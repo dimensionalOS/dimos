@@ -3,7 +3,7 @@
     "id": "go2_short_route_t7_southeast",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (1.35, 5.71), 3 m due southeast of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (1.35, 5.71), 3 m due southeast of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "blocked",
     "choices": [
       "reachable",
@@ -32,7 +32,7 @@
     "id": "go2_short_route_t21_southwest",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-3.13, 13.55), 3 m due southwest of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-3.13, 13.55), 3 m due southwest of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "blocked",
     "choices": [
       "reachable",
@@ -61,7 +61,7 @@
     "id": "go2_short_route_t31_northwest",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (1.43, 16.53), 3 m due northwest of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (1.43, 16.53), 3 m due northwest of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "blocked",
     "choices": [
       "reachable",
@@ -90,7 +90,7 @@
     "id": "go2_short_route_t41_south",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (2.05, 4.33), 3 m due south of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (2.05, 4.33), 3 m due south of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "blocked",
     "choices": [
       "reachable",
@@ -119,7 +119,7 @@
     "id": "go2_short_route_t53_south",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-2.28, -1.04), 3 m due south of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-2.28, -1.04), 3 m due south of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "blocked",
     "choices": [
       "reachable",
@@ -148,7 +148,7 @@
     "id": "go2_china_office_route_t34_west",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-1.15, 2.07), 3 m due west of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-1.15, 2.07), 3 m due west of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "blocked",
     "choices": [
       "reachable",
@@ -177,7 +177,7 @@
     "id": "go2_china_office_route_t61_southeast",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (7.60, 3.68), 3 m due southeast of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (7.60, 3.68), 3 m due southeast of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "blocked",
     "choices": [
       "reachable",
@@ -206,7 +206,7 @@
     "id": "go2_china_office_route_t73_west",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (0.75, 5.83), 3 m due west of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (0.75, 5.83), 3 m due west of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "blocked",
     "choices": [
       "reachable",
@@ -235,7 +235,7 @@
     "id": "go2_china_office_route_t85_southwest",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (0.09, 3.75), 3 m due southwest of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (0.09, 3.75), 3 m due southwest of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "blocked",
     "choices": [
       "reachable",
@@ -264,7 +264,7 @@
     "id": "go2_china_office_route_t97_southeast",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (5.58, 1.34), 3 m due southeast of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (5.58, 1.34), 3 m due southeast of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "blocked",
     "choices": [
       "reachable",
@@ -293,7 +293,7 @@
     "id": "go2_china_office_route_t121_northwest",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (1.36, 5.33), 3 m due northwest of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (1.36, 5.33), 3 m due northwest of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "blocked",
     "choices": [
       "reachable",
@@ -322,7 +322,7 @@
     "id": "go2_china_office_route_t133_south",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (3.92, 2.21), 3 m due south of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (3.92, 2.21), 3 m due south of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "blocked",
     "choices": [
       "reachable",
@@ -351,7 +351,7 @@
     "id": "go2_short_route_t3_east",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (2.57, 5.15), 3 m due east of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (2.57, 5.15), 3 m due east of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "reachable",
     "choices": [
       "reachable",
@@ -380,7 +380,7 @@
     "id": "go2_short_route_t13_southeast",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (0.19, 8.53), 3 m due southeast of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (0.19, 8.53), 3 m due southeast of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "reachable",
     "choices": [
       "reachable",
@@ -409,7 +409,7 @@
     "id": "go2_short_route_t31_west",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (0.55, 14.40), 3 m due west of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (0.55, 14.40), 3 m due west of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "reachable",
     "choices": [
       "reachable",
@@ -438,7 +438,7 @@
     "id": "go2_short_route_t47_west",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-2.24, 2.87), 3 m due west of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-2.24, 2.87), 3 m due west of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "reachable",
     "choices": [
       "reachable",
@@ -467,7 +467,7 @@
     "id": "go2_short_route_t57_east",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (0.79, 4.57), 3 m due east of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (0.79, 4.57), 3 m due east of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "reachable",
     "choices": [
       "reachable",
@@ -496,7 +496,7 @@
     "id": "go2_china_office_route_t28_southwest",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-0.00, -1.46), 3 m due southwest of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-0.00, -1.46), 3 m due southwest of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "reachable",
     "choices": [
       "reachable",
@@ -525,7 +525,7 @@
     "id": "go2_china_office_route_t46_west",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (0.34, 3.73), 3 m due west of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (0.34, 3.73), 3 m due west of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "reachable",
     "choices": [
       "reachable",
@@ -554,7 +554,7 @@
     "id": "go2_china_office_route_t61_northwest",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (3.36, 7.92), 3 m due northwest of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (3.36, 7.92), 3 m due northwest of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "reachable",
     "choices": [
       "reachable",
@@ -583,7 +583,7 @@
     "id": "go2_china_office_route_t79_southeast",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (3.84, 3.91), 3 m due southeast of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (3.84, 3.91), 3 m due southeast of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "reachable",
     "choices": [
       "reachable",
@@ -612,7 +612,7 @@
     "id": "go2_china_office_route_t97_northwest",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (1.34, 5.58), 3 m due northwest of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (1.34, 5.58), 3 m due northwest of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "reachable",
     "choices": [
       "reachable",
@@ -641,7 +641,7 @@
     "id": "go2_china_office_route_t121_northeast",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (5.60, 5.33), 3 m due northeast of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (5.60, 5.33), 3 m due northeast of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "reachable",
     "choices": [
       "reachable",
@@ -670,7 +670,7 @@
     "id": "go2_china_office_route_t133_southeast",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (6.04, 3.09), 3 m due southeast of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (6.04, 3.09), 3 m due southeast of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "reachable",
     "choices": [
       "reachable",
@@ -699,7 +699,7 @@
     "id": "go2_short_route_t5_north",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-0.26, 10.05), 3 m due north of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-0.26, 10.05), 3 m due north of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "unknown",
     "choices": [
       "reachable",
@@ -728,7 +728,7 @@
     "id": "go2_short_route_t13_west",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-4.93, 10.65), 3 m due west of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-4.93, 10.65), 3 m due west of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "unknown",
     "choices": [
       "reachable",
@@ -757,7 +757,7 @@
     "id": "go2_short_route_t21_north",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-1.01, 18.67), 3 m due north of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-1.01, 18.67), 3 m due north of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "unknown",
     "choices": [
       "reachable",
@@ -786,7 +786,7 @@
     "id": "go2_short_route_t29_east",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (6.53, 15.60), 3 m due east of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (6.53, 15.60), 3 m due east of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "unknown",
     "choices": [
       "reachable",
@@ -815,7 +815,7 @@
     "id": "go2_short_route_t37_northeast",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (4.78, 11.25), 3 m due northeast of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (4.78, 11.25), 3 m due northeast of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "unknown",
     "choices": [
       "reachable",
@@ -844,7 +844,7 @@
     "id": "go2_short_route_t51_south",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-0.85, -1.43), 3 m due south of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-0.85, -1.43), 3 m due south of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "unknown",
     "choices": [
       "reachable",
@@ -873,7 +873,7 @@
     "id": "go2_china_office_route_t25_south",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (2.42, -2.82), 3 m due south of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (2.42, -2.82), 3 m due south of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "unknown",
     "choices": [
       "reachable",
@@ -902,7 +902,7 @@
     "id": "go2_china_office_route_t37_southeast",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (5.33, 0.82), 3 m due southeast of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (5.33, 0.82), 3 m due southeast of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "unknown",
     "choices": [
       "reachable",
@@ -931,7 +931,7 @@
     "id": "go2_china_office_route_t55_northeast",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (7.94, 5.91), 3 m due northeast of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (7.94, 5.91), 3 m due northeast of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "unknown",
     "choices": [
       "reachable",
@@ -960,7 +960,7 @@
     "id": "go2_china_office_route_t67_northeast",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (6.34, 7.86), 3 m due northeast of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (6.34, 7.86), 3 m due northeast of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "unknown",
     "choices": [
       "reachable",
@@ -989,7 +989,7 @@
     "id": "go2_china_office_route_t106_west",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-1.53, 1.57), 3 m due west of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-1.53, 1.57), 3 m due west of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "unknown",
     "choices": [
       "reachable",
@@ -1018,7 +1018,7 @@
     "id": "go2_china_office_route_t130_west",
     "family": "route",
     "type": "mcq",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (1.01, 4.86), 3 m due west of you. The straight line to it is blocked by mapped obstacles, but you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (1.01, 4.86), 3 m due west of you, and you may follow any route across the floor. Using only the mapped point cloud, can you get there? Answer with exactly one word: reachable if some route reaches it entirely through space the sensor confirmed is traversable; blocked if no route reaches it even when space the sensor never measured is treated as traversable; unknown if every route that reaches it has to cross space the sensor never measured.",
     "a": "unknown",
     "choices": [
       "reachable",

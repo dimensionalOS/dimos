@@ -145,17 +145,12 @@ def clearance_rows(
 ) -> list[generate.Row]:
     """Corridor clearance at body height: clear / blocked.
 
-    Two-valued on purpose. An earlier version called a corridor ``unknown``
-    when no body-height point came back from it, on the theory that silence
-    could be glass or a dark surface rather than empty space. That is wrong at
-    this range: coverage built from **every** return at any height shows the
-    lidar sweeps the floor all around the robot, so a 2 m corridor has always
-    been scanned, and silence at body height really does mean nothing is
-    there. Sweeping the corridor length confirmed the two labels are mutually
-    exclusive in practice — at 2 m nothing is unscanned, and by 5 m nothing is
-    clear. Unmeasured space is a real question, but it belongs to
-    :mod:`dimos.evals.suites.go2_pointcloud_route`, where the goal is far
-    enough out to reach it.
+    Two-valued at this range. Coverage built from **every** return at any
+    height shows the lidar sweeps the floor all around the robot, so a 2 m
+    corridor has always been scanned and silence at body height means nothing
+    is there; by 5 m nothing is clear. Unmeasured space belongs to
+    :mod:`dimos.evals.suites.go2_pointcloud_route`, whose goal is far enough
+    out to reach it.
 
     Obstruction is judged at body height because that is what would hit the
     robot. Candidates with fewer than ``MIN_EVIDENCE`` points inside are
@@ -197,9 +192,9 @@ def clearance_rows(
                             f"Consider a {2 * HALF_WIDTH:g} m wide corridor running "
                             f"{REACH:g} m due {name} from your position, at body height "
                             f"(z between {z_band[0]} and {z_band[1]} m). Using only the "
-                            "mapped point cloud, can you tell whether that corridor is "
-                            "clear? Answer with exactly one word: blocked if mapped points "
-                            "lie inside the corridor, or clear if none do.",
+                            "mapped point cloud, is that corridor clear? Answer with "
+                            "exactly one word: blocked if mapped points lie inside the "
+                            "corridor, or clear if none do.",
                             "a": label,
                             "choices": ["clear", "blocked"],
                             "context": [
