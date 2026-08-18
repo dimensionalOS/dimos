@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dimensional cloud auth: `dimos login` / `logout` / `whoami`.
+"""Dimensional cloud auth: `dimos login` / `dimos logout` / `dimos whoami`.
 
 Device-code flow (RFC 8628 shaped) against login.dimensional.org — built for robots:
 no browser or clipboard needed on this machine. The CLI prints an 8-character code,
@@ -36,8 +36,6 @@ from dimos.constants import CONFIG_DIR
 BASE = os.environ.get("DIMOS_CLOUD_URL", "https://login.dimensional.org")
 CRED_PATH = CONFIG_DIR / "dimos" / "credentials.json"
 
-app = typer.Typer(help="Dimensional cloud account")
-
 
 def _post(path: str, **params: str | int) -> dict:
     url = f"{BASE}{path}?" + urllib.parse.urlencode(params)
@@ -55,7 +53,6 @@ def api_key() -> str | None:
         return None
 
 
-@app.command()
 def login() -> None:
     """Sign this machine in to Dimensional cloud."""
     d = _post("/auth/device", label=socket.gethostname())
@@ -78,7 +75,6 @@ def login() -> None:
     raise typer.Exit(1)
 
 
-@app.command()
 def logout() -> None:
     """Forget the stored key. Revoke it fully at login.dimensional.org/keys."""
     if CRED_PATH.exists():
@@ -88,7 +84,6 @@ def logout() -> None:
         typer.echo("Not logged in.")
 
 
-@app.command()
 def whoami() -> None:
     """Show which account this machine's key belongs to."""
     key = api_key()
