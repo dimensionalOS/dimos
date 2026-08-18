@@ -34,6 +34,8 @@ from dimos.evals.vqa.contracts import (
     InsufficientEvidenceError,
     NonEmptyString,
     ObjectDetector,
+    ObjectMaskEstimator,
+    ObjectRangeEstimator,
     QuestionProposal,
 )
 from dimos.evals.vqa.families import (
@@ -50,8 +52,6 @@ _UNORDERED_FAMILIES = frozenset(
 
 if TYPE_CHECKING:
     from dimos.evals.vqa.preprocessing import CalibratedFrame
-    from dimos.evals.vqa.primitives.edgetam import ObjectMaskEstimator
-    from dimos.evals.vqa.primitives.range import ObjectRangeEstimator
 
 
 class GenerationRequest(BaseModel):
@@ -66,7 +66,6 @@ class GenerationRequest(BaseModel):
     stop: int | None = Field(default=None, gt=0)
     stride: int | None = Field(default=None, ge=1)
     calibration_profile: Literal["go2"] | None = None
-    synchronization_tolerance_s: float = Field(default=0.1, gt=0)
 
     @model_validator(mode="after")
     def valid_selection(self) -> GenerationRequest:
@@ -90,6 +89,14 @@ class GenerationRequest(BaseModel):
         if self.output is not None:
             return self.output.expanduser()
         return STATE_DIR / "datasets" / "vqa" / f"{Path(self.dataset).stem}-frames"
+
+
+class VqaGenerationConfig(BaseModel):
+    """Processing policy shared by VQA generation runs."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    synchronization_tolerance_s: float = Field(default=0.1, gt=0)
 
 
 class PublicCase(BaseModel):
@@ -140,27 +147,32 @@ class _GeneratedFrame:
     families: tuple[FamilySpec, ...]
 
 
-def generate_dataset(request: GenerationRequest) -> GenerationResult:
+def generate_dataset(
+    request: GenerationRequest,
+    config: VqaGenerationConfig | None = None,
+) -> GenerationResult:
     """Generate a standalone dataset from selected Memory images."""
     from dimos.evals.vqa.preprocessing import (
         FrameGeometryUnavailableError,
         RecordingFramePreprocessor,
+        recorded_calibration_available,
     )
-    from dimos.evals.vqa.primitives.edgetam import EdgeTamObjectMaskEstimator
+    from dimos.evals.vqa.primitives.edgetam import EdgeTamObjectMaskPipeline
     from dimos.evals.vqa.primitives.range import LidarRangeEstimator
 
     # Load optional model dependencies only when generation is requested.
     from dimos.models.vl.moondream import MoondreamVlModel
     from dimos.models.vl.openai import OpenAIVlModel
 
+    config = config or VqaGenerationConfig()
     indices = request.frame_indices()
     probe = open_dataset(request.dataset)
     try:
         streams = set(probe.list_streams())
     finally:
         probe.stop()
-    has_recorded_geometry = (
-        "camera_info" in streams and "tf" in streams and bool({"pointlio_lidar", "lidar"} & streams)
+    has_recorded_geometry = recorded_calibration_available(streams) and bool(
+        {"pointlio_lidar", "lidar"} & streams
     )
     use_geometry = request.calibration_profile is not None or has_recorded_geometry
 
@@ -172,7 +184,7 @@ def generate_dataset(request: GenerationRequest) -> GenerationResult:
             "author": author_model.config.model_name,
             "detector": detector_model.config.model_name,
         }
-        mask_estimator = EdgeTamObjectMaskEstimator(detector)
+        mask_estimator = EdgeTamObjectMaskPipeline(detector)
         if not use_geometry:
             store = open_dataset(request.dataset)
             try:
@@ -196,6 +208,7 @@ def generate_dataset(request: GenerationRequest) -> GenerationResult:
                     OpenAIQuestionAuthor(author_model),
                     detector,
                     mask_estimator=mask_estimator,
+                    config=config,
                     model_names=model_names,
                 )
             finally:
@@ -204,7 +217,7 @@ def generate_dataset(request: GenerationRequest) -> GenerationResult:
         with RecordingFramePreprocessor(
             request.dataset,
             calibration_profile=request.calibration_profile,
-            tolerance_s=request.synchronization_tolerance_s,
+            tolerance_s=config.synchronization_tolerance_s,
         ) as preprocessor:
             image_count = preprocessor.image_count
             if indices[-1] >= image_count:
@@ -228,6 +241,7 @@ def generate_dataset(request: GenerationRequest) -> GenerationResult:
                 detector,
                 LidarRangeEstimator(mask_estimator),
                 mask_estimator,
+                config=config,
                 model_names=model_names,
             )
     finally:
@@ -251,9 +265,11 @@ def generate_frames_dataset(
     range_estimator: ObjectRangeEstimator | None = None,
     mask_estimator: ObjectMaskEstimator | None = None,
     *,
+    config: VqaGenerationConfig | None = None,
     model_names: dict[str, str] | None = None,
 ) -> GenerationResult:
     """Generate and write one dataset from already loaded indexed images."""
+    config = config or VqaGenerationConfig()
     output = request.output_directory()
     _prepare_output(output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -289,6 +305,7 @@ def generate_frames_dataset(
             staging / "audit" / "run.json",
             {
                 "generation": request.model_dump(mode="json", exclude={"output"}),
+                "configuration": config.model_dump(mode="json"),
                 "families": [
                     family.name for family in AVAILABLE_FAMILIES if family.name in used_family_names
                 ],

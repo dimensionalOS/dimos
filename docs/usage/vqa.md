@@ -29,13 +29,14 @@ Generated datasets default to:
 
 Use `--output <directory>` to override that location. The destination must be empty.
 
-Legacy Go2 recordings without `camera_info` and `tf` require explicit calibration:
+Go2 recordings without `camera_info` and `tf` require the explicit fallback profile:
 
 ```bash skip
 dimos evals vqa generate go2_short.db --image-index 500 --calibration-profile go2
 ```
 
-Image and LiDAR observations must be within `--sync-tolerance` seconds, which defaults to `0.1`.
+Recordings containing only one calibration stream are rejected. The VQA generation configuration
+requires image and LiDAR observations to be within `0.1` seconds by default.
 
 ## Question Families
 
@@ -100,10 +101,10 @@ writes results under `~/.local/state/dimos/evals/run-*/`.
 ## Architecture
 
 - `author.py` proposes constrained family inputs from an image.
-- `contracts.py` defines shared proposals, answers, family metadata, and the detector interface.
+- `contracts.py` defines shared proposals, answers, family metadata, and evidence interfaces.
 - `families.py` owns question text, choices, and deterministic answer rules.
 - `preprocessing.py` synchronizes and calibrates image and point-cloud frames.
-- `primitives/edgetam.py` detects and segments objects with a shared per-image mask cache.
+- `primitives/edgetam.py` runs the detection-to-segmentation pipeline with a per-image mask cache.
 - `primitives/range.py` combines cached masks with projected point clouds for range evidence.
 - `primitives/moondream.py` supplies private object detections.
 - `generate.py` loads frames, reuses models, and writes datasets atomically.

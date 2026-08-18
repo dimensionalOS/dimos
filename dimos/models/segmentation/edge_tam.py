@@ -174,12 +174,14 @@ class EdgeTAMImageSegmenter:
         ]
         return ImageDetections2D(image, [det for det in detections if det.is_valid()])
 
-    def segment(self, detections: ImageDetections2D) -> ImageDetections2D:
+    def segment(
+        self, detections: ImageDetections2D[Detection2DBBox]
+    ) -> ImageDetections2D[Detection2DSeg]:
         """Refine box detections into mask detections (Detection2DSeg)."""
         import cv2
 
         if not len(detections):
-            return detections
+            return ImageDetections2D(detections.image, [])
 
         image = detections.image
         rgb = cv2.cvtColor(image.to_opencv(), cv2.COLOR_BGR2RGB)
@@ -196,7 +198,7 @@ class EdgeTAMImageSegmenter:
             masks, _, _ = self._predictor.predict(box=boxes, multimask_output=False)
 
         masks = masks.reshape(-1, *masks.shape[-2:])  # (N, H, W) regardless of batch dim
-        segmented: list[Detection2DBBox] = [
+        segmented: list[Detection2DSeg] = [
             Detection2DSeg.from_sam2_result(
                 mask,
                 det.track_id,

@@ -28,6 +28,7 @@ from dimos.perception.detection.type.detection2d.imageDetections2D import ImageD
 if TYPE_CHECKING:
     from dimos.evals.vqa.contracts import ObjectDetector
     from dimos.msgs.sensor_msgs.Image import Image
+    from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 
 
 @dataclass(frozen=True)
@@ -53,10 +54,10 @@ class EdgeTAMImageSegmenterCompatible(Protocol):
 
     def segment(
         self, detections: ImageDetections2D[Detection2DBBox]
-    ) -> ImageDetections2D[Detection2DBBox]: ...
+    ) -> ImageDetections2D[Detection2DSeg]: ...
 
 
-class EdgeTamObjectMaskEstimator:
+class EdgeTamObjectMaskPipeline:
     """Detect and batch-segment named objects, caching evidence per image."""
 
     def __init__(
@@ -116,10 +117,9 @@ class EdgeTamObjectMaskEstimator:
                 )
             expected_shape = (image.height, image.width)
             for (object_name, detection), candidate in zip(pending, segmented, strict=True):
-                mask = getattr(candidate, "mask", None)
+                mask = candidate.mask
                 if not (
                     candidate.is_valid()
-                    and isinstance(mask, np.ndarray)
                     and mask.ndim == 2
                     and mask.shape == expected_shape
                     and bool(np.any(mask))
@@ -148,13 +148,3 @@ class EdgeTamObjectMaskEstimator:
 
             self._segmenter = EdgeTAMImageSegmenter()
         return self._segmenter
-
-
-class ObjectMaskEstimator(Protocol):
-    """Estimate object masks from an image."""
-
-    def estimate(self, image: Image, object_name: str) -> ObjectMaskEvidence: ...
-
-    def estimate_many(
-        self, image: Image, object_names: tuple[str, ...]
-    ) -> tuple[ObjectMaskEvidence, ...]: ...
