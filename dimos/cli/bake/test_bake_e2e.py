@@ -23,7 +23,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-import shutil
 import socket
 import subprocess
 import time
@@ -37,10 +36,7 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
-pytestmark = [
-    pytest.mark.self_hosted,
-    pytest.mark.skipif(shutil.which("cargo") is None, reason="dimos bake needs cargo"),
-]
+pytestmark = pytest.mark.self_hosted
 
 SUPPRESSED = ("global_map", "local_map", "region_bounds")
 # The sensor sits a meter above a flat patch of floor.
