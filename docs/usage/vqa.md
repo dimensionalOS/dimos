@@ -7,15 +7,6 @@ title: "Visual Question Answering"
 The VQA tools generate deterministic questions from recorded images and evaluate them through the
 shared DimOS evaluation runner.
 
-## Install
-
-VQA dataset generation uses OpenAI for question proposals and Moondream for private visual
-evidence. Install their optional dependencies before generating a dataset:
-
-```bash skip
-uv sync --extra agents --extra perception
-```
-
 ## Generate a Dataset
 
 Generate from one image:
