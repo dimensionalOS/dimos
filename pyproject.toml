@@ -629,7 +629,7 @@ strict = true
 warn_unused_ignores = false
 untyped_calls_exclude = ["zenoh"]
 explicit_package_bases = true
-exclude = "^dimos/models/Detic(/|$)|^dimos/experimental/robot_policy/lerobot/python/|.*/test_.|.*/tool_.|.*/conftest.py*"
+exclude = "^dimos/models/Detic(/|$)|^dimos/imitation/policy/lerobot/python/|.*/test_.|.*/tool_.|.*/conftest.py*"
 
 [[tool.mypy.overrides]]
 module = [
@@ -744,7 +744,7 @@ exclude_also = [
 max_size_kb = 75
 ignore = [
     "uv.lock",
-    "dimos/experimental/isolated_python/example/python/uv.lock",
+    "*/uv.lock",
     "*/package-lock.json",
     "Cargo.lock",
     "*/Cargo.lock",
