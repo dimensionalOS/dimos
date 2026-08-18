@@ -32,6 +32,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from rich.console import Console
+from rich.panel import Panel
+from rich.text import Text
 import typer
 
 from dimos.constants import CREDENTIALS_PATH
@@ -39,6 +42,25 @@ from dimos.core.global_config import global_config
 
 _KEYRING_SERVICE = "dimos-cloud"
 _KEYRING_USER = "default"
+
+_console = Console(highlight=False)
+
+_LOGO = """\
+██████╗ ██╗███╗   ███╗ ██████╗ ███████╗
+██╔══██╗██║████╗ ████║██╔═══██╗██╔════╝
+██║  ██║██║██╔████╔██║██║   ██║███████╗
+██║  ██║██║██║╚██╔╝██║██║   ██║╚════██║
+██████╔╝██║██║ ╚═╝ ██║╚██████╔╝███████║
+╚═════╝ ╚═╝╚═╝     ╚═╝ ╚═════╝ ╚══════╝"""
+
+_GRADIENT = ["#00e5ff", "#00c4ff", "#3d9bff", "#5c7cff", "#7a5cff", "#9b40ff"]
+
+
+def _logo() -> Text:
+    art = Text()
+    for line, color in zip(_LOGO.splitlines(), _GRADIENT, strict=True):
+        art.append(line + "\n", style=f"bold {color}")
+    return art
 
 
 def _base() -> str:
@@ -110,19 +132,40 @@ def api_key() -> str | None:
 def login() -> None:
     """Sign this machine in to Dimensional cloud."""
     d = _post("/auth/device", label=socket.gethostname())
-    typer.echo(f"\n  Open        {d['verification_uri']}")
-    typer.echo(f"  Enter code  {d['user_code']}\n")
+    _console.print(
+        Panel(
+            Text.assemble(
+                ("Open        ", "dim"),
+                (d["verification_uri"], "bold cyan underline"),
+                "\n",
+                ("Enter code  ", "dim"),
+                (f" {d['user_code']} ", "bold black on cyan"),
+            ),
+            title="[bold]Dimensional Cloud[/]",
+            subtitle="[dim]approve from any signed-in browser[/]",
+            border_style="cyan",
+            padding=(1, 3),
+            expand=False,
+        )
+    )
     deadline = time.time() + d["expires_in"]
-    while time.time() < deadline:
-        time.sleep(d["interval"])
-        r = _post("/auth/token", device_code=d["device_code"])
-        if r["status"] == "ok":
-            where = _store({"api_key": r["api_key"], "email": r["email"]})
-            typer.echo(f"Logged in as {r['email']} (key {r['key_id']}…, stored in {where})")
-            return
-        if r["status"] in ("denied", "expired"):
-            typer.echo(f"Login {r['status']}.", err=True)
-            raise typer.Exit(1)
+    with _console.status("", spinner="dots") as status:
+        while time.time() < deadline:
+            left = int(deadline - time.time())
+            status.update(f"[cyan]Waiting for approval…[/] [dim]{left // 60}:{left % 60:02d}[/]")
+            time.sleep(d["interval"])
+            r = _post("/auth/token", device_code=d["device_code"])
+            if r["status"] == "ok":
+                where = _store({"api_key": r["api_key"], "email": r["email"]})
+                _console.print(_logo())
+                _console.print(
+                    f"[bold green]✔ Logged in[/] as [bold]{r['email']}[/] "
+                    f"[dim](key {r['key_id']}…, stored in {where})[/]"
+                )
+                return
+            if r["status"] in ("denied", "expired"):
+                typer.echo(f"Login {r['status']}.", err=True)
+                raise typer.Exit(1)
     typer.echo("Login timed out.", err=True)
     raise typer.Exit(1)
 
@@ -130,7 +173,9 @@ def login() -> None:
 def logout() -> None:
     """Forget the stored key. Revoke it fully at login.dimensional.org/keys."""
     if _forget():
-        typer.echo(f"Logged out. Revoke the key at {_base()}/keys.")
+        _console.print(
+            f"[bold cyan]⏻[/] [bold]Logged out.[/] [dim]Revoke the key at {_base()}/keys.[/]"
+        )
     else:
         typer.echo("Not logged in.")
 
@@ -155,4 +200,4 @@ def whoami() -> None:
             err=True,
         )
         raise typer.Exit(1) from e
-    typer.echo(f"{who['email']} (scopes: {who['scopes']})")
+    _console.print(f"[bold]{who['email']}[/] [dim](scopes: {who['scopes']})[/]")
