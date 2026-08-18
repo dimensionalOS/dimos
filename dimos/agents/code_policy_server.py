@@ -153,6 +153,7 @@ class CodePolicyMcpServer:
                 "artifacts": str(trial.artifacts),
                 "log_path": str(trial.log_path),
                 "memory_path": str(trial.memory_path),
+                "policy_output": trial.policy_output,
             }
         )
 

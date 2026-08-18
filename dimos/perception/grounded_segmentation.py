@@ -40,6 +40,8 @@ class GroundedSegmentationSpec(Spec, Protocol):
         prompts: list[str],
     ) -> ImageDetections2D[Detection2DSeg]: ...
 
+    def segment_best(self, image: Image, prompt: str) -> ImageDetections2D[Detection2DSeg]: ...
+
 
 class GroundedSegmentationConfig(ModuleConfig):
     grounder: Callable[[], VlModel] = MoondreamVlModel
@@ -97,3 +99,23 @@ class GroundedSegmentationModule(Module, GroundedSegmentationSpec):
             image,
             [detection for detection in segmented if isinstance(detection, Detection2DSeg)],
         )
+
+    @rpc
+    def segment_best(
+        self,
+        image: Image,
+        prompt: str,
+    ) -> ImageDetections2D[Detection2DSeg]:
+        """Return one point-grounded mask for a uniquely described object."""
+        if self._grounder is None or self._segmenter is None:
+            raise RuntimeError("Grounded segmentation module has not been started")
+        normalized = prompt.strip()
+        if not normalized:
+            raise ValueError("prompt must be non-empty")
+        points = self._grounder.query_points(image, normalized)
+        if not points:
+            return ImageDetections2D(image)
+        point = points[0]
+        point.track_id = 0
+        point.name = normalized
+        return self._segmenter.segment_points(ImageDetections2D(image, [point]))

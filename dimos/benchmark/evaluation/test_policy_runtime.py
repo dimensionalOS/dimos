@@ -38,6 +38,7 @@ from dimos.porcelain.dimos import Dimos
 
 def policy(app: Dimos) -> None:
     del app
+    print("policy inspection")
 
 
 class _FakeCodePolicyServer:
@@ -55,8 +56,9 @@ class _FakeCodePolicyServer:
         pass
 
 
-def _send_large_policy_error(messages, start_event, result_sending) -> None:
+def _send_large_policy_error(messages, start_event, result_sending, output_path: str) -> None:
     start_event.wait()
+    Path(output_path).write_text("diagnostic")
     result_sending.set()
     messages.send(("policy_error", "x" * 1_000_000))
     messages.close()
@@ -81,6 +83,7 @@ def _trial(path: Path, number: int) -> TrialRun:
         artifacts=path,
         log_path=log_path,
         memory_path=memory_path,
+        policy_output=f"attempt {number}",
     )
 
 
@@ -141,10 +144,17 @@ def test_policy_worker_connects_and_invokes_callable(mocker, tmp_path: Path) -> 
     connect = mocker.patch.object(Dimos, "connect", return_value=app)
     results, worker_results = multiprocessing.Pipe(duplex=False)
     start_event = threading.Event()
+    output_path = tmp_path / "policy-output.log"
 
     worker = threading.Thread(
         target=_execute_policy_worker,
-        args=(str(serialized_path), str(memory_path), worker_results, start_event),
+        args=(
+            str(serialized_path),
+            str(memory_path),
+            str(output_path),
+            worker_results,
+            start_event,
+        ),
     )
     worker.start()
 
@@ -159,17 +169,22 @@ def test_policy_worker_connects_and_invokes_callable(mocker, tmp_path: Path) -> 
     worker.join(timeout=1)
     assert not worker.is_alive()
     app.stop.assert_called_once_with()
+    assert output_path.read_text() == "policy inspection\n"
     results.close()
     worker_results.close()
 
 
-def test_prepared_policy_waits_for_explicit_start_and_stops_at_trial_end(mocker) -> None:
+def test_prepared_policy_waits_for_explicit_start_and_stops_at_trial_end(
+    mocker, tmp_path: Path
+) -> None:
     process = mocker.Mock()
     process.is_alive.return_value = True
     messages = mocker.Mock()
     messages.poll.return_value = False
     start_event = threading.Event()
-    execution = _PolicyExecutionProcess(process, messages, start_event)
+    output_path = tmp_path / "policy-output.log"
+    output_path.write_text("partial diagnostic")
+    execution = _PolicyExecutionProcess(process, messages, start_event, output_path)
 
     assert not start_event.is_set()
     execution.start()
@@ -178,22 +193,24 @@ def test_prepared_policy_waits_for_explicit_start_and_stops_at_trial_end(mocker)
     result = execution.finish(grace_s=0.0)
 
     assert result.status == "stopped"
+    assert result.output == "partial diagnostic"
     process.terminate.assert_called_once_with()
 
 
-def test_policy_result_larger_than_pipe_buffer_does_not_deadlock() -> None:
+def test_policy_result_larger_than_pipe_buffer_does_not_deadlock(tmp_path: Path) -> None:
     context = multiprocessing.get_context("spawn")
     messages, worker_messages = context.Pipe(duplex=False)
     start_event = context.Event()
     result_sending = context.Event()
+    output_path = tmp_path / "policy-output.log"
     process = context.Process(
         target=_send_large_policy_error,
-        args=(worker_messages, start_event, result_sending),
+        args=(worker_messages, start_event, result_sending, str(output_path)),
         daemon=True,
     )
     process.start()
     worker_messages.close()
-    execution = _PolicyExecutionProcess(process, messages, start_event)
+    execution = _PolicyExecutionProcess(process, messages, start_event, output_path)
     execution.start()
     assert result_sending.wait(timeout=2)
 
@@ -201,6 +218,7 @@ def test_policy_result_larger_than_pipe_buffer_does_not_deadlock() -> None:
 
     assert result.status == "policy_error"
     assert result.error == "x" * 1_000_000
+    assert result.output == "diagnostic"
 
 
 def test_explore_freezes_last_of_five_debug_submissions(mocker, tmp_path: Path) -> None:

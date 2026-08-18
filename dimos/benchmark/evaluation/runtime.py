@@ -16,13 +16,15 @@
 
 from __future__ import annotations
 
+from contextlib import redirect_stderr, redirect_stdout
 import hashlib
+import io
 import json
 import multiprocessing
 from pathlib import Path
 import shutil
 import time
-from typing import Any, Literal
+from typing import Any, Literal, TextIO
 
 from dimos.agents.code_policy_server import CodePolicyMcpServer
 from dimos.benchmark.evaluation.models import ArtifactReference, RuntimeCondition, RuntimeIdentity
@@ -40,6 +42,7 @@ from dimos.benchmark.evaluation.protocol import (
 CODE_POLICY_PROFILE: Literal["code-policy-v1"] = "code-policy-v1"
 TURN_TIMEOUT_SECONDS = 600.0
 DEFAULT_MAX_SUBMISSIONS = 5
+MAX_POLICY_OUTPUT = 32_000
 
 SYSTEM_INSTRUCTIONS = """You are a CodePolicy exploration agent.
 
@@ -48,7 +51,8 @@ executes in a persistent trusted environment. Define a synchronous function
 with the exact signature `def policy(app: Dimos) -> None`, then call
 `submit_policy(policy)` to test it. Every accepted submission starts a fresh
 debug environment and a fresh policy-only DimOS blueprint. Inspect the returned
-TrialRun's outcome, logs, Memory2 recording, and artifacts to diagnose failures.
+TrialRun's outcome, policy_output, logs, Memory2 recording, and artifacts to
+diagnose failures.
 You may submit at most five trials. The last accepted submission becomes the
 task-level policy evaluated later without an agent. Do not connect to DimOS
 directly from the exploration REPL.
@@ -209,7 +213,13 @@ class CodePolicyRuntimeFactory:
         start_event = context.Event()
         process = context.Process(
             target=_execute_policy_worker,
-            args=(str(policy.serialized_path), str(memory_path), worker_messages, start_event),
+            args=(
+                str(policy.serialized_path),
+                str(memory_path),
+                str(memory_path.parent / "policy-output.log"),
+                worker_messages,
+                start_event,
+            ),
             daemon=True,
         )
         try:
@@ -223,7 +233,12 @@ class CodePolicyRuntimeFactory:
                 _stop_process(process)
                 messages.close()
                 raise RuntimeError(error or "policy worker failed before readiness")
-            return _PolicyExecutionProcess(process, messages, start_event)
+            return _PolicyExecutionProcess(
+                process,
+                messages,
+                start_event,
+                memory_path.parent / "policy-output.log",
+            )
         except BaseException:
             if process.is_alive():
                 _stop_process(process)
@@ -393,53 +408,66 @@ class _SubmissionManager:
 def _execute_policy_worker(
     serialized_path: str,
     memory_path: str,
+    output_path: str,
     messages: Any,
     start_event: Any,
 ) -> None:
-    try:
+    with _BoundedPolicyWriter(Path(output_path)) as output:
         try:
-            import cloudpickle
+            try:
+                import cloudpickle
 
-            with Path(serialized_path).open("rb") as handle:
-                policy = cloudpickle.load(handle)
-        except Exception as exc:
-            messages.send(
-                ("infrastructure_error", f"policy load failed: {type(exc).__name__}: {exc}")
-            )
-            return
-        try:
-            from dimos.memory2.store.sqlite import SqliteStore
-            from dimos.porcelain.dimos import Dimos
+                with Path(serialized_path).open("rb") as handle:
+                    policy = cloudpickle.load(handle)
+            except Exception as exc:
+                messages.send(
+                    ("infrastructure_error", f"policy load failed: {type(exc).__name__}: {exc}")
+                )
+                return
+            try:
+                from dimos.memory2.store.sqlite import SqliteStore
+                from dimos.porcelain.dimos import Dimos
 
-            memory = SqliteStore(path=memory_path, must_exist=True, read_only=True)
-            memory.start()
-            app = Dimos.connect(memory=memory)
-        except Exception as exc:
-            messages.send(
-                ("infrastructure_error", f"DimOS connection failed: {type(exc).__name__}: {exc}")
-            )
-            return
-        messages.send(("ready", None))
-        start_event.wait()
-        try:
-            result = policy(app)
-            if result is not None:
-                raise TypeError("policy(app) must return None")
-        except Exception as exc:
-            messages.send(("policy_error", f"{type(exc).__name__}: {exc}"))
-        else:
-            messages.send(("completed", None))
+                memory = SqliteStore(path=memory_path, must_exist=True, read_only=True)
+                memory.start()
+                app = Dimos.connect(memory=memory)
+            except Exception as exc:
+                messages.send(
+                    (
+                        "infrastructure_error",
+                        f"DimOS connection failed: {type(exc).__name__}: {exc}",
+                    )
+                )
+                return
+            messages.send(("ready", None))
+            start_event.wait()
+            try:
+                with redirect_stdout(output), redirect_stderr(output):
+                    result = policy(app)
+                if result is not None:
+                    raise TypeError("policy(app) must return None")
+            except Exception as exc:
+                messages.send(("policy_error", f"{type(exc).__name__}: {exc}"))
+            else:
+                messages.send(("completed", None))
+            finally:
+                app.stop()
         finally:
-            app.stop()
-    finally:
-        messages.close()
+            messages.close()
 
 
 class _PolicyExecutionProcess:
-    def __init__(self, process: Any, messages: Any, start_event: Any) -> None:
+    def __init__(
+        self,
+        process: Any,
+        messages: Any,
+        start_event: Any,
+        output_path: Path,
+    ) -> None:
         self._process = process
         self._messages = messages
         self._start_event = start_event
+        self._output_path = output_path
         self._started_at: float | None = None
         self._finished: PolicyExecution | None = None
 
@@ -475,12 +503,56 @@ class _PolicyExecutionProcess:
                 status = "infrastructure_error"
                 error = f"policy worker exited with code {self._process.exitcode} without a result"
         self._messages.close()
+        output = self._output_path.read_text(encoding="utf-8")
         self._finished = PolicyExecution(
             status=status,
             duration_seconds=time.monotonic() - self._started_at,
             error=error,
+            output=output,
         )
         return self._finished
+
+
+class _BoundedPolicyWriter(io.TextIOBase):
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._handle: TextIO | None = None
+        self._remaining = MAX_POLICY_OUTPUT
+        self._truncated = False
+
+    def __enter__(self) -> _BoundedPolicyWriter:
+        self._handle = self._path.open("w", encoding="utf-8")
+        return self
+
+    def __exit__(
+        self,
+        *_args: object,
+    ) -> None:
+        if self._handle is not None:
+            self._handle.close()
+
+    def write(self, value: str) -> int:
+        if self._handle is None:
+            raise RuntimeError("policy output is not open")
+        if self._remaining <= 0:
+            if not self._truncated:
+                self._handle.write("\n... [policy output truncated]")
+                self._handle.flush()
+                self._truncated = True
+            return len(value)
+        if len(value) <= self._remaining:
+            written = value
+        else:
+            written = value[: self._remaining] + "\n... [policy output truncated]"
+            self._truncated = True
+        self._handle.write(written)
+        self._handle.flush()
+        self._remaining -= len(written)
+        return len(value)
+
+    def flush(self) -> None:
+        if self._handle is not None:
+            self._handle.flush()
 
 
 def _stop_process(process: Any) -> None:

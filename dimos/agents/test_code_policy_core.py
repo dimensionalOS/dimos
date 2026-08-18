@@ -83,6 +83,7 @@ def test_exploration_repl_submits_callable_and_receives_trial(tmp_path: Path) ->
             artifacts=artifacts,
             log_path=log_path,
             memory_path=memory_path,
+            policy_output="planner diagnostic",
         )
 
     with CodePolicyMcpServer(handle) as server:
@@ -91,10 +92,10 @@ def test_exploration_repl_submits_callable_and_receives_trial(tmp_path: Path) ->
             "def policy(app: Dimos) -> None:\n"
             "    app.list_modules()\n\n"
             "trial = submit_policy(policy)\n"
-            "(trial.run_id, trial.outcome.success)"
+            "(trial.run_id, trial.outcome.success, trial.policy_output)"
         )
 
-    assert "('debug-1', False)" in result.text
+    assert "('debug-1', False, 'planner diagnostic')" in result.text
     assert len(submitted) == 1
 
 
@@ -163,3 +164,21 @@ def test_python_exec_returns_displayed_image() -> None:
     assert len(result.images) == 1
     assert result.images[0].mime_type in {"image/png", "image/jpeg"}
     assert result.images[0].data
+
+
+def test_python_exec_rejects_timeout_longer_than_transport_request() -> None:
+    session = CodePolicySession(
+        CodePolicySessionConfig(
+            environment=SubmissionEnvironment(
+                submission_url="http://127.0.0.1:1",
+                submission_token="unused",
+            )
+        )
+    )
+    session.start()
+    try:
+        result = session.python_exec("1 + 1", timeout_s=300.0)
+    finally:
+        session.stop()
+
+    assert result.text == "timeout_s must be in (0, 240]"

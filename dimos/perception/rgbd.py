@@ -25,11 +25,12 @@ import numpy as np
 from dimos.memory2.tf import StreamTF
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import (
     ImageDetections3DPC,
 )
-from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 
 if TYPE_CHECKING:
     from dimos.memory2.store.base import Store
@@ -40,6 +41,7 @@ if TYPE_CHECKING:
     )
 
 T = TypeVar("T")
+TDetection2D = TypeVar("TDetection2D", bound=Detection2DBBox)
 
 
 @dataclass(frozen=True)
@@ -102,7 +104,7 @@ def latest_rgbd(
 
 
 def project_depth(
-    detections: ImageDetections2D,
+    detections: ImageDetections2D[TDetection2D],
     observation: RGBDObservation,
     filters: list[PointCloudFilter] | None = None,
 ) -> ImageDetections3DPC:

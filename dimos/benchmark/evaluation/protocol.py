@@ -48,7 +48,8 @@ class PolicyArtifact:
 class PolicyExecution:
     status: Literal["completed", "policy_error", "stopped", "infrastructure_error"]
     duration_seconds: float
-    error: str | None = None
+    error: str | None
+    output: str
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,7 @@ class TrialRun:
     artifacts: Path
     log_path: Path
     memory_path: Path
+    policy_output: str
 
     def read_logs(
         self,

@@ -33,7 +33,10 @@ from dimos.core.global_config import global_config
 if TYPE_CHECKING:
     from dimos.benchmark.evaluation.protocol import TrialRun
 
-MAX_EXECUTION_TIMEOUT_S = 600.0
+# The MCP transport abandons a request after roughly 300 seconds. Interrupt the
+# kernel with enough headroom for the timeout response to reach the agent; otherwise
+# the abandoned execution keeps the serial session lock and every later call is busy.
+MAX_EXECUTION_TIMEOUT_S = 240.0
 DEFAULT_OUTPUT_LIMIT = 32_000
 _SUBMISSION_URL_ENV = "DIMOS_CODE_POLICY_SUBMISSION_URL"
 _SUBMISSION_TOKEN_ENV = "DIMOS_CODE_POLICY_SUBMISSION_TOKEN"
@@ -201,6 +204,7 @@ def submit_policy(policy: Any) -> TrialRun:
         artifacts=Path(payload["artifacts"]),
         log_path=Path(payload["log_path"]),
         memory_path=Path(payload["memory_path"]),
+        policy_output=payload["policy_output"],
     )
 
 
