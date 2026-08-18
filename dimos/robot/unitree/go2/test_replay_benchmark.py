@@ -38,8 +38,8 @@ WATCHED = (("odom", PoseStamped), ("lidar", PointCloud2), ("color_image", Image)
 # near-lossless; lidar and color_image are large frames whose delivery relies
 # on the 64MB rmem tuning, so leave headroom for designed shedding.
 FLOOR_FRACTION = {"odom": 0.9, "lidar": 0.9, "color_image": 0.5}
-# When set, write build wall/CPU and run CPU seconds to this path.
-CPU_METRICS_PATH = os.environ.get("DIMOS_BENCH_CPU_METRICS")
+# When set, write build wall/CPU, run CPU seconds and peak memory to this path.
+METRICS_PATH = os.environ.get("DIMOS_BENCH_METRICS")
 
 
 def _expected_counts(db_path: str) -> dict[str, int]:
@@ -70,6 +70,19 @@ def _expected_counts(db_path: str) -> dict[str, int]:
         store.stop()
 
 
+def _cgroup_path() -> Path:
+    lines = Path("/proc/self/cgroup").read_text().splitlines()
+    v2 = next((line for line in lines if line.startswith("0::")), None)
+    if v2 is None:
+        raise RuntimeError(f"cgroup v2 required for benchmark accounting, got: {lines}")
+    return Path("/sys/fs/cgroup", v2.removeprefix("0::").strip().lstrip("/"))
+
+
+def _cgroup_stat(name: str) -> dict[str, str]:
+    lines = (_cgroup_path() / name).read_text().splitlines()
+    return dict(line.split() for line in lines)
+
+
 def _cpu_mark() -> tuple[float, float, float]:
     """(wall, user, system): monotonic seconds and this cgroup's CPU seconds.
 
@@ -78,14 +91,19 @@ def _cpu_mark() -> tuple[float, float, float]:
     the work are never reaped by the test process, so RUSAGE_CHILDREN misses
     them.
     """
-    lines = Path("/proc/self/cgroup").read_text().splitlines()
-    v2 = next((line for line in lines if line.startswith("0::")), None)
-    if v2 is None:
-        raise RuntimeError(f"cgroup v2 required for CPU accounting, got: {lines}")
-    rel = v2.removeprefix("0::").strip().lstrip("/")
-    stat = Path("/sys/fs/cgroup", rel, "cpu.stat").read_text()
-    fields = dict(line.split() for line in stat.splitlines())
+    fields = _cgroup_stat("cpu.stat")
     return time.monotonic(), int(fields["user_usec"]) / 1e6, int(fields["system_usec"]) / 1e6
+
+
+def _cgroup_anon_bytes() -> int:
+    """Anonymous memory currently charged to this cgroup, whole process tree.
+
+    Page cache is deliberately excluded (memory.current would include it): it
+    scales with file reads and global memory pressure, not with the pipeline.
+    memory.peak is no use either — it is cumulative since cgroup creation, so
+    on a CI runner it would report the job's setup steps, not the benchmark.
+    """
+    return int(_cgroup_stat("memory.stat")["anon"])
 
 
 @pytest.mark.self_hosted
@@ -135,13 +153,22 @@ def test_go2_replay_realtime_load() -> None:
 
         state: dict[str, ModuleCoordinator] = {}
         cpu_marks: dict[str, tuple[float, float, float]] = {}
+        peak_anon = 0
+        stop_sampling = threading.Event()
+
+        def sample_memory() -> None:
+            nonlocal peak_anon
+            while not stop_sampling.wait(0.1):
+                peak_anon = max(peak_anon, _cgroup_anon_bytes())
+
+        sampler = threading.Thread(target=sample_memory, daemon=True)
 
         def build_and_run() -> None:
             nonlocal last_arrival
-            if CPU_METRICS_PATH:
+            if METRICS_PATH:
                 cpu_marks["start"] = _cpu_mark()
             state["coordinator"] = ModuleCoordinator.build(blueprint)
-            if CPU_METRICS_PATH:
+            if METRICS_PATH:
                 cpu_marks["built"] = _cpu_mark()
             with lock:
                 last_arrival = time.monotonic()
@@ -151,7 +178,7 @@ def test_go2_replay_realtime_load() -> None:
                     quiet = time.monotonic() - last_arrival
                     done = all(counts[name] >= floors[name] for name in counts)
                 if done and quiet >= QUIET_S:
-                    if CPU_METRICS_PATH:
+                    if METRICS_PATH:
                         cpu_marks["end"] = _cpu_mark()
                     return
                 time.sleep(0.2)
@@ -170,27 +197,34 @@ def test_go2_replay_realtime_load() -> None:
                 if stopper.is_alive():
                     pytest.fail("coordinator.stop() hung")
 
+        if METRICS_PATH:
+            sampler.start()
         try:
             build_and_run()
         finally:
+            stop_sampling.set()
+            if sampler.is_alive():
+                sampler.join(timeout=5)
             teardown()
 
-        if CPU_METRICS_PATH:
+        if METRICS_PATH:
             start, built, end = cpu_marks["start"], cpu_marks["built"], cpu_marks["end"]
-            series = {
+            entries = (
                 # Startup cost: worker spawn + imports + transport setup.
-                "build wall": built[0] - start[0],
-                "build cpu": (built[1] + built[2]) - (start[1] + start[2]),
-                # Steady-state cost of the realtime window — the headline.
-                "run cpu": (end[1] + end[2]) - (built[1] + built[2]),
-                "run cpu (user)": end[1] - built[1],
-                "run cpu (system)": end[2] - built[2],
-            }
-            Path(CPU_METRICS_PATH).write_text(
+                ("build wall", built[0] - start[0], "s"),
+                ("build cpu", (built[1] + built[2]) - (start[1] + start[2]), "s"),
+                # Steady-state cost of the realtime run — the headline.
+                ("run cpu", (end[1] + end[2]) - (built[1] + built[2]), "s"),
+                ("run cpu (user)", end[1] - built[1], "s"),
+                ("run cpu (system)", end[2] - built[2], "s"),
+                # Max sampled at 10Hz across build+run, whole process tree.
+                ("peak memory", peak_anon / 2**20, "MB"),
+            )
+            Path(METRICS_PATH).write_text(
                 json.dumps(
                     [
-                        {"name": name, "unit": "s", "value": round(value, 3)}
-                        for name, value in series.items()
+                        {"name": name, "unit": unit, "value": round(value, 3)}
+                        for name, value, unit in entries
                     ],
                     indent=2,
                 )

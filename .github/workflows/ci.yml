@@ -995,10 +995,10 @@ jobs:
         run: uv sync --group tests --frozen
       - name: Pre-extract the replay database
         run: uv run python -c "from dimos.utils.data import get_data; print(get_data('go2_short.db'))"
-      - name: Run the replay under cgroup CPU accounting
+      - name: Run the replay under cgroup accounting
         run: uv run pytest -m '' --no-cov dimos/robot/unitree/go2/test_replay_benchmark.py
         env:
-          DIMOS_BENCH_CPU_METRICS: cpu-benchmark.json
+          DIMOS_BENCH_METRICS: benchmark.json
       # Re-runs reuse the original event payload, which predates any label
       # added in response to a failure — so query the live labels instead.
       - name: Check for an acknowledged regression
@@ -1016,7 +1016,7 @@ jobs:
         with:
           name: go2 replay realtime
           tool: customSmallerIsBetter
-          output-file-path: cpu-benchmark.json
+          output-file-path: benchmark.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
           # Append to the tracked series on main; PRs only compare against it.
           auto-push: ${{ github.event_name == 'push' }}
