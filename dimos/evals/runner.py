@@ -206,7 +206,7 @@ class EvalRunner(Configurable, CompositeResource):
 
         return SqliteStore(path=self.config.live_db, must_exist=True)
 
-    def encode(self, stream: Stream[Any, Any]) -> list[dict[str, Any]]:
+    def encode(self, stream: Stream[Any, Any], *, budget: int = 0) -> list[dict[str, Any]]:
         """mem2 Stream -> model-legible content blocks (the surface under test).
 
         Metadata iterates lazily; blobs load only for the <= context_budget
@@ -218,7 +218,7 @@ class EvalRunner(Configurable, CompositeResource):
         if not observations:
             return [{"type": "text", "text": f"stream {stream.name!r}: no observations"}]
 
-        budget = self.config.context_budget
+        budget = budget or self.config.context_budget
         if len(observations) > budget:
             step = (len(observations) - 1) / (budget - 1)
             observations = [observations[round(i * step)] for i in range(budget)]

@@ -55,9 +55,11 @@ odom_window that ends exactly at the question timestamp.
 from __future__ import annotations
 
 from collections import defaultdict
-import json
+from collections.abc import Callable
 import math
-from pathlib import Path
+from typing import Any
+
+from dimos.memory.objects import DETECTIONS_STREAM
 
 DATASET = "go2_bigoffice"
 MERGE_RADIUS_M = 1.5
@@ -126,9 +128,9 @@ RECORDED_MCQS = [
 ]
 
 
-def cluster(detections: list[dict]) -> list[dict]:
+def cluster(detections: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Greedy same-class clustering within MERGE_RADIUS_M of the running mean."""
-    clusters: list[dict] = []
+    clusters: list[dict[str, Any]] = []
     for det in sorted(detections, key=lambda d: d["ts"]):
         home = None
         for c in clusters:
@@ -160,32 +162,41 @@ def compass_of(dx: float, dy: float) -> str:
     return COMPASS_NAMES[round(math.atan2(dy, dx) / (math.pi / 4)) % 8]
 
 
-def robot_pose_at(detections: list[dict], t: float) -> dict:
+def robot_pose_at(detections: list[dict[str, Any]], t: float) -> dict[str, Any]:
     return min(detections, key=lambda d: abs(d["ts"] - t))
 
 
-def main() -> None:
-    here = Path(__file__).parent
-    detections = json.loads((here / "detections.json").read_text())
+def _quizzed_ts(rows: list[dict[str, Any]], family: str) -> list[float]:
+    """Question timestamps already used by ``family`` (the odom window ends at
+    the question timestamp) — so quizzed moments stay well separated."""
+    return [
+        window[1]
+        for row in rows
+        if row["family"] == family
+        for name, window in row["context"]
+        if name == "odom"
+    ]
+
+
+def rows(detections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Frozen detections -> VQA rows. Ground truth is derived here, independently
+    of whatever encoding the eval then quizzes."""
     # "no" presence probes must be classes the detector NEVER saw — a faithful
     # map of the raw detections must agree the class is absent.
     ever_detected = {d["class_name"] for d in detections}
     detections = [d for d in detections if d["class_name"] not in NON_INDOOR | NON_STATIC]
 
     clusters = [c for c in cluster(detections) if c["n"] >= MIN_SIGHTINGS]
-    by_class: dict[str, list[dict]] = defaultdict(list)
+    by_class: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for c in clusters:
         by_class[c["class_name"]].append(c)
     singles = {name: cs[0] for name, cs in by_class.items() if len(cs) == 1}
-    print(f"{len(clusters)} clusters across {len(by_class)} classes")
-    for name, cs in sorted(by_class.items(), key=lambda kv: -len(kv[1])):
-        print(f"  {name:15s} {len(cs)} objects, sightings {[c['n'] for c in cs]}")
 
     # Zones: quadrants of the odom-track bounding box, +x east / +y north.
     xs = [d["x"] for d in detections]
     ys = [d["y"] for d in detections]
     mx, my = round((min(xs) + max(xs)) / 2, 1), round((min(ys) + max(ys)) / 2, 1)
-    zones = {
+    zones: dict[str, Callable[[float, float], bool]] = {
         "northwest area": lambda x, y: x < mx and y >= my,
         "northeast area": lambda x, y: x >= mx and y >= my,
         "southwest area": lambda x, y: x < mx and y < my,
@@ -202,19 +213,30 @@ def main() -> None:
         .replace("{my}", str(my))
     )
 
-    rows: list[dict] = []
+    rows: list[dict[str, Any]] = []
 
-    def add(row_id: str, family: str, q: str, a, *, ctx: str = "objects", **extra) -> None:
+    def add(
+        row_id: str,
+        family: str,
+        q: str,
+        a: object,
+        *,
+        odom_window: list[float] | None = None,
+        **extra: object,
+    ) -> None:
         if "vocab" in extra:
             kind = "set"
         elif isinstance(a, (int, float)) and "choices" not in extra:
             kind = "numeric"
         else:
             kind = "mcq"
+        context: list[list[object]] = [[DETECTIONS_STREAM, None]]
+        if odom_window is not None:
+            context.append(["odom", odom_window])
         rows.append(
-            {"id": row_id, "family": family, "type": kind, "q": q, "a": a, "ctx": ctx}
+            {"id": row_id, "family": family, "type": kind, "q": q, "a": a}
             | extra
-            | {"dataset": DATASET}
+            | {"context": context, "dataset": DATASET}
         )
 
     # -- presence: priors anti-correlated with truth so blind guessing loses
@@ -290,9 +312,7 @@ def main() -> None:
         ranked = sorted(dists.items(), key=lambda kv: kv[1])
         if ranked[1][1] - ranked[0][1] < NEAREST_MARGIN_M:
             continue  # ambiguous — skip timestamp
-        if any(
-            r["family"] == "nearest" and abs(r["odom_window"][1] - pose["ts"]) < 15.0 for r in rows
-        ):
+        if any(abs(ts - pose["ts"]) < 15.0 for ts in _quizzed_ts(rows, "nearest")):
             continue  # keep quizzed timestamps well separated
         nearest_added += 1
         add(
@@ -304,7 +324,6 @@ def main() -> None:
             f"{', '.join(choices)}.",
             ranked[0][0],
             choices=choices,
-            ctx="objects+odom",
             odom_window=[round(max(0.0, pose["ts"] - 0.5), 2), pose["ts"]],
         )
 
@@ -346,7 +365,6 @@ def main() -> None:
                 f"or right.",
                 truth,
                 choices=["ahead", "behind", "left", "right"],
-                ctx="objects+odom",
                 odom_window=[round(max(0.0, pose["ts"] - 0.5), 2), pose["ts"]],
             )
             ego_added += 1
@@ -404,10 +422,7 @@ def main() -> None:
         if robotdist_added >= 3:
             break
         pose = robot_pose_at(detections, t)
-        if any(
-            r["family"] == "robotdist" and abs(r["odom_window"][1] - pose["ts"]) < 15.0
-            for r in rows
-        ):
+        if any(abs(ts - pose["ts"]) < 15.0 for ts in _quizzed_ts(rows, "robotdist")):
             continue
         name = single_names[robotdist_added % len(single_names)]
         c = singles[name]
@@ -421,7 +436,6 @@ def main() -> None:
             f"number.",
             round(dist, 2),
             band=max(1.0, round(0.25 * dist, 2)),
-            ctx="objects+odom",
             odom_window=[round(max(0.0, pose["ts"] - 0.5), 2), pose["ts"]],
         )
         robotdist_added += 1
@@ -435,7 +449,8 @@ def main() -> None:
         if a == names[0]:
             continue
         for b in names:
-            pair = tuple(sorted((a, b)))
+            first, second = sorted((a, b))
+            pair = (first, second)
             if b == a or pair in objdist_pairs:
                 continue
             ca, cb = singles[a], singles[b]
@@ -523,18 +538,18 @@ def main() -> None:
             break
         ax, ay = singles[x]["x"], singles[x]["y"]
         others = [c for c in clusters if c is not singles[x]]
-        dists = [math.hypot(c["x"] - ax, c["y"] - ay) for c in others]
+        radii = [math.hypot(c["x"] - ax, c["y"] - ay) for c in others]
         best: tuple[int, float, list[str]] | None = None  # (len(truth), -R, truth)
         for radius in (2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0):
-            if any(abs(d - radius) < 1.5 for d in dists):
+            if any(abs(d - radius) < 1.5 for d in radii):
                 continue  # a cluster rides the boundary — ambiguous under grounding error
-            truth = sorted(
-                {c["class_name"] for c, d in zip(others, dists, strict=True) if d < radius}
+            nearby = sorted(
+                {c["class_name"] for c, d in zip(others, radii, strict=True) if d < radius}
             )
-            if not truth:
+            if not nearby:
                 continue  # empty truth is prior-guessable ("none")
-            if best is None or (len(truth), -radius) > (best[0], best[1]):
-                best = (len(truth), -radius, truth)
+            if best is None or (len(nearby), -radius) > (best[0], best[1]):
+                best = (len(nearby), -radius, nearby)
         if best is not None:
             radius = -best[1]
             add(
@@ -554,12 +569,12 @@ def main() -> None:
         if nextto_added >= 3:
             break
         ax, ay = singles[x]["x"], singles[x]["y"]
-        ranked = sorted(
+        by_distance = sorted(
             (min(math.hypot(c["x"] - ax, c["y"] - ay) for c in cs), n)
             for n, cs in by_class.items()
             if n != x
         )
-        if ranked[1][0] - ranked[0][0] < 1.5:
+        if by_distance[1][0] - by_distance[0][0] < 1.5:
             continue  # ambiguous under grounding error
         opts = [n for n in choices if n != x]
         add(
@@ -568,7 +583,7 @@ def main() -> None:
             f"Based on the semantic object map, which object class is "
             f"horizontally nearest to the {x} (other than {x} itself)? "
             f"Answer with exactly one of: {', '.join(opts)}.",
-            ranked[0][1],
+            by_distance[0][1],
             choices=opts,
         )
         nextto_added += 1
@@ -616,17 +631,4 @@ def main() -> None:
             )
             between_added += 1
 
-    out = here / "rows.json"
-    out.write_text(json.dumps(rows, indent=2) + "\n")  # matches pretty-format-json hook
-    families = defaultdict(int)
-    for r in rows:
-        families[r["family"]] += 1
-    print(f"\nwrote {len(rows)} rows -> {out}")
-    for fam, n in families.items():
-        print(f"  {fam:10s} {n}")
-    for r in rows:
-        print(json.dumps(r))
-
-
-if __name__ == "__main__":
-    main()
+    return rows

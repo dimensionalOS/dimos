@@ -77,7 +77,7 @@ class EvalRig(Protocol):
 
     def open_dataset(self, name: str) -> Store: ...
     def live_store(self) -> Store: ...
-    def encode(self, stream: Stream[Any, Any]) -> list[dict[str, Any]]: ...
+    def encode(self, stream: Stream[Any, Any], *, budget: int = 0) -> list[dict[str, Any]]: ...
     def ask(self, context: Sequence[dict[str, Any]], question: str) -> str: ...
     def call_skill(self, name: str, args: Mapping[str, object]) -> str: ...
     def agent_loop(self, case: EvalCase) -> str: ...
@@ -129,6 +129,7 @@ class PassiveEval(EvalCase, Generic[T]):
     context: tuple[Select, ...] = ()
     dataset: str = "go2_short"
     tools: bool = False  # True: full agent loop over the frozen store
+    context_budget: int = 0  # observations encoded per select; 0 = runner default
 
     def evaluate(self, rig: EvalRig) -> EvalResult:
         store = rig.open_dataset(self.dataset)
@@ -139,7 +140,13 @@ class PassiveEval(EvalCase, Generic[T]):
                 outputs = rig.agent_loop(self)
             else:
                 blocks = (
-                    [] if rig.blind else [b for sel in self.context for b in rig.encode(sel(store))]
+                    []
+                    if rig.blind
+                    else [
+                        b
+                        for sel in self.context
+                        for b in rig.encode(sel(store), budget=self.context_budget)
+                    ]
                 )
                 outputs = rig.ask(blocks, self.inputs)
         finally:

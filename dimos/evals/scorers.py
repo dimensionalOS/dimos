@@ -74,6 +74,26 @@ def choice(options: Sequence[str]) -> Callable[[str], str]:
     return parse
 
 
+def name_set(vocab: Sequence[str]) -> Callable[[str], frozenset[str]]:
+    """Parser for a list-them-all reply: every ``vocab`` name the reply mentions.
+    ``vocab`` carries verified-absent probes too, so hallucinated extras land in
+    the set and lose precision under :func:`set_f1`."""
+    import re
+
+    pattern = re.compile(
+        r"\b(" + "|".join(re.escape(v) for v in sorted(vocab, key=len, reverse=True)) + r")\b",
+        re.I,
+    )
+    return lambda text: frozenset(m.lower() for m in pattern.findall(text))
+
+
+def set_f1(expected: frozenset[str], got: frozenset[str]) -> float:
+    """F1 between two sets: naming everything loses precision, naming nothing
+    scores 0. The graded answer to "list every X you saw"."""
+    hits = len(expected & got)
+    return 2 * hits / (len(expected) + len(got)) if hits else 0.0
+
+
 def within(band: float) -> Callable[[float, float], float]:
     """1.0 at exact, linear to 0.0 at ``band`` away."""
     return lambda expected, got: max(0.0, 1.0 - abs(got - expected) / band)
