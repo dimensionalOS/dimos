@@ -35,6 +35,9 @@ class DINOv3ModelConfig(EmbeddingModelConfig):
     #: facebook/dinov3-* originals require a license grant). Heaviest that fits
     #: the 8 GB laptop GPU is vit_huge_plus (840M); vit_7b needs ~13.4 GB fp16.
     model_name: str = "vit_huge_plus_patch16_dinov3"
+    #: vit_huge_plus is fp16-safe; vit_large OVERFLOWS fp16 to all-NaN patch
+    #: features on real images — run it as float32 weights under
+    #: torch.autocast bf16 (117ms/frame) instead.
     dtype: torch.dtype = torch.float16
     #: Inference resolution as (width, height); the input image is resized to
     #: this before embedding, and the patch grid is (height/16, width/16).

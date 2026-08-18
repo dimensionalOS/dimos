@@ -69,27 +69,30 @@ def refine_scores(
     averages their coarse scores. Non-local on purpose: patches of the same
     object share score even when far apart in the image.
     """
-    fine_h, fine_w, dim = fine_features.shape
-    coarse_h, coarse_w = coarse.shape
+    import torch
 
-    rows = (np.arange(fine_h) * coarse_h) // fine_h
-    cols = (np.arange(fine_w) * coarse_w) // fine_w
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    fine = torch.from_numpy(np.ascontiguousarray(fine_features)).to(device)
+    scores = torch.from_numpy(np.ascontiguousarray(coarse)).to(device)
+    fine_h, fine_w, dim = fine.shape
+    coarse_h, coarse_w = scores.shape
+
+    rows = (torch.arange(fine_h, device=device) * coarse_h) // fine_h
+    cols = (torch.arange(fine_w, device=device) * coarse_w) // fine_w
     cell = (rows[:, None] * coarse_w + cols[None, :]).reshape(-1)
 
-    flat = fine_features.reshape(-1, dim)
-    prototypes = np.zeros((coarse_h * coarse_w, dim), dtype=np.float64)
-    np.add.at(prototypes, cell, flat)
-    norms = np.linalg.norm(prototypes, axis=1, keepdims=True)
-    prototypes = (prototypes / np.maximum(norms, 1e-8)).astype(np.float32)
+    flat = fine.reshape(-1, dim)
+    prototypes = torch.zeros(coarse_h * coarse_w, dim, device=device, dtype=flat.dtype)
+    prototypes.index_add_(0, cell, flat)
+    prototypes = torch.nn.functional.normalize(prototypes, dim=1)
 
     similarity = flat @ prototypes.T  # (fine, coarse)
     if top_k < similarity.shape[1]:
-        cutoff = np.partition(similarity, -top_k, axis=1)[:, -top_k, None]
-        similarity = np.where(similarity >= cutoff, similarity, -np.inf)
-    weights = np.exp((similarity - similarity.max(axis=1, keepdims=True)) / temperature)
-    weights /= weights.sum(axis=1, keepdims=True)
-    refined = weights @ coarse.reshape(-1)
-    return np.asarray(refined.reshape(fine_h, fine_w), dtype=np.float32)
+        kth = similarity.topk(top_k, dim=1).values[:, -1:]
+        similarity = similarity.masked_fill(similarity < kth, float("-inf"))
+    weights = torch.softmax(similarity / temperature, dim=1)
+    refined = (weights @ scores.reshape(-1)).reshape(fine_h, fine_w)
+    return np.asarray(refined.cpu().numpy(), dtype=np.float32)
 
 
 def main(argv: list[str] | None = None) -> None:
