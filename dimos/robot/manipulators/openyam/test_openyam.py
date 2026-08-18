@@ -46,7 +46,7 @@ def test_openyam_model_config_has_expected_links_and_mapping() -> None:
         f"arm/joint{i}": f"yam_joint{i}" for i in range(1, OPENYAM_DOF + 1)
     }
     assert config.base_link == "yam_base_link"
-    assert config.end_effector_link == "yam_hand_tcp"
+    assert config.planning_groups[0].tip_link == "yam_hand_tcp"
     assert list(config.package_paths) == list(OPENYAM_PACKAGE_PATHS)
     assert config.gripper_hardware_id == "arm"
 
@@ -78,7 +78,7 @@ def test_openyam_planner_blueprint_preserves_model_config() -> None:
 
     assert config.name == "arm"
     assert config.joint_names == [f"yam_joint{i}" for i in range(1, OPENYAM_DOF + 1)]
-    assert config.end_effector_link == "yam_hand_tcp"
+    assert config.planning_groups[0].tip_link == "yam_hand_tcp"
     assert config.gripper_hardware_id == "arm"
     task = _coordinator_kwargs(blueprint)["tasks"][0]
     assert task.type == "trajectory"
