@@ -67,8 +67,6 @@ def build(
     output: Path | None,
     output_format: Literal["lerobot", "hdf5"] | None,
 ) -> None:
-    from dimos.imitation.dataprep.build import run_dataprep
-
     cfg = _load_config(config_path, source, output, output_format)
     if not cfg.source:
         typer.echo("error: no source given (use --source or set it in --config)", err=True)
@@ -82,7 +80,14 @@ def build(
         raise typer.Exit(2)
 
     try:
-        path = run_dataprep(cfg)
+        if cfg.output.format == "lerobot":
+            from dimos.imitation.dataprep.lerobot import run_lerobot_dataprep
+
+            path = run_lerobot_dataprep(cfg)
+        else:
+            from dimos.imitation.dataprep.build import run_dataprep
+
+            path = run_dataprep(cfg)
     except Exception as e:
         # CLI boundary: any failure becomes a clean message + non-zero exit
         # instead of a traceback. run_dataprep raises specific errors internally.
