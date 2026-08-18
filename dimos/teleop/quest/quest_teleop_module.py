@@ -23,6 +23,7 @@ deltas, and publishes PoseStamped commands.
 
 import asyncio
 from dataclasses import dataclass
+import math
 from pathlib import Path
 import threading
 import time
@@ -105,6 +106,7 @@ class QuestTeleopModule(Module):
             Hand.RIGHT: None,
         }
         self._lock = threading.RLock()
+        self._translation_scale = 1.0
 
         # Control loop
         self._control_loop_thread: threading.Thread | None = None
@@ -221,8 +223,15 @@ class QuestTeleopModule(Module):
         raise ValueError(f"Unexpected frame_id: {frame_id!r}, expected 'left' or 'right'")
 
     def _on_pose_bytes(self, data: bytes) -> None:
-        """Decode LCM bytes into PoseStamped, transform to robot frame."""
+        """Decode LCM bytes into PoseStamped, transform to robot frame.
+
+        Poses that aren't controller poses (e.g. the "head" viewer pose the
+        web client also streams) are ignored here; subclasses that want them
+        override this method. Raising instead would kill the websocket.
+        """
         msg = PoseStamped.lcm_decode(data)
+        if msg.frame_id not in ("left", "right"):
+            return
         hand = self._resolve_hand(msg.frame_id)
         robot_pose = webxr_to_robot(msg, is_left_controller=(hand == Hand.LEFT))
         with self._lock:
@@ -365,11 +374,18 @@ class QuestTeleopModule(Module):
 
         delta = current_pose - initial_pose
         return PoseStamped(
-            position=delta.position,
+            position=delta.position * self._translation_scale,
             orientation=delta.orientation,
             ts=current_pose.ts,
             frame_id=current_pose.frame_id,
         )
+
+    def _set_translation_scale(self, translation_scale: float) -> None:
+        """Set the positive multiplier applied to controller position deltas."""
+        if not math.isfinite(translation_scale) or translation_scale <= 0.0:
+            raise ValueError("translation_scale must be finite and positive")
+        with self._lock:
+            self._translation_scale = translation_scale
 
     def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
         """Publish message for a controller.

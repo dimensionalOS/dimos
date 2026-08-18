@@ -30,7 +30,7 @@ from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import PlanningGroupID, RobotName
-from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
+from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf
 from dimos.utils.transform_utils import pose_to_matrix
 
 ROBOPLAN_WORLD_FRAME = "dimos_world"
@@ -127,7 +127,7 @@ def build_roboplan_model(
         (
             robot,
             Path(
-                prepare_urdf_for_drake(
+                prepare_urdf(
                     robot.config.model_path,
                     package_paths=robot.config.package_paths,
                     xacro_args=robot.config.xacro_args,
@@ -337,8 +337,6 @@ def _groups(
     generated = 0
     for size in range(2, len(configured) + 1):
         for selected in combinations(configured, size):
-            if len({group.robot_name for group in selected}) < 2:
-                continue
             if len({name for group in selected for name in group.joint_names}) != sum(
                 len(group.joint_names) for group in selected
             ):

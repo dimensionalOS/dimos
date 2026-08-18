@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -264,6 +265,20 @@ def test_transport_options_support_relative_full_and_environment_forms() -> None
     assert from_cli.transport_overrides() == {"provider": {"api_key": "cli-key", "retries": 3}}
 
 
+def test_environment_ignores_unknown_transport_section() -> None:
+    blueprint = PrimaryModule.blueprint()
+    parser = BlueprintConfigParser(blueprint)
+
+    parsed = parser.parse(
+        environ={
+            "TRANSPORTS__BROKER__BROKER_URL": "https://teleop.dimensionalos.com",
+            "TRANSPORTS__BROKER__API_KEY": "",
+        },
+    )
+
+    assert parsed.transport_configs == {}
+
+
 def test_environment_values_coerce_null_and_json_like_cli() -> None:
     parsed = BlueprintConfigParser(PrimaryModule.blueprint(map_file="pinned")).parse(
         environ={
@@ -488,6 +503,26 @@ def test_blueprint_pinned_arbitrary_value_survives_filtering() -> None:
     parsed = BlueprintConfigParser(ArbitraryModule.blueprint(scaling=Anchor())).parse(environ={})
 
     assert isinstance(parsed.module_kwargs("arbitrarymodule")["scaling"], Anchor)
+
+
+def test_blueprint_pinned_callable_dataclass_survives_validation() -> None:
+    @dataclass
+    class CallableFactory:
+        result: str
+
+        def __call__(self, _value: Any) -> str:
+            return self.result
+
+    factory = CallableFactory(result="rendered")
+    parsed = BlueprintConfigParser(ArbitraryModule.blueprint(handlers={"visual": factory})).parse(
+        environ={}
+    )
+
+    kwargs = parsed.module_kwargs("arbitrarymodule")
+    validated = ArbitraryConfig.model_validate(kwargs)
+
+    assert isinstance(validated.handlers["visual"], CallableFactory)
+    assert validated.handlers["visual"](None) == "rendered"
 
 
 def test_format_help_uses_nested_parent_default_instance() -> None:

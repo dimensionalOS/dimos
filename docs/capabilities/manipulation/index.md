@@ -19,11 +19,26 @@ Each blueprint launches the full stack — keyboard UI, mock controller, IK solv
 
 ```bash
 dimos run keyboard-teleop-a750    # A-750 6-DOF
+dimos run keyboard-teleop-openarm # OpenArm bimanual 2x(7-DOF + gripper)
 dimos run keyboard-teleop-a1z     # Galaxea A1Z 6-DOF
 dimos run keyboard-teleop-piper   # Piper 6-DOF
+dimos run keyboard-teleop-openyam # OpenYAM 6-DOF + gripper
 dimos run keyboard-teleop-xarm6   # XArm6 6-DOF
 dimos run keyboard-teleop-xarm7   # XArm7 7-DOF
 ```
+
+OpenYAM is exposed as one whole-body device with six angular arm joints and a
+normalized gripper joint. `arm/gripper` uses `0.0` for fully closed and `1.0`
+for fully open; it does not use meters. Hardware activation calibrates both
+mechanical endpoints, so clear the gripper jaws and workspace before startup.
+The gripper has no default startup target and moves only after joint control has
+an explicit target.
+
+OpenArm follows the same whole-body model with both arms and both grippers in
+one device: fourteen angular joints (`left_arm/joint1..7`,
+`right_arm/joint1..7`) plus two normalized gripper joints (`left_arm/gripper`,
+`right_arm/gripper`). The keyboard jogs the left arm while the right arm holds
+its pose; keyboard gripper bindings are a follow-up.
 
 Open the Meshcat URL printed in the terminal (default `http://localhost:7000`) to see the robot.
 
@@ -117,7 +132,7 @@ request. For example, `planner.backend=roboplan` requires
 `world_backend=drake`.
 
 Trajectory parametrization is a separate startup choice. Joint-space planners
-normally return an untimed geometric path; DimOS accepts the plan only after
+normally return an untimed geometric path; dimOS accepts the plan only after
 the selected backend converts that path to a validated timed trajectory:
 
 ```bash
@@ -185,13 +200,7 @@ from dimos.manipulation.planning.planners.roboplan_config import (
     RoboPlanCartesianPathConfig,
 )
 
-path_config = RoboPlanCartesianPathConfig(
-    speed_mode="bounded",
-    max_linear_speed=0.1,
-    max_angular_speed=0.5,
-    max_position_error=0.005,
-    max_orientation_error=0.01,
-)
+path_config = RoboPlanCartesianPathConfig()
 
 module.plan_cartesian_targets(
     {"arm/manipulator": (current_tcp_pose, goal_tcp_pose)},
@@ -199,10 +208,35 @@ module.plan_cartesian_targets(
 )
 ```
 
-The remaining settings mirror RoboPlan's standard Cartesian planner options,
-including bounded and time-optimal speed modes, sample time, solver weights,
-linear/angular acceleration limits, joint velocity/acceleration scaling,
-TOPP-RA corner blending, joint-limit handling, and per-step attempts.
+The default `time_optimal` mode returns the TOPP-RA trajectory constrained by
+the robot's joint velocity and acceleration limits. To enforce Cartesian speed
+and acceleration maxima instead, opt into bounded mode:
+
+```python skip
+bounded_config = RoboPlanCartesianPathConfig(
+    speed_mode="bounded",
+    max_linear_speed=0.1,
+    max_angular_speed=0.5,
+    max_linear_acceleration=0.5,
+    max_angular_acceleration=2.5,
+    max_position_error=0.005,
+    max_orientation_error=0.01,
+)
+```
+
+RoboPlan first resolves the Cartesian reference as a geometric joint path, then
+uses TOPP-RA to produce the timed trajectory. Both speed modes follow this
+pipeline. Time-optimal mode returns the joint-limit-constrained trajectory;
+bounded mode slows it further when needed to respect the configured Cartesian
+speed and acceleration maxima. `toppra_blend_deviation` controls TOPP-RA corner
+rounding in both modes and influences how aggressively the resolved path is
+decimated before timing.
+
+The remaining settings mirror RoboPlan's Cartesian planner options, including
+sample time, solver weights, linear/angular acceleration limits, joint
+velocity/acceleration scaling, TOPP-RA corner blending, and joint-limit
+handling. RoboPlan 0.6 removed the former `limit_ratio_tolerance` and
+`max_attempts_per_step` settings.
 
 Cartesian path planning remains a low-level internal capability in this
 release. `ManipulationModule.plan_cartesian_targets()` accepts an ordered
@@ -267,7 +301,7 @@ Safety behavior for unsupported RoboPlan features:
 - Planning-critical unsupported inputs fail loudly before planning. Examples
   include unsupported obstacle geometry, unavailable robot loading APIs, or
   unavailable collision query APIs. RoboPlan worlds generate a minimal SRDF from
-  the DimOS robot config, including configured collision-exclusion pairs.
+  the dimOS robot config, including configured collision-exclusion pairs.
 - Unverified non-critical query methods raise explicit `NotImplementedError`.
   In particular, signed minimum-distance semantics are not implemented for
   RoboPlan until a safe equivalent is verified.
@@ -293,6 +327,15 @@ CLI example:
 ```bash
 uv run dimos run xarm7-planner-coordinator \
   --visualization.backend=viser
+```
+
+Viser binds to `127.0.0.1` by default. To expose it on the network, opt in
+explicitly with the nested host override:
+
+```bash
+uv run dimos run xarm7-planner-coordinator \
+  -o manipulationmodule.visualization.backend=viser \
+  -o manipulationmodule.visualization.host=0.0.0.0
 ```
 
 Blueprint example:
@@ -382,6 +425,73 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
 - **KeyboardTeleopModule** — Pygame UI publishing routed spatial EEF twist intent
 - **ControlCoordinator** — 100Hz control loop with mock or real hardware adapters
 - **ManipulationModule** — world backend, optional visualization, RRT motion planning, obstacle management
+
+### Streaming pose-target control
+
+`CartesianIKTask` and `TeleopIKTask` are sibling leaves over the shared
+`PoseTargetIKTask` control core. Their configuration uses a `RobotModelConfig`,
+explicit controlled `joint_names`, and named target frames. The common core
+warm-starts one bounded Pink update from live coordinator joint state on each
+tick; it does not require a planning world or expose planning groups to the
+coordinator.
+
+Cartesian IK accepts one absolute robot-frame target. Quest IK accepts one or
+two controller-to-frame bindings and owns engagement, reference capture,
+relative target mapping, and optional per-hand gripper commands. The
+coordinator only routes the distinct left/right pose streams by task name and
+arbitrates the resulting joint command.
+
+### Robot-specific Pink task stacks
+
+For robot-specific control feel, subclass `PinkIK` and override its protected
+`_create_tasks()` hook. Call `super()` so the mandatory `frame/<frame_name>`
+tasks remain present, then tune inherited task fields or add native Pink tasks
+under stable names. The backend keeps the mapping order, reuses its task
+objects across streaming ticks, and continues to own solving, integration, and
+joint-limit safety.
+
+```python skip
+from typing import Any
+
+import numpy as np
+import pink
+
+from dimos.manipulation.planning.kinematics.pink_ik import PinkIK
+
+
+class OpenArmPinkIK(PinkIK):
+    def _create_tasks(
+        self,
+        configuration: Any,
+        target_frames: tuple[str, ...],
+    ) -> dict[str, Any]:
+        tasks = super()._create_tasks(configuration, target_frames)
+
+        for frame_name in target_frames:
+            frame_task = tasks[f"frame/{frame_name}"]
+            frame_task.cost[:3] = np.array([8.0, 8.0, 6.0])
+
+        tasks["regularization/damping"] = pink.tasks.DampingTask(cost=1e-3)
+        return tasks
+```
+
+Construct a fresh backend for each stateful control-task instance and inject it
+through the existing `ik=` argument:
+
+```python skip
+teleop_task = TeleopIKTask(
+    "teleop_openarm",
+    openarm_quest_config,
+    ik=OpenArmPinkIK(openarm_quest_config.pink),
+)
+```
+
+If an auxiliary task needs per-step inputs or solver history, override
+`_before_solve(tasks, configuration, dt)` or
+`_after_solve(tasks, velocity, dt)`. These hooks receive a read-only mapping;
+mutate the contained task objects, not the mapping structure. Keep temporal
+state inside that backend instance and define its discontinuity behavior in
+the robot-specific subclass.
 
 Internally, planning code depends on `WorldSpec` for world, collision, and
 kinematics behavior. Meshcat preview and publishing are exposed separately

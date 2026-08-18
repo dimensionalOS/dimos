@@ -168,6 +168,7 @@ class RoboPlanPlanner:
                 dict(zip(normalized_goal.name, normalized_goal.position, strict=True)),
                 timeout,
                 max_iterations,
+                output_names=selection.joint_names,
             )
 
     def plan_cartesian_path(
@@ -179,6 +180,7 @@ class RoboPlanPlanner:
         config: RoboPlanCartesianPathConfig,
         *,
         auxiliary_groups: Sequence[PlanningGroupID] = (),
+        check_collision: bool = True,
     ) -> PlanningResult:
         """Plan synchronized TCP waypoint paths with official RoboPlan planning."""
         started = time.time()
@@ -217,7 +219,11 @@ class RoboPlanPlanner:
                     group,
                     trajectory,
                 )
-                collision_free = not path or self._combined_path_collision_free(ctx, path)
+                collision_validation_failed = (
+                    check_collision
+                    and bool(path)
+                    and not (self._combined_path_collision_free(ctx, path))
+                )
         except (KeyError, RuntimeError, ValueError) as exc:
             return PlanningResult(
                 status=PlanningStatus.NO_SOLUTION,
@@ -231,7 +237,7 @@ class RoboPlanPlanner:
                 planning_time=time.time() - started,
                 message="RoboPlan Cartesian planning failed: returned an empty trajectory",
             )
-        if not collision_free:
+        if collision_validation_failed:
             return PlanningResult(
                 status=PlanningStatus.NO_SOLUTION,
                 planning_time=time.time() - started,
@@ -444,10 +450,8 @@ class RoboPlanPlanner:
         options.config_task_weight = config.config_task_weight
         options.velocity_scale = config.velocity_scale
         options.acceleration_scale = config.acceleration_scale
-        options.limit_ratio_tolerance = config.limit_ratio_tolerance
         options.toppra_blend_deviation = config.toppra_blend_deviation
         options.position_limit_gain = config.position_limit_gain
-        options.max_attempts_per_step = config.max_attempts_per_step
         return options
 
     def _path_from_cartesian_trajectory(
@@ -529,6 +533,8 @@ class RoboPlanPlanner:
         goal_by_name: Mapping[str, float],
         timeout: float,
         max_iterations: int,
+        *,
+        output_names: Sequence[str] | None = None,
     ) -> PlanningResult:
         started = time.time()
         try:
@@ -557,7 +563,7 @@ class RoboPlanPlanner:
                     max_iterations,
                 )
                 result = self._shortcut_native_path(group, result)
-            path = self._path_from_native(group, result)
+            path = self._path_from_native(group, result, output_names=output_names)
         except ValueError as exc:
             return PlanningResult(
                 status=PlanningStatus.NO_SOLUTION,
@@ -661,12 +667,25 @@ class RoboPlanPlanner:
         ):
             raise ValueError("RoboPlan path shortcutter changed the goal configuration")
 
-    def _path_from_native(self, group: RoboPlanGroup, result: Any) -> list[JointState]:
+    def _path_from_native(
+        self,
+        group: RoboPlanGroup,
+        result: Any,
+        *,
+        output_names: Sequence[str] | None = None,
+    ) -> list[JointState]:
         result_names = tuple(getattr(result, "joint_names", ()) or group.native_names)
         if set(result_names) != set(group.native_names):
             raise ValueError("RoboPlan path joint names do not match the selected group")
         public_by_native = dict(zip(group.native_names, group.public_names, strict=True))
         source_names = tuple(public_by_native[name] for name in result_names)
+        ordered_output_names = (
+            tuple(output_names) if output_names is not None else group.output_names
+        )
+        if len(ordered_output_names) != len(set(ordered_output_names)) or set(
+            ordered_output_names
+        ) != set(group.public_names):
+            raise ValueError("RoboPlan output joint names do not match the selected group")
         path: list[JointState] = []
         for waypoint in result.positions:
             values = np.asarray(waypoint, dtype=np.float64)
@@ -675,8 +694,8 @@ class RoboPlanPlanner:
             positions = dict(zip(source_names, values, strict=True))
             path.append(
                 JointState(
-                    name=list(group.output_names),
-                    position=[float(positions[name]) for name in group.output_names],
+                    name=list(ordered_output_names),
+                    position=[float(positions[name]) for name in ordered_output_names],
                 )
             )
         return path

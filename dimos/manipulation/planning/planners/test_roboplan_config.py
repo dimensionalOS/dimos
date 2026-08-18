@@ -29,8 +29,7 @@ from dimos.manipulation.planning.planners.roboplan_config import (
         {"dt": 0.0},
         {"velocity_scale": 1.1},
         {"acceleration_scale": 0.0},
-        {"limit_ratio_tolerance": 0.99},
-        {"max_attempts_per_step": 0},
+        {"toppra_blend_deviation": -0.01},
     ],
 )
 def test_roboplan_cartesian_path_config_rejects_invalid_limits(
