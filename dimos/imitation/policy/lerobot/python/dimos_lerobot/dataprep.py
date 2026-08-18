@@ -16,15 +16,15 @@
 
 from __future__ import annotations
 
-import argparse
 from collections.abc import Iterator
 from contextlib import suppress
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Annotated, Any, Protocol, cast
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 import numpy as np
 from numpy.typing import NDArray
+import typer
 
 from dimos.imitation.dataprep.build import run_dataprep
 from dimos.imitation.dataprep.core import DataPrepConfig, OutputConfig, Sample, is_image_array
@@ -166,14 +166,17 @@ def write(samples: Iterator[Sample], output: OutputConfig) -> Path:
     return Path(dataset.root)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Convert a DimOS recording to LeRobot")
-    parser.add_argument("config", type=Path)
-    args = parser.parse_args()
-    config = DataPrepConfig.model_validate_json(args.config.read_text())
+def main(
+    config_path: Annotated[
+        Path,
+        typer.Argument(help="JSON DataPrepConfig for the DimOS recording"),
+    ],
+) -> None:
+    """Convert a DimOS recording to a LeRobot dataset."""
+    config = DataPrepConfig.model_validate_json(config_path.read_text())
     path = run_dataprep(config, writer=write)
-    print(path)
+    typer.echo(path)
 
 
 if __name__ == "__main__":
-    main()
+    typer.run(main)

@@ -37,7 +37,9 @@ class Contract(IsolatedPythonModule):
 def test_sibling_project_is_required(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source = tmp_path / "contract.py"
     source.touch()
-    monkeypatch.setattr("dimos.core.isolated_python_module.inspect.getfile", lambda _: str(source))
+    monkeypatch.setattr(
+        "dimos.core.python_native_environment.inspect.getfile", lambda _: str(source)
+    )
     module = Contract()
     try:
         with pytest.raises(FileNotFoundError, match="sibling 'python/'"):
@@ -53,7 +55,9 @@ def test_uv_lock_enables_frozen_commands(tmp_path: Path, monkeypatch: pytest.Mon
     project.mkdir()
     (project / "pyproject.toml").touch()
     (project / "uv.lock").touch()
-    monkeypatch.setattr("dimos.core.isolated_python_module.inspect.getfile", lambda _: str(source))
+    monkeypatch.setattr(
+        "dimos.core.python_native_environment.inspect.getfile", lambda _: str(source)
+    )
     module = Contract()
     try:
         prepare = module._prepare_command()
@@ -78,7 +82,9 @@ def test_pixi_supplies_uv_when_manifest_exists(
     (project / "pyproject.toml").touch()
     (project / "uv.lock").touch()
     (project / "pixi.toml").touch()
-    monkeypatch.setattr("dimos.core.isolated_python_module.inspect.getfile", lambda _: str(source))
+    monkeypatch.setattr(
+        "dimos.core.python_native_environment.inspect.getfile", lambda _: str(source)
+    )
     module = Contract()
     try:
         assert module._prepare_command()[:5] == [
@@ -102,7 +108,9 @@ def test_runtime_environment_uses_sibling_virtualenv(
     project.mkdir()
     (project / "pyproject.toml").touch()
     (project / "uv.lock").write_text("locked")
-    monkeypatch.setattr("dimos.core.isolated_python_module.inspect.getfile", lambda _: str(source))
+    monkeypatch.setattr(
+        "dimos.core.python_native_environment.inspect.getfile", lambda _: str(source)
+    )
     monkeypatch.setenv("VIRTUAL_ENV", "/parent/.venv")
     module = Contract(extra_env={"EXAMPLE_SETTING": "configured"})
     try:

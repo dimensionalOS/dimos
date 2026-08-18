@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import inspect
 import os
 from pathlib import Path
 import pickle
@@ -31,7 +30,7 @@ from dimos.core.module import Module
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.python_native_environment import (
     project_environment_vars,
-    require_locked_project,
+    python_native_project,
     uv_run_command,
     uv_sync_command,
 )
@@ -98,17 +97,7 @@ class IsolatedPythonModule(NativeModule):
 
     @property
     def runtime_project(self) -> Path:
-        source = Path(inspect.getfile(type(self))).resolve()
-        project = source.parent / "python"
-        try:
-            return require_locked_project(project)
-        except FileNotFoundError as error:
-            if not project.is_dir():
-                raise FileNotFoundError(
-                    f"Isolated Python runtime project is missing: {project}; "
-                    "create a sibling 'python/' directory"
-                ) from error
-            raise
+        return python_native_project(type(self))
 
     def _uv_command(self, *args: str) -> list[str]:
         command = ["uv", *args]

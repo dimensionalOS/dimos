@@ -99,6 +99,10 @@ def test_openyam_collection_has_one_wrist_webcam_and_all_joints() -> None:
 
     assert len(camera_atoms) == 1
     assert camera_atoms[0].instance_name == "WristCamera"
+    camera = camera_atoms[0].kwargs["hardware"]()
+    assert camera.config.width == 640
+    assert camera.config.height == 480
+    assert camera.config.fps == 30.0
     hardware = coordinator.kwargs["hardware"]
     assert len(hardware) == 1
     assert hardware[0].joints == OPENYAM_JOINTS

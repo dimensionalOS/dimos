@@ -19,8 +19,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 import hashlib
 from importlib.metadata import version
+import inspect
 from pathlib import Path
 import re
+from typing import Any
 
 import dimos
 from dimos.constants import CACHE_DIR
@@ -40,6 +42,21 @@ def require_locked_project(project: Path) -> Path:
     if not lock.is_file():
         raise FileNotFoundError(f"Python-native runtime lock is missing: {lock}")
     return project
+
+
+def python_native_project(module_class: type[Any]) -> Path:
+    """Return the locked sibling project for a Python-native module contract."""
+    source = Path(inspect.getfile(module_class)).resolve()
+    project = source.parent / "python"
+    try:
+        return require_locked_project(project)
+    except FileNotFoundError as error:
+        if not project.is_dir():
+            raise FileNotFoundError(
+                f"Python-native runtime project is missing: {project}; "
+                "create a sibling 'python/' directory"
+            ) from error
+        raise
 
 
 def dimos_overlay_args() -> list[str]:

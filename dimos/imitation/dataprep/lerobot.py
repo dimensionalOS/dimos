@@ -23,22 +23,17 @@ import tempfile
 
 from dimos.core.python_native_environment import (
     project_environment_vars,
-    require_locked_project,
+    python_native_project,
     uv_run_command,
 )
 from dimos.imitation.dataprep.core import DataPrepConfig
-from dimos.imitation.policy.lerobot import module as lerobot_module
+from dimos.imitation.policy.lerobot.module import LeRobotPolicyModule
 from dimos.utils.cache import cache_usage_guard
-
-
-def lerobot_project() -> Path:
-    """Locate the packaged LeRobot project beside its host contract."""
-    return require_locked_project(Path(lerobot_module.__file__).resolve().parent / "python")
 
 
 def run_lerobot_dataprep(config: DataPrepConfig) -> Path:
     """Run conversion under the locked LeRobot dependency stack."""
-    project = lerobot_project()
+    project = python_native_project(LeRobotPolicyModule)
     command: list[str]
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", encoding="utf-8") as config_file:
         config_file.write(config.model_dump_json())

@@ -51,3 +51,28 @@ def test_locked_project_is_required(tmp_path: Path) -> None:
 
     with pytest.raises(FileNotFoundError, match="runtime lock is missing"):
         python_native_environment.require_locked_project(project)
+
+
+def test_python_native_project_resolves_sibling_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "contract.py"
+    source.touch()
+    project = tmp_path / "python"
+    project.mkdir()
+    (project / "pyproject.toml").touch()
+    (project / "uv.lock").touch()
+    monkeypatch.setattr(python_native_environment.inspect, "getfile", lambda _: str(source))
+
+    assert python_native_environment.python_native_project(type("Contract", (), {})) == project
+
+
+def test_python_native_project_requires_sibling_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "contract.py"
+    source.touch()
+    monkeypatch.setattr(python_native_environment.inspect, "getfile", lambda _: str(source))
+
+    with pytest.raises(FileNotFoundError, match="sibling 'python/'"):
+        python_native_environment.python_native_project(type("Contract", (), {}))

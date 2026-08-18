@@ -86,7 +86,7 @@ def _openyam_wrist_camera() -> Webcam:
         camera_index=0,
         width=640,
         height=480,
-        fps=15.0,
+        fps=30.0,
         frame_id_prefix="wrist",
     )
 
