@@ -28,10 +28,9 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
-REPLAY_DB = os.environ.get("DIMOS_BENCH_REPLAY_DB", "go2_hongkong_office")
-DURATION = float(os.environ.get("DIMOS_BENCH_DURATION", 60))
-QUIET_S = 3.0  # all watched streams silent this long => window complete
-RUN_TIMEOUT = DURATION + 360.0  # build+run deadline, inside the test timeout
+REPLAY_DB = os.environ.get("DIMOS_BENCH_REPLAY_DB", "go2_short")
+QUIET_S = 3.0  # all watched streams silent this long => replay complete
+RUN_TIMEOUT = 420.0  # build+run deadline, inside the test timeout
 # GO2Connection source streams. camera_info is deliberately absent: it is
 # published by a 1 Hz forever-loop thread, so it never quiesces.
 WATCHED = (("odom", PoseStamped), ("lidar", PointCloud2), ("color_image", Image))
@@ -39,12 +38,12 @@ WATCHED = (("odom", PoseStamped), ("lidar", PointCloud2), ("color_image", Image)
 # near-lossless; lidar and color_image are large frames whose delivery relies
 # on the 64MB rmem tuning, so leave headroom for designed shedding.
 FLOOR_FRACTION = {"odom": 0.9, "lidar": 0.9, "color_image": 0.5}
-# When set, write build wall/CPU and run-window CPU seconds to this path.
+# When set, write build wall/CPU and run CPU seconds to this path.
 CPU_METRICS_PATH = os.environ.get("DIMOS_BENCH_CPU_METRICS")
 
 
-def _expected_counts(db_path: str, duration: float = DURATION) -> dict[str, int]:
-    """Windowed per-stream counts straight from the DB.
+def _expected_counts(db_path: str) -> dict[str, int]:
+    """Per-stream message totals straight from the DB.
 
     Mirrors ReplayConnection's stream-name fallback (mid360-era recordings use
     go2_lidar/go2_odom, older ones lidar/odom).
@@ -54,8 +53,7 @@ def _expected_counts(db_path: str, duration: float = DURATION) -> dict[str, int]
     store = SqliteStore(path=db_path, must_exist=True)
     store.start()
     try:
-        replay = store.replay(duration=duration)
-        available = replay.list_streams()
+        available = store.list_streams()
 
         def first_present(*names: str) -> str:
             for name in names:
@@ -64,9 +62,9 @@ def _expected_counts(db_path: str, duration: float = DURATION) -> dict[str, int]
             raise KeyError(f"none of {names!r} in {db_path!r}; available: {available}")
 
         return {
-            "odom": replay.stream(first_present("go2_odom", "odom")).count(),
-            "lidar": replay.stream(first_present("go2_lidar", "lidar")).count(),
-            "color_image": replay.stream("color_image").count(),
+            "odom": store.stream(first_present("go2_odom", "odom")).count(),
+            "lidar": store.stream(first_present("go2_lidar", "lidar")).count(),
+            "color_image": store.stream("color_image").count(),
         }
     finally:
         store.stop()
@@ -96,7 +94,7 @@ def _cpu_mark() -> tuple[float, float, float]:
 @pytest.mark.skipif_macos_bug
 @pytest.mark.timeout(900)
 def test_go2_replay_realtime_load() -> None:
-    """Build the unitree-go2 blueprint and run a replay window at realtime pace."""
+    """Build the unitree-go2 blueprint and run the replay to completion at realtime pace."""
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
     from dimos.memory.replay import resolve_db_path
     from dimos.robot.get_all_blueprints import get_blueprint_by_name
@@ -108,7 +106,6 @@ def test_go2_replay_realtime_load() -> None:
     global_config.update(
         replay=True,
         replay_db=REPLAY_DB,
-        replay_duration=DURATION,
         viewer="none",
     )
     try:
@@ -158,7 +155,7 @@ def test_go2_replay_realtime_load() -> None:
                         cpu_marks["end"] = _cpu_mark()
                     return
                 time.sleep(0.2)
-            pytest.fail(f"window did not complete: counts={counts}, expected~{expected}")
+            pytest.fail(f"replay did not complete: counts={counts}, expected~{expected}")
 
         def teardown() -> None:
             for transport in transports:

@@ -55,8 +55,6 @@ class GlobalConfig(BaseSettings):
     simulation: str = ""
     replay: bool = False
     replay_db: str = "go2_short"
-    # Seconds of recording to play before the streams complete (None = all).
-    replay_duration: float | None = None
     new_memory: bool = False
     # Discover zenoh peers across the network.
     # Toggling off drops back to loopback-only discovery:

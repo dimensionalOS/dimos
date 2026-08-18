@@ -143,7 +143,8 @@ def make_connection(
     connection_type = cfg.unitree_connection_type.lower()
 
     if ip in ("fake", "mock", "replay") or connection_type == "replay":
-        return ReplayConnection(dataset=cfg.replay_db, duration=cfg.replay_duration)
+        dataset = cfg.replay_db
+        return ReplayConnection(dataset=dataset)
     elif ip == "mujoco" or connection_type in ("mujoco", "true"):
         from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
@@ -164,18 +165,15 @@ def make_connection(
 
 
 class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         dataset: str = "go2_china_office",
-        *,
-        seek: float | None = None,
-        duration: float | None = None,
-        loop: bool = False,
+        **kwargs,
     ) -> None:
         self.dataset = dataset
-        self._seek = seek
-        self._duration = duration
-        self._loop = loop
+        self._loop = kwargs.get("loop", False)
+        self._seek = kwargs.get("seek")
+        self._duration = kwargs.get("duration")
 
     @cached_property
     def replay(self) -> Replay:

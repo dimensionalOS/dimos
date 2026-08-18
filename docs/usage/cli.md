@@ -19,7 +19,6 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--simulation` / `--no-simulation` | bool | `False` | Enable MuJoCo simulation |
 | `--replay` / `--no-replay` | bool | `False` | Use recorded replay data |
 | `--replay-db` | TEXT | `go2_short` | Replay memory SQLite database name |
-| `--replay-duration` | FLOAT | `None` | Seconds of recording to play before the streams complete |
 | `--new-memory` / `--no-new-memory` | bool | `False` | Clear persistent memory on start |
 | `--viewer` | `rerun\|none` | `rerun` | Visualization backend |
 | `--rerun-open` | `native\|web\|both\|none` | `native` | How to open the Rerun viewer |

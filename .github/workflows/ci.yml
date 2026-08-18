@@ -969,12 +969,12 @@ jobs:
       - name: Cache the replay dataset archive
         uses: actions/cache@v6
         with:
-          path: data/.lfs/go2_hongkong_office.db.tar.gz
-          key: lfs-go2-hongkong-office-${{ hashFiles('data/.lfs/go2_hongkong_office.db.tar.gz') }}
+          path: data/.lfs/go2_short.db.tar.gz
+          key: lfs-go2-short-${{ hashFiles('data/.lfs/go2_short.db.tar.gz') }}
       - name: Fetch the replay dataset from LFS if not cached
         run: |
-          if git lfs pointer --check --file data/.lfs/go2_hongkong_office.db.tar.gz; then
-            git lfs pull --include="data/.lfs/go2_hongkong_office.db.tar.gz" --exclude=""
+          if git lfs pointer --check --file data/.lfs/go2_short.db.tar.gz; then
+            git lfs pull --include="data/.lfs/go2_short.db.tar.gz" --exclude=""
           else
             echo "archive already smudged"
           fi
@@ -994,7 +994,7 @@ jobs:
       - name: Install dependencies
         run: uv sync --group tests --frozen
       - name: Pre-extract the replay database
-        run: uv run python -c "from dimos.utils.data import get_data; print(get_data('go2_hongkong_office.db'))"
+        run: uv run python -c "from dimos.utils.data import get_data; print(get_data('go2_short.db'))"
       - name: Run the replay under cgroup CPU accounting
         run: uv run pytest -m '' --no-cov dimos/robot/unitree/go2/test_replay_benchmark.py
         env:
