@@ -155,3 +155,14 @@ def test_global_map_normals_matches_global_map() -> None:
 def test_global_map_normals_empty_map() -> None:
     centers, normals = make_mapper().global_map_normals()
     assert centers.shape == normals.shape == (0, 3)
+
+
+def test_global_map_normal_fits_matches_shapes() -> None:
+    mapper = make_mapper()
+    mapper.add_frame(np.array([[5.5, 0.5, 0.5]], dtype=np.float32), ORIGIN, IDENTITY)
+
+    centers, normals, min_eigs = mapper.global_map_normal_fits()
+    assert centers.shape == normals.shape == (mapper.voxel_count(), 3)
+    assert min_eigs.shape == (mapper.voxel_count(),)
+    assert min_eigs.dtype == np.float32
+    np.testing.assert_allclose(np.sort(centers, axis=0), np.sort(mapper.global_map(), axis=0))

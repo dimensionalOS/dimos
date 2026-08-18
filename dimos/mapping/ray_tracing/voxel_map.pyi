@@ -82,6 +82,15 @@ class VoxelRayMapper:
         """
         ...
 
+    def global_map_normal_fits(
+        self,
+    ) -> tuple[NDArray[np.float32], NDArray[np.float32], NDArray[np.float32]]:
+        """global_map_normals with freshly recomputed fits plus smallest eigenvalues (M,).
+
+        Whole-map refit cost. Visualization only.
+        """
+        ...
+
     def local_map(
         self,
         origin: tuple[float, float, float],

@@ -33,19 +33,21 @@ const NORMAL_MIN_SUPPORT: f32 = 0.5;
 
 /// The surface normal of a covariance, or None unless it is clearly planar.
 #[cfg(test)]
-pub(super) fn fit_normal(cov: Matrix3<f32>) -> Option<Vector3<f32>> {
+pub(super) fn fit_normal(cov: Matrix3<f32>) -> Option<(Vector3<f32>, f32)> {
     classify(&cov.symmetric_eigen())
 }
 
-/// fit_normal on an already-computed eigendecomposition.
-fn classify(eig: &SymmetricEigen<f32, U3>) -> Option<Vector3<f32>> {
+/// fit_normal on an already-computed eigendecomposition. Pairs the normal
+/// with the smallest eigenvalue, the fit's out-of-plane variance.
+fn classify(eig: &SymmetricEigen<f32, U3>) -> Option<(Vector3<f32>, f32)> {
     let mut idx = [0usize, 1, 2];
     idx.sort_by(|&a, &b| eig.eigenvalues[a].total_cmp(&eig.eigenvalues[b]));
     let e2 = eig.eigenvalues[idx[2]].max(0.0);
     if e2 < 1e-12 {
         return None;
     }
-    let l0 = eig.eigenvalues[idx[0]].max(0.0).sqrt();
+    let e0 = eig.eigenvalues[idx[0]].max(0.0);
+    let l0 = e0.sqrt();
     let l1 = eig.eigenvalues[idx[1]].max(0.0).sqrt();
     let l2 = e2.sqrt();
     let linearity = (l2 - l1) / l2;
@@ -54,7 +56,7 @@ fn classify(eig: &SymmetricEigen<f32, U3>) -> Option<Vector3<f32>> {
     if planarity < linearity || planarity < scattering {
         return None;
     }
-    Some(eig.eigenvectors.column(idx[0]).into_owned())
+    Some((eig.eigenvectors.column(idx[0]).into_owned(), e0))
 }
 
 /// Moments of one neighbor voxel: count, sum, sum of outer products, centroid.
@@ -70,7 +72,7 @@ pub(super) fn pooled_normal(
     voxels: &AHashMap<VoxelKey, Voxel>,
     key: VoxelKey,
     voxel_size: f32,
-) -> Option<Vector3<f32>> {
+) -> Option<(Vector3<f32>, f32)> {
     let r = NORMAL_NEIGHBOR_RADIUS;
     let mut nbs: ArrayVec<Neighbor, NEIGHBORHOOD_CAP> = ArrayVec::new();
     let mut n_raw: u32 = 0;
@@ -169,7 +171,7 @@ pub(super) fn refresh_voxels(
     let updates: Vec<(VoxelKey, Option<Vector3<f32>>)> = dirty
         .par_iter()
         .filter(|k| map.voxels.contains_key(k))
-        .map(|&k| (k, pooled_normal(&map.voxels, k, voxel_size)))
+        .map(|&k| (k, pooled_normal(&map.voxels, k, voxel_size).map(|(n, _)| n)))
         .collect();
     for (k, n) in updates {
         if let Some(c) = map.voxels.get_mut(&k) {

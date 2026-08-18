@@ -72,6 +72,16 @@ def _normal_colors(voxel_colors: NDArray[np.uint8]) -> NDArray[np.uint8]:
     return mixed.astype(np.uint8)
 
 
+def _planarity_scale(min_eigs: NDArray[np.float32]) -> NDArray[np.float32]:
+    """Arrow length factors, larger for more planar fits.
+    Inverse smallest eigenvalue, median-normalized and clamped to 0.25-4x.
+    """
+    if len(min_eigs) == 0:
+        return np.empty(0, np.float32)
+    inv = 1.0 / np.maximum(min_eigs, 1e-12)
+    return np.clip(inv / np.median(inv), 0.25, 4.0).astype(np.float32)
+
+
 def _height_colors(centers: NDArray[np.float32], base: list[int]) -> NDArray[np.uint8]:
     """Shade each voxel by height, keeping the method's base hue."""
     if len(centers) == 0:
@@ -112,8 +122,8 @@ def main(
     out: Path | None = typer.Option(
         None, "--out", help="Output .rrd path. If omitted, spawn rerun live."
     ),
-    lidar_stream: str = typer.Option("fastlio_lidar", "--lidar-stream"),
-    odom_stream: str = typer.Option("fastlio_odometry", "--odom-stream"),
+    lidar_stream: str = typer.Option("pointlio_lidar", "--lidar-stream"),
+    odom_stream: str = typer.Option("pointlio_odometry", "--odom-stream"),
     align_tol: float = typer.Option(0.05, "--align-tol", help="Lidar/odom alignment tolerance (s)"),
     voxel_size: float = typer.Option(
         DEFAULT_VOXEL_SIZE, "--voxel-size", help="Voxel edge length (m)"
@@ -132,7 +142,9 @@ def main(
         help="Voxel render size (m); scales with --voxel-size when unset "
         f"({DEFAULT_RENDER_VOXEL} at the default voxel size of {DEFAULT_VOXEL_SIZE})",
     ),
-    normal_scale: float = typer.Option(0.08, "--normal-scale", help="Normal arrow length (m)"),
+    normal_scale: float = typer.Option(
+        0.08, "--normal-scale", help="Median normal arrow length (m); flatter fits draw longer"
+    ),
     from_time: float | None = typer.Option(
         None, "--from-time", help="Start replay at this stream timestamp (s)"
     ),
@@ -219,7 +231,7 @@ def main(
                         ),
                     )
                     continue
-                centers, normals = mapper.global_map_normals()
+                centers, normals, min_eigs = mapper.global_map_normal_fits()
                 colors = _z_gradient(centers, COARSE_RAMP)
                 rr.log(
                     f"world/maps/{name}",
@@ -229,11 +241,12 @@ def main(
                 origins, vectors = centers[keep], normals[keep]
                 flip = np.sum(vectors * (robot - origins), axis=1) < 0
                 vectors = np.where(flip[:, None], -vectors, vectors)
+                lengths = normal_scale * _planarity_scale(min_eigs[keep])
                 rr.log(
                     f"world/maps/{name}/normals",
                     rr.Arrows3D(
                         origins=origins,
-                        vectors=vectors * normal_scale,
+                        vectors=vectors * lengths[:, None],
                         colors=_normal_colors(colors[keep]),
                         radii=0.005,
                     ),

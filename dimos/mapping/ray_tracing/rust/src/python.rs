@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use numpy::ndarray::Array2;
-use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2, PyUntypedArrayMethods};
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use validator::Validate;
@@ -21,7 +21,7 @@ use validator::Validate;
 use dimos_module::init_worker_pool;
 
 use crate::mapper::{Mapper, Pose};
-use crate::voxel_ray_tracer::{iter_global_normals, Config, LocalBounds};
+use crate::voxel_ray_tracer::{global_normal_fits, iter_global_normals, Config, LocalBounds};
 
 fn extract_tuples(arr: &Bound<'_, PyAny>, name: &str) -> PyResult<Vec<(f32, f32, f32)>> {
     let arr: PyReadonlyArray2<'_, f32> = arr.extract().map_err(|_| {
@@ -59,6 +59,13 @@ fn points_to_array<'py>(py: Python<'py>, points: &[(f32, f32, f32)]) -> Bound<'p
         .expect("3 elements pushed per point")
         .into_pyarray(py)
 }
+
+/// Centers, normals, and smallest eigenvalues from the viz fit query.
+type NormalFitArrays<'py> = (
+    Bound<'py, PyArray2<f32>>,
+    Bound<'py, PyArray2<f32>>,
+    Bound<'py, PyArray1<f32>>,
+);
 
 /// Zero-copy hand-off of flat (x, y, z) triples to a (N, 3) numpy array.
 fn flat_to_array(py: Python<'_>, points: Vec<f32>) -> Bound<'_, PyArray2<f32>> {
@@ -222,6 +229,23 @@ impl VoxelRayMapper {
             .expect("3 elements pushed per voxel")
             .into_pyarray(py);
         (positions, normals)
+    }
+
+    /// global_map_normals with freshly recomputed fits, plus each fit's
+    /// smallest eigenvalue as (M,). Whole-map refit cost, visualization only.
+    fn global_map_normal_fits<'py>(&self, py: Python<'py>) -> NormalFitArrays<'py> {
+        let mapper = &self.mapper;
+        let (positions, normals, eigs) =
+            py.allow_threads(|| global_normal_fits(mapper.map(), mapper.config().voxel_size));
+        let m = eigs.len();
+        let positions = Array2::from_shape_vec((m, 3), positions)
+            .expect("3 elements pushed per voxel")
+            .into_pyarray(py);
+        let normals = Array2::from_shape_vec((m, 3), normals)
+            .expect("3 elements pushed per voxel")
+            .into_pyarray(py);
+        let eigs = eigs.into_pyarray(py);
+        (positions, normals, eigs)
     }
 
     fn local_map<'py>(

@@ -641,7 +641,7 @@ fn planar_patch_yields_vertical_normal() {
             v.observe(Vector3::new(x, y, 0.0));
         }
     }
-    let n = v
+    let (n, _) = v
         .self_normal()
         .expect("a flat 2d patch must yield a normal");
     assert!(n[2].abs() > 0.99, "expected ~vertical normal, got {n:?}");
@@ -1142,7 +1142,7 @@ fn milestone_gated_normals_match_full_refit() {
         if v.num_pts < 10 {
             continue;
         }
-        let Some(want) = pooled_normal(&map.voxels, key, voxel_size) else {
+        let Some((want, _)) = pooled_normal(&map.voxels, key, voxel_size) else {
             continue;
         };
         let got = v.normal.expect("streamed voxel must carry a normal");

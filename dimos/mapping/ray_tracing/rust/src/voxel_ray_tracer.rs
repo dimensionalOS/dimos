@@ -23,8 +23,8 @@ mod normals;
 mod tests;
 
 #[cfg(test)]
-use normals::{fit_normal, pooled_normal};
-use normals::{refresh_voxels, should_spare, NORMAL_MIN_POINTS};
+use normals::fit_normal;
+use normals::{pooled_normal, refresh_voxels, should_spare, NORMAL_MIN_POINTS};
 
 pub type VoxelKey = (i32, i32, i32);
 pub type VoxelHealth = i32;
@@ -356,7 +356,12 @@ impl VoxelMap {
             .voxels
             .keys()
             .copied()
-            .map(|k| (k, pooled_normal(&self.voxels, k, voxel_size)))
+            .map(|k| {
+                (
+                    k,
+                    pooled_normal(&self.voxels, k, voxel_size).map(|(n, _)| n),
+                )
+            })
             .collect();
         for (k, n) in updates {
             self.voxels.get_mut(&k).unwrap().normal = n;
@@ -427,7 +432,7 @@ impl Voxel {
 
     /// Fit a normal from this voxel's own points alone, ignoring neighbors.
     #[cfg(test)]
-    fn self_normal(&self) -> Option<Vector3<f32>> {
+    fn self_normal(&self) -> Option<(Vector3<f32>, f32)> {
         if self.num_pts < NORMAL_MIN_POINTS {
             return None;
         }
@@ -547,6 +552,41 @@ pub fn iter_global_normals(
             let normal = c.normal.map_or([0.0; 3], |n| [n[0], n[1], n[2]]);
             (pos, normal)
         })
+}
+
+/// Healthy voxel centers with freshly recomputed pooled fits: flat positions,
+/// normals, and each fit's smallest eigenvalue, zeros where there is no plane.
+/// Whole-map refit cost. A visualization helper, not for control paths.
+pub fn global_normal_fits(map: &VoxelMap, voxel_size: f32) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    let half = voxel_size * 0.5;
+    let keys: Vec<VoxelKey> = map
+        .voxels
+        .iter()
+        .filter(|(_, c)| c.health > 0)
+        .map(|(&k, _)| k)
+        .collect();
+    let fits: Vec<([f32; 3], [f32; 3], f32)> = keys
+        .par_iter()
+        .map(|&(kx, ky, kz)| {
+            let pos = [
+                kx as f32 * voxel_size + half,
+                ky as f32 * voxel_size + half,
+                kz as f32 * voxel_size + half,
+            ];
+            let (normal, min_eig) = pooled_normal(&map.voxels, (kx, ky, kz), voxel_size)
+                .map_or(([0.0; 3], 0.0), |(n, e)| ([n[0], n[1], n[2]], e));
+            (pos, normal, min_eig)
+        })
+        .collect();
+    let mut positions: Vec<f32> = Vec::with_capacity(fits.len() * 3);
+    let mut normals: Vec<f32> = Vec::with_capacity(fits.len() * 3);
+    let mut eigs: Vec<f32> = Vec::with_capacity(fits.len());
+    for (p, n, e) in fits {
+        positions.extend_from_slice(&p);
+        normals.extend_from_slice(&n);
+        eigs.push(e);
+    }
+    (positions, normals, eigs)
 }
 
 /// Chunk range (inclusive) covering the axis-aligned box a cylinder bounds fits in.
