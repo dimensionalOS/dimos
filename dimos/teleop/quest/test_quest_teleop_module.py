@@ -23,7 +23,12 @@ import pytest_mock
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.teleop.quest.quest_extensions import Go2TeleopModule, HandTeleopModule
 from dimos.teleop.quest.quest_teleop_module import QuestTeleopModule
-from dimos.teleop.quest.quest_types import Buttons, Hand, QuestControllerState
+from dimos.teleop.quest.quest_types import (
+    Buttons,
+    Hand,
+    QuestControllerState,
+    ThumbstickState,
+)
 
 
 @pytest.fixture
@@ -187,6 +192,29 @@ def test_go2_stale_input_publishes_zero_velocity(mocker: pytest_mock.MockerFixtu
             module._last_controller_update[Hand.LEFT] = 1.0
             module._expire_stale_state(1.0 + module.config.input_timeout_s + 0.1)
 
+        twist = publish.call_args.args[0]
+        assert twist.linear.x == 0.0
+        assert twist.linear.y == 0.0
+        assert twist.angular.z == 0.0
+    finally:
+        module.stop()
+
+
+def test_go2_malformed_joy_clears_stale_state_and_publishes_zero_velocity(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    module = Go2TeleopModule()
+    publish = mocker.patch.object(module.cmd_vel, "publish")
+    mocker.patch(
+        "dimos.teleop.quest.quest_teleop_module.Joy.lcm_decode",
+        return_value=SimpleNamespace(frame_id="left", axes=[], buttons=[]),
+    )
+    module._controllers[Hand.LEFT] = QuestControllerState(thumbstick=ThumbstickState(y=-1.0))
+    try:
+        assert module._on_joy_bytes(b"malformed") is False
+
+        assert module._controllers[Hand.LEFT] is None
+        publish.assert_called_once()
         twist = publish.call_args.args[0]
         assert twist.linear.x == 0.0
         assert twist.linear.y == 0.0

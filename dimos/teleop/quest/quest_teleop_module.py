@@ -299,7 +299,7 @@ class QuestTeleopModule(Module):
             self._current_poses[hand] = robot_pose
             self._last_pose_update[hand] = time.monotonic()
 
-    def _on_joy_bytes(self, data: bytes) -> None:
+    def _on_joy_bytes(self, data: bytes) -> bool:
         """Decode LCM bytes into Joy, parse into QuestControllerState."""
         msg = Joy.lcm_decode(data)
         hand = self._resolve_hand(msg.frame_id)
@@ -309,10 +309,16 @@ class QuestTeleopModule(Module):
             logger.warning(
                 f"Malformed Joy for {hand.name}: axes={len(msg.axes or [])}, buttons={len(msg.buttons or [])}"
             )
-            return
+            with self._lock:
+                self._controllers[hand] = None
+                self._last_controller_update[hand] = None
+                self._is_engaged[hand] = False
+                self._initial_poses[hand] = None
+            return False
         with self._lock:
             self._controllers[hand] = controller
             self._last_controller_update[hand] = time.monotonic()
+        return True
 
     def _start_server(self) -> None:
         """Start the embedded FastAPI server with HTTPS in a daemon thread."""
