@@ -75,6 +75,7 @@ all_blueprints = {
     "keyboard-teleop-xarm6": "dimos.robot.manipulators.xarm.blueprints.teleop:keyboard_teleop_xarm6",
     "keyboard-teleop-xarm7": "dimos.robot.manipulators.xarm.blueprints.teleop:keyboard_teleop_xarm7",
     "learning-collect-quest-openarm": "dimos.imitation.collection.blueprint:learning_collect_quest_openarm",
+    "learning-collect-quest-openarm-webcam": "dimos.imitation.collection.blueprint:learning_collect_quest_openarm_webcam",
     "learning-collect-quest-piper": "dimos.imitation.collection.blueprint:learning_collect_quest_piper",
     "learning-collect-quest-xarm7": "dimos.imitation.collection.blueprint:learning_collect_quest_xarm7",
     "mid360": "dimos.hardware.sensors.lidar.livox.livox_blueprints:mid360",

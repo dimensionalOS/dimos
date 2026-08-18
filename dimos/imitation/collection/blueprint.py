@@ -22,11 +22,14 @@ shutdown. DataPrep reads that DB afterwards.
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 
 from dimos.constants import STATE_DIR
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
+from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
+from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.robot.manipulators.openarm.blueprints.teleop import teleop_quest_openarm
@@ -78,6 +81,29 @@ learning_collect_quest_piper = autoconnect(
 learning_collect_quest_openarm = autoconnect(
     teleop_quest_openarm,
     *_camera_if_real(),
+    EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
+    CollectionRecorder.blueprint(db_path=_session_db("openarm")),
+)
+
+
+def _scene_webcam() -> Webcam:
+    """First external UVC camera, falling back to device 0.
+
+    Node indices shift across reboots, so pick by name instead of number.
+    """
+    index = 0
+    for node in sorted(Path("/sys/class/video4linux").glob("video*")):
+        name = (node / "name").read_text()
+        if "Integrated" not in name:
+            index = int(node.name.removeprefix("video"))
+            break
+    return Webcam(camera_index=index, width=1280, height=720, fps=30.0)
+
+
+# Variant for a plain UVC scene camera instead of a RealSense.
+learning_collect_quest_openarm_webcam = autoconnect(
+    teleop_quest_openarm,
+    CameraModule.blueprint(hardware=_scene_webcam),
     EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
     CollectionRecorder.blueprint(db_path=_session_db("openarm")),
 )
