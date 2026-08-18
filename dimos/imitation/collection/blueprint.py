@@ -107,3 +107,62 @@ learning_collect_quest_openarm_webcam = autoconnect(
     EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
     CollectionRecorder.blueprint(db_path=_session_db("openarm")),
 )
+
+
+# Physical USB port each rig camera is plugged into, identified by unplug
+# testing on 2026-08-18 (see memory: openarm-act-4cam-mapping). The cameras
+# report an identical fake serial number, so the USB port is the only way to
+# tell them apart; this mapping breaks if a cable moves to a different port,
+# and the ports themselves must stay labeled.
+_MULTICAM_USB_PORTS = {
+    "chest": "3-5.1",
+    "left_hand": "3-5.2",
+    "right_hand": "3-5.3",
+    "waist": "3-4.1",
+}
+
+
+def _video_index_for_usb_port(port: str, sysfs_root: Path = Path("/sys/class/video4linux")) -> int:
+    """Resolve the lowest /dev/videoN capture node at a physical USB port.
+
+    Each UVC camera exposes a pair of adjacent nodes sharing one `device`
+    symlink; the lower-numbered node is the one that actually streams
+    frames. Raises if the port is empty, rather than silently falling back
+    to a different physical camera under the wrong body label.
+    """
+    matches: list[int] = []
+    for node in sysfs_root.glob("video*"):
+        device_path = (node / "device").resolve()
+        node_port = device_path.name.split(":")[0]
+        if node_port == port:
+            matches.append(int(node.name.removeprefix("video")))
+    if not matches:
+        raise RuntimeError(
+            f"No camera found at USB port {port!r}. Check the cable is connected "
+            "to its labeled port; ports drift only if a cable is moved."
+        )
+    return min(matches)
+
+
+def _rig_camera(label: str) -> Webcam:
+    port = _MULTICAM_USB_PORTS[label]
+    index = _video_index_for_usb_port(port)
+    return Webcam(camera_index=index, width=1280, height=720, fps=30.0)
+
+
+def _rig_camera_blueprint(label: str) -> Blueprint:
+    instance_name = f"{label}_camera"
+    return CameraModule.blueprint(
+        instance_name=instance_name,
+        hardware=lambda label=label: _rig_camera(label),
+    ).remappings([(instance_name, "color_image", f"{label}_image")])
+
+
+# Multi-view variant recording all four labeled rig cameras (chest, both
+# hands, waist) as separate observation streams.
+learning_collect_quest_openarm_multicam = autoconnect(
+    teleop_quest_openarm,
+    *(_rig_camera_blueprint(label) for label in _MULTICAM_USB_PORTS),
+    EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
+    CollectionRecorder.blueprint(db_path=_session_db("openarm")),
+)

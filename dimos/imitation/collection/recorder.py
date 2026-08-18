@@ -53,7 +53,13 @@ class CollectionRecorder(Recorder):
 
     config: CollectionRecorderConfig
 
-    color_image: In[Image]  # observation (camera)
+    color_image: In[Image]  # observation (single camera)
+    # Additional observation cameras for multi-view rigs; each stays silent
+    # unless a collection blueprint wires a camera onto it.
+    chest_image: In[Image]
+    left_hand_image: In[Image]
+    right_hand_image: In[Image]
+    waist_image: In[Image]
     coordinator_joint_state: In[JointState]  # observation + action (measured/next state)
     # action (commanded targets); recorded when the coordinator runs with
     # publish_joint_targets on, silent otherwise
