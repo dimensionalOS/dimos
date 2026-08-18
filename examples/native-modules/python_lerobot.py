@@ -16,7 +16,7 @@
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.experimental.robot_policy.lerobot.module import LeRobotPolicyModule
+from dimos.imitation.policy.lerobot.module import LeRobotPolicyModule
 
 
 def run_example() -> None:
