@@ -12,97 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Contracts for deterministic VQA question families."""
+"""Specifications and answer rules for deterministic VQA question families."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Literal, Protocol, cast
+from typing import TYPE_CHECKING, cast
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    JsonValue,
-    StringConstraints,
-    model_validator,
+from pydantic import JsonValue
+
+from dimos.evals.vqa.contracts import (
+    FamilyAnswer,
+    FamilyName,
+    FamilySpec,
+    InsufficientEvidenceError,
+    ObjectDetector,
+    QuestionProposal,
 )
 
 if TYPE_CHECKING:
     from dimos.evals.vqa.preprocessing import CalibratedFrame
+    from dimos.evals.vqa.primitives.edgetam import ObjectMaskEstimator
     from dimos.evals.vqa.primitives.range import ObjectRangeEstimator
     from dimos.msgs.sensor_msgs.Image import Image
-    from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-
-NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-FamilyName = Literal[
-    "presence",
-    "horizontal_direction",
-    "object_count",
-    "object_distance",
-    "closest_object",
-]
-
-
-class QuestionProposal(BaseModel):
-    """A model-authored request constrained to a deterministic family."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    family: FamilyName
-    object_names: tuple[NonEmptyString, ...] = Field(min_length=1)
-
-
-class FamilyAnswer(BaseModel):
-    """A public question and its privately derived choice answer."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    question: NonEmptyString
-    choices: tuple[NonEmptyString, ...]
-    answer: NonEmptyString
-    evidence: dict[str, JsonValue] = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def answer_is_a_choice(self) -> FamilyAnswer:
-        if len(self.choices) < 2:
-            raise ValueError("a VQA question requires at least two choices")
-        if len(set(self.choices)) != len(self.choices):
-            raise ValueError("VQA choices must be unique")
-        if self.answer not in self.choices:
-            raise ValueError("the answer must be one of the choices")
-        return self
-
-
-@dataclass(frozen=True)
-class FamilySpec:
-    """The proposal shape exposed to the image-only question author."""
-
-    name: FamilyName
-    description: str
-    min_objects: int = 1
-    max_objects: int = 1
-    distinct_objects: bool = False
-    requires_pointcloud: bool = False
-
-    def validate(self, proposal: QuestionProposal) -> None:
-        """Validate a structurally parsed proposal against this family contract."""
-        if proposal.family != self.name:
-            raise ValueError(
-                f"proposal family {proposal.family!r} does not match specification {self.name!r}"
-            )
-        count = len(proposal.object_names)
-        if not self.min_objects <= count <= self.max_objects:
-            if self.min_objects == self.max_objects:
-                requirement = f"exactly {self.min_objects} object name"
-            else:
-                requirement = f"{self.min_objects} to {self.max_objects} object names"
-            raise ValueError(f"{self.name} requires {requirement}")
-        if (
-            self.distinct_objects
-            and len({name.casefold() for name in proposal.object_names}) != count
-        ):
-            raise ValueError(f"{self.name} requires distinct object names")
 
 
 PRESENCE_FAMILY = FamilySpec(
@@ -116,6 +47,26 @@ HORIZONTAL_DIRECTION_FAMILY = FamilySpec(
 OBJECT_COUNT_FAMILY = FamilySpec(
     name="object_count",
     description="Count a small number of clearly visible, distinct object instances.",
+)
+IMAGE_COVERAGE_FAMILY = FamilySpec(
+    name="image_coverage",
+    description=(
+        "Estimate how much of the image one clearly visible object occupies from its segmentation "
+        "mask. Do not estimate the percentage yourself."
+    ),
+    requires_masks=True,
+)
+LARGEST_VISIBLE_AREA_FAMILY = FamilySpec(
+    name="largest_visible_area",
+    description=(
+        "Choose which of two to five distinct, clearly visible object references occupies the "
+        "largest segmented image area. Do not infer which reference is largest."
+    ),
+    min_objects=2,
+    max_objects=5,
+    distinct_objects=True,
+    requires_masks=True,
+    object_order_matters=False,
 )
 OBJECT_DISTANCE_FAMILY = FamilySpec(
     name="object_distance",
@@ -133,11 +84,14 @@ CLOSEST_OBJECT_FAMILY = FamilySpec(
     max_objects=5,
     distinct_objects=True,
     requires_pointcloud=True,
+    object_order_matters=False,
 )
 AVAILABLE_FAMILIES = (
     PRESENCE_FAMILY,
     HORIZONTAL_DIRECTION_FAMILY,
     OBJECT_COUNT_FAMILY,
+    IMAGE_COVERAGE_FAMILY,
+    LARGEST_VISIBLE_AREA_FAMILY,
     OBJECT_DISTANCE_FAMILY,
     CLOSEST_OBJECT_FAMILY,
 )
@@ -149,22 +103,13 @@ def _family_spec(name: FamilyName) -> FamilySpec:
     return _FAMILIES_BY_NAME[name]
 
 
-class InsufficientEvidenceError(ValueError):
-    """A family cannot derive an answer from the available primitive evidence."""
-
-
-class ObjectDetector(Protocol):
-    """Object evidence required by visual question families."""
-
-    def detect(self, image: Image, object_name: str) -> ImageDetections2D: ...
-
-
 def answer_question(
     proposal: QuestionProposal,
     image: Image,
     detector: ObjectDetector,
     calibrated_frame: CalibratedFrame | None = None,
     range_estimator: ObjectRangeEstimator | None = None,
+    mask_estimator: ObjectMaskEstimator | None = None,
 ) -> FamilyAnswer:
     """Dispatch one constrained proposal to its deterministic family."""
     _family_spec(proposal.family).validate(proposal)
@@ -174,6 +119,16 @@ def answer_question(
         return _answer_horizontal_direction(proposal, image, detector)
     if proposal.family == "object_count":
         return _answer_object_count(proposal, image, detector)
+    if proposal.family == "image_coverage":
+        if mask_estimator is None:
+            raise InsufficientEvidenceError("image coverage requires segmentation-mask evidence")
+        return _answer_image_coverage(proposal, image, mask_estimator)
+    if proposal.family == "largest_visible_area":
+        if mask_estimator is None:
+            raise InsufficientEvidenceError(
+                "largest visible area requires segmentation-mask evidence"
+            )
+        return _answer_largest_visible_area(proposal, image, mask_estimator)
     if proposal.family == "object_distance":
         if calibrated_frame is None or range_estimator is None:
             raise InsufficientEvidenceError(
@@ -299,6 +254,101 @@ def _answer_object_distance(
         evidence={
             "primitive": "edgetam_lidar_range",
             **evidence.model_dump(mode="json"),
+        },
+    )
+
+
+_COVERAGE_SCHEMES = (
+    (
+        (25.0, 50.0, 75.0),
+        ("under 25%", "25% to under 50%", "50% to under 75%", "75% or more"),
+    ),
+    (
+        (15.0, 35.0, 65.0, 85.0),
+        (
+            "under 15%",
+            "15% to under 35%",
+            "35% to under 65%",
+            "65% to under 85%",
+            "85% or more",
+        ),
+    ),
+)
+
+
+def _answer_image_coverage(
+    proposal: QuestionProposal,
+    image: Image,
+    mask_estimator: ObjectMaskEstimator,
+) -> FamilyAnswer:
+    object_name = proposal.object_names[0]
+    evidence = mask_estimator.estimate(image, object_name)
+    image_area = image.width * image.height
+    coverage = 100.0 * evidence.mask_area_px / image_area
+    boundaries, choices = max(
+        _COVERAGE_SCHEMES,
+        key=lambda scheme: min(abs(coverage - boundary) for boundary in scheme[0]),
+    )
+    boundary_margin = min(abs(coverage - boundary) for boundary in boundaries)
+    answer_index = sum(coverage >= boundary for boundary in boundaries)
+    return FamilyAnswer(
+        question=(
+            f"Approximately what percentage of the image is occupied by the visible {object_name}?"
+        ),
+        choices=choices,
+        answer=choices[answer_index],
+        evidence={
+            "primitive": "edgetam_mask_area",
+            "object_name": object_name,
+            "mask_area_px": evidence.mask_area_px,
+            "image_area_px": image_area,
+            "coverage_percent": coverage,
+            "bucket_boundaries_percent": cast("JsonValue", list(boundaries)),
+            "nearest_boundary_margin_percent": boundary_margin,
+            "prompt_bbox_xyxy": cast("JsonValue", list(evidence.prompt_bbox_xyxy)),
+            "mask_bbox_xyxy": cast("JsonValue", list(evidence.mask_bbox_xyxy)),
+        },
+    )
+
+
+def _answer_largest_visible_area(
+    proposal: QuestionProposal,
+    image: Image,
+    mask_estimator: ObjectMaskEstimator,
+) -> FamilyAnswer:
+    object_names = proposal.object_names
+    masks = mask_estimator.estimate_many(image, object_names)
+    if tuple(mask.object_name for mask in masks) != object_names:
+        raise ValueError("mask estimator results do not match the requested object order")
+    ranked = sorted(range(len(masks)), key=lambda index: masks[index].mask_area_px, reverse=True)
+    winner_index, runner_up_index = ranked[:2]
+    winner_area = masks[winner_index].mask_area_px
+    runner_up_area = masks[runner_up_index].mask_area_px
+    if 5 * winner_area < 6 * runner_up_area:
+        raise InsufficientEvidenceError(
+            "visible mask areas do not establish an object that is at least 20% larger"
+        )
+    image_area = image.width * image.height
+    return FamilyAnswer(
+        question="Which object occupies the largest visible area in the image?",
+        choices=object_names,
+        answer=object_names[winner_index],
+        evidence={
+            "primitive": "edgetam_mask_area",
+            "comparison_rule": "winner_at_least_20_percent_larger",
+            "objects": cast(
+                "JsonValue",
+                [
+                    {
+                        "choice": object_name,
+                        "mask_area_px": mask.mask_area_px,
+                        "coverage_percent": 100.0 * mask.mask_area_px / image_area,
+                        "prompt_bbox_xyxy": list(mask.prompt_bbox_xyxy),
+                        "mask_bbox_xyxy": list(mask.mask_bbox_xyxy),
+                    }
+                    for object_name, mask in zip(object_names, masks, strict=True)
+                ],
+            ),
         },
     )
 

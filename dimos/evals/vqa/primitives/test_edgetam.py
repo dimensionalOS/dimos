@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, cast
 import numpy as np
 import pytest
 
-from dimos.evals.vqa.families import InsufficientEvidenceError
+from dimos.evals.vqa.contracts import InsufficientEvidenceError
 from dimos.evals.vqa.preprocessing import CalibratedFrame
 from dimos.evals.vqa.primitives.edgetam import EdgeTamObjectMaskEstimator
 from dimos.evals.vqa.primitives.range import LidarRangeEstimator

@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from pydantic import ValidationError
 
-from dimos.evals.vqa.families import FamilySpec, QuestionProposal
+from dimos.evals.vqa.contracts import FamilySpec, QuestionProposal
 
 if TYPE_CHECKING:
     from dimos.models.vl.base import VlModel

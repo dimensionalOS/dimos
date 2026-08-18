@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Annotated, Protocol
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from dimos.evals.vqa.families import InsufficientEvidenceError
+from dimos.evals.vqa.contracts import InsufficientEvidenceError
 from dimos.perception.detection.type.detection3d.pointcloud import ProjectedPointCloud
 
 if TYPE_CHECKING:
