@@ -59,9 +59,16 @@ class FakeArm:
         self.commands.append(commands)
 
 
+class FakeGripperMotor:
+    def __init__(self, velocity: float = 0.2, torque: float = 0.4) -> None:
+        self.velocity = velocity
+        self.torque = torque
+
+
 class FakeGripper:
     def __init__(self, opening: float) -> None:
         self.opening = opening
+        self.motor = FakeGripperMotor()
         self.command_error: Exception | None = None
         self.commands: list[float] = []
 
@@ -466,8 +473,8 @@ def test_read_motor_states_multiple_groups_returns_ordered_feedback(
         MotorState(q=0.2),
         MotorState(q=0.3),
         MotorState(q=0.4),
-        MotorState(q=0.5),
-        MotorState(q=0.6),
+        MotorState(q=0.5, dq=0.2, tau=0.4),
+        MotorState(q=0.6, dq=0.2, tau=0.4),
     ]
 
 

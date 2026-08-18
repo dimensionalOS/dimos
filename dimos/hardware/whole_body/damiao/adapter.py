@@ -260,10 +260,20 @@ class DamiaoWholeBodyAdapter(ABC):
                 # placeholder so read-only sessions still stream arm state.
                 states.append(MotorState(q=0.0, dq=0.0, tau=0.0))
                 continue
-            opening = float(self._grippers[name].opening)
+            gripper = self._grippers[name]
+            opening = float(gripper.opening)
             if not np.isfinite(opening) or not 0.0 <= opening <= 1.0:
                 raise RuntimeError(f"gripper {name!r} returned invalid opening {opening}")
-            states.append(MotorState(q=opening, dq=0.0, tau=0.0))
+            # dq and tau are motor-shaft units, not the normalized opening
+            # scale; recorded as-is for grasp telemetry.
+            motor = gripper.motor
+            states.append(
+                MotorState(
+                    q=opening,
+                    dq=float(motor.velocity),
+                    tau=float(motor.torque),
+                )
+            )
         self._validate_finite_states(states)
         return states
 
