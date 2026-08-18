@@ -29,6 +29,7 @@ from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionRecorder
+from dimos.robot.manipulators.openarm.blueprints.teleop import teleop_quest_openarm
 from dimos.teleop.quest.blueprints import (
     teleop_quest_piper,
     teleop_quest_xarm7,
@@ -70,3 +71,13 @@ learning_collect_quest_piper = autoconnect(
     EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
     CollectionRecorder.blueprint(db_path=_session_db("piper")),
 ).remappings(_JOINTS_FROM_ARM)
+
+
+# The OpenArm coordinator publishes the combined coordinator_joint_state, so
+# the recorder connects without a per-robot remapping.
+learning_collect_quest_openarm = autoconnect(
+    teleop_quest_openarm,
+    *_camera_if_real(),
+    EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
+    CollectionRecorder.blueprint(db_path=_session_db("openarm")),
+)
