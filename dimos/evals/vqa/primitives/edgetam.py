@@ -21,12 +21,12 @@ from typing import TYPE_CHECKING, Protocol, cast
 
 import numpy as np
 
-from dimos.evals.vqa.families import InsufficientEvidenceError
+from dimos.evals.vqa.contracts import InsufficientEvidenceError
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
 if TYPE_CHECKING:
-    from dimos.evals.vqa.families import ObjectDetector
+    from dimos.evals.vqa.contracts import ObjectDetector
     from dimos.msgs.sensor_msgs.Image import Image
 
 

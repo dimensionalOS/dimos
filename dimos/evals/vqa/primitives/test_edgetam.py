@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, cast
 import numpy as np
 import pytest
 
-from dimos.evals.vqa.families import InsufficientEvidenceError
+from dimos.evals.vqa.contracts import InsufficientEvidenceError
 from dimos.evals.vqa.preprocessing import CalibratedFrame
 from dimos.evals.vqa.primitives.edgetam import EdgeTamObjectMaskEstimator
 from dimos.evals.vqa.primitives.range import LidarRangeEstimator
@@ -53,14 +53,14 @@ class _Detector:
     def __init__(self, boxes: list[BBox]) -> None:
         self._boxes = boxes
 
-    def detect(self, image: Image, object_name: str) -> ImageDetections2D[Detection2DBBox]:
+    def query_detections(self, image: Image, query: str) -> ImageDetections2D[Detection2DBBox]:
         detections = [
             Detection2DBBox(
                 bbox=box,
                 track_id=index,
                 class_id=0,
                 confidence=1.0,
-                name=object_name,
+                name=query,
                 ts=image.ts,
                 image=image,
             )
@@ -73,17 +73,17 @@ class _NamedDetector:
     def __init__(self, boxes: dict[str, BBox]) -> None:
         self._boxes = boxes
 
-    def detect(self, image: Image, object_name: str) -> ImageDetections2D[Detection2DBBox]:
-        box = self._boxes[object_name]
+    def query_detections(self, image: Image, query: str) -> ImageDetections2D[Detection2DBBox]:
+        box = self._boxes[query]
         return ImageDetections2D(
             image,
             [
                 Detection2DBBox(
                     bbox=box,
-                    track_id=len(object_name),
+                    track_id=len(query),
                     class_id=0,
                     confidence=1.0,
-                    name=object_name,
+                    name=query,
                     ts=image.ts,
                     image=image,
                 )

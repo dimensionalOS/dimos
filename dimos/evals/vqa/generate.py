@@ -28,14 +28,16 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from dimos.constants import STATE_DIR
 from dimos.evals.vqa.author import OpenAIQuestionAuthor, QuestionAuthor
-from dimos.evals.vqa.families import (
-    AVAILABLE_FAMILIES,
+from dimos.evals.vqa.contracts import (
     FamilyAnswer,
     FamilySpec,
     InsufficientEvidenceError,
     NonEmptyString,
     ObjectDetector,
     QuestionProposal,
+)
+from dimos.evals.vqa.families import (
+    AVAILABLE_FAMILIES,
     answer_question,
 )
 from dimos.memory.cli.dataset import open_dataset
@@ -43,6 +45,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 
 if TYPE_CHECKING:
     from dimos.evals.vqa.preprocessing import CalibratedFrame
+    from dimos.evals.vqa.primitives.edgetam import ObjectMaskEstimator
     from dimos.evals.vqa.primitives.range import ObjectRangeEstimator
 
 
@@ -164,6 +167,7 @@ def generate_dataset(request: GenerationRequest) -> GenerationResult:
             "author": author_model.config.model_name,
             "detector": detector_model.config.model_name,
         }
+        mask_estimator = EdgeTamObjectMaskEstimator(detector)
         if not use_geometry:
             store = open_dataset(request.dataset)
             try:
@@ -186,6 +190,7 @@ def generate_dataset(request: GenerationRequest) -> GenerationResult:
                     visual_frames(),
                     OpenAIQuestionAuthor(author_model),
                     detector,
+                    mask_estimator=mask_estimator,
                     model_names=model_names,
                 )
             finally:
@@ -216,7 +221,8 @@ def generate_dataset(request: GenerationRequest) -> GenerationResult:
                 calibrated_frames(),
                 OpenAIQuestionAuthor(author_model),
                 detector,
-                LidarRangeEstimator(EdgeTamObjectMaskEstimator(detector)),
+                LidarRangeEstimator(mask_estimator),
+                mask_estimator,
                 model_names=model_names,
             )
     finally:
@@ -238,6 +244,7 @@ def generate_frames_dataset(
     author: QuestionAuthor,
     detector: ObjectDetector,
     range_estimator: ObjectRangeEstimator | None = None,
+    mask_estimator: ObjectMaskEstimator | None = None,
     *,
     model_names: dict[str, str] | None = None,
 ) -> GenerationResult:
@@ -253,7 +260,7 @@ def generate_frames_dataset(
         rejected_count = 0
         used_family_names: set[str] = set()
         for source in frames:
-            frame = _generate_frame(source, author, detector, range_estimator)
+            frame = _generate_frame(source, author, detector, range_estimator, mask_estimator)
             _write_frame(staging, frame)
             all_cases.extend(frame.cases)
             all_labels.extend(frame.labels)
@@ -297,13 +304,17 @@ def _generate_frame(
     author: QuestionAuthor,
     detector: ObjectDetector,
     range_estimator: ObjectRangeEstimator | None,
+    mask_estimator: ObjectMaskEstimator | None,
 ) -> _GeneratedFrame:
     image_index = source.index
     image = source.image
-    families = (
-        AVAILABLE_FAMILIES
-        if source.calibrated is not None and range_estimator is not None
-        else tuple(family for family in AVAILABLE_FAMILIES if not family.requires_pointcloud)
+    families = tuple(
+        family
+        for family in AVAILABLE_FAMILIES
+        if not (family.requires_masks and mask_estimator is None)
+        and not (
+            family.requires_pointcloud and (source.calibrated is None or range_estimator is None)
+        )
     )
     proposals = _deduplicate_proposals(author.propose(image, families))
     answered: list[tuple[QuestionProposal, FamilyAnswer]] = []
@@ -316,6 +327,7 @@ def _generate_frame(
                 detector,
                 source.calibrated,
                 range_estimator,
+                mask_estimator,
             )
         except InsufficientEvidenceError as exc:
             audit_rows.append(
@@ -361,13 +373,19 @@ def _generate_frame(
 
 def _deduplicate_proposals(proposals: Sequence[QuestionProposal]) -> tuple[QuestionProposal, ...]:
     unique: list[QuestionProposal] = []
-    closest_object_sets: set[frozenset[str]] = set()
+    unordered_families = {
+        family.name for family in AVAILABLE_FAMILIES if not family.object_order_matters
+    }
+    seen_object_sets: set[tuple[str, frozenset[str]]] = set()
     for proposal in proposals:
-        if proposal.family == "closest_object":
-            object_set = frozenset(name.casefold() for name in proposal.object_names)
-            if object_set in closest_object_sets:
+        if proposal.family in unordered_families:
+            object_set = (
+                proposal.family,
+                frozenset(name.casefold() for name in proposal.object_names),
+            )
+            if object_set in seen_object_sets:
                 continue
-            closest_object_sets.add(object_set)
+            seen_object_sets.add(object_set)
         if proposal not in unique:
             unique.append(proposal)
     return tuple(unique)

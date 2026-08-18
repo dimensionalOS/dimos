@@ -46,6 +46,8 @@ answers. Every proposal uses `object_names`; single-object families require one 
 | `presence` | yes, no | At least one Moondream detection |
 | `horizontal_direction` | left, center, right | Exactly one detection; use its horizontal center |
 | `object_count` | one, two, three, four or more | Count Moondream detections |
+| `image_coverage` | Adaptive percentage buckets | Divide EdgeTAM mask pixels by image pixels |
+| `largest_visible_area` | Two to five authored object references | Select a mask at least 20% larger than the runner-up |
 | `object_distance` | under 1 m, 1 to under 2 m, 2 to under 3 m, 3 m or more | Median LiDAR range inside an EdgeTAM mask |
 | `closest_object` | Two to five authored object references | Select the smallest unambiguous LiDAR range |
 
@@ -57,6 +59,11 @@ LiDAR points. Evidence whose range quartiles cross an answer boundary is rejecte
 Closest-object questions accept references such as `left person`, `right person`, and `chair`, which
 lets Moondream distinguish repeated categories. They are rejected unless every reference has exactly
 one detection or the closest range interval overlaps any other candidate.
+
+Image-coverage questions choose between two bucket schemes so the measured mask coverage is as far
+as possible from the nearest answer boundary. Largest-visible-area questions are rejected unless the
+winning EdgeTAM mask contains at least 20% more pixels than the runner-up. Both families work without
+point-cloud data.
 
 ## Dataset Layout
 

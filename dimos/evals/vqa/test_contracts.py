@@ -26,15 +26,18 @@ import pytest
 from dimos.constants import STATE_DIR
 from dimos.evals.types import EvalRig
 from dimos.evals.vqa.author import OpenAIQuestionAuthor, QuestionAuthor
-from dimos.evals.vqa.families import (
-    AVAILABLE_FAMILIES,
-    CLOSEST_OBJECT_FAMILY,
-    OBJECT_DISTANCE_FAMILY,
-    PRESENCE_FAMILY,
+from dimos.evals.vqa.contracts import (
     FamilyAnswer,
     FamilySpec,
     InsufficientEvidenceError,
     QuestionProposal,
+)
+from dimos.evals.vqa.families import (
+    AVAILABLE_FAMILIES,
+    CLOSEST_OBJECT_FAMILY,
+    LARGEST_VISIBLE_AREA_FAMILY,
+    OBJECT_DISTANCE_FAMILY,
+    PRESENCE_FAMILY,
     answer_question,
 )
 from dimos.evals.vqa.generate import (
@@ -44,6 +47,7 @@ from dimos.evals.vqa.generate import (
     PublicCase,
     generate_frames_dataset,
 )
+from dimos.evals.vqa.primitives.edgetam import ObjectMaskEvidence
 from dimos.evals.vqa.primitives.range import ObjectRangeEvidence
 from dimos.evals.vqa.suite import load_suite
 from dimos.msgs.sensor_msgs.Image import Image
@@ -79,6 +83,25 @@ class _ClosestObjectAuthor:
             QuestionProposal(
                 family="closest_object",
                 object_names=("left person", "right person", "chair"),
+            ),
+        )
+
+
+class _CoverageAuthor:
+    def propose(self, image: Image, families: Sequence[FamilySpec]) -> Sequence[QuestionProposal]:
+        return (QuestionProposal(family="image_coverage", object_names=("chair",)),)
+
+
+class _DuplicateLargestVisibleAreaAuthor:
+    def propose(self, image: Image, families: Sequence[FamilySpec]) -> Sequence[QuestionProposal]:
+        return (
+            QuestionProposal(
+                family="largest_visible_area",
+                object_names=("chair", "table", "box"),
+            ),
+            QuestionProposal(
+                family="largest_visible_area",
+                object_names=("box", "chair", "table"),
             ),
         )
 
@@ -170,6 +193,8 @@ class _QuestionModel:
         assert "presence" in prompt
         assert "horizontal_direction" in prompt
         assert "object_count" in prompt
+        assert "image_coverage" in prompt
+        assert "largest_visible_area" in prompt
         assert "object_distance" in prompt
         assert "closest_object" in prompt
         assert "JSON array" in prompt
@@ -177,6 +202,11 @@ class _QuestionModel:
             {"family": "presence", "object_names": ["chair"]},
             {"family": "horizontal_direction", "object_names": ["robot"]},
             {"family": "object_count", "object_names": ["box"]},
+            {"family": "image_coverage", "object_names": ["chair"]},
+            {
+                "family": "largest_visible_area",
+                "object_names": ["chair", "table", "box"],
+            },
             {"family": "object_distance", "object_names": ["chair"]},
             {
                 "family": "closest_object",
@@ -239,6 +269,36 @@ class _RangeEstimator:
         self, frame: CalibratedFrame, object_names: tuple[str, ...]
     ) -> tuple[ObjectRangeEvidence, ...]:
         return tuple(self.estimate(frame, object_name) for object_name in object_names)
+
+
+class _MaskEstimator:
+    def __init__(self, areas: dict[str, int]) -> None:
+        self._areas = areas
+
+    def estimate(self, image: Image, object_name: str) -> ObjectMaskEvidence:
+        mask = np.zeros((image.height, image.width), dtype=bool)
+        mask.flat[: self._areas[object_name]] = True
+        box = (0.0, 0.0, float(image.width), float(image.height))
+        detection = Detection2DBBox(
+            bbox=box,
+            track_id=0,
+            class_id=-1,
+            confidence=1.0,
+            name=object_name,
+            ts=image.ts,
+            image=image,
+        )
+        return ObjectMaskEvidence(
+            object_name=object_name,
+            prompt_bbox_xyxy=box,
+            detection=detection,
+            mask=mask,
+        )
+
+    def estimate_many(
+        self, image: Image, object_names: tuple[str, ...]
+    ) -> tuple[ObjectMaskEvidence, ...]:
+        return tuple(self.estimate(image, object_name) for object_name in object_names)
 
 
 class _ClosestRangeEstimator:
@@ -608,6 +668,91 @@ def test_object_count_requires_at_least_one_detection() -> None:
         answer_question(proposal, image, _BoxesDetector(()))
 
 
+@pytest.mark.parametrize(
+    ("area", "expected", "boundaries", "margin"),
+    (
+        (24, "15% to under 35%", [15.0, 35.0, 65.0, 85.0], 9.0),
+        (40, "25% to under 50%", [25.0, 50.0, 75.0], 10.0),
+    ),
+)
+def test_image_coverage_chooses_scheme_with_largest_boundary_margin(
+    area: int,
+    expected: str,
+    boundaries: list[float],
+    margin: float,
+) -> None:
+    image = Image.from_numpy(np.zeros((10, 10, 3), dtype=np.uint8))
+    proposal = QuestionProposal(family="image_coverage", object_names=("chair",))
+
+    answer = answer_question(
+        proposal,
+        image,
+        _Detector(present=True),
+        mask_estimator=_MaskEstimator({"chair": area}),
+    )
+
+    assert answer.answer == expected
+    assert answer.evidence["coverage_percent"] == float(area)
+    assert answer.evidence["bucket_boundaries_percent"] == boundaries
+    assert answer.evidence["nearest_boundary_margin_percent"] == margin
+
+
+def test_image_coverage_requires_mask_evidence() -> None:
+    proposal = QuestionProposal(family="image_coverage", object_names=("chair",))
+
+    with pytest.raises(InsufficientEvidenceError, match="segmentation-mask"):
+        answer_question(
+            proposal,
+            Image.from_numpy(np.zeros((10, 10, 3), dtype=np.uint8)),
+            _Detector(present=True),
+        )
+
+
+def test_largest_visible_area_requires_distinct_references() -> None:
+    with pytest.raises(ValueError, match="distinct object names"):
+        LARGEST_VISIBLE_AREA_FAMILY.validate(
+            QuestionProposal(
+                family="largest_visible_area",
+                object_names=("chair", "Chair"),
+            )
+        )
+
+
+def test_largest_visible_area_accepts_winner_at_twenty_percent_margin() -> None:
+    image = Image.from_numpy(np.zeros((10, 10, 3), dtype=np.uint8))
+    proposal = QuestionProposal(
+        family="largest_visible_area",
+        object_names=("chair", "table", "box"),
+    )
+
+    answer = answer_question(
+        proposal,
+        image,
+        _Detector(present=True),
+        mask_estimator=_MaskEstimator({"chair": 50, "table": 60, "box": 10}),
+    )
+
+    assert answer.answer == "table"
+    assert answer.choices == ("chair", "table", "box")
+    assert answer.evidence["comparison_rule"] == "winner_at_least_20_percent_larger"
+
+
+def test_largest_visible_area_rejects_close_mask_areas() -> None:
+    image = Image.from_numpy(np.zeros((10, 10, 3), dtype=np.uint8))
+    proposal = QuestionProposal(
+        family="largest_visible_area",
+        object_names=("chair", "table"),
+    )
+
+    with pytest.raises(InsufficientEvidenceError, match="at least 20% larger"):
+        answer_question(
+            proposal,
+            image,
+            _Detector(present=True),
+            mask_estimator=_MaskEstimator({"chair": 50, "table": 59}),
+        )
+
+
 def test_openai_author_parses_constrained_proposals() -> None:
     image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
     author = OpenAIQuestionAuthor(cast("VlModel", _QuestionModel()))
@@ -618,6 +763,11 @@ def test_openai_author_parses_constrained_proposals() -> None:
         QuestionProposal(family="presence", object_names=("chair",)),
         QuestionProposal(family="horizontal_direction", object_names=("robot",)),
         QuestionProposal(family="object_count", object_names=("box",)),
+        QuestionProposal(family="image_coverage", object_names=("chair",)),
+        QuestionProposal(
+            family="largest_visible_area",
+            object_names=("chair", "table", "box"),
+        ),
         QuestionProposal(family="object_distance", object_names=("chair",)),
         QuestionProposal(
             family="closest_object",
@@ -845,6 +995,23 @@ def test_generate_closest_object_case_from_calibrated_frame(tmp_path: Path) -> N
     ]
 
 
+def test_generate_image_coverage_case_without_pointcloud(tmp_path: Path) -> None:
+    output = tmp_path / "vqa"
+    image = Image.from_numpy(np.zeros((10, 10, 3), dtype=np.uint8), ts=12.5)
+
+    result = generate_frames_dataset(
+        GenerationRequest(dataset="recording.db", image_index=4, output=output),
+        (GenerationFrame(4, image),),
+        cast("QuestionAuthor", _CoverageAuthor()),
+        _Detector(present=True),
+        mask_estimator=_MaskEstimator({"chair": 24}),
+    )
+
+    assert result.cases[0].id == "frame-000004-chair-image_coverage"
+    labels = [json.loads(line) for line in (output / "labels.jsonl").read_text().splitlines()]
+    assert labels == [{"id": "frame-000004-chair-image_coverage", "answer": "15% to under 35%"}]
+
+
 def test_generation_deduplicates_reordered_closest_object_references(tmp_path: Path) -> None:
     result = generate_frames_dataset(
         GenerationRequest(dataset="recording.db", image_index=4, output=tmp_path / "vqa"),
@@ -867,6 +1034,18 @@ def test_generation_deduplicates_reordered_closest_object_references(tmp_path: P
     assert len(result.cases) == 1
 
 
+def test_generation_deduplicates_reordered_largest_area_references(tmp_path: Path) -> None:
+    result = generate_frames_dataset(
+        GenerationRequest(dataset="recording.db", image_index=4, output=tmp_path / "vqa"),
+        (GenerationFrame(4, Image.from_numpy(np.zeros((10, 10, 3), dtype=np.uint8))),),
+        cast("QuestionAuthor", _DuplicateLargestVisibleAreaAuthor()),
+        _Detector(present=True),
+        mask_estimator=_MaskEstimator({"chair": 60, "table": 40, "box": 10}),
+    )
+
+    assert len(result.cases) == 1
+
+
 def test_uncalibrated_frame_does_not_expose_distance_family(tmp_path: Path) -> None:
     output = tmp_path / "vqa"
     image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=12.5)
@@ -884,6 +1063,30 @@ def test_uncalibrated_frame_does_not_expose_distance_family(tmp_path: Path) -> N
     assert author.family_names == ("presence", "horizontal_direction", "object_count")
     run = json.loads((output / "audit" / "run.json").read_text())
     assert run["families"] == ["presence", "horizontal_direction", "object_count"]
+
+
+def test_uncalibrated_frame_exposes_mask_families_when_masks_are_available(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "vqa"
+    image = Image.from_numpy(np.zeros((10, 10, 3), dtype=np.uint8), ts=12.5)
+    author = _RecordingAuthor()
+
+    generate_frames_dataset(
+        GenerationRequest(dataset="recording.db", image_index=4, output=output),
+        (GenerationFrame(4, image),),
+        cast("QuestionAuthor", author),
+        _Detector(present=True),
+        mask_estimator=_MaskEstimator({"chair": 24}),
+    )
+
+    assert author.family_names == (
+        "presence",
+        "horizontal_direction",
+        "object_count",
+        "image_coverage",
+        "largest_visible_area",
+    )
 
 
 def test_generate_multiple_images_aggregates_frame_artifacts(tmp_path: Path) -> None:
