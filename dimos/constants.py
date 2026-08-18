@@ -38,8 +38,6 @@ else:
     LOG_DIR = STATE_DIR / "logs"
     RECORDINGS_DIR = STATE_DIR / "recordings"
 
-CREDENTIALS_PATH = CONFIG_DIR / "dimos" / "credentials.json"
-
 """
 Constants for shared memory
 Usually, auto-detection for size would be preferred. Sadly, though, channels are made
