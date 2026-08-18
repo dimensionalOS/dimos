@@ -13,19 +13,38 @@
 # limitations under the License.
 
 import json
+from pathlib import Path
+import time
+from typing import Any
 
 import pytest
 import typer
 
 from dimos.cli import cloud
+from dimos.core.global_config import global_config
 
 
-def test_login_stores_key(monkeypatch, tmp_path):
+@pytest.fixture
+def filestore(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Force the headless path: no keyring backend, credentials in a temp file."""
+    monkeypatch.setattr(cloud, "_keyring", lambda: None)
     cred = tmp_path / "credentials.json"
-    monkeypatch.setattr(cloud, "CRED_PATH", cred)
-    monkeypatch.setattr(cloud.time, "sleep", lambda s: None)
-    responses = iter(
-        [
+    monkeypatch.setattr(cloud, "CREDENTIALS_PATH", cred)
+    monkeypatch.setattr(global_config, "dimos_api_key", None)
+    return cred
+
+
+def _responses(*rs: dict[str, Any]) -> Any:
+    it = iter(rs)
+    return lambda path, **kw: next(it)
+
+
+def test_login_stores_key_owner_only(monkeypatch: pytest.MonkeyPatch, filestore: Path) -> None:
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    monkeypatch.setattr(
+        cloud,
+        "_post",
+        _responses(
             {
                 "device_code": "dc",
                 "user_code": "AAAA-BBBB",
@@ -35,22 +54,25 @@ def test_login_stores_key(monkeypatch, tmp_path):
             },
             {"status": "authorization_pending"},
             {"status": "ok", "api_key": "dimos_sk_x", "key_id": "dimos_sk_x", "email": "e@x"},
-        ]
+        ),
     )
-    monkeypatch.setattr(cloud, "_post", lambda path, **kw: next(responses))
 
     cloud.login()
 
-    assert json.loads(cred.read_text())["api_key"] == "dimos_sk_x"
-    assert oct(cred.stat().st_mode)[-3:] == "600"
+    assert json.loads(filestore.read_text())["api_key"] == "dimos_sk_x"
+    assert oct(filestore.stat().st_mode)[-3:] == "600"
     assert cloud.api_key() == "dimos_sk_x"
 
+    cloud.logout()
+    assert not filestore.exists() and cloud.api_key() is None
 
-def test_login_denied_exits(monkeypatch, tmp_path):
-    monkeypatch.setattr(cloud, "CRED_PATH", tmp_path / "c.json")
-    monkeypatch.setattr(cloud.time, "sleep", lambda s: None)
-    responses = iter(
-        [
+
+def test_login_denied_exits(monkeypatch: pytest.MonkeyPatch, filestore: Path) -> None:
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    monkeypatch.setattr(
+        cloud,
+        "_post",
+        _responses(
             {
                 "device_code": "dc",
                 "user_code": "AAAA-BBBB",
@@ -59,14 +81,16 @@ def test_login_denied_exits(monkeypatch, tmp_path):
                 "expires_in": 900,
             },
             {"status": "denied"},
-        ]
+        ),
     )
-    monkeypatch.setattr(cloud, "_post", lambda path, **kw: next(responses))
     with pytest.raises(typer.Exit):
         cloud.login()
+    assert not filestore.exists()
 
 
-def test_env_var_overrides_stored_key(monkeypatch, tmp_path):
-    monkeypatch.setattr(cloud, "CRED_PATH", tmp_path / "missing.json")
-    monkeypatch.setenv("DIMOS_API_KEY", "dimos_sk_env")
+def test_global_config_key_overrides_stored(
+    monkeypatch: pytest.MonkeyPatch, filestore: Path
+) -> None:
+    filestore.write_text(json.dumps({"api_key": "dimos_sk_stored"}))
+    monkeypatch.setattr(global_config, "dimos_api_key", "dimos_sk_env")
     assert cloud.api_key() == "dimos_sk_env"

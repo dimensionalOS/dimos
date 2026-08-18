@@ -16,41 +16,95 @@
 
 Device-code flow (RFC 8628 shaped) against login.dimensional.org — built for robots:
 no browser or clipboard needed on this machine. The CLI prints an 8-character code,
-you approve it from any signed-in browser (laptop, phone), and the minted API key
-lands in the XDG config dir. `DIMOS_API_KEY` overrides the stored key everywhere.
+you approve it from any signed-in browser (laptop, phone), and the minted API key is
+stored in the system keyring, falling back to a 0600 file (`CREDENTIALS_PATH`) on
+headless machines with no keyring backend. `DIMOS_API_KEY` (via GlobalConfig)
+overrides any stored login.
 """
 
 import json
 import os
 import socket
-import stat
 import time
+from types import ModuleType
+from typing import Any, cast
 import urllib.error
 import urllib.parse
 import urllib.request
 
 import typer
 
-from dimos.constants import CONFIG_DIR
+from dimos.constants import CREDENTIALS_PATH
+from dimos.core.global_config import global_config
 
-BASE = os.environ.get("DIMOS_CLOUD_URL", "https://login.dimensional.org")
-CRED_PATH = CONFIG_DIR / "dimos" / "credentials.json"
+_KEYRING_SERVICE = "dimos-cloud"
+_KEYRING_USER = "default"
 
 
-def _post(path: str, **params: str | int) -> dict:
-    url = f"{BASE}{path}?" + urllib.parse.urlencode(params)
+def _base() -> str:
+    return global_config.dimos_cloud_url.rstrip("/")
+
+
+def _post(path: str, **params: str | int) -> dict[str, Any]:
+    url = f"{_base()}{path}?" + urllib.parse.urlencode(params)
     with urllib.request.urlopen(urllib.request.Request(url, method="POST")) as r:
-        return json.load(r)
+        return cast("dict[str, Any]", json.load(r))
+
+
+def _keyring() -> ModuleType | None:
+    """The OS keyring, or None on machines without a usable backend (headless robots)."""
+    try:
+        import keyring
+
+        keyring.get_password(_KEYRING_SERVICE, "probe")
+        return keyring
+    except Exception:
+        return None
+
+
+def _store(creds: dict[str, str]) -> str:
+    """Persist credentials; returns a human-readable location for the login message."""
+    blob = json.dumps(creds)
+    if kr := _keyring():
+        kr.set_password(_KEYRING_SERVICE, _KEYRING_USER, blob)
+        return "system keyring"
+    CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    # No keyring backend (typical on robots): owner-only file, the same convention
+    # gh / aws / kubectl use for exactly this situation.
+    fd = os.open(CREDENTIALS_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(blob)
+    return str(CREDENTIALS_PATH)
+
+
+def _load() -> dict[str, str] | None:
+    if kr := _keyring():
+        if blob := kr.get_password(_KEYRING_SERVICE, _KEYRING_USER):
+            return cast("dict[str, str]", json.loads(blob))
+    try:
+        return cast("dict[str, str]", json.loads(CREDENTIALS_PATH.read_text()))
+    except (OSError, ValueError):
+        return None
+
+
+def _forget() -> bool:
+    found = False
+    if kr := _keyring():
+        if kr.get_password(_KEYRING_SERVICE, _KEYRING_USER):
+            kr.delete_password(_KEYRING_SERVICE, _KEYRING_USER)
+            found = True
+    if CREDENTIALS_PATH.exists():
+        CREDENTIALS_PATH.unlink()
+        found = True
+    return found
 
 
 def api_key() -> str | None:
-    """The credential for cloud calls: env var first, then the stored login."""
-    if key := os.environ.get("DIMOS_API_KEY"):
-        return key
-    try:
-        return json.loads(CRED_PATH.read_text())["api_key"]
-    except (OSError, KeyError, ValueError):
-        return None
+    """The credential for cloud calls: DIMOS_API_KEY first, then the stored login."""
+    if global_config.dimos_api_key:
+        return global_config.dimos_api_key
+    creds = _load()
+    return creds.get("api_key") if creds else None
 
 
 def login() -> None:
@@ -63,10 +117,8 @@ def login() -> None:
         time.sleep(d["interval"])
         r = _post("/auth/token", device_code=d["device_code"])
         if r["status"] == "ok":
-            CRED_PATH.parent.mkdir(parents=True, exist_ok=True)
-            CRED_PATH.write_text(json.dumps({"api_key": r["api_key"], "email": r["email"]}))
-            CRED_PATH.chmod(stat.S_IRUSR | stat.S_IWUSR)
-            typer.echo(f"Logged in as {r['email']} (key {r['key_id']}…)")
+            where = _store({"api_key": r["api_key"], "email": r["email"]})
+            typer.echo(f"Logged in as {r['email']} (key {r['key_id']}…, stored in {where})")
             return
         if r["status"] in ("denied", "expired"):
             typer.echo(f"Login {r['status']}.", err=True)
@@ -77,9 +129,8 @@ def login() -> None:
 
 def logout() -> None:
     """Forget the stored key. Revoke it fully at login.dimensional.org/keys."""
-    if CRED_PATH.exists():
-        CRED_PATH.unlink()
-        typer.echo(f"Removed {CRED_PATH}. Revoke the key at {BASE}/keys.")
+    if _forget():
+        typer.echo(f"Logged out. Revoke the key at {_base()}/keys.")
     else:
         typer.echo("Not logged in.")
 
@@ -90,7 +141,9 @@ def whoami() -> None:
     if not key:
         typer.echo("Not logged in — run `dimos login`.", err=True)
         raise typer.Exit(1)
-    req = urllib.request.Request(f"{BASE}/auth/whoami", headers={"Authorization": f"Bearer {key}"})
+    req = urllib.request.Request(
+        f"{_base()}/auth/whoami", headers={"Authorization": f"Bearer {key}"}
+    )
     try:
         with urllib.request.urlopen(req) as r:
             who = json.load(r)
