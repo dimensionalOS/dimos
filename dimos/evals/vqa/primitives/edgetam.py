@@ -16,37 +16,36 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated, Any, Protocol
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Protocol, cast
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from dimos.evals.vqa.families import InsufficientEvidenceError
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-from dimos.perception.detection.type.detection3d.pointcloud import ProjectedPointCloud
-
-ObjectName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 if TYPE_CHECKING:
     from dimos.evals.vqa.families import ObjectDetector
-    from dimos.evals.vqa.preprocessing import CalibratedFrame
+    from dimos.msgs.sensor_msgs.Image import Image
 
 
-class ObjectRangeEvidence(BaseModel):
-    """Median Euclidean camera-origin range supported by foreground points."""
+@dataclass(frozen=True)
+class ObjectMaskEvidence:
+    """One validated box-prompted object mask."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
-
-    object_name: ObjectName
-    camera_range_m: float = Field(ge=0)
-    supporting_point_count: int = Field(ge=1)
+    object_name: str
     prompt_bbox_xyxy: tuple[float, float, float, float]
-    mask_bbox_xyxy: tuple[float, float, float, float]
-    mask_area_px: int = Field(ge=1)
-    range_quartiles_m: tuple[float, float, float]
-    synchronization_delta_s: float = Field(ge=0)
-    calibration_source: str = Field(min_length=1)
+    detection: Detection2DBBox
+    mask: np.ndarray
+
+    @property
+    def mask_bbox_xyxy(self) -> tuple[float, float, float, float]:
+        return cast("tuple[float, float, float, float]", tuple(map(float, self.detection.bbox)))
+
+    @property
+    def mask_area_px(self) -> int:
+        return int(np.count_nonzero(self.mask))
 
 
 class EdgeTAMImageSegmenterCompatible(Protocol):
@@ -57,116 +56,91 @@ class EdgeTAMImageSegmenterCompatible(Protocol):
     ) -> ImageDetections2D[Detection2DBBox]: ...
 
 
-class EdgeTamLidarRangeEstimator:
-    """Estimate object range from box-prompted masks and calibrated LiDAR points."""
+class EdgeTamObjectMaskEstimator:
+    """Detect and batch-segment named objects, caching evidence per image."""
 
     def __init__(
         self,
         detector: ObjectDetector,
         segmenter: EdgeTAMImageSegmenterCompatible | None = None,
-        min_supporting_points: int = 5,
     ) -> None:
-        if min_supporting_points < 1:
-            raise ValueError("min_supporting_points must be at least 1")
         self._detector = detector
         self._segmenter = segmenter
-        self._min_supporting_points = min_supporting_points
-        self._cached_frame: CalibratedFrame | None = None
-        self._cached_projection: ProjectedPointCloud | None = None
-        self._cached_evidence: dict[str, ObjectRangeEvidence] = {}
+        self._cached_image_key: tuple[int, int, float] | None = None
+        self._cached_evidence: dict[str, ObjectMaskEvidence] = {}
 
-    def estimate(self, frame: CalibratedFrame, object_name: str) -> ObjectRangeEvidence:
-        """Estimate robust camera-origin range to one detected object."""
-        if not isinstance(object_name, str):
-            raise TypeError("object_name must be a string")
-        normalized_name = object_name.strip()
-        if not normalized_name:
-            raise ValueError("object_name must not be blank")
-        if frame is not self._cached_frame:
-            self._cached_frame = frame
-            self._cached_projection = None
+    def estimate(self, image: Image, object_name: str) -> ObjectMaskEvidence:
+        """Return one named object's validated mask."""
+        return self.estimate_many(image, (object_name,))[0]
+
+    def estimate_many(
+        self,
+        image: Image,
+        object_names: tuple[str, ...],
+    ) -> tuple[ObjectMaskEvidence, ...]:
+        """Return several object masks from one EdgeTAM segmentation pass."""
+        if not object_names:
+            raise ValueError("object_names must not be empty")
+        normalized_names = tuple(name.strip() for name in object_names)
+        if any(not name for name in normalized_names):
+            raise ValueError("object names must not be blank")
+        if len({name.casefold() for name in normalized_names}) != len(normalized_names):
+            raise ValueError("object names must be distinct")
+
+        image_key = (id(image), id(image.data), image.ts)
+        if image_key != self._cached_image_key:
+            self._cached_image_key = image_key
             self._cached_evidence.clear()
-        cache_key = normalized_name
-        if cached := self._cached_evidence.get(cache_key):
-            return cached
 
-        detections = self._detector.query_detections(frame.image, normalized_name)
-        valid_detections = [detection for detection in detections if detection.is_valid()]
-        if len(valid_detections) != 1:
-            raise InsufficientEvidenceError(
-                f"object range requires exactly one valid detected {normalized_name!r}, "
-                f"got {len(valid_detections)}"
-            )
-        detection = valid_detections[0]
+        pending: list[tuple[str, Detection2DBBox]] = []
+        for object_name in normalized_names:
+            if object_name in self._cached_evidence:
+                continue
+            detected = self._detector.query_detections(image, object_name)
+            valid_detections = [detection for detection in detected if detection.is_valid()]
+            if len(valid_detections) != 1:
+                raise InsufficientEvidenceError(
+                    f"object mask requires exactly one valid detected {object_name!r}, "
+                    f"got {len(valid_detections)}"
+                )
+            pending.append((object_name, valid_detections[0]))
 
-        prompted = ImageDetections2D(frame.image, [detection])
-        segmented = self._get_segmenter().segment(prompted)
-        valid_masks: list[tuple[Detection2DBBox, np.ndarray[Any, Any]]] = []
-        expected_shape = (frame.image.height, frame.image.width)
-        for candidate in segmented:
-            mask = getattr(candidate, "mask", None)
-            if (
-                candidate.is_valid()
-                and isinstance(mask, np.ndarray)
-                and mask.ndim == 2
-                and mask.shape == expected_shape
-                and bool(np.any(mask))
-            ):
-                valid_masks.append((candidate, mask))
-        if len(valid_masks) != 1:
-            raise InsufficientEvidenceError(
-                "object range requires exactly one valid segmentation mask matching "
-                f"the rectified image, got {len(valid_masks)}"
+        if pending:
+            segmented = self._get_segmenter().segment(
+                ImageDetections2D(image, [detection for _, detection in pending])
             )
-        segmented_detection, mask = valid_masks[0]
-
-        if (frame.camera_info.height, frame.camera_info.width) != (
-            frame.image.height,
-            frame.image.width,
-        ):
-            raise ValueError("camera calibration dimensions do not match the rectified image")
-        if self._cached_projection is None:
-            self._cached_projection = ProjectedPointCloud.from_pointcloud(
-                frame.pointcloud,
-                frame.camera_info,
-                frame.pointcloud_to_camera,
-            )
-        _, supporting_points = self._cached_projection.points_in_detection(
-            segmented_detection,
-            nearest_per_pixel=True,
-        )
-        if len(supporting_points) < self._min_supporting_points:
-            raise InsufficientEvidenceError(
-                f"object range requires at least {self._min_supporting_points} supporting "
-                f"points, got {len(supporting_points)}"
-            )
-
-        ranges = np.linalg.norm(supporting_points, axis=1)
-        quartiles = np.quantile(ranges, (0.25, 0.5, 0.75))
-        bbox = detection.bbox
-        mask_bbox = segmented_detection.bbox
-        evidence = ObjectRangeEvidence(
-            object_name=normalized_name,
-            camera_range_m=float(quartiles[1]),
-            supporting_point_count=len(supporting_points),
-            prompt_bbox_xyxy=(float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])),
-            mask_bbox_xyxy=(
-                float(mask_bbox[0]),
-                float(mask_bbox[1]),
-                float(mask_bbox[2]),
-                float(mask_bbox[3]),
-            ),
-            mask_area_px=int(np.count_nonzero(mask)),
-            range_quartiles_m=(
-                float(quartiles[0]),
-                float(quartiles[1]),
-                float(quartiles[2]),
-            ),
-            synchronization_delta_s=float(frame.synchronization_delta_s),
-            calibration_source=frame.calibration_source,
-        )
-        self._cached_evidence[cache_key] = evidence
-        return evidence
+            if len(segmented) != len(pending):
+                raise InsufficientEvidenceError(
+                    "object mask requires one segmentation result per detected object, "
+                    f"got {len(segmented)} for {len(pending)} objects"
+                )
+            expected_shape = (image.height, image.width)
+            for (object_name, detection), candidate in zip(pending, segmented, strict=True):
+                mask = getattr(candidate, "mask", None)
+                if not (
+                    candidate.is_valid()
+                    and isinstance(mask, np.ndarray)
+                    and mask.ndim == 2
+                    and mask.shape == expected_shape
+                    and bool(np.any(mask))
+                ):
+                    raise InsufficientEvidenceError(
+                        "object mask requires one valid segmentation mask matching "
+                        f"the rectified image for {object_name!r}"
+                    )
+                bbox = detection.bbox
+                self._cached_evidence[object_name] = ObjectMaskEvidence(
+                    object_name=object_name,
+                    prompt_bbox_xyxy=(
+                        float(bbox[0]),
+                        float(bbox[1]),
+                        float(bbox[2]),
+                        float(bbox[3]),
+                    ),
+                    detection=candidate,
+                    mask=mask,
+                )
+        return tuple(self._cached_evidence[name] for name in normalized_names)
 
     def _get_segmenter(self) -> EdgeTAMImageSegmenterCompatible:
         if self._segmenter is None:
@@ -176,7 +150,11 @@ class EdgeTamLidarRangeEstimator:
         return self._segmenter
 
 
-class ObjectRangeEstimator(Protocol):
-    """Estimate object range from an explicit canonical frame."""
+class ObjectMaskEstimator(Protocol):
+    """Estimate object masks from an image."""
 
-    def estimate(self, frame: CalibratedFrame, object_name: str) -> ObjectRangeEvidence: ...
+    def estimate(self, image: Image, object_name: str) -> ObjectMaskEvidence: ...
+
+    def estimate_many(
+        self, image: Image, object_names: tuple[str, ...]
+    ) -> tuple[ObjectMaskEvidence, ...]: ...

@@ -38,7 +38,8 @@ Image and LiDAR observations must be within `--sync-tolerance` seconds, which de
 ## Question Families
 
 The image-only question author selects object names and applicable families. It does not produce
-answers.
+answers. Every proposal uses `object_names`; single-object families require one entry, while
+`closest_object` requires two to five.
 
 | Family | Choices | Evidence rule |
 |---|---|---|
@@ -46,12 +47,16 @@ answers.
 | `horizontal_direction` | left, center, right | Exactly one detection; use its horizontal center |
 | `object_count` | one, two, three, four or more | Count Moondream detections |
 | `object_distance` | under 1 m, 1 to under 2 m, 2 to under 3 m, 3 m or more | Median LiDAR range inside an EdgeTAM mask |
+| `closest_object` | Two to five authored object references | Select the smallest unambiguous LiDAR range |
 
 Proposals without sufficient evidence are rejected and retained in the private audit. If no proposal
 can be answered, generation fails without publishing a dataset.
 
 Distance questions require one Moondream detection, one EdgeTAM mask, and at least five projected
 LiDAR points. Evidence whose range quartiles cross an answer boundary is rejected.
+Closest-object questions accept references such as `left person`, `right person`, and `chair`, which
+lets Moondream distinguish repeated categories. They are rejected unless every reference has exactly
+one detection or the closest range interval overlaps any other candidate.
 
 ## Dataset Layout
 

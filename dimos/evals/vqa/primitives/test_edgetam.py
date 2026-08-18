@@ -21,7 +21,8 @@ import pytest
 
 from dimos.evals.vqa.families import InsufficientEvidenceError
 from dimos.evals.vqa.preprocessing import CalibratedFrame
-from dimos.evals.vqa.primitives.edgetam import EdgeTamLidarRangeEstimator
+from dimos.evals.vqa.primitives.edgetam import EdgeTamObjectMaskEstimator
+from dimos.evals.vqa.primitives.range import LidarRangeEstimator
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -68,16 +69,44 @@ class _Detector:
         return ImageDetections2D(image, detections)
 
 
+class _NamedDetector:
+    def __init__(self, boxes: dict[str, BBox]) -> None:
+        self._boxes = boxes
+
+    def detect(self, image: Image, object_name: str) -> ImageDetections2D[Detection2DBBox]:
+        box = self._boxes[object_name]
+        return ImageDetections2D(
+            image,
+            [
+                Detection2DBBox(
+                    bbox=box,
+                    track_id=len(object_name),
+                    class_id=0,
+                    confidence=1.0,
+                    name=object_name,
+                    ts=image.ts,
+                    image=image,
+                )
+            ],
+        )
+
+
 class _Segmenter:
-    def __init__(self, mask: np.ndarray) -> None:
-        self._mask = mask
+    def __init__(self, mask: np.ndarray | list[np.ndarray]) -> None:
+        self._masks = mask if isinstance(mask, list) else [mask]
         self.prompted_boxes: list[BBox] = []
+        self.call_count = 0
 
     def segment(
         self, detections: ImageDetections2D[Detection2DBBox]
     ) -> ImageDetections2D[Detection2DBBox]:
-        prompt = detections[0]
-        self.prompted_boxes.append(prompt.bbox)
+        self.call_count += 1
+        self.prompted_boxes.extend(prompt.bbox for prompt in detections)
+        masks = (
+            self._masks * len(detections)
+            if len(self._masks) == 1
+            else self._masks[: len(detections)]
+        )
         segmented: list[Detection2DBBox] = [
             Detection2DSeg(
                 bbox=prompt.bbox,
@@ -87,8 +116,9 @@ class _Segmenter:
                 name=prompt.name,
                 ts=prompt.ts,
                 image=detections.image,
-                mask=self._mask,
+                mask=mask,
             )
+            for prompt, mask in zip(detections, masks, strict=True)
         ]
         return ImageDetections2D(detections.image, segmented)
 
@@ -120,6 +150,48 @@ def _full_mask() -> np.ndarray:
     return np.ones((10, 10), dtype=np.uint8)
 
 
+def _range_estimator(
+    detector: _Detector | _NamedDetector,
+    segmenter: _Segmenter,
+    min_supporting_points: int = 5,
+) -> LidarRangeEstimator:
+    return LidarRangeEstimator(
+        EdgeTamObjectMaskEstimator(detector, segmenter),
+        min_supporting_points,
+    )
+
+
+def test_mask_estimator_batches_and_caches_without_pointcloud() -> None:
+    image = Image(data=np.zeros((10, 10, 3), dtype=np.uint8), ts=10.0)
+    left_mask = np.zeros((10, 10), dtype=np.uint8)
+    right_mask = np.zeros((10, 10), dtype=np.uint8)
+    left_mask[:, :4] = 1
+    right_mask[:, 5:] = 1
+    segmenter = _Segmenter([left_mask, right_mask])
+    estimator = EdgeTamObjectMaskEstimator(
+        _NamedDetector(
+            {
+                "left person": (0.0, 0.0, 4.0, 9.0),
+                "right person": (5.0, 0.0, 9.0, 9.0),
+            }
+        ),
+        segmenter,
+    )
+
+    left, right = estimator.estimate_many(image, ("left person", "right person"))
+    cached = estimator.estimate(image, "left person")
+
+    assert left.mask_area_px == 40
+    assert right.mask_area_px == 50
+    assert cached is left
+    assert segmenter.call_count == 1
+
+    image.ts = 11.0
+    estimator.estimate(image, "left person")
+
+    assert segmenter.call_count == 2
+
+
 def test_projects_transformed_points_and_rejects_invalid_projections() -> None:
     pointcloud = _PointCloud(
         np.array(
@@ -139,7 +211,7 @@ def test_projects_transformed_points_and_rejects_invalid_projections() -> None:
     mask = np.zeros((10, 10), dtype=np.uint8)
     mask[0, 2] = 1
 
-    evidence = EdgeTamLidarRangeEstimator(
+    evidence = _range_estimator(
         _Detector([(0.0, 0.0, 3.0, 2.0)]), _Segmenter(mask), min_supporting_points=1
     ).estimate(frame, "crate")
 
@@ -160,7 +232,7 @@ def test_mask_selection_uses_nearest_camera_z_point_per_pixel() -> None:
     mask = np.zeros((10, 10), dtype=np.uint8)
     mask[5, 5] = 1
 
-    evidence = EdgeTamLidarRangeEstimator(
+    evidence = _range_estimator(
         _Detector([(0.0, 0.0, 10.0, 10.0)]), _Segmenter(mask), min_supporting_points=1
     ).estimate(_frame(pointcloud), "chair")
 
@@ -171,21 +243,22 @@ def test_mask_selection_uses_nearest_camera_z_point_per_pixel() -> None:
 
 @pytest.mark.parametrize("boxes", [[], [(0.0, 0.0, 4.0, 4.0), (5.0, 5.0, 9.0, 9.0)]])
 def test_requires_exactly_one_valid_detection(boxes: list[BBox]) -> None:
-    estimator = EdgeTamLidarRangeEstimator(_Detector(boxes), _Segmenter(_full_mask()))
+    cloud = _PointCloud(np.array([[0.0, 0.0, 1.0]]))
+    estimator = _range_estimator(_Detector(boxes), _Segmenter(_full_mask()))
 
     with pytest.raises(InsufficientEvidenceError, match="exactly one valid detected"):
-        estimator.estimate(_frame(_PointCloud(np.array([[0.0, 0.0, 1.0]]))), "cup")
+        estimator.estimate(_frame(cloud), "cup")
+
+    assert cloud.read_count == 0
 
 
 def test_rejects_too_few_mask_supporting_points() -> None:
     pointcloud = _PointCloud(
         np.array([[-2.0, 0.0, 1.0], [-1.5, 0.0, 1.0], [-1.0, 0.0, 1.0], [-0.5, 0.0, 1.0]])
     )
-    estimator = EdgeTamLidarRangeEstimator(
-        _Detector([(0.0, 0.0, 10.0, 10.0)]), _Segmenter(_full_mask())
-    )
+    estimator = _range_estimator(_Detector([(0.0, 0.0, 10.0, 10.0)]), _Segmenter(_full_mask()))
 
-    with pytest.raises(InsufficientEvidenceError, match="at least 5 supporting points, got 4"):
+    with pytest.raises(InsufficientEvidenceError, match="at least 5 supporting points.*got 4"):
         estimator.estimate(_frame(pointcloud), "bottle")
 
 
@@ -193,7 +266,7 @@ def test_rejects_invalid_camera_intrinsics_before_projection() -> None:
     frame = _frame(_PointCloud(np.array([[0.0, 0.0, 1.0]])))
     frame.camera_info.K[0] = 0.0
 
-    estimator = EdgeTamLidarRangeEstimator(
+    estimator = _range_estimator(
         _Detector([(0.0, 0.0, 10.0, 10.0)]),
         _Segmenter(_full_mask()),
         min_supporting_points=1,
@@ -204,13 +277,13 @@ def test_rejects_invalid_camera_intrinsics_before_projection() -> None:
 
 
 def test_rejects_segmentation_mask_with_wrong_dimensions() -> None:
-    estimator = EdgeTamLidarRangeEstimator(
+    estimator = _range_estimator(
         _Detector([(0.0, 0.0, 10.0, 10.0)]),
         _Segmenter(np.ones((9, 10), dtype=np.uint8)),
         min_supporting_points=1,
     )
 
-    with pytest.raises(InsufficientEvidenceError, match="exactly one valid segmentation mask"):
+    with pytest.raises(InsufficientEvidenceError, match="one valid segmentation mask"):
         estimator.estimate(_frame(_PointCloud(np.array([[0.0, 0.0, 1.0]]))), "bottle")
 
 
@@ -219,7 +292,7 @@ def test_returns_median_euclidean_range_and_auditable_quartiles() -> None:
     expected_ranges = np.linalg.norm(points, axis=1)
     frame = _frame(_PointCloud(points), fx=1.0, fy=1.0, cx=0.0, cy=0.0)
 
-    evidence = EdgeTamLidarRangeEstimator(
+    evidence = _range_estimator(
         _Detector([(0.0, 0.0, 9.0, 9.0)]), _Segmenter(_full_mask())
     ).estimate(frame, "cone")
 
@@ -239,9 +312,7 @@ def test_projection_cache_reuses_across_objects_only_for_the_same_explicit_frame
     second_cloud = _PointCloud(points)
     first_frame = _frame(first_cloud, index=3, fx=1.0, fy=1.0, cx=0.0, cy=0.0)
     second_frame = _frame(second_cloud, index=3, fx=1.0, fy=1.0, cx=0.0, cy=0.0)
-    estimator = EdgeTamLidarRangeEstimator(
-        _Detector([(0.0, 0.0, 9.0, 9.0)]), _Segmenter(_full_mask())
-    )
+    estimator = _range_estimator(_Detector([(0.0, 0.0, 9.0, 9.0)]), _Segmenter(_full_mask()))
 
     estimator.estimate(first_frame, "box")
     estimator.estimate(first_frame, "crate")
@@ -249,3 +320,30 @@ def test_projection_cache_reuses_across_objects_only_for_the_same_explicit_frame
 
     assert first_cloud.read_count == 1
     assert second_cloud.read_count == 1
+
+
+def test_estimate_many_batches_masks_and_reuses_one_projection() -> None:
+    cloud = _PointCloud(np.array([[-1.5, 0.0, 1.0], [3.0, 0.0, 3.0]]))
+    left_mask = np.zeros((10, 10), dtype=np.uint8)
+    right_mask = np.zeros((10, 10), dtype=np.uint8)
+    left_mask[5, 2] = 1
+    right_mask[5, 7] = 1
+    segmenter = _Segmenter([left_mask, right_mask])
+    estimator = _range_estimator(
+        _NamedDetector(
+            {
+                "chair": (0.0, 0.0, 4.0, 9.0),
+                "table": (5.0, 0.0, 9.0, 9.0),
+            }
+        ),
+        segmenter,
+        min_supporting_points=1,
+    )
+
+    left, right = estimator.estimate_many(_frame(cloud), ("chair", "table"))
+
+    assert left.object_name == "chair"
+    assert right.object_name == "table"
+    assert left.camera_range_m < right.camera_range_m
+    assert segmenter.call_count == 1
+    assert cloud.read_count == 1
