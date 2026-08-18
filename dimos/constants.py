@@ -33,12 +33,12 @@ if (DIMOS_PROJECT_ROOT / ".git").exists():
     # Running from Git repository
     LOG_DIR = DIMOS_PROJECT_ROOT / "logs"
     RECORDINGS_DIR = DIMOS_PROJECT_ROOT / "recordings"
-    CREDENTIALS_PATH = DIMOS_PROJECT_ROOT / ".credentials.json"
 else:
     # Running from an installed package - use XDG_STATE_HOME
     LOG_DIR = STATE_DIR / "logs"
     RECORDINGS_DIR = STATE_DIR / "recordings"
-    CREDENTIALS_PATH = CONFIG_DIR / "dimos" / "credentials.json"
+
+CREDENTIALS_PATH = CONFIG_DIR / "dimos" / "credentials.json"
 
 """
 Constants for shared memory

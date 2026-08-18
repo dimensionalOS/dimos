@@ -40,7 +40,6 @@ result-*
 
 # Local environment and secrets
 .env
-.credentials.json
 .ssh/
 .bash_history
 
