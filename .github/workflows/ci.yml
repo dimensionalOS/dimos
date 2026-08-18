@@ -1022,6 +1022,17 @@ jobs:
         run: uv run pytest -m '' --no-cov dimos/robot/unitree/go2/test_replay_benchmark.py
         env:
           DIMOS_BENCH_CPU_METRICS: cpu-benchmark.json
+      # Re-runs reuse the original event payload, which predates any label
+      # added in response to a failure — so query the live labels instead.
+      - name: Check for an acknowledged regression
+        id: ack
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          acked=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" \
+            --jq '[.labels[].name] | contains(["benchmark-ack"])')
+          echo "acked=$acked" >> "$GITHUB_OUTPUT"
       - name: Track results
         uses: benchmark-action/github-action-benchmark@v1
         with:
@@ -1034,8 +1045,15 @@ jobs:
           save-data-file: ${{ github.event_name == 'push' }}
           alert-threshold: 120%
           comment-on-alert: true
+          comment-always: true
           summary-always: true
           max-items-in-chart: 200
+          # A >120% regression fails the PR check (and with it ci-complete).
+          # To accept one, a maintainer adds the `benchmark-ack` label and
+          # re-runs this job; once merged, the main push records the new
+          # baseline, so later PRs compare against it. Pushes and the merge
+          # queue don't re-enforce what the PR check already gated.
+          fail-on-alert: ${{ github.event_name == 'pull_request' && steps.ack.outputs.acked != 'true' }}
 
   # Cross-job fail-fast: GitHub Actions only fail-fasts within a matrix,
   # not across sibling jobs. This watcher fires the moment `tests` fails
