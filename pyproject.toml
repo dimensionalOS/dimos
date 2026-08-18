@@ -50,6 +50,10 @@ exclude = [
     "**/*.svg",
     "**/*.tcss",
     "**/*.pyi",
+    # Locked Python-native runtime definition. Keep these exact rather than
+    # shipping arbitrary manifests from the source tree.
+    "imitation/policy/lerobot/python/pyproject.toml",
+    "imitation/policy/lerobot/python/uv.lock",
 ]
 
 [tool.setuptools.exclude-package-data]

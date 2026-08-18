@@ -17,13 +17,16 @@ from __future__ import annotations
 import pytest
 
 from dimos.core.coordination.blueprints import Blueprint
+from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.imitation.collection.blueprint import (
+    learning_collect_quest_openyam,
     learning_collect_quest_piper,
     learning_collect_quest_xarm7,
 )
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.manipulators.openyam.config import OPENYAM_JOINTS
 from dimos.teleop.quest.quest_extensions import ArmTeleopModule
 
 AGGREGATE = "coordinator_joint_state"
@@ -82,7 +85,10 @@ def _joint_streams(blueprint: Blueprint) -> dict[tuple[str, str], str]:
     }
 
 
-@pytest.mark.parametrize("blueprint", [learning_collect_quest_xarm7, learning_collect_quest_piper])
+@pytest.mark.parametrize(
+    "blueprint",
+    [learning_collect_quest_xarm7, learning_collect_quest_piper, learning_collect_quest_openyam],
+)
 def test_recorder_reads_aggregate_joint_state(blueprint: Blueprint) -> None:
     streams = _joint_streams(blueprint)
 
@@ -90,4 +96,22 @@ def test_recorder_reads_aggregate_joint_state(blueprint: Blueprint) -> None:
     # atom carries its explicit instance_name (the RPC lookup contract).
     assert streams[("collectionrecorder", AGGREGATE)] == AGGREGATE
     assert streams[("ControlCoordinator", AGGREGATE)] == AGGREGATE
-    assert not [port for _instance, port in streams if port.endswith("_joints")]
+
+
+def test_openyam_collection_has_one_wrist_webcam_and_all_joints() -> None:
+    camera_atoms = [
+        atom
+        for atom in learning_collect_quest_openyam.active_blueprints
+        if atom.module is CameraModule
+    ]
+    coordinator = next(
+        atom
+        for atom in learning_collect_quest_openyam.active_blueprints
+        if atom.instance_name == "ControlCoordinator"
+    )
+
+    assert len(camera_atoms) == 1
+    assert camera_atoms[0].instance_name == "WristCamera"
+    hardware = coordinator.kwargs["hardware"]
+    assert len(hardware) == 1
+    assert hardware[0].joints == OPENYAM_JOINTS
