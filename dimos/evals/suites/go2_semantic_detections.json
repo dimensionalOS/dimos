@@ -1,0 +1,2639 @@
+[
+  {
+    "class_name": "surfboard",
+    "confidence": 0.507,
+    "ts": 6.67,
+    "x": -11.659,
+    "y": 12.972,
+    "z": 0.312,
+    "yaw": -0.43
+  },
+  {
+    "class_name": "bed",
+    "confidence": 0.499,
+    "ts": 8.08,
+    "x": -10.973,
+    "y": 12.633,
+    "z": 0.312,
+    "yaw": -0.472
+  },
+  {
+    "class_name": "bed",
+    "confidence": 0.825,
+    "ts": 8.78,
+    "x": -10.592,
+    "y": 12.444,
+    "z": 0.307,
+    "yaw": -0.45
+  },
+  {
+    "class_name": "bed",
+    "confidence": 0.625,
+    "ts": 9.13,
+    "x": -10.404,
+    "y": 12.35,
+    "z": 0.307,
+    "yaw": -0.514
+  },
+  {
+    "class_name": "car",
+    "confidence": 0.595,
+    "ts": 10.18,
+    "x": -10.008,
+    "y": 12.16,
+    "z": 0.307,
+    "yaw": -0.183
+  },
+  {
+    "class_name": "bed",
+    "confidence": 0.459,
+    "ts": 11.24,
+    "x": -9.483,
+    "y": 12.027,
+    "z": 0.311,
+    "yaw": -0.277
+  },
+  {
+    "class_name": "bed",
+    "confidence": 0.643,
+    "ts": 11.59,
+    "x": -9.142,
+    "y": 11.935,
+    "z": 0.316,
+    "yaw": -0.266
+  },
+  {
+    "class_name": "bench",
+    "confidence": 0.426,
+    "ts": 18.27,
+    "x": -4.488,
+    "y": 10.47,
+    "z": 0.31,
+    "yaw": -0.248
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.571,
+    "ts": 22.13,
+    "x": -3.003,
+    "y": 9.609,
+    "z": 0.315,
+    "yaw": -1.72
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.476,
+    "ts": 22.13,
+    "x": -3.003,
+    "y": 9.609,
+    "z": 0.315,
+    "yaw": -1.72
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.469,
+    "ts": 22.13,
+    "x": -3.003,
+    "y": 9.609,
+    "z": 0.315,
+    "yaw": -1.72
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.527,
+    "ts": 23.89,
+    "x": -3.245,
+    "y": 8.332,
+    "z": 0.31,
+    "yaw": -1.902
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.487,
+    "ts": 23.89,
+    "x": -3.245,
+    "y": 8.332,
+    "z": 0.31,
+    "yaw": -1.902
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.437,
+    "ts": 24.59,
+    "x": -3.366,
+    "y": 8.016,
+    "z": 0.309,
+    "yaw": -1.97
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.509,
+    "ts": 24.94,
+    "x": -3.463,
+    "y": 7.769,
+    "z": 0.314,
+    "yaw": -1.957
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.479,
+    "ts": 24.94,
+    "x": -3.463,
+    "y": 7.769,
+    "z": 0.314,
+    "yaw": -1.957
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.468,
+    "ts": 24.94,
+    "x": -3.463,
+    "y": 7.769,
+    "z": 0.314,
+    "yaw": -1.957
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.47,
+    "ts": 25.29,
+    "x": -3.578,
+    "y": 7.507,
+    "z": 0.314,
+    "yaw": -1.961
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.522,
+    "ts": 25.64,
+    "x": -3.727,
+    "y": 7.157,
+    "z": 0.314,
+    "yaw": -1.956
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.558,
+    "ts": 29.16,
+    "x": -4.171,
+    "y": 4.982,
+    "z": 0.309,
+    "yaw": -0.625
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.48,
+    "ts": 29.16,
+    "x": -4.171,
+    "y": 4.982,
+    "z": 0.309,
+    "yaw": -0.625
+  },
+  {
+    "class_name": "tv",
+    "confidence": 0.455,
+    "ts": 29.16,
+    "x": -4.171,
+    "y": 4.982,
+    "z": 0.309,
+    "yaw": -0.625
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.409,
+    "ts": 29.16,
+    "x": -4.171,
+    "y": 4.982,
+    "z": 0.309,
+    "yaw": -0.625
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.467,
+    "ts": 29.5,
+    "x": -4.029,
+    "y": 4.886,
+    "z": 0.309,
+    "yaw": -0.565
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.678,
+    "ts": 29.86,
+    "x": -3.867,
+    "y": 4.79,
+    "z": 0.316,
+    "yaw": -0.558
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.545,
+    "ts": 29.86,
+    "x": -3.867,
+    "y": 4.79,
+    "z": 0.316,
+    "yaw": -0.558
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.424,
+    "ts": 29.86,
+    "x": -3.867,
+    "y": 4.79,
+    "z": 0.316,
+    "yaw": -0.558
+  },
+  {
+    "class_name": "tv",
+    "confidence": 0.423,
+    "ts": 29.86,
+    "x": -3.867,
+    "y": 4.79,
+    "z": 0.316,
+    "yaw": -0.558
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.532,
+    "ts": 30.92,
+    "x": -3.392,
+    "y": 4.535,
+    "z": 0.312,
+    "yaw": -0.381
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.428,
+    "ts": 30.92,
+    "x": -3.392,
+    "y": 4.535,
+    "z": 0.312,
+    "yaw": -0.381
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.464,
+    "ts": 31.62,
+    "x": -3.062,
+    "y": 4.456,
+    "z": 0.31,
+    "yaw": -0.026
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.783,
+    "ts": 33.38,
+    "x": -2.377,
+    "y": 4.796,
+    "z": 0.308,
+    "yaw": 0.981
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.462,
+    "ts": 33.38,
+    "x": -2.377,
+    "y": 4.796,
+    "z": 0.308,
+    "yaw": 0.981
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.437,
+    "ts": 33.72,
+    "x": -2.264,
+    "y": 4.985,
+    "z": 0.314,
+    "yaw": 1.001
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.506,
+    "ts": 34.42,
+    "x": -2.112,
+    "y": 5.334,
+    "z": 0.31,
+    "yaw": 1.31
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.467,
+    "ts": 35.48,
+    "x": -2.121,
+    "y": 5.497,
+    "z": 0.313,
+    "yaw": 0.386
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.413,
+    "ts": 35.48,
+    "x": -2.121,
+    "y": 5.497,
+    "z": 0.313,
+    "yaw": 0.386
+  },
+  {
+    "class_name": "tv",
+    "confidence": 0.579,
+    "ts": 37.95,
+    "x": -1.862,
+    "y": 4.724,
+    "z": 0.323,
+    "yaw": -0.872
+  },
+  {
+    "class_name": "tv",
+    "confidence": 0.474,
+    "ts": 38.3,
+    "x": -1.699,
+    "y": 4.517,
+    "z": 0.312,
+    "yaw": -0.864
+  },
+  {
+    "class_name": "toilet",
+    "confidence": 0.448,
+    "ts": 38.3,
+    "x": -1.699,
+    "y": 4.517,
+    "z": 0.312,
+    "yaw": -0.864
+  },
+  {
+    "class_name": "tv",
+    "confidence": 0.575,
+    "ts": 38.65,
+    "x": -1.565,
+    "y": 4.369,
+    "z": 0.316,
+    "yaw": -0.859
+  },
+  {
+    "class_name": "tv",
+    "confidence": 0.495,
+    "ts": 39.0,
+    "x": -1.41,
+    "y": 4.187,
+    "z": 0.311,
+    "yaw": -0.849
+  },
+  {
+    "class_name": "microwave",
+    "confidence": 0.436,
+    "ts": 39.0,
+    "x": -1.41,
+    "y": 4.187,
+    "z": 0.311,
+    "yaw": -0.849
+  },
+  {
+    "class_name": "microwave",
+    "confidence": 0.698,
+    "ts": 39.36,
+    "x": -1.249,
+    "y": 4.013,
+    "z": 0.307,
+    "yaw": -0.831
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.506,
+    "ts": 39.7,
+    "x": -1.146,
+    "y": 3.886,
+    "z": 0.318,
+    "yaw": -1.099
+  },
+  {
+    "class_name": "surfboard",
+    "confidence": 0.569,
+    "ts": 42.86,
+    "x": -0.679,
+    "y": 2.291,
+    "z": 0.31,
+    "yaw": -1.492
+  },
+  {
+    "class_name": "refrigerator",
+    "confidence": 0.418,
+    "ts": 43.92,
+    "x": -0.625,
+    "y": 1.634,
+    "z": 0.309,
+    "yaw": -1.328
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.861,
+    "ts": 50.58,
+    "x": 0.864,
+    "y": 0.548,
+    "z": 0.31,
+    "yaw": 2.55
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.768,
+    "ts": 51.3,
+    "x": 0.589,
+    "y": 0.609,
+    "z": 0.308,
+    "yaw": 2.99
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.533,
+    "ts": 51.64,
+    "x": 0.428,
+    "y": 0.635,
+    "z": 0.309,
+    "yaw": 3.004
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.885,
+    "ts": 51.99,
+    "x": 0.214,
+    "y": 0.653,
+    "z": 0.315,
+    "yaw": 3.011
+  },
+  {
+    "class_name": "refrigerator",
+    "confidence": 0.593,
+    "ts": 51.99,
+    "x": 0.214,
+    "y": 0.653,
+    "z": 0.315,
+    "yaw": 3.011
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.562,
+    "ts": 52.35,
+    "x": 0.026,
+    "y": 0.684,
+    "z": 0.313,
+    "yaw": 2.883
+  },
+  {
+    "class_name": "refrigerator",
+    "confidence": 0.529,
+    "ts": 52.35,
+    "x": 0.026,
+    "y": 0.684,
+    "z": 0.313,
+    "yaw": 2.883
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.6,
+    "ts": 52.7,
+    "x": -0.162,
+    "y": 0.724,
+    "z": 0.31,
+    "yaw": 2.898
+  },
+  {
+    "class_name": "tv",
+    "confidence": 0.492,
+    "ts": 52.7,
+    "x": -0.162,
+    "y": 0.724,
+    "z": 0.31,
+    "yaw": 2.898
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.425,
+    "ts": 52.7,
+    "x": -0.162,
+    "y": 0.724,
+    "z": 0.31,
+    "yaw": 2.898
+  },
+  {
+    "class_name": "train",
+    "confidence": 0.469,
+    "ts": 53.05,
+    "x": -0.365,
+    "y": 0.773,
+    "z": 0.31,
+    "yaw": 2.901
+  },
+  {
+    "class_name": "toothbrush",
+    "confidence": 0.476,
+    "ts": 54.1,
+    "x": -0.853,
+    "y": 0.925,
+    "z": 0.311,
+    "yaw": 3.055
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.448,
+    "ts": 55.51,
+    "x": -1.34,
+    "y": 0.603,
+    "z": 0.315,
+    "yaw": -1.968
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.452,
+    "ts": 57.27,
+    "x": -1.367,
+    "y": -0.034,
+    "z": 0.309,
+    "yaw": -1.653
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.483,
+    "ts": 57.62,
+    "x": -1.385,
+    "y": -0.241,
+    "z": 0.314,
+    "yaw": -1.637
+  },
+  {
+    "class_name": "cake",
+    "confidence": 0.57,
+    "ts": 58.68,
+    "x": -1.555,
+    "y": -1.061,
+    "z": 0.312,
+    "yaw": -1.793
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.407,
+    "ts": 58.68,
+    "x": -1.555,
+    "y": -1.061,
+    "z": 0.312,
+    "yaw": -1.793
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.486,
+    "ts": 59.37,
+    "x": -1.694,
+    "y": -1.596,
+    "z": 0.314,
+    "yaw": -1.884
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.464,
+    "ts": 59.37,
+    "x": -1.694,
+    "y": -1.596,
+    "z": 0.314,
+    "yaw": -1.884
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.413,
+    "ts": 59.37,
+    "x": -1.694,
+    "y": -1.596,
+    "z": 0.314,
+    "yaw": -1.884
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.445,
+    "ts": 60.78,
+    "x": -1.981,
+    "y": -2.564,
+    "z": 0.307,
+    "yaw": -1.839
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.43,
+    "ts": 60.78,
+    "x": -1.981,
+    "y": -2.564,
+    "z": 0.307,
+    "yaw": -1.839
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.413,
+    "ts": 60.78,
+    "x": -1.981,
+    "y": -2.564,
+    "z": 0.307,
+    "yaw": -1.839
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.508,
+    "ts": 61.13,
+    "x": -2.038,
+    "y": -2.751,
+    "z": 0.314,
+    "yaw": -1.837
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.464,
+    "ts": 61.13,
+    "x": -2.038,
+    "y": -2.751,
+    "z": 0.314,
+    "yaw": -1.837
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.439,
+    "ts": 61.48,
+    "x": -2.1,
+    "y": -2.981,
+    "z": 0.313,
+    "yaw": -1.817
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.417,
+    "ts": 61.48,
+    "x": -2.1,
+    "y": -2.981,
+    "z": 0.313,
+    "yaw": -1.817
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.413,
+    "ts": 61.48,
+    "x": -2.1,
+    "y": -2.981,
+    "z": 0.313,
+    "yaw": -1.817
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.409,
+    "ts": 61.48,
+    "x": -2.1,
+    "y": -2.981,
+    "z": 0.313,
+    "yaw": -1.817
+  },
+  {
+    "class_name": "cup",
+    "confidence": 0.81,
+    "ts": 62.87,
+    "x": -2.29,
+    "y": -3.841,
+    "z": 0.315,
+    "yaw": -1.742
+  },
+  {
+    "class_name": "pizza",
+    "confidence": 0.62,
+    "ts": 62.87,
+    "x": -2.29,
+    "y": -3.841,
+    "z": 0.315,
+    "yaw": -1.742
+  },
+  {
+    "class_name": "cup",
+    "confidence": 0.791,
+    "ts": 63.22,
+    "x": -2.326,
+    "y": -4.033,
+    "z": 0.309,
+    "yaw": -1.727
+  },
+  {
+    "class_name": "pizza",
+    "confidence": 0.66,
+    "ts": 63.22,
+    "x": -2.326,
+    "y": -4.033,
+    "z": 0.309,
+    "yaw": -1.727
+  },
+  {
+    "class_name": "cup",
+    "confidence": 0.885,
+    "ts": 63.57,
+    "x": -2.357,
+    "y": -4.257,
+    "z": 0.306,
+    "yaw": -1.665
+  },
+  {
+    "class_name": "refrigerator",
+    "confidence": 0.624,
+    "ts": 63.57,
+    "x": -2.357,
+    "y": -4.257,
+    "z": 0.306,
+    "yaw": -1.665
+  },
+  {
+    "class_name": "refrigerator",
+    "confidence": 0.461,
+    "ts": 64.62,
+    "x": -2.23,
+    "y": -4.666,
+    "z": 0.303,
+    "yaw": -1.071
+  },
+  {
+    "class_name": "tv",
+    "confidence": 0.411,
+    "ts": 64.97,
+    "x": -2.146,
+    "y": -4.775,
+    "z": 0.309,
+    "yaw": -0.773
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.44,
+    "ts": 66.38,
+    "x": -1.823,
+    "y": -4.947,
+    "z": 0.303,
+    "yaw": -0.258
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.458,
+    "ts": 66.73,
+    "x": -1.697,
+    "y": -4.97,
+    "z": 0.302,
+    "yaw": -0.154
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.518,
+    "ts": 74.11,
+    "x": -2.653,
+    "y": -4.675,
+    "z": 0.309,
+    "yaw": -0.548
+  },
+  {
+    "class_name": "sandwich",
+    "confidence": 0.459,
+    "ts": 76.22,
+    "x": -2.647,
+    "y": -4.261,
+    "z": 0.305,
+    "yaw": 3.09
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.647,
+    "ts": 79.39,
+    "x": -4.021,
+    "y": -3.786,
+    "z": 0.317,
+    "yaw": 1.668
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.623,
+    "ts": 79.39,
+    "x": -4.021,
+    "y": -3.786,
+    "z": 0.317,
+    "yaw": 1.668
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.607,
+    "ts": 79.39,
+    "x": -4.021,
+    "y": -3.786,
+    "z": 0.317,
+    "yaw": 1.668
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.602,
+    "ts": 79.39,
+    "x": -4.021,
+    "y": -3.786,
+    "z": 0.317,
+    "yaw": 1.668
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.602,
+    "ts": 79.39,
+    "x": -4.021,
+    "y": -3.786,
+    "z": 0.317,
+    "yaw": 1.668
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.572,
+    "ts": 79.39,
+    "x": -4.021,
+    "y": -3.786,
+    "z": 0.317,
+    "yaw": 1.668
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.563,
+    "ts": 79.39,
+    "x": -4.021,
+    "y": -3.786,
+    "z": 0.317,
+    "yaw": 1.668
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.541,
+    "ts": 79.39,
+    "x": -4.021,
+    "y": -3.786,
+    "z": 0.317,
+    "yaw": 1.668
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.489,
+    "ts": 79.39,
+    "x": -4.021,
+    "y": -3.786,
+    "z": 0.317,
+    "yaw": 1.668
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.418,
+    "ts": 79.39,
+    "x": -4.021,
+    "y": -3.786,
+    "z": 0.317,
+    "yaw": 1.668
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.406,
+    "ts": 79.39,
+    "x": -4.021,
+    "y": -3.786,
+    "z": 0.317,
+    "yaw": 1.668
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.754,
+    "ts": 80.08,
+    "x": -4.06,
+    "y": -3.432,
+    "z": 0.311,
+    "yaw": 1.653
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.704,
+    "ts": 80.08,
+    "x": -4.06,
+    "y": -3.432,
+    "z": 0.311,
+    "yaw": 1.653
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.679,
+    "ts": 80.08,
+    "x": -4.06,
+    "y": -3.432,
+    "z": 0.311,
+    "yaw": 1.653
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.678,
+    "ts": 80.08,
+    "x": -4.06,
+    "y": -3.432,
+    "z": 0.311,
+    "yaw": 1.653
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.658,
+    "ts": 80.08,
+    "x": -4.06,
+    "y": -3.432,
+    "z": 0.311,
+    "yaw": 1.653
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.656,
+    "ts": 80.08,
+    "x": -4.06,
+    "y": -3.432,
+    "z": 0.311,
+    "yaw": 1.653
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.588,
+    "ts": 80.08,
+    "x": -4.06,
+    "y": -3.432,
+    "z": 0.311,
+    "yaw": 1.653
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.549,
+    "ts": 80.08,
+    "x": -4.06,
+    "y": -3.432,
+    "z": 0.311,
+    "yaw": 1.653
+  },
+  {
+    "class_name": "pizza",
+    "confidence": 0.849,
+    "ts": 80.44,
+    "x": -4.077,
+    "y": -3.24,
+    "z": 0.312,
+    "yaw": 1.574
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.728,
+    "ts": 80.78,
+    "x": -4.076,
+    "y": -3.076,
+    "z": 0.31,
+    "yaw": 1.563
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.695,
+    "ts": 80.78,
+    "x": -4.076,
+    "y": -3.076,
+    "z": 0.31,
+    "yaw": 1.563
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.687,
+    "ts": 80.78,
+    "x": -4.076,
+    "y": -3.076,
+    "z": 0.31,
+    "yaw": 1.563
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.684,
+    "ts": 80.78,
+    "x": -4.076,
+    "y": -3.076,
+    "z": 0.31,
+    "yaw": 1.563
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.681,
+    "ts": 80.78,
+    "x": -4.076,
+    "y": -3.076,
+    "z": 0.31,
+    "yaw": 1.563
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.523,
+    "ts": 80.78,
+    "x": -4.076,
+    "y": -3.076,
+    "z": 0.31,
+    "yaw": 1.563
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.575,
+    "ts": 81.48,
+    "x": -3.987,
+    "y": -2.767,
+    "z": 0.308,
+    "yaw": 1.199
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.573,
+    "ts": 81.48,
+    "x": -3.987,
+    "y": -2.767,
+    "z": 0.308,
+    "yaw": 1.199
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.537,
+    "ts": 81.48,
+    "x": -3.987,
+    "y": -2.767,
+    "z": 0.308,
+    "yaw": 1.199
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.463,
+    "ts": 81.48,
+    "x": -3.987,
+    "y": -2.767,
+    "z": 0.308,
+    "yaw": 1.199
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.609,
+    "ts": 82.18,
+    "x": -3.844,
+    "y": -2.371,
+    "z": 0.315,
+    "yaw": 1.219
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.542,
+    "ts": 82.18,
+    "x": -3.844,
+    "y": -2.371,
+    "z": 0.315,
+    "yaw": 1.219
+  },
+  {
+    "class_name": "refrigerator",
+    "confidence": 0.527,
+    "ts": 82.18,
+    "x": -3.844,
+    "y": -2.371,
+    "z": 0.315,
+    "yaw": 1.219
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.499,
+    "ts": 82.18,
+    "x": -3.844,
+    "y": -2.371,
+    "z": 0.315,
+    "yaw": 1.219
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.462,
+    "ts": 82.18,
+    "x": -3.844,
+    "y": -2.371,
+    "z": 0.315,
+    "yaw": 1.219
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.435,
+    "ts": 82.18,
+    "x": -3.844,
+    "y": -2.371,
+    "z": 0.315,
+    "yaw": 1.219
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.418,
+    "ts": 82.18,
+    "x": -3.844,
+    "y": -2.371,
+    "z": 0.315,
+    "yaw": 1.219
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.407,
+    "ts": 82.18,
+    "x": -3.844,
+    "y": -2.371,
+    "z": 0.315,
+    "yaw": 1.219
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.679,
+    "ts": 83.23,
+    "x": -3.633,
+    "y": -1.78,
+    "z": 0.31,
+    "yaw": 1.225
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.667,
+    "ts": 83.23,
+    "x": -3.633,
+    "y": -1.78,
+    "z": 0.31,
+    "yaw": 1.225
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.666,
+    "ts": 83.23,
+    "x": -3.633,
+    "y": -1.78,
+    "z": 0.31,
+    "yaw": 1.225
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.634,
+    "ts": 83.23,
+    "x": -3.633,
+    "y": -1.78,
+    "z": 0.31,
+    "yaw": 1.225
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.581,
+    "ts": 83.23,
+    "x": -3.633,
+    "y": -1.78,
+    "z": 0.31,
+    "yaw": 1.225
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.556,
+    "ts": 83.23,
+    "x": -3.633,
+    "y": -1.78,
+    "z": 0.31,
+    "yaw": 1.225
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.466,
+    "ts": 83.23,
+    "x": -3.633,
+    "y": -1.78,
+    "z": 0.31,
+    "yaw": 1.225
+  },
+  {
+    "class_name": "tv",
+    "confidence": 0.44,
+    "ts": 83.23,
+    "x": -3.633,
+    "y": -1.78,
+    "z": 0.31,
+    "yaw": 1.225
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.421,
+    "ts": 83.94,
+    "x": -3.501,
+    "y": -1.401,
+    "z": 0.316,
+    "yaw": 1.24
+  },
+  {
+    "class_name": "suitcase",
+    "confidence": 0.632,
+    "ts": 85.0,
+    "x": -3.279,
+    "y": -0.878,
+    "z": 0.306,
+    "yaw": 1.171
+  },
+  {
+    "class_name": "tv",
+    "confidence": 0.484,
+    "ts": 85.0,
+    "x": -3.279,
+    "y": -0.878,
+    "z": 0.306,
+    "yaw": 1.171
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.517,
+    "ts": 88.51,
+    "x": -3.387,
+    "y": -1.109,
+    "z": 0.309,
+    "yaw": -1.89
+  },
+  {
+    "class_name": "bowl",
+    "confidence": 0.46,
+    "ts": 88.51,
+    "x": -3.387,
+    "y": -1.109,
+    "z": 0.309,
+    "yaw": -1.89
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.432,
+    "ts": 88.51,
+    "x": -3.387,
+    "y": -1.109,
+    "z": 0.309,
+    "yaw": -1.89
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.558,
+    "ts": 88.86,
+    "x": -3.45,
+    "y": -1.318,
+    "z": 0.304,
+    "yaw": -1.872
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.52,
+    "ts": 88.86,
+    "x": -3.45,
+    "y": -1.318,
+    "z": 0.304,
+    "yaw": -1.872
+  },
+  {
+    "class_name": "book",
+    "confidence": 0.516,
+    "ts": 88.86,
+    "x": -3.45,
+    "y": -1.318,
+    "z": 0.304,
+    "yaw": -1.872
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.43,
+    "ts": 88.86,
+    "x": -3.45,
+    "y": -1.318,
+    "z": 0.304,
+    "yaw": -1.872
+  },
+  {
+    "class_name": "book",
+    "confidence": 0.571,
+    "ts": 89.21,
+    "x": -3.508,
+    "y": -1.496,
+    "z": 0.311,
+    "yaw": -1.874
+  },
+  {
+    "class_name": "book",
+    "confidence": 0.465,
+    "ts": 89.21,
+    "x": -3.508,
+    "y": -1.496,
+    "z": 0.311,
+    "yaw": -1.874
+  },
+  {
+    "class_name": "book",
+    "confidence": 0.44,
+    "ts": 89.21,
+    "x": -3.508,
+    "y": -1.496,
+    "z": 0.311,
+    "yaw": -1.874
+  },
+  {
+    "class_name": "book",
+    "confidence": 0.44,
+    "ts": 89.21,
+    "x": -3.508,
+    "y": -1.496,
+    "z": 0.311,
+    "yaw": -1.874
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.402,
+    "ts": 89.21,
+    "x": -3.508,
+    "y": -1.496,
+    "z": 0.311,
+    "yaw": -1.874
+  },
+  {
+    "class_name": "book",
+    "confidence": 0.636,
+    "ts": 89.91,
+    "x": -3.62,
+    "y": -1.919,
+    "z": 0.313,
+    "yaw": -1.849
+  },
+  {
+    "class_name": "book",
+    "confidence": 0.567,
+    "ts": 89.91,
+    "x": -3.62,
+    "y": -1.919,
+    "z": 0.313,
+    "yaw": -1.849
+  },
+  {
+    "class_name": "book",
+    "confidence": 0.524,
+    "ts": 89.91,
+    "x": -3.62,
+    "y": -1.919,
+    "z": 0.313,
+    "yaw": -1.849
+  },
+  {
+    "class_name": "book",
+    "confidence": 0.498,
+    "ts": 89.91,
+    "x": -3.62,
+    "y": -1.919,
+    "z": 0.313,
+    "yaw": -1.849
+  },
+  {
+    "class_name": "book",
+    "confidence": 0.497,
+    "ts": 89.91,
+    "x": -3.62,
+    "y": -1.919,
+    "z": 0.313,
+    "yaw": -1.849
+  },
+  {
+    "class_name": "book",
+    "confidence": 0.49,
+    "ts": 89.91,
+    "x": -3.62,
+    "y": -1.919,
+    "z": 0.313,
+    "yaw": -1.849
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.484,
+    "ts": 89.91,
+    "x": -3.62,
+    "y": -1.919,
+    "z": 0.313,
+    "yaw": -1.849
+  },
+  {
+    "class_name": "book",
+    "confidence": 0.455,
+    "ts": 89.91,
+    "x": -3.62,
+    "y": -1.919,
+    "z": 0.313,
+    "yaw": -1.849
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.45,
+    "ts": 89.91,
+    "x": -3.62,
+    "y": -1.919,
+    "z": 0.313,
+    "yaw": -1.849
+  },
+  {
+    "class_name": "book",
+    "confidence": 0.446,
+    "ts": 89.91,
+    "x": -3.62,
+    "y": -1.919,
+    "z": 0.313,
+    "yaw": -1.849
+  },
+  {
+    "class_name": "book",
+    "confidence": 0.566,
+    "ts": 90.27,
+    "x": -3.685,
+    "y": -2.15,
+    "z": 0.31,
+    "yaw": -1.84
+  },
+  {
+    "class_name": "book",
+    "confidence": 0.526,
+    "ts": 90.27,
+    "x": -3.685,
+    "y": -2.15,
+    "z": 0.31,
+    "yaw": -1.84
+  },
+  {
+    "class_name": "book",
+    "confidence": 0.467,
+    "ts": 90.27,
+    "x": -3.685,
+    "y": -2.15,
+    "z": 0.31,
+    "yaw": -1.84
+  },
+  {
+    "class_name": "book",
+    "confidence": 0.459,
+    "ts": 90.27,
+    "x": -3.685,
+    "y": -2.15,
+    "z": 0.31,
+    "yaw": -1.84
+  },
+  {
+    "class_name": "book",
+    "confidence": 0.426,
+    "ts": 90.27,
+    "x": -3.685,
+    "y": -2.15,
+    "z": 0.31,
+    "yaw": -1.84
+  },
+  {
+    "class_name": "book",
+    "confidence": 0.658,
+    "ts": 90.62,
+    "x": -3.744,
+    "y": -2.377,
+    "z": 0.312,
+    "yaw": -1.822
+  },
+  {
+    "class_name": "book",
+    "confidence": 0.653,
+    "ts": 90.62,
+    "x": -3.744,
+    "y": -2.377,
+    "z": 0.312,
+    "yaw": -1.822
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.442,
+    "ts": 90.62,
+    "x": -3.744,
+    "y": -2.377,
+    "z": 0.312,
+    "yaw": -1.822
+  },
+  {
+    "class_name": "book",
+    "confidence": 0.435,
+    "ts": 90.62,
+    "x": -3.744,
+    "y": -2.377,
+    "z": 0.312,
+    "yaw": -1.822
+  },
+  {
+    "class_name": "book",
+    "confidence": 0.429,
+    "ts": 90.62,
+    "x": -3.744,
+    "y": -2.377,
+    "z": 0.312,
+    "yaw": -1.822
+  },
+  {
+    "class_name": "book",
+    "confidence": 0.417,
+    "ts": 90.62,
+    "x": -3.744,
+    "y": -2.377,
+    "z": 0.312,
+    "yaw": -1.822
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.878,
+    "ts": 90.97,
+    "x": -3.789,
+    "y": -2.577,
+    "z": 0.314,
+    "yaw": -1.819
+  },
+  {
+    "class_name": "book",
+    "confidence": 0.553,
+    "ts": 91.34,
+    "x": -3.848,
+    "y": -2.817,
+    "z": 0.309,
+    "yaw": -1.803
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.534,
+    "ts": 91.34,
+    "x": -3.848,
+    "y": -2.817,
+    "z": 0.309,
+    "yaw": -1.803
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.889,
+    "ts": 91.68,
+    "x": -3.893,
+    "y": -3.019,
+    "z": 0.305,
+    "yaw": -1.793
+  },
+  {
+    "class_name": "book",
+    "confidence": 0.425,
+    "ts": 91.68,
+    "x": -3.893,
+    "y": -3.019,
+    "z": 0.305,
+    "yaw": -1.793
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.618,
+    "ts": 92.02,
+    "x": -3.946,
+    "y": -3.236,
+    "z": 0.316,
+    "yaw": -1.786
+  },
+  {
+    "class_name": "book",
+    "confidence": 0.582,
+    "ts": 92.37,
+    "x": -3.992,
+    "y": -3.437,
+    "z": 0.312,
+    "yaw": -1.767
+  },
+  {
+    "class_name": "book",
+    "confidence": 0.418,
+    "ts": 92.37,
+    "x": -3.992,
+    "y": -3.437,
+    "z": 0.312,
+    "yaw": -1.767
+  },
+  {
+    "class_name": "tv",
+    "confidence": 0.429,
+    "ts": 103.25,
+    "x": -7.594,
+    "y": -3.512,
+    "z": 0.302,
+    "yaw": 1.641
+  },
+  {
+    "class_name": "tv",
+    "confidence": 0.533,
+    "ts": 103.61,
+    "x": -7.608,
+    "y": -3.406,
+    "z": 0.307,
+    "yaw": 1.598
+  },
+  {
+    "class_name": "tv",
+    "confidence": 0.593,
+    "ts": 104.31,
+    "x": -7.621,
+    "y": -3.266,
+    "z": 0.299,
+    "yaw": 1.508
+  },
+  {
+    "class_name": "tv",
+    "confidence": 0.442,
+    "ts": 105.01,
+    "x": -7.613,
+    "y": -3.035,
+    "z": 0.31,
+    "yaw": 1.419
+  },
+  {
+    "class_name": "tv",
+    "confidence": 0.42,
+    "ts": 108.17,
+    "x": -6.769,
+    "y": -0.446,
+    "z": 0.309,
+    "yaw": 1.269
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.438,
+    "ts": 128.2,
+    "x": -6.03,
+    "y": -7.746,
+    "z": 0.314,
+    "yaw": 0.096
+  },
+  {
+    "class_name": "toothbrush",
+    "confidence": 0.494,
+    "ts": 133.82,
+    "x": -5.222,
+    "y": -7.444,
+    "z": 0.313,
+    "yaw": 0.889
+  },
+  {
+    "class_name": "kite",
+    "confidence": 0.536,
+    "ts": 144.01,
+    "x": -5.842,
+    "y": -10.475,
+    "z": 0.318,
+    "yaw": -0.344
+  },
+  {
+    "class_name": "frisbee",
+    "confidence": 0.433,
+    "ts": 159.13,
+    "x": -6.603,
+    "y": -7.972,
+    "z": 0.311,
+    "yaw": 0.687
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.462,
+    "ts": 163.34,
+    "x": -5.295,
+    "y": -6.458,
+    "z": 0.311,
+    "yaw": 1.513
+  },
+  {
+    "class_name": "car",
+    "confidence": 0.431,
+    "ts": 164.39,
+    "x": -5.175,
+    "y": -5.686,
+    "z": 0.314,
+    "yaw": 1.319
+  },
+  {
+    "class_name": "bus",
+    "confidence": 0.617,
+    "ts": 167.2,
+    "x": -4.539,
+    "y": -4.108,
+    "z": 0.314,
+    "yaw": 0.401
+  },
+  {
+    "class_name": "cup",
+    "confidence": 0.618,
+    "ts": 170.01,
+    "x": -3.125,
+    "y": -4.119,
+    "z": 0.309,
+    "yaw": -0.129
+  },
+  {
+    "class_name": "train",
+    "confidence": 0.506,
+    "ts": 171.42,
+    "x": -2.581,
+    "y": -3.82,
+    "z": 0.319,
+    "yaw": 0.958
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.654,
+    "ts": 173.18,
+    "x": -2.241,
+    "y": -2.896,
+    "z": 0.315,
+    "yaw": 1.278
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.449,
+    "ts": 173.18,
+    "x": -2.241,
+    "y": -2.896,
+    "z": 0.315,
+    "yaw": 1.278
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.444,
+    "ts": 173.18,
+    "x": -2.241,
+    "y": -2.896,
+    "z": 0.315,
+    "yaw": 1.278
+  },
+  {
+    "class_name": "bottle",
+    "confidence": 0.433,
+    "ts": 173.18,
+    "x": -2.241,
+    "y": -2.896,
+    "z": 0.315,
+    "yaw": 1.278
+  },
+  {
+    "class_name": "cup",
+    "confidence": 0.487,
+    "ts": 176.69,
+    "x": -1.665,
+    "y": -0.548,
+    "z": 0.3,
+    "yaw": 0.518
+  },
+  {
+    "class_name": "cup",
+    "confidence": 0.496,
+    "ts": 177.03,
+    "x": -1.524,
+    "y": -0.485,
+    "z": 0.311,
+    "yaw": 0.513
+  },
+  {
+    "class_name": "vase",
+    "confidence": 0.48,
+    "ts": 177.03,
+    "x": -1.524,
+    "y": -0.485,
+    "z": 0.311,
+    "yaw": 0.513
+  },
+  {
+    "class_name": "cup",
+    "confidence": 0.47,
+    "ts": 177.38,
+    "x": -1.394,
+    "y": -0.415,
+    "z": 0.306,
+    "yaw": 0.335
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.906,
+    "ts": 186.17,
+    "x": 0.919,
+    "y": -1.444,
+    "z": 0.307,
+    "yaw": 2.788
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.405,
+    "ts": 186.52,
+    "x": 0.789,
+    "y": -1.4,
+    "z": 0.304,
+    "yaw": 2.67
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.768,
+    "ts": 186.88,
+    "x": 0.637,
+    "y": -1.315,
+    "z": 0.303,
+    "yaw": 2.666
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.778,
+    "ts": 187.22,
+    "x": 0.454,
+    "y": -1.222,
+    "z": 0.307,
+    "yaw": 2.632
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.401,
+    "ts": 187.93,
+    "x": 0.167,
+    "y": -1.046,
+    "z": 0.307,
+    "yaw": 2.551
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.67,
+    "ts": 188.28,
+    "x": 0.021,
+    "y": -0.947,
+    "z": 0.314,
+    "yaw": 2.549
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.465,
+    "ts": 189.34,
+    "x": -0.733,
+    "y": -0.464,
+    "z": 0.311,
+    "yaw": 2.577
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.444,
+    "ts": 189.34,
+    "x": -0.733,
+    "y": -0.464,
+    "z": 0.311,
+    "yaw": 2.577
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.4,
+    "ts": 189.34,
+    "x": -0.733,
+    "y": -0.464,
+    "z": 0.311,
+    "yaw": 2.577
+  },
+  {
+    "class_name": "refrigerator",
+    "confidence": 0.498,
+    "ts": 190.04,
+    "x": -1.076,
+    "y": -0.228,
+    "z": 0.312,
+    "yaw": 2.395
+  },
+  {
+    "class_name": "refrigerator",
+    "confidence": 0.488,
+    "ts": 190.74,
+    "x": -1.281,
+    "y": 0.001,
+    "z": 0.306,
+    "yaw": 2.217
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.401,
+    "ts": 194.25,
+    "x": -1.164,
+    "y": 1.987,
+    "z": 0.31,
+    "yaw": 1.207
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.452,
+    "ts": 194.95,
+    "x": -0.911,
+    "y": 2.617,
+    "z": 0.305,
+    "yaw": 1.239
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.66,
+    "ts": 195.31,
+    "x": -0.851,
+    "y": 2.723,
+    "z": 0.311,
+    "yaw": 1.257
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.747,
+    "ts": 195.66,
+    "x": -0.853,
+    "y": 2.751,
+    "z": 0.297,
+    "yaw": 1.25
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.451,
+    "ts": 196.36,
+    "x": -0.883,
+    "y": 2.772,
+    "z": 0.309,
+    "yaw": 1.717
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.406,
+    "ts": 196.36,
+    "x": -0.883,
+    "y": 2.772,
+    "z": 0.309,
+    "yaw": 1.717
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.762,
+    "ts": 197.07,
+    "x": -0.968,
+    "y": 3.043,
+    "z": 0.303,
+    "yaw": 2.067
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.523,
+    "ts": 197.07,
+    "x": -0.968,
+    "y": 3.043,
+    "z": 0.303,
+    "yaw": 2.067
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.705,
+    "ts": 197.42,
+    "x": -1.083,
+    "y": 3.251,
+    "z": 0.315,
+    "yaw": 2.106
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.595,
+    "ts": 197.42,
+    "x": -1.083,
+    "y": 3.251,
+    "z": 0.315,
+    "yaw": 2.106
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.499,
+    "ts": 197.42,
+    "x": -1.083,
+    "y": 3.251,
+    "z": 0.315,
+    "yaw": 2.106
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.823,
+    "ts": 197.77,
+    "x": -1.246,
+    "y": 3.524,
+    "z": 0.31,
+    "yaw": 2.123
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.676,
+    "ts": 197.77,
+    "x": -1.246,
+    "y": 3.524,
+    "z": 0.31,
+    "yaw": 2.123
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.674,
+    "ts": 197.77,
+    "x": -1.246,
+    "y": 3.524,
+    "z": 0.31,
+    "yaw": 2.123
+  },
+  {
+    "class_name": "train",
+    "confidence": 0.468,
+    "ts": 198.11,
+    "x": -1.393,
+    "y": 3.739,
+    "z": 0.314,
+    "yaw": 2.499
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.77,
+    "ts": 198.82,
+    "x": -1.835,
+    "y": 4.024,
+    "z": 0.316,
+    "yaw": 2.571
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.698,
+    "ts": 198.82,
+    "x": -1.835,
+    "y": 4.024,
+    "z": 0.316,
+    "yaw": 2.571
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.454,
+    "ts": 198.82,
+    "x": -1.835,
+    "y": 4.024,
+    "z": 0.316,
+    "yaw": 2.571
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.598,
+    "ts": 199.87,
+    "x": -2.359,
+    "y": 4.578,
+    "z": 0.31,
+    "yaw": 2.074
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.598,
+    "ts": 199.87,
+    "x": -2.359,
+    "y": 4.578,
+    "z": 0.31,
+    "yaw": 2.074
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.403,
+    "ts": 199.87,
+    "x": -2.359,
+    "y": 4.578,
+    "z": 0.31,
+    "yaw": 2.074
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.532,
+    "ts": 200.57,
+    "x": -2.478,
+    "y": 4.967,
+    "z": 0.311,
+    "yaw": 1.736
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.779,
+    "ts": 200.93,
+    "x": -2.531,
+    "y": 5.233,
+    "z": 0.314,
+    "yaw": 1.768
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.774,
+    "ts": 200.93,
+    "x": -2.531,
+    "y": 5.233,
+    "z": 0.314,
+    "yaw": 1.768
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.55,
+    "ts": 200.93,
+    "x": -2.531,
+    "y": 5.233,
+    "z": 0.314,
+    "yaw": 1.768
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.784,
+    "ts": 201.63,
+    "x": -2.552,
+    "y": 5.73,
+    "z": 0.321,
+    "yaw": 1.34
+  },
+  {
+    "class_name": "teddy bear",
+    "confidence": 0.466,
+    "ts": 201.63,
+    "x": -2.552,
+    "y": 5.73,
+    "z": 0.321,
+    "yaw": 1.34
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.916,
+    "ts": 201.99,
+    "x": -2.474,
+    "y": 5.967,
+    "z": 0.314,
+    "yaw": 1.291
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.855,
+    "ts": 201.99,
+    "x": -2.474,
+    "y": 5.967,
+    "z": 0.314,
+    "yaw": 1.291
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.462,
+    "ts": 201.99,
+    "x": -2.474,
+    "y": 5.967,
+    "z": 0.314,
+    "yaw": 1.291
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.438,
+    "ts": 201.99,
+    "x": -2.474,
+    "y": 5.967,
+    "z": 0.314,
+    "yaw": 1.291
+  },
+  {
+    "class_name": "chair",
+    "confidence": 0.404,
+    "ts": 202.33,
+    "x": -2.401,
+    "y": 6.299,
+    "z": 0.315,
+    "yaw": 1.391
+  },
+  {
+    "class_name": "teddy bear",
+    "confidence": 0.795,
+    "ts": 202.68,
+    "x": -2.383,
+    "y": 6.519,
+    "z": 0.315,
+    "yaw": 1.539
+  },
+  {
+    "class_name": "teddy bear",
+    "confidence": 0.547,
+    "ts": 202.68,
+    "x": -2.383,
+    "y": 6.519,
+    "z": 0.315,
+    "yaw": 1.539
+  },
+  {
+    "class_name": "potted plant",
+    "confidence": 0.406,
+    "ts": 202.68,
+    "x": -2.383,
+    "y": 6.519,
+    "z": 0.315,
+    "yaw": 1.539
+  },
+  {
+    "class_name": "teddy bear",
+    "confidence": 0.89,
+    "ts": 203.38,
+    "x": -2.275,
+    "y": 6.905,
+    "z": 0.315,
+    "yaw": 1.006
+  },
+  {
+    "class_name": "teddy bear",
+    "confidence": 0.576,
+    "ts": 203.38,
+    "x": -2.275,
+    "y": 6.905,
+    "z": 0.315,
+    "yaw": 1.006
+  },
+  {
+    "class_name": "teddy bear",
+    "confidence": 0.873,
+    "ts": 203.74,
+    "x": -2.191,
+    "y": 7.039,
+    "z": 0.309,
+    "yaw": 0.883
+  },
+  {
+    "class_name": "teddy bear",
+    "confidence": 0.479,
+    "ts": 203.74,
+    "x": -2.191,
+    "y": 7.039,
+    "z": 0.309,
+    "yaw": 0.883
+  },
+  {
+    "class_name": "teddy bear",
+    "confidence": 0.849,
+    "ts": 204.44,
+    "x": -1.967,
+    "y": 7.231,
+    "z": 0.303,
+    "yaw": 0.633
+  },
+  {
+    "class_name": "teddy bear",
+    "confidence": 0.609,
+    "ts": 204.44,
+    "x": -1.967,
+    "y": 7.231,
+    "z": 0.303,
+    "yaw": 0.633
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.476,
+    "ts": 205.14,
+    "x": -1.682,
+    "y": 7.358,
+    "z": 0.308,
+    "yaw": 0.276
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.718,
+    "ts": 220.6,
+    "x": 3.058,
+    "y": 16.821,
+    "z": 0.308,
+    "yaw": -2.029
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.695,
+    "ts": 220.95,
+    "x": 2.961,
+    "y": 16.623,
+    "z": 0.315,
+    "yaw": -2.03
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.57,
+    "ts": 221.65,
+    "x": 2.819,
+    "y": 16.158,
+    "z": 0.324,
+    "yaw": -1.776
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.739,
+    "ts": 222.01,
+    "x": 2.734,
+    "y": 15.9,
+    "z": 0.316,
+    "yaw": -1.893
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.731,
+    "ts": 222.36,
+    "x": 2.644,
+    "y": 15.61,
+    "z": 0.313,
+    "yaw": -1.884
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.612,
+    "ts": 222.7,
+    "x": 2.532,
+    "y": 15.263,
+    "z": 0.298,
+    "yaw": -1.879
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.728,
+    "ts": 223.06,
+    "x": 2.444,
+    "y": 14.993,
+    "z": 0.315,
+    "yaw": -1.872
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.744,
+    "ts": 223.41,
+    "x": 2.332,
+    "y": 14.597,
+    "z": 0.317,
+    "yaw": -1.853
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.763,
+    "ts": 223.76,
+    "x": 2.251,
+    "y": 14.315,
+    "z": 0.31,
+    "yaw": -1.848
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.703,
+    "ts": 224.11,
+    "x": 2.154,
+    "y": 14.007,
+    "z": 0.304,
+    "yaw": -1.88
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.758,
+    "ts": 224.47,
+    "x": 2.071,
+    "y": 13.76,
+    "z": 0.311,
+    "yaw": -1.89
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.755,
+    "ts": 224.82,
+    "x": 1.956,
+    "y": 13.403,
+    "z": 0.307,
+    "yaw": -1.868
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.732,
+    "ts": 225.17,
+    "x": 1.866,
+    "y": 13.187,
+    "z": 0.308,
+    "yaw": -1.954
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.724,
+    "ts": 225.52,
+    "x": 1.758,
+    "y": 12.897,
+    "z": 0.308,
+    "yaw": -1.934
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.773,
+    "ts": 225.87,
+    "x": 1.628,
+    "y": 12.553,
+    "z": 0.31,
+    "yaw": -1.93
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.82,
+    "ts": 226.22,
+    "x": 1.506,
+    "y": 12.214,
+    "z": 0.315,
+    "yaw": -1.932
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.498,
+    "ts": 226.57,
+    "x": 1.372,
+    "y": 11.93,
+    "z": 0.308,
+    "yaw": -1.665
+  },
+  {
+    "class_name": "airplane",
+    "confidence": 0.802,
+    "ts": 232.54,
+    "x": 2.942,
+    "y": 11.322,
+    "z": 0.312,
+    "yaw": 0.372
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.545,
+    "ts": 238.17,
+    "x": 2.597,
+    "y": 11.49,
+    "z": 0.313,
+    "yaw": -3.093
+  },
+  {
+    "class_name": "train",
+    "confidence": 0.442,
+    "ts": 238.17,
+    "x": 2.597,
+    "y": 11.49,
+    "z": 0.313,
+    "yaw": -3.093
+  },
+  {
+    "class_name": "person",
+    "confidence": 0.627,
+    "ts": 238.88,
+    "x": 2.177,
+    "y": 11.38,
+    "z": 0.313,
+    "yaw": -2.647
+  },
+  {
+    "class_name": "potted plant",
+    "confidence": 0.593,
+    "ts": 241.33,
+    "x": 0.297,
+    "y": 10.697,
+    "z": 0.305,
+    "yaw": 3.088
+  },
+  {
+    "class_name": "potted plant",
+    "confidence": 0.523,
+    "ts": 241.68,
+    "x": 0.091,
+    "y": 10.715,
+    "z": 0.311,
+    "yaw": 3.085
+  },
+  {
+    "class_name": "potted plant",
+    "confidence": 0.594,
+    "ts": 243.43,
+    "x": -1.425,
+    "y": 10.974,
+    "z": 0.314,
+    "yaw": 2.991
+  },
+  {
+    "class_name": "potted plant",
+    "confidence": 0.532,
+    "ts": 243.79,
+    "x": -1.678,
+    "y": 11.017,
+    "z": 0.312,
+    "yaw": 2.99
+  },
+  {
+    "class_name": "potted plant",
+    "confidence": 0.618,
+    "ts": 244.14,
+    "x": -2.041,
+    "y": 11.074,
+    "z": 0.312,
+    "yaw": 3.009
+  },
+  {
+    "class_name": "bench",
+    "confidence": 0.445,
+    "ts": 245.19,
+    "x": -2.712,
+    "y": 11.037,
+    "z": 0.32,
+    "yaw": -2.477
+  },
+  {
+    "class_name": "train",
+    "confidence": 0.603,
+    "ts": 245.9,
+    "x": -3.21,
+    "y": 10.668,
+    "z": 0.314,
+    "yaw": -2.462
+  },
+  {
+    "class_name": "bed",
+    "confidence": 0.44,
+    "ts": 250.12,
+    "x": -6.248,
+    "y": 10.52,
+    "z": 0.317,
+    "yaw": 3.024
+  },
+  {
+    "class_name": "bed",
+    "confidence": 0.609,
+    "ts": 250.47,
+    "x": -6.541,
+    "y": 10.584,
+    "z": 0.315,
+    "yaw": 2.912
+  },
+  {
+    "class_name": "bed",
+    "confidence": 0.475,
+    "ts": 253.28,
+    "x": -8.562,
+    "y": 11.484,
+    "z": 0.309,
+    "yaw": 2.634
+  },
+  {
+    "class_name": "laptop",
+    "confidence": 0.434,
+    "ts": 253.28,
+    "x": -8.562,
+    "y": 11.484,
+    "z": 0.309,
+    "yaw": 2.634
+  },
+  {
+    "class_name": "laptop",
+    "confidence": 0.445,
+    "ts": 253.62,
+    "x": -8.868,
+    "y": 11.647,
+    "z": 0.307,
+    "yaw": 2.645
+  },
+  {
+    "class_name": "laptop",
+    "confidence": 0.783,
+    "ts": 253.97,
+    "x": -9.159,
+    "y": 11.818,
+    "z": 0.302,
+    "yaw": 2.662
+  },
+  {
+    "class_name": "keyboard",
+    "confidence": 0.499,
+    "ts": 253.97,
+    "x": -9.159,
+    "y": 11.818,
+    "z": 0.302,
+    "yaw": 2.662
+  },
+  {
+    "class_name": "laptop",
+    "confidence": 0.453,
+    "ts": 254.33,
+    "x": -9.524,
+    "y": 12.009,
+    "z": 0.303,
+    "yaw": 2.677
+  },
+  {
+    "class_name": "laptop",
+    "confidence": 0.778,
+    "ts": 254.68,
+    "x": -9.76,
+    "y": 12.129,
+    "z": 0.306,
+    "yaw": 2.692
+  },
+  {
+    "class_name": "laptop",
+    "confidence": 0.484,
+    "ts": 255.03,
+    "x": -10.067,
+    "y": 12.281,
+    "z": 0.3,
+    "yaw": 2.71
+  },
+  {
+    "class_name": "refrigerator",
+    "confidence": 0.548,
+    "ts": 279.98,
+    "x": -15.282,
+    "y": 1.695,
+    "z": 0.305,
+    "yaw": -1.361
+  },
+  {
+    "class_name": "refrigerator",
+    "confidence": 0.485,
+    "ts": 285.25,
+    "x": -13.843,
+    "y": -0.249,
+    "z": 0.311,
+    "yaw": -1.861
+  }
+]

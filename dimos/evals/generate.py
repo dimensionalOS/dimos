@@ -24,18 +24,22 @@ Row schema::
     {"id", "family", "type": "numeric"|"mcq", "q", "a",
      "band" (numeric) | "choices" (mcq),
      "context": [[stream, [t0, t1]], ...], "dataset"}
+
+A context entry with a null window names a stream that is synthesized rather
+than read from the recording (see ``streams=`` on :func:`cases`).
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
-from dimos.evals.scorers import choice, exact, first_number, within
-from dimos.evals.types import PassiveEval
+from dimos.evals.scorers import choice, exact, first_number, name_set, set_f1, within
+from dimos.evals.types import PassiveEval, Select
 from dimos.memory.cli.dataset import open_dataset
 
 if TYPE_CHECKING:
@@ -362,17 +366,52 @@ def coverage_direction_rows(
         return rows
 
 
-def cases(rows: Sequence[Row], *, tags: frozenset[str] = frozenset()) -> list[PassiveEval[Any]]:
-    """Rows -> typed cases. The mirror of the schema above: numeric rows score
-    on a band, mcq rows on exact match against the named options."""
+def _select(name: str, window: Sequence[float], streams: Mapping[str, Select]) -> Select:
+    """A context entry -> a stream select: synthesized where the suite supplies
+    one, else the named recording stream over the row's window."""
+    if name in streams:
+        return streams[name]
+    t0, t1 = window
+    return lambda store: store.streams[name].range_time(t0, t1)
+
+
+def cases(
+    rows: Sequence[Row],
+    *,
+    tags: frozenset[str] = frozenset(),
+    streams: Mapping[str, Select] = MappingProxyType({}),
+    context_budget: int = 0,
+) -> list[PassiveEval[Any]]:
+    """Rows -> typed cases. The mirror of the schema above: numeric rows score on
+    a band, mcq rows on exact match against the named options, set rows on F1
+    over the named vocabulary.
+
+    ``streams`` supplies selects for synthesized streams (a suite materializing
+    a fixture); ``context_budget`` overrides how many observations per select
+    the runner encodes, for suites whose ground truth needs the whole span.
+    """
     out: list[PassiveEval[Any]] = []
     for row in rows:
         context = tuple(
-            (lambda s, n=str(name), w=tuple(window): s.streams[n].range_time(*w))
+            _select(str(name), window, streams)
             for name, window in cast("list[tuple[str, list[float]]]", row["context"])
         )
         case_tags = tags | {str(row["family"]), str(row["type"])}
-        if row["type"] == "numeric":
+        if row["type"] == "set":
+            out.append(
+                PassiveEval(
+                    id=str(row["id"]),
+                    inputs=str(row["q"]),
+                    expected=frozenset(cast("list[str]", row["a"])),
+                    parse=name_set(cast("list[str]", row["vocab"])),
+                    score=set_f1,
+                    context=context,
+                    dataset=str(row["dataset"]),
+                    tags=case_tags,
+                    context_budget=context_budget,
+                )
+            )
+        elif row["type"] == "numeric":
             out.append(
                 PassiveEval(
                     id=str(row["id"]),
@@ -383,6 +422,7 @@ def cases(rows: Sequence[Row], *, tags: frozenset[str] = frozenset()) -> list[Pa
                     context=context,
                     dataset=str(row["dataset"]),
                     tags=case_tags,
+                    context_budget=context_budget,
                 )
             )
         else:
@@ -396,6 +436,7 @@ def cases(rows: Sequence[Row], *, tags: frozenset[str] = frozenset()) -> list[Pa
                     context=context,
                     dataset=str(row["dataset"]),
                     tags=case_tags,
+                    context_budget=context_budget,
                 )
             )
     return out

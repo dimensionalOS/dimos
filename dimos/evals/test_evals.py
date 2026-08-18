@@ -34,7 +34,9 @@ from dimos.evals.scorers import (
     first_number,
     floor,
     mean,
+    name_set,
     ramp,
+    set_f1,
     within,
     yes_no,
 )
@@ -88,8 +90,8 @@ class FakeRig:
     def live_store(self) -> Any:
         raise NotImplementedError
 
-    def encode(self, stream: Any) -> list[dict[str, Any]]:
-        return [{"type": "text", "text": f"{len(list(stream))} observations"}]
+    def encode(self, stream: Any, *, budget: int = 0) -> list[dict[str, Any]]:
+        return [{"type": "text", "text": f"{len(list(stream))} observations (budget {budget})"}]
 
     def ask(self, context: Sequence[dict[str, Any]], question: str) -> str:
         self.calls.append("ask")
@@ -152,6 +154,11 @@ def test_parsers() -> None:
     assert compass("it drifts north, then finally east") == "east"  # last named wins
     with pytest.raises(ValueError):
         compass("no idea")
+    seen = name_set(["chair", "bed", "sink"])
+    assert seen("I saw a chair and a bed") == frozenset({"chair", "bed"})
+    assert set_f1(frozenset({"chair", "bed"}), frozenset({"chair", "bed"})) == 1.0
+    assert set_f1(frozenset({"chair"}), frozenset({"chair", "sink"})) == pytest.approx(2 / 3)
+    assert set_f1(frozenset({"chair"}), frozenset()) == 0.0
 
 
 # -- case dispatch ---------------------------------------------------------------------
@@ -308,11 +315,34 @@ def test_runner_encode_budget(dataset: str, tmp_path: Path) -> None:
     assert "pos=" in blocks[1]["text"]
 
 
+def test_case_budget_overrides_runner(dataset: str, tmp_path: Path) -> None:
+    """A suite whose ground truth needs the whole span must not be silently
+    subsampled by the runner default."""
+    from dimos.evals.runner import EvalRunner
+
+    runner = EvalRunner(context_budget=3, out_dir=tmp_path)
+    store = runner.open_dataset(dataset)
+    try:
+        default = runner.encode(store.streams.odom)
+        raised = runner.encode(store.streams.odom, budget=99)
+    finally:
+        store.stop()
+    assert len(default) == 4  # 1 header + context_budget=3 observations
+    assert len(raised) > len(default)
+
+
 def test_suites_importable() -> None:
     """Suite modules construct without data or network (lambdas stay lazy)."""
-    from dimos.evals.suites import dimsim_house, examples, go2_pointcloud, go2_smoke, go2_vqa
+    from dimos.evals.suites import (
+        dimsim_house,
+        examples,
+        go2_pointcloud,
+        go2_semantic,
+        go2_smoke,
+        go2_vqa,
+    )
 
-    for module in (examples, go2_smoke, go2_vqa, go2_pointcloud, dimsim_house):
+    for module in (examples, go2_smoke, go2_vqa, go2_pointcloud, go2_semantic, dimsim_house):
         assert module.SUITE, module.__name__
 
 
