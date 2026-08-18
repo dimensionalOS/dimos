@@ -63,6 +63,8 @@ def test_make_openyam_model_config_uses_canonical_arm_joints() -> None:
     assert config.base_link == "base"
     assert config.planning_groups[0].tip_link == "gripper_tip"
     assert config.gripper_hardware_id == "arm"
+    assert config.velocity_limits == [2.0] * OPENYAM_DOF
+    assert config.max_velocity == 2.0
 
 
 @pytest.mark.self_hosted
@@ -73,6 +75,15 @@ def test_openyam_model_contains_canonical_arm_joints() -> None:
     assert [joint.name for joint in model.joints if joint.name in config.joint_names] == (
         OPENYAM_ARM_JOINTS
     )
+
+
+def test_quest_teleop_matches_dual_openyam_response_tuning() -> None:
+    tasks = _coordinator_kwargs(teleop_quest_openyam)["tasks"]
+    teleop = next(task for task in tasks if task.type == "teleop_ik")
+
+    assert teleop.params["pink"].gain == 1.0
+    assert teleop.params["max_joint_velocity_rad_s"] == 2.0
+    assert teleop.params["joint_command_filter_cutoff_hz"] == 30.0
 
 
 def test_openyam_hardware_physical_mode_returns_one_whole_body(
