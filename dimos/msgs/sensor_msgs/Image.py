@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass, field
 from enum import Enum
+import threading
 import time
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 import warnings
@@ -36,6 +37,21 @@ if TYPE_CHECKING:
 
     from reactivex.abc import SchedulerBase
     from reactivex.observable import Observable
+    from turbojpeg import TurboJPEG
+
+
+_tj_local = threading.local()
+
+
+def _turbojpeg() -> TurboJPEG:
+    """Per-thread cached TurboJPEG: the constructor costs ~2ms per call and
+    native handles are not safe for concurrent use across threads."""
+    tj = getattr(_tj_local, "tj", None)
+    if tj is None:
+        from turbojpeg import TurboJPEG
+
+        tj = _tj_local.tj = TurboJPEG()
+    return tj
 
 
 class ImageFormat(Enum):
@@ -542,12 +558,11 @@ class Image(Timestamped):
         Returns:
             Raw JPEG bytes.
         """
-        from turbojpeg import TJPF_RGB, TurboJPEG
+        from turbojpeg import TJPF_RGB
 
-        jpeg = TurboJPEG()
         # Canonicalize to RGB so JPEG bytes are deterministic regardless of input format.
         rgb_array = self.to_rgb().data
-        return jpeg.encode(rgb_array, quality=quality, pixel_format=TJPF_RGB)  # type: ignore[no-any-return]
+        return _turbojpeg().encode(rgb_array, quality=quality, pixel_format=TJPF_RGB)  # type: ignore[no-any-return]
 
     def lcm_jpeg_encode(self, quality: int = 75, frame_id: str | None = None) -> bytes:
         """Convert to LCM Image message with JPEG-compressed data.
@@ -599,9 +614,9 @@ class Image(Timestamped):
         Returns:
             Image instance
         """
-        from turbojpeg import TJPF_RGB, TurboJPEG
+        from turbojpeg import TJPF_RGB
 
-        jpeg = TurboJPEG()
+        jpeg = _turbojpeg()
         msg = LCMImage.lcm_decode(data)
 
         if msg.encoding != "jpeg":
