@@ -58,7 +58,7 @@ Distance questions require one Moondream detection, one EdgeTAM mask, and at lea
 LiDAR points. Evidence whose range quartiles cross an answer boundary is rejected.
 Closest-object questions accept references such as `left person`, `right person`, and `chair`, which
 lets Moondream distinguish repeated categories. They are rejected unless every reference has exactly
-one detection or the closest range interval overlaps any other candidate.
+one detection and the closest range interval does not overlap any other candidate.
 
 Image-coverage questions choose between two bucket schemes so the measured mask coverage is as far
 as possible from the nearest answer boundary. Largest-visible-area questions are rejected unless the

@@ -983,7 +983,7 @@ def test_generate_closest_object_case_from_calibrated_frame(tmp_path: Path) -> N
         ),
     )
 
-    case_id = "frame-000004-left-person-vs-right-person-vs-chair-closest_object"
+    case_id = "frame-000004-chair-vs-left-person-vs-right-person-closest_object"
     assert result.cases[0].id == case_id
     assert result.cases[0].choices == ("left person", "right person", "chair")
     labels = [json.loads(line) for line in (output / "labels.jsonl").read_text().splitlines()]
@@ -1032,6 +1032,9 @@ def test_generation_deduplicates_reordered_closest_object_references(tmp_path: P
     )
 
     assert len(result.cases) == 1
+    assert result.cases[0].id == (
+        "frame-000004-chair-vs-left-person-vs-right-person-closest_object"
+    )
 
 
 def test_generation_deduplicates_reordered_largest_area_references(tmp_path: Path) -> None:
@@ -1044,6 +1047,7 @@ def test_generation_deduplicates_reordered_largest_area_references(tmp_path: Pat
     )
 
     assert len(result.cases) == 1
+    assert result.cases[0].id == "frame-000004-box-vs-chair-vs-table-largest_visible_area"
 
 
 def test_uncalibrated_frame_does_not_expose_distance_family(tmp_path: Path) -> None:

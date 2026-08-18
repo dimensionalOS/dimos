@@ -21,7 +21,6 @@ from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
-import cv2
 import numpy as np
 
 from dimos.memory.cli.dataset import open_dataset
@@ -243,6 +242,9 @@ class _ImageRectifier:
         self._maps: dict[tuple[Any, ...], tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
 
     def rectify(self, image: Image, source: CameraInfo) -> tuple[Image, CameraInfo]:
+        # OpenCV is intentionally lazy because importing it loads a large native library.
+        import cv2
+
         if (source.width, source.height) != (image.width, image.height):
             raise ValueError(
                 "camera calibration dimensions "
@@ -366,6 +368,9 @@ def _profile_pointcloud_to_camera(
 def _rectification_maps(
     image: Image, source: CameraInfo
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    # OpenCV is intentionally lazy because importing it loads a large native library.
+    import cv2
+
     matrix = np.asarray(source.K, dtype=np.float64).reshape(3, 3)
     distortion = np.asarray(source.D, dtype=np.float64)
     rectification = np.asarray(source.R, dtype=np.float64).reshape(3, 3)

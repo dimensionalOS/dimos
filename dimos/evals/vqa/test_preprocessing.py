@@ -13,15 +13,24 @@
 # limitations under the License.
 
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
+import numpy as np
 import pytest
 
-from dimos.evals.vqa.preprocessing import RecordingFramePreprocessor, _align_one
+from dimos.evals.vqa.preprocessing import (
+    RecordingFramePreprocessor,
+    _align_one,
+    _profile_pointcloud_to_camera,
+)
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.type.observation import Observation
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.robot.unitree.go2.connection import BASE_TO_OPTICAL
 
 
 def test_align_one_uses_nearest_observation_timestamp() -> None:
@@ -65,3 +74,23 @@ def test_go2_profile_must_be_explicit_for_uncalibrated_recording(tmp_path: Path)
     preprocessor = RecordingFramePreprocessor(recording)
     with pytest.raises(ValueError, match="calibration_profile='go2'"):
         preprocessor.start()
+
+
+def test_go2_profile_treats_legacy_image_pose_as_world_from_base() -> None:
+    image = Observation[Image](
+        ts=10.0,
+        pose_tuple=(1.0, 2.0, 0.5, 0.0, 0.0, 0.0, 1.0),
+        _data=cast("Image", object()),
+    )
+    lidar = Observation[PointCloud2](
+        ts=10.0,
+        _data=cast("PointCloud2", SimpleNamespace(frame_id="world")),
+    )
+
+    pointcloud_to_camera = _profile_pointcloud_to_camera(image, lidar)
+
+    assert image.pose is not None
+    expected = -(Transform.from_pose("base_link", image.pose) + BASE_TO_OPTICAL)
+    assert pointcloud_to_camera.frame_id == "camera_optical"
+    assert pointcloud_to_camera.child_frame_id == "world"
+    assert np.allclose(pointcloud_to_camera.to_matrix(), expected.to_matrix())
