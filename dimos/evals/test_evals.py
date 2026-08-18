@@ -315,6 +315,7 @@ def test_suites_importable() -> None:
         examples,
         go2_pointcloud,
         go2_pointcloud_clearance,
+        go2_pointcloud_glass,
         go2_pointcloud_route,
         go2_smoke,
         go2_vqa,
@@ -326,6 +327,7 @@ def test_suites_importable() -> None:
         go2_vqa,
         go2_pointcloud,
         go2_pointcloud_clearance,
+        go2_pointcloud_glass,
         go2_pointcloud_route,
         dimsim_house,
     ):

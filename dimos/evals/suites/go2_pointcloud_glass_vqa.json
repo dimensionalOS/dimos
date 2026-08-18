@@ -1,0 +1,898 @@
+[
+  {
+    "id": "go2_china_office_crossing_partition_a_t34",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (2.07, 4.21), 2.1 m from you: the nearest mapped points on either side of it are 0.80 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "barrier",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          33.79,
+          33.89
+        ]
+      ],
+      [
+        "odom",
+        [
+          33.5,
+          34.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_crossing_partition_a_t36",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (2.07, 4.21), 1.9 m from you: the nearest mapped points on either side of it are 0.80 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "barrier",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          35.85,
+          35.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          35.5,
+          36.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_crossing_partition_a_t120",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (2.22, 4.41), 2.0 m from you: the nearest mapped points on either side of it are 1.11 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "barrier",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          119.83,
+          119.93
+        ]
+      ],
+      [
+        "odom",
+        [
+          119.5,
+          120.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_crossing_partition_a_t122",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (2.29, 4.49), 1.4 m from you: the nearest mapped points on either side of it are 0.76 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "barrier",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          121.89,
+          121.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          121.5,
+          122.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_crossing_partition_b_t106",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (1.00, 4.28), 2.7 m from you: the nearest mapped points on either side of it are 0.66 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "barrier",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          105.9,
+          106.0
+        ]
+      ],
+      [
+        "odom",
+        [
+          105.5,
+          106.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_crossing_partition_b_t110",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (1.13, 4.23), 1.9 m from you: the nearest mapped points on either side of it are 0.59 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "barrier",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          109.9,
+          110.0
+        ]
+      ],
+      [
+        "odom",
+        [
+          109.5,
+          110.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_crossing_partition_b_t112",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (1.16, 4.21), 1.9 m from you: the nearest mapped points on either side of it are 0.53 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "barrier",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          111.9,
+          112.0
+        ]
+      ],
+      [
+        "odom",
+        [
+          111.5,
+          112.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_crossing_partition_b_t114",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (1.16, 4.21), 2.4 m from you: the nearest mapped points on either side of it are 0.53 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "barrier",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          113.94,
+          114.04
+        ]
+      ],
+      [
+        "odom",
+        [
+          113.5,
+          114.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_crossing_partition_b_t116",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (1.16, 4.21), 2.7 m from you: the nearest mapped points on either side of it are 0.53 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "barrier",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          115.92,
+          116.02
+        ]
+      ],
+      [
+        "odom",
+        [
+          115.5,
+          116.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_crossing_meeting_room_t126",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (2.95, 6.69), 2.9 m from you: the nearest mapped points on either side of it are 1.15 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "barrier",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          125.9,
+          126.0
+        ]
+      ],
+      [
+        "odom",
+        [
+          125.5,
+          126.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_crossing_meeting_room_t128",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (2.95, 6.69), 2.7 m from you: the nearest mapped points on either side of it are 1.15 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "barrier",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          127.19,
+          127.29
+        ]
+      ],
+      [
+        "odom",
+        [
+          127.5,
+          128.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_crossing_meeting_room_t130",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (2.71, 6.76), 2.3 m from you: the nearest mapped points on either side of it are 0.65 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "barrier",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          129.91,
+          130.01
+        ]
+      ],
+      [
+        "odom",
+        [
+          129.5,
+          130.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_crossing_meeting_room_t132",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (2.72, 6.76), 2.0 m from you: the nearest mapped points on either side of it are 0.62 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "barrier",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          131.89,
+          131.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          131.5,
+          132.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_crossing_meeting_room_t134",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (2.74, 6.75), 1.7 m from you: the nearest mapped points on either side of it are 0.59 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "barrier",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          133.89,
+          133.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          133.5,
+          134.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_crossing_meeting_room_t136",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (2.75, 6.75), 1.7 m from you: the nearest mapped points on either side of it are 0.56 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "barrier",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          135.81,
+          135.91
+        ]
+      ],
+      [
+        "odom",
+        [
+          135.5,
+          136.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_crossing_meeting_room_t138",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (2.75, 6.75), 1.7 m from you: the nearest mapped points on either side of it are 0.56 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "barrier",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          137.91,
+          138.01
+        ]
+      ],
+      [
+        "odom",
+        [
+          137.5,
+          138.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_crossing_open_t63_2",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (2.99, 5.68), 1.9 m from you: the nearest mapped points on either side of it are 0.80 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "open",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          62.92,
+          63.02
+        ]
+      ],
+      [
+        "odom",
+        [
+          62.5,
+          63.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_crossing_open_t64_2",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (2.99, 5.68), 1.9 m from you: the nearest mapped points on either side of it are 0.80 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "open",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          63.83,
+          63.93
+        ]
+      ],
+      [
+        "odom",
+        [
+          63.5,
+          64.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_crossing_open_t59_1",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (3.23, 5.65), 2.5 m from you: the nearest mapped points on either side of it are 1.11 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "open",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          58.87,
+          58.97
+        ]
+      ],
+      [
+        "odom",
+        [
+          58.5,
+          59.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_crossing_open_t66_2",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (2.99, 5.68), 1.6 m from you: the nearest mapped points on either side of it are 0.76 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "open",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          65.89,
+          65.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          65.5,
+          66.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_crossing_open_t6_2",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (1.53, -0.83), 1.6 m from you: the nearest mapped points on either side of it are 0.66 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "open",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          5.85,
+          5.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          5.5,
+          6.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_short_crossing_open_t47_2",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (-2.02, 1.85), 3.0 m from you: the nearest mapped points on either side of it are 0.59 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "open",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          46.88,
+          46.98
+        ]
+      ],
+      [
+        "odom",
+        [
+          46.5,
+          47.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_crossing_open_t46_1",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (-0.89, 1.57), 2.9 m from you: the nearest mapped points on either side of it are 0.54 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "open",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          45.84,
+          45.94
+        ]
+      ],
+      [
+        "odom",
+        [
+          45.5,
+          46.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_crossing_open_t49_1",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (-1.86, 1.79), 2.0 m from you: the nearest mapped points on either side of it are 0.54 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "open",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          48.86,
+          48.96
+        ]
+      ],
+      [
+        "odom",
+        [
+          48.5,
+          49.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_crossing_open_t49_2",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (-2.02, 1.85), 2.1 m from you: the nearest mapped points on either side of it are 0.54 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "open",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          48.86,
+          48.96
+        ]
+      ],
+      [
+        "odom",
+        [
+          48.5,
+          49.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_china_office_crossing_open_t24_2",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (2.81, 2.51), 2.4 m from you: the nearest mapped points on either side of it are 1.15 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "open",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          23.93,
+          24.03
+        ]
+      ],
+      [
+        "odom",
+        [
+          23.5,
+          24.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_crossing_open_t25_2",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (2.81, 2.51), 2.4 m from you: the nearest mapped points on either side of it are 1.15 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "open",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          24.87,
+          24.97
+        ]
+      ],
+      [
+        "odom",
+        [
+          24.5,
+          25.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_short_crossing_open_t51_1",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (-1.86, 1.79), 1.0 m from you: the nearest mapped points on either side of it are 0.65 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "open",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          50.93,
+          51.03
+        ]
+      ],
+      [
+        "odom",
+        [
+          50.5,
+          51.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_china_office_crossing_open_t10_1",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (1.53, -0.83), 0.8 m from you: the nearest mapped points on either side of it are 0.62 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "open",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          9.84,
+          9.94
+        ]
+      ],
+      [
+        "odom",
+        [
+          9.5,
+          10.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_short_crossing_open_t48_3",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (-2.02, 1.85), 2.6 m from you: the nearest mapped points on either side of it are 0.59 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "open",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          47.79,
+          47.89
+        ]
+      ],
+      [
+        "odom",
+        [
+          47.5,
+          48.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_china_office_crossing_open_t13_1",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (2.09, -0.23), 0.8 m from you: the nearest mapped points on either side of it are 0.56 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "open",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          12.73,
+          12.83
+        ]
+      ],
+      [
+        "odom",
+        [
+          12.5,
+          13.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_crossing_open_t8_1",
+    "family": "crossing",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The mapped points leave a gap centred at (1.38, -0.68), 0.8 m from you: the nearest mapped points on either side of it are 0.56 m apart, which is wider than your body. Using only the mapped point cloud, would you get through if you walked into it? Answer with exactly one word: open if the gap is floor you would pass through, or barrier if something standing in it would stop you.",
+    "a": "open",
+    "choices": [
+      "open",
+      "barrier"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          7.88,
+          7.98
+        ]
+      ],
+      [
+        "odom",
+        [
+          7.5,
+          8.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  }
+]
