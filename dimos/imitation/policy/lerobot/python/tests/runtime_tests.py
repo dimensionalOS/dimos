@@ -28,7 +28,7 @@ import pytest_mock
 import torch
 from torch import Tensor
 
-from dimos.experimental.robot_policy.lerobot.module import LeRobotPolicyConfig
+from dimos.imitation.policy.lerobot.module import LeRobotPolicyConfig
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.protocol.rpc.pubsubrpc import LCMRPC

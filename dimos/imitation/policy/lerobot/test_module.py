@@ -18,7 +18,7 @@ from pydantic import ValidationError
 import pytest
 
 from dimos.core.python_native_module import contract_rpc_names
-from dimos.experimental.robot_policy.lerobot.module import (
+from dimos.imitation.policy.lerobot.module import (
     LeRobotPolicyModule,
     LeRobotPolicyModuleConfig,
 )
