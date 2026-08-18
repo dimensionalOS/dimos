@@ -369,9 +369,7 @@ class ModuleCoordinator(Resource):
             coordinator.build_all_modules()
             coordinator.start_all_modules()
         except BaseException:
-            # The caller never gets a reference to a build that raised, so
-            # nothing else can stop the modules that did start, and they keep
-            # whatever ports and sockets they took.
+            # The caller never gets a coordinator to stop, so stop it here.
             with suppress(Exception):
                 coordinator.stop()
             raise

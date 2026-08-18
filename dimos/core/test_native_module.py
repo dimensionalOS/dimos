@@ -343,7 +343,7 @@ def test_a_native_can_be_opened_as_the_router(monkeypatch) -> None:
 
 
 def test_a_pinned_session_is_not_a_module_config_field(monkeypatch) -> None:
-    """Native config structs reject unknown keys, so it stays out of `config`."""
+    """Native config structs reject unknown keys, so it stays out of config."""
     assert _launch(monkeypatch, "zenoh", session=ZenohConfig())["config"] is None
 
 

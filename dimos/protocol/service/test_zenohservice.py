@@ -54,23 +54,36 @@ def recorded_logs(monkeypatch):
     return recorder
 
 
-def test_a_client_dialing_several_endpoints_warns(zenoh_defaults, recorded_logs) -> None:
+def _acquire(monkeypatch, config: ZenohConfig) -> None:
+    monkeypatch.setattr(zenohservice.zenoh, "open", lambda zconfig: object())
+    ZenohSessionPool().acquire(config)
+
+
+def test_a_client_dialing_several_endpoints_warns(
+    zenoh_defaults, recorded_logs, monkeypatch
+) -> None:
     """Only the first endpoint that connects carries traffic."""
-    ZenohConfig(mode="client", connect=["tcp/192.0.2.10:7447", "tcp/192.0.2.11:7447"]).to_wire()
+    endpoints = ["tcp/192.0.2.10:7447", "tcp/192.0.2.11:7447"]
+    _acquire(monkeypatch, ZenohConfig(mode="client", connect=endpoints))
 
     event, fields = recorded_logs.warnings[0]
     assert "single link" in event
-    assert fields["connect"] == ["tcp/192.0.2.10:7447", "tcp/192.0.2.11:7447"]
+    assert fields["connect"] == endpoints
 
 
-def test_a_peer_dialing_several_endpoints_does_not_warn(zenoh_defaults, recorded_logs) -> None:
+def test_a_peer_dialing_several_endpoints_does_not_warn(
+    zenoh_defaults, recorded_logs, monkeypatch
+) -> None:
     """A peer links to all of them, so there is nothing to warn about."""
-    ZenohConfig(mode="peer", connect=["tcp/192.0.2.10:7447", "tcp/192.0.2.11:7447"]).to_wire()
+    endpoints = ["tcp/192.0.2.10:7447", "tcp/192.0.2.11:7447"]
+    _acquire(monkeypatch, ZenohConfig(mode="peer", connect=endpoints))
     assert recorded_logs.warnings == []
 
 
-def test_a_client_with_one_endpoint_does_not_warn(zenoh_defaults, recorded_logs) -> None:
-    ZenohConfig(mode="client", connect=["tcp/192.0.2.10:7447"]).to_wire()
+def test_a_client_with_one_endpoint_does_not_warn(
+    zenoh_defaults, recorded_logs, monkeypatch
+) -> None:
+    _acquire(monkeypatch, ZenohConfig(mode="client", connect=["tcp/192.0.2.10:7447"]))
     assert recorded_logs.warnings == []
 
 
@@ -93,7 +106,6 @@ def test_close_all_empties_the_pool_even_when_a_session_will_not_close(
     pool.close_all()
 
     assert [event for event, _ in recorded_logs.warnings] == ["Zenoh session close failed"]
-    # The pool is empty, so the next acquire opens a fresh session.
     pool.acquire(ZenohConfig())
     assert len(opens) == 2
 
