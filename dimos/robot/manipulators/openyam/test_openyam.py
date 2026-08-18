@@ -61,6 +61,17 @@ def test_make_openyam_model_config_maps_only_arm_joints() -> None:
     assert OPENYAM_GRIPPER_JOINT not in config.joint_name_mapping
     assert config.base_link == "base"
     assert config.end_effector_link == "gripper_tip"
+    assert config.velocity_limits == [2.0] * OPENYAM_DOF
+    assert config.max_velocity == 2.0
+
+
+def test_quest_teleop_matches_dual_openyam_response_tuning() -> None:
+    tasks = _coordinator_kwargs(teleop_quest_openyam)["tasks"]
+    teleop = next(task for task in tasks if task.type == "teleop_ik")
+
+    assert teleop.params["pink"].gain == 1.0
+    assert teleop.params["max_joint_velocity_rad_s"] == 2.0
+    assert teleop.params["joint_command_filter_cutoff_hz"] == 30.0
 
 
 def test_openyam_hardware_physical_mode_returns_one_whole_body(
