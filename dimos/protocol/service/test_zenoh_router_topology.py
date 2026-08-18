@@ -32,7 +32,6 @@ def _free_endpoint() -> str:
         return f"tcp/127.0.0.1:{sock.getsockname()[1]}"
 
 
-_ROUTER_ENDPOINT = _free_endpoint()
 _KEY = "dimos_test/router_topology"
 
 
@@ -43,6 +42,11 @@ def pool():
     pool.close_all()
 
 
+@pytest.fixture
+def router_endpoint() -> str:
+    return _free_endpoint()
+
+
 def _service(pool: ZenohSessionPool, **config: Any) -> ZenohService:
     """A started service with discovery off, so only the dialed links exist."""
     service = ZenohService(session_pool=pool, multicast=False, gossip=False, **config)
@@ -50,11 +54,15 @@ def _service(pool: ZenohSessionPool, **config: Any) -> ZenohService:
     return service
 
 
-def test_a_client_and_a_peer_talk_through_a_router(zenoh_defaults, pool) -> None:
-    router = _service(pool, mode="router", listen=[_ROUTER_ENDPOINT], connect=[])
-    publisher = _service(pool, mode="client", connect=[_ROUTER_ENDPOINT])
-    subscriber = _service(pool, mode="peer", connect=[_ROUTER_ENDPOINT])
-    assert publisher.session is not subscriber.session is not router.session
+def test_a_client_and_a_peer_talk_through_a_router(zenoh_defaults, pool, router_endpoint) -> None:
+    router = _service(pool, mode="router", listen=[router_endpoint], connect=[])
+    publisher = _service(pool, mode="client", connect=[router_endpoint])
+    subscriber = _service(pool, mode="peer", connect=[router_endpoint])
+    assert len({id(router.session), id(publisher.session), id(subscriber.session)}) == 3
+
+    # The client must see the hub as a router, not merely as a linked peer.
+    router_zids = [str(zid) for zid in publisher.session.info.routers_zid()]
+    assert router_zids == [str(router.session.info.zid())]
 
     received: list[bytes] = []
     subscriber.session.declare_subscriber(

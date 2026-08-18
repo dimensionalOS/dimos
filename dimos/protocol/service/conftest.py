@@ -18,7 +18,7 @@ from dimos.core.global_config import global_config
 
 
 @pytest.fixture
-def zenoh_defaults(monkeypatch):
+def zenoh_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pin every zenoh-relevant global config field to its stock default."""
     monkeypatch.setattr(global_config, "transport", "zenoh")
     monkeypatch.setattr(global_config, "robot_ip", None)
