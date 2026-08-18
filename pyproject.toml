@@ -291,6 +291,7 @@ manipulation = [
 
     # Mesh conversion (STL/DAE → OBJ for Drake collision geometry)
     "trimesh",
+    "rtree",
     "pycollada",
 
     # Visualization (Optional)

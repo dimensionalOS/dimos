@@ -19,10 +19,11 @@ from __future__ import annotations
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+from dimos.manipulation.planning.global_map_obstacle_bridge import GlobalMapObstacleBridge
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
-from dimos.perception.point_cloud_self_filter import PointCloudSelfFilter, SelfFilterBox
-from dimos.protocol.tf.tf_pose_source import TfPoseSource
+from dimos.perception.point_cloud_self_filter import PointCloudSelfFilter
+from dimos.protocol.tf.point_cloud_tf_pose_source import PointCloudTfPoseSource
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import (
     XARM7_SIM_PATH,
@@ -30,6 +31,7 @@ from dimos.robot.manipulators.xarm.config import (
     make_xarm7_sim_module_kwargs,
     make_xarm7_sim_robot_config,
 )
+from dimos.robot.robot_tf_publisher import RobotTfPublisher
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
@@ -57,9 +59,6 @@ xarm_voxel_planning_viser_demo = (
         ManipulationModule.blueprint(
             robots=[make_xarm7_sim_robot_config()],
             planning_timeout=10.0,
-            planning_world_frame="world",
-            planning_voxel_resolution=XARM_VOXEL_PLANNING_RESOLUTION,
-            planning_collision_max_age_s=1.0,
             visualization={"backend": "viser"},
             world_backend="roboplan",
             planner={"backend": "roboplan"},
@@ -70,10 +69,7 @@ xarm_voxel_planning_viser_demo = (
             kinematics={"backend": "jacobian"},
         ),
         MujocoSimModule.blueprint(
-            # The simulator already has the camera's world pose. Publishing
-            # that edge directly keeps mapping independent from the
-            # manipulation module's derived world -> link7 TF loop.
-            **(make_xarm7_sim_module_kwargs(XARM7_SIM_PATH) | {"base_frame_id": ""}),
+            **make_xarm7_sim_module_kwargs(XARM7_SIM_PATH),
             enable_depth=True,
             enable_color=True,
             enable_pointcloud=True,
@@ -82,26 +78,29 @@ xarm_voxel_planning_viser_demo = (
         PointCloudSelfFilter.blueprint(
             robot_model=make_xarm7_sim_robot_config(),
             padding_m=XARM_VOXEL_PLANNING_RESOLUTION / 2.0,
-            additional_boxes=[
-                SelfFilterBox(
-                    link="link7",
-                    center_xyz=(0.0, 0.0, 0.08),
-                    size_xyz=(0.08, 0.18, 0.18),
-                )
-            ],
             voxel_size=XARM_VOXEL_PLANNING_RESOLUTION,
             planning_frame="world",
             tf_tolerance_s=0.02,
             tf_forward_tolerance_s=0.05,
         ),
-        TfPoseSource.blueprint(
-            target_frame="world",
-            source_frame="wrist_camera_color_optical_frame",
-            publish_rate_hz=50.0,
+        PointCloudTfPoseSource.blueprint(
+            fixed_frame="world",
+            tf_tolerance_s=0.02,
+            tf_forward_tolerance_s=0.05,
+        ),
+        RobotTfPublisher.blueprint(
+            robot_model=make_xarm7_sim_robot_config(),
+            fixed_frame="world",
         ),
         RayTracingVoxelMap.blueprint(
             voxel_size=XARM_VOXEL_PLANNING_RESOLUTION,
+            map_frame="world",
             pose_match_tolerance_s=0.02,
+        ),
+        GlobalMapObstacleBridge.blueprint(
+            resolution=XARM_VOXEL_PLANNING_RESOLUTION,
+            planning_frame="world",
+            world_backend="roboplan",
         ),
         coordinator(
             hardware=[_xarm7_sim_hw],
@@ -111,7 +110,6 @@ xarm_voxel_planning_viser_demo = (
     .remappings(
         [
             (RayTracingVoxelMap, "lidar", "filtered_pointcloud"),
-            (ManipulationModule, "planning_voxel_map", "global_map"),
         ]
     )
     .global_config(simulation="mujoco")

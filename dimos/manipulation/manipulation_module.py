@@ -19,11 +19,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from enum import Enum
 import math
-from pathlib import Path
 import threading
 import time
 from typing import Any, Literal, TypeAlias, cast
-import xml.etree.ElementTree as ET
 
 from pydantic import Field
 from reactivex.abc import DisposableBase
@@ -33,7 +31,7 @@ from dimos.agents.skill_result import SkillResult
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In, Out
+from dimos.core.stream import In
 from dimos.manipulation.execution_manager import (
     ExecutionTarget,
     PlanExecutionManager,
@@ -67,9 +65,6 @@ from dimos.manipulation.planning.kinematics.config import (
     ManipulationKinematicsConfig,
     PinkKinematicsConfig,
 )
-from dimos.manipulation.planning.monitor.planning_collision_snapshot import (
-    PlanningCollisionSnapshot,
-)
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.planners.config import (
     CartesianPathConfig,
@@ -82,7 +77,6 @@ from dimos.manipulation.planning.planners.roboplan_config import (
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType
 from dimos.manipulation.planning.spec.models import (
-    DEFAULT_OBSTACLE_RGBA,
     CartesianTarget,
     GeneratedPlan,
     IKResult,
@@ -114,8 +108,6 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -131,15 +123,6 @@ RobotInfoValue: TypeAlias = (
     str | bool | float | list[str] | list[float] | list[PlanningGroup] | None
 )
 RobotInfoPayload: TypeAlias = dict[str, RobotInfoValue]
-
-ObstacleShape: TypeAlias = Literal["box", "sphere", "cylinder", "mesh"]
-
-_SHAPE_TO_OBSTACLE_TYPE: dict[str, ObstacleType] = {
-    "box": ObstacleType.BOX,
-    "sphere": ObstacleType.SPHERE,
-    "cylinder": ObstacleType.CYLINDER,
-    "mesh": ObstacleType.MESH,
-}
 
 
 class ManipulationState(Enum):
@@ -179,9 +162,6 @@ class ManipulationModuleConfig(ModuleConfig):
     default_speed_scale: float = Field(default=1.0, gt=0.0, le=1.0)
     linear_speed_scale: float = Field(default=0.5, gt=0.0, le=1.0)
     execution_timeout: float = Field(default=60.0, gt=0.0)
-    planning_voxel_resolution: float = Field(default=0.05, gt=0.0)
-    planning_world_frame: str = "world"
-    planning_collision_max_age_s: float | None = Field(default=None, gt=0.0)
 
 
 class ManipulationModule(Module):
@@ -192,8 +172,6 @@ class ManipulationModule(Module):
 
     # Input: Joint state from coordinator (for world sync)
     coordinator_joint_state: In[JointState]
-    planning_voxel_map: In[PointCloud2]
-    tf: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -206,11 +184,6 @@ class ManipulationModule(Module):
 
         # Planning components (initialized in start())
         self._world_monitor: WorldMonitor | None = None
-        self._planning_collision_snapshot = PlanningCollisionSnapshot(
-            resolution=self.config.planning_voxel_resolution,
-            planning_frame=self.config.planning_world_frame,
-            max_age_s=self.config.planning_collision_max_age_s,
-        )
         self._planner: PlannerSpec | None = None
         self._kinematics: KinematicsSpec | None = None
         self._trajectory_parametrizer: TrajectoryParametrizerSpec | None = None
@@ -228,9 +201,7 @@ class ManipulationModule(Module):
         # Init joints: captured from first joint state per robot, used by go_init
         self._init_joints: dict[RobotName, JointState] = {}
 
-        self._robot_tf_edges: dict[RobotName, list[tuple[str, str]]] = {}
         self._joint_state_subscription: DisposableBase | None = None
-        self._planning_voxel_subscription: DisposableBase | None = None
 
         logger.info("ManipulationModule initialized")
 
@@ -250,36 +221,7 @@ class ManipulationModule(Module):
                 Disposable(self.coordinator_joint_state.subscribe(self._on_joint_state))
             )
             logger.info("Subscribed to coordinator_joint_state port")
-        if (
-            self.planning_voxel_map.connection is not None
-            or self.planning_voxel_map._transport is not None
-        ):
-            self._planning_voxel_subscription = self.register_disposable(
-                Disposable(self.planning_voxel_map.subscribe(self._on_planning_voxel_map))
-            )
-            logger.info("Subscribed to planning_voxel_map port")
-
         logger.info("ManipulationModule started")
-
-    def _on_planning_voxel_map(self, cloud: PointCloud2) -> None:
-        """Stage the latest complete planning collision snapshot."""
-        try:
-            self._planning_collision_snapshot.stage(cloud)
-        except ValueError as exc:
-            logger.warning("Rejected planning collision snapshot: %s", exc)
-
-    def _synchronize_planning_collision_snapshot(self) -> None:
-        """Commit staged collision input before collision-aware planning work."""
-        if self._world_monitor is not None:
-            self._planning_collision_snapshot.synchronize(self._world_monitor)
-
-    def committed_planning_collision_snapshot(self) -> PointCloud2 | None:
-        """Return the completely committed planning collision snapshot."""
-        return self._planning_collision_snapshot.committed()
-
-    def latest_planning_collision_snapshot(self) -> PointCloud2 | None:
-        """Return the latest validated snapshot for prompt visualization."""
-        return self._planning_collision_snapshot.staged()
 
     def _initialize_planning(self) -> None:
         """Initialize world, planner, and trajectory generator."""
@@ -309,13 +251,9 @@ class ManipulationModule(Module):
             world_monitor=self._world_monitor,
             manipulation_module=self,
         )
-        if not hasattr(self, "_robot_tf_edges"):
-            self._robot_tf_edges = {}
-
         for robot_config in self.config.robots:
             robot_id = self._world_monitor.add_robot(robot_config)
             self._robots[robot_config.name] = (robot_id, robot_config)
-            self._robot_tf_edges[robot_config.name] = self._load_robot_tf_edges(robot_config)
 
         operator = ManipulationOperator(self, self._world_monitor)
         self._world_monitor.finalize(visualization, operator=operator)
@@ -417,15 +355,6 @@ class ManipulationModule(Module):
 
                 # Route to specific monitor
                 self._world_monitor.on_joint_state(sub_msg, robot_id=robot_id)
-                model_joint_state = JointState(
-                    name=list(config.joint_names),
-                    position=sub_positions,
-                    velocity=sub_velocities,
-                    ts=msg.ts,
-                    frame_id=msg.frame_id,
-                )
-                self._publish_robot_tf(robot_name, robot_id, config, model_joint_state)
-
                 # Capture per-robot init joints on first update
                 if robot_name not in self._init_joints:
                     self._init_joints[robot_name] = sub_msg
@@ -439,66 +368,6 @@ class ManipulationModule(Module):
             import traceback
 
             logger.error(traceback.format_exc())
-
-    @staticmethod
-    def _load_robot_tf_edges(config: RobotModelConfig) -> list[tuple[str, str]]:
-        """Read the model's parent-child link tree from its resolved URDF."""
-        from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
-
-        if not config.model_path.exists():
-            logger.warning("Robot TF tree unavailable: model does not exist: %s", config.model_path)
-            return []
-        urdf = Path(
-            prepare_urdf_for_drake(
-                config.model_path,
-                package_paths=config.package_paths,
-                xacro_args=config.xacro_args,
-            )
-        )
-        root = ET.parse(urdf).getroot()
-        edges: list[tuple[str, str]] = []
-        for joint in root.findall("joint"):
-            parent = joint.find("parent")
-            child = joint.find("child")
-            if parent is None or child is None or parent.attrib["link"] == "world":
-                continue
-            edges.append((parent.attrib["link"], child.attrib["link"]))
-        return edges
-
-    def _publish_robot_tf(
-        self,
-        robot_name: RobotName,
-        robot_id: WorldRobotID,
-        config: RobotModelConfig,
-        joint_state: JointState,
-    ) -> None:
-        """Publish the complete model TF tree from one measured joint state."""
-        if self._world_monitor is None:
-            return
-        edges = self._robot_tf_edges.get(robot_name)
-        if edges is None:
-            return
-        links = {config.base_link, *(link for edge in edges for link in edge)}
-        world_transforms: dict[str, Transform] = {}
-        for link in links:
-            pose = self._world_monitor.get_link_pose(robot_id, link, joint_state)
-            if pose is None:
-                logger.warning("Skipping robot TF sample: pose unavailable for %s", link)
-                return
-            transform = Transform.from_pose(link, pose)
-            transform.frame_id = self.config.planning_world_frame
-            transform.child_frame_id = link
-            transform.ts = joint_state.ts
-            world_transforms[link] = transform
-
-        transforms = [world_transforms[config.base_link]]
-        for parent, child in edges:
-            relative = world_transforms[parent].inverse() + world_transforms[child]
-            relative.frame_id = parent
-            relative.child_frame_id = child
-            relative.ts = joint_state.ts
-            transforms.append(relative)
-        self.tfbuffer.publish(*transforms)
 
     @rpc
     def get_state(self) -> ManipulationSnapshot:
@@ -615,11 +484,6 @@ class ManipulationModule(Module):
             if self._state not in (ManipulationState.IDLE, ManipulationState.COMPLETED):
                 logger.warning(f"Cannot plan: state is {self._state.name}")
                 return None
-            # Synchronize before publishing PLANNING.  In particular, a failed
-            # backend registration must leave the caller's prior state intact.
-            # Holding the lock also keeps a concurrent planning request from
-            # observing or racing this reservation.
-            self._synchronize_planning_collision_snapshot()
             self._planning_epoch += 1
             self._last_plan = None
             self._error_message = ""
@@ -802,8 +666,6 @@ class ManipulationModule(Module):
             return IKResult(
                 status=IKStatus.NO_SOLUTION, message="At least one pose target is required"
             )
-        if check_collision:
-            self._synchronize_planning_collision_snapshot()
         return self._inverse_kinematics_impl(
             pose_targets, auxiliary_group_ids, seed, check_collision
         )
@@ -1619,72 +1481,17 @@ class ManipulationModule(Module):
         return self._world_monitor
 
     @rpc
-    def add_obstacle(
-        self,
-        name: str,
-        pose: Pose,
-        shape: str,
-        dimensions: list[float] | None = None,
-        mesh_path: str | None = None,
-    ) -> str:
-        """Add obstacle: shape='box'|'sphere'|'cylinder'|'mesh'. Returns obstacle_id."""
-        if not self._world_monitor:
+    def add_obstacle(self, obstacle: Obstacle) -> str:
+        """Add a complete obstacle and return its native planning-world ID."""
+        if self._world_monitor is None:
             return ""
-
-        obstacle_type = _SHAPE_TO_OBSTACLE_TYPE.get(shape)
-        if obstacle_type is None:
-            logger.warning(f"Unknown obstacle shape: {shape}")
-            return ""
-
-        # Validate mesh_path for mesh type
-        if obstacle_type == ObstacleType.MESH and not mesh_path:
-            logger.warning("mesh_path required for mesh obstacles")
-            return ""
-
-        obstacle = Obstacle(
-            name=name,
-            obstacle_type=obstacle_type,
-            pose=PoseStamped(position=pose.position, orientation=pose.orientation),
-            dimensions=tuple(dimensions) if dimensions else (),
-            mesh_path=mesh_path,
-        )
-        # Preserve the historical RPC string contract for duplicate additions.
         return self._world_monitor.add_obstacle(obstacle) or ""
 
     @rpc
-    def update_obstacle(
-        self,
-        name: str,
-        pose: Pose,
-        shape: ObstacleShape,
-        dimensions: list[float] | None = None,
-        mesh_path: str | None = None,
-        color: list[float] | None = None,
-    ) -> bool:
+    def update_obstacle(self, obstacle: Obstacle) -> bool:
         """Replace a complete obstacle identified by name."""
         if self._world_monitor is None:
             return False
-
-        obstacle_type = _SHAPE_TO_OBSTACLE_TYPE.get(shape)
-        if obstacle_type is None:
-            raise ValueError(f"Unknown obstacle shape: {shape}")
-        if obstacle_type == ObstacleType.MESH and not mesh_path:
-            raise ValueError("mesh_path required for mesh obstacles")
-        if color is None:
-            rgba = DEFAULT_OBSTACLE_RGBA
-        elif len(color) == 4:
-            rgba = (float(color[0]), float(color[1]), float(color[2]), float(color[3]))
-        else:
-            raise ValueError("Obstacle color must contain four values")
-
-        obstacle = Obstacle(
-            name=name,
-            obstacle_type=obstacle_type,
-            pose=PoseStamped(position=pose.position, orientation=pose.orientation),
-            dimensions=tuple(dimensions) if dimensions else (),
-            color=rgba,
-            mesh_path=mesh_path,
-        )
         return self._world_monitor.update_obstacle(obstacle)
 
     @rpc
@@ -1855,7 +1662,7 @@ class ManipulationModule(Module):
         super().stop()
 
     def _dispose_input_subscriptions(self) -> None:
-        for attribute in ("_joint_state_subscription", "_planning_voxel_subscription"):
+        for attribute in ("_joint_state_subscription",):
             subscription = getattr(self, attribute, None)
             setattr(self, attribute, None)
             if subscription is not None:

@@ -17,7 +17,6 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-import numpy as np
 import pytest
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
@@ -41,7 +40,6 @@ from dimos.manipulation.visualization.viser.scene import RobotDisplayMode, Viser
 from dimos.manipulation.visualization.viser.visualizer import ViserManipulationVisualizer
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
 
@@ -398,13 +396,9 @@ def test_visualizer_publish_preview_and_close_paths(
 ) -> None:
     calls: list[tuple[str, str]] = []
     current = JointState({"name": ["joint1"], "position": [0.5]})
-    latest_snapshot = PointCloud2.from_numpy(
-        np.asarray([[0.1, 0.2, 0.3]]), frame_id="world", timestamp=1.0
-    )
 
     class FakeOperator:
-        def latest_planning_collision_snapshot(self) -> PointCloud2:
-            return latest_snapshot
+        pass
 
     class FakeRuntime:
         url = "http://localhost:8095"
@@ -430,10 +424,6 @@ def test_visualizer_publish_preview_and_close_paths(
         def update_current_robot(self, robot_id: str, joint_state: JointState | None) -> None:
             assert joint_state == current
             calls.append(("update", robot_id))
-
-        def update_planning_collision_snapshot(self, cloud: PointCloud2 | None) -> None:
-            assert cloud is latest_snapshot
-            calls.append(("snapshot", "latest"))
 
         def register_robot(self, robot_id: str, config: RobotModelConfig) -> None:
             calls.append(("register", robot_id))
@@ -494,7 +484,6 @@ def test_visualizer_publish_preview_and_close_paths(
         ("register", "robot-1"),
         ("cancel", "preview"),
         ("update", "robot-1"),
-        ("snapshot", "latest"),
         ("cancel", "preview"),
         ("animate", "groups"),
         ("obstacle", "add:native/id"),

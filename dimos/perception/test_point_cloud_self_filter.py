@@ -1,5 +1,25 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, cast
 
@@ -13,8 +33,6 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.point_cloud_self_filter import (
     PointCloudSelfFilter,
-    PointCloudSelfFilterConfig,
-    SelfFilterBox,
     _CollisionGeometry,
 )
 from dimos.protocol.tf.tf import TF, MultiTBuffer
@@ -33,30 +51,33 @@ def _write_box_robot(path: Path) -> None:
     )
 
 
-def _filter(
-    tmp_path: Path, *, additional_boxes: tuple[SelfFilterBox, ...] = ()
-) -> PointCloudSelfFilter:
+@pytest.fixture
+def make_filter(tmp_path: Path) -> Iterator[Callable[[], PointCloudSelfFilter]]:
     urdf = tmp_path / "robot.urdf"
     _write_box_robot(urdf)
-    module = object.__new__(PointCloudSelfFilter)
-    state = cast("dict[str, Any]", module.__dict__)
-    state["config"] = PointCloudSelfFilterConfig(
-        robot_model=RobotModelConfig(
-            name="robot",
-            model_path=urdf,
-            joint_names=[],
-            base_link="base",
-        ),
-        padding_m=0.01,
-        voxel_size=0.05,
-        tf_tolerance_s=0.001,
-        tf_forward_tolerance_s=0.0,
-        additional_boxes=additional_boxes,
-    )
-    state["_tf"] = MultiTBuffer()
-    state["_collision_geometry"] = module._load_collision_geometry()
-    state["_previous_clear_keys"] = set()
-    return module
+    modules: list[PointCloudSelfFilter] = []
+
+    def make() -> PointCloudSelfFilter:
+        module = PointCloudSelfFilter(
+            robot_model=RobotModelConfig(
+                name="robot",
+                model_path=urdf,
+                joint_names=[],
+                base_link="base",
+            ),
+            padding_m=0.01,
+            voxel_size=0.05,
+            tf_tolerance_s=0.001,
+            tf_forward_tolerance_s=0.0,
+        )
+        cast("dict[str, Any]", module.__dict__)["_tf"] = MultiTBuffer()
+        modules.append(module)
+        return module
+
+    yield make
+    for module in modules:
+        cast("dict[str, Any]", module.__dict__)["_tf"] = None
+        module.dispose()
 
 
 def _cloud(points: list[tuple[float, float, float]], timestamp: float = 12.5) -> PointCloud2:
@@ -81,8 +102,10 @@ def _publish_link_pose(module: PointCloudSelfFilter, timestamp: float, x: float 
     )
 
 
-def test_model_filter_removes_robot_surface_and_preserves_external_point(tmp_path: Path) -> None:
-    module = _filter(tmp_path)
+def test_model_filter_removes_robot_surface_and_preserves_external_point(
+    make_filter: Callable[[], PointCloudSelfFilter],
+) -> None:
+    module = make_filter()
     _publish_link_pose(module, 12.5)
 
     result = module.filter_cloud(_cloud([(0.5, 0.0, 0.0), (0.0, 0.0, 0.0), (2.0, 0.0, 0.0)]))
@@ -93,33 +116,19 @@ def test_model_filter_removes_robot_surface_and_preserves_external_point(tmp_pat
     np.testing.assert_allclose(filtered.intensities_f32(), [3.0])
     assert clear_mask.frame_id == "world"
     assert clear_mask.ts == 12.5
-    keys = clear_mask.points_f32()
-    assert len(keys) > 0
-    np.testing.assert_array_equal(keys, np.floor(keys))
-
-
-def test_additional_box_removes_attached_geometry(tmp_path: Path) -> None:
-    module = _filter(
-        tmp_path,
-        additional_boxes=(
-            SelfFilterBox(
-                link="base",
-                center_xyz=(2.0, 0.0, 0.0),
-                size_xyz=(0.2, 0.4, 0.6),
-            ),
-        ),
+    samples = clear_mask.points_f32()
+    assert len(samples) > 0
+    np.testing.assert_allclose(
+        np.floor(samples / module.filter_config.voxel_size) + 0.5,
+        samples / module.filter_config.voxel_size,
+        atol=1e-5,
     )
-    _publish_link_pose(module, 12.5)
-
-    result = module.filter_cloud(_cloud([(2.0, 0.0, 0.0), (3.0, 0.0, 0.0)]))
-
-    assert result is not None
-    filtered, _ = result
-    np.testing.assert_allclose(filtered.points_f32(), [[3.0, 0.0, 0.0]])
 
 
-def test_clear_mask_contains_previous_and_current_robot_volumes(tmp_path: Path) -> None:
-    module = _filter(tmp_path)
+def test_clear_mask_contains_previous_and_current_robot_volumes(
+    make_filter: Callable[[], PointCloudSelfFilter],
+) -> None:
+    module = make_filter()
     _publish_link_pose(module, 12.5, x=0.0)
     first = module.filter_cloud(_cloud([], 12.5))
     assert first is not None
@@ -131,18 +140,20 @@ def test_clear_mask_contains_previous_and_current_robot_volumes(tmp_path: Path) 
     second_keys = {tuple(key) for key in second[1].points_f32()}
 
     assert first_keys < second_keys
-    assert any(key[0] >= 10 for key in second_keys)
+    assert any(key[0] >= 0.5 for key in second_keys)
 
 
-def test_missing_required_link_tf_drops_whole_capture(tmp_path: Path) -> None:
-    module = _filter(tmp_path)
+def test_missing_required_link_tf_drops_whole_capture(
+    make_filter: Callable[[], PointCloudSelfFilter],
+) -> None:
+    module = make_filter()
     assert module.filter_cloud(_cloud([(2.0, 0.0, 0.0)])) is None
 
 
-def test_self_filter_stream_types_include_atomic_clear_mask() -> None:
+def test_self_filter_stream_types_include_independent_clear_mask() -> None:
     assert PointCloudSelfFilter.__annotations__["pointcloud"]
     assert PointCloudSelfFilter.__annotations__["filtered_pointcloud"]
-    assert PointCloudSelfFilter.__annotations__["robot_clear_mask"]
+    assert PointCloudSelfFilter.__annotations__["voxel_clear_mask"]
 
 
 def test_transform_points_applies_rotation_and_translation() -> None:
@@ -161,7 +172,7 @@ def test_transform_points_applies_rotation_and_translation() -> None:
     np.testing.assert_allclose(transformed, [[4.0, 6.0, 6.0], [2.0, 5.0, 9.0]])
 
 
-def test_mesh_filter_uses_conservative_link_local_bounds() -> None:
+def test_mesh_filter_uses_exact_mesh_surface_with_padding() -> None:
     mesh = trimesh.creation.icosphere(radius=1.0)
     geometry = _CollisionGeometry(
         link="arm",
@@ -173,7 +184,7 @@ def test_mesh_filter_uses_conservative_link_local_bounds() -> None:
     )
     points = np.asarray(
         [
-            [0.9, 0.9, 0.0],  # Outside the sphere, inside its conservative bounds.
+            [0.9, 0.9, 0.0],  # Outside the sphere, inside its bounding box.
             [1.02, 0.0, 0.0],  # Included by padding.
             [1.2, 0.0, 0.0],
         ]
@@ -181,7 +192,7 @@ def test_mesh_filter_uses_conservative_link_local_bounds() -> None:
 
     removed = PointCloudSelfFilter._points_inside_geometry(points, geometry, padding=0.05)
 
-    np.testing.assert_array_equal(removed, [True, True, False])
+    np.testing.assert_array_equal(removed, [False, True, False])
 
 
 @pytest.mark.self_hosted
@@ -239,4 +250,4 @@ def test_xarm_model_removes_base_arm_and_gripper_surfaces() -> None:
         filtered, _ = result
         np.testing.assert_allclose(filtered.points_f32(), [external_point])
     finally:
-        module.stop()
+        module.dispose()

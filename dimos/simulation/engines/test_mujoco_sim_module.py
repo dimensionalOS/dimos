@@ -235,7 +235,7 @@ def test_pointcloud_publishes_tf_from_the_same_capture_first(mocker: Any) -> Non
         module.stop()
 
 
-def test_render_capture_timestamp_is_preserved_for_images_and_tf() -> None:
+def test_render_capture_timestamp_is_preserved_for_images_and_tf(mocker: Any) -> None:
     capture_timestamp = 123.456
     frame = CameraFrame(
         rgb=np.zeros((1, 1, 3), dtype=np.uint8),
@@ -266,17 +266,17 @@ def test_render_capture_timestamp_is_preserved_for_images_and_tf() -> None:
 
     try:
         module._engine = _OneFrameEngine()  # type: ignore[assignment]
-        module.color_image = MagicMock()
-        module.depth_image = MagicMock()
-        module._publish_tf = MagicMock()  # type: ignore[method-assign]
+        color_publish = mocker.patch.object(module.color_image, "publish")
+        depth_publish = mocker.patch.object(module.depth_image, "publish")
+        publish_tf = mocker.patch.object(module, "_publish_tf")
 
         module._publish_loop()
 
-        color = module.color_image.publish.call_args.args[0]
-        depth = module.depth_image.publish.call_args.args[0]
+        color = color_publish.call_args.args[0]
+        depth = depth_publish.call_args.args[0]
         assert color.ts == capture_timestamp
         assert depth.ts == capture_timestamp
-        module._publish_tf.assert_called_once_with(capture_timestamp, frame)
+        publish_tf.assert_called_once_with(capture_timestamp, frame)
     finally:
         module.stop()
 

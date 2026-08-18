@@ -55,7 +55,7 @@ mid360_fastlio_voxels_native = autoconnect(
 
 mid360_fastlio_ray_trace = autoconnect(
     FastLio2.blueprint(),
-    RayTracingVoxelMap.blueprint(voxel_size=voxel_size),
+    RayTracingVoxelMap.blueprint(voxel_size=voxel_size, map_frame="odom"),
     vis_module(
         "rerun",
         rerun_config={

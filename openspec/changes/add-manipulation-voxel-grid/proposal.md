@@ -1,40 +1,32 @@
-## Why
+# Proposal: capture-aligned manipulation voxel mapping
 
-Manipulation planning can register modeled obstacles, but it cannot use live occupancy produced by the perception stack. Plans may therefore ignore objects seen by the wrist camera even when the voxel mapper has an up-to-date view of the workspace.
+## Problem
 
-This change connects complete planning collision snapshots to the unified obstacle lifecycle, exposes the accepted backend obstacle set in Viser, and provides an xArm simulation example that exercises the full perception-to-planning path.
+The xArm wrist camera produced point clouds and poses on independent timers, so
+motion registered static objects at the wrong world positions. The camera also
+sees the robot base, arm, and gripper; those returns became hard planning
+obstacles and historical robot voxels could remain after motion.
 
-## What Changes
+## Change
 
-- Accept complete, pre-filtered occupancy snapshots in the planning world frame as manipulation collision input.
-- Stage the latest snapshot and commit it at planning time through stable-ID obstacle add/update/remove operations.
-- Register octree collision geometry in RoboPlan and raise an explicit unsupported-operation error on planning backends without octree support.
-- Project backend-accepted obstacles in Viser through PR #3108's add-or-replace/remove/clear lifecycle.
-- Resolve camera pose from correctly stamped TF near each cloud's capture time, with a strict 20 ms dynamic-transform tolerance and 50 ms delivery wait.
-- Add timeless static TF edges and publish the complete robot kinematic TF tree from measured joint-state updates at at least 50 Hz.
-- Derive whole-robot self-exclusion from padded URDF/Xacro collision shapes and atomically clear previous/current robot volumes while integrating each cloud.
-- Reject new plans when the latest valid collision snapshot is older than 1 second.
-- Add an xArm MuJoCo/Viser example that maps wrist-camera depth data into manipulation collision geometry.
-- Add focused unit, integration, blueprint, and user-documentation coverage.
+- Establish a shared mapper contract for navigation and manipulation:
+  sensor-frame `PointCloud2` plus fixed-frame sensor `Odometry`.
+- Generate wrist-camera Odometry once per cloud by querying TF at the cloud's
+  capture timestamp.
+- Buffer clouds in the native mapper until the corresponding pose arrives,
+  with bounded capacity, timestamp tolerance, frame validation, and expiry.
+- Remove modeled robot collision geometry before mapping and provide optional,
+  independent metric voxel-clear masks to remove current and vacated volumes.
+- Publish the complete robot TF tree from measured joint state in a reusable
+  module.
+- Reconcile every complete global map through typed `Obstacle` add/update/remove
+  RPCs under one stable RoboPlan OCTREE ID.
+- Provide a MuJoCo + Viser blueprint and manual verification guide.
 
-## Affected DimOS Surfaces
+## Non-goals
 
-- Modules/streams: manipulation planning, world monitoring, obstacle models, RoboPlan world adaptation, Viser visualization, point-cloud self-filtering, TF pose sourcing, and voxel-map streams.
-- Blueprints/CLI: a runnable xArm simulation blueprint discoverable through `dimos list` and `dimos run`; no CLI syntax changes.
-- Skills/MCP: none.
-- Hardware/simulation/replay: the xArm example remains simulation-only, while TF timestamp/static-edge semantics and robot-model self-exclusion are reusable by hardware blueprints.
-- Docs/generated registries: xArm voxel-planning usage documentation and regenerated built-in blueprint registry.
-
-## Capabilities
-
-### New Capabilities
-
-- `manipulation-collision-snapshots`: Complete occupancy snapshots, planning-world registration, unified obstacle lifecycle behavior, accepted-backend visualization, and xArm simulation observability.
-
-### Modified Capabilities
-
-None.
-
-## Impact
-
-The change is additive and does not alter public CLI syntax, skills, MCP tools, or trajectory execution. RoboPlan gains octree collision registration; other planning backends reject that obstacle type explicitly. Planning cost grows with occupied-voxel count because collision registration does not discard points, while Viser may cap display points independently. Verification covers snapshot lifecycle and failure behavior, native RoboPlan conversion, accepted-backend visualization, self-filter and TF helpers, blueprint wiring, and the generated registry.
+- Soft collision costs or sensor-confidence weighting.
+- Grasped-payload self exclusion.
+- OCTREE support in Drake.
+- TF interpolation; capture-triggered closest-sample lookup uses tight bounded
+  tolerances.

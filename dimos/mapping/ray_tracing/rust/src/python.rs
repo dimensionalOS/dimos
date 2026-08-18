@@ -110,6 +110,7 @@ impl VoxelRayMapper {
             global_emit_every: 1,
             region_percentile: 95.0,
             pose_match_tolerance_s: 0.1,
+            map_frame: "world".to_string(),
         };
         config
             .validate()

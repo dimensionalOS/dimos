@@ -29,7 +29,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-08-03T19:08:40.466827Z"
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -1763,6 +1763,7 @@ all = [
     { name = "reportlab" },
     { name = "rerun-sdk" },
     { name = "roboplan" },
+    { name = "rtree" },
     { name = "sentencepiece" },
     { name = "sounddevice" },
     { name = "soundfile" },
@@ -1856,6 +1857,7 @@ manipulation = [
     { name = "pyrealsense2-extended", marker = "sys_platform != 'darwin'" },
     { name = "pyyaml" },
     { name = "roboplan" },
+    { name = "rtree" },
     { name = "trimesh" },
     { name = "viser", extra = ["urdf"] },
     { name = "xacro" },
@@ -2278,6 +2280,7 @@ requires-dist = [
     { name = "rerun-sdk", specifier = "==0.32.0" },
     { name = "rerun-sdk", marker = "extra == 'visualization'", specifier = "==0.32.0" },
     { name = "roboplan", marker = "extra == 'manipulation'", specifier = ">=0.6.0,<0.7.0" },
+    { name = "rtree", marker = "extra == 'manipulation'" },
     { name = "scipy", specifier = ">=1.15.1" },
     { name = "sentencepiece", marker = "extra == 'perception'", specifier = ">=0.2.0" },
     { name = "sortedcontainers", specifier = "==2.4.0" },

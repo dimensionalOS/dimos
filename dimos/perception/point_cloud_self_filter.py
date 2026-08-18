@@ -5,6 +5,20 @@
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
 
 """Robot-model point-cloud self exclusion and map-clear-mask generation."""
 
@@ -41,23 +55,6 @@ class _CollisionGeometry:
     clear_samples: np.ndarray
 
 
-@dataclass(frozen=True)
-class SelfFilterBox:
-    """Conservative attached geometry expressed in a robot link frame."""
-
-    link: str
-    center_xyz: tuple[float, float, float]
-    size_xyz: tuple[float, float, float]
-
-    def __post_init__(self) -> None:
-        if not self.link:
-            raise ValueError("Self-filter box link must not be empty")
-        if not np.isfinite(self.center_xyz).all():
-            raise ValueError("Self-filter box center must contain only finite values")
-        if not np.isfinite(self.size_xyz).all() or any(size <= 0.0 for size in self.size_xyz):
-            raise ValueError("Self-filter box size must contain finite positive values")
-
-
 class PointCloudSelfFilterConfig(ModuleConfig):
     robot_model: RobotModelConfig
     padding_m: float = Field(default=0.01, ge=0.0)
@@ -65,7 +62,6 @@ class PointCloudSelfFilterConfig(ModuleConfig):
     planning_frame: str = "world"
     tf_tolerance_s: float = Field(default=0.02, ge=0.0)
     tf_forward_tolerance_s: float = Field(default=0.05, ge=0.0)
-    additional_boxes: list[SelfFilterBox] = Field(default_factory=list)
 
 
 class PointCloudSelfFilter(Module):
@@ -76,7 +72,7 @@ class PointCloudSelfFilter(Module):
     pointcloud: In[PointCloud2]
     tf: In[TFMessage]
     filtered_pointcloud: Out[PointCloud2]
-    robot_clear_mask: Out[PointCloud2]
+    voxel_clear_mask: Out[PointCloud2]
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
@@ -134,7 +130,9 @@ class PointCloudSelfFilter(Module):
 
         clear_keys = self._previous_clear_keys | current_clear_keys
         self._previous_clear_keys = current_clear_keys
-        clear_points = np.asarray(sorted(clear_keys), dtype=np.float32).reshape((-1, 3))
+        clear_points = (
+            np.asarray(sorted(clear_keys), dtype=np.float32).reshape((-1, 3)) + 0.5
+        ) * self.filter_config.voxel_size
         clear_mask = PointCloud2.from_numpy(
             clear_points,
             frame_id=self.filter_config.planning_frame,
@@ -158,9 +156,10 @@ class PointCloudSelfFilter(Module):
         if result is None:
             return
         filtered, clear_mask = result
-        # Both messages carry the capture timestamp; the mapper joins them
-        # before mutating occupancy, regardless of transport delivery order.
-        self.robot_clear_mask.publish(clear_mask)
+        # The mask is independent authoritative free-space evidence. Publishing
+        # it first minimizes cleanup latency without making cloud processing
+        # depend on cross-topic ordering.
+        self.voxel_clear_mask.publish(clear_mask)
         self.filtered_pointcloud.publish(filtered)
 
     def _load_collision_geometry(self) -> list[_CollisionGeometry]:
@@ -194,20 +193,6 @@ class PointCloudSelfFilter(Module):
                         clear_samples=self._clear_samples(mesh),
                     )
                 )
-        for box in self.filter_config.additional_boxes:
-            link_from_geometry = np.eye(4, dtype=np.float64)
-            link_from_geometry[:3, 3] = box.center_xyz
-            mesh = trimesh.creation.box(extents=box.size_xyz)
-            result.append(
-                _CollisionGeometry(
-                    link=box.link,
-                    link_from_geometry=link_from_geometry,
-                    mesh=mesh,
-                    shape="box",
-                    dimensions=box.size_xyz,
-                    clear_samples=self._clear_samples(mesh),
-                )
-            )
         return result
 
     @staticmethod
@@ -261,14 +246,10 @@ class PointCloudSelfFilter(Module):
                 & (np.abs(points[:, 2]) <= length / 2.0 + padding)
             )
 
-        bounds = geometry.mesh.bounds
-        # Collision meshes are already conservative robot geometry. Their
-        # link-local bounds form an oriented box in the sensor frame, avoiding
-        # expensive per-point mesh proximity queries while retaining safe
-        # self-exclusion at mapping resolution.
-        return np.asarray(
-            np.all((points >= bounds[0] - padding) & (points <= bounds[1] + padding), axis=1)
+        signed_distance = trimesh.proximity.signed_distance(  # type: ignore[no-untyped-call]
+            geometry.mesh, points
         )
+        return np.asarray(signed_distance >= -padding)
 
     def _clear_samples(self, mesh: trimesh.Trimesh) -> np.ndarray:
         pitch = self.filter_config.voxel_size
@@ -280,11 +261,10 @@ class PointCloudSelfFilter(Module):
             for lo, hi in zip(lower, upper, strict=True)
         ]
         grid = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1).reshape((-1, 3))
-        _, distances, _ = trimesh.proximity.closest_point(  # type: ignore[no-untyped-call]
+        signed_distance = trimesh.proximity.signed_distance(  # type: ignore[no-untyped-call]
             mesh, grid
         )
-        inside = mesh.contains(grid) if mesh.is_watertight else np.zeros(len(grid), dtype=bool)
-        return np.asarray(grid[inside | (distances <= margin)], dtype=np.float64)
+        return np.asarray(grid[signed_distance >= -margin], dtype=np.float64)
 
     @staticmethod
     def _transform_points(points: np.ndarray, transform: np.ndarray) -> np.ndarray:

@@ -26,7 +26,6 @@ from dimos.manipulation.planning.planners.config import CartesianPathConfig
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningGroupID, RobotName
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 if TYPE_CHECKING:
     from dimos.manipulation.manipulation_module import ManipulationModule
@@ -108,10 +107,6 @@ class ManipulationOperator:
             return False
         self._motion_speed = float(speed_scale)
         return True
-
-    def latest_planning_collision_snapshot(self) -> PointCloud2 | None:
-        """Return the latest validated snapshot for visualization only."""
-        return self._module.latest_planning_collision_snapshot()
 
     def get_init_joints(self, robot_name: RobotName) -> JointState | None:
         """Return the operator-authoritative init joint state for a robot."""

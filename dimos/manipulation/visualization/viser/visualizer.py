@@ -240,9 +240,6 @@ class ViserManipulationVisualizer:
             robot_id_string = str(robot_id)
             self._current_states[robot_id_string] = JointState(current)
             self._scene.update_current_robot(robot_id_string, current)
-        latest_snapshot = getattr(self._operator, "latest_planning_collision_snapshot", None)
-        if callable(latest_snapshot):
-            self._scene.update_planning_collision_snapshot(latest_snapshot())
         if self._gui is not None:
             self._gui.refresh()
 

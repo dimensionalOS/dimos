@@ -59,6 +59,9 @@ pub struct Config {
     /// Maximum cloud/odometry timestamp difference used for registration.
     #[validate(range(exclusive_min = 0.0))]
     pub pose_match_tolerance_s: f32,
+    /// Fixed frame for odometry parents, clear masks, and map outputs.
+    #[validate(length(min = 1))]
+    pub map_frame: String,
 }
 
 fn validate_health_range(cfg: &Config) -> Result<(), ValidationError> {
@@ -78,7 +81,7 @@ impl VoxelMap {
         self.voxels.values().filter(|c| c.health > 0).count()
     }
 
-    /// Remove robot-body voxels before integrating the matching sensor capture.
+    /// Remove voxels identified by authoritative external free-space evidence.
     pub fn clear_voxels(&mut self, keys: impl IntoIterator<Item = VoxelKey>) {
         for key in keys {
             self.voxels.remove(&key);
@@ -743,6 +746,7 @@ mod tests {
             global_emit_every: 1,
             region_percentile: 95.0,
             pose_match_tolerance_s: 0.1,
+            map_frame: "world".to_string(),
         }
     }
 
@@ -951,6 +955,7 @@ mod tests {
             global_emit_every: 1,
             region_percentile: 95.0,
             pose_match_tolerance_s: 0.1,
+            map_frame: "world".to_string(),
         };
         // Build the floor over a y band so it is a 2d plane, not a wire.
         let max_x = 25.0_f32;
@@ -1107,6 +1112,7 @@ mod tests {
             global_emit_every: 1,
             region_percentile: 95.0,
             pose_match_tolerance_s: 0.1,
+            map_frame: "world".to_string(),
         };
 
         // Staircase
@@ -1182,6 +1188,7 @@ mod tests {
             global_emit_every: 1,
             region_percentile: 95.0,
             pose_match_tolerance_s: 0.1,
+            map_frame: "world".to_string(),
         };
 
         // Flat floor from the sensor out to a vertical wall.
@@ -1245,6 +1252,7 @@ mod tests {
             global_emit_every: 1,
             region_percentile: 95.0,
             pose_match_tolerance_s: 0.1,
+            map_frame: "world".to_string(),
         };
 
         // Staircase topped by a flat landing and a back wall.
@@ -1377,6 +1385,7 @@ mod tests {
             global_emit_every: 1,
             region_percentile: 95.0,
             pose_match_tolerance_s: 0.1,
+            map_frame: "world".to_string(),
         };
         let (mut map, _) = build_surface(&floor, voxel_size, cfg.max_health);
         let row: Vec<VoxelKey> = map
@@ -1429,7 +1438,7 @@ mod tests {
     }
 
     #[test]
-    fn robot_clear_mask_removes_only_named_voxels() {
+    fn voxel_clear_mask_removes_only_named_voxels() {
         let mut map = VoxelMap::default();
         map.set((1, 2, 3), 2);
         map.set((4, 5, 6), 2);

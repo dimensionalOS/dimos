@@ -176,6 +176,7 @@ go2_zenoh_raycaster = autoconnect(
     ),
     RayTracingVoxelMap.blueprint(
         voxel_size=voxel_size,
+        map_frame="odom",
         emit_every=1,
         global_emit_every=50,
         min_health=-1,

@@ -60,6 +60,8 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     region_percentile: float = 95.0
     # Maximum cloud/odometry timestamp difference used for registration.
     pose_match_tolerance_s: float = Field(default=0.1, gt=0.0)
+    # Fixed frame in which the accumulated map and odometry parent are expressed.
+    map_frame: str = Field(default="world", min_length=1)
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
@@ -69,7 +71,7 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
 
     lidar: In[PointCloud2]
     odometry: In[Odometry]
-    robot_clear_mask: In[PointCloud2]
+    voxel_clear_mask: In[PointCloud2]
     global_map: Out[PointCloud2]
     local_map: Out[PointCloud2]
     region_bounds: Out[PoseStamped]

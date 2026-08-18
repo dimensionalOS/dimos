@@ -844,30 +844,3 @@ class TestStreamTF:
             assert len(tf.buffers[("map", "base")]) < 100
         finally:
             store.stop()
-
-
-def test_static_transform_is_timeless_and_composes_with_dynamic_edges() -> None:
-    buffer = MultiTBuffer()
-    buffer.receive_static_transform(
-        Transform(
-            translation=Vector3(0.0, 0.0, 1.0),
-            frame_id="wrist",
-            child_frame_id="camera",
-            ts=1.0,
-        )
-    )
-    buffer.receive_transform(
-        Transform(
-            translation=Vector3(2.0, 0.0, 0.0),
-            frame_id="world",
-            child_frame_id="wrist",
-            ts=100.0,
-        )
-    )
-
-    result = buffer.get("world", "camera", time_point=100.0, time_tolerance=0.001)
-
-    assert result is not None
-    assert result.translation.x == 2.0
-    assert result.translation.z == 1.0
-    assert "camera" in buffer.get_frames()

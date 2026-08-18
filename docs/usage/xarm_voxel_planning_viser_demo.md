@@ -4,125 +4,83 @@ title: "xArm Voxel Planning with Viser"
 
 # xArm Voxel Planning with Viser
 
-This simulation demonstrates the complete wrist-camera perception-to-planning
-path for an xArm. It uses MuJoCo, RoboPlan, the manipulation planner, and Viser
-to show the collision state used for planning.
+This simulation exercises the complete wrist-RGBD-to-collision-planning path:
 
-## Install
-
-Install the manipulation dependencies:
-
-```bash
-uv sync --extra manipulation --inexact
+```text
+MuJoCo RGB-D capture
+  ├─ pointcloud ──────────────> capture-triggered TF pose ─> Odometry ─┐
+  └─ pointcloud ─> robot-model self-filter ─> filtered cloud ──────────┤
+                  └─ metric voxel-clear mask ──────────────────────────┤
+                                                                     v
+                                                   RayTracingVoxelMap.global_map
+                                                                     |
+                                                                     v
+                                                   GlobalMapObstacleBridge
+                                                                     |
+                                     add/update/remove Obstacle RPC (stable ID)
+                                                                     |
+                                                                     v
+                                                        RoboPlan + Viser
 ```
 
-The blueprint is included in the runnable blueprint list. Confirm its name
-before starting the simulation:
+The camera pose estimate and cloud use the capture timestamp. The simulator
+publishes the real mounted `link7 -> wrist_camera_color_optical_frame` edge,
+while `RobotTfPublisher` publishes the complete robot tree from each measured
+joint state. The pose adapter emits exactly one `world <- camera` Odometry for
+each cloud and never falls back to the latest unrelated pose.
+
+`PointCloudSelfFilter` removes points inside padded URDF collision geometry,
+including the base, arm, and articulated gripper. Missing capture-time TF for
+any required link drops the whole capture. Its independent clear mask contains
+the previous and current robot volumes as metric world-frame positions. The
+native mapper applies masks monotonically as authoritative free-space evidence;
+cloud processing never requires a mask, so navigation and manipulation use the
+same mapper behavior. Cross-topic delivery is eventually consistent: a late
+mask may temporarily remove a newly exposed surface until the next cloud.
+
+The accumulated world map is reconciled as the single RoboPlan OCTREE obstacle
+`mapping/global-voxel-map`. Non-empty maps update first and add if the obstacle
+does not exist; empty maps remove it. The async bridge allows one RPC at a time
+and coalesces backlog to the newest map. Mapper silence retains the last
+accepted obstacle. OCTREE registration is intentionally RoboPlan-only.
+
+Viser renders the backend-accepted OCTREE with a display-only point cap. The
+cap does not change collision geometry.
+
+## Run the manual test
+
+Install the required dependencies and start the blueprint:
 
 ```bash
-dimos list
-```
-
-Start the dedicated simulation with:
-
-```bash
+uv sync --extra manipulation --extra sim --inexact
 dimos run xarm-voxel-planning-viser-demo
 ```
 
-The command starts simulation only; it does not change CLI syntax or add a
-hardware execution path. Open the Viser address printed by the process. The
-scene shows the simulated arm, the planning scene, and the obstacles actually
-accepted by the planning backend. The planning collision snapshot has one
-unified blue visualization at `/planning/collision_snapshot`, showing the
-latest valid staged perception before the next plan commits it. Viser
-suppresses the overlapping accepted OCTREE projection for this reserved
-obstacle only; backend collision state and other accepted obstacle visuals are
-unchanged.
+Open the Viser URL printed in the log, then check the following in order:
 
-## Perception to planning
+1. Before moving the arm, compare the simulated desk to its blue OCTREE. The
+   desk must have the same world position and scale; it must not appear closer
+   to the camera than the rendered desk.
+2. Inspect the base, links, wrist, fingers, and knuckles. No persistent blue
+   voxels should overlap the robot. Nearby desk voxels must remain.
+3. Move the end-effector gizmo through several poses while watching the map.
+   Static desk edges must stay fixed in world coordinates instead of smearing
+   or drifting with the wrist.
+4. Return the arm toward a previous pose. Vacated arm and gripper volumes must
+   not leave a collision trail.
+5. Request a collision-aware plan. The gizmo should report IK/collision status,
+   the plan should finish without timing out, and execution should transition
+   out of `EXECUTING` automatically when the coordinator completes.
+6. Stop point-cloud production briefly, if convenient. The last accepted
+   obstacle must remain; the planning world must not silently become empty.
 
-The simulated wrist camera produces a point cloud in the planning pipeline:
+During motion, occasional throttled missing-TF or dropped-capture warnings may
+appear at startup. Repeated warnings, pending-capacity evictions, cloud expiry,
+or a continuously missing `link_base` transform indicate a failed test.
 
-```text
-MujocoSimModule.pointcloud
-  -> URDF collision-geometry self-filter + robot clear mask
-  -> RayTracingVoxelMap.global_map
-  -> ManipulationModule.planning_voxel_map
-```
+## Limits
 
-The self-filter removes points belonging to the robot body before the mapper
-produces a **Planning Collision Snapshot**. A snapshot is complete,
-pre-filtered occupancy for collision checks, not a semantic or persistent world
-model. It must be expressed in the configured **Planning World Frame**. The
-initial **Snapshot Resolution** is 0.05 m; it is carried explicitly and is not
-inferred from point spacing.
-
-MuJoCo publishes the wrist camera's optical-frame transform directly in
-`world`. The mapping pose source therefore does not depend on the manipulation
-module first deriving and publishing a `world -> link7` transform.
-
-The snapshot input is latest-wins: incoming snapshots replace the staged
-snapshot. New planning is rejected when the latest valid snapshot is older
-than one second by sensor capture time; the last accepted collision geometry
-stays registered until fresh data arrives. Viser refreshes this staged view independently of collision-world
-registration, caps it at 20,000 displayed points, and throttles replacement to
-twice per second to keep the UI responsive. At the beginning of a planning
-operation, the latest staged snapshot is synchronized through the existing
-obstacle lifecycle. The first non-empty snapshot adds one planning-collision
-obstacle. Later non-empty snapshots update its complete OCTREE geometry under
-the same native ID. The authoritative obstacle namespace is:
-
-```text
-/manipulation/obstacles/<encoded-native-id>
-```
-
-The backend is mutated first. Actual mutations drive PR #3108's visualization
-lifecycle. A successful full-geometry update uses the existing
-`add_vis_obstacle` operation as an add-or-replace event for the same native ID;
-it does not emit a remove event or create a second generation. An empty
-snapshot removes the stable planning-collision obstacle.
-
-RoboPlan does not expose a native replace-geometry call. DimOS therefore
-validates the new OCTREE and builds a complete replacement scene while the
-active scene remains available. It then publishes the new scene and obstacle
-registry together. In-flight collision and planning queries finish against the
-old scene; later queries use the new scene. If construction or insertion
-fails, the old scene remains active and no visualization update is emitted.
-Forward kinematics and Jacobian queries use a separate immutable robot-only
-scene, so a slow collision query or collision-scene swap cannot stall pose
-target IK. The Viser panel also runs latest-wins IK and collision validation on
-separate workers: the target ghost moves as soon as IK succeeds, remains in the
-checking state, and only becomes plannable after the independent collision
-result succeeds. The demo uses Pink for pose-target IK because the generic
-Jacobian solver can diverge on ordinary xArm Cartesian displacements near the
-configured observation pose; RoboPlan remains the collision world and motion
-planner.
-
-Visualization failures are logged synchronization faults and do not redefine
-backend mutation success. Pose updates are backend-first and are visualized
-only after the backend truthfully reports that collision state was updated.
-Backends that cannot truthfully update pose report the operation as unsupported.
-A frame mismatch is rejected without changing staged or accepted state.
-
-The mapper joins each filtered cloud, its `world <- camera` pose, and its robot
-clear mask by capture timestamp before changing occupancy. The mask covers both
-the robot's previous and current padded volumes, which removes robot voxels left
-behind during motion. Incomplete triples are dropped without mutating the map.
-
-## RoboPlan and rendering limits
-
-The initial octree adapter supports RoboPlan. Every occupied voxel is retained
-for collision registration, so collision checking is not subject to a point or
-voxel cap. Planning backends without octree support reject the snapshot
-explicitly before mutating their world; they do not approximate or discard the
-occupancy.
-
-Viser uses a render-only display cap for the unified live planning layer and
-for ordinary accepted OCTREE obstacles. These caps change only what is drawn,
-not the all-voxel collision geometry or the accepted backend obstacle data.
-
-## Planning and execution
-
-Snapshot synchronization changes the collision inputs used by planning. Plan
-generation, trajectory reservation, and trajectory execution continue through
-their existing manipulation and coordinator paths unchanged.
+- The voxel size is 0.05 m across the filter, mapper, and OCTREE bridge.
+- Grasped payloads are not part of self-exclusion in this change.
+- Sensor-confidence or soft-collision costs are not implemented; OCTREE voxels
+  remain hard collision geometry.

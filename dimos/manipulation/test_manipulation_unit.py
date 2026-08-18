@@ -19,7 +19,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import ANY, MagicMock
 
-import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
@@ -48,6 +47,7 @@ from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType, Plann
 from dimos.manipulation.planning.spec.models import (
     GeneratedPlan,
     IKResult,
+    Obstacle,
     PlanningResult,
 )
 from dimos.manipulation.planning.trajectory_generator.config import (
@@ -61,7 +61,6 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
@@ -226,25 +225,17 @@ class TestObstacleUpdates:
             orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
         )
 
-        result = module.update_obstacle(
-            "moving-shape",
-            pose,
-            "sphere",
-            [0.4],
-            color=[0.1, 0.2, 0.3, 0.9],
+        obstacle = Obstacle(
+            name="moving-shape",
+            obstacle_type=ObstacleType.SPHERE,
+            pose=PoseStamped(position=pose.position, orientation=pose.orientation),
+            dimensions=(0.4,),
+            color=(0.1, 0.2, 0.3, 0.9),
         )
+        result = module.update_obstacle(obstacle)
 
         assert result is True
-        obstacle = module._world_monitor.update_obstacle.call_args.args[0]
-        assert obstacle.name == "moving-shape"
-        assert obstacle.obstacle_type == ObstacleType.SPHERE
-        assert obstacle.dimensions == (0.4,)
-        assert obstacle.color == (0.1, 0.2, 0.3, 0.9)
-        assert obstacle.pose.position.x == pytest.approx(1.0)
-
-        assert module.update_obstacle("default-color", pose, "box", [1.0, 1.0, 1.0])
-        default_obstacle = module._world_monitor.update_obstacle.call_args.args[0]
-        assert default_obstacle.color == (0.8, 0.2, 0.2, 0.8)
+        module._world_monitor.update_obstacle.assert_called_once_with(obstacle)
 
     def test_pose_update_forwards_only_name_and_pose(self, module_factory) -> None:
         module = module_factory()
@@ -264,35 +255,17 @@ class TestObstacleUpdates:
         assert stamped.position.y == pytest.approx(5.0)
         assert stamped.position.z == pytest.approx(6.0)
 
-    def test_complete_update_rejects_unknown_shape_before_world_mutation(
-        self, module_factory
-    ) -> None:
-        module = module_factory()
-        module._world_monitor = MagicMock(spec=WorldMonitor)
-
-        with pytest.raises(ValueError, match="Unknown obstacle shape"):
-            module.update_obstacle("shape", Pose(), "capsule", [1.0])
-
-        module._world_monitor.update_obstacle.assert_not_called()
-
-    def test_complete_update_rejects_incomplete_mesh_and_invalid_color(
-        self, module_factory
-    ) -> None:
-        module = module_factory()
-        module._world_monitor = MagicMock(spec=WorldMonitor)
-
-        with pytest.raises(ValueError, match="mesh_path required"):
-            module.update_obstacle("mesh", Pose(), "mesh")
-        with pytest.raises(ValueError, match="four values"):
-            module.update_obstacle("box", Pose(), "box", [1.0, 1.0, 1.0], color=[1.0])
-
-        module._world_monitor.update_obstacle.assert_not_called()
-
     def test_updates_fail_when_world_monitor_is_unavailable(self, module_factory) -> None:
         module = module_factory()
         module._world_monitor = None
+        obstacle = Obstacle(
+            name="box",
+            obstacle_type=ObstacleType.BOX,
+            pose=PoseStamped(),
+            dimensions=(1.0, 1.0, 1.0),
+        )
 
-        assert module.update_obstacle("box", Pose(), "box", [1.0, 1.0, 1.0]) is False
+        assert module.update_obstacle(obstacle) is False
         assert module.update_obstacle_pose("box", Pose()) is False
 
 
@@ -1030,20 +1003,6 @@ class TestPlanningDiagnostics:
         assert retry_epoch is not None
         assert module._state == ManipulationState.PLANNING
         assert module.get_error() == ""
-
-
-class TestPlanningCollisionSnapshots:
-    """Test planning-module collision snapshot integration."""
-
-    def test_invalid_snapshot_does_not_change_committed_state(self, module_factory) -> None:
-        module = module_factory()
-        module._on_planning_voxel_map(PointCloud2.from_numpy(np.array([[1.0, 0.0, 0.0]])))
-        assert module.committed_planning_collision_snapshot() is None
-
-        module._on_planning_voxel_map(
-            PointCloud2.from_numpy(np.array([[2.0, 0.0, 0.0]]), frame_id="camera")
-        )
-        assert module.committed_planning_collision_snapshot() is None
 
 
 class TestExecute:
