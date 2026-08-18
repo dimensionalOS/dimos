@@ -46,6 +46,7 @@ from dimos.imitation.dataprep.core import (
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.utils.testing.waiting import wait_until
 
 pytestmark = [
     pytest.mark.skipif_macos,
@@ -122,7 +123,6 @@ def _record_session(db_path: Path) -> None:
         db_path=db_path,
         record_tf=False,
         poseless_streams=["color_image", "coordinator_joint_state", "status"],
-        queue_maxsize=64,
     )
     transports = {
         "color_image": _DirectTransport(),
@@ -131,6 +131,18 @@ def _record_session(db_path: Path) -> None:
     }
     for name, transport in transports.items():
         getattr(recorder, name).transport = transport
+
+    counts = {name: 0 for name in transports}
+
+    def publish(name: str, message: Any) -> None:
+        counts[name] += 1
+        transports[name].publish(message)
+        wait_until(
+            lambda: recorder.store.stream(name).count() == counts[name],
+            timeout=5.0,
+            interval=0.005,
+            message=f"{name} message {counts[name]} was not recorded",
+        )
 
     episodes = [
         (100.0, "pick", True, 0.0),
@@ -142,21 +154,24 @@ def _record_session(db_path: Path) -> None:
         saved = 0
         discarded = 0
         for start_ts, task, success, base in episodes:
-            transports["status"].publish(
-                _status(start_ts, "start", "recording", saved, discarded, task)
+            publish(
+                "status",
+                _status(start_ts, "start", "recording", saved, discarded, task),
             )
             for frame in range(3):
                 ts = start_ts + frame
                 pixel = int(base + frame) * 4
-                transports["color_image"].publish(
+                publish(
+                    "color_image",
                     Image(
                         data=np.full((16, 16, 3), pixel, dtype=np.uint8),
                         format=ImageFormat.RGB,
                         frame_id="camera",
                         ts=ts,
-                    )
+                    ),
                 )
-                transports["coordinator_joint_state"].publish(
+                publish(
+                    "coordinator_joint_state",
                     JointState(
                         ts=ts,
                         frame_id="arm",
@@ -164,7 +179,7 @@ def _record_session(db_path: Path) -> None:
                         position=[base + frame, base + 100.0 + frame],
                         velocity=[0.0, 0.0],
                         effort=[0.0, 0.0],
-                    )
+                    ),
                 )
             if success:
                 saved += 1
@@ -172,11 +187,12 @@ def _record_session(db_path: Path) -> None:
             else:
                 discarded += 1
                 event = "discard"
-            transports["status"].publish(
-                _status(start_ts + 2.0, event, "idle", saved, discarded, task)
+            publish(
+                "status",
+                _status(start_ts + 2.0, event, "idle", saved, discarded, task),
             )
     finally:
-        transports["status"].publish(_status(112.0, "start", "recording", 2, 1, "interrupted"))
+        publish("status", _status(112.0, "start", "recording", 2, 1, "interrupted"))
         recorder.stop()
 
 
