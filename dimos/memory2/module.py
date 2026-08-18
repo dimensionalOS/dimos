@@ -395,14 +395,17 @@ class Recorder(MemoryModule):
         async def on_msg(stamped: tuple[float, Any]) -> None:
             recv_ts, msg = stamped
             ts = self._resolve_ts(name, msg)
-            pose = await self._resolve_pose(name, msg, ts)
-            if not pose and name not in self.config.poseless_streams:
-                logger.warning(
-                    "[%s] No pose for time %s (msg ts: %s), storing without pose",
-                    name,
-                    ts,
-                    getattr(msg, "ts", None),
-                )
+            if name in self.config.poseless_streams:
+                pose = None
+            else:
+                pose = await self._resolve_pose(name, msg, ts)
+                if not pose:
+                    logger.warning(
+                        "[%s] No pose for time %s (msg ts: %s), storing without pose",
+                        name,
+                        ts,
+                        getattr(msg, "ts", None),
+                    )
             stream.append(msg, ts=ts, pose=pose, tags={"reception_ts": recv_ts})
 
         # Stamp arrival time before the coalescing dispatch queue.
