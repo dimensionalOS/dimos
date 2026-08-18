@@ -29,7 +29,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from dimos.imitation.dataprep.build import _write_dimos_meta, run_dataprep
+from dimos.imitation.dataprep.build import _write_dimos_meta, inspect_dataset, run_dataprep
 from dimos.imitation.dataprep.core import (
     DataPrepConfig,
     Episode,
@@ -44,6 +44,7 @@ from dimos.imitation.dataprep.core import (
     resolve_field,
     summarize_lengths,
 )
+from dimos.memory.store.sqlite import SqliteStore
 
 
 @pytest.mark.parametrize(
@@ -61,6 +62,24 @@ from dimos.imitation.dataprep.core import (
 def test_is_image_array_disambiguates_2d_by_dtype(arr: np.ndarray, expected: bool) -> None:
     # 2D float matrices stay low-dim; 2D integer frames are grayscale images.
     assert is_image_array(arr) is expected
+
+
+def test_inspect_empty_recording_without_status_stream(tmp_path: Path) -> None:
+    db_path = tmp_path / "empty.db"
+    with SqliteStore(path=str(db_path)):
+        pass
+
+    info = inspect_dataset(db_path)
+
+    assert info["streams"] == {}
+    assert info["status_stream"] is None
+    assert info["episodes"] == 0
+    assert info["incomplete_episodes"] == []
+
+
+def test_inspect_rejects_unknown_format(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="Cannot detect data format"):
+        inspect_dataset(tmp_path / "unknown")
 
 
 # ── fakes ────────────────────────────────────────────────────────────────────

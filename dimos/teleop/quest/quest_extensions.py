@@ -259,6 +259,9 @@ class Go2TeleopModule(QuestTeleopModule):
     color_image: In[Image]
     cmd_vel: Out[Twist]
 
+    def _publish_safe_command(self) -> None:
+        self.cmd_vel.publish(Twist.zero())
+
     def _deadzone(self, v: float) -> float:
         return 0.0 if abs(v) < self.config.deadzone else v
 

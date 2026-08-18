@@ -131,7 +131,6 @@ def _record_session(db_path: Path) -> None:
     }
     for name, transport in transports.items():
         getattr(recorder, name).transport = transport
-
     counts = {name: 0 for name in transports}
 
     def publish(name: str, message: Any) -> None:
@@ -149,8 +148,8 @@ def _record_session(db_path: Path) -> None:
         (104.0, "discard-me", False, 10.0),
         (108.0, "place", True, 20.0),
     ]
-    recorder.start()
     try:
+        recorder.start()
         saved = 0
         discarded = 0
         for start_ts, task, success, base in episodes:
@@ -191,8 +190,8 @@ def _record_session(db_path: Path) -> None:
                 "status",
                 _status(start_ts + 2.0, event, "idle", saved, discarded, task),
             )
-    finally:
         publish("status", _status(112.0, "start", "recording", 2, 1, "interrupted"))
+    finally:
         recorder.stop()
 
 
@@ -209,19 +208,22 @@ def _read_video(path: Path) -> list[np.ndarray[Any, Any]]:
         capture.release()
 
 
-def test_collection_to_hdf5_and_lerobot_roundtrip(tmp_path: Path) -> None:
-    db_path = tmp_path / "recording.db"
+EXPECTED_STATE = np.asarray(
+    [[0.0, 100.0], [1.0, 101.0], [20.0, 120.0], [21.0, 121.0]],
+    dtype=np.float32,
+)
+EXPECTED_ACTION = np.asarray(
+    [[1.0, 101.0], [2.0, 102.0], [21.0, 121.0], [22.0, 122.0]],
+    dtype=np.float32,
+)
+
+
+@pytest.fixture(scope="module")
+def recorded_session(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[Path, dict[float, np.ndarray[Any, Any]]]:
+    db_path = tmp_path_factory.mktemp("recorded-session") / "recording.db"
     _record_session(db_path)
-
-    expected_state = np.asarray(
-        [[0.0, 100.0], [1.0, 101.0], [20.0, 120.0], [21.0, 121.0]],
-        dtype=np.float32,
-    )
-    expected_action = np.asarray(
-        [[1.0, 101.0], [2.0, 102.0], [21.0, 121.0], [22.0, 122.0]],
-        dtype=np.float32,
-    )
-
     with SqliteStore(path=str(db_path), must_exist=True) as store:
         assert store.stream("color_image").count() == 9
         assert store.stream("coordinator_joint_state").count() == 9
@@ -247,6 +249,14 @@ def test_collection_to_hdf5_and_lerobot_roundtrip(tmp_path: Path) -> None:
     assert recording_info["incomplete_episodes"] == [
         {"start_ts": 112.0, "task_label": "interrupted"}
     ]
+    return db_path, recorded_images
+
+
+def test_collection_to_hdf5_roundtrip(
+    tmp_path: Path,
+    recorded_session: tuple[Path, dict[float, np.ndarray[Any, Any]]],
+) -> None:
+    db_path, recorded_images = recorded_session
 
     hdf5_path = run_dataprep(
         _dataprep_config(
@@ -275,11 +285,11 @@ def test_collection_to_hdf5_and_lerobot_roundtrip(tmp_path: Path) -> None:
         np.testing.assert_array_equal(second["timestamp"][:], [0.0, 1.0])
         np.testing.assert_array_equal(
             np.concatenate([first["observation/state"][:], second["observation/state"][:]]),
-            expected_state,
+            EXPECTED_STATE,
         )
         np.testing.assert_array_equal(
             np.concatenate([first["action/action"][:], second["action/action"][:]]),
-            expected_action,
+            EXPECTED_ACTION,
         )
         np.testing.assert_array_equal(
             first["observation/camera"][:],
@@ -296,6 +306,12 @@ def test_collection_to_hdf5_and_lerobot_roundtrip(tmp_path: Path) -> None:
         for episode in hdf5_meta["episodes"]
     ] == [(100.0, 102.0, "pick"), (108.0, 110.0, "place")]
 
+
+def test_collection_to_lerobot_roundtrip(
+    tmp_path: Path,
+    recorded_session: tuple[Path, dict[float, np.ndarray[Any, Any]]],
+) -> None:
+    db_path, recorded_images = recorded_session
     try:
         lerobot_path = run_dataprep(
             _dataprep_config(
@@ -319,9 +335,9 @@ def test_collection_to_hdf5_and_lerobot_roundtrip(tmp_path: Path) -> None:
     assert data.column("episode_index").to_pylist() == [0, 0, 1, 1]
     assert data.column("frame_index").to_pylist() == [0, 1, 0, 1]
     np.testing.assert_array_equal(
-        np.asarray(data.column("observation.state").to_pylist()), expected_state
+        np.asarray(data.column("observation.state").to_pylist()), EXPECTED_STATE
     )
-    np.testing.assert_array_equal(np.asarray(data.column("action").to_pylist()), expected_action)
+    np.testing.assert_array_equal(np.asarray(data.column("action").to_pylist()), EXPECTED_ACTION)
 
     episode_rows = pq.read_table(
         lerobot_path / "meta/episodes/chunk-000/file-000.parquet"

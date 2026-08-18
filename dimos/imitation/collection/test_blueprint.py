@@ -21,6 +21,7 @@ from dimos.imitation.collection.blueprint import (
     learning_collect_quest_piper,
     learning_collect_quest_xarm7,
 )
+from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.msgs.sensor_msgs.JointState import JointState
 
@@ -48,6 +49,14 @@ def test_collection_streams_are_poseless(blueprint: Blueprint) -> None:
 )
 def test_collection_recorder_stops_after_producers(blueprint: Blueprint) -> None:
     assert blueprint.active_blueprints[0].module is CollectionRecorder
+
+
+@pytest.mark.parametrize(
+    "blueprint",
+    [learning_collect_quest_xarm7, learning_collect_quest_piper],
+)
+def test_episode_monitor_stops_after_input_producers(blueprint: Blueprint) -> None:
+    assert blueprint.active_blueprints[1].module is EpisodeMonitorModule
 
 
 def _joint_streams(blueprint: Blueprint) -> dict[tuple[str, str], str]:
