@@ -755,6 +755,11 @@ main.add_typer(map_app, name="map")
 map_app.command("global")(_map_main)
 
 
+from dimos.navigation.nav_3d.evaluator.cli import app as nav_eval_app
+
+main.add_typer(nav_eval_app, name="nav-eval")
+
+
 dataprep_app = typer.Typer(help="Build and inspect learning datasets from recordings")
 main.add_typer(dataprep_app, name="dataprep")
 
@@ -794,9 +799,13 @@ map_app.command("pose-fill")(_map_pose_fill_main)
 map_app.command("replay")(_map_replay_main)
 map_app.command("replay-marker")(_map_replay_marker_main)
 
-from dimos.memory2.cli.app import mem_app
+from dimos.memory.cli.app import mem_app
 
 main.add_typer(mem_app, name="mem")
+
+from dimos.evals.cli import app as evals_app
+
+main.add_typer(evals_app, name="evals")
 
 
 @main.command()

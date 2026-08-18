@@ -37,10 +37,10 @@ from typing import TYPE_CHECKING, Any
 
 import typer
 
-from dimos.memory2.utils.progress import progress
+from dimos.memory.utils.progress import progress
 
 if TYPE_CHECKING:
-    from dimos.memory2.stream import Stream
+    from dimos.memory.stream import Stream
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 TIMELINE = "ts"
@@ -177,8 +177,8 @@ def main(
     import rerun as rr
 
     from dimos.mapping.voxels.module import VoxelMapTransformer
-    from dimos.memory2.cli.dataset import open_store, resolve_dataset, stream_payload_types
-    from dimos.memory2.transform import throttle
+    from dimos.memory.cli.dataset import open_store, resolve_dataset, stream_payload_types
+    from dimos.memory.transform import throttle
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.nav_msgs.Odometry import Odometry
     from dimos.msgs.sensor_msgs.Image import Image

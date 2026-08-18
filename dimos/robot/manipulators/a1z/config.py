@@ -16,10 +16,9 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import math
 from pathlib import Path
-
-import attrs
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
 from dimos.core.global_config import global_config
@@ -92,7 +91,7 @@ def a1z_hardware(
         if dynamics_urdf_path is not None:
             # Preserve LfsPath laziness: the adapter resolves the model only when
             # connect() constructs the vendor robot.
-            resolved_config = attrs.evolve(resolved_config, urdf_path=dynamics_urdf_path)
+            resolved_config = replace(resolved_config, urdf_path=dynamics_urdf_path)
         adapter_kwargs["config"] = resolved_config
 
     return HardwareComponent(

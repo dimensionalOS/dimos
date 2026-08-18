@@ -1,2 +1,5 @@
 # Ignore dependency trees under the docs workspace (would otherwise be scanned as pages).
 node_modules/
+**/node_modules/**
+package-lock.json
+package.json

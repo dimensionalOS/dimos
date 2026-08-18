@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.manipulation.planning.spec.models import (
         CartesianTarget,
+        GeneratedPlan,
         IKResult,
         Obstacle,
         PlanningGroupID,
@@ -330,10 +331,26 @@ class PlannerSpec(Protocol):
         config: CartesianPathConfig,
         *,
         auxiliary_groups: Sequence[PlanningGroupID] = (),
+        check_collision: bool = True,
     ) -> PlanningResult:
         """Plan synchronized TCP waypoint paths for an ordered group selection."""
         ...
 
     def get_name(self) -> str:
         """Get planner name."""
+        ...
+
+
+@runtime_checkable
+class TrajectoryParametrizerSpec(Protocol):
+    """Convert successful planning output into one canonical generated plan."""
+
+    def materialize_plan(
+        self,
+        world: WorldSpec,
+        selection: PlanningGroupSelection,
+        result: PlanningResult,
+        speed_scale: float = 1.0,
+    ) -> GeneratedPlan:
+        """Preserve timed output or parametrize an untimed path, then validate it."""
         ...

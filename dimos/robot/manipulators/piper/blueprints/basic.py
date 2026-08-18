@@ -16,7 +16,8 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import ControlCoordinator
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
@@ -67,14 +68,7 @@ else:
 coordinator_piper = autoconnect(
     ControlCoordinator.blueprint(
         hardware=[_piper_hw],
-        tasks=[
-            TaskConfig(
-                name="traj_piper",
-                type="trajectory",
-                joint_names=_piper_hw.joints,
-                priority=10,
-            )
-        ],
+        tasks=[joint_trajectory_task(_piper_hw.joints)],
     ),
     *_piper_simulation_modules,
 )

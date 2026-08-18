@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -23,7 +24,6 @@ import open3d as o3d
 import pytest
 
 from dimos.agents.skill_result import SkillResult
-from dimos.core.module import ModuleBase
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -61,10 +61,11 @@ def _make_det_object(
 
 
 @pytest.fixture
-def module() -> PickAndPlaceModule:
-    """Create a PickAndPlaceModule with heavy base init (RPC, config) patched out."""
-    with patch.object(ModuleBase, "__init__", lambda self, config_args: None):
-        return PickAndPlaceModule()
+def module() -> Iterator[PickAndPlaceModule]:
+    """Create an unstarted PickAndPlaceModule for pure-logic tests."""
+    instance = PickAndPlaceModule()
+    yield instance
+    instance.stop()
 
 
 class TestFindObjectInDetections:
@@ -221,7 +222,6 @@ class TestGraspHeuristics:
                         grasp_frame_to_tcp=Pose(),
                         pre_grasp_direction=Vector3(0.0, 0.0, -1.0),
                     ),
-                    None,
                 ),
             ),
             patch.object(module, "_generate_grasps_for_pick", return_value=[Pose()]),
