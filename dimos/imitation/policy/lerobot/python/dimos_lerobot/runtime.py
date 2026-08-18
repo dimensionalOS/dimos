@@ -36,7 +36,7 @@ from torch import Tensor
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
-from dimos.experimental.robot_policy.lerobot.module import (
+from dimos.imitation.policy.lerobot.module import (
     LeRobotPolicyConfig,
     LeRobotPolicyModule,
     PolicyStatus,
