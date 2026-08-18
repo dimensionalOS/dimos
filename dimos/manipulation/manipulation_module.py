@@ -1404,14 +1404,21 @@ class ManipulationModule(Module):
 
     def _initialize_execution(self) -> None:
         """Initialize coordinator access and planned execution policy."""
-        targets = [
-            ExecutionTarget.from_coordinator_mapping(
-                robot_name=config.name,
-                model_joint_names=config.joint_names,
-                coordinator_to_model=config.joint_name_mapping,
+        targets = []
+        for config in self.config.robots:
+            planning_joint_names = set(config.joint_names)
+            execution_mapping = {
+                coordinator_name: model_name
+                for coordinator_name, model_name in config.joint_name_mapping.items()
+                if model_name in planning_joint_names
+            }
+            targets.append(
+                ExecutionTarget.from_coordinator_mapping(
+                    robot_name=config.name,
+                    model_joint_names=config.joint_names,
+                    coordinator_to_model=execution_mapping,
+                )
             )
-            for config in self.config.robots
-        ]
         self._execution_manager = PlanExecutionManager(
             targets=targets,
             coordinator=self._control_coordinator,

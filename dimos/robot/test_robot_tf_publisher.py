@@ -2,6 +2,15 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 from __future__ import annotations
 
@@ -86,6 +95,24 @@ def test_incomplete_joint_state_publishes_nothing(
 
     assert module.on_joint_state(JointState(ts=12.5, name=[], position=[])) is False
     publish.assert_not_called()
+
+
+def test_unrelated_coordinator_joint_does_not_abort_tf_sample(
+    robot_model: RobotModelConfig,
+    make_publisher: Callable[..., RobotTfPublisher],
+    mocker: Any,
+) -> None:
+    module = make_publisher(robot_model=robot_model)
+    publish = mocker.patch.object(module.tf, "publish")
+
+    state = JointState(
+        ts=12.5,
+        name=["joint", "arm/gripper"],
+        position=[0.5, 0.85],
+    )
+
+    assert module.on_joint_state(state) is True
+    publish.assert_called_once()
 
 
 def test_stream_contract_uses_joint_state_and_tf_message() -> None:

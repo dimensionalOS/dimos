@@ -2,6 +2,15 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """Publish a robot model's complete TF tree from measured joint state."""
 
@@ -49,6 +58,7 @@ class RobotTfPublisher(Module):
             )
         )
         self._robot = yourdfpy.URDF.load(str(urdf_path), load_meshes=False)
+        self._actuated_joint_names = frozenset(self._robot.actuated_joint_names)
         self._edges = tuple(
             (joint.parent, joint.child)
             for joint in self._robot.robot.joints
@@ -66,9 +76,11 @@ class RobotTfPublisher(Module):
         """Publish all model edges for one complete measured state."""
         model = self.publisher_config.robot_model
         positions = dict(zip(state.name, state.position, strict=False))
-        configuration = {
-            model.get_urdf_joint_name(name): float(position) for name, position in positions.items()
-        }
+        configuration = {}
+        for name, position in positions.items():
+            urdf_name = model.get_urdf_joint_name(name)
+            if urdf_name in self._actuated_joint_names:
+                configuration[urdf_name] = float(position)
         required_joints = [model.get_urdf_joint_name(name) for name in model.joint_names]
         missing = [name for name in required_joints if name not in configuration]
         if missing:

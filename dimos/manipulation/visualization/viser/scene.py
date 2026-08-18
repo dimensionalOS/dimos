@@ -98,6 +98,7 @@ REFERENCE_GRID_SECTION_COLOR = (90, 145, 165)
 COLLISION_MESH_COLOR = (210, 40, 220)
 COLLISION_MESH_OPACITY = 0.35
 PLANNING_OBSTACLE_POINT_CAP = 20_000
+PLANNING_OBSTACLE_POINT_SIZE = 0.02
 OBSTACLE_NAMESPACE = "/manipulation/obstacles"
 OBSTACLE_DEFAULT_RGBA = DEFAULT_OBSTACLE_RGBA
 OBSTACLE_FALLBACK_COLOR = (55, 190, 210)
@@ -231,12 +232,17 @@ class ViserManipulationScene:
                 elif obstacle.obstacle_type == ObstacleType.OCTREE:
                     if obstacle.points is None or obstacle.octree_resolution is None:
                         raise ValueError("OCTREE obstacle requires points and octree_resolution")
+                    points = np.asarray(obstacle.points)
+                    if len(points) > PLANNING_OBSTACLE_POINT_CAP:
+                        stride = int(np.ceil(len(points) / PLANNING_OBSTACLE_POINT_CAP))
+                        points = points[::stride]
                     handles.append(
                         scene.add_point_cloud(
                             path,
-                            points=np.asarray(obstacle.points)[:PLANNING_OBSTACLE_POINT_CAP],
+                            points=points,
                             colors=color,
-                            point_size=float(obstacle.octree_resolution),
+                            point_size=PLANNING_OBSTACLE_POINT_SIZE,
+                            point_shape="circle",
                             position=position,
                             wxyz=wxyz,
                             visible=self._obstacles_visible,

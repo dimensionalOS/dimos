@@ -243,6 +243,13 @@ def make_xarm_model_config(
 
     local_joint_names = joint_names(dof)
     tip_link = "link_tcp" if add_gripper else f"link{dof}"
+    joint_name_mapping = coordinator_joint_mapping(
+        name,
+        dof,
+        joint_prefix=joint_prefix,
+    )
+    if add_gripper:
+        joint_name_mapping[f"{name}/gripper"] = "drive_joint"
     return RobotModelConfig(
         name=name,
         model_path=XARM_MODEL_PATH,
@@ -261,11 +268,7 @@ def make_xarm_model_config(
         xacro_args=xacro_args,
         auto_convert_meshes=True,
         collision_exclusion_pairs=(XARM_GRIPPER_COLLISION_EXCLUSIONS if add_gripper else []),
-        joint_name_mapping=coordinator_joint_mapping(
-            name,
-            dof,
-            joint_prefix=joint_prefix,
-        ),
+        joint_name_mapping=joint_name_mapping,
         gripper_hardware_id=name if add_gripper else None,
         home_joints=home_joints or [0.0] * dof,
         pre_grasp_offset=pre_grasp_offset,

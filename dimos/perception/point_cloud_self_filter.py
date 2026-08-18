@@ -12,24 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copyright 2026 Dimensional Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-
 """Robot-model point-cloud self exclusion and map-clear-mask generation."""
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 from pydantic import Field
-from reactivex.disposable import Disposable
 import trimesh
 import yourdfpy  # type: ignore[import-untyped]
 
@@ -83,8 +75,14 @@ class PointCloudSelfFilter(Module):
 
     @rpc
     def start(self) -> None:
+        # Subscribe to TF before accepting clouds. Filtering is dispatched off
+        # the transport thread so TF can keep filling while geometry work runs.
+        _ = self.tfbuffer
         super().start()
-        self.register_disposable(Disposable(self.pointcloud.subscribe(self._on_pointcloud)))
+
+    async def handle_pointcloud(self, cloud: PointCloud2) -> None:
+        """Filter the latest capture without starving TF transport callbacks."""
+        await asyncio.to_thread(self._on_pointcloud, cloud)
 
     @rpc
     def stop(self) -> None:
@@ -246,10 +244,19 @@ class PointCloudSelfFilter(Module):
                 & (np.abs(points[:, 2]) <= length / 2.0 + padding)
             )
 
-        signed_distance = trimesh.proximity.signed_distance(  # type: ignore[no-untyped-call]
-            geometry.mesh, points
-        )
-        return np.asarray(signed_distance >= -padding)
+        # Exact mesh distance is expensive for a full RGB-D cloud. Reject
+        # points outside the padded mesh bounds first; robot links occupy only
+        # a small fraction of the camera view.
+        padded_lower = geometry.mesh.bounds[0] - padding
+        padded_upper = geometry.mesh.bounds[1] + padding
+        candidates = np.all((points >= padded_lower) & (points <= padded_upper), axis=1)
+        inside = np.zeros(len(points), dtype=bool)
+        if np.any(candidates):
+            signed_distance = trimesh.proximity.signed_distance(  # type: ignore[no-untyped-call]
+                geometry.mesh, points[candidates]
+            )
+            inside[candidates] = signed_distance >= -padding
+        return inside
 
     def _clear_samples(self, mesh: trimesh.Trimesh) -> np.ndarray:
         pitch = self.filter_config.voxel_size

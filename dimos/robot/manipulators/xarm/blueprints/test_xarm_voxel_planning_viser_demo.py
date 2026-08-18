@@ -77,6 +77,7 @@ def test_sim_planning_world_matches_mujoco_robot_mount() -> None:
     assert robot.base_pose.y == 0.0
     assert robot.base_pose.z == mujoco_base_position[2]
     assert [float(value) for value in robot.xacro_args["attach_xyz"].split()] == [0.0, 0.0, 0.0]
+    assert robot.get_urdf_joint_name("arm/gripper") == "drive_joint"
 
 
 def test_demo_wires_camera_filter_voxel_map_and_obstacle_bridge() -> None:
@@ -101,7 +102,7 @@ def test_demo_wires_camera_filter_voxel_map_and_obstacle_bridge() -> None:
     assert filter_kwargs["robot_model"].base_link == "link_base"
     assert filter_kwargs["padding_m"] == 0.025
     assert "additional_boxes" not in filter_kwargs
-    assert filter_kwargs["tf_tolerance_s"] == 0.02
+    assert filter_kwargs["tf_tolerance_s"] == 0.05
     assert filter_kwargs["tf_forward_tolerance_s"] == 0.05
     assert xarm_voxel_planning_viser_demo.remapping_map == {
         (RayTracingVoxelMap.name, "lidar"): "filtered_pointcloud",
@@ -109,7 +110,7 @@ def test_demo_wires_camera_filter_voxel_map_and_obstacle_bridge() -> None:
 
     assert _atom(RayTracingVoxelMap).kwargs["voxel_size"] == 0.05
     assert _atom(RayTracingVoxelMap).kwargs["map_frame"] == "world"
-    assert _atom(RayTracingVoxelMap).kwargs["pose_match_tolerance_s"] == 0.02
+    assert _atom(RayTracingVoxelMap).kwargs["pose_match_tolerance_s"] == 0.05
     assert _atom(GlobalMapObstacleBridge).kwargs["resolution"] == 0.05
     assert XARM_VOXEL_PLANNING_RESOLUTION == 0.05
     assert not hasattr(ManipulationModule, "committed_planning_collision_snapshot")
@@ -119,7 +120,7 @@ def test_demo_is_simulation_only_and_pose_feeds_voxel_odometry() -> None:
     assert xarm_voxel_planning_viser_demo.global_config_overrides == {"simulation": "mujoco"}
     pose_kwargs = _atom(PointCloudTfPoseSource).kwargs
     assert pose_kwargs["fixed_frame"] == "world"
-    assert pose_kwargs["tf_tolerance_s"] == 0.02
+    assert pose_kwargs["tf_tolerance_s"] == 0.05
     assert pose_kwargs["tf_forward_tolerance_s"] == 0.05
 
     pose_out = next(

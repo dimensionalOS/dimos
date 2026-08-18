@@ -53,8 +53,14 @@ Install the required dependencies and start the blueprint:
 
 ```bash
 uv sync --extra manipulation --extra sim --inexact
+nix --extra-experimental-features 'nix-command flakes' build \
+  ./dimos/mapping/ray_tracing/rust
 dimos run xarm-voxel-planning-viser-demo
 ```
+
+Rebuild the native mapper after changing or rebasing its Rust source. An older
+`result/bin/voxel_ray_tracing` cannot deserialize the current mapper config and
+will exit before publishing `global_map`.
 
 Open the Viser URL printed in the log, then check the following in order:
 

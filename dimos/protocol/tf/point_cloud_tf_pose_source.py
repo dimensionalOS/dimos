@@ -2,13 +2,23 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """Capture-triggered conversion from point-cloud TF to mapper Odometry."""
 
 from __future__ import annotations
 
+import asyncio
+
 from pydantic import Field
-from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -38,8 +48,14 @@ class PointCloudTfPoseSource(Module):
 
     @rpc
     def start(self) -> None:
+        # Subscribe to TF before accepting clouds. The producer publishes a
+        # capture-aligned TF immediately before each cloud.
+        _ = self.tfbuffer
         super().start()
-        self.register_disposable(Disposable(self.pointcloud.subscribe(self.on_pointcloud)))
+
+    async def handle_pointcloud(self, cloud: PointCloud2) -> None:
+        """Resolve capture-time TF without blocking the transport receive thread."""
+        await asyncio.to_thread(self.on_pointcloud, cloud)
 
     def on_pointcloud(self, cloud: PointCloud2) -> bool:
         """Publish the fixed-frame sensor pose accepted for this capture."""

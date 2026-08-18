@@ -272,6 +272,22 @@ class TestObstacleUpdates:
 class TestStateMachine:
     """Test state transitions."""
 
+    def test_execution_initialization_ignores_auxiliary_urdf_joint_mapping(
+        self, module_factory
+    ) -> None:
+        module = module_factory()
+        config = _one_joint_config()
+        config.joint_name_mapping = {
+            "arm/j0": "j0",
+            "arm/gripper": "drive_joint",
+        }
+        module.config = module.config.model_copy(update={"robots": [config]})
+        module._control_coordinator = _control_coordinator()
+
+        module._initialize_execution()
+
+        assert module._execution_manager is not None
+
     def test_cancel_interrupts_planning(self, module_factory):
         module = module_factory()
 

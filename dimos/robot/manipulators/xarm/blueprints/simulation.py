@@ -80,12 +80,12 @@ xarm_voxel_planning_viser_demo = (
             padding_m=XARM_VOXEL_PLANNING_RESOLUTION / 2.0,
             voxel_size=XARM_VOXEL_PLANNING_RESOLUTION,
             planning_frame="world",
-            tf_tolerance_s=0.02,
+            tf_tolerance_s=0.05,
             tf_forward_tolerance_s=0.05,
         ),
         PointCloudTfPoseSource.blueprint(
             fixed_frame="world",
-            tf_tolerance_s=0.02,
+            tf_tolerance_s=0.05,
             tf_forward_tolerance_s=0.05,
         ),
         RobotTfPublisher.blueprint(
@@ -95,7 +95,7 @@ xarm_voxel_planning_viser_demo = (
         RayTracingVoxelMap.blueprint(
             voxel_size=XARM_VOXEL_PLANNING_RESOLUTION,
             map_frame="world",
-            pose_match_tolerance_s=0.02,
+            pose_match_tolerance_s=0.05,
         ),
         GlobalMapObstacleBridge.blueprint(
             resolution=XARM_VOXEL_PLANNING_RESOLUTION,
