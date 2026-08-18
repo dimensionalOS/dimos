@@ -101,4 +101,6 @@ def make_openyam_model_config(
         collision_exclusion_pairs=[],
         gripper_hardware_id=OPENYAM_HARDWARE_ID,
         home_joints=home_joints or [0.0] * OPENYAM_DOF,
+        velocity_limits=[2.0] * OPENYAM_DOF,
+        max_velocity=2.0,
     )

@@ -685,6 +685,27 @@ def test_planar_retry_sampling_uses_finite_expanding_translation_window() -> Non
     assert upper == pytest.approx([104.0, -46.0, np.pi])
 
 
+def test_robot_context_applies_configured_velocity_limits_by_joint_name(
+    mocker: MockerFixture, tmp_path: Path
+) -> None:
+    modules = _install_fake_modules(mocker)
+    model = _FakeModel()
+    modules.pinocchio.buildModelFromUrdf = mocker.Mock(return_value=model)
+    mocker.patch.object(pink_ik, "prepare_urdf", return_value=tmp_path / "prepared.urdf")
+    config = _robot_config()
+    config.model_path = tmp_path / "fake.urdf"
+    config.model_path.write_text("<robot/>")
+    config.velocity_limits = [0.5, 1.5, 2.5]
+
+    context = _StreamingTestPinkIK(PinkIKConfig())._build_robot_context(
+        config,
+        "tool",
+        config.joint_names,
+    )
+
+    assert context.model.velocityLimit == pytest.approx([1.5, 0.5, 2.5])
+
+
 def test_streaming_envelope_intersects_configured_and_urdf_velocity(
     mocker: MockerFixture,
 ) -> None:
