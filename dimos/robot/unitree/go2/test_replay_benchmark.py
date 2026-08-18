@@ -38,7 +38,8 @@ WATCHED = (("odom", PoseStamped), ("lidar", PointCloud2), ("color_image", Image)
 # near-lossless; lidar and color_image are large frames whose delivery relies
 # on the 64MB rmem tuning, so leave headroom for designed shedding.
 FLOOR_FRACTION = {"odom": 0.9, "lidar": 0.9, "color_image": 0.5}
-# When set, write build wall/CPU, run CPU, and peak memory/threads to this path.
+# When set, write build wall/CPU, run CPU, peak memory/threads and disk I/O
+# to this path.
 METRICS_PATH = os.environ.get("DIMOS_BENCH_METRICS")
 
 
@@ -115,6 +116,21 @@ def _cgroup_tasks() -> int:
     return int((_cgroup_path() / "pids.current").read_text())
 
 
+def _cgroup_io_bytes() -> tuple[int, int]:
+    """(read, written) block-device bytes charged to this cgroup so far.
+
+    Device-level, not syscall-level: reads served from the page cache are
+    free, so with the DB pre-extracted (and therefore cache-warm) reads
+    mostly reflect cold imports, and writes reflect actual writeback.
+    """
+    read = written = 0
+    for line in (_cgroup_path() / "io.stat").read_text().splitlines():
+        fields = dict(part.split("=") for part in line.split()[1:])
+        read += int(fields.get("rbytes", 0))
+        written += int(fields.get("wbytes", 0))
+    return read, written
+
+
 @pytest.mark.self_hosted
 # macOS: coordinator->worker zenoh RPC times out (set_transport), and the
 # in-test LCM subscriptions would need lo0 route + maxdgram host tuning.
@@ -162,6 +178,7 @@ def test_go2_replay_realtime_load() -> None:
 
         state: dict[str, ModuleCoordinator] = {}
         cpu_marks: dict[str, tuple[float, float, float]] = {}
+        io_marks: dict[str, tuple[int, int]] = {}
         peak_anon = 0
         peak_tasks = 0
         stop_sampling = threading.Event()
@@ -178,6 +195,7 @@ def test_go2_replay_realtime_load() -> None:
             nonlocal last_arrival
             if METRICS_PATH:
                 cpu_marks["start"] = _cpu_mark()
+                io_marks["start"] = _cgroup_io_bytes()
             state["coordinator"] = ModuleCoordinator.build(blueprint)
             if METRICS_PATH:
                 cpu_marks["built"] = _cpu_mark()
@@ -191,6 +209,7 @@ def test_go2_replay_realtime_load() -> None:
                 if done and quiet >= QUIET_S:
                     if METRICS_PATH:
                         cpu_marks["end"] = _cpu_mark()
+                        io_marks["end"] = _cgroup_io_bytes()
                     return
                 time.sleep(0.2)
             pytest.fail(f"replay did not complete: counts={counts}, expected~{expected}")
@@ -231,6 +250,9 @@ def test_go2_replay_realtime_load() -> None:
                 # Maxima sampled at 10Hz across build+run, whole process tree.
                 ("peak memory", peak_anon / 2**20, "MB"),
                 ("peak threads", float(peak_tasks), "threads"),
+                # Block-device totals across build+run; page-cache hits are free.
+                ("disk read", (io_marks["end"][0] - io_marks["start"][0]) / 2**20, "MB"),
+                ("disk write", (io_marks["end"][1] - io_marks["start"][1]) / 2**20, "MB"),
             )
             Path(METRICS_PATH).write_text(
                 json.dumps(
