@@ -18,8 +18,10 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use validator::Validate;
 
+use dimos_module::init_worker_pool;
+
 use crate::edges::edges_to_segments;
-use crate::mls_planner::{init_worker_pool, Config, Planner, RegionBounds};
+use crate::mls_planner::{Config, Planner, RegionBounds};
 use crate::voxel::{surface_point_xyz, VoxelKey};
 
 #[pyclass]

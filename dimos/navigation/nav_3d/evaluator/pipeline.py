@@ -18,11 +18,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-import numpy as np
-
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    import numpy as np
     from numpy.typing import NDArray
 
     from dimos.navigation.nav_3d.evaluator.config import EvalConfig

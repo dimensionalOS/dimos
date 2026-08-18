@@ -95,6 +95,21 @@ def test_local_map_filters_by_cylinder() -> None:
     np.testing.assert_allclose(local[0], [2.5, 0.5, 0.5])
 
 
+def test_frames_batch_only_when_emit_every_is_set() -> None:
+    points = np.array([[5.5, 0.5, 0.5]], dtype=np.float32)
+
+    silent = make_mapper()
+    silent.add_frame(points, ORIGIN, IDENTITY)
+    assert silent.take_local_bounds()[2] == 0.0
+
+    batching = VoxelRayMapper(
+        voxel_size=1.0, max_range=100.0, min_health=0, max_health=1, emit_every=1
+    )
+    batching.add_frame(points, ORIGIN, IDENTITY)
+    assert batching.take_local_bounds()[2] > 0.0
+    assert batching.take_local_bounds()[2] == 0.0
+
+
 def test_add_frame_world_registers_at_world_coordinates() -> None:
     mapper = make_mapper()
     points = np.array([[105.55, 200.05, 3.05]], dtype=np.float32)

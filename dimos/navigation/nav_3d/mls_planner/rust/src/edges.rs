@@ -57,24 +57,42 @@ pub struct NodeEdge {
 const CORRIDOR_ADOPT_FRAC: f32 = 0.7;
 
 /// Fill an edge's corridor from the current Voronoi field by walking preds
-/// from both boundary cells. Dead cells are skipped, like plan expansion does.
+/// from both boundary cells.
 fn capture_chain(cells: &SurfaceCells, state: &DijkstraState, edge: &mut NodeEdge) {
-    let mut from_a = walk_preds(state, edge.boundary_u);
+    let mut from_a = walk_live_chain(cells, state, edge.boundary_u);
     from_a.reverse();
-    let to_b = walk_preds(state, edge.boundary_v);
+    let to_b = walk_live_chain(cells, state, edge.boundary_v);
     edge.chain = from_a
         .into_iter()
         .chain(to_b)
-        .filter(|&c| cells.is_live(c))
         .map(|c| cells.coord(c))
         .collect();
-    edge.bbox = chain_bbox(&edge.chain);
+    edge.bbox = chain_bbox(edge.chain.iter().copied());
 }
 
-fn chain_bbox(chain: &[VoxelKey]) -> (VoxelKey, VoxelKey) {
+/// walk_preds truncated at the first dead cell or non-adjacent hop. Regional
+/// updates leave out-of-window pred chains stale. A freed slot's coord is
+/// garbage, and a recycled slot can alias an unrelated cell far away.
+fn walk_live_chain(cells: &SurfaceCells, state: &DijkstraState, from: CellId) -> Vec<CellId> {
+    let mut chain = walk_preds(state, from);
+    let mut keep = 0;
+    for (i, &c) in chain.iter().enumerate() {
+        if !cells.is_live(c) {
+            break;
+        }
+        if i > 0 && !cells.neighbors(chain[i - 1]).iter().any(|e| e.dest == c) {
+            break;
+        }
+        keep = i + 1;
+    }
+    chain.truncate(keep);
+    chain
+}
+
+fn chain_bbox(chain: impl IntoIterator<Item = VoxelKey>) -> (VoxelKey, VoxelKey) {
     let mut min = (i32::MAX, i32::MAX, i32::MAX);
     let mut max = (i32::MIN, i32::MIN, i32::MIN);
-    for &(x, y, z) in chain {
+    for (x, y, z) in chain {
         min = (min.0.min(x), min.1.min(y), min.2.min(z));
         max = (max.0.max(x), max.1.max(y), max.2.max(z));
     }
@@ -194,11 +212,11 @@ pub fn build_node_edges_region(
     dijkstra_region(cells, &source_cells, window, state, Weight::Penalized);
 
     let live_node: AHashSet<NodeId> = source_cells.iter().copied().collect();
-    let window_bbox = chain_bbox(&window.iter().map(|&c| cells.coord(c)).collect::<Vec<_>>());
+    let window_bbox = chain_bbox(window.iter().map(|&c| cells.coord(c)));
 
     // A cached corridor survives while both its nodes exist and every hop of
     // its stored chain is still live and passable. Corridors clear of the
-    // update window are provably untouched and keep their cost; touched ones
+    // update window are provably untouched and keep their cost. Touched ones
     // are re-walked and re-priced, or dropped when broken.
     let mut merged: AHashMap<(NodeId, NodeId), NodeEdge> = AHashMap::new();
     for e in out_edges.drain(..) {
@@ -470,5 +488,109 @@ mod tests {
         let chain_v = walk_preds(&pg.cell_state, e.boundary_v);
         assert_eq!(chain_u.last(), Some(&cell_a));
         assert_eq!(chain_v.last(), Some(&cell_b));
+    }
+
+    #[test]
+    fn corridor_cost_none_on_impassable_hop() {
+        let mut pg = setup(&strip_cells(), &[(0, 0, 0), (19, 0, 0)]);
+        let chain = pg.node_edges[0].chain.clone();
+        assert!(corridor_cost(&pg.cells, &chain).is_some());
+
+        let c9 = pg.cells.id((9, 0, 0)).unwrap();
+        let c10 = pg.cells.id((10, 0, 0)).unwrap();
+        for e in pg.cells.edges_mut(c9) {
+            if e.dest == c10 {
+                e.cost = f32::INFINITY;
+            }
+        }
+        assert!(
+            corridor_cost(&pg.cells, &chain).is_none(),
+            "an impassable hop invalidates the corridor"
+        );
+    }
+
+    #[test]
+    fn corridor_cost_none_when_a_chain_cell_dies() {
+        let mut pg = setup(&strip_cells(), &[(0, 0, 0), (19, 0, 0)]);
+        let chain = pg.node_edges[0].chain.clone();
+        pg.cells.remove((10, 0, 0));
+        assert!(
+            corridor_cost(&pg.cells, &chain).is_none(),
+            "a dead cell invalidates the corridor"
+        );
+    }
+
+    fn parallel_strips() -> Vec<VoxelKey> {
+        let mut v: Vec<VoxelKey> = (0..20).map(|x| (x, 0, 0)).collect();
+        v.extend((0..20).map(|x| (x, 1, 0)));
+        v
+    }
+
+    fn rebuild_region_all(pg: &mut PlannerGraph) {
+        let window: AHashSet<CellId> = pg.cells.ids().collect();
+        let PlannerGraph {
+            cells,
+            nodes,
+            node_edges,
+            node_adj,
+            cell_state,
+            ..
+        } = pg;
+        build_node_edges_region(cells, nodes, &window, cell_state, node_edges, node_adj);
+    }
+
+    #[test]
+    fn cached_corridor_survives_an_equal_cost_rescan() {
+        let mut pg = setup(&parallel_strips(), &[(0, 0, 0), (19, 0, 0)]);
+        assert_eq!(pg.node_edges.len(), 1);
+        let cached = pg.node_edges[0].chain.clone();
+
+        rebuild_region_all(&mut pg);
+
+        assert_eq!(pg.node_edges.len(), 1);
+        assert_eq!(
+            pg.node_edges[0].chain, cached,
+            "a crossing that is not clearly cheaper must not displace the corridor"
+        );
+    }
+
+    #[test]
+    fn clearly_cheaper_crossing_replaces_the_cached_corridor() {
+        let mut pg = setup(&parallel_strips(), &[(0, 0, 0), (19, 0, 0)]);
+        let cached = pg.node_edges[0].chain.clone();
+        let old_cost = pg.node_edges[0].cost;
+
+        // The y=1 row becomes a highway two orders of magnitude cheaper.
+        let ids: Vec<CellId> = pg.cells.ids().collect();
+        let into_row: Vec<(CellId, Vec<bool>)> = ids
+            .iter()
+            .map(|&id| {
+                let marks = pg
+                    .cells
+                    .neighbors(id)
+                    .iter()
+                    .map(|e| pg.cells.coord(e.dest).1 == 1)
+                    .collect();
+                (id, marks)
+            })
+            .collect();
+        for (id, marks) in into_row {
+            for (e, cheap) in pg.cells.edges_mut(id).iter_mut().zip(marks) {
+                if cheap {
+                    e.cost *= 0.01;
+                }
+            }
+        }
+
+        rebuild_region_all(&mut pg);
+
+        assert_eq!(pg.node_edges.len(), 1);
+        let e = &pg.node_edges[0];
+        assert!(e.cost < CORRIDOR_ADOPT_FRAC * old_cost);
+        assert_ne!(e.chain, cached, "the cheaper crossing is adopted");
+        assert!(
+            e.chain.iter().any(|&(_, y, _)| y == 1),
+            "the adopted corridor routes through the cheap row"
+        );
     }
 }

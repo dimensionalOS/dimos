@@ -33,6 +33,7 @@ class VoxelRayMapper:
         support_min: int = 4,
         region_percentile: float = 95.0,
         worker_threads: int = 4,
+        emit_every: int = 0,
     ) -> None: ...
     @property
     def voxel_size(self) -> float: ...
@@ -66,6 +67,7 @@ class VoxelRayMapper:
         """Cylinder over the frames batched since the last call.
 
         Returns (cx, cy, radius, z_min, z_max) and consumes the batch.
+        Frames batch only when emit_every is nonzero.
         """
         ...
 

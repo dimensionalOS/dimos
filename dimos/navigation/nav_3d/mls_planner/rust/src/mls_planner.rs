@@ -21,14 +21,14 @@ use validator::ValidationError;
 
 use crate::adjacency::{build_surface_cells, build_surface_lookup, rebuild_edges_around, CellId};
 use crate::edges::{build_node_edges, build_node_edges_region, PlannerGraph};
-use crate::nodes::{place_nodes, place_nodes_region, relocate_dead_nodes, PlacementParams};
+use crate::nodes::{
+    place_nodes, place_nodes_region, relocate_dead_nodes, PlacementParams, HOLE_SPAN_CELLS,
+};
 use crate::planner;
 use crate::surfaces::{
     add_to_by_col, extract_surfaces, extract_surfaces_region, remove_from_by_col, ColumnIz,
 };
 use crate::voxel::{voxelize, VoxelKey};
-
-/// Node positions bucketed by spacing-sized grid cell, for crowding checks.
 
 #[native_config]
 #[derive(Clone)]
@@ -76,19 +76,10 @@ pub struct Config {
     /// artifacts. 0 disables them entirely. The path output is unthrottled.
     #[validate(range(min = 0.0))]
     pub viz_publish_hz: f32,
-    /// Worker threads for parallel planner work. Small on purpose: past a few
-    /// threads the per-frame workloads gain no wall time and burn cores the
-    /// rest of the robot needs.
+    /// Worker threads for parallel planner work. More threads gain no wall
+    /// time and steal cores the rest of the robot needs.
     #[validate(range(min = 1))]
     pub worker_threads: u32,
-}
-
-/// Cap the process-wide worker pool. A no-op when some other module in this
-/// process already sized it, which keeps the first configured value.
-pub fn init_worker_pool(threads: u32) {
-    let _ = rayon::ThreadPoolBuilder::new()
-        .num_threads(threads as usize)
-        .build_global();
 }
 
 /// The soft wall penalty needs a non-zero zone to act in.
@@ -446,8 +437,8 @@ impl Planner {
     }
 
     /// Live cells within the node-graph margin of the changed cells, walked
-    /// as a BFS ball over cell adjacency. The ball is exactly the region a
-    /// change can reach.
+    /// as a BFS ball over cell adjacency from roots covering everything a
+    /// change can directly touch.
     fn node_window(&self, changed: &[VoxelKey], config: &Config) -> AHashSet<CellId> {
         // Wall distances only matter out to the penalty band, so the ball
         // covers the buffer reach of the changed cells plus slack.
@@ -479,6 +470,38 @@ impl Planner {
                             frontier.push(id);
                         }
                     }
+                }
+            }
+        }
+
+        // Wall-seed status scans across up to HOLE_SPAN_CELLS empty columns,
+        // so a change can flip wall adjacency that far away with no adjacency
+        // path in between. Root the first surfaced column in each direction.
+        // Columns behind it cannot see the change, their scan stops there.
+        // Affected seeds sit within headroom + step of the changed z, except
+        // when the column's own existence may have flipped, which can move
+        // any seed's scan stop: then the whole column roots.
+        let headroom = config.headroom_cells();
+        for &(ix, iy, iz) in changed {
+            let flipped = lookup.get(&(ix, iy)).is_none_or(|zs| zs.len() <= 1);
+            let (z_lo, z_hi) = (iz - headroom - step_dz, iz + step_dz);
+            for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                for k in 1..=HOLE_SPAN_CELLS {
+                    let col = (ix + dx * k, iy + dy * k);
+                    let Some(zs) = lookup.get(&col) else {
+                        continue;
+                    };
+                    for &nz in zs {
+                        if !flipped && !(z_lo..=z_hi).contains(&nz) {
+                            continue;
+                        }
+                        if let Some(id) = cells.id((col.0, col.1, nz)) {
+                            if ball.insert(id) {
+                                frontier.push(id);
+                            }
+                        }
+                    }
+                    break;
                 }
             }
         }
@@ -914,6 +937,51 @@ mod region_tests {
         assert!(
             p.graph.nodes.iter().any(|n| n.pos == target),
             "sticky node moved on a nearby junk voxel: {target:?}"
+        );
+    }
+
+    /// The drop side of sticky retention: a node whose cell falls inside the
+    /// clearance zone of newly grown structure dies instead of persisting.
+    #[test]
+    fn sticky_node_dies_when_a_wall_grows_next_to_it() {
+        let cfg = Config {
+            wall_clearance_m: 0.2,
+            ..test_config()
+        };
+        let all = big_world();
+        let vs = cfg.voxel_size;
+        let mut p = Planner::default();
+        p.update_global_map(&all, &cfg);
+
+        let target = p
+            .graph
+            .nodes
+            .iter()
+            .map(|n| n.pos)
+            .min_by(|a, b| {
+                let da = (a.0 - 2.0).powi(2) + (a.1 - 2.0).powi(2);
+                let db = (b.0 - 2.0).powi(2) + (b.1 - 2.0).powi(2);
+                da.total_cmp(&db)
+            })
+            .unwrap();
+
+        // A wall stack grows in the column right next to the node's cell.
+        let b = RegionBounds {
+            origin_x: target.0,
+            origin_y: target.1,
+            radius: 1.0,
+            z_min: -1.0,
+            z_max: 2.0,
+        };
+        let mut pts = slice(&all, &b, vs);
+        for iz in 0..5 {
+            pts.push((target.0 + vs, target.1, iz as f32 * vs + vs * 0.5));
+        }
+        p.update_region(&pts, &b, &cfg);
+
+        assert!(
+            !p.graph.nodes.iter().any(|n| n.pos == target),
+            "sub-clearance node must be dropped, not kept: {target:?}"
         );
     }
 

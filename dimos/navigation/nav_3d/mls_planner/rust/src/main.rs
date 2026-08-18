@@ -16,9 +16,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use dimos_mls_planner::edges::{edges_to_segments, PlannerGraph};
-use dimos_mls_planner::mls_planner::{init_worker_pool, Config, Planner, RegionBounds};
+use dimos_mls_planner::mls_planner::{Config, Planner, RegionBounds};
 use dimos_mls_planner::voxel::surface_point_xyz;
-use dimos_module::{error_throttled, run_with_transport, warn_throttled, Input, Module, Output};
+use dimos_module::{
+    error_throttled, init_worker_pool, run_with_transport, warn_throttled, Input, Module, Output,
+};
 use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::Path;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};

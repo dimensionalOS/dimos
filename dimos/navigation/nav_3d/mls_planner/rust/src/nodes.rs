@@ -361,7 +361,7 @@ fn collect_wall_adjacent_in_window(
 }
 
 /// Empty columns a gap may span before it counts as a real edge, not a hole.
-const HOLE_SPAN_CELLS: i32 = 4;
+pub(crate) const HOLE_SPAN_CELLS: i32 = 4;
 
 /// Smallest unserved component the fallback seeding still gives a node.
 const MIN_COMPONENT_CELLS: u32 = 4;

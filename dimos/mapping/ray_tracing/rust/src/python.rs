@@ -18,8 +18,10 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use validator::Validate;
 
+use dimos_module::init_worker_pool;
+
 use crate::mapper::{Mapper, Pose};
-use crate::voxel_ray_tracer::{init_worker_pool, iter_global_normals, Config, LocalBounds};
+use crate::voxel_ray_tracer::{iter_global_normals, Config, LocalBounds};
 
 fn extract_tuples(arr: &Bound<'_, PyAny>, name: &str) -> PyResult<Vec<(f32, f32, f32)>> {
     let arr: PyReadonlyArray2<'_, f32> = arr.extract().map_err(|_| {
@@ -88,6 +90,7 @@ impl VoxelRayMapper {
         support_min = 4,
         region_percentile = 95.0,
         worker_threads = 4,
+        emit_every = 0,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -103,7 +106,10 @@ impl VoxelRayMapper {
         support_min: i32,
         region_percentile: f32,
         worker_threads: u32,
+        emit_every: u32,
     ) -> PyResult<Self> {
+        // A nonzero emit_every batches frames for take_local_bounds. Callers
+        // that never take must leave it 0 or the batch grows forever.
         let config = Config {
             voxel_size,
             fine_divisor,
@@ -115,7 +121,7 @@ impl VoxelRayMapper {
             max_health,
             graze_cos,
             support_min,
-            emit_every: 1,
+            emit_every,
             global_emit_every: 1,
             fine_emit_every: 0,
             region_percentile,

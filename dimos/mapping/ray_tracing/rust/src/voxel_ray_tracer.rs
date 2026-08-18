@@ -95,19 +95,10 @@ pub struct Config {
     /// stray far hit cannot inflate it.
     #[validate(range(min = 0.0, max = 100.0))]
     pub region_percentile: f32,
-    /// Worker threads for parallel map work. Small on purpose: past a few
-    /// threads the per-frame workloads gain no wall time and burn cores the
-    /// rest of the robot needs.
+    /// Worker threads for parallel map work. More threads gain no wall time
+    /// and steal cores the rest of the robot needs.
     #[validate(range(min = 1))]
     pub worker_threads: u32,
-}
-
-/// Cap the process-wide worker pool. A no-op when some other module in this
-/// process already sized it, which keeps the first configured value.
-pub fn init_worker_pool(threads: u32) {
-    let _ = rayon::ThreadPoolBuilder::new()
-        .num_threads(threads as usize)
-        .build_global();
 }
 
 fn validate_config(cfg: &Config) -> Result<(), ValidationError> {
@@ -173,27 +164,33 @@ impl VoxelMap {
         self.voxels.values().filter(|c| c.health > 0).count()
     }
 
-    /// Add a return to its voxel's accumulated moments. Returns the key when
-    /// the return crossed the voxel's normal-refit milestone.
-    fn accumulate(&mut self, point: (f32, f32, f32), voxel_size: f32) -> Option<VoxelKey> {
+    /// Add a return to its voxel's accumulated moments. Returns the key and
+    /// whether the return crossed the voxel's normal-refit milestone.
+    fn accumulate(&mut self, point: (f32, f32, f32), voxel_size: f32) -> (VoxelKey, bool) {
         let key = world_to_voxel(point.0, point.1, point.2, 1.0 / voxel_size);
         let center = Vector3::new(
             (key.0 as f32 + 0.5) * voxel_size,
             (key.1 as f32 + 0.5) * voxel_size,
             (key.2 as f32 + 0.5) * voxel_size,
         );
-        self.voxels
+        let milestone = self
+            .voxels
             .entry(key)
             .or_default()
-            .observe(Vector3::new(point.0, point.1, point.2) - center)
-            .then_some(key)
+            .observe(Vector3::new(point.0, point.1, point.2) - center);
+        (key, milestone)
     }
 
-    /// Mark a return's fine cell occupied. The voxel key must use the same
-    /// coarse quantization as `accumulate`, since a fine-grid float path can
-    /// disagree at cell boundaries and plant phantom voxels.
-    fn observe_fine(&mut self, point: (f32, f32, f32), divisor: i32, voxel_size: f32) {
-        let coarse = world_to_voxel(point.0, point.1, point.2, 1.0 / voxel_size);
+    /// Mark a return's fine cell occupied and return its fine key. The child
+    /// index derives from the caller's coarse key, not a fine-grid float path,
+    /// which can disagree at cell boundaries and plant phantom voxels.
+    fn observe_fine(
+        &mut self,
+        point: (f32, f32, f32),
+        coarse: VoxelKey,
+        divisor: i32,
+        voxel_size: f32,
+    ) -> VoxelKey {
         let inv_fine = divisor as f32 / voxel_size;
         let local = |p: f32, k: i32| {
             (((p - k as f32 * voxel_size) * inv_fine).floor() as i32).clamp(0, divisor - 1)
@@ -203,6 +200,7 @@ impl VoxelMap {
         let lz = local(point.2, coarse.2);
         let index = (lx * divisor + ly) * divisor + lz;
         self.voxels.entry(coarse).or_default().fine |= 1 << index;
+        join_fine_key(coarse, index as usize, divisor)
     }
 
     /// Move a voxel in or out of the healthy-chunk index on a health-sign crossing.
@@ -880,14 +878,17 @@ pub fn update_map(
         map.record_hit(v, cfg.min_health, cfg.max_health);
     }
 
-    let fine = cfg.fine_layer().map(|(d, size)| (d as i32, size));
+    let fine = cfg.fine_layer().map(|(d, _)| d as i32);
     let mut changed: AHashSet<VoxelKey> = AHashSet::new();
+    let mut fine_live: AHashSet<VoxelKey> =
+        AHashSet::with_capacity(if fine.is_some() { points.len() } else { 0 });
     for &p in points {
-        if let Some(key) = map.accumulate(p, cfg.voxel_size) {
+        let (key, milestone) = map.accumulate(p, cfg.voxel_size);
+        if milestone {
             changed.insert(key);
         }
-        if let Some((divisor, _)) = fine {
-            map.observe_fine(p, divisor, cfg.voxel_size);
+        if let Some(divisor) = fine {
+            fine_live.insert(map.observe_fine(p, key, divisor, cfg.voxel_size));
         }
     }
 
@@ -899,10 +900,6 @@ pub fn update_map(
     }
 
     refresh_voxels(map, &changed, &removed, cfg.voxel_size);
-
-    let fine_live = fine.map_or_else(AHashSet::new, |(_, fine_size)| {
-        live_voxels(points, fine_size)
-    });
 
     FrameHits {
         coarse: hits,

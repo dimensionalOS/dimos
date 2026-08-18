@@ -579,7 +579,6 @@ fn nearest_node(
     None
 }
 
-/// Walk predecessors back to the search source.
 /// walk_preds through the persistent Voronoi state, truncated at the first
 /// cell that died since the state was written. Regional updates leave
 /// out-of-window pred chains stale, and a freed slot's coord is garbage.
@@ -591,6 +590,7 @@ fn walk_live_preds(plg: &PlannerGraph, from: CellId) -> Vec<CellId> {
     chain
 }
 
+/// Walk predecessors back to the search source.
 fn walk_local_preds(pred: &AHashMap<CellId, CellId>, from: CellId) -> Vec<CellId> {
     let mut path = vec![from];
     let mut cur = from;

@@ -318,6 +318,35 @@ mod tests {
     }
 
     #[test]
+    fn fine_only_frames_read_bounds_without_consuming_the_batch() {
+        let cfg = Config {
+            fine_divisor: 2,
+            emit_every: 2,
+            fine_emit_every: 1,
+            ..config()
+        };
+        let mut mapper = Mapper::new(cfg);
+        let pose = Pose {
+            position: (0.0, 0.0, 0.0),
+            orientation: IDENTITY,
+        };
+
+        mapper.add_frame(&[(2.0, 0.5, 0.5)], pose);
+        assert!(mapper.fine_due() && !mapper.local_due());
+        let fine_frame = mapper.local_bounds();
+        assert!(fine_frame.radius > 0.0);
+
+        mapper.add_frame(&[(0.5, 3.0, 0.5)], pose);
+        assert!(mapper.fine_due() && mapper.local_due());
+        let local_frame = mapper.take_local_bounds();
+        assert!(
+            local_frame.radius > fine_frame.radius,
+            "the local cylinder still covers both batched frames"
+        );
+        assert_eq!(mapper.local_bounds().radius, 0.0, "take consumed the batch");
+    }
+
+    #[test]
     fn fine_points_none_when_layer_off() {
         let mut mapper = Mapper::new(config());
         let pose = Pose {

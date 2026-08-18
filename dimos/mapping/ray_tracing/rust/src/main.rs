@@ -15,9 +15,11 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use dimos_module::{error_throttled, run_with_transport, warn_throttled, Input, Module, Output};
+use dimos_module::{
+    error_throttled, init_worker_pool, run_with_transport, warn_throttled, Input, Module, Output,
+};
 use dimos_voxel_ray_tracing::mapper::{Mapper, Pose};
-use dimos_voxel_ray_tracing::voxel_ray_tracer::{init_worker_pool, Config};
+use dimos_voxel_ray_tracing::voxel_ray_tracer::Config;
 use lcm_msgs::geometry_msgs::{Point, Pose as PoseMsg, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
@@ -109,8 +111,10 @@ impl RayTracingVoxelMap {
 
         // Only the local cadence consumes the batch. A fine-only frame reads
         // it non-destructively so the next local cylinder still covers every
-        // frame since the last local emission.
-        let region = if local_due {
+        // frame since the last local emission. With the local map disabled the
+        // fine cadence is the only consumer, so it takes or the batch would
+        // grow forever.
+        let region = if local_due || (fine_due && mapper.config().emit_every == 0) {
             Some(mapper.take_local_bounds())
         } else if fine_due {
             Some(mapper.local_bounds())

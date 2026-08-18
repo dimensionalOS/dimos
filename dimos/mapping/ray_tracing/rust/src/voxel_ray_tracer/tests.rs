@@ -1085,11 +1085,11 @@ fn fine_emission_applies_support_min() {
     for x in 0..3 {
         for y in 0..3 {
             map.set_health((x, y, 0), 1);
-            map.observe_fine((x as f32 + 0.5, y as f32 + 0.5, 0.5), 2, 1.0);
+            map.observe_fine((x as f32 + 0.5, y as f32 + 0.5, 0.5), (x, y, 0), 2, 1.0);
         }
     }
     map.set_health((20, 20, 0), 1);
-    map.observe_fine((20.5, 20.5, 0.5), 2, 1.0);
+    map.observe_fine((20.5, 20.5, 0.5), (20, 20, 0), 2, 1.0);
 
     let no_live = AHashSet::new();
     assert_eq!(
