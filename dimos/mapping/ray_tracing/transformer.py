@@ -17,14 +17,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
-from dimos.memory2.transform import Transformer
+from dimos.memory.transform import Transformer
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from dimos.memory2.type.observation import Observation
+    from dimos.memory.type.observation import Observation
 
 logger = setup_logger()
 

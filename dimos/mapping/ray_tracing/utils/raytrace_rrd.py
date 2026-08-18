@@ -29,9 +29,9 @@ from numpy.typing import NDArray
 import typer
 
 from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
-from dimos.memory2.store.sqlite import SqliteStore
-from dimos.memory2.transform import FnTransformer
-from dimos.memory2.vis.utils import (
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.transform import FnTransformer
+from dimos.memory.vis.utils import (
     DEFAULT_RENDER_VOXEL,
     attach_pose_from_odom,
     default_render_voxel,
