@@ -4,10 +4,13 @@
 //
 // Leg asymmetry, forced by upstream bugs (see web/README.md):
 // - Robot (aioquic): robot->relay hello rides an @control data frame on a
-//   one-shot bidi stream (v5); every relay->robot control (welcome, errors,
-//   pong, subs, teleop) rides datagrams, because the relay must never write
-//   on robot-opened bidi streams (their send half is aborted with RESET,
-//   never FIN). Data = one-shot bidi streams under the same rule.
+//   one-shot bidi stream (v5); relay->robot handshake and teleop control
+//   (welcome, errors, pong, teleop) rides datagrams, while subs snapshots
+//   (and future robot-bound control) ride @control frames on the reliable
+//   robot control carrier - ONE relay-opened uni stream per session. The
+//   relay still never writes on robot-OPENED bidi streams (their send half
+//   is aborted with RESET, never FIN); the carrier is relay-opened, the
+//   proven direction. Data = one-shot bidi streams under the same rule.
 // - Viewer (browser): control = viewer-opened bidi stream (replies + pushes
 //   on the same stream) or datagrams (Python test viewer); data = relay-
 //   opened uni streams.
@@ -27,6 +30,7 @@ import {
   type RobotManifest,
 } from "@dimos/shared";
 import { parseManifest } from "@dimos/shared/manifest";
+import { type CarrierStats, RobotCarrier } from "./carrier.ts";
 import {
   type ChannelPolicy,
   ControlPayloadTooLargeError,
@@ -79,16 +83,47 @@ export class RobotSession implements RobotPeer {
   readonly #conn: Deno.QuicConn;
   readonly #registry: Registry;
   readonly #dgWriter: WritableStreamDefaultWriter<Uint8Array>;
+  readonly #carrier: RobotCarrier;
 
   constructor(wt: WebTransport, conn: Deno.QuicConn, registry: Registry) {
     this.#wt = wt;
     this.#conn = conn;
     this.#registry = registry;
     this.#dgWriter = wt.datagrams.writable.getWriter();
+    // The stream opens lazily on the first sendControl - the registration
+    // baseline snapshot - so a rejected session never burns a stream.
+    this.#carrier = new RobotCarrier({
+      openStream: async () => {
+        const stream = await wt.createUnidirectionalStream({
+          waitUntilAvailable: true,
+          sendOrder: CONTROL_SEND_ORDER,
+        });
+        return stream.getWriter();
+      },
+      fail: (reason) => this.#failCarrier(reason),
+    });
   }
 
   sendMsg(msg: Msg): void {
     this.#dgWriter.write(encodeDatagram(msg)).catch(() => {});
+  }
+
+  sendControl(msg: Msg): void {
+    this.#carrier.sendControl(msg);
+  }
+
+  carrierStats(): CarrierStats {
+    return this.#carrier.stats();
+  }
+
+  /** The carrier is a control dependency: on overflow or write failure the
+   * whole session fails (error datagram + close), never limps on with stale
+   * subscription state. The bridge reconnects and gets a fresh baseline. */
+  #failCarrier(reason: string): void {
+    if (this.closed !== null) return; // already tearing down: not a failure
+    this.#registry.carrierFailed();
+    console.error(`[relay] robot control carrier failed: ${reason}`);
+    this.#reject("carrier_failed", `robot control carrier failed: ${reason}`, "carrier failure");
   }
 
   #reject(code: string, message: string, reason: string): false {
@@ -104,7 +139,10 @@ export class RobotSession implements RobotPeer {
     console.log("[relay] robot connected");
     this.#wt.closed
       .catch(() => {})
-      .finally(() => this.#registry.robotClosed(this));
+      .finally(() => {
+        this.#carrier.dispose();
+        this.#registry.robotClosed(this);
+      });
     this.#controlLoop();
     this.#frameLoop();
   }
