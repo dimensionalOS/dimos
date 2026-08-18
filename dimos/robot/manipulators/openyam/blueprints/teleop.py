@@ -129,7 +129,7 @@ _openyam_quest_task = teleop_ik_task(
 
 # Single-arm Quest teleop: right controller -> OpenYAM arm
 teleop_quest_openyam = autoconnect(
-    ArmTeleopModule.blueprint(task_names={"right": OPENYAM_QUEST_TASK_NAME}),
+    ArmTeleopModule.blueprint(),
     TeleopControlCoordinator.blueprint(
         instance_name="ControlCoordinator",
         hardware=[_openyam_quest_hw],
