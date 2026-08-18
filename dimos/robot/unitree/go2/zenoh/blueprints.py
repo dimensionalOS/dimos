@@ -159,22 +159,22 @@ go2_zenoh_basic = autoconnect(
 
 # global_map is remapped off so the planner runs purely on the
 # incremental local_map + region_bounds pair.
-mls_planner_config = {
-    "world_frame": "odom",
-    "voxel_size": voxel_size,
-    "robot_height": ROBOT_HEIGHT,
-    "surface_closing_radius": 0.3,
-    "wall_clearance_m": 0.1,
-    "wall_buffer_m": 0.75,
-    "wall_buffer_weight": 100.0,
-    "step_threshold_m": 0.16,
-    "step_penalty_weight": 4.0,
-    "viz_publish_hz": planner_viz_hz,
-}
-
-_mls_planner = MLSPlannerNative.blueprint(**mls_planner_config).remappings(
-    [(MLSPlannerNative, "global_map", "global_map_unused")]
+mls_planner_config = MLSPlannerNativeConfig(
+    world_frame="odom",
+    voxel_size=voxel_size,
+    robot_height=ROBOT_HEIGHT,
+    surface_closing_radius=0.3,
+    wall_clearance_m=0.1,
+    wall_buffer_m=0.75,
+    wall_buffer_weight=100.0,
+    step_threshold_m=0.16,
+    step_penalty_weight=4.0,
+    viz_publish_hz=planner_viz_hz,
 )
+
+_mls_planner = MLSPlannerNative.blueprint(
+    **mls_planner_config.model_dump(exclude_unset=True)
+).remappings([(MLSPlannerNative, "global_map", "global_map_unused")])
 
 # Consumes GO2Zenoh's lidar + odometry directly: the bridge stamps them exactly as
 # PointLio does locally (frames odom / mid360_link, xyz+intensity at point_step 16).
@@ -186,19 +186,19 @@ _raytraced_vis = vis_module(
     rerun_config=_rerun_config({"world/pointlio_map": None, "world/lidar": None}),
 )
 
-ray_tracing_config = {
-    "voxel_size": voxel_size,
-    "emit_every": 1,
-    "global_emit_every": 50,
-    "min_health": -1,
-    "max_health": 5,
-    "support_min": 4,
-}
+ray_tracing_config = RayTracingVoxelMapConfig(
+    voxel_size=voxel_size,
+    emit_every=1,
+    global_emit_every=50,
+    min_health=-1,
+    max_health=5,
+    support_min=4,
+)
 
 go2_zenoh_raycaster = autoconnect(
     go2_zenoh_basic,
     _raytraced_vis,
-    RayTracingVoxelMap.blueprint(**ray_tracing_config),
+    RayTracingVoxelMap.blueprint(**ray_tracing_config.model_dump(exclude_unset=True)),
 ).global_config(transport="zenoh", n_workers=6, robot_model="unitree_go2")
 
 
@@ -234,8 +234,8 @@ go2_zenoh_nav_baked = autoconnect(
     go2_zenoh_basic,
     _raytraced_vis,
     GoNav.blueprint(
-        ray_tracing_config=RayTracingVoxelMapConfig(**ray_tracing_config),
-        mls_planner_config=MLSPlannerNativeConfig(**mls_planner_config),
+        ray_tracing_config=ray_tracing_config,
+        mls_planner_config=mls_planner_config,
     ),
     GoalRelay.blueprint(lidar_height=ROBOT_HEIGHT),
     BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6),
