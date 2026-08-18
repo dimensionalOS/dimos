@@ -102,7 +102,6 @@ class GlobalConfig(BaseSettings):
     dimsim_headless: bool = True
     local_relay: bool = False
     relay_url: str | None = None
-    # Dimensional cloud (`dimos login`). DIMOS_API_KEY overrides any stored login.
     dimos_cloud_url: str = "https://login.dimensional.org"
     dimos_api_key: str | None = None
 
