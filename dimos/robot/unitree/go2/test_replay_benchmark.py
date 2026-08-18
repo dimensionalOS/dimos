@@ -38,7 +38,7 @@ WATCHED = (("odom", PoseStamped), ("lidar", PointCloud2), ("color_image", Image)
 # near-lossless; lidar and color_image are large frames whose delivery relies
 # on the 64MB rmem tuning, so leave headroom for designed shedding.
 FLOOR_FRACTION = {"odom": 0.9, "lidar": 0.9, "color_image": 0.5}
-# When set, write build wall/CPU, run CPU seconds and peak memory to this path.
+# When set, write build wall/CPU, run CPU, and peak memory/threads to this path.
 METRICS_PATH = os.environ.get("DIMOS_BENCH_METRICS")
 
 
@@ -106,6 +106,15 @@ def _cgroup_anon_bytes() -> int:
     return int(_cgroup_stat("memory.stat")["anon"])
 
 
+def _cgroup_tasks() -> int:
+    """Threads currently in this cgroup, whole process tree.
+
+    The pids controller charges every task, so a single-threaded process
+    counts as 1.
+    """
+    return int((_cgroup_path() / "pids.current").read_text())
+
+
 @pytest.mark.self_hosted
 # macOS: coordinator->worker zenoh RPC times out (set_transport), and the
 # in-test LCM subscriptions would need lo0 route + maxdgram host tuning.
@@ -154,14 +163,16 @@ def test_go2_replay_realtime_load() -> None:
         state: dict[str, ModuleCoordinator] = {}
         cpu_marks: dict[str, tuple[float, float, float]] = {}
         peak_anon = 0
+        peak_tasks = 0
         stop_sampling = threading.Event()
 
-        def sample_memory() -> None:
-            nonlocal peak_anon
+        def sample_peaks() -> None:
+            nonlocal peak_anon, peak_tasks
             while not stop_sampling.wait(0.1):
                 peak_anon = max(peak_anon, _cgroup_anon_bytes())
+                peak_tasks = max(peak_tasks, _cgroup_tasks())
 
-        sampler = threading.Thread(target=sample_memory, daemon=True)
+        sampler = threading.Thread(target=sample_peaks, daemon=True)
 
         def build_and_run() -> None:
             nonlocal last_arrival
@@ -217,8 +228,9 @@ def test_go2_replay_realtime_load() -> None:
                 ("run cpu", (end[1] + end[2]) - (built[1] + built[2]), "s"),
                 ("run cpu (user)", end[1] - built[1], "s"),
                 ("run cpu (system)", end[2] - built[2], "s"),
-                # Max sampled at 10Hz across build+run, whole process tree.
+                # Maxima sampled at 10Hz across build+run, whole process tree.
                 ("peak memory", peak_anon / 2**20, "MB"),
+                ("peak threads", float(peak_tasks), "threads"),
             )
             Path(METRICS_PATH).write_text(
                 json.dumps(
