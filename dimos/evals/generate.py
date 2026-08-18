@@ -65,13 +65,18 @@ def _voxels2d(pts: np.ndarray, cell: float = VOXEL) -> set[tuple[int, int]]:
     return set(map(tuple, np.floor(pts[:, :2] / cell).astype(int)))
 
 
-def _cloud_at(store: Store, t: float) -> tuple[np.ndarray, list[list[object]]]:
-    """Points of the last cloud at or before ``t``, plus a context window that
-    selects that one frame."""
+def _frame_at(store: Store, t: float) -> tuple[Any, list[list[object]]]:
+    """The last cloud at or before ``t``, plus a context window selecting it."""
     lidar = store.streams.lidar
     obs = lidar.range_time(0, t).to_list()[-1]
     ts = obs.ts - lidar.first().ts
-    return obs.data.points_f32(), [["lidar", [round(ts - 0.05, 2), round(ts + 0.05, 2)]]]
+    return obs.data, [["lidar", [round(ts - 0.05, 2), round(ts + 0.05, 2)]]]
+
+
+def _cloud_at(store: Store, t: float) -> tuple[np.ndarray, list[list[object]]]:
+    """Points of the last cloud at or before ``t``, plus its context window."""
+    cloud, context = _frame_at(store, t)
+    return cloud.points_f32(), context
 
 
 def displacement_rows(dataset: str, windows: Sequence[tuple[float, float]]) -> list[Row]:

@@ -23,6 +23,10 @@ quizzing whatever lossy encoding the agent receives for a ``PointCloud2``.
 ``go2_bigoffice`` is a 292 s exploration whose lidar is a rolling ~6 m local
 window, which is why the two datasets take different stream families.
 
+Free-space families live in their own suites, one per question class:
+:mod:`dimos.evals.suites.go2_pointcloud_clearance` and
+:mod:`dimos.evals.suites.go2_pointcloud_route`.
+
 Regenerate (needs both recordings)::
 
     python -m dimos.evals.suites.go2_pointcloud
