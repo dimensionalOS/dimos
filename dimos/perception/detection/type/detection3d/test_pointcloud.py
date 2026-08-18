@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any
-
 import numpy as np
 import pytest
 
@@ -24,8 +22,6 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
-
-pytestmark = pytest.mark.self_hosted
 
 
 def _projection_context() -> tuple[Image, CameraInfo, Transform]:
@@ -112,8 +108,9 @@ def test_from_2d_prefers_segmentation_mask_over_bbox() -> None:
     assert np.allclose(points, ((2.0, 2.0, 1.0),))
 
 
+@pytest.mark.self_hosted
 @pytest.mark.skipif_macos_bug
-def test_detection3dpc(detection3dpc: Any) -> None:
+def test_detection3dpc(detection3dpc) -> None:
     # def test_oriented_bounding_box(detection3dpc):
     """Test oriented bounding box calculation and values."""
     obb = detection3dpc.get_oriented_bounding_box()
