@@ -28,8 +28,10 @@ from dimos.memory.store.memory import MemoryStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.observation import Observation
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.unitree.go2.connection import BASE_TO_OPTICAL
 
 
@@ -61,7 +63,24 @@ def test_go2_profile_must_be_explicit_for_uncalibrated_recording(tmp_path: Path)
         preprocessor.start()
 
 
-def test_go2_profile_treats_legacy_image_pose_as_world_from_base() -> None:
+@pytest.mark.parametrize(
+    ("stream_name", "stream_type"), (("camera_info", CameraInfo), ("tf", TFMessage))
+)
+def test_rejects_incomplete_recorded_calibration(
+    stream_name: str, stream_type: type[Any], tmp_path: Path
+) -> None:
+    recording = tmp_path / "recording.db"
+    with SqliteStore(path=recording) as store:
+        store.stream("color_image", Image)
+        store.stream("lidar", PointCloud2)
+        store.stream(stream_name, stream_type)
+
+    preprocessor = RecordingFramePreprocessor(recording, calibration_profile="go2")
+    with pytest.raises(ValueError, match="camera_info and tf streams must both be present"):
+        preprocessor.start()
+
+
+def test_go2_profile_treats_image_observation_pose_as_world_from_base() -> None:
     image = Observation[Image](
         ts=10.0,
         pose_tuple=(1.0, 2.0, 0.5, 0.0, 0.0, 0.0, 1.0),

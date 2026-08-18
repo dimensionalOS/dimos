@@ -21,7 +21,7 @@ import pytest
 
 from dimos.evals.vqa.contracts import InsufficientEvidenceError
 from dimos.evals.vqa.preprocessing import CalibratedFrame
-from dimos.evals.vqa.primitives.edgetam import EdgeTamObjectMaskEstimator
+from dimos.evals.vqa.primitives.edgetam import EdgeTamObjectMaskPipeline
 from dimos.evals.vqa.primitives.range import LidarRangeEstimator
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -99,7 +99,7 @@ class _Segmenter:
 
     def segment(
         self, detections: ImageDetections2D[Detection2DBBox]
-    ) -> ImageDetections2D[Detection2DBBox]:
+    ) -> ImageDetections2D[Detection2DSeg]:
         self.call_count += 1
         self.prompted_boxes.extend(prompt.bbox for prompt in detections)
         masks = (
@@ -107,7 +107,7 @@ class _Segmenter:
             if len(self._masks) == 1
             else self._masks[: len(detections)]
         )
-        segmented: list[Detection2DBBox] = [
+        segmented: list[Detection2DSeg] = [
             Detection2DSeg(
                 bbox=prompt.bbox,
                 track_id=prompt.track_id,
@@ -156,7 +156,7 @@ def _range_estimator(
     min_supporting_points: int = 5,
 ) -> LidarRangeEstimator:
     return LidarRangeEstimator(
-        EdgeTamObjectMaskEstimator(detector, segmenter),
+        EdgeTamObjectMaskPipeline(detector, segmenter),
         min_supporting_points,
     )
 
@@ -168,7 +168,7 @@ def test_mask_estimator_batches_and_caches_without_pointcloud() -> None:
     left_mask[:, :4] = 1
     right_mask[:, 5:] = 1
     segmenter = _Segmenter([left_mask, right_mask])
-    estimator = EdgeTamObjectMaskEstimator(
+    estimator = EdgeTamObjectMaskPipeline(
         _NamedDetector(
             {
                 "left person": (0.0, 0.0, 4.0, 9.0),

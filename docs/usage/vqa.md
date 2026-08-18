@@ -27,13 +27,14 @@ Generated datasets default to:
 
 Use `--output <directory>` to override that location. The destination must be empty.
 
-Legacy Go2 recordings without `camera_info` and `tf` require explicit calibration:
+Go2 recordings without `camera_info` and `tf` require the explicit fallback profile:
 
 ```bash skip
 dimos evals vqa generate go2_short.db --image-index 500 --calibration-profile go2
 ```
 
-Image and LiDAR observations must be within `--sync-tolerance` seconds, which defaults to `0.1`.
+Recordings containing only one calibration stream are rejected. The VQA generation configuration
+requires image and LiDAR observations to be within `0.1` seconds by default.
 
 ## Question Families
 

@@ -16,17 +16,16 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated, Protocol
+from typing import TYPE_CHECKING, Annotated
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from dimos.evals.vqa.contracts import InsufficientEvidenceError
+from dimos.evals.vqa.contracts import InsufficientEvidenceError, ObjectMaskEstimator
 from dimos.perception.detection.type.detection3d.pointcloud import ProjectedPointCloud
 
 if TYPE_CHECKING:
     from dimos.evals.vqa.preprocessing import CalibratedFrame
-    from dimos.evals.vqa.primitives.edgetam import ObjectMaskEstimator
 
 ObjectName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
@@ -115,9 +114,3 @@ class LidarRangeEstimator:
                     calibration_source=frame.calibration_source,
                 )
         return tuple(self._cached_evidence[mask.object_name] for mask in masks)
-
-
-class ObjectRangeEstimator(Protocol):
-    """Estimate object range from an explicit canonical frame."""
-
-    def estimate(self, frame: CalibratedFrame, object_name: str) -> ObjectRangeEvidence: ...

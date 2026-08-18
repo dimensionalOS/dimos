@@ -44,6 +44,7 @@ from dimos.evals.vqa.generate import (
     GenerationRequest,
     PrivateLabel,
     PublicCase,
+    VqaGenerationConfig,
     generate_frames_dataset,
 )
 from dimos.evals.vqa.primitives.edgetam import ObjectMaskEvidence
@@ -800,6 +801,12 @@ def test_generation_request_defaults_output_under_state_directory() -> None:
     assert request.output_directory() == STATE_DIR / "datasets" / "vqa" / "go2_short-frames"
 
 
+def test_generation_config_validates_synchronization_tolerance() -> None:
+    assert VqaGenerationConfig().synchronization_tolerance_s == 0.1
+    with pytest.raises(ValidationError):
+        VqaGenerationConfig(synchronization_tolerance_s=0.0)
+
+
 def test_generation_request_selects_frame_range() -> None:
     request = GenerationRequest(
         dataset="go2_short",
@@ -1104,6 +1111,7 @@ def test_generate_multiple_images_aggregates_frame_artifacts(tmp_path: Path) -> 
         frames,
         cast("QuestionAuthor", _Author()),
         _Detector(present=True),
+        config=VqaGenerationConfig(synchronization_tolerance_s=0.025),
         model_names={"author": "gpt-4o-mini", "detector": "vikhyatk/moondream2"},
     )
 
@@ -1121,6 +1129,7 @@ def test_generate_multiple_images_aggregates_frame_artifacts(tmp_path: Path) -> 
     assert run["generation"]["start"] == 1
     assert run["generation"]["stop"] == 5
     assert run["generation"]["stride"] == 2
+    assert run["configuration"] == {"synchronization_tolerance_s": 0.025}
     assert run["models"] == {
         "author": "gpt-4o-mini",
         "detector": "vikhyatk/moondream2",

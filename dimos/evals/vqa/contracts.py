@@ -29,6 +29,9 @@ from pydantic import (
 )
 
 if TYPE_CHECKING:
+    from dimos.evals.vqa.preprocessing import CalibratedFrame
+    from dimos.evals.vqa.primitives.edgetam import ObjectMaskEvidence
+    from dimos.evals.vqa.primitives.range import ObjectRangeEvidence
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
@@ -115,3 +118,19 @@ class ObjectDetector(Protocol):
     """Object evidence required by visual question families."""
 
     def query_detections(self, image: Image, query: str) -> ImageDetections2D: ...
+
+
+class ObjectMaskEstimator(Protocol):
+    """Estimate object masks from an image."""
+
+    def estimate(self, image: Image, object_name: str) -> ObjectMaskEvidence: ...
+
+    def estimate_many(
+        self, image: Image, object_names: tuple[str, ...]
+    ) -> tuple[ObjectMaskEvidence, ...]: ...
+
+
+class ObjectRangeEstimator(Protocol):
+    """Estimate object range from an explicit canonical frame."""
+
+    def estimate(self, frame: CalibratedFrame, object_name: str) -> ObjectRangeEvidence: ...

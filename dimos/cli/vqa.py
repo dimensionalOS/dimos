@@ -32,10 +32,7 @@ def generate(
     stop: int | None = typer.Option(None, min=1, help="Exclusive color_image stop index"),
     stride: int | None = typer.Option(None, min=1, help="Frame stride in range mode"),
     calibration_profile: Literal["go2"] | None = typer.Option(
-        None, help="Explicit calibration profile for legacy recordings (go2)"
-    ),
-    sync_tolerance: float = typer.Option(
-        0.1, min=0.001, help="Maximum image-to-pointcloud timestamp delta"
+        None, help="Explicit Go2 fallback for recordings without calibration streams"
     ),
     output: Path | None = typer.Option(None, help="Override the generated dataset directory"),
 ) -> None:
@@ -51,7 +48,6 @@ def generate(
         stop=stop,
         stride=stride,
         calibration_profile=calibration_profile,
-        synchronization_tolerance_s=sync_tolerance,
     )
     result = generate_dataset(request)
     typer.echo(f"Generated {len(result.cases)} VQA case(s) in {result.output}")

@@ -26,13 +26,13 @@ from dimos.evals.vqa.contracts import (
     FamilySpec,
     InsufficientEvidenceError,
     ObjectDetector,
+    ObjectMaskEstimator,
+    ObjectRangeEstimator,
     QuestionProposal,
 )
 
 if TYPE_CHECKING:
     from dimos.evals.vqa.preprocessing import CalibratedFrame
-    from dimos.evals.vqa.primitives.edgetam import ObjectMaskEstimator
-    from dimos.evals.vqa.primitives.range import ObjectRangeEstimator
     from dimos.msgs.sensor_msgs.Image import Image
 
 

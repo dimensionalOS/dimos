@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
@@ -63,6 +64,18 @@ class CalibratedFrameLoader(Protocol):
 
 
 CalibrationProfile = Literal["go2"]
+
+
+def recorded_calibration_available(streams: Collection[str]) -> bool:
+    """Return whether a recording contains the complete calibration stream pair."""
+    has_camera_info = "camera_info" in streams
+    has_tf = "tf" in streams
+    if has_camera_info != has_tf:
+        raise ValueError(
+            "recording calibration is incomplete; camera_info and tf streams must both be present "
+            "or both be absent"
+        )
+    return has_camera_info
 
 
 class FrameGeometryUnavailableError(ValueError):
@@ -121,6 +134,7 @@ class RecordingFramePreprocessor:
             streams = set(store.list_streams())
             if "color_image" not in streams:
                 raise ValueError("recording has no 'color_image' stream")
+            has_recorded_calibration = recorded_calibration_available(streams)
             lidar_name = next(
                 (name for name in ("pointlio_lidar", "lidar") if name in streams), None
             )
@@ -130,7 +144,7 @@ class RecordingFramePreprocessor:
             self._images = store.stream("color_image", Image).order_by("ts")
             self._lidar = store.stream(lidar_name, PointCloud2).order_by("ts")
 
-            if "camera_info" in streams and "tf" in streams:
+            if has_recorded_calibration:
                 try:
                     self._recorded_camera_info = (
                         store.stream("camera_info", CameraInfo).order_by("ts").first().data
@@ -143,7 +157,7 @@ class RecordingFramePreprocessor:
                 self._calibration_source = "profile:go2"
             else:
                 raise ValueError(
-                    "recording does not contain both camera_info and tf calibration; "
+                    "recording has no camera_info or tf calibration streams; "
                     "set calibration_profile='go2' explicitly to use the Go2 profile"
                 )
             self._store = store
@@ -340,8 +354,8 @@ def _profile_pointcloud_to_camera(
         raise FrameGeometryUnavailableError(
             "Go2 calibration profile requires an image observation pose"
         )
-    # Legacy Go2 recordings store the robot pose on image observations even though
-    # the payload frame is camera_optical, so the static mount is still required.
+    # This fallback defines image observation poses as world <- base_link, so the
+    # static camera mount is still required even if the payload names camera_optical.
     world_from_camera = Transform.from_pose("base_link", image_pose) + BASE_TO_OPTICAL
     camera_from_world = -world_from_camera
     cloud_frame = lidar_obs.data.frame_id
