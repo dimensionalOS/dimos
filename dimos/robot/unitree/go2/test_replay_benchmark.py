@@ -38,8 +38,7 @@ WATCHED = (("odom", PoseStamped), ("lidar", PointCloud2), ("color_image", Image)
 # near-lossless; lidar and color_image are large frames whose delivery relies
 # on the 64MB rmem tuning, so leave headroom for designed shedding.
 FLOOR_FRACTION = {"odom": 0.9, "lidar": 0.9, "color_image": 0.5}
-# When set, write build wall/CPU, run CPU, peak memory/threads and disk I/O
-# to this path.
+# When set, write the tracked series (wall/CPU/memory/threads/disk/network) to this path.
 METRICS_PATH = os.environ.get("DIMOS_BENCH_METRICS")
 
 
@@ -131,6 +130,28 @@ def _cgroup_io_bytes() -> tuple[int, int]:
     return read, written
 
 
+def _net_bytes() -> tuple[int, int, int]:
+    """(loopback, external rx, external tx) interface byte counters.
+
+    cgroup v2 has no network accounting, so this is netns-wide — fine on a
+    runner where the job is the only real user. Loopback is the LCM transport
+    between the workers (multicast is counted once, and rx==tx there, so one
+    number). External interfaces should stay ~flat across the run: growth
+    means something inside the measured region talks to the network.
+    """
+    loopback = ext_rx = ext_tx = 0
+    for line in Path("/proc/net/dev").read_text().splitlines()[2:]:
+        name, _, rest = line.partition(":")
+        fields = rest.split()
+        rx, tx = int(fields[0]), int(fields[8])
+        if name.strip() == "lo":
+            loopback = rx
+        else:
+            ext_rx += rx
+            ext_tx += tx
+    return loopback, ext_rx, ext_tx
+
+
 @pytest.mark.self_hosted
 # macOS: coordinator->worker zenoh RPC times out (set_transport), and the
 # in-test LCM subscriptions would need lo0 route + maxdgram host tuning.
@@ -179,6 +200,7 @@ def test_go2_replay_realtime_load() -> None:
         state: dict[str, ModuleCoordinator] = {}
         cpu_marks: dict[str, tuple[float, float, float]] = {}
         io_marks: dict[str, tuple[int, int]] = {}
+        net_marks: dict[str, tuple[int, int, int]] = {}
         peak_anon = 0
         peak_tasks = 0
         stop_sampling = threading.Event()
@@ -196,6 +218,7 @@ def test_go2_replay_realtime_load() -> None:
             if METRICS_PATH:
                 cpu_marks["start"] = _cpu_mark()
                 io_marks["start"] = _cgroup_io_bytes()
+                net_marks["start"] = _net_bytes()
             state["coordinator"] = ModuleCoordinator.build(blueprint)
             if METRICS_PATH:
                 cpu_marks["built"] = _cpu_mark()
@@ -210,6 +233,7 @@ def test_go2_replay_realtime_load() -> None:
                     if METRICS_PATH:
                         cpu_marks["end"] = _cpu_mark()
                         io_marks["end"] = _cgroup_io_bytes()
+                        net_marks["end"] = _net_bytes()
                     return
                 time.sleep(0.2)
             pytest.fail(f"replay did not complete: counts={counts}, expected~{expected}")
@@ -253,6 +277,19 @@ def test_go2_replay_realtime_load() -> None:
                 # Block-device totals across build+run; page-cache hits are free.
                 ("disk read", (io_marks["end"][0] - io_marks["start"][0]) / 2**20, "MB"),
                 ("disk write", (io_marks["end"][1] - io_marks["start"][1]) / 2**20, "MB"),
+                # Interface deltas across build+run: lo = LCM transport volume;
+                # external ~0 unless something in-region talks to the network.
+                ("network (loopback)", (net_marks["end"][0] - net_marks["start"][0]) / 2**20, "MB"),
+                (
+                    "network (external rx)",
+                    (net_marks["end"][1] - net_marks["start"][1]) / 2**20,
+                    "MB",
+                ),
+                (
+                    "network (external tx)",
+                    (net_marks["end"][2] - net_marks["start"][2]) / 2**20,
+                    "MB",
+                ),
             )
             Path(METRICS_PATH).write_text(
                 json.dumps(
