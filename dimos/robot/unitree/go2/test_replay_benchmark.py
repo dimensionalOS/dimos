@@ -91,7 +91,7 @@ def _expected_counts(db_path: str, duration: float = DURATION) -> dict[str, int]
     Mirrors ReplayConnection's stream-name fallback (mid360-era recordings use
     go2_lidar/go2_odom, older ones lidar/odom).
     """
-    from dimos.memory2.store.sqlite import SqliteStore
+    from dimos.memory.store.sqlite import SqliteStore
 
     store = SqliteStore(path=db_path, must_exist=True)
     store.start()
@@ -140,7 +140,7 @@ def _cpu_mark() -> tuple[float, float, float]:
 def test_go2_replay_realtime_load() -> None:
     """Build the unitree-go2 blueprint and run a replay window at realtime pace."""
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
-    from dimos.memory2.replay import resolve_db_path
+    from dimos.memory.replay import resolve_db_path
     from dimos.robot.get_all_blueprints import get_blueprint_by_name
 
     # Configure before resolving the blueprint: unitree_go2_basic composes its

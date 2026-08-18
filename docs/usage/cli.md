@@ -18,7 +18,7 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--robot-ips` | TEXT | `None` | Multiple robot IPs |
 | `--simulation` / `--no-simulation` | bool | `False` | Enable MuJoCo simulation |
 | `--replay` / `--no-replay` | bool | `False` | Use recorded replay data |
-| `--replay-db` | TEXT | `go2_short` | Replay memory2 SQLite database name |
+| `--replay-db` | TEXT | `go2_short` | Replay memory SQLite database name |
 | `--replay-duration` | FLOAT | `None` | Seconds of recording to play before the streams complete |
 | `--new-memory` / `--no-new-memory` | bool | `False` | Clear persistent memory on start |
 | `--viewer` | `rerun\|none` | `rerun` | Visualization backend |
