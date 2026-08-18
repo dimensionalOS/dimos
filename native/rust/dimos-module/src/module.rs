@@ -486,7 +486,7 @@ pub(crate) fn propagate_task_failure(name: &str, res: Result<(), tokio::task::Jo
 }
 
 /// Read the launch config the coordinator writes to stdin as one JSON line.
-pub async fn read_launch_config() -> io::Result<serde_json::Value> {
+pub(crate) async fn read_launch_config() -> io::Result<serde_json::Value> {
     let mut line = String::new();
     BufReader::new(tokio::io::stdin())
         .read_line(&mut line)

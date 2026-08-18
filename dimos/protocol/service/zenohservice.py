@@ -47,7 +47,6 @@ ALL_INTERFACES = "auto"
 
 
 def _locators(value: str) -> list[str]:
-    """Split a comma-separated locator list, dropping blanks."""
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
@@ -124,7 +123,7 @@ class ZenohConfig(SessionConfig):
     gossip: bool | None = Field(default_factory=_default_gossip)
     # Seconds to block in start() waiting for the connect endpoints to link.
     # Also bounds zenoh's dial retries at open. 0 skips both.
-    connect_timeout: float = Field(default_factory=_default_connect_timeout)
+    connect_timeout: float = Field(default_factory=_default_connect_timeout, ge=0, le=86400)
 
     @model_validator(mode="after")
     def _router_needs_a_listen_endpoint(self) -> ZenohConfig:
@@ -151,7 +150,7 @@ class ZenohConfig(SessionConfig):
 
     @property
     def session_key(self) -> str:
-        """Identity of the session this config opens. Every setting zenoh sees."""
+        """Every setting zenoh sees."""
         return (
             f"{self.mode}|{json.dumps(sorted(self.connect))}"
             f"|{json.dumps(sorted(self.listen))}|{self.multicast_interface}"
@@ -159,11 +158,7 @@ class ZenohConfig(SessionConfig):
         )
 
     def to_wire(self) -> dict[str, Any]:
-        """This session as the JSON object a native module reads on stdin.
-
-        Derived fields are resolved here, so the native side derives nothing.
-        """
-        _warn_client_single_link(self)
+        """This session as the JSON object a native module reads on stdin."""
         return {
             "mode": self.mode,
             "connect": self.connect,
@@ -222,6 +217,7 @@ class ZenohSessionPool:
         key = config.session_key
         with self._lock:
             if key not in self._sessions:
+                _warn_client_single_link(config)
                 self._sessions[key] = zenoh.open(_zenoh_config(config))
                 logger.info(
                     "Zenoh session opened",

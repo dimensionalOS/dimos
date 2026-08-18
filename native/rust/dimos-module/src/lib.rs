@@ -28,10 +28,7 @@ pub mod zenoh;
 pub use dimos_module_macros::{native_config, Module};
 pub use host::{host_main, HostSpec, ModuleEntry};
 pub use lcm::LcmTransport;
-pub use module::{
-    read_launch_config, run, Builder, Input, Io, Module, ModuleConfig, NativeConfig, NoConfig,
-    Output,
-};
+pub use module::{run, Builder, Input, Io, Module, ModuleConfig, NativeConfig, NoConfig, Output};
 pub use tf::{Lookup, Tf, Transform};
 pub use transport::{SharedTransport, Transport};
 pub use zenoh::ZenohTransport;
@@ -48,22 +45,29 @@ pub use dimos_lcm::LcmOptions;
 /// unset or unknown value is an error.
 pub async fn run_with_transport<M: Module>() {
     crate::module::init_tracing();
-    let launch = read_launch_config()
-        .await
-        .expect("failed to read the launch config from stdin");
-    match std::env::var("DIMOS_TRANSPORT").as_deref() {
-        Ok("lcm") => {
-            let transport = LcmTransport::new()
-                .await
-                .expect("failed to create lcm transport");
-            run::<M, _>(transport, launch).await
-        }
-        Ok("zenoh") => {
-            let transport = ZenohTransport::from_launch(&launch)
-                .await
-                .expect("failed to create zenoh transport");
-            run::<M, _>(transport, launch).await
-        }
+    // Check the transport first so a missing variable fails loudly instead of
+    // blocking on stdin.
+    let use_zenoh = match std::env::var("DIMOS_TRANSPORT").as_deref() {
+        Ok("lcm") => false,
+        Ok("zenoh") => true,
         other => panic!("DIMOS_TRANSPORT must be 'lcm' or 'zenoh', got {other:?}"),
+    };
+    let launch = match crate::module::read_launch_config().await {
+        Ok(launch) => launch,
+        Err(e) => {
+            tracing::error!("failed to read the launch config from stdin: {e}");
+            std::process::exit(1);
+        }
+    };
+    if use_zenoh {
+        let transport = ZenohTransport::from_launch(&launch)
+            .await
+            .expect("failed to create zenoh transport");
+        run::<M, _>(transport, launch).await
+    } else {
+        let transport = LcmTransport::new()
+            .await
+            .expect("failed to create lcm transport");
+        run::<M, _>(transport, launch).await
     }
 }

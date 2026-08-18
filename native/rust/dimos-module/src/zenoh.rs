@@ -14,7 +14,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io;
-use std::net::ToSocketAddrs;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -162,10 +161,10 @@ pub struct ZenohTransport {
 /// The host:port forms a live link to this locator may report.
 ///
 /// A locator dialed by name never matches the address the link reports.
-fn endpoint_addresses(endpoint: &str) -> HashSet<String> {
+async fn endpoint_addresses(endpoint: &str) -> HashSet<String> {
     let address = endpoint.rsplit('/').next().unwrap_or(endpoint);
     let mut out = HashSet::from([address.to_string()]);
-    if let Ok(resolved) = address.to_socket_addrs() {
+    if let Ok(resolved) = tokio::net::lookup_host(address).await {
         out.extend(resolved.map(|addr| addr.to_string()));
     }
     out
@@ -179,10 +178,10 @@ async fn await_connect(session: &Session, endpoints: &[String], mode: Mode, time
     if endpoints.is_empty() || timeout.is_zero() {
         return;
     }
-    let mut pending: Vec<(&str, HashSet<String>)> = endpoints
-        .iter()
-        .map(|endpoint| (endpoint.as_str(), endpoint_addresses(endpoint)))
-        .collect();
+    let mut pending: Vec<(&str, HashSet<String>)> = Vec::with_capacity(endpoints.len());
+    for endpoint in endpoints {
+        pending.push((endpoint.as_str(), endpoint_addresses(endpoint).await));
+    }
     // A client session holds one link. Zenoh dials the endpoints as
     // alternatives and keeps the first that answers.
     let needed = if mode == Mode::Client {
@@ -217,7 +216,7 @@ async fn await_connect(session: &Session, endpoints: &[String], mode: Mode, time
 
 impl ZenohTransport {
     /// Open the session the launch config describes.
-    pub async fn from_launch(launch: &serde_json::Value) -> io::Result<Self> {
+    pub(crate) async fn from_launch(launch: &serde_json::Value) -> io::Result<Self> {
         match SessionSettings::from_launch(launch)? {
             Some(settings) => Self::open(&settings).await,
             None => Self::new().await,
@@ -330,8 +329,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    /// A launch config carrying the session settings python's
-    /// `ZenohConfig.to_wire` produces, with these fields overridden.
+    /// A launch config carrying python's session settings, with these fields overridden.
     fn launch(overrides: serde_json::Value) -> serde_json::Value {
         let mut session = serde_json::json!({
             "mode": "peer",
@@ -356,6 +354,39 @@ mod tests {
         SessionSettings::from_launch(&launch(overrides))
             .expect("settings deserialize")
             .expect("a session was sent")
+    }
+
+    // The goldens are shared with dimos/protocol/service/test_zenoh_wire.py,
+    // which asserts to_wire produces exactly these bytes.
+    fn golden(text: &str) -> SessionSettings {
+        let session: serde_json::Value = serde_json::from_str(text).expect("golden is JSON");
+        SessionSettings::from_launch(&serde_json::json!({"session": session}))
+            .expect("golden deserializes")
+            .expect("golden carries a session")
+    }
+
+    #[test]
+    fn the_client_golden_parses_into_the_settings_python_sends() {
+        let settings = golden(include_str!("../tests/fixtures/session_wire_client.json"));
+        assert_eq!(settings.mode, Mode::Client);
+        assert_eq!(settings.connect, ["tcp/192.0.2.10:7447"]);
+        assert!(settings.listen.is_empty());
+        assert!(settings.multicast);
+        assert!(!settings.gossip);
+        assert_eq!(settings.interface, "lo");
+        assert_eq!(settings.connect_timeout_ms, 2000);
+    }
+
+    #[test]
+    fn the_router_golden_parses_into_the_settings_python_sends() {
+        let settings = golden(include_str!("../tests/fixtures/session_wire_router.json"));
+        assert_eq!(settings.mode, Mode::Router);
+        assert!(settings.connect.is_empty());
+        assert_eq!(settings.listen, ["tcp/127.0.0.1:7447"]);
+        assert!(!settings.multicast);
+        assert!(settings.gossip);
+        assert_eq!(settings.interface, "auto");
+        assert_eq!(settings.connect_timeout_ms, 0);
     }
 
     #[test]
@@ -431,14 +462,18 @@ mod tests {
         assert!(SessionSettings::from_launch(&incoming).is_err());
     }
 
-    #[test]
-    fn endpoint_addresses_keeps_the_literal_address() {
-        assert!(endpoint_addresses("tcp/192.0.2.10:7447").contains("192.0.2.10:7447"));
+    #[tokio::test]
+    async fn endpoint_addresses_keeps_the_literal_address() {
+        assert!(endpoint_addresses("tcp/192.0.2.10:7447")
+            .await
+            .contains("192.0.2.10:7447"));
     }
 
-    #[test]
-    fn endpoint_addresses_resolves_names() {
-        assert!(endpoint_addresses("tcp/localhost:7447").contains("127.0.0.1:7447"));
+    #[tokio::test]
+    async fn endpoint_addresses_resolves_names() {
+        assert!(endpoint_addresses("tcp/localhost:7447")
+            .await
+            .contains("127.0.0.1:7447"));
     }
 
     /// Session in a test topology, discovery off so only the dialed endpoints
@@ -450,16 +485,14 @@ mod tests {
         ::zenoh::open(config).await.expect("open session")
     }
 
-    /// Session settings for a test topology, with discovery off.
     /// A loopback endpoint nothing is listening on yet.
-    ///
-    /// A fixed port collides between concurrent runs on a shared CI runner.
     fn free_endpoint() -> String {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind an ephemeral port");
         let port = listener.local_addr().expect("read the bound port").port();
         format!("tcp/127.0.0.1:{port}")
     }
 
+    /// Session settings for a test topology, with discovery off.
     fn topology(mode: &str, connect: &[&str], listen: &[&str]) -> serde_json::Value {
         serde_json::json!({
             "mode": mode,
