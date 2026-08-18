@@ -42,6 +42,10 @@ from dimos.control.task import (
     JointStateSnapshot,
     ResourceClaim,
 )
+from dimos.control.tasks.gripper_task.gripper_task import (
+    GripperControlTask,
+    GripperControlTaskConfig,
+)
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     JOINT_TRAJECTORY_TASK_NAME,
     JointTrajectoryTask,
@@ -188,25 +192,27 @@ class TestJointStateSnapshot:
 
 
 class TestConnectedHardware:
-    def test_normalized_gripper_commands_are_mapped_at_hardware_boundary(self, mock_adapter):
-        mock_adapter.read_gripper_position.return_value = 0.035
+    def test_gripper_rides_the_one_array_without_conversion(self, mock_adapter):
+        mock_adapter.read_joint_positions.return_value = [0.0] * 6 + [0.035]
+        mock_adapter.read_joint_velocities.return_value = [0.0] * 7
+        mock_adapter.read_joint_efforts.return_value = [0.0] * 7
         component = HardwareComponent(
             hardware_id="arm",
             hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("arm", 6),
-            gripper_joints=["arm/gripper"],
-            gripper_open_position=0.07,
-            gripper_closed_position=0.0,
+            joints=[*make_joints("arm", 6), "arm/gripper"],
         )
         hardware = ConnectedHardware(mock_adapter, component)
 
-        assert hardware.read_state()["arm/gripper"].position == pytest.approx(0.5)
-        hardware.write_command({"arm/gripper": 0.0}, ControlMode.POSITION)
-        hardware.write_command({"arm/gripper": 1.0}, ControlMode.POSITION)
-        assert mock_adapter.write_gripper_position.call_args_list == [
-            ((0.0,), {}),
-            ((0.07,), {}),
-        ]
+        # Read: the adapter's value, verbatim — not remapped to a fraction.
+        assert hardware.read_state()["arm/gripper"].position == pytest.approx(0.035)
+
+        # Write: one call carrying arm and gripper, gripper value untouched.
+        assert hardware.write_command({"arm/gripper": 0.07}, ControlMode.POSITION)
+        mock_adapter.write_joint_positions.assert_called_once_with([0.0] * 6 + [0.07])
+
+        # Velocity commands use the same complete joint order and zero omitted joints.
+        assert hardware.write_command({"arm/joint1": 0.5}, ControlMode.VELOCITY)
+        mock_adapter.write_joint_velocities.assert_called_once_with([0.5] + [0.0] * 6)
 
     def test_joint_names_prefixed(self, connected_hardware):
         names = connected_hardware.joint_names
@@ -909,6 +915,53 @@ class TestArbitration:
 
 
 class TestTickLoop:
+    def test_partial_trajectory_and_gripper_command_share_hardware_write(self, mocker):
+        joint_names = ["arm/joint1", "arm/joint2", "arm/gripper"]
+        adapter = mocker.Mock(spec=ManipulatorAdapter)
+        adapter.read_joint_positions.return_value = [0.0, 0.0, 0.0]
+        adapter.read_joint_velocities.return_value = [0.0, 0.0, 0.0]
+        adapter.read_joint_efforts.return_value = [0.0, 0.0, 0.0]
+        adapter.set_control_mode.return_value = True
+        adapter.write_joint_positions.return_value = True
+        hardware = ConnectedHardware(
+            adapter,
+            HardwareComponent(
+                hardware_id="arm",
+                hardware_type=HardwareType.MANIPULATOR,
+                joints=joint_names,
+            ),
+        )
+        trajectory_task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=joint_names))
+        gripper_task = GripperControlTask(
+            "gripper",
+            GripperControlTaskConfig(joint_names=["arm/gripper"]),
+            limits=[(0.0, 1.0)],
+        )
+        trajectory = JointTrajectory(
+            joint_names=["arm/joint1", "arm/joint2"],
+            points=[
+                TrajectoryPoint(positions=[0.0, 0.0], velocities=[0.0, 0.0], time_from_start=0.0),
+                TrajectoryPoint(positions=[0.5, 0.5], velocities=[0.0, 0.0], time_from_start=1.0),
+            ],
+        )
+        tick_loop = TickLoop(
+            tick_rate=100.0,
+            hardware={"arm": hardware},
+            hardware_lock=threading.Lock(),
+            tasks={trajectory_task.name: trajectory_task, "gripper": gripper_task},
+            task_lock=threading.Lock(),
+            joint_to_hardware=dict.fromkeys(joint_names, "arm"),
+        )
+
+        assert (
+            trajectory_task.execute(trajectory, trajectory_start_positions(trajectory)).status
+            is TrajectoryExecutionStatus.ACCEPTED
+        )
+        assert gripper_task.set_position([0.75])
+        tick_loop._tick()
+
+        adapter.write_joint_positions.assert_called_once_with([0.0, 0.0, 0.75])
+
     def test_tick_loop_starts_and_stops(self, mock_adapter, wait_until):
         component = HardwareComponent(
             hardware_id="arm",

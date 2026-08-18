@@ -25,13 +25,11 @@ import pinocchio
 from pydantic import Field, FiniteFloat
 
 from dimos.control.coordinator import TaskConfig
-from dimos.control.task import CoordinatorState, JointCommandOutput, ResourceClaim
+from dimos.control.task import CoordinatorState, JointCommandOutput
 from dimos.control.tasks.cartesian_ik_task.cartesian_ik_task import (
     CartesianIKTask,
     CartesianIKTaskConfig,
     CartesianIKTaskParams,
-    append_gripper_position,
-    claim_with_gripper,
 )
 from dimos.control.tasks.cartesian_ik_task.pink_control_ik import PinkControlIKConfig
 from dimos.utils.logging_config import setup_logger
@@ -69,9 +67,6 @@ class TeleopIKTaskConfig(CartesianIKTaskConfig):
 
     max_joint_delta_deg: float = 5.0
     hand: Literal["left", "right"] | None = None
-    gripper_joint: str | None = None
-    gripper_open_pos: float = 0.0
-    gripper_closed_pos: float = 0.0
 
 
 class TeleopIKTask(CartesianIKTask):
@@ -87,12 +82,6 @@ class TeleopIKTask(CartesianIKTask):
         self._engagement = _EngagementState.DISENGAGED
         self._primary_down = False
         self._estopped = False
-        self._gripper_target = config.gripper_open_pos
-        self._gripper_active = config.gripper_joint is not None
-
-    def claim(self) -> ResourceClaim:
-        """Claim arm joints and the optional gripper joint."""
-        return claim_with_gripper(super().claim(), self._config.gripper_joint)
 
     def is_active(self) -> bool:
         """Run only when a non-E-STOPped pose target is active."""
@@ -113,7 +102,6 @@ class TeleopIKTask(CartesianIKTask):
                 self._target_pose = None
                 self._initial_ee_pose = None
                 self._last_commanded_joints = None
-                self._gripper_active = False
             else:
                 self._engagement = (
                     _EngagementState.WAITING_FOR_RELEASE
@@ -159,20 +147,16 @@ class TeleopIKTask(CartesianIKTask):
         return target
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
-        """Run the inherited Pink solve and append the optional gripper target."""
-        output = super().compute(state)
+        """Run the inherited Pink solve. The gripper is not ours (R17)."""
         with self._lock:
             if self._estopped:
                 return None
-            gripper_target = self._gripper_target
-            gripper_joint = self._config.gripper_joint if self._gripper_active else None
-        return append_gripper_position(output, gripper_joint, gripper_target)
+        return super().compute(state)
 
     def on_buttons(self, msg: Buttons) -> bool:
         """Use the configured primary button as press-and-hold engagement."""
         is_left = self._config.hand == "left"
         primary = msg.left_primary if is_left else msg.right_primary
-        trigger = msg.left_trigger_analog if is_left else msg.right_trigger_analog
 
         with self._lock:
             was_primary_down = self._primary_down
@@ -197,8 +181,6 @@ class TeleopIKTask(CartesianIKTask):
                 self._initial_ee_pose = None
                 self._last_commanded_joints = None
 
-        if self._config.gripper_joint is not None:
-            self.on_gripper_trigger(trigger)
         return True
 
     def on_teleop_buttons(self, msg: Buttons, t_now: float) -> bool:
@@ -215,22 +197,6 @@ class TeleopIKTask(CartesianIKTask):
             self._target_pose = pose
             self._last_update_time = t_now
             self._active = True
-        return True
-
-    def on_gripper_trigger(self, value: float, _t_now: float = 0.0) -> bool:
-        """Map an analog trigger value onto the configured gripper range."""
-        if self._config.gripper_joint is None or not np.isfinite(value):
-            return False
-        clamped = max(0.0, min(1.0, value))
-        position = (
-            self._config.gripper_open_pos
-            + (self._config.gripper_closed_pos - self._config.gripper_open_pos) * clamped
-        )
-        with self._lock:
-            if self._estopped:
-                return False
-            self._gripper_target = position
-            self._gripper_active = True
         return True
 
     def _on_timeout(self) -> None:
@@ -253,7 +219,6 @@ class TeleopIKTask(CartesianIKTask):
             self._initial_ee_pose = None
             self._engagement = _EngagementState.DISENGAGED
             self._primary_down = False
-            self._gripper_active = False
 
     def clear(self) -> None:
         """Clear output and discard engagement-relative state."""
@@ -265,9 +230,6 @@ class TeleopIKTaskParams(CartesianIKTaskParams):
     control_ik: TeleopControlIKConfig
     hand: Literal["left", "right"] | None = None
     max_joint_delta_deg: float = 5.0
-    gripper_joint: str | None = None
-    gripper_open_pos: float = 0.0
-    gripper_closed_pos: float = 0.0
 
 
 def create_task(cfg: TaskConfig, hardware: object) -> TeleopIKTask:
@@ -285,8 +247,5 @@ def create_task(cfg: TaskConfig, hardware: object) -> TeleopIKTask:
             min_dt=params.min_dt,
             max_dt=params.max_dt,
             hand=params.hand,
-            gripper_joint=params.gripper_joint,
-            gripper_open_pos=params.gripper_open_pos,
-            gripper_closed_pos=params.gripper_closed_pos,
         ),
     )

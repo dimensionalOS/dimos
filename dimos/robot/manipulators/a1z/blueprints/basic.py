@@ -25,10 +25,11 @@ from dimos.robot.manipulators.a1z.config import (
 )
 from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
 
+_a1z_model = make_a1z_model_config(name="arm")
 _a1z_planner_hw = a1z_hardware("arm")
 
 a1z_planner_coordinator = autoconnect(
-    planner(robots=[make_a1z_model_config(name="arm")]),
+    planner(robots=[_a1z_model]),
     coordinator(
         hardware=[_a1z_planner_hw],
         tasks=[trajectory_task(_a1z_planner_hw)],

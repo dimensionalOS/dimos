@@ -31,7 +31,6 @@ from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.std_msgs.Bool import Bool
 
 
 @dataclass
@@ -272,54 +271,17 @@ def test_preemption_discards_last_commanded_solve_seed(task: EEFTwistTask, fake_
     np.testing.assert_allclose(fake_ik.q_calls[-1], [0.5, 0.0, 0.0])
 
 
-@pytest.fixture
-def gripper_task(fake_ik: FakeIK) -> EEFTwistTask:
-    return EEFTwistTask(
-        "eef",
-        EEFTwistTaskConfig(
-            joint_names=["arm/joint1", "arm/joint2", "arm/joint3"],
-            control_ik=PinkControlIKConfig(robot_model=_fake_robot_model()),
-            timeout=0.0,
-            max_joint_delta_deg=15.0,
-            gripper_joint="arm/gripper",
-            gripper_open_pos=0.85,
-            gripper_closed_pos=0.0,
-        ),
+def test_commands_during_estop_are_rejected(task: EEFTwistTask) -> None:
+    task.start()
+    task.set_estop(True)
+
+    assert not task.is_active()
+    assert not task.on_ee_twist_command(_twist(), t_now=1.0)
+
+    task.set_estop(False)
+    assert task.compute(_state(2.0, positions=[0.1, 0.2, 0.3])) is None, (
+        "clearing E-STOP must not replay the pre-estop command"
     )
 
-
-def test_gripper_task_claims_and_outputs_gripper(gripper_task: EEFTwistTask) -> None:
-    gripper_task.start()
-
-    output = gripper_task.compute(_state(0.5, positions=[0.1, 0.2, 0.3]))
-
-    assert "arm/gripper" in gripper_task.claim().joints
-    assert output is not None
-    assert output.joint_names[-1] == "arm/gripper"
-    assert output.positions[-1] == 0.85
-
-
-def test_gripper_command_updates_target(gripper_task: EEFTwistTask) -> None:
-    assert gripper_task.on_gripper_command(Bool(data=True), 0.0)
-
-    output = gripper_task.compute(_state(0.5, positions=[0.1, 0.2, 0.3]))
-
-    assert output is not None
-    assert output.positions[-1] == 0.0
-
-
-def test_commands_during_estop_are_rejected(gripper_task: EEFTwistTask) -> None:
-    gripper_task.start()
-    gripper_task.set_estop(True)
-
-    assert not gripper_task.is_active()
-    assert not gripper_task.on_ee_twist_command(_twist(), t_now=1.0)
-    assert not gripper_task.on_gripper_command(Bool(data=True), 1.0)
-
-    gripper_task.set_estop(False)
-    assert gripper_task.compute(_state(2.0, positions=[0.1, 0.2, 0.3])) is None
-
-    assert gripper_task.on_gripper_command(Bool(data=True), 2.1)
-    output = gripper_task.compute(_state(2.2, positions=[0.1, 0.2, 0.3]))
-    assert output is not None
-    assert output.positions[-1] == 0.0
+    assert task.on_ee_twist_command(_twist(), t_now=2.1)
+    assert task.compute(_state(2.2, positions=[0.1, 0.2, 0.3])) is not None

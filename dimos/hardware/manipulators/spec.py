@@ -55,7 +55,7 @@ class ControlMode(Enum):
 
 @dataclass
 class ManipulatorInfo:
-    """Information about the manipulator."""
+    """Manipulator information; ``dof`` is the total owned joint count."""
 
     vendor: str
     model: str
@@ -66,11 +66,11 @@ class ManipulatorInfo:
 
 @dataclass
 class JointLimits:
-    """Joint position and velocity limits."""
+    """Limits in the adapter's complete joint-array order."""
 
-    position_lower: list[float]  # radians
-    position_upper: list[float]  # radians
-    velocity_max: list[float]  # rad/s
+    position_lower: list[float]
+    position_upper: list[float]
+    velocity_max: list[float]
 
 
 def default_base_transform() -> Transform:
@@ -85,12 +85,8 @@ def default_base_transform() -> Transform:
 class ManipulatorAdapter(Protocol):
     """Protocol for hardware-specific IO.
 
-    Implement this per vendor SDK. All methods use SI units:
-    - Angles: radians
-    - Angular velocity: rad/s
-    - Torque: Nm
-    - Position: meters
-    - Force: Newtons
+    Rotational joints use radians and linear joints use metres where the SDK
+    exposes physical units. Vendor-native scales are declared by JointLimits.
     """
 
     def connect(self) -> bool:
@@ -118,11 +114,11 @@ class ManipulatorAdapter(Protocol):
         ...
 
     def get_dof(self) -> int:
-        """Get degrees of freedom."""
+        """Get the total number of joints owned by this adapter."""
         ...
 
     def get_limits(self) -> JointLimits:
-        """Get joint limits."""
+        """Limits for every joint this adapter owns, in adapter order."""
         ...
 
     def set_control_mode(self, mode: ControlMode) -> bool:
@@ -148,15 +144,25 @@ class ManipulatorAdapter(Protocol):
         ...
 
     def read_joint_positions(self) -> list[float]:
-        """Read current joint positions (radians)."""
+        """Read positions for **all** joints, gripper entries last.
+
+        Arm entries are radians; a gripper entry is in this adapter's own
+        gripper unit — the one ``get_limits()`` declares.
+        """
         ...
 
     def read_joint_velocities(self) -> list[float]:
-        """Read current joint velocities (rad/s)."""
+        """Read velocities for all joints (rad/s for arm joints), gripper last.
+
+        Reads are symmetric with positions even though velocity *writes* are
+        not (see ``write_joint_velocities``), because callers zip positions,
+        velocities and efforts by index. An adapter that cannot measure
+        gripper velocity reports ``0.0`` for it.
+        """
         ...
 
     def read_joint_efforts(self) -> list[float]:
-        """Read current joint efforts (Nm)."""
+        """Read efforts for all joints (Nm for arm joints), gripper last."""
         ...
 
     def read_state(self) -> dict[str, int]:
@@ -172,11 +178,14 @@ class ManipulatorAdapter(Protocol):
         positions: list[float],
         velocity: float = 1.0,
     ) -> bool:
-        """Command joint positions (radians). Returns success."""
+        """Command all joints in adapter order and units. Returns success."""
         ...
 
     def write_joint_velocities(self, velocities: list[float]) -> bool:
-        """Command joint velocities (rad/s). Returns success."""
+        """Command velocities for all joints in adapter order.
+
+        Unsupported entries may be ignored only when zero.
+        """
         ...
 
     def write_stop(self) -> bool:
@@ -220,14 +229,6 @@ class ManipulatorAdapter(Protocol):
         Returns:
             True if command accepted, False if not supported
         """
-        ...
-
-    def read_gripper_position(self) -> float | None:
-        """Read gripper position (meters). None if no gripper."""
-        ...
-
-    def write_gripper_position(self, position: float) -> bool:
-        """Command gripper position. False if no gripper."""
         ...
 
     def read_force_torque(self) -> list[float] | None:

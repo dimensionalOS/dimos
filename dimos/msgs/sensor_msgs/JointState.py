@@ -79,7 +79,8 @@ class JointState(Timestamped):
             ts: Timestamp in seconds
             frame_id: Frame ID for the message
             name: List of joint names
-            position: List of joint positions (rad or m)
+            position: List of joint positions (rad or m); gripper joints use
+                the unit their adapter declares
             velocity: List of joint velocities (rad/s or m/s)
             effort: List of joint efforts (Nm or N)
         """

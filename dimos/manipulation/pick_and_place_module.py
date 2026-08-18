@@ -34,6 +34,7 @@ from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationModuleConfig,
 )
+from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.manipulation.skill_errors import ManipulationSkillError
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -337,6 +338,13 @@ class PickAndPlaceModule(ManipulationModule):
             return None
         return det.center.x, det.center.y, det.center.z
 
+    def _gripper_group_id(self, robot_name: str | None) -> PlanningGroupID | None:
+        """Resolve the pose planning group that owns a robot's gripper."""
+        robot = self._get_robot(robot_name)
+        if robot is None or self._world_monitor is None:
+            return None
+        return self._world_monitor.planning_groups.primary_pose_group_id_for_robot(robot[0])
+
     @skill
     def get_scene_info(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
         """Get current robot state, detected objects, and scene information.
@@ -364,9 +372,11 @@ class PickAndPlaceModule(ManipulationModule):
             lines.append("EE pose: unavailable")
 
         # Gripper
-        gripper_pos = self.get_gripper(robot_name)
+        group_id = self._gripper_group_id(robot_name)
+        group_state = self.get_state().groups.get(group_id) if group_id is not None else None
+        gripper_pos = group_state.gripper_position if group_state is not None else None
         if gripper_pos is not None:
-            lines.append(f"Gripper: {gripper_pos:.3f}m")
+            lines.append(f"Gripper: {gripper_pos:.0%} open")
         else:
             lines.append("Gripper: not configured")
 
@@ -529,7 +539,7 @@ then refreshes perception obstacles.
 
             # 3. Open gripper before approach
             logger.info("Opening gripper...")
-            self._set_gripper_position(0.85, rname)
+            self.set_gripper_position(1.0, self._gripper_group_id(rname))
             time.sleep(0.5)
 
             # 4. Execute approach to pre-grasp
@@ -547,7 +557,7 @@ then refreshes perception obstacles.
 
             # 6. Close gripper
             logger.info("Closing gripper...")
-            self._set_gripper_position(0.0, rname)
+            self.set_gripper_position(0.0, self._gripper_group_id(rname))
             time.sleep(1.5)  # Wait for gripper to close
 
             # 7. Retract to pre-grasp
@@ -638,7 +648,7 @@ then refreshes perception obstacles.
 
         # 3. Release
         logger.info("Releasing object...")
-        self._set_gripper_position(0.85, rname)
+        self.set_gripper_position(1.0, self._gripper_group_id(rname))
         time.sleep(1.0)
 
         # 4. Retract

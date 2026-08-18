@@ -35,7 +35,7 @@ def test_connect_continues_when_gripper_startup_fails(
     mocker.patch.object(piper_adapter, "C_PiperInterface_V2", lambda **_: sdk)
     mocker.patch("dimos.hardware.manipulators.piper.adapter.time.sleep")
 
-    adapter = PiperAdapter()
+    adapter = PiperAdapter(dof=7)
 
     assert adapter.connect()
     assert adapter.is_connected()

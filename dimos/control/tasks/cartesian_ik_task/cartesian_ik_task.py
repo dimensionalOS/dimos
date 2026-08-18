@@ -58,32 +58,6 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-def claim_with_gripper(claim: ResourceClaim, gripper_joint: str | None) -> ResourceClaim:
-    """Extend an arm task claim with its configured gripper joint."""
-    if gripper_joint is None:
-        return claim
-    return ResourceClaim(
-        joints=claim.joints | frozenset([gripper_joint]),
-        priority=claim.priority,
-        mode=claim.mode,
-    )
-
-
-def append_gripper_position(
-    output: JointCommandOutput | None,
-    gripper_joint: str | None,
-    position: float,
-) -> JointCommandOutput | None:
-    """Append a configured gripper position to an arm task output."""
-    if output is None or gripper_joint is None:
-        return output
-    return JointCommandOutput(
-        joint_names=[*output.joint_names, gripper_joint],
-        positions=[*(output.positions or []), position],
-        mode=output.mode,
-    )
-
-
 @dataclass
 class CartesianIKTaskConfig:
     """Configuration for cartesian IK task.

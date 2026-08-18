@@ -17,7 +17,13 @@ from collections.abc import Iterator
 import pytest
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.teleop.quest.quest_extensions import HandTeleopModule
+from dimos.teleop.quest.blueprints import (
+    teleop_quest_a1z,
+    teleop_quest_piper,
+    teleop_quest_xarm6,
+    teleop_quest_xarm7,
+)
+from dimos.teleop.quest.quest_extensions import ArmTeleopModule, HandTeleopModule
 from dimos.teleop.quest.quest_teleop_module import QuestTeleopModule
 from dimos.teleop.quest.quest_types import Hand, QuestControllerState
 
@@ -100,3 +106,35 @@ def test_hand_teleop_pinch_toggles_engagement(mocker) -> None:
         assert not publish.call_args.args[0].right_primary
     finally:
         module.stop()
+
+
+def test_arm_teleop_publishes_normalized_gripper_opening_for_engaged_hand(mocker) -> None:
+    module = ArmTeleopModule()
+    try:
+        left_publish = mocker.patch.object(module.left_gripper_command, "publish")
+        right_publish = mocker.patch.object(module.right_gripper_command, "publish")
+        left = QuestControllerState(is_left=True, trigger=0.25)
+        right = QuestControllerState(is_left=False, trigger=0.75)
+        module._is_engaged[Hand.LEFT] = True
+
+        module._publish_button_state(left, right)
+
+        assert left_publish.call_args.args[0].data == pytest.approx(0.75)
+        right_publish.assert_not_called()
+    finally:
+        module.stop()
+
+
+@pytest.mark.parametrize(
+    ("blueprint", "hand"),
+    [
+        (teleop_quest_xarm6, "right"),
+        (teleop_quest_xarm7, "right"),
+        (teleop_quest_piper, "left"),
+        (teleop_quest_a1z, "left"),
+    ],
+)
+def test_quest_blueprint_routes_selected_hand_gripper_command(blueprint, hand: str) -> None:
+    assert blueprint.remapping_map[("armteleopmodule", f"{hand}_gripper_command")] == (
+        "gripper_command"
+    )

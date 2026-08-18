@@ -256,7 +256,7 @@ def _connected_adapter(module: ModuleType, **kwargs: Any) -> tuple[Any, _FakeArm
         teaching=teaching,
     )
     assert not kwargs
-    adapter = module.GalaxeaA1ZAdapter(address="can0", config=config)
+    adapter = module.GalaxeaA1ZAdapter(address="can0", config=config, dof=6 + int(gripper_enabled))
     assert adapter.connect()
     return adapter, _FakeArmRobot.instances[-1]
 
@@ -508,16 +508,22 @@ def test_motor_fault_is_reported_as_error_state(
 def test_gripper_round_trips_meters_to_normalized(
     a1z_adapter_module: ModuleType,
 ) -> None:
+    """The gripper rides the joint array; metres in, SDK fraction out."""
     adapter, robot = _connected_adapter(a1z_adapter_module, gripper=True, gripper_max_opening_m=0.1)
     assert robot.factory_kwargs["with_gripper"] is True
     assert adapter.activate()
 
-    assert adapter.write_gripper_position(0.05)  # half open
+    assert adapter.get_dof() == 7
+    limits = adapter.get_limits()
+    assert len(limits.position_upper) == adapter.get_dof()
+    assert limits.position_upper[-1] == pytest.approx(0.1)  # metres, declared
+
+    assert adapter.write_joint_positions([0.0] * 6 + [0.05])  # half open
     assert robot.gripper_fraction == pytest.approx(0.5)
-    assert adapter.read_gripper_position() == pytest.approx(0.05)
+    assert adapter.read_joint_positions()[-1] == pytest.approx(0.05)
 
     # Out-of-range commands clamp to the physical stroke
-    assert adapter.write_gripper_position(1.0)
+    assert adapter.write_joint_positions([0.0] * 6 + [1.0])
     assert robot.gripper_fraction == pytest.approx(1.0)
 
 

@@ -50,14 +50,6 @@ class PinkControlIKOverrides(TypedDict, total=False):
     qpsolver_options: dict[str, float]
 
 
-class GripperTaskOverrides(TypedDict, total=False):
-    """Optional gripper fields shared by teleop and EEF-twist tasks."""
-
-    gripper_joint: str
-    gripper_open_pos: float
-    gripper_closed_pos: float
-
-
 def trajectory_task(
     hardware: HardwareComponent,
     *additional_hardware: HardwareComponent,
@@ -78,7 +70,7 @@ def _resolve_control_ik(
     control_ik: PinkControlIKOverrides | None,
 ) -> dict[str, Any]:
     coordinator_joints = robot_model.get_coordinator_joint_names()
-    if hardware.joints != coordinator_joints:
+    if not set(coordinator_joints) <= set(hardware.joints):
         raise ValueError("hardware joints must match RobotModelConfig coordinator joints")
     payload = dict(control_ik or {})
     payload["robot_model"] = robot_model
@@ -102,7 +94,7 @@ def cartesian_ik_task(
     return TaskConfig(
         name=name,
         type="cartesian_ik",
-        joint_names=hardware.joints,
+        joint_names=robot_model.get_coordinator_joint_names(),
         priority=priority,
         params={
             "control_ik": resolved_control_ik,
@@ -127,7 +119,6 @@ def eef_twist_task(
     max_dt: float = 0.05,
     control_ik: PinkControlIKOverrides | None = None,
     robot_model: RobotModelConfig,
-    params: GripperTaskOverrides | None = None,
 ) -> TaskConfig:
     resolved_control_ik = _resolve_control_ik(hardware, robot_model, control_ik)
     task_params: dict[str, Any] = {
@@ -138,12 +129,10 @@ def eef_twist_task(
         "min_dt": min_dt,
         "max_dt": max_dt,
     }
-    if params:
-        task_params.update(params)
     return TaskConfig(
         name=name,
         type="eef_twist",
-        joint_names=hardware.joints,
+        joint_names=robot_model.get_coordinator_joint_names(),
         priority=priority,
         params=task_params,
     )
@@ -162,7 +151,6 @@ def teleop_ik_task(
     min_dt: float = 1e-4,
     max_dt: float = 0.05,
     control_ik: PinkControlIKOverrides | None = None,
-    params: GripperTaskOverrides | None = None,
     stream_bind: dict[str, str] | None = None,
 ) -> TaskConfig:
     resolved_control_ik = _resolve_control_ik(hardware, robot_model, control_ik)
@@ -175,12 +163,10 @@ def teleop_ik_task(
         "min_dt": min_dt,
         "max_dt": max_dt,
     }
-    if params:
-        task_params.update(params)
     return TaskConfig(
         name=name,
         type="teleop_ik",
-        joint_names=hardware.joints,
+        joint_names=robot_model.get_coordinator_joint_names(),
         priority=priority,
         params=task_params,
         stream_bind=stream_bind or {},
