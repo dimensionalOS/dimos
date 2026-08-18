@@ -14,6 +14,7 @@
 
 from pathlib import Path
 
+from click import unstyle
 import pytest
 from typer.testing import CliRunner
 
@@ -26,30 +27,33 @@ from dimos.evals.vqa.generate import GenerationRequest, GenerationResult, Public
 
 def test_vqa_cli_exposes_generate_and_run() -> None:
     result = CliRunner().invoke(app, ["vqa", "--help"])
+    output = unstyle(result.stdout)
 
     assert result.exit_code == 0
-    assert "generate" in result.stdout
-    assert "run" in result.stdout
+    assert "generate" in output
+    assert "run" in output
 
 
 def test_vqa_generate_cli_declares_single_image_input() -> None:
     result = CliRunner().invoke(app, ["vqa", "generate", "--help"])
+    output = unstyle(result.stdout)
 
     assert result.exit_code == 0
-    assert "DATASET" in result.stdout
-    assert "--image-index" in result.stdout
-    assert "--start" in result.stdout
-    assert "--stop" in result.stdout
-    assert "--stride" in result.stdout
-    assert "--output" in result.stdout
+    assert "DATASET" in output
+    assert "--image-index" in output
+    assert "--start" in output
+    assert "--stop" in output
+    assert "--stride" in output
+    assert "--output" in output
 
 
 def test_vqa_run_cli_declares_standalone_dataset_input() -> None:
     result = CliRunner().invoke(app, ["vqa", "run", "--help"])
+    output = unstyle(result.stdout)
 
     assert result.exit_code == 0
-    assert "DATASET" in result.stdout
-    assert "--model" in result.stdout
+    assert "DATASET" in output
+    assert "--model" in output
 
 
 def test_vqa_generate_cli_runs_generation(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

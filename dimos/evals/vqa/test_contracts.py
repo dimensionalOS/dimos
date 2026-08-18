@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -45,8 +46,6 @@ from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     from dimos.models.vl.base import VlModel
 
 
@@ -296,7 +295,7 @@ def test_generation_request_selects_one_memory_image() -> None:
 
     assert request.image_index == 4
     assert request.output == Path("dataset")
-    assert request.frame_indices() == (4,)
+    assert request.frame_indices() == range(4, 5)
 
 
 def test_generation_request_defaults_output_under_state_directory() -> None:
@@ -314,7 +313,7 @@ def test_generation_request_selects_frame_range() -> None:
         output=Path("dataset"),
     )
 
-    assert request.frame_indices() == (2, 5, 8)
+    assert request.frame_indices() == range(2, 10, 3)
 
 
 @pytest.mark.parametrize(
@@ -334,7 +333,7 @@ def test_generation_request_rejects_invalid_selection(selection: dict[str, int])
 def test_standalone_rows_match_public_private_contract() -> None:
     case = PublicCase(
         id="frame-000004-chair-presence",
-        image="assets/frame-000004.jpg",
+        image="assets/frame-000004.png",
         question="Is there a chair in the image?",
         choices=("yes", "no"),
     )
@@ -342,7 +341,7 @@ def test_standalone_rows_match_public_private_contract() -> None:
 
     assert case.model_dump(mode="json") == {
         "id": "frame-000004-chair-presence",
-        "image": "assets/frame-000004.jpg",
+        "image": "assets/frame-000004.png",
         "question": "Is there a chair in the image?",
         "choices": ["yes", "no"],
     }
@@ -354,7 +353,7 @@ def test_standalone_rows_match_public_private_contract() -> None:
 
 def test_generate_and_evaluate_one_image(tmp_path: Path) -> None:
     output = tmp_path / "vqa"
-    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=12.5)
+    image = Image.from_numpy(np.arange(48, dtype=np.uint8).reshape(4, 4, 3), ts=12.5)
     request = GenerationRequest(dataset="recording.db", image_index=4, output=output)
 
     result = generate_frames_dataset(
@@ -365,7 +364,9 @@ def test_generate_and_evaluate_one_image(tmp_path: Path) -> None:
     )
 
     assert result.cases[0].id == "frame-000004-chair-presence"
-    assert (output / "assets" / "frame-000004.jpg").is_file()
+    image_path = output / "assets" / "frame-000004.png"
+    assert image_path.is_file()
+    assert np.array_equal(Image.from_file(image_path).data, image.data)
     assert (output / "cases.jsonl").is_file()
     assert (output / "labels.jsonl").is_file()
     assert (output / "audit" / "frame-000004" / "ground_truth.json").is_file()
@@ -396,14 +397,15 @@ def test_generate_multiple_images_aggregates_frame_artifacts(tmp_path: Path) -> 
         frames,
         cast("QuestionAuthor", _Author()),
         _Detector(present=True),
+        model_names={"author": "gpt-4o-mini", "detector": "vikhyatk/moondream2"},
     )
 
     assert [case.id for case in result.cases] == [
         "frame-000001-chair-presence",
         "frame-000003-chair-presence",
     ]
-    assert (output / "assets" / "frame-000001.jpg").is_file()
-    assert (output / "assets" / "frame-000003.jpg").is_file()
+    assert (output / "assets" / "frame-000001.png").is_file()
+    assert (output / "assets" / "frame-000003.png").is_file()
     assert (output / "audit" / "frame-000001" / "frame.json").is_file()
     assert (output / "audit" / "frame-000003" / "frame.json").is_file()
     run = json.loads((output / "audit" / "run.json").read_text())
@@ -412,6 +414,10 @@ def test_generate_multiple_images_aggregates_frame_artifacts(tmp_path: Path) -> 
     assert run["generation"]["start"] == 1
     assert run["generation"]["stop"] == 5
     assert run["generation"]["stride"] == 2
+    assert run["models"] == {
+        "author": "gpt-4o-mini",
+        "detector": "vikhyatk/moondream2",
+    }
 
 
 def test_empty_frame_does_not_count_as_rejected_question(tmp_path: Path) -> None:

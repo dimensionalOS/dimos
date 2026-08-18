@@ -22,7 +22,6 @@ import json
 from pathlib import Path
 import re
 import tempfile
-from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -37,9 +36,9 @@ from dimos.evals.vqa.families import (
     QuestionProposal,
     answer_question,
 )
-
-if TYPE_CHECKING:
-    from dimos.msgs.sensor_msgs.Image import Image
+from dimos.evals.vqa.primitives.moondream import MoondreamObjectDetector
+from dimos.memory.cli.dataset import open_dataset
+from dimos.msgs.sensor_msgs.Image import Image
 
 
 class GenerationRequest(BaseModel):
@@ -66,11 +65,11 @@ class GenerationRequest(BaseModel):
             raise ValueError("stop must be greater than start")
         return self
 
-    def frame_indices(self) -> tuple[int, ...]:
+    def frame_indices(self) -> range:
         if self.image_index is not None:
-            return (self.image_index,)
+            return range(self.image_index, self.image_index + 1)
         assert self.start is not None and self.stop is not None
-        return tuple(range(self.start, self.stop, self.stride or 1))
+        return range(self.start, self.stop, self.stride or 1)
 
     def output_directory(self) -> Path:
         if self.output is not None:
@@ -118,7 +117,7 @@ class _GeneratedFrame:
 
 def generate_dataset(request: GenerationRequest) -> GenerationResult:
     """Generate a standalone dataset from selected Memory images."""
-    from dimos.memory.cli.dataset import open_dataset
+    # Load optional model dependencies only when generation is requested.
     from dimos.models.vl.moondream import MoondreamVlModel
     from dimos.models.vl.openai import OpenAIVlModel
 
@@ -127,8 +126,6 @@ def generate_dataset(request: GenerationRequest) -> GenerationResult:
     author_model = OpenAIVlModel()
     detector_model = MoondreamVlModel()
     try:
-        from dimos.evals.vqa.primitives.moondream import MoondreamObjectDetector
-
         images = store.streams.color_image
         image_count = images.count()
         if indices[-1] >= image_count:
@@ -146,6 +143,10 @@ def generate_dataset(request: GenerationRequest) -> GenerationResult:
             selected_frames(),
             OpenAIQuestionAuthor(author_model),
             MoondreamObjectDetector(detector_model),
+            model_names={
+                "author": author_model.config.model_name,
+                "detector": detector_model.config.model_name,
+            },
         )
     finally:
         store.stop()
@@ -154,8 +155,6 @@ def generate_dataset(request: GenerationRequest) -> GenerationResult:
 
 
 def _copy_observation_image(value: object, timestamp: float) -> Image:
-    from dimos.msgs.sensor_msgs.Image import Image
-
     if not isinstance(value, Image):
         raise TypeError("color_image stream must contain dimos Image values")
     image = value.copy()
@@ -168,6 +167,8 @@ def generate_frames_dataset(
     frames: Iterable[tuple[int, Image]],
     author: QuestionAuthor,
     detector: ObjectDetector,
+    *,
+    model_names: dict[str, str] | None = None,
 ) -> GenerationResult:
     """Generate and write one dataset from already loaded indexed images."""
     output = request.output_directory()
@@ -204,6 +205,7 @@ def generate_frames_dataset(
             {
                 "generation": request.model_dump(mode="json", exclude={"output"}),
                 "families": [family.name for family in AVAILABLE_FAMILIES],
+                "models": model_names or {},
                 "frame_count": frame_count,
                 "question_count": len(all_cases),
                 "rejected_question_count": rejected_count,
@@ -249,7 +251,7 @@ def _generate_frame(
     cases = tuple(
         PublicCase(
             id=case_id,
-            image=f"assets/frame-{image_index:06d}.jpg",
+            image=f"assets/frame-{image_index:06d}.png",
             question=answer.question,
             choices=answer.choices,
         )
@@ -298,7 +300,7 @@ def _write_frame(output: Path, frame: _GeneratedFrame) -> None:
     frame_audit = output / "audit" / f"frame-{frame.index:06d}"
     frame_audit.mkdir(parents=True, exist_ok=True)
 
-    image_name = f"assets/frame-{frame.index:06d}.jpg"
+    image_name = f"assets/frame-{frame.index:06d}.png"
     image_path = output / image_name
     if not frame.image.save(str(image_path)):
         raise RuntimeError(f"failed to write VQA image: {image_path}")

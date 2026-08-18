@@ -33,6 +33,7 @@ def generate(
     output: Path | None = typer.Option(None, help="Override the generated dataset directory"),
 ) -> None:
     """Generate questions for one image or an indexed image range."""
+    # Keep generation's optional model stack out of global CLI startup.
     from dimos.evals.vqa.generate import GenerationRequest, generate_dataset
 
     request = GenerationRequest(
@@ -53,6 +54,7 @@ def run(
     model: str = typer.Option("", help="Override chat model"),
 ) -> None:
     """Evaluate a generated standalone VQA dataset."""
+    # Keep evaluation implementation imports out of global CLI startup.
     from dimos.evals.runner import EvalRunner, summarize
     from dimos.evals.vqa.suite import load_suite
 
