@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import os
 import platform
 import socket
 import threading
@@ -207,14 +208,25 @@ class ZenohSessionPool:
     def __init__(self) -> None:
         self._sessions: dict[str, zenoh.Session] = {}
         self._lock = threading.Lock()
+        self._opened_in_pid: int | None = None
 
     def acquire(self, config: ZenohConfig) -> zenoh.Session:
         """Open a session for this config, or return the existing shared one."""
         key = config.session_key
         with self._lock:
+            if self._opened_in_pid not in (None, os.getpid()):
+                # Fail fast: both inherited sessions and new zenoh.open() calls
+                # deadlock in a fork child because zenoh's process-global
+                # runtime loses its threads at fork.
+                raise RuntimeError(
+                    f"zenoh sessions were opened in pid {self._opened_in_pid} before this "
+                    "process forked; zenoh's runtime does not survive fork. "
+                    "Fork or daemonize before any zenoh use."
+                )
             if key not in self._sessions:
                 _warn_client_single_link(config)
                 self._sessions[key] = zenoh.open(_zenoh_config(config))
+                self._opened_in_pid = os.getpid()
                 logger.info(
                     "Zenoh session opened",
                     mode=config.mode,
