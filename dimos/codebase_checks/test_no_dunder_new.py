@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import ast
+import os
 from pathlib import Path
 
 from dimos.constants import DIMOS_PROJECT_ROOT
@@ -42,7 +43,10 @@ def find_dunder_new_calls() -> list[tuple[Path, int, str]]:
             continue
         source = path.read_text(encoding="utf-8")
         lines = source.splitlines()
-        rel_path = str(path.relative_to(DIMOS_PROJECT_ROOT))
+        # Normalize to forward slashes so the WHITELIST (written with "/")
+        # matches regardless of the host OS's path separator (os.sep is "\\"
+        # on Windows, which would otherwise never equal the "/" entries).
+        rel_path = str(path.relative_to(DIMOS_PROJECT_ROOT)).replace(os.sep, "/")
         for node in ast.walk(ast.parse(source)):
             if not (
                 isinstance(node, ast.Call)

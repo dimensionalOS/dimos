@@ -87,7 +87,10 @@ def find_get_logger_usages() -> list[tuple[str, int, str]]:
             full_path = os.path.join(dirpath, fname)
             if os.path.realpath(full_path) == self_path:
                 continue
-            rel_path = os.path.relpath(full_path, DIMOS_PROJECT_ROOT)
+            # Normalize to forward slashes so the WHITELIST (written with "/")
+            # matches regardless of the host OS's path separator (os.sep is "\\"
+            # on Windows, which would otherwise never equal the "/" entries).
+            rel_path = os.path.relpath(full_path, DIMOS_PROJECT_ROOT).replace(os.sep, "/")
 
             try:
                 with open(full_path, encoding="utf-8", errors="replace") as f:
