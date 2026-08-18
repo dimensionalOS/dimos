@@ -16,6 +16,8 @@
 
 import time
 
+import pytest
+
 from dimos.core.global_config import ZenohMode, global_config
 from dimos.protocol.service.zenohservice import (
     ALL_INTERFACES,
@@ -26,44 +28,50 @@ from dimos.protocol.service.zenohservice import (
 )
 
 
-def test_scouting_follows_global_config(zenoh_defaults, monkeypatch):
+def test_scouting_follows_global_config(
+    zenoh_defaults: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
     assert ZenohConfig().scouting is False
     monkeypatch.setattr(global_config, "zenoh_scouting", True)
     assert ZenohConfig().scouting is True
 
 
-def test_scouting_separates_pooled_sessions(zenoh_defaults):
+def test_scouting_separates_pooled_sessions(zenoh_defaults: None) -> None:
     assert ZenohConfig(scouting=True).session_key != ZenohConfig(scouting=False).session_key
 
 
-def test_scouting_on_reaches_every_interface(zenoh_defaults, monkeypatch):
+def test_scouting_on_reaches_every_interface(
+    zenoh_defaults: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(global_config, "zenoh_scouting", True)
     assert ZenohConfig().multicast_interface == ALL_INTERFACES
 
 
-def test_scouting_off_stays_on_loopback(zenoh_defaults):
+def test_scouting_off_stays_on_loopback(zenoh_defaults: None) -> None:
     assert ZenohConfig().multicast_interface == LOOPBACK_INTERFACE
 
 
-def test_named_interface_overrides_scouting(zenoh_defaults, monkeypatch):
+def test_named_interface_overrides_scouting(
+    zenoh_defaults: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(global_config, "zenoh_interface", "wlan0")
     assert ZenohConfig().multicast_interface == "wlan0"
     monkeypatch.setattr(global_config, "zenoh_scouting", True)
     assert ZenohConfig().multicast_interface == "wlan0"
 
 
-def test_interface_separates_pooled_sessions(zenoh_defaults):
+def test_interface_separates_pooled_sessions(zenoh_defaults: None) -> None:
     assert (
         ZenohConfig(scouting_interface="wlan0").session_key
         != ZenohConfig(scouting_interface="eth0").session_key
     )
 
 
-def test_endpoint_addresses_keeps_literal_host_and_port():
+def test_endpoint_addresses_keeps_literal_host_and_port() -> None:
     assert "192.0.2.10:7447" in endpoint_addresses("tcp/192.0.2.10:7447")
 
 
-def test_endpoint_addresses_resolves_names():
+def test_endpoint_addresses_resolves_names() -> None:
     assert "127.0.0.1:7447" in endpoint_addresses("tcp/localhost:7447")
 
 
@@ -95,12 +103,12 @@ def _await_elapsed(
     return time.monotonic() - started
 
 
-def test_await_returns_once_endpoint_is_linked(zenoh_defaults):
+def test_await_returns_once_endpoint_is_linked(zenoh_defaults: None) -> None:
     session = _FakeSession(["tcp/192.0.2.10:7447"])
     assert _await_elapsed(session, connect=["tcp/192.0.2.10:7447"], connect_timeout=5.0) < 1.0
 
 
-def test_await_waits_for_every_endpoint(zenoh_defaults):
+def test_await_waits_for_every_endpoint(zenoh_defaults: None) -> None:
     session = _FakeSession(["tcp/192.0.2.10:7447"])
     elapsed = _await_elapsed(
         session,
@@ -110,7 +118,7 @@ def test_await_waits_for_every_endpoint(zenoh_defaults):
     assert elapsed >= 0.3
 
 
-def test_client_mode_await_is_satisfied_by_one_link(zenoh_defaults):
+def test_client_mode_await_is_satisfied_by_one_link(zenoh_defaults: None) -> None:
     """A client session holds a single link, so one linked alternative is done."""
     session = _FakeSession(["tcp/192.0.2.10:7447"])
     elapsed = _await_elapsed(
@@ -122,25 +130,25 @@ def test_client_mode_await_is_satisfied_by_one_link(zenoh_defaults):
     assert elapsed < 3.0
 
 
-def test_duplicate_endpoints_do_not_satisfy_the_wait(zenoh_defaults):
+def test_duplicate_endpoints_do_not_satisfy_the_wait(zenoh_defaults: None) -> None:
     """One endpoint listed twice is still one link to wait for."""
     duplicate = "tcp/192.0.2.199:7447"
     elapsed = _await_elapsed(_FakeSession([]), connect=[duplicate, duplicate], connect_timeout=0.3)
     assert elapsed >= 0.3
 
 
-def test_await_gives_up_after_timeout(zenoh_defaults):
+def test_await_gives_up_after_timeout(zenoh_defaults: None) -> None:
     elapsed = _await_elapsed(
         _FakeSession([]), connect=["tcp/192.0.2.199:7447"], connect_timeout=0.3
     )
     assert elapsed >= 0.3
 
 
-def test_await_is_skipped_without_connect_endpoints(zenoh_defaults):
+def test_await_is_skipped_without_connect_endpoints(zenoh_defaults: None) -> None:
     assert _await_elapsed(_FakeSession([]), connect=[], connect_timeout=30.0) < 3.0
 
 
-def test_zero_timeout_disables_the_wait(zenoh_defaults):
+def test_zero_timeout_disables_the_wait(zenoh_defaults: None) -> None:
     assert (
         _await_elapsed(_FakeSession([]), connect=["tcp/192.0.2.199:7447"], connect_timeout=0.0)
         < 1.0

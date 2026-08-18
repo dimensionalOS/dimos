@@ -143,7 +143,6 @@ def test_worker_inherits_host_global_config(create_worker_manager):
     module = worker_manager.deploy(SimpleModule, host_config, {})
     module.start()
 
-    # robot_ip is a field the pre-widening code did not forward.
     assert module.read_global_robot_ip() == "10.11.12.13"
 
     module.stop()

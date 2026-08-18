@@ -140,7 +140,6 @@ class NativeModuleConfig(ModuleConfig):
 
     @model_validator(mode="after")
     def _session_needs_the_stdin_line(self) -> NativeModuleConfig:
-        """A pinned session reaches the module on the stdin line or not at all."""
         if self.session is not None and not self.stdin_config:
             raise ValueError(
                 f"{self.executable} pins a session config but has stdin_config off, "

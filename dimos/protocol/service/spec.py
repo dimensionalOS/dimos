@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from abc import ABC
-from typing import Any, ClassVar, get_type_hints
+from typing import Any, ClassVar, Self, get_type_hints
 
 from pydantic import BaseModel
 
@@ -33,7 +33,7 @@ class SessionConfig(BaseConfig):
         """This session as the JSON object a native module reads on stdin."""
         return {}
 
-    def rebased(self) -> "SessionConfig":
+    def rebased(self) -> Self:
         """This config's explicit fields over the current global config defaults."""
         return type(self)(**{name: getattr(self, name) for name in self.model_fields_set})
 
