@@ -48,6 +48,12 @@ returning nothing at all cannot be reported by *any* encoding of that cloud, so
 scoring it would reward guessing. Of ten confirmed panes, seven returned
 nothing; :data:`PANES` is what remains.
 
+Every adjudication, including the rejected and undecided ones, is kept in
+``go2_glass_labels.json`` beside this file — 74 candidates, 13 confirmed glass,
+6 of them leaving a usable trace. Those labels are the one part of this suite
+that cannot be regenerated from the recordings, so widening the family means
+adding to that file, not re-running the detector.
+
 ``open`` is analytic. The gate is a slice across the robot's own direction of
 travel at a point its base later occupied — it walked through, so the gap was
 real. Both classes are sampled to the same gate width and standoff so the
@@ -88,6 +94,8 @@ FLANK = 1.5  # a gate needs mapped obstacle within this on both sides
 
 
 # Human-confirmed glass. Each entry is (dataset, tag, end, end, time window).
+# These are the six ``verdict == "glass" and learnable`` entries of
+# go2_glass_labels.json, merged where the reviewer named two views as one pane.
 #
 # Every pane here was confirmed by a person against the camera frame, and left
 # enough trace in the point cloud that an encoding could in principle report it.

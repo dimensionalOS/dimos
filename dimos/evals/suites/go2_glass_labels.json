@@ -1,0 +1,2749 @@
+{
+ "note": "Hand-adjudicated glass annotations over the go2 replays. Candidates come from Yoloe2DDetector (PROMPT mode, 'glass wall'/'glass door'/'window'/'glass partition') on the camera stream; the pane is placed in world coordinates by casting rays through the segmentation mask's bottom edge onto the floor plane measured by the lidar (cv2.fisheye + the go2 front_camera_720.yaml intrinsics and BASE_TO_OPTICAL mount). A human confirmed or rejected each one from the camera frame. verdict is one of glass / notglass / unsure. learnable marks panes that leave a trace in the point cloud (>=30 returns on the pane, >=30% of its width covered, <=3.5 m range, flanking structure) -- only those can appear in an eval, since an encoding cannot report a surface that returned nothing. Box bearing carries a systematic error of a few degrees from the camera mount; ~5-15 cm at these ranges, which does not change any verdict.",
+ "counts": {
+  "glass": 13,
+  "unsure": 28,
+  "notglass": 15,
+  "unreviewed": 18
+ },
+ "labels": [
+  {
+   "id": "go2_china_office_t32_0",
+   "dataset": "go2_china_office",
+   "t": 32.0,
+   "name": "glass wall",
+   "conf": 0.2834399938583374,
+   "corner_a": [
+    9.37,
+    4.77
+   ],
+   "corner_b": [
+    6.09,
+    1.7
+   ],
+   "z": [
+    -0.12,
+    2.52
+   ],
+   "width_m": 4.5,
+   "height_m": 2.65,
+   "range_m": 5.6,
+   "robot_xy": [
+    1.69,
+    1.96
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.14,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 11,
+   "verdict": "glass",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t32_1",
+   "dataset": "go2_china_office",
+   "t": 32.0,
+   "name": "glass wall",
+   "conf": 0.2660873234272003,
+   "corner_a": [
+    5.76,
+    7.3
+   ],
+   "corner_b": [
+    7.46,
+    5.89
+   ],
+   "z": [
+    -0.12,
+    2.06
+   ],
+   "width_m": 2.22,
+   "height_m": 2.19,
+   "range_m": 6.45,
+   "robot_xy": [
+    1.69,
+    1.96
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.067,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 1935,
+   "verdict": "unsure",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t34_0",
+   "dataset": "go2_china_office",
+   "t": 34.0,
+   "name": "glass wall",
+   "conf": 0.24232345819473267,
+   "corner_a": [
+    5.61,
+    8.53
+   ],
+   "corner_b": [
+    7.21,
+    8.18
+   ],
+   "z": [
+    -0.12,
+    2.55
+   ],
+   "width_m": 1.64,
+   "height_m": 2.67,
+   "range_m": 6.76,
+   "robot_xy": [
+    2.63,
+    2.37
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.049,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 1406,
+   "verdict": "unsure",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t36_0",
+   "dataset": "go2_china_office",
+   "t": 36.0,
+   "name": "window",
+   "conf": 0.22788387537002563,
+   "corner_a": [
+    5.45,
+    8.26
+   ],
+   "corner_b": [
+    8.67,
+    7.26
+   ],
+   "z": [
+    -0.12,
+    2.73
+   ],
+   "width_m": 3.37,
+   "height_m": 2.86,
+   "range_m": 5.48,
+   "robot_xy": [
+    3.35,
+    3.12
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.152,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 3778,
+   "verdict": "unsure",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t36_1",
+   "dataset": "go2_china_office",
+   "t": 36.0,
+   "name": "glass wall",
+   "conf": 0.1505747139453888,
+   "corner_a": [
+    3.14,
+    4.19
+   ],
+   "corner_b": [
+    3.7,
+    4.2
+   ],
+   "z": [
+    -0.12,
+    0.62
+   ],
+   "width_m": 0.56,
+   "height_m": 0.75,
+   "range_m": 0.82,
+   "robot_xy": [
+    3.35,
+    3.12
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.01,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 1367,
+   "verdict": "unsure",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t38_0",
+   "dataset": "go2_china_office",
+   "t": 38.0,
+   "name": "glass wall",
+   "conf": 0.15924817323684692,
+   "corner_a": [
+    1.78,
+    3.81
+   ],
+   "corner_b": [
+    2.81,
+    4.99
+   ],
+   "z": [
+    -0.12,
+    0.82
+   ],
+   "width_m": 1.56,
+   "height_m": 0.95,
+   "range_m": 0.81,
+   "robot_xy": [
+    3.09,
+    3.63
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.083,
+   "on_pane": 106,
+   "span_cov": 0.67,
+   "flank": 110,
+   "learnable": true,
+   "lidar_returns_in_box": 294,
+   "lidar_returns_beyond": 1042,
+   "verdict": "glass",
+   "note": "box a bit far and a few deg off",
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t42_0",
+   "dataset": "go2_china_office",
+   "t": 42.0,
+   "name": "window",
+   "conf": 0.16992461681365967,
+   "corner_a": [
+    8.0,
+    3.8
+   ],
+   "corner_b": [
+    4.63,
+    -0.63
+   ],
+   "z": [
+    -0.12,
+    1.31
+   ],
+   "width_m": 5.57,
+   "height_m": 1.43,
+   "range_m": 3.63,
+   "robot_xy": [
+    3.1,
+    3.81
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.13,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 5399,
+   "verdict": "glass",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t44_0",
+   "dataset": "go2_china_office",
+   "t": 44.0,
+   "name": "window",
+   "conf": 0.2122417688369751,
+   "corner_a": [
+    6.9,
+    1.42
+   ],
+   "corner_b": [
+    6.94,
+    -0.37
+   ],
+   "z": [
+    -0.12,
+    0.94
+   ],
+   "width_m": 1.79,
+   "height_m": 1.06,
+   "range_m": 4.38,
+   "robot_xy": [
+    3.25,
+    3.76
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.131,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 3593,
+   "verdict": "notglass",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t44_1",
+   "dataset": "go2_china_office",
+   "t": 44.0,
+   "name": "window",
+   "conf": 0.17970241606235504,
+   "corner_a": [
+    8.28,
+    2.32
+   ],
+   "corner_b": [
+    7.96,
+    1.05
+   ],
+   "z": [
+    -0.12,
+    1.37
+   ],
+   "width_m": 1.3,
+   "height_m": 1.49,
+   "range_m": 4.99,
+   "robot_xy": [
+    3.25,
+    3.76
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.008,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 1781,
+   "verdict": "notglass",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t44_2",
+   "dataset": "go2_china_office",
+   "t": 44.0,
+   "name": "glass wall",
+   "conf": 0.17595942318439484,
+   "corner_a": [
+    8.92,
+    4.15
+   ],
+   "corner_b": [
+    5.57,
+    0.17
+   ],
+   "z": [
+    -0.12,
+    1.36
+   ],
+   "width_m": 5.21,
+   "height_m": 1.48,
+   "range_m": 3.94,
+   "robot_xy": [
+    3.25,
+    3.76
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.17,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 4794,
+   "verdict": "glass",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t46_0",
+   "dataset": "go2_china_office",
+   "t": 46.0,
+   "name": "glass wall",
+   "conf": 0.6537381410598755,
+   "corner_a": [
+    8.63,
+    4.62
+   ],
+   "corner_b": [
+    4.7,
+    0.97
+   ],
+   "z": [
+    -0.12,
+    1.62
+   ],
+   "width_m": 5.36,
+   "height_m": 1.74,
+   "range_m": 2.02,
+   "robot_xy": [
+    4.03,
+    3.31
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.035,
+   "on_pane": 23,
+   "span_cov": 0.33,
+   "flank": 134,
+   "learnable": false,
+   "lidar_returns_in_box": 611,
+   "lidar_returns_beyond": 2802,
+   "verdict": "glass",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t46_1",
+   "dataset": "go2_china_office",
+   "t": 46.0,
+   "name": "window",
+   "conf": 0.2741769254207611,
+   "corner_a": [
+    7.66,
+    0.84
+   ],
+   "corner_b": [
+    7.02,
+    -0.88
+   ],
+   "z": [
+    -0.12,
+    0.86
+   ],
+   "width_m": 1.84,
+   "height_m": 0.98,
+   "range_m": 4.25,
+   "robot_xy": [
+    4.03,
+    3.31
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.076,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 4644,
+   "verdict": "notglass",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t48_0",
+   "dataset": "go2_china_office",
+   "t": 48.0,
+   "name": "window",
+   "conf": 0.35475412011146545,
+   "corner_a": [
+    9.5,
+    0.57
+   ],
+   "corner_b": [
+    8.95,
+    -1.1
+   ],
+   "z": [
+    -0.12,
+    1.02
+   ],
+   "width_m": 1.75,
+   "height_m": 1.15,
+   "range_m": 4.92,
+   "robot_xy": [
+    5.09,
+    2.92
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.046,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 3999,
+   "verdict": "notglass",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t54_0",
+   "dataset": "go2_china_office",
+   "t": 54.0,
+   "name": "window",
+   "conf": 0.2355424016714096,
+   "corner_a": [
+    5.27,
+    6.39
+   ],
+   "corner_b": [
+    11.4,
+    6.31
+   ],
+   "z": [
+    -0.12,
+    1.64
+   ],
+   "width_m": 6.13,
+   "height_m": 1.76,
+   "range_m": 2.47,
+   "robot_xy": [
+    5.79,
+    3.78
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.417,
+   "on_pane": 127,
+   "span_cov": 0.17,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 365,
+   "lidar_returns_beyond": 6571,
+   "verdict": "unsure",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t56_0",
+   "dataset": "go2_china_office",
+   "t": 56.0,
+   "name": "glass wall",
+   "conf": 0.31388211250305176,
+   "corner_a": [
+    4.48,
+    5.02
+   ],
+   "corner_b": [
+    6.19,
+    5.54
+   ],
+   "z": [
+    -0.12,
+    0.9
+   ],
+   "width_m": 1.79,
+   "height_m": 1.03,
+   "range_m": 0.87,
+   "robot_xy": [
+    5.72,
+    4.18
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.09,
+   "on_pane": 1,
+   "span_cov": 0.14,
+   "flank": 26,
+   "learnable": false,
+   "lidar_returns_in_box": 150,
+   "lidar_returns_beyond": 1884,
+   "verdict": "unsure",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t58_0",
+   "dataset": "go2_china_office",
+   "t": 58.0,
+   "name": "glass wall",
+   "conf": 0.5605030655860901,
+   "corner_a": [
+    5.14,
+    7.74
+   ],
+   "corner_b": [
+    6.62,
+    6.33
+   ],
+   "z": [
+    -0.12,
+    1.1
+   ],
+   "width_m": 2.05,
+   "height_m": 1.23,
+   "range_m": 1.33,
+   "robot_xy": [
+    5.64,
+    5.34
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.023,
+   "on_pane": 422,
+   "span_cov": 0.88,
+   "flank": 312,
+   "learnable": true,
+   "lidar_returns_in_box": 784,
+   "lidar_returns_beyond": 733,
+   "verdict": "unsure",
+   "note": "glass or shadow on a wall",
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t58_1",
+   "dataset": "go2_china_office",
+   "t": 58.0,
+   "name": "glass wall",
+   "conf": 0.45749977231025696,
+   "corner_a": [
+    -0.13,
+    10.94
+   ],
+   "corner_b": [
+    4.41,
+    10.3
+   ],
+   "z": [
+    -0.12,
+    3.51
+   ],
+   "width_m": 4.59,
+   "height_m": 3.63,
+   "range_m": 5.61,
+   "robot_xy": [
+    5.64,
+    5.34
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.372,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 439,
+   "verdict": "unsure",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t68_0",
+   "dataset": "go2_china_office",
+   "t": 68.0,
+   "name": "glass wall",
+   "conf": 0.19723841547966003,
+   "corner_a": [
+    2.5,
+    5.77
+   ],
+   "corner_b": [
+    3.3,
+    7.04
+   ],
+   "z": [
+    -0.12,
+    0.72
+   ],
+   "width_m": 1.49,
+   "height_m": 0.84,
+   "range_m": 0.73,
+   "robot_xy": [
+    3.75,
+    5.82
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.073,
+   "on_pane": 7,
+   "span_cov": 0.33,
+   "flank": 21,
+   "learnable": false,
+   "lidar_returns_in_box": 80,
+   "lidar_returns_beyond": 924,
+   "verdict": "unsure",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t70_0",
+   "dataset": "go2_china_office",
+   "t": 70.0,
+   "name": "glass wall",
+   "conf": 0.21555368602275848,
+   "corner_a": [
+    2.58,
+    9.48
+   ],
+   "corner_b": [
+    1.63,
+    11.72
+   ],
+   "z": [
+    -0.12,
+    3.09
+   ],
+   "width_m": 2.44,
+   "height_m": 3.21,
+   "range_m": 5.01,
+   "robot_xy": [
+    3.75,
+    5.83
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.425,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 11,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 0,
+   "verdict": "notglass",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t70_1",
+   "dataset": "go2_china_office",
+   "t": 70.0,
+   "name": "window",
+   "conf": 0.16401620209217072,
+   "corner_a": [
+    -2.1,
+    6.17
+   ],
+   "corner_b": [
+    -3.6,
+    9.69
+   ],
+   "z": [
+    -0.12,
+    3.41
+   ],
+   "width_m": 3.83,
+   "height_m": 3.53,
+   "range_m": 6.56,
+   "robot_xy": [
+    3.75,
+    5.83
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.744,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 457,
+   "verdict": "unsure",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t70_2",
+   "dataset": "go2_china_office",
+   "t": 70.0,
+   "name": "glass wall",
+   "conf": 0.16011476516723633,
+   "corner_a": [
+    2.48,
+    5.77
+   ],
+   "corner_b": [
+    3.29,
+    7.05
+   ],
+   "z": [
+    -0.12,
+    0.73
+   ],
+   "width_m": 1.52,
+   "height_m": 0.85,
+   "range_m": 0.75,
+   "robot_xy": [
+    3.75,
+    5.83
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.074,
+   "on_pane": 3,
+   "span_cov": 0.33,
+   "flank": 19,
+   "learnable": false,
+   "lidar_returns_in_box": 37,
+   "lidar_returns_beyond": 498,
+   "verdict": "unsure",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t82_0",
+   "dataset": "go2_china_office",
+   "t": 82.0,
+   "name": "glass wall",
+   "conf": 0.18647930026054382,
+   "corner_a": [
+    3.72,
+    5.36
+   ],
+   "corner_b": [
+    1.9,
+    1.7
+   ],
+   "z": [
+    -0.12,
+    1.45
+   ],
+   "width_m": 4.09,
+   "height_m": 1.57,
+   "range_m": 2.32,
+   "robot_xy": [
+    1.67,
+    6.32
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.126,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 29,
+   "lidar_returns_beyond": 5139,
+   "verdict": "glass",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t82_1",
+   "dataset": "go2_china_office",
+   "t": 82.0,
+   "name": "glass wall",
+   "conf": 0.15199732780456543,
+   "corner_a": [
+    3.96,
+    5.92
+   ],
+   "corner_b": [
+    4.14,
+    6.17
+   ],
+   "z": [
+    -0.12,
+    1.27
+   ],
+   "width_m": 0.3,
+   "height_m": 1.4,
+   "range_m": 2.18,
+   "robot_xy": [
+    1.67,
+    6.32
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.034,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 18,
+   "lidar_returns_beyond": 1499,
+   "verdict": "glass",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t84_0",
+   "dataset": "go2_china_office",
+   "t": 84.0,
+   "name": "glass wall",
+   "conf": 0.15649299323558807,
+   "corner_a": [
+    3.59,
+    6.19
+   ],
+   "corner_b": [
+    3.24,
+    4.64
+   ],
+   "z": [
+    -0.12,
+    0.82
+   ],
+   "width_m": 1.59,
+   "height_m": 0.94,
+   "range_m": 0.8,
+   "robot_xy": [
+    2.38,
+    5.81
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.082,
+   "on_pane": 17,
+   "span_cov": 0.5,
+   "flank": 45,
+   "learnable": false,
+   "lidar_returns_in_box": 243,
+   "lidar_returns_beyond": 1043,
+   "verdict": "unsure",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t86_0",
+   "dataset": "go2_china_office",
+   "t": 86.0,
+   "name": "glass wall",
+   "conf": 0.26732486486434937,
+   "corner_a": [
+    6.11,
+    7.39
+   ],
+   "corner_b": [
+    8.87,
+    4.98
+   ],
+   "z": [
+    -0.12,
+    2.29
+   ],
+   "width_m": 3.66,
+   "height_m": 2.42,
+   "range_m": 3.87,
+   "robot_xy": [
+    3.1,
+    5.83
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.066,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 1604,
+   "verdict": "unsure",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t88_0",
+   "dataset": "go2_china_office",
+   "t": 88.0,
+   "name": "window",
+   "conf": 0.3061997592449188,
+   "corner_a": [
+    7.12,
+    2.29
+   ],
+   "corner_b": [
+    7.8,
+    3.26
+   ],
+   "z": [
+    -0.12,
+    0.9
+   ],
+   "width_m": 1.18,
+   "height_m": 1.02,
+   "range_m": 4.42,
+   "robot_xy": [
+    3.89,
+    5.8
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.068,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 972,
+   "verdict": "notglass",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t88_1",
+   "dataset": "go2_china_office",
+   "t": 88.0,
+   "name": "window",
+   "conf": 0.25254422426223755,
+   "corner_a": [
+    6.33,
+    7.66
+   ],
+   "corner_b": [
+    8.74,
+    4.55
+   ],
+   "z": [
+    -0.12,
+    2.25
+   ],
+   "width_m": 3.93,
+   "height_m": 2.37,
+   "range_m": 3.27,
+   "robot_xy": [
+    3.89,
+    5.8
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.121,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 46,
+   "learnable": false,
+   "lidar_returns_in_box": 40,
+   "lidar_returns_beyond": 2470,
+   "verdict": "unsure",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t88_3",
+   "dataset": "go2_china_office",
+   "t": 88.0,
+   "name": "window",
+   "conf": 0.15336717665195465,
+   "corner_a": [
+    6.99,
+    1.72
+   ],
+   "corner_b": [
+    7.67,
+    3.3
+   ],
+   "z": [
+    -0.12,
+    0.92
+   ],
+   "width_m": 1.72,
+   "height_m": 1.04,
+   "range_m": 4.43,
+   "robot_xy": [
+    3.89,
+    5.8
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.041,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 1105,
+   "verdict": "notglass",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t88_4",
+   "dataset": "go2_china_office",
+   "t": 88.0,
+   "name": "glass wall",
+   "conf": 0.15086427330970764,
+   "corner_a": [
+    6.24,
+    7.57
+   ],
+   "corner_b": [
+    8.74,
+    5.67
+   ],
+   "z": [
+    -0.12,
+    0.78
+   ],
+   "width_m": 3.14,
+   "height_m": 0.9,
+   "range_m": 3.22,
+   "robot_xy": [
+    3.89,
+    5.8
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.062,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 81,
+   "learnable": false,
+   "lidar_returns_in_box": 106,
+   "lidar_returns_beyond": 1350,
+   "verdict": "notglass",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t92_0",
+   "dataset": "go2_china_office",
+   "t": 92.0,
+   "name": "glass wall",
+   "conf": 0.3017690181732178,
+   "corner_a": [
+    -0.66,
+    2.05
+   ],
+   "corner_b": [
+    0.63,
+    3.91
+   ],
+   "z": [
+    -0.12,
+    2.38
+   ],
+   "width_m": 2.26,
+   "height_m": 2.51,
+   "range_m": 4.2,
+   "robot_xy": [
+    4.4,
+    4.96
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.082,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 350,
+   "verdict": "unsure",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t92_1",
+   "dataset": "go2_china_office",
+   "t": 92.0,
+   "name": "window",
+   "conf": 0.20880797505378723,
+   "corner_a": [
+    5.41,
+    1.55
+   ],
+   "corner_b": [
+    4.23,
+    0.06
+   ],
+   "z": [
+    -0.12,
+    2.12
+   ],
+   "width_m": 1.9,
+   "height_m": 2.25,
+   "range_m": 3.91,
+   "robot_xy": [
+    4.4,
+    4.96
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.049,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 1120,
+   "verdict": "unsure",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t92_2",
+   "dataset": "go2_china_office",
+   "t": 92.0,
+   "name": "window",
+   "conf": 0.17079102993011475,
+   "corner_a": [
+    5.39,
+    1.58
+   ],
+   "corner_b": [
+    4.44,
+    -0.3
+   ],
+   "z": [
+    -0.12,
+    1.09
+   ],
+   "width_m": 2.11,
+   "height_m": 1.21,
+   "range_m": 4.18,
+   "robot_xy": [
+    4.4,
+    4.96
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.125,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 1,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 517,
+   "verdict": "glass",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t100_0",
+   "dataset": "go2_china_office",
+   "t": 100.0,
+   "name": "window",
+   "conf": 0.15769708156585693,
+   "corner_a": [
+    2.59,
+    -1.61
+   ],
+   "corner_b": [
+    0.89,
+    -6.16
+   ],
+   "z": [
+    -0.12,
+    1.34
+   ],
+   "width_m": 4.85,
+   "height_m": 1.47,
+   "range_m": 4.61,
+   "robot_xy": [
+    2.57,
+    1.8
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.14,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 412,
+   "verdict": "notglass",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t104_0",
+   "dataset": "go2_china_office",
+   "t": 104.0,
+   "name": "glass wall",
+   "conf": 0.15804360806941986,
+   "corner_a": [
+    0.39,
+    1.6
+   ],
+   "corner_b": [
+    0.62,
+    2.21
+   ],
+   "z": [
+    -0.12,
+    0.7
+   ],
+   "width_m": 0.65,
+   "height_m": 0.82,
+   "range_m": 0.92,
+   "robot_xy": [
+    1.57,
+    1.4
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.013,
+   "on_pane": 17,
+   "span_cov": 0.67,
+   "flank": 102,
+   "learnable": false,
+   "lidar_returns_in_box": 37,
+   "lidar_returns_beyond": 419,
+   "verdict": "notglass",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t108_0",
+   "dataset": "go2_china_office",
+   "t": 108.0,
+   "name": "glass partition",
+   "conf": 0.32990530133247375,
+   "corner_a": [
+    0.44,
+    4.52
+   ],
+   "corner_b": [
+    1.94,
+    3.88
+   ],
+   "z": [
+    -0.12,
+    1.03
+   ],
+   "width_m": 1.64,
+   "height_m": 1.16,
+   "range_m": 1.56,
+   "robot_xy": [
+    1.13,
+    2.32
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.032,
+   "on_pane": 126,
+   "span_cov": 0.83,
+   "flank": 197,
+   "learnable": true,
+   "lidar_returns_in_box": 519,
+   "lidar_returns_beyond": 1386,
+   "verdict": "glass",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t116_1",
+   "dataset": "go2_china_office",
+   "t": 116.0,
+   "name": "glass wall",
+   "conf": 0.17895714938640594,
+   "corner_a": [
+    10.33,
+    4.76
+   ],
+   "corner_b": [
+    6.21,
+    2.16
+   ],
+   "z": [
+    -0.12,
+    3.38
+   ],
+   "width_m": 4.87,
+   "height_m": 3.5,
+   "range_m": 5.03,
+   "robot_xy": [
+    2.52,
+    2.0
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.096,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 0,
+   "verdict": "unsure",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t118_0",
+   "dataset": "go2_china_office",
+   "t": 118.0,
+   "name": "window",
+   "conf": 0.2126631736755371,
+   "corner_a": [
+    4.94,
+    7.44
+   ],
+   "corner_b": [
+    9.43,
+    8.36
+   ],
+   "z": [
+    -0.12,
+    3.02
+   ],
+   "width_m": 4.58,
+   "height_m": 3.15,
+   "range_m": 5.69,
+   "robot_xy": [
+    3.33,
+    2.7
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.206,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 1345,
+   "verdict": "unsure",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t122_0",
+   "dataset": "go2_china_office",
+   "t": 122.0,
+   "name": "glass wall",
+   "conf": 0.22457069158554077,
+   "corner_a": [
+    -1.58,
+    10.65
+   ],
+   "corner_b": [
+    2.87,
+    7.91
+   ],
+   "z": [
+    -0.12,
+    3.62
+   ],
+   "width_m": 5.23,
+   "height_m": 3.75,
+   "range_m": 6.4,
+   "robot_xy": [
+    3.04,
+    3.75
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.158,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 350,
+   "verdict": "notglass",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t122_1",
+   "dataset": "go2_china_office",
+   "t": 122.0,
+   "name": "glass wall",
+   "conf": 0.19939476251602173,
+   "corner_a": [
+    1.74,
+    3.78
+   ],
+   "corner_b": [
+    2.62,
+    5.13
+   ],
+   "z": [
+    -0.12,
+    0.8
+   ],
+   "width_m": 1.61,
+   "height_m": 0.93,
+   "range_m": 0.81,
+   "robot_xy": [
+    3.04,
+    3.75
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.082,
+   "on_pane": 177,
+   "span_cov": 0.83,
+   "flank": 64,
+   "learnable": true,
+   "lidar_returns_in_box": 375,
+   "lidar_returns_beyond": 987,
+   "verdict": "glass",
+   "note": "same surface as t38_0",
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t124_0",
+   "dataset": "go2_china_office",
+   "t": 124.0,
+   "name": "window",
+   "conf": 0.3686251938343048,
+   "corner_a": [
+    5.52,
+    7.56
+   ],
+   "corner_b": [
+    8.69,
+    5.83
+   ],
+   "z": [
+    -0.12,
+    2.37
+   ],
+   "width_m": 3.61,
+   "height_m": 2.5,
+   "range_m": 4.65,
+   "robot_xy": [
+    3.01,
+    3.77
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.066,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 3544,
+   "verdict": "unsure",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t124_1",
+   "dataset": "go2_china_office",
+   "t": 124.0,
+   "name": "glass wall",
+   "conf": 0.2512296438217163,
+   "corner_a": [
+    2.97,
+    5.01
+   ],
+   "corner_b": [
+    4.31,
+    4.26
+   ],
+   "z": [
+    -0.12,
+    0.78
+   ],
+   "width_m": 1.55,
+   "height_m": 0.9,
+   "range_m": 0.77,
+   "robot_xy": [
+    3.01,
+    3.77
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.079,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 157,
+   "learnable": false,
+   "lidar_returns_in_box": 24,
+   "lidar_returns_beyond": 143,
+   "verdict": "unsure",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t126_0",
+   "dataset": "go2_china_office",
+   "t": 126.0,
+   "name": "window",
+   "conf": 0.4382411241531372,
+   "corner_a": [
+    4.74,
+    6.76
+   ],
+   "corner_b": [
+    7.09,
+    5.64
+   ],
+   "z": [
+    -0.12,
+    1.61
+   ],
+   "width_m": 2.6,
+   "height_m": 1.73,
+   "range_m": 2.94,
+   "robot_xy": [
+    3.46,
+    4.01
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.08,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 5,
+   "lidar_returns_beyond": 2893,
+   "verdict": "unsure",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t128_0",
+   "dataset": "go2_china_office",
+   "t": 128.0,
+   "name": "glass wall",
+   "conf": 0.2676851451396942,
+   "corner_a": [
+    5.36,
+    8.45
+   ],
+   "corner_b": [
+    6.75,
+    6.76
+   ],
+   "z": [
+    -0.12,
+    1.94
+   ],
+   "width_m": 2.19,
+   "height_m": 2.06,
+   "range_m": 3.28,
+   "robot_xy": [
+    4.01,
+    4.71
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.043,
+   "on_pane": 9,
+   "span_cov": 0.12,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 30,
+   "lidar_returns_beyond": 2221,
+   "verdict": "unsure",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t128_1",
+   "dataset": "go2_china_office",
+   "t": 128.0,
+   "name": "window",
+   "conf": 0.1577456146478653,
+   "corner_a": [
+    0.78,
+    12.34
+   ],
+   "corner_b": [
+    4.36,
+    8.78
+   ],
+   "z": [
+    -0.12,
+    3.79
+   ],
+   "width_m": 5.05,
+   "height_m": 3.91,
+   "range_m": 4.96,
+   "robot_xy": [
+    4.01,
+    4.71
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.663,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 107,
+   "verdict": "unsure",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t130_0",
+   "dataset": "go2_china_office",
+   "t": 130.0,
+   "name": "glass wall",
+   "conf": 0.268646776676178,
+   "corner_a": [
+    3.97,
+    8.68
+   ],
+   "corner_b": [
+    2.85,
+    13.26
+   ],
+   "z": [
+    -0.12,
+    3.44
+   ],
+   "width_m": 4.72,
+   "height_m": 3.56,
+   "range_m": 4.11,
+   "robot_xy": [
+    3.94,
+    5.22
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.611,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 826,
+   "verdict": "notglass",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t130_1",
+   "dataset": "go2_china_office",
+   "t": 130.0,
+   "name": "glass wall",
+   "conf": 0.2643774747848511,
+   "corner_a": [
+    2.75,
+    6.35
+   ],
+   "corner_b": [
+    4.51,
+    6.78
+   ],
+   "z": [
+    -0.12,
+    0.97
+   ],
+   "width_m": 1.82,
+   "height_m": 1.09,
+   "range_m": 1.09,
+   "robot_xy": [
+    3.94,
+    5.22
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.096,
+   "on_pane": 11,
+   "span_cov": 0.14,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 40,
+   "lidar_returns_beyond": 805,
+   "verdict": "unsure",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t134_0",
+   "dataset": "go2_china_office",
+   "t": 134.0,
+   "name": "glass wall",
+   "conf": 0.6483441591262817,
+   "corner_a": [
+    2.45,
+    6.8
+   ],
+   "corner_b": [
+    3.5,
+    6.59
+   ],
+   "z": [
+    -0.12,
+    0.94
+   ],
+   "width_m": 1.08,
+   "height_m": 1.07,
+   "range_m": 1.21,
+   "robot_xy": [
+    3.74,
+    5.36
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.091,
+   "on_pane": 53,
+   "span_cov": 0.5,
+   "flank": 182,
+   "learnable": true,
+   "lidar_returns_in_box": 134,
+   "lidar_returns_beyond": 395,
+   "verdict": "glass",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t134_1",
+   "dataset": "go2_china_office",
+   "t": 134.0,
+   "name": "glass wall",
+   "conf": 0.3270387351512909,
+   "corner_a": [
+    2.84,
+    6.91
+   ],
+   "corner_b": [
+    3.5,
+    6.72
+   ],
+   "z": [
+    -0.12,
+    0.91
+   ],
+   "width_m": 0.68,
+   "height_m": 1.04,
+   "range_m": 1.27,
+   "robot_xy": [
+    3.74,
+    5.36
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.102,
+   "on_pane": 40,
+   "span_cov": 0.33,
+   "flank": 142,
+   "learnable": true,
+   "lidar_returns_in_box": 103,
+   "lidar_returns_beyond": 403,
+   "verdict": "unsure",
+   "note": "box slightly near and angled",
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t136_0",
+   "dataset": "go2_china_office",
+   "t": 136.0,
+   "name": "glass wall",
+   "conf": 0.7252320647239685,
+   "corner_a": [
+    2.34,
+    6.89
+   ],
+   "corner_b": [
+    3.5,
+    6.48
+   ],
+   "z": [
+    -0.12,
+    0.98
+   ],
+   "width_m": 1.24,
+   "height_m": 1.1,
+   "range_m": 1.18,
+   "robot_xy": [
+    3.74,
+    5.36
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.061,
+   "on_pane": 134,
+   "span_cov": 0.75,
+   "flank": 183,
+   "learnable": true,
+   "lidar_returns_in_box": 165,
+   "lidar_returns_beyond": 873,
+   "verdict": "glass",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_china_office_t136_1",
+   "dataset": "go2_china_office",
+   "t": 136.0,
+   "name": "glass wall",
+   "conf": 0.17312951385974884,
+   "corner_a": [
+    3.1,
+    6.53
+   ],
+   "corner_b": [
+    3.54,
+    6.71
+   ],
+   "z": [
+    -0.12,
+    0.78
+   ],
+   "width_m": 0.47,
+   "height_m": 0.91,
+   "range_m": 1.08,
+   "robot_xy": [
+    3.74,
+    5.36
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.025,
+   "on_pane": 40,
+   "span_cov": 1.0,
+   "flank": 16,
+   "learnable": false,
+   "lidar_returns_in_box": 146,
+   "lidar_returns_beyond": 16,
+   "verdict": "unsure",
+   "note": null,
+   "review_round": 1
+  },
+  {
+   "id": "go2_short_t7_0",
+   "dataset": "go2_short",
+   "t": 7.0,
+   "name": "glass partition",
+   "conf": 0.39226996898651123,
+   "corner_a": [
+    -8.92,
+    8.47
+   ],
+   "corner_b": [
+    -3.72,
+    7.28
+   ],
+   "z": [
+    -0.12,
+    2.46
+   ],
+   "width_m": 5.34,
+   "height_m": 2.59,
+   "range_m": 3.45,
+   "robot_xy": [
+    -0.77,
+    7.83
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.43,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 14,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 347,
+   "verdict": "unreviewed",
+   "note": null,
+   "review_round": 2
+  },
+  {
+   "id": "go2_short_t7_1",
+   "dataset": "go2_short",
+   "t": 7.0,
+   "name": "window",
+   "conf": 0.15883885324001312,
+   "corner_a": [
+    -4.32,
+    8.17
+   ],
+   "corner_b": [
+    -3.42,
+    10.85
+   ],
+   "z": [
+    -0.12,
+    1.74
+   ],
+   "width_m": 2.83,
+   "height_m": 1.86,
+   "range_m": 3.22,
+   "robot_xy": [
+    -0.77,
+    7.83
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.184,
+   "on_pane": 23,
+   "span_cov": 0.27,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 128,
+   "lidar_returns_beyond": 2369,
+   "verdict": "unreviewed",
+   "note": null,
+   "review_round": 2
+  },
+  {
+   "id": "go2_short_t9_0",
+   "dataset": "go2_short",
+   "t": 9.0,
+   "name": "glass wall",
+   "conf": 0.18063001334667206,
+   "corner_a": [
+    -4.23,
+    8.46
+   ],
+   "corner_b": [
+    -3.26,
+    12.59
+   ],
+   "z": [
+    -0.12,
+    1.77
+   ],
+   "width_m": 4.24,
+   "height_m": 1.89,
+   "range_m": 2.57,
+   "robot_xy": [
+    -1.82,
+    8.42
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.269,
+   "on_pane": 433,
+   "span_cov": 0.62,
+   "flank": 61,
+   "learnable": true,
+   "lidar_returns_in_box": 665,
+   "lidar_returns_beyond": 2379,
+   "verdict": "unsure",
+   "note": "",
+   "review_round": 2
+  },
+  {
+   "id": "go2_short_t11_0",
+   "dataset": "go2_short",
+   "t": 11.0,
+   "name": "glass partition",
+   "conf": 0.19815310835838318,
+   "corner_a": [
+    -4.12,
+    11.72
+   ],
+   "corner_b": [
+    -3.14,
+    11.73
+   ],
+   "z": [
+    -0.08,
+    1.59
+   ],
+   "width_m": 0.99,
+   "height_m": 1.66,
+   "range_m": 2.51,
+   "robot_xy": [
+    -2.13,
+    9.37
+   ],
+   "floor_z": -0.08,
+   "planarity_rms_m": 0.034,
+   "on_pane": 192,
+   "span_cov": 1.0,
+   "flank": 2,
+   "learnable": false,
+   "lidar_returns_in_box": 275,
+   "lidar_returns_beyond": 1794,
+   "verdict": "unreviewed",
+   "note": null,
+   "review_round": 2
+  },
+  {
+   "id": "go2_short_t13_0",
+   "dataset": "go2_short",
+   "t": 13.0,
+   "name": "glass wall",
+   "conf": 0.41888052225112915,
+   "corner_a": [
+    -3.12,
+    12.1
+   ],
+   "corner_b": [
+    -6.42,
+    16.8
+   ],
+   "z": [
+    -0.08,
+    0.81
+   ],
+   "width_m": 5.75,
+   "height_m": 0.88,
+   "range_m": 2.11,
+   "robot_xy": [
+    -1.92,
+    10.68
+   ],
+   "floor_z": -0.08,
+   "planarity_rms_m": 0.078,
+   "on_pane": 59,
+   "span_cov": 0.09,
+   "flank": 83,
+   "learnable": false,
+   "lidar_returns_in_box": 497,
+   "lidar_returns_beyond": 1075,
+   "verdict": "unreviewed",
+   "note": null,
+   "review_round": 2
+  },
+  {
+   "id": "go2_short_t15_0",
+   "dataset": "go2_short",
+   "t": 15.0,
+   "name": "glass wall",
+   "conf": 0.44001850485801697,
+   "corner_a": [
+    -1.79,
+    17.32
+   ],
+   "corner_b": [
+    0.71,
+    17.91
+   ],
+   "z": [
+    -0.08,
+    1.79
+   ],
+   "width_m": 2.57,
+   "height_m": 1.87,
+   "range_m": 5.01,
+   "robot_xy": [
+    -1.93,
+    12.27
+   ],
+   "floor_z": -0.08,
+   "planarity_rms_m": 0.266,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 1568,
+   "verdict": "unreviewed",
+   "note": null,
+   "review_round": 2
+  },
+  {
+   "id": "go2_short_t15_1",
+   "dataset": "go2_short",
+   "t": 15.0,
+   "name": "glass wall",
+   "conf": 0.22070768475532532,
+   "corner_a": [
+    -0.61,
+    15.92
+   ],
+   "corner_b": [
+    -0.92,
+    13.29
+   ],
+   "z": [
+    -0.08,
+    1.06
+   ],
+   "width_m": 2.65,
+   "height_m": 1.13,
+   "range_m": 2.09,
+   "robot_xy": [
+    -1.93,
+    12.27
+   ],
+   "floor_z": -0.08,
+   "planarity_rms_m": 0.015,
+   "on_pane": 224,
+   "span_cov": 0.8,
+   "flank": 132,
+   "learnable": true,
+   "lidar_returns_in_box": 303,
+   "lidar_returns_beyond": 351,
+   "verdict": "notglass",
+   "note": "",
+   "review_round": 2
+  },
+  {
+   "id": "go2_short_t17_0",
+   "dataset": "go2_short",
+   "t": 17.0,
+   "name": "glass wall",
+   "conf": 0.15772786736488342,
+   "corner_a": [
+    -2.26,
+    17.55
+   ],
+   "corner_b": [
+    -2.48,
+    14.82
+   ],
+   "z": [
+    -0.12,
+    0.85
+   ],
+   "width_m": 2.74,
+   "height_m": 0.97,
+   "range_m": 1.35,
+   "robot_xy": [
+    -1.86,
+    13.98
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.054,
+   "on_pane": 203,
+   "span_cov": 0.6,
+   "flank": 153,
+   "learnable": true,
+   "lidar_returns_in_box": 367,
+   "lidar_returns_beyond": 328,
+   "verdict": "notglass",
+   "note": "",
+   "review_round": 2
+  },
+  {
+   "id": "go2_short_t29_0",
+   "dataset": "go2_short",
+   "t": 29.0,
+   "name": "glass wall",
+   "conf": 0.18740758299827576,
+   "corner_a": [
+    4.46,
+    15.14
+   ],
+   "corner_b": [
+    4.49,
+    12.22
+   ],
+   "z": [
+    -0.08,
+    1.1
+   ],
+   "width_m": 2.92,
+   "height_m": 1.18,
+   "range_m": 1.24,
+   "robot_xy": [
+    3.54,
+    15.58
+   ],
+   "floor_z": -0.08,
+   "planarity_rms_m": 0.092,
+   "on_pane": 125,
+   "span_cov": 0.73,
+   "flank": 8,
+   "learnable": false,
+   "lidar_returns_in_box": 306,
+   "lidar_returns_beyond": 1619,
+   "verdict": "unreviewed",
+   "note": null,
+   "review_round": 2
+  },
+  {
+   "id": "go2_short_t31_0",
+   "dataset": "go2_short",
+   "t": 31.0,
+   "name": "glass wall",
+   "conf": 0.6250139474868774,
+   "corner_a": [
+    4.83,
+    12.81
+   ],
+   "corner_b": [
+    4.56,
+    11.2
+   ],
+   "z": [
+    -0.08,
+    1.45
+   ],
+   "width_m": 1.63,
+   "height_m": 1.53,
+   "range_m": 2.31,
+   "robot_xy": [
+    3.55,
+    14.35
+   ],
+   "floor_z": -0.08,
+   "planarity_rms_m": 0.01,
+   "on_pane": 110,
+   "span_cov": 0.83,
+   "flank": 157,
+   "learnable": true,
+   "lidar_returns_in_box": 146,
+   "lidar_returns_beyond": 522,
+   "verdict": "unsure",
+   "note": "",
+   "review_round": 2
+  },
+  {
+   "id": "go2_short_t39_0",
+   "dataset": "go2_short",
+   "t": 39.0,
+   "name": "glass wall",
+   "conf": 0.22064748406410217,
+   "corner_a": [
+    2.17,
+    5.56
+   ],
+   "corner_b": [
+    2.76,
+    7.25
+   ],
+   "z": [
+    -0.12,
+    0.87
+   ],
+   "width_m": 1.79,
+   "height_m": 1.0,
+   "range_m": 0.99,
+   "robot_xy": [
+    2.23,
+    8.0
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.078,
+   "on_pane": 131,
+   "span_cov": 0.86,
+   "flank": 113,
+   "learnable": true,
+   "lidar_returns_in_box": 291,
+   "lidar_returns_beyond": 201,
+   "verdict": "glass",
+   "note": "box a few deg off",
+   "review_round": 2
+  },
+  {
+   "id": "go2_short_t39_1",
+   "dataset": "go2_short",
+   "t": 39.0,
+   "name": "glass wall",
+   "conf": 0.187075674533844,
+   "corner_a": [
+    3.68,
+    6.71
+   ],
+   "corner_b": [
+    1.36,
+    6.94
+   ],
+   "z": [
+    -0.12,
+    0.8
+   ],
+   "width_m": 2.33,
+   "height_m": 0.92,
+   "range_m": 0.85,
+   "robot_xy": [
+    2.23,
+    8.0
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.15,
+   "on_pane": 81,
+   "span_cov": 0.67,
+   "flank": 37,
+   "learnable": true,
+   "lidar_returns_in_box": 173,
+   "lidar_returns_beyond": 1420,
+   "verdict": "notglass",
+   "note": "",
+   "review_round": 2
+  },
+  {
+   "id": "go2_short_t41_0",
+   "dataset": "go2_short",
+   "t": 41.0,
+   "name": "glass wall",
+   "conf": 0.20953965187072754,
+   "corner_a": [
+    2.25,
+    6.67
+   ],
+   "corner_b": [
+    -0.91,
+    -0.01
+   ],
+   "z": [
+    -0.08,
+    1.86
+   ],
+   "width_m": 7.39,
+   "height_m": 1.94,
+   "range_m": 1.52,
+   "robot_xy": [
+    2.05,
+    7.33
+   ],
+   "floor_z": -0.08,
+   "planarity_rms_m": 0.362,
+   "on_pane": 20,
+   "span_cov": 0.03,
+   "flank": 60,
+   "learnable": false,
+   "lidar_returns_in_box": 341,
+   "lidar_returns_beyond": 1345,
+   "verdict": "unreviewed",
+   "note": null,
+   "review_round": 2
+  },
+  {
+   "id": "go2_short_t41_1",
+   "dataset": "go2_short",
+   "t": 41.0,
+   "name": "glass wall",
+   "conf": 0.19348393380641937,
+   "corner_a": [
+    1.13,
+    -0.71
+   ],
+   "corner_b": [
+    2.51,
+    6.5
+   ],
+   "z": [
+    -0.08,
+    1.62
+   ],
+   "width_m": 7.34,
+   "height_m": 1.7,
+   "range_m": 1.49,
+   "robot_xy": [
+    2.05,
+    7.33
+   ],
+   "floor_z": -0.08,
+   "planarity_rms_m": 0.055,
+   "on_pane": 182,
+   "span_cov": 0.24,
+   "flank": 112,
+   "learnable": false,
+   "lidar_returns_in_box": 200,
+   "lidar_returns_beyond": 445,
+   "verdict": "unreviewed",
+   "note": null,
+   "review_round": 2
+  },
+  {
+   "id": "go2_short_t45_0",
+   "dataset": "go2_short",
+   "t": 45.0,
+   "name": "glass wall",
+   "conf": 0.5133692026138306,
+   "corner_a": [
+    -0.82,
+    -4.04
+   ],
+   "corner_b": [
+    -3.38,
+    -0.47
+   ],
+   "z": [
+    -0.08,
+    3.53
+   ],
+   "width_m": 4.39,
+   "height_m": 3.61,
+   "range_m": 7.47,
+   "robot_xy": [
+    1.32,
+    4.32
+   ],
+   "floor_z": -0.08,
+   "planarity_rms_m": 0.358,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 332,
+   "verdict": "unreviewed",
+   "note": null,
+   "review_round": 2
+  },
+  {
+   "id": "go2_short_t45_1",
+   "dataset": "go2_short",
+   "t": 45.0,
+   "name": "glass partition",
+   "conf": 0.16206222772598267,
+   "corner_a": [
+    2.25,
+    -3.56
+   ],
+   "corner_b": [
+    0.14,
+    -3.22
+   ],
+   "z": [
+    -0.08,
+    3.11
+   ],
+   "width_m": 2.14,
+   "height_m": 3.18,
+   "range_m": 7.46,
+   "robot_xy": [
+    1.32,
+    4.32
+   ],
+   "floor_z": -0.08,
+   "planarity_rms_m": 0.018,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 2169,
+   "verdict": "unreviewed",
+   "note": null,
+   "review_round": 2
+  },
+  {
+   "id": "go2_short_t47_0",
+   "dataset": "go2_short",
+   "t": 47.0,
+   "name": "glass wall",
+   "conf": 0.3859318494796753,
+   "corner_a": [
+    4.2,
+    -4.13
+   ],
+   "corner_b": [
+    -3.42,
+    -0.8
+   ],
+   "z": [
+    -0.12,
+    3.25
+   ],
+   "width_m": 8.31,
+   "height_m": 3.37,
+   "range_m": 4.9,
+   "robot_xy": [
+    0.75,
+    2.82
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.237,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 4911,
+   "verdict": "unreviewed",
+   "note": null,
+   "review_round": 2
+  },
+  {
+   "id": "go2_short_t49_0",
+   "dataset": "go2_short",
+   "t": 49.0,
+   "name": "glass wall",
+   "conf": 0.6797831058502197,
+   "corner_a": [
+    -0.53,
+    -0.43
+   ],
+   "corner_b": [
+    -4.99,
+    0.58
+   ],
+   "z": [
+    -0.12,
+    2.42
+   ],
+   "width_m": 4.58,
+   "height_m": 2.54,
+   "range_m": 2.81,
+   "robot_xy": [
+    0.12,
+    1.85
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.062,
+   "on_pane": 119,
+   "span_cov": 0.44,
+   "flank": 12,
+   "learnable": false,
+   "lidar_returns_in_box": 254,
+   "lidar_returns_beyond": 1421,
+   "verdict": "unreviewed",
+   "note": null,
+   "review_round": 2
+  },
+  {
+   "id": "go2_short_t49_1",
+   "dataset": "go2_short",
+   "t": 49.0,
+   "name": "glass wall",
+   "conf": 0.15186044573783875,
+   "corner_a": [
+    -0.81,
+    -1.84
+   ],
+   "corner_b": [
+    -2.01,
+    -1.66
+   ],
+   "z": [
+    -0.12,
+    1.89
+   ],
+   "width_m": 1.22,
+   "height_m": 2.01,
+   "range_m": 3.67,
+   "robot_xy": [
+    0.12,
+    1.85
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.026,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 1074,
+   "verdict": "unreviewed",
+   "note": null,
+   "review_round": 2
+  },
+  {
+   "id": "go2_short_t51_0",
+   "dataset": "go2_short",
+   "t": 51.0,
+   "name": "window",
+   "conf": 0.2055385708808899,
+   "corner_a": [
+    -2.87,
+    -0.19
+   ],
+   "corner_b": [
+    -3.92,
+    -0.24
+   ],
+   "z": [
+    -0.12,
+    1.22
+   ],
+   "width_m": 1.05,
+   "height_m": 1.35,
+   "range_m": 2.78,
+   "robot_xy": [
+    -0.89,
+    1.57
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.023,
+   "on_pane": 39,
+   "span_cov": 0.25,
+   "flank": 75,
+   "learnable": false,
+   "lidar_returns_in_box": 67,
+   "lidar_returns_beyond": 495,
+   "verdict": "unreviewed",
+   "note": null,
+   "review_round": 2
+  },
+  {
+   "id": "go2_short_t51_1",
+   "dataset": "go2_short",
+   "t": 51.0,
+   "name": "glass partition",
+   "conf": 0.15879502892494202,
+   "corner_a": [
+    -6.75,
+    0.94
+   ],
+   "corner_b": [
+    -8.88,
+    1.17
+   ],
+   "z": [
+    -0.12,
+    2.33
+   ],
+   "width_m": 2.14,
+   "height_m": 2.45,
+   "range_m": 5.9,
+   "robot_xy": [
+    -0.89,
+    1.57
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.083,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 0,
+   "verdict": "unreviewed",
+   "note": null,
+   "review_round": 2
+  },
+  {
+   "id": "go2_short_t53_0",
+   "dataset": "go2_short",
+   "t": 53.0,
+   "name": "glass wall",
+   "conf": 0.3165493607521057,
+   "corner_a": [
+    -6.43,
+    1.68
+   ],
+   "corner_b": [
+    -3.71,
+    8.73
+   ],
+   "z": [
+    -0.12,
+    3.25
+   ],
+   "width_m": 7.55,
+   "height_m": 3.38,
+   "range_m": 3.68,
+   "robot_xy": [
+    -2.28,
+    1.96
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.791,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 3875,
+   "verdict": "unreviewed",
+   "note": null,
+   "review_round": 2
+  },
+  {
+   "id": "go2_short_t55_0",
+   "dataset": "go2_short",
+   "t": 55.0,
+   "name": "glass wall",
+   "conf": 0.25587716698646545,
+   "corner_a": [
+    -2.96,
+    10.86
+   ],
+   "corner_b": [
+    -3.83,
+    6.87
+   ],
+   "z": [
+    -0.12,
+    3.17
+   ],
+   "width_m": 4.09,
+   "height_m": 3.3,
+   "range_m": 5.28,
+   "robot_xy": [
+    -2.48,
+    2.86
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.071,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 0,
+   "lidar_returns_beyond": 0,
+   "verdict": "unreviewed",
+   "note": null,
+   "review_round": 2
+  },
+  {
+   "id": "go2_short_t57_0",
+   "dataset": "go2_short",
+   "t": 57.0,
+   "name": "glass wall",
+   "conf": 0.3373350501060486,
+   "corner_a": [
+    -4.04,
+    7.28
+   ],
+   "corner_b": [
+    -4.17,
+    12.24
+   ],
+   "z": [
+    -0.12,
+    2.62
+   ],
+   "width_m": 4.96,
+   "height_m": 2.74,
+   "range_m": 4.61,
+   "robot_xy": [
+    -2.21,
+    4.57
+   ],
+   "floor_z": -0.12,
+   "planarity_rms_m": 0.046,
+   "on_pane": 0,
+   "span_cov": 0.0,
+   "flank": 0,
+   "learnable": false,
+   "lidar_returns_in_box": 68,
+   "lidar_returns_beyond": 1207,
+   "verdict": "unreviewed",
+   "note": null,
+   "review_round": 2
+  }
+ ]
+}
