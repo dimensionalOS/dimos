@@ -15,12 +15,12 @@ crate-type = ["cdylib", "rlib"]
 name = "voxel_ray_tracing"
 path = "src/main.rs"
 
-# Registry entry read by `dimos bake` (graph + codegen) and cross-checked at
-# compile time by #[module(name = "ray_tracing")].
+# Bake registry entry, cross-checked at compile time by the module macro.
+# threads = 2 keeps per-scan map compute from serializing with publish work.
 [package.metadata.dimos.module.ray_tracing]
 path = "dimos_voxel_ray_tracing::module::RayTracingVoxelMap"
 python = "dimos.mapping.ray_tracing.module:RayTracingVoxelMap"
-threads = 1
+threads = 2
 
 [package.metadata.dimos.module.ray_tracing.inputs]
 lidar = "sensor_msgs.PointCloud2"
@@ -32,9 +32,7 @@ local_map = "sensor_msgs.PointCloud2"
 region_bounds = "geometry_msgs.PoseStamped"
 
 [features]
-# pyo3 is only needed for the python extension module. `dimos bake` links this
-# crate into a host binary with default-features off so no pyo3 objects (and
-# their libpython symbols) reach a statically linked build.
+# Baked host binaries build with default-features off to keep libpython out of a static link.
 default = ["python"]
 python = ["dep:pyo3", "dep:numpy"]
 

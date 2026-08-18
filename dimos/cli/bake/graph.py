@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Wire the selected modules together the way ``autoconnect`` would.
+"""Wire the selected modules together the way autoconnect would.
 
 Unlike autoconnect, a same-name type mismatch is an error rather than silence.
 """
@@ -25,29 +25,11 @@ import hashlib
 import json
 from typing import Literal
 
-from dimos.cli.bake.discovery import ModuleInfo, normalize_id
+from dimos.cli.bake.discovery import RegisteredModule, normalize_id
 from dimos.cli.bake.errors import BakeError
+from dimos.core.transport_factory import default_zenoh_qos_for, zenoh_key_expr
 
 Kind = Literal["internal", "external_input", "external_output"]
-
-_TOPIC_PREFIX = "dimos/"
-
-
-def topic_for(name: str, msg_type: str) -> str:
-    """The zenoh key a typed dimos channel lands on."""
-    return f"{_TOPIC_PREFIX}{name.lstrip('/')}/{msg_type}"
-
-
-def default_qos(name: str, msg_type: str) -> dict[str, str] | None:
-    """Publisher QoS bake bakes in, mirroring ``default_zenoh_qos``."""
-    from dimos.core.transport_factory import _LATEST_WINS_TYPES, _NEVER_DROP_CHANNELS
-    from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, QOS_NEVER_DROP
-
-    if msg_type in _LATEST_WINS_TYPES:
-        return QOS_LATEST_WINS.to_wire()
-    if name.lstrip("/") in _NEVER_DROP_CHANNELS:
-        return QOS_NEVER_DROP.to_wire()
-    return None
 
 
 @dataclass(frozen=True)
@@ -105,13 +87,9 @@ class Graph:
         """Baked wiring: `{module: {port: topic}}`."""
         wiring: dict[str, dict[str, str]] = {m: {} for m in self.modules}
         for conn in self.connections:
-            for ref in self.producers_and_consumers(conn):
+            for ref in conn.producers + conn.consumers:
                 wiring[ref.module][ref.port] = conn.topic
         return wiring
-
-    @staticmethod
-    def producers_and_consumers(conn: Connection) -> tuple[PortRef, ...]:
-        return conn.producers + conn.consumers
 
     def suppressed_topics(self) -> tuple[str, ...]:
         return tuple(c.topic for c in self.connections if c.suppressed)
@@ -144,7 +122,7 @@ class Graph:
 
 
 def parse_remap(value: str) -> tuple[tuple[str, str], str]:
-    """`--remap mls_planner.global_map=surface_map` -> `(("mls_planner", "global_map"), ...)`."""
+    """Split one --remap argument into its target port and new channel name."""
     target, _, name = value.partition("=")
     module, _, port = target.partition(".")
     if not (module and port and name):
@@ -157,7 +135,7 @@ def _effective(remaps: Mapping[tuple[str, str], str], module: str, port: str) ->
 
 
 def _check_remap_targets(
-    modules: Sequence[ModuleInfo], remaps: Mapping[tuple[str, str], str]
+    modules: Sequence[RegisteredModule], remaps: Mapping[tuple[str, str], str]
 ) -> None:
     known = {(m.id, port) for m in modules for port in m.ports}
     for module, port in remaps:
@@ -178,7 +156,7 @@ def _resolve_suppress(entries: Iterable[str], connections: Sequence[Connection])
 
 def build_graph(
     host: str,
-    modules: Sequence[ModuleInfo],
+    modules: Sequence[RegisteredModule],
     *,
     remaps: Mapping[tuple[str, str], str] | None = None,
     suppress: Iterable[str] = (),
@@ -209,14 +187,15 @@ def build_graph(
 
     def connection(name: str, suppressed: bool) -> Connection:
         msg_type, _ = types[name]
+        qos = default_zenoh_qos_for(name, msg_type)
         return Connection(
             name=name,
-            topic=topic_for(name, msg_type),
+            topic=zenoh_key_expr(name, msg_type),
             msg_type=msg_type,
             producers=tuple(producers.get(name, ())),
             consumers=tuple(consumers.get(name, ())),
             suppressed=suppressed,
-            qos=default_qos(name, msg_type),
+            qos=qos.to_wire() if qos else None,
         )
 
     draft = [connection(name, False) for name in sorted(types)]

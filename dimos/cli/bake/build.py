@@ -46,8 +46,7 @@ def build_command(builder: str, *, target: str | None = None, debug: bool = Fals
 
 
 def target_dir_name(target: str) -> str:
-    """The directory cargo writes for `target`. `cargo zigbuild` accepts a
-    glibc suffix glued to the triple but writes under the bare triple."""
+    """The output directory for a target triple, with any glibc suffix stripped."""
     return target.split(".", 1)[0]
 
 

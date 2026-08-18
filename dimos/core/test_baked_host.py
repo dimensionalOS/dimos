@@ -69,11 +69,11 @@ def ports(cls: type[NativeModule]) -> dict[str, object]:
     }
 
 
-def test_ports_are_the_union_of_the_members():
+def test_ports_are_the_union_of_the_members() -> None:
     assert set(ports(host_class())) == {"lidar", "local_map", "goal", "path"}
 
 
-def test_a_port_someone_produces_is_an_output_on_the_host():
+def test_a_port_someone_produces_is_an_output_on_the_host() -> None:
     declared = ports(host_class())
     # local_map is In on the planner and Out on the mapper: producing wins.
     assert get_origin(declared["local_map"]) is Out
@@ -82,13 +82,13 @@ def test_a_port_someone_produces_is_an_output_on_the_host():
     assert get_origin(declared["path"]) is Out
 
 
-def test_remaps_rename_a_member_port_on_the_host():
+def test_remaps_rename_a_member_port_on_the_host() -> None:
     declared = ports(host_class(remaps={("planner", "local_map"): "surface"}))
     assert "surface" in declared
     assert get_origin(declared["surface"]) is In
 
 
-def test_a_type_clash_between_members_is_refused():
+def test_a_type_clash_between_members_is_refused() -> None:
     class Clash(NativeModule):
         config: PlannerConfig
 
@@ -98,7 +98,7 @@ def test_a_type_clash_between_members_is_refused():
         baked_host("Bad", executable="x", members={"planner": Planner, "clash": Clash})
 
 
-def test_member_configs_default_and_are_overridable():
+def test_member_configs_default_and_are_overridable() -> None:
     cls = host_class()
     host = cls(mapper_config=MapperConfig(voxel_size=0.25))
     assert host.config.mapper_config.voxel_size == 0.25
@@ -108,7 +108,7 @@ def test_member_configs_default_and_are_overridable():
     host.stop()
 
 
-def test_a_duplex_member_port_keeps_both_directions():
+def test_a_duplex_member_port_keeps_both_directions() -> None:
     """Collapsing IO to Out would leave the host deaf on the channel."""
 
     class DuplexConfig(NativeModuleConfig):
@@ -123,7 +123,7 @@ def test_a_duplex_member_port_keeps_both_directions():
     assert get_origin(get_type_hints(cls)["cmd"]) is IO
 
 
-def test_a_baked_host_spawns_its_binary_with_no_arguments():
+def test_a_baked_host_spawns_its_binary_with_no_arguments() -> None:
     host = host_class()()
     # What the base class would have sent, and what the binary exits 2 on.
     assert "--mapper_config" in host.config.to_cli_args()
@@ -131,7 +131,7 @@ def test_a_baked_host_spawns_its_binary_with_no_arguments():
     host.stop()
 
 
-def test_stdin_blob_nests_one_section_per_member():
+def test_stdin_blob_nests_one_section_per_member() -> None:
     host = host_class()()
     topics = {
         "lidar": "dimos/lidar",
@@ -156,7 +156,7 @@ def test_stdin_blob_nests_one_section_per_member():
     host.stop()
 
 
-def test_a_remapped_member_port_keeps_its_own_name_in_its_section():
+def test_a_remapped_member_port_keeps_its_own_name_in_its_section() -> None:
     host = host_class(remaps={("planner", "local_map"): "surface"})()
     blob = json.loads(
         host._stdin_blob({"local_map": "dimos/local_map", "surface": "dimos/surface"})
@@ -166,14 +166,14 @@ def test_a_remapped_member_port_keeps_its_own_name_in_its_section():
     host.stop()
 
 
-def test_an_explicit_suppress_list_replaces_the_baked_one():
+def test_an_explicit_suppress_list_replaces_the_baked_one() -> None:
     host = host_class()(suppress=[])
     blob = json.loads(host._stdin_blob({}))
     assert blob["suppress"] == []
     host.stop()
 
 
-def test_an_empty_member_map_is_refused():
+def test_an_empty_member_map_is_refused() -> None:
     with pytest.raises(ValueError, match="at least one member"):
         baked_host("Empty", executable="x", members={})
 
@@ -181,7 +181,7 @@ def test_an_empty_member_map_is_refused():
 Pickled = baked_host("Pickled", executable="dist/x", members=MEMBERS)
 
 
-def test_the_generated_classes_pickle():
+def test_the_generated_classes_pickle() -> None:
     """Deploying to a worker pickles both, so both must resolve by module path."""
     assert pickle.loads(pickle.dumps(Pickled)) is Pickled
     host = Pickled()

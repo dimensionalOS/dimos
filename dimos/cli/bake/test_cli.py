@@ -16,12 +16,19 @@
 
 from __future__ import annotations
 
+import dataclasses
+import json
+from pathlib import Path
+
+import pytest
 import typer
 from typer.testing import CliRunner
 
-from dimos.cli.bake.cli import bake, emit_config
+from dimos.cli.bake import cli
+from dimos.cli.bake.cli import bake, default_config, emit_config
 from dimos.cli.bake.codegen import render_main_rs
 from dimos.cli.bake.discovery import discover_modules, select_modules
+from dimos.cli.bake.errors import BakeError
 from dimos.cli.bake.graph import build_graph
 
 
@@ -43,6 +50,49 @@ def test_a_bake_error_exits_nonzero() -> None:
     result = CliRunner().invoke(app(), ["ray_tracing", "-o", "bad.name"])
     assert result.exit_code == 1
     assert "cannot name the host binary" in result.output
+
+
+def test_out_is_required_for_a_build() -> None:
+    result = CliRunner().invoke(app(), ["ray_tracing"])
+    assert result.exit_code == 1
+    assert "-o/--out is required" in result.output
+
+
+def test_dry_run_prints_the_graph_and_skips_the_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(cli, "generate_crate", lambda *a, **k: calls.append("generate"))
+    result = CliRunner().invoke(
+        app(), ["ray_tracing", "-o", str(tmp_path / "hostbin"), "--dry-run"]
+    )
+    assert result.exit_code == 0
+    assert "Host `hostbin`: ray_tracing" in result.output
+    assert calls == []
+
+
+def test_emit_config_writes_one_json_line_and_creates_parent_dirs(tmp_path: Path) -> None:
+    dest = tmp_path / "deploy" / "configs" / "hostbin.json"
+    result = CliRunner().invoke(
+        app(),
+        ["ray_tracing", "-o", str(tmp_path / "hostbin"), "--dry-run", "--emit-config", str(dest)],
+    )
+    assert result.exit_code == 0
+    text = dest.read_text()
+    # The host reads its config with a single read_line.
+    assert text.endswith("\n")
+    assert "\n" not in text[:-1]
+    assert set(json.loads(text)["modules"]) == {"ray_tracing"}
+
+
+def test_default_config_reports_an_unimportable_wrapper() -> None:
+    entry = discover_modules()["ray_tracing"]
+    missing_module = dataclasses.replace(entry, python_ref="dimos.no_such_module:Wrapper")
+    with pytest.raises(BakeError, match="cannot import"):
+        default_config(missing_module)
+    missing_class = dataclasses.replace(entry, python_ref="dimos.cli.bake.cli:NoSuchClass")
+    with pytest.raises(BakeError, match="cannot import"):
+        default_config(missing_class)
 
 
 def test_emit_config_leaves_the_session_to_the_deployment() -> None:

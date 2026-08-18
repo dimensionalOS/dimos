@@ -239,11 +239,6 @@ fn merge_qos(defaults: &Value, overrides: Option<&Value>, suppress: &[String]) -
     Value::Object(merged)
 }
 
-/// The effective suppression list: the baked one unless stdin replaces it.
-///
-/// A stdin entry names a channel (`local_map`) or a full topic, like the CLI's
-/// `--suppress`. An entry matching nothing this host touches is an error: a
-/// typo must not silently publish the topic it meant to keep in-process.
 /// Whether a `suppress` entry names this topic, by full topic or channel name.
 fn suppresses(topic: &str, entry: &str) -> bool {
     topic == entry || topic.split('/').nth(1) == Some(entry)
@@ -275,6 +270,11 @@ fn baked_suppress(spec: &HostSpec, known: &[String]) -> Vec<String> {
     resolved
 }
 
+/// The effective suppression list: the baked one unless stdin replaces it.
+///
+/// A stdin entry names a channel (`local_map`) or a full topic, like the CLI's
+/// `--suppress`. An entry matching nothing this host touches is an error: a
+/// typo must not silently publish the topic it meant to keep in-process.
 fn resolve_suppress(spec: &HostSpec, stdin: &Value, known: &[String]) -> io::Result<Vec<String>> {
     let Some(value) = stdin.get("suppress") else {
         return Ok(baked_suppress(spec, known));
@@ -471,21 +471,23 @@ fn run_host_fallible(spec: &HostSpec) -> io::Result<()> {
     supervise(spec, prepared, transport, &main_rt)
 }
 
-/// Run every prepared module on its own runtime and take the host down as soon
-/// as one of them stops, whichever way it stops.
-fn supervise(
+type DoneSender = mpsc::UnboundedSender<(&'static str, Outcome)>;
+type DoneReceiver = mpsc::UnboundedReceiver<(&'static str, Outcome)>;
+
+/// Spawn every prepared module on its own runtime, reporting each stop on
+/// `done`.
+fn spawn_modules(
     spec: &HostSpec,
     prepared: Vec<Prepared>,
-    transport: Arc<SharedTransport>,
+    transport: &Arc<SharedTransport>,
     main_rt: &tokio::runtime::Runtime,
-) -> io::Result<()> {
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let (done_tx, mut done_rx) = mpsc::unbounded_channel::<(&'static str, Outcome)>();
-
+    shutdown_rx: &watch::Receiver<bool>,
+    done_tx: &DoneSender,
+) -> io::Result<Vec<tokio::runtime::Runtime>> {
     let mut runtimes = Vec::with_capacity(prepared.len());
     for (entry, one) in spec.modules.iter().zip(prepared) {
         let runtime = build_runtime(entry)?;
-        let joined = runtime.spawn((one.run)(Arc::clone(&transport), shutdown_rx.clone()));
+        let joined = runtime.spawn((one.run)(Arc::clone(transport), shutdown_rx.clone()));
         let done = done_tx.clone();
         let name = entry.name;
         main_rt.spawn(async move {
@@ -497,27 +499,13 @@ fn supervise(
             let _ = done.send((name, outcome));
         });
         runtimes.push(runtime);
-        info!(
-            host = spec.name,
-            module = name,
-            threads = entry.threads,
-            "module started"
-        );
     }
-    drop(done_tx);
+    Ok(runtimes)
+}
 
-    // Fail fast: the first module to stop takes the host down with it. A module
-    // that returns is as fatal as one that panics: nothing else can drive it.
-    let first = main_rt.block_on(async {
-        tokio::select! {
-            first = done_rx.recv() => first,
-            _ = tokio::signal::ctrl_c() => None,
-        }
-    });
-
-    let _ = shutdown_tx.send(true);
-
-    let failure = match &first {
+/// Log why the host is going down. True when a module stopping caused it.
+fn note_first_stop(spec: &HostSpec, first: &Option<(&'static str, Outcome)>) -> bool {
+    match first {
         Some((name, Outcome::Panicked)) => {
             error!(
                 host = spec.name,
@@ -542,9 +530,12 @@ fn supervise(
             info!(host = spec.name, "interrupted, shutting down");
             false
         }
-    };
+    }
+}
 
-    // Bounded: a wedged module must not keep the host alive.
+/// Wait for the remaining modules to stop. Bounded: a wedged module must not
+/// keep the host alive.
+fn drain_modules(spec: &HostSpec, main_rt: &tokio::runtime::Runtime, done_rx: &mut DoneReceiver) {
     main_rt.block_on(async {
         let drain = async { while done_rx.recv().await.is_some() {} };
         if tokio::time::timeout(SHUTDOWN_GRACE, drain).await.is_err() {
@@ -555,6 +546,33 @@ fn supervise(
             );
         }
     });
+}
+
+/// Run every prepared module on its own runtime and take the host down as soon
+/// as one of them stops, whichever way it stops.
+fn supervise(
+    spec: &HostSpec,
+    prepared: Vec<Prepared>,
+    transport: Arc<SharedTransport>,
+    main_rt: &tokio::runtime::Runtime,
+) -> io::Result<()> {
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let (done_tx, mut done_rx) = mpsc::unbounded_channel();
+    let runtimes = spawn_modules(spec, prepared, &transport, main_rt, &shutdown_rx, &done_tx)?;
+    drop(done_tx);
+
+    // Fail fast: the first module to stop takes the host down with it. A module
+    // that returns is as fatal as one that panics: nothing else can drive it.
+    let first = main_rt.block_on(async {
+        tokio::select! {
+            first = done_rx.recv() => first,
+            _ = tokio::signal::ctrl_c() => None,
+        }
+    });
+
+    let _ = shutdown_tx.send(true);
+    let failure = note_first_stop(spec, &first);
+    drain_modules(spec, main_rt, &mut done_rx);
     // Dropping a Runtime waits for its tasks. A wedged module would hang here.
     for runtime in runtimes {
         runtime.shutdown_background();
@@ -801,10 +819,9 @@ mod tests {
 
     // Two mock modules on one host, over one shared transport.
 
-    use crate::module::{Builder, Input, NoConfig, Output};
+    use crate::module::{Builder, Input, NativeConfig, NoConfig, Output};
     use crate::transport::Dispatch;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Mutex;
+    use std::sync::{LazyLock, Mutex};
 
     /// Loopback transport: a publish is delivered to this process's own
     /// subscribers, which is all a host needs to wire its modules together.
@@ -833,26 +850,59 @@ mod tests {
         }
     }
 
-    static RECEIVED: AtomicBool = AtomicBool::new(false);
-    static SENDER_THREAD: Mutex<Option<String>> = Mutex::new(None);
+    /// What the mock modules report, keyed per test so cargo's concurrent
+    /// test threads cannot clobber each other.
+    #[derive(Default, Clone)]
+    struct Probe {
+        received: bool,
+        sender_thread: Option<String>,
+    }
+
+    static PROBES: LazyLock<Mutex<HashMap<String, Probe>>> = LazyLock::new(Default::default);
+
+    fn probe(key: &str) -> Probe {
+        PROBES.lock().unwrap().get(key).cloned().unwrap_or_default()
+    }
+
+    #[derive(Debug, serde::Deserialize, serde::Serialize)]
+    #[serde(deny_unknown_fields)]
+    struct ProbeConfig {
+        key: String,
+    }
+
+    impl NativeConfig for ProbeConfig {}
+
+    impl validator::Validate for ProbeConfig {
+        fn validate(&self) -> Result<(), validator::ValidationErrors> {
+            Ok(())
+        }
+    }
 
     /// Publishes on `ping` forever, so the receiver can't miss the message by
     /// subscribing late.
     struct Sender {
+        key: String,
         ping: Output<Vec<u8>>,
     }
 
     impl Module for Sender {
-        type Config = NoConfig;
+        type Config = ProbeConfig;
 
-        fn build(builder: &mut Builder, _config: NoConfig) -> Self {
+        fn build(builder: &mut Builder, config: ProbeConfig) -> Self {
             Self {
+                key: config.key,
                 ping: builder.output("ping", |b: &Vec<u8>| b.clone()),
             }
         }
 
         async fn handle(&mut self) {
-            *SENDER_THREAD.lock().unwrap() = std::thread::current().name().map(str::to_string);
+            let name = std::thread::current().name().map(str::to_string);
+            PROBES
+                .lock()
+                .unwrap()
+                .entry(self.key.clone())
+                .or_default()
+                .sender_thread = name;
             loop {
                 let _ = self.ping.publish(&vec![7u8]).await;
                 tokio::time::sleep(Duration::from_millis(5)).await;
@@ -862,21 +912,28 @@ mod tests {
 
     /// Records the first message and returns, which is a fatal event for a host.
     struct Receiver {
+        key: String,
         ping: Input<Vec<u8>>,
     }
 
     impl Module for Receiver {
-        type Config = NoConfig;
+        type Config = ProbeConfig;
 
-        fn build(builder: &mut Builder, _config: NoConfig) -> Self {
+        fn build(builder: &mut Builder, config: ProbeConfig) -> Self {
             Self {
+                key: config.key,
                 ping: builder.input("ping", |b| Ok(b.to_vec())),
             }
         }
 
         async fn handle(&mut self) {
             if self.ping.recv().await.is_some() {
-                RECEIVED.store(true, Ordering::SeqCst);
+                PROBES
+                    .lock()
+                    .unwrap()
+                    .entry(self.key.clone())
+                    .or_default()
+                    .received = true;
             }
         }
     }
@@ -921,12 +978,12 @@ mod tests {
         }
     }
 
-    fn run_spec(spec: &HostSpec) -> io::Result<()> {
+    fn run_spec(spec: &HostSpec, config: Value) -> io::Result<()> {
         let stdin = json!({
             "modules": spec
                 .modules
                 .iter()
-                .map(|m| (m.name.to_string(), json!({"config": null})))
+                .map(|m| (m.name.to_string(), json!({"config": config.clone()})))
                 .collect::<Map<String, Value>>(),
         });
         let prepared = prepare_all(spec, &stdin)?;
@@ -946,15 +1003,14 @@ mod tests {
         ];
         const TOPICS: &str =
             r#"{"sender": {"ping": "host/ping"}, "receiver": {"ping": "host/ping"}}"#;
-        RECEIVED.store(false, Ordering::SeqCst);
 
         // The receiver stopping is what ends the host, so this also covers
         // fail-fast on a module that simply returns.
-        let err =
-            run_spec(&host_spec(MODULES, TOPICS)).expect_err("a stopped module fails the host");
+        let err = run_spec(&host_spec(MODULES, TOPICS), json!({"key": "exchange"}))
+            .expect_err("a stopped module fails the host");
         assert!(err.to_string().contains("receiver"), "{err}");
         assert!(
-            RECEIVED.load(Ordering::SeqCst),
+            probe("exchange").received,
             "the receiver should have seen the sender's message"
         );
     }
@@ -965,7 +1021,8 @@ mod tests {
             ModuleEntry::new::<Exploder>("exploder"),
             ModuleEntry::new::<Idler>("idler"),
         ];
-        let err = run_spec(&host_spec(MODULES, "{}")).expect_err("a panic must fail the host");
+        let err = run_spec(&host_spec(MODULES, "{}"), Value::Null)
+            .expect_err("a panic must fail the host");
         assert!(err.to_string().contains("exploder"), "{err}");
     }
 
@@ -977,11 +1034,9 @@ mod tests {
         ];
         const TOPICS: &str =
             r#"{"sender": {"ping": "host/ping"}, "receiver": {"ping": "host/ping"}}"#;
-        *SENDER_THREAD.lock().unwrap() = None;
 
-        let _ = run_spec(&host_spec(MODULES, TOPICS));
-        let name = SENDER_THREAD.lock().unwrap().clone();
-        assert_eq!(name.as_deref(), Some("dm-sender"));
+        let _ = run_spec(&host_spec(MODULES, TOPICS), json!({"key": "threads"}));
+        assert_eq!(probe("threads").sender_thread.as_deref(), Some("dm-sender"));
     }
 
     #[test]

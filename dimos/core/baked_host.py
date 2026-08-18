@@ -12,17 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Blueprint-side view of a `dimos bake` host binary.
-
-One host process runs several native modules, so python drives it as a single
-NativeModule whose ports are the union of its members'.
-
-    GoNav = baked_host(
-        "GoNav",
-        executable="dist/go2-nav",
-        members={"ray_tracing": RayTracingVoxelMap, "mls_planner": MLSPlannerNative},
-    )
-"""
+"""Blueprint-side view of a baked host binary: one process of several native
+modules, driven as a single NativeModule with the union of their ports."""
 
 from __future__ import annotations
 

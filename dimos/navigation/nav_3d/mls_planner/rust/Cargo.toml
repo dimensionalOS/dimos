@@ -15,10 +15,9 @@ crate-type = ["cdylib", "rlib"]
 name = "mls_planner"
 path = "src/main.rs"
 
-# Registry entry read by `dimos bake` (graph + codegen) and cross-checked at
-# compile time by #[module(name = "mls_planner")].
-# threads = 2: the handle loop must keep dispatching while the planning worker
-# task runs block_in_place, so a current_thread runtime would stall it.
+# Bake registry entry, cross-checked at compile time by the module macro.
+# threads = 2 so the handle loop keeps dispatching while the planning worker
+# runs block_in_place.
 [package.metadata.dimos.module.mls_planner]
 path = "dimos_mls_planner::module::MlsPlanner"
 python = "dimos.navigation.nav_3d.mls_planner.mls_planner_native:MLSPlannerNative"
@@ -38,9 +37,7 @@ node_edges = "nav_msgs.LineSegments3D"
 path = "nav_msgs.Path"
 
 [features]
-# pyo3 is only needed for the python extension module. `dimos bake` links this
-# crate into a host binary with default-features off so no pyo3 objects (and
-# their libpython symbols) reach a statically linked build.
+# Baked host binaries build with default-features off to keep libpython out of a static link.
 default = ["python"]
 python = ["dep:pyo3", "dep:numpy"]
 

@@ -44,13 +44,8 @@ _PRUNE = {
 _SEARCH_ROOTS = ("dimos", "native")
 
 
-def repo_root() -> Path:
-    """The checkout root, i.e. the directory holding the `dimos` package."""
-    return DIMOS_PROJECT_ROOT
-
-
 @dataclass(frozen=True)
-class ModuleInfo:
+class RegisteredModule:
     """One registry entry: everything bake needs about a module before compiling."""
 
     id: str
@@ -92,7 +87,7 @@ def _str_table(entry: Mapping[str, object], key: str, where: str) -> dict[str, s
     return dict(table)
 
 
-def parse_manifest(path: Path) -> list[ModuleInfo]:
+def parse_manifest(path: Path) -> list[RegisteredModule]:
     """Registry entries declared by one Cargo.toml. Empty for crates that opt out."""
     manifest = tomllib.loads(path.read_text())
     package = manifest.get("package", {})
@@ -104,7 +99,7 @@ def parse_manifest(path: Path) -> list[ModuleInfo]:
     if not isinstance(crate_name, str):
         raise BakeError(f"{path}: a module crate needs a [package] name")
 
-    found: list[ModuleInfo] = []
+    found: list[RegisteredModule] = []
     for raw_id, entry in modules.items():
         where = f"{path}: [package.metadata.dimos.module.{raw_id}]"
         if not isinstance(entry, dict):
@@ -116,7 +111,7 @@ def parse_manifest(path: Path) -> list[ModuleInfo]:
         if not isinstance(threads, int) or threads < 1:
             raise BakeError(f"{where}: `threads` must be a positive integer")
         found.append(
-            ModuleInfo(
+            RegisteredModule(
                 id=normalize_id(raw_id),
                 crate_dir=path.parent,
                 crate_name=crate_name,
@@ -130,10 +125,10 @@ def parse_manifest(path: Path) -> list[ModuleInfo]:
     return found
 
 
-def discover_modules(root: Path | None = None) -> dict[str, ModuleInfo]:
+def discover_modules(root: Path | None = None) -> dict[str, RegisteredModule]:
     """Every registered module in the checkout, keyed by id."""
-    root = root or repo_root()
-    registry: dict[str, ModuleInfo] = {}
+    root = root or DIMOS_PROJECT_ROOT
+    registry: dict[str, RegisteredModule] = {}
     for manifest in sorted(_iter_manifests(root)):
         for info in parse_manifest(manifest):
             if info.id in registry:
@@ -145,11 +140,13 @@ def discover_modules(root: Path | None = None) -> dict[str, ModuleInfo]:
     return registry
 
 
-def select_modules(registry: Mapping[str, ModuleInfo], names: Sequence[str]) -> list[ModuleInfo]:
+def select_modules(
+    registry: Mapping[str, RegisteredModule], names: Sequence[str]
+) -> list[RegisteredModule]:
     """Resolve CLI module names against the registry, preserving the given order."""
     if not names:
         raise BakeError("no modules given; `dimos bake --list` shows what is registered")
-    selected: list[ModuleInfo] = []
+    selected: list[RegisteredModule] = []
     seen: set[str] = set()
     for name in names:
         module_id = normalize_id(name)
@@ -167,13 +164,13 @@ def select_modules(registry: Mapping[str, ModuleInfo], names: Sequence[str]) -> 
     return selected
 
 
-def render_registry(registry: Mapping[str, ModuleInfo]) -> str:
+def render_registry(registry: Mapping[str, RegisteredModule]) -> str:
     """`dimos bake --list` output."""
     if not registry:
         return "No registered modules found."
     lines = ["Registered native modules:"]
     for module_id, info in sorted(registry.items()):
-        rel = info.crate_dir.relative_to(repo_root())
+        rel = info.crate_dir.relative_to(DIMOS_PROJECT_ROOT)
         lines.append(f"  {module_id}  ({info.crate_name} at {rel}, threads={info.threads})")
         for port, msg in sorted(info.inputs.items()):
             lines.append(f"      in   {port}: {msg}")

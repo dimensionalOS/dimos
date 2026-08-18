@@ -26,12 +26,17 @@ import typer
 
 from dimos.cli.bake.build import BUILDERS, build_host, install
 from dimos.cli.bake.codegen import check_host_name, generate_crate
-from dimos.cli.bake.discovery import ModuleInfo, discover_modules, render_registry, select_modules
+from dimos.cli.bake.discovery import (
+    RegisteredModule,
+    discover_modules,
+    render_registry,
+    select_modules,
+)
 from dimos.cli.bake.errors import BakeError
 from dimos.cli.bake.graph import Graph, build_graph, parse_remap, render
 
 
-def default_config(module: ModuleInfo) -> dict[str, object]:
+def default_config(module: RegisteredModule) -> dict[str, object]:
     """The module's python wrapper config at its defaults, as the native struct sees it."""
     module_name, _, class_name = module.python_ref.partition(":")
     try:
@@ -44,7 +49,7 @@ def default_config(module: ModuleInfo) -> dict[str, object]:
     return dict(config_type().to_config_dict())
 
 
-def emit_config(graph: Graph, modules: Sequence[ModuleInfo]) -> dict[str, object]:
+def emit_config(graph: Graph, modules: Sequence[RegisteredModule]) -> dict[str, object]:
     """The stdin blob for the host, bar the `session` block only the deployment knows."""
     topics = graph.topics()
     return {
@@ -89,65 +94,48 @@ def bake(
 ) -> None:
     """Compose rust native modules into a single host binary."""
     try:
-        _bake(
-            modules or [],
-            out=out,
-            target=target,
+        registry = discover_modules()
+        if list_modules:
+            typer.echo(render_registry(registry))
+            return
+
+        if out is None:
+            raise BakeError("-o/--out is required: its filename names the host binary")
+        host = out.name
+        check_host_name(host)
+        selected = select_modules(registry, modules or [])
+        graph = build_graph(
+            host,
+            selected,
+            remaps=dict(parse_remap(r) for r in remap or []),
             suppress=suppress or [],
-            remap=remap or [],
-            builder=builder,
-            debug=debug,
-            dry_run=dry_run,
-            emit_config_to=emit_config_to,
-            list_modules=list_modules,
         )
+
+        typer.echo(render(graph))
+        typer.echo("")
+
+        if emit_config_to is not None:
+            emit_config_to.parent.mkdir(parents=True, exist_ok=True)
+            # The host reads its config with a single read_line, so the blob must
+            # stay on one line.
+            emit_config_to.write_text(json.dumps(emit_config(graph, selected)) + "\n")
+            typer.echo(f"Wrote {emit_config_to}")
+
+        if dry_run:
+            return
+
+        crate = generate_crate(host, selected, graph)
+        typer.echo(f"Generated {crate}")
+        artifact = build_host(crate, host, builder=builder, target=target, debug=debug)
+        size = install(artifact, out)
+        typer.echo(f"Wrote {out} ({size / 1e6:.1f} MB)")
     except BakeError as exc:
         typer.echo(typer.style(f"bake: {exc}", fg=typer.colors.RED), err=True)
         raise typer.Exit(1) from exc
 
 
-def _bake(
-    module_names: Sequence[str],
-    *,
-    out: Path | None,
-    target: str | None,
-    suppress: Sequence[str],
-    remap: Sequence[str],
-    builder: str,
-    debug: bool,
-    dry_run: bool,
-    emit_config_to: Path | None,
-    list_modules: bool,
-) -> None:
-    registry = discover_modules()
-    if list_modules:
-        typer.echo(render_registry(registry))
-        return
-
-    if out is None:
-        raise BakeError("-o/--out is required: its filename names the host binary")
-    host = out.name
-    check_host_name(host)
-    selected = select_modules(registry, module_names)
-    graph = build_graph(
-        host, selected, remaps=dict(parse_remap(r) for r in remap), suppress=suppress
-    )
-
-    typer.echo(render(graph))
-    typer.echo("")
-
-    if emit_config_to is not None:
-        emit_config_to.parent.mkdir(parents=True, exist_ok=True)
-        # The host reads its config with a single read_line, so the blob must
-        # stay on one line.
-        emit_config_to.write_text(json.dumps(emit_config(graph, selected)) + "\n")
-        typer.echo(f"Wrote {emit_config_to}")
-
-    if dry_run:
-        return
-
-    crate = generate_crate(host, selected, graph)
-    typer.echo(f"Generated {crate}")
-    artifact = build_host(crate, host, builder=builder, target=target, debug=debug)
-    size = install(artifact, out)
-    typer.echo(f"Wrote {out} ({size / 1e6:.1f} MB)")
+def main(argv: list[str] | None = None) -> None:
+    """Run the bake CLI on argv, or sys.argv when argv is None."""
+    app = typer.Typer(add_completion=False)
+    app.command()(bake)
+    typer.main.get_command(app)(args=argv, prog_name="dimos bake")

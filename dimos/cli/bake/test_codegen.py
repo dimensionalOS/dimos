@@ -32,7 +32,7 @@ from dimos.cli.bake.test_graph import MAPPER, PLANNER, module
 GRAPH = build_graph("go2-nav", [MAPPER, PLANNER], suppress=["local_map"])
 
 
-def test_cargo_toml_pins_absolute_paths_and_drops_default_features():
+def test_cargo_toml_pins_absolute_paths_and_drops_default_features() -> None:
     toml = render_cargo_toml("go2-nav", [MAPPER, PLANNER], Path("/repo"))
     assert '[[bin]]\nname = "go2-nav"' in toml
     assert 'dimos-module = { path = "/repo/native/rust/dimos-module" }' in toml
@@ -43,7 +43,7 @@ def test_cargo_toml_pins_absolute_paths_and_drops_default_features():
     assert "[workspace]" in toml
 
 
-def test_main_rs_lists_entries_with_their_thread_counts():
+def test_main_rs_lists_entries_with_their_thread_counts() -> None:
     threaded = module("planner", PLANNER.inputs, PLANNER.outputs, threads=2)
     main = render_main_rs("go2-nav", [MAPPER, threaded], GRAPH)
     assert '    ModuleEntry::new::<mapper::module::Thing>("mapper"),' in main
@@ -54,19 +54,19 @@ def test_main_rs_lists_entries_with_their_thread_counts():
     assert 'include_str!("graph.json")' in main
 
 
-def test_the_binary_carries_the_graph_stamp_its_config_is_checked_against():
+def test_the_binary_carries_the_graph_stamp_its_config_is_checked_against() -> None:
     main = render_main_rs("go2-nav", [MAPPER, PLANNER], GRAPH)
     assert f'graph_hash: "{GRAPH.fingerprint()}",' in main
 
 
-def test_rewiring_a_topic_changes_the_graph_stamp():
+def test_rewiring_a_topic_changes_the_graph_stamp() -> None:
     remapped = build_graph(
         "go2-nav", [MAPPER, PLANNER], remaps={("planner", "path"): "route"}, suppress=["local_map"]
     )
     assert remapped.fingerprint() != GRAPH.fingerprint()
 
 
-def test_generate_crate_writes_the_blobs_the_host_includes(tmp_path):
+def test_generate_crate_writes_the_blobs_the_host_includes(tmp_path: Path) -> None:
     crate = generate_crate("go2-nav", [MAPPER, PLANNER], GRAPH, tmp_path)
     assert crate == tmp_path / "target" / "dimos-bake" / "go2-nav"
 
@@ -82,14 +82,14 @@ def test_generate_crate_writes_the_blobs_the_host_includes(tmp_path):
     assert (crate / "Cargo.toml").exists()
 
 
-def test_generate_crate_is_idempotent(tmp_path):
+def test_generate_crate_is_idempotent(tmp_path: Path) -> None:
     first = generate_crate("go2-nav", [MAPPER, PLANNER], GRAPH, tmp_path)
     before = (first / "src" / "main.rs").read_text()
     again = generate_crate("go2-nav", [MAPPER, PLANNER], GRAPH, tmp_path)
     assert (again / "src" / "main.rs").read_text() == before
 
 
-def test_host_names_cargo_would_reject_are_refused():
+def test_host_names_cargo_would_reject_are_refused() -> None:
     check_host_name("go2-nav")
     check_host_name("motion_host")
     for bad in ("go2-nav.bin", "2fast", "go2 nav", ""):
