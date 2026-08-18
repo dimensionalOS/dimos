@@ -14,7 +14,7 @@ The receiving coordinator and hardware stack must enforce joint limits and
 other actuation safety constraints.
 
 ```python
-from dimos.experimental.robot_policy.lerobot.module import (
+from dimos.imitation.policy.lerobot.module import (
     LeRobotPolicyConfig,
     LeRobotPolicyModule,
 )
@@ -50,7 +50,7 @@ does not load the placeholder checkpoint or publish a command.
 Run isolated runtime checks with:
 
 ```bash
-cd dimos/experimental/robot_policy/lerobot/python
+cd dimos/imitation/policy/lerobot/python
 uv sync --locked --group tests
 uv run --locked --group tests pytest
 uv run --locked --group tests mypy

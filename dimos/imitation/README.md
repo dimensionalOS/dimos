@@ -1,11 +1,16 @@
-# Teleop Data Collection → Dataset
+# Imitation Learning
 
-End-to-end: teleoperate an arm, record episodes to a session DB, then convert
+Collect demonstrations, build training datasets, and run trained policies in
+DimOS. Teleoperation records episodes to a session DB, and DataPrep converts
 that DB into a LeRobot or HDF5 dataset for imitation learning.
 
 ```
 teleop (Quest) ─▶ CollectionRecorder ─▶ session_<robot>_<ts>.db ─▶ dimos dataprep ─▶ dataset
 ```
+
+After training, use the production
+[`LeRobotPolicyModule`](policy/lerobot/README.md) to run a checkpoint against
+live camera and joint-state observations.
 
 ---
 
