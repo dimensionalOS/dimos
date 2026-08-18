@@ -958,31 +958,14 @@ jobs:
           if [ "$size_mb" -gt 25600 ]; then uv cache prune --ci; fi
 
   benchmark:
-    # The e2e unitree-go2 blueprint consuming 60s of go2_hongkong_office at
-    # realtime pace — the load production sees (accelerating the replay makes
-    # the transports shed load, so the measured workload would shrink to
-    # whatever survives). The tracked series are the job cgroup's user/system
-    # CPU seconds over the run window (load-decoupled, so a hosted runner is
-    # fine) plus build wall/CPU, kept by github-action-benchmark under
-    # dev/bench/ on the gh-pages branch (alerts and job summaries work
-    # without Pages being enabled).
-    # A dedicated job because the test is not xdist-safe: the cgroup CPU
-    # numbers would include every concurrently running test, the watched
-    # topics ride shared transports, and the keep-up floors are
-    # load-sensitive.
-    # Skipped on fork PRs: their read-only GITHUB_TOKEN can't post the
-    # alert comment.
-    if: github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 30
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # push the benchmark series to gh-pages (main pushes only)
-      pull-requests: write  # regression alert comments
+      contents: write  # To push the benchmark series to gh-pages branch
+      pull-requests: write  # For PR comments
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-      # After checkout (lfs: false) the archive is a ~130-byte pointer;
-      # hashFiles() of the pointer is a stable content-addressed key.
       - name: Cache the replay dataset archive
         uses: actions/cache@v6
         with:
@@ -1008,17 +991,11 @@ jobs:
         uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
-      - name: Setup Python
-        run: uv python install 3.12
       - name: Install dependencies
         run: uv sync --group tests --frozen
-      # Keep the 2.46GB extraction (and any download failure) out of the
-      # measured run.
       - name: Pre-extract the replay database
         run: uv run python -c "from dimos.utils.data import get_data; print(get_data('go2_hongkong_office.db'))"
-      # The test snapshots the cgroup's cpu.stat around build and the replay
-      # window and writes the series JSON.
-      - name: Run the realtime window under cgroup CPU accounting
+      - name: Run the replay under cgroup CPU accounting
         run: uv run pytest -m '' --no-cov dimos/robot/unitree/go2/test_replay_benchmark.py
         env:
           DIMOS_BENCH_CPU_METRICS: cpu-benchmark.json
@@ -1034,6 +1011,7 @@ jobs:
             --jq '[.labels[].name] | contains(["benchmark-ack"])')
           echo "acked=$acked" >> "$GITHUB_OUTPUT"
       - name: Track results
+        id: track
         uses: benchmark-action/github-action-benchmark@v1
         with:
           name: go2 replay realtime
@@ -1043,17 +1021,22 @@ jobs:
           # Append to the tracked series on main; PRs only compare against it.
           auto-push: ${{ github.event_name == 'push' }}
           save-data-file: ${{ github.event_name == 'push' }}
-          alert-threshold: 120%
-          comment-on-alert: true
-          comment-always: true
+          alert-threshold: 108%
+          # Fork PRs run with a read-only token that can't post comments;
+          # there the numbers land in the job summary and the step log only.
+          comment-on-alert: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          comment-always: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
           summary-always: true
           max-items-in-chart: 200
-          # A >120% regression fails the PR check (and with it ci-complete).
-          # To accept one, a maintainer adds the `benchmark-ack` label and
-          # re-runs this job; once merged, the main push records the new
-          # baseline, so later PRs compare against it. Pushes and the merge
-          # queue don't re-enforce what the PR check already gated.
           fail-on-alert: ${{ github.event_name == 'pull_request' && steps.ack.outputs.acked != 'true' }}
+      - name: Explain how to acknowledge the regression
+        if: failure() && steps.track.outcome == 'failure'
+        run: |
+          {
+            echo 'If this regression is expected, a maintainer can add the `benchmark-ack`'
+            echo 'label to the PR and re-run this job in order to merge.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error title=Benchmark regression::If expected, add the 'benchmark-ack' label and re-run."
 
   # Cross-job fail-fast: GitHub Actions only fail-fasts within a matrix,
   # not across sibling jobs. This watcher fires the moment `tests` fails
@@ -1094,7 +1077,7 @@ jobs:
     - name: Decide whether the needed jobs succeeded or failed
       uses: re-actors/alls-green@release/v1
       with:
-        allowed-skips: cmu-nav-natives, self-hosted-tests, self-hosted-large-tests, benchmark
+        allowed-skips: cmu-nav-natives, self-hosted-tests, self-hosted-large-tests
         jobs: ${{ toJSON(needs) }}
     - name: Trigger Codecov notifications
       uses: codecov/codecov-action@v7

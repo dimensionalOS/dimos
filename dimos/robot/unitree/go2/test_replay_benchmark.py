@@ -12,49 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Realtime-load benchmark of the unitree-go2 blueprint under replay.
-
-The equivalent of `dimos --replay --replay-db go2_hongkong_office run
-unitree-go2`, bounded: build the coordinator, play the first ~60s of the
-recording at its natural pace, stop. The replay is deliberately not
-accelerated: the transports shed load by design (zenoh latest-wins on heavy
-topics, LCM UDP drops under flood), so a faster-than-realtime drain saturates
-them and the work performed shrinks to whatever survives — a machine-speed-
-dependent workload where a faster pipeline drops less and therefore does
-*more* work, which can invert the signal (a speedup shows as no change, a
-slowdown as a faster drain). At realtime pace the workload is the recording
-itself, delivery should be near-complete, and the interesting number is the
-CPU the stack burns keeping up with reality.
-
-The measured region is build+run; replay starts inside
-ModuleCoordinator.build() (GO2Connection.start() subscribes the replay
-streams), so the two can't be separated without changing the blueprint. Run
-completion is detected by quiescence — no arrival on any watched source topic
-for QUIET_S. Windowed per-stream counts read from the database beforehand act
-as validity floors; at realtime pace they double as the keep-up check (a
-stack shedding frames at 1x is itself a regression).
-
-With DIMOS_BENCH_CPU_METRICS=<path> set, the test snapshots the job cgroup's
-cpu.stat at start, after build() and at completion, and writes build wall/CPU
-plus run-window user/system CPU seconds to that path in
-github-action-benchmark's customSmallerIsBetter format.
-The dedicated `benchmark` job in ci.yml runs the test alone for
-that measurement and tracks the series on gh-pages. A dedicated job because
-the test is not xdist-safe: the cgroup counts every process in the job, the
-watched topics ride shared transports any concurrent test could publish on,
-and the keep-up floors are load-sensitive.
-
-self_hosted (LFS data, ~10 worker processes) keeps it out of the parallel
-hosted matrix; the self-hosted CI job runs it sequentially as a plain test,
-which keeps the path in coverage. Linux-only for now (skipif_macos_bug):
-local macOS runs die on the coordinator->worker zenoh RPC timeout, and the
-LCM fallback needs lo0 route + maxdgram tuning. Linux smoke against the small
-bundled recording:
-
-    DIMOS_BENCH_REPLAY_DB=go2_short DIMOS_BENCH_DURATION=10 \
-        uv run pytest dimos/robot/unitree/go2/test_replay_benchmark.py \
-        -m self_hosted --no-cov -v
-"""
+"""Realtime-load benchmark of the unitree-go2 blueprint under replay."""
 
 import json
 import os
