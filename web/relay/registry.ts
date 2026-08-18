@@ -5,14 +5,14 @@
 //
 // Subscription flow: viewers sub/unsub channels of their watched robot; after
 // every mutation the registry recomputes the active set (union over watchers)
-// and pushes a `subs` snapshot upstream when it changed. Snapshots ride lossy
-// datagrams, so server.ts also calls resendSnapshots() on an interval: any
-// single delivery heals bridge state (the bridge ignores stale `n`).
+// and pushes a `subs` snapshot upstream when it changed. Snapshots ride the
+// reliable robot control carrier (ordered, never lost on a live session);
+// registration forces a baseline snapshot, and the monotonic `n` still guards
+// against duplicates and reordering across reconnects.
 
 import {
   type ChannelSpec,
   type Delivery,
-  encodeDatagram,
   type FrameHeader,
   type Msg,
   PROTOCOL_VERSION,
@@ -20,7 +20,9 @@ import {
   type RobotInfo,
   type RobotManifest,
 } from "@dimos/shared";
+import { MAX_MANIFEST_ID_LEN } from "@dimos/shared/manifest";
 
+import type { CarrierStats } from "./carrier.ts";
 import {
   type ChannelPolicy,
   LatestChannel,
@@ -29,10 +31,6 @@ import {
   ReliableChannel,
   type ViewerSink,
 } from "./forward.ts";
-
-// Subs snapshots ride a single QUIC datagram (~1200 B budget before QUIC
-// overhead) until the reliable robot carrier lands (W4).
-const DATAGRAM_BUDGET_BYTES = 1200;
 
 /** What the registry needs from a robot session. */
 export interface RobotPeer {
@@ -45,8 +43,15 @@ export interface RobotPeer {
   readonly manifest: RobotManifest | null;
   /** Close reason once closed; a closed session must never (re)register. */
   readonly closed: string | null;
-  /** Control message upstream to the bridge (datagram: lossy, never blocks). */
+  /** Control message upstream to the bridge (datagram: lossy, never blocks).
+   * Handshake and teleop only. */
   sendMsg(msg: Msg): void;
+  /** Control message upstream on the reliable robot control carrier (ordered;
+   * a write failure fails the whole robot session). Subs snapshots and future
+   * robot-bound control. */
+  sendControl(msg: Msg): void;
+  /** Live carrier queue counters for stats(). */
+  carrierStats(): CarrierStats;
 }
 
 /** What the registry needs from a viewer session (fakeable in tests). */
@@ -91,7 +96,7 @@ interface RobotEntry {
   teleopGen: number;
   /** Snapshot counter, monotonic for this robot session's registration. */
   n: number;
-  /** Last snapshot content, for change detection and periodic resend. */
+  /** Last snapshot content, for change detection and stats(). */
   lastChs: string[];
   /** Per-channel ingress stats, declared channels only. */
   channelsIn: Map<string, ChannelInStats>;
@@ -108,6 +113,13 @@ export class Registry {
   #framesFromUnregistered = 0;
   #teleopForwarded = 0;
   #teleopDropped = 0;
+  #carrierFailures = 0;
+
+  /** A robot control carrier overflowed or failed a write; the session is
+   * being closed. Registry-level because the per-robot entry dies with it. */
+  carrierFailed(): void {
+    this.#carrierFailures++;
+  }
 
   addViewer(viewer: ViewerPeer): void {
     this.#viewers.add(viewer);
@@ -244,11 +256,22 @@ export class Registry {
             });
             break;
           }
-          // Manifest-validated: unbounded ch strings would grow the subs
-          // snapshot past the datagram budget and silently freeze the
-          // robot's whole subscription control plane. A robot that declared
-          // no manifest at all (transport tests) has nothing to validate
-          // against and accepts any sub - production bridges always declare.
+          // Manifest ids are length-bounded; hold undeclared subs to the
+          // same cap so a manifest-less robot (transport tests accept any
+          // sub) cannot accumulate ch strings that push its subs snapshot
+          // past the @control payload cap and fail the carrier.
+          if (msg.ch.length > MAX_MANIFEST_ID_LEN) {
+            reply({
+              t: "error",
+              code: "unknown_channel",
+              message: `channel ids are at most ${MAX_MANIFEST_ID_LEN} chars`,
+            });
+            break;
+          }
+          // Manifest-validated: arbitrary ch strings must not grow relay and
+          // bridge subscription state. A robot that declared no manifest at
+          // all (transport tests) has nothing to validate against and
+          // accepts any sub - production bridges always declare.
           const entry = this.#robots.get(viewer.watched);
           if (entry === undefined) {
             reply({ t: "error", code: "unknown_robot", message: `no robot ${viewer.watched}` });
@@ -403,17 +426,6 @@ export class Registry {
     }
   }
 
-  /**
-   * Re-push every robot's current snapshot with a fresh `n` (called on an
-   * interval by server.ts). Content is unchanged, so a bridge that saw the
-   * previous snapshot reconciles to a no-op; one that missed it heals.
-   */
-  resendSnapshots(): void {
-    for (const entry of this.#robots.values()) {
-      entry.peer.sendMsg({ t: "subs", chs: entry.lastChs, n: ++entry.n });
-    }
-  }
-
   /** Reap stale accepted latest streams on every viewer. Offers reap
    * opportunistically, but an idle input stops offering; server.ts drives
    * this on an interval. Clock passed in so tests fabricate time. */
@@ -444,10 +456,12 @@ export class Registry {
       framesFromUnregistered: this.#framesFromUnregistered,
       teleopForwarded: this.#teleopForwarded,
       teleopDropped: this.#teleopDropped,
+      carrierFailures: this.#carrierFailures,
       perRobot: Object.fromEntries(
         [...this.#robots].map(([id, e]) => [id, {
           subs: e.lastChs,
           teleop: e.teleop?.id ?? null,
+          carrier: e.peer.carrierStats(),
           channels: Object.fromEntries(
             [...e.channelsIn].map(([ch, s]) => [ch, {
               delivery: s.delivery,
@@ -509,16 +523,7 @@ export class Registry {
     const chs = this.#activeChs(robotId, entry.delivery);
     if (!force && chs.join("\n") === entry.lastChs.join("\n")) return;
     entry.lastChs = chs;
-    const msg: Msg = { t: "subs", chs, n: ++entry.n };
-    const size = encodeDatagram(msg).byteLength;
-    if (size > DATAGRAM_BUDGET_BYTES) {
-      // Reachable since v5: a stream hello can declare a channel set whose
-      // full snapshot no longer fits one datagram (W4 moves snapshots to the
-      // reliable carrier). Loud because an oversized snapshot silently never
-      // reaches the robot.
-      console.error(`[relay] subs snapshot for ${robotId} is ${size} B (over datagram budget)`);
-    }
-    entry.peer.sendMsg(msg);
+    entry.peer.sendControl({ t: "subs", chs, n: ++entry.n });
     console.log(`[relay] robot ${robotId} active channels: [${chs.join(", ")}]`);
   }
 
