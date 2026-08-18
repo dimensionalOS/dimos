@@ -30,7 +30,7 @@ from pathlib import Path
 
 import numpy as np
 
-from dimos.memory2.cli.dataset import open_dataset
+from dimos.memory.cli.dataset import open_dataset
 
 DATASET = "go2_short"
 SINGLE_TS = [5.0, 20.0, 40.0, 58.0]

@@ -119,14 +119,11 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=0)
     args = parser.parse_args()
 
-    from evo_agent import Run
-
     from dimos.evals.runner import EvalRunner
 
     rows = json.loads((Path(__file__).parent / "rows.json").read_text())
     if args.limit:
         rows = rows[: args.limit]
-    by_id = {row["id"]: row for row in rows}
     cases = build_cases(rows)
 
     runner = EvalRunner(blind=args.blind)
@@ -156,28 +153,6 @@ def main() -> None:
             file=sys.stderr,
         )
         sys.exit(3)
-
-    run = Run()
-    try:
-        for result in results:
-            row = by_id[result.case_id]
-            run.report(
-                result.case_id,
-                score=result.score,
-                summary=f"{row['family']} expected={row['a']} score={result.score:.2f}",
-                failure_reason=(result.error or None) if result.score < 1.0 else None,
-                extras={
-                    "question": row["q"],
-                    "expected": row["a"],
-                    "family": row["family"],
-                    "kind": row["type"],
-                    "blind": args.blind,
-                    "output": result.outputs[:800],
-                    "error": result.error,
-                },
-            )
-    finally:
-        run.finish()
 
     mean = sum(r.score for r in results) / len(results)
     print(f"mean={mean:.4f} n={len(results)} blind={args.blind}")
