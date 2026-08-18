@@ -1,0 +1,65 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Launch native LeRobot conversion in the policy runtime environment."""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+
+from dimos.core.python_native_environment import (
+    project_environment_vars,
+    require_locked_project,
+    uv_run_command,
+)
+from dimos.imitation.dataprep.core import DataPrepConfig
+from dimos.imitation.policy.lerobot import module as lerobot_module
+from dimos.utils.cache import cache_usage_guard
+
+
+def lerobot_project() -> Path:
+    """Locate the packaged LeRobot project beside its host contract."""
+    return require_locked_project(Path(lerobot_module.__file__).resolve().parent / "python")
+
+
+def run_lerobot_dataprep(config: DataPrepConfig) -> Path:
+    """Run conversion under the locked LeRobot dependency stack."""
+    project = lerobot_project()
+    command: list[str]
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", encoding="utf-8") as config_file:
+        config_file.write(config.model_dump_json())
+        config_file.flush()
+        command = uv_run_command(
+            project,
+            "python",
+            "-m",
+            "dimos_lerobot.dataprep",
+            config_file.name,
+        )
+        env = dict(os.environ)
+        env.pop("VIRTUAL_ENV", None)
+        env.update(project_environment_vars(project))
+        try:
+            with cache_usage_guard():
+                result = subprocess.run(command, env=env, check=False)
+        except FileNotFoundError as error:
+            raise RuntimeError(
+                "uv is required for LeRobot conversion; install uv and ensure it is on PATH"
+            ) from error
+    if result.returncode:
+        raise RuntimeError(f"LeRobot conversion exited with status {result.returncode}")
+    return config.output.path

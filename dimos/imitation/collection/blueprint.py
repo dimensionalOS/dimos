@@ -26,9 +26,12 @@ from datetime import datetime
 from dimos.constants import STATE_DIR
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
+from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
+from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionRecorder
+from dimos.robot.manipulators.openyam.blueprints.teleop import teleop_quest_openyam
 from dimos.teleop.quest.blueprints import (
     teleop_quest_piper,
     teleop_quest_xarm7,
@@ -75,4 +78,26 @@ learning_collect_quest_piper = autoconnect(
     EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
     teleop_quest_piper,
     *_camera_if_real(),
+)
+
+
+def _openyam_wrist_camera() -> Webcam:
+    return Webcam(
+        camera_index=0,
+        width=640,
+        height=480,
+        fps=15.0,
+        frame_id_prefix="wrist",
+    )
+
+
+learning_collect_quest_openyam = autoconnect(
+    teleop_quest_openyam,
+    CameraModule.blueprint(
+        instance_name="WristCamera",
+        hardware=_openyam_wrist_camera,
+        frame_id="wrist_camera_link",
+    ),
+    EpisodeMonitorModule.blueprint(default_task_label="openyam_task"),
+    CollectionRecorder.blueprint(db_path=_session_db("openyam")),
 )

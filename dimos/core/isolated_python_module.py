@@ -29,6 +29,12 @@ from typing import Any, ClassVar
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.native_module import NativeModule, NativeModuleConfig
+from dimos.core.python_native_environment import (
+    project_environment_vars,
+    require_locked_project,
+    uv_run_command,
+    uv_sync_command,
+)
 from dimos.core.rpc_client import RPCClient
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
@@ -94,16 +100,15 @@ class IsolatedPythonModule(NativeModule):
     def runtime_project(self) -> Path:
         source = Path(inspect.getfile(type(self))).resolve()
         project = source.parent / "python"
-        if not project.is_dir():
-            raise FileNotFoundError(
-                f"Isolated Python runtime project is missing: {project}; "
-                "create a sibling 'python/' directory"
-            )
-        if not (project / "pyproject.toml").is_file():
-            raise FileNotFoundError(
-                f"Isolated Python runtime manifest is missing: {project / 'pyproject.toml'}"
-            )
-        return project
+        try:
+            return require_locked_project(project)
+        except FileNotFoundError as error:
+            if not project.is_dir():
+                raise FileNotFoundError(
+                    f"Isolated Python runtime project is missing: {project}; "
+                    "create a sibling 'python/' directory"
+                ) from error
+            raise
 
     def _uv_command(self, *args: str) -> list[str]:
         command = ["uv", *args]
@@ -112,31 +117,25 @@ class IsolatedPythonModule(NativeModule):
         return command
 
     def _prepare_command(self) -> list[str]:
-        args = ["sync"]
-        if (self.runtime_project / "uv.lock").is_file():
-            args.append("--frozen")
-        return self._uv_command(*args)
+        command = uv_sync_command(self.runtime_project)
+        return self._uv_command(*command[1:])
 
     def _launch_command(self, handshake_fd: int) -> list[str]:
-        args = ["run"]
-        if (self.runtime_project / "uv.lock").is_file():
-            args.append("--frozen")
-        args.extend(
-            [
-                "python",
-                "-m",
-                "dimos.core.isolated_python_bootstrap",
-                "--declaration",
-                f"{type(self).__module__}:{type(self).__name__}",
-                "--implementation",
-                self.implementation,
-                "--instance-name",
-                self._new_runtime_name(),
-                "--handshake-fd",
-                str(handshake_fd),
-            ]
+        command = uv_run_command(
+            self.runtime_project,
+            "python",
+            "-m",
+            "dimos.core.isolated_python_bootstrap",
+            "--declaration",
+            f"{type(self).__module__}:{type(self).__name__}",
+            "--implementation",
+            self.implementation,
+            "--instance-name",
+            self._new_runtime_name(),
+            "--handshake-fd",
+            str(handshake_fd),
         )
-        return self._uv_command(*args)
+        return self._uv_command(*command[1:])
 
     def _new_runtime_name(self) -> str:
         public_name = self.config.instance_name or type(self).__name__
@@ -147,6 +146,7 @@ class IsolatedPythonModule(NativeModule):
         env = dict(os.environ)
         env.pop("VIRTUAL_ENV", None)
         env.update(self.config.extra_env)
+        env.update(project_environment_vars(self.runtime_project))
         return env
 
     def _run_prepare(self) -> None:

@@ -25,7 +25,11 @@ from pathlib import Path
 from typing import Any
 
 from dimos.imitation.dataprep.core import summarize_lengths
-from dimos.imitation.dataprep.formats.lerobot.writer import CHUNK, EPISODES_DIR, FILE, META_DIR
+
+META_DIR = "meta"
+EPISODES_DIR = "episodes"
+CHUNK = "chunk-000"
+FILE = "file-000"
 
 _META_COLS = {"timestamp", "frame_index", "episode_index", "index", "task_index"}
 
