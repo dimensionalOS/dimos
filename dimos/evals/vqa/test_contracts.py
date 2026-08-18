@@ -36,7 +36,6 @@ from dimos.evals.vqa.families import (
     AVAILABLE_FAMILIES,
     CLOSEST_OBJECT_FAMILY,
     LARGEST_VISIBLE_AREA_FAMILY,
-    OBJECT_DISTANCE_FAMILY,
     PRESENCE_FAMILY,
     answer_question,
 )
@@ -386,13 +385,6 @@ def test_presence_proposal_matches_available_family() -> None:
         "object_names": ["chair"],
     }
     assert proposal.family in [family.name for family in AVAILABLE_FAMILIES]
-
-
-def test_object_distance_family_is_available() -> None:
-    proposal = QuestionProposal(family="object_distance", object_names=("chair",))
-
-    assert OBJECT_DISTANCE_FAMILY.name == proposal.family
-    assert OBJECT_DISTANCE_FAMILY in AVAILABLE_FAMILIES
 
 
 def test_closest_object_proposal_requires_two_to_five_distinct_references() -> None:

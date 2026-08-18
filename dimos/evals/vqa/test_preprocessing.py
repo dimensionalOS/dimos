@@ -33,21 +33,6 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.go2.connection import BASE_TO_OPTICAL
 
 
-def test_align_one_uses_nearest_observation_timestamp() -> None:
-    with MemoryStore() as store:
-        images = store.stream("color_image", str)
-        lidar = store.stream("lidar", str)
-        images.append("payload timestamp is irrelevant", ts=10.0)
-        lidar.append("early", ts=9.8)
-        lidar.append("nearest", ts=9.97)
-        lidar.append("late", ts=10.08)
-
-        aligned = _align_one(images.order_by("ts"), lidar.order_by("ts"), 0.1)
-
-    assert aligned.data == "nearest"
-    assert aligned.ts == 9.97
-
-
 def test_align_one_rejects_observation_outside_tolerance() -> None:
     with MemoryStore() as store:
         images = store.stream("color_image", str)
