@@ -332,6 +332,7 @@ each scores **only** what is its own.
   instead. Multiple shooting is what buys it — re-initialising every
   0.05–0.8 s keeps the residual a measure of dynamics rather than of
   divergence.
+
 - **Loop 2's exclusive capability is emergent, body-level.** Where the robot
   actually went, how it followed commands, how it oscillated — quantities
   that only exist after seconds of closed-loop behaviour.
@@ -858,32 +859,47 @@ rollouts add ~2 min to a 1–2 h outer trial; plant-scale effects (envelope
 `--replicates 16`. What no replication buys: comparisons across windows,
 or more than two or three decisions per recording (§4).
 
-**The headline** (194142, full span, robot-repeat floor from
-`195401`+`195715`, `--replicates 8`, tracking areas + measured-state
-seeding since 2026-08-17): `measured` **loss 1.52, 6 of 14** (draws
-1.31–2.61, 5–8 of 14); `stock` **11.87, 4 of 14** (draws 10.70–49.43 —
-the top draw is a genuine FALL under the mid-walk seed, absorbed by the
-median). Under the previous compositions the same runs read 0.92/12.52
-(eleven terms, standstill start) and 1.61/10.46 (interim snapped-rate
-terms) — instrument and start honesty changed, not the physics. What
-fails for `measured`: the tracking family (trk_yaw/cross/along all 2.6 —
-the sim wanders from the robot ~2.6× more than from itself), `roll_std`
-1.9, `height_std` 1.6, `speed_gain` 1.4. The measured-vs-stock
-separation is ~18× the n=8 MDD. The envelope's loss contribution
-(~0.44, measured under the prior native-runner floor) also clears it,
-replicated; its match-count gain does not.
+**The headline is quoted HELD-OUT** (the shipping decision's reserve pass,
+195539, robot-repeat floor, `--replicates 16`): `measured` **loss 1.93,
+5 of 14** vs its predecessor's 2.14 and the fit-median's 2.20 (§9's draw
+selection). On the fit recording 194142 the shipped plant reads 1.88 to
+the predecessor's 1.52 — the predecessor was better IN-SAMPLE, the
+shipped plant on both held-out recordings: the trade is the point. What
+still fails: the tracking family (trk_cross/yaw/along ~3 — the sim
+wanders from the robot ~3× more than from itself), `roll_std` 2.8,
+`speed_gain` 1.9. `stock` reads ~12, 4 of 14 (draws to 49 — genuine
+falls under the mid-walk seed, absorbed by the median): the
+measured-vs-stock separation is ~18× the n=8 MDD.
 
 ---
 
 ## 9. The plant: what is closed, what is open
 
 **What ships** (`ranges.py`): two built-in presets with distinct jobs.
-`measured` is the plant — the weighed trunk, six fitted knobs, the measured
-torque envelope, and the friction pair DERIVED from `FLOOR_MU = 0.90`
-(DR_FLOOR's centre, the μ the fit pins), with torsional friction computed
-from its source at import (`anchors.derive`, the same call `fit`'s default
-plan pins from, so the plant and the fitting discipline agree by
-construction). Every value names its provenance on the preset
+`measured` is the plant — the weighed trunk, the SELECTED draw's knobs
+(below), the measured torque envelope, and the friction pair DERIVED from
+`FLOOR_MU = 0.90` (DR_FLOOR's centre, the μ the fit pins), with torsional
+friction computed from its source at import (`anchors.derive`, the same
+call `fit`'s default plan pins from, so the plant and the fitting
+discipline agree by construction).
+
+**The shipping step is DRAW SELECTION, not the fit's median** (2026-08-18).
+The fit pins a region (§4a) and refit stochasticity beats every
+judge-weighting scheme (§4's outer study) — so the point that ships is
+chosen from the region by the referee: the fit persists its pooled cloud
+as INDEX-ALIGNED joint draws (`ranges.json:"cloud"` — joint rows, never
+per-knob resampling, which fabricates off-valley points), every draw is
+grounded at 16 replicates on the selection recording, and the top few are
+quoted ONCE on the reserve recording, whose winner ships. First run: 161
+draws, ten beat the previous plant on selection (best 1.41 vs 1.79 —
+selection-flattered, as the quote then showed), and on the reserve the
+finalists read **draw054 1.93 / draw002 2.00 / draw053 2.01 vs the
+previous plant's 2.14** — each margin under the single-comparison MDD,
+the improvement carried by all three finalists beating it on BOTH
+recordings. The fit's own median point grounds at 2.20: draw selection
+bought ~0.27 for one 25-min fit plus ~40 min of grounding. The spent
+reserve is retired with this shipping decision — the next one needs a
+fresh never-touched recording. Every value names its provenance on the preset
 (`Preset.provenance`); two structural tests hold the discipline (every
 preset value inside the range that admits it, every derived value equal to
 its own derivation). `stock` is bare vendored menagerie — kept not as

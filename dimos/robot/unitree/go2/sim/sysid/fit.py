@@ -975,6 +975,13 @@ def main() -> None:
                     "cloud_min_max": {
                         k: [float(v.min()), float(v.max())] for k, v in res.cloud.items()
                     },
+                    # The pooled cloud itself, INDEX-ALIGNED across knobs:
+                    # row i of every array is one harvested trial, i.e. one
+                    # JOINT draw from the region. Draw selection (ground a
+                    # draw, ship the best) needs the joint rows — the knobs
+                    # trade against each other, so per-knob resampling
+                    # fabricates off-valley points the fit never visited.
+                    "cloud": {k: [float(x) for x in v] for k, v in res.cloud.items()},
                     "pinned": {
                         k: {"value": p.value, "why": p.why} for k, p in res.plan.pinned.items()
                     },

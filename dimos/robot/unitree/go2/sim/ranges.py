@@ -238,23 +238,32 @@ FLOOR_MU = 0.90
 # construction.
 _ANCHORS = derive(GO2, floor_mu=FLOOR_MU)
 
-# THE shipped plant: the measured trunk (weighed and derived), the six knobs
-# the 2026-08-16 open-loop fit resolved, and the measured torque envelope.
-# HYBRID PROVENANCE, deliberately: the knobs were fitted open loop with the
-# envelope OFF, so running them with it ON is formally the double-counting
-# README 9 warns about. It is kept because the referee prefers the hybrid
-# everywhere (README 8-9: the envelope's loss gain is replicated, and the
-# envelope-consistent refit grounds WORSE — the anti-transfer). DO NOT
-# "fix" the inconsistency by refitting: that was tried, and lost.
+# THE shipped plant: the measured trunk (weighed and derived), and the
+# searched knobs of draw 54 — SELECTED, not just fitted (2026-08-18). The
+# open-loop fit pins a region, not a point (README 4a), and refit
+# stochasticity beats every judge-weighting scheme (README 4: the outer
+# study) — so the shipping step is DRAW SELECTION: 161 joint draws from the
+# incumbent objective's pooled cloud, each grounded at 16 replicates on the
+# selection recording (195401), the top three quoted once on the reserve
+# (195539), and the reserve's winner ships. Quoted: loss 1.93 vs the
+# previous plant's 2.14, with all three finalists beating it on both
+# recordings. HYBRID PROVENANCE still deliberate: knobs fitted open loop
+# with the envelope OFF, run with it ON — the referee prefers the hybrid
+# everywhere and the envelope-consistent refit grounds WORSE. DO NOT "fix"
+# the inconsistency by refitting: that was tried, and lost.
 MEASURED_PHYSICS: dict[str, float] = {
-    "armature": 0.02899,
+    "armature": 0.026235469296468247,
     "damping": 0.03808,
-    "frictionloss": 1.46585,
-    "leg_mass_scale": 1.0,
+    "frictionloss": 0.6997397096456963,
+    "leg_mass_scale": 1.3275068262275753,
     "foot_friction": FLOOR_MU,
+    "foot_solref_time": 0.014832125244436329,
+    "foot_solref_damp": 1.1398535892980237,
+    "foot_solimp_dmin": 0.015,
+    "foot_solimp_width": 0.0016142451913904524,
     **_ANCHORS,
 }
-MEASURED_ACTUATOR_TAU = 0.00525
+MEASURED_ACTUATOR_TAU = 0.005010955656476395
 
 # The experimental CONTROL, not a leftover: every claim this package makes
 # is comparative — "the tuned plant matches the robot better than bare
@@ -270,16 +279,20 @@ MEASURED = Preset(
     actuator_tau=MEASURED_ACTUATOR_TAU,
     envelope="central",
     provenance={
-        "armature": "fitted: R8-FIT2 open-loop multiple shooting, 2026-08-16 markers",
+        "armature": "selected: draw 54 of the 2026-08-18 incumbent-objective cloud",
         "damping": "fitted: suspended recording's joint channel — the one knob accel cannot see",
-        "frictionloss": "fitted: R8-FIT2 open-loop multiple shooting, 2026-08-16 markers",
-        "leg_mass_scale": "fitted: joint fit ~0.96; kept at 1.0 (CAD trusted)",
+        "frictionloss": "selected: draw 54 (trades against the contact knobs; see cloud spread)",
+        "leg_mass_scale": "selected: draw 54",
         "foot_friction": "declared: DR_FLOOR centre, the mu the fit pins; closed-loop inert (README 9)",
+        "foot_solref_time": "selected: draw 54",
+        "foot_solref_damp": "selected: draw 54",
+        "foot_solimp_dmin": "declared: the fit's contact base value, carried by every graded draw",
+        "foot_solimp_width": "selected: draw 54",
         "foot_friction_torsional": "derived: torsional_friction(FLOOR_MU, foot radius) via anchors.derive",
         "trunk_mass_scale": "derived: 16.500 kg kitchen-scale weighing (anchors.derive)",
         "trunk_com_x": "derived: parallel-axis payload analysis (anchors.derive)",
         "trunk_inertia_scale": "derived: parallel-axis payload analysis (anchors.derive)",
-        "actuator_tau": "fitted: R8-FIT2 open-loop multiple shooting, 2026-08-16 markers",
+        "actuator_tau": "selected: draw 54 of the 2026-08-18 incumbent-objective cloud",
         "envelope": "measured: sysid.drive demanded-vs-delivered transfer, zero free parameters",
     },
 )

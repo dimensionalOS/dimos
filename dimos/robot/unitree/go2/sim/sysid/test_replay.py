@@ -49,6 +49,36 @@ needs_mixed = pytest.mark.skipif(not MIXED.is_file(), reason=f"no recording at {
 needs_hanging = pytest.mark.skipif(not HANGING.is_file(), reason=f"no recording at {HANGING}")
 
 
+def acceptance_plant():
+    """The FROZEN plant the acceptance numbers were measured under.
+
+    Deliberately not ``ranges.MEASURED``: these tests pin the replay
+    PIPELINE bit-for-bit, and the shipped plant is allowed to improve
+    (draw selection re-ships it) without this file conflating "the plant
+    changed" with "the pipeline regressed". These are the 2026-08-17
+    shipped values, frozen here the day draw054 replaced them; update
+    them only when re-basing the pipeline acceptance itself.
+    """
+    from dimos.robot.unitree.go2.sim.ranges import Preset
+
+    return Preset(
+        name="acceptance-frozen-20260817",
+        physics={
+            "armature": 0.02899,
+            "damping": 0.03808,
+            "frictionloss": 1.46585,
+            "leg_mass_scale": 1.0,
+            "foot_friction": 0.9,
+            "trunk_mass_scale": 1.1869082502528536,
+            "foot_friction_torsional": 0.005831581363226053,
+            "trunk_com_x": -0.012040057929109567,
+            "trunk_inertia_scale": 1.1180010114682968,
+        },
+        actuator_tau=0.00525,
+        envelope="central",
+    )
+
+
 @pytest.fixture(scope="module")
 def mixed_streams():
     from dimos.robot.unitree.go2.sim.sysid.ingest import read_streams
@@ -77,15 +107,15 @@ def test_segment_4_reproduces_the_shipped_plants_numbers(mixed_streams):
     tightens the joint residual). Same bit-identical discipline forward."""
     from dimos.robot.unitree.go2.sim.model import MujocoBackend
     from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
-    from dimos.robot.unitree.go2.sim.ranges import MEASURED
     from dimos.robot.unitree.go2.sim.sysid.replay import replay
 
     st = mixed_streams
     _i, mode, a, b = st.segments()[4]
     assert mode == "freewalk"
     t0 = a + 0.2
-    backend = MujocoBackend(envelope=TORQUE_ENVELOPES[MEASURED.envelope])
-    r = replay(st, t0, b - t0 - 0.2, backend, preset=MEASURED, window=0.4)
+    plant = acceptance_plant()
+    backend = MujocoBackend(envelope=TORQUE_ENVELOPES[plant.envelope])
+    r = replay(st, t0, b - t0 - 0.2, backend, preset=plant, window=0.4)
 
     je = r.joint_err()
     dp, da = r.body_err()
@@ -111,12 +141,12 @@ def test_a_suspended_recording_replays_with_the_trunk_pinned(hanging_streams):
     and the trunk stays pinned to the measured pose, clear of any floor."""
     from dimos.robot.unitree.go2.sim.model import MujocoBackend
     from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
-    from dimos.robot.unitree.go2.sim.ranges import MEASURED
     from dimos.robot.unitree.go2.sim.sysid.replay import replay
 
     st = hanging_streams
-    backend = MujocoBackend(envelope=TORQUE_ENVELOPES[MEASURED.envelope])
-    r = replay(st, 10.0, 20.0, backend, preset=MEASURED, window=0.4, suspended=True)
+    plant = acceptance_plant()
+    backend = MujocoBackend(envelope=TORQUE_ENVELOPES[plant.envelope])
+    r = replay(st, 10.0, 20.0, backend, preset=plant, window=0.4, suspended=True)
     # Reference for the WELD mechanism (trunk held DURING the step, attitude
     # tracking the measurement). The frozen instrument's numbers (joint mean
     # 0.05685969199042827, max 2.4079772840531506) were measured in a

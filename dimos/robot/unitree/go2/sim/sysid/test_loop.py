@@ -205,12 +205,16 @@ def test_the_command_shift_sweep_reproduces_and_prefers_zero_over_30ms():
     recorded timeline beats a +30 ms delay — the target->plant leg is ~0."""
     from dimos.robot.unitree.go2.sim.model import MujocoBackend
     from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
-    from dimos.robot.unitree.go2.sim.ranges import load_preset
     from dimos.robot.unitree.go2.sim.sysid.ingest import read_streams
     from dimos.robot.unitree.go2.sim.sysid.loop import command_shift_sweep
 
+    # The FROZEN acceptance plant, not the live preset: the pinned numbers
+    # check determinism of the sweep, and must not move when draw selection
+    # re-ships the plant (test_replay.acceptance_plant says why).
+    from dimos.robot.unitree.go2.sim.sysid.test_replay import acceptance_plant
+
     st = read_streams(FREEWALK)
-    preset = load_preset("measured")
+    preset = acceptance_plant()
     backend = MujocoBackend(envelope=TORQUE_ENVELOPES[preset.envelope])
     p0, p30 = command_shift_sweep(st, backend, (0.0, 30.0), t0=20.0, duration=10.0, preset=preset)
     # Re-based 2026-08-17 (consolidation, envelope honoured): from
