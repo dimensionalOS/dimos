@@ -44,9 +44,11 @@ class SigLIP2ModuleConfig(ModuleConfig):
     max_freq: float = 2.0
     #: Model device; None auto-selects cuda when available.
     device: str | None = None
-    #: NaFlex token budget per image (144 -> 9x16 grid on a wide frame);
+    #: NaFlex token budget per image (576 -> 18x32 grid on a wide frame);
     #: None keeps the checkpoint default. Ignored by fixed-resolution models.
-    max_num_patches: int | None = 144
+    #: 576 costs barely more than 144 (56ms vs 51ms on the 5070 laptop, 18fps
+    #: single-frame) and won the fridge/crate A/B on grounding cleanliness.
+    max_num_patches: int | None = 576
 
 
 class SigLIP2Module(Module):
