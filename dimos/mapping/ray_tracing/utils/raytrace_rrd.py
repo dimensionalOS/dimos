@@ -66,7 +66,7 @@ NORMAL_TINT = np.array([255, 60, 235], np.float32)
 NORMAL_TINT_BLEND = 0.45
 
 
-def _normal_colors(voxel_colors: NDArray[np.float32]) -> NDArray[np.uint8]:
+def _normal_colors(voxel_colors: NDArray[np.uint8]) -> NDArray[np.uint8]:
     """Magenta-cast copies of the voxel colors for their normal arrows."""
     mixed = (1.0 - NORMAL_TINT_BLEND) * voxel_colors + NORMAL_TINT_BLEND * NORMAL_TINT
     return mixed.astype(np.uint8)
@@ -93,8 +93,9 @@ def _z_gradient(centers: NDArray[np.float32], ramp: NDArray[np.float32]) -> NDAr
     if len(centers) == 0:
         return np.empty((0, 3), np.uint8)
     z = centers[:, 2]
-    z_lo, z_hi = np.percentile(z, [2.0, 98.0])
-    span = float(z_hi - z_lo)
+    quantiles = np.percentile(z, [2.0, 98.0])
+    z_lo, z_hi = float(quantiles[0]), float(quantiles[1])
+    span = z_hi - z_lo
     if span > 1e-6:
         t = np.clip((z - z_lo) / span, 0.0, 1.0)
     else:
@@ -102,7 +103,8 @@ def _z_gradient(centers: NDArray[np.float32], ramp: NDArray[np.float32]) -> NDAr
     pos = t * (len(ramp) - 1)
     lo = np.minimum(pos.astype(np.int32), len(ramp) - 2)
     frac = (pos - lo)[:, None]
-    return (ramp[lo] * (1.0 - frac) + ramp[lo + 1] * frac).astype(np.uint8)
+    mixed: NDArray[np.float32] = ramp[lo] * (1.0 - frac) + ramp[lo + 1] * frac
+    return mixed.astype(np.uint8)
 
 
 def main(

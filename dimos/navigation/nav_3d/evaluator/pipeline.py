@@ -70,7 +70,9 @@ class MLSPipeline:
 
         self._mapper = VoxelRayMapper(voxel_size=cfg.voxel_size, max_range=cfg.max_range)
         self._planner = MLSPlanner(
-            voxel_size=cfg.voxel_size, robot_height=cfg.robot_height, **cfg.planner
+            voxel_size=cfg.voxel_size,
+            robot_height=cfg.robot_height,
+            **cfg.planner,  # type: ignore[arg-type]
         )
         self._pending = False
         self._mapped = False
