@@ -718,8 +718,7 @@ class TestJointTrajectoryTask:
         assert final.joint_names == ["arm/joint2"]
         assert trajectory_task.get_state() == TrajectoryState.COMPLETED
         assert (
-            trajectory_task.compute(CoordinatorState(joints=reached, t_now=12.0, dt=0.01))
-            is None
+            trajectory_task.compute(CoordinatorState(joints=reached, t_now=12.0, dt=0.01)) is None
         )
 
     def test_replacement_reset_and_cancel_clear_active_subset(self, trajectory_task):

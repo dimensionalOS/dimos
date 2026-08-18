@@ -276,11 +276,7 @@ def pick_and_place_pointclouds(
     # Tall destination geometry is treated as a receptacle; thin geometry is a
     # supporting surface whose target must include half the held object's height.
     if destination_height >= _TALL_RECEPTACLE_METERS:
-        place_z = (
-            destination_top
-            - source_height / 2.0
-            - _RECEPTACLE_RIM_CLEARANCE_METERS
-        )
+        place_z = destination_top - source_height / 2.0 - _RECEPTACLE_RIM_CLEARANCE_METERS
     else:
         place_z = destination_top + source_height / 2.0
     place = PoseStamped(

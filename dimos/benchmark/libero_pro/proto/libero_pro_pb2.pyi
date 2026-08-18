@@ -1,8 +1,8 @@
-from google.protobuf.internal import containers as _containers
-from google.protobuf import descriptor as _descriptor
-from google.protobuf import message as _message
 from collections.abc import Iterable as _Iterable, Mapping as _Mapping
-from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
+from typing import ClassVar as _ClassVar, Union as _Union
+
+from google.protobuf import descriptor as _descriptor, message as _message
+from google.protobuf.internal import containers as _containers
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -11,19 +11,27 @@ class Empty(_message.Message):
     def __init__(self) -> None: ...
 
 class Health(_message.Message):
-    __slots__ = ("ready", "detail")
+    __slots__ = ("detail", "ready")
     READY_FIELD_NUMBER: _ClassVar[int]
     DETAIL_FIELD_NUMBER: _ClassVar[int]
     ready: bool
     detail: str
-    def __init__(self, ready: _Optional[bool] = ..., detail: _Optional[str] = ...) -> None: ...
+    def __init__(self, ready: bool | None = ..., detail: str | None = ...) -> None: ...
 
 class WatchRequest(_message.Message):
     __slots__ = ()
     def __init__(self) -> None: ...
 
 class CameraFrame(_message.Message):
-    __slots__ = ("camera", "width", "height", "rgb", "depth_meters", "intrinsic", "camera_to_robot_base")
+    __slots__ = (
+        "camera",
+        "camera_to_robot_base",
+        "depth_meters",
+        "height",
+        "intrinsic",
+        "rgb",
+        "width",
+    )
     CAMERA_FIELD_NUMBER: _ClassVar[int]
     WIDTH_FIELD_NUMBER: _ClassVar[int]
     HEIGHT_FIELD_NUMBER: _ClassVar[int]
@@ -38,10 +46,26 @@ class CameraFrame(_message.Message):
     depth_meters: bytes
     intrinsic: _containers.RepeatedScalarFieldContainer[float]
     camera_to_robot_base: _containers.RepeatedScalarFieldContainer[float]
-    def __init__(self, camera: _Optional[str] = ..., width: _Optional[int] = ..., height: _Optional[int] = ..., rgb: _Optional[bytes] = ..., depth_meters: _Optional[bytes] = ..., intrinsic: _Optional[_Iterable[float]] = ..., camera_to_robot_base: _Optional[_Iterable[float]] = ...) -> None: ...
+    def __init__(
+        self,
+        camera: str | None = ...,
+        width: int | None = ...,
+        height: int | None = ...,
+        rgb: bytes | None = ...,
+        depth_meters: bytes | None = ...,
+        intrinsic: _Iterable[float] | None = ...,
+        camera_to_robot_base: _Iterable[float] | None = ...,
+    ) -> None: ...
 
 class RobotSnapshot(_message.Message):
-    __slots__ = ("tick", "timestamp_s", "joint_position", "joint_velocity", "gripper_position", "cameras")
+    __slots__ = (
+        "cameras",
+        "gripper_position",
+        "joint_position",
+        "joint_velocity",
+        "tick",
+        "timestamp_s",
+    )
     TICK_FIELD_NUMBER: _ClassVar[int]
     TIMESTAMP_S_FIELD_NUMBER: _ClassVar[int]
     JOINT_POSITION_FIELD_NUMBER: _ClassVar[int]
@@ -54,26 +78,47 @@ class RobotSnapshot(_message.Message):
     joint_velocity: _containers.RepeatedScalarFieldContainer[float]
     gripper_position: float
     cameras: _containers.RepeatedCompositeFieldContainer[CameraFrame]
-    def __init__(self, tick: _Optional[int] = ..., timestamp_s: _Optional[float] = ..., joint_position: _Optional[_Iterable[float]] = ..., joint_velocity: _Optional[_Iterable[float]] = ..., gripper_position: _Optional[float] = ..., cameras: _Optional[_Iterable[_Union[CameraFrame, _Mapping]]] = ...) -> None: ...
+    def __init__(
+        self,
+        tick: int | None = ...,
+        timestamp_s: float | None = ...,
+        joint_position: _Iterable[float] | None = ...,
+        joint_velocity: _Iterable[float] | None = ...,
+        gripper_position: float | None = ...,
+        cameras: _Iterable[_Union[CameraFrame, _Mapping]] | None = ...,
+    ) -> None: ...
 
 class JointTargets(_message.Message):
-    __slots__ = ("joint_position", "gripper_position", "sequence")
+    __slots__ = ("gripper_position", "joint_position", "sequence")
     JOINT_POSITION_FIELD_NUMBER: _ClassVar[int]
     GRIPPER_POSITION_FIELD_NUMBER: _ClassVar[int]
     SEQUENCE_FIELD_NUMBER: _ClassVar[int]
     joint_position: _containers.RepeatedScalarFieldContainer[float]
     gripper_position: float
     sequence: int
-    def __init__(self, joint_position: _Optional[_Iterable[float]] = ..., gripper_position: _Optional[float] = ..., sequence: _Optional[int] = ...) -> None: ...
+    def __init__(
+        self,
+        joint_position: _Iterable[float] | None = ...,
+        gripper_position: float | None = ...,
+        sequence: int | None = ...,
+    ) -> None: ...
 
 class Ack(_message.Message):
     __slots__ = ("sequence",)
     SEQUENCE_FIELD_NUMBER: _ClassVar[int]
     sequence: int
-    def __init__(self, sequence: _Optional[int] = ...) -> None: ...
+    def __init__(self, sequence: int | None = ...) -> None: ...
 
 class InitializeTrialRequest(_message.Message):
-    __slots__ = ("suite", "task_order_index", "task_index", "init_state_index", "horizon_ticks", "control_frequency_hz", "settling_ticks")
+    __slots__ = (
+        "control_frequency_hz",
+        "horizon_ticks",
+        "init_state_index",
+        "settling_ticks",
+        "suite",
+        "task_index",
+        "task_order_index",
+    )
     SUITE_FIELD_NUMBER: _ClassVar[int]
     TASK_ORDER_INDEX_FIELD_NUMBER: _ClassVar[int]
     TASK_INDEX_FIELD_NUMBER: _ClassVar[int]
@@ -88,18 +133,35 @@ class InitializeTrialRequest(_message.Message):
     horizon_ticks: int
     control_frequency_hz: int
     settling_ticks: int
-    def __init__(self, suite: _Optional[str] = ..., task_order_index: _Optional[int] = ..., task_index: _Optional[int] = ..., init_state_index: _Optional[int] = ..., horizon_ticks: _Optional[int] = ..., control_frequency_hz: _Optional[int] = ..., settling_ticks: _Optional[int] = ...) -> None: ...
+    def __init__(
+        self,
+        suite: str | None = ...,
+        task_order_index: int | None = ...,
+        task_index: int | None = ...,
+        init_state_index: int | None = ...,
+        horizon_ticks: int | None = ...,
+        control_frequency_hz: int | None = ...,
+        settling_ticks: int | None = ...,
+    ) -> None: ...
 
 class TrialReady(_message.Message):
-    __slots__ = ("task_name", "instruction")
+    __slots__ = ("instruction", "task_name")
     TASK_NAME_FIELD_NUMBER: _ClassVar[int]
     INSTRUCTION_FIELD_NUMBER: _ClassVar[int]
     task_name: str
     instruction: str
-    def __init__(self, task_name: _Optional[str] = ..., instruction: _Optional[str] = ...) -> None: ...
+    def __init__(self, task_name: str | None = ..., instruction: str | None = ...) -> None: ...
 
 class TerminalResult(_message.Message):
-    __slots__ = ("success", "score", "reward", "terminal_reason", "policy_ticks", "backend_ticks", "error")
+    __slots__ = (
+        "backend_ticks",
+        "error",
+        "policy_ticks",
+        "reward",
+        "score",
+        "success",
+        "terminal_reason",
+    )
     SUCCESS_FIELD_NUMBER: _ClassVar[int]
     SCORE_FIELD_NUMBER: _ClassVar[int]
     REWARD_FIELD_NUMBER: _ClassVar[int]
@@ -114,4 +176,13 @@ class TerminalResult(_message.Message):
     policy_ticks: int
     backend_ticks: int
     error: str
-    def __init__(self, success: _Optional[bool] = ..., score: _Optional[float] = ..., reward: _Optional[float] = ..., terminal_reason: _Optional[str] = ..., policy_ticks: _Optional[int] = ..., backend_ticks: _Optional[int] = ..., error: _Optional[str] = ...) -> None: ...
+    def __init__(
+        self,
+        success: bool | None = ...,
+        score: float | None = ...,
+        reward: float | None = ...,
+        terminal_reason: str | None = ...,
+        policy_ticks: int | None = ...,
+        backend_ticks: int | None = ...,
+        error: str | None = ...,
+    ) -> None: ...
