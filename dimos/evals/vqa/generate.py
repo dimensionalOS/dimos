@@ -44,6 +44,10 @@ from dimos.evals.vqa.primitives.moondream import MoondreamObjectDetector
 from dimos.memory.cli.dataset import open_dataset
 from dimos.msgs.sensor_msgs.Image import Image
 
+_UNORDERED_FAMILIES = frozenset(
+    family.name for family in AVAILABLE_FAMILIES if not family.object_order_matters
+)
+
 if TYPE_CHECKING:
     from dimos.evals.vqa.preprocessing import CalibratedFrame
     from dimos.evals.vqa.primitives.edgetam import ObjectMaskEstimator
@@ -374,12 +378,9 @@ def _generate_frame(
 
 def _deduplicate_proposals(proposals: Sequence[QuestionProposal]) -> tuple[QuestionProposal, ...]:
     unique: list[QuestionProposal] = []
-    unordered_families = {
-        family.name for family in AVAILABLE_FAMILIES if not family.object_order_matters
-    }
     seen_object_sets: set[tuple[str, frozenset[str]]] = set()
     for proposal in proposals:
-        if proposal.family in unordered_families:
+        if proposal.family in _UNORDERED_FAMILIES:
             object_set = (
                 proposal.family,
                 frozenset(name.casefold() for name in proposal.object_names),
@@ -396,8 +397,11 @@ def _case_ids(image_index: int, proposals: tuple[QuestionProposal, ...]) -> tupl
     counts: dict[str, int] = {}
     identifiers: list[str] = []
     for proposal in proposals:
-        object_names = "-vs-".join(proposal.object_names)
-        object_id = re.sub(r"[^a-z0-9]+", "-", object_names.casefold()).strip("-")
+        object_names = proposal.object_names
+        if proposal.family in _UNORDERED_FAMILIES:
+            object_names = tuple(sorted(object_names, key=str.casefold))
+        joined_names = "-vs-".join(object_names)
+        object_id = re.sub(r"[^a-z0-9]+", "-", joined_names.casefold()).strip("-")
         base = f"frame-{image_index:06d}-{object_id or 'object'}-{proposal.family}"
         count = counts.get(base, 0) + 1
         counts[base] = count
