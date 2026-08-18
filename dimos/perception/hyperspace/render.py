@@ -63,6 +63,26 @@ def normalize_scores(
     return np.asarray(norm, dtype=np.float32)
 
 
+def normalize_scores_absolute(
+    scores: NDArray[np.floating],
+    lo: float = 0.0,
+    hi: float = 0.15,
+) -> NDArray[np.float32]:
+    """Map scores to [0, 1] on a fixed cosine scale, for apples-to-apples images.
+
+    Unlike :func:`normalize_scores`, the scale does not adapt to the score
+    distribution: ``lo`` (no signal) and ``hi`` (strong match) are absolute
+    background-contrasted cosines, so a frame that matches everywhere colors
+    everywhere, and images rendered separately remain comparable. Defaults
+    span the range background-contrasted SigLIP cosines occupy in practice
+    (false positives ~0.1, confident hits ~0.15+).
+    """
+    scores = np.asarray(scores, dtype=np.float32)
+    if scores.size == 0:
+        return scores
+    return np.asarray(np.clip((scores - lo) / (hi - lo), 0.0, 1.0), dtype=np.float32)
+
+
 def scores_to_colors(normalized: NDArray[np.floating]) -> NDArray[np.uint8]:
     """(N,) scores in [0, 1] -> (N, 3) RGB along a gray -> blue -> red gradient."""
     t = np.asarray(normalized, dtype=np.float32).reshape(-1, 1)
