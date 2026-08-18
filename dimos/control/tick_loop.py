@@ -83,6 +83,8 @@ class TickLoop:
         joint_to_hardware: Dict mapping joint_name -> hardware_id
         publish_callback: Optional callback to publish the merged JointState
         publish_robot_callback: Optional callback, called with (hardware_id, msg)
+        publish_target_callback: Optional callback to publish the arbitrated
+            position targets each tick
         frame_id: Frame ID for published JointState
         log_ticks: Whether to log tick information
     """
@@ -97,6 +99,7 @@ class TickLoop:
         joint_to_hardware: dict[JointName, HardwareId],
         publish_callback: Callable[[JointState], None] | None = None,
         publish_robot_callback: Callable[[HardwareId, JointState], None] | None = None,
+        publish_target_callback: Callable[[JointState], None] | None = None,
         frame_id: str = "coordinator",
         log_ticks: bool = False,
     ) -> None:
@@ -108,6 +111,7 @@ class TickLoop:
         self._joint_to_hardware = joint_to_hardware
         self._publish_callback = publish_callback
         self._publish_robot_callback = publish_robot_callback
+        self._publish_target_callback = publish_target_callback
         self._frame_id = frame_id
         self._log_ticks = log_ticks
 
@@ -190,6 +194,9 @@ class TickLoop:
         hw_commands = self._route_to_hardware(joint_commands)
 
         self._write_all_hardware(hw_commands)
+
+        if self._publish_target_callback:
+            self._publish_joint_targets(joint_commands)
 
         if self._publish_callback:
             self._publish_joint_state(joint_states)
@@ -416,6 +423,30 @@ class TickLoop:
                             )
                     except Exception as e:
                         logger.error(f"Failed to write to {hw_id}: {e}")
+
+    def _publish_joint_targets(
+        self, joint_commands: dict[str, tuple[float, ControlMode, str]]
+    ) -> None:
+        """Publish the arbitrated position targets that go to hardware this tick."""
+        from dimos.hardware.manipulators.spec import ControlMode
+
+        callback = self._publish_target_callback
+        if callback is None:
+            return
+        names = [
+            name
+            for name, (_, mode, _) in joint_commands.items()
+            if mode in (ControlMode.POSITION, ControlMode.SERVO_POSITION)
+        ]
+        if not names:
+            return
+        msg = JointState(
+            ts=time.time(),
+            frame_id=self._frame_id,
+            name=names,
+            position=[joint_commands[name][0] for name in names],
+        )
+        callback(msg)
 
     def _publish_joint_state(self, snapshot: JointStateSnapshot) -> None:
         """Publish aggregated JointState for external consumers."""

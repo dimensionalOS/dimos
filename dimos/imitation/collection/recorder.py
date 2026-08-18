@@ -27,6 +27,8 @@ segmentation).
 
 from __future__ import annotations
 
+from pydantic import Field
+
 from dimos.core.stream import In
 from dimos.imitation.collection.episode_monitor import EpisodeStatus
 from dimos.memory2.module import Recorder, RecorderConfig
@@ -35,7 +37,15 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 
 
 class CollectionRecorderConfig(RecorderConfig):
-    pass
+    # Joint and status streams carry no world pose; skipping the tf lookup
+    # avoids a per-message warning at the control rate.
+    poseless_streams: list[str] = Field(
+        default_factory=lambda: [
+            "coordinator_joint_state",
+            "coordinator_joint_target",
+            "status",
+        ]
+    )
 
 
 class CollectionRecorder(Recorder):
@@ -45,4 +55,7 @@ class CollectionRecorder(Recorder):
 
     color_image: In[Image]  # observation (camera)
     coordinator_joint_state: In[JointState]  # observation + action (measured/next state)
+    # action (commanded targets); recorded when the coordinator runs with
+    # publish_joint_targets on, silent otherwise
+    coordinator_joint_target: In[JointState]
     status: In[EpisodeStatus]  # episode start/save/discard segmentation

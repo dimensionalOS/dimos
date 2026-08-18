@@ -97,6 +97,10 @@ class ControlCoordinatorConfig(ModuleConfig):
 
     tick_rate: float = 100.0
     publish_joint_state: bool = True
+    # Publish the per-tick arbitrated position targets on
+    # coordinator_joint_target, so recordings capture commanded actions in
+    # addition to measured state.
+    publish_joint_targets: bool = False
     # Transitional: goes away once every consumer reads per-robot streams.
     publish_robot_joint_states: bool = False
     joint_state_frame_id: str = "coordinator"
@@ -157,6 +161,10 @@ class ControlCoordinator(Module):
 
     # Output: Aggregated joint state for external consumers
     coordinator_joint_state: Out[JointState]
+
+    # Output: Arbitrated position targets, published when
+    # publish_joint_targets is on
+    coordinator_joint_target: Out[JointState]
 
     # Input: Streaming joint commands for real-time control
     joint_command: In[JointState]
@@ -955,6 +963,9 @@ class ControlCoordinator(Module):
         publish_robot_cb = (
             self._publish_robot_joint_state if self.config.publish_robot_joint_states else None
         )
+        publish_target_cb = (
+            self.coordinator_joint_target.publish if self.config.publish_joint_targets else None
+        )
         self._tick_loop = TickLoop(
             tick_rate=self.config.tick_rate,
             hardware=self._hardware,
@@ -964,6 +975,7 @@ class ControlCoordinator(Module):
             joint_to_hardware=self._joint_to_hardware,
             publish_callback=publish_cb,
             publish_robot_callback=publish_robot_cb,
+            publish_target_callback=publish_target_cb,
             frame_id=self.config.joint_state_frame_id,
             log_ticks=self.config.log_ticks,
         )
