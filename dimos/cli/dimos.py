@@ -98,9 +98,7 @@ def _migrate_legacy_config() -> None:
         tmp.rename(legacy / "config")
         typer.echo(f"config migrated: {legacy} -> {legacy / 'config'}", err=True)
     except OSError:
-        # ponytail: lost a migration race with a concurrent dimos run; the winner
-        # already moved it.
-        pass
+        pass  # lost a migration race; the winner already moved it
 
 
 def _normalize_simulation_argv(argv: list[str]) -> list[str]:
