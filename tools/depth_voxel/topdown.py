@@ -79,8 +79,15 @@ def main(out_path: str, recording_name: str, *labelled_paths: str) -> None:
         min(cloud[1].min() for cloud in clouds) - margin_meters,
         max(cloud[1].max() for cloud in clouds) + margin_meters,
     )
-    figure, axes = pyplot.subplots(1, len(panels), figsize=(8 * len(panels), 8), facecolor="white")
-    for axis, (label, _), (x, y, z) in zip(np.atleast_1d(axes), panels, clouds, strict=True):
+    columns = min(len(panels), 2)
+    rows = -(-len(panels) // columns)
+    figure, axes = pyplot.subplots(
+        rows, columns, figsize=(8 * columns, 8 * rows), facecolor="white", squeeze=False
+    )
+    flat_axes = axes.ravel()
+    for extra_axis in flat_axes[len(panels) :]:
+        extra_axis.axis("off")
+    for axis, (label, _), (x, y, z) in zip(flat_axes, panels, clouds, strict=False):
         scatter = axis.scatter(
             x, y, c=z, s=1.2, cmap="turbo", vmin=low_z, vmax=high_z, linewidths=0
         )
