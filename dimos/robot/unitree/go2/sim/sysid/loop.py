@@ -452,7 +452,7 @@ def main() -> None:
     print(sensor_noise(st, t0=args.noise_t0, t1=args.noise_t1).describe())
 
     if args.sweep:
-        from dimos.robot.unitree.go2.sim.model import MujocoBackend
+        from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
         from dimos.robot.unitree.go2.sim.ranges import load_preset
 
         print(f"\ncommand-shift sweep  t={args.start:g}-{args.start + args.seconds:g}s")

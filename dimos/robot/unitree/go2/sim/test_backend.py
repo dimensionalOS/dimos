@@ -29,9 +29,10 @@ mujoco = pytest.importorskip("mujoco")
 # silent-vanish shape, closed the same way.
 pytestmark = [pytest.mark.go2sim]
 
-from dimos.robot.unitree.go2.sim import anchors, model as go2_model
+from dimos.robot.unitree.go2.sim import anchors
 from dimos.robot.unitree.go2.sim.backend import BaseCondition, Commands, RolloutPlan, State
-from dimos.robot.unitree.go2.sim.model import MujocoBackend
+from dimos.robot.unitree.go2.sim.engines import model as go2_model
+from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
 
 STAND_Q = np.tile([0.0, 0.9, -1.8], 4)
 

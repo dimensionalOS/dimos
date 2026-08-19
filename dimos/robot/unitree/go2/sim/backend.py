@@ -17,14 +17,22 @@
 Everything above this seam — ingest, regimes, clip scheduling, channels, the
 fit — is simulator-agnostic. The backend never sees a regime, a channel or a
 fit: it is handed a :class:`RolloutPlan` and returns a :class:`Prediction`.
-MuJoCo implements it today (:class:`~dimos.robot.unitree.go2.sim.model.MujocoBackend`);
-IsaacLab is the next backend, and PhysX shares no contact model with MuJoCo,
-so fitted VALUES will not transfer — the recordings, anchors, and method are
-what transfer.
+CPU MuJoCo implements it today
+(:class:`~dimos.robot.unitree.go2.sim.engines.mujoco.MujocoBackend`). The
+implementations live in ``engines/`` beside this module, and how much of the
+plant a second one inherits depends on the engine: MJX compiles the same
+:class:`mujoco.MjModel` that :mod:`~dimos.robot.unitree.go2.sim.engines.model`
+builds, so the fitted VALUES carry and only the solver has to be re-verified;
+PhysX shares no contact model with MuJoCo, so ``foot_solref_*`` and
+``foot_solimp_*`` have no counterpart there and a PhysX backend is a
+re-identification, not a port. What transfers to any of them is the same:
+the recordings, the anchors, and the method.
 
 NO ENGINE IMPORT LIVES HERE, by design: this module is the seam, and importing
 the seam must never drag in a simulator — with two backends installed, using
-either would import both.
+either would import both. That is why the seam stays a leaf module and the
+engines live in their own directory: importing ``...sim.backend`` gets the
+protocols and cannot reach an engine.
 
 Four expensive lessons are encoded in the types rather than left to comments:
 ``Knob.log`` because a bound must be judged in the parameter's own metric;
@@ -196,7 +204,7 @@ class Backend(Protocol):
     backend object to spawned worker processes (``sysid.rollouts``,
     ``sysid.probe``), so a backend holds configuration — paths, knob values,
     an envelope — never live engine state. Compiling the engine's model per
-    rollout (as :class:`~dimos.robot.unitree.go2.sim.model.MujocoBackend`
+    rollout (as :class:`~dimos.robot.unitree.go2.sim.engines.mujoco.MujocoBackend`
     does) satisfies this for free.
     """
 

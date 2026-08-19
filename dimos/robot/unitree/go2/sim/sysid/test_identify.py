@@ -251,7 +251,7 @@ def test_the_jacobian_is_deterministic_and_shares_its_schedules(mixed_streams):
     """Same recording, same seed, twice: bit-identical J and residual. The
     clip schedule is a pure function per segment and the backend is
     deterministic, so any drift here means a rollout leaked state."""
-    from dimos.robot.unitree.go2.sim.model import MujocoBackend
+    from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
     from dimos.robot.unitree.go2.sim.ranges import MEASURED
     from dimos.robot.unitree.go2.sim.sysid.identify import jacobian
     from dimos.robot.unitree.go2.sim.sysid.regimes import sample_segments
@@ -278,7 +278,7 @@ def test_the_jacobian_is_deterministic_and_shares_its_schedules(mixed_streams):
 @pytest.mark.go2sim
 def test_every_channel_produces_a_scorable_jacobian(mixed_streams):
     from dimos.robot.unitree.go2.sim.backend import CHANNELS
-    from dimos.robot.unitree.go2.sim.model import MujocoBackend
+    from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
     from dimos.robot.unitree.go2.sim.ranges import MEASURED
     from dimos.robot.unitree.go2.sim.sysid.identify import (
         analyse,

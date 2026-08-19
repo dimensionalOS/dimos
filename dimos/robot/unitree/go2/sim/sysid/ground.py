@@ -1499,7 +1499,7 @@ def main() -> None:
     ap.add_argument("--speed", type=float, default=1.0, help="viewer playback rate")
     args = ap.parse_args()
 
-    from dimos.robot.unitree.go2.sim.model import MujocoBackend
+    from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
 
     st = read_streams(args.recording)
     policy = FreePolicy.load(args.policy_bin)

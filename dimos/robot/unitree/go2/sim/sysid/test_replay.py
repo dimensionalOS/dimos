@@ -105,7 +105,7 @@ def test_segment_4_reproduces_the_shipped_plants_numbers(mixed_streams):
     joint -3.96%, the direction 5d's drive measurement predicts (the bare
     sim OVER-drives tau 1.1-1.35x; derating toward the measured drive
     tightens the joint residual). Same bit-identical discipline forward."""
-    from dimos.robot.unitree.go2.sim.model import MujocoBackend
+    from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
     from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
     from dimos.robot.unitree.go2.sim.sysid.replay import replay
 
@@ -139,7 +139,7 @@ def test_the_tracker_is_detected_and_scores_the_body_channels(mixed_streams):
 def test_a_suspended_recording_replays_with_the_trunk_pinned(hanging_streams):
     """No tracker, sport-driven, hanging 70-85 deg off level: loads, replays,
     and the trunk stays pinned to the measured pose, clear of any floor."""
-    from dimos.robot.unitree.go2.sim.model import MujocoBackend
+    from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
     from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
     from dimos.robot.unitree.go2.sim.sysid.replay import replay
 

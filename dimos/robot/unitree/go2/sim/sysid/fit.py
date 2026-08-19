@@ -837,7 +837,7 @@ def main() -> None:
 
     from contextlib import ExitStack
 
-    from dimos.robot.unitree.go2.sim.model import MujocoBackend
+    from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
 
     backend = MujocoBackend(envelope=TORQUE_ENVELOPES[args.envelope] if args.envelope else None)
     base = base_values(args.preset)

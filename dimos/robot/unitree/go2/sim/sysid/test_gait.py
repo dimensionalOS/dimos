@@ -26,7 +26,7 @@ def test_fk_matches_mujoco_exactly() -> None:
     """The hand FK is the model's own kinematics, not an approximation of it."""
     import mujoco
 
-    from dimos.robot.unitree.go2.sim.model import load
+    from dimos.robot.unitree.go2.sim.engines.model import load
 
     model, data = load(None)
     rng = np.random.default_rng(7)

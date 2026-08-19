@@ -47,7 +47,7 @@ def _tree_sha256(root: Path) -> str:
 
 
 def test_the_vendored_tree_is_byte_identical_to_the_pinned_menagerie_commit():
-    from dimos.robot.unitree.go2.sim.model import MENAGERIE_TREE_SHA256
+    from dimos.robot.unitree.go2.sim.engines.model import MENAGERIE_TREE_SHA256
 
     root = _vendored_root()
     assert (root / "unitree_go2" / "scene.xml").is_file()
@@ -59,7 +59,7 @@ def test_the_vendored_tree_is_byte_identical_to_the_pinned_menagerie_commit():
 
 
 def test_the_vendored_snapshot_carries_its_license_and_provenance():
-    from dimos.robot.unitree.go2.sim.model import MENAGERIE_COMMIT
+    from dimos.robot.unitree.go2.sim.engines.model import MENAGERIE_COMMIT
 
     root = _vendored_root()
     # Menagerie's LICENSE is an aggregate, one section per model directory;
@@ -72,7 +72,7 @@ def test_the_vendored_snapshot_carries_its_license_and_provenance():
 
 def test_the_vendored_scene_compiles_without_the_environment_override():
     mujoco = pytest.importorskip("mujoco")
-    from dimos.robot.unitree.go2.sim.model import load
+    from dimos.robot.unitree.go2.sim.engines.model import load
 
     model, _ = load(_vendored_root())
     assert model.opt.timestep == pytest.approx(0.002)

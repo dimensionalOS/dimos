@@ -27,7 +27,7 @@ import numpy as np
 
 # Unitree SDK LowCmd.motor_cmd / LowState.motor_state order for the 12 leg
 # motors (indices 12-19 are unused on a Go2). Lives here rather than in
-# model.py so ingest can map wire order without importing mujoco.
+# backend/model.py so ingest can map wire order without importing mujoco.
 UNITREE_MOTOR_NAMES: tuple[str, ...] = (
     "FR_hip",
     "FR_thigh",

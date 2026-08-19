@@ -316,7 +316,7 @@ def test_tracking_areas_score_the_free_rollouts():
 @pytest.mark.skipif(not FREEWALK.is_file(), reason="needs the freewalk recording")
 @pytest.mark.skipif(not FREEWALK_BIN.is_file(), reason="needs the freewalk blob")
 def test_the_closed_loop_rollout_is_deterministic_and_summarisable():
-    from dimos.robot.unitree.go2.sim.model import MujocoBackend
+    from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
     from dimos.robot.unitree.go2.sim.policy import FreePolicy
     from dimos.robot.unitree.go2.sim.ranges import load_preset
     from dimos.robot.unitree.go2.sim.sysid.ground import rollout_policy, sim_summary
@@ -345,7 +345,7 @@ def test_loop_mechanisms_are_off_by_default_and_deterministic_when_on():
     """Latency and obs noise must change the physics when on, change NOTHING
     when off (every existing grounding number reproduces), and be exactly
     repeatable so a probe result is a measurement, not a draw."""
-    from dimos.robot.unitree.go2.sim.model import MujocoBackend
+    from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
     from dimos.robot.unitree.go2.sim.policy import FreePolicy
     from dimos.robot.unitree.go2.sim.ranges import load_preset
     from dimos.robot.unitree.go2.sim.sysid.ground import rollout_policy
@@ -385,7 +385,7 @@ def test_loop_mechanisms_are_off_by_default_and_deterministic_when_on():
 def test_a_perturbed_start_diverges_but_the_statistics_survive():
     """The whole premise of loop 2 in one assertion pair: position separates,
     the summary statistics stay within a sensible band."""
-    from dimos.robot.unitree.go2.sim.model import MujocoBackend
+    from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
     from dimos.robot.unitree.go2.sim.policy import FreePolicy
     from dimos.robot.unitree.go2.sim.ranges import load_preset
     from dimos.robot.unitree.go2.sim.sysid.ground import rollout_policy, sim_summary
@@ -417,7 +417,7 @@ def test_the_snapped_rollout_reinitialises_and_measures_a_finite_rate():
     """The closed loop's re-init path: snaps fire on schedule, the run is
     deterministic, and the divergence rates come out finite with the sim
     world's yaw/xy preserved across snaps (no teleports)."""
-    from dimos.robot.unitree.go2.sim.model import MujocoBackend
+    from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
     from dimos.robot.unitree.go2.sim.policy import FreePolicy
     from dimos.robot.unitree.go2.sim.ranges import load_preset
     from dimos.robot.unitree.go2.sim.sysid.ground import (

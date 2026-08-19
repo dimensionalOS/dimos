@@ -33,8 +33,8 @@ import sys
 
 PACKAGE = "dimos.robot.unitree.go2.sim"
 
-# Everything above the seam: every module in the package except the one that
-# IS the engine binding (model.py). A new module is above the seam by
+# Everything above the seam: every module in the package except the engine
+# bindings, which live in `engines/`. A new module is above the seam by
 # default — it must be added HERE, not exempted.
 ABOVE_SEAM = (
     "anchors",
@@ -63,15 +63,18 @@ ABOVE_SEAM = (
     "sysid.verify_net",
 )
 
-# The engine binding: the ONE module allowed to import the engine, and the
-# module whose import above the seam is just an engine import in disguise.
-ENGINE_MODULES = ("mujoco", f"{PACKAGE}.model")
+# The engine bindings: the modules allowed to import an engine, and the
+# modules whose import above the seam is just an engine import in disguise.
+# `engines.model` compiles the MJCF both MuJoCo-family backends consume;
+# `engines.mujoco` and `engines.mjx` are the engines themselves.
+BELOW_SEAM = ("engines.model", "engines.mujoco", "engines.mjx")
+ENGINE_MODULES = ("mujoco", "jax", *(f"{PACKAGE}.{m}" for m in BELOW_SEAM))
 
 HOW_TO_FIX = (
     "Above the seam the engine arrives as an argument — a Backend, a "
     "ClosedLoopBackend, a Rollouts built around one — never as an import. "
     "Construct the engine in the CLI's main() (as fit/ground/replay do), or "
-    "put genuinely engine-specific code in model.py behind the Backend or "
+    "put genuinely engine-specific code in engines/ behind the Backend or "
     "LoopSession protocol."
 )
 
@@ -82,10 +85,10 @@ def test_every_module_is_listed():
     found = {
         str(p.relative_to(root))[: -len(".py")].replace("/", ".")
         for p in root.rglob("*.py")
-        if not p.name.startswith("test_") and p.name != "__init__.py"
+        if not p.name.startswith("test_")
     }
-    assert found - {"model"} == set(ABOVE_SEAM), (
-        f"module list out of date: unlisted {sorted(found - {'model'} - set(ABOVE_SEAM))}, "
+    assert found - set(BELOW_SEAM) == set(ABOVE_SEAM), (
+        f"module list out of date: unlisted {sorted(found - set(BELOW_SEAM) - set(ABOVE_SEAM))}, "
         f"vanished {sorted(set(ABOVE_SEAM) - found)}. New modules are above the seam "
         "by default: add them to ABOVE_SEAM."
     )
@@ -129,7 +132,9 @@ def _engine_imports_outside_main(path: Path) -> list[str]:
             if isinstance(child, ast.Import):
                 names = [a.name for a in child.names]
             elif isinstance(child, ast.ImportFrom):
-                names = [child.module or ""]
+                # level > 0 is relative: `from .mujoco import ...` parses with
+                # module="mujoco" and is OUR module, not the engine.
+                names = [child.module or ""] if child.level == 0 else []
             for name in names:
                 if any(name == e or name.startswith(e + ".") for e in ENGINE_MODULES):
                     if "main" not in fn_stack:

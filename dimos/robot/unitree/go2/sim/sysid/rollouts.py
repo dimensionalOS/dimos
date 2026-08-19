@@ -31,7 +31,7 @@ function runs in. Workers receive the CONFIGURED BACKEND itself, pickled
 .Backend`), so no engine is named here and a different simulator
 parallelises by construction. MuJoCo is not thread-safe on shared
 ``MjData``, hence processes, each compiling its own model (which
-:class:`~dimos.robot.unitree.go2.sim.model.MujocoBackend` does per rollout
+:class:`~dimos.robot.unitree.go2.sim.engines.mujoco.MujocoBackend` does per rollout
 anyway).
 """
 
@@ -113,7 +113,7 @@ class Rollouts:
     """Evaluates rollout specs against one recording, serially or across processes.
 
     ``backend`` is the configured engine — an envelope-carrying
-    :class:`~dimos.robot.unitree.go2.sim.model.MujocoBackend`, an Isaac
+    :class:`~dimos.robot.unitree.go2.sim.engines.mujoco.MujocoBackend`, an Isaac
     backend, anything behind the seam. ``reader`` is the recording format
     (default: the Go2 DDS reader), pickled to workers exactly like the
     backend. ``workers <= 1`` runs in-process;

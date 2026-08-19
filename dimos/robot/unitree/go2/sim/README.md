@@ -2,14 +2,6 @@
 
 A measured Go2 plant for MuJoCo, and the identification pipeline that
 produced it: record the real robot → replay/rollout in sim → tune → verify.
-This file documents where the package is; how it got here lives in git
-history.
-
-**Honest caveat, first:** none of this is yet validated by a policy
-transferring to hardware. The value on offer is the method and the
-provenance, not an accuracy claim — and the referee is only ever as good as
-the sensor behind it (a loose tracker mount once cost three sound
-investigations aimed at a gap that wasn't there).
 
 ---
 
@@ -130,6 +122,15 @@ recordings ──► ingest ──► regimes ──► segments+clips ──►
                                                          BACKEND       ▼
                                                                      knobs
 ```
+
+The seam is a file the engines cannot reach into: `backend.py` carries the
+protocols and the plan/prediction types and imports no engine, while every
+engine lives in `engines/` — `engines/mujoco.py` today, `engines/mjx.py`
+next. `engines/model.py` sits between them: it vendors the scene and applies
+the knobs, and both MuJoCo-family backends compile the same `MjModel` from
+it, which is what makes "the same plant under two engines" structural rather
+than asserted. `test_seam.py` holds the split — a new module is above the
+seam by default and must be listed to be anything else.
 
 ```python
 class Backend(Protocol):
@@ -446,15 +447,15 @@ recording dissolved entirely on the held-out one.
 
 **Current recording roles** (`~/recordings/hard_floor`):
 
-| recording | executor | role |
-|---|---|---|
-| `20260816-194142` freewalk | Ivan's | fit set |
-| `20260816-174724` sport-jumps | native | fit set (flight regime) |
-| `20260817-153320`, `153558` | native runner | robot-repeat floor pair |
-| `20260817-154201` | native runner | excluded (loose mount) |
-| `20260817-195401` | Ivan's | selection |
-| `20260817-195715` | Ivan's | alternate floor partner |
-| `20260817-195539` | Ivan's | reserve — SPENT 2026-08-18 |
+| recording                     | executor      | role                       |
+|-------------------------------|---------------|----------------------------|
+| `20260816-194142` freewalk    | Ivan's        | fit set                    |
+| `20260816-174724` sport-jumps | native        | fit set (flight regime)    |
+| `20260817-153320`, `153558`   | native runner | robot-repeat floor pair    |
+| `20260817-154201`             | native runner | excluded (loose mount)     |
+| `20260817-195401`             | Ivan's        | selection                  |
+| `20260817-195715`             | Ivan's        | alternate floor partner    |
+| `20260817-195539`             | Ivan's        | reserve — SPENT 2026-08-18 |
 
 Mode B models Ivan's executor (raw un-smoothed actions on `policy/lowcmd`,
 22.3 ms median tick); the Go2's native runner is a second execution path

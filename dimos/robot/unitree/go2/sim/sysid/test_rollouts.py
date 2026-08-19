@@ -54,7 +54,7 @@ def _equal_results(a, b) -> None:
 
 @needs_hard
 def test_worker_processes_reproduce_the_serial_rollouts_bit_for_bit():
-    from dimos.robot.unitree.go2.sim.model import MujocoBackend
+    from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
     from dimos.robot.unitree.go2.sim.ranges import MEASURED
     from dimos.robot.unitree.go2.sim.sysid.rollouts import Rollouts, RolloutSpec
 
@@ -80,7 +80,7 @@ def test_worker_processes_reproduce_the_serial_rollouts_bit_for_bit():
 
 @needs_hard
 def test_the_parallel_jacobian_is_the_serial_jacobian():
-    from dimos.robot.unitree.go2.sim.model import MujocoBackend
+    from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
     from dimos.robot.unitree.go2.sim.ranges import MEASURED
     from dimos.robot.unitree.go2.sim.sysid.identify import jacobian
     from dimos.robot.unitree.go2.sim.sysid.regimes import sample_segments
@@ -112,7 +112,7 @@ def test_a_parallel_fit_is_the_serial_fit_bit_for_bit():
     plan = default_plan(KNOBS, search=("armature", "actuator_tau"))
     base = base_values("measured")
 
-    from dimos.robot.unitree.go2.sim.model import MujocoBackend
+    from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
 
     def run_fit(workers: int):
         with Rollouts(HARD, MujocoBackend(), workers=workers) as rollouts:

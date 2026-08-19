@@ -378,7 +378,7 @@ def main() -> None:
     ap.add_argument("--workers", type=int, default=1, help="fan segment rollouts across processes")
     args = ap.parse_args()
 
-    from dimos.robot.unitree.go2.sim.model import MujocoBackend
+    from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
 
     st = read_streams(args.recording)
     declared = read_declarations(args.recording)

@@ -318,7 +318,7 @@ def main() -> None:
     ap.add_argument("--no-ghost", action="store_true", help="hide the recorded-pose ghost")
     args = ap.parse_args()
 
-    from dimos.robot.unitree.go2.sim.model import MujocoBackend
+    from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
     from dimos.robot.unitree.go2.sim.ranges import load_preset
     from dimos.robot.unitree.go2.sim.sysid.ingest import read_streams
     from dimos.robot.unitree.go2.sim.sysid.recording import read_declarations

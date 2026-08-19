@@ -820,7 +820,7 @@ def main() -> None:
 
     args = ap.parse_args()
 
-    from dimos.robot.unitree.go2.sim.model import MujocoBackend
+    from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
 
     backend = MujocoBackend()
     if args.cmd == "experiment":
