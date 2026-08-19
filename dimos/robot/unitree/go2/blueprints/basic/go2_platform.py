@@ -14,6 +14,7 @@
 
 from dataclasses import replace
 from functools import cache
+from pathlib import Path
 
 from dimos.control.components import HardwareType
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
@@ -35,6 +36,9 @@ from dimos.simulation.providers import (
 from dimos.utils.data import LfsPath
 
 _GO2_POLICY_MODEL = LfsPath("go2_velocity_policy/policy.onnx")
+_GO2_MUJOCO_ROOT = Path(__file__).resolve().parents[2] / "assets" / "mujoco"
+_GO2_MJCF_PATH = _GO2_MUJOCO_ROOT / "unitree_robots" / "go2" / "go2.pimsim.xml"
+_GO2_MESH_DIR = _GO2_MUJOCO_ROOT / "unitree_robots" / "go2" / "assets"
 
 
 def resolve_go2_platform() -> Blueprint:
@@ -61,8 +65,19 @@ def _resolve_simulation_binding() -> SimulationBinding:
     return provider.build(
         SimulationRequest(
             robot_model="unitree_go2",
+            model_path=_GO2_MJCF_PATH,
+            mesh_dir=_GO2_MESH_DIR,
             scene_package=global_config.scene_package,
-            features=frozenset({SimulationFeature.SENSORS}),
+            features=frozenset(
+                {
+                    SimulationFeature.SENSORS,
+                    *(
+                        (SimulationFeature.EPISODE_CONTROL,)
+                        if global_config.scene_package is not None
+                        else ()
+                    ),
+                }
+            ),
         )
     )
 

@@ -91,7 +91,14 @@ def test_go2_platform_uses_requested_simulation_provider(
     provider.build.assert_called_once_with(
         SimulationRequest(
             robot_model="unitree_go2",
+            model_path=go2_platform._GO2_MJCF_PATH,
+            mesh_dir=go2_platform._GO2_MESH_DIR,
             scene_package="dimsim-apartment",
-            features=frozenset({SimulationFeature.SENSORS}),
+            features=frozenset(
+                {
+                    SimulationFeature.SENSORS,
+                    SimulationFeature.EPISODE_CONTROL,
+                }
+            ),
         )
     )

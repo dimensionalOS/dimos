@@ -1,0 +1,368 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot name="go2">
+  <material name="metal">
+    <color rgba=".9 .95 .95 1" />
+  </material>
+  <material name="black">
+    <color rgba="0 0 0 1" />
+  </material>
+  <material name="white">
+    <color rgba="1 1 1 1" />
+  </material>
+  <material name="gray">
+    <color rgba="0.671705 0.692426 0.774270 1" />
+  </material>
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="assets/base_0.obj" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="assets/base_1.obj" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="assets/base_2.obj" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="assets/base_3.obj" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="assets/base_4.obj" />
+      </geometry>
+      <material name="gray" />
+    </visual>
+  </link>
+  <link name="FL_hip">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="assets/hip_0.obj" />
+      </geometry>
+      <material name="metal" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="assets/hip_1.obj" />
+      </geometry>
+      <material name="gray" />
+    </visual>
+  </link>
+  <joint name="FL_hip_joint" type="continuous">
+    <parent link="base_link" />
+    <child link="FL_hip" />
+    <origin xyz="0.1934 0.0465 0" rpy="0 0 0" />
+    <axis xyz="1 0 0" />
+  </joint>
+  <link name="FL_thigh">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="assets/thigh_0.obj" />
+      </geometry>
+      <material name="metal" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="assets/thigh_1.obj" />
+      </geometry>
+      <material name="gray" />
+    </visual>
+  </link>
+  <joint name="FL_thigh_joint" type="continuous">
+    <parent link="FL_hip" />
+    <child link="FL_thigh" />
+    <origin xyz="0 0.0955 0" rpy="0 0 0" />
+    <axis xyz="0 1 0" />
+  </joint>
+  <link name="FL_calf">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="assets/calf_0.obj" />
+      </geometry>
+      <material name="gray" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="assets/calf_1.obj" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 -0.213" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="assets/foot.obj" />
+      </geometry>
+      <material name="black" />
+    </visual>
+  </link>
+  <joint name="FL_calf_joint" type="continuous">
+    <parent link="FL_thigh" />
+    <child link="FL_calf" />
+    <origin xyz="0 0 -0.213" rpy="0 0 0" />
+    <axis xyz="0 1 0" />
+  </joint>
+  <link name="FL_foot" />
+  <joint name="FL_calf_to_FL_foot" type="fixed">
+    <parent link="FL_calf" />
+    <child link="FL_foot" />
+    <origin xyz="0 0 -0.213" rpy="0 0 0" />
+  </joint>
+  <link name="FR_hip">
+    <visual>
+      <origin xyz="0 0 0" rpy="3.14149999999 0 0" />
+      <geometry>
+        <mesh filename="assets/hip_0.obj" />
+      </geometry>
+      <material name="metal" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 0" rpy="3.14149999999 0 0" />
+      <geometry>
+        <mesh filename="assets/hip_1.obj" />
+      </geometry>
+      <material name="gray" />
+    </visual>
+  </link>
+  <joint name="FR_hip_joint" type="continuous">
+    <parent link="base_link" />
+    <child link="FR_hip" />
+    <origin xyz="0.1934 -0.0465 0" rpy="0 0 0" />
+    <axis xyz="1 0 0" />
+  </joint>
+  <link name="FR_thigh">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="assets/thigh_mirror_0.obj" />
+      </geometry>
+      <material name="metal" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="assets/thigh_mirror_1.obj" />
+      </geometry>
+      <material name="gray" />
+    </visual>
+  </link>
+  <joint name="FR_thigh_joint" type="continuous">
+    <parent link="FR_hip" />
+    <child link="FR_thigh" />
+    <origin xyz="0 -0.0955 0" rpy="0 0 0" />
+    <axis xyz="0 1 0" />
+  </joint>
+  <link name="FR_calf">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="assets/calf_mirror_0.obj" />
+      </geometry>
+      <material name="gray" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="assets/calf_mirror_1.obj" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 -0.213" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="assets/foot.obj" />
+      </geometry>
+      <material name="black" />
+    </visual>
+  </link>
+  <joint name="FR_calf_joint" type="continuous">
+    <parent link="FR_thigh" />
+    <child link="FR_calf" />
+    <origin xyz="0 0 -0.213" rpy="0 0 0" />
+    <axis xyz="0 1 0" />
+  </joint>
+  <link name="FR_foot" />
+  <joint name="FR_calf_to_FR_foot" type="fixed">
+    <parent link="FR_calf" />
+    <child link="FR_foot" />
+    <origin xyz="0 0 -0.213" rpy="0 0 0" />
+  </joint>
+  <link name="RL_hip">
+    <visual>
+      <origin xyz="0 0 0" rpy="3.14159265359 9.26536001326e-05 3.14159265359" />
+      <geometry>
+        <mesh filename="assets/hip_0.obj" />
+      </geometry>
+      <material name="metal" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 0" rpy="3.14159265359 9.26536001326e-05 3.14159265359" />
+      <geometry>
+        <mesh filename="assets/hip_1.obj" />
+      </geometry>
+      <material name="gray" />
+    </visual>
+  </link>
+  <joint name="RL_hip_joint" type="continuous">
+    <parent link="base_link" />
+    <child link="RL_hip" />
+    <origin xyz="-0.1934 0.0465 0" rpy="0 0 0" />
+    <axis xyz="1 0 0" />
+  </joint>
+  <link name="RL_thigh">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="assets/thigh_0.obj" />
+      </geometry>
+      <material name="metal" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="assets/thigh_1.obj" />
+      </geometry>
+      <material name="gray" />
+    </visual>
+  </link>
+  <joint name="RL_thigh_joint" type="continuous">
+    <parent link="RL_hip" />
+    <child link="RL_thigh" />
+    <origin xyz="0 0.0955 0" rpy="0 0 0" />
+    <axis xyz="0 1 0" />
+  </joint>
+  <link name="RL_calf">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="assets/calf_0.obj" />
+      </geometry>
+      <material name="gray" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="assets/calf_1.obj" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 -0.213" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="assets/foot.obj" />
+      </geometry>
+      <material name="black" />
+    </visual>
+  </link>
+  <joint name="RL_calf_joint" type="continuous">
+    <parent link="RL_thigh" />
+    <child link="RL_calf" />
+    <origin xyz="0 0 -0.213" rpy="0 0 0" />
+    <axis xyz="0 1 0" />
+  </joint>
+  <link name="RL_foot" />
+  <joint name="RL_calf_to_RL_foot" type="fixed">
+    <parent link="RL_calf" />
+    <child link="RL_foot" />
+    <origin xyz="0 0 -0.213" rpy="0 0 0" />
+  </joint>
+  <link name="RR_hip">
+    <visual>
+      <origin xyz="0 0 0" rpy="-9.26536003314e-05 9.26536003314e-05 3.14159265359" />
+      <geometry>
+        <mesh filename="assets/hip_0.obj" />
+      </geometry>
+      <material name="metal" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 0" rpy="-9.26536003314e-05 9.26536003314e-05 3.14159265359" />
+      <geometry>
+        <mesh filename="assets/hip_1.obj" />
+      </geometry>
+      <material name="gray" />
+    </visual>
+  </link>
+  <joint name="RR_hip_joint" type="continuous">
+    <parent link="base_link" />
+    <child link="RR_hip" />
+    <origin xyz="-0.1934 -0.0465 0" rpy="0 0 0" />
+    <axis xyz="1 0 0" />
+  </joint>
+  <link name="RR_thigh">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="assets/thigh_mirror_0.obj" />
+      </geometry>
+      <material name="metal" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="assets/thigh_mirror_1.obj" />
+      </geometry>
+      <material name="gray" />
+    </visual>
+  </link>
+  <joint name="RR_thigh_joint" type="continuous">
+    <parent link="RR_hip" />
+    <child link="RR_thigh" />
+    <origin xyz="0 -0.0955 0" rpy="0 0 0" />
+    <axis xyz="0 1 0" />
+  </joint>
+  <link name="RR_calf">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="assets/calf_mirror_0.obj" />
+      </geometry>
+      <material name="gray" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="assets/calf_mirror_1.obj" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 -0.213" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="assets/foot.obj" />
+      </geometry>
+      <material name="black" />
+    </visual>
+  </link>
+  <joint name="RR_calf_joint" type="continuous">
+    <parent link="RR_thigh" />
+    <child link="RR_calf" />
+    <origin xyz="0 0 -0.213" rpy="0 0 0" />
+    <axis xyz="0 1 0" />
+  </joint>
+  <link name="RR_foot" />
+  <joint name="RR_calf_to_RR_foot" type="fixed">
+    <parent link="RR_calf" />
+    <child link="RR_foot" />
+    <origin xyz="0 0 -0.213" rpy="0 0 0" />
+  </joint>
+</robot>
