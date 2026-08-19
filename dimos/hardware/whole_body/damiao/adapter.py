@@ -82,8 +82,8 @@ class DamiaoWholeBodyAdapter(ABC):
         self._active = False
         self._has_state = False
         self._robot: can_motor_control.Robot
-        self._arms: dict[str, can_motor_control.Arm]
-        self._grippers: dict[str, can_motor_control.Gripper]
+        self._arms: dict[str, can_motor_control.Arm] = {}
+        self._grippers: dict[str, can_motor_control.Gripper] = {}
         self._pin_model: pinocchio.Model
         self._pin_data: pinocchio.Data
 
@@ -135,18 +135,7 @@ class DamiaoWholeBodyAdapter(ABC):
                 "Damiao whole-body adapter failed to connect",
                 hardware_id=self._hardware_id,
             )
-            try:
-                if robot.is_connected():
-                    robot.disable()
-            except Exception:
-                logger.warning(
-                    "Damiao whole-body connect rollback failed",
-                    hardware_id=self._hardware_id,
-                    exc_info=True,
-                )
-            self._connected = False
-            self._active = False
-            self._has_state = False
+            self._release_robot(robot)
             return False
 
     @staticmethod
@@ -172,14 +161,23 @@ class DamiaoWholeBodyAdapter(ABC):
     def disconnect(self) -> None:
         if not self._connected:
             return
+        self._release_robot(self._robot)
+
+    def _release_robot(self, robot: can_motor_control.Robot) -> None:
+        """Disable hardware and drop every handle that owns the robot transport."""
         try:
-            self._robot.disable()
+            if robot.is_connected():
+                robot.disable()
         except Exception:
             logger.warning(
-                "Damiao whole-body adapter failed to disable while disconnecting",
+                "Damiao whole-body adapter failed to disable while releasing robot",
                 hardware_id=self._hardware_id,
                 exc_info=True,
             )
+        self._arms.clear()
+        self._grippers.clear()
+        if hasattr(self, "_robot") and self._robot is robot:
+            del self._robot
         self._connected = False
         self._active = False
         self._has_state = False
