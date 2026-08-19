@@ -378,7 +378,7 @@ def cases(rows: Sequence[Row], *, tags: frozenset[str] = frozenset()) -> list[Pa
             for name, window in cast("list[tuple[str, list[float]]]", row["context"])
         )
         case_tags = tags | {str(row["family"]), str(row["type"])}
-        if "split" in row:  # slice tag from dimos.evals.split
+        if "split" in row:  # slice tag from dimos.evals.temp.split
             case_tags |= {str(row["split"])}
         if row["type"] == "numeric":
             out.append(

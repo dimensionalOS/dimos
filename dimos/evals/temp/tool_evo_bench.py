@@ -23,15 +23,15 @@ whenever the measurement itself completed — a candidate encoder that scores
 0.0 is a measurement, not a failure. Non-zero exit means the bench could not
 measure (missing dataset, unimportable suite) or a gate threshold was breached.
 
-    python -m dimos.evals.tool_evo_bench                    # the benchmark
-    python -m dimos.evals.tool_evo_bench --dry-run          # wiring, no spend
-    python -m dimos.evals.tool_evo_bench --slice holdout --gate --min-score 0.62
-    python -m dimos.evals.tool_evo_bench --write-floors     # record the baseline
+    python -m dimos.evals.temp.tool_evo_bench                    # the benchmark
+    python -m dimos.evals.temp.tool_evo_bench --dry-run          # wiring, no spend
+    python -m dimos.evals.temp.tool_evo_bench --slice holdout --gate --min-score 0.62
+    python -m dimos.evals.temp.tool_evo_bench --write-floors     # record the baseline
 
 The default ``bench`` slice runs the train rows *and* the frozen geometry
 suite in one pass, but scores only the families under optimization: the
 regression floors then come free from the same run, read back by
-``tool_evo_gate floors``. See docs/development/autoresearch.md.
+``temp/tool_evo_gate floors``. See docs/development/autoresearch.md.
 """
 
 from __future__ import annotations

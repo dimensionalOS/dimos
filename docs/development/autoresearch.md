@@ -14,6 +14,13 @@ suites in `dimos/evals/suites/`. The first run took the geometry suite from
 0.136 to 0.96 over 13 experiments ([#3415](https://github.com/dimensionalOS/dimos/pull/3415)).
 This page is the wiring for the next one.
 
+<Note>
+  Everything the loop needs lives in `dimos/evals/temp/` and is deleted once a
+  run has landed its winner — it is scaffolding, not shipped code. The only
+  traces outside it are the slice tag in `generate.py` and the `split.assign()`
+  call in the three sliced suites.
+</Note>
+
 ## Where the encoder stands
 
 Measured on `gpt-5.6-luna`, 2026-08-18, before the slices below existed:
@@ -38,12 +45,12 @@ more obstacle precision, is the axis the next run has to find.
 ## Slices
 
 Rows sampled seconds apart off the same wall at the same bearing with the same
-answer are one question asked twice. `dimos/evals/split.py` groups rows by the
+answer are one question asked twice. `dimos/evals/temp/split.py` groups rows by the
 scene moment they came from — one glass pane, or one 30 s block of one
 recording — and sends a whole group to one slice:
 
 ```bash
-python -m dimos.evals.split      # the table
+python -m dimos.evals.temp.split      # the table
 ```
 
 | Family | train | holdout | spare |
@@ -66,17 +73,17 @@ tripwire, not a measurement. Label more panes before believing a crossing win.
 
 ## The harness
 
-`dimos/evals/tool_evo_bench.py` speaks evo's inline instrumentation contract —
+`dimos/evals/temp/tool_evo_bench.py` speaks evo's inline instrumentation contract —
 reads `EVO_RESULT_PATH`, `EVO_TRACES_DIR`, `EVO_EXPERIMENT_ID`; writes
 `{"score", "tasks", "families", …}` and one trace per case; exits 0 whenever
 the measurement completed, because an encoder that scores 0.0 is a dead branch
 and not a broken harness.
 
 ```bash
-python -m dimos.evals.tool_evo_bench                  # the benchmark: train + frozen
-python -m dimos.evals.tool_evo_bench --dry-run        # wiring only, no model calls
-python -m dimos.evals.tool_evo_bench --limit 6        # smoke, one case per family
-python -m dimos.evals.tool_evo_bench --slice holdout --gate --min-score 0.62
+python -m dimos.evals.temp.tool_evo_bench                  # the benchmark: train + frozen
+python -m dimos.evals.temp.tool_evo_bench --dry-run        # wiring only, no model calls
+python -m dimos.evals.temp.tool_evo_bench --limit 6        # smoke, one case per family
+python -m dimos.evals.temp.tool_evo_bench --slice holdout --gate --min-score 0.62
 ```
 
 The score is the mean of the *scored* families' means — `clearance`, `route`,
@@ -89,10 +96,10 @@ the regression gate reads it back for free. Every run also drops
 
 | Gate | Phase | Command | Catches |
 |---|---|---|---|
-| `static` | pre | `python -m dimos.evals.tool_evo_gate static` | the benchmark being edited; the encoder importing the answer or reaching the filesystem |
-| `budget` | pre | `python -m dimos.evals.tool_evo_gate budget` | winning by emitting more — 6 kB and 80 ms per frame, against a seed of 3.3 kB and 14 ms |
-| `floors` | post | `python -m dimos.evals.tool_evo_gate floors` | any frozen family sagging more than 0.05 below baseline |
-| holdout | post | `tool_evo_bench --slice holdout --gate --min-score <floor>` | gains that do not leave the groups they were found on |
+| `static` | pre | `python -m dimos.evals.temp.tool_evo_gate static` | the benchmark being edited; the encoder importing the answer or reaching the filesystem |
+| `budget` | pre | `python -m dimos.evals.temp.tool_evo_gate budget` | winning by emitting more — 6 kB and 80 ms per frame, against a seed of 3.3 kB and 14 ms |
+| `floors` | post | `python -m dimos.evals.temp.tool_evo_gate floors` | any frozen family sagging more than 0.05 below baseline |
+| holdout | post | `python -m dimos.evals.temp.tool_evo_bench --slice holdout --gate --min-score <floor>` | gains that do not leave the groups they were found on |
 
 Pre-gates decide from the worktree alone, so a candidate that rewrites the
 questions or bloats the encoding fails before a model call is paid for.
@@ -102,7 +109,7 @@ so `static` bans `dimos.navigation`, `dimos.mapping`, `dimos.evals` and
 `dimos.perception` from the encoder outright — importing the answer would score
 1.0 and ship nothing.
 
-The manifest cannot defend itself: an optimizer that edits `evo_frozen.json`
+The manifest cannot defend itself: an optimizer that edits `temp/evo_frozen.json`
 and the gate together passes. The per-experiment diff and the review before
 landing are what catch that. The gate exists to make drift loud.
 
@@ -116,23 +123,23 @@ not every experiment.
 evo install claude-code
 
 # 1. baseline the encoder you are starting from, then freeze what it measured
-python -m dimos.evals.tool_evo_bench --write-floors        # -> dimos/evals/evo_floors.json
-python -m dimos.evals.tool_evo_bench --slice holdout       # note the score; it becomes --min-score
-python -m dimos.evals.tool_evo_gate freeze                 # -> dimos/evals/evo_frozen.json
-git add dimos/evals/evo_floors.json dimos/evals/evo_frozen.json && git commit
+python -m dimos.evals.temp.tool_evo_bench --write-floors        # -> dimos/evals/temp/evo_floors.json
+python -m dimos.evals.temp.tool_evo_bench --slice holdout       # note the score; it becomes --min-score
+python -m dimos.evals.temp.tool_evo_gate freeze                 # -> dimos/evals/temp/evo_frozen.json
+git add dimos/evals/temp/evo_floors.json dimos/evals/temp/evo_frozen.json && git commit
 
 # 2. wire the workspace
 evo init --name pointcloud-encode --host claude-code \
   --target dimos/msgs/sensor_msgs/PointCloud2.py \
-  --benchmark "uv run python -m dimos.evals.tool_evo_bench" \
+  --benchmark "uv run python -m dimos.evals.temp.tool_evo_bench" \
   --metric max --per-exp-timeout 3600 \
-  --gate "uv run python -m dimos.evals.tool_evo_gate static && uv run python -m dimos.evals.tool_evo_gate budget"
+  --gate "uv run python -m dimos.evals.temp.tool_evo_gate static && uv run python -m dimos.evals.temp.tool_evo_gate budget"
 
 # 3. register the post gates on the baseline node, then check they inherit
 evo gate add exp_0000 --phase post --name floors \
-  --command "uv run python -m dimos.evals.tool_evo_gate floors"
+  --command "uv run python -m dimos.evals.temp.tool_evo_gate floors"
 evo gate add exp_0000 --phase post --name holdout \
-  --command "uv run python -m dimos.evals.tool_evo_bench --slice holdout --gate --min-score <baseline>"
+  --command "uv run python -m dimos.evals.temp.tool_evo_bench --slice holdout --gate --min-score <baseline>"
 evo gate list exp_0000
 evo run exp_0000 --check     # validates wiring without consuming retry budget
 

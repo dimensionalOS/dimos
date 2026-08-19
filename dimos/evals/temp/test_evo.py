@@ -26,12 +26,13 @@ from pathlib import Path
 
 import pytest
 
-from dimos.evals import generate, split
+from dimos.evals import generate
 from dimos.evals.generate import Row
-from dimos.evals.tool_evo_bench import SLICE_TAGS, family_of, means, pool, select
-from dimos.evals.tool_evo_gate import TARGET, _banned_reach, floors
+from dimos.evals.temp import split
+from dimos.evals.temp.tool_evo_bench import SLICE_TAGS, family_of, means, pool, select
+from dimos.evals.temp.tool_evo_gate import TARGET, _banned_reach, floors
 
-SUITES_DIR = Path(__file__).parent / "suites"
+SUITES_DIR = Path(__file__).parents[1] / "suites"
 SLICED = ("clearance", "route", "glass")
 
 
@@ -152,7 +153,7 @@ def test_bench_slice_is_train_plus_frozen() -> None:
 
 
 def test_the_encoder_reaches_nowhere_it_should_not() -> None:
-    assert _banned_reach((Path(__file__).parents[2] / TARGET).read_text()) == []
+    assert _banned_reach((Path(__file__).parents[3] / TARGET).read_text()) == []
 
 
 def test_banned_reach_catches_importing_the_answer() -> None:

@@ -16,10 +16,10 @@
 
 """Gates for the ``agent_encode`` autoresearch loop. Exit 0 = pass.
 
-    python -m dimos.evals.tool_evo_gate static    # pre: benchmark unedited, encoder honest
-    python -m dimos.evals.tool_evo_gate budget    # pre: encoding stays small and fast
-    python -m dimos.evals.tool_evo_gate floors    # post: no family regressed
-    python -m dimos.evals.tool_evo_gate freeze    # (setup) re-record the hash manifest
+    python -m dimos.evals.temp.tool_evo_gate static    # pre: benchmark unedited, encoder honest
+    python -m dimos.evals.temp.tool_evo_gate budget    # pre: encoding stays small and fast
+    python -m dimos.evals.temp.tool_evo_gate floors    # post: no family regressed
+    python -m dimos.evals.temp.tool_evo_gate freeze    # (setup) re-record the hash manifest
 
 ``static`` and ``budget`` are pre-gates: they decide from the worktree alone,
 so a candidate that edits the benchmark or bloats the encoding fails before a
@@ -44,12 +44,17 @@ import sys
 import time
 from typing import Any
 
-REPO = Path(__file__).resolve().parents[2]
+REPO = Path(__file__).resolve().parents[3]
 MANIFEST = Path(__file__).parent / "evo_frozen.json"
 FLOORS = Path(__file__).parent / "evo_floors.json"
 BENCH_ARTIFACT = Path(".evo_bench/bench.json")
 
-FROZEN_GLOBS = ("dimos/evals/*.py", "dimos/evals/suites/*.py", "dimos/evals/suites/*.json")
+FROZEN_GLOBS = (
+    "dimos/evals/*.py",
+    "dimos/evals/temp/*.py",
+    "dimos/evals/suites/*.py",
+    "dimos/evals/suites/*.json",
+)
 """Everything the benchmark is made of. The optimizer edits the encoder, not
 the questions, the scorers, the slices, or the harness."""
 

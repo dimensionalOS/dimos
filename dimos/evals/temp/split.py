@@ -33,7 +33,7 @@ The geometry suite is not sliced — it is the frozen regression set, tagged
 
 Print the table::
 
-    python -m dimos.evals.split
+    python -m dimos.evals.temp.split
 """
 
 from __future__ import annotations
@@ -166,7 +166,7 @@ def main() -> None:
 
     rows: list[Row] = []
     for name in ("clearance", "route", "glass"):
-        path = Path(__file__).parent / "suites" / f"go2_pointcloud_{name}_vqa.json"
+        path = Path(__file__).parents[1] / "suites" / f"go2_pointcloud_{name}_vqa.json"
         rows += assign(json.loads(path.read_text()))
     for (family, slice_), answers in sorted(counts(rows).items()):
         total = sum(answers.values())

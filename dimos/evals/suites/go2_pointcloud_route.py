@@ -34,7 +34,7 @@ gap between them is ``unknown`` — a route that exists only if unmeasured
 space happens to be clear. That third answer is the one an obstacle-list
 encoding cannot express.
 
-Rows are sliced train / holdout / spare by :mod:`dimos.evals.split`.
+Rows are sliced train / holdout / spare by :mod:`dimos.evals.temp.split`.
 
 Regenerate (needs both recordings)::
 
@@ -51,7 +51,8 @@ from typing import Any
 import numpy as np
 
 from dimos.core.global_config import GlobalConfig
-from dimos.evals import generate, split
+from dimos.evals import generate
+from dimos.evals.temp import split
 from dimos.evals.types import Suite
 from dimos.mapping.pointclouds.occupancy import height_cost_occupancy
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
