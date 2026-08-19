@@ -18,6 +18,7 @@
 # Module class whose annotations become strings silently loses its streams
 # (see the module-level note in test_relay_bridge_module.py).
 
+from dataclasses import dataclass
 import pickle
 import re
 import subprocess
@@ -37,6 +38,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.web.cockpit import Channel, cockpit
 from dimos.web.relay_bridge import dynamic
 from dimos.web.relay_bridge.dynamic import DynamicPortSpec, make_relay_bridge_class
 from dimos.web.relay_bridge.e2e_support import stop_module
@@ -376,6 +378,40 @@ def test_two_shapes_deploy_to_one_worker(worker_manager, deployed_proxies):
     # Shape A does not have shape B's port; shape B has it but unwired.
     assert isinstance(proxy_a.peek_stream("duo_feed_b", 0.1), PeekNotFound)
     assert proxy_b.peek_stream("duo_feed_b", 0.1) is None
+
+
+@dataclass(frozen=True)
+class _OpsNote:
+    text: str
+    priority: int
+
+
+@pytest.mark.skipif_macos_bug
+def test_cockpit_channels_blueprint_deploys_through_forkserver(worker_manager, deployed_proxies):
+    """W6: a cockpit(channels=)-compiled atom - generated class plus runtime
+    specs carrying by-reference encoder callables in the kwargs - must
+    survive the real forkserver deploy path (config re-validates in the
+    child)."""
+    assert worker_manager.workers[0].pid is not None
+
+    blueprint = cockpit(
+        channels=[
+            Channel("target_pose", PoseStamped, encoding="pose.json.v1", max_hz=5.0),
+            Channel("ops_note", _OpsNote),
+        ]
+    )
+    (atom,) = blueprint.blueprints
+    assert atom.module.__name__.startswith("DynamicRelayBridge_")
+    proxy = worker_manager.deploy(atom.module, global_config, atom.kwargs)
+    deployed_proxies.append(proxy)
+
+    assert isinstance(proxy.peek_stream("no_such_stream", 0.1), PeekNotFound)
+    # Both generated ports exist in the worker (unwired: None, not NotFound).
+    assert proxy.peek_stream("target_pose", 0.1) is None
+    assert proxy.peek_stream("ops_note", 0.1) is None
+    remote = proxy.target_pose
+    assert isinstance(remote, RemoteIn)
+    assert remote.type is PoseStamped
 
 
 @pytest.mark.skipif_macos_bug
