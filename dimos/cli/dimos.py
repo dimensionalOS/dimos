@@ -82,6 +82,26 @@ load_dotenv()
 
 SIMULATORS = ("mujoco", "dimsim")
 
+DEFAULT_CONFIG_PATH = CONFIG_DIR / "dimos" / "config.json"
+
+
+def _migrate_legacy_config() -> None:
+    """~/.config/dimos used to BE the config file; it is now a directory holding
+    config.json (and future per-machine config). Move an old flat file inside."""
+    legacy = CONFIG_DIR / "dimos"
+    if not legacy.is_file():
+        return
+    try:
+        tmp = legacy.with_name("dimos.migrating")
+        legacy.rename(tmp)
+        legacy.mkdir()
+        tmp.rename(legacy / "config.json")
+        typer.echo(f"config migrated: {legacy} -> {legacy / 'config.json'}", err=True)
+    except OSError:
+        # ponytail: lost a migration race with a concurrent dimos run; the winner
+        # already moved it.
+        pass
+
 
 def _normalize_simulation_argv(argv: list[str]) -> list[str]:
     """Keep `--simulation` backwards compatible.
@@ -207,7 +227,7 @@ def run(
     daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
     disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
     config_path: Path = typer.Option(
-        CONFIG_DIR / "dimos", "--config", "-c", help="Path to config file"
+        DEFAULT_CONFIG_PATH, "--config", "-c", help="Path to config file"
     ),
     local_relay: bool | None = typer.Option(
         None,
@@ -220,6 +240,7 @@ def run(
     show_help: bool = typer.Option(False, "--help"),
 ) -> None:
     """Start a robot blueprint"""
+    _migrate_legacy_config()
     from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
     from dimos.core.coordination.blueprint_config.parser import (
         BlueprintConfigParser,
