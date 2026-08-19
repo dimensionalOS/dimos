@@ -150,47 +150,6 @@ detector.stop()
 camera.stop()
 ```
 
-## Connecting via transports
-
-`.connect` wires two modules living in the same process. Alternatively, you can assign a **transport** — a typed pub/sub channel such as LCM or Zenoh — to a stream. Everything published on the output then goes over the wire, and any input given the same transport picks it up. The modules never hold a reference to each other, so they can run as separate scripts.
-
-`camera_script.py`:
-
-```python skip
-import time
-from dimos.core.transport import LCMTransport
-from dimos.hardware.sensors.camera.module import CameraModule
-from dimos.msgs.sensor_msgs.Image import Image
-
-camera = CameraModule()
-camera.color_image.transport = LCMTransport("/camera/rgb", Image)
-
-camera.start()
-time.sleep(10)
-camera.stop()
-```
-
-`detector_script.py`:
-
-```python skip
-import time
-from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.perception.detection.module2D import Detection2DModule
-
-detector = Detection2DModule()
-detector.color_image.transport = LCMTransport("/camera/rgb", Image)
-
-detector.start()
-detector.detections.subscribe(print)
-time.sleep(10)
-detector.stop()
-```
-
-Run each in its own terminal and detections start printing as soon as both are up. The channel name and message type must match on both sides — `LCMTransport("/camera/rgb", Image)` maps to the typed channel `/camera/rgb#sensor_msgs.Image`, which you can watch with `dimos spy` or `dimos topic echo /camera/rgb`.
-
-Available transports live in `dimos.core.transport` (`LCMTransport`, `ZenohTransport`, `SHMTransport`, ...); see [Transports](/docs/usage/transports/index.md) for choosing between them.
-
 ## Distributed Execution
 
 As we build module structures, we'll quickly want to utilize all cores on the machine (which Python doesn't allow as a single process) and potentially distribute modules across machines or even the internet.
@@ -513,3 +472,93 @@ to_svg(agentic, "assets/go2_agentic.svg")
 ![output](assets/go2_agentic.svg)
 
 To see more information on how to use Blueprints, see [Blueprints](/docs/usage/blueprints.md).
+
+
+## Peaking behind a curtain
+
+### Connecting via transports
+
+`.connect` wires two modules living in the same process. Alternatively, you can assign a **transport** — a typed pub/sub channel such as LCM or Zenoh. The modules never hold a reference to each other, so they can run as separate scripts.
+
+`camera_script.py`:
+
+```python skip
+import time
+from dimos.core.transport import LCMTransport
+from dimos.hardware.sensors.camera.module import CameraModule
+from dimos.msgs.sensor_msgs.Image import Image
+
+camera = CameraModule()
+camera.color_image.transport = LCMTransport("/camera/rgb", Image)
+
+camera.start()
+time.sleep(10)
+camera.stop()
+```
+
+`detector_script.py`:
+
+```python skip
+import time
+from dimos.core.transport import LCMTransport
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.perception.detection.module2D import Detection2DModule
+
+detector = Detection2DModule()
+detector.color_image.transport = LCMTransport("/camera/rgb", Image)
+
+detector.start()
+detector.detections.subscribe(print)
+time.sleep(10)
+detector.stop()
+```
+
+Run each in its own terminal and detections start printing as soon as both are up. The channel name and message type must match on both sides — `LCMTransport("/camera/rgb", Image)` maps to the typed channel `/camera/rgb#sensor_msgs.Image`, which you can watch with `dimos spy` or `dimos topic echo /camera/rgb`.
+
+Available transports live in `dimos.core.transport` (`LCMTransport`, `ZenohTransport`, `SHMTransport`, ...); see [Transports](/docs/usage/transports/index.md) for choosing between them.
+
+### Raw transports (no module)
+
+A transport works on its own — init one and send/receive from a plain script, no module or stream declarations needed:
+
+```python skip
+from dimos.core.transport import LCMTransport
+from dimos.msgs.std_msgs.String import String
+
+chat = LCMTransport("/chat", String)
+
+unsubscribe = chat.subscribe(print)     # receive
+chat.publish(String(data="hello"))      # send
+
+msg = chat.get_next()                   # or block for the next message
+chat.stop()
+```
+
+Any other script (or module stream) on the same channel sees the traffic. This is handy for quick probes and debug scripts — for a robot system, prefer modules so the streams show up in blueprints and introspection.
+
+### Dynamic streams
+
+Streams don't have to be class annotations — a module can grow inputs and outputs at runtime. Construct the stream with the module as owner and assign it as an attribute; `inputs`/`outputs`/`io()` discover streams by scanning instance attributes, and `handle_<name>` auto-binding picks up anything that exists before `start()`.
+
+```python skip
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
+from dimos.core.transport import LCMTransport
+from dimos.msgs.std_msgs.String import String
+
+class Dyn(Module):
+    pass
+
+m = Dyn()
+m.words = Out(String, "words", m)
+m.echo = In(String, "echo", m)
+
+m.words.transport = LCMTransport("/words", String)
+m.echo.transport = LCMTransport("/words", String)
+
+m.echo.subscribe(print)
+m.start()
+m.words.publish(String(data="loopback over LCM"))
+```
+
+Useful when the port set depends on config — e.g. one output per configured camera.
