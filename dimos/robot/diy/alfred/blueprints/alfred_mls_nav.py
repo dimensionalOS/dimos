@@ -99,7 +99,9 @@ alfred_mls_nav = (
                 (MLSPlannerNative, "start_pose", "odom"),
             ]
         ),
-        GoalRelay.blueprint(),
+        # On Go2 the base pose comes off the robot connection. Alfred has no such module,
+        # so GoalRelay's odometry-to-pose conversion is what feeds every consumer of odom.
+        GoalRelay.blueprint().remappings([(GoalRelay, "start_pose", "odom")]),
         DanLocalPlanner.blueprint(resample_spacing_m=0.1),
         DanHolonomicTC.blueprint(run_profile="walk"),
         MovementManager.blueprint(),
