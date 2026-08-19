@@ -20,11 +20,10 @@ Each case names one coordinate and asks whether the robot could stand there.
 The body-height cloud leaves a robot-width gap at every one; half are floor,
 half are glass.
 
-Truth is split by class because lidar is what glass defeats. ``barrier`` is
-adjudicated by a person against the camera; every verdict, including the
-rejected ones, is in ``go2_glass_labels.json`` beside this file, the one input
-here that cannot be regenerated from the recordings. ``open`` is the robot's
-own trajectory: it walked through.
+``barrier`` panes are hand-labelled from the camera, lidar being the sensor
+glass defeats. The verdicts, rejections included, are in
+``go2_glass_labels.json`` beside this file and cannot be regenerated.
+``open`` gates are ones the robot drove through.
 
 Regenerate (needs both recordings)::
 
@@ -78,7 +77,7 @@ _OPEN_DATASETS = ("go2_china_office", "go2_short")
 
 
 def _question(gate: np.ndarray) -> str:
-    """Pose, frame convention, one coordinate. Nothing about what is there."""
+    """Names a coordinate and never says what is mapped there."""
     return (
         "You are the robot; your current pose is the odom observation shown "
         "(world frame: +x is east, +y is north, coordinates in meters). Using "
@@ -163,7 +162,7 @@ def barrier_rows() -> list[tuple[float, generate.Row]]:
 
 
 def open_rows() -> list[tuple[float, generate.Row]]:
-    """Gates the robot's own base later occupied, held to the barrier geometry."""
+    """Gates the robot's base later occupied, at the barrier widths and standoffs."""
     rows: list[tuple[float, generate.Row]] = []
     for dataset in _OPEN_DATASETS:
         with generate._dataset(dataset) as store:
