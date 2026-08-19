@@ -255,3 +255,36 @@ def test_to_rerun_keeps_the_clouds_own_rgb() -> None:
     ramp = cloud.to_rerun(mode="points", rgb=False)
     assert ramp.colors is None
     assert ramp.class_ids is not None
+
+
+def test_agent_encode_scalars_are_exact() -> None:
+    """The scalars the eval suite quizzes must match numpy, not approximate it —
+    a slab wall at x=2, plus floor points that must not enter the body band."""
+    wall = np.stack(
+        [
+            np.full(200, 2.0),
+            np.linspace(-1.0, 1.0, 200),
+            np.linspace(0.2, 0.9, 200),
+        ],
+        axis=1,
+    )
+    floor = np.stack([np.linspace(-3, 3, 100), np.linspace(-3, 3, 100), np.zeros(100)], axis=1)
+    encoded = PointCloud2.from_numpy(np.vstack([wall, floor])).agent_encode()
+
+    stats = encoded["exact_stats"]
+    assert isinstance(stats, dict)
+    assert encoded["num_points"] == 300
+    assert stats["x_range"] == [-3.0, 3.0]
+    assert stats["horizontal_extent_m"] == 6.0
+    assert stats["vertical_span_m"] == 0.9
+    occupancy = encoded["body_height_occupancy"]
+    assert isinstance(occupancy, dict)
+    # body-height boxes see the wall only: x pinned at 2.0, floor (z=0) excluded
+    assert all(b.startswith("2.00@") for b in str(occupancy["boxes"]).split(","))
+    assert encoded["centroid_xy_m"] == [1.33, 0.0]  # 200 wall pts at x=2, 100 floor at mean 0
+
+
+def test_agent_encode_empty_cloud() -> None:
+    encoded = PointCloud2.from_numpy(np.zeros((0, 3))).agent_encode()
+    assert encoded["num_points"] == 0
+    assert "exact_stats" not in encoded
