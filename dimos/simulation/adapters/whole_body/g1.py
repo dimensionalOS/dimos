@@ -29,15 +29,15 @@ from pathlib import Path
 import time
 from typing import Any
 
+from dimos.hardware.simulation.shared_memory import (
+    ManipShmReader,
+    shm_key_from_path,
+)
 from dimos.hardware.whole_body.spec import (
     POS_STOP,
     IMUState,
     MotorCommand,
     MotorState,
-)
-from dimos.simulation.engines.mujoco_shm import (
-    ManipShmReader,
-    shm_key_from_path,
 )
 from dimos.utils.logging_config import setup_logger
 

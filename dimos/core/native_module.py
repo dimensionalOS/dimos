@@ -60,6 +60,10 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
+from dimos.protocol.service.zenohservice import (
+    ZENOH_LOCAL_ROUTER_ENDPOINT,
+    ZENOH_ROUTER_ENDPOINT_ENV,
+)
 from dimos.utils.logging_config import setup_logger
 
 if sys.platform.startswith("linux"):
@@ -254,6 +258,8 @@ class NativeModule(Module):
 
         # set transport so native modules know which one to spawn
         env["DIMOS_TRANSPORT"] = global_config.transport
+        if global_config.transport == "zenoh":
+            env[ZENOH_ROUTER_ENDPOINT_ENV] = ZENOH_LOCAL_ROUTER_ENDPOINT
 
         # set Rust logging to match Python level
         env["RUST_LOG"] = _PYTHON_TO_RUST_LEVELS.get(
