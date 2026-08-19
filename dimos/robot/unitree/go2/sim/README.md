@@ -90,6 +90,15 @@ Mode B (§7); native-runner recordings serve the floor and Mode A only.
   range bounds, so the region likely extends past them. Pyramidal (4×
   faster still) was killed by measurement: 101 of 103 fitted draws explode
   open loop, and the best survivor explodes 1 in 16 closed-loop rollouts.
+  **One honest caveat travels with `fast`:** at 1 Newton iteration the
+  solver never converges, so its truncation IS plant behaviour, and the
+  engines truncate differently — cross-engine parity on the same plan reads
+  1.0e-9 N·m median per step at 100/50 but 0.14 N·m (−14% of the scored
+  residual, MJX the closer of the two to the recording) at 1/5. The
+  refereed plant is CPU-1/5; the training plant is its MJX sibling, graded
+  only through that bound. Closing it needs Mode B under MJX. The dtype,
+  by contrast, is measured nearly free open loop: MJX f32 vs f64 moves the
+  scored joint residual 0.1%.
 
 **The contact solver is part of the preset.** `solver_iterations` /
 `solver_ls_iterations` / `solver_cone` are knobs like any other (never
