@@ -29,7 +29,8 @@ Generated datasets default to:
 
 Use `--output <directory>` to override that location. The destination must be empty.
 
-Go2 recordings without `camera_info` and `tf` require the explicit fallback profile:
+Go2 recordings without `camera_info` and `tf` require the explicit fallback profile and a recorded
+`odom` stream:
 
 ```bash skip
 dimos evals vqa generate go2_short.db --image-index 500 --calibration-profile go2
