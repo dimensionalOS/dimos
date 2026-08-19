@@ -38,7 +38,10 @@ else:
     LOG_DIR = STATE_DIR / "logs"
     RECORDINGS_DIR = STATE_DIR / "recordings"
 
-CREDENTIALS_PATH = CONFIG_DIR / "dimos" / "credentials.json"
+# Plain-text API key, 0600. Deliberately a flat sibling of the dimos config
+# path, never inside it: the config path is shareable (dotfiles, bug reports,
+# machine sync) and secrets must not ride along.
+CREDENTIALS_PATH = CONFIG_DIR / "dimos-credentials"
 
 """
 Constants for shared memory
