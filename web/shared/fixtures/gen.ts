@@ -36,6 +36,7 @@ const controlMsgs: Record<string, Msg> = {
         { ch: "color_image", encoding: "jpeg.v1", delivery: "latest", maxHz: 15.5 },
         { ch: "odom", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20.5 },
       ],
+      panels: [{ id: "color_image", kind: "video", channels: ["color_image"] }],
     },
   },
   hello_viewer: { t: "hello", v: PROTOCOL_VERSION, role: "viewer" },
@@ -60,6 +61,7 @@ const controlMsgs: Record<string, Msg> = {
     t: "manifest",
     robotId: "go2-lab",
     channels: [{ ch: "odom", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20.5 }],
+    panels: [{ id: "pose", kind: "readout", channels: ["odom"] }],
   },
   sub: { t: "sub", ch: "color_image" },
   unsub: { t: "unsub", ch: "color_image" },
@@ -149,6 +151,22 @@ const manifestCases: Record<string, unknown> = {
   panel_unknown_channel: {
     channels: [chOdom],
     panels: [{ id: "a", kind: "video", channels: ["lidar"] }],
+  },
+  video_panel_no_channel: {
+    channels: [chImage],
+    panels: [{ id: "cam", kind: "video", channels: [] }],
+  },
+  video_panel_two_channels: {
+    channels: [chImage, chOdom],
+    panels: [{ id: "cam", kind: "video", channels: ["color_image", "odom"] }],
+  },
+  video_panel_wrong_encoding: {
+    channels: [chOdom],
+    panels: [{ id: "cam", kind: "video", channels: ["odom"] }],
+  },
+  video_panel_wrong_delivery: {
+    channels: [{ ...chImage, delivery: "reliable" }],
+    panels: [{ id: "cam", kind: "video", channels: ["color_image"] }],
   },
   layout_not_list: { channels: [chOdom], layout: "row" },
   layout_not_strings: { channels: [chOdom], layout: [1.5] },

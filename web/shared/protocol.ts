@@ -16,11 +16,18 @@
 // must never kill a session. Framing-level corruption (absurd length
 // prefixes) throws and kills only the affected stream.
 
-import { type ChannelSpec, type Delivery, isChannelSpec } from "./manifest.ts";
+import {
+  type ChannelSpec,
+  type Delivery,
+  isChannelSpec,
+  isPanelSpec,
+  MAX_MANIFEST_ID_LEN,
+  type PanelSpec,
+} from "./manifest.ts";
 
 // Channel/manifest domain types live in manifest.ts; re-exported so protocol
 // consumers keep a single import surface.
-export type { ChannelSpec, Delivery } from "./manifest.ts";
+export type { ChannelSpec, Delivery, PanelSpec } from "./manifest.ts";
 
 // v2: a reliable channel packs all its frames onto one persistent stream (v1
 // carried one frame per stream), which a v1 receiver would misread as a
@@ -44,6 +51,7 @@ export interface RobotInfo {
 
 export interface RobotManifest {
   channels: ChannelSpec[];
+  panels?: PanelSpec[];
 }
 
 export interface HelloMsg {
@@ -94,6 +102,7 @@ export interface ManifestMsg {
   t: "manifest";
   robotId: string;
   channels: ChannelSpec[];
+  panels?: PanelSpec[];
 }
 
 export interface SubMsg {
@@ -195,15 +204,21 @@ function isRobotInfo(value: unknown): value is RobotInfo {
 // Structural checks for nested fields, run after the flat MSG_FIELDS pass.
 // Optional fields (hello.robot/manifest) accept absent but reject null: JSON
 // encoders on both sides omit absent fields and never emit null.
+function isPanelList(value: unknown): boolean {
+  return value === undefined || (Array.isArray(value) && value.every(isPanelSpec));
+}
+
 const MSG_VALIDATORS: Record<string, (value: Record<string, unknown>) => boolean> = {
   hello: (v) =>
     (v.robot === undefined || isRobotInfo(v.robot)) &&
     (v.manifest === undefined ||
       (isRecord(v.manifest) &&
         Array.isArray(v.manifest.channels) &&
-        v.manifest.channels.every(isChannelSpec))),
+        v.manifest.channels.every(isChannelSpec) &&
+        isPanelList(v.manifest.panels))),
   robots: (v) => Array.isArray(v.robots) && v.robots.every(isRobotInfo),
-  manifest: (v) => Array.isArray(v.channels) && v.channels.every(isChannelSpec),
+  manifest: (v) =>
+    Array.isArray(v.channels) && v.channels.every(isChannelSpec) && isPanelList(v.panels),
   subs: (v) => Array.isArray(v.chs) && v.chs.every((c) => typeof c === "string"),
 };
 
@@ -226,6 +241,10 @@ export function frameHeaderFromUnknown(value: unknown): FrameHeader | null {
   if (
     isRecord(value) &&
     typeof value.ch === "string" &&
+    // Declared channels are already bounded to this by manifest validation,
+    // so only unroutable undeclared names are dropped (they count
+    // framesDropped at the relay).
+    value.ch.length <= MAX_MANIFEST_ID_LEN &&
     typeof value.seq === "number" &&
     typeof value.ts === "number" &&
     (value.delivery === "latest" || value.delivery === "reliable") &&

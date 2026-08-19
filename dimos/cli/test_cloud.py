@@ -47,7 +47,7 @@ class FakeKeyring:
 def filestore(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     """Force the headless path: no keyring backend, credentials in a temp file."""
     monkeypatch.setattr(cloud, "_keyring", lambda: None)
-    cred = tmp_path / "credentials.json"
+    cred = tmp_path / "dimos-credentials"
     monkeypatch.setattr(cloud, "CREDENTIALS_PATH", cred)
     monkeypatch.setattr(global_config, "dimos_api_key", None)
     return cred
@@ -78,7 +78,7 @@ def test_login_stores_key_owner_only(monkeypatch: pytest.MonkeyPatch, filestore:
 
     cloud.login()
 
-    assert json.loads(filestore.read_text())["api_key"] == "dimos_sk_x"
+    assert filestore.read_text().strip() == "dimos_sk_x"
     assert oct(filestore.stat().st_mode)[-3:] == "600"
     assert cloud.api_key() == "dimos_sk_x"
 
@@ -110,7 +110,7 @@ def test_login_denied_exits(monkeypatch: pytest.MonkeyPatch, filestore: Path) ->
 def test_global_config_key_overrides_stored(
     monkeypatch: pytest.MonkeyPatch, filestore: Path
 ) -> None:
-    filestore.write_text(json.dumps({"api_key": "dimos_sk_stored"}))
+    filestore.write_text("dimos_sk_stored\n")
     monkeypatch.setattr(global_config, "dimos_api_key", "dimos_sk_env")
     assert cloud.api_key() == "dimos_sk_env"
 
@@ -121,7 +121,7 @@ def test_keyring_store_load_forget(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     monkeypatch.setattr(cloud, "CREDENTIALS_PATH", tmp_path / "never-written.json")
     monkeypatch.setattr(global_config, "dimos_api_key", None)
 
-    assert cloud._store({"api_key": "dimos_sk_kr", "email": "e@x"}) == "system keyring"
+    assert cloud._store("dimos_sk_kr") == "system keyring"
     assert not (tmp_path / "never-written.json").exists()  # keyring won; no file
     assert cloud.api_key() == "dimos_sk_kr"
     assert cloud._forget() is True
@@ -131,7 +131,7 @@ def test_keyring_store_load_forget(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
 def test_whoami_displays_account(
     monkeypatch: pytest.MonkeyPatch, filestore: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    filestore.write_text(json.dumps({"api_key": "dimos_sk_w"}))
+    filestore.write_text("dimos_sk_w\n")
     seen: dict[str, str] = {}
 
     def fake_urlopen(req: Any) -> io.BytesIO:
@@ -145,7 +145,7 @@ def test_whoami_displays_account(
 
 
 def test_whoami_revoked_key_exits(monkeypatch: pytest.MonkeyPatch, filestore: Path) -> None:
-    filestore.write_text(json.dumps({"api_key": "dimos_sk_dead"}))
+    filestore.write_text("dimos_sk_dead\n")
 
     def fake_urlopen(req: Any) -> io.BytesIO:
         raise urllib.error.HTTPError(req.full_url, 401, "unauthorized", {}, None)  # type: ignore[arg-type]
