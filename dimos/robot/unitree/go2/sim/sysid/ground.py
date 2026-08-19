@@ -1495,16 +1495,40 @@ def main() -> None:
         default=1,
         help="fan the replicate rollouts across processes (bit-identical to serial)",
     )
+    ap.add_argument(
+        "--engine",
+        choices=("mujoco", "mjx"),
+        default="mujoco",
+        help="which backend hosts the loop. At a converged solver they are the "
+        "same plant; at a truncated one (the fast preset's 1/5) they are NOT, "
+        "and grading the mjx flavour is grading the plant that trains",
+    )
+    ap.add_argument(
+        "--f32",
+        action="store_true",
+        help="mjx only: run the TRAINING dtype instead of the plant's float64",
+    )
     ap.add_argument("--view", action="store_true", help="watch it against the recorded ghost")
     ap.add_argument("--speed", type=float, default=1.0, help="viewer playback rate")
     args = ap.parse_args()
 
-    from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
+    backend: ClosedLoopBackend
+    if args.engine == "mjx":
+        if args.view:
+            ap.error("--view is a MuJoCo viewer; mjx has no scene to attach it to")
+        from dimos.robot.unitree.go2.sim.engines.mjx import MjxBackend
+
+        backend = MjxBackend(x64=not args.f32)
+    else:
+        if args.f32:
+            ap.error("--f32 is an mjx dtype choice; the CPU engine is float64 only")
+        from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
+
+        backend = MujocoBackend()
 
     st = read_streams(args.recording)
     policy = FreePolicy.load(args.policy_bin)
     preset = load_preset(args.preset)
-    backend = MujocoBackend()
     obs_noise: ObsNoise | None
     if args.obs_noise == "measured":
         from dimos.robot.unitree.go2.sim.sysid.loop import sensor_noise

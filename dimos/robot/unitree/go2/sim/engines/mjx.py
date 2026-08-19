@@ -56,6 +56,7 @@ import numpy as np
 from dimos.robot.unitree.go2.sim.backend import (
     CHANNELS,
     BaseCondition,
+    LoopState,
     Prediction,
     RolloutPlan,
     State,
@@ -223,6 +224,117 @@ def deliverable_jax(envelope: TorqueEnvelope, requested: Any, dq: Any) -> Any:
     return jnp.clip(requested * gain, -limit, limit)
 
 
+_STEP_CACHE: dict[bool, Any] = {}
+
+
+def _jitted_step() -> Any:
+    """One process-wide jitted ``mjx.step(mx, d)`` per x64 mode."""
+    import jax
+    from mujoco import mjx  # type: ignore[attr-defined]
+
+    key = bool(getattr(jax.config, "jax_enable_x64"))
+    if key not in _STEP_CACHE:
+        _STEP_CACHE[key] = jax.jit(mjx.step)
+    return _STEP_CACHE[key]
+
+
+class MjxSession:
+    """One closed-loop episode in MJX: Mode B's stepping primitive, batched-engine flavour.
+
+    Exists so the referee can grade the plant that actually TRAINS. At a
+    converged solver the CPU and MJX plants are the same object (1e-9 N.m
+    per step) and this session is redundant; at the cheap solver the two
+    engines truncate DIFFERENTLY, the truncation is plant behaviour, and a
+    CPU verdict only bounds the MJX plant instead of grading it. This
+    session closes that gap: the generic driver
+    (:func:`~dimos.robot.unitree.go2.sim.sysid.ground.rollout_policy`) runs
+    unchanged, one jitted ``mjx.step`` per tick, state read back each step.
+
+    One env, one step per call — a per-step host/device round trip, priced
+    for GRADING (a 40 s rollout in ~tens of seconds), not training. Snap
+    placement is computed on a CPU twin of the same compiled model — the
+    identical arithmetic :class:`~...engines.mujoco.MujocoSession.snap`
+    does, preserving the sim's current world yaw and x/y — and uploaded.
+    No viewer and no ghost: MJX has no CPU-side scene to attach one to.
+    """
+
+    def __init__(self, model: mujoco.MjModel, dt: float, x64: bool) -> None:
+        import jax
+        import jax.numpy as jnp
+        from mujoco import mjx  # type: ignore[attr-defined]
+
+        jax.config.update("jax_enable_x64", x64)  # type: ignore[no-untyped-call]
+        self._model = model
+        self._twin = mujoco.MjData(model)  # CPU scratch for snap kinematics
+        self._feet = go2_model.foot_geom_ids(model)
+        self._dt = dt
+        self._mx = mjx.put_model(model)
+        self._dx = mjx.make_data(self._mx)
+        self._jnp = jnp
+        # The model rides as an ARGUMENT, not a closure: jax caches traces by
+        # function identity + abstract shapes, so every session of every
+        # same-shaped plant reuses one compilation instead of re-jitting the
+        # ~40 s step per episode (16 replicates would pay it 16 times).
+        self._step_fn = _jitted_step()
+
+    @property
+    def timestep(self) -> float:
+        return self._dt
+
+    def state(self) -> LoopState:
+        qpos = np.asarray(self._dx.qpos, dtype=float)
+        qvel = np.asarray(self._dx.qvel, dtype=float)
+        return LoopState(
+            pos=qpos[0:3].copy(),
+            quat=qpos[3:7].copy(),
+            q=qpos[7:19].copy(),
+            dq=qvel[6:18].copy(),
+            gyro=qvel[3:6].copy(),
+        )
+
+    def step(self, ctrl: np.ndarray) -> bool:
+        jnp = self._jnp
+        self._dx = self._step_fn(
+            self._mx, self._dx.replace(ctrl=jnp.asarray(ctrl, dtype=self._dx.ctrl.dtype))
+        )
+        return True
+
+    def snap(self, state: State) -> None:
+        """MujocoSession.snap's arithmetic on the CPU twin, then uploaded."""
+        d, m = self._twin, self._model
+        cur = np.asarray(self._dx.qpos, dtype=float)
+        xy = cur[0:2].copy()
+        w, x, y, z = cur[3:7]
+        yaw = np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+        cy, sy = np.cos(yaw), np.sin(yaw)
+        rz = np.array([[cy, -sy, 0.0], [sy, cy, 0.0], [0.0, 0.0, 1.0]])
+        rot = rz @ state.rot
+        d.qpos[:] = 0.0
+        d.qvel[:] = 0.0
+        d.qpos[0:2] = xy
+        d.qpos[3:7] = mat_to_quat(rot)
+        d.qpos[7:19] = state.q
+        d.qpos[2] = 0.30
+        mujoco.mj_forward(m, d)
+        low = float(np.min(d.geom_xpos[self._feet, 2])) - go2_model.FOOT_RADIUS
+        d.qpos[2] -= low  # lowest foot exactly on the floor
+        d.qvel[6:18] = state.dq
+        d.qvel[3:6] = rot @ state.gyro  # body rates -> world
+        if state.v_body is not None:
+            d.qvel[0:3] = rot @ state.v_body
+        jnp = self._jnp
+        self._dx = self._dx.replace(
+            qpos=jnp.asarray(d.qpos, dtype=self._dx.qpos.dtype),
+            qvel=jnp.asarray(d.qvel, dtype=self._dx.qvel.dtype),
+        )
+
+    def show_ghost(self, pos: np.ndarray, quat: np.ndarray) -> None:
+        pass  # visual only, and there is nothing here to draw on
+
+    def close(self) -> None:
+        pass
+
+
 class MjxBackend:
     """The measured plant under MJX: same model, same plan, same prediction.
 
@@ -281,6 +393,44 @@ class MjxBackend:
         if unknown:
             raise ValueError(f"unknown knob(s) for {self.name}: {sorted(unknown)}")
         self._values = dict(values)
+
+    def session(
+        self,
+        pose: np.ndarray,
+        *,
+        ghost: bool = False,
+        view: bool = False,
+        view_speed: float = 1.0,
+    ) -> MjxSession:
+        """A closed-loop episode: applied physics, keyframe home, joints at ``pose``.
+
+        The MuJoCo session's contract, minus what MJX cannot host: a viewer
+        or a ghost is a refusal, not a silent downgrade — watch the same
+        preset under the CPU engine instead (the compiled model is shared,
+        so at a converged solver it IS the same plant; at a truncated one
+        the difference is exactly what this session exists to measure).
+        """
+        if view or ghost:
+            raise NotImplementedError(
+                f"{self.name} has no viewer to attach and no scene to draw a ghost in; "
+                "use the mujoco backend to watch"
+            )
+        model, data = go2_model.load(self._menagerie)
+        physics = {k: v for k, v in self._values.items() if k in PHYSICS_KEYS}
+        if physics:
+            go2_model.apply_physics(model, physics)
+        prepare(model)
+        kid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "home")  # type: ignore[attr-defined]
+        if kid >= 0:
+            mujoco.mj_resetDataKeyframe(model, data, kid)
+        data.qpos[7:19] = pose
+        mujoco.mj_forward(model, data)
+        session = MjxSession(model, float(model.opt.timestep), self._x64)
+        session._dx = session._dx.replace(
+            qpos=session._jnp.asarray(data.qpos, dtype=session._dx.qpos.dtype),
+            qvel=session._jnp.asarray(data.qvel, dtype=session._dx.qvel.dtype),
+        )
+        return session
 
     def rollout(self, plan: RolloutPlan) -> Prediction:
         if plan.base is not BaseCondition.FREE:

@@ -187,3 +187,47 @@ def test_mjx_reproduces_the_cpu_plant_on_the_same_plan(envelope_name):
         a, b = getattr(cpu, field), getattr(gpu, field)
         worst = np.abs(a - b).max()
         assert worst < tol, f"{field}: engines disagree by {worst:.3e} (> {tol:.0e})"
+
+
+def test_mjx_hosts_the_closed_loop_and_snaps_where_the_cpu_does():
+    """Mode B under MJX exists so the referee can grade the plant that
+    TRAINS: at the fast preset's 1/5 solver the engines truncate differently,
+    so a CPU verdict only BOUNDS the MJX plant. The session's contract is the
+    CPU session's — this holds the piece with its own arithmetic (snap), which
+    must place the robot identically, since it is measured state and forward
+    kinematics with no engine in it."""
+    pytest.importorskip("jax")
+    from dimos.robot.unitree.go2.sim.ranges import FAST
+
+    state = State(
+        t=0.0,
+        q=STAND_Q.copy(),
+        dq=np.zeros(12),
+        rot=np.eye(3),
+        gyro=np.zeros(3),
+    )
+    cpu = _configured(MujocoBackend()).session(STAND_Q)
+    gpu = _configured(go2_mjx.MjxBackend()).session(STAND_Q)
+    try:
+        cpu.snap(state)
+        gpu.snap(state)
+        a, b = cpu.state(), gpu.state()
+        assert np.allclose(a.pos, b.pos, atol=1e-12), (a.pos, b.pos)
+        assert np.allclose(a.quat, b.quat, atol=1e-12)
+        assert np.allclose(a.q, b.q, atol=1e-12)
+        assert gpu.timestep == cpu.timestep
+        # and it steps: torques in, state out, no exception
+        assert gpu.step(np.zeros(12)) is True
+    finally:
+        cpu.close()
+        gpu.close()
+
+
+def test_the_mjx_session_refuses_a_viewer_rather_than_silently_dropping_it():
+    """A viewer that silently does nothing is how someone ends up believing
+    they watched the plant they graded."""
+    pytest.importorskip("jax")
+    with pytest.raises(NotImplementedError, match="no viewer"):
+        go2_mjx.MjxBackend().session(STAND_Q, view=True)
+    with pytest.raises(NotImplementedError, match="ghost"):
+        go2_mjx.MjxBackend().session(STAND_Q, ghost=True)
