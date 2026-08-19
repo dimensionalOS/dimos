@@ -26,6 +26,7 @@ from dimos.imitation.collection.blueprint import (
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.manipulators.openyam.blueprints.teleop import _openyam_quest_hardware
 from dimos.robot.manipulators.openyam.config import OPENYAM_JOINTS
 
 AGGREGATE = "coordinator_joint_state"
@@ -103,6 +104,5 @@ def test_openyam_collection_has_one_wrist_webcam_and_all_joints() -> None:
     assert camera.config.width == 640
     assert camera.config.height == 480
     assert camera.config.fps == 30.0
-    hardware = coordinator.kwargs["hardware"]
-    assert len(hardware) == 1
-    assert hardware[0].joints == OPENYAM_JOINTS
+    assert "hardware" not in coordinator.kwargs
+    assert _openyam_quest_hardware(None).joints == OPENYAM_JOINTS

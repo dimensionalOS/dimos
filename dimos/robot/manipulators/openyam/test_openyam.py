@@ -18,6 +18,7 @@ import pytest
 
 from dimos.control.components import HardwareType
 from dimos.control.coordinator import ControlCoordinator
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
 from dimos.robot.manipulators.openyam.blueprints.basic import (
@@ -25,6 +26,8 @@ from dimos.robot.manipulators.openyam.blueprints.basic import (
     openyam_planner_coordinator,
 )
 from dimos.robot.manipulators.openyam.blueprints.teleop import (
+    OpenYamTeleopCoordinator,
+    _openyam_quest_hardware,
     keyboard_teleop_openyam,
     keyboard_teleop_openyam_planner,
     teleop_quest_openyam,
@@ -72,6 +75,26 @@ def test_quest_teleop_matches_dual_openyam_response_tuning() -> None:
     assert teleop.params["pink"].gain == 1.0
     assert teleop.params["max_joint_velocity_rad_s"] == 2.0
     assert teleop.params["joint_command_filter_cutoff_hz"] == 30.0
+
+
+def test_quest_teleop_defaults_to_fake_hardware() -> None:
+    coordinator = _module_kwargs(teleop_quest_openyam, OpenYamTeleopCoordinator)
+    hardware = _openyam_quest_hardware(None)
+
+    assert "hardware" not in coordinator
+    assert hardware.adapter_type == "mock_whole_body"
+
+
+def test_quest_teleop_selects_physical_hardware_with_explicit_can_port() -> None:
+    parsed = BlueprintConfigParser(teleop_quest_openyam).parse(
+        ["--can-port", "can8"],
+        environ={},
+    )
+    hardware = _openyam_quest_hardware("can8")
+
+    assert parsed.global_config_values()["can_port"] == "can8"
+    assert hardware.adapter_type == "openyam_damiao"
+    assert hardware.adapter_kwargs["runtime_config"].bus_devices == {"openyam": "can8"}
 
 
 def test_openyam_hardware_physical_mode_returns_one_whole_body(

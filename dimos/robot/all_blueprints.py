@@ -254,6 +254,7 @@ all_modules = {
     "object-tracker3-d": "dimos.perception.experimental.object_tracker_3d.ObjectTracker3D",
     "object-tracking": "dimos.perception.experimental.object_tracker.ObjectTracking",
     "open-arm-teleop-coordinator": "dimos.robot.manipulators.openarm.blueprints.teleop.OpenArmTeleopCoordinator",
+    "open-yam-teleop-coordinator": "dimos.robot.manipulators.openyam.blueprints.teleop.OpenYamTeleopCoordinator",
     "osm-skill": "dimos.agents.skills.osm.OsmSkill",
     "path-following-coordinator": "dimos.control.path_following_coordinator.PathFollowingCoordinator",
     "patrolling-module": "dimos.navigation.patrolling.module.PatrollingModule",
