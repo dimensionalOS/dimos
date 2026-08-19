@@ -252,9 +252,14 @@ class MjxBackend:
         menagerie: Path | None = None,
         *,
         envelope: TorqueEnvelope | None = None,
+        x64: bool = True,
     ) -> None:
         self._menagerie = menagerie
         self._envelope = envelope
+        # float64 is the plant's native precision (enable_x64); x64=False runs
+        # the TRAINING dtype instead — consumer GPUs do fp64 at 1/32-1/64 of
+        # fp32 — so what fp32 costs is measurable rather than argued.
+        self._x64 = x64
         self._values: dict[str, float] = {}
         self._dt: float | None = None
 
@@ -288,7 +293,7 @@ class MjxBackend:
         import jax.numpy as jnp
         from mujoco import mjx  # type: ignore[attr-defined]
 
-        enable_x64()
+        jax.config.update("jax_enable_x64", self._x64)  # type: ignore[no-untyped-call]
 
         model, data = go2_model.load(self._menagerie)
         physics = {k: v for k, v in self._values.items() if k in PHYSICS_KEYS}

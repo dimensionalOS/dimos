@@ -24,6 +24,8 @@ from dimos.robot.unitree.go2.sim.ranges import (
     CONTACT_DEFAULTS,
     DR_FLOOR,
     ENGINE_DEFAULTS,
+    FAST,
+    FAST_REFIT,
     FLOOR_MU,
     GO2,
     KNOBS,
@@ -168,16 +170,41 @@ def test_an_envelope_free_preset_writes_no_envelope_key(tmp_path):
     assert "envelope" not in d  # older readers see the exact old shape
 
 
-def test_two_builtins_with_distinct_jobs():
-    """One plant to ship (measured knobs + measured envelope, README 9) and
-    one to compare against (stock = bare menagerie, the experimental control
-    every comparative claim needs). Nothing else: a third built-in that
-    exists because it used to be someone's answer is history, not
-    architecture."""
-    assert set(BUILTIN_PRESETS) == {"stock", "measured"}
+def test_three_builtins_with_distinct_jobs():
+    """One plant to ship (measured knobs + measured envelope, README 9), one
+    to compare against (stock = bare menagerie, the experimental control
+    every comparative claim needs), and one to train in (fast = the contact
+    re-identified for the cheap solver the batched engine wants). Nothing
+    else: a built-in that exists because it used to be someone's answer is
+    history, not architecture."""
+    assert set(BUILTIN_PRESETS) == {"stock", "measured", "fast"}
     assert MEASURED.envelope == "central"
     stock = BUILTIN_PRESETS["stock"]
     assert stock.physics == {} and stock.envelope is None and stock.actuator_tau == 0.0
+
+
+def test_fast_is_measured_with_a_reidentified_contact_and_nothing_else():
+    """The isolation claim in the data: `fast` may differ from `measured`
+    ONLY in the solver choice and the four contact knobs refit under it —
+    anything else moving would confound 'what did the cheap solver cost'."""
+    refit = set(FAST_REFIT)
+    assert refit == SOLVER_KEYS | {
+        "foot_solref_time",
+        "foot_solref_damp",
+        "foot_solimp_dmin",
+        "foot_solimp_width",
+    }
+    for k, v in FAST.physics.items():
+        if k not in refit:
+            assert v == MEASURED.physics[k], f"fast.{k} drifted from measured"
+    assert FAST.actuator_tau == MEASURED.actuator_tau
+    assert FAST.envelope == MEASURED.envelope
+    # the cheap solver, not the recorded scene default
+    assert FAST.physics["solver_iterations"] == 1.0
+    assert FAST.physics["solver_ls_iterations"] == 5.0
+    assert FAST.physics["solver_cone"] == 1.0  # elliptic survived; pyramidal measured dead
+    for k in FAST.physics:
+        assert FAST.provenance.get(k), f"fast.{k}: no provenance"
 
 
 def test_a_preset_round_trips_its_provenance(tmp_path):

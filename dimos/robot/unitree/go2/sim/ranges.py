@@ -135,26 +135,36 @@ KNOBS: dict[str, Knob] = {
     "foot_solimp_dmin": Knob(
         0.005, 0.5, log=True, why="never resolved; menagerie default 0.015 stands"
     ),
-    "foot_solimp_width": Knob(0.001, 0.03, log=True, unit="m", why="seed spread 0.0021-0.0069"),
+    "foot_solimp_width": Knob(
+        0.001,
+        0.08,
+        log=True,
+        unit="m",
+        why="stiff-solver seed spread 0.0021-0.0069; hi widened 0.03->0.08 by the "
+        "cheap-solver contact refit (2026-08-19), whose referee-selected draws "
+        "sit at 0.03-0.07 — the two solvers want different contact shapes",
+    ),
     # Contact SOLVER settings. Model options, not fitted quantities — but a
     # preset must fully determine the plant, and these were inherited silently
     # from menagerie's scene until 2026-08-19, when the batched engine made
-    # them a CHOICE: the shipped contact needs Newton 4/10 to converge (100/50
-    # reproduces it exactly, so the scene's cap was doing nothing), and a
-    # cheap-solver preset must say so on itself rather than in a run script.
-    # Never in DEFAULT_SEARCH: a solver is chosen and then the contact is
-    # identified UNDER it, not the other way around.
+    # them a CHOICE: walking on the shipped contact is bit-identical down to
+    # Newton 15/20 (so 100/50 is slack), explodes intermittently at 10/10 and
+    # below, and the cheap 1/5 the batched engine wants needs a RE-IDENTIFIED
+    # contact (the `fast` preset). Never in DEFAULT_SEARCH: a solver is chosen
+    # and then the contact is identified UNDER it, not the other way around.
     "solver_iterations": Knob(
         1,
         200,
         log=True,
-        why="Newton iteration cap; menagerie's 100 converges by 4 on the shipped plant",
+        why="Newton iteration cap; on the shipped plant a PD-held stand converges "
+        "by 2, but WALKING needs ~15 (impacts) — 4/10 explodes mid-recording",
     ),
     "solver_ls_iterations": Knob(
         1,
         100,
         log=True,
-        why="line-search cap per Newton iteration; menagerie's 50 converges by 10",
+        why="line-search cap per Newton iteration; walking on the shipped plant "
+        "needs ~16-20 (10 explodes where 16 holds; the cap binds before Newton's)",
     ),
     "solver_cone": Knob(
         0,
@@ -341,13 +351,58 @@ MEASURED = Preset(
         "actuator_tau": "selected: draw 54 of the 2026-08-18 incumbent-objective cloud",
         "envelope": "measured: sysid.drive demanded-vs-delivered transfer, zero free parameters",
         "solver_iterations": "declared: menagerie scene default, recorded explicitly 2026-08-19 "
-        "(Newton converges by 4 on this plant, so the cap is slack, not load-bearing)",
+        "(walking replay is bit-identical down to 15/20, so 100/50 is slack, not load-bearing)",
         "solver_ls_iterations": "declared: menagerie scene default, recorded explicitly 2026-08-19",
         "solver_cone": "declared: the scene's elliptic cone, chosen with its impratio 100",
     },
 )
 
-BUILTIN_PRESETS: dict[str, Preset] = {p.name: p for p in (STOCK, MEASURED)}
+# The batched-training plant: `measured` with its contact RE-IDENTIFIED for
+# the cheap solver MJX is fast at. Newton 1/5 elliptic explodes the measured
+# contact (foot_solimp_width 1.6 mm needs ~15 iterations through impacts), so
+# the four contact knobs were refit UNDER 1/5 on the same recordings, pinned
+# everywhere else to `measured` — isolating what the cheap solver costs.
+# Shipped by draw selection (README 5): 78 pooled draws, 37 stable through
+# both fit recordings open-loop, all 37 grounded at 16 replicates on the
+# selection recording (195401), the top three quoted once on the
+# speeds-strafe reserve (200750, SPENT 2026-08-19) — this is the reserve's
+# winner. Quoted: selection 2.29 vs measured's 2.79 (MDD 0.26); reserve 3.81
+# vs 4.10 — the cheap solver costs NOTHING measurable on the referee.
+# Pyramidal (4x faster still) was killed by measurement: 2 of 103 draws
+# survive open loop and its best explodes 1 in 16 closed-loop rollouts.
+# Throughput: engines/bench.py — the reason this preset exists.
+FAST_REFIT: dict[str, float] = {
+    "solver_iterations": 1.0,
+    "solver_ls_iterations": 5.0,
+    "solver_cone": 1.0,  # elliptic: keeps the friction model impratio 100 was chosen for
+    "foot_solref_time": 0.00419376600991049,
+    "foot_solref_damp": 0.7847549255682962,
+    "foot_solimp_dmin": 0.48066205059077133,
+    "foot_solimp_width": 0.0707702018228441,
+}
+
+FAST = Preset(
+    name="fast",
+    physics={**MEASURED_PHYSICS, **FAST_REFIT},
+    actuator_tau=MEASURED_ACTUATOR_TAU,
+    envelope="central",
+    provenance={
+        **MEASURED.provenance,
+        "solver_iterations": "declared: the cheap solver this plant is identified FOR "
+        "(Newton 1; MJX's unrolled fast path)",
+        "solver_ls_iterations": "declared: chosen with the iteration cap (1/5)",
+        "solver_cone": "declared: elliptic — pyramidal is 4x faster batched but 101 of 103 "
+        "fitted draws explode open-loop and its best survivor explodes closed loop",
+        "foot_solref_time": "selected: draw 18 of the 2026-08-19 cheap-solver refit cloud "
+        "(fit 194142+174724, selected on 195401 x16, quoted once on reserve 200750)",
+        "foot_solref_damp": "selected: draw 18 of the 2026-08-19 cheap-solver refit cloud",
+        "foot_solimp_dmin": "selected: draw 18 — near its range's hi bound (0.48 of [0.005, "
+        "0.5]); the cheap solver wants a stiff-start wide ramp the stiff solver never did",
+        "foot_solimp_width": "selected: draw 18 of the 2026-08-19 cheap-solver refit cloud",
+    },
+)
+
+BUILTIN_PRESETS: dict[str, Preset] = {p.name: p for p in (STOCK, MEASURED, FAST)}
 DEFAULT_PRESET = "measured"
 
 

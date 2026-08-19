@@ -320,6 +320,12 @@ def main() -> None:
         help="which backend drives the plan; the plants are the same model, so a "
         "difference between them is the SOLVER (mjx: FREE base only, no viewer)",
     )
+    ap.add_argument(
+        "--f32",
+        action="store_true",
+        help="mjx only: run the TRAINING dtype instead of the plant's float64 — "
+        "the cost of fp32 is a measurement, not an argument",
+    )
     ap.add_argument("--view", action="store_true", help="attach the MuJoCo viewer")
     ap.add_argument("--speed", type=float, default=1.0, help="viewer playback rate")
     ap.add_argument("--no-ghost", action="store_true", help="hide the recorded-pose ghost")
@@ -365,8 +371,10 @@ def main() -> None:
             ap.error("mjx implements BaseCondition.FREE only; this recording is suspended")
         from dimos.robot.unitree.go2.sim.engines.mjx import MjxBackend
 
-        backend: Backend = MjxBackend(envelope=envelope)
+        backend: Backend = MjxBackend(envelope=envelope, x64=not args.f32)
     else:
+        if args.f32:
+            ap.error("--f32 is an mjx dtype choice; the CPU engine is float64 only")
         from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
 
         backend = MujocoBackend(

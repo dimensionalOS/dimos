@@ -59,7 +59,7 @@ Mode B (§7); native-runner recordings serve the floor and Mode A only.
 
 ## 2. The plant
 
-**Two built-in presets** (`ranges.py`), with distinct jobs:
+**Three built-in presets** (`ranges.py`), with distinct jobs:
 
 - **`measured`** — the plant: a weighed trunk (mass, CoM and inertia from a
   kitchen scale and parallel-axis analysis), the selected draw's knobs
@@ -75,16 +75,33 @@ Mode B (§7); native-runner recordings serve the floor and Mode A only.
   robot better than bare menagerie"), and the eventual transfer experiment
   is stock-vs-tuned by design. Delete it and the claims become
   unverifiable.
+- **`fast`** — the batched-training plant: `measured` with the four contact
+  knobs RE-IDENTIFIED under the cheap solver MJX is fast at (Newton 1/5,
+  elliptic — ~7.5× `measured`'s batched throughput; `engines/bench.py`),
+  pinned to `measured` everywhere else so the comparison isolates what the
+  cheap solver costs. Shipped by draw selection like `measured` itself
+  (fit on the same recordings, 37 of 78 draws stable open-loop, selected
+  on `195401` ×16, quoted once on the speeds-strafe reserve `200750`):
+  selection 2.29 vs `measured`'s 2.79, reserve 3.81 vs 4.10 — the cheap
+  solver costs nothing the referee can measure, on a reserve whose content
+  (speeds+strafe) differs from the fit set. Its contact is a different
+  SHAPE, not a softer copy: solref 4.2 ms / width 71 mm / dmin 0.48
+  against `measured`'s 14.8 ms / 1.6 mm / 0.015 — near the width and dmin
+  range bounds, so the region likely extends past them. Pyramidal (4×
+  faster still) was killed by measurement: 101 of 103 fitted draws explode
+  open loop, and the best survivor explodes 1 in 16 closed-loop rollouts.
 
 **The contact solver is part of the preset.** `solver_iterations` /
 `solver_ls_iterations` / `solver_cone` are knobs like any other (never
 searched — a solver is chosen, then the contact is identified UNDER it),
 applied to `model.opt` by the same `apply_physics` both engines compile
 from. They were inherited silently from menagerie's scene until the batched
-engine made them a choice: Newton converges by 4/10 on the shipped contact,
-so the scene's 100/50 cap is slack. `measured` records the scene's
-100/50/elliptic explicitly — a no-op, held by test — and an absent key
-keeps the scene default, so pre-schema preset JSONs reproduce bit-for-bit.
+engine made them a choice. Measured on the shipped contact: a PD-held stand
+converges by Newton 2, but WALKING is bit-identical only down to 15/20 and
+explodes intermittently at 10/10 and below — impact clips, invisible to the
+stand probe. `measured` records the scene's 100/50/elliptic explicitly — a
+no-op, held by test — and an absent key keeps the scene default, so
+pre-schema preset JSONs reproduce bit-for-bit.
 
 **The plant's provenance is deliberately hybrid — do not "fix" it by
 refitting.** The knobs were fitted with the torque envelope OFF and are run
@@ -463,9 +480,10 @@ recording dissolved entirely on the held-out one.
 | `20260816-174724` sport-jumps | native        | fit set (flight regime)    |
 | `20260817-153320`, `153558`   | native runner | robot-repeat floor pair    |
 | `20260817-154201`             | native runner | excluded (loose mount)     |
-| `20260817-195401`             | Ivan's        | selection                  |
-| `20260817-195715`             | Ivan's        | alternate floor partner    |
-| `20260817-195539`             | Ivan's        | reserve — SPENT 2026-08-18 |
+| `20260817-195401`             | Ivan's        | selection (also `fast`'s, 2026-08-19) |
+| `20260817-195715`             | Ivan's        | alternate floor partner; `fast` fit held-out |
+| `20260817-195539`             | Ivan's        | reserve — SPENT 2026-08-18 (draw054) |
+| `validation/20260816-200750` speeds-strafe | Ivan's | reserve — SPENT 2026-08-19 (`fast`); content differs from the fit set, stated in `fast`'s claim |
 
 Mode B models Ivan's executor (raw un-smoothed actions on `policy/lowcmd`,
 22.3 ms median tick); the Go2's native runner is a second execution path
