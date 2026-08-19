@@ -171,7 +171,6 @@
         "pages": [
           "development/conventions",
           "development/testing",
-          "development/autoresearch",
           "development/docker",
           "development/grid_testing",
           "development/large_file_management",
@@ -524,10 +523,6 @@
     {
       "source": "/docs/development/testing.md",
       "destination": "/development/testing"
-    },
-    {
-      "source": "/docs/development/autoresearch.md",
-      "destination": "/development/autoresearch"
     },
     {
       "source": "/docs/development/docker.md",

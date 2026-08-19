@@ -1,6 +1,4 @@
----
-title: "Autoresearch"
----
+# Autoresearch
 
 An autoresearch loop points [evo](https://github.com/evo-hq/evo) at one
 function and lets it run experiments against a benchmark: subagents form a
@@ -14,12 +12,10 @@ suites in `dimos/evals/suites/`. The first run took the geometry suite from
 0.136 to 0.96 over 13 experiments ([#3415](https://github.com/dimensionalOS/dimos/pull/3415)).
 This page is the wiring for the next one.
 
-<Note>
-  Everything the loop needs lives in `dimos/evals/temp/` and is deleted once a
-  run has landed its winner — it is scaffolding, not shipped code. The only
-  traces outside it are the slice tag in `generate.py` and the `split.assign()`
-  call in the three sliced suites.
-</Note>
+> Everything the loop needs lives in this directory and is deleted once a run
+> has landed its winner — it is scaffolding, not shipped code. The only traces
+> outside it are the slice tag in `generate.py` and the `split.assign()` call in
+> the three sliced suites. See [README.md](README.md).
 
 ## Where the encoder stands
 

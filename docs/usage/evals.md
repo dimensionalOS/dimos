@@ -200,7 +200,7 @@ vs `final`.
 - **Slices**: the pointcloud rows carry a `train` / `holdout` / `spare` tag
   from `dimos.evals.temp.split`, and the geometry suite is tagged `frozen` —
   `dimos evals run <suite> --tags holdout`. What they are for:
-  [Autoresearch](/docs/development/autoresearch.md).
+  [dimos/evals/temp/autoresearch.md](/dimos/evals/temp/autoresearch.md).
 - **Blind ablation**: `EvalRunner(blind=True)` withholds all observations. A
   case that still passes blind is guessable — fix its distractors. Run every
   new suite sighted and blind once before trusting it.

@@ -31,7 +31,7 @@ measure (missing dataset, unimportable suite) or a gate threshold was breached.
 The default ``bench`` slice runs the train rows *and* the frozen geometry
 suite in one pass, but scores only the families under optimization: the
 regression floors then come free from the same run, read back by
-``temp/tool_evo_gate floors``. See docs/development/autoresearch.md.
+``temp/tool_evo_gate floors``. See dimos/evals/temp/autoresearch.md.
 """
 
 from __future__ import annotations

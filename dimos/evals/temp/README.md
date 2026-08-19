@@ -17,4 +17,4 @@ tag) and the `split.assign(...)` call in the three sliced suites — after that
 the suites run every row, as they did before.
 
 How the loop is wired, what it costs, and what it is trying to fix:
-[docs/development/autoresearch.md](/docs/development/autoresearch.md).
+[autoresearch.md](autoresearch.md).
