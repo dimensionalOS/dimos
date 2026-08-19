@@ -139,7 +139,7 @@ from dimos.hardware.sensors.camera.module import CameraModule
 camera = CameraModule()
 detector = Detection2DModule()
 
-detector.image.connect(camera.color_image)
+detector.color_image.connect(camera.color_image)
 
 camera.start()
 detector.start()
@@ -149,6 +149,47 @@ time.sleep(3)
 detector.stop()
 camera.stop()
 ```
+
+## Connecting via transports
+
+`.connect` wires two modules living in the same process. Alternatively, you can assign a **transport** — a typed pub/sub channel such as LCM or Zenoh — to a stream. Everything published on the output then goes over the wire, and any input given the same transport picks it up. The modules never hold a reference to each other, so they can run as separate scripts.
+
+`camera_script.py`:
+
+```python skip
+import time
+from dimos.core.transport import LCMTransport
+from dimos.hardware.sensors.camera.module import CameraModule
+from dimos.msgs.sensor_msgs.Image import Image
+
+camera = CameraModule()
+camera.color_image.transport = LCMTransport("/camera/rgb", Image)
+
+camera.start()
+time.sleep(10)
+camera.stop()
+```
+
+`detector_script.py`:
+
+```python skip
+import time
+from dimos.core.transport import LCMTransport
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.perception.detection.module2D import Detection2DModule
+
+detector = Detection2DModule()
+detector.color_image.transport = LCMTransport("/camera/rgb", Image)
+
+detector.start()
+detector.detections.subscribe(print)
+time.sleep(10)
+detector.stop()
+```
+
+Run each in its own terminal and detections start printing as soon as both are up. The channel name and message type must match on both sides — `LCMTransport("/camera/rgb", Image)` maps to the typed channel `/camera/rgb#sensor_msgs.Image`, which you can watch with `dimos spy` or `dimos topic echo /camera/rgb`.
+
+Available transports live in `dimos.core.transport` (`LCMTransport`, `ZenohTransport`, `SHMTransport`, ...); see [Transports](/docs/usage/transports/index.md) for choosing between them.
 
 ## Distributed Execution
 
