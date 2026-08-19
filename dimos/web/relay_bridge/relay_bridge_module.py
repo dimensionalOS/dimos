@@ -145,7 +145,10 @@ class RelayBridgeConfig(ModuleConfig):
     """Relay identity; empty falls back to g.robot_id, then the hostname."""
     robot_name: str = ""
     """Display name; empty falls back to robot_id."""
-    jpeg_quality: int = 75
+    jpeg_quality: int = Field(default=75, ge=0, le=100)
+    # MuJoCo publishes video at 20 Hz. Keep enough headroom for that source and
+    # for camera jitter: a cap close to the nominal rate aliases slightly early
+    # frames into an every-other-frame pattern.
     image_max_hz: float = Field(default=30.0, gt=0.0)
     odom_max_hz: float = Field(default=20.0, gt=0.0)
     available_channels: tuple[str, ...] | None = None
@@ -180,6 +183,22 @@ class ChannelDef:
     delivery: Delivery
     max_hz: Callable[[RelayBridgeConfig], float]
     encode: Callable[[RelayBridgeModule, Any], tuple[bytes, _FrameMeta]]
+    # Cockpit panel-component kind rendered for this channel (None: raw row
+    # only). One panel per channel until the T7 authoring API.
+    panel_kind: str | None = None
+
+
+def _passes_rate_gate(
+    last_input: dict[str, float],
+    ch: str,
+    now: float,
+    min_interval: float,
+) -> bool:
+    """Claim the current input when it is outside the channel's rate interval."""
+    if now - last_input.get(ch, 0.0) < min_interval:
+        return False
+    last_input[ch] = now
+    return True
 
 
 @dataclass(slots=True)
@@ -193,7 +212,9 @@ class _Session:
 
 # The v0 channel table; every entry needs a matching `In` on the module.
 CHANNELS: tuple[ChannelDef, ...] = (
-    ChannelDef("color_image", "jpeg.v1", "latest", lambda c: c.image_max_hz, _encode_image),
+    ChannelDef(
+        "color_image", "jpeg.v1", "latest", lambda c: c.image_max_hz, _encode_image, "video"
+    ),
     ChannelDef("odom", "pose.json.v1", "reliable", lambda c: c.odom_max_hz, _encode_odom),
 )
 
@@ -211,10 +232,15 @@ def build_manifest(config: RelayBridgeConfig, channels: tuple[ChannelDef, ...]) 
                     "maxHz": cd.max_hz(config),
                 }
                 for cd in channels
-            ]
+            ],
+            "panels": [
+                {"id": cd.ch, "kind": cd.panel_kind, "channels": [cd.ch]}
+                for cd in channels
+                if cd.panel_kind is not None
+            ],
         }
     )
-    return RobotManifest(channels=manifest.channels)
+    return RobotManifest(channels=manifest.channels, panels=manifest.panels)
 
 
 def resolve_robot_info(config: RelayBridgeConfig) -> RobotInfo:
@@ -468,9 +494,8 @@ class RelayBridgeModule(Module):
         if session.retired.is_set():
             return
         now = time.monotonic()
-        if now - self._last_input.get(cd.ch, 0.0) < self._min_interval[cd.ch]:
+        if not _passes_rate_gate(self._last_input, cd.ch, now, self._min_interval[cd.ch]):
             return
-        self._last_input[cd.ch] = now
         try:
             payload, meta = cd.encode(self, msg)
         except Exception:
