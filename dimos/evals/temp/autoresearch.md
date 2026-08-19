@@ -14,8 +14,9 @@ This page is the wiring for the next one.
 
 > Everything the loop needs lives in this directory and is deleted once a run
 > has landed its winner — it is scaffolding, not shipped code. The only traces
-> outside it are the slice tag in `generate.py` and the `split.assign()` call in
-> the three sliced suites. See [README.md](README.md).
+> outside it are the slice tag in `generate.py`, the `split.assign()` call in
+> the three sliced suites, and the `train` tag in the four hand-authored ones.
+> See [README.md](README.md).
 
 ## Where the encoder stands
 
@@ -38,6 +39,41 @@ from space the sensor never reached, and glass returns nothing at the pane
 *and* nothing behind it. That shadow is the whole evidence. Free space, not
 more obstacle precision, is the axis the next run has to find.
 
+And the four hand-authored families added 2026-08-19, same model, same day:
+
+| Suite | Family | Sighted | Blind | Always-negative | Sighted, positive half |
+|---|---|---|---|---|---|
+| `go2_pointcloud_doorway` | `doorway` | 0.50 | 0.50 | 0.50 | **0.67** |
+| `go2_pointcloud_rooms` | `rooms` | 0.00 | 0.00 | 0.50 | 0.00 |
+| `go2_pointcloud_floor_level` | `floorlevel` | 0.50 | 0.50 | 0.50 | 0.00 |
+| `go2_pointcloud_stairs` | `stairs` | 0.33 | 0.50 | 0.50 | 0.00 |
+
+**Read the last column, not the first.** Each of these suites is three positive
+rows and three negative ones, and `matched_set` scores a correct "none" as 1.0,
+so answering "none" six times out of six banks 0.50 having seen nothing. The
+family mean cannot tell a better encoder from a more timid model. The positive
+half can: it is 0.00 blind across all twelve positive rows, because no model
+guesses a coordinate. `tool_evo_bench` prints it as `(positive N)` next to any
+family whose two means differ, and carries it in the result payload as
+`families_positive`.
+
+Three readings worth having before the next run:
+
+- `doorway` is the one family where the cloud demonstrably helps — 0.67 sighted
+  on the positive half against 0.00 blind. It hands the gain straight back by
+  inventing doorways on two of three negatives (0.33 against a blind 1.00).
+  Real signal, cancelled by false positives.
+- `floorlevel` sighted is bit-identical to blind: `level` six times. The
+  encoding contributes nothing there at all.
+- `stairs` scores *below* its own always-negative floor, like `crossing` does.
+  It hallucinated a staircase at `4.21,-0.30,0.60` on a frame with no steps.
+
+`floorlevel` and `stairs` deliberately share all six frames and ask different
+questions of them. The gap between them was meant to separate "carries
+elevation" from "carries steps" — but both score 0.00 on every positive frame,
+so today it measures only which phrasing induces more hallucination. That
+ablation becomes readable the moment either one lifts off zero.
+
 ## Slices
 
 Rows sampled seconds apart off the same wall at the same bearing with the same
@@ -54,6 +90,14 @@ python -m dimos.evals.temp.split      # the table
 | `clearance` | 23 | 10 | 3 |
 | `route` | 25 | 11 | 0 |
 | `crossing` | 10 | 4 | 8 |
+
+The four hand-authored families are **not sliced and have no holdout.** Six
+rows each is too few to hold a group-disjoint holdout, and `split.py` groups by
+30 s blocks, which would collapse most of them. They are tagged `train` where
+they are built, so the bench sees them; nothing verifies that a gain on them
+left the frames it was found on. Treat a doorway or stairs win as a hypothesis
+until more frames are labelled — the same standing caveat as `crossing`, only
+stronger.
 
 `train` is what the optimizer sees. `holdout` is scored only at gate time and
 shares no group with train, so a gain that does not survive it was memorization.
@@ -83,10 +127,11 @@ python -m dimos.evals.temp.tool_evo_bench --slice holdout --gate --min-score 0.6
 ```
 
 The score is the mean of the *scored* families' means — `clearance`, `route`,
-`crossing`, family-weighted so 40 solved geometry rows cannot outvote 22 glass
-rows. The frozen suite rides along in the same run without moving the score, so
-the regression gate reads it back for free. Every run also drops
-`.evo_bench/<slice>.json` (gitignored) for the gates and for you.
+`crossing`, `doorway`, `rooms`, `floorlevel`, `stairs` — family-weighted so 40
+solved geometry rows cannot outvote 22 glass rows. The frozen suite rides along
+in the same run without moving the score, so the regression gate reads it back
+for free. Every run also drops `.evo_bench/<slice>.json` (gitignored) for the
+gates and for you.
 
 ## Gates
 
@@ -149,8 +194,9 @@ or the harness itself, or `static` will fail every experiment.
 
 ## What a round costs
 
-One experiment is 98 paid calls for the benchmark (58 train + 40 frozen) plus
-25 for the holdout gate — roughly 20 minutes of wall clock. `floors`, `static`
+One experiment is 122 paid calls for the benchmark (58 sliced train + 24
+hand-authored + 40 frozen) plus 25 for the holdout gate — roughly 25 minutes of
+wall clock. `floors`, `static`
 and `budget` are free. Three subagents on a ten-round run is on the order of a
 hundred benchmark runs; size the round before starting it, not after.
 

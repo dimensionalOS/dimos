@@ -21,10 +21,15 @@ surface. Rows are pure data; a suite module maps them onto typed
 
 Row schema::
 
-    {"id", "family", "type": "numeric"|"mcq", "q", "a",
-     "band" (numeric) | "choices" (mcq),
-     "context": [[stream, [t0, t1]], ...], "dataset",
+    {"id", "family", "type": "numeric"|"mcq"|"coords", "q", "a",
+     "band" (numeric) | "choices" (mcq) | "radius" + "value_band" (coords),
+     "context": [[stream, [t0, t1], fuse?], ...], "dataset",
      "split" (optional): "train" | "holdout" | "spare"}
+
+``coords`` answers are open-ended point lists — ``"a": [[x, y], ...]`` or
+``[[x, y, value], ...]``, ``[]`` for "there are none" — scored by
+:func:`~dimos.evals.scorers.matched_set`. The optional third element of a
+context entry fuses that window into one cloud; see :func:`_select`.
 """
 
 from __future__ import annotations
@@ -35,8 +40,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
-from dimos.evals.scorers import choice, exact, first_number, within
-from dimos.evals.types import PassiveEval
+from dimos.evals.scorers import choice, coord_list, exact, first_number, matched_set, within
+from dimos.evals.types import PassiveEval, Select
 from dimos.memory.cli.dataset import open_dataset
 
 if TYPE_CHECKING:
@@ -368,19 +373,73 @@ def coverage_direction_rows(
         return rows
 
 
+def _fuse_of(entry: Sequence[Any]) -> dict[str, Any] | None:
+    """The optional third element of a context entry: fuse settings, or None."""
+    return cast("dict[str, Any]", entry[2]) if len(entry) > 2 else None
+
+
+def _select(name: str, window: tuple[float, ...], fuse: dict[str, Any] | None) -> Select:
+    """One context entry -> the stream the model is shown.
+
+    Without ``fuse`` this is the plain window. With it, the window is thinned
+    to every ``downsample``-th frame and accumulated into a single voxel map
+    (``emit_every=0`` yields once, at the end), so a long stretch of driving
+    reaches the model as one fused cloud rather than as
+    ``context_budget`` snapshots of a rolling local map.
+    """
+    if fuse is None:
+        return lambda s: s.streams[name].range_time(*window)
+
+    def select(s: Store) -> Any:
+        from dimos.mapping.voxels.module import VoxelMapTransformer
+        from dimos.memory.transform import downsample
+
+        return (
+            s.streams[name]
+            .range_time(*window)
+            .transform(downsample(int(fuse.get("downsample", 1))))
+            .transform(
+                VoxelMapTransformer(
+                    voxel_size=float(fuse.get("voxel_size", 0.05)),
+                    device=str(fuse.get("device", "CPU:0")),
+                    emit_every=0,
+                )
+            )
+        )
+
+    return select
+
+
 def cases(rows: Sequence[Row], *, tags: frozenset[str] = frozenset()) -> list[PassiveEval[Any]]:
     """Rows -> typed cases. The mirror of the schema above: numeric rows score
-    on a band, mcq rows on exact match against the named options."""
+    on a band, mcq rows on exact match against the named options, coords rows
+    on set overlap within a radius."""
     out: list[PassiveEval[Any]] = []
     for row in rows:
         context = tuple(
-            (lambda s, n=str(name), w=tuple(window): s.streams[n].range_time(*w))
-            for name, window in cast("list[tuple[str, list[float]]]", row["context"])
+            _select(str(entry[0]), tuple(cast("list[float]", entry[1])), _fuse_of(entry))
+            for entry in cast("list[list[Any]]", row["context"])
         )
         case_tags = tags | {str(row["family"]), str(row["type"])}
         if "split" in row:  # slice tag from dimos.evals.temp.split
             case_tags |= {str(row["split"])}
-        if row["type"] == "numeric":
+        if row["type"] == "coords":
+            out.append(
+                PassiveEval(
+                    id=str(row["id"]),
+                    inputs=str(row["q"]),
+                    expected=[tuple(c) for c in cast("list[list[float]]", row["a"])],
+                    parse=coord_list,
+                    score=matched_set(
+                        float(cast("float", row["radius"])),
+                        cast("float | None", row.get("value_band")),
+                    ),
+                    context=context,
+                    dataset=str(row["dataset"]),
+                    tags=case_tags,
+                )
+            )
+        elif row["type"] == "numeric":
             out.append(
                 PassiveEval(
                     id=str(row["id"]),

@@ -54,12 +54,29 @@ SUITES = (
     "dimos.evals.suites.go2_pointcloud_clearance",
     "dimos.evals.suites.go2_pointcloud_route",
     "dimos.evals.suites.go2_pointcloud_glass",
+    "dimos.evals.suites.go2_pointcloud_doorway",
+    "dimos.evals.suites.go2_pointcloud_rooms",
+    "dimos.evals.suites.go2_pointcloud_floor_level",
+    "dimos.evals.suites.go2_pointcloud_stairs",
     "dimos.evals.suites.go2_pointcloud",
 )
 
-SCORED_FAMILIES = ("clearance", "route", "crossing")
+SCORED_FAMILIES = (
+    "clearance",
+    "route",
+    "crossing",
+    "doorway",
+    "rooms",
+    "floorlevel",
+    "stairs",
+)
 """Families the loop optimizes. Geometry families ride along in the same run
-so the regression gate costs no extra model calls, but they cannot buy score."""
+so the regression gate costs no extra model calls, but they cannot buy score.
+
+The last four are hand-authored and carry no holdout — see
+dimos/evals/temp/autoresearch.md. Read their ``positive`` mean, not their
+family mean: three of the six rows in each expect the negative answer, and a
+model that says "none" every time banks 0.50 for free."""
 
 SLICE_TAGS: dict[str, frozenset[str]] = {
     "bench": frozenset({"train", "frozen"}),
@@ -72,7 +89,9 @@ SLICE_TAGS: dict[str, frozenset[str]] = {
 
 # Suites tag a case with its suite, family, row type and slice; whatever is
 # left over is the family.
-_NON_FAMILY = frozenset({"pointcloud", "numeric", "mcq", "train", "holdout", "spare", "frozen"})
+_NON_FAMILY = frozenset(
+    {"pointcloud", "numeric", "mcq", "coords", "train", "holdout", "spare", "frozen"}
+)
 
 ARTIFACTS = Path(".evo_bench")  # gitignored; where gates read the last run from
 FLOORS = Path(__file__).parent / "evo_floors.json"
@@ -106,6 +125,17 @@ def select(slice_: str, *, limit: int = 0) -> list[EvalCase]:
     order = [c for row in zip_longest(*by_family.values()) for c in row if c is not None]
     keep = {c.id for c in order[:limit]}
     return [c for c in cases if c.id in keep]
+
+
+def is_positive(case: EvalCase) -> bool:
+    """Does this case expect a non-empty answer?
+
+    Only meaningful for the ``coords`` families, where half the rows expect
+    "there are none". Saying "none" to all six scores 0.50 without seeing
+    anything, so the family mean alone cannot tell a better encoder from a more
+    timid model. The positive half can: it is 0.00 blind, by construction.
+    """
+    return getattr(case, "expected", None) != []
 
 
 def means(pairs: Sequence[tuple[str, float]]) -> dict[str, float]:
@@ -218,11 +248,16 @@ def measure(
     # An errored case scores 0. A candidate encoder that raises is a dead
     # branch, not a broken harness, and evo should not spend retries on it.
     per_family = means([(families[r.case_id], r.score) for r in results])
+    positive = {c.id for c in cases if is_positive(c)}
+    per_family_positive = means(
+        [(families[r.case_id], r.score) for r in results if r.case_id in positive]
+    )
     return (
         {
             "score": pool(per_family),
             "tasks": {r.case_id: r.score for r in results},
             "families": per_family,
+            "families_positive": per_family_positive,
             "started_at": started,
             "ended_at": _now(),
             "slice": args.slice,
@@ -265,9 +300,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     (ARTIFACTS / f"{args.slice}.json").write_text(json.dumps(payload, indent=2))
 
+    positive: dict[str, float] = payload["families_positive"]
     for family, score in payload["families"].items():
         marker = " " if family in SCORED_FAMILIES else "."
-        print(f"{marker} {family:10} {score:.3f}")
+        # The positive-only mean is printed where it differs: for the coords
+        # families it is the number that cannot be won by answering "none".
+        half = positive.get(family)
+        note = f"   (positive {half:.3f})" if half is not None and half != score else ""
+        print(f"{marker} {family:10} {score:.3f}{note}")
     print(
         f"score {payload['score']:.4f} | slice {args.slice} | {payload['n']} cases "
         f"| {payload['errors']} errors | {payload['run_dir']}"
