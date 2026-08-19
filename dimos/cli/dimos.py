@@ -53,7 +53,7 @@ from dimos.cli.cache import app as cache_app
 from dimos.cli.cloud import login as cloud_login, logout as cloud_logout, whoami as cloud_whoami
 from dimos.cli.hardware_cli import app as hardware_app
 from dimos.cli.shell import shell
-from dimos.constants import CONFIG_DIR, LOG_DIR
+from dimos.constants import CONFIG_DIR, LOG_DIR, migrate_legacy_config
 from dimos.core.daemon import daemonize, install_signal_handlers
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
@@ -86,19 +86,8 @@ DEFAULT_CONFIG_PATH = CONFIG_DIR / "dimos" / "config"
 
 
 def _migrate_legacy_config() -> None:
-    """~/.config/dimos used to BE the config file; it is now a directory holding
-    `config` (and future per-machine config). Move an old flat file inside."""
-    legacy = CONFIG_DIR / "dimos"
-    if not legacy.is_file():
-        return
-    try:
-        tmp = legacy.with_name("dimos.migrating")
-        legacy.rename(tmp)
-        legacy.mkdir()
-        tmp.rename(legacy / "config")
-        typer.echo(f"config migrated: {legacy} -> {legacy / 'config'}", err=True)
-    except OSError:
-        pass  # lost a migration race; the winner already moved it
+    if migrate_legacy_config():
+        typer.echo(f"config migrated into {CONFIG_DIR / 'dimos'}", err=True)
 
 
 def _normalize_simulation_argv(argv: list[str]) -> list[str]:

@@ -16,11 +16,13 @@ from pathlib import Path
 
 import pytest
 
-from dimos.cli import dimos as cli
+from dimos import constants
+from dimos.cli import cloud, dimos as cli
 
 
 @pytest.fixture
 def config_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    monkeypatch.setattr(constants, "CONFIG_DIR", tmp_path)
     monkeypatch.setattr(cli, "CONFIG_DIR", tmp_path)
     return tmp_path
 
@@ -42,3 +44,17 @@ def test_migration_noop_without_legacy_file(config_home: Path) -> None:
     (config_home / "dimos").mkdir()  # already migrated
     cli._migrate_legacy_config()
     assert (config_home / "dimos").is_dir()
+
+
+def test_login_store_migrates_legacy_config_first(
+    config_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    legacy = config_home / "dimos"
+    legacy.write_text('{"viewer": "rerun"}')
+    monkeypatch.setattr(cloud, "_keyring", lambda: None)
+    monkeypatch.setattr(cloud, "CREDENTIALS_PATH", config_home / "dimos" / "credentials")
+
+    cloud._store("dimos_sk_x")
+
+    assert (config_home / "dimos" / "config").read_text() == '{"viewer": "rerun"}'
+    assert (config_home / "dimos" / "credentials").read_text().strip() == "dimos_sk_x"

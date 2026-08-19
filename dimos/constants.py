@@ -38,7 +38,24 @@ else:
     LOG_DIR = STATE_DIR / "logs"
     RECORDINGS_DIR = STATE_DIR / "recordings"
 
-CREDENTIALS_PATH = CONFIG_DIR / "dimos-credentials"
+CREDENTIALS_PATH = CONFIG_DIR / "dimos" / "credentials"
+
+
+def migrate_legacy_config() -> bool:
+    """~/.config/dimos used to BE the config file; it is now a directory. Move an
+    old flat file to config inside. Returns True if a migration happened."""
+    legacy = CONFIG_DIR / "dimos"
+    if not legacy.is_file():
+        return False
+    try:
+        tmp = legacy.with_name("dimos.migrating")
+        legacy.rename(tmp)
+        legacy.mkdir()
+        tmp.rename(legacy / "config")
+        return True
+    except OSError:
+        return False  # lost a migration race; the winner already moved it
+
 
 """
 Constants for shared memory
