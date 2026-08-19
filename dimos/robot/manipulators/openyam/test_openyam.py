@@ -40,6 +40,7 @@ from dimos.robot.manipulators.openyam.config import (
     make_openyam_model_config,
     openyam_hardware,
 )
+from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolver
 from dimos.teleop.quest.quest_extensions import ArmTeleopModule
 
 
@@ -82,6 +83,7 @@ def test_quest_teleop_matches_dual_openyam_response_tuning() -> None:
     teleop = next(task for task in tasks if task.type == "teleop_ik")
 
     assert teleop.params["pink"].gain == 1.0
+    assert teleop.params["solver_type"] is OpenYamPinkPoseTargetSolver
     assert teleop.params["max_joint_velocity_rad_s"] == 2.0
     assert teleop.params["joint_command_filter_cutoff_hz"] == 30.0
 
