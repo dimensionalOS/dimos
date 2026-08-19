@@ -33,6 +33,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.ImuInfo import ImuInfo
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
@@ -206,6 +207,12 @@ class CuvslamConfig(NativeModuleConfig):
     # rgbd only: raw depth units per metre. cuVSLAM assumes 1, and depth images are
     # 16-bit millimetres.
     depth_units_per_meter: float = 1000.0
+    # Range gate on the published depth_cloud, in metres; 0 leaves the far side open.
+    # Stereo depth error grows as range squared, so the far gate is what decides whether
+    # the cloud is worth mapping with: on a D455 indoors, 4 m more than doubled voxel
+    # agreement with a lidar map over the ungated cloud.
+    depth_cloud_min_range: float = 0.0
+    depth_cloud_max_range: float = 4.0
 
 
 class CuvslamOdometry(NativeModule):
@@ -220,7 +227,8 @@ class CuvslamOdometry(NativeModule):
 
     ``odometry`` is one continuous ``odom`` -> ``base_link`` path; restarts after a
     tracking loss are rebased onto the last published pose. ``tf`` carries
-    ``odom`` -> ``base_link`` and an identity ``map`` -> ``odom``.
+    ``odom`` -> ``base_link`` and an identity ``map`` -> ``odom``. ``depth_cloud`` is
+    the range-gated depth cloud, in the depth sensor's own frame.
     """
 
     config: CuvslamConfig
@@ -233,4 +241,6 @@ class CuvslamOdometry(NativeModule):
     imu_info: In[ImuInfo]
 
     odometry: Out[Odometry]
+    # rgbd only: the depth sensor's own points, range-gated, in the depth frame.
+    depth_cloud: Out[PointCloud2]
     tf: IO[TFMessage]
