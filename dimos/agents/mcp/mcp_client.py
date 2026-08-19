@@ -29,6 +29,11 @@ from langgraph.graph.state import CompiledStateGraph
 from reactivex.disposable import Disposable
 import requests
 
+from dimos.agents.compaction import (
+    compact_history,
+    make_model_summarizer,
+    resolve_context_window,
+)
 from dimos.agents.mcp import tool_stream
 from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.agents.utils import pretty_print_langchain_message
@@ -63,6 +68,19 @@ class McpClientConfig(ModuleConfig):
     model_fixture: str | None = None
     mcp_server_url: str = "http://localhost:9990/mcp"
 
+    # History compaction. Long sessions otherwise grow the history past the
+    # model's context window and every subsequent request fails.
+    compaction_enabled: bool = True
+    # Context window in tokens. None resolves it from `model`.
+    context_window: int | None = None
+    # Compact once the history exceeds this fraction of the window...
+    compaction_trigger_ratio: float = 0.8
+    # ...down to roughly this fraction of it.
+    compaction_keep_ratio: float = 0.35
+    # Summarise the dropped messages with the model instead of an offline
+    # digest. Costs an extra model call each time compaction fires.
+    compaction_summarize_with_model: bool = True
+
 
 class McpClient(Module):
     config: McpClientConfig
@@ -80,6 +98,7 @@ class McpClient(Module):
     _http_client: requests.Session
     _seq_ids: SequentialIds
     _tool_stream_cleanup: Callable[[], None] | None
+    _model: Any | None
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -97,6 +116,7 @@ class McpClient(Module):
         self._http_client = requests.Session()
         self._seq_ids = SequentialIds()
         self._tool_stream_cleanup = None
+        self._model = None
 
     def __reduce__(self) -> Any:
         return (self.__class__, (), {})
@@ -236,6 +256,7 @@ class McpClient(Module):
             model = _init_model(self.config.model)
 
         with self._lock:
+            self._model = model
             self._state_graph = create_agent(
                 model=model,
                 tools=tools,
@@ -332,6 +353,42 @@ class McpClient(Module):
                     raise ValueError("No state graph initialized")
                 self._process_message(self._state_graph, message)
 
+    def _compact_history_if_needed(self) -> None:
+        """Shrink the history in place if it is close to the context window.
+
+        Runs before every model invocation. Failures are swallowed: a turn that
+        would have succeeded must not be lost to a compaction bug.
+        """
+        if not self.config.compaction_enabled or len(self._history) <= 1:
+            return
+
+        summarizer = None
+        if self.config.compaction_summarize_with_model and self._model is not None:
+            summarizer = make_model_summarizer(self._model)
+
+        try:
+            result = compact_history(
+                self._history,
+                context_window=(
+                    self.config.context_window or resolve_context_window(self.config.model)
+                ),
+                trigger_ratio=self.config.compaction_trigger_ratio,
+                keep_ratio=self.config.compaction_keep_ratio,
+                summarizer=summarizer,
+            )
+        except Exception:
+            logger.warning("History compaction failed; continuing uncompacted", exc_info=True)
+            return
+
+        if result.compacted:
+            self._history = result.messages
+            logger.info(
+                "Agent history compacted.",
+                dropped_messages=result.dropped_messages,
+                tokens_before=result.tokens_before,
+                tokens_after=result.tokens_after,
+            )
+
     def _process_message(
         self, state_graph: CompiledStateGraph[Any, Any, Any, Any], message: BaseMessage
     ) -> None:
@@ -339,6 +396,8 @@ class McpClient(Module):
         self._history.append(message)
         pretty_print_langchain_message(message)
         self.agent.publish(message)
+
+        self._compact_history_if_needed()
 
         for update in state_graph.stream({"messages": self._history}, stream_mode="updates"):
             for node_output in update.values():

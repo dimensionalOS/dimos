@@ -53,3 +53,32 @@ uv run dimos run unitree-go2-agentic
 1. `McpServer` in the blueprint starts a FastAPI server on port 9990
 2. Claude Code connects directly to `http://localhost:9990/mcp`
 3. Skills are exposed as MCP tools (e.g., `relative_move`, `navigate_with_text`)
+
+## History compaction
+
+`McpClient` keeps the full conversation and replays it on every turn, so a long
+session eventually outgrows the model's context window and every subsequent
+request fails. To prevent that, the history is compacted before each model call:
+the oldest messages are dropped and replaced with a summary, keeping the recent
+turns verbatim.
+
+Compaction is on by default and is configured on `McpClientConfig`:
+
+| Option | Default | Meaning |
+| -- | -- | -- |
+| `compaction_enabled` | `True` | Turn compaction off entirely |
+| `context_window` | `None` | Window size in tokens; `None` resolves it from `model` |
+| `compaction_trigger_ratio` | `0.8` | Compact once the history passes this fraction of the window |
+| `compaction_keep_ratio` | `0.35` | Target size of the history after compaction |
+| `compaction_summarize_with_model` | `True` | Summarise with the model; otherwise use an offline digest |
+
+Notes:
+
+- Tool results are never separated from the tool call that produced them, so a
+  compacted history stays valid for the OpenAI API.
+- A leading system message is never dropped.
+- If summarisation fails, an offline digest is used instead; if compaction
+  itself fails, the turn proceeds uncompacted. Compaction never fails a turn.
+- The window for an unrecognised model falls back to a conservative default.
+  Add known models to `MODEL_CONTEXT_WINDOWS` in `dimos/agents/compaction.py`.
+
