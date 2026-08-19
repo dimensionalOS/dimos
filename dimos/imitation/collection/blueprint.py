@@ -116,7 +116,7 @@ learning_collect_quest_openarm_webcam = autoconnect(
 # tell them apart; this mapping breaks if a cable moves to a different port,
 # and the ports themselves must stay labeled.
 _MULTICAM_USB_PORTS = {
-    "chest": "3-5.1",
+    "chest": "3-4.2",  # moved off the 3-5 hub on 2026-08-18 to fix single-TT contention
     "left_hand": "3-5.2",
     "right_hand": "3-5.3",
     "waist": "3-4.1",
