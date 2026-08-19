@@ -155,11 +155,11 @@ class CuvslamConfig(NativeModuleConfig):
     cwd: str | None = str(MODULE_DIR)
     executable: str = "result/bin/cuvslam_odometry"
     # The module lives in dimSLAM (cuVSLAM + the Rust module built on it); dimos just
-    # builds the pinned rev (fused-odom-rust tip; tag on merge). `nix build`
+    # builds the pinned rev (jeff/feat/depth_clean_cloud tip; tag on merge). `nix build`
     # drops the `result` symlink in the cwd.
     build_command: str | None = Field(
         default_factory=lambda: "nix build github:dimensionalOS/dimSLAM/"
-        f"f64e67879b6ef969360e8341c140ecbcb43f2637#{sdk_variant()}"
+        f"b8022eba82c9bd589a32b384dfe7f0c15e3c4189#{sdk_variant()}"
     )
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
