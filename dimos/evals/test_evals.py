@@ -686,8 +686,25 @@ def test_count_rooms_grader_scores_reply_and_coverage(tmp_path: Path) -> None:
 
 def test_suites_and_agents_importable() -> None:
     """Modules construct without data or network (lambdas stay lazy)."""
+    from dimos.evals.cli import load_agent
+    from dimos.evals.module import list_agents
+    from dimos.evals.suites import (
+        dimsim_house,
+        dimsim_pointcloud_mapping,
+        examples,
+        go2_pointcloud,
+        go2_smoke,
+        go2_vqa,
+    )
 
-    for module in (examples, go2_smoke, go2_vqa, dimsim_house, dimsim_pointcloud_mapping):
+    for module in (
+        examples,
+        go2_smoke,
+        go2_vqa,
+        go2_pointcloud,
+        dimsim_house,
+        dimsim_pointcloud_mapping,
+    ):
         assert module.SUITE, module.__name__
     agents = list_agents()
     assert {m.rsplit(".", 1)[1] for m in agents} == {

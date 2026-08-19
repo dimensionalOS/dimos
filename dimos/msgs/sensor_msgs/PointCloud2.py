@@ -339,6 +339,99 @@ class PointCloud2(Timestamped):
     def __str__(self) -> str:
         return f"PointCloud2(frame_id='{self.frame_id}', num_points={len(self)})"
 
+    def agent_encode(self) -> dict[str, object]:
+        """Compact, spatially structured encoding for LLM consumption.
+
+        World-frame meters throughout. Carries the cloud's horizontal centroid
+        (so consecutive frames reveal motion of the mapped region) and exact
+        world-meter bounding boxes of body-height obstacle clusters (so
+        clearance around a given world position is closed-form point-to-box).
+        """
+        pts = self.points_f32()
+        n = int(pts.shape[0])
+        out: dict[str, object] = {"frame_id": self.frame_id, "num_points": n}
+        if n == 0:
+            return out
+        xy = pts[:, :2]
+        cx, cy = xy.mean(axis=0)
+        out["centroid_xy_m"] = [round(float(cx), 2), round(float(cy), 2)]
+        mins = pts.min(axis=0)
+        maxs = pts.max(axis=0)
+        # Distinct occupied 0.2 m x-y cells of THIS frame's cloud alone.
+        floor_cells = np.unique(np.floor(xy / 0.2).astype(np.int64), axis=0)
+        out["exact_stats"] = {
+            "note": "exact full-cloud values in meters; for numeric extent/span/area "
+            "answers use these, not the body-height interval map below",
+            "x_range": [round(float(mins[0]), 2), round(float(maxs[0]), 2)],
+            "y_range": [round(float(mins[1]), 2), round(float(maxs[1]), 2)],
+            "z_range": [round(float(mins[2]), 2), round(float(maxs[2]), 2)],
+            "horizontal_extent_m": round(float(max(maxs[0] - mins[0], maxs[1] - mins[1])), 2),
+            "vertical_span_m": round(float(maxs[2] - mins[2]), 2),
+            "occupied_floor_footprint_m2": round(float(floor_cells.shape[0]) * 0.2 * 0.2, 1),
+            "footprint_note": "mapped floor area of this frame's cloud only (distinct "
+            "occupied 0.2 m x-y cells); use it, not bbox area, for floor coverage. For "
+            "area trends compare each frame's own footprint value across frames -- it "
+            "can decrease as well as increase; do not accumulate coverage over frames",
+        }
+        out["compass"] = (
+            "8-way direction of motion (dx,dy = last minus first): if |dx|>2.41*|dy| "
+            "then east (dx>0) or west (dx<0); if |dy|>2.41*|dx| then north (dy>0) or "
+            "south (dy<0); otherwise diagonal by signs (northeast, northwest, "
+            "southeast, southwest). For any question about which direction the map "
+            "moved or gained coverage, take dx,dy from centroid_xy_m of the last "
+            "minus the first frame; range edges are too noisy for direction"
+        )
+        z = pts[:, 2]
+        band = xy[(z >= 0.15) & (z <= 1.0)]
+        grid = self._body_height_occupancy(band)
+        if grid is not None:
+            out["body_height_occupancy"] = grid
+        return out
+
+    @staticmethod
+    def _body_height_occupancy(xy: np.ndarray, max_cells: int = 28) -> dict[str, object] | None:
+        """Exact bounding boxes of body-height obstacle clusters, world meters.
+
+        ponytail: y binned into bands only to segment clusters; the emitted
+        extents are exact point min/max, so clearance is closed-form
+        point-to-box in both axes.
+        """
+        if xy.shape[0] == 0:
+            return None
+        lo = xy.min(axis=0)
+        hi = xy.max(axis=0)
+        span = float(max(hi[0] - lo[0], hi[1] - lo[1]))
+        cell = next((c for c in (0.25, 0.4, 0.8, 1.6, 3.2) if span / c < max_cells), 6.4)
+        iy = np.floor((xy[:, 1] - lo[1]) / cell).astype(int)
+        parts = []
+        for r in range(int(iy.max()), -1, -1):
+            sel = xy[iy == r]
+            if sel.shape[0] == 0:
+                continue
+            sel = sel[np.argsort(sel[:, 0])]
+            rx = sel[:, 0]
+            breaks = np.flatnonzero(np.diff(rx) > cell)
+            starts = np.concatenate(([0], breaks + 1))
+            ends = np.concatenate((breaks, [rx.size - 1]))
+            for s, e in zip(starts, ends, strict=False):
+                a, b = f"{rx[s]:.2f}", f"{rx[e]:.2f}"
+                run = a if a == b else f"{a}:{b}"
+                ry = sel[s : e + 1, 1]
+                ya, yb = f"{ry.min():.2f}", f"{ry.max():.2f}"
+                run += f"@{ya}" if ya == yb else f"@{ya}:{yb}"
+                parts.append(run)
+        return {
+            "desc": "Exact bounding boxes (world meters) of obstacle points at "
+            "body height (z 0.15..1.0 m), listed north to south. Each box "
+            "xmin:xmax@ymin:ymax is the exact extent of its points (+x east, "
+            "+y north; a lone value = zero-width, a thin obstacle). "
+            "Horizontal clearance from a query point (qx,qy) = min over all "
+            "boxes of hypot(dx,dy), where dx = max(0, xmin-qx, qx-xmax) and "
+            "dy = max(0, ymin-qy, qy-ymax) (each term is zero only when the "
+            "query lies inside that extent).",
+            "boxes": ",".join(parts),
+        }
+
     @functools.cached_property
     def center(self) -> Vector3:
         """Calculate the center of the pointcloud in world frame."""
