@@ -69,6 +69,14 @@ When writing or debugging a specific self-hosted test, override `-m` yourself to
 pytest -m self_hosted dimos/path/to/test_something.py
 ```
 
+### Recorder fidelity
+
+The mem2 [recorder fidelity harness](/dimos/memory/recorder_fidelity.md) runs a
+production-shaped sensor mix through real transports and the current Recorder,
+then compares the source manifest with the completed database. CI uses a
+30-second characterization; longer runs and targeted stall controls are
+available for performance investigations.
+
 ## Testing on a fresh Ubuntu install
 
 CI tests dimos with pre-built images and cached deps, so it can't catch gaps

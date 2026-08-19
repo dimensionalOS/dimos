@@ -1,0 +1,132 @@
+{
+  "name": "recorder-production",
+  "seed": 7,
+  "streams": [
+    {
+      "name": "rgb",
+      "kind": "rgb",
+      "payload_type": "dimos.msgs.sensor_msgs.Image.Image",
+      "rate_hz": 30.0,
+      "transport": "shm",
+      "codec": "jpeg",
+      "frame_id": "rgb_link",
+      "shape": [
+        480,
+        640,
+        3
+      ],
+      "dtype": "uint8",
+      "point_count": null,
+      "raw_bytes": 921600,
+      "encoded_bytes": 80000
+    },
+    {
+      "name": "grayscale_left",
+      "kind": "grayscale",
+      "payload_type": "dimos.msgs.sensor_msgs.Image.Image",
+      "rate_hz": 30.0,
+      "transport": "shm",
+      "codec": "lz4+lcm",
+      "frame_id": "grayscale_left_link",
+      "shape": [
+        480,
+        640
+      ],
+      "dtype": "uint8",
+      "point_count": null,
+      "raw_bytes": 307200,
+      "encoded_bytes": 180000
+    },
+    {
+      "name": "grayscale_right",
+      "kind": "grayscale",
+      "payload_type": "dimos.msgs.sensor_msgs.Image.Image",
+      "rate_hz": 30.0,
+      "transport": "shm",
+      "codec": "lz4+lcm",
+      "frame_id": "grayscale_right_link",
+      "shape": [
+        480,
+        640
+      ],
+      "dtype": "uint8",
+      "point_count": null,
+      "raw_bytes": 307200,
+      "encoded_bytes": 180000
+    },
+    {
+      "name": "depth",
+      "kind": "depth",
+      "payload_type": "dimos.msgs.sensor_msgs.Image.Image",
+      "rate_hz": 30.0,
+      "transport": "shm",
+      "codec": "lz4+lcm",
+      "frame_id": "depth_link",
+      "shape": [
+        480,
+        640
+      ],
+      "dtype": "uint16",
+      "point_count": null,
+      "raw_bytes": 614400,
+      "encoded_bytes": 350000
+    },
+    {
+      "name": "imu",
+      "kind": "imu",
+      "payload_type": "dimos.msgs.sensor_msgs.Imu.Imu",
+      "rate_hz": 400.0,
+      "transport": "lcm",
+      "codec": "lcm",
+      "frame_id": "imu_link",
+      "shape": null,
+      "dtype": null,
+      "point_count": null,
+      "raw_bytes": 320,
+      "encoded_bytes": 320
+    },
+    {
+      "name": "pointlio",
+      "kind": "pointcloud",
+      "payload_type": "dimos.msgs.sensor_msgs.PointCloud2.PointCloud2",
+      "rate_hz": 10.0,
+      "transport": "shm",
+      "codec": "lcm",
+      "frame_id": "lidar_link",
+      "shape": null,
+      "dtype": null,
+      "point_count": 20000,
+      "raw_bytes": 320000,
+      "encoded_bytes": 320000
+    },
+    {
+      "name": "odometry",
+      "kind": "odometry",
+      "payload_type": "dimos.msgs.nav_msgs.Odometry.Odometry",
+      "rate_hz": 200.0,
+      "transport": "lcm",
+      "codec": "lcm",
+      "frame_id": "world",
+      "shape": null,
+      "dtype": null,
+      "point_count": null,
+      "raw_bytes": 760,
+      "encoded_bytes": 760
+    },
+    {
+      "name": "tf",
+      "kind": "tf",
+      "payload_type": "dimos.msgs.tf2_msgs.TFMessage.TFMessage",
+      "rate_hz": 20.0,
+      "transport": "lcm",
+      "codec": "lcm",
+      "frame_id": "world",
+      "shape": null,
+      "dtype": null,
+      "point_count": null,
+      "raw_bytes": 1024,
+      "encoded_bytes": 1024
+    }
+  ],
+  "calibration_source": "synthetic defaults; replace with calibrate output"
+}
