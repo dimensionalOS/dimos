@@ -35,6 +35,9 @@ from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.mapping.cuvslam.cuvslam import CuvslamOdometry
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.navigation.dannav.holonomic_tc.module import DanHolonomicTC
 from dimos.navigation.dannav.local_planner.module import DanLocalPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
@@ -49,6 +52,25 @@ DEPTH_MAX_RANGE_METERS = 6.0
 evidence. Its quadratic error model puts ~5 cm at 6 m for the 95 mm baseline."""
 
 ALFRED_BODY_HEIGHT_METERS = 0.5
+
+D455_MOUNT = Transform(
+    translation=Vector3(-0.2518, -0.2736, 0.42),
+    rotation=Quaternion(0.078360, 0.006348, -0.996712, 0.019616),
+)
+"""Where the D455 sits on the body, as base_link -> camera_link.
+
+``RealSenseCameraConfig.base_transform`` defaults to identity, which would drop the
+depth cloud at the body origin and leave MLS planning against a floor half a metre off.
+It has to be set here: the camera module publishes this edge itself and never reads
+``alfred.urdf``, so correcting the URDF would not reach this blueprint.
+
+Provisional. This is the (roll, pitch, yaw) = (-0.0097, +0.1571, -3.1030) fit from
+drive_2026-08-18_23-05-04.db, which is the most recent recording and so the closest
+available witness to how the camera is mounted now. The same fit run against
+drive_2026-08-16_23-46-03.db instead lands at pitch -0.4020, the value ``alfred.urdf``
+carries, and the two disagree by 32 degrees - the mount evidently moved between those
+dates. Needs confirming against the actual robot before this is trusted.
+"""
 
 alfred_mls_nav = (
     autoconnect(
@@ -69,6 +91,7 @@ alfred_mls_nav = (
             # Feeding the D455's own IMU made cuVSLAM worse on every handheld recording
             # benchmarked, 4x at jogging pace.
             enable_imu=False,
+            base_transform=D455_MOUNT,
         ),
         CuvslamOdometry.blueprint(
             enable_imu=False,
