@@ -148,10 +148,9 @@ def _video_index_for_usb_port(port: str, sysfs_root: Path = Path("/sys/class/vid
 def _rig_camera(label: str) -> Webcam:
     port = _MULTICAM_USB_PORTS[label]
     index = _video_index_for_usb_port(port)
-    # 480x480@15 keeps 3 simultaneous MJPG streams inside one USB2 hub's
-    # isochronous bandwidth; 1280x720@30 corrupted 2 of 4 rig cameras on
-    # Krishna's shared-hub setup on 2026-08-18.
-    return Webcam(camera_index=index, width=480, height=480, fps=15.0)
+    # 640x480@30 is the agreed ACT dataset spec; frozen across all episodes
+    # of a dataset. Each camera needs its own hub segment at this rate.
+    return Webcam(camera_index=index, width=640, height=480, fps=30.0)
 
 
 def _rig_camera_blueprint(label: str) -> Blueprint:
