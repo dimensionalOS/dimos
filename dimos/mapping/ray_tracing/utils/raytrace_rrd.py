@@ -74,12 +74,12 @@ def _normal_colors(voxel_colors: NDArray[np.uint8]) -> NDArray[np.uint8]:
 
 def _planarity_scale(min_eigs: NDArray[np.float32]) -> NDArray[np.float32]:
     """Arrow length factors, larger for more planar fits.
-    Inverse smallest eigenvalue, median-normalized and clamped to 0.25-4x.
+    Inverse smallest eigenvalue, median-normalized and clamped to 0.25-2x.
     """
     if len(min_eigs) == 0:
         return np.empty(0, np.float32)
     inv = 1.0 / np.maximum(min_eigs, 1e-12)
-    return np.clip(inv / np.median(inv), 0.25, 4.0).astype(np.float32)
+    return np.clip(inv / np.median(inv), 0.25, 2.0).astype(np.float32)
 
 
 def _height_colors(centers: NDArray[np.float32], base: list[int]) -> NDArray[np.uint8]:
@@ -129,7 +129,7 @@ def main(
         DEFAULT_VOXEL_SIZE, "--voxel-size", help="Voxel edge length (m)"
     ),
     fine_divisor: int = typer.Option(
-        0,
+        3,
         "--fine-divisor",
         help="Fine cells per voxel edge; logs the defaults variant's fine map when set. "
         "Zero disables it",
