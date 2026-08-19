@@ -32,8 +32,10 @@ Regenerate (needs both recordings)::
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 import json
 from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
 
@@ -57,12 +59,23 @@ OPEN_SAMPLE = 1.0  # open gates are the larger pool; sample them finer to match 
 LOOKAHEAD = 25.0  # how far ahead of a frame the trajectory certificate may look
 SLICE = 0.15  # half-thickness of the trajectory slice defining an open gate
 FLANK = 1.5  # a gate needs mapped obstacle within this on both sides
+SPOT = 0.30  # gates closer than this are the same place on the same surface
+STANDOFF = 0.50  # robot body length; nearer poses read the same spot the same way
+
+
+class Candidate(NamedTuple):
+    """A case plus the geometry the width match and the duplicate rule read."""
+
+    gap: float
+    gate: np.ndarray
+    origin: np.ndarray
+    row: generate.Row
 
 
 # (dataset, tag, end, end, time window) for the six ``glass and learnable``
 # entries of go2_glass_labels.json. Both ``partition_a`` rows are one surface.
 #
-# ponytail: 16 barrier cases but only 3 surfaces, all go2_china_office. Read
+# ponytail: 11 barrier cases but only 3 surfaces, all go2_china_office. Read
 # per-pane, not per-case.
 PANES: tuple[
     tuple[str, str, tuple[float, float], tuple[float, float], tuple[float, float]], ...
@@ -124,9 +137,9 @@ def _widest_hole(band: np.ndarray, a: np.ndarray, b: np.ndarray) -> tuple[float,
     return float(holes[k]), a + u * float((edges[k] + edges[k + 1]) / 2)
 
 
-def barrier_rows() -> list[tuple[float, generate.Row]]:
+def barrier_rows() -> list[Candidate]:
     """Confirmed panes, at each frame where the map still shows a robot-width hole."""
-    rows: list[tuple[float, generate.Row]] = []
+    rows: list[Candidate] = []
     for dataset in sorted({p[0] for p in PANES}):
         with generate._dataset(dataset) as store:
             for _, tag, pa, pb, (t0, t1) in [p for p in PANES if p[0] == dataset]:
@@ -146,8 +159,10 @@ def barrier_rows() -> list[tuple[float, generate.Row]]:
                     if not (MIN_GAP <= gap <= MAX_GAP and GATE_LO <= rng <= GATE_HI):
                         continue
                     rows.append(
-                        (
+                        Candidate(
                             gap,
+                            gate,
+                            origin,
                             _row(
                                 dataset,
                                 f"{dataset}_crossing_{tag}_t{t:g}",
@@ -161,9 +176,9 @@ def barrier_rows() -> list[tuple[float, generate.Row]]:
     return rows
 
 
-def open_rows() -> list[tuple[float, generate.Row]]:
+def open_rows() -> list[Candidate]:
     """Gates the robot's base later occupied, at the barrier widths and standoffs."""
-    rows: list[tuple[float, generate.Row]] = []
+    rows: list[Candidate] = []
     for dataset in _OPEN_DATASETS:
         with generate._dataset(dataset) as store:
             odom = store.streams.odom
@@ -209,8 +224,10 @@ def open_rows() -> list[tuple[float, generate.Row]]:
                         continue  # the trajectory lingers; one gate per spot per frame
                     seen.add(cell)
                     rows.append(
-                        (
+                        Candidate(
                             gap,
+                            gate,
+                            origin,
                             _row(
                                 dataset,
                                 f"{dataset}_crossing_open_t{t:g}_{len(seen)}",
@@ -224,7 +241,9 @@ def open_rows() -> list[tuple[float, generate.Row]]:
     return rows
 
 
-# Every barrier case, plus an equal number of open cases matched on gate width.
+# Frames of the confirmed panes that clear the gap and range gates. _distinct
+# thins them, and _matched_open pairs each survivor with an open case of the
+# same gate width.
 _CASES = (
     "go2_china_office_crossing_partition_a_t34",
     "go2_china_office_crossing_partition_a_t36",
@@ -245,33 +264,47 @@ _CASES = (
 )
 
 
-def _matched_open(
-    barrier: list[tuple[float, generate.Row]],
-    candidates: list[tuple[float, generate.Row]],
-) -> list[generate.Row]:
+def _distinct(candidates: Iterable[Candidate]) -> list[Candidate]:
+    """Drop a case whose gate and robot pose both repeat an earlier one.
+
+    Frames come every ``SAMPLE`` seconds and the robot walks slowly, so a gap
+    stays in view for several of them. Same gate, same standoff, same answer:
+    the later frames re-ask a question already in the set.
+    """
+    kept: list[Candidate] = []
+    for c in candidates:
+        if not any(
+            np.hypot(*(c.gate - k.gate)) < SPOT and np.hypot(*(c.origin - k.origin)) < STANDOFF
+            for k in kept
+        ):
+            kept.append(c)
+    return kept
+
+
+def _matched_open(barrier: list[Candidate], candidates: list[Candidate]) -> list[generate.Row]:
     """One open case per barrier case, nearest in gate width, no reuse.
 
     Width is visible in the cloud; unmatched, it would separate the classes.
     """
-    pool = sorted(candidates, key=lambda gr: str(gr[1]["id"]))
+    pool = sorted(candidates, key=lambda c: str(c.row["id"]))
     picked: list[generate.Row] = []
     used: set[str] = set()
-    for target, _ in barrier:
+    for target in barrier:
         best = min(
-            (gr for gr in pool if str(gr[1]["id"]) not in used),
-            key=lambda gr: abs(gr[0] - target),
+            (c for c in pool if str(c.row["id"]) not in used),
+            key=lambda c: abs(c.gap - target.gap),
             default=None,
         )
         if best is not None:
-            used.add(str(best[1]["id"]))
-            picked.append(best[1])
+            used.add(str(best.row["id"]))
+            picked.append(best.row)
     return picked
 
 
 def rows() -> list[generate.Row]:
     """The generator calls behind the committed JSON."""
-    barrier = [gr for gr in barrier_rows() if str(gr[1]["id"]) in _CASES]
-    return [*(r for _, r in barrier), *_matched_open(barrier, open_rows())]
+    barrier = _distinct(c for c in barrier_rows() if str(c.row["id"]) in _CASES)
+    return [*(c.row for c in barrier), *_matched_open(barrier, _distinct(open_rows()))]
 
 
 if __name__ == "__main__":
