@@ -33,6 +33,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.ImuInfo import ImuInfo
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
@@ -216,6 +217,11 @@ class CuvslamConfig(NativeModuleConfig):
     # rgbd only: raw depth units per metre. cuVSLAM assumes 1, and depth images are
     # 16-bit millimetres.
     depth_units_per_meter: float = 1000.0
+    # Range gate on the published depth_cloud, metres. Stereo depth error grows as range
+    # squared, so the far gate decides whether the cloud is worth mapping with; 0 leaves
+    # it open.
+    depth_cloud_min_range: float = 0.0
+    depth_cloud_max_range: float = 0.0
 
 
 class CuvslamOdometry(NativeModule):
@@ -243,4 +249,5 @@ class CuvslamOdometry(NativeModule):
     imu_info: In[ImuInfo]
 
     odometry: Out[Odometry]
+    depth_cloud: Out[PointCloud2]
     tf: IO[TFMessage]
