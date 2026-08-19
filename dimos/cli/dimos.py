@@ -83,6 +83,15 @@ load_dotenv()
 SIMULATORS = ("mujoco", "dimsim")
 
 
+def default_config_path() -> Path:
+    """~/.config/dimos used to BE the config file; it is now a directory (it holds
+    credentials.json since `dimos login`), so config moved inside it."""
+    legacy = CONFIG_DIR / "dimos"
+    if legacy.is_file():
+        return legacy
+    return legacy / "config.json"
+
+
 def _normalize_simulation_argv(argv: list[str]) -> list[str]:
     """Keep `--simulation` backwards compatible.
 
@@ -207,7 +216,7 @@ def run(
     daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
     disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
     config_path: Path = typer.Option(
-        CONFIG_DIR / "dimos", "--config", "-c", help="Path to config file"
+        default_config_path(), "--config", "-c", help="Path to config file"
     ),
     local_relay: bool | None = typer.Option(
         None,
