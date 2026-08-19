@@ -90,15 +90,25 @@ Mode B (§7); native-runner recordings serve the floor and Mode A only.
   range bounds, so the region likely extends past them. Pyramidal (4×
   faster still) was killed by measurement: 101 of 103 fitted draws explode
   open loop, and the best survivor explodes 1 in 16 closed-loop rollouts.
-  **One honest caveat travels with `fast`:** at 1 Newton iteration the
-  solver never converges, so its truncation IS plant behaviour, and the
-  engines truncate differently — cross-engine parity on the same plan reads
-  1.0e-9 N·m median per step at 100/50 but 0.14 N·m (−14% of the scored
-  residual, MJX the closer of the two to the recording) at 1/5. The
-  refereed plant is CPU-1/5; the training plant is its MJX sibling, graded
-  only through that bound. Closing it needs Mode B under MJX. The dtype,
-  by contrast, is measured nearly free open loop: MJX f32 vs f64 moves the
-  scored joint residual 0.1%.
+  **What the cheap solver does to cross-engine identity, and why it turned
+  out not to matter.** At 1 Newton iteration the solver never converges, so
+  its truncation IS plant behaviour and the two engines truncate
+  differently. Open loop, on the same plan, the gap grows as the solver
+  gets cheaper — 1.0e-9 N·m median per step at 100/50, 1.4e-3 at 4/10,
+  **0.14 N·m at the shipped 1/5** (−13.9% of the scored residual, MJX the
+  closer of the two to the recording, so this is not MJX being worse). That
+  made the refereed plant (CPU-1/5) and the plant that would train
+  (MJX-1/5) siblings rather than one object, which is why `MjxSession`
+  exists: loop 2 runs over the batched engine, so the training plant is
+  GRADED, not bounded. Measured, 8 seeds paired (replicate *i* gets the
+  identical perturbation under both engines — far sharper than comparing
+  medians against the MDD): **+0.032 ± 0.004 loss, ~0.4%**, every
+  behavioural statistic within 0.55 of the chaos floor (worst `stride_hz`
+  0.55, `speed_gain` 0.50). Statistically resolvable, behaviourally
+  negligible: **the closed loop absorbs the open-loop truncation gap**,
+  which is §5's own lesson pointed at the engines instead of the knobs.
+  The dtype is free twice over: 0.1% open loop, and inside that 0.4%
+  closed loop.
 
 **The contact solver is part of the preset.** `solver_iterations` /
 `solver_ls_iterations` / `solver_cone` are knobs like any other (never

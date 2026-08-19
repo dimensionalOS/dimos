@@ -251,7 +251,14 @@ class MjxSession:
     unchanged, one jitted ``mjx.step`` per tick, state read back each step.
 
     One env, one step per call — a per-step host/device round trip, priced
-    for GRADING (a 40 s rollout in ~tens of seconds), not training. Snap
+    for GRADING, not training: a 40 s rollout takes ~5.7 min, host-bound at
+    ~25% GPU. Two operational consequences, both measured: replicates must
+    run SERIAL (``ground --workers 1``; eight worker processes autotuning
+    cuBLAS on one card fails outright with a JaxRuntimeError), and a
+    verdict is better bought by PAIRING seeds across engines than by
+    replicating each engine to the MDD — the same perturbation under both
+    engines resolves a 0.4% difference that unpaired medians would call a
+    tie. Snap
     placement is computed on a CPU twin of the same compiled model — the
     identical arithmetic :class:`~...engines.mujoco.MujocoSession.snap`
     does, preserving the sim's current world yaw and x/y — and uploaded.
