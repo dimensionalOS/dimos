@@ -22,6 +22,7 @@ shutdown. DataPrep reads that DB afterwards.
 from __future__ import annotations
 
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 
 from dimos.constants import STATE_DIR
@@ -154,7 +155,7 @@ def _rig_camera_blueprint(label: str) -> Blueprint:
     instance_name = f"{label}_camera"
     return CameraModule.blueprint(
         instance_name=instance_name,
-        hardware=lambda label=label: _rig_camera(label),
+        hardware=partial(_rig_camera, label),
     ).remappings([(instance_name, "color_image", f"{label}_image")])
 
 
