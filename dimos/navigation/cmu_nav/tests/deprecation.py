@@ -22,5 +22,5 @@ import pytest
 
 SKIP_CMU_NAV = pytest.mark.skipif(
     os.environ.get("CMU_NAV_TESTS") != "true",
-    reason="cmu_nav is deprecated, set CMU_NAV_TESTS=true to run",
+    reason="cmu_nav tests disabled, set CMU_NAV_TESTS=true to run",
 )
