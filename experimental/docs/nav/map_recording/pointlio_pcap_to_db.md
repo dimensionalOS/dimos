@@ -38,7 +38,7 @@ dimos map global --lidar pointlio_lidar --pgo-tol=0 --no-carve
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--pcap` | *(required)* | Livox Mid-360 pcap (a missing path is fetched via `get_data`) |
-| `--db` | `<pcap>.db` | Target memory2 db. Existing → append/align; missing → built from scratch (or fetched via `get_data`) |
+| `--db` | `<pcap>.db` | Target memory db. Existing → append/align; missing → built from scratch (or fetched via `get_data`) |
 | `--rate` | `1.0` | Replay-speed multiplier |
 | `--odom-freq` | `30.0` | Point-LIO odometry rate (Hz) |
 | `--max-sensor-sec` | `0` (whole pcap) | Stop after N sensor seconds |

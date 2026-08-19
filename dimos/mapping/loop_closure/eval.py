@@ -34,10 +34,10 @@ from typing import Any
 import typer
 
 from dimos.mapping.loop_closure.pgo import PGO
-from dimos.memory2.store.sqlite import SqliteStore
-from dimos.memory2.stream import Stream
-from dimos.memory2.transform import QualityWindow, SpeedLimit
-from dimos.memory2.type.observation import Observation
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.stream import Stream
+from dimos.memory.transform import QualityWindow, SpeedLimit
+from dimos.memory.type.observation import Observation
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.fiducial.marker_transformer import DetectMarkers
