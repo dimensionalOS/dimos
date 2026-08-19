@@ -17,6 +17,7 @@
 
 all_blueprints = {
     "a1z-planner-coordinator": "dimos.robot.manipulators.a1z.blueprints.basic:a1z_planner_coordinator",
+    "alfred-455-rec": "dimos.robot.diy.alfred.blueprints.alfred_455_rec:alfred_455_rec",
     "alfred-cuvslam": "dimos.robot.diy.alfred.blueprints.alfred_cuvslam:alfred_cuvslam",
     "alfred-nav": "dimos.robot.diy.alfred.blueprints.alfred_nav:alfred_nav",
     "coordinator-a1z": "dimos.robot.manipulators.a1z.blueprints.basic:coordinator_a1z",
@@ -167,6 +168,7 @@ all_blueprints = {
 
 all_modules = {
     "alfred-high-level": "dimos.robot.diy.alfred.effector_high_level.AlfredHighLevel",
+    "alfred-recorder": "dimos.robot.diy.alfred.recorder.AlfredRecorder",
     "arm-command-module": "dimos.teleop.hosted.arm_command.ArmCommandModule",
     "arm-pose-coordinator": "dimos.robot.manipulators.common.coordinators.ArmPoseCoordinator",
     "arm-pose-twist-coordinator": "dimos.robot.manipulators.common.coordinators.ArmPoseTwistCoordinator",
