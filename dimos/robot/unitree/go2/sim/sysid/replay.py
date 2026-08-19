@@ -313,12 +313,18 @@ def main() -> None:
         action="store_true",
         help="free open-loop divergence — the only way to SEE what open loop costs",
     )
+    ap.add_argument(
+        "--engine",
+        choices=("mujoco", "mjx"),
+        default="mujoco",
+        help="which backend drives the plan; the plants are the same model, so a "
+        "difference between them is the SOLVER (mjx: FREE base only, no viewer)",
+    )
     ap.add_argument("--view", action="store_true", help="attach the MuJoCo viewer")
     ap.add_argument("--speed", type=float, default=1.0, help="viewer playback rate")
     ap.add_argument("--no-ghost", action="store_true", help="hide the recorded-pose ghost")
     args = ap.parse_args()
 
-    from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
     from dimos.robot.unitree.go2.sim.ranges import load_preset
     from dimos.robot.unitree.go2.sim.sysid.ingest import read_streams
     from dimos.robot.unitree.go2.sim.sysid.recording import read_declarations
@@ -351,14 +357,26 @@ def main() -> None:
     # must never silently run bare (the two are one claim — see ranges.Preset).
     from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
 
-    backend = MujocoBackend(
-        view=args.view,
-        view_speed=args.speed,
-        ghost=ghost,
-        envelope=TORQUE_ENVELOPES[preset.envelope] if preset.envelope else None,
-    )
+    envelope = TORQUE_ENVELOPES[preset.envelope] if preset.envelope else None
+    if args.engine == "mjx":
+        if args.view:
+            ap.error("--view is a MuJoCo viewer; mjx has no CPU MjData to attach it to")
+        if suspended:
+            ap.error("mjx implements BaseCondition.FREE only; this recording is suspended")
+        from dimos.robot.unitree.go2.sim.engines.mjx import MjxBackend
+
+        backend: Backend = MjxBackend(envelope=envelope)
+    else:
+        from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
+
+        backend = MujocoBackend(
+            view=args.view,
+            view_speed=args.speed,
+            ghost=ghost,
+            envelope=envelope,
+        )
     print(
-        f"preset {preset.name} | re-init "
+        f"engine {backend.name} | preset {preset.name} | re-init "
         f"{'OFF (free divergence)' if window is None else window} | "
         f"ghost {'tracker' if ghost is not None and args.view else 'absent'}"
         f"{' | SUSPENDED (trunk welded to the measured attitude)' if suspended else ''}"
