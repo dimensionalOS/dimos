@@ -94,3 +94,6 @@ yolo11n*.pt
 # Generic ignore patterns
 *.ignore
 *.ignore.*
+
+# autoresearch: per-run benchmark artifacts (docs/development/autoresearch.md)
+.evo_bench/

@@ -197,6 +197,10 @@ vs `final`.
 - **MCP**: the `EvalModule` skills `run_evals` / `list_eval_suites` return the
   summary + run dir, so a coding agent can run evals, grep transcripts, edit
   prompts/encodings, and run again.
+- **Slices**: the pointcloud rows carry a `train` / `holdout` / `spare` tag
+  from `dimos.evals.split`, and the geometry suite is tagged `frozen` —
+  `dimos evals run <suite> --tags holdout`. What they are for:
+  [Autoresearch](/docs/development/autoresearch.md).
 - **Blind ablation**: `EvalRunner(blind=True)` withholds all observations. A
   case that still passes blind is guessable — fix its distractors. Run every
   new suite sighted and blind once before trusting it.

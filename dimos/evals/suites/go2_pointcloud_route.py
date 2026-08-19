@@ -34,6 +34,8 @@ gap between them is ``unknown`` — a route that exists only if unmeasured
 space happens to be clear. That third answer is the one an obstacle-list
 encoding cannot express.
 
+Rows are sliced train / holdout / spare by :mod:`dimos.evals.split`.
+
 Regenerate (needs both recordings)::
 
     python -m dimos.evals.suites.go2_pointcloud_route
@@ -49,7 +51,7 @@ from typing import Any
 import numpy as np
 
 from dimos.core.global_config import GlobalConfig
-from dimos.evals import generate
+from dimos.evals import generate, split
 from dimos.evals.types import Suite
 from dimos.mapping.pointclouds.occupancy import height_cost_occupancy
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -59,7 +61,9 @@ from dimos.navigation.replanning_a_star.navigation_map import NavigationMap
 
 _JSON = Path(__file__).parent / "go2_pointcloud_route_vqa.json"
 
-SUITE: Suite = generate.cases(json.loads(_JSON.read_text()), tags=frozenset({"pointcloud"}))
+SUITE: Suite = generate.cases(
+    split.assign(json.loads(_JSON.read_text())), tags=frozenset({"pointcloud"})
+)
 
 _SHORT_TS = [3.0 + i * 2.0 for i in range(29)]
 _OFFICE_TS = [22.0 + i * 3.0 for i in range(38)]

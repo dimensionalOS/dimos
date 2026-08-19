@@ -1,0 +1,32 @@
+{
+  "files": {
+    "dimos/evals/cli.py": "fdc247b635167bc4e2b1118df5bc2533f2943451d0782eaa3aba276e5836463f",
+    "dimos/evals/generate.py": "fe3dae54f840dfad3675ef04fc0010924a9df74892619abfefa54662738750c0",
+    "dimos/evals/local.py": "54a65017f4ea167ce8f9efb58578e6cd8bd4df5785f42aacf5a189d90ec6d1ff",
+    "dimos/evals/module.py": "216a885035550bc3cb1dc40f5aba3a68cb7435cab6bce91eb1ee7f33c6913f34",
+    "dimos/evals/runner.py": "d1ef1b6ee36942ed020dd38114de1343a19177b178807437790287e0c211fc0d",
+    "dimos/evals/scorers.py": "5e4daf06231acacaee6323b42f611d96ee46bfff9c2c4927d197e1c2151d978a",
+    "dimos/evals/split.py": "b17f25cb32c63372afffc9b62c1cccc81e9be6986ef0fe87ef0beb5372c850e5",
+    "dimos/evals/suites/dimsim_house.py": "954cc025d79eb2329fa90971c74882a3e78463837ce247371bd3597db485cdf2",
+    "dimos/evals/suites/examples.py": "7d9499975bdf98a383d62035585ed696b620c659d0e1b9e018b56d0af635c88e",
+    "dimos/evals/suites/go2_glass_labels.json": "8fee98f5ddbb4d67f051468eb4394bd030d76bf136f8f4ef4b488b1b7044bc82",
+    "dimos/evals/suites/go2_pointcloud.py": "535653e8e2db3c79a1a874db62c93fca9cc60954a03e74074a8335c7d5c1a317",
+    "dimos/evals/suites/go2_pointcloud_clearance.py": "8e7a6db90111e22d31c36800e1994abafdcaa2163b9ee6174c964b51a992e315",
+    "dimos/evals/suites/go2_pointcloud_clearance_vqa.json": "8f2178d8824df14535dd7a2fcc47bc021107b8a8e8567bf7e42f1a889e42d84a",
+    "dimos/evals/suites/go2_pointcloud_glass.py": "b13f2fee8b7badfc945867e51196fbd1915ca7a2372e2c121d1f7f692ce90985",
+    "dimos/evals/suites/go2_pointcloud_glass_vqa.json": "bfb31f1a9a69f97dd887e9e49ae15febb1f692868b01dc551c10a8f0473d17f2",
+    "dimos/evals/suites/go2_pointcloud_route.py": "73dd80d3666a3d9793c2ac54ba925a26dac114fb276205f7c975ce7de35f5bfb",
+    "dimos/evals/suites/go2_pointcloud_route_vqa.json": "9f7209e4ce8000d68999654be8db37f6a6b98595ff2ff12b977951dff48a856d",
+    "dimos/evals/suites/go2_pointcloud_vqa.json": "fb73009e42c4b37815e6eac08d67292293f8c6c5317f3dd0262cf20e6842bb7b",
+    "dimos/evals/suites/go2_smoke.py": "e37dd6c7ed12b51d1bfdfa92a6513d3e0314dc9f6b4d775162508e55e6fd0d61",
+    "dimos/evals/suites/go2_vqa.json": "0e31a4bd3e5485416adc4fde84ed9dfafc51f9858ade094d5be69cc38cdc0e60",
+    "dimos/evals/suites/go2_vqa.py": "4ad3ac351c0af3856c350591d5a059512fcb219a5bf442b16979fdade0d09471",
+    "dimos/evals/test_evals.py": "337568315a08df06bdf6859cb5efa48b2c45c54cd6c6a4ec197b743f7a9271a2",
+    "dimos/evals/test_evo.py": "c2f4fb97acca18153898dce3e8437bcc67760d15959742782eef824dbe02eeaa",
+    "dimos/evals/test_mem2_wiring.py": "d4613707fbb59e5599d14a6eecaaca4da481e8f4236ee2d151b351657a6f41d7",
+    "dimos/evals/test_smoke.py": "989c87fd0109602529997bc17cc57d3839f36d9726ae806c5b78963d6d6d09a4",
+    "dimos/evals/tool_evo_bench.py": "692775733cd278901bdd70c70e93c44e5b410bb1044d77563b7298ee74f277fa",
+    "dimos/evals/tool_evo_gate.py": "5fc8ac50448ff3927e00768f8ab5327ff4e9951a16ff87613086c038250d3ad6",
+    "dimos/evals/types.py": "0f17989d25027bb5ea9682c8920d97984b19e29eddf16c5c88d57985268d1dd4"
+  }
+}

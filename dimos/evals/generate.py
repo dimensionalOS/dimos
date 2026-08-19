@@ -23,7 +23,8 @@ Row schema::
 
     {"id", "family", "type": "numeric"|"mcq", "q", "a",
      "band" (numeric) | "choices" (mcq),
-     "context": [[stream, [t0, t1]], ...], "dataset"}
+     "context": [[stream, [t0, t1]], ...], "dataset",
+     "split" (optional): "train" | "holdout" | "spare"}
 """
 
 from __future__ import annotations
@@ -377,6 +378,8 @@ def cases(rows: Sequence[Row], *, tags: frozenset[str] = frozenset()) -> list[Pa
             for name, window in cast("list[tuple[str, list[float]]]", row["context"])
         )
         case_tags = tags | {str(row["family"]), str(row["type"])}
+        if "split" in row:  # slice tag from dimos.evals.split
+            case_tags |= {str(row["split"])}
         if row["type"] == "numeric":
             out.append(
                 PassiveEval(
