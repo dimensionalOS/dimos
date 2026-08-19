@@ -130,7 +130,7 @@
   </link>
   <joint name="camera_joint" type="fixed">
     <parent link="base_link"/><child link="camera_link"/>
-    <origin xyz="-0.2518 -0.2736 0.48" rpy="-0.0097 -0.4020 -3.1030"/>
+    <origin xyz="-0.2518 -0.2736 0.42" rpy="-0.0097 0.1571 -3.1030"/>
   </joint>
 
   <link name="camera_depth_frame"/>

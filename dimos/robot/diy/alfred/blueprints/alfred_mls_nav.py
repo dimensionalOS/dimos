@@ -64,12 +64,9 @@ depth cloud at the body origin and leave MLS planning against a floor half a met
 It has to be set here: the camera module publishes this edge itself and never reads
 ``alfred.urdf``, so correcting the URDF would not reach this blueprint.
 
-Provisional. This is the (roll, pitch, yaw) = (-0.0097, +0.1571, -3.1030) fit from
-drive_2026-08-18_23-05-04.db, which is the most recent recording and so the closest
-available witness to how the camera is mounted now. The same fit run against
-drive_2026-08-16_23-46-03.db instead lands at pitch -0.4020, the value ``alfred.urdf``
-carries, and the two disagree by 32 degrees - the mount evidently moved between those
-dates. Needs confirming against the actual robot before this is trusted.
+Fit against drive_2026-08-18_23-05-04.db, the first recording taken after the camera was
+re-angled. Scored against a point-lio reference it lands the floor at z=-0.40, matching
+the lidar map exactly, where the pre-remount angle misses it by 2.2 m.
 """
 
 alfred_mls_nav = (
