@@ -38,7 +38,7 @@ else:
     LOG_DIR = STATE_DIR / "logs"
     RECORDINGS_DIR = STATE_DIR / "recordings"
 
-CREDENTIALS_PATH = CONFIG_DIR / "dimos" / "credentials.json"
+CREDENTIALS_PATH = CONFIG_DIR / "dimos-credentials"
 
 """
 Constants for shared memory
