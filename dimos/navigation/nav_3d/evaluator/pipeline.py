@@ -69,13 +69,17 @@ class MLSPipeline:
 
         self._mapper = VoxelRayMapper(voxel_size=cfg.voxel_size, max_range=cfg.max_range)
         self._planner = MLSPlanner(
-            voxel_size=cfg.voxel_size, robot_height=cfg.robot_height, **cfg.planner
+            voxel_size=cfg.voxel_size,
+            robot_height=cfg.robot_height,
+            # The only int param, bound explicitly so the float overrides unpack checks.
+            worker_threads=4,
+            **cfg.planner,
         )
         self._pending = False
         self._mapped = False
 
     def add_frame(self, points: NDArray[np.float32], origin: Point, ts: float) -> None:
-        self._mapper.add_frame(points, origin)
+        self._mapper.add_frame_world(points, origin)
         self._pending = True
 
     def sync_map(self) -> None:

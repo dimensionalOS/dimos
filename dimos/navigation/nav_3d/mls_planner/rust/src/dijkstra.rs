@@ -30,7 +30,7 @@ pub struct DijkstraState {
     pub source: Vec<u32>,
     // Window membership for the regional search, left all-false between calls.
     in_window: Vec<bool>,
-    heap: BinaryHeap<Scored>,
+    heap: BinaryHeap<Scored<(VoxelKey, CellId)>>,
 }
 
 impl DijkstraState {
@@ -95,10 +95,10 @@ pub fn dijkstra(
         }
         state.dist[s as usize] = 0.0;
         state.source[s as usize] = s;
-        state.heap.push(Scored(0.0, cells.coord(s), s));
+        state.heap.push(Scored(0.0, (cells.coord(s), s)));
     }
 
-    while let Some(Scored(d, _, u)) = state.heap.pop() {
+    while let Some(Scored(d, (_, u))) = state.heap.pop() {
         let cur = state.dist[u as usize];
         if d > cur {
             continue;
@@ -113,7 +113,7 @@ pub fn dijkstra(
                 state.source[v] = su;
                 state
                     .heap
-                    .push(Scored(nd, cells.coord(edge.dest), edge.dest));
+                    .push(Scored(nd, (cells.coord(edge.dest), edge.dest)));
             }
         }
     }
@@ -148,7 +148,7 @@ pub fn dijkstra_region(
         }
         state.dist[s as usize] = 0.0;
         state.source[s as usize] = s;
-        state.heap.push(Scored(0.0, cells.coord(s), s));
+        state.heap.push(Scored(0.0, (cells.coord(s), s)));
     }
 
     let mut frontier: AHashSet<CellId> = AHashSet::new();
@@ -163,10 +163,10 @@ pub fn dijkstra_region(
     for &n in &frontier {
         state
             .heap
-            .push(Scored(state.dist[n as usize], cells.coord(n), n));
+            .push(Scored(state.dist[n as usize], (cells.coord(n), n)));
     }
 
-    while let Some(Scored(d, _, u)) = state.heap.pop() {
+    while let Some(Scored(d, (_, u))) = state.heap.pop() {
         if d > state.dist[u as usize] {
             continue;
         }
@@ -181,7 +181,7 @@ pub fn dijkstra_region(
                 state.dist[v as usize] = nd;
                 state.pred[v as usize] = u;
                 state.source[v as usize] = su;
-                state.heap.push(Scored(nd, cells.coord(v), v));
+                state.heap.push(Scored(nd, (cells.coord(v), v)));
             }
         }
     }
@@ -210,22 +210,23 @@ pub fn walk_preds(state: &DijkstraState, start: CellId) -> Vec<CellId> {
     cells
 }
 
-struct Scored(f32, VoxelKey, CellId);
+/// Min-heap entry: cost first, with an ordered payload as a deterministic
+/// tie-break.
+pub(crate) struct Scored<T>(pub f32, pub T);
 
-impl PartialEq for Scored {
+impl<T: Ord> PartialEq for Scored<T> {
     fn eq(&self, other: &Self) -> bool {
         self.0.total_cmp(&other.0) == Ordering::Equal && self.1 == other.1
     }
 }
-impl Eq for Scored {}
-impl PartialOrd for Scored {
+impl<T: Ord> Eq for Scored<T> {}
+impl<T: Ord> PartialOrd for Scored<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
-impl Ord for Scored {
+impl<T: Ord> Ord for Scored<T> {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Tie-break on cell id for repeatable ordering.
         other.0.total_cmp(&self.0).then(self.1.cmp(&other.1))
     }
 }

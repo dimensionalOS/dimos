@@ -18,6 +18,8 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use validator::Validate;
 
+use dimos_module::init_worker_pool;
+
 use crate::edges::edges_to_segments;
 use crate::mls_planner::{Config, Planner, RegionBounds};
 use crate::voxel::{surface_point_xyz, VoxelKey};
@@ -69,6 +71,7 @@ impl MLSPlanner {
         wall_buffer_weight = 100.0,
         step_threshold_m = 0.16,
         step_penalty_weight = 4.0,
+        worker_threads = 4,
     ))]
     fn new(
         voxel_size: f32,
@@ -81,6 +84,7 @@ impl MLSPlanner {
         wall_buffer_weight: f32,
         step_threshold_m: f32,
         step_penalty_weight: f32,
+        worker_threads: u32,
     ) -> PyResult<Self> {
         let config = Config {
             world_frame: String::new(),
@@ -100,10 +104,12 @@ impl MLSPlanner {
             goal_tolerance: 1.0,
             // Unused here. Only the binary's worker publishes viz artifacts.
             viz_publish_hz: 1.0,
+            worker_threads,
         };
         config
             .validate()
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        init_worker_pool(config.worker_threads);
         Ok(Self {
             config,
             planner: Planner::default(),
@@ -209,7 +215,7 @@ impl MLSPlanner {
         let voxel_size = self.config.voxel_size;
         let graph = self.planner.graph();
         let values: Vec<f32> = py.allow_threads(|| {
-            let segments = edges_to_segments(&graph.cells, &graph.cell_state, &graph.node_edges);
+            let segments = edges_to_segments(&graph.node_edges);
             let mut out: Vec<f32> = Vec::with_capacity(segments.len() * 7);
             for (a, b, cost) in segments {
                 let pa = surface_point_xyz(a.0, a.1, a.2, voxel_size);

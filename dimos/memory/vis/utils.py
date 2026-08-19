@@ -21,9 +21,37 @@ from typing import Any
 import numpy as np
 
 from dimos.memory.type.observation import EmbeddedObservation, Observation
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.detection.type.detection2d.base import Detection2D
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+
+# Rerun voxel render size at each replay tool's default voxel size.
+DEFAULT_RENDER_VOXEL = 0.05
+
+PairObs = Observation[tuple[Observation[PointCloud2], Observation[Odometry]]]
+
+
+def default_render_voxel(voxel_size: float, default_voxel_size: float) -> float:
+    """Rerun voxel render size, scaled with the configured voxel size."""
+    return DEFAULT_RENDER_VOXEL * (voxel_size / default_voxel_size)
+
+
+def attach_pose_from_odom(pair_obs: PairObs) -> Observation[PointCloud2]:
+    """Tag an aligned lidar observation with its paired odometry pose."""
+    lidar_obs, odom_obs = pair_obs.data
+    odom = odom_obs.data
+    pose_tuple = (
+        float(odom.position.x),
+        float(odom.position.y),
+        float(odom.position.z),
+        float(odom.orientation.x),
+        float(odom.orientation.y),
+        float(odom.orientation.z),
+        float(odom.orientation.w),
+    )
+    return lidar_obs.with_pose(pose_tuple)
 
 
 def mosaic(

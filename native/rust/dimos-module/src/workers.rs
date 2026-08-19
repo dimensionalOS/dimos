@@ -12,7 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod mapper;
-pub mod voxel_ray_tracer;
-
-mod python;
+/// Cap the process-wide rayon worker pool. One pool per process: a no-op when
+/// some other module in this process already sized it, which keeps the first
+/// configured value.
+pub fn init_worker_pool(threads: u32) {
+    let _ = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads as usize)
+        .build_global();
+}

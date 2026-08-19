@@ -32,6 +32,11 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF, tf_stream
 from dimos.memory.transform import FnTransformer
 from dimos.memory.type.observation import Observation
+from dimos.memory.vis.utils import (
+    DEFAULT_RENDER_VOXEL,
+    attach_pose_from_odom,
+    default_render_voxel,
+)
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -50,6 +55,9 @@ if TYPE_CHECKING:
 
 TIMELINE = "ts"
 
+# --voxel-size default, and the render size --render-voxel scales from when unset.
+DEFAULT_VOXEL_SIZE = 0.08
+
 # Mount frames as recorded on the tf stream.
 BASE_FRAME = "base_link"
 SENSOR_FRAME = "mid360_link"
@@ -66,6 +74,28 @@ PATH_PALETTE = [
     [160, 120, 255],
     [120, 255, 200],
     [255, 255, 120],
+]
+
+# Sampled from the turbo colormap, low to high. Shared across both metric plots
+# so a given color reads the same in either.
+TURBO_BLUE = [70, 102, 221]
+TURBO_GREEN = [121, 254, 89]
+TURBO_ORANGE = [245, 105, 24]
+TURBO_RED = [195, 37, 3]
+
+# Each series is (metric key, entity suffix, legend label, color). The suffix
+# sorts the legend top-to-bottom. The label overrides the displayed name.
+TIMING_SERIES = [
+    ("total_ms", "1_total", "total", TURBO_ORANGE),
+    ("update_ms", "2_update", "update", TURBO_GREEN),
+    ("plan_ms", "3_plan", "plan", TURBO_BLUE),
+]
+
+SIZE_SERIES = [
+    ("voxels", "1_voxels", "voxels", TURBO_RED),
+    ("surface_cells", "2_surfaces", "surfaces", TURBO_ORANGE),
+    ("edges", "3_edges", "edges", TURBO_GREEN),
+    ("nodes", "4_nodes", "nodes", TURBO_BLUE),
 ]
 
 
@@ -94,24 +124,6 @@ def _parse_configs(
         c, b, w = (float(p) for p in parts)
         out.append((c, b, w))
     return out
-
-
-PairObs = Observation[tuple[Observation[PointCloud2], Observation[Odometry]]]
-
-
-def _attach_pose_from_odom(pair_obs: PairObs) -> Observation[PointCloud2]:
-    lidar_obs, odom_obs = pair_obs.data
-    odom = odom_obs.data
-    pose_tuple = (
-        float(odom.position.x),
-        float(odom.position.y),
-        float(odom.position.z),
-        float(odom.orientation.x),
-        float(odom.orientation.y),
-        float(odom.orientation.z),
-        float(odom.orientation.w),
-    )
-    return lidar_obs.with_pose(pose_tuple)
 
 
 def _log_edges(edges: NDArray[np.float32], entity: str) -> None:
@@ -388,6 +400,13 @@ def _init_recording(db_path: FsPath, out: FsPath | None, live: bool, crop: Local
         rr.spawn()
     rr.send_blueprint(_blueprint(crop))
     register_colormap_annotation("turbo")
+    for group, series in (("timing", TIMING_SERIES), ("size", SIZE_SERIES)):
+        for _key, suffix, name, color in series:
+            rr.log(
+                f"metrics/{group}/{suffix}",
+                rr.SeriesLines(colors=[color], names=[name]),
+                static=True,
+            )
 
 
 def _build_planners(
@@ -460,16 +479,16 @@ def _process_frame(
                 start, planner, render_voxel, clearance_clamp, hard_clearance, crop
             )
 
-    for key, value in ref_timing.items():
-        rr.log(f"metrics/timing/{key}", rr.Scalars(value))
+    for key, suffix, _name, _color in TIMING_SERIES:
+        rr.log(f"metrics/timing/{suffix}", rr.Scalars(ref_timing[key]))
     sizes = {
         "voxels": planners[0][2].voxel_count(),
         "surface_cells": len(surface),
         "nodes": len(nodes),
         "edges": len(edges),
     }
-    for key, value in sizes.items():
-        rr.log(f"metrics/size/{key}", rr.Scalars(value))
+    for key, suffix, _name, _color in SIZE_SERIES:
+        rr.log(f"metrics/size/{suffix}", rr.Scalars(sizes[key]))
     return ref_timing
 
 
@@ -485,7 +504,9 @@ def main(
         "pointlio_odometry", "--odom-stream", help="Odometry stream in the recording"
     ),
     align_tol: float = typer.Option(0.05, "--align-tol", help="Lidar/odom alignment tolerance (s)"),
-    voxel_size: float = typer.Option(0.08, "--voxel-size", help="Voxel edge length (m)"),
+    voxel_size: float = typer.Option(
+        DEFAULT_VOXEL_SIZE, "--voxel-size", help="Voxel edge length (m)"
+    ),
     max_range: float = typer.Option(30.0, "--max-range", help="Max ray cast distance (m)"),
     ray_subsample: int = typer.Option(1, "--ray-subsample", help="Keep every Nth ray"),
     shadow_depth: float = typer.Option(
@@ -550,7 +571,12 @@ def main(
     live: bool = typer.Option(
         False, "--live", help="Also spawn the rerun viewer when --out is set"
     ),
-    render_voxel: float = typer.Option(0.05, "--render-voxel", help="Rerun voxel render size (m)"),
+    render_voxel: float | None = typer.Option(
+        None,
+        "--render-voxel",
+        help="Rerun voxel render size (m); scales with --voxel-size when unset "
+        f"({DEFAULT_RENDER_VOXEL} at the default voxel size of {DEFAULT_VOXEL_SIZE})",
+    ),
     local_radius: float = typer.Option(
         5.0, "--local-radius", help="Close-up view: crop radius around the robot (m)"
     ),
@@ -575,6 +601,9 @@ def main(
 ) -> None:
     import rerun as rr
 
+    if render_voxel is None:
+        render_voxel = default_render_voxel(voxel_size, DEFAULT_VOXEL_SIZE)
+
     db_path = resolve_named_path(dataset, ".db")
     crop = LocalCrop(local_radius, local_above, local_below)
     _init_recording(db_path, out, live, crop)
@@ -590,7 +619,7 @@ def main(
         tf = _tf_over(store, lidar)
 
         pose_tagged = lidar.align(odom, tolerance=align_tol).transform(
-            FnTransformer(_attach_pose_from_odom)
+            FnTransformer(attach_pose_from_odom)
         )
         ray_pipeline = pose_tagged.transform(
             RayTraceMap(

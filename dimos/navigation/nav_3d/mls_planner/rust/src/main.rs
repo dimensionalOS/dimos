@@ -18,7 +18,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use dimos_mls_planner::edges::{edges_to_segments, PlannerGraph};
 use dimos_mls_planner::mls_planner::{Config, Planner, RegionBounds};
 use dimos_mls_planner::voxel::surface_point_xyz;
-use dimos_module::{error_throttled, run_with_transport, warn_throttled, Input, Module, Output};
+use dimos_module::{
+    error_throttled, init_worker_pool, run_with_transport, warn_throttled, Input, Module, Output,
+};
 use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::Path;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
@@ -94,6 +96,7 @@ struct MlsPlanner {
 
 impl MlsPlanner {
     async fn spawn_worker(&mut self) {
+        init_worker_pool(self.config.worker_threads);
         let worker = Worker {
             pending: Arc::clone(&self.pending),
             latest_start: Arc::clone(&self.latest_start),
@@ -448,7 +451,7 @@ fn build_path_from_waypoints(waypoints: &[(f32, f32, f32)], frame_id: &str, stam
 /// Emit edges as alternating PoseStamped pairs with orientation.w carrying
 /// the per-edge cost.
 fn build_segments_path(plg: &PlannerGraph, voxel_size: f32, frame_id: &str, stamp: Time) -> Path {
-    let segments = edges_to_segments(&plg.cells, &plg.cell_state, &plg.node_edges);
+    let segments = edges_to_segments(&plg.node_edges);
     let mut poses: Vec<PoseStamped> = Vec::with_capacity(segments.len() * 2);
     for (a, b, cost) in segments {
         let pa = surface_point_xyz(a.0, a.1, a.2, voxel_size);
