@@ -16,7 +16,13 @@ from __future__ import annotations
 
 import pytest
 
-from dimos.protocol.service.zenohservice import ZenohConfig, ZenohService, ZenohSessionPool
+from dimos.protocol.service.zenohservice import (
+    ZENOH_LOCAL_ROUTER_ENDPOINT,
+    ZENOH_ROUTER_ENDPOINT_ENV,
+    ZenohConfig,
+    ZenohService,
+    ZenohSessionPool,
+)
 
 
 @pytest.fixture()
@@ -31,6 +37,17 @@ def test_different_modes_produce_different_keys() -> None:
     peer = ZenohConfig(mode="peer")
     client = ZenohConfig(mode="client")
     assert peer.session_key != client.session_key
+
+
+def test_default_config_uses_local_router_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(ZENOH_ROUTER_ENDPOINT_ENV, ZENOH_LOCAL_ROUTER_ENDPOINT)
+
+    config = ZenohConfig()
+
+    assert config.mode == "client"
+    assert config.connect == [ZENOH_LOCAL_ROUTER_ENDPOINT]
 
 
 def test_start_creates_session(session_pool) -> None:
