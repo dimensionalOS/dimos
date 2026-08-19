@@ -23,14 +23,16 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from dimos.constants import STATE_DIR
+from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE, STATE_DIR
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
+from dimos.core.transport import pSHMTransport
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionRecorder
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.manipulators.openyam.blueprints.teleop import teleop_quest_openyam
 from dimos.teleop.quest.blueprints import (
     teleop_quest_piper,
@@ -60,7 +62,6 @@ def _camera_if_real() -> tuple[Blueprint, ...]:
 learning_collect_quest_xarm7 = autoconnect(
     CollectionRecorder.blueprint(
         db_path=_session_db("xarm7"),
-        poseless_streams=["color_image", "coordinator_joint_state", "status"],
         record_tf=False,
     ),
     EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
@@ -72,7 +73,6 @@ learning_collect_quest_xarm7 = autoconnect(
 learning_collect_quest_piper = autoconnect(
     CollectionRecorder.blueprint(
         db_path=_session_db("piper"),
-        poseless_streams=["color_image", "coordinator_joint_state", "status"],
         record_tf=False,
     ),
     EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
@@ -100,4 +100,10 @@ learning_collect_quest_openyam = autoconnect(
     ),
     EpisodeMonitorModule.blueprint(default_task_label="openyam_task"),
     CollectionRecorder.blueprint(db_path=_session_db("openyam")),
+).transports(
+    {
+        ("color_image", Image): pSHMTransport(
+            "/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+        )
+    }
 )

@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import pytest
 
+from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.transport import pSHMTransport
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.imitation.collection.blueprint import (
     learning_collect_quest_openyam,
@@ -25,6 +27,7 @@ from dimos.imitation.collection.blueprint import (
 )
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionRecorder
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.openyam.blueprints.teleop import _openyam_quest_hardware
 from dimos.robot.manipulators.openyam.config import OPENYAM_JOINTS
@@ -39,11 +42,6 @@ AGGREGATE = "coordinator_joint_state"
 def test_collection_streams_are_poseless(blueprint: Blueprint) -> None:
     recorder = next(atom for atom in blueprint.blueprints if atom.module is CollectionRecorder)
 
-    assert recorder.kwargs["poseless_streams"] == [
-        "color_image",
-        "coordinator_joint_state",
-        "status",
-    ]
     assert recorder.kwargs["record_tf"] is False
 
 
@@ -106,3 +104,10 @@ def test_openyam_collection_has_one_wrist_webcam_and_all_joints() -> None:
     assert camera.config.fps == 30.0
     assert "hardware" not in coordinator.kwargs
     assert _openyam_quest_hardware(None).joints == OPENYAM_JOINTS
+
+
+def test_openyam_collection_records_wrist_camera_over_shared_memory() -> None:
+    transport = learning_collect_quest_openyam.transport_map[("color_image", Image)]
+
+    assert isinstance(transport, pSHMTransport)
+    assert transport.shm.config.default_capacity == DEFAULT_CAPACITY_COLOR_IMAGE
