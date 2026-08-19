@@ -37,13 +37,19 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 
 
 class CollectionRecorderConfig(RecorderConfig):
-    # Joint and status streams carry no world pose; skipping the tf lookup
-    # avoids a per-message warning at the control rate.
+    # None of the collection streams carry a world pose this stack can
+    # resolve; skipping the tf lookup avoids per-message warnings at the
+    # control and camera rates.
     poseless_streams: list[str] = Field(
         default_factory=lambda: [
             "coordinator_joint_state",
             "coordinator_joint_target",
             "status",
+            "color_image",
+            "chest_image",
+            "left_hand_image",
+            "right_hand_image",
+            "waist_image",
         ]
     )
 
