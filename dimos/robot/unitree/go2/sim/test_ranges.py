@@ -23,11 +23,14 @@ from dimos.robot.unitree.go2.sim.ranges import (
     BUILTIN_PRESETS,
     CONTACT_DEFAULTS,
     DR_FLOOR,
+    ENGINE_DEFAULTS,
     FLOOR_MU,
     GO2,
     KNOBS,
     MEASURED,
     PHYSICS_KEYS,
+    SOLVER_DEFAULTS,
+    SOLVER_KEYS,
     Knob,
     Preset,
     load_preset,
@@ -64,6 +67,22 @@ def test_physics_keys_are_the_knobs_minus_the_actuator_lag():
     assert "actuator_tau" in KNOBS and "actuator_tau" not in PHYSICS_KEYS
     assert PHYSICS_KEYS == set(KNOBS) - {"actuator_tau"}
     assert set(CONTACT_DEFAULTS) <= PHYSICS_KEYS
+    assert SOLVER_KEYS <= PHYSICS_KEYS
+    assert ENGINE_DEFAULTS == {**CONTACT_DEFAULTS, **SOLVER_DEFAULTS}
+
+
+def test_the_shipped_plant_records_its_solver_explicitly():
+    """Once the solver is a choice (the batched engine made it one), a preset
+    must fully determine it. `measured` records the scene's own values — the
+    physical no-op is held by test_backend.py; this holds the SCHEMA: the
+    keys are present, they are the declared scene defaults, and each names
+    its provenance."""
+    for k in SOLVER_KEYS:
+        assert MEASURED.physics[k] == SOLVER_DEFAULTS[k], k
+        assert MEASURED.provenance.get(k), f"measured.{k}: no provenance"
+    # stock stays bare menagerie: recording the solver there would make
+    # "untouched" a lie by one dict entry.
+    assert not (SOLVER_KEYS & set(BUILTIN_PRESETS["stock"].physics))
 
 
 def test_every_preset_key_is_a_known_knob():

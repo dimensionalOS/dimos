@@ -58,7 +58,7 @@ import numpy as np
 
 from dimos.robot.unitree.go2.sim.anchors import RobotSpec, derive
 from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
-from dimos.robot.unitree.go2.sim.ranges import CONTACT_DEFAULTS, Knob, Preset, load_preset
+from dimos.robot.unitree.go2.sim.ranges import ENGINE_DEFAULTS, Knob, Preset, load_preset
 from dimos.robot.unitree.go2.sim.sysid.recording import read_declarations
 from dimos.robot.unitree.go2.sim.sysid.regimes import (
     Segment,
@@ -210,11 +210,12 @@ def load_knob_plan(path: str | Path, backend_knobs: Mapping[str, Knob]) -> KnobP
 def base_values(preset: str = "measured") -> dict[str, float]:
     """The incumbent's complete knob values — the search's start point.
 
-    Early presets predate the contact keys, so the engine defaults fill in:
-    this changes no physics, it just gives every searched knob a start value.
+    Early presets predate the contact and solver keys, so the engine defaults
+    fill in: this changes no physics, it just gives every knob a start value
+    — and the preset a fit SAVES then carries them explicitly.
     """
     p = load_preset(preset)
-    return {**CONTACT_DEFAULTS, **p.physics, "actuator_tau": p.actuator_tau}
+    return {**ENGINE_DEFAULTS, **p.physics, "actuator_tau": p.actuator_tau}
 
 
 def merged(
@@ -713,7 +714,7 @@ def judgement(
     with what weight, against what, and what came out (README 4). Scales
     calibrate on the ``--preset`` incumbent exactly as a fit's would."""
     baseline = objective.calibrate(merged(base, plan, {}))
-    tvals = {**CONTACT_DEFAULTS, **target.physics, "actuator_tau": target.actuator_tau}
+    tvals = {**ENGINE_DEFAULTS, **target.physics, "actuator_tau": target.actuator_tau}
     cand = objective.evaluate(tvals)
     out = [
         f"LOOP-1 JUDGEMENT  plant {target.name!r}  (scales: baseline {args.preset!r})",
@@ -732,7 +733,7 @@ def judgement(
         why = target.provenance.get(name, "")
         if not why and name in plan.pinned:
             why = plan.pinned[name].why
-        if not why and name in CONTACT_DEFAULTS and tvals[name] == CONTACT_DEFAULTS[name]:
+        if not why and name in ENGINE_DEFAULTS and tvals[name] == ENGINE_DEFAULTS[name]:
             why = "menagerie default (never overridden)"
         out.append(f"  {name:<26s} {tvals[name]:>10.5f}  {disp:<10s} {why}")
     out.append("")

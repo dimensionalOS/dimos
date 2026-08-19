@@ -76,6 +76,16 @@ Mode B (§7); native-runner recordings serve the floor and Mode A only.
   is stock-vs-tuned by design. Delete it and the claims become
   unverifiable.
 
+**The contact solver is part of the preset.** `solver_iterations` /
+`solver_ls_iterations` / `solver_cone` are knobs like any other (never
+searched — a solver is chosen, then the contact is identified UNDER it),
+applied to `model.opt` by the same `apply_physics` both engines compile
+from. They were inherited silently from menagerie's scene until the batched
+engine made them a choice: Newton converges by 4/10 on the shipped contact,
+so the scene's 100/50 cap is slack. `measured` records the scene's
+100/50/elliptic explicitly — a no-op, held by test — and an absent key
+keeps the scene default, so pre-schema preset JSONs reproduce bit-for-bit.
+
 **The plant's provenance is deliberately hybrid — do not "fix" it by
 refitting.** The knobs were fitted with the torque envelope OFF and are run
 with it ON, so the envelope's average effect is double-counted into the

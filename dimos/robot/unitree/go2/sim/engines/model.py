@@ -166,6 +166,17 @@ def apply_physics(model: mujoco.MjModel, overrides: dict[str, float]) -> None:
     unknown = set(overrides) - PHYSICS_KEYS
     if unknown:
         raise ValueError(f"unknown physics override(s): {sorted(unknown)}")
+    # Solver settings are model OPTIONS, applied here for the same reason the
+    # geom knobs are: a preset must fully determine the plant, and both
+    # MuJoCo-family engines compile this one model (MJX reads opt.iterations,
+    # opt.ls_iterations and opt.cone from it verbatim). Integer-valued and
+    # rounded, so a preset JSON's 1.0 and an int 1 mean the same solver.
+    if "solver_iterations" in overrides:
+        model.opt.iterations = int(round(overrides["solver_iterations"]))
+    if "solver_ls_iterations" in overrides:
+        model.opt.ls_iterations = int(round(overrides["solver_ls_iterations"]))
+    if "solver_cone" in overrides:
+        model.opt.cone = int(round(overrides["solver_cone"]))
     if "armature" in overrides:
         model.dof_armature[LEG_DOFS] = overrides["armature"]
     if "damping" in overrides:

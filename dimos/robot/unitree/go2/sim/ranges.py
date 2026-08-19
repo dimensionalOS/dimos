@@ -136,6 +136,33 @@ KNOBS: dict[str, Knob] = {
         0.005, 0.5, log=True, why="never resolved; menagerie default 0.015 stands"
     ),
     "foot_solimp_width": Knob(0.001, 0.03, log=True, unit="m", why="seed spread 0.0021-0.0069"),
+    # Contact SOLVER settings. Model options, not fitted quantities — but a
+    # preset must fully determine the plant, and these were inherited silently
+    # from menagerie's scene until 2026-08-19, when the batched engine made
+    # them a CHOICE: the shipped contact needs Newton 4/10 to converge (100/50
+    # reproduces it exactly, so the scene's cap was doing nothing), and a
+    # cheap-solver preset must say so on itself rather than in a run script.
+    # Never in DEFAULT_SEARCH: a solver is chosen and then the contact is
+    # identified UNDER it, not the other way around.
+    "solver_iterations": Knob(
+        1,
+        200,
+        log=True,
+        why="Newton iteration cap; menagerie's 100 converges by 4 on the shipped plant",
+    ),
+    "solver_ls_iterations": Knob(
+        1,
+        100,
+        log=True,
+        why="line-search cap per Newton iteration; menagerie's 50 converges by 10",
+    ),
+    "solver_cone": Knob(
+        0,
+        1,
+        why="categorical, mjtCone: 0 = pyramidal, 1 = elliptic. The scene's "
+        "impratio 100 was chosen for elliptic friction; pyramidal linearises "
+        "the cone and must be re-identified, not toggled",
+    ),
 }
 
 # Foot-floor contact solver keys. No early preset carries a value for these:
@@ -149,6 +176,21 @@ CONTACT_DEFAULTS: dict[str, float] = {
     "foot_solimp_width": 0.022,
 }
 CONTACT_KEYS = frozenset(CONTACT_DEFAULTS)
+
+# Contact-solver keys and the values the vendored scene compiles to (go2.xml
+# declares none of them, so these are MuJoCo's own defaults plus the scene's
+# cone choice). Same discipline as CONTACT_DEFAULTS: an absent key is never
+# written and every pre-schema preset reproduces bit-for-bit.
+SOLVER_DEFAULTS: dict[str, float] = {
+    "solver_iterations": 100.0,
+    "solver_ls_iterations": 50.0,
+    "solver_cone": 1.0,  # mjCONE_ELLIPTIC
+}
+SOLVER_KEYS = frozenset(SOLVER_DEFAULTS)
+
+# What the engine would do with no preset at all: the scene's own values for
+# every key a preset MAY carry but early presets did not.
+ENGINE_DEFAULTS: dict[str, float] = {**CONTACT_DEFAULTS, **SOLVER_DEFAULTS}
 
 # Model-override keys apply_physics accepts: every knob except the actuator lag,
 # which lives in the stepping loop rather than on the compiled model.
@@ -261,6 +303,10 @@ MEASURED_PHYSICS: dict[str, float] = {
     "foot_solref_damp": 1.1398535892980237,
     "foot_solimp_dmin": 0.015,
     "foot_solimp_width": 0.0016142451913904524,
+    # The solver the knobs were identified UNDER, recorded rather than
+    # inherited: these are exactly what the scene compiles to, so writing
+    # them down changes nothing (test_backend.py holds that).
+    **SOLVER_DEFAULTS,
     **_ANCHORS,
 }
 MEASURED_ACTUATOR_TAU = 0.005010955656476395
@@ -294,6 +340,10 @@ MEASURED = Preset(
         "trunk_inertia_scale": "derived: parallel-axis payload analysis (anchors.derive)",
         "actuator_tau": "selected: draw 54 of the 2026-08-18 incumbent-objective cloud",
         "envelope": "measured: sysid.drive demanded-vs-delivered transfer, zero free parameters",
+        "solver_iterations": "declared: menagerie scene default, recorded explicitly 2026-08-19 "
+        "(Newton converges by 4 on this plant, so the cap is slack, not load-bearing)",
+        "solver_ls_iterations": "declared: menagerie scene default, recorded explicitly 2026-08-19",
+        "solver_cone": "declared: the scene's elliptic cone, chosen with its impratio 100",
     },
 )
 

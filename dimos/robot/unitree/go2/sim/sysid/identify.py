@@ -65,7 +65,7 @@ from typing import Any
 import numpy as np
 
 from dimos.robot.unitree.go2.sim.backend import CHANNELS, Backend
-from dimos.robot.unitree.go2.sim.ranges import CONTACT_DEFAULTS, Knob, load_preset
+from dimos.robot.unitree.go2.sim.ranges import ENGINE_DEFAULTS, SOLVER_KEYS, Knob, load_preset
 from dimos.robot.unitree.go2.sim.sysid.ingest import read_streams
 from dimos.robot.unitree.go2.sim.sysid.recording import Streams, read_declarations
 from dimos.robot.unitree.go2.sim.sysid.regimes import (
@@ -85,11 +85,12 @@ def nudge(
     """A copy of ``values`` with one knob moved by ``frac`` of its range.
 
     The centre is the applied value if present, else the engine default we
-    know (:data:`CONTACT_DEFAULTS` — no early preset carries a contact value,
-    which is what keeps old rollouts identical). A knob with neither has no
-    centre to differentiate around, and that is an error, not a guess.
+    know (:data:`ENGINE_DEFAULTS` — no early preset carries a contact or
+    solver value, which is what keeps old rollouts identical). A knob with
+    neither has no centre to differentiate around, and that is an error, not
+    a guess.
     """
-    value = float(values.get(name, CONTACT_DEFAULTS.get(name, float("nan"))))
+    value = float(values.get(name, ENGINE_DEFAULTS.get(name, float("nan"))))
     if not math.isfinite(value):
         raise KeyError(f"{name} has no value on this plant and no known default")
     if knob.log:
@@ -158,7 +159,11 @@ def jacobian(
     variants in the same order, bit-identically.
     """
     knobs = backend.knobs()
-    names = list(params) if params is not None else list(knobs)
+    # The default set is every CONTINUOUS physics knob: the solver keys are
+    # integer/categorical model options, so a central difference on them
+    # measures solver convergence (or, after rounding, nothing at all), not
+    # the plant. Ask for them by name to get exactly that measurement.
+    names = list(params) if params is not None else [n for n in knobs if n not in SOLVER_KEYS]
     missing = [n for n in names if n not in knobs]
     if missing:
         raise KeyError(f"backend {backend.name!r} exposes no knob(s) {missing}")
@@ -373,6 +378,12 @@ def main() -> None:
         help="clip length, s: one value = fixed, two = U(lo, hi), 0 = never re-init",
     )
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument(
+        "--knobs",
+        default=None,
+        help="comma-separated knobs to differentiate (default: every continuous knob; "
+        "the question 'does this data resolve THESE' wants exactly these)",
+    )
     ap.add_argument("--start", type=float, default=None, help="restrict to [start, start+seconds]")
     ap.add_argument("--seconds", type=float, default=None)
     ap.add_argument("--workers", type=int, default=1, help="fan segment rollouts across processes")
@@ -421,6 +432,7 @@ def main() -> None:
         frac=args.frac,
         window=window,
         seed=args.seed,
+        params=tuple(args.knobs.split(",")) if args.knobs else None,
         channel=args.channel,
         protect=protected(spans),
         suspended=suspended,

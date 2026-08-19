@@ -147,6 +147,60 @@ def test_apply_physics_rejects_an_unknown_key():
         go2_model.apply_physics(model, {"solar_flux": 1.0})
 
 
+def test_recording_the_solver_on_measured_wrote_down_what_was_already_there():
+    """The 2026-08-19 schema change: `measured` now carries its contact
+    solver explicitly instead of inheriting it silently from the scene. The
+    hard invariant is that WRITING IT DOWN CHANGED NOTHING — the recorded
+    values must be exactly what the scene compiles to, and applying the full
+    preset must leave the options where they were."""
+    from dimos.robot.unitree.go2.sim.ranges import MEASURED, SOLVER_DEFAULTS
+
+    fresh, _ = go2_model.load()
+    assert fresh.opt.iterations == SOLVER_DEFAULTS["solver_iterations"]
+    assert fresh.opt.ls_iterations == SOLVER_DEFAULTS["solver_ls_iterations"]
+    assert fresh.opt.cone == SOLVER_DEFAULTS["solver_cone"] == int(mujoco.mjtCone.mjCONE_ELLIPTIC)
+    model, _ = go2_model.load()
+    go2_model.apply_physics(model, MEASURED.physics)
+    assert model.opt.iterations == fresh.opt.iterations
+    assert model.opt.ls_iterations == fresh.opt.ls_iterations
+    assert model.opt.cone == fresh.opt.cone
+
+
+def test_the_measured_plant_moves_identically_with_its_solver_recorded():
+    """The same fact from the physics side: a contact-rich collapse is
+    bit-identical whether the preset's solver keys are applied or omitted.
+    If this ever fails, the schema change moved `measured` — the one thing
+    it must never do."""
+    from dimos.robot.unitree.go2.sim.engines.mjx import qpos_after
+    from dimos.robot.unitree.go2.sim.ranges import MEASURED, SOLVER_KEYS
+
+    def collapse(physics: dict[str, float]) -> np.ndarray:
+        model, data = go2_model.load()
+        go2_model.apply_physics(model, physics)
+        data.qpos[2] = 0.30
+        return qpos_after(model, data, 500)
+
+    with_solver = collapse(dict(MEASURED.physics))
+    without = collapse({k: v for k, v in MEASURED.physics.items() if k not in SOLVER_KEYS})
+    assert np.array_equal(with_solver, without)
+
+
+def test_apply_physics_sets_a_cheap_solver_and_only_when_asked():
+    fresh, _ = go2_model.load()
+    model, _ = go2_model.load()
+    go2_model.apply_physics(
+        model, {"solver_iterations": 1.0, "solver_ls_iterations": 5.0, "solver_cone": 0.0}
+    )
+    assert model.opt.iterations == 1
+    assert model.opt.ls_iterations == 5
+    assert model.opt.cone == int(mujoco.mjtCone.mjCONE_PYRAMIDAL)
+    # an ABSENT key is never written
+    only_geom, _ = go2_model.load()
+    go2_model.apply_physics(only_geom, {"armature": 0.03})
+    assert only_geom.opt.iterations == fresh.opt.iterations
+    assert only_geom.opt.cone == fresh.opt.cone
+
+
 def test_the_backend_rejects_an_unknown_knob():
     with pytest.raises(ValueError, match="unknown knob"):
         MujocoBackend().apply({"warp_drive": 1.0})

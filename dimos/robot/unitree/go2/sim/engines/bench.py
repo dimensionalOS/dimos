@@ -45,14 +45,15 @@ import numpy as np
 
 from dimos.robot.unitree.go2.sim.engines import mjx as go2_mjx, model as go2_model
 from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES, TORQUE_LIMITS, TorqueEnvelope
-from dimos.robot.unitree.go2.sim.ranges import MEASURED
+from dimos.robot.unitree.go2.sim.ranges import Preset, load_preset
 
 STAND_Q = np.tile([0.0, 0.9, -1.8], 4)
 KP, KD = 40.0, 2.0
-# The shipped plant names an envelope and running it bare would measure a
-# different plant, so this is an assertion, not a default.
-assert MEASURED.envelope is not None, "the measured preset must name an envelope"
-ENVELOPE = TORQUE_ENVELOPES[MEASURED.envelope]
+
+
+def _envelope(preset: Preset) -> TorqueEnvelope | None:
+    """The preset's own envelope: a plant fitted with it must run with it."""
+    return TORQUE_ENVELOPES[preset.envelope] if preset.envelope is not None else None
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,11 @@ class Result:
     compile_s: float
     run_s: float
     peak_mib: float
+    finite: bool = True
+    """False = the batch went NaN. Throughput of a diverged plant is still a
+    NUMBER (it bounds what the solver setting could buy), but never a claim
+    the plant survives there — which is why it rides the result instead of
+    killing the sweep."""
 
     @property
     def steps_per_s(self) -> float:
@@ -87,27 +93,30 @@ def standing_state(model: mujoco.MjModel, data: mujoco.MjData) -> tuple[np.ndarr
     return data.qpos.copy(), data.qvel.copy()
 
 
-def cpu_baseline(steps: int = 5000) -> Result:
+def cpu_baseline(preset: Preset, steps: int = 5000) -> Result:
     """CPU MuJoCo, one env, the same stepped body. The bar to clear."""
     model, data = go2_model.load()
-    go2_model.apply_physics(model, MEASURED.physics)
+    go2_model.apply_physics(model, preset.physics)
+    envelope = _envelope(preset)
     qpos, qvel = standing_state(model, data)
     data.qpos[:], data.qvel[:] = qpos, qvel
     dt = float(model.opt.timestep)
-    alpha = dt / (MEASURED.actuator_tau + dt)
+    alpha = dt / (preset.actuator_tau + dt) if preset.actuator_tau > 0.0 else 1.0
     applied = np.zeros(12)
 
     t0 = time.perf_counter()
     for _ in range(steps):
         q, dq = data.qpos[7:19], data.qvel[6:18]
         tau = np.clip(KP * (STAND_Q - q) - KD * dq, -TORQUE_LIMITS, TORQUE_LIMITS)
-        applied = applied + alpha * (ENVELOPE.deliverable(tau, dq) - applied)
+        if envelope is not None:
+            tau = envelope.deliverable(tau, dq)
+        applied = applied + alpha * (tau - applied)
         data.ctrl[:] = applied
         mujoco.mj_step(model, data)
     return Result("mujoco cpu", 1, steps, 0.0, time.perf_counter() - t0, 0.0)
 
 
-def _stepper(mx: Any, envelope: TorqueEnvelope, alpha: float, steps: int) -> Any:
+def _stepper(mx: Any, envelope: TorqueEnvelope | None, alpha: float, steps: int) -> Any:
     """One env's scanned rollout, closed over the compiled model."""
     import jax
     import jax.numpy as jnp
@@ -120,7 +129,9 @@ def _stepper(mx: Any, envelope: TorqueEnvelope, alpha: float, steps: int) -> Any
         d, applied = carry
         q, dq = d.qpos[7:19], d.qvel[6:18]
         tau = jnp.clip(KP * (target - q) - KD * dq, -limits, limits)
-        applied = applied + alpha * (go2_mjx.deliverable_jax(envelope, tau, dq) - applied)
+        if envelope is not None:
+            tau = go2_mjx.deliverable_jax(envelope, tau, dq)
+        applied = applied + alpha * (tau - applied)
         return (mjx.step(mx, d.replace(ctrl=applied)), applied), None
 
     def run(d):  # type: ignore[no-untyped-def]
@@ -130,7 +141,7 @@ def _stepper(mx: Any, envelope: TorqueEnvelope, alpha: float, steps: int) -> Any
     return run
 
 
-def mjx_throughput(envs: int, steps: int, *, x64: bool) -> Result:
+def mjx_throughput(preset: Preset, envs: int, steps: int, *, x64: bool) -> Result:
     """Batched MJX: compile once, then time the steady state."""
     import jax
     import jax.numpy as jnp
@@ -139,7 +150,7 @@ def mjx_throughput(envs: int, steps: int, *, x64: bool) -> Result:
     from mujoco import mjx  # type: ignore[attr-defined]
 
     model, data = go2_model.load()
-    go2_model.apply_physics(model, MEASURED.physics)
+    go2_model.apply_physics(model, preset.physics)
     go2_mjx.prepare(model)
     qpos, qvel = standing_state(model, data)
     dt = float(model.opt.timestep)
@@ -154,7 +165,8 @@ def mjx_throughput(envs: int, steps: int, *, x64: bool) -> Result:
     batch = jax.tree.map(lambda x: jnp.broadcast_to(x, (envs, *x.shape)).copy(), dx)
     batch = batch.replace(qpos=batch.qpos.at[:, 7:19].add(jitter))
 
-    run = jax.jit(jax.vmap(_stepper(mx, ENVELOPE, dt / (MEASURED.actuator_tau + dt), steps)))
+    alpha = dt / (preset.actuator_tau + dt) if preset.actuator_tau > 0.0 else 1.0
+    run = jax.jit(jax.vmap(_stepper(mx, _envelope(preset), alpha, steps)))
     t0 = time.perf_counter()
     out = jax.block_until_ready(run(batch))  # type: ignore[no-untyped-call]
     compile_s = time.perf_counter() - t0
@@ -162,13 +174,15 @@ def mjx_throughput(envs: int, steps: int, *, x64: bool) -> Result:
     t0 = time.perf_counter()
     out = jax.block_until_ready(run(batch))  # type: ignore[no-untyped-call]
     run_s = time.perf_counter() - t0
-    assert np.isfinite(np.asarray(out)).all(), "the batch went non-finite"
+    finite = bool(np.isfinite(np.asarray(out)).all())
 
     peak = 0.0
     stats = jax.local_devices()[0].memory_stats()
     if stats:
         peak = stats.get("peak_bytes_in_use", 0) / 1024**2
-    return Result(f"mjx {'f64' if x64 else 'f32'}", envs, steps, compile_s, run_s, peak)
+    return Result(
+        f"mjx {'f64' if x64 else 'f32'}", envs, steps, compile_s, run_s, peak, finite=finite
+    )
 
 
 def main() -> None:
@@ -176,6 +190,7 @@ def main() -> None:
     import os
 
     ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--preset", default="measured", help="plant preset name or JSON path")
     ap.add_argument("--envs", type=int, nargs="+", default=[1, 64, 256, 1024, 4096])
     ap.add_argument("--steps", type=int, default=1000, help="physics steps per env")
     ap.add_argument("--x64", action="store_true", help="also measure float64")
@@ -183,8 +198,12 @@ def main() -> None:
 
     import jax
 
-    print(f"device: {jax.local_devices()[0]}  |  cores: {os.cpu_count()}")
-    base = cpu_baseline()
+    preset = load_preset(args.preset)
+    print(
+        f"device: {jax.local_devices()[0]}  |  cores: {os.cpu_count()}  |  "
+        f"preset: {preset.name} (envelope {preset.envelope or 'none'})"
+    )
+    base = cpu_baseline(preset)
     cores = os.cpu_count() or 1
     print(
         f"\n{'engine':>10s} {'envs':>6s} {'steps/s':>12s} {'compile':>9s} "
@@ -202,7 +221,7 @@ def main() -> None:
     for x64 in [False, True] if args.x64 else [False]:
         for envs in args.envs:
             try:
-                r = mjx_throughput(envs, args.steps, x64=x64)
+                r = mjx_throughput(preset, envs, args.steps, x64=x64)
             except Exception as exc:  # OOM is a RESULT, not a crash
                 print(
                     f"{'mjx f64' if x64 else 'mjx f32':>10s} {envs:6d} "
@@ -212,6 +231,7 @@ def main() -> None:
             print(
                 f"{r.label:>10s} {r.envs:6d} {r.steps_per_s:12,.0f} {r.compile_s:8.1f}s "
                 f"{r.run_s:7.2f}s {r.peak_mib:10,.0f}M"
+                + ("" if r.finite else "   <- went NaN: a speed, not a survivable plant")
             )
 
 
