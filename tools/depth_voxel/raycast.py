@@ -29,10 +29,12 @@ from dimos.memory.cli.dataset import open_store
 from dimos.memory.tf import StreamTF
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from tools.depth_voxel import recording as recordings
 from tools.depth_voxel.filters import DepthFilter
 from tools.depth_voxel.maps import VOXEL_SIZE_METERS, compare, shared_window
 from tools.depth_voxel.pipeline import DepthProjector, PoseTrack
-from tools.depth_voxel.run_experiment import FRAME_STRIDE, RESULTS_DIR
+from tools.depth_voxel.recording import Recording
+from tools.depth_voxel.run_experiment import FRAME_STRIDE
 
 RAYCAST_MAX_RANGE_METERS = 30.0
 """The RayTracingVoxelMap module default. Also drops the lidar map's ±80 m strays."""
@@ -55,9 +57,9 @@ def to_world(points: np.ndarray, matrix: np.ndarray) -> tuple[np.ndarray, np.nda
 
 
 def lidar_frames(
-    store: Any, poses: PoseTrack, start: float, end: float
+    store: Any, poses: PoseTrack, recording: Recording, start: float, end: float
 ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
-    for obs in store.stream("lidar", PointCloud2).after(start).before(end):
+    for obs in store.stream(recording.lidar_stream, PointCloud2).after(start).before(end):
         pose = poses.at(float(obs.ts))
         points = obs.data.points_f32()
         if pose is None or not len(points):
@@ -68,12 +70,13 @@ def lidar_frames(
 def depth_frames(
     store: Any,
     projector: DepthProjector,
+    recording: Recording,
     start: float,
     end: float,
     depth_filter: DepthFilter,
 ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
     depth_filter.reset()
-    stream = store.stream("depth_image", Image).after(start).before(end)
+    stream = store.stream(recording.depth_stream, Image).after(start).before(end)
     for index, obs in enumerate(stream):
         if index % FRAME_STRIDE:
             continue
@@ -86,29 +89,41 @@ def depth_frames(
         yield to_world(points, odom_to_lidar.to_matrix() @ projector.lidar_to_depth)
 
 
-def main(db_path: str) -> None:
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    store = open_store(db_path)
+def main(recording_name: str) -> None:
+    recording = recordings.get(recording_name)
+    results_dir = recording.results_dir
+    results_dir.mkdir(parents=True, exist_ok=True)
+    store = open_store(recording.db_path)
     with store:
-        tf = StreamTF.from_store(store, "tf_corrected")
+        tf = StreamTF.from_store(store, recording.tf_stream)
         assert tf is not None
-        poses = PoseTrack.from_store(store)
-        projector = DepthProjector.from_store(store, tf, poses)
-        start, end = shared_window(store)
+        poses = PoseTrack.from_store(store, recording)
+        projector = DepthProjector.from_store(store, tf, poses, recording)
+        start, end = shared_window(store, recording)
+        print(f"{recording.name}: window {start:.3f}..{end:.3f} ({end - start:.1f} s)")
 
         began = time.time()
-        lidar_keys = raycast_map(lidar_frames(store, poses, start, end))
-        np.save(RESULTS_DIR / "raycast_lidar_keys.npy", lidar_keys)
+        lidar_keys = raycast_map(lidar_frames(store, poses, recording, start, end))
+        np.save(results_dir / "raycast_lidar_keys.npy", lidar_keys)
         print(f"raycast lidar map: {len(lidar_keys)} voxels in {time.time() - began:.0f} s")
 
         began = time.time()
-        depth_keys = raycast_map(depth_frames(store, projector, start, end, WINNING_FILTER))
-        np.save(RESULTS_DIR / "raycast_depth_keys.npy", depth_keys)
+        depth_keys = raycast_map(
+            depth_frames(store, projector, recording, start, end, WINNING_FILTER)
+        )
+        np.save(results_dir / "raycast_depth_keys.npy", depth_keys)
         print(f"raycast depth map: {len(depth_keys)} voxels in {time.time() - began:.0f} s")
 
     stats = compare(depth_keys, lidar_keys)
-    (RESULTS_DIR / "raycast.json").write_text(
-        json.dumps({"name": "raycast-" + WINNING_FILTER.name, **stats.as_dict()}, indent=2)
+    (results_dir / "raycast.json").write_text(
+        json.dumps(
+            {
+                "name": "raycast-" + WINNING_FILTER.name,
+                "recording": recording.name,
+                **stats.as_dict(),
+            },
+            indent=2,
+        )
     )
     print(stats.summary())
 

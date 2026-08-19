@@ -25,6 +25,7 @@ from dimos.memory.cli.dataset import open_store
 from dimos.memory.tf import StreamTF
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from tools.depth_voxel import recording as recordings
 from tools.depth_voxel.pipeline import DepthProjector, PoseTrack
 
 LIDAR_WINDOW_SECONDS = 4.0
@@ -39,19 +40,20 @@ def to_o3d(points: np.ndarray) -> o3d.geometry.PointCloud:
     return cloud
 
 
-def main(db_path: str) -> None:
-    store = open_store(db_path)
+def main(recording_name: str) -> None:
+    recording = recordings.get(recording_name)
+    store = open_store(recording.db_path)
     with store:
-        tf = StreamTF.from_store(store, "tf_corrected")
+        tf = StreamTF.from_store(store, recording.tf_stream)
         assert tf is not None
-        poses = PoseTrack.from_store(store)
-        projector = DepthProjector.from_store(store, tf, poses)
+        poses = PoseTrack.from_store(store, recording)
+        projector = DepthProjector.from_store(store, tf, poses, recording)
         start = float(poses.timestamps[0])
 
         for offset in SAMPLE_OFFSETS_SECONDS:
             depth_obs = next(
                 iter(
-                    store.stream("depth_image", Image)
+                    store.stream(recording.depth_stream, Image)
                     .after(start + offset)
                     .before(start + offset + 0.5)
                 ),
@@ -64,7 +66,7 @@ def main(db_path: str) -> None:
 
             lidar_points = [
                 _to_world(obs.data.points_f32(), poses, float(obs.ts))
-                for obs in store.stream("lidar", PointCloud2)
+                for obs in store.stream(recording.lidar_stream, PointCloud2)
                 .after(timestamp - LIDAR_WINDOW_SECONDS)
                 .before(timestamp + LIDAR_WINDOW_SECONDS)
                 if poses.at(float(obs.ts)) is not None

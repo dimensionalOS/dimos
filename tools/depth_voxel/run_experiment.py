@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import sys
 import time
 
@@ -25,15 +24,13 @@ import numpy as np
 
 from dimos.memory.cli.dataset import open_store
 from dimos.memory.tf import StreamTF
-from tools.depth_voxel import maps
+from tools.depth_voxel import maps, recording as recordings
 from tools.depth_voxel.filters import DepthFilter
 from tools.depth_voxel.maps import VOXEL_SIZE_METERS, build_depth_map, build_lidar_map, compare
 from tools.depth_voxel.pipeline import DepthProjector, PoseTrack
 
 FRAME_STRIDE = 3
 """Use every 3rd depth frame (~10 Hz), matching the lidar sweep rate."""
-
-RESULTS_DIR = Path.home() / ".local/share/cbg/long-tasks/SureFelidae/results"
 
 CONFIGS: list[DepthFilter] = [
     DepthFilter(name="00-baseline-unfiltered"),
@@ -112,24 +109,26 @@ CONFIGS: list[DepthFilter] = [
 ]
 
 
-def main(db_path: str, only: str | None = None) -> None:
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    store = open_store(db_path)
+def main(recording_name: str, only: str | None = None) -> None:
+    recording = recordings.get(recording_name)
+    results_dir = recording.results_dir
+    results_dir.mkdir(parents=True, exist_ok=True)
+    store = open_store(recording.db_path)
     with store:
-        tf = StreamTF.from_store(store, "tf_corrected")
+        tf = StreamTF.from_store(store, recording.tf_stream)
         assert tf is not None
-        poses = PoseTrack.from_store(store)
-        projector = DepthProjector.from_store(store, tf, poses)
-        start, end = maps.shared_window(store)
+        poses = PoseTrack.from_store(store, recording)
+        projector = DepthProjector.from_store(store, tf, poses, recording)
+        start, end = maps.shared_window(store, recording)
         print(f"window {start:.3f}..{end:.3f} ({end - start:.1f} s) voxel {VOXEL_SIZE_METERS} m")
 
-        lidar_key_path = RESULTS_DIR / "lidar_voxel_keys.npy"
+        lidar_key_path = results_dir / "lidar_voxel_keys.npy"
         if lidar_key_path.exists():
             lidar_keys = np.load(lidar_key_path)
             print(f"lidar map: {len(lidar_keys)} voxels (cached)")
         else:
             began = time.time()
-            lidar_grid = build_lidar_map(store, poses, start, end)
+            lidar_grid = build_lidar_map(store, poses, recording, start, end)
             lidar_keys = maps.voxel_keys(lidar_grid)
             np.save(lidar_key_path, lidar_keys)
             print(f"lidar map: {len(lidar_keys)} voxels in {time.time() - began:.0f} s")
@@ -137,14 +136,14 @@ def main(db_path: str, only: str | None = None) -> None:
         for config in CONFIGS:
             if only and only not in config.name:
                 continue
-            out_path = RESULTS_DIR / f"{config.name}.json"
+            out_path = results_dir / f"{config.name}.json"
             if out_path.exists():
                 print(f"{config.name}: cached")
                 continue
             began = time.time()
-            grid = build_depth_map(store, projector, start, end, config, FRAME_STRIDE)
+            grid = build_depth_map(store, projector, recording, start, end, config, FRAME_STRIDE)
             depth_keys = maps.voxel_keys(grid)
-            np.save(RESULTS_DIR / f"{config.name}_keys.npy", depth_keys)
+            np.save(results_dir / f"{config.name}_keys.npy", depth_keys)
             stats = compare(depth_keys, lidar_keys)
             elapsed = time.time() - began
             out_path.write_text(

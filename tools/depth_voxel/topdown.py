@@ -26,17 +26,19 @@ from matplotlib import pyplot
 import numpy as np
 
 from dimos.memory.cli.dataset import open_store
+from tools.depth_voxel import recording as recordings
 from tools.depth_voxel.maps import VOXEL_SIZE_METERS, shared_window
 from tools.depth_voxel.pipeline import PoseTrack
 from tools.depth_voxel.render import RENDER_CLIP_METERS
 
 
-def odometry_path(db_path: Path) -> np.ndarray:
-    """Point-lio ``odom -> mid360_link`` xy track over the window both maps were built on."""
-    store = open_store(str(db_path))
+def odometry_path(recording_name: str) -> np.ndarray:
+    """Point-lio xy track over the window both maps were built on."""
+    recording = recordings.get(recording_name)
+    store = open_store(recording.db_path)
     with store:
-        start, end = shared_window(store)
-        poses = PoseTrack.from_store(store)
+        start, end = shared_window(store, recording)
+        poses = PoseTrack.from_store(store, recording)
     inside = (poses.timestamps >= start) & (poses.timestamps <= end)
     return poses.positions[inside, :2]
 
@@ -63,11 +65,11 @@ def column_heights(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return centers[:, 0], centers[:, 1], centers[:, 2]
 
 
-def main(out_path: str, db_path: str, *labelled_paths: str) -> None:
+def main(out_path: str, recording_name: str, *labelled_paths: str) -> None:
     panels = [entry.split("=", 1) for entry in labelled_paths]
     (low_z, high_z) = TOPDOWN_CLIP_METERS[2]
     clouds = [column_heights(Path(key_path)) for _, key_path in panels]
-    track = odometry_path(Path(db_path))
+    track = odometry_path(recording_name)
     margin_meters = 1.0
     x_limits = (
         min(cloud[0].min() for cloud in clouds) - margin_meters,

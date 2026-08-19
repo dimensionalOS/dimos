@@ -14,12 +14,13 @@
 
 """Depth-image -> world-frame point clouds -> dimos voxel map, plus lidar comparison.
 
-The recording gives depth in ``camera_depth_optical_frame`` and point-lio odometry
-as ``odom -> mid360_link``. World pose of the depth camera is therefore
+The recording gives depth in the camera's optical frame and point-lio odometry as
+``odom -> <lidar frame>``. World pose of the depth camera is therefore
 
-    T_world_depth = T_odom_mid360 @ inv(T_base_mid360) @ T_base_depth
+    T_world_depth = T_odom_lidar @ inv(T_base_lidar) @ T_base_depth
 
-with the two ``T_base_*`` legs read from the ``tf_corrected`` tree.
+with the two ``T_base_*`` legs read from the tf tree. :py:class:`Recording` names the
+streams and frames, which differ between the robot and handheld rigs.
 """
 
 from __future__ import annotations
@@ -35,16 +36,13 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from tools.depth_voxel.recording import Recording
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
 DEPTH_UNIT_METERS = 0.001
 """RealSense DEPTH16 least-significant bit, in meters."""
-
-BASE_FRAME = "base_link"
-LIDAR_FRAME = "mid360_link"
-DEPTH_FRAME = "camera_depth_optical_frame"
 
 
 @dataclass(frozen=True)
@@ -72,17 +70,24 @@ class Intrinsics:
 class PoseTrack:
     """Interpolated ``odom -> mid360_link`` poses from the point-lio odometry stream."""
 
-    def __init__(self, timestamps: np.ndarray, positions: np.ndarray, quaternions: np.ndarray):
+    def __init__(
+        self,
+        timestamps: np.ndarray,
+        positions: np.ndarray,
+        quaternions: np.ndarray,
+        lidar_frame: str,
+    ):
         self.timestamps = timestamps
         self.positions = positions
         self.quaternions = quaternions
+        self.lidar_frame = lidar_frame
 
     @classmethod
-    def from_store(cls, store: Any, stream: str = "odometry") -> PoseTrack:
+    def from_store(cls, store: Any, recording: Recording) -> PoseTrack:
         timestamps: list[float] = []
         positions: list[tuple[float, float, float]] = []
         quaternions: list[tuple[float, float, float, float]] = []
-        for obs in store.stream(stream, Odometry):
+        for obs in store.stream(recording.odometry_stream, Odometry):
             odom = obs.data
             timestamps.append(float(obs.ts))
             positions.append((odom.x, odom.y, odom.z))
@@ -97,6 +102,7 @@ class PoseTrack:
             np.asarray(timestamps, dtype=np.float64),
             np.asarray(positions, dtype=np.float64),
             quaternion_array,
+            recording.lidar_frame,
         )
 
     def at(self, timestamp: float) -> Transform | None:
@@ -116,7 +122,7 @@ class PoseTrack:
         matrix = np.eye(4)
         matrix[:3, :3] = _quaternion_to_matrix(quaternion)
         matrix[:3, 3] = position
-        return Transform.from_matrix(matrix, frame_id="odom", child_frame_id=LIDAR_FRAME)
+        return Transform.from_matrix(matrix, frame_id="odom", child_frame_id=self.lidar_frame)
 
 
 def _slerp(start: np.ndarray, end: np.ndarray, weight: float) -> np.ndarray:
@@ -165,13 +171,15 @@ class DepthProjector:
         self.ray_y = (rows - np.float32(intrinsics.cy)) / np.float32(intrinsics.fy)
 
     @classmethod
-    def from_store(cls, store: Any, tf: StreamTF, poses: PoseTrack) -> DepthProjector:
-        info = next(iter(store.stream("depth_camera_info", CameraInfo)))
+    def from_store(
+        cls, store: Any, tf: StreamTF, poses: PoseTrack, recording: Recording
+    ) -> DepthProjector:
+        info = next(iter(store.stream(recording.depth_info_stream, CameraInfo)))
         reference_time = float(poses.timestamps[len(poses.timestamps) // 2])
-        base_to_depth = tf.get(BASE_FRAME, DEPTH_FRAME, reference_time)
-        base_to_lidar = tf.get(BASE_FRAME, LIDAR_FRAME, reference_time)
+        base_to_depth = tf.get(recording.base_frame, recording.depth_frame, reference_time)
+        base_to_lidar = tf.get(recording.base_frame, recording.lidar_frame, reference_time)
         if base_to_depth is None or base_to_lidar is None:
-            raise ValueError("tf_corrected is missing the camera or lidar mount transform")
+            raise ValueError("tf is missing the camera or lidar mount transform")
         return cls(
             Intrinsics.from_camera_info(info.data),
             base_to_depth.to_matrix(),
@@ -202,12 +210,13 @@ class DepthProjector:
 def depth_clouds(
     store: Any,
     projector: DepthProjector,
+    recording: Recording,
     start: float,
     end: float,
     depth_filter: Any = None,
 ) -> Iterator[PointCloud2]:
     """World-frame clouds for every depth frame in ``[start, end]``."""
-    stream = store.stream("depth_image", Image).after(start).before(end)
+    stream = store.stream(recording.depth_stream, Image).after(start).before(end)
     for obs in stream:
         depth = obs.data.data
         if depth_filter is not None:
@@ -217,9 +226,11 @@ def depth_clouds(
             yield cloud
 
 
-def lidar_clouds(store: Any, poses: PoseTrack, start: float, end: float) -> Iterator[PointCloud2]:
-    """Point-lio lidar sweeps transformed from ``mid360_link`` into the odom frame."""
-    stream = store.stream("lidar", PointCloud2).after(start).before(end)
+def lidar_clouds(
+    store: Any, poses: PoseTrack, recording: Recording, start: float, end: float
+) -> Iterator[PointCloud2]:
+    """Point-lio lidar sweeps transformed out of the lidar frame into the odom frame."""
+    stream = store.stream(recording.lidar_stream, PointCloud2).after(start).before(end)
     for obs in stream:
         pose = poses.at(float(obs.ts))
         if pose is None:

@@ -25,6 +25,7 @@ from dimos.mapping.voxels.grid import VoxelGrid
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from tools.depth_voxel.pipeline import DepthProjector, PoseTrack, lidar_clouds
+from tools.depth_voxel.recording import Recording
 
 if TYPE_CHECKING:
     from tools.depth_voxel.filters import DepthFilter
@@ -34,13 +35,13 @@ MAP_DEVICE = "CPU:0"
 NEIGHBOR_TOLERANCE_VOXELS = 1
 
 
-def shared_window(store: Any) -> tuple[float, float]:
+def shared_window(store: Any, recording: Recording) -> tuple[float, float]:
     """The interval covered by depth, lidar and odometry alike."""
     spans = []
-    for name, payload in (("depth_image", Image), ("lidar", PointCloud2)):
+    for name, payload in ((recording.depth_stream, Image), (recording.lidar_stream, PointCloud2)):
         stream = store.stream(name, payload)
         spans.append((stream.first().ts, stream.order_by("ts", desc=True).first().ts))
-    poses = store.stream("odometry")
+    poses = store.stream(recording.odometry_stream)
     spans.append((poses.first().ts, poses.order_by("ts", desc=True).first().ts))
     return max(lo for lo, _ in spans), min(hi for _, hi in spans)
 
@@ -60,6 +61,7 @@ def build_map(clouds: Any, voxel_size: float = VOXEL_SIZE_METERS) -> VoxelGrid:
 def build_depth_map(
     store: Any,
     projector: DepthProjector,
+    recording: Recording,
     start: float,
     end: float,
     depth_filter: DepthFilter,
@@ -69,7 +71,7 @@ def build_depth_map(
     depth_filter.reset()
 
     def clouds() -> Any:
-        stream = store.stream("depth_image", Image).after(start).before(end)
+        stream = store.stream(recording.depth_stream, Image).after(start).before(end)
         for index, obs in enumerate(stream):
             if index % frame_stride:
                 continue
@@ -83,11 +85,12 @@ def build_depth_map(
 def build_lidar_map(
     store: Any,
     poses: PoseTrack,
+    recording: Recording,
     start: float,
     end: float,
     voxel_size: float = VOXEL_SIZE_METERS,
 ) -> VoxelGrid:
-    return build_map(lidar_clouds(store, poses, start, end), voxel_size)
+    return build_map(lidar_clouds(store, poses, recording, start, end), voxel_size)
 
 
 def voxel_keys(grid: VoxelGrid, voxel_size: float = VOXEL_SIZE_METERS) -> np.ndarray:

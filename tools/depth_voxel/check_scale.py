@@ -25,7 +25,7 @@ from dimos.memory.cli.dataset import open_store
 from dimos.memory.tf import StreamTF
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from tools.depth_voxel import pipeline
+from tools.depth_voxel import pipeline, recording as recordings
 from tools.depth_voxel.pipeline import DepthProjector, PoseTrack
 
 CANDIDATE_UNITS = (0.001, 0.0001)
@@ -43,16 +43,17 @@ def nearest_distances(source: np.ndarray, target: np.ndarray) -> np.ndarray:
     return distances
 
 
-def main(db_path: str) -> None:
-    store = open_store(db_path)
+def main(recording_name: str) -> None:
+    recording = recordings.get(recording_name)
+    store = open_store(recording.db_path)
     with store:
-        tf = StreamTF.from_store(store, "tf_corrected")
+        tf = StreamTF.from_store(store, recording.tf_stream)
         assert tf is not None
-        poses = PoseTrack.from_store(store)
-        projector = DepthProjector.from_store(store, tf, poses)
+        poses = PoseTrack.from_store(store, recording)
+        projector = DepthProjector.from_store(store, tf, poses, recording)
 
         depth_observations = list(
-            store.stream("depth_image", Image)
+            store.stream(recording.depth_stream, Image)
             .after(poses.timestamps[0] + 20.0)
             .before(poses.timestamps[0] + 20.5)
         )
@@ -60,7 +61,7 @@ def main(db_path: str) -> None:
         timestamp = float(depth_obs.ts)
 
         sweeps = list(
-            store.stream("lidar", PointCloud2)
+            store.stream(recording.lidar_stream, PointCloud2)
             .after(timestamp - SWEEP_HALF_WINDOW_SECONDS)
             .before(timestamp + SWEEP_HALF_WINDOW_SECONDS)
         )
