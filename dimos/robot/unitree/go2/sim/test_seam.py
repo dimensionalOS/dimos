@@ -67,7 +67,7 @@ ABOVE_SEAM = (
 # modules whose import above the seam is just an engine import in disguise.
 # `engines.model` compiles the MJCF both MuJoCo-family backends consume;
 # `engines.mujoco` and `engines.mjx` are the engines themselves.
-BELOW_SEAM = ("engines.model", "engines.mujoco", "engines.mjx")
+BELOW_SEAM = ("engines.model", "engines.mujoco", "engines.mjx", "engines.bench")
 ENGINE_MODULES = ("mujoco", "jax", *(f"{PACKAGE}.{m}" for m in BELOW_SEAM))
 
 HOW_TO_FIX = (
