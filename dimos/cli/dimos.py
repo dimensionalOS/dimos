@@ -82,12 +82,12 @@ load_dotenv()
 
 SIMULATORS = ("mujoco", "dimsim")
 
-DEFAULT_CONFIG_PATH = CONFIG_DIR / "dimos" / "config.json"
+DEFAULT_CONFIG_PATH = CONFIG_DIR / "dimos" / "config"
 
 
 def _migrate_legacy_config() -> None:
     """~/.config/dimos used to BE the config file; it is now a directory holding
-    config.json (and future per-machine config). Move an old flat file inside."""
+    `config` (and future per-machine config). Move an old flat file inside."""
     legacy = CONFIG_DIR / "dimos"
     if not legacy.is_file():
         return
@@ -95,8 +95,8 @@ def _migrate_legacy_config() -> None:
         tmp = legacy.with_name("dimos.migrating")
         legacy.rename(tmp)
         legacy.mkdir()
-        tmp.rename(legacy / "config.json")
-        typer.echo(f"config migrated: {legacy} -> {legacy / 'config.json'}", err=True)
+        tmp.rename(legacy / "config")
+        typer.echo(f"config migrated: {legacy} -> {legacy / 'config'}", err=True)
     except OSError:
         # ponytail: lost a migration race with a concurrent dimos run; the winner
         # already moved it.

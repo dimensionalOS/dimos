@@ -83,7 +83,7 @@ def test_config_file_errors_are_clear_but_missing_file_is_optional(tmp_path: Pat
 
 
 def test_config_path_that_is_a_directory_reads_as_absent(tmp_path: Path) -> None:
-    # ~/.config/dimos may exist as a directory (it holds config.json since the
+    # ~/.config/dimos may exist as a directory (it holds the config file since the
     # flat-file migration); pointing at a directory must mean "no config".
     parser = BlueprintConfigParser(PrimaryModule.blueprint())
     parser.parse(config_path=tmp_path, environ={})

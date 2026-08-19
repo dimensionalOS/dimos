@@ -32,7 +32,7 @@ def test_legacy_flat_file_migrates_into_directory(config_home: Path) -> None:
     cli._migrate_legacy_config()
 
     assert legacy.is_dir()
-    assert (legacy / "config.json").read_text() == '{"viewer": "rerun"}'
+    assert (legacy / "config").read_text() == '{"viewer": "rerun"}'
 
 
 def test_migration_noop_without_legacy_file(config_home: Path) -> None:
