@@ -150,15 +150,23 @@ def _driver_env() -> dict[str, str]:
     return {"LD_LIBRARY_PATH": ":".join(parts)}
 
 
+# Both native modules come out of one dimSLAM derivation, so they share a pin.
+# fused-odom-rust tip; tag on merge.
+DIMSLAM_REV = "395dd26664ef914dc81e5c6f38a6317ccb2ce874"
+
+
+def dimslam_build_command() -> str:
+    """`nix build` line for the dimSLAM binaries, resolved for this host.
+
+    It drops the `result` symlink in the module's cwd.
+    """
+    return f"nix build github:dimensionalOS/dimSLAM/{DIMSLAM_REV}#{sdk_variant()}"
+
+
 class CuvslamConfig(NativeModuleConfig):
     cwd: str | None = str(MODULE_DIR)
     executable: str = "result/bin/cuvslam_odometry"
-    # The C++ lives in dimSLAM (cuVSLAM + the module built on it); dimos just
-    # builds the pinned rev (jeff/feat/imu_info tip; tag on merge). `nix build`
-    # drops the `result` symlink in the cwd.
-    build_command: str | None = Field(
-        default_factory=lambda: f"nix build github:dimensionalOS/dimSLAM/v0.2.0#{sdk_variant()}"
-    )
+    build_command: str | None = Field(default_factory=dimslam_build_command)
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
 
@@ -180,19 +188,15 @@ class CuvslamConfig(NativeModuleConfig):
     # optical frame reproduces NVIDIA's examples, whose rig is the left camera; output stays
     # on base_frame either way, the two differing by a fixed transform.
     rig_frame: str = ""
-    # Only read when Slam is off, where map->odom can only be identity.
+    # map->odom can only be identity: this module carries no map correction. Loop
+    # closure and relocalization moved downstream, into the fusion filter.
     publish_map_to_odom: bool = True
+    # Off publishes odometry only. Downstream of a fusion filter this has to be off: the
+    # filter owns odom -> base_frame, and a second publisher on that edge races it.
+    publish_tf: bool = True
 
-    # Pose graph and loop closure; without it map->odom is identity.
-    enable_slam: bool = True
-    # Runs Slam on its own thread. Its GetPose() carries no timestamp, so a thread running
-    # behind cannot be matched to the odometry pose it corrects.
-    slam_async: bool = False
-    # Poses in the pose graph, not a distance. 0 is unlimited.
-    slam_max_poses: int = 300
-    slam_throttling_ms: int = 0
-    # The noise model arrives on the ``imu_info`` stream, published by the driver
-    # the way ``camera_info`` is; the tracker waits for it before building the rig.
+    # cuVSLAM's Inertial mode: the stereo pair plus one IMU. The noise model and frame
+    # come from the imu_info stream, published by the driver the way camera_info is.
     enable_imu: bool = False
     # Rebase guard: a frame whose translation standard deviation (root of the largest
     # translation term of cuVSLAM's covariance) exceeds this has its motion dropped and the
@@ -225,9 +229,8 @@ class CuvslamOdometry(NativeModule):
     color) is reprojected onto the rig camera through ``depth_camera_info`` and tf.
 
     ``odometry`` is one continuous ``odom`` -> ``base_link`` path; restarts after a
-    tracking loss are rebased onto the last published pose. ``corrected_odometry`` is
-    the pose-graph ``map`` -> ``base_link`` and jumps at loop closures. ``tf`` carries
-    ``odom`` -> ``base_link`` and ``map`` -> ``odom``.
+    tracking loss are rebased onto the last published pose. ``tf`` carries
+    ``odom`` -> ``base_link`` and an identity ``map`` -> ``odom``.
     """
 
     config: CuvslamConfig
@@ -240,5 +243,4 @@ class CuvslamOdometry(NativeModule):
     imu_info: In[ImuInfo]
 
     odometry: Out[Odometry]
-    corrected_odometry: Out[Odometry]
     tf: IO[TFMessage]
