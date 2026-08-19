@@ -43,6 +43,39 @@ deno task fixture        # demo consumer on http://localhost:5174 (run a relay f
 subscribes to `odom` by hand. Run `dimos run <bp> --local-relay` and `deno task fixture` side by
 side; like the cockpit dev server it proxies `/api` to the relay on `:7780`.
 
+### Decoders
+
+Each session owns a `DecoderRegistry` (pass one via `connect({decoders})`; the default is a fresh
+registry with the built-ins). A decoder is
+`(payload: Uint8Array, header: FrameHeader) => { value, preview? }`, looked up by the channel's
+manifest `encoding`. Built-ins: `jpeg.v1`, `costmap.zlib.v1`, `json.v1`; any other `*.json.vN`
+encoding JSON-decodes without registration. An exact registration wins over that convention, and a
+duplicate `register()` throws unless `{ replace: true }`. An encoding with no decoder is not an
+error: the channel still counts frames and renders as unsupported. A throwing decoder bumps the
+channel's `decodeErrors`/`decodeFailing` stats and keeps the last good value. Keep decoders
+synchronous and cheap - they run on the ingest path; panel-paced work (inflate, draw) belongs in the
+consumer.
+
+The Python half is `@web_encoder` (`dimos.web.codecs`) plus `Channel` (`dimos.web.cockpit`);
+`examples/custom-path/` is the end-to-end pair for this exact codec:
+
+```python skip
+import struct
+
+from dimos.msgs.nav_msgs.Path import Path
+from dimos.web.cockpit import Channel, cockpit
+from dimos.web.codecs import EncodedPayload, web_encoder
+
+
+@web_encoder("path.points.v1")
+def encode_path_points(msg: Path) -> EncodedPayload:
+    payload = b"".join(struct.pack("<ff", p.position.x, p.position.y) for p in msg.poses)
+    return EncodedPayload(payload, {"n": len(msg.poses)})
+
+
+my_ui = cockpit(channels=[Channel("nav_path", Path, encoding="path.points.v1", max_hz=20.0)])
+```
+
 ### Zero-build page
 
 `examples/minimal/` is a single HTML file importing `/sdk.js` - no bundler, no npm. Serve it from

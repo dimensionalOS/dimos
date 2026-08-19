@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type Msg, PROTOCOL_VERSION, type RobotInfo } from "@dimos/shared";
 import type { CostmapValue } from "./decoders/costmap.ts";
+import { createDecoderRegistry } from "./decoders/index.ts";
 import { teleopHooks } from "./internal/teleopMachine.ts";
 import {
   connect,
@@ -464,6 +465,37 @@ describe("Session over a fake WebTransport", () => {
     const { stats } = handle.store.getUiSnapshot("color_image");
     expect(stats.decodeErrors).toBe(1);
     expect(stats.decodeFailing).toBe(true);
+  });
+
+  it("connect({decoders}) decodes a custom encoding into the store", async () => {
+    // The per-session registry path: no cockpit panel, no built-in decoder -
+    // the custom frontend supplies its own (the W6 Channel authoring pair).
+    const decoders = createDecoderRegistry();
+    decoders.register("path.points.v1", (payload, header) => {
+      const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+      const points: { x: number; y: number }[] = [];
+      for (let i = 0; i + 8 <= payload.byteLength; i += 8) {
+        points.push({ x: view.getFloat32(i, true), y: view.getFloat32(i + 4, true) });
+      }
+      return { value: { n: header.meta?.n, points }, preview: `${points.length} points` };
+    });
+    const { relay, handle } = start({ decoders });
+    await goLive(relay, handle, ROBOT_A, [
+      spec({ ch: "nav_path", encoding: "path.points.v1", delivery: "reliable" }),
+    ]);
+    handle.subscribe("nav_path", () => {});
+    await until(() => relay.subs().includes("nav_path"), "sub");
+
+    const payload = new Uint8Array(16);
+    const view = new DataView(payload.buffer);
+    for (const [i, coord] of [1.5, -2.5, 3.5, 4.5].entries()) {
+      view.setFloat32(i * 4, coord, true);
+    }
+    relay.pushRaw(1, payload, "nav_path", { n: 2 });
+    await until(() => handle.store.get("nav_path") !== null, "frame");
+    const slot = handle.store.get("nav_path")!;
+    expect(slot.value).toEqual({ n: 2, points: [{ x: 1.5, y: -2.5 }, { x: 3.5, y: 4.5 }] });
+    expect(slot.preview).toBe("2 points");
   });
 
   it("retries the watch when the robot reappears after unknown_robot", async () => {
