@@ -20,38 +20,11 @@ Each case names one coordinate and asks whether the robot could stand there.
 The body-height cloud leaves a robot-width gap at every one; half are floor,
 half are glass.
 
-``crossing`` is deliberately small and deliberately correlated — a probe, not a
-benchmark. Read :data:`PANES` before using the numbers for anything.
-
-The question is local because the map scale rules out a routing form: the
-lidar stream is a 6.4 m rolling window, so a pane short enough to fit inside it
-has both ends inside it too and a planner routes around, leaving every goal
-reachable even with the pane painted into the costmap as a wall. A corridor
-aimed at a pane is meanwhile already blocked by furniture. At the pane itself
-the map shows a hole wide enough for the robot, which is what is asked about.
-
-Ground truth is split by class, because glass cannot be labelled from lidar —
-lidar is what glass defeats.
-
-``barrier`` is human-adjudicated. YOLO-E (:class:`Yoloe2DDetector`, prompt mode,
-"glass wall" / "glass door" / "window" / "glass partition") segmented candidate
-panes in the camera stream; each was placed in world coordinates by casting
-rays through the mask's bottom edge onto the floor plane the lidar measured,
-and every candidate was then confirmed or rejected by a person against the
-camera frame. :data:`PANES` holds only those leaving a usable trace in the
-cloud — seven of the ten confirmed panes return nothing at all, and a pane no
-encoding of that cloud could report would score guessing.
-
-Every adjudication, including the rejected and undecided ones, is kept in
-``go2_glass_labels.json`` beside this file — 74 candidates, 13 confirmed glass,
-6 of them leaving a usable trace. Those labels are the one part of this suite
-that cannot be regenerated from the recordings, so widening the family means
-adding to that file, not re-running the detector.
-
-``open`` is analytic. The gate is a slice across the robot's own direction of
-travel at a point its base later occupied — it walked through, so the gap was
-real. Both classes are sampled to the same gate width and standoff so the
-geometry cannot separate them.
+Truth is split by class because lidar is what glass defeats. ``barrier`` is
+adjudicated by a person against the camera; every verdict, including the
+rejected ones, is in ``go2_glass_labels.json`` beside this file, the one input
+here that cannot be regenerated from the recordings. ``open`` is the robot's
+own trajectory: it walked through.
 
 Regenerate (needs both recordings)::
 
@@ -87,16 +60,11 @@ SLICE = 0.15  # half-thickness of the trajectory slice defining an open gate
 FLANK = 1.5  # a gate needs mapped obstacle within this on both sides
 
 
-# Human-confirmed glass. Each entry is (dataset, tag, end, end, time window).
-# These are the six ``verdict == "glass" and learnable`` entries of
-# go2_glass_labels.json. The two ``partition_a`` entries are one physical
-# surface the reviewer identified in both time windows; ids stay distinct by
-# time.
+# (dataset, tag, end, end, time window) for the six ``glass and learnable``
+# entries of go2_glass_labels.json. Both ``partition_a`` rows are one surface.
 #
-# ponytail: three distinct physical surfaces, all in go2_china_office. The
-# go2_short pane the reviewer confirmed never presents a gap in the MIN_GAP
-# range, so it contributes no cases. Treat per-pane results as three samples,
-# not sixteen.
+# ponytail: 16 barrier cases but only 3 surfaces, all go2_china_office. Read
+# per-pane, not per-case.
 PANES: tuple[
     tuple[str, str, tuple[float, float], tuple[float, float], tuple[float, float]], ...
 ] = (
@@ -141,12 +109,7 @@ def _row(
 
 
 def _widest_hole(band: np.ndarray, a: np.ndarray, b: np.ndarray) -> tuple[float, np.ndarray]:
-    """Longest stretch of a pane with no body-height return, and its midpoint.
-
-    Glass returns intermittently — mullions and near-normal incidence give
-    points, the pane between them gives none — so a confirmed pane still shows
-    holes. The widest one is what the robot would be told it fits through.
-    """
+    """Longest stretch of a pane with no body-height return, and its midpoint."""
     length = float(np.linalg.norm(b - a))
     u = (b - a) / length
     n = np.array([-u[1], u[0]])
@@ -163,12 +126,7 @@ def _widest_hole(band: np.ndarray, a: np.ndarray, b: np.ndarray) -> tuple[float,
 
 
 def barrier_rows() -> list[tuple[float, generate.Row]]:
-    """Confirmed glass panes, at every frame where the map still shows a hole.
-
-    A pane only becomes a case where the cloud presents a gap in the crossing
-    range: the point is that the map reads as passable, so a frame where the
-    pane looks solid is not a failure to elicit.
-    """
+    """Confirmed panes, at each frame where the map still shows a robot-width hole."""
     rows: list[tuple[float, generate.Row]] = []
     for dataset in sorted({p[0] for p in PANES}):
         with generate._dataset(dataset) as store:
@@ -205,12 +163,7 @@ def barrier_rows() -> list[tuple[float, generate.Row]]:
 
 
 def open_rows() -> list[tuple[float, generate.Row]]:
-    """Gaps certified by the robot's own trajectory: it walked through them.
-
-    The gate is a slice taken across the direction of travel at a point the
-    base later occupied, so "passable" is not an inference — it happened. Gate
-    width and standoff are held to the same ranges as the barrier class.
-    """
+    """Gates the robot's own base later occupied, held to the barrier geometry."""
     rows: list[tuple[float, generate.Row]] = []
     for dataset in _OPEN_DATASETS:
         with generate._dataset(dataset) as store:
@@ -272,8 +225,7 @@ def open_rows() -> list[tuple[float, generate.Row]]:
     return rows
 
 
-# The dataset: every barrier case, and an equal number of open cases chosen to
-# match the barrier gate widths so the answer cannot be read off the geometry.
+# Every barrier case, plus an equal number of open cases matched on gate width.
 _CASES = (
     "go2_china_office_crossing_partition_a_t34",
     "go2_china_office_crossing_partition_a_t36",
@@ -300,8 +252,7 @@ def _matched_open(
 ) -> list[generate.Row]:
     """One open case per barrier case, nearest in gate width, no reuse.
 
-    Gate width is visible in the cloud, so unmatched classes would let a reader
-    separate them on width alone.
+    Width is visible in the cloud; unmatched, it would separate the classes.
     """
     pool = sorted(candidates, key=lambda gr: str(gr[1]["id"]))
     picked: list[generate.Row] = []
