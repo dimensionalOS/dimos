@@ -32,7 +32,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.unitree.go2.connection import BASE_TO_OPTICAL, GO2Connection
+from dimos.robot.unitree.go2.calibration import BASE_TO_OPTICAL, camera_info_static
 
 if TYPE_CHECKING:
     from dimos.memory.stream import Stream
@@ -231,9 +231,7 @@ class RecordingFramePreprocessor:
                 raise FrameGeometryUnavailableError(
                     "recording has no synchronized odometry within tolerance"
                 ) from exc
-            image, camera_info = self._rectifier.rectify(
-                source_image, GO2Connection.camera_info_static
-            )
+            image, camera_info = self._rectifier.rectify(source_image, camera_info_static())
             pointcloud_to_camera = _profile_pointcloud_to_camera(odom_obs, lidar_obs)
 
         return CalibratedFrame(
@@ -259,7 +257,7 @@ class RecordingFramePreprocessor:
         camera_info = (
             self._recorded_camera_info
             if self._calibration_source == "recorded"
-            else GO2Connection.camera_info_static
+            else camera_info_static()
         )
         if camera_info is None:
             raise RuntimeError("camera calibration was not initialized")

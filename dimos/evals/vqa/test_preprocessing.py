@@ -34,7 +34,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.robot.unitree.go2.connection import BASE_TO_OPTICAL
+from dimos.robot.unitree.go2.calibration import BASE_TO_OPTICAL
 
 
 def test_align_one_rejects_observation_outside_tolerance() -> None:

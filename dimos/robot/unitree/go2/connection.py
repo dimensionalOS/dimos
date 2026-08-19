@@ -14,7 +14,6 @@
 
 import copy
 from enum import Enum
-from importlib import resources
 import sys
 from threading import Thread
 import time
@@ -44,6 +43,10 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
+from dimos.robot.unitree.go2.calibration import (
+    BASE_TO_OPTICAL as BASE_TO_OPTICAL,
+    camera_info_static as _camera_info_static,
+)
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.spec.perception import Camera, Pointcloud
 from dimos.utils.decorators.decorators import cached_property, simple_mcache
@@ -102,36 +105,11 @@ class Go2ConnectionProtocol(Protocol):
     def publish_request(self, topic: str, data: dict) -> dict: ...  # type: ignore[type-arg]
 
 
-_FRONT_CAMERA_720_YAML = resources.files("dimos.robot.unitree.go2").joinpath(
-    "front_camera_720.yaml"
-)
-
-
-def _camera_info_static() -> CameraInfo:
-    with resources.as_file(_FRONT_CAMERA_720_YAML) as yaml_path:
-        return CameraInfo.from_yaml(str(yaml_path))
-
-
 def _prefixed(prefix: str | None, name: str) -> str:
     """Apply a TF namespace prefix (ModuleConfig.frame_id_prefix) to a frame name."""
     if not prefix or not name:
         return name
     return f"{prefix}/{name}"
-
-
-# Static camera mount chain: base_link -> camera_link -> camera_optical.
-# TODO we need a standardized way to specify this for all cameras in dimos
-BASE_TO_OPTICAL: Transform = Transform(
-    translation=Vector3(0.3, 0.0, 0.0),
-    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-    frame_id="base_link",
-    child_frame_id="camera_link",
-) + Transform(
-    translation=Vector3(0.0, 0.0, 0.0),
-    rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-    frame_id="camera_link",
-    child_frame_id="camera_optical",
-)
 
 
 def make_connection(
