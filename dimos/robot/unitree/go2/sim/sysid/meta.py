@@ -286,6 +286,7 @@ def experiment(
     seconds: float | None = None,
     seeds: int = 4,
     replicates: int = 8,
+    workers: int = 1,
 ) -> str:
     """Ground each plant under one shared floor and say which the referee prefers.
 
@@ -320,6 +321,7 @@ def experiment(
             noise=noise,
             floor_source=source,
             replicates=replicates,
+            workers=workers,
             with_ghost=False,
         )
         reports.append(rep)
@@ -754,6 +756,9 @@ def main() -> None:
     ex.add_argument("--seconds", type=float, default=None)
     ex.add_argument("--seeds", type=int, default=4, help="floor rollouts (shared_floor)")
     ex.add_argument("--replicates", type=int, default=8, help="verdict rollouts per preset")
+    ex.add_argument(
+        "--workers", type=int, default=1, help="fan each preset's replicate rollouts out"
+    )
 
     ot = sub.add_parser("outer", help="the nested search (EXPENSIVE: trials are inner fits)")
     ot.add_argument(
@@ -834,6 +839,7 @@ def main() -> None:
                 seconds=args.seconds,
                 seeds=args.seeds,
                 replicates=args.replicates,
+                workers=args.workers,
             )
         )
     elif args.cmd == "mechanisms":
