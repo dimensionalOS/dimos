@@ -28,6 +28,8 @@ from dimos.navigation.cmu_nav.modules.simple_planner.simple_planner import (
     progress_tick,
 )
 
+pytestmark = pytest.mark.skip(reason="cmu_nav is deprecated")
+
 _DEFAULT_MAX_EXPANSIONS = 200_000
 
 

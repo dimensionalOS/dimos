@@ -37,7 +37,7 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-pytestmark = [pytest.mark.self_hosted]
+pytestmark = [pytest.mark.self_hosted, pytest.mark.skip(reason="cmu_nav is deprecated")]
 
 _PROCESS_STARTUP_SEC = 2.0
 _POST_FEED_DRAIN_SEC = 2.0

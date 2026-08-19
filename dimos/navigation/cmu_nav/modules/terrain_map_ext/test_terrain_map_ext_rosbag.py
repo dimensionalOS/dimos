@@ -44,7 +44,7 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-pytestmark = [pytest.mark.self_hosted]
+pytestmark = [pytest.mark.self_hosted, pytest.mark.skip(reason="cmu_nav is deprecated")]
 
 # Key differences from C++ code defaults:
 # useSorting=true, quantileZ=0.1, lowerBoundZ=-2.5, checkTerrainConn=false
