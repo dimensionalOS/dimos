@@ -617,6 +617,21 @@ jobs:
           } >> "$GITHUB_ENV"
       - name: Run tests
         run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not mujoco'
+      - name: Characterize recorder fidelity for 30 seconds
+        if: matrix.os == 'Linux'
+        continue-on-error: true
+        run: >-
+          uv run python -m dimos.memory.tool_recorder_fidelity run
+          dimos/memory/testdata/recorder_production_profile.json
+          --duration 30
+          --output recorder-fidelity-ci
+      - name: Upload recorder fidelity report
+        if: ${{ always() && matrix.os == 'Linux' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: recorder-fidelity-${{ matrix.os }}
+          path: recorder-fidelity-ci
+          if-no-files-found: warn
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
