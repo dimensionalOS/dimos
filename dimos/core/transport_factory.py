@@ -35,6 +35,9 @@ from dimos.protocol.pubsub.impl.zenohpubsub import (
 )
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
+from dimos.protocol.service.lcmservice import LCMConfig
+from dimos.protocol.service.spec import SessionConfig
+from dimos.protocol.service.zenohservice import ZenohConfig
 
 if TYPE_CHECKING:
     from dimos.core.transport import PubSubTransport
@@ -139,3 +142,14 @@ def apply_transport_arg(argv: list[str], *, g: GlobalConfig = global_config) -> 
 def rpc_backend(g: GlobalConfig = global_config) -> type[RPCSpec]:
     """Return the RPC class (`LCMRPC` or `ZenohRPC`) for the active backend."""
     return ZenohRPC if g.transport == "zenoh" else LCMRPC
+
+
+def session_config(g: GlobalConfig = global_config) -> SessionConfig:
+    """Session settings for the active backend, derived from the global config."""
+    match g.transport:
+        case "zenoh":
+            return ZenohConfig()
+        case "lcm":
+            return LCMConfig()
+        case unknown:
+            raise ValueError(f"no session config for transport {unknown!r}")
