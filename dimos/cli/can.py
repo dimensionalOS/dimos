@@ -76,7 +76,7 @@ def setup(
     interface: str = typer.Argument(..., help="Linux CAN interface name"),
     bitrate: int = typer.Option(
         1_000_000,
-        min=1,
+        min=10_000,
         help="Nominal CAN bitrate in bits per second",
     ),
     txqueuelen: int = typer.Option(1_000, min=1, help="Kernel transmit queue length"),

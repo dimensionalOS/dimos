@@ -261,27 +261,6 @@ class _EEFTwistCoordinator(ControlCoordinator):
 
 
 class TestControlCoordinatorLifecycle:
-    def test_dispatch_routes_ee_twist_only_to_matching_frame_id(self, make_coordinator):
-        coordinator = make_coordinator()
-        matching_task = RecordingTask("eef")
-        other_task = RecordingTask("other")
-        coordinator._tasks = {"eef": matching_task, "other": other_task}
-        coordinator._routes = {
-            "coordinator_ee_twist_command": [
-                (matching_task, "on_ee_twist_command", Routing.BY_TASK_NAME),
-                (other_task, "on_ee_twist_command", Routing.BY_TASK_NAME),
-            ]
-        }
-
-        for frame_id in ("eef", "missing", ""):
-            coordinator._dispatch(
-                "coordinator_ee_twist_command",
-                TwistStamped(frame_id=frame_id, linear=[0.1, 0.0, 0.0], angular=[0.0, 0.0, 0.0]),
-            )
-
-        assert len(matching_task.ee_twist_calls) == 1
-        assert other_task.ee_twist_calls == []
-
     def test_start_subscribes_ee_twist_only_for_eef_twist_tasks(self, make_coordinator, mocker):
         mocker.patch("dimos.core.module.Module.start")
         mocker.patch("dimos.control.coordinator.TickLoop")

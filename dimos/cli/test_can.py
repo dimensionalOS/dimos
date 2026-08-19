@@ -89,11 +89,11 @@ def test_setup_nonpositive_queue_length_returns_usage_error() -> None:
     assert "x>=1" in result.output
 
 
-def test_setup_nonpositive_bitrate_returns_usage_error() -> None:
-    result = _invoke_can(["setup", "can0", "--bitrate", "0"])
+def test_setup_bitrate_below_minimum_returns_usage_error() -> None:
+    result = _invoke_can(["setup", "can0", "--bitrate", "9999"])
 
     assert result.exit_code == 2
-    assert "x>=1" in result.output
+    assert "x>=10000" in result.output
 
 
 def test_status_existing_interface_prints_detailed_state(mocker: MockerFixture) -> None:
