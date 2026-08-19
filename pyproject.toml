@@ -336,6 +336,24 @@ go2sim = [
     "cmaes>=0.11",  # optuna's CmaEsSampler backend, not pulled in by default
 ]
 
+# The batched engine: MJX compiles the SAME MjModel `go2sim` fits, so the
+# measured plant carries over and only the solver has to be re-verified
+# (dimos/robot/unitree/go2/sim/backend/mjx.py). Additive on `go2sim`, never a
+# replacement: the CPU backend stays the reference both loops are graded on.
+go2train = [
+    # Locked to the `go2sim` engine pin, and they move TOGETHER: mjx and
+    # mujoco are released in lockstep and a mismatch fails at import, not at
+    # runtime — `playground` in the `sim` extra is exactly that, reading an
+    # mjtEnableBit mujoco 3.10 does not define.
+    "mujoco-mjx==3.10.0",
+    # The CUDA build, behind three markers. linux/x86_64: ~2 GB of nvidia
+    # runtime macOS cannot use and the Jetson (aarch64) must not be handed.
+    # py>=3.11: jax dropped 3.10 at 0.9, and dimos still supports it. It also
+    # needs `nvidia-cudnn-cu12` overridden to coexist with torch — see
+    # `override-dependencies`.
+    "jax[cuda12]>=0.9; sys_platform == 'linux' and platform_machine == 'x86_64' and python_full_version >= '3.11'",
+]
+
 mapping = [
     # PGO for reloc premap + cmu_nav experiments
     # Jeff's https://github.com/jeff-hykin/gtsam-extended
@@ -541,6 +559,13 @@ override-dependencies = [
     # uv picks importlib-metadata>=9 and cascades the otel stack down to 1.11.1,
     # whose stale _pb2.py files crash with protobuf>=6.
     "importlib-metadata<8.8.0",
+    # torch 2.7.1+cu128 pins nvidia-cudnn-cu12==9.7.1.26; every jax cuda12
+    # plugin back to 0.7.2 requires >=9.8,<10. No version selection satisfies
+    # both, so the floor wins and torch is moved off its pin — cuDNN 9 is
+    # ABI-stable within its major. Not assumed, measured: on the resolved
+    # 9.24.0.43, torch 2.7.1+cu128 runs a cuDNN conv2d on sm_120 and jax
+    # reports CudaDevice(id=0). Re-measure both if this bound moves.
+    "nvidia-cudnn-cu12>=9.8,<10; sys_platform == 'linux'",
     # GraspGenX pins older versions that conflict with the current DimOS stack.
     # These versions were validated with the pinned GraspGenX source revision.
     "yourdfpy>=0.0.60",
@@ -725,9 +750,6 @@ env = [
   "PYTHONWARNINGS=ignore:cupyx.jit.rawkernel is experimental:FutureWarning",
 ]
 addopts = "--dist=loadfile --durations=10 --timeout=600 --timeout-method=thread -v -ra --showlocals --cov-report=xml -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (self_hosted or mujoco or self_hosted_large or web_browser)'"
-markers = [
-    "go2sim: the measured Go2 plant; needs a menagerie checkout and the recordings",
-]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
