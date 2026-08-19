@@ -35,10 +35,11 @@ exclude-newer-span = "P7D"
 [options.exclude-newer-package]
 dimos-viewer = false
 dimos-lcm = false
-lcm-dimos-fork = false
 pyrealsense2-extended = false
-md-babel-py = false
 edgetam-dimos = false
+can-motor-control = false
+lcm-dimos-fork = false
+md-babel-py = false
 roboplan = false
 
 [manifest]
@@ -670,6 +671,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/78/e0/df5e171f685f82f37b12e1f208064e24244911079d7b767447d1af7e0d70/build-1.5.0.tar.gz", hash = "sha256:302c22c3ba2a0fd5f3911918651341ebb3896176cbdec15bd421f80b1afc7647", size = 89796, upload-time = "2026-04-30T03:18:25.17Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0d/fe/6bea5c9162869c5beba5d9c8abbed835ec85bf1ec1fba05a3822325c45f3/build-1.5.0-py3-none-any.whl", hash = "sha256:13f3eecb844759ab66efec90ca17639bbf14dc06cb2fdf37a9010322d9c50a6f", size = 26018, upload-time = "2026-04-30T03:18:23.644Z" },
+]
+
+[[package]]
+name = "can-motor-control"
+version = "0.0.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32') or (python_full_version < '3.11' and sys_platform == 'linux')" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32') or (python_full_version >= '3.11' and sys_platform == 'linux')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/92/86/9dddbf67f49a86f0500da426fb56bcb18756db6448075bc56a086c5a60ee/can_motor_control-0.0.7.tar.gz", hash = "sha256:d0eb9ef5f47af050ac8bb5ea71834910c3e9fce972b3e86917f4a9d00d70c538", size = 145480, upload-time = "2026-08-19T03:58:07.569Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f8/73/33dcb5242917ba81b74612c31904be40ed9673692c7ceb247f91d259148d/can_motor_control-0.0.7-cp310-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:7bd5095d29de34b3979080e736f42c939ec787ef96ac710024b39514eec5fbd4", size = 514625, upload-time = "2026-08-19T03:58:04.753Z" },
+    { url = "https://files.pythonhosted.org/packages/72/c2/1779ac01f2fa765a9ba2a7f49db97aadf376141abc0faf9baecc6309af9d/can_motor_control-0.0.7-cp310-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:c5d0f78d3cb6a69448ee664056b723febbd41b1077c165713178e303b3bbf9a2", size = 537246, upload-time = "2026-08-19T03:58:06.007Z" },
 ]
 
 [[package]]
@@ -1726,6 +1741,7 @@ all = [
     { name = "aiohttp" },
     { name = "aioquic" },
     { name = "aiortc" },
+    { name = "can-motor-control", marker = "sys_platform == 'linux'" },
     { name = "chromadb" },
     { name = "coacd" },
     { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64'" },
@@ -1858,11 +1874,13 @@ learning = [
 ]
 manipulation = [
     { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "can-motor-control", marker = "sys_platform == 'linux'" },
     { name = "drake", version = "1.45.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform == 'darwin'" },
     { name = "drake", version = "1.49.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform != 'darwin'" },
     { name = "matplotlib" },
     { name = "piper-sdk" },
     { name = "pycollada" },
+    { name = "pygame" },
     { name = "pyrealsense2-extended", marker = "sys_platform != 'darwin'" },
     { name = "pyyaml" },
     { name = "roboplan" },
@@ -2014,6 +2032,7 @@ browser-tests = [
 ]
 lint = [
     { name = "aiortc" },
+    { name = "can-motor-control", marker = "sys_platform == 'linux'" },
     { name = "chromadb" },
     { name = "dimos", extra = ["visualization", "web", "webrtc"] },
     { name = "einops" },
@@ -2057,6 +2076,7 @@ lint = [
     { name = "xacro" },
 ]
 project-deps = [
+    { name = "can-motor-control", marker = "sys_platform == 'linux'" },
     { name = "chromadb" },
     { name = "dimos", extra = ["visualization", "web", "webrtc"] },
     { name = "einops" },
@@ -2083,6 +2103,7 @@ project-deps = [
     { name = "xacro" },
 ]
 tests = [
+    { name = "can-motor-control", marker = "sys_platform == 'linux'" },
     { name = "chromadb" },
     { name = "coacd" },
     { name = "coverage" },
@@ -2134,6 +2155,7 @@ tests = [
     { name = "xacro" },
 ]
 tests-self-hosted = [
+    { name = "can-motor-control", marker = "sys_platform == 'linux'" },
     { name = "chromadb" },
     { name = "coacd" },
     { name = "coverage" },
@@ -2198,6 +2220,7 @@ requires-dist = [
     { name = "bosdyn-api", marker = "extra == 'spot'", specifier = ">=4.0.0" },
     { name = "bosdyn-client", marker = "extra == 'spot'", specifier = ">=4.0.0" },
     { name = "bosdyn-core", marker = "extra == 'spot'", specifier = ">=4.0.0" },
+    { name = "can-motor-control", marker = "sys_platform == 'linux' and extra == 'manipulation'", specifier = ">=0.0.7" },
     { name = "chromadb", marker = "extra == 'perception'", specifier = ">=1.0.0" },
     { name = "cmeel-tinyxml2", specifier = ">=11,<12" },
     { name = "coacd", marker = "extra == 'scene'", specifier = ">=1.0.0" },
@@ -2276,6 +2299,7 @@ requires-dist = [
     { name = "pycollada", marker = "extra == 'manipulation'" },
     { name = "pydantic" },
     { name = "pydantic-settings", specifier = ">=2.11.0,<3" },
+    { name = "pygame", marker = "extra == 'manipulation'", specifier = ">=2.6.1" },
     { name = "pygame", marker = "extra == 'sim'", specifier = ">=2.6.1" },
     { name = "pymavlink", marker = "extra == 'drone'" },
     { name = "pyrealsense2-extended", marker = "sys_platform != 'darwin' and extra == 'manipulation'" },
@@ -2334,6 +2358,7 @@ autofix = [{ name = "ruff", specifier = "==0.14.3" }]
 browser-tests = [{ name = "playwright", specifier = ">=1.55" }]
 lint = [
     { name = "aiortc", specifier = ">=1.14.0" },
+    { name = "can-motor-control", marker = "sys_platform == 'linux'", specifier = ">=0.0.7" },
     { name = "chromadb", specifier = ">=1.0.0" },
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
     { name = "einops", specifier = ">=0.8.1" },
@@ -2376,6 +2401,7 @@ lint = [
     { name = "xacro" },
 ]
 project-deps = [
+    { name = "can-motor-control", marker = "sys_platform == 'linux'", specifier = ">=0.0.7" },
     { name = "chromadb", specifier = ">=1.0.0" },
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
     { name = "einops", specifier = ">=0.8.1" },
@@ -2402,6 +2428,7 @@ project-deps = [
     { name = "xacro" },
 ]
 tests = [
+    { name = "can-motor-control", marker = "sys_platform == 'linux'", specifier = ">=0.0.7" },
     { name = "chromadb", specifier = ">=1.0.0" },
     { name = "coacd", specifier = ">=1.0.0" },
     { name = "coverage", specifier = ">=7.0" },
@@ -2454,6 +2481,7 @@ tests = [
     { name = "xacro" },
 ]
 tests-self-hosted = [
+    { name = "can-motor-control", marker = "sys_platform == 'linux'", specifier = ">=0.0.7" },
     { name = "chromadb", specifier = ">=1.0.0" },
     { name = "coacd", specifier = ">=1.0.0" },
     { name = "coverage", specifier = ">=7.0" },

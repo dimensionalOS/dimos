@@ -52,7 +52,7 @@ impl Validate for NoConfig {
     }
 }
 
-fn init_tracing() {
+pub(crate) fn init_tracing() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     let _ = tracing_subscriber::fmt()
         .json()
@@ -481,30 +481,35 @@ fn propagate_task_failure(name: &str, res: Result<(), tokio::task::JoinError>) {
     }
 }
 
-pub async fn run<M, T>(transport: T)
+/// Read the launch config the coordinator writes to stdin as one JSON line.
+pub(crate) async fn read_launch_config() -> io::Result<serde_json::Value> {
+    let mut line = String::new();
+    BufReader::new(tokio::io::stdin())
+        .read_line(&mut line)
+        .await?;
+    parse_launch_config(&line)
+}
+
+fn parse_launch_config(line: &str) -> io::Result<serde_json::Value> {
+    serde_json::from_str(line.trim()).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+}
+
+pub async fn run<M, T>(transport: T, launch: serde_json::Value)
 where
     M: Module,
     T: Transport,
 {
-    if let Err(e) = run_fallible::<M, T>(transport).await {
+    if let Err(e) = run_fallible::<M, T>(transport, launch).await {
         error!("{e}");
         std::process::exit(1);
     }
 }
 
-async fn run_fallible<M, T>(transport: T) -> io::Result<()>
+async fn run_fallible<M, T>(transport: T, json: serde_json::Value) -> io::Result<()>
 where
     M: Module,
     T: Transport,
 {
-    init_tracing();
-
-    let mut line = String::new();
-    BufReader::new(tokio::io::stdin())
-        .read_line(&mut line)
-        .await?;
-    let json: serde_json::Value = serde_json::from_str(line.trim())
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     let (topics, config) = parse_config_value::<M::Config>(&json)?;
     validate_config(&config)?;
     transport.set_publisher_qos(json.get("qos").unwrap_or(&serde_json::Value::Null));
@@ -561,9 +566,16 @@ mod tests {
     fn parse_config_json<C: DeserializeOwned + Serialize>(
         line: &str,
     ) -> io::Result<(HashMap<String, String>, C)> {
-        let json: serde_json::Value = serde_json::from_str(line.trim())
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        parse_config_value(&json)
+        parse_config_value(&parse_launch_config(line)?)
+    }
+
+    #[test]
+    fn an_empty_launch_line_is_an_error_not_a_hang() {
+        // The module is spawned with a pipe, so EOF arrives as an empty line.
+        for line in ["", "\n", "not json"] {
+            let err = parse_launch_config(line).expect_err("empty line rejected");
+            assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        }
     }
 
     type InboundQueue = Mutex<VecDeque<(String, Vec<u8>)>>;
