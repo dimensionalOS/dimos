@@ -53,7 +53,7 @@ from dimos.cli.cache import app as cache_app
 from dimos.cli.cloud import login as cloud_login, logout as cloud_logout, whoami as cloud_whoami
 from dimos.cli.hardware_cli import app as hardware_app
 from dimos.cli.shell import shell
-from dimos.constants import CONFIG_DIR, LOG_DIR, migrate_legacy_config
+from dimos.constants import CONFIG_DIR, LOG_DIR, reject_legacy_config
 from dimos.core.daemon import daemonize, install_signal_handlers
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
@@ -85,9 +85,12 @@ SIMULATORS = ("mujoco", "dimsim")
 DEFAULT_CONFIG_PATH = CONFIG_DIR / "dimos" / "config"
 
 
-def _migrate_legacy_config() -> None:
-    if migrate_legacy_config():
-        typer.echo(f"config migrated into {CONFIG_DIR / 'dimos'}", err=True)
+def _reject_legacy_config() -> None:
+    try:
+        reject_legacy_config()
+    except RuntimeError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(2) from None
 
 
 def _normalize_simulation_argv(argv: list[str]) -> list[str]:
@@ -227,7 +230,7 @@ def run(
     show_help: bool = typer.Option(False, "--help"),
 ) -> None:
     """Start a robot blueprint"""
-    _migrate_legacy_config()
+    _reject_legacy_config()
     from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
     from dimos.core.coordination.blueprint_config.parser import (
         BlueprintConfigParser,

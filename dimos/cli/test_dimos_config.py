@@ -17,44 +17,36 @@ from pathlib import Path
 import pytest
 
 from dimos import constants
-from dimos.cli import cloud, dimos as cli
+from dimos.cli import cloud
 
 
 @pytest.fixture
 def config_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     monkeypatch.setattr(constants, "CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(cli, "CONFIG_DIR", tmp_path)
     return tmp_path
 
 
-def test_legacy_flat_file_migrates_into_directory(config_home: Path) -> None:
-    legacy = config_home / "dimos"
-    legacy.write_text('{"viewer": "rerun"}')
-
-    cli._migrate_legacy_config()
-
-    assert legacy.is_dir()
-    assert (legacy / "config").read_text() == '{"viewer": "rerun"}'
+def test_legacy_flat_file_is_refused_with_instructions(config_home: Path) -> None:
+    (config_home / "dimos").write_text('{"viewer": "rerun"}')
+    with pytest.raises(RuntimeError, match="mv "):
+        constants.reject_legacy_config()
 
 
-def test_migration_noop_without_legacy_file(config_home: Path) -> None:
-    cli._migrate_legacy_config()  # nothing exists
-    assert not (config_home / "dimos").exists()
+def test_no_legacy_file_passes(config_home: Path) -> None:
+    constants.reject_legacy_config()  # nothing exists
 
-    (config_home / "dimos").mkdir()  # already migrated
-    cli._migrate_legacy_config()
-    assert (config_home / "dimos").is_dir()
+    (config_home / "dimos").mkdir()  # already a directory
+    constants.reject_legacy_config()
 
 
-def test_login_store_migrates_legacy_config_first(
+def test_login_store_refuses_on_legacy_config(
     config_home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    legacy = config_home / "dimos"
-    legacy.write_text('{"viewer": "rerun"}')
+    (config_home / "dimos").write_text('{"viewer": "rerun"}')
     monkeypatch.setattr(cloud, "_keyring", lambda: None)
     monkeypatch.setattr(cloud, "CREDENTIALS_PATH", config_home / "dimos" / "credentials")
+    monkeypatch.setattr(cloud, "reject_legacy_config", constants.reject_legacy_config)
 
-    cloud._store("dimos_sk_x")
-
-    assert (config_home / "dimos" / "config").read_text() == '{"viewer": "rerun"}'
-    assert (config_home / "dimos" / "credentials").read_text().strip() == "dimos_sk_x"
+    with pytest.raises(RuntimeError, match="old path"):
+        cloud._store("dimos_sk_x")
+    assert (config_home / "dimos").read_text() == '{"viewer": "rerun"}'  # untouched

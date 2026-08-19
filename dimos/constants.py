@@ -41,20 +41,14 @@ else:
 CREDENTIALS_PATH = CONFIG_DIR / "dimos" / "credentials"
 
 
-def migrate_legacy_config() -> bool:
-    """~/.config/dimos used to BE the config file; it is now a directory. Move an
-    old flat file to config inside. Returns True if a migration happened."""
+def reject_legacy_config() -> None:
+    """~/.config/dimos used to BE the config file; it is now a directory."""
     legacy = CONFIG_DIR / "dimos"
-    if not legacy.is_file():
-        return False
-    try:
-        tmp = legacy.with_name("dimos.migrating")
-        legacy.rename(tmp)
-        legacy.mkdir()
-        tmp.rename(legacy / "config")
-        return True
-    except OSError:
-        return False  # lost a migration race; the winner already moved it
+    if legacy.is_file():
+        raise RuntimeError(
+            f"config found at old path {legacy}, which is now a directory; move it:\n"
+            f"  mv {legacy} {legacy}.tmp && mkdir {legacy} && mv {legacy}.tmp {legacy}/config"
+        )
 
 
 """
