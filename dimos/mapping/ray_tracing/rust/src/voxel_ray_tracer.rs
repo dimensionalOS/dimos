@@ -58,9 +58,7 @@ fn voxel_center(key: VoxelKey, voxel_size: f32) -> (f32, f32, f32) {
 pub struct Config {
     #[validate(range(exclusive_min = 0.0))]
     pub voxel_size: f32,
-    /// Fine cells per voxel edge for the fine emission layer: fine cell size =
-    /// `voxel_size / fine_divisor`. 2 to 4 (divisor^3 occupancy bits per voxel
-    /// must fit in a u64). Zero disables the layer.
+    /// Factor of the fine grain voxels against the coarse grain voxels.
     #[validate(range(min = 0, max = 4))]
     pub fine_divisor: u32,
     #[validate(range(min = 0.0))]
@@ -88,9 +86,6 @@ pub struct Config {
     /// Publish the global map every Nth frame. Zero disables it.
     #[validate(range(min = 0))]
     pub global_emit_every: u32,
-    /// Publish the fine local map every Nth frame. Zero disables it.
-    #[validate(range(min = 0))]
-    pub fine_emit_every: u32,
     /// Size the local region to this percentile of batch point distances, so a
     /// stray far hit cannot inflate it.
     #[validate(range(min = 0.0, max = 100.0))]
@@ -107,9 +102,6 @@ fn validate_config(cfg: &Config) -> Result<(), ValidationError> {
     }
     if cfg.fine_divisor == 1 {
         return Err(ValidationError::new("fine_divisor_min_2"));
-    }
-    if cfg.fine_emit_every > 0 && cfg.fine_divisor == 0 {
-        return Err(ValidationError::new("fine_emit_requires_fine_divisor"));
     }
     Ok(())
 }

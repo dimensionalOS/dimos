@@ -105,36 +105,18 @@ impl RayTracingVoxelMap {
         let mapper = self.mapper.as_mut().expect("built in setup");
         mapper.add_frame(&points, pose);
 
-        let local_due = mapper.local_due();
-        let fine_due = mapper.fine_due();
-        let global_due = mapper.global_due();
-
-        // Only the local cadence consumes the batch and fine-only frames peek.
-        // With the local map disabled the fine cadence takes instead.
-        let region = if local_due || (fine_due && mapper.config().emit_every == 0) {
-            Some(mapper.take_local_bounds())
-        } else if fine_due {
-            Some(mapper.local_bounds())
-        } else {
-            None
-        };
+        let region = mapper.local_due().then(|| mapper.take_local_bounds());
         let cylinder = region.map(|c| c.bounds());
 
-        let global_points = global_due.then(|| mapper.global_points());
-        let local_points = cylinder
-            .as_ref()
-            .filter(|_| local_due)
-            .map(|cyl| mapper.local_points(cyl));
-        let fine_points = cylinder
-            .as_ref()
-            .filter(|_| fine_due)
-            .and_then(|cyl| mapper.fine_points(cyl));
+        let global_points = mapper.global_due().then(|| mapper.global_points());
+        let local_points = cylinder.as_ref().map(|cyl| mapper.local_points(cyl));
+        let fine_points = cylinder.as_ref().and_then(|cyl| mapper.fine_points(cyl));
 
         let out_frame_id = "world";
         let stamp = msg.header.stamp;
 
         // Bounds pair with local_map by stamp, so publish them on its cadence.
-        if let (Some(c), true) = (region, local_due) {
+        if let Some(c) = region {
             let bounds_msg = PoseStamped {
                 header: Header {
                     seq: 0,
@@ -367,7 +349,6 @@ mod tests {
             support_min: 0,
             emit_every: 1,
             global_emit_every: 1,
-            fine_emit_every: 0,
             region_percentile: 95.0,
             worker_threads: 4,
         };

@@ -130,7 +130,6 @@ impl VoxelRayMapper {
             support_min,
             emit_every,
             global_emit_every: 1,
-            fine_emit_every: 0,
             region_percentile,
             worker_threads,
         };

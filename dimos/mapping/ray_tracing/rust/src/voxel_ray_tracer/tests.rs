@@ -28,7 +28,6 @@ fn basic_config() -> Config {
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
-        fine_emit_every: 0,
         region_percentile: 95.0,
         worker_threads: 4,
     }
@@ -260,7 +259,6 @@ fn ground_clipping_single_ray() {
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
-        fine_emit_every: 0,
         region_percentile: 95.0,
         worker_threads: 4,
     };
@@ -415,7 +413,6 @@ fn stair_clipping_ray_fan() {
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
-        fine_emit_every: 0,
         region_percentile: 95.0,
         worker_threads: 4,
     };
@@ -492,7 +489,6 @@ fn landing_floor_ray_fan() {
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
-        fine_emit_every: 0,
         region_percentile: 95.0,
         worker_threads: 4,
     };
@@ -557,7 +553,6 @@ fn landing_grazed_from_below() {
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
-        fine_emit_every: 0,
         region_percentile: 95.0,
         worker_threads: 4,
     };
@@ -691,7 +686,6 @@ fn grazing_ray_spares_planar_floor() {
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
-        fine_emit_every: 0,
         region_percentile: 95.0,
         worker_threads: 4,
     };
@@ -1000,9 +994,6 @@ fn config_rejects_bad_fine_settings() {
     assert!(cfg.validate().is_err(), "divisor 1 duplicates the map");
     cfg.fine_divisor = 5;
     assert!(cfg.validate().is_err(), "divisor^3 bits must fit in a u64");
-    cfg.fine_divisor = 0;
-    cfg.fine_emit_every = 1;
-    assert!(cfg.validate().is_err(), "fine emit needs a fine grid");
     cfg.fine_divisor = 2;
     assert!(cfg.validate().is_ok());
 }

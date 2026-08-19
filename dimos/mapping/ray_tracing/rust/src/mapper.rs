@@ -90,9 +90,9 @@ impl Mapper {
     fn ingest(&mut self, points: Vec<Point>, origin: Point) {
         self.live = update_map(&mut self.map, origin, &points, &self.config);
 
-        // The batch only feeds the local region bounds, so skip it when both
-        // local maps are disabled.
-        if self.config.emit_every > 0 || self.config.fine_emit_every > 0 {
+        // The batch only feeds the local region bounds, so skip it when the
+        // local cadence is disabled.
+        if self.config.emit_every > 0 {
             self.batch_points.extend_from_slice(&points);
             self.batch_origins.push(origin);
         }
@@ -111,42 +111,32 @@ impl Mapper {
         emit_due(self.frame_count, self.config.emit_every)
     }
 
-    /// Whether the fine local map is due this frame.
-    pub fn fine_due(&self) -> bool {
-        emit_due(self.frame_count, self.config.fine_emit_every)
-    }
-
     /// Whether the global map is due this frame.
     pub fn global_due(&self) -> bool {
         emit_due(self.frame_count, self.config.global_emit_every)
     }
 
-    /// Cylinder over the batched frames, leaving the batch intact. An empty
-    /// batch yields a zero-radius region at the last origin.
-    pub fn local_bounds(&self) -> Cylinder {
-        if self.batch_origins.is_empty() {
+    /// Cylinder over the batched frames, consuming the batch. An empty batch
+    /// yields a zero-radius region at the last origin.
+    pub fn take_local_bounds(&mut self) -> Cylinder {
+        let bounds = if self.batch_origins.is_empty() {
             let (x, y, z) = self.last_origin;
-            return Cylinder {
+            Cylinder {
                 cx: x,
                 cy: y,
                 radius: 0.0,
                 z_min: z,
                 z_max: z,
-            };
-        }
-        let margin = self.config.shadow_depth + self.config.voxel_size;
-        batch_local_bounds(
-            &self.batch_points,
-            &self.batch_origins,
-            self.config.region_percentile,
-            margin,
-        )
-    }
-
-    /// Cylinder over the batched frames, consuming the batch. Only the local
-    /// map cadence may consume, so a faster fine cadence cannot starve it.
-    pub fn take_local_bounds(&mut self) -> Cylinder {
-        let bounds = self.local_bounds();
+            }
+        } else {
+            let margin = self.config.shadow_depth + self.config.voxel_size;
+            batch_local_bounds(
+                &self.batch_points,
+                &self.batch_origins,
+                self.config.region_percentile,
+                margin,
+            )
+        };
         self.batch_points.clear();
         self.batch_origins.clear();
         bounds
@@ -226,7 +216,6 @@ mod tests {
             support_min: 0,
             emit_every: 1,
             global_emit_every: 1,
-            fine_emit_every: 0,
             region_percentile: 95.0,
             worker_threads: 4,
         }
@@ -292,7 +281,6 @@ mod tests {
         let cfg = Config {
             emit_every: 2,
             global_emit_every: 3,
-            fine_emit_every: 0,
             ..config()
         };
         let mut mapper = Mapper::new(cfg);
@@ -303,48 +291,19 @@ mod tests {
         let mut dues = Vec::new();
         for _ in 0..6 {
             mapper.add_frame(&[(5.5, 0.5, 0.5)], pose);
-            dues.push((mapper.local_due(), mapper.global_due(), mapper.fine_due()));
+            dues.push((mapper.local_due(), mapper.global_due()));
         }
         assert_eq!(
             dues,
             vec![
-                (false, false, false),
-                (true, false, false),
-                (false, true, false),
-                (true, false, false),
-                (false, false, false),
-                (true, true, false),
+                (false, false),
+                (true, false),
+                (false, true),
+                (true, false),
+                (false, false),
+                (true, true),
             ]
         );
-    }
-
-    #[test]
-    fn fine_only_frames_read_bounds_without_consuming_the_batch() {
-        let cfg = Config {
-            fine_divisor: 2,
-            emit_every: 2,
-            fine_emit_every: 1,
-            ..config()
-        };
-        let mut mapper = Mapper::new(cfg);
-        let pose = Pose {
-            position: (0.0, 0.0, 0.0),
-            orientation: IDENTITY,
-        };
-
-        mapper.add_frame(&[(2.0, 0.5, 0.5)], pose);
-        assert!(mapper.fine_due() && !mapper.local_due());
-        let fine_frame = mapper.local_bounds();
-        assert!(fine_frame.radius > 0.0);
-
-        mapper.add_frame(&[(0.5, 3.0, 0.5)], pose);
-        assert!(mapper.fine_due() && mapper.local_due());
-        let local_frame = mapper.take_local_bounds();
-        assert!(
-            local_frame.radius > fine_frame.radius,
-            "the local cylinder still covers both batched frames"
-        );
-        assert_eq!(mapper.local_bounds().radius, 0.0, "take consumed the batch");
     }
 
     #[test]
