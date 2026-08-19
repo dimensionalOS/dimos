@@ -41,6 +41,8 @@ from dimos.manipulation.manipulation_spec import ExecutionStatus, PlanStatus
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.planners.config import RRTConnectPlannerConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.enums import ObstacleType
+from dimos.manipulation.planning.spec.models import Obstacle
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -219,7 +221,14 @@ class TestManipulationModuleIntegration:
             position=Vector3(0.5, 0.0, 0.3),
             orientation=Quaternion(),  # default is identity (w=1)
         )
-        obstacle_id = module.add_obstacle("test_box", pose, "box", [0.1, 0.1, 0.1])
+        obstacle_id = module.add_obstacle(
+            Obstacle(
+                name="test_box",
+                obstacle_type=ObstacleType.BOX,
+                pose=PoseStamped(position=pose.position, orientation=pose.orientation),
+                dimensions=(0.1, 0.1, 0.1),
+            )
+        )
 
         assert obstacle_id != ""
         assert obstacle_id is not None

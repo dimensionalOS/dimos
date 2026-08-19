@@ -272,6 +272,16 @@ class TestTBuffer:
 
 
 class TestMultiTBuffer:
+    def test_missing_transform_warning_is_throttled_per_frame_pair(self, mocker) -> None:
+        ttbuffer = MultiTBuffer()
+        warning = mocker.patch("dimos.protocol.tf.tf.logger.warning")
+
+        assert ttbuffer.get("world", "camera") is None
+        assert ttbuffer.get("world", "camera") is None
+        assert ttbuffer.get("world", "other_camera") is None
+
+        assert warning.call_count == 2
+
     def test_multiple_frame_pairs(self) -> None:
         ttbuffer = MultiTBuffer(buffer_size=10.0)
 

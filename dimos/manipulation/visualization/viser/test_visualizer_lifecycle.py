@@ -24,6 +24,7 @@ pytest.importorskip("viser", reason="Viser optional dependency is not installed"
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import (
+    Obstacle,
     PlanningSceneInfo,
     VisualizationSession,
     VisualizationStateFrame,
@@ -396,6 +397,9 @@ def test_visualizer_publish_preview_and_close_paths(
     calls: list[tuple[str, str]] = []
     current = JointState({"name": ["joint1"], "position": [0.5]})
 
+    class FakeOperator:
+        pass
+
     class FakeRuntime:
         url = "http://localhost:8095"
 
@@ -431,6 +435,18 @@ def test_visualizer_publish_preview_and_close_paths(
             assert duration == 1.5
             calls.append(("animate", "groups"))
 
+        def add_vis_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
+            calls.append(("obstacle", f"add:{obstacle_id}"))
+
+        def remove_vis_obstacle(self, obstacle_id: str) -> None:
+            calls.append(("obstacle", f"remove:{obstacle_id}"))
+
+        def clear_vis_obstacles(self) -> None:
+            calls.append(("obstacle", "clear"))
+
+        def update_vis_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> None:
+            calls.append(("obstacle", f"pose:{obstacle_id}"))
+
         def close(self) -> None:
             calls.append(("scene", "close"))
 
@@ -443,12 +459,22 @@ def test_visualizer_publish_preview_and_close_paths(
 
     assert hasattr(ViserManipulationVisualizer, "cancel_preview_animation")
     visualizer.initialize(
-        VisualizationSession(PlanningSceneInfo({"robot-1": fake_robot_config("arm")}))
+        VisualizationSession(
+            PlanningSceneInfo({"robot-1": fake_robot_config("arm")}),
+            operator=FakeOperator(),
+        )
     )
     visualizer.cancel_preview_animation()
     visualizer.update_state(VisualizationStateFrame({"robot-1": current}))
     visualizer.cancel_preview_animation()
     visualizer.animate_trajectory(JointTrajectory(joint_names=["arm/joint1"]), duration=1.5)
+    obstacle = Obstacle(
+        "box", scene_module.ObstacleType.BOX, PoseStamped(), dimensions=(1.0, 1.0, 1.0)
+    )
+    visualizer.add_vis_obstacle("native/id", obstacle)
+    visualizer.update_vis_obstacle_pose("native/id", PoseStamped())
+    visualizer.remove_vis_obstacle("native/id")
+    visualizer.clear_vis_obstacles()
     visualizer.close()
     visualizer.update_state(VisualizationStateFrame({"robot-1": current}))
 
@@ -460,6 +486,10 @@ def test_visualizer_publish_preview_and_close_paths(
         ("update", "robot-1"),
         ("cancel", "preview"),
         ("animate", "groups"),
+        ("obstacle", "add:native/id"),
+        ("obstacle", "pose:native/id"),
+        ("obstacle", "remove:native/id"),
+        ("obstacle", "clear"),
         ("scene", "close"),
         ("runtime", "close"),
     ]

@@ -343,6 +343,7 @@ else:
         PointLio.blueprint(),
         RayTracingVoxelMap.blueprint(
             voxel_size=_G1_REAL_NAV_VOXEL_RESOLUTION,
+            map_frame="odom",
             emit_every=0,  # no local_map consumer here
             global_emit_every=4,  # ~1 Hz global map; also paces the costmap
             # Clearing matched to go2 nav_3d.

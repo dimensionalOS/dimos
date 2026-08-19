@@ -416,7 +416,8 @@ class RoboPlanWorld:
             result = scene.computeFrameJacobian(
                 scene_q,
                 model.native_link(robot.config.name, group.tip_link),
-                True,
+                # JacobianIK expresses its error twist in the world frame.
+                False,
             )
         arr = np.asarray(result, dtype=np.float64)
         if arr.shape[0] != 6:
@@ -630,6 +631,29 @@ class RoboPlanWorld:
                 ROBOPLAN_WORLD_FRAME,
                 roboplan_core.Mesh(obstacle.mesh_path),
                 matrix,
+                color,
+            )
+            return
+        if obstacle.obstacle_type == ObstacleType.OCTREE:
+            assert obstacle.points is not None
+            assert obstacle.octree_resolution is not None
+            native_method = getattr(scene, "addOcTreeGeometry", None)
+            octree_cls = getattr(roboplan_core, "OcTree", None)
+            if not callable(native_method) or not callable(octree_cls):
+                raise NotImplementedError(
+                    "RoboPlan OCTREE obstacles require roboplan_core.OcTree and "
+                    "Scene.addOcTreeGeometry"
+                )
+            resolution = float(obstacle.octree_resolution)
+            boxes = [
+                np.asarray((*point, resolution, 1.0, 0.5), dtype=np.float64)
+                for point in np.asarray(obstacle.points, dtype=np.float64)
+            ]
+            native_method(
+                obstacle_id,
+                ROBOPLAN_WORLD_FRAME,
+                octree_cls(boxes, resolution),
+                np.asarray(matrix, dtype=np.float64, order="F"),
                 color,
             )
             return

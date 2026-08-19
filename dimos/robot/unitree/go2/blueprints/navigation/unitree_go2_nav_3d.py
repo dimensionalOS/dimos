@@ -144,6 +144,7 @@ unitree_go2_nav_3d = autoconnect(
     Go2Mid360StaticTf.blueprint(),
     RayTracingVoxelMap.blueprint(
         voxel_size=voxel_size,
+        map_frame="odom",
         emit_every=1,
         global_emit_every=50,
         min_health=-1,

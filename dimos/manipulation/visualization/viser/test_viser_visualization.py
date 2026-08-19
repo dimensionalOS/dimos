@@ -22,6 +22,7 @@ from pathlib import Path
 import threading
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
@@ -606,6 +607,8 @@ def test_plan_target_sequence_invalidation_and_unfiltered_all_robot_execute(
     gui.state.target_status = TargetStatus.FEASIBLE
     gui._submit_execute()
     assert module.executions == 1
+    assert gui.state.action_status == ActionStatus.IDLE
+    assert gui.state.plan_state.status == PlanStatus.STALE
 
 
 def test_cartesian_space_mode_requests_sparse_time_optimal_trajectory(
@@ -1542,6 +1545,35 @@ def test_scene_renders_obstacle_geometry_with_pose_color_and_visibility(
             },
         )
     ]
+
+
+def test_scene_renders_octree_with_original_point_cloud_style_and_stride_sampling() -> None:
+    server = Server()
+    server.scene.add_grid = lambda *_args, **_kwargs: Handle()
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def add_point_cloud(path: str, **kwargs: object) -> Handle:
+        calls.append((path, kwargs))
+        return Handle(visible=bool(kwargs["visible"]))
+
+    server.scene.add_point_cloud = add_point_cloud
+    scene = ViserManipulationScene(server, Urdf)
+    points = np.arange(20_001 * 3, dtype=np.float64).reshape((-1, 3))
+    item = Obstacle(
+        name="mapping/global-voxel-map",
+        obstacle_type=ObstacleType.OCTREE,
+        pose=PoseStamped(),
+        points=points,
+        octree_resolution=0.05,
+    )
+
+    scene.add_vis_obstacle(item.name, item)
+
+    path, kwargs = calls[0]
+    assert path == "/manipulation/obstacles/mapping/global-voxel-map"
+    np.testing.assert_array_equal(kwargs["points"], points[::2])
+    assert kwargs["point_size"] == 0.02
+    assert kwargs["point_shape"] == "circle"
 
 
 @pytest.mark.parametrize(

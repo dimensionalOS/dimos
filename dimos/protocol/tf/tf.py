@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = setup_logger()
+_MISSING_TRANSFORM_WARNING_INTERVAL_S = 1.0
 
 
 @runtime_checkable
@@ -48,6 +49,8 @@ class TFLookup(Protocol):
         child_frame: str,
         time_point: float | None = None,
         time_tolerance: float | None = None,
+        *,
+        forward_tolerance: float = 0.0,
     ) -> Transform | None: ...
 
 
@@ -96,6 +99,7 @@ class MultiTBuffer:
         self.buffers: dict[tuple[str, str], TBuffer] = {}
         self.buffer_size = buffer_size
         self._cv = threading.Condition()
+        self._missing_warning_times: dict[tuple[str, str], float] = {}
 
     def receive_transform(self, *args: Transform) -> None:
         with self._cv:
@@ -216,10 +220,25 @@ class MultiTBuffer:
                 parent_frame, child_frame, time_point, time_tolerance, forward_tolerance
             )
         if result is None:
-            logger.warning(
-                f"No direct transform found between '{parent_frame}' and '{child_frame}' at '{to_human_readable(time_point or time.time())}'"
-            )
+            self._warn_missing_transform(parent_frame, child_frame, time_point)
         return result
+
+    def _warn_missing_transform(
+        self, parent_frame: str, child_frame: str, time_point: float | None
+    ) -> None:
+        key = (parent_frame, child_frame)
+        now = time.monotonic()
+        with self._cv:
+            previous = self._missing_warning_times.get(key)
+            if previous is not None and now - previous < _MISSING_TRANSFORM_WARNING_INTERVAL_S:
+                return
+            self._missing_warning_times[key] = now
+        logger.warning(
+            "No transform found between '%s' and '%s' at '%s'",
+            parent_frame,
+            child_frame,
+            to_human_readable(time_point or time.time()),
+        )
 
     def get_pose(
         self,

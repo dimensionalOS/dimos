@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pydantic import Field
+
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -56,6 +58,10 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     global_emit_every: int = 1
     # Size the local region to this percentile of batch point distances.
     region_percentile: float = 95.0
+    # Maximum cloud/odometry timestamp difference used for registration.
+    pose_match_tolerance_s: float = Field(default=0.1, gt=0.0)
+    # Fixed frame in which the accumulated map and odometry parent are expressed.
+    map_frame: str = Field(default="world", min_length=1)
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
@@ -65,6 +71,7 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
 
     lidar: In[PointCloud2]
     odometry: In[Odometry]
+    voxel_clear_mask: In[PointCloud2]
     global_map: Out[PointCloud2]
     local_map: Out[PointCloud2]
     region_bounds: Out[PoseStamped]

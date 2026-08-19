@@ -32,6 +32,8 @@ from dimos.manipulation.manipulation_spec import (
     PlanningGroupInfo,
     PlanResult,
 )
+from dimos.manipulation.planning.spec.enums import ObstacleType
+from dimos.manipulation.planning.spec.models import DEFAULT_OBSTACLE_RGBA, Obstacle
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -152,20 +154,26 @@ def add_box(
     d: float = 0.05,
 ) -> str | None:
     """Add a box obstacle."""
-    pose = Pose(position=Vector3(x=x, y=y, z=z), orientation=Quaternion(0, 0, 0, 1))
-    return cast("str | None", _client.add_obstacle(name, pose, "box", [w, h, d], None))
+    obstacle = Obstacle(
+        name=name,
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(position=Vector3(x=x, y=y, z=z), orientation=Quaternion(0, 0, 0, 1)),
+        dimensions=(w, h, d),
+    )
+    return cast("str | None", _client.add_obstacle(obstacle))
 
 
-def update_obstacle(
-    name: str,
-    pose: Pose,
-    shape: str,
-    dimensions: list[float] | None = None,
-    mesh_path: str | None = None,
-    color: list[float] | None = None,
-) -> bool:
+def update_obstacle(obstacle: Obstacle) -> bool:
     """Replace a complete obstacle."""
-    return cast("bool", _client.update_obstacle(name, pose, shape, dimensions, mesh_path, color))
+    return cast("bool", _client.update_obstacle(obstacle))
+
+
+def _rgba(color: list[float] | None) -> tuple[float, float, float, float]:
+    if color is None:
+        return DEFAULT_OBSTACLE_RGBA
+    if len(color) != 4:
+        raise ValueError("Obstacle color must contain four values")
+    return (float(color[0]), float(color[1]), float(color[2]), float(color[3]))
 
 
 def update_box(
@@ -179,8 +187,15 @@ def update_box(
     color: list[float] | None = None,
 ) -> bool:
     """Replace a complete box obstacle."""
-    pose = Pose(position=Vector3(x=x, y=y, z=z), orientation=Quaternion(0, 0, 0, 1))
-    return update_obstacle(name, pose, "box", [w, h, d], color=color)
+    return update_obstacle(
+        Obstacle(
+            name=name,
+            obstacle_type=ObstacleType.BOX,
+            pose=PoseStamped(position=Vector3(x=x, y=y, z=z), orientation=Quaternion(0, 0, 0, 1)),
+            dimensions=(w, h, d),
+            color=_rgba(color),
+        )
+    )
 
 
 def update_sphere(
@@ -192,8 +207,15 @@ def update_sphere(
     color: list[float] | None = None,
 ) -> bool:
     """Replace a complete sphere obstacle."""
-    pose = Pose(position=Vector3(x=x, y=y, z=z), orientation=Quaternion(0, 0, 0, 1))
-    return update_obstacle(name, pose, "sphere", [radius], color=color)
+    return update_obstacle(
+        Obstacle(
+            name=name,
+            obstacle_type=ObstacleType.SPHERE,
+            pose=PoseStamped(position=Vector3(x=x, y=y, z=z), orientation=Quaternion(0, 0, 0, 1)),
+            dimensions=(radius,),
+            color=_rgba(color),
+        )
+    )
 
 
 def update_cylinder(
@@ -206,8 +228,15 @@ def update_cylinder(
     color: list[float] | None = None,
 ) -> bool:
     """Replace a complete cylinder obstacle."""
-    pose = Pose(position=Vector3(x=x, y=y, z=z), orientation=Quaternion(0, 0, 0, 1))
-    return update_obstacle(name, pose, "cylinder", [radius, height], color=color)
+    return update_obstacle(
+        Obstacle(
+            name=name,
+            obstacle_type=ObstacleType.CYLINDER,
+            pose=PoseStamped(position=Vector3(x=x, y=y, z=z), orientation=Quaternion(0, 0, 0, 1)),
+            dimensions=(radius, height),
+            color=_rgba(color),
+        )
+    )
 
 
 def update_pose(

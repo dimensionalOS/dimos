@@ -24,13 +24,14 @@ import time
 from typing import Any, Literal, TypeAlias, cast
 
 from pydantic import Field
+from reactivex.abc import DisposableBase
+from reactivex.disposable import Disposable
 
 from dimos.agents.skill_result import SkillResult
-from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In, Out
+from dimos.core.stream import In
 from dimos.manipulation.execution_manager import (
     ExecutionTarget,
     PlanExecutionManager,
@@ -76,7 +77,6 @@ from dimos.manipulation.planning.planners.roboplan_config import (
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType
 from dimos.manipulation.planning.spec.models import (
-    DEFAULT_OBSTACLE_RGBA,
     CartesianTarget,
     GeneratedPlan,
     IKResult,
@@ -108,7 +108,6 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -124,15 +123,6 @@ RobotInfoValue: TypeAlias = (
     str | bool | float | list[str] | list[float] | list[PlanningGroup] | None
 )
 RobotInfoPayload: TypeAlias = dict[str, RobotInfoValue]
-
-ObstacleShape: TypeAlias = Literal["box", "sphere", "cylinder", "mesh"]
-
-_SHAPE_TO_OBSTACLE_TYPE: dict[str, ObstacleType] = {
-    "box": ObstacleType.BOX,
-    "sphere": ObstacleType.SPHERE,
-    "cylinder": ObstacleType.CYLINDER,
-    "mesh": ObstacleType.MESH,
-}
 
 
 class ManipulationState(Enum):
@@ -182,7 +172,6 @@ class ManipulationModule(Module):
 
     # Input: Joint state from coordinator (for world sync)
     coordinator_joint_state: In[JointState]
-    tf: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -212,9 +201,7 @@ class ManipulationModule(Module):
         # Init joints: captured from first joint state per robot, used by go_init
         self._init_joints: dict[RobotName, JointState] = {}
 
-        # TF publishing thread
-        self._tf_stop_event = threading.Event()
-        self._tf_thread: threading.Thread | None = None
+        self._joint_state_subscription: DisposableBase | None = None
 
         logger.info("ManipulationModule initialized")
 
@@ -222,6 +209,7 @@ class ManipulationModule(Module):
     def start(self) -> None:
         """Start the manipulation module."""
         super().start()
+        self._dispose_input_subscriptions()
 
         # Execution state must exist before planning starts observers such as visualization.
         self._initialize_execution()
@@ -229,7 +217,9 @@ class ManipulationModule(Module):
 
         # Subscribe to joint state via port
         if self.coordinator_joint_state is not None:
-            self.coordinator_joint_state.subscribe(self._on_joint_state)
+            self._joint_state_subscription = self.register_disposable(
+                Disposable(self.coordinator_joint_state.subscribe(self._on_joint_state))
+            )
             logger.info("Subscribed to coordinator_joint_state port")
         logger.info("ManipulationModule started")
 
@@ -261,7 +251,6 @@ class ManipulationModule(Module):
             world_monitor=self._world_monitor,
             manipulation_module=self,
         )
-
         for robot_config in self.config.robots:
             robot_id = self._world_monitor.add_robot(robot_config)
             self._robots[robot_config.name] = (robot_id, robot_config)
@@ -294,14 +283,7 @@ class ManipulationModule(Module):
             if url := self._world_monitor.get_visualization_url():
                 logger.info(f"Visualization: {url}")
 
-        # Start TF publishing thread if any robot has tf_extra_links
-        if any(c.tf_extra_links for _, c in self._robots.values()):
-            self._tf_stop_event.clear()
-            self._tf_thread = threading.Thread(
-                target=self._tf_publish_loop, name="ManipTFThread", daemon=True
-            )
-            self._tf_thread.start()
-            logger.info("TF publishing thread started")
+        logger.info("Robot TF is published from timestamped joint-state updates")
 
     def _get_default_robot_name(self) -> RobotName | None:
         """Get default robot name (first robot if only one, else None)."""
@@ -364,6 +346,8 @@ class ManipulationModule(Module):
                     else []
                 )
                 sub_msg = JointState(
+                    ts=msg.ts,
+                    frame_id=msg.frame_id,
                     name=list(coord_names),
                     position=sub_positions,
                     velocity=sub_velocities,
@@ -371,7 +355,6 @@ class ManipulationModule(Module):
 
                 # Route to specific monitor
                 self._world_monitor.on_joint_state(sub_msg, robot_id=robot_id)
-
                 # Capture per-robot init joints on first update
                 if robot_name not in self._init_joints:
                     self._init_joints[robot_name] = sub_msg
@@ -385,39 +368,6 @@ class ManipulationModule(Module):
             import traceback
 
             logger.error(traceback.format_exc())
-
-    def _tf_publish_loop(self) -> None:
-        """Publish TF transforms at 10Hz for EE and extra links."""
-        from dimos.msgs.geometry_msgs.Transform import Transform
-
-        period = 0.1  # 10Hz
-        while not self._tf_stop_event.is_set():
-            try:
-                if self._world_monitor is None:
-                    break
-                transforms: list[Transform] = []
-                for robot_id, config in self._robots.values():
-                    # Publish world → EE
-                    ee_pose = self._world_monitor.get_ee_pose(robot_id)
-                    if ee_pose is not None:
-                        ee_tf = Transform.from_pose(config.end_effector_link, ee_pose)
-                        ee_tf.frame_id = "world"
-                        transforms.append(ee_tf)
-
-                    # Publish world → each extra link
-                    for link_name in config.tf_extra_links:
-                        link_pose = self._world_monitor.get_link_pose(robot_id, link_name)
-                        if link_pose is not None:
-                            link_tf = Transform.from_pose(link_name, link_pose)
-                            link_tf.frame_id = "world"
-                            transforms.append(link_tf)
-
-                if transforms:
-                    self.tf.publish(TFMessage(*transforms))
-            except Exception as e:
-                logger.debug(f"TF publish error: {e}")
-
-            self._tf_stop_event.wait(period)
 
     @rpc
     def get_state(self) -> ManipulationSnapshot:
@@ -709,14 +659,27 @@ class ManipulationModule(Module):
         seed: JointState | None = None,
         check_collision: bool = True,
     ) -> IKResult:
-        """Solve planning-group pose targets without planning a joint path."""
+        """Synchronize collision input and solve planning-group pose targets."""
         if self._kinematics is None or self._world_monitor is None:
             return IKResult(status=IKStatus.NO_SOLUTION, message="Planning not initialized")
         if not pose_targets:
             return IKResult(
                 status=IKStatus.NO_SOLUTION, message="At least one pose target is required"
             )
+        return self._inverse_kinematics_impl(
+            pose_targets, auxiliary_group_ids, seed, check_collision
+        )
 
+    def _inverse_kinematics_impl(
+        self,
+        pose_targets: Mapping[PlanningGroupID, PoseStamped],
+        auxiliary_group_ids: Sequence[PlanningGroupID] = (),
+        seed: JointState | None = None,
+        check_collision: bool = True,
+    ) -> IKResult:
+        """Solve pose targets after the caller synchronized collision input."""
+        if self._kinematics is None or self._world_monitor is None:
+            return IKResult(status=IKStatus.NO_SOLUTION, message="Planning not initialized")
         try:
             stamped_targets = dict(pose_targets)
             auxiliary_ids = tuple(auxiliary_group_ids)
@@ -804,13 +767,20 @@ class ManipulationModule(Module):
                     status=IKStatus.NO_SOLUTION,
                     message=f"Cannot solve IK while state is {self._state.name}",
                 )
+            previous_state = self._state
             self._state = ManipulationState.PLANNING
-        result = self.inverse_kinematics_single(
-            pose,
-            robot_name=robot_name,
-            seed=seed,
-            check_collision=check_collision,
-        )
+        try:
+            result = self.inverse_kinematics_single(
+                pose,
+                robot_name=robot_name,
+                seed=seed,
+                check_collision=check_collision,
+            )
+        except Exception:
+            with self._lock:
+                if self._state == ManipulationState.PLANNING:
+                    self._state = previous_state
+            raise
         self._state = ManipulationState.COMPLETED if result.is_success() else ManipulationState.IDLE
         if result.is_success():
             logger.info(f"IK solved, error: {result.position_error:.4f}m")
@@ -968,7 +938,7 @@ class ManipulationModule(Module):
         if resolved is None:
             return None
         _selection, start = resolved
-        ik = self.inverse_kinematics(
+        ik = self._inverse_kinematics_impl(
             pose_targets=stamped_targets,
             auxiliary_group_ids=auxiliary_ids,
             seed=start,
@@ -1434,14 +1404,21 @@ class ManipulationModule(Module):
 
     def _initialize_execution(self) -> None:
         """Initialize coordinator access and planned execution policy."""
-        targets = [
-            ExecutionTarget.from_coordinator_mapping(
-                robot_name=config.name,
-                model_joint_names=config.joint_names,
-                coordinator_to_model=config.joint_name_mapping,
+        targets = []
+        for config in self.config.robots:
+            planning_joint_names = set(config.joint_names)
+            execution_mapping = {
+                coordinator_name: model_name
+                for coordinator_name, model_name in config.joint_name_mapping.items()
+                if model_name in planning_joint_names
+            }
+            targets.append(
+                ExecutionTarget.from_coordinator_mapping(
+                    robot_name=config.name,
+                    model_joint_names=config.joint_names,
+                    coordinator_to_model=execution_mapping,
+                )
             )
-            for config in self.config.robots
-        ]
         self._execution_manager = PlanExecutionManager(
             targets=targets,
             coordinator=self._control_coordinator,
@@ -1502,8 +1479,8 @@ class ManipulationModule(Module):
         with self._lock:
             self._last_plan = plan
             self._state = ManipulationState.COMPLETED
-        result = self.execute(blocking=False)
-        return result.status is ExecutionStatus.ACCEPTED
+        result = self.execute(blocking=True)
+        return result.status is ExecutionStatus.COMPLETED
 
     @property
     def world_monitor(self) -> WorldMonitor | None:
@@ -1511,71 +1488,17 @@ class ManipulationModule(Module):
         return self._world_monitor
 
     @rpc
-    def add_obstacle(
-        self,
-        name: str,
-        pose: Pose,
-        shape: str,
-        dimensions: list[float] | None = None,
-        mesh_path: str | None = None,
-    ) -> str:
-        """Add obstacle: shape='box'|'sphere'|'cylinder'|'mesh'. Returns obstacle_id."""
-        if not self._world_monitor:
+    def add_obstacle(self, obstacle: Obstacle) -> str:
+        """Add a complete obstacle and return its native planning-world ID."""
+        if self._world_monitor is None:
             return ""
-
-        obstacle_type = _SHAPE_TO_OBSTACLE_TYPE.get(shape)
-        if obstacle_type is None:
-            logger.warning(f"Unknown obstacle shape: {shape}")
-            return ""
-
-        # Validate mesh_path for mesh type
-        if obstacle_type == ObstacleType.MESH and not mesh_path:
-            logger.warning("mesh_path required for mesh obstacles")
-            return ""
-
-        obstacle = Obstacle(
-            name=name,
-            obstacle_type=obstacle_type,
-            pose=PoseStamped(position=pose.position, orientation=pose.orientation),
-            dimensions=tuple(dimensions) if dimensions else (),
-            mesh_path=mesh_path,
-        )
-        return self._world_monitor.add_obstacle(obstacle)
+        return self._world_monitor.add_obstacle(obstacle) or ""
 
     @rpc
-    def update_obstacle(
-        self,
-        name: str,
-        pose: Pose,
-        shape: ObstacleShape,
-        dimensions: list[float] | None = None,
-        mesh_path: str | None = None,
-        color: list[float] | None = None,
-    ) -> bool:
+    def update_obstacle(self, obstacle: Obstacle) -> bool:
         """Replace a complete obstacle identified by name."""
         if self._world_monitor is None:
             return False
-
-        obstacle_type = _SHAPE_TO_OBSTACLE_TYPE.get(shape)
-        if obstacle_type is None:
-            raise ValueError(f"Unknown obstacle shape: {shape}")
-        if obstacle_type == ObstacleType.MESH and not mesh_path:
-            raise ValueError("mesh_path required for mesh obstacles")
-        if color is None:
-            rgba = DEFAULT_OBSTACLE_RGBA
-        elif len(color) == 4:
-            rgba = (float(color[0]), float(color[1]), float(color[2]), float(color[3]))
-        else:
-            raise ValueError("Obstacle color must contain four values")
-
-        obstacle = Obstacle(
-            name=name,
-            obstacle_type=obstacle_type,
-            pose=PoseStamped(position=pose.position, orientation=pose.orientation),
-            dimensions=tuple(dimensions) if dimensions else (),
-            color=rgba,
-            mesh_path=mesh_path,
-        )
         return self._world_monitor.update_obstacle(obstacle)
 
     @rpc
@@ -1737,15 +1660,17 @@ class ManipulationModule(Module):
                     "Shutdown could not confirm coordinator trajectory safety: %s",
                     cancellation.message,
                 )
-
-        # Stop TF thread
-        if self._tf_thread is not None:
-            self._tf_stop_event.set()
-            self._tf_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-            self._tf_thread = None
-
+        # Stop callbacks before clearing the monitor registry they dispatch into.
+        self._dispose_input_subscriptions()
         # Stop world monitor (includes visualization thread)
         if self._world_monitor is not None:
             self._world_monitor.stop_all_monitors()
 
         super().stop()
+
+    def _dispose_input_subscriptions(self) -> None:
+        for attribute in ("_joint_state_subscription",):
+            subscription = getattr(self, attribute, None)
+            setattr(self, attribute, None)
+            if subscription is not None:
+                subscription.dispose()

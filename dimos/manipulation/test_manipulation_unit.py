@@ -47,6 +47,7 @@ from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType, Plann
 from dimos.manipulation.planning.spec.models import (
     GeneratedPlan,
     IKResult,
+    Obstacle,
     PlanningResult,
 )
 from dimos.manipulation.planning.trajectory_generator.config import (
@@ -224,25 +225,17 @@ class TestObstacleUpdates:
             orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
         )
 
-        result = module.update_obstacle(
-            "moving-shape",
-            pose,
-            "sphere",
-            [0.4],
-            color=[0.1, 0.2, 0.3, 0.9],
+        obstacle = Obstacle(
+            name="moving-shape",
+            obstacle_type=ObstacleType.SPHERE,
+            pose=PoseStamped(position=pose.position, orientation=pose.orientation),
+            dimensions=(0.4,),
+            color=(0.1, 0.2, 0.3, 0.9),
         )
+        result = module.update_obstacle(obstacle)
 
         assert result is True
-        obstacle = module._world_monitor.update_obstacle.call_args.args[0]
-        assert obstacle.name == "moving-shape"
-        assert obstacle.obstacle_type == ObstacleType.SPHERE
-        assert obstacle.dimensions == (0.4,)
-        assert obstacle.color == (0.1, 0.2, 0.3, 0.9)
-        assert obstacle.pose.position.x == pytest.approx(1.0)
-
-        assert module.update_obstacle("default-color", pose, "box", [1.0, 1.0, 1.0])
-        default_obstacle = module._world_monitor.update_obstacle.call_args.args[0]
-        assert default_obstacle.color == (0.8, 0.2, 0.2, 0.8)
+        module._world_monitor.update_obstacle.assert_called_once_with(obstacle)
 
     def test_pose_update_forwards_only_name_and_pose(self, module_factory) -> None:
         module = module_factory()
@@ -262,40 +255,38 @@ class TestObstacleUpdates:
         assert stamped.position.y == pytest.approx(5.0)
         assert stamped.position.z == pytest.approx(6.0)
 
-    def test_complete_update_rejects_unknown_shape_before_world_mutation(
-        self, module_factory
-    ) -> None:
-        module = module_factory()
-        module._world_monitor = MagicMock(spec=WorldMonitor)
-
-        with pytest.raises(ValueError, match="Unknown obstacle shape"):
-            module.update_obstacle("shape", Pose(), "capsule", [1.0])
-
-        module._world_monitor.update_obstacle.assert_not_called()
-
-    def test_complete_update_rejects_incomplete_mesh_and_invalid_color(
-        self, module_factory
-    ) -> None:
-        module = module_factory()
-        module._world_monitor = MagicMock(spec=WorldMonitor)
-
-        with pytest.raises(ValueError, match="mesh_path required"):
-            module.update_obstacle("mesh", Pose(), "mesh")
-        with pytest.raises(ValueError, match="four values"):
-            module.update_obstacle("box", Pose(), "box", [1.0, 1.0, 1.0], color=[1.0])
-
-        module._world_monitor.update_obstacle.assert_not_called()
-
     def test_updates_fail_when_world_monitor_is_unavailable(self, module_factory) -> None:
         module = module_factory()
         module._world_monitor = None
+        obstacle = Obstacle(
+            name="box",
+            obstacle_type=ObstacleType.BOX,
+            pose=PoseStamped(),
+            dimensions=(1.0, 1.0, 1.0),
+        )
 
-        assert module.update_obstacle("box", Pose(), "box", [1.0, 1.0, 1.0]) is False
+        assert module.update_obstacle(obstacle) is False
         assert module.update_obstacle_pose("box", Pose()) is False
 
 
 class TestStateMachine:
     """Test state transitions."""
+
+    def test_execution_initialization_ignores_auxiliary_urdf_joint_mapping(
+        self, module_factory
+    ) -> None:
+        module = module_factory()
+        config = _one_joint_config()
+        config.joint_name_mapping = {
+            "arm/j0": "j0",
+            "arm/gripper": "drive_joint",
+        }
+        module.config = module.config.model_copy(update={"robots": [config]})
+        module._control_coordinator = _control_coordinator()
+
+        module._initialize_execution()
+
+        assert module._execution_manager is not None
 
     def test_cancel_interrupts_planning(self, module_factory):
         module = module_factory()

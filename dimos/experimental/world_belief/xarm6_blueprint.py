@@ -86,8 +86,6 @@ xarm6_worldbelief = autoconnect(
             make_xarm6_model_config(
                 name="arm",
                 add_gripper=False,
-                # Enables TF publication.
-                tf_extra_links=["link_base"],
             ),
         ],
     ),

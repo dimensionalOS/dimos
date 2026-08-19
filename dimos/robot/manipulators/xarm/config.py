@@ -58,6 +58,7 @@ XARM_MODEL_PATH = LfsPath("xarm_description") / "urdf/xarm_device.urdf.xacro"
 XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": LfsPath("xarm_description")}
 XARM6_SIM_PATH = LfsPath("xarm6/scene.xml")
 XARM7_SIM_PATH = LfsPath("xarm7/scene.xml")
+XARM7_SIM_BASE_HEIGHT = 0.12
 XARM_GRIPPER_PARAMS = {
     "gripper_joint": make_gripper_joints("arm")[0],
     "gripper_open_pos": 0.85,
@@ -70,7 +71,7 @@ def make_xarm7_sim_robot_config() -> RobotModelConfig:
     return make_xarm7_model_config(
         name="arm",
         add_gripper=True,
-        tf_extra_links=["link7"],
+        z_offset=XARM7_SIM_BASE_HEIGHT,
         home_joints=XARM7_SIM_HOME,
         pre_grasp_offset=0.05,
     )
@@ -228,7 +229,6 @@ def make_xarm_model_config(
     z_offset: float = 0.0,
     pitch: float = 0.0,
     joint_prefix: str | None = None,
-    tf_extra_links: list[str] | None = None,
     home_joints: list[float] | None = None,
     pre_grasp_offset: float = 0.10,
 ) -> RobotModelConfig:
@@ -243,6 +243,13 @@ def make_xarm_model_config(
 
     local_joint_names = joint_names(dof)
     tip_link = "link_tcp" if add_gripper else f"link{dof}"
+    joint_name_mapping = coordinator_joint_mapping(
+        name,
+        dof,
+        joint_prefix=joint_prefix,
+    )
+    if add_gripper:
+        joint_name_mapping[f"{name}/gripper"] = "drive_joint"
     return RobotModelConfig(
         name=name,
         model_path=XARM_MODEL_PATH,
@@ -261,13 +268,8 @@ def make_xarm_model_config(
         xacro_args=xacro_args,
         auto_convert_meshes=True,
         collision_exclusion_pairs=(XARM_GRIPPER_COLLISION_EXCLUSIONS if add_gripper else []),
-        joint_name_mapping=coordinator_joint_mapping(
-            name,
-            dof,
-            joint_prefix=joint_prefix,
-        ),
+        joint_name_mapping=joint_name_mapping,
         gripper_hardware_id=name if add_gripper else None,
-        tf_extra_links=tf_extra_links or [],
         home_joints=home_joints or [0.0] * dof,
         pre_grasp_offset=pre_grasp_offset,
     )

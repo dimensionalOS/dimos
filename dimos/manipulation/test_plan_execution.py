@@ -128,6 +128,19 @@ def test_blocking_execute_waits_for_terminal_jtt_status(module) -> None:
     assert module._state is ManipulationState.COMPLETED
 
 
+def test_visualization_execute_waits_for_terminal_jtt_status(module) -> None:
+    module._control_coordinator.task_invoke.side_effect = [
+        TrajectoryStatus(state=TrajectoryState.EXECUTING, progress=0.5),
+        TrajectoryStatus(state=TrajectoryState.COMPLETED, progress=1.0),
+    ]
+
+    succeeded = module._execute_generated_plan(_plan())
+
+    assert succeeded is True
+    assert module._control_coordinator.task_invoke.call_count == 2
+    assert module._state is ManipulationState.COMPLETED
+
+
 def test_execution_timeout_does_not_cancel_motion(module) -> None:
     module._control_coordinator.task_invoke.return_value = TrajectoryStatus(
         state=TrajectoryState.EXECUTING

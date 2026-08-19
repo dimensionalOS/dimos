@@ -36,7 +36,7 @@ g1_safe_radius_margin = 0.6
 
 unitree_g1_nav_simple = autoconnect(
     _unitree_g1_onboard,
-    RayTracingVoxelMap.blueprint(voxel_size=voxel_resolution),
+    RayTracingVoxelMap.blueprint(voxel_size=voxel_resolution, map_frame="odom"),
     CostMapper.blueprint(
         config=HeightCostConfig(
             resolution=voxel_resolution,

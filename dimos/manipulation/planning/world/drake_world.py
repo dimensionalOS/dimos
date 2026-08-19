@@ -619,6 +619,8 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             if not obstacle.mesh_path:
                 raise ValueError("MESH obstacle requires mesh_path")
             return Convex(Path(obstacle.mesh_path))
+        elif obstacle.obstacle_type == ObstacleType.OCTREE:
+            raise NotImplementedError("DrakeWorld does not support OCTREE obstacles")
         else:
             raise ValueError(f"Unsupported obstacle type: {obstacle.obstacle_type}")
 

@@ -126,6 +126,16 @@ class ManipulationOperator:
 
     def evaluate_pose_target(self, request: PoseTargetRequest) -> TargetEvaluationResult:
         """Validate and evaluate explicit world-frame pose targets."""
+        solved = self.solve_pose_target(request)
+        if not solved.success or solved.target_joints is None:
+            return solved
+        groups = self._groups_for_ids(solved.group_ids)
+        if groups is None:
+            return self._invalid(solved.group_ids, "Unknown planning group")
+        return self._evaluate_global_target(groups, solved.target_joints)
+
+    def solve_pose_target(self, request: PoseTargetRequest) -> TargetEvaluationResult:
+        """Solve pose-target IK without waiting for collision validation."""
         group_ids, validation = self._validate_pose_request(request)
         if validation is not None:
             return validation
@@ -133,7 +143,10 @@ class ManipulationOperator:
             pose_targets=dict(request.pose_targets),
             auxiliary_group_ids=request.auxiliary_group_ids,
             seed=JointState(request.seed) if request.seed is not None else None,
-            check_collision=True,
+            # Collision validity is evaluated once below against each robot's
+            # complete state.  Asking IK to check here would run the same
+            # expensive scene query twice for a successful pose target.
+            check_collision=False,
         )
         if not ik.is_success() or ik.joint_state is None:
             return TargetEvaluationResult(
@@ -146,7 +159,26 @@ class ManipulationOperator:
         groups = self._groups_for_ids(group_ids)
         if groups is None:
             return self._invalid(group_ids, "Unknown planning group")
-        return self._evaluate_global_target(groups, ik.joint_state)
+        complete = self._complete_states(groups, ik.joint_state)
+        if complete is None:
+            return self._invalid(group_ids, "Incomplete robot target state")
+        poses: dict[PlanningGroupID, PoseStamped | None] = {}
+        for group in groups:
+            try:
+                poses[group.id] = self._world_monitor.get_group_ee_pose(
+                    group.id, complete[group.robot_name]
+                )
+            except ValueError:
+                poses[group.id] = None
+        return TargetEvaluationResult(
+            success=True,
+            status="IK_SOLVED",
+            message="IK solved; collision check pending",
+            collision_free=False,
+            group_ids=group_ids,
+            target_joints=JointState(ik.joint_state),
+            group_poses=poses,
+        )
 
     def plan_to_joints(self, request: JointTargetRequest) -> GeneratedPlan | None:
         groups, validation = self._validate_joint_request(request)

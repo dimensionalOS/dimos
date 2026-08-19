@@ -876,6 +876,7 @@ class MujocoSimModule(
             return
 
         while not self._stop_event.is_set():
+            publish_started = time.monotonic()
             try:
                 frame = engine.read_camera(self.config.camera_name)
             except RuntimeError as exc:
@@ -891,7 +892,10 @@ class MujocoSimModule(
                 self._stop_event.wait(timeout=interval * 0.5)
                 continue
             last_timestamp = frame.timestamp
-            ts = time.time()
+            # The render pose and pixels are one capture. Preserve that timestamp
+            # through every derived message so TF lookup cannot pair the cloud
+            # with a later robot pose merely because publication was delayed.
+            ts = frame.timestamp
 
             if self.config.enable_color:
                 color_img = Image(
@@ -921,7 +925,7 @@ class MujocoSimModule(
                     depth_shape=frame.depth.shape,
                 )
 
-            elapsed = time.time() - ts
+            elapsed = time.monotonic() - publish_started
             sleep_time = interval - elapsed
             if sleep_time > 0:
                 time.sleep(sleep_time)
@@ -952,7 +956,7 @@ class MujocoSimModule(
         camera_transform = _pose_matrix(frame.cam_pos, mj_rot.as_matrix())
         optical_transform = _pose_matrix(frame.cam_pos, optical_rot.as_matrix())
         parent_frame = "world"
-        if frame.base_pos is not None and frame.base_mat is not None:
+        if self.config.base_frame_id and frame.base_pos is not None and frame.base_mat is not None:
             parent_frame = self.config.base_frame_id
             base_transform = _pose_matrix(frame.base_pos, frame.base_mat)
             inv_base_transform = np.linalg.inv(base_transform)
@@ -1014,6 +1018,10 @@ class MujocoSimModule(
                 depth_scale=1.0,
             )
             pcd = pcd.voxel_downsample(0.005)
+            # Point-cloud generation polls the latest immutable render independently
+            # from the image loop. Publish the pose from this exact capture so a
+            # newer render cannot overwrite the only TF sample matching the cloud.
+            self._publish_tf(frame.timestamp, frame)
             self.pointcloud.publish(pcd)
         except Exception as exc:
             logger.error("Pointcloud generation error", error=str(exc))

@@ -1211,7 +1211,7 @@ def test_group_fk_and_jacobian_use_group_tip_and_local_joint_order(
         self: FakeScene, q: np.ndarray, frame_name: str, local: bool = True
     ) -> np.ndarray:
         assert frame_name == "tcp"
-        assert local is True
+        assert local is False
         return np.arange(18, dtype=np.float64).reshape(6, 3)
 
     monkeypatch.setattr(FakeScene, "forwardKinematics", fake_fk)
