@@ -45,6 +45,10 @@ class OdometryFusionConfig(NativeModuleConfig):
     # outlier. 0 disables the gate.
     mahalanobis_gate: float = 5.0
 
+    # With this off the filter is seeded level from the first source message and coasts
+    # at constant world velocity between measurements instead of propagating on IMU.
+    use_imu: bool = True
+
     # Bosch BMI055 figures for the D455's IMU, in the continuous-time units the filter
     # wants: rad/s/sqrt(Hz), rad/s^2/sqrt(Hz), m/s^2/sqrt(Hz), m/s^3/sqrt(Hz).
     imu_gyro_noise_density: float = 0.0018
