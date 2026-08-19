@@ -232,6 +232,13 @@ impl ZenohTransport {
     }
 
     async fn open(settings: &SessionSettings) -> io::Result<Self> {
+        if settings.mode == Mode::Client && settings.connect.len() > 1 {
+            tracing::warn!(
+                connect = ?settings.connect,
+                "zenoh client mode holds a single link, traffic flows only through \
+                 the first endpoint that connects"
+            );
+        }
         let session = ::zenoh::open(settings.zenoh_config()?)
             .await
             .map_err(to_io)?;
