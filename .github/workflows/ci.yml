@@ -672,6 +672,11 @@ jobs:
         run: |
           git config --global --add safe.directory '*'
           git clean -ffdx
+      - name: Install system dependencies
+        if: matrix.os == 'Linux'
+        run: |
+          apt-get update
+          apt-get install -y libturbojpeg
       - name: Point uv at a persistent cache on the workspace mount
         # HOME in container jobs is an ephemeral /github/home, so uv's default
         # cache would be dropped after every run. The workspace mount (/__w,
