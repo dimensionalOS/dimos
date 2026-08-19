@@ -85,9 +85,6 @@ def test_relay_serves_cockpit_dist(tmp_path: Path) -> None:
         assert status == 200 and b"fake cockpit index" in index
         status, asset = _fetch(f"{info.open_url}assets/app.js")
         assert status == 200 and b"console.log" in asset
-        # The debug page still resolves from relay/static/ behind the cockpit.
-        status, debug = _fetch(info.debug_url)
-        assert status == 200 and b"DimOS relay debug" in debug
 
         status, body = _fetch(f"{info.open_url}api/info")
         assert status == 200
@@ -97,14 +94,13 @@ def test_relay_serves_cockpit_dist(tmp_path: Path) -> None:
         assert api_info["certHash"] == info.cert_hash
 
 
-def test_relay_without_cockpit_serves_debug(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_relay_without_cockpit_serves_build_hint(monkeypatch: pytest.MonkeyPatch) -> None:
     # The checkout may have a built dist; force the "not built" path.
     monkeypatch.setattr(relay_process, "find_cockpit_dist", lambda _: None)
     with RelayProcess(port=0) as info:
         assert info.cockpit is False
-        assert info.open_url == info.debug_url
-        status, index = _fetch(f"http://127.0.0.1:{info.http_port}/")
-        assert status == 200 and b"DimOS relay debug" in index
+        status, index = _fetch(info.open_url)
+        assert status == 404 and b"cockpit dist not built" in index
 
 
 class _FakeBuild:
