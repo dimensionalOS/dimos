@@ -231,7 +231,7 @@ def _write_rrd(db_path: Path, odom_stream: str, lidar_stream: str, voxel: float)
     import numpy as np
     import rerun as rr
 
-    from dimos.memory2.store.sqlite import SqliteStore
+    from dimos.memory.store.sqlite import SqliteStore
     from dimos.msgs.nav_msgs.Odometry import Odometry
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
     from dimos.visualization.rerun.init import rerun_init
@@ -504,7 +504,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "--db",
         default=None,
-        help="target memory2 SQLite db. Existing -> append/align; missing -> built from "
+        help="target memory SQLite db. Existing -> append/align; missing -> built from "
         "scratch. Omit to default to <pcap>.db next to the pcap.",
     )
     parser.add_argument(

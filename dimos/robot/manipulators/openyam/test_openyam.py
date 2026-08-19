@@ -40,7 +40,9 @@ from dimos.robot.manipulators.openyam.config import (
 
 
 def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
-    return next(atom.kwargs for atom in blueprint.blueprints if atom.module is module_type)
+    return next(
+        atom.kwargs for atom in blueprint.blueprints if issubclass(atom.module, module_type)
+    )
 
 
 def _coordinator_kwargs(blueprint: Blueprint) -> dict[str, Any]:

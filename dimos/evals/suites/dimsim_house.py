@@ -33,7 +33,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 if TYPE_CHECKING:
     from dimos.e2e_tests.dim_sim_client import DimSimClient
-    from dimos.memory2.store.base import Store
+    from dimos.memory.store.base import Store
 
 BED = Vector3(-3.567, -1.332, 0.0)
 

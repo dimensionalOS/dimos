@@ -163,7 +163,7 @@ Note that [`CostMapper`](/dimos/mapping/costmapper.py) builds the costmap from t
 
 | File | Format | Produced by | Consumed by |
 |------|--------|-------------|-------------|
-| `{name}.db` | memory2 SQLite (`lidar`, `odom`, `color_image`, …) | `unitree-go2-memory` | `dimos map *`, `--replay-db` |
+| `{name}.db` | memory SQLite (`lidar`, `odom`, `color_image`, …) | `unitree-go2-memory` | `dimos map *`, `--replay-db` |
 | `{name}.pc2.lcm` | LCM-encoded `PointCloud2` premap | `dimos map global --export` | `RelocalizationModule` (`map_file`) |
 | `{name}.rrd` | Rerun recording (visual QA) | `dimos map global` | Rerun viewer |
 

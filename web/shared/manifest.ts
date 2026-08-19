@@ -4,9 +4,9 @@
 // pytest).
 //
 // The transport (protocol.ts) checks only field shapes; this module owns the
-// domain rules: bounded unique ids, positive rates, and panel/layout
-// references that resolve. Panels and layout are minimal until T7 (the
-// layout is a flat panel-id order, not a tree).
+// domain rules: bounded unique ids, positive rates, panel/layout references
+// that resolve, and kind-specific panel rules (video). Panels and layout are
+// minimal until T7 (the layout is a flat panel-id order, not a tree).
 
 export type Delivery = "latest" | "reliable";
 
@@ -60,7 +60,7 @@ export function isChannelSpec(value: unknown): value is ChannelSpec {
   );
 }
 
-function isPanelSpec(value: unknown): value is PanelSpec {
+export function isPanelSpec(value: unknown): value is PanelSpec {
   return (
     isRecord(value) &&
     typeof value.id === "string" &&
@@ -97,7 +97,7 @@ export function parseManifest(value: unknown): Manifest {
   const panels = rawPanels as PanelSpec[];
   const layout = rawLayout as string[];
 
-  const chIds = new Set<string>();
+  const chIds = new Map<string, ChannelSpec>();
   for (const spec of channels) {
     if (!boundedId(spec.ch)) {
       throw new ManifestError(
@@ -108,7 +108,7 @@ export function parseManifest(value: unknown): Manifest {
     if (chIds.has(spec.ch)) {
       throw new ManifestError("duplicate_channel_id", `duplicate channel ${spec.ch}`);
     }
-    chIds.add(spec.ch);
+    chIds.set(spec.ch, spec);
     if (!boundedId(spec.encoding)) {
       throw new ManifestError(
         "invalid_encoding",
@@ -140,6 +140,23 @@ export function parseManifest(value: unknown): Manifest {
         throw new ManifestError(
           "unknown_panel_channel",
           `panel ${panel.id} wants undeclared channel ${ch}`,
+        );
+      }
+    }
+    // Kind-specific rules; unknown kinds stay unvalidated (forward
+    // compatibility with newer bridges).
+    if (panel.kind === "video") {
+      if (panel.channels.length !== 1) {
+        throw new ManifestError(
+          "invalid_video_panel",
+          `video panel ${panel.id} must bind exactly one channel`,
+        );
+      }
+      const bound = chIds.get(panel.channels[0])!;
+      if (bound.encoding !== "jpeg.v1" || bound.delivery !== "latest") {
+        throw new ManifestError(
+          "invalid_video_panel",
+          `video panel ${panel.id} needs a jpeg.v1 latest channel`,
         );
       }
     }
