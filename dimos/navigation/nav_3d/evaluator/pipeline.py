@@ -71,7 +71,9 @@ class MLSPipeline:
         self._planner = MLSPlanner(
             voxel_size=cfg.voxel_size,
             robot_height=cfg.robot_height,
-            **cfg.planner,  # type: ignore[arg-type]
+            # The only int param, bound explicitly so the float overrides unpack checks.
+            worker_threads=4,
+            **cfg.planner,
         )
         self._pending = False
         self._mapped = False

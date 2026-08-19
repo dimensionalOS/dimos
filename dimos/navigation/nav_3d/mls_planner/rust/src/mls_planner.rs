@@ -474,13 +474,9 @@ impl Planner {
             }
         }
 
-        // Wall-seed status scans across up to HOLE_SPAN_CELLS empty columns,
-        // so a change can flip wall adjacency that far away with no adjacency
-        // path in between. Root the first surfaced column in each direction.
-        // Columns behind it cannot see the change, their scan stops there.
-        // Affected seeds sit within headroom + step of the changed z, except
-        // when the column's own existence may have flipped, which can move
-        // any seed's scan stop: then the whole column roots.
+        // Wall-seed scans cross up to HOLE_SPAN_CELLS empty columns, so a
+        // change can flip wall adjacency that far away. Root the first
+        // surfaced column each direction, whole when its existence flipped.
         let headroom = config.headroom_cells();
         for &(ix, iy, iz) in changed {
             let flipped = lookup.get(&(ix, iy)).is_none_or(|zs| zs.len() <= 1);

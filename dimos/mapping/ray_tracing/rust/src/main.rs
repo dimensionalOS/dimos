@@ -109,11 +109,8 @@ impl RayTracingVoxelMap {
         let fine_due = mapper.fine_due();
         let global_due = mapper.global_due();
 
-        // Only the local cadence consumes the batch. A fine-only frame reads
-        // it non-destructively so the next local cylinder still covers every
-        // frame since the last local emission. With the local map disabled the
-        // fine cadence is the only consumer, so it takes or the batch would
-        // grow forever.
+        // Only the local cadence consumes the batch and fine-only frames peek.
+        // With the local map disabled the fine cadence takes instead.
         let region = if local_due || (fine_due && mapper.config().emit_every == 0) {
             Some(mapper.take_local_bounds())
         } else if fine_due {

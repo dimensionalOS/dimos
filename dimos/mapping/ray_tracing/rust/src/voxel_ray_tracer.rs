@@ -164,43 +164,38 @@ impl VoxelMap {
         self.voxels.values().filter(|c| c.health > 0).count()
     }
 
-    /// Add a return to its voxel's accumulated moments. Returns the key and
-    /// whether the return crossed the voxel's normal-refit milestone.
-    fn accumulate(&mut self, point: (f32, f32, f32), voxel_size: f32) -> (VoxelKey, bool) {
+    /// Add a return to its voxel's accumulated moments, marking its fine cell
+    /// when a divisor is given. Returns the key, whether the return crossed
+    /// the normal-refit milestone, and the fine key. The fine child index
+    /// derives from the coarse key, not a fine-grid float path, which can
+    /// disagree at cell boundaries and plant phantom voxels.
+    fn accumulate(
+        &mut self,
+        point: (f32, f32, f32),
+        voxel_size: f32,
+        fine_divisor: Option<i32>,
+    ) -> (VoxelKey, bool, Option<VoxelKey>) {
         let key = world_to_voxel(point.0, point.1, point.2, 1.0 / voxel_size);
         let center = Vector3::new(
             (key.0 as f32 + 0.5) * voxel_size,
             (key.1 as f32 + 0.5) * voxel_size,
             (key.2 as f32 + 0.5) * voxel_size,
         );
-        let milestone = self
-            .voxels
-            .entry(key)
-            .or_default()
-            .observe(Vector3::new(point.0, point.1, point.2) - center);
-        (key, milestone)
-    }
-
-    /// Mark a return's fine cell occupied and return its fine key. The child
-    /// index derives from the caller's coarse key, not a fine-grid float path,
-    /// which can disagree at cell boundaries and plant phantom voxels.
-    fn observe_fine(
-        &mut self,
-        point: (f32, f32, f32),
-        coarse: VoxelKey,
-        divisor: i32,
-        voxel_size: f32,
-    ) -> VoxelKey {
-        let inv_fine = divisor as f32 / voxel_size;
-        let local = |p: f32, k: i32| {
-            (((p - k as f32 * voxel_size) * inv_fine).floor() as i32).clamp(0, divisor - 1)
-        };
-        let lx = local(point.0, coarse.0);
-        let ly = local(point.1, coarse.1);
-        let lz = local(point.2, coarse.2);
-        let index = (lx * divisor + ly) * divisor + lz;
-        self.voxels.entry(coarse).or_default().fine |= 1 << index;
-        join_fine_key(coarse, index as usize, divisor)
+        let v = self.voxels.entry(key).or_default();
+        let milestone = v.observe(Vector3::new(point.0, point.1, point.2) - center);
+        let fine = fine_divisor.map(|divisor| {
+            let inv_fine = divisor as f32 / voxel_size;
+            let local = |p: f32, k: i32| {
+                (((p - k as f32 * voxel_size) * inv_fine).floor() as i32).clamp(0, divisor - 1)
+            };
+            let lx = local(point.0, key.0);
+            let ly = local(point.1, key.1);
+            let lz = local(point.2, key.2);
+            let index = (lx * divisor + ly) * divisor + lz;
+            v.fine |= 1 << index;
+            join_fine_key(key, index as usize, divisor)
+        });
+        (key, milestone, fine)
     }
 
     /// Move a voxel in or out of the healthy-chunk index on a health-sign crossing.
@@ -265,12 +260,17 @@ impl VoxelMap {
 
     /// Register a ray hit: create the voxel at `min_health` if new, then bump its
     /// health. Keeps the healthy-chunk index and every neighbor's `support` count
-    /// in sync.
-    fn record_hit(&mut self, key: VoxelKey, min_health: VoxelHealth, max_health: VoxelHealth) {
-        let (was_healthy, now_healthy) = if let Some(c) = self.voxels.get_mut(&key) {
+    /// in sync. Returns whether the voxel was created.
+    fn record_hit(
+        &mut self,
+        key: VoxelKey,
+        min_health: VoxelHealth,
+        max_health: VoxelHealth,
+    ) -> bool {
+        let (created, was_healthy, now_healthy) = if let Some(c) = self.voxels.get_mut(&key) {
             let was_healthy = c.health > 0;
             c.health = (c.health + 1).min(max_health);
-            (was_healthy, c.health > 0)
+            (false, was_healthy, c.health > 0)
         } else {
             let support = self.count_healthy_neighbors(key);
             let health = (min_health + 1).min(max_health);
@@ -282,12 +282,13 @@ impl VoxelMap {
                     ..Default::default()
                 },
             );
-            (false, health > 0)
+            (true, false, health > 0)
         };
         self.update_health_index(key, was_healthy, now_healthy);
         if was_healthy != now_healthy {
             self.propagate_neighbor_support(key, if now_healthy { 1 } else { -1 });
         }
+        created
     }
 
     /// Apply a clearing miss: drop the voxel's health by one, removing it once it
@@ -914,21 +915,25 @@ pub fn update_map(
             a
         });
 
+    // New voxels join the refresh set so a sparse voxel among converged
+    // neighbors gets a pooled fit before its first milestone.
+    let mut changed: AHashSet<VoxelKey> = AHashSet::new();
     for &v in &hits {
-        map.record_hit(v, cfg.min_health, cfg.max_health);
+        if map.record_hit(v, cfg.min_health, cfg.max_health) {
+            changed.insert(v);
+        }
     }
 
     let fine = cfg.fine_layer().map(|(d, _)| d as i32);
-    let mut changed: AHashSet<VoxelKey> = AHashSet::new();
     let mut fine_live: AHashSet<VoxelKey> =
         AHashSet::with_capacity(if fine.is_some() { points.len() } else { 0 });
     for &p in points {
-        let (key, milestone) = map.accumulate(p, cfg.voxel_size);
+        let (key, milestone, fine_key) = map.accumulate(p, cfg.voxel_size, fine);
         if milestone {
             changed.insert(key);
         }
-        if let Some(divisor) = fine {
-            fine_live.insert(map.observe_fine(p, key, divisor, cfg.voxel_size));
+        if let Some(fk) = fine_key {
+            fine_live.insert(fk);
         }
     }
 

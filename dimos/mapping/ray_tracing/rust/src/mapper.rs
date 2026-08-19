@@ -196,6 +196,7 @@ impl Mapper {
         self.batch_points.clear();
         self.batch_origins.clear();
         self.last_registered.clear();
+        self.last_origin = (0.0, 0.0, 0.0);
         self.frame_count = 0;
     }
 }

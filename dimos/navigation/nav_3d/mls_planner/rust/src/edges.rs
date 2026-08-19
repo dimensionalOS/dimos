@@ -214,10 +214,8 @@ pub fn build_node_edges_region(
     let live_node: AHashSet<NodeId> = source_cells.iter().copied().collect();
     let window_bbox = chain_bbox(window.iter().map(|&c| cells.coord(c)));
 
-    // A cached corridor survives while both its nodes exist and every hop of
-    // its stored chain is still live and passable. Corridors clear of the
-    // update window are provably untouched and keep their cost. Touched ones
-    // are re-walked and re-priced, or dropped when broken.
+    // Corridors clear of the update window are provably untouched and keep
+    // their cost. Touched ones are re-priced, or dropped when broken.
     let mut merged: AHashMap<(NodeId, NodeId), NodeEdge> = AHashMap::new();
     for e in out_edges.drain(..) {
         if !live_node.contains(&e.a) || !live_node.contains(&e.b) {

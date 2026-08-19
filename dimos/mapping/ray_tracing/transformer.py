@@ -72,7 +72,7 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
         self,
         upstream: Iterator[Observation[PointCloud2]],
     ) -> Iterator[Observation[PointCloud2]]:
-        # emit_every=1 turns on frame batching; this transformer consumes it
+        # emit_every=1 turns on frame batching. This transformer consumes it
         # with take_local_bounds on its own cadence.
         mapper = VoxelRayMapper(
             voxel_size=self.voxel_size,

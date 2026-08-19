@@ -348,7 +348,7 @@ fn build_surface(
     let inv = 1.0 / voxel_size;
     let mut map = VoxelMap::default();
     for &p in lidar {
-        map.accumulate(p, voxel_size);
+        map.accumulate(p, voxel_size, None);
     }
     let mut keys: Vec<VoxelKey> = lidar
         .iter()
@@ -876,7 +876,7 @@ fn healthy_chunk_index_tracks_health_transitions_through_update_map() {
     assert_eq!(
         map.healthy_chunks.values().map(|s| s.len()).sum::<usize>(),
         1,
-        "set() indexes the healthy voxel"
+        "set_health() indexes the healthy voxel"
     );
 
     update_map(&mut map, (0.0, 0.0, 0.0), &[(5.5, 0.5, 0.5)], &cfg);
@@ -1085,11 +1085,11 @@ fn fine_emission_applies_support_min() {
     for x in 0..3 {
         for y in 0..3 {
             map.set_health((x, y, 0), 1);
-            map.observe_fine((x as f32 + 0.5, y as f32 + 0.5, 0.5), (x, y, 0), 2, 1.0);
+            map.accumulate((x as f32 + 0.5, y as f32 + 0.5, 0.5), 1.0, Some(2));
         }
     }
     map.set_health((20, 20, 0), 1);
-    map.observe_fine((20.5, 20.5, 0.5), (20, 20, 0), 2, 1.0);
+    map.accumulate((20.5, 20.5, 0.5), 1.0, Some(2));
 
     let no_live = AHashSet::new();
     assert_eq!(
@@ -1153,6 +1153,45 @@ fn milestone_gated_normals_match_full_refit() {
         checked += 1;
     }
     assert!(checked > 100, "expected a real floor, checked {checked}");
+}
+
+/// A voxel created below its first milestone gets a pooled fit from converged
+/// neighbors on its creation frame, keeping the grazing spare available.
+#[test]
+fn new_voxel_gets_pooled_normal_on_creation() {
+    let voxel_size = 0.1_f32;
+    let cfg = Config {
+        voxel_size,
+        max_range: 50.0,
+        shadow_depth: 0.2,
+        grace_depth: 0.2,
+        graze_cos: 0.5,
+        ..basic_config()
+    };
+    let ds = voxel_size / 3.0;
+    let n = (2.0 / ds).ceil() as i32;
+    let origin = (1.0, 1.0, 1.0);
+    let gap = (10, 10, 0);
+    let mut map = VoxelMap::default();
+    for _ in 0..12 {
+        let floor: Vec<(f32, f32, f32)> = (0..=n)
+            .flat_map(|i| (0..=n).map(move |j| (i as f32 * ds, j as f32 * ds, voxel_size * 0.5)))
+            .filter(|&(x, y, z)| world_to_voxel(x, y, z, 1.0 / voxel_size) != gap)
+            .collect();
+        update_map(&mut map, origin, &floor, &cfg);
+    }
+    assert!(
+        !map.voxels.contains_key(&gap),
+        "gap voxel must start absent"
+    );
+
+    update_map(&mut map, origin, &[(1.05, 1.05, 0.05)], &cfg);
+    let v = &map.voxels[&gap];
+    assert_eq!(v.num_pts, 1);
+    assert!(
+        v.normal.is_some(),
+        "creation-frame voxel must carry a pooled normal"
+    );
 }
 
 /// Whole-map fine scan kept as the reference for the parallel, interior-hoisted

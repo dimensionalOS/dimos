@@ -95,11 +95,8 @@ def _height_colors(centers: NDArray[np.float32], base: list[int]) -> NDArray[np.
 
 
 def _z_gradient(centers: NDArray[np.float32], ramp: NDArray[np.float32]) -> NDArray[np.uint8]:
-    """Color each point by height, interpolated along the ramp's stops.
-
-    Normalizes to the 2nd-98th height percentiles so a few stray points cannot
-    compress the bulk of the cloud into the middle of the ramp.
-    """
+    """Color each point by height, normalized to the 2nd-98th percentiles
+    so stray points cannot compress the cloud into the middle of the ramp."""
     if len(centers) == 0:
         return np.empty((0, 3), np.uint8)
     z = centers[:, 2]
@@ -144,6 +141,12 @@ def main(
     ),
     normal_scale: float = typer.Option(
         0.08, "--normal-scale", help="Median normal arrow length (m); flatter fits draw longer"
+    ),
+    fit_normals: bool = typer.Option(
+        False,
+        "--fit-normals",
+        help="Refit normals every emitted frame to scale arrows by planarity. "
+        "Whole-map refit cost. Off draws cached normals at a fixed length",
     ),
     from_time: float | None = typer.Option(
         None, "--from-time", help="Start replay at this stream timestamp (s)"
@@ -231,7 +234,11 @@ def main(
                         ),
                     )
                     continue
-                centers, normals, min_eigs = mapper.global_map_normal_fits()
+                min_eigs: NDArray[np.float32] | None = None
+                if fit_normals:
+                    centers, normals, min_eigs = mapper.global_map_normal_fits()
+                else:
+                    centers, normals = mapper.global_map_normals()
                 colors = _z_gradient(centers, COARSE_RAMP)
                 rr.log(
                     f"world/maps/{name}",
@@ -241,7 +248,10 @@ def main(
                 origins, vectors = centers[keep], normals[keep]
                 flip = np.sum(vectors * (robot - origins), axis=1) < 0
                 vectors = np.where(flip[:, None], -vectors, vectors)
-                lengths = normal_scale * _planarity_scale(min_eigs[keep])
+                if min_eigs is None:
+                    lengths = np.full(len(origins), normal_scale, np.float32)
+                else:
+                    lengths = normal_scale * _planarity_scale(min_eigs[keep])
                 rr.log(
                     f"world/maps/{name}/normals",
                     rr.Arrows3D(
