@@ -389,3 +389,33 @@ def test_run_dataprep_rejects_shared_obs_action_key() -> None:
     )
     with pytest.raises(ValueError, match="share feature name"):
         run_dataprep(cfg)
+
+
+def test_run_dataprep_reports_empty_recorded_stream_before_writer(mocker, tmp_path: Path) -> None:
+    store = mocker.MagicMock()
+    store.list_streams.return_value = ["color_image", "joint_state", "status"]
+    stream_counts = {"color_image": 0, "joint_state": 20}
+    store.stream.side_effect = lambda name: mocker.MagicMock(
+        count=mocker.Mock(return_value=stream_counts[name])
+    )
+    mocker.patch("dimos.imitation.dataprep.build.SqliteStore", return_value=store)
+    mocker.patch(
+        "dimos.imitation.dataprep.build.extract_episodes",
+        return_value=[Episode(id="ep_0", start_ts=1.0, end_ts=2.0)],
+    )
+    mocker.patch("dimos.imitation.dataprep.build.iter_episode_samples", return_value=iter(()))
+    writer = mocker.Mock(return_value=tmp_path)
+    cfg = DataPrepConfig(
+        source="recording.db",
+        observation={
+            "wrist": StreamField(stream="color_image", field="data"),
+            "state": StreamField(stream="joint_state", field="position"),
+        },
+        output=OutputConfig(format="hdf5", path=tmp_path / "dataset.hdf5"),
+    )
+
+    with pytest.raises(RuntimeError, match="color_image=0, joint_state=20"):
+        run_dataprep(cfg, writer=writer)
+
+    writer.assert_not_called()
+    store.stop.assert_called_once_with()

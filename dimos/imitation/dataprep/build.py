@@ -23,6 +23,7 @@ readers/writers. Exposed by the `dimos dataprep` subcommand.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from itertools import chain
 import json
 from pathlib import Path
 from typing import Any
@@ -166,7 +167,22 @@ def run_dataprep(config: DataPrepConfig, *, writer: Writer | None = None) -> Pat
                     produced.append(ep)
                 episodes_done += 1
 
-        dataset_path = Path(selected_writer(_all_samples(), output))
+        samples = _all_samples()
+        try:
+            first_sample = next(samples)
+        except StopIteration as error:
+            recorded_streams = sorted({ref.stream for ref in streams.values()})
+            counts = ", ".join(
+                f"{stream_name}={store.stream(stream_name).count()}"
+                for stream_name in recorded_streams
+            )
+            raise RuntimeError(
+                f"No synchronized samples were produced from {total} successful episode(s). "
+                f"Recorded stream counts: {counts}. Check that every configured stream records "
+                "data during each episode before adjusting sync tolerance or action_shift."
+            ) from error
+
+        dataset_path = Path(selected_writer(chain((first_sample,), samples), output))
         written = [e.model_copy(update={"id": f"ep_{i:06d}"}) for i, e in enumerate(produced)]
         _write_dimos_meta(dataset_path, config, written)
         logger.info(
