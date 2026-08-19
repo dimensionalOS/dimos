@@ -32,8 +32,8 @@ from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
-from dimos.memory2.replay import Replay, ReplayStream, resolve_db_path
-from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory.replay import Replay, ReplayStream, resolve_db_path
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -75,6 +75,9 @@ class ConnectionConfig(ModuleConfig):
     # TF parent frame of the internal odometry (odom_frame_id -> base_link).
     # Rename (e.g. "go2_odom") when another odom source owns the tree root
     odom_frame_id: str = "world"
+    # Turn off where another module owns the base_link edge. The odom port
+    # keeps publishing either way.
+    publish_tf: bool = True
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -397,8 +400,9 @@ class GO2Connection(Module, Camera, Pointcloud):
 
     def _publish_tf(self, msg: PoseStamped) -> None:
         msg.frame_id = self.config.odom_frame_id
-        transforms = self._odom_to_tf(msg, prefix=self.config.frame_id_prefix or "")
-        self.tf.publish(TFMessage(*transforms))
+        if self.config.publish_tf:
+            transforms = self._odom_to_tf(msg, prefix=self.config.frame_id_prefix or "")
+            self.tf.publish(TFMessage(*transforms))
         if self.odom.transport:
             self.odom.publish(msg)
 

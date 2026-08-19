@@ -12,28 +12,50 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterator
 from pathlib import Path
+import re
 import sys
-from typing import Literal
+from typing import Any
 
-from pydantic import BaseModel, Field
 import pytest
 from typer.testing import CliRunner
 
+import dimos.cli.dimos as dimos_cli
 from dimos.cli.dimos import (
     _normalize_simulation_argv,
     _with_relay_bridge,
-    arg_help,
-    load_config_args,
     main,
 )
 import dimos.cli.spy.run_spy as run_spy
-from dimos.core.coordination.blueprints import autoconnect
-import dimos.core.coordination.worker_manager_python as worker_manager_python
+import dimos.core.coordination.module_coordinator as module_coordinator
+import dimos.core.coordination.process_lifecycle as process_lifecycle
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
+import dimos.core.run_registry as run_registry
 from dimos.robot import external_blueprints as external
+import dimos.robot.get_all_blueprints as get_all_blueprints
 import dimos.utils.cache as cache_utils
+import dimos.utils.logging_config as logging_config
+
+
+class RunConfigA(ModuleConfig):
+    map_file: str | None = None
+    entity_prefix: str = "world"
+    daemon: str = "module-default"
+
+
+class RunModuleA(Module):
+    config: RunConfigA
+
+
+class RunConfigB(ModuleConfig):
+    map_file: str | None = None
+    lookahead: float = 1.0
+
+
+class RunModuleB(Module):
+    config: RunConfigB
 
 
 @pytest.mark.parametrize(
@@ -74,106 +96,6 @@ def test_global_config_flag_applies_before_subcommand():
         global_config.update(transport=original)
 
 
-def test_blueprint_arg_help():
-    class ConfigA(ModuleConfig):
-        min_interval_sec: float = 0.1
-        entity_prefix: str = "world"
-        viewer_mode: Literal["native", "web", "connect", "none"] = "native"
-
-    class TestModuleA(Module):
-        config: ConfigA
-
-    class ConfigB(ModuleConfig):
-        memory_limit: str = "25%"
-        ip: str = "127.0.0.1"
-
-    class TestModuleB(Module):
-        config: ConfigB
-
-    blueprint = autoconnect(TestModuleA.blueprint(), TestModuleB.blueprint())
-    output = arg_help(blueprint.config(), blueprint)
-    # List output produces better diff in pytest error output.
-    assert output.split("\n") == [
-        "    testmodulea:",
-        "      * testmodulea.default_rpc_timeout: float (default: 120.0)",
-        "      * testmodulea.frame_id_prefix: str | None (default: None)",
-        "      * testmodulea.frame_id: str | None (default: None)",
-        "      * testmodulea.min_interval_sec: float (default: 0.1)",
-        "      * testmodulea.entity_prefix: str (default: world)",
-        "      * testmodulea.viewer_mode: typing.Literal['native', 'web', 'connect', 'none'] (default: native)",
-        "    testmoduleb:",
-        "      * testmoduleb.default_rpc_timeout: float (default: 120.0)",
-        "      * testmoduleb.frame_id_prefix: str | None (default: None)",
-        "      * testmoduleb.frame_id: str | None (default: None)",
-        "      * testmoduleb.memory_limit: str (default: 25%)",
-        "      * testmoduleb.ip: str (default: 127.0.0.1)",
-        "",
-    ]
-
-
-def test_blueprint_arg_help_extra_args():
-    """Test defaults passed to .blueprint() override."""
-
-    class ConfigA(ModuleConfig):
-        frame_id_prefix: str | None = None
-        min_interval_sec: float = 0.1
-        entity_prefix: str = "world"
-        viewer_mode: Literal["native", "web", "connect", "none"] = "native"
-
-    class TestModuleA(Module):
-        config: ConfigA
-
-    class ConfigB(ModuleConfig):
-        memory_limit: str = "25%"
-        ip: str = "127.0.0.1"
-
-    class TestModuleB(Module):
-        config: ConfigB
-
-    module_a = TestModuleA.blueprint(frame_id_prefix="foo", viewer_mode="web")
-    blueprint = autoconnect(module_a, TestModuleB.blueprint(ip="1.1.1.1"))
-    output = arg_help(blueprint.config(), blueprint)
-    # List output produces better diff in pytest error output.
-    assert output.split("\n") == [
-        "    testmodulea:",
-        "      * testmodulea.default_rpc_timeout: float (default: 120.0)",
-        "      * testmodulea.frame_id_prefix: str | None (default: foo)",
-        "      * testmodulea.frame_id: str | None (default: None)",
-        "      * testmodulea.min_interval_sec: float (default: 0.1)",
-        "      * testmodulea.entity_prefix: str (default: world)",
-        "      * testmodulea.viewer_mode: typing.Literal['native', 'web', 'connect', 'none'] (default: web)",
-        "    testmoduleb:",
-        "      * testmoduleb.default_rpc_timeout: float (default: 120.0)",
-        "      * testmoduleb.frame_id_prefix: str | None (default: None)",
-        "      * testmoduleb.frame_id: str | None (default: None)",
-        "      * testmoduleb.memory_limit: str (default: 25%)",
-        "      * testmoduleb.ip: str (default: 1.1.1.1)",
-        "",
-    ]
-
-
-def test_load_config_args_merges_cli_g_overrides(tmp_path):
-    """CLI flags (--transport, --local-relay, ...) must merge into the g
-    subtree built from config file / G__* env / -o g.* args, not replace it:
-    a replace silently reverts every other g.* key to its default."""
-
-    class Config(ModuleConfig):
-        pass
-
-    class TestModuleG(Module):
-        config: Config
-
-    blueprint = TestModuleG.blueprint()
-    kwargs = load_config_args(
-        blueprint.config(),
-        ["g.robot_id=go2-lab", "g.local_relay=false"],
-        tmp_path / "config.json",
-        cli_g_overrides={"local_relay": True},
-    )
-    assert kwargs["g"]["robot_id"] == "go2-lab"  # survives the CLI overrides
-    assert kwargs["g"]["local_relay"] is True  # the explicit flag wins its own key
-
-
 def test_run_composition_leaves_blueprint_alone_when_relay_disabled() -> None:
     class Config(ModuleConfig):
         pass
@@ -192,29 +114,6 @@ def test_run_composition_leaves_blueprint_alone_when_relay_disabled() -> None:
             local_relay=original_local_relay,
             relay_url=original_relay_url,
         )
-
-
-def test_blueprint_arg_help_required():
-    """Test required arguments."""
-
-    class Config(ModuleConfig):
-        foo: int
-        spam: str = "eggs"
-
-    class TestModule(Module):
-        config: Config
-
-    blueprint = TestModule.blueprint()
-    output = arg_help(blueprint.config(), blueprint)
-    assert output.split("\n") == [
-        "    testmodule:",
-        "      * testmodule.default_rpc_timeout: float (default: 120.0)",
-        "      * testmodule.frame_id_prefix: str | None (default: None)",
-        "      * testmodule.frame_id: str | None (default: None)",
-        "      * [Required] testmodule.foo: int",
-        "      * testmodule.spam: str (default: eggs)",
-        "",
-    ]
 
 
 def test_list_blueprints_groups_builtin_and_external(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -263,6 +162,222 @@ def test_list_blueprints_reports_external_discovery_errors(
 def isolated_cache_locks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cache_utils, "_CACHE_LOCK_DIR", tmp_path / "cache-users")
     monkeypatch.setattr(cache_utils, "_CACHE_GATE_PATH", tmp_path / "cache-clean.lock")
+
+
+@pytest.fixture
+def stubbed_run(
+    isolated_cache_locks: None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[dict[str, Any]]:
+    """Drive `dimos run` through parsing without starting processes."""
+    recorded: dict[str, Any] = {}
+    original_global_config = global_config.model_dump()
+
+    class FakeCoordinator:
+        n_modules = 1
+
+        @classmethod
+        def build(cls, blueprint: Any, parsed_config: Any = None) -> "FakeCoordinator":
+            recorded["blueprint"] = blueprint
+            recorded["parsed_config"] = parsed_config
+            return cls()
+
+        def health_check(self) -> bool:
+            return True
+
+        def stop(self) -> None:
+            return None
+
+        def suppress_console(self) -> None:
+            return None
+
+        def loop(self) -> None:
+            return None
+
+    class FakeEntry:
+        def __init__(self, **fields: Any) -> None:
+            recorded["entry"] = fields
+
+        def save(self) -> None:
+            return None
+
+        def remove(self) -> None:
+            return None
+
+    blueprints = {
+        "alpha": RunModuleA.blueprint(),
+        "beta": RunModuleB.blueprint(),
+    }
+    modules = {
+        "runmodulea": RunModuleA.blueprint(),
+        "runmoduleb": RunModuleB.blueprint(),
+    }
+
+    global_config.update(local_relay=False, relay_url=None)
+    monkeypatch.setattr(module_coordinator, "ModuleCoordinator", FakeCoordinator)
+    monkeypatch.setattr(run_registry, "RunEntry", FakeEntry)
+    monkeypatch.setattr(run_registry, "cleanup_stale", lambda: 0)
+    monkeypatch.setattr(run_registry, "generate_run_id", lambda name: f"test-{name}")
+    monkeypatch.setattr(process_lifecycle, "spawn_watchdog", lambda *args, **kwargs: None)
+    monkeypatch.setattr(dimos_cli, "install_signal_handlers", lambda *args, **kwargs: None)
+    monkeypatch.setattr(dimos_cli, "LOG_DIR", tmp_path / "logs")
+    monkeypatch.setattr(logging_config, "set_run_log_dir", lambda path: None)
+    monkeypatch.setattr(get_all_blueprints, "get_by_name_or_exit", blueprints.__getitem__)
+    monkeypatch.setattr(
+        get_all_blueprints,
+        "get_module_by_name_or_exit",
+        lambda name: modules[name.lower()],
+    )
+    monkeypatch.setenv("DIMOS_RUN_ID", "")
+
+    try:
+        yield recorded
+    finally:
+        global_config.update(**original_global_config)
+
+
+def test_run_parses_spaced_and_equals_config_flags(stubbed_run: dict[str, Any]) -> None:
+    result = CliRunner().invoke(
+        main,
+        [
+            "run",
+            "alpha",
+            "beta",
+            "--entity-prefix=hall",
+            "--lookahead",
+            "2.5",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    parsed = stubbed_run["parsed_config"]
+    assert parsed.module_kwargs("runmodulea")["entity_prefix"] == "hall"
+    assert parsed.module_kwargs("runmoduleb")["lookahead"] == 2.5
+    assert stubbed_run["entry"]["blueprint"] == "alpha-beta"
+    assert stubbed_run["entry"]["cli_args"] == ["alpha", "beta"]
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--robot-ip", "192.168.0.116", "run", "alpha"],
+        ["run", "alpha", "--robot-ip", "192.168.0.116"],
+    ],
+)
+def test_run_accepts_global_config_flags_before_and_after_blueprint(
+    argv: list[str],
+    stubbed_run: dict[str, Any],
+) -> None:
+    result = CliRunner().invoke(main, argv)
+
+    assert result.exit_code == 0, result.output
+    assert stubbed_run["parsed_config"].global_config["robot_ip"] == "192.168.0.116"
+
+
+def test_after_run_global_config_is_applied_before_blueprint_resolution(
+    stubbed_run: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed_robot_ips: list[str | None] = []
+
+    def resolve(name: str) -> Any:
+        observed_robot_ips.append(global_config.robot_ip)
+        assert name == "alpha"
+        return RunModuleA.blueprint()
+
+    monkeypatch.setattr(get_all_blueprints, "get_by_name_or_exit", resolve)
+
+    result = CliRunner().invoke(
+        main,
+        ["run", "alpha", "--robot-ip", "192.0.2.42"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert observed_robot_ips == ["192.0.2.42"]
+
+
+def test_qualified_global_relay_flag_is_applied_before_composition(
+    stubbed_run: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed_relay_values: list[tuple[bool, str | None]] = []
+
+    def compose(blueprint: Any) -> Any:
+        observed_relay_values.append((global_config.local_relay, global_config.relay_url))
+        return blueprint
+
+    monkeypatch.setattr(dimos_cli, "_with_relay_bridge", compose)
+
+    result = CliRunner().invoke(main, ["run", "alpha", "--g.local-relay=true"])
+
+    assert result.exit_code == 0, result.output
+    assert observed_relay_values == [(True, None)]
+    assert stubbed_run["parsed_config"].global_config["local_relay"] is True
+
+
+def test_run_rejects_ambiguous_short_config_flag(stubbed_run: dict[str, Any]) -> None:
+    result = CliRunner().invoke(main, ["run", "alpha", "beta", "--map-file", "office"])
+
+    assert result.exit_code == 2
+    assert "--runmodulea.map-file" in result.output
+    assert "--runmoduleb.map-file" in result.output
+    assert "parsed_config" not in stubbed_run
+    assert "entry" not in stubbed_run
+
+
+def test_run_accepts_qualified_config_flag(stubbed_run: dict[str, Any]) -> None:
+    result = CliRunner().invoke(
+        main,
+        ["run", "alpha", "beta", "--runmoduleb.map-file=office"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert stubbed_run["parsed_config"].module_kwargs("runmoduleb")["map_file"] == "office"
+    assert "map_file" not in stubbed_run["parsed_config"].module_kwargs("runmodulea")
+
+
+def test_run_options_still_work_after_dynamic_config_flags(
+    stubbed_run: dict[str, Any],
+) -> None:
+    result = CliRunner().invoke(
+        main,
+        ["run", "alpha", "beta", "--entity-prefix", "hall", "--disable", "RunModuleB"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert stubbed_run["parsed_config"].module_kwargs("runmodulea")["entity_prefix"] == "hall"
+    assert stubbed_run["blueprint"].disabled_modules_tuple == (RunModuleB,)
+
+
+def test_run_help_lists_dynamic_flags_without_starting(stubbed_run: dict[str, Any]) -> None:
+    result = CliRunner().invoke(main, ["run", "alpha", "--help"])
+
+    assert result.exit_code == 0, result.output
+    # In CI, GITHUB_ACTIONS makes typer emit ANSI styling that splits option
+    # names mid-string, so strip the escape codes before matching.
+    output_plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "--map-file" in output_plain
+    assert "--runmodulea.daemon" in output_plain
+    assert output_plain.count("--daemon") == 1
+    assert "parsed_config" not in stubbed_run
+    assert "entry" not in stubbed_run
+
+
+@pytest.mark.parametrize("legacy_flag", ["-o", "--option"])
+def test_run_rejects_removed_legacy_option(
+    legacy_flag: str,
+    stubbed_run: dict[str, Any],
+) -> None:
+    result = CliRunner().invoke(
+        main,
+        ["run", "alpha", legacy_flag, "runmodulea.entity_prefix=hall"],
+    )
+
+    assert result.exit_code == 2
+    assert "removed" in result.output.lower()
+    assert "--map-file" in result.output
+    assert "parsed_config" not in stubbed_run
 
 
 def test_run_reports_external_resolution_errors(
@@ -345,92 +460,3 @@ def test_spy_rejects_root_transport(monkeypatch, spy_main_argv):
     assert result.exit_code == 2
     assert "dimos spy --transport" in result.output
     assert spy_main_argv == []  # never reaches the spy
-
-
-def test_blueprint_arg_help_nested_config_paths():
-    class NestedConfig(BaseModel):
-        enabled: bool = True
-        mode: str = "auto"
-
-    class Config(ModuleConfig):
-        nested: NestedConfig = Field(default_factory=NestedConfig)
-
-    class TestModule(Module):
-        config: Config
-
-    blueprint = TestModule.blueprint(nested={"mode": "manual"})
-    output = arg_help(blueprint.config(), blueprint)
-
-    assert "      testmodule.nested:" in output
-    assert "        * testmodule.nested.enabled: bool (default: True)" in output
-    assert "        * testmodule.nested.mode: str (default: manual)" in output
-
-
-def test_blueprint_arg_help_uses_nested_backend_defaults():
-    class DisabledConfig(BaseModel):
-        backend: Literal["disabled"] = "disabled"
-
-    class EnabledConfig(BaseModel):
-        backend: Literal["enabled"] = "enabled"
-        level: int = 1
-
-    class Config(ModuleConfig):
-        nested: DisabledConfig | EnabledConfig = Field(default_factory=DisabledConfig)
-
-    class TestModule(Module):
-        config: Config
-
-    blueprint = TestModule.blueprint(nested={"backend": "enabled", "level": 3})
-    output = arg_help(blueprint.config(), blueprint)
-
-    assert "      testmodule.nested:" in output
-    assert (
-        "        * testmodule.nested.backend: typing.Literal['enabled'] (default: enabled)"
-        in output
-    )
-    assert "        * testmodule.nested.level: int (default: 3)" in output
-
-
-def test_nested_blueprint_config_defaults_survive_cli_override(tmp_path, monkeypatch):
-    class NestedConfig(BaseModel):
-        enabled: bool = True
-        mode: str = "auto"
-
-    class Config(ModuleConfig):
-        nested: NestedConfig = Field(default_factory=NestedConfig)
-
-    class TestModule(Module):
-        config: Config
-
-    class FakeWorker:
-        dedicated = False
-        module_count = 0
-
-        def reserve_slot(self):
-            self.module_count += 1
-
-        def deploy_module(self, _module_class, _global_config, kwargs):
-            return kwargs
-
-    monkeypatch.setattr(
-        worker_manager_python, "RPCClient", lambda actor, _module_class, _instance_name: actor
-    )
-
-    blueprint = TestModule.blueprint(nested={"mode": "manual"})
-    blueprint_args = load_config_args(
-        blueprint.config(),
-        ["testmodule.nested.enabled=false"],
-        tmp_path / "config.json",
-    )
-    worker_manager = worker_manager_python.WorkerManagerPython(global_config)
-    worker_manager._started = True
-    worker_manager._workers = [FakeWorker()]
-
-    deployed_configs = worker_manager.deploy_parallel(
-        [(TestModule, global_config, blueprint.blueprints[0].kwargs.copy())],
-        blueprint_args,
-    )
-    config = Config(**deployed_configs[0])
-
-    assert config.nested.enabled is False
-    assert config.nested.mode == "manual"

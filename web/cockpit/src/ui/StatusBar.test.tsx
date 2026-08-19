@@ -13,6 +13,7 @@ function makeStatus(over: Partial<SessionStatus> = {}): SessionStatus {
     robot: null,
     robotCount: 0,
     channels: [],
+    panels: [],
     epoch: 0,
     lastError: null,
     ...over,

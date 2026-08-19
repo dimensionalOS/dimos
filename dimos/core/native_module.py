@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""NativeModule: blueprint-integrated wrapper for native (C/C++) executables.
+"""NativeModule: blueprint-integrated wrapper for native executables.
 
-A NativeModule is a thin Python Module subclass that declares In/Out ports
+A NativeModule is a thin Python Module subclass that declares In/Out/IO ports
 for blueprint wiring but delegates all real work to a managed subprocess.
-The native process receives its LCM topic names via CLI args and does
-pub/sub directly on the LCM multicast bus.
+The native process receives its topic names via CLI args, or as a JSON line on
+stdin when ``stdin_config`` is set, and does pub/sub on them directly.
 
 Example usage::
 
@@ -178,15 +178,19 @@ class NativeModule(Module):
     """
     Module that wraps a native executable as a managed subprocess.
 
-    Subclass this, declare In/Out ports, and annotate ``config`` with a
+    Subclass this, declare In/Out/IO ports, and annotate ``config`` with a
     :class:`NativeModuleConfig` subclass pointing at the executable.
 
     On ``start()``, the binary is launched with CLI args::
 
-        <executable> --<port_name> <lcm_topic_string> ... <extra_args>
+        <executable> --<port_name> <topic> ... --<config_field> <value> ... <extra_args>
 
-    The native process should parse these args and pub/sub on the given
-    LCM topics directly.  On ``stop()``, the process receives SIGTERM.
+    Each topic is the wire channel for that port on the transport named by the
+    ``DIMOS_TRANSPORT`` env var. With ``stdin_config``, those same topics plus
+    the config and any publisher QoS also arrive as one JSON line on stdin.
+
+    The native process should parse whichever it uses and pub/sub on the given
+    topics directly.  On ``stop()``, the process receives SIGTERM.
     """
 
     config: NativeModuleConfig
@@ -427,7 +431,7 @@ class NativeModule(Module):
                 )
             return
 
-        if exe.exists() and not self.config.auto_build and not global_config.build_native:
+        if exe.exists() and not self.config.auto_build and not self.config.g.build_native:
             return
 
         logger.info(
@@ -471,7 +475,7 @@ class NativeModule(Module):
 
     def _collect_topics(self) -> dict[str, str]:
         topics: dict[str, str] = {}
-        for name in list(self.inputs) + list(self.outputs):
+        for name in list(self.inputs) + list(self.outputs) + list(self.ios):
             stream = getattr(self, name, None)
             if stream is None:
                 continue
@@ -484,9 +488,9 @@ class NativeModule(Module):
         return topics
 
     def _collect_output_qos(self) -> dict[str, dict[str, str]]:
-        """Publisher QoS per output channel, keyed by channel."""
+        """Publisher QoS per published channel, keyed by channel."""
         qos_map: dict[str, dict[str, str]] = {}
-        for name in self.outputs:
+        for name in list(self.outputs) + list(self.ios):
             stream = getattr(self, name, None)
             if stream is None:
                 continue

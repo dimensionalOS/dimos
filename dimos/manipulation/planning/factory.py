@@ -26,11 +26,17 @@ from dimos.manipulation.planning.kinematics.config import (
     PinkKinematicsConfig,
     kinematics_config_from_name,
 )
-from dimos.manipulation.planning.planners.config import (
-    ManipulationPlannerConfig,
-    RoboPlanPlannerConfig,
+from dimos.manipulation.planning.planners.config import ManipulationPlannerConfig
+from dimos.manipulation.planning.planners.roboplan_config import RoboPlanPlannerConfig
+from dimos.manipulation.planning.spec.protocols import (
+    PlannerSpec,
+    TrajectoryParametrizerSpec,
 )
-from dimos.manipulation.planning.spec.protocols import PlannerSpec
+from dimos.manipulation.planning.trajectory_generator.config import (
+    RoboPlanTOPPRAParametrizationConfig,
+    SimpleTrapezoidParametrizationConfig,
+    TrajectoryParametrizationConfig,
+)
 from dimos.manipulation.visualization.config import (
     ManipulationVisualizationConfig,
     NoManipulationVisualizationConfig,
@@ -51,6 +57,7 @@ class PlanningSpecs:
     world_monitor: WorldMonitor
     kinematics: KinematicsSpec
     planner: PlannerSpec
+    trajectory_parametrizer: TrajectoryParametrizerSpec
 
 
 WorldBackend: TypeAlias = Literal["drake", "roboplan"]
@@ -73,8 +80,13 @@ def validate_backend_combination(
     world_backend: str = "roboplan",
     planner_backend: str = "roboplan",
     kinematics_name: str = DEFAULT_KINEMATICS_NAME,
+    trajectory_parametrization_backend: str | None = None,
 ) -> None:
     """Validate manipulation backend choices before constructing the stack."""
+    if trajectory_parametrization_backend is None:
+        trajectory_parametrization_backend = (
+            "roboplan_toppra" if world_backend == "roboplan" else "simple_trapezoid"
+        )
     if world_backend not in SUPPORTED_WORLD_BACKENDS:
         raise ValueError(
             f"Unknown backend: {world_backend}. Available: {list(SUPPORTED_WORLD_BACKENDS)}"
@@ -87,11 +99,44 @@ def validate_backend_combination(
         raise ValueError(
             f"Unknown kinematics solver: {kinematics_name}. Available: {list(SUPPORTED_KINEMATICS)}"
         )
+    if trajectory_parametrization_backend not in ("simple_trapezoid", "roboplan_toppra"):
+        raise ValueError(
+            f"Unknown trajectory parametrization backend: {trajectory_parametrization_backend}"
+        )
 
     if planner_backend == "roboplan" and world_backend != "roboplan":
         raise ValueError(_ROBOPLAN_PLANNER_REQUIRES_ROBOPLAN_WORLD)
     if kinematics_name == "drake_optimization" and world_backend != "drake":
         raise ValueError('kinematics_name="drake_optimization" requires world_backend="drake"')
+    if trajectory_parametrization_backend == "roboplan_toppra" and world_backend != "roboplan":
+        raise ValueError(
+            'trajectory_parametrization.backend="roboplan_toppra" requires world_backend="roboplan"'
+        )
+
+
+def create_trajectory_parametrizer(
+    config: TrajectoryParametrizationConfig,
+    *,
+    world_backend: str,
+) -> TrajectoryParametrizerSpec:
+    """Construct the one startup-selected path parametrizer."""
+    if config.backend == "roboplan_toppra" and world_backend != "roboplan":
+        raise ValueError(
+            'trajectory_parametrization.backend="roboplan_toppra" requires world_backend="roboplan"'
+        )
+    if isinstance(config, SimpleTrapezoidParametrizationConfig):
+        from dimos.manipulation.planning.trajectory_generator.simple_parametrizer import (
+            SimpleTrapezoidParametrizer,
+        )
+
+        return SimpleTrapezoidParametrizer(config)
+    if isinstance(config, RoboPlanTOPPRAParametrizationConfig):
+        from dimos.manipulation.planning.trajectory_generator.roboplan_toppra_parametrizer import (
+            RoboPlanTOPPRAParametrizer,
+        )
+
+        return RoboPlanTOPPRAParametrizer(config)
+    raise TypeError(f"Unsupported trajectory parametrization config: {type(config).__name__}")
 
 
 def create_world(
@@ -150,8 +195,8 @@ def create_planner(
 ) -> PlannerSpec:
     """Create a motion planner from its typed backend configuration.
 
-    RoboPlan-native planning is scene/backend-coupled, so its config returns the
-    RoboPlan world object itself as the planner.
+    RoboPlan-native planning is scene/backend-coupled, so its planner is bound to
+    the supplied RoboPlan world.
     """
     if config.backend == "rrt_connect":
         from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
@@ -160,9 +205,9 @@ def create_planner(
     if config.backend == "roboplan":
         if world_backend != "roboplan" or world is None:
             raise ValueError(_ROBOPLAN_PLANNER_REQUIRES_ROBOPLAN_WORLD)
-        if not isinstance(world, PlannerSpec):
-            raise ValueError("RoboPlan-native planner requires a RoboPlan world planner object")
-        return world
+        from dimos.manipulation.planning.planners.roboplan_planner import RoboPlanPlanner
+
+        return RoboPlanPlanner(world, config)
 
     raise TypeError(f"Unsupported planner config: {type(config).__name__}")
 
@@ -173,6 +218,7 @@ def create_planning_specs(
     planner: ManipulationPlannerConfig | None = None,
     kinematics_name: str | None = None,
     kinematics: ManipulationKinematicsConfig | None = None,
+    trajectory_parametrization: TrajectoryParametrizationConfig | None = None,
 ) -> PlanningSpecs:
     """Create planning specs around an already-created world."""
     from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
@@ -183,17 +229,28 @@ def create_planning_specs(
         kinematics = kinematics_config_from_name(DEFAULT_KINEMATICS_NAME)
     if planner is None:
         planner = RoboPlanPlannerConfig()
+    if trajectory_parametrization is None:
+        trajectory_parametrization = (
+            RoboPlanTOPPRAParametrizationConfig()
+            if world_backend == "roboplan"
+            else SimpleTrapezoidParametrizationConfig()
+        )
 
     validate_backend_combination(
         world_backend=world_backend,
         planner_backend=planner.backend,
         kinematics_name=kinematics.backend,
+        trajectory_parametrization_backend=trajectory_parametrization.backend,
     )
 
     return PlanningSpecs(
         world_monitor=WorldMonitor(world=world),
         kinematics=create_kinematics(config=kinematics),
         planner=create_planner(config=planner, world=world, world_backend=world_backend),
+        trajectory_parametrizer=create_trajectory_parametrizer(
+            trajectory_parametrization,
+            world_backend=world_backend,
+        ),
     )
 
 

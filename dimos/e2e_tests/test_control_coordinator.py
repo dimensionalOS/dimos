@@ -20,9 +20,12 @@ Unlike unit tests, these verify the full system integration.
 
 import time
 
-import pytest
-
 from dimos.control.coordinator import ControlCoordinator
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JOINT_TRAJECTORY_TASK_NAME,
+    TrajectoryCancellationStatus,
+    TrajectoryExecutionStatus,
+)
 from dimos.core.rpc_client import RPCClient
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
@@ -30,7 +33,6 @@ from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
 
 
-@pytest.mark.skipif_in_ci
 class TestControlCoordinatorE2E:
     """End-to-end tests for ControlCoordinator."""
 
@@ -60,7 +62,7 @@ class TestControlCoordinatorE2E:
             # Test list_tasks RPC
             tasks = client.list_tasks()
             assert tasks is not None
-            assert "traj_arm" in tasks
+            assert JOINT_TRAJECTORY_TASK_NAME in tasks
 
             # Test list_hardware RPC
             hardware = client.list_hardware()
@@ -69,7 +71,7 @@ class TestControlCoordinatorE2E:
         finally:
             client.stop_rpc_client()
 
-    def test_coordinator_executes_trajectory(self, lcm_spy, start_blueprint) -> None:
+    def test_coordinator_executes_trajectory(self, lcm_spy, start_blueprint, wait_until) -> None:
         """Test that coordinator executes a trajectory via RPC."""
         # Save topics
         lcm_spy.save_topic("/coordinator_joint_state#sensor_msgs.JointState")
@@ -104,23 +106,18 @@ class TestControlCoordinatorE2E:
                 ],
             )
 
-            # Execute trajectory via task_invoke
-            result = client.task_invoke("traj_arm", "execute", {"trajectory": trajectory})
-            assert result is True
+            # Execute through the coordinator's trajectory RPC (it injects
+            # the authoritative current positions for start-state validation)
+            result = client.execute_trajectory(trajectory)
+            assert result.status is TrajectoryExecutionStatus.ACCEPTED, result
 
             # Poll for completion
-            timeout = 5.0
-            start_time = time.time()
-            completed = False
-
-            while time.time() - start_time < timeout:
-                state = client.task_invoke("traj_arm", "get_state")
-                if state is not None and state == TrajectoryState.COMPLETED:
-                    completed = True
-                    break
-                time.sleep(0.1)
-
-            assert completed, "Trajectory did not complete within timeout"
+            wait_until(
+                lambda: client.task_invoke(JOINT_TRAJECTORY_TASK_NAME, "get_state")
+                == TrajectoryState.COMPLETED,
+                timeout=5.0,
+                message="Trajectory did not complete within timeout",
+            )
         finally:
             client.stop_rpc_client()
 
@@ -181,24 +178,24 @@ class TestControlCoordinatorE2E:
                 ],
             )
 
-            # Start trajectory via task_invoke
-            result = client.task_invoke("traj_arm", "execute", {"trajectory": trajectory})
-            assert result is True
+            # Start trajectory
+            result = client.execute_trajectory(trajectory)
+            assert result.status is TrajectoryExecutionStatus.ACCEPTED, result
 
             # Wait a bit then cancel
             time.sleep(0.5)
-            cancel_result = client.task_invoke("traj_arm", "cancel")
-            assert cancel_result is True
+            cancel_result = client.cancel_trajectory()
+            assert cancel_result.status is TrajectoryCancellationStatus.CANCELLED, cancel_result
 
             # Check status is ABORTED
-            state = client.task_invoke("traj_arm", "get_state")
+            state = client.task_invoke(JOINT_TRAJECTORY_TASK_NAME, "get_state")
             assert state is not None
             assert state == TrajectoryState.ABORTED
         finally:
             client.stop_rpc_client()
 
-    def test_dual_arm_coordinator(self, lcm_spy, start_blueprint) -> None:
-        """Test dual-arm coordinator with independent trajectories."""
+    def test_dual_arm_coordinator(self, lcm_spy, start_blueprint, wait_until) -> None:
+        """Test dual-arm coordinator moving both arms with one combined trajectory."""
         lcm_spy.save_topic("/coordinator_joint_state#sensor_msgs.JointState")
 
         # Start dual-arm mock coordinator
@@ -212,44 +209,30 @@ class TestControlCoordinatorE2E:
             assert "left_arm/joint1" in joints
             assert "right_arm/joint1" in joints
 
+            # The coordinator supports exactly one trajectory task, so the
+            # dual-arm blueprint has a single task spanning both arms
             tasks = client.list_tasks()
-            assert "traj_left" in tasks
-            assert "traj_right" in tasks
+            assert tasks == [JOINT_TRAJECTORY_TASK_NAME]
 
-            # Create trajectories for both arms
-            left_trajectory = JointTrajectory(
-                joint_names=[f"left_arm/joint{i + 1}" for i in range(7)],
+            # One trajectory moving the left arm (7 joints) and right arm
+            # (6 joints) together
+            trajectory = JointTrajectory(
+                joint_names=[f"left_arm/joint{i + 1}" for i in range(7)]
+                + [f"right_arm/joint{i + 1}" for i in range(6)],
                 points=[
-                    TrajectoryPoint(time_from_start=0.0, positions=[0.0] * 7),
-                    TrajectoryPoint(time_from_start=0.5, positions=[0.2] * 7),
+                    TrajectoryPoint(time_from_start=0.0, positions=[0.0] * 13),
+                    TrajectoryPoint(time_from_start=0.5, positions=[0.2] * 7 + [0.3] * 6),
                 ],
             )
 
-            right_trajectory = JointTrajectory(
-                joint_names=[f"right_arm/joint{i + 1}" for i in range(6)],
-                points=[
-                    TrajectoryPoint(time_from_start=0.0, positions=[0.0] * 6),
-                    TrajectoryPoint(time_from_start=0.5, positions=[0.3] * 6),
-                ],
+            result = client.execute_trajectory(trajectory)
+            assert result.status is TrajectoryExecutionStatus.ACCEPTED, result
+
+            wait_until(
+                lambda: client.task_invoke(JOINT_TRAJECTORY_TASK_NAME, "get_state")
+                == TrajectoryState.COMPLETED,
+                timeout=5.0,
+                message="Trajectory did not complete within timeout",
             )
-
-            # Execute both via task_invoke
-            assert (
-                client.task_invoke("traj_left", "execute", {"trajectory": left_trajectory}) is True
-            )
-            assert (
-                client.task_invoke("traj_right", "execute", {"trajectory": right_trajectory})
-                is True
-            )
-
-            # Wait for completion
-            time.sleep(1.0)
-
-            # Both should complete
-            left_state = client.task_invoke("traj_left", "get_state")
-            right_state = client.task_invoke("traj_right", "get_state")
-
-            assert left_state == TrajectoryState.COMPLETED
-            assert right_state == TrajectoryState.COMPLETED
         finally:
             client.stop_rpc_client()
