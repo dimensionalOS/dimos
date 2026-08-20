@@ -71,6 +71,10 @@ export const MANIFEST_VERSION = 1;
 /** Bound for channel/panel ids, encodings, and panel kinds. */
 export const MAX_MANIFEST_ID_LEN = 64;
 
+/** Channel ids with this prefix belong to protocol control (e.g. @control)
+ * and can never be declared by a manifest. */
+export const RESERVED_CHANNEL_PREFIX = "@";
+
 export class ManifestError extends Error {
   constructor(readonly code: string, message: string) {
     super(`${code}: ${message}`);
@@ -220,6 +224,12 @@ export function parseManifest(value: unknown): Manifest {
       throw new ManifestError(
         "invalid_channel_id",
         `channel id must be 1..${MAX_MANIFEST_ID_LEN} chars`,
+      );
+    }
+    if (spec.ch.startsWith(RESERVED_CHANNEL_PREFIX)) {
+      throw new ManifestError(
+        "reserved_channel_id",
+        `channel ids beginning with ${RESERVED_CHANNEL_PREFIX} are reserved for protocol control`,
       );
     }
     if (chIds.has(spec.ch)) {

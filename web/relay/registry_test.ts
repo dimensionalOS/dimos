@@ -443,6 +443,19 @@ Deno.test("a robot that declared no manifest accepts any sub", () => {
   assertEquals(viewer.replies.filter((m) => m.t === "error"), []);
 });
 
+Deno.test("sub to a reserved @-channel is rejected even without a manifest", () => {
+  // @-ids are protocol control; they must never enter subs or snapshots.
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", []);
+  reg.registerRobot(robot);
+  const viewer = attach(reg, "r1", []);
+  const before = robot.subs().length;
+  send(reg, viewer, { t: "sub", ch: "@control" });
+  assertEquals((viewer.replies.at(-1) as { code: string }).code, "unknown_channel");
+  assertEquals(viewer.subs.size, 0);
+  assertEquals(robot.subs().length, before); // no new snapshot went out
+});
+
 Deno.test("sub while the watched robot is offline is rejected", () => {
   const reg = new Registry();
   const robot = new FakeRobot("r1", SPECS);

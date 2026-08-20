@@ -26,6 +26,9 @@ Framing (see web/README.md for the upstream-bug rationale):
   frames back to back on one persistent stream. Receivers count bytes and
   must never treat stream EOF as a message boundary (Deno 2.6.x delays FIN
   by up to ~1 s, and a persistent stream has no EOF between frames).
+  Channel ids beginning with "@" are reserved for protocol control: the
+  robot's hello rides an @control frame (datagram-encoded payload) on a
+  one-shot bidi stream, and @-frames are never forwarded to viewers.
 
 Validation policy (mirrored in protocol.ts): decoders validate shape strictly,
 and receivers drop invalid or unknown messages -- a peer's bytes must never
@@ -56,6 +59,7 @@ from dimos.utils.logging_config import setup_logger
 # single import surface, mirroring protocol.ts.
 from dimos.web.relay_bridge.manifest import (
     MAX_MANIFEST_ID_LEN,
+    RESERVED_CHANNEL_PREFIX as RESERVED_CHANNEL_PREFIX,
     ChannelSpec as ChannelSpec,
     Delivery as Delivery,
     Dir as Dir,
@@ -64,17 +68,31 @@ from dimos.web.relay_bridge.manifest import (
 
 logger = setup_logger()
 
-# v4: the twist datagram gains vy (strafe) and the teleop lease messages
-# (teleop_start/teleop_started/teleop_stop) enter the control plane;
-# robot-bound twist/stop/teleop_start/teleop_stop carry the relay-stamped
-# lease generation `gen` (amended into v4 pre-release: an older v4 peer
-# without gen gets dead teleop, never unsafe motion). v3: the
+# v5: the robot hello leaves datagrams (and their ~1100 B budget) and rides
+# an @control data frame on a robot-opened one-shot bidi stream; channel ids
+# beginning with "@" are reserved for protocol control; a robot datagram
+# hello is rejected. v4: the twist datagram gains vy (strafe) and the teleop
+# lease messages (teleop_start/teleop_started/teleop_stop) enter the control
+# plane; robot-bound twist/stop/teleop_start/teleop_stop carry the
+# relay-stamped lease generation `gen` (amended into v4 pre-release: an
+# older v4 peer without gen gets dead teleop, never unsafe motion). v3: the
 # manifest travels as one opaque record nested in hello/manifest messages
 # (v2 carried flat channels/panels fields, which a v2 peer would silently
 # misread in both directions). v2: a reliable channel packs all its frames
 # onto one persistent stream. Bump on any change an old peer would silently
 # misparse.
-PROTOCOL_VERSION = 4
+PROTOCOL_VERSION = 5
+
+# The reserved data-frame channel carrying robot-leg control messages (v5+:
+# the robot's hello; the relay never forwards @-prefixed frames to viewers).
+# The payload reuses the datagram encoding (raw UTF-8 JSON).
+CONTROL_CHANNEL = "@control"
+
+# Cap for an @control frame's payload, far below MAX_DATA_FRAME_BYTES: the
+# relay enforces it before buffering the payload (pre-authentication frames
+# must not allocate unbounded state) and the robot client refuses to send
+# beyond it.
+MAX_CONTROL_PAYLOAD_BYTES = 64 * 1024
 
 # Reject absurd header lengths before allocating (mirrors protocol.ts).
 MAX_HEADER_LEN = 65536

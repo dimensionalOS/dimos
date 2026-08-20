@@ -35,7 +35,10 @@ from dimos.web.relay_bridge.protocol import (
     Hello,
     RobotInfo,
     RobotManifest,
+    Sub,
     Unsub,
+    Watch,
+    encode_datagram,
 )
 from dimos.web.relay_bridge.relay_process import RelayProcess, RelayReadyInfo
 from dimos.web.relay_bridge.wt_client import RelayClient, RelayRejectedError
@@ -117,10 +120,10 @@ async def test_robot_hello_without_identity_is_rejected(relay: RelayReadyInfo) -
             await robot.hello()
 
 
-async def test_previous_protocol_version_is_rejected(relay: RelayReadyInfo) -> None:
-    # A v1 (T2-era) bridge would misread the v2 persistent reliable stream as
-    # a single frame; the relay must fail its handshake loudly. Hello rides
-    # lossy datagrams, so resend until the error lands.
+async def test_datagram_hello_from_an_old_bridge_is_rejected(relay: RelayReadyInfo) -> None:
+    # v5 moved the robot hello onto @control stream frames; a datagram hello
+    # is how every v4-or-older bridge announces itself and must fail the
+    # handshake loudly. Datagrams are lossy, so resend until the error lands.
     async with await RelayClient.connect(relay.wt_url, "robot") as old:
         deadline = time.monotonic() + 5.0
         while old._session.relay_error is None and time.monotonic() < deadline:
@@ -128,6 +131,60 @@ async def test_previous_protocol_version_is_rejected(relay: RelayReadyInfo) -> N
             await asyncio.sleep(0.05)
         error = old._session.relay_error
         assert error is not None and error.code == "version_mismatch"
+
+
+async def test_fat_manifest_registers_beyond_the_datagram_budget(relay: RelayReadyInfo) -> None:
+    # The whole point of the v5 stream hello: a manifest far beyond the old
+    # ~1100 B datagram budget registers, gates subs, and forwards frames.
+    manifest: RobotManifest = {
+        "version": 1,
+        "channels": [
+            {
+                "ch": f"ch_{i}",
+                "encoding": "pose.json.v1",
+                "delivery": "reliable",
+                "maxHz": 10.5,
+                "params": {"note": f"padding for channel {i} so the hello dwarfs a datagram"},
+            }
+            for i in range(40)
+        ],
+    }
+    fat_robot = RobotInfo(id="fat-bot", name="Fat Bot", model="test")
+    hello_size = len(encode_datagram(Hello(v=5, role="robot", robot=fat_robot, manifest=manifest)))
+    assert hello_size > 1200, f"fat hello must exceed the datagram budget, got {hello_size} B"
+
+    async with await RelayClient.connect(relay.wt_url, "robot") as robot:
+        await robot.hello(robot=fat_robot, manifest=manifest)
+        async with await RelayClient.connect(relay.wt_url, "viewer") as viewer:
+            await viewer.hello()
+            # This test viewer's control plane is datagrams, and the fat
+            # manifest reply exceeds a datagram, so the usual manifest-ack
+            # ordering barrier is unavailable (a browser viewer receives it
+            # on its control stream - pinned by the Deno-side fat test).
+            # Retry the idempotent watch+sub pair until the snapshot lands.
+            deadline = time.monotonic() + 10.0
+            while True:
+                viewer.send_control(Watch(robotId=fat_robot.id))
+                viewer.send_control(Sub(ch="ch_7"))
+                try:
+                    await wait_subs(robot, {"ch_7"}, timeout=1.0)
+                    break
+                except TimeoutError:
+                    if time.monotonic() >= deadline:
+                        raise
+            # The sub was accepted only because the fat manifest declared
+            # ch_7: an undeclared channel is refused, proving the relay
+            # parsed and enforces the whole manifest.
+            viewer.send_control(Sub(ch="undeclared"))
+            while viewer._session.relay_error is None:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("no unknown_channel error for the undeclared sub")
+                await asyncio.sleep(0.05)
+            assert viewer._session.relay_error.code == "unknown_channel"
+
+            robot.send_frame("ch_7", b"fat-frame", delivery="reliable")
+            frames = await collect_until(viewer, lambda fs: any(f.header.ch == "ch_7" for f in fs))
+            assert [bytes(f.payload) for f in frames if f.header.ch == "ch_7"] == [b"fat-frame"]
 
 
 async def test_invalid_manifest_hello_is_rejected(relay: RelayReadyInfo) -> None:

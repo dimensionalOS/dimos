@@ -7,7 +7,9 @@ import {
   type Delivery,
   type FrameHeader,
   frameHeaderFromUnknown,
+  MAX_CONTROL_PAYLOAD_BYTES,
   peekDataFrameLengths,
+  RESERVED_CHANNEL_PREFIX,
 } from "@dimos/shared";
 
 // Reliable channels: a viewer this far behind is dead weight; kick it so it
@@ -475,27 +477,72 @@ async function readByte(reader: ReadableStreamBYOBReader): Promise<number> {
   return value[0];
 }
 
+/** An @-channel frame claimed a payload beyond MAX_CONTROL_PAYLOAD_BYTES.
+ * Typed so sessions can reject the peer instead of the usual silent
+ * per-stream drop. */
+export class ControlPayloadTooLargeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ControlPayloadTooLargeError";
+  }
+}
+
 /**
  * Read one length-prefixed data frame from a robot stream, stopping at the
  * frame's byte count - never at EOF (Deno 2.6.x delays FIN by up to ~1 s, and
  * a reset-stale writer may never send one). BYOB reader: default readers were
  * observed to never deliver on Deno 2.6.10 incoming WT streams.
+ *
+ * The header is parsed as soon as its bytes arrive (headerLen is bounded by
+ * MAX_HEADER_LEN) and returned alongside the frame so callers dispatch
+ * without re-parsing; null = malformed header. `reserved` reports whether
+ * the raw header JSON named an @-prefixed channel, independent of full
+ * header validity, so sessions fail closed on malformed control instead of
+ * misfiling it as ordinary data. Reserved channels are capped at
+ * MAX_CONTROL_PAYLOAD_BYTES before their payload is buffered -
+ * pre-authentication control must not allocate unbounded state.
  */
-export async function readDataFrameBytes(rs: ReadableStream<Uint8Array>): Promise<Uint8Array> {
+export async function readRobotFrame(
+  rs: ReadableStream<Uint8Array>,
+): Promise<{ header: FrameHeader | null; bytes: Uint8Array; reserved: boolean }> {
   const reader = rs.getReader({ mode: "byob" });
   const chunks: Uint8Array[] = [];
   let size = 0;
-  let total: number | null = null;
+  let lens: { headerLen: number; payloadLen: number; total: number } | null = null;
+  let header: FrameHeader | null = null;
+  let headerParsed = false;
+  let reserved = false;
   try {
-    while (total === null || size < total) {
+    while (lens === null || size < lens.total) {
       const { value, done } = await reader.read(new Uint8Array(64 * 1024));
       if (value && value.byteLength) {
         chunks.push(value);
         size += value.byteLength;
-        if (total === null && size >= 8) {
+        if (lens === null && size >= 8) {
           // peekDataFrameLengths throws on an oversize total (MAX_DATA_FRAME_BYTES).
-          const lens = peekDataFrameLengths(concatBytes(chunks, 8));
-          if (lens !== null) total = lens.total;
+          lens = peekDataFrameLengths(concatBytes(chunks, 8));
+        }
+        if (lens !== null && !headerParsed && size >= 8 + lens.headerLen) {
+          headerParsed = true;
+          let raw: unknown = null;
+          try {
+            raw = JSON.parse(
+              headerDecoder.decode(concatBytes(chunks, 8 + lens.headerLen).subarray(8)),
+            );
+          } catch {
+            // bad UTF-8 or bad JSON: header stays null, dropped downstream
+          }
+          const ch = typeof raw === "object" && raw !== null && !Array.isArray(raw)
+            ? (raw as Record<string, unknown>).ch
+            : undefined;
+          reserved = typeof ch === "string" && ch.startsWith(RESERVED_CHANNEL_PREFIX);
+          if (reserved && lens.payloadLen > MAX_CONTROL_PAYLOAD_BYTES) {
+            throw new ControlPayloadTooLargeError(
+              `control frame claims a ${lens.payloadLen} B payload ` +
+                `(cap ${MAX_CONTROL_PAYLOAD_BYTES})`,
+            );
+          }
+          header = frameHeaderFromUnknown(raw);
         }
       }
       if (done) break;
@@ -503,8 +550,8 @@ export async function readDataFrameBytes(rs: ReadableStream<Uint8Array>): Promis
   } finally {
     reader.releaseLock();
   }
-  if (total === null || size < total) {
+  if (lens === null || size < lens.total) {
     throw new Error(`robot stream ended mid-frame (${size} bytes)`);
   }
-  return concatBytes(chunks, total);
+  return { header, bytes: concatBytes(chunks, lens.total), reserved };
 }

@@ -4,7 +4,7 @@
       "name": "hello_robot",
       "message": {
         "t": "hello",
-        "v": 4,
+        "v": 5,
         "role": "robot",
         "robot": {
           "id": "go2-lab",
@@ -52,24 +52,24 @@
           "pages": []
         }
       },
-      "b64": "5wEAAHsidCI6ImhlbGxvIiwidiI6NCwicm9sZSI6InJvYm90Iiwicm9ib3QiOnsiaWQiOiJnbzItbGFiIiwibmFtZSI6IkdvMiBMYWJvcmF0b3IgzrIiLCJtb2RlbCI6InVuaXRyZWUtZ28yIn0sIm1hbmlmZXN0Ijp7InZlcnNpb24iOjEsImNoYW5uZWxzIjpbeyJjaCI6ImNvbG9yX2ltYWdlIiwiZGlyIjoicngiLCJlbmNvZGluZyI6ImpwZWcudjEiLCJkZWxpdmVyeSI6ImxhdGVzdCIsIm1heEh6IjoxNS41LCJwYXJhbXMiOnsicXVhbGl0eSI6NzUuNX19LHsiY2giOiJvZG9tIiwiZGlyIjoicngiLCJlbmNvZGluZyI6InBvc2UuanNvbi52MSIsImRlbGl2ZXJ5IjoicmVsaWFibGUiLCJtYXhIeiI6MjAuNSwicGFyYW1zIjp7fX1dLCJwYW5lbHMiOlt7ImlkIjoicDAiLCJraW5kIjoidmlkZW8iLCJ0aXRsZSI6IkNhbWVyYSDOsiIsImNoYW5uZWxzIjpbImNvbG9yX2ltYWdlIl0sInBhcmFtcyI6e319XSwibGF5b3V0Ijp7InJvdyI6WyJwMCJdfSwicGFnZXMiOltdfX0="
+      "b64": "5wEAAHsidCI6ImhlbGxvIiwidiI6NSwicm9sZSI6InJvYm90Iiwicm9ib3QiOnsiaWQiOiJnbzItbGFiIiwibmFtZSI6IkdvMiBMYWJvcmF0b3IgzrIiLCJtb2RlbCI6InVuaXRyZWUtZ28yIn0sIm1hbmlmZXN0Ijp7InZlcnNpb24iOjEsImNoYW5uZWxzIjpbeyJjaCI6ImNvbG9yX2ltYWdlIiwiZGlyIjoicngiLCJlbmNvZGluZyI6ImpwZWcudjEiLCJkZWxpdmVyeSI6ImxhdGVzdCIsIm1heEh6IjoxNS41LCJwYXJhbXMiOnsicXVhbGl0eSI6NzUuNX19LHsiY2giOiJvZG9tIiwiZGlyIjoicngiLCJlbmNvZGluZyI6InBvc2UuanNvbi52MSIsImRlbGl2ZXJ5IjoicmVsaWFibGUiLCJtYXhIeiI6MjAuNSwicGFyYW1zIjp7fX1dLCJwYW5lbHMiOlt7ImlkIjoicDAiLCJraW5kIjoidmlkZW8iLCJ0aXRsZSI6IkNhbWVyYSDOsiIsImNoYW5uZWxzIjpbImNvbG9yX2ltYWdlIl0sInBhcmFtcyI6e319XSwibGF5b3V0Ijp7InJvdyI6WyJwMCJdfSwicGFnZXMiOltdfX0="
     },
     {
       "name": "hello_viewer",
       "message": {
         "t": "hello",
-        "v": 4,
+        "v": 5,
         "role": "viewer"
       },
-      "b64": "IwAAAHsidCI6ImhlbGxvIiwidiI6NCwicm9sZSI6InZpZXdlciJ9"
+      "b64": "IwAAAHsidCI6ImhlbGxvIiwidiI6NSwicm9sZSI6InZpZXdlciJ9"
     },
     {
       "name": "welcome",
       "message": {
         "t": "welcome",
-        "v": 4
+        "v": 5
       },
-      "b64": "FQAAAHsidCI6IndlbGNvbWUiLCJ2Ijo0fQ=="
+      "b64": "FQAAAHsidCI6IndlbGNvbWUiLCJ2Ijo1fQ=="
     },
     {
       "name": "ping",
@@ -94,9 +94,9 @@
       "message": {
         "t": "error",
         "code": "version_mismatch",
-        "message": "protocol v4 required, versiune neacceptată"
+        "message": "protocol v5 required, versiune neacceptată"
       },
-      "b64": "XwAAAHsidCI6ImVycm9yIiwiY29kZSI6InZlcnNpb25fbWlzbWF0Y2giLCJtZXNzYWdlIjoicHJvdG9jb2wgdjQgcmVxdWlyZWQsIHZlcnNpdW5lIG5lYWNjZXB0YXTEgyJ9"
+      "b64": "XwAAAHsidCI6ImVycm9yIiwiY29kZSI6InZlcnNpb25fbWlzbWF0Y2giLCJtZXNzYWdlIjoicHJvdG9jb2wgdjUgcmVxdWlyZWQsIHZlcnNpdW5lIG5lYWNjZXB0YXTEgyJ9"
     },
     {
       "name": "robots_two",

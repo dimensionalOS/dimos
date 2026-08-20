@@ -14,7 +14,8 @@
 
 """aioquic session internals for the relay bridge.
 
-The quirks this module works around are documented in web/README.md: control rides
+The quirks this module works around are documented in web/README.md: the v5
+robot hello rides an @control data frame while all relay->robot control rides
 datagrams (the relay may never write on our bidi streams), data frames are
 one-shot bidi streams, delivery pacing uses `sender.is_finished` (ACK-based),
 and reset_stream is only ever called on ids still present in `_quic._streams`
