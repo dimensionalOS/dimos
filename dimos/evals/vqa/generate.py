@@ -149,7 +149,9 @@ class GenerationFrame:
 
 
 @dataclass(frozen=True)
-class _GeneratedFrame:
+class GeneratedFrame:
+    """Questions and evidence generated for one source frame."""
+
     index: int
     image: Image
     cases: tuple[PublicCase, ...]
@@ -237,7 +239,7 @@ def generate_frames_dataset(
         rejected_count = 0
         used_family_names: set[str] = set()
         for source in frames:
-            frame = _generate_frame(source, author, detector, range_estimator, mask_estimator)
+            frame = generate_frame(source, author, detector, range_estimator, mask_estimator)
             _write_frame(staging, frame)
             all_cases.extend(frame.cases)
             all_labels.extend(frame.labels)
@@ -277,13 +279,14 @@ def generate_frames_dataset(
     return GenerationResult(output=output, cases=tuple(all_cases))
 
 
-def _generate_frame(
+def generate_frame(
     source: GenerationFrame,
     author: QuestionAuthor,
     detector: VlModel,
     range_estimator: ObjectRangeEstimator | None,
     mask_estimator: ObjectMaskEstimator | None,
-) -> _GeneratedFrame:
+) -> GeneratedFrame:
+    """Generate answerable questions for one already loaded frame."""
     image_index = source.index
     image = source.image
     families = tuple(
@@ -340,7 +343,7 @@ def _generate_frame(
         PrivateLabel(id=case.id, answer=answer.answer)
         for case, answer in zip(cases, answers, strict=True)
     )
-    return _GeneratedFrame(
+    return GeneratedFrame(
         index=image_index,
         image=image,
         cases=cases,
@@ -388,7 +391,7 @@ def _prepare_output(output: Path) -> None:
         raise FileExistsError(f"VQA output directory is not empty: {output}")
 
 
-def _write_frame(output: Path, frame: _GeneratedFrame) -> None:
+def _write_frame(output: Path, frame: GeneratedFrame) -> None:
     (output / "assets").mkdir(parents=True, exist_ok=True)
     frame_audit = output / "audit" / f"frame-{frame.index:06d}"
     frame_audit.mkdir(parents=True, exist_ok=True)

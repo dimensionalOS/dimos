@@ -237,6 +237,7 @@ class _PartlyInvalidQuestionModel:
     def query_json(self, image: Image, prompt: str) -> list[object]:
         return [
             {"family": "presence", "object_names": ["chair"]},
+            {"family": "object_count", "object_names": ["table"]},
             {"family": "unsupported", "object_names": ["table"]},
             {"family": "presence", "object_names": ["door"], "answer": "yes"},
         ]
@@ -779,7 +780,12 @@ def test_openai_author_keeps_valid_items_from_partly_invalid_response() -> None:
 
     proposals = author.propose(image, AVAILABLE_FAMILIES)
 
-    assert proposals == (QuestionProposal(family="presence", object_names=("chair",)),)
+    assert proposals == (
+        QuestionProposal(family="presence", object_names=("chair",)),
+        QuestionProposal(family="object_count", object_names=("table",)),
+        QuestionProposal(family="object_distance", object_names=("chair",)),
+        QuestionProposal(family="closest_object", object_names=("chair", "table")),
+    )
 
 
 def test_openai_author_skips_unavailable_family() -> None:

@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DimOS VQA Editor</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #eef1e8;
+      --muted: #9ca79a;
+      --paper: #111612;
+      --panel: #192019;
+      --line: #364236;
+      --acid: #d8ff55;
+      --rust: #ff744d;
+      --sky: #7ed6ff;
+      font-family: "IBM Plex Mono", "Liberation Mono", monospace;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; color: var(--ink); background: var(--paper); }
+    button, input, select, textarea { font: inherit; }
+    button { color: var(--ink); background: transparent; border: 1px solid var(--line); cursor: pointer; }
+    button:hover:not(:disabled) { border-color: var(--acid); color: var(--acid); }
+    button:disabled { opacity: .42; cursor: wait; }
+    input, select, textarea { width: 100%; color: var(--ink); background: #0c100d; border: 1px solid var(--line); padding: .7rem; }
+    input:focus, select:focus, textarea:focus { outline: 1px solid var(--acid); border-color: var(--acid); }
+    .shell { display: grid; grid-template-rows: auto 1fr; min-height: 100vh; }
+    header { display: grid; grid-template-columns: 1fr auto; gap: 1rem; align-items: end; padding: 1.1rem 1.5rem; border-bottom: 1px solid var(--line); }
+    .eyebrow { color: var(--acid); font-size: .72rem; letter-spacing: .18em; text-transform: uppercase; }
+    h1 { font: 600 clamp(1.45rem, 3vw, 2.2rem)/1.1 Georgia, serif; margin: .25rem 0 0; }
+    .meta { color: var(--muted); font-size: .72rem; text-align: right; max-width: 44vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    main { display: grid; grid-template-columns: minmax(0, 1.28fr) minmax(390px, .72fr); min-height: 0; }
+    .viewer { padding: 1rem 1.5rem 1.5rem; border-right: 1px solid var(--line); min-width: 0; }
+    .toolbar { display: flex; gap: .55rem; align-items: center; margin-bottom: .8rem; }
+    .toolbar button { width: 2.7rem; height: 2.7rem; font-size: 1.2rem; }
+    .toolbar .primary { width: auto; }
+    .frame-input { display: flex; align-items: center; gap: .5rem; width: 13rem; }
+    .frame-input input { text-align: right; }
+    .frame-input span { color: var(--muted); white-space: nowrap; }
+    .spacer { flex: 1; }
+    .badge { border: 1px solid var(--line); padding: .35rem .55rem; font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; }
+    .badge.dirty { color: var(--rust); border-color: var(--rust); }
+    .image-stage { position: relative; display: grid; place-items: center; min-height: 55vh; overflow: hidden; background: #080b09; border: 1px solid var(--line); }
+    .image-stage::after { content: "RAW RECORDING"; position: absolute; left: .7rem; bottom: .6rem; color: var(--muted); font-size: .65rem; letter-spacing: .16em; }
+    #frame-image { display: block; max-width: 100%; max-height: 67vh; object-fit: contain; }
+    .batch { margin-top: .8rem; padding: .85rem; border: 1px solid var(--line); background: var(--panel); }
+    .batch-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: .65rem; }
+    .batch-fields { display: grid; grid-template-columns: repeat(3, 1fr) auto; gap: .6rem; align-items: end; }
+    label { display: block; color: var(--muted); font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; }
+    label input { margin-top: .3rem; }
+    .primary { padding: .72rem 1rem; border-color: var(--acid); color: #111; background: var(--acid); font-weight: 700; }
+    .primary:hover:not(:disabled) { color: #111; filter: brightness(.9); }
+    .questions { min-height: 0; overflow-y: auto; padding: 1rem; }
+    .questions-head { display: flex; justify-content: space-between; align-items: center; position: sticky; top: -1rem; z-index: 4; padding: 1rem 0 .75rem; background: var(--paper); }
+    .questions-head h2 { margin: 0; font: 600 1.2rem Georgia, serif; }
+    .question { position: relative; margin-bottom: .8rem; padding: 1rem; border: 1px solid var(--line); background: var(--panel); }
+    .question-number { margin-bottom: .65rem; color: var(--sky); font-size: .68rem; letter-spacing: .1em; }
+    .delete { position: absolute; top: .6rem; right: .6rem; border: 0; color: var(--muted); font-size: 1.1rem; }
+    textarea { min-height: 4.4rem; resize: vertical; }
+    .choices { display: grid; gap: .4rem; margin: .7rem 0; }
+    .choice { display: grid; grid-template-columns: 1fr auto; gap: .35rem; }
+    .choice button { width: 2.45rem; }
+    .add-choice { width: 100%; padding: .5rem; border-style: dashed; }
+    .answer { margin-top: .7rem; }
+    .empty { padding: 3rem 1rem; color: var(--muted); border: 1px dashed var(--line); text-align: center; line-height: 1.6; }
+    .footer-actions { position: sticky; bottom: -1rem; display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; padding: .9rem 0 1rem; background: linear-gradient(transparent, var(--paper) 18%); }
+    .footer-actions button { padding: .8rem; }
+    #toast { position: fixed; left: 50%; bottom: 1.2rem; z-index: 20; transform: translateX(-50%) translateY(5rem); padding: .75rem 1rem; color: #111; background: var(--acid); box-shadow: 0 6px 30px #0008; transition: transform .2s; }
+    #toast.show { transform: translateX(-50%) translateY(0); }
+    #toast.error { color: white; background: var(--rust); }
+    @media (max-width: 850px) {
+      header { grid-template-columns: 1fr; }
+      .meta { max-width: 100%; text-align: left; }
+      main { display: block; }
+      .viewer { border-right: 0; border-bottom: 1px solid var(--line); padding: .8rem; }
+      .image-stage { min-height: 35vh; }
+      #frame-image { max-height: 52vh; }
+      .batch-fields { grid-template-columns: repeat(3, 1fr); }
+      .batch-fields button { grid-column: 1 / -1; }
+      .questions { overflow: visible; padding: .8rem; }
+      .questions-head { top: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div><div class="eyebrow">Dataset workshop</div><h1>VQA Frame Editor</h1></div>
+      <div class="meta"><div id="recording">Loading recording...</div><div id="output"></div></div>
+    </header>
+    <main>
+      <section class="viewer">
+        <div class="toolbar">
+          <button id="previous" title="Previous frame">&#8592;</button>
+          <div class="frame-input"><input id="frame" type="number" min="0" value="0"><span id="frame-total">/ --</span></div>
+          <button id="next" title="Next frame">&#8594;</button>
+          <div class="spacer"></div>
+          <span id="frame-state" class="badge">Empty</span>
+          <button id="generate-one" class="primary">Generate</button>
+        </div>
+        <div class="image-stage"><img id="frame-image" alt="Recording frame"></div>
+        <div class="batch">
+          <div class="batch-title"><span class="eyebrow">Batch generation</span><span class="meta">stop is exclusive</span></div>
+          <div class="batch-fields">
+            <label>Start<input id="start" type="number" min="0" value="0"></label>
+            <label>Stop<input id="stop" type="number" min="1" value="1"></label>
+            <label>Stride<input id="stride" type="number" min="1" value="1"></label>
+            <button id="generate-range" class="primary">Generate range</button>
+          </div>
+        </div>
+      </section>
+      <section class="questions">
+        <div class="questions-head"><h2><span id="question-count">0</span> questions</h2><span id="dirty-count" class="badge">Saved</span></div>
+        <div id="question-list"></div>
+        <div class="footer-actions">
+          <button id="add-question">+ Add question</button>
+          <button id="submit" class="primary">Submit dataset</button>
+        </div>
+      </section>
+    </main>
+  </div>
+  <div id="toast"></div>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let session = null;
+    let current = 0;
+    let draft = {index: 0, questions: []};
+    let localDirty = false;
+    let busy = false;
+    let navigating = false;
+
+    async function request(url, options = {}) {
+      const response = await fetch(url, {headers: {"Content-Type": "application/json"}, ...options});
+      if (!response.ok) {
+        let message = response.statusText;
+        try { message = (await response.json()).detail || message; } catch (_) {}
+        throw new Error(Array.isArray(message) ? message.map(x => x.msg).join("; ") : message);
+      }
+      return response.status === 204 ? null : response.json();
+    }
+
+    function toast(message, error = false) {
+      const node = $("toast");
+      node.textContent = message;
+      node.className = error ? "show error" : "show";
+      setTimeout(() => node.className = "", 2800);
+    }
+
+    function setBusy(value, label = "Working...") {
+      busy = value;
+      document.querySelectorAll("button").forEach(button => button.disabled = value);
+      if (value) toast(label);
+      else render();
+    }
+
+    function markDirty() {
+      localDirty = true;
+      $("dirty-count").textContent = "Unsaved draft";
+      $("dirty-count").className = "badge dirty";
+    }
+
+    function readDraft() {
+      const questions = [...document.querySelectorAll(".question")].map(card => ({
+        id: card.dataset.id,
+        question: card.querySelector("textarea").value.trim(),
+        choices: [...card.querySelectorAll(".choice input")].map(input => input.value.trim()),
+        answer: card.querySelector("select").value
+      }));
+      return {index: current, questions};
+    }
+
+    async function saveDraft() {
+      if (!localDirty) return;
+      draft = await request(`/api/frames/${current}`, {method: "PUT", body: JSON.stringify(readDraft())});
+      localDirty = false;
+      session.dirty_frames = [...new Set([...session.dirty_frames, current])];
+      updateBadges();
+    }
+
+    function updateBadges() {
+      const exists = session.existing_frames.includes(current);
+      const changed = session.dirty_frames.includes(current) || localDirty;
+      $("frame-state").textContent = changed ? "Draft" : exists ? "Existing" : "Empty";
+      $("frame-state").className = changed ? "badge dirty" : "badge";
+      $("dirty-count").textContent = localDirty ? "Unsaved draft" : `${session.dirty_frames.length} pending frame${session.dirty_frames.length === 1 ? "" : "s"}`;
+      $("dirty-count").className = session.dirty_frames.length || localDirty ? "badge dirty" : "badge";
+    }
+
+    function render() {
+      const list = $("question-list");
+      list.innerHTML = "";
+      $("question-count").textContent = draft.questions.length;
+      if (!draft.questions.length) {
+        list.innerHTML = '<div class="empty">No questions for this frame.<br>Generate calibrated questions or add one manually.</div>';
+      }
+      draft.questions.forEach((question, index) => {
+        const card = document.createElement("article");
+        card.className = "question";
+        card.dataset.id = question.id;
+        card.innerHTML = `<div class="question-number">QUESTION ${String(index + 1).padStart(2, "0")} &middot; ${escapeHtml(question.id)}</div><button class="delete" title="Delete question">&times;</button><textarea aria-label="Question">${escapeHtml(question.question)}</textarea><div class="choices"></div><button class="add-choice">+ choice</button><label class="answer">Ground truth<select></select></label>`;
+        card.querySelector(".delete").onclick = () => { draft.questions.splice(index, 1); markDirty(); render(); };
+        card.querySelector("textarea").oninput = event => {
+          question.question = event.target.value;
+          markDirty();
+        };
+        const choices = card.querySelector(".choices");
+        question.choices.forEach((choice, choiceIndex) => addChoiceRow(choices, question, choice, choiceIndex));
+        card.querySelector(".add-choice").onclick = () => {
+          question.choices.push("");
+          markDirty(); render();
+        };
+        populateAnswers(card, question);
+        list.appendChild(card);
+      });
+      $("previous").disabled = busy || navigating || current === 0;
+      $("next").disabled = busy || navigating || current === session.image_count - 1;
+      updateBadges();
+    }
+
+    function addChoiceRow(container, question, value, index) {
+      const row = document.createElement("div");
+      row.className = "choice";
+      row.innerHTML = `<input aria-label="Choice ${index + 1}" value="${escapeAttr(value)}"><button title="Remove choice" ${question.choices.length <= 2 ? "disabled" : ""}>&times;</button>`;
+      row.querySelector("input").oninput = event => {
+        question.choices[index] = event.target.value;
+        markDirty(); syncAnswers(row.closest(".question"), question);
+      };
+      row.querySelector("button").onclick = () => {
+        const card = row.closest(".question");
+        const question = draft.questions.find(item => item.id === card.dataset.id);
+        question.choices.splice(index, 1); markDirty(); render();
+      };
+      container.appendChild(row);
+    }
+
+    function populateAnswers(card, question) {
+      const select = card.querySelector("select");
+      const choices = [...card.querySelectorAll(".choice input")].map(input => input.value);
+      select.innerHTML = choices.map(choice => `<option value="${escapeAttr(choice)}" ${choice === question.answer ? "selected" : ""}>${escapeHtml(choice || "(empty choice)")}</option>`).join("");
+      if (!choices.includes(question.answer)) question.answer = choices[0] || "";
+      select.value = question.answer;
+      select.onchange = event => { question.answer = event.target.value; markDirty(); };
+    }
+
+    function syncAnswers(card, question) {
+      populateAnswers(card, question);
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>]/g, character => ({"&": "&amp;", "<": "&lt;", ">": "&gt;"})[character]);
+    }
+
+    function escapeAttr(value) {
+      return escapeHtml(value).replace(/"/g, "&quot;");
+    }
+
+    async function loadFrame(index) {
+      if (busy || navigating || !session) return;
+      navigating = true;
+      render();
+      try {
+        await saveDraft();
+        current = Math.max(0, Math.min(session.image_count - 1, Number(index)));
+        $("frame").value = current;
+        $("frame-image").src = `/api/frames/${current}/image?t=${Date.now()}`;
+        draft = await request(`/api/frames/${current}`);
+        draft.questions = draft.questions.map(question => ({...question, choices: [...question.choices]}));
+        localDirty = false;
+      } catch (error) { toast(error.message, true); }
+      finally { navigating = false; render(); }
+    }
+
+    async function generate(payload) {
+      try {
+        await saveDraft(); setBusy(true, "Generating calibrated questions...");
+        const generated = await request("/api/generate", {method: "POST", body: JSON.stringify(payload)});
+        session = await request("/api/session");
+        const currentDraft = generated.find(item => item.index === current);
+        if (currentDraft) {
+          draft = currentDraft;
+          draft.questions = draft.questions.map(question => ({...question, choices: [...question.choices]}));
+          localDirty = false; render();
+        }
+        toast(`Generated ${generated.length} frame${generated.length === 1 ? "" : "s"}`);
+      } catch (error) { toast(error.message, true); }
+      finally { setBusy(false); updateBadges(); }
+    }
+
+    $("previous").onclick = () => loadFrame(current - 1);
+    $("next").onclick = () => loadFrame(current + 1);
+    $("frame").onchange = event => loadFrame(event.target.value);
+    $("generate-one").onclick = () => generate({image_index: current});
+    $("generate-range").onclick = () => generate({start: Number($("start").value), stop: Number($("stop").value), stride: Number($("stride").value)});
+    $("add-question").onclick = () => {
+      const id = `frame-${String(current).padStart(6, "0")}-manual-${Date.now().toString(36)}`;
+      draft.questions.push({id, question: "", choices: ["yes", "no"], answer: "yes"});
+      markDirty(); render();
+    };
+    $("submit").onclick = async () => {
+      try {
+        await saveDraft(); setBusy(true, "Updating dataset...");
+        const result = await request("/api/submit", {method: "POST"});
+        session = await request("/api/session");
+        toast(`Submitted ${result.question_count} questions across ${result.frame_count} frames`);
+      } catch (error) { toast(error.message, true); }
+      finally { setBusy(false); updateBadges(); }
+    };
+    document.addEventListener("keydown", event => {
+      if (["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName)) return;
+      if (event.key === "ArrowLeft") loadFrame(current - 1);
+      if (event.key === "ArrowRight") loadFrame(current + 1);
+    });
+
+    (async () => {
+      try {
+        session = await request("/api/session");
+        $("recording").textContent = session.recording;
+        $("output").textContent = session.output;
+        $("frame-total").textContent = `/ ${session.image_count - 1}`;
+        $("stop").value = session.image_count;
+        await loadFrame(0);
+      } catch (error) { toast(error.message, true); }
+    })();
+  </script>
+</body>
+</html>

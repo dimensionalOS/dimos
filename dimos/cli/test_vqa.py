@@ -21,7 +21,11 @@ from typer.testing import CliRunner
 from dimos.cli.dimos import main as app
 from dimos.evals import runner as runner_module
 from dimos.evals.types import EvalResult
-from dimos.evals.vqa import generate as generate_module, suite as suite_module
+from dimos.evals.vqa import (
+    generate as generate_module,
+    suite as suite_module,
+    visualizer as visualizer_module,
+)
 from dimos.evals.vqa.generate import (
     GenerationRequest,
     GenerationResult,
@@ -30,12 +34,13 @@ from dimos.evals.vqa.generate import (
 )
 
 
-def test_vqa_cli_exposes_generate_and_run() -> None:
+def test_vqa_cli_exposes_generate_edit_and_run() -> None:
     result = CliRunner().invoke(app, ["evals", "vqa", "--help"])
     output = unstyle(result.stdout)
 
     assert result.exit_code == 0
     assert "generate" in output
+    assert "edit" in output
     assert "run" in output
 
 
@@ -185,6 +190,24 @@ def test_vqa_run_cli_formats_dataset_errors(
     assert result.exit_code != 0
     assert "invalid VQA dataset file" in result.output
     assert "Traceback" not in result.output
+
+
+def test_vqa_edit_cli_starts_local_editor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    seen: list[tuple[str, Path, int]] = []
+    monkeypatch.setattr(
+        visualizer_module,
+        "run_editor",
+        lambda recording, output, port: seen.append((recording, output, port)),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["evals", "vqa", "edit", "recording.db", str(tmp_path), "--port", "9876"],
+    )
+
+    assert result.exit_code == 0
+    assert seen == [("recording.db", tmp_path, 9876)]
+    assert "http://127.0.0.1:9876" in result.stdout
 
 
 def test_vqa_run_cli_runs_shared_evaluator(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
