@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -37,7 +38,11 @@ from dimos.memory.recorder_fidelity import (
     render_report,
     shared_loss_windows,
 )
-from dimos.memory.tool_recorder_fidelity import run_harness, run_storage_control
+from dimos.memory.tool_recorder_fidelity import (
+    run_capacity_search,
+    run_harness,
+    run_storage_control,
+)
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
@@ -66,6 +71,80 @@ def test_profile_round_trips_json(tmp_path: Path) -> None:
         "odometry",
         "tf",
     ]
+
+
+def test_profile_rate_scale_preserves_shape_and_scales_rates() -> None:
+    profile = default_profile()
+
+    scaled = profile.with_rate_scale(1.5)
+
+    assert [stream.rate_hz for stream in scaled.streams] == [
+        stream.rate_hz * 1.5 for stream in profile.streams
+    ]
+    assert [stream.shape for stream in scaled.streams] == [
+        stream.shape for stream in profile.streams
+    ]
+    assert [stream.rate_hz for stream in profile.streams] == [
+        30.0,
+        30.0,
+        30.0,
+        30.0,
+        400.0,
+        10.0,
+        200.0,
+        20.0,
+    ]
+
+
+@pytest.mark.parametrize("scale", [0.0, -1.0, float("inf"), float("nan")])
+def test_profile_rate_scale_rejects_invalid_values(scale: float) -> None:
+    with pytest.raises(ValueError, match="rate scale"):
+        default_profile().with_rate_scale(scale)
+
+
+def test_capacity_search_refines_and_confirms_highest_faithful_scale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base_rate = default_profile().stream("imu").rate_hz
+
+    def fake_run_harness(
+        profile: WorkloadProfile, *, duration_s: float, output_dir: Path, **_: object
+    ) -> FidelityReport:
+        output_dir.mkdir(parents=True)
+        (output_dir / "recording.db").write_bytes(b"database")
+        (output_dir / "recording.db-wal").write_bytes(b"wal")
+        scale = profile.stream("imu").rate_hz / base_rate
+        source_valid = scale <= 3.0
+        faithful = scale <= 2.5
+        return FidelityReport(
+            profile=profile.name,
+            mode="baseline",
+            duration_s=duration_s,
+            source_valid=source_valid,
+            faithful=faithful,
+            source={},
+            streams={},
+        )
+
+    monkeypatch.setattr(
+        "dimos.memory.tool_recorder_fidelity.run_harness",
+        fake_run_harness,
+    )
+
+    result = run_capacity_search(
+        default_profile(),
+        trial_duration_s=1.0,
+        confirm_duration_s=2.0,
+        max_scale=4.0,
+        resolution=0.125,
+        output_dir=tmp_path,
+    )
+
+    assert result["max_faithful_scale"] == 2.5
+    assert result["limiting_stage"] == "recorder"
+    assert result["trials"][-1]["phase"] == "confirm"
+    assert json.loads((tmp_path / "capacity.json").read_text()) == result
+    assert not list(tmp_path.glob("**/recording.db*"))
 
 
 def test_source_conformance_rejects_under_rate_and_long_gap() -> None:
