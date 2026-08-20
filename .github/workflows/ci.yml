@@ -71,6 +71,9 @@ jobs:
 
       - name: Run pre-commit
         uses: pre-commit/action@v3.0.1
+        env:
+          # clippy and fmt are checked in the rust job, so we can skip them here
+          SKIP: cargo-fmt,cargo-clippy
 
   rust:
     timeout-minutes: 30
