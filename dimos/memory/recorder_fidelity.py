@@ -843,7 +843,7 @@ def build_realtime_metrics(
     violations: list[str] = []
     recovery_s: float | None = None
 
-    if mode == "baseline":
+    if mode in {"baseline", "wal-control"}:
         if p99_ms >= 100.0:
             violations.append(f"receive-to-commit p99 {p99_ms:.3f}ms is not below 100ms")
         if final_age >= 0.1:

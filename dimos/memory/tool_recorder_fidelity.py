@@ -94,7 +94,7 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
-Mode = Literal["baseline", "encoder-stall", "sqlite-lock"]
+Mode = Literal["baseline", "encoder-stall", "sqlite-lock", "wal-control"]
 StorageControlMode = Literal["encoder-control", "split-db-control", "batch-small-control"]
 
 
@@ -177,6 +177,7 @@ class FidelityRecorderConfig(RecorderConfig):
     stall_after_messages: int = 10
     stall_duration_s: float = 1.0
     sample_interval_s: float = 0.1
+    wal_autocheckpoint_pages: int | None = None
 
 
 class _TimingCodec:
@@ -252,6 +253,13 @@ class FidelityRecorder(Recorder):
         self._sampling_stop = threading.Event()
         self._sampling_thread: threading.Thread | None = None
         super().start()
+        if self.config.wal_autocheckpoint_pages is not None:
+            for stream in self.store._streams.values():  # type: ignore[attr-defined]
+                backend = cast("Backend[Any]", stream._source)  # type: ignore[attr-defined]
+                connection = backend.metadata_store._conn  # type: ignore[attr-defined]
+                connection.execute(
+                    f"PRAGMA wal_autocheckpoint={self.config.wal_autocheckpoint_pages}"
+                )
 
     @rpc
     def begin_measurement(self) -> None:
@@ -600,6 +608,7 @@ def run_harness(
                 stream_codecs=codecs,
                 stall_stream=stall_stream,
                 stall_duration_s=stall_duration_s,
+                wal_autocheckpoint_pages=0 if mode == "wal-control" else None,
                 default_frame_id="base_link",
                 tf_tolerance=1.0,
             ),
@@ -1118,7 +1127,9 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--duration", type=float, default=300.0)
     run.add_argument("--output", type=Path, default=Path("recorder-fidelity-results"))
     run.add_argument(
-        "--mode", choices=("baseline", "encoder-stall", "sqlite-lock"), default="baseline"
+        "--mode",
+        choices=("baseline", "encoder-stall", "sqlite-lock", "wal-control"),
+        default="baseline",
     )
     run.add_argument("--transport", choices=("lcm", "shm", "zenoh"))
     run.add_argument("--stall-duration", type=float, default=1.0)
