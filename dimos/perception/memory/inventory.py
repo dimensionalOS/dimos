@@ -38,15 +38,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from dimos.memory.tf import StreamTF
-from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
-from dimos.perception.memory import gates
-from dimos.perception.memory.gates import (
-    MOTION_THRESHOLD,
-    OPTICAL_FRAME,
-    TF_TOLERANCE,
-    WORLD_FRAME,
-)
+from dimos.perception.memory.gates import MOTION_THRESHOLD
+from dimos.perception.memory.rig import Rig
 from dimos.perception.memory.support_plane import SupportPlane, fit_support_plane
 from dimos.perception.memory.types import (
     Instance,
@@ -63,24 +56,14 @@ if TYPE_CHECKING:
     from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
     from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
     from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
-    from dimos.protocol.tf.tf import TFLookup
 
 logger = setup_logger()
 
-KEYFRAME_STRIDE = 2.5  # s - proposal keyframe grid
 MAX_PROPOSALS_PER_FRAME = 40
 NAME_FRAMES_PER_INSTANCE = 5
-# An attachment must be the detector drawing a box around this member, not a
-# box that merely crosses it.
-NAME_ATTACH_IOU = 0.45
 SUPPRESS_SCORE = 0.25
 SUPPRESS_OVERLAP = 0.35
 UNGROUNDED_TRACK_IOU = 0.40
-# The majority of a candidate's points must lie within the error envelope of
-# the track's accumulated support. Partial and newly revealed views of one
-# object satisfy this; a different object placed at a vacated rest position
-# does not, which is what AABB overlap cannot express at tabletop scale.
-SUPPORT_EXPLAINED = 0.5
 
 # Groups of surface strings for one thing, canonical label first. Only groups
 # compete, so near-synonyms reinforce instead of splitting a box's score. A
@@ -179,43 +162,36 @@ def _proposal_passes_2d(det: Detection2DSeg, image_area: float, policy: Inventor
     return True
 
 
-# A lifted cloud plainly spanning more than one object: wider than any single
-# tabletop object here, or reaching table-to-well-above-hand height.
-SPLIT_EXTENT_M = 0.30
-SPLIT_HEIGHT_M = 0.10
-SPLIT_EPS_M = 0.03
-
-
 def _split_oversized(
     points: np.ndarray, plane: SupportPlane | None, policy: InventoryPolicy
 ) -> list[np.ndarray]:
     """Re-segment a mask-bled cloud by 3D connectivity.
 
-    Automatic masks occasionally bleed across an object onto the table and
-    its neighbors; the lifted cloud then violates single-object bounds. The
-    repair is geometric: strip the support-surface points, then split by
-    spatial connectivity - distinct objects on this rig are separated by
-    more than the cluster gap, one object's surface is not.
+    Automatic masks occasionally bleed across an object onto its support
+    surface and its neighbors; the lifted cloud then violates single-object
+    bounds. The repair is geometric: strip the support-surface points, then
+    split by spatial connectivity - distinct objects are separated by more
+    than the cluster gap, one object's surface is not.
     """
     extent = points.max(axis=0) - points.min(axis=0)
-    if float(extent.max()) <= SPLIT_EXTENT_M and float(extent[2]) <= SPLIT_HEIGHT_M:
+    if float(extent.max()) <= policy.split_extent_m and float(extent[2]) <= policy.split_height_m:
         return [points]
     if plane is None:
         return [points]
     heights = plane.height_above(points)
-    if float((np.abs(heights) <= 0.003).mean()) < 0.15:
+    if float((np.abs(heights) <= policy.min_height_above_plane_m).mean()) < 0.15:
         # No appreciable support-surface content: this is one oversized body,
-        # not a mask that bled across the table. Leave it to the extent cap.
+        # not a mask that bled across the surface. Leave it to the extent cap.
         return [points]
 
-    above = heights > 0.002
+    above = heights > policy.min_height_above_plane_m * 2 / 3
     body = points[above] if above.sum() >= policy.min_depth_points else points
 
     import open3d as o3d
 
     cloud = o3d.geometry.PointCloud()
     cloud.points = o3d.utility.Vector3dVector(body)
-    labels = np.asarray(cloud.cluster_dbscan(eps=SPLIT_EPS_M, min_points=20))
+    labels = np.asarray(cloud.cluster_dbscan(eps=policy.split_eps_m, min_points=20))
     clusters = [
         body[labels == label]
         for label in range(labels.max() + 1)
@@ -240,26 +216,20 @@ def _pixel_bbox(
 
 def _lift_frame(
     detections_2d: Any,
-    store: Any,
-    tf: TFLookup,
-    camera_info: CameraInfo,
+    rig: Rig,
     obs_ts: float,
     camera_position: np.ndarray,
     policy: InventoryPolicy,
-    optical_frame: str,
-    world_frame: str,
-    tf_tolerance: float,
     plane: SupportPlane | None = None,
 ) -> tuple[list[SupportObservation], list[Detection2DSeg]]:
-    """Depth-lift accepted proposals of one frame; returns (grounded, ungrounded)."""
+    """Lift accepted proposals of one frame through the rig; (grounded, ungrounded)."""
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
-    depth = gates.depth_at(store, obs_ts)
-    transform = tf.get(optical_frame, world_frame, obs_ts, tf_tolerance)
-    if depth is None or transform is None:
+    lifted = rig.lift(detections_2d)
+    transform = rig.world_to_optical(obs_ts)
+    if lifted is None or transform is None:
         return [], list(detections_2d)
-
-    lifted = ImageDetections3DPC.from_depth(detections_2d, depth, camera_info, transform)
+    camera_info = rig.camera_info
 
     grounded: list[SupportObservation] = []
     ungrounded: list[Detection2DSeg] = []
@@ -285,7 +255,7 @@ def _lift_frame(
                     ts=obs_ts,
                     cloud=det3d.pointcloud
                     if whole
-                    else PointCloud2.from_numpy(piece, frame_id="world", timestamp=obs_ts),
+                    else PointCloud2.from_numpy(piece, frame_id=rig.world_frame, timestamp=obs_ts),
                     centroid=piece.mean(axis=0),
                     aabb_min=aabb_min,
                     aabb_max=aabb_max,
@@ -324,16 +294,17 @@ def _aabb_gap(a: SupportObservation, b: SupportObservation) -> float:
     return float(gap.max())
 
 
-def _cloud_gap(a: SupportObservation, b: SupportObservation) -> float:
+def _cloud_gap(a: SupportObservation, b: SupportObservation, cut: float) -> float:
     """Minimum point-to-point distance between two observation clouds.
 
     The AABB gap is a poor contact test for diagonal objects - an
     axis-aligned box overhangs its object's true footprint and "touches"
     neighbors that are centimeters of clear table away. Actual cloud
     distance is the physical claim. The AABB test remains as a cheap
-    prefilter.
+    prefilter: beyond ``cut`` of box separation the exact distance cannot
+    matter to any caller.
     """
-    if _aabb_gap(a, b) > 0.06:
+    if _aabb_gap(a, b) > cut:
         return np.inf
     from scipy.spatial import cKDTree
 
@@ -385,7 +356,10 @@ def _merge_same_frame(
         changed = False
         for i in range(len(items)):
             for j in range(i + 1, len(items)):
-                if _cloud_gap(items[i], items[j]) <= policy.same_frame_merge_gap_m:
+                if (
+                    _cloud_gap(items[i], items[j], 3 * policy.same_frame_merge_gap_m)
+                    <= policy.same_frame_merge_gap_m
+                ):
                     _absorb_into(items[i], items[j])
                     items.pop(j)
                     changed = True
@@ -430,7 +404,7 @@ def _associate(
                     continue
                 t_lo, t_hi = track.aabb
                 size_gap = np.abs((t_hi - t_lo) - (obs.aabb_max - obs.aabb_min))
-                if float(size_gap.max()) > 0.25:
+                if float(size_gap.max()) > policy.size_gap_max_m:
                     continue
                 overlap = aabb_overlap(
                     obs.aabb_min, obs.aabb_max, t_lo, t_hi, pad=policy.envelope_pad_m
@@ -438,7 +412,7 @@ def _associate(
                 if overlap < policy.overlap_accept:
                     continue
                 explained = _support_explained(obs_points, track.support_pts, policy.envelope_pad_m)
-                if explained < SUPPORT_EXPLAINED:
+                if explained < policy.support_explained:
                     continue
                 cost[i, j] = 1.0 - overlap
 
@@ -477,7 +451,11 @@ def _tracks_are_fragments(a: _Track, b: _Track, policy: InventoryPolicy) -> bool
     shared = a.frame_ts & b.frame_ts
     for ts in shared:
         pairs_gap = min(
-            _cloud_gap(ma, mb) for ma in a.members if ma.ts == ts for mb in b.members if mb.ts == ts
+            _cloud_gap(ma, mb, 3 * policy.same_frame_merge_gap_m)
+            for ma in a.members
+            if ma.ts == ts
+            for mb in b.members
+            if mb.ts == ts
         )
         if pairs_gap > 1.5 * policy.same_frame_merge_gap_m:
             return False
@@ -514,7 +492,7 @@ def _merge_tracks(tracks: list[_Track], policy: InventoryPolicy) -> list[_Track]
                         _support_explained(a.support_pts, b.support_pts, policy.envelope_pad_m),
                         _support_explained(b.support_pts, a.support_pts, policy.envelope_pad_m),
                     )
-                    if explained < SUPPORT_EXPLAINED:
+                    if explained < policy.support_explained:
                         continue
                 for obs in b.members:
                     a.add(obs, obs.ts)
@@ -584,7 +562,7 @@ def _aggregated_label(labels: tuple[tuple[str, float], ...], policy: InventoryPo
 
 
 def _build_instance(
-    index: int, track: _Track, policy: InventoryPolicy, grounded: bool = True
+    index: int, track: _Track, policy: InventoryPolicy, frame_id: str, grounded: bool = True
 ) -> Instance:
     labels = tuple(sorted(track.labels.items(), key=lambda kv: -kv[1]))
     primary = _aggregated_label(labels, policy)
@@ -602,7 +580,7 @@ def _build_instance(
         sigma_xyz_m=(float(sigma[0]), float(sigma[1]), float(sigma[2])),
         coverage=coverage,
         axes_observed=axes_observed,
-        frame_id="world",
+        frame_id=frame_id,
     )
     distinct_views = len({tuple(np.round(m.camera_position, 2)) for m in track.members})
     return Instance(
@@ -675,7 +653,7 @@ def _accepted_groups(
 def _name_and_suppress(
     tracks: list[_Track],
     tracks_2d: list[_Track2D],
-    store: Any,
+    color: Any,
     detector: Owlv2Detector,
     vocabulary: NamingVocabulary,
     policy: InventoryPolicy,
@@ -710,7 +688,7 @@ def _name_and_suppress(
     )
     for ts in all_ts:
         try:
-            image = store.streams.color_image.at(ts, 0.05).first().data
+            image = color.at(ts, 0.05).first().data
         except LookupError:
             continue
 
@@ -724,7 +702,7 @@ def _name_and_suppress(
                     continue
                 bbox = (float(box[0]), float(box[1]), float(box[2]), float(box[3]))
                 best_target: Any = None
-                best_iou = NAME_ATTACH_IOU
+                best_iou = policy.name_attach_iou
                 for track, member in frame_members.get(ts, []):
                     if member.bbox is None:
                         continue
@@ -774,9 +752,7 @@ def inventory(
     policy: InventoryPolicy | None = None,
     motion_threshold: float = MOTION_THRESHOLD,
     log_progress: bool = False,
-    world_frame: str = WORLD_FRAME,
-    optical_frame: str = OPTICAL_FRAME,
-    tf_tolerance: float = TF_TOLERANCE,
+    rig: Rig | None = None,
 ) -> list[Instance]:
     """Deduplicated object instances for the window, computed at query time.
 
@@ -796,47 +772,28 @@ def inventory(
 
     Both models belong to the caller: nothing here is loaded or stopped, so
     one process can call this repeatedly on warm weights, over as many
-    windows as it wants.
+    windows as it wants. Without a ``rig`` the store's shape decides one,
+    and without a ``policy`` the rig supplies scale-appropriate defaults.
     """
-    policy = policy or InventoryPolicy()
-    tf = StreamTF.from_store(store)
-    if tf is None:
-        raise ValueError("recording has no tf stream")
-    camera_info = store.streams.camera_info.first().data
-    lo, hi = store.streams.color_image.get_time_range()
+    rig = rig or Rig.from_store(store)
+    policy = policy or rig.default_inventory_policy()
+    lo, hi = rig.color.get_time_range()
     t0 = after if after is not None else lo
     t1 = before if before is not None else hi
     logger.info(f"inventory window: {t0 - lo:.1f}s to {t1 - lo:.1f}s ({t1 - t0:.1f}s)")
 
-    intervals = gates.still_intervals(tf, t0, t1, optical_frame, world_frame, tf_tolerance)
-    gray: dict[float, Any] = {}
-
-    keyframes = gates.keyframes(
-        store,
-        tf,
-        t0,
-        t1,
-        KEYFRAME_STRIDE,
-        intervals,
-        gray,
-        motion_threshold,
-        optical_frame,
-        world_frame,
-        tf_tolerance,
-    )
-    logger.info(f"gates: {len(keyframes)} keyframes pass camera-still + scene-still")
+    keyframes = rig.keyframes(t0, t1, policy.keyframe_stride_s, motion_threshold)
+    logger.info(f"gates: {len(keyframes)} keyframes pass the capture gates")
     if not keyframes:
         return []
 
-    plane = fit_support_plane(
-        store, tf, camera_info, keyframes, optical_frame, world_frame, tf_tolerance
-    )
+    plane = fit_support_plane(rig, keyframes)
     if plane is not None:
         logger.info(f"support plane: {plane.inlier_count} inliers")
 
     frames_grounded: list[tuple[float, list[SupportObservation]]] = []
     frames_ungrounded: list[tuple[float, list[Detection2DSeg]]] = []
-    image_area = float(camera_info.width * camera_info.height)
+    image_area = float(rig.camera_info.width * rig.camera_info.height)
 
     from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
@@ -854,7 +811,7 @@ def inventory(
                 )
             continue
 
-        pose = gates.camera_pose(tf, obs.ts, optical_frame, world_frame, tf_tolerance)
+        pose = rig.camera_pose(obs.ts)
         if pose is None:
             if log_progress:
                 logger.info(
@@ -868,15 +825,10 @@ def inventory(
             det.track_id = j
         grounded, ungrounded = _lift_frame(
             ImageDetections2D(obs.data, accepted),
-            store,
-            tf,
-            camera_info,
+            rig,
             obs.ts,
             camera_position,
             policy,
-            optical_frame,
-            world_frame,
-            tf_tolerance,
             plane,
         )
         grounded = [o for o in grounded if _in_scope(o, plane, policy)]
@@ -900,14 +852,14 @@ def inventory(
     tracks_2d = _track_ungrounded(frames_ungrounded) if include_ungrounded else []
     logger.info(f"association: {len(tracks)} grounded instances")
 
-    _name_and_suppress(tracks, tracks_2d, store, detector, naming_vocabulary, policy)
+    _name_and_suppress(tracks, tracks_2d, rig.color, detector, naming_vocabulary, policy)
     tracks = [t for t in tracks if len(t.members) >= policy.min_member_observations]
 
     tracks.sort(key=lambda t: min(m.ts for m in t.members))
     instances: list[Instance] = []
     unknown = 0
     for index, track in enumerate(tracks):
-        instance = _build_instance(index, track, policy)
+        instance = _build_instance(index, track, policy, rig.world_frame)
         if instance.primary_label is None:
             instance.primary_label = f"unknown-{unknown}"
             unknown += 1

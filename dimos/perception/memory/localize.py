@@ -16,7 +16,8 @@
 
 Search memory with embeddings (SigLIP,
 frame-level), open-vocabulary detection (OWLv2, calibrated per-box scores),
-segmentation (EdgeTAM), projection to 3D through aligned depth. Two
+segmentation (EdgeTAM), projection to 3D through the rig's geometry - an
+aligned depth stream or a registered pointcloud stream. Two
 algorithm rules distinguish it from a best-crop search:
 
 * **Latest-pose semantics.** Among verified observations of the chosen
@@ -36,30 +37,21 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from dimos.memory.embed import EmbedImages
-from dimos.memory.tf import StreamTF
 from dimos.memory.transform import throttle
-from dimos.perception.detection.project import sees
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
-from dimos.perception.memory import gates
-from dimos.perception.memory.gates import OPTICAL_FRAME, TF_TOLERANCE, WORLD_FRAME
+from dimos.perception.memory.rig import Rig
 from dimos.perception.memory.types import Localization, LocalizePolicy, Support
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos_lcm.sensor_msgs import CameraInfo
-
     from dimos.memory.stream import Stream
     from dimos.models.embedding.siglip import SigLIPModel
     from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
     from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
     from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
-    from dimos.protocol.tf.tf import TFLookup
 
 logger = setup_logger()
 
-EMBED_HZ = 1.0
-TOP_FRAMES = 12
 TIME_BANDS = 6  # stratify retrieval across the window so late scans always compete
 BOXES_PER_FRAME = 4
 CONFIRM_FLOOR = 0.22  # geometric confirmation accept for re-detections
@@ -191,26 +183,19 @@ class _DetectionCache:
 
 def _lift(
     detections: ImageDetections2D,
-    store: Any,
-    tf: TFLookup,
-    camera_info: CameraInfo,
-    optical_frame: str,
-    world_frame: str,
-    tf_tolerance: float,
+    rig: Rig,
     policy: LocalizePolicy,
     plane: Any | None = None,
 ) -> list[tuple[Detection3DPC, np.ndarray]]:
-    """Depth-lift 2D detections; returns valid (detection3d, camera_position) pairs."""
-    depth = gates.depth_at(store, detections.ts)
-    transform = tf.get(optical_frame, world_frame, detections.ts, tf_tolerance)
-    if depth is None or transform is None:
-        return []
-    pose = gates.camera_pose(tf, detections.ts, optical_frame, world_frame, tf_tolerance)
+    """Lift 2D detections through the rig; returns valid (detection3d, camera_position) pairs."""
+    pose = rig.camera_pose(detections.ts)
     if pose is None:
         return []
     camera = np.array([pose.position.x, pose.position.y, pose.position.z])
 
-    lifted = ImageDetections3DPC.from_depth(detections, depth, camera_info, transform)
+    lifted = rig.lift(detections)
+    if lifted is None:
+        return []
     valid: list[tuple[Detection3DPC, np.ndarray]] = []
     for det3d in lifted:
         points = np.asarray(det3d.pointcloud.pointcloud.points)
@@ -238,28 +223,19 @@ def embed_index(
     t0: float,
     t1: float,
     *,
-    optical_frame: str = OPTICAL_FRAME,
-    world_frame: str = WORLD_FRAME,
-    tf_tolerance: float = TF_TOLERANCE,
+    rig: Rig | None = None,
 ) -> Stream[Any, Any]:
-    """SigLIP-embedded, world-posed frame index at EMBED_HZ over the window.
+    """SigLIP-embedded, world-posed frame index at the rig's embed rate.
 
     Built once per window and handed to every ``localize`` call on it: the
     embed forwards are what a second query would otherwise repeat.
     """
-    tf = StreamTF.from_store(store)
-    if tf is None:
-        raise ValueError("recording has no tf stream")
+    rig = rig or Rig.from_store(store)
     posed = (
-        store.streams.color_image.after(t0)
+        rig.color.after(t0)
         .before(t1)
-        .transform(throttle(1.0 / EMBED_HZ))
-        .map(
-            lambda obs: obs.derive(
-                data=obs.data,
-                pose=gates.camera_pose(tf, obs.ts, optical_frame, world_frame, tf_tolerance),
-            )
-        )
+        .transform(throttle(1.0 / rig.embed_hz))
+        .map(lambda obs: obs.derive(data=obs.data, pose=rig.index_pose(obs)))
         .filter(lambda obs: obs.pose is not None)
     )
     embedded: Stream[Any, Any] = posed.transform(EmbedImages(siglip)).materialize()
@@ -267,14 +243,7 @@ def embed_index(
     return embedded
 
 
-def _retrieve(
-    index: Stream[Any, Any],
-    tf: TFLookup,
-    query_embedding: Any,
-    optical_frame: str,
-    world_frame: str,
-    tf_tolerance: float,
-) -> list[Any]:
+def _retrieve(index: Stream[Any, Any], rig: Rig, query_embedding: Any, budget: int) -> list[Any]:
     """Top still frames by text similarity, stratified over time bands.
 
     Stratification is what keeps latest-pose semantics honest at the
@@ -284,14 +253,14 @@ def _retrieve(
     ranked = [
         obs
         for obs in index.search(query_embedding, k=max(index.count(), 1))
-        if gates.camera_still(tf, obs.ts, optical_frame, world_frame, tf_tolerance)
+        if rig.camera_still(obs.ts)
     ]
     if not ranked:
         return []
 
     t0, t1 = index.get_time_range()
     bands = max(1, min(TIME_BANDS, int((t1 - t0) / 20)))
-    per_band = max(1, TOP_FRAMES // bands)
+    per_band = max(1, budget // bands)
     span = (t1 - t0) / bands
     selected: list[Any] = []
     chosen: set[float] = set()
@@ -304,7 +273,7 @@ def _retrieve(
                 chosen.add(obs.ts)
                 selected.append(obs)
     for obs in ranked:  # fill remaining budget by global rank
-        if len(selected) >= TOP_FRAMES:
+        if len(selected) >= budget:
             break
         if obs.ts not in chosen:
             chosen.add(obs.ts)
@@ -320,12 +289,10 @@ def localize(
     siglip: SigLIPModel,
     detector: Owlv2Detector,
     segmenter: EdgeTAMImageSegmenter,
+    rig: Rig | None = None,
     require_pose: bool = True,
     policy: LocalizePolicy | None = None,
     cloud_mode: str = "latest_visible",
-    world_frame: str = WORLD_FRAME,
-    optical_frame: str = OPTICAL_FRAME,
-    tf_tolerance: float = TF_TOLERANCE,
     trace: LocalizeTrace | list[LocalizeTrace] | None = None,
 ) -> Localization | list[Localization | None] | None:
     """Latest unambiguous 3D localization of *query*, or ``None``.
@@ -340,16 +307,15 @@ def localize(
     OWLv2 takes the whole list per frame - and returns one result per label,
     in input order; ``trace`` then takes a list of the same length.
 
-    The index and the three models belong to the caller: nothing here is
-    loaded or stopped, so one process can call this repeatedly on warm
-    weights, and every query on one window reuses the same embeddings. The
-    window is the index's - build it with :func:`embed_index`.
+    The index, the rig and the three models belong to the caller: nothing
+    here is loaded or stopped, so one process can call this repeatedly on
+    warm weights, and every query on one window reuses the same embeddings.
+    The window is the index's - build it with :func:`embed_index`. Without a
+    ``rig`` the store's shape decides one, and without a ``policy`` the rig
+    supplies scale-appropriate defaults.
     """
-    policy = policy or LocalizePolicy()
-    tf = StreamTF.from_store(store)
-    if tf is None:
-        raise ValueError("recording has no tf stream")
-    camera_info = store.streams.camera_info.first().data
+    rig = rig or Rig.from_store(store)
+    policy = policy or rig.default_localize_policy()
 
     queries = [query] if isinstance(query, str) else query
     traces: list[LocalizeTrace | None] = (
@@ -358,19 +324,14 @@ def localize(
     cache = _DetectionCache(detector, segmenter, queries, policy.candidate_floor)
     results = [
         _localize_one(
-            store,
             q,
             index=index,
             siglip=siglip,
             cache=cache,
-            tf=tf,
-            camera_info=camera_info,
+            rig=rig,
             require_pose=require_pose,
             policy=policy,
             cloud_mode=cloud_mode,
-            world_frame=world_frame,
-            optical_frame=optical_frame,
-            tf_tolerance=tf_tolerance,
             trace=t,
         )
         for q, t in zip(queries, traces, strict=True)
@@ -379,34 +340,27 @@ def localize(
 
 
 def _localize_one(
-    store: Any,
     query: str,
     *,
     index: Stream[Any, Any],
     siglip: SigLIPModel,
     cache: _DetectionCache,
-    tf: TFLookup,
-    camera_info: CameraInfo,
+    rig: Rig,
     require_pose: bool,
     policy: LocalizePolicy,
     cloud_mode: str,
-    world_frame: str,
-    optical_frame: str,
-    tf_tolerance: float,
     trace: LocalizeTrace | None,
 ) -> Localization | None:
     # Pass 1 - SigLIP: rank the indexed frames by the query.
     query_embedding = siglip.embed_text(query)
-    frames = _retrieve(index, tf, query_embedding, optical_frame, world_frame, tf_tolerance)
+    frames = _retrieve(index, rig, query_embedding, policy.retrieval_frames)
     logger.info(f"localize '{query}': {len(frames)} candidate frames of {index.count()} embedded")
     if not frames:
         return None
 
     from dimos.perception.memory.support_plane import fit_support_plane
 
-    plane = fit_support_plane(
-        store, tf, camera_info, frames, optical_frame, world_frame, tf_tolerance
-    )
+    plane = fit_support_plane(rig, frames)
 
     # Pass 2 - OWLv2 + EdgeTAM: detect, segment, lift, verify.
     clusters: list[_Cluster] = []
@@ -423,17 +377,7 @@ def _localize_one(
             return
         if trace is not None and not is_verify:
             trace.detection_frames.append(frame_obs.derive(data=detections))
-        lifted = _lift(
-            detections,
-            store,
-            tf,
-            camera_info,
-            optical_frame,
-            world_frame,
-            tf_tolerance,
-            policy,
-            plane,
-        )
+        lifted = _lift(detections, rig, policy, plane)
         for det2d in detections:
             if not any(d.track_id == det2d.track_id for d, _ in lifted):
                 best = (det2d.confidence, det2d.ts)
@@ -467,27 +411,19 @@ def _localize_one(
     # geometrically (near + sees with occlusion), then re-detected.
     clusters.sort(key=lambda c: -c.max_score)
     for cluster in list(clusters[:4]):
-        predicate = sees(
+        predicate = rig.sees(
             cluster.center,
-            camera_info,
-            tf=tf,
-            world_frame=world_frame,
-            optical_frame=optical_frame,
-            time_tolerance=tf_tolerance,
             extent=np.minimum(cluster.extent, 0.4),
             # A large object overflows close-up frames; a third of its box in
             # view is still a usable re-detection pass, and those close-ups
             # are exactly the distinct viewpoints verification needs.
             min_fraction=0.35,
-            depth=lambda obs: gates.depth_at(store, obs.ts),
-            max_range=1.6,
+            max_range=policy.verify_radius_m,
         )
         observing = [
             obs
-            for obs in index.near(cluster.center, radius=1.6)
-            if obs.ts not in processed
-            and gates.camera_still(tf, obs.ts, optical_frame, world_frame, tf_tolerance)
-            and predicate(obs)
+            for obs in index.near(cluster.center, radius=policy.verify_radius_m)
+            if obs.ts not in processed and rig.camera_still(obs.ts) and predicate(obs)
         ]
         if len(observing) > VERIFY_FRAMES:
             # Even spread that always includes the endpoints: dropping the
@@ -520,7 +456,7 @@ def _localize_one(
                 ambiguity_margin=1.0,
                 position_world_xyz=None,
                 orientation_world_xyzw=None,
-                frame_id="world",
+                frame_id=rig.world_frame,
                 support=None,
                 pose_timestamp=ts,
                 geometry_timestamp=ts,
@@ -565,7 +501,7 @@ def _localize_one(
         sigma_xyz_m=(float(sigma[0]), float(sigma[1]), float(sigma[2])),
         coverage=_azimuth_coverage(winner.observations, winner.center),
         axes_observed=_axes_observed(winner.observations, winner.center),
-        frame_id="world",
+        frame_id=rig.world_frame,
     )
 
     if trace is not None:
@@ -583,7 +519,7 @@ def _localize_one(
             float(latest.centroid[2]),
         ),
         orientation_world_xyzw=orientation,
-        frame_id="world",
+        frame_id=rig.world_frame,
         support=support,
         pose_timestamp=latest.ts,
         geometry_timestamp=latest.ts,
