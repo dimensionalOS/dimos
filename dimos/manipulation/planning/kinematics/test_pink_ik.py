@@ -76,8 +76,6 @@ class _FakeModel:
     nq = 3
 
     def __init__(self) -> None:
-        self.lowerPositionLimit = np.full(self.nq, -np.inf)
-        self.upperPositionLimit = np.full(self.nq, np.inf)
         self.names = ["universe", "joint_b", "joint_a", "joint_c"]
         self.joints = [SimpleNamespace(idx_q=-1, nq=0), _FakeJoint(0), _FakeJoint(1), _FakeJoint(2)]
         self.frames = [_FakeFrame("base", 0), _FakeFrame("tool", 3)]

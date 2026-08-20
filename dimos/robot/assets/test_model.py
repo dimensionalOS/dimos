@@ -136,6 +136,99 @@ def test_with_fixed_frame_builds_ordered_model_chain_and_preserves_extensions(
     ]
 
 
+def test_with_joint_position_limits_preserves_model_content(tmp_path: Path) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(
+        "<robot name='r'><link name='base'/><link name='finger'/>"
+        "<joint name='finger_joint' type='prismatic'>"
+        "<parent link='base'/><child link='finger'/>"
+        "<limit lower='0.018' upper='0.06' effort='10' velocity='2'/>"
+        "<mimic joint='driver' multiplier='-1'/></joint>"
+        "<gazebo reference='finger'/><transmission name='drive'/>"
+        "<ros2_control name='control'/></robot>"
+    )
+
+    loaded = (
+        robot_model.RobotModel.from_file(urdf)
+        .with_joint_position_limits(
+            "finger_joint",
+            lower=0.0,
+            upper=0.06,
+        )
+        .load()
+    )
+    root = ET.fromstring(loaded.xml)
+    joint = root.find("joint[@name='finger_joint']")
+
+    assert joint is not None
+    assert joint.find("limit").attrib == {
+        "lower": "0.0",
+        "upper": "0.06",
+        "effort": "10",
+        "velocity": "2",
+    }
+    assert joint.find("mimic").attrib == {"joint": "driver", "multiplier": "-1"}
+    assert [element.tag for element in root if element.tag not in {"link", "joint"}] == [
+        "gazebo",
+        "transmission",
+        "ros2_control",
+    ]
+    assert "lower='0.018'" in urdf.read_text()
+
+
+@pytest.mark.parametrize(
+    ("lower", "upper", "message"),
+    [
+        (1.0, 0.0, "inverted"),
+        (float("nan"), 1.0, "finite"),
+    ],
+)
+def test_with_joint_position_limits_rejects_invalid_range(
+    tmp_path: Path,
+    lower: float,
+    upper: float,
+    message: str,
+) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text("<robot name='r'><link name='base'/></robot>")
+
+    with pytest.raises(ValueError, match=message):
+        robot_model.RobotModel.from_file(urdf).with_joint_position_limits(
+            "joint",
+            lower=lower,
+            upper=upper,
+        )
+
+
+@pytest.mark.parametrize(
+    ("joint_xml", "name", "message"),
+    [
+        ("", "missing", "Joint not found"),
+        (
+            "<joint name='fixed' type='fixed'><parent link='base'/><child link='tool'/></joint>",
+            "fixed",
+            "has no position limits",
+        ),
+    ],
+)
+def test_with_joint_position_limits_rejects_unsupported_model(
+    tmp_path: Path,
+    joint_xml: str,
+    name: str,
+    message: str,
+) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(f"<robot name='r'><link name='base'/><link name='tool'/>{joint_xml}</robot>")
+    model = robot_model.RobotModel.from_file(urdf).with_joint_position_limits(
+        name,
+        lower=0.0,
+        upper=1.0,
+    )
+
+    with pytest.raises(ValueError, match=message):
+        model.load()
+
+
 @pytest.mark.parametrize(
     ("name", "parent", "message"),
     [
@@ -159,16 +252,26 @@ def test_with_fixed_frame_rejects_invalid_model(
 
 def test_pickle_keeps_model_edits_but_not_materialized_xml(tmp_path: Path) -> None:
     urdf = tmp_path / "robot.urdf"
-    urdf.write_text("<robot name='before'><link name='base'/></robot>")
-    model = robot_model.RobotModel.from_file(urdf).with_fixed_frame("tool", "base")
+    urdf.write_text(
+        "<robot name='before'><link name='base'/><link name='slider'/>"
+        "<joint name='slider_joint' type='prismatic'><parent link='base'/>"
+        "<child link='slider'/><limit lower='0.1' upper='1' effort='1' velocity='1'/>"
+        "</joint></robot>"
+    )
+    model = (
+        robot_model.RobotModel.from_file(urdf)
+        .with_joint_position_limits("slider_joint", lower=0.0, upper=1.0)
+        .with_fixed_frame("tool", "slider")
+    )
     assert ET.fromstring(model.load().xml).get("name") == "before"
 
     restored = pickle.loads(pickle.dumps(model))
-    urdf.write_text("<robot name='after'><link name='base'/></robot>")
+    urdf.write_text(urdf.read_text().replace("name='before'", "name='after'"))
     root = ET.fromstring(restored.load().xml)
 
     assert root.get("name") == "after"
     assert root.find("link[@name='tool']") is not None
+    assert root.find("joint[@name='slider_joint']/limit").get("lower") == "0.0"
 
 
 def test_model_rejects_non_urdf_source(tmp_path: Path) -> None:

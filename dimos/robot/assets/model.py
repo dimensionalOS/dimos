@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from functools import cached_property
+import math
 import os
 from pathlib import Path
 import re
@@ -82,6 +83,13 @@ class _FixedFrame:
 
 
 @dataclass(frozen=True)
+class _JointPositionLimits:
+    name: str
+    lower: float
+    upper: float
+
+
+@dataclass(frozen=True)
 class RobotModel:
     """Lazy, immutable robot model shared by planning backends."""
 
@@ -89,6 +97,7 @@ class RobotModel:
     _package_paths: tuple[tuple[str, Path | str | os.PathLike[str]], ...] = ()
     _xacro_args: tuple[tuple[str, str], ...] = ()
     _fixed_frames: tuple[_FixedFrame, ...] = ()
+    _joint_position_limits: tuple[_JointPositionLimits, ...] = ()
 
     @classmethod
     def from_file(
@@ -130,6 +139,26 @@ class RobotModel:
             _fixed_frames=(*self._fixed_frames, _FixedFrame(name, parent, xyz, rpy)),
         )
 
+    def with_joint_position_limits(
+        self,
+        name: str,
+        *,
+        lower: float,
+        upper: float,
+    ) -> RobotModel:
+        """Return a model with replacement position limits for one joint."""
+        if not math.isfinite(lower) or not math.isfinite(upper):
+            raise ValueError("Joint position limits must be finite")
+        if lower > upper:
+            raise ValueError(f"Joint position limits are inverted: {lower} > {upper}")
+        return replace(
+            self,
+            _joint_position_limits=(
+                *self._joint_position_limits,
+                _JointPositionLimits(name, lower, upper),
+            ),
+        )
+
     def load(self) -> LoadedRobotModel:
         """Materialize and memoize the model for a backend adapter."""
         return self._loaded
@@ -146,6 +175,8 @@ class RobotModel:
         else:
             xml = source_path.read_text()
         xml = _resolve_package_uris(xml, package_paths)
+        if self._joint_position_limits:
+            xml = _set_joint_position_limits(xml, self._joint_position_limits)
         if self._fixed_frames:
             xml = _add_fixed_frames(xml, self._fixed_frames)
 
@@ -189,6 +220,28 @@ def _add_fixed_frames(xml: str, frames: tuple[_FixedFrame, ...]) -> str:
         link_names.add(frame.name)
         joint_names.add(frame.joint_name)
 
+    return ET.tostring(root, encoding="unicode")
+
+
+def _set_joint_position_limits(
+    xml: str,
+    replacements: tuple[_JointPositionLimits, ...],
+) -> str:
+    root = ET.fromstring(xml)
+    joints = {joint.get("name"): joint for joint in root.findall("joint")}
+    seen: set[str] = set()
+    for replacement in replacements:
+        if replacement.name in seen:
+            raise ValueError(f"Joint position limits already replaced: {replacement.name}")
+        seen.add(replacement.name)
+        joint = joints.get(replacement.name)
+        if joint is None:
+            raise ValueError(f"Joint not found: {replacement.name}")
+        limit = joint.find("limit")
+        if limit is None:
+            raise ValueError(f"Joint has no position limits: {replacement.name}")
+        limit.set("lower", str(replacement.lower))
+        limit.set("upper", str(replacement.upper))
     return ET.tostring(root, encoding="unicode")
 
 

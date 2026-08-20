@@ -36,9 +36,6 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus
 from dimos.manipulation.planning.spec.models import IKResult, RobotName, WorldRobotID
 from dimos.manipulation.planning.spec.protocols import WorldSpec
-from dimos.manipulation.planning.utils.joint_positions import (
-    repair_unconfigured_joint_positions,
-)
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -587,10 +584,10 @@ class PinkIK:
         return q
 
     def _neutral_q(self, context: _PinkRobotContext) -> NDArray[np.float64]:
-        q = np.asarray(self._modules.pinocchio.neutral(context.model), dtype=np.float64).copy()
-        lower = np.asarray(context.model.lowerPositionLimit, dtype=np.float64)
-        upper = np.asarray(context.model.upperPositionLimit, dtype=np.float64)
-        return repair_unconfigured_joint_positions(q, lower, upper, context.mapping.idx_q)
+        return np.asarray(
+            self._modules.pinocchio.neutral(context.model),
+            dtype=np.float64,
+        ).copy()
 
     def _q_to_dimos_positions(
         self, context: _PinkRobotContext, q: NDArray[np.float64]

@@ -663,13 +663,11 @@ def test_context_cloning_and_joint_state_round_trip(
     assert live_round_trip.position == [0.1, 0.2]
 
 
-def test_full_scene_state_neutralizes_unconfigured_joint_with_nonzero_limits(
+def test_full_scene_state_preserves_backend_default_for_unconfigured_joint(
     fake_roboplan: None,
     robot_config: RobotModelConfig,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(FakeScene, "full_position_limits_lower", [-1.0, -2.0, 0.018])
-    monkeypatch.setattr(FakeScene, "full_position_limits_upper", [1.0, 2.0, 0.06])
     captured_q: np.ndarray | None = None
 
     def capture_jacobian_q(
@@ -691,7 +689,7 @@ def test_full_scene_state_neutralizes_unconfigured_joint_with_nonzero_limits(
     )
 
     assert captured_q is not None
-    np.testing.assert_allclose(captured_q, [0.0, 0.0, 0.018])
+    np.testing.assert_allclose(captured_q, [0.0, 0.0, 0.0])
 
 
 def test_joint_name_mapping_is_applied_to_input_states(

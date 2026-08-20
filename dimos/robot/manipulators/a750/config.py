@@ -108,9 +108,14 @@ def make_a750_model_config(
 ) -> RobotModelConfig:
     dof = 6
     local_joint_names = joint_names(dof)
+    model = (
+        RobotModel.from_file(A750_MODEL_PATH, package_paths=A750_PACKAGE_PATHS)
+        .with_joint_position_limits("finger", lower=0.0, upper=0.06)
+        .with_joint_position_limits("finger_mimic", lower=0.0, upper=0.06)
+    )
     return RobotModelConfig(
         name=name,
-        model=RobotModel.from_file(A750_MODEL_PATH, package_paths=A750_PACKAGE_PATHS),
+        model=model,
         base_pose=base_pose(),
         joint_names=local_joint_names,
         base_link="base_link",
