@@ -14,6 +14,7 @@
 
 from pathlib import Path
 import re
+from urllib.parse import unquote, urlparse
 
 import pytest
 
@@ -73,13 +74,17 @@ def test_mesh_conversion_cache_is_keyed_by_mesh_content(
     first = mesh_utils.prepare_urdf_for_drake(description, convert_meshes=True)
     first_match = re.search(r'filename="([^"]+\.obj)"', first.xml)
     assert first_match is not None
-    first_obj = Path(first_match.group(1))
+    first_uri = first_match.group(1)
+    first_obj = Path(unquote(urlparse(first_uri).path))
     mesh.write_text(mesh.read_text().replace("vertex 1 0 0", "vertex 2 0 0"))
     second = mesh_utils.prepare_urdf_for_drake(description, convert_meshes=True)
     second_match = re.search(r'filename="([^"]+\.obj)"', second.xml)
     assert second_match is not None
-    second_obj = Path(second_match.group(1))
+    second_uri = second_match.group(1)
+    second_obj = Path(unquote(urlparse(second_uri).path))
 
+    assert first_uri.startswith("file://")
+    assert second_uri.startswith("file://")
     assert first_obj.exists()
     assert second_obj.exists()
     assert first_obj != second_obj

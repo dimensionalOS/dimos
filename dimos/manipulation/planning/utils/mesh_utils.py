@@ -134,8 +134,9 @@ def _convert_meshes(urdf_content: str, output_dir: Path) -> str:
                 mesh.export(str(obj_path), file_type="obj")  # type: ignore[no-untyped-call]
                 logger.debug(f"Converted mesh: {original_path} -> {obj_path}")
 
-            converted[original_path] = str(obj_path)
-            return f'filename="{obj_path}"'
+            obj_uri = obj_path.resolve().as_uri()
+            converted[original_path] = obj_uri
+            return f'filename="{obj_uri}"'
 
         except Exception as e:
             logger.warning(f"Failed to convert mesh {original_path}: {e}")
