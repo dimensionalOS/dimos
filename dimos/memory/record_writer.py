@@ -42,6 +42,10 @@ class RecordWriterStatus:
     mean_rows_per_transaction: float
     max_rows_per_transaction: int
     commit_p99_ms: float
+    commit_max_ms: float
+    commits_over_100ms: int
+    writer_queue_p99_ms: float
+    writer_queue_max_ms: float
     receive_to_commit_p50_ms: float
     receive_to_commit_p95_ms: float
     receive_to_commit_p99_ms: float
@@ -57,6 +61,8 @@ class RecordWriterStreamStatus:
     committed_payload_bytes: int
     receive_to_commit_p99_ms: float
     receive_to_commit_max_ms: float
+    writer_queue_p99_ms: float
+    writer_queue_max_ms: float
 
 
 @dataclass(frozen=True)
@@ -64,6 +70,7 @@ class _Write:
     backend: Backend[Any]
     prepared: PreparedAppend[Any]
     accepted_monotonic: float
+    submitted_monotonic: float
     stream_name: str
     payload_bytes: int
 
@@ -96,11 +103,15 @@ class RecordWriter:
         self._transaction_rows: deque[int] = deque(maxlen=100_000)
         self._commit_durations_s: deque[float] = deque(maxlen=100_000)
         self._receive_to_commit_s: deque[float] = deque(maxlen=100_000)
+        self._writer_queue_s: deque[float] = deque(maxlen=100_000)
         self._stream_submitted: dict[str, int] = defaultdict(int)
         self._stream_committed: dict[str, int] = defaultdict(int)
         self._stream_submitted_bytes: dict[str, int] = defaultdict(int)
         self._stream_committed_bytes: dict[str, int] = defaultdict(int)
         self._stream_latencies_s: dict[str, deque[float]] = defaultdict(
+            lambda: deque(maxlen=100_000)
+        )
+        self._stream_writer_queue_s: dict[str, deque[float]] = defaultdict(
             lambda: deque(maxlen=100_000)
         )
         self._closed = False
@@ -131,7 +142,7 @@ class RecordWriter:
             self._max_pending = max(self._max_pending, self._submitted - self._committed)
             if self._oldest_monotonic is None:
                 self._oldest_monotonic = accepted
-        self._queue.put(_Write(backend, prepared, accepted, name, payload_bytes))
+        self._queue.put(_Write(backend, prepared, accepted, time.monotonic(), name, payload_bytes))
 
     def flush(self, timeout_s: float) -> None:
         deadline = time.monotonic() + timeout_s
@@ -161,6 +172,7 @@ class RecordWriter:
             rows = list(self._transaction_rows)
             durations = list(self._commit_durations_s)
             latencies = list(self._receive_to_commit_s)
+            writer_queue = list(self._writer_queue_s)
             oldest_age = 0.0 if self._oldest_monotonic is None else now - self._oldest_monotonic
             self._max_oldest_age_s = max(self._max_oldest_age_s, oldest_age)
             streams = {
@@ -172,6 +184,9 @@ class RecordWriter:
                     receive_to_commit_p99_ms=_percentile(list(self._stream_latencies_s[name]), 0.99)
                     * 1e3,
                     receive_to_commit_max_ms=max(self._stream_latencies_s[name], default=0.0) * 1e3,
+                    writer_queue_p99_ms=_percentile(list(self._stream_writer_queue_s[name]), 0.99)
+                    * 1e3,
+                    writer_queue_max_ms=max(self._stream_writer_queue_s[name], default=0.0) * 1e3,
                 )
                 for name in self._stream_submitted
             }
@@ -189,6 +204,10 @@ class RecordWriter:
                 mean_rows_per_transaction=sum(rows) / len(rows) if rows else 0.0,
                 max_rows_per_transaction=max(rows, default=0),
                 commit_p99_ms=_percentile(durations, 0.99) * 1e3,
+                commit_max_ms=max(durations, default=0.0) * 1e3,
+                commits_over_100ms=sum(duration >= 0.1 for duration in durations),
+                writer_queue_p99_ms=_percentile(writer_queue, 0.99) * 1e3,
+                writer_queue_max_ms=max(writer_queue, default=0.0) * 1e3,
                 receive_to_commit_p50_ms=_percentile(latencies, 0.50) * 1e3,
                 receive_to_commit_p95_ms=_percentile(latencies, 0.95) * 1e3,
                 receive_to_commit_p99_ms=_percentile(latencies, 0.99) * 1e3,
@@ -274,8 +293,11 @@ class RecordWriter:
                 self._commit_durations_s.append(time.perf_counter() - started)
                 for item in items:
                     latency = committed_at - item.accepted_monotonic
+                    writer_queue_latency = committed_at - item.submitted_monotonic
                     self._receive_to_commit_s.append(latency)
+                    self._writer_queue_s.append(writer_queue_latency)
                     self._stream_latencies_s[item.stream_name].append(latency)
+                    self._stream_writer_queue_s[item.stream_name].append(writer_queue_latency)
 
         with self._lock:
             self._committed += len(committed)
