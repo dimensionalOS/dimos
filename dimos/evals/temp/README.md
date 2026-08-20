@@ -18,4 +18,5 @@ tag in the four hand-authored ones — after that the suites run every row, as
 they did before.
 
 How the loop is wired, what it costs, and what it is trying to fix:
-[autoresearch.md](autoresearch.md).
+[autoresearch.md](autoresearch.md). Why round 2's winner is being reverted and
+what round 3 changes: [round3.md](round3.md).
