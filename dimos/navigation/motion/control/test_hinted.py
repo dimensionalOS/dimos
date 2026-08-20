@@ -22,6 +22,7 @@ silently drift away from the plant.
 """
 
 import numpy as np
+import pytest
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -53,6 +54,7 @@ def test_rate_limit_is_the_plants_own_slew() -> None:
     """
     want = tuple(np.asarray(GO2_COMMAND_SLEW, dtype=float) / GO2_CONTROL_DT)
     assert hinted.CMD_SLEW_PER_S == want
+    pytest.importorskip("dimos_motion2_tc")  # the rust half, when it is built
     assert tuple(load_extension().CMD_SLEW_PER_S) == want
 
 

@@ -46,6 +46,11 @@ from dimos.navigation.motion.control.profile import (
     encode_precision,
 )
 
+# The crate under test. Skipped rather than failed when it is not built, the way
+# ray_tracing and mls_planner do it: `uv run maturin develop --uv --release -m
+# dimos/navigation/motion/control/rust/Cargo.toml`.
+pytest.importorskip("dimos_motion2_tc")
+
 TOL = 1e-9
 CASES = 240
 

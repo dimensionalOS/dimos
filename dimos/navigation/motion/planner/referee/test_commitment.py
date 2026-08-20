@@ -75,7 +75,20 @@ ARC_EPS = 0.05
 # solve, and `test_gold_invariance` is where it earns its keep. The python port
 # spec is checked where one query answers the question and left off the chains,
 # which are six solves deep and minutes long through it.
-CANDIDATES = ["target", "target-py"]
+try:  # the rust candidate; the python port spec runs either way
+    import dimos_motion2_target  # noqa: F401
+
+    HAS_RUST = True
+except ImportError:  # `uv run maturin develop --uv --release -m <planner>/rust/Cargo.toml`
+    HAS_RUST = False
+
+CANDIDATES = [
+    pytest.param(
+        "target",
+        marks=pytest.mark.skipif(not HAS_RUST, reason="dimos_motion2_target is not built"),
+    ),
+    "target-py",
+]
 
 
 def _obstacles(sc: Scenario) -> np.ndarray:
@@ -163,7 +176,7 @@ def test_the_margin_covers_the_tie_it_was_measured_for(planner: str) -> None:
     assert abs(prices[1] - prices[0]) < COMMIT_MARGIN
 
 
-@pytest.mark.parametrize("planner", ["target"])
+@pytest.mark.parametrize("planner", CANDIDATES[:1])  # the rust candidate only
 @pytest.mark.parametrize("idx", [0, 1, 2, 3, 4])
 def test_a_chain_of_replans_keeps_the_route_it_published(planner: str, idx: int) -> None:
     """Walk the pose down the published route and replan, each query fed the one
