@@ -39,6 +39,7 @@ from dimos.memory.recorder_fidelity import (
 )
 from dimos.memory.tool_recorder_fidelity import run_harness, run_storage_control
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
 def _published(*timestamps_ns: int) -> list[PublishedSample]:
@@ -166,6 +167,16 @@ def test_image_payload_digest_covers_pixels_and_format() -> None:
     assert payload_digest(rgb) == payload_digest(
         Image(data=pixels.copy(), format=ImageFormat.RGB, frame_id="camera", ts=2.0)
     )
+
+
+def test_pointcloud_payload_digest_uses_observation_time_separately() -> None:
+    points = np.arange(12, dtype=np.float32).reshape(4, 3)
+    first = PointCloud2.from_numpy(points, frame_id="lidar", timestamp=1.0)
+    later = PointCloud2.from_numpy(points.copy(), frame_id="lidar", timestamp=2.0)
+    changed = PointCloud2.from_numpy(points + 1, frame_id="lidar", timestamp=1.0)
+
+    assert payload_digest(first) == payload_digest(later)
+    assert payload_digest(first) != payload_digest(changed)
 
 
 def test_report_renders_actionable_counts() -> None:
