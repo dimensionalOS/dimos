@@ -54,12 +54,14 @@ import threading
 import time
 from typing import IO, Any
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.transport_factory import session_config
+from dimos.protocol.service.spec import SessionConfig
 from dimos.utils.logging_config import setup_logger
 
 if sys.platform.startswith("linux"):
@@ -113,13 +115,16 @@ _PYTHON_TO_RUST_LEVELS = {
 
 
 class NativeModuleConfig(ModuleConfig):
-    """Configuration for a native (C/C++) subprocess module."""
+    """Configuration for a native subprocess module."""
 
     executable: str
     build_command: str | None = None
     cwd: str | None = None
     extra_args: list[str] = Field(default_factory=list)
     extra_env: dict[str, str] = Field(default_factory=dict)
+    # Session settings for this module alone, e.g. opening it as the zenoh router
+    # the rest of the graph connects to. None follows the global config.
+    session: SessionConfig | None = None
     shutdown_timeout: float = DEFAULT_THREAD_JOIN_TIMEOUT
     log_format: LogFormat = LogFormat.JSON
     auto_build: bool = False
@@ -133,13 +138,20 @@ class NativeModuleConfig(ModuleConfig):
     # the boundary if that module's native struct declares it.
     base_fields: frozenset[str] = frozenset()
 
+    @model_validator(mode="after")
+    def _session_needs_the_stdin_line(self) -> NativeModuleConfig:
+        if self.session is not None and not self.stdin_config:
+            raise ValueError(
+                f"{self.executable} pins a session config but has stdin_config off, "
+                "so the module would open its own defaults instead"
+            )
+        return self
+
     def _ignore_fields(self) -> set[str]:
         return set(NativeModuleConfig.model_fields) - self.base_fields
 
     def to_config_dict(self) -> dict[str, Any]:
-        """
-        Return module-specific config fields as a plain dict (for stdin JSON).
-        """
+        """Module-specific config fields as a plain dict, for the stdin JSON."""
         ignore_fields = self._ignore_fields()
         # An opted-in base field is sent even when None, so the native struct
         # reports a null it can name rather than a field that looks unset.
@@ -186,11 +198,11 @@ class NativeModule(Module):
         <executable> --<port_name> <topic> ... --<config_field> <value> ... <extra_args>
 
     Each topic is the wire channel for that port on the transport named by the
-    ``DIMOS_TRANSPORT`` env var. With ``stdin_config``, those same topics plus
-    the config and any publisher QoS also arrive as one JSON line on stdin.
+    ``DIMOS_TRANSPORT`` env var. With ``stdin_config``, the topics, config,
+    publisher QoS and session settings also arrive as one JSON line on stdin.
 
     The native process should parse whichever it uses and pub/sub on the given
-    topics directly.  On ``stop()``, the process receives SIGTERM.
+    topics directly. On ``stop()``, the process receives SIGTERM.
     """
 
     config: NativeModuleConfig
@@ -212,13 +224,61 @@ class NativeModule(Module):
         if self.config.cwd is not None and not Path(self.config.cwd).is_absolute():
             base_dir = Path(inspect.getfile(type(self))).resolve().parent
             self.config.cwd = str(base_dir / self.config.cwd)
-        if not Path(self.config.executable).is_absolute() and self.config.cwd is not None:
-            self.config.executable = str(Path(self.config.cwd) / self.config.executable)
+        if not Path(self.config.executable).is_absolute():
+            # The spawn runs from the executable's own directory, so a relative
+            # path has to be resolved before then or it resolves against itself.
+            base = Path(self.config.cwd) if self.config.cwd is not None else Path.cwd()
+            self.config.executable = str(base / self.config.executable)
 
     @rpc
     def build(self) -> None:
         super().build()
         self._maybe_build()
+
+    def _spawn_env(self) -> dict[str, str]:
+        env = {**os.environ, **self.config.extra_env}
+
+        env["DIMOS_TRANSPORT"] = global_config.transport
+
+        env["RUST_LOG"] = _PYTHON_TO_RUST_LEVELS.get(
+            os.environ.get("DIMOS_LOG_LEVEL", "").upper(), "info"
+        )
+        return env
+
+    def _session(self) -> SessionConfig:
+        """The session this module's process opens on the active transport."""
+        pinned = self.config.session
+        if pinned is None:
+            return session_config()
+        if pinned.transport != global_config.transport:
+            raise ValueError(
+                f"[{self._module_label}] pins a {pinned.transport} session config, "
+                f"but the transport is {global_config.transport}"
+            )
+        # A blueprint builds its config before global config is settled.
+        return pinned.rebased()
+
+    def _argv(self, topics: dict[str, str]) -> list[str]:
+        """The command line the native process is spawned with."""
+        cmd = [self.config.executable]
+        for name, topic_str in topics.items():
+            cmd.extend([f"--{name}", topic_str])
+        cmd.extend(self.config.to_cli_args())
+        cmd.extend(self.config.extra_args)
+        return cmd
+
+    def _stdin_blob(self, topics: dict[str, str]) -> bytes:
+        """The JSON line the native process reads its launch from."""
+        config_dict = self.config.to_config_dict()
+        blob: dict[str, Any] = {
+            "topics": topics,
+            "config": config_dict or None,
+            "session": self._session().to_wire(),
+        }
+        qos = self._collect_output_qos()
+        if qos:
+            blob["qos"] = qos
+        return json.dumps(blob).encode() + b"\n"
 
     @rpc
     def start(self) -> None:
@@ -232,33 +292,13 @@ class NativeModule(Module):
             return
 
         topics = self._collect_topics()
-
-        cmd = [self.config.executable]
-        for name, topic_str in topics.items():
-            cmd.extend([f"--{name}", topic_str])
-        cmd.extend(self.config.to_cli_args())
-        cmd.extend(self.config.extra_args)
+        cmd = self._argv(topics)
 
         # Built before the spawn: a config that cannot be serialized must fail
         # without leaving a child blocked on a stdin line it will never get.
-        stdin_blob: bytes | None = None
-        if self.config.stdin_config:
-            config_dict = self.config.to_config_dict()
-            blob: dict[str, Any] = {"topics": topics, "config": config_dict or None}
-            qos = self._collect_output_qos()
-            if qos:
-                blob["qos"] = qos
-            stdin_blob = json.dumps(blob).encode() + b"\n"
+        stdin_blob = self._stdin_blob(topics) if self.config.stdin_config else None
 
-        env = {**os.environ, **self.config.extra_env}
-
-        # set transport so native modules know which one to spawn
-        env["DIMOS_TRANSPORT"] = global_config.transport
-
-        # set Rust logging to match Python level
-        env["RUST_LOG"] = _PYTHON_TO_RUST_LEVELS.get(
-            os.environ.get("DIMOS_LOG_LEVEL", "").upper(), "info"
-        )
+        env = self._spawn_env()
         cwd = self.config.cwd or str(Path(self.config.executable).resolve().parent)
 
         logger.info(
