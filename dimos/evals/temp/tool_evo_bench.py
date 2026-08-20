@@ -237,6 +237,8 @@ def measure(
         overrides: dict[str, Any] = {"blind": args.blind}
         if args.model:
             overrides["model"] = args.model
+        if args.concurrency:
+            overrides["concurrency"] = args.concurrency
         runner = EvalRunner(**overrides)
         results = runner.run(cases)
         run_dir = str(runner.run_dir)
@@ -279,6 +281,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=0, help="run at most N cases")
     parser.add_argument("--model", default="", help="override the chat model")
     parser.add_argument("--blind", action="store_true", help="withhold observations")
+    parser.add_argument(
+        "--concurrency", type=int, default=0, help="parallel cases (0 = runner default)"
+    )
     parser.add_argument("--dry-run", action="store_true", help="select cases, score 0, no spend")
     parser.add_argument("--gate", action="store_true", help="never write the evo result artifact")
     parser.add_argument("--min-score", type=float, default=None, help="exit 1 below this")

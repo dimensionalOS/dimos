@@ -34,6 +34,7 @@ def run(
     blind: bool = typer.Option(False, help="Withhold observations (guessing ablation)"),
     attach: bool = typer.Option(False, help="Drive an already-running dimos (interactive cases)"),
     limit: int = typer.Option(0, help="Run at most N cases"),
+    concurrency: int = typer.Option(0, help="Parallel passive cases (0 = config default)"),
     live_db: str = typer.Option("recording.db", help="Live Recorder db (interactive cases)"),
     min_mean: float = typer.Option(0.0, help="Exit non-zero if mean score falls below this"),
     max_mean: float = typer.Option(
@@ -46,6 +47,8 @@ def run(
     overrides: dict[str, object] = {"blind": blind, "attach": attach, "live_db": live_db}
     if model:
         overrides["model"] = model
+    if concurrency:
+        overrides["concurrency"] = concurrency
     runner = EvalRunner(**overrides)
     results = runner.run(
         cases,

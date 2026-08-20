@@ -1,0 +1,24 @@
+{
+  "note": "per-family floors for tool_evo_gate floors; regenerate with tool_evo_bench --write-floors on a known-good encoder",
+  "families": {
+    "area": 1.0,
+    "areatrend": 1.0,
+    "clearance": 0.8260869565217391,
+    "crossing": 0.5,
+    "direction": 1.0,
+    "doorway": 0.27777777777777773,
+    "extent": 1.0,
+    "floorlevel": 0.5,
+    "nearest": 0.7359805388311136,
+    "rooms": 0.0,
+    "route": 0.64,
+    "shift": 1.0,
+    "stairs": 0.5,
+    "zspan": 1.0
+  },
+  "score": 0.46340924775707387,
+  "slice": "bench",
+  "model": "default",
+  "git": "61379356c",
+  "recorded_at": "2026-08-20T00:13:57.511789+00:00"
+}
