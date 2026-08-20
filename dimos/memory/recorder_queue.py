@@ -17,10 +17,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 import queue
 import threading
-import time
 from typing import Any
 
 
@@ -28,9 +26,7 @@ class RecorderFailedError(RuntimeError):
     """Raised when a recorder queue can no longer persist accepted messages."""
 
 
-@dataclass(frozen=True)
-class _QueuedMessage:
-    value: Any
+_STOP = object()
 
 
 class RecorderQueue:
@@ -50,7 +46,7 @@ class RecorderQueue:
     ) -> None:
         self.name = name
         self._process = process
-        self._queue: queue.Queue[_QueuedMessage | None] = queue.Queue(maxsize=max_pending)
+        self._queue: queue.Queue[Any] = queue.Queue(maxsize=max_pending)
         self._lock = threading.Lock()
         self._failure: BaseException | None = None
         self._accepting = True
@@ -67,9 +63,8 @@ class RecorderQueue:
             self._raise_if_failed_locked()
             if not self._accepting:
                 raise RecorderFailedError(f"Recorder queue {self.name!r} is closed")
-        item = _QueuedMessage(value)
         try:
-            self._queue.put_nowait(item)
+            self._queue.put_nowait(value)
         except queue.Full as error:
             with self._lock:
                 self._fail_locked(
@@ -86,30 +81,16 @@ class RecorderQueue:
                 return
             self._accepting = False
             self._closed = True
-        self._queue.put(None)
+        self._queue.put(_STOP)
 
     def fail(self, error: BaseException) -> None:
         """Enter the fatal state without discarding already accepted work."""
         with self._lock:
             self._fail_locked(error)
 
-    def flush(self, timeout_s: float = 10.0) -> None:
-        deadline = time.monotonic() + timeout_s
-        while self._queue.unfinished_tasks:
-            with self._lock:
-                self._raise_if_failed_locked()
-            if time.monotonic() >= deadline:
-                raise RecorderFailedError(
-                    f"Recorder queue {self.name!r} did not drain within {timeout_s:.3f}s"
-                )
-            time.sleep(0.005)
-        with self._lock:
-            self._raise_if_failed_locked()
-
     def close(self, timeout_s: float = 10.0) -> None:
         self.close_input()
-        deadline = time.monotonic() + timeout_s
-        self._thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        self._thread.join(timeout=timeout_s)
         if self._thread.is_alive():
             raise RecorderFailedError(f"Recorder queue {self.name!r} worker did not stop")
         with self._lock:
@@ -119,12 +100,12 @@ class RecorderQueue:
         while True:
             item = self._queue.get()
             try:
-                if item is None:
+                if item is _STOP:
                     return
                 with self._lock:
                     failed = self._failure is not None
                 if not failed:
-                    self._process(item.value)
+                    self._process(item)
             except BaseException as error:
                 with self._lock:
                     self._fail_locked(error)

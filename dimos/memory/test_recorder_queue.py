@@ -57,9 +57,6 @@ def test_recorder_queue_reports_worker_failure() -> None:
     recorder_queue.submit(1)
 
     with pytest.raises(RecorderFailedError, match="failed"):
-        recorder_queue.flush(timeout_s=1.0)
-
-    with pytest.raises(RecorderFailedError, match="failed"):
         recorder_queue.close(timeout_s=1.0)
 
 
