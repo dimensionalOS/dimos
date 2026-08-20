@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""CollectionRecorder — captures teleop collection streams to a memory2 DB.
+"""CollectionRecorder — captures teleop collection streams to a memory DB.
 
-A `Recorder` (memory2) subscribes each declared `In` port and appends every
+A `Recorder` (memory) subscribes each declared `In` port and appends every
 message to a SQLite store, flushing durably on stop(). Only *connected*
 streams are recorded, so the same recorder works for any arm whose
 coordinator publishes `coordinator_joint_state`.
@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from dimos.core.stream import In
 from dimos.imitation.collection.episode_monitor import EpisodeStatus
-from dimos.memory2.module import Recorder, RecorderConfig
+from dimos.memory.module import Recorder, RecorderConfig
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 

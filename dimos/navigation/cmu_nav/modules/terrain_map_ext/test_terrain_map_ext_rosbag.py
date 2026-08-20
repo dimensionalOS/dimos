@@ -39,12 +39,13 @@ from dimos.navigation.cmu_nav.modules.terrain_map_ext.terrain_map_ext import (
     TerrainMapExtConfig,
     _voxel_index,
 )
+from dimos.navigation.cmu_nav.tests.deprecation import SKIP_CMU_NAV
 from dimos.navigation.cmu_nav.tests.rosbag_fixtures import load_rosbag_window
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-pytestmark = [pytest.mark.self_hosted]
+pytestmark = [pytest.mark.self_hosted, SKIP_CMU_NAV]
 
 # Key differences from C++ code defaults:
 # useSorting=true, quantileZ=0.1, lowerBoundZ=-2.5, checkTerrainConn=false

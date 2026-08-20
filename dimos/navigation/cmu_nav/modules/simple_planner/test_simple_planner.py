@@ -27,6 +27,9 @@ from dimos.navigation.cmu_nav.modules.simple_planner.simple_planner import (
     plan_on_costmap,
     progress_tick,
 )
+from dimos.navigation.cmu_nav.tests.deprecation import SKIP_CMU_NAV
+
+pytestmark = SKIP_CMU_NAV
 
 _DEFAULT_MAX_EXPANSIONS = 200_000
 

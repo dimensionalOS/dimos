@@ -405,11 +405,16 @@ class TickLoop:
         hw_commands: dict[str, tuple[dict[str, float], ControlMode]],
     ) -> None:
         """Write commands to all hardware interfaces."""
+        hardware = self._hardware
         with self._hardware_lock:
             for hw_id, (positions, mode) in hw_commands.items():
-                if hw_id in self._hardware:
+                if hw_id in hardware:
                     try:
-                        self._hardware[hw_id].write_command(positions, mode)
+                        accepted = hardware[hw_id].write_command(positions, mode)
+                        if not accepted:
+                            logger.error(
+                                f"Hardware {hw_id} rejected {mode.name} command from control task"
+                            )
                     except Exception as e:
                         logger.error(f"Failed to write to {hw_id}: {e}")
 

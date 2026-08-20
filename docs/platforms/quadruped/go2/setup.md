@@ -15,7 +15,7 @@ First, install system dependencies for your platform:
 - [macOS](/docs/installation/osx.md)
 - [Nix](/docs/installation/nix.md)
 
-Then install DimOS:
+Then install dimOS:
 
 ```bash
 uv venv --python "3.12"
@@ -66,16 +66,16 @@ export ROBOT_IP=<discovered_ip>
 ping $ROBOT_IP
 ```
 
-2. Built-in obstacle avoidance is on. (DimOS handles path planning, but the onboard obstacle avoidance provides an extra safety layer around tight spots)
+2. Built-in obstacle avoidance is on. (dimOS handles path planning, but the onboard obstacle avoidance provides an extra safety layer around tight spots)
 
-### Ready to run DimOS
+### Ready to run dimOS
 
 ```bash
 export ROBOT_IP=<YOUR_GO2_IP>
 dimos run unitree-go2
 ```
 
-That's it. DimOS connects via WebRTC (no jailbreak required), starts the full navigation stack, and opens the command center in your browser.
+That's it. dimOS connects via WebRTC (no jailbreak required), starts the full navigation stack, and opens the command center in your browser.
 
 ### What's Running
 
