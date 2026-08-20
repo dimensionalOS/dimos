@@ -45,13 +45,9 @@ class Imu(Timestamped):
     ) -> None:
         self.ts = ts if ts is not None else time.time()
         self.frame_id = frame_id
-        self.angular_velocity = (
-            Vector3(0.0, 0.0, 0.0) if angular_velocity is None else angular_velocity
-        )
-        self.linear_acceleration = (
-            Vector3(0.0, 0.0, 0.0) if linear_acceleration is None else linear_acceleration
-        )
-        self.orientation = Quaternion(0.0, 0.0, 0.0, 1.0) if orientation is None else orientation
+        self.angular_velocity = angular_velocity or Vector3(0.0, 0.0, 0.0)
+        self.linear_acceleration = linear_acceleration or Vector3(0.0, 0.0, 0.0)
+        self.orientation = orientation or Quaternion(0.0, 0.0, 0.0, 1.0)
         self.orientation_covariance = orientation_covariance or [0.0] * 9
         self.angular_velocity_covariance = angular_velocity_covariance or [0.0] * 9
         self.linear_acceleration_covariance = linear_acceleration_covariance or [0.0] * 9
