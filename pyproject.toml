@@ -326,7 +326,7 @@ sim = [
 ]
 
 mapping = [
-    # PGO for reloc premap + cmu_nav experiments
+    # PGO for reloc premap
     # Jeff's https://github.com/jeff-hykin/gtsam-extended
     "gtsam-extended>=4.3a1.post1",
 ]
