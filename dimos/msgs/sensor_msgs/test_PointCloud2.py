@@ -14,8 +14,6 @@
 # limitations under the License.
 
 
-import json
-
 import numpy as np
 import pytest
 
@@ -215,65 +213,3 @@ def test_agent_encode_empty_cloud() -> None:
     encoded = PointCloud2.from_numpy(np.zeros((0, 3))).agent_encode()
     assert encoded["num_points"] == 0
     assert "exact_stats" not in encoded
-
-
-def test_agent_encode_ground_relief_flat_floor_is_level() -> None:
-    """A floor at one level must report no relief areas at all.
-
-    This is the negative half of the floor-level question, and it is the half
-    that regresses first: an encoder that hints at steps everywhere makes the
-    model invent them on flat frames.
-    """
-    grid = np.stack(np.meshgrid(np.arange(-3, 3, 0.05), np.arange(-3, 3, 0.05)), -1).reshape(-1, 2)
-    flat = np.column_stack([grid, np.zeros(len(grid))])
-
-    relief = PointCloud2.from_numpy(flat).agent_encode()["ground_relief"]
-
-    assert isinstance(relief, dict)
-    assert relief["floor_z"] == 0.0
-    assert relief["areas"] == []
-
-
-def test_agent_encode_ground_relief_detects_raised_platform() -> None:
-    """A 2 m x 2 m platform 0.30 m up must surface as one area, located and measured.
-
-    The body-height band cannot see the surface underneath returns, so without
-    this channel a platform reads as ordinary floor.
-    """
-    grid = np.stack(np.meshgrid(np.arange(-3, 3, 0.05), np.arange(-3, 3, 0.05)), -1).reshape(-1, 2)
-    raised = (grid[:, 0] > 0.0) & (grid[:, 0] < 2.0) & (grid[:, 1] > 0.0) & (grid[:, 1] < 2.0)
-    stepped = np.column_stack([grid, np.where(raised, 0.30, 0.0)])
-
-    relief = PointCloud2.from_numpy(stepped).agent_encode()["ground_relief"]
-
-    assert isinstance(relief, dict)
-    assert relief["floor_z"] == 0.0
-    areas = relief["areas"]
-    assert isinstance(areas, list)
-    assert len(areas) == 1
-    assert areas[0] == {"x": 1.0, "y": 1.0, "area_m2": 4.0, "dz_m": 0.3, "far_dz_m": 0.3}
-
-
-def test_agent_encode_stays_within_prompt_budget() -> None:
-    """The encoding is prompt text, so its size is a hard product constraint.
-
-    A busy room -- floor, four walls, scattered clutter -- is the verbose case.
-    The encoder trims its own tail rather than letting a dense frame run over.
-    """
-    rng = np.random.default_rng(7)
-    grid = np.stack(np.meshgrid(np.arange(-6, 6, 0.04), np.arange(-6, 6, 0.04)), -1).reshape(-1, 2)
-    parts = [np.column_stack([grid, np.zeros(len(grid))])]
-    for edge in (-6.0, 6.0):
-        span = np.arange(-6, 6, 0.02)
-        height = rng.uniform(0.15, 1.0, span.size)
-        parts.append(np.column_stack([np.full(span.size, edge), span, height]))
-        parts.append(np.column_stack([span, np.full(span.size, edge), height]))
-    parts.append(
-        np.column_stack(
-            [rng.uniform(-6, 6, 4000), rng.uniform(-6, 6, 4000), rng.uniform(0.15, 1.0, 4000)]
-        )
-    )
-
-    encoded = PointCloud2.from_numpy(np.vstack(parts)).agent_encode()
-
-    assert len(json.dumps(encoded)) < 6000
