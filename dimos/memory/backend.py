@@ -25,7 +25,7 @@ from dimos.memory.notifier.subject import SubjectNotifier
 from dimos.memory.type.observation import _UNLOADED
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Sequence
 
     from reactivex.abc import DisposableBase
 
@@ -99,15 +99,25 @@ class Backend(CompositeResource, Generic[T]):
         return loader
 
     def append(self, obs: Observation[T]) -> Observation[T]:
-        prepared = self.prepare_append(obs)
+        return self.append_prepared((self.prepare_append(obs),))[0]
+
+    def append_prepared(
+        self, prepared_appends: Sequence[PreparedAppend[T]]
+    ) -> list[Observation[T]]:
+        """Persist prepared observations in one transaction, then publish them."""
+        results: list[Observation[T]] = []
         try:
-            result = self.persist_prepared(prepared)
-            self.commit()
+            for prepared in prepared_appends:
+                results.append(self._persist_prepared(prepared))
+            if hasattr(self.metadata_store, "commit"):
+                self.metadata_store.commit()
         except BaseException:
-            self.rollback()
+            if hasattr(self.metadata_store, "rollback"):
+                self.metadata_store.rollback()
             raise
-        self.notify(result)
-        return result
+        for result in results:
+            self.notifier.notify(result)
+        return results
 
     def prepare_append(self, obs: Observation[T]) -> PreparedAppend[T]:
         """Validate and encode an observation without touching storage."""
@@ -133,7 +143,7 @@ class Backend(CompositeResource, Generic[T]):
 
         return PreparedAppend(observation=obs, encoded=encoded)
 
-    def persist_prepared(self, prepared: PreparedAppend[T]) -> Observation[T]:
+    def _persist_prepared(self, prepared: PreparedAppend[T]) -> Observation[T]:
         """Insert one prepared observation into the current transaction."""
         obs = prepared.observation
         encoded = prepared.encoded
@@ -152,17 +162,6 @@ class Backend(CompositeResource, Generic[T]):
                 self.vector_store.put(self.name, row_id, emb)
 
         return obs
-
-    def commit(self) -> None:
-        if hasattr(self.metadata_store, "commit"):
-            self.metadata_store.commit()
-
-    def rollback(self) -> None:
-        if hasattr(self.metadata_store, "rollback"):
-            self.metadata_store.rollback()
-
-    def notify(self, obs: Observation[T]) -> None:
-        self.notifier.notify(obs)
 
     def iterate(self, query: StreamQuery) -> Iterator[Observation[T]]:
         if query.search_vec is not None and query.live_buffer is not None:
