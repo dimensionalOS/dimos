@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+import copy
 import enum
 import inspect
 import os
@@ -32,7 +33,9 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
+from dimos.memory.backend import Backend
 from dimos.memory.embed import EmbedImages
+from dimos.memory.record_writer import RecordWriter
 from dimos.memory.recorder_queue import RecorderFailedError, RecorderQueue
 from dimos.memory.store.null import NullStore
 from dimos.memory.store.sqlite import SqliteStore
@@ -280,6 +283,8 @@ class RecorderConfig(MemoryModuleConfig):
     max_pending_messages: int = Field(default=65_536, ge=1)
     max_backlog_s: float = Field(default=2.0, gt=0)
     shutdown_timeout_s: float = Field(default=10.0, gt=0)
+    batch_max_rows: int = Field(default=64, ge=1)
+    batch_max_delay_s: float = Field(default=0.010, gt=0)
 
 
 PoseSetter = Callable[[Any], "Awaitable[Pose | None]"]
@@ -330,6 +335,7 @@ class Recorder(MemoryModule):
     _pose_setters: dict[str, Any] = {}
     _recording_queues: dict[str, RecorderQueue]
     _recording_subscriptions: list[DisposableBase]
+    _record_writer: RecordWriter
 
     @rpc
     def start(self) -> None:
@@ -344,6 +350,10 @@ class Recorder(MemoryModule):
         self._pose_setters = self._collect_pose_setters()
         self._recording_queues = {}
         self._recording_subscriptions = []
+        self._record_writer = RecordWriter(
+            max_rows=self.config.batch_max_rows,
+            max_delay_s=self.config.batch_max_delay_s,
+        )
 
         # TODO: store reset API/logic is not implemented yet. This module
         # shouldn't need to know about files (SqliteStore specific), and
@@ -420,7 +430,17 @@ class Recorder(MemoryModule):
             if loop is None or not loop.is_running():
                 raise RecorderFailedError("Recorder event loop is not running")
             msg, ts, pose, recv_ts = asyncio.run_coroutine_threadsafe(prepare(stamped), loop).result()
-            stream.append(msg, ts=ts, pose=pose, tags={"reception_ts": recv_ts})
+            if hasattr(msg, "ts"):
+                msg.ts = ts
+            backend = cast("Backend[Any]", stream._source)  # type: ignore[attr-defined]
+            observation = Observation(
+                id=-1,
+                ts=ts,
+                pose=pose,
+                tags={"reception_ts": recv_ts},
+                _data=msg,
+            )
+            self._record_writer.submit(backend, backend.prepare_append(observation))
 
         recording_queue = RecorderQueue(
             name,
@@ -434,7 +454,11 @@ class Recorder(MemoryModule):
         # owns this FIFO and therefore never enters Module's latest-only async
         # dispatcher.
         subscription = input_topic.pure_observable().subscribe(
-            lambda msg: recording_queue.submit((time.time(), msg))
+            # Snapshot the message wrapper at reception. Some high-rate
+            # publishers deliberately reuse a payload object and update its
+            # timestamp on the next tick; retaining that wrapper would record
+            # the later timestamp after an encoder or SQLite stall.
+            lambda msg: recording_queue.submit((time.time(), copy.copy(msg)))
         )
         self._recording_subscriptions.append(subscription)
         self.register_disposable(subscription)
@@ -494,7 +518,14 @@ class Recorder(MemoryModule):
 
         def process_tf(msg: TFMessage) -> None:
             for transform in msg.transforms:
-                tf_stream.append(TFMessage(transform), ts=transform.ts, pose=None)
+                backend = cast("Backend[Any]", tf_stream._source)  # type: ignore[attr-defined]
+                observation = Observation(
+                    id=-1,
+                    ts=transform.ts,
+                    pose=None,
+                    _data=TFMessage(transform),
+                )
+                self._record_writer.submit(backend, backend.prepare_append(observation))
 
         recording_queue = RecorderQueue(
             "tf",
@@ -512,15 +543,17 @@ class Recorder(MemoryModule):
         """Wait until every observation accepted by Recorder is persisted."""
         for recording_queue in self._recording_queues.values():
             recording_queue.flush(self.config.shutdown_timeout_s)
+        self._record_writer.flush(self.config.shutdown_timeout_s)
 
     @rpc
     def recording_status(self) -> dict[str, Any]:
         """Return per-stream ingress counts, backlog, and fatal errors."""
-        return {
+        queues = {
             name: status.__dict__
             for name, recording_queue in self._recording_queues.items()
             if (status := recording_queue.status())
         }
+        return {"queues": queues, "writer": self._record_writer.status().__dict__}
 
     @rpc
     def stop(self) -> None:
@@ -536,6 +569,10 @@ class Recorder(MemoryModule):
                 recording_queue.close(self.config.shutdown_timeout_s)
             except BaseException as error:
                 failure = failure or error
+        try:
+            self._record_writer.close(self.config.shutdown_timeout_s)
+        except BaseException as error:
+            failure = failure or error
         super().stop()
         if failure is not None:
             raise RecorderFailedError("Recorder failed while draining") from failure
