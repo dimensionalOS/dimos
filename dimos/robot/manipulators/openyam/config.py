@@ -75,7 +75,7 @@ def make_openyam_model_config(
     local_joint_names = joint_names(OPENYAM_DOF, prefix="yam_joint")
     return RobotModelConfig(
         name=name,
-        model_path=OPENYAM_MODEL_PATH,
+        urdf_path=OPENYAM_MODEL_PATH,
         base_pose=base_pose(),
         joint_names=local_joint_names,
         base_link="yam_base_link",

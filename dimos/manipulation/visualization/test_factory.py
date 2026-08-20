@@ -94,7 +94,7 @@ class FakeWorld:
     def get_robot_config(self, robot_id: WorldRobotID) -> RobotModelConfig:
         return RobotModelConfig(
             name="fake",
-            model_path=Path("fake.urdf"),
+            urdf_path=Path("fake.urdf"),
             base_pose=PoseStamped(),
             joint_names=[],
             planning_groups=[

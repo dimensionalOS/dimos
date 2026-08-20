@@ -113,7 +113,7 @@ def make_a1z_model_config(
     local_joint_names = joint_names(A1Z_DOF, prefix="arm_joint")
     return RobotModelConfig(
         name=name,
-        model_path=A1Z_G1Z_MODEL_PATH if has_gripper else A1Z_FLANGE_MODEL_PATH,
+        urdf_path=A1Z_G1Z_MODEL_PATH if has_gripper else A1Z_FLANGE_MODEL_PATH,
         base_pose=base_pose(),
         joint_names=local_joint_names,
         base_link="base_link",

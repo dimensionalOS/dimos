@@ -426,7 +426,7 @@ class ViserManipulationScene:
         self._animation_generations.setdefault(robot_id, 0)
         self._target_active.setdefault(robot_id, False)
         self._target_tracks_current.setdefault(robot_id, True)
-        if config.model_path and robot_id not in self._models_by_id:
+        if config.urdf_path and robot_id not in self._models_by_id:
             self._models_by_id[robot_id] = self._load_robot_model(config)
         self._ensure_robot_urdfs(robot_id, config)
 
@@ -687,7 +687,7 @@ class ViserManipulationScene:
             self._robot_display_mode = RobotDisplayMode.VISUAL
 
     def _ensure_robot_urdfs(self, robot_id: str, config: RobotModelConfig) -> None:
-        if not config.model_path:
+        if not config.urdf_path:
             return
         model = self._models_by_id.get(robot_id)
         if model is None:
@@ -798,7 +798,7 @@ class ViserManipulationScene:
 
     def loaded_robot_description(self, config: RobotModelConfig) -> LoadedUrdf:
         description = load_urdf(
-            config.model_path,
+            config.urdf_path,
             package_paths=config.package_paths,
             xacro_args=config.xacro_args,
             package_uri_mode="absolute",

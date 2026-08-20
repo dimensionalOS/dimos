@@ -217,7 +217,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
     def add_robot(self, config: RobotModelConfig) -> WorldRobotID:
         """Add a robot to the world. Returns robot_id.
 
-        Same model_path + base_pose reuses the model instance (e.g. two arms in one URDF).
+        Same urdf_path + base_pose reuses the model instance (e.g. two arms in one URDF).
         """
         if self._finalized:
             raise RuntimeError("Cannot add robot after world is finalized")
@@ -266,40 +266,34 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             return robot_id
 
     def _load_model(self, config: RobotModelConfig) -> Any:
-        """Load robot model (URDF/xacro/MJCF) and return model instance."""
-        original_path = config.model_path.resolve()
+        """Load a URDF or Xacro robot model and return its model instance."""
+        original_path = config.urdf_path.resolve()
         if not original_path.exists():
             raise FileNotFoundError(f"Robot model not found: {original_path}")
 
-        if original_path.suffix == ".xml":
-            # MJCF — pass directly to Drake (detects format from .xml extension)
-            logger.info(f"Using model: {original_path}")
-            model_instances = self._parser.AddModels(original_path)
+        description = load_urdf(
+            original_path,
+            package_paths=config.package_paths,
+            xacro_args=config.xacro_args,
+            package_uri_mode="absolute",
+            additional_fixed_frames=tuple(config.additional_fixed_frames),
+        )
+        description = prepare_urdf_for_drake(
+            description,
+            convert_meshes=config.auto_convert_meshes,
+        )
+        description = self._strip_world_base_joint(description, config)
+
+        if config.package_paths:
+            for pkg_name, pkg_path in config.package_paths.items():
+                self._parser.package_map().Add(pkg_name, pkg_path)
         else:
-            description = load_urdf(
-                original_path,
-                package_paths=config.package_paths,
-                xacro_args=config.xacro_args,
-                package_uri_mode="absolute",
-                additional_fixed_frames=tuple(config.additional_fixed_frames),
+            self._parser.package_map().Add(
+                f"{config.name}_description", description.source_path.parent
             )
-            description = prepare_urdf_for_drake(
-                description,
-                convert_meshes=config.auto_convert_meshes,
-            )
-            description = self._strip_world_base_joint(description, config)
 
-            # Register package paths (not applicable to MJCF)
-            if config.package_paths:
-                for pkg_name, pkg_path in config.package_paths.items():
-                    self._parser.package_map().Add(pkg_name, pkg_path)
-            else:
-                self._parser.package_map().Add(
-                    f"{config.name}_description", description.source_path.parent
-                )
-
-            logger.info(f"Using in-memory model from: {description.source_path}")
-            model_instances = self._parser.AddModelsFromString(description.urdf_xml, "urdf")
+        logger.info(f"Using in-memory model from: {description.source_path}")
+        model_instances = self._parser.AddModelsFromString(description.urdf_xml, "urdf")
 
         if not model_instances:
             raise ValueError(f"Failed to parse model: {original_path}")

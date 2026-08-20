@@ -46,7 +46,7 @@ def test_flange_model_uses_native_flange_tip() -> None:
 def test_gripper_model_contains_configured_end_effector_frame() -> None:
     config = make_a1z_model_config(has_gripper=True)
     description = load_urdf(
-        config.model_path,
+        config.urdf_path,
         package_paths=config.package_paths,
         xacro_args=config.xacro_args,
         additional_fixed_frames=tuple(config.additional_fixed_frames),

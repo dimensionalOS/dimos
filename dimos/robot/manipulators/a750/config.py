@@ -109,7 +109,7 @@ def make_a750_model_config(
     local_joint_names = joint_names(dof)
     return RobotModelConfig(
         name=name,
-        model_path=A750_MODEL_PATH,
+        urdf_path=A750_MODEL_PATH,
         base_pose=base_pose(),
         joint_names=local_joint_names,
         base_link="base_link",

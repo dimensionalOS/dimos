@@ -143,7 +143,7 @@ def make_piper_model_config(
     model_home_joints = list(home_joints) if home_joints is not None else list(PIPER_HOME_JOINTS)
     return RobotModelConfig(
         name=name,
-        model_path=PIPER_MODEL_PATH,
+        urdf_path=PIPER_MODEL_PATH,
         base_pose=base_pose(),
         joint_names=local_joint_names,
         base_link="base_link",

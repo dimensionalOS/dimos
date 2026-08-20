@@ -82,7 +82,7 @@ def robot_config():
     """Create a robot config for testing."""
     return RobotModelConfig(
         name="test_arm",
-        model_path=Path("/path/to/robot.urdf"),
+        urdf_path=Path("/path/to/robot.urdf"),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["joint1", "joint2", "joint3"],
         base_link="link_base",
@@ -104,7 +104,7 @@ def robot_config_with_mapping():
     """Create a robot config with joint name mapping (dual-arm scenario)."""
     return RobotModelConfig(
         name="left_arm",
-        model_path=Path("/path/to/robot.urdf"),
+        urdf_path=Path("/path/to/robot.urdf"),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["joint1", "joint2", "joint3"],
         base_link="link_base",
@@ -127,7 +127,7 @@ def robot_config_with_mapping():
 def _one_joint_config(name: str = "arm") -> RobotModelConfig:
     return RobotModelConfig(
         name=name,
-        model_path=Path("/path"),
+        urdf_path=Path("/path/robot.urdf"),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["j0"],
         base_link="base_link",
@@ -827,7 +827,7 @@ class TestPlanningGroupApis:
     ):
         left = RobotModelConfig(
             name="left",
-            model_path=Path("/path"),
+            urdf_path=Path("/path/robot.urdf"),
             base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
             joint_names=["j0", "j1"],
             planning_groups=[
@@ -839,7 +839,7 @@ class TestPlanningGroupApis:
         )
         right = RobotModelConfig(
             name="right",
-            model_path=Path("/path"),
+            urdf_path=Path("/path/robot.urdf"),
             base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
             joint_names=["k0", "k1"],
             planning_groups=[
@@ -905,7 +905,7 @@ class TestPlanningGroupApis:
     ):
         no_pose_config = RobotModelConfig(
             name="test_arm",
-            model_path=robot_config.model_path,
+            urdf_path=robot_config.urdf_path,
             base_pose=robot_config.base_pose,
             joint_names=robot_config.joint_names,
             base_link=robot_config.base_link,
@@ -937,7 +937,7 @@ class TestPlanningGroupApis:
     ):
         multi_pose_config = RobotModelConfig(
             name="test_arm",
-            model_path=robot_config.model_path,
+            urdf_path=robot_config.urdf_path,
             base_pose=robot_config.base_pose,
             joint_names=robot_config.joint_names,
             base_link=robot_config.base_link,

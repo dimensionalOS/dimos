@@ -85,7 +85,7 @@ def openarm_model_config(side: str, name: str | None = None) -> RobotModelConfig
     local_joint_names = openarm_joints(side)
     return RobotModelConfig(
         name=resolved_name,
-        model_path=OPENARM_LEFT_MODEL if side == "left" else OPENARM_RIGHT_MODEL,
+        urdf_path=OPENARM_LEFT_MODEL if side == "left" else OPENARM_RIGHT_MODEL,
         base_pose=base_pose(),
         joint_names=local_joint_names,
         base_link="openarm_body_link0",
@@ -123,7 +123,7 @@ def openarm_single_model_config() -> RobotModelConfig:
     local_joint_names = openarm_joints("left")
     return RobotModelConfig(
         name="arm",
-        model_path=OPENARM_V10_FK_MODEL,
+        urdf_path=OPENARM_V10_FK_MODEL,
         base_pose=base_pose(),
         joint_names=local_joint_names,
         base_link="openarm_body_link0",

@@ -57,7 +57,7 @@ class _World:
         self.legacy_jacobian_calls = 0
         self.config = RobotModelConfig(
             name="arm",
-            model_path=Path("robot.urdf"),
+            urdf_path=Path("robot.urdf"),
             base_pose=_pose(),
             joint_names=["joint_a", "joint_b", "gripper"],
             base_link="base",

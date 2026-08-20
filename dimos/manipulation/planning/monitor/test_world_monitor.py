@@ -224,7 +224,7 @@ class FakeViz:
 def _robot_config() -> RobotModelConfig:
     return RobotModelConfig(
         name="arm",
-        model_path=Path("/tmp/arm.urdf"),
+        urdf_path=Path("/tmp/arm.urdf"),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion([0, 0, 0, 1])),
         joint_names=["j1", "j2"],
         base_link="base",
@@ -440,7 +440,7 @@ def test_current_global_joint_state_skips_stale_robots_and_preserves_state_order
     stale_id = monitor.add_robot(
         RobotModelConfig(
             name="arm2",
-            model_path=Path("/tmp/arm2.urdf"),
+            urdf_path=Path("/tmp/arm2.urdf"),
             joint_names=["a", "b"],
             planning_groups=[
                 PlanningGroupDefinition(
@@ -454,7 +454,7 @@ def test_current_global_joint_state_skips_stale_robots_and_preserves_state_order
     monitor.add_robot(
         RobotModelConfig(
             name="arm3",
-            model_path=Path("/tmp/arm3.urdf"),
+            urdf_path=Path("/tmp/arm3.urdf"),
             joint_names=["x"],
             planning_groups=[
                 PlanningGroupDefinition(

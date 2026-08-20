@@ -35,7 +35,7 @@ class RobotModelConfig(ModuleConfig):
 
     Attributes:
         name: Human-readable robot name
-        model_path: Path to robot model file (.urdf, .xacro, or .xml/MJCF)
+        urdf_path: Path to a URDF or Xacro robot model file
         srdf_path: Optional path to SRDF file containing planning group definitions
         base_pose: Placement transform. This is the canonical world placement for
             robot instances.
@@ -61,7 +61,7 @@ class RobotModelConfig(ModuleConfig):
     """
 
     name: str
-    model_path: Path
+    urdf_path: Path
     srdf_path: Path | None = None
     base_pose: PoseStamped = Field(default_factory=PoseStamped)
     joint_names: list[str]
@@ -89,9 +89,14 @@ class RobotModelConfig(ModuleConfig):
     pre_grasp_offset: float = 0.10
 
     def model_post_init(self, __context: object) -> None:
-        """Validate delimiter-based naming constraints."""
+        """Validate robot naming and description format constraints."""
         assert_valid_robot_name(self.name)
         assert_local_joint_names(self.joint_names)
+        if self.urdf_path.suffix.lower() not in {".urdf", ".xacro"}:
+            raise ValueError(
+                f"RobotModelConfig.urdf_path must reference a .urdf or .xacro file, "
+                f"got {self.urdf_path.name!r}"
+            )
 
     @property
     def end_effector_link(self) -> str:

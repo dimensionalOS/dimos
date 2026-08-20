@@ -24,6 +24,7 @@ import re
 from typing import Literal
 import xml.etree.ElementTree as ET
 
+from dimos.robot.assets.xacro import expand_xacro
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -80,7 +81,7 @@ def load_urdf(
         )
 
     if source_path.suffix.lower() == ".xacro":
-        urdf_content = _expand_xacro(source_path, resolved_package_paths, resolved_xacro_args)
+        urdf_content = expand_xacro(source_path, resolved_package_paths, resolved_xacro_args)
     else:
         urdf_content = source_path.read_text()
 
@@ -164,19 +165,3 @@ def normalize_package_paths(
         package_name: Path(os.fspath(package_path)).resolve()
         for package_name, package_path in package_paths.items()
     }
-
-
-def _expand_xacro(
-    xacro_path: Path,
-    package_paths: dict[str, Path],
-    xacro_args: dict[str, str],
-) -> str:
-    try:
-        from dimos.robot.assets.xacro import expand_xacro
-    except ImportError:
-        raise ImportError(
-            "xacro is required for processing .xacro files. "
-            "Install the manipulation extra: pip install dimos[manipulation]"
-        )
-
-    return expand_xacro(xacro_path, package_paths, xacro_args)

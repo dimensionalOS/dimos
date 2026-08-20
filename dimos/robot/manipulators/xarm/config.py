@@ -249,7 +249,7 @@ def make_xarm_model_config(
     tip_link = "link_tcp" if add_gripper else f"link{dof}"
     return RobotModelConfig(
         name=name,
-        model_path=XARM_MODEL_PATH,
+        urdf_path=XARM_MODEL_PATH,
         base_pose=base_pose(x_offset, y_offset, z_offset, pitch),
         joint_names=local_joint_names,
         base_link="link_base",

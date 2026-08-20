@@ -34,7 +34,7 @@ class FakeWorld:
         self.robot_id = "robot-instance"
         self.config = RobotModelConfig(
             name="arm",
-            model_path=Path("/tmp/fake.urdf"),
+            urdf_path=Path("/tmp/fake.urdf"),
             joint_names=["base", "shoulder", "elbow", "wrist"],
         )
         self.current_state = JointState(

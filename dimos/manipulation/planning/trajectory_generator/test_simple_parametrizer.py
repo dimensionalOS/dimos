@@ -60,7 +60,7 @@ def _selection() -> PlanningGroupSelection:
 def _world(*, velocity: float = 2.0, acceleration: float = 6.0) -> WorldSpec:
     config = RobotModelConfig(
         name="arm",
-        model_path=Path("/robot.urdf"),
+        urdf_path=Path("/robot.urdf"),
         base_pose=PoseStamped(),
         joint_names=["a", "b"],
         base_link="base",

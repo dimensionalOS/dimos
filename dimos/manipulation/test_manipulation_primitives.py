@@ -51,7 +51,7 @@ def _robot(
 ) -> RobotModelConfig:
     return RobotModelConfig(
         name=name,
-        model_path=Path("/robot.urdf"),
+        urdf_path=Path("/robot.urdf"),
         joint_names=["j0"],
         base_link="base",
         home_joints=home,

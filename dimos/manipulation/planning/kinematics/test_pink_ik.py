@@ -168,7 +168,7 @@ def _fake_modules(converge: bool = True) -> _PinkModules:
 def _robot_config() -> RobotModelConfig:
     return RobotModelConfig(
         name="arm",
-        model_path=Path("/tmp/fake.urdf"),
+        urdf_path=Path("/tmp/fake.urdf"),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
         joint_names=["joint_a", "joint_b", "joint_c"],
         base_link="base",
@@ -514,7 +514,7 @@ def test_robot_context_cache_key_includes_tip_frame(mocker: MockerFixture, tmp_p
     model_path = tmp_path / "fake.urdf"
     model_path.write_text("<robot/>")
     world = _FakeWorld()
-    world.config.model_path = model_path
+    world.config.urdf_path = model_path
     ik = PinkIK(PinkIKConfig(max_iterations=1))
 
     first = ik._get_robot_context(cast("Any", world), "robot", "tool")
@@ -535,7 +535,7 @@ def test_build_robot_context_rejects_base_link_not_model_root(
     model_path = tmp_path / "fake.urdf"
     model_path.write_text("<robot/>")
     config = _robot_config()
-    config.model_path = model_path
+    config.urdf_path = model_path
 
     with pytest.raises(ValueError, match="base_link 'base'.*model root"):
         PinkIK(PinkIKConfig(max_iterations=1))._build_robot_context(config, "tool")

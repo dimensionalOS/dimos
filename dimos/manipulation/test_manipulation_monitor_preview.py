@@ -42,7 +42,7 @@ def robot_config_with_mapping() -> RobotModelConfig:
     """Create a robot config with joint name mapping."""
     return RobotModelConfig(
         name="left_arm",
-        model_path=Path("/path/to/robot.urdf"),
+        urdf_path=Path("/path/to/robot.urdf"),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["joint1", "joint2", "joint3"],
         base_link="link_base",
@@ -65,7 +65,7 @@ def robot_config_with_mapping() -> RobotModelConfig:
 def _one_joint_config(name: str = "arm") -> RobotModelConfig:
     return RobotModelConfig(
         name=name,
-        model_path=Path("/path"),
+        urdf_path=Path("/path/robot.urdf"),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["j0"],
         base_link="base_link",
@@ -251,7 +251,7 @@ class TestOnJointState:
         """With two robots, each gets only its own joints from the aggregated message."""
         left_config = RobotModelConfig(
             name="left",
-            model_path=Path("/path/to/robot.urdf"),
+            urdf_path=Path("/path/to/robot.urdf"),
             base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
             joint_names=["j1", "j2"],
             base_link="base",
@@ -264,7 +264,7 @@ class TestOnJointState:
         )
         right_config = RobotModelConfig(
             name="right",
-            model_path=Path("/path/to/robot.urdf"),
+            urdf_path=Path("/path/to/robot.urdf"),
             base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
             joint_names=["j1", "j2"],
             base_link="base",

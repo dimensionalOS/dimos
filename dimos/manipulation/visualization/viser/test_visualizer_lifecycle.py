@@ -85,7 +85,7 @@ class FakeRuntimeServer(FakeServer):
 def fake_robot_config(name: str) -> RobotModelConfig:
     return RobotModelConfig(
         name=name,
-        model_path=Path(f"{name}.urdf"),
+        urdf_path=Path(f"{name}.urdf"),
         base_pose=PoseStamped(),
         joint_names=[],
         planning_groups=[

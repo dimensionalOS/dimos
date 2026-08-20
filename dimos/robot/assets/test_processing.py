@@ -70,7 +70,7 @@ def test_load_urdf_reruns_xacro_each_time(
     calls = iter(("first", "second"))
     monkeypatch.setattr(
         processing,
-        "_expand_xacro",
+        "expand_xacro",
         lambda _path, _package_paths, _xacro_args: f"<robot name='{next(calls)}'/>",
     )
 

@@ -104,7 +104,7 @@ def _config(
 ) -> RobotModelConfig:
     return RobotModelConfig(
         name="arm",
-        model_path=path,
+        urdf_path=path,
         base_pose=PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]),
         joint_names=joints or ["joint1", "joint2"],
         base_link="base_link",
@@ -272,7 +272,7 @@ def test_drake_applies_config_base_pose_when_urdf_has_world_base_joint(
     left_id = world.add_robot(
         RobotModelConfig(
             name="left_arm",
-            model_path=urdf,
+            urdf_path=urdf,
             base_pose=PoseStamped(position=[0, 0.5, 0], orientation=[0, 0, 0, 1]),
             joint_names=["joint1", "joint2"],
             base_link="base_link",
@@ -282,7 +282,7 @@ def test_drake_applies_config_base_pose_when_urdf_has_world_base_joint(
     right_id = world.add_robot(
         RobotModelConfig(
             name="right_arm",
-            model_path=urdf,
+            urdf_path=urdf,
             base_pose=PoseStamped(position=[0, -0.5, 0], orientation=[0, 0, 0, 1]),
             joint_names=["joint1", "joint2"],
             base_link="base_link",

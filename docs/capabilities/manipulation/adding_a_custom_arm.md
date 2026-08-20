@@ -548,7 +548,7 @@ def _make_yourarm_config(
 
     return RobotModelConfig(
         name=name,
-        model_path=_YOURARM_URDF_PATH,
+        urdf_path=_YOURARM_URDF_PATH,
         joint_names=joint_names,
         planning_groups=[
             PlanningGroupDefinition(
@@ -610,7 +610,7 @@ yourarm_planner = manipulation_module(
 
 | Field | Description |
 |-------|-------------|
-| `model_path` | Path to `.urdf` or `.xacro` file |
+| `urdf_path` | Path to `.urdf` or `.xacro` file |
 | `joint_names` | Ordered controllable local model joint set (must match URDF); not itself a planning group |
 | `planning_groups` / `srdf_path` | Explicit planning groups or SRDF source; direct `RobotModelConfig(...)` helpers should pass explicit groups, while shared config helpers can discover groups from SRDF/fallback |
 | `base_pose` / `base_link` | Optional robot placement: `base_pose` places `base_link` in the world for weld/strip behavior |

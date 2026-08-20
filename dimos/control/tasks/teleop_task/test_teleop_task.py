@@ -73,7 +73,7 @@ class _FakePinkIK:
 def _robot(path: Path) -> RobotModelConfig:
     return RobotModelConfig(
         name="arm",
-        model_path=path,
+        urdf_path=path,
         base_pose=PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]),
         joint_names=["joint1", "joint2"],
         planning_groups=[

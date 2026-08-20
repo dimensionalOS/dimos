@@ -65,7 +65,7 @@ def module(module_factory) -> ManipulationModule:
     manipulation = module_factory(coordinator)
     config = RobotModelConfig(
         name="arm",
-        model_path=Path("/path/to/robot.urdf"),
+        urdf_path=Path("/path/to/robot.urdf"),
         joint_names=["j0"],
         base_link="base",
         planning_groups=[

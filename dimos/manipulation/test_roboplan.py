@@ -447,7 +447,7 @@ def robot_config(tmp_path: Path) -> RobotModelConfig:
     )
     return RobotModelConfig(
         name="arm",
-        model_path=model_path,
+        urdf_path=model_path,
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
         joint_names=["joint1", "joint2"],
         base_link="base",
@@ -2228,11 +2228,11 @@ def test_scene_receives_generated_model_contents_inline(
 def test_composed_model_fills_only_missing_acceleration_limits(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
-    tree = ET.parse(robot_config.model_path)
+    tree = ET.parse(robot_config.urdf_path)
     authored = tree.find("./joint[@name='joint1']/limit")
     assert authored is not None
     authored.set("acceleration", "3.5")
-    tree.write(robot_config.model_path)
+    tree.write(robot_config.urdf_path)
 
     world, _ = _make_world(fake_roboplan, robot_config)
 

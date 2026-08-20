@@ -537,21 +537,18 @@ class PinkIK:
 
     def _build_robot_context(self, config: RobotModelConfig, frame_name: str) -> _PinkRobotContext:
         pinocchio = self._modules.pinocchio
-        model_path = Path(config.model_path).resolve()
-        if not model_path.exists():
-            raise FileNotFoundError(f"Robot model not found: {model_path}")
+        urdf_path = Path(config.urdf_path).resolve()
+        if not urdf_path.exists():
+            raise FileNotFoundError(f"Robot model not found: {urdf_path}")
 
-        if model_path.suffix == ".xml":
-            model = pinocchio.buildModelFromMJCF(str(model_path))
-        else:
-            description = load_urdf(
-                model_path,
-                package_paths=config.package_paths,
-                xacro_args=config.xacro_args,
-                package_uri_mode="absolute",
-                additional_fixed_frames=tuple(config.additional_fixed_frames),
-            )
-            model = pinocchio.buildModelFromXML(description.urdf_xml)
+        description = load_urdf(
+            urdf_path,
+            package_paths=config.package_paths,
+            xacro_args=config.xacro_args,
+            package_uri_mode="absolute",
+            additional_fixed_frames=tuple(config.additional_fixed_frames),
+        )
+        model = pinocchio.buildModelFromXML(description.urdf_xml)
 
         data = model.createData()
         _assert_base_link_is_model_root(model, config.base_link)

@@ -133,7 +133,7 @@ def _robot_config(
 ) -> RobotModelConfig:
     return RobotModelConfig(
         name=name,
-        model_path=Path("/tmp/robot.urdf"),
+        urdf_path=Path("/tmp/robot.urdf"),
         base_pose=PoseStamped(),
         joint_names=["joint1", "joint2", "joint3"],
         planning_groups=planning_groups
@@ -371,7 +371,7 @@ def test_primary_pose_group_id_for_robot_raises_when_ambiguous() -> None:
         [
             RobotModelConfig(
                 name="robot",
-                model_path=Path("/tmp/robot.urdf"),
+                urdf_path=Path("/tmp/robot.urdf"),
                 base_pose=PoseStamped(),
                 joint_names=["joint1", "joint2"],
                 planning_groups=[
@@ -635,7 +635,7 @@ def test_local_joint_name_from_global_validates_robot_prefix_and_local_shape() -
 def test_robot_model_config_derives_legacy_end_effector_link_from_pose_group() -> None:
     config = RobotModelConfig(
         name="arm",
-        model_path=Path("robot.urdf"),
+        urdf_path=Path("robot.urdf"),
         joint_names=["j1", "j2"],
         joint_name_mapping={"hw_j1": "j1", "hw_j2": "j2"},
         planning_groups=[
@@ -657,7 +657,7 @@ def test_robot_model_config_derives_legacy_end_effector_link_from_pose_group() -
 def test_robot_model_config_end_effector_link_requires_pose_group() -> None:
     config = RobotModelConfig(
         name="arm",
-        model_path=Path("robot.urdf"),
+        urdf_path=Path("robot.urdf"),
         joint_names=["j1"],
         planning_groups=[
             PlanningGroupDefinition(
@@ -675,7 +675,7 @@ def test_robot_model_config_end_effector_link_requires_pose_group() -> None:
 def test_robot_model_config_end_effector_link_rejects_ambiguous_pose_groups() -> None:
     config = RobotModelConfig(
         name="arm",
-        model_path=Path("robot.urdf"),
+        urdf_path=Path("robot.urdf"),
         joint_names=["j1", "j2"],
         planning_groups=[
             PlanningGroupDefinition(

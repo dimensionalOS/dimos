@@ -159,7 +159,7 @@ def build_roboplan_model(
 
 def _prepared_urdf_xml(config: RobotModelConfig) -> str:
     description = load_urdf(
-        config.model_path,
+        config.urdf_path,
         package_paths=config.package_paths,
         xacro_args=config.xacro_args,
         package_uri_mode="absolute",

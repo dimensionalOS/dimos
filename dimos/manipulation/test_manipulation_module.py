@@ -67,7 +67,7 @@ def _get_xarm7_config() -> RobotModelConfig:
     """Create XArm7 robot config for testing."""
     return RobotModelConfig(
         name="test_arm",
-        model_path=XARM_MODEL_PATH,
+        urdf_path=XARM_MODEL_PATH,
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"],
         base_link="link_base",

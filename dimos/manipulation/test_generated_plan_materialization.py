@@ -73,7 +73,7 @@ class RecordingGenerator:
 def _robot(name: str, joints: list[str], velocity: float, acceleration: float) -> RobotModelConfig:
     return RobotModelConfig(
         name=name,
-        model_path=Path("/robot.urdf"),
+        urdf_path=Path("/robot.urdf"),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=joints,
         base_link="base",

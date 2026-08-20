@@ -176,7 +176,7 @@ class Config:
     home_joints: list[float] | None
     base_link: str = "base"
     end_effector_link: str = "tool"
-    model_path: Path | str = "robot.urdf"
+    urdf_path: Path | str = "robot.urdf"
     package_paths: dict[str, str] | None = None
     xacro_args: dict[str, str] | None = None
     auto_convert_meshes: bool = False
@@ -187,8 +187,8 @@ class Config:
     additional_fixed_frames: list[FixedFrameDefinition] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        if isinstance(self.model_path, str):
-            self.model_path = Path(self.model_path)
+        if isinstance(self.urdf_path, str):
+            self.urdf_path = Path(self.urdf_path)
 
 
 def group(robot: str, name: str, joints: tuple[str, ...], *, pose: bool = False) -> PlanningGroup:

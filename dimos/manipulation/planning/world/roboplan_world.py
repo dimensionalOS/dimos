@@ -111,8 +111,8 @@ class RoboPlanWorld:
         """Register a robot for the scene built by :meth:`finalize`."""
         if self._finalized:
             raise RuntimeError("Cannot add robot after world is finalized")
-        if not Path(config.model_path).exists():
-            raise FileNotFoundError(f"Robot model not found: {Path(config.model_path).resolve()}")
+        if not Path(config.urdf_path).exists():
+            raise FileNotFoundError(f"Robot model not found: {Path(config.urdf_path).resolve()}")
         if any(data.config.name == config.name for data in self._robots.values()):
             raise ValueError(f"Robot name '{config.name}' is already registered")
         self._validate_planning_group_config(config)
