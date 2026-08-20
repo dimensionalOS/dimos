@@ -59,7 +59,7 @@ def test_writer_groups_rows_and_notifies_only_after_commit() -> None:
     writer = RecordWriter(max_rows=3, max_delay_s=1.0)
 
     for ts in (1.0, 2.0, 3.0):
-        writer.submit(backend, _prepared(ts, b"data"), accepted_monotonic=0.0)
+        writer.submit(backend, _prepared(ts, b"data"))
     writer.close(timeout_s=1.0)
 
     assert events == [
@@ -74,14 +74,8 @@ def test_writer_groups_rows_and_notifies_only_after_commit() -> None:
     status = writer.status()
     assert status.transactions == 1
     assert status.committed == 3
-    assert status.committed_payload_bytes == 12
     assert status.mean_rows_per_transaction == 3.0
     assert status.max_rows_per_transaction == 3
-    assert status.receive_to_commit_p99_ms > 0
-    assert status.writer_queue_p99_ms > 0
-    assert status.commit_max_ms > 0
-    assert status.commits_over_100ms == 0
-    assert status.streams["camera"].committed_payload_bytes == 12
 
 
 def test_writer_rolls_back_and_reports_failure() -> None:
