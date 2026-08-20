@@ -23,7 +23,6 @@ from dimos.control.components import HardwareComponent, HardwareType, make_joint
 from dimos.core.global_config import global_config
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.robot.assets.processing import rendered_robot_description
 from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.manipulators._modeling import (
     base_pose,
@@ -64,11 +63,6 @@ A750_MODEL_PATH = _A750_REPO / "urdf" / "a750_rev1.urdf"
 A750_PACKAGE_PATHS: dict[str, Path] = {
     "a750_description": _A750_REPO / ".",
 }
-A750_FK_MODEL = rendered_robot_description(
-    A750_MODEL_PATH,
-    A750_PACKAGE_PATHS,
-    removed_joint_names=frozenset({"finger", "finger_mimic"}),
-)
 
 
 def make_a750_hardware(

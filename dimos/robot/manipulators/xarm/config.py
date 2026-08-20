@@ -56,7 +56,7 @@ XARM_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
 ]
 
 XARM_ROS2_REPO = "https://github.com/xArm-Developer/xarm_ros2"
-XARM_ROS2_REF = "d0b95117dabd3883f41155125aa3f67d37901c18"
+XARM_ROS2_REF = "5bb832f72ca665f1236a9d8ed1c3a82f308db489"
 _XARM_REPO = RobotDescriptionSource(url=XARM_ROS2_REPO, ref=XARM_ROS2_REF)
 XARM_MODEL_PATH = _XARM_REPO / "xarm_description" / "urdf" / "xarm_device.urdf.xacro"
 XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": _XARM_REPO / "xarm_description"}

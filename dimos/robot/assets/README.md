@@ -2,7 +2,7 @@
 
 `dimos.robot.assets` resolves robot description sources into local filesystem paths.
 It is the home for Git-backed robot model assets, package-root resolution, and
-generic URDF rendering helpers.
+in-memory URDF/Xacro loading.
 
 This directory is intentionally self-contained so it can be extracted later. Do
 not add compatibility wrappers outside this module for new code. Import directly
@@ -24,8 +24,7 @@ Assets live under:
 ├── sources/                 # Git checkouts by source identity
 ├── locks/                   # per-source file locks
 └── derived/
-    ├── rendered_urdfs/      # generic rendered URDF cache
-    └── drake_urdfs/         # Drake-specific prepared URDF cache
+    └── drake_meshes/        # content-addressed converted mesh artifacts
 ```
 
 `GitAssetCache` uses the “fresh-when-safe” policy:
@@ -33,7 +32,8 @@ Assets live under:
 - clone when the source is missing;
 - update clean cached repos before use;
 - warn and keep cached content if update fails;
-- warn and skip update for dirty cached repos, preserving local edits.
+- warn and skip update for dirty cached repos or checkouts with local-only
+  commits, preserving local work.
 
 `dimos cache clean` removes robot assets along with all other DimOS caches.
 Because source entries are Git checkouts, the command preserves checkouts with
@@ -78,32 +78,36 @@ package_paths = {"myarm_description": _MYARM_REPO / "."}
 `RobotDescriptionPath` defers clone/update/path validation until path operations
 such as `str(path)`, `path.resolve()`, or `path.exists()`.
 
-## Rendering URDFs
+## Loading robot descriptions
 
-Use `processing.py` for generic robot-description rendering:
+Use `processing.py` to expand Xacro, resolve package URIs, and add fixed frames
+without writing a derived URDF file:
 
 ```python
-from dimos.robot.assets.processing import render_urdf, rendered_robot_description
+from dimos.robot.assets.processing import FixedFrameDefinition, load_robot_description
 
-rendered_path = render_urdf(
+description = load_robot_description(
     model_path,
     package_paths,
     xacro_args={"limited": "true"},
     package_uri_mode="preserve",  # or "absolute"
-)
-
-# Use a lazy handle in module-level robot configuration. No checkout or
-# rendering occurs until a consumer observes the filesystem path.
-fk_model_path = rendered_robot_description(
-    model_path,
-    package_paths,
-    xacro_args={"dof": "6", "limited": "true"},
+    additional_fixed_frames=(
+        FixedFrameDefinition(
+            name="tool_center_point",
+            parent="tool_flange",
+            xyz=(0.1, 0.0, 0.0),
+        ),
+    ),
 )
 ```
 
-`rendered_robot_description` can also derive an arm-only kinematic model with
-`removed_joint_names=frozenset({...})`. The named joint, its child link, and the
-complete descendant subtree are removed in the cached output.
+`LoadedRobotDescription` carries the expanded XML together with its resolved
+source path and package roots. Consumers pass its XML directly to Drake,
+RoboPlan, Pinocchio, or yourdfpy. `FixedFrameDefinition` adds an empty link and
+fixed joint to that in-memory model; declarations are ordered, so a frame may
+use an earlier custom frame as its parent.
 
 Keep consumer-specific processing outside this module. For example, Drake-specific
-cleanup still belongs in `dimos/manipulation/planning/utils/mesh_utils.py`.
+cleanup and optional mesh conversion still belong in
+`dimos/manipulation/planning/utils/mesh_utils.py`. Only converted meshes are
+cached because backends require them as filesystem artifacts.

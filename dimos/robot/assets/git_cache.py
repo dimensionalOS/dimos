@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 import shutil
@@ -40,18 +39,6 @@ class GitAssetCacheWarning(RuntimeWarning):
     """Warning emitted when a cached checkout is usable but not fresh."""
 
 
-@dataclass(frozen=True)
-class GitAssetCheckout:
-    """Resolved local checkout information."""
-
-    path: Path
-    repo_url: str
-    ref: str
-    updated: bool = False
-    used_cached_fallback: bool = False
-    skipped_dirty_update: bool = False
-
-
 class GitAssetCache:
     """Resolve `(repo_url, ref)` pairs into fresh-when-safe cached checkouts.
 
@@ -67,7 +54,7 @@ class GitAssetCache:
         self._sources_root = self.cache_root / "sources"
         self._locks_root = self.cache_root / "locks"
 
-    def resolve(self, repo_url: str, ref: str) -> GitAssetCheckout:
+    def resolve(self, repo_url: str, ref: str) -> Path:
         """Return a local checkout for `repo_url` at `ref`."""
         key = self._source_key(repo_url, ref)
         checkout_path = self._sources_root / key / self._repo_slug(repo_url)
@@ -94,7 +81,7 @@ class GitAssetCache:
         slug = "".join(char if char.isalnum() or char in {"-", "_", "."} else "-" for char in slug)
         return slug or "checkout"
 
-    def _clone_missing(self, repo_url: str, ref: str, checkout_path: Path) -> GitAssetCheckout:
+    def _clone_missing(self, repo_url: str, ref: str, checkout_path: Path) -> Path:
         temp_parent = checkout_path.parent
         temp_parent.mkdir(parents=True, exist_ok=True)
         temp_path = Path(tempfile.mkdtemp(prefix=f".{checkout_path.name}-", dir=temp_parent))
@@ -102,14 +89,14 @@ class GitAssetCache:
             repo = Repo.clone_from(repo_url, temp_path)
             self._checkout_ref(repo, ref)
             temp_path.rename(checkout_path)
-            return GitAssetCheckout(path=checkout_path, repo_url=repo_url, ref=ref, updated=True)
+            return checkout_path
         except Exception as exc:
             shutil.rmtree(temp_path, ignore_errors=True)
             raise GitAssetCacheError(
                 f"Failed to fetch Git asset source {repo_url!r} at ref {ref!r}: {exc}"
             ) from exc
 
-    def _refresh_cached(self, repo_url: str, ref: str, checkout_path: Path) -> GitAssetCheckout:
+    def _refresh_cached(self, repo_url: str, ref: str, checkout_path: Path) -> Path:
         try:
             repo = Repo(checkout_path)
         except (InvalidGitRepositoryError, NoSuchPathError) as exc:
@@ -117,43 +104,34 @@ class GitAssetCache:
                 f"Cached asset path {checkout_path} is not a valid Git repository"
             ) from exc
 
-        if self._is_dirty(repo):
+        if repo.is_dirty(untracked_files=True):
             warnings.warn(
                 f"Git asset cache {checkout_path} has local changes; skipping upstream update.",
                 GitAssetCacheWarning,
                 stacklevel=2,
             )
-            return GitAssetCheckout(
-                path=checkout_path,
-                repo_url=repo_url,
-                ref=ref,
-                skipped_dirty_update=True,
-            )
+            return checkout_path
 
         try:
             repo.remotes.origin.fetch(tags=True)
-            before = repo.head.commit.hexsha if repo.head.is_valid() else None
+            protection_reason = _git_protection_reason(repo)
+            if protection_reason is not None:
+                warnings.warn(
+                    f"Git asset cache {checkout_path} {protection_reason}; "
+                    "skipping upstream update.",
+                    GitAssetCacheWarning,
+                    stacklevel=2,
+                )
+                return checkout_path
             self._checkout_ref(repo, ref)
-            after = repo.head.commit.hexsha if repo.head.is_valid() else None
-            return GitAssetCheckout(
-                path=checkout_path, repo_url=repo_url, ref=ref, updated=before != after
-            )
+            return checkout_path
         except Exception as exc:
             warnings.warn(
                 f"Could not update Git asset cache {checkout_path}; using cached checkout: {exc}",
                 GitAssetCacheWarning,
                 stacklevel=2,
             )
-            return GitAssetCheckout(
-                path=checkout_path,
-                repo_url=repo_url,
-                ref=ref,
-                used_cached_fallback=True,
-            )
-
-    @staticmethod
-    def _is_dirty(repo: Repo) -> bool:
-        return repo.is_dirty(untracked_files=True)
+            return checkout_path
 
     @staticmethod
     def _checkout_ref(repo: Repo, ref: str) -> None:
@@ -170,3 +148,20 @@ class GitAssetCache:
             repo.git.checkout(ref)
         except GitCommandError as exc:
             raise GitAssetCacheError(f"Could not check out ref {ref!r}") from exc
+
+
+def git_checkout_protection_reason(checkout: Path) -> str | None:
+    """Return why a cached checkout must be preserved, if any."""
+    try:
+        return _git_protection_reason(Repo(checkout))
+    except (GitCommandError, InvalidGitRepositoryError, NoSuchPathError, OSError) as error:
+        return f"could not inspect Git checkout: {error}"
+
+
+def _git_protection_reason(repo: Repo) -> str | None:
+    if repo.is_dirty(untracked_files=True):
+        return "has local changes"
+    local_commits = repo.git.rev_list("HEAD", "--not", "--remotes", "--tags")
+    if local_commits.strip():
+        return "has local-only commits"
+    return None

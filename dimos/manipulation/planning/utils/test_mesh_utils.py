@@ -13,17 +13,17 @@
 # limitations under the License.
 
 from pathlib import Path
+import re
+
+import pytest
 
 from dimos.manipulation.planning.utils import mesh_utils
-import dimos.robot.assets.processing as processing
+from dimos.robot.assets.processing import LoadedRobotDescription
 
 
-def test_prepare_urdf_for_drake_uses_rendered_urdf_and_keeps_drake_cleanup(
+def test_prepare_urdf_for_drake_keeps_xml_in_memory_and_drake_cleanup(
     tmp_path: Path,
-    monkeypatch,
 ) -> None:
-    monkeypatch.setattr(processing, "_RENDERED_URDF_CACHE_ROOT", tmp_path / "rendered")
-    monkeypatch.setattr(mesh_utils, "_CACHE_DIR", tmp_path / "drake")
     package_root = tmp_path / "pkg"
     mesh = package_root / "meshes" / "link.stl"
     mesh.parent.mkdir(parents=True)
@@ -38,15 +38,49 @@ def test_prepare_urdf_for_drake_uses_rendered_urdf_and_keeps_drake_cleanup(
         "</robot>"
     )
 
-    prepared = Path(
-        mesh_utils.prepare_urdf_for_drake(
-            urdf,
-            {"pkg": package_root},
-        )
+    description = LoadedRobotDescription(
+        xml=urdf.read_text().replace("package://pkg", str(package_root)),
+        source_path=urdf,
+        package_paths={"pkg": package_root},
     )
+    prepared = mesh_utils.prepare_urdf_for_drake(description)
 
-    prepared_text = prepared.read_text()
-    assert prepared.is_relative_to(tmp_path / "drake")
-    assert "package://" not in prepared_text
-    assert str(mesh) in prepared_text
-    assert "<transmission" not in prepared_text
+    assert "package://" not in prepared.xml
+    assert str(mesh) in prepared.xml
+    assert "<transmission" not in prepared.xml
+    assert not (tmp_path / "drake").exists()
+
+
+def test_mesh_conversion_cache_is_keyed_by_mesh_content(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mesh = tmp_path / "link.stl"
+    mesh.write_text(
+        "solid link\n"
+        "facet normal 0 0 1\nouter loop\n"
+        "vertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\n"
+        "endloop\nendfacet\nendsolid link\n"
+    )
+    description = LoadedRobotDescription(
+        xml=f'<robot name="r"><link name="base"><visual><geometry><mesh filename="{mesh}"/>'
+        "</geometry></visual></link></robot>",
+        source_path=tmp_path / "robot.urdf",
+        package_paths={},
+    )
+    monkeypatch.setattr(mesh_utils, "_CACHE_DIR", tmp_path / "derived" / "drake_meshes")
+
+    first = mesh_utils.prepare_urdf_for_drake(description, convert_meshes=True)
+    first_match = re.search(r'filename="([^"]+\.obj)"', first.xml)
+    assert first_match is not None
+    first_obj = Path(first_match.group(1))
+    mesh.write_text(mesh.read_text().replace("vertex 1 0 0", "vertex 2 0 0"))
+    second = mesh_utils.prepare_urdf_for_drake(description, convert_meshes=True)
+    second_match = re.search(r'filename="([^"]+\.obj)"', second.xml)
+    assert second_match is not None
+    second_obj = Path(second_match.group(1))
+
+    assert first_obj.exists()
+    assert second_obj.exists()
+    assert first_obj != second_obj
+    assert not list(tmp_path.glob("*.urdf"))

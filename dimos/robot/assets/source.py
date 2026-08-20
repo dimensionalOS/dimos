@@ -42,7 +42,7 @@ class RobotDescriptionSource:
     def checkout_path(self) -> Path:
         """Return the local checkout root, cloning/updating if needed."""
         if self._checkout_path_cache is None:
-            self._checkout_path_cache = self._git_cache.resolve(self.url, self.ref).path
+            self._checkout_path_cache = self._git_cache.resolve(self.url, self.ref)
         return self._checkout_path_cache
 
     def path(self) -> RobotDescriptionPath:

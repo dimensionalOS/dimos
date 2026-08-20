@@ -15,18 +15,8 @@
 """
 Mesh Utilities for Drake
 
-Provides utilities for preparing URDF files for use with Drake:
-- Xacro processing
+Provides utilities for preparing in-memory URDF descriptions for use with Drake:
 - Mesh format conversion (DAE/STL to OBJ)
-- Package path resolution
-
-Example:
-    urdf_path = prepare_urdf_for_drake(
-        urdf_path="/path/to/robot.xacro",
-        package_paths={"robot_description": "/path/to/robot_description"},
-        xacro_args={"use_sim": "true"},
-        convert_meshes=True,
-    )
 """
 
 from __future__ import annotations
@@ -37,7 +27,8 @@ import re
 import shutil
 from typing import TYPE_CHECKING
 
-from dimos.robot.assets.processing import DERIVED_ASSET_CACHE_ROOT, render_urdf
+from dimos.robot.assets.git_cache import DEFAULT_ROBOT_ASSET_CACHE_ROOT
+from dimos.robot.assets.processing import LoadedRobotDescription
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -46,84 +37,41 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-# Cache directory for Drake-specific URDFs derived from rendered robot assets.
-_CACHE_DIR = DERIVED_ASSET_CACHE_ROOT / "drake_urdfs"
+# Only converted mesh artifacts are cached. Prepared URDF XML remains in memory.
+_CACHE_DIR = DEFAULT_ROBOT_ASSET_CACHE_ROOT / "derived" / "drake_meshes"
 
 
 def prepare_urdf_for_drake(
-    urdf_path: Path | str,
-    package_paths: dict[str, Path] | None = None,
-    xacro_args: dict[str, str] | None = None,
+    description: LoadedRobotDescription,
     convert_meshes: bool = False,
-) -> str:
-    """Prepare a URDF/xacro file for use with Drake.
+) -> LoadedRobotDescription:
+    """Apply Drake-specific cleanup to an in-memory URDF.
 
     This function:
-    1. Processes xacro files if needed
-    2. Resolves package:// URIs in mesh paths
-    3. Optionally converts DAE/STL meshes to OBJ format
+    1. Strips transmission blocks
+    2. Optionally converts DAE/STL meshes to cached OBJ artifacts
 
     Args:
-        urdf_path: Path to URDF or xacro file
-        package_paths: Dict mapping package names to filesystem paths
-        xacro_args: Arguments to pass to xacro processor
+        description: Loaded in-memory URDF
         convert_meshes: Convert DAE/STL meshes to OBJ for Drake compatibility
 
     Returns:
-        Path to the prepared URDF file (may be cached)
+        Prepared in-memory URDF and its original filesystem context
     """
-    package_paths = package_paths or {}
-    xacro_args = xacro_args or {}
-    rendered_urdf = render_urdf(
-        urdf_path,
-        package_paths,
-        xacro_args,
-        package_uri_mode="absolute",
-    )
-
-    # Generate cache key for Drake-specific processing.
-    cache_key = _generate_cache_key(rendered_urdf, convert_meshes)
-    cache_path = _CACHE_DIR / cache_key / rendered_urdf.stem
-    cache_path.mkdir(parents=True, exist_ok=True)
-    cached_urdf = cache_path / f"{rendered_urdf.stem}.urdf"
-
-    # Check cache
-    if cached_urdf.exists():
-        logger.debug(f"Using cached URDF: {cached_urdf}")
-        return str(cached_urdf)
-
-    urdf_content = rendered_urdf.read_text()
+    urdf_content = description.xml
 
     # Strip transmission blocks (Drake doesn't need them, and they can cause issues)
     urdf_content = _strip_transmission_blocks(urdf_content)
 
     # Convert meshes if requested
     if convert_meshes:
-        urdf_content = _convert_meshes(urdf_content, cache_path)
+        urdf_content = _convert_meshes(urdf_content, _CACHE_DIR)
 
-    # Write processed URDF
-    cached_urdf.write_text(urdf_content)
-    logger.info(f"Prepared URDF cached at: {cached_urdf}")
-
-    return str(cached_urdf)
-
-
-def _generate_cache_key(
-    urdf_path: Path,
-    convert_meshes: bool,
-) -> str:
-    """Generate a cache key for Drake-specific URDF processing.
-
-    Includes a version number to invalidate cache when processing logic changes.
-    """
-    # Include file modification time
-    mtime = urdf_path.stat().st_mtime if urdf_path.exists() else 0
-
-    # Version number to invalidate cache when processing logic changes
-    # Increment this when adding new processing steps (e.g., stripping transmission blocks)
-    processing_version = "drake-urdf-v1"
-    key_data = f"{processing_version}:{urdf_path}:{mtime}:{convert_meshes}"
-    return hashlib.md5(key_data.encode()).hexdigest()[:16]
+    return LoadedRobotDescription(
+        xml=urdf_content,
+        source_path=description.source_path,
+        package_paths=description.package_paths,
+    )
 
 
 def _strip_transmission_blocks(urdf_content: str) -> str:
@@ -162,7 +110,7 @@ def _convert_meshes(urdf_content: str, output_dir: Path) -> str:
         return urdf_content
 
     mesh_dir = output_dir / "meshes"
-    mesh_dir.mkdir(exist_ok=True)
+    mesh_dir.mkdir(parents=True, exist_ok=True)
 
     # Find mesh file references
     pattern = r'filename="([^"]+\.(dae|stl|DAE|STL))"'
@@ -176,16 +124,15 @@ def _convert_meshes(urdf_content: str, output_dir: Path) -> str:
             return f'filename="{converted[original_path]}"'
 
         try:
-            # Load mesh
-            mesh = trimesh.load(original_path, force="mesh")
+            source_path = Path(original_path)
+            content_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()[:16]
+            obj_path = mesh_dir / f"{source_path.stem}-{content_hash}.obj"
 
-            # Generate output path
-            mesh_name = Path(original_path).stem
-            obj_path = mesh_dir / f"{mesh_name}.obj"
-
-            # Export as OBJ (trimesh.export returns None, ignore)
-            mesh.export(str(obj_path), file_type="obj")  # type: ignore[no-untyped-call]
-            logger.debug(f"Converted mesh: {original_path} -> {obj_path}")
+            if not obj_path.exists():
+                mesh = trimesh.load(source_path, force="mesh")
+                # trimesh.export returns None, so there is no result to inspect.
+                mesh.export(str(obj_path), file_type="obj")  # type: ignore[no-untyped-call]
+                logger.debug(f"Converted mesh: {original_path} -> {obj_path}")
 
             converted[original_path] = str(obj_path)
             return f'filename="{obj_path}"'
@@ -269,7 +216,7 @@ def pointcloud_to_convex_hull_obj(
 
 
 def clear_cache() -> None:
-    """Clear the URDF cache directory."""
+    """Clear converted mesh and convex-hull artifacts."""
     if _CACHE_DIR.exists():
         shutil.rmtree(_CACHE_DIR)
         logger.info(f"Cleared URDF cache: {_CACHE_DIR}")

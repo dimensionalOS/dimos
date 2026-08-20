@@ -12,66 +12,69 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Universal robot asset rendering helpers."""
+"""In-memory robot description loading and transformation."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-import hashlib
+from dataclasses import dataclass
 import os
 from pathlib import Path
 import re
 from typing import Literal
 import xml.etree.ElementTree as ET
 
-from dimos.robot.assets.git_cache import DEFAULT_ROBOT_ASSET_CACHE_ROOT
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 PackageUriMode = Literal["preserve", "absolute"]
 
-DERIVED_ASSET_CACHE_ROOT = DEFAULT_ROBOT_ASSET_CACHE_ROOT / "derived"
-_RENDERED_URDF_CACHE_ROOT = DERIVED_ASSET_CACHE_ROOT / "rendered_urdfs"
+
+@dataclass(frozen=True)
+class FixedFrameDefinition:
+    """A model-owned fixed frame added after URDF/Xacro loading."""
+
+    name: str
+    parent: str
+    xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+    @property
+    def joint_name(self) -> str:
+        return f"{self.name}_joint"
 
 
-def render_urdf(
+@dataclass(frozen=True)
+class LoadedRobotDescription:
+    """In-memory URDF plus the filesystem context needed by consumers."""
+
+    xml: str
+    source_path: Path
+    package_paths: Mapping[str, Path]
+
+
+def load_robot_description(
     urdf_path: Path | str | os.PathLike[str],
     package_paths: Mapping[str, Path | str | os.PathLike[str]] | None = None,
     xacro_args: Mapping[str, str] | None = None,
     *,
     package_uri_mode: PackageUriMode = "preserve",
-    removed_joint_names: frozenset[str] = frozenset(),
-) -> Path:
-    """Render a URDF or Xacro artifact into a cached plain URDF file.
+    additional_fixed_frames: tuple[FixedFrameDefinition, ...] = (),
+) -> LoadedRobotDescription:
+    """Load a URDF or Xacro artifact entirely in memory.
 
-    This is the universal robot-description stage: it expands Xacro with the
-    supplied ROS package roots and can optionally rewrite ``package://`` URIs to
-    absolute filesystem paths. Consumer-specific cleanup, such as Drake-only tag
-    stripping, belongs in the consumer adapter.
+    Xacro expansion and package URI rewriting happen without writing an
+    intermediate URDF. Model-owned fixed frames are appended after expansion.
     """
     if package_uri_mode not in ("preserve", "absolute"):
         raise ValueError(f"Unsupported package URI mode: {package_uri_mode!r}")
 
-    source_path = Path(os.fspath(urdf_path))
+    source_path = Path(os.fspath(urdf_path)).resolve()
     resolved_package_paths = normalize_package_paths(package_paths or {})
     resolved_xacro_args = dict(xacro_args or {})
-
-    cache_key = _generate_render_key(
-        source_path,
-        resolved_package_paths,
-        resolved_xacro_args,
-        package_uri_mode,
-        removed_joint_names,
-    )
-    rendered_stem = _rendered_urdf_stem(source_path)
-    cache_path = _RENDERED_URDF_CACHE_ROOT / cache_key / rendered_stem
-    cache_path.mkdir(parents=True, exist_ok=True)
-    rendered_urdf = cache_path / f"{rendered_stem}.urdf"
-
-    if rendered_urdf.exists():
-        logger.debug(f"Using cached rendered URDF: {rendered_urdf}")
-        return rendered_urdf
+    if source_path.suffix == ".xml" and additional_fixed_frames:
+        raise ValueError("Additional fixed frames are supported only for URDF/Xacro models")
 
     if source_path.suffix == ".xacro":
         urdf_content = _process_xacro(source_path, resolved_package_paths, resolved_xacro_args)
@@ -81,147 +84,50 @@ def render_urdf(
     if package_uri_mode == "absolute":
         urdf_content = resolve_package_uris(urdf_content, resolved_package_paths)
 
-    if removed_joint_names:
-        urdf_content = remove_joint_subtrees(urdf_content, removed_joint_names)
+    if additional_fixed_frames:
+        urdf_content = add_fixed_frames(urdf_content, additional_fixed_frames)
 
-    rendered_urdf.write_text(urdf_content)
-    logger.info(f"Rendered URDF cached at: {rendered_urdf}")
-    return rendered_urdf
-
-
-class RenderedRobotDescriptionPath(type(Path())):  # type: ignore[misc]
-    """Lazy path to a cached URDF rendered from a robot description source."""
-
-    def __new__(
-        cls,
-        urdf_path: Path | str | os.PathLike[str],
-        package_paths: Mapping[str, Path | str | os.PathLike[str]] | None = None,
-        xacro_args: Mapping[str, str] | None = None,
-        *,
-        package_uri_mode: PackageUriMode = "preserve",
-        removed_joint_names: frozenset[str] = frozenset(),
-    ) -> RenderedRobotDescriptionPath:
-        instance: RenderedRobotDescriptionPath = super().__new__(cls, ".")
-        object.__setattr__(instance, "_render_source_path", urdf_path)
-        object.__setattr__(instance, "_render_package_paths", dict(package_paths or {}))
-        object.__setattr__(instance, "_render_xacro_args", dict(xacro_args or {}))
-        object.__setattr__(instance, "_render_package_uri_mode", package_uri_mode)
-        object.__setattr__(instance, "_render_removed_joint_names", removed_joint_names)
-        object.__setattr__(instance, "_render_resolved_cache", None)
-        return instance
-
-    def __init__(
-        self,
-        urdf_path: Path | str | os.PathLike[str],
-        package_paths: Mapping[str, Path | str | os.PathLike[str]] | None = None,
-        xacro_args: Mapping[str, str] | None = None,
-        *,
-        package_uri_mode: PackageUriMode = "preserve",
-        removed_joint_names: frozenset[str] = frozenset(),
-    ) -> None:
-        del (
-            urdf_path,
-            package_paths,
-            xacro_args,
-            package_uri_mode,
-            removed_joint_names,
-        )
-
-    def _resolve(self) -> Path:
-        cache: Path | None = object.__getattribute__(self, "_render_resolved_cache")
-        if cache is None:
-            cache = render_urdf(
-                object.__getattribute__(self, "_render_source_path"),
-                object.__getattribute__(self, "_render_package_paths"),
-                object.__getattribute__(self, "_render_xacro_args"),
-                package_uri_mode=object.__getattribute__(self, "_render_package_uri_mode"),
-                removed_joint_names=object.__getattribute__(self, "_render_removed_joint_names"),
-            )
-            object.__setattr__(self, "_render_resolved_cache", cache)
-        return cache
-
-    def __getattribute__(self, name: str) -> object:
-        try:
-            object.__getattribute__(self, "_render_source_path")
-        except AttributeError:
-            return object.__getattribute__(self, name)
-
-        if name.startswith("_render_") or name == "_resolve":
-            return object.__getattribute__(self, name)
-        if name == "name":
-            source = object.__getattribute__(self, "_render_source_path")
-            source_name = str(source.name)
-            return f"{Path(source_name).stem.removesuffix('.urdf')}.urdf"
-        if name == "stem":
-            return Path(str(self.name)).stem
-        if name == "suffix":
-            return ".urdf"
-        return getattr(object.__getattribute__(self, "_resolve")(), name)
-
-    def __str__(self) -> str:
-        return str(self._resolve())
-
-    def __fspath__(self) -> str:
-        return str(self._resolve())
-
-
-def rendered_robot_description(
-    urdf_path: Path | str | os.PathLike[str],
-    package_paths: Mapping[str, Path | str | os.PathLike[str]] | None = None,
-    xacro_args: Mapping[str, str] | None = None,
-    *,
-    package_uri_mode: PackageUriMode = "preserve",
-    removed_joint_names: frozenset[str] = frozenset(),
-) -> RenderedRobotDescriptionPath:
-    """Return a lazy handle to a cached, rendered URDF."""
-    return RenderedRobotDescriptionPath(
-        urdf_path,
-        package_paths,
-        xacro_args,
-        package_uri_mode=package_uri_mode,
-        removed_joint_names=removed_joint_names,
+    return LoadedRobotDescription(
+        xml=urdf_content,
+        source_path=source_path,
+        package_paths=resolved_package_paths,
     )
 
 
-def remove_joint_subtrees(urdf_content: str, joint_names: frozenset[str]) -> str:
-    """Remove named joints, their child links, and all descendant subtrees."""
+def add_fixed_frames(
+    urdf_content: str,
+    frames: tuple[FixedFrameDefinition, ...],
+) -> str:
+    """Append model-owned fixed frames to URDF XML in declaration order."""
     root = ET.fromstring(urdf_content)
-    joints = root.findall("joint")
-    links = {link.get("name"): link for link in root.findall("link")}
-    children_by_parent: dict[str, list[ET.Element]] = {}
-    for joint in joints:
-        parent = joint.find("parent")
-        if parent is not None and (parent_name := parent.get("link")) is not None:
-            children_by_parent.setdefault(parent_name, []).append(joint)
+    link_names = {link.get("name") for link in root.findall("link")}
+    joint_names = {joint.get("name") for joint in root.findall("joint")}
 
-    pending = [joint for joint in joints if joint.get("name") in joint_names]
-    removed_joints: set[ET.Element] = set()
-    removed_links: set[str] = set()
-    while pending:
-        joint = pending.pop()
-        if joint in removed_joints:
-            continue
-        removed_joints.add(joint)
-        child = joint.find("child")
-        if child is None or (child_name := child.get("link")) is None:
-            continue
-        removed_links.add(child_name)
-        pending.extend(children_by_parent.get(child_name, []))
+    for frame in frames:
+        if frame.name in link_names:
+            raise ValueError(f"Fixed frame link already exists: {frame.name}")
+        if frame.joint_name in joint_names:
+            raise ValueError(f"Fixed frame joint already exists: {frame.joint_name}")
+        if frame.parent not in link_names:
+            raise ValueError(
+                f"Fixed frame {frame.name} references unknown parent link: {frame.parent}"
+            )
 
-    removed_joint_names = {
-        name for joint in removed_joints if (name := joint.get("name")) is not None
-    }
-    missing = joint_names - removed_joint_names
-    if missing:
-        raise ValueError(f"Cannot remove unknown URDF joints: {sorted(missing)}")
+        ET.SubElement(root, "link", {"name": frame.name})
+        joint = ET.SubElement(root, "joint", {"name": frame.joint_name, "type": "fixed"})
+        ET.SubElement(
+            joint, "origin", {"xyz": _vector_text(frame.xyz), "rpy": _vector_text(frame.rpy)}
+        )
+        ET.SubElement(joint, "parent", {"link": frame.parent})
+        ET.SubElement(joint, "child", {"link": frame.name})
+        link_names.add(frame.name)
+        joint_names.add(frame.joint_name)
 
-    for joint in removed_joints:
-        root.remove(joint)
-    for link_name in removed_links:
-        link = links.get(link_name)
-        if link is not None:
-            root.remove(link)
     return ET.tostring(root, encoding="unicode")
+
+
+def _vector_text(vector: tuple[float, float, float]) -> str:
+    return " ".join(str(value) for value in vector)
 
 
 def resolve_package_uris(
@@ -255,69 +161,6 @@ def normalize_package_paths(
         package_name: Path(os.fspath(package_path)).resolve()
         for package_name, package_path in package_paths.items()
     }
-
-
-def _generate_render_key(
-    urdf_path: Path,
-    package_paths: Mapping[str, Path],
-    xacro_args: Mapping[str, str],
-    package_uri_mode: PackageUriMode,
-    removed_joint_names: frozenset[str],
-) -> str:
-    processing_version = "urdf-render-v3"
-    mtime = urdf_path.stat().st_mtime if urdf_path.exists() else 0
-    key_data = repr(
-        (
-            processing_version,
-            str(urdf_path),
-            mtime,
-            sorted((name, str(path)) for name, path in package_paths.items()),
-            _render_dependency_fingerprints(urdf_path, package_paths),
-            sorted(xacro_args.items()),
-            package_uri_mode,
-            sorted(removed_joint_names),
-        )
-    )
-    return hashlib.sha256(key_data.encode()).hexdigest()[:16]
-
-
-def _rendered_urdf_stem(source_path: Path) -> str:
-    """Return a stable output stem without duplicated URDF suffixes."""
-    return source_path.stem.removesuffix(".urdf")
-
-
-def _render_dependency_fingerprints(
-    urdf_path: Path,
-    package_paths: Mapping[str, Path],
-) -> tuple[tuple[str, str], ...]:
-    """Fingerprint files that can affect Xacro expansion or URI rewriting."""
-    roots = list(package_paths.values()) or [urdf_path.parent]
-    fingerprints = []
-    for root in sorted(set(roots), key=str):
-        fingerprints.append((str(root), _directory_fingerprint(root)))
-    return tuple(fingerprints)
-
-
-def _directory_fingerprint(root: Path) -> str:
-    digest = hashlib.sha256()
-    if not root.exists():
-        digest.update(b"missing")
-        return digest.hexdigest()[:16]
-
-    for path in sorted(root.rglob("*")):
-        if ".git" in path.parts:
-            continue
-        try:
-            stat = path.stat()
-        except OSError:
-            continue
-        if not path.is_file():
-            continue
-        relative_path = path.relative_to(root)
-        digest.update(str(relative_path).encode())
-        digest.update(str(stat.st_size).encode())
-        digest.update(path.read_bytes())
-    return digest.hexdigest()[:16]
 
 
 def _process_xacro(

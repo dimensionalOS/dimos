@@ -29,6 +29,7 @@ from dimos.control.tasks.cartesian_ik_task.pink_control_ik import (
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.robot.assets.processing import LoadedRobotDescription
 
 _URDF = """\
 <robot name="tiny">
@@ -138,7 +139,7 @@ def test_pink_settings_use_finite_declarative_validation(tmp_path: Path) -> None
         )
 
 
-def test_pink_prepares_xacro_with_package_paths_and_arguments(
+def test_pink_loads_xacro_in_memory_with_package_paths_and_arguments(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     model_path = _write_urdf(tmp_path)
@@ -153,23 +154,26 @@ def test_pink_prepares_xacro_with_package_paths_and_arguments(
     )
     prepared: dict[str, Any] = {}
 
-    def prepare(
+    def load(
         path: Path,
         package_paths: dict[str, Path],
         xacro_args: dict[str, str],
-        convert_meshes: bool,
-    ) -> str:
+        *,
+        package_uri_mode: str,
+        additional_fixed_frames: tuple[object, ...],
+    ) -> LoadedRobotDescription:
         prepared.update(
             path=path,
             package_paths=package_paths,
             xacro_args=xacro_args,
-            convert_meshes=convert_meshes,
+            package_uri_mode=package_uri_mode,
+            additional_fixed_frames=additional_fixed_frames,
         )
-        return str(model_path)
+        return LoadedRobotDescription(_URDF, model_path, package_paths)
 
     monkeypatch.setattr(
-        "dimos.control.tasks.cartesian_ik_task.pink_control_ik.prepare_urdf_for_drake",
-        prepare,
+        "dimos.control.tasks.cartesian_ik_task.pink_control_ik.load_robot_description",
+        load,
     )
 
     create_pink_control_ik(
@@ -180,7 +184,8 @@ def test_pink_prepares_xacro_with_package_paths_and_arguments(
         "path": tmp_path / "robot.xacro",
         "package_paths": {"description": package_path},
         "xacro_args": {"dof": "2"},
-        "convert_meshes": False,
+        "package_uri_mode": "absolute",
+        "additional_fixed_frames": (),
     }
 
 

@@ -27,6 +27,7 @@ from dimos.manipulation.planning.groups.identifiers import (
 )
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.robot.assets.processing import FixedFrameDefinition
 
 
 class RobotModelConfig(ModuleConfig):
@@ -43,6 +44,7 @@ class RobotModelConfig(ModuleConfig):
         base_link: Robot-scoped link that base_pose places in the world and
             current backends use for weld/placement.
         package_paths: Dict mapping package names to filesystem Paths
+        additional_fixed_frames: Model-owned fixed frames appended after loading
         joint_limits_lower: Lower joint limits (radians)
         joint_limits_upper: Upper joint limits (radians)
         velocity_limits: Joint velocity limits (rad/s)
@@ -66,6 +68,7 @@ class RobotModelConfig(ModuleConfig):
     base_link: str = "base_link"
     planning_groups: list[PlanningGroupDefinition] = Field(default_factory=list)
     package_paths: dict[str, Path] = Field(default_factory=dict)
+    additional_fixed_frames: list[FixedFrameDefinition] = Field(default_factory=list)
     joint_limits_lower: list[float] | None = None
     joint_limits_upper: list[float] | None = None
     velocity_limits: list[float] | None = None

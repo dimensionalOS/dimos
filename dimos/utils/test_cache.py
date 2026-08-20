@@ -27,11 +27,6 @@ import dimos.utils.cache as cache_utils
 def cache_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     cache_dir = tmp_path / "cache"
     monkeypatch.setattr(cache_utils, "CACHE_DIR", cache_dir)
-    monkeypatch.setattr(
-        cache_utils,
-        "_ROBOT_ASSET_SOURCES_DIR",
-        cache_dir / "robot_assets" / "sources",
-    )
     monkeypatch.setattr(cache_utils, "_CACHE_LOCK_DIR", tmp_path / "state" / "cache-users")
     monkeypatch.setattr(cache_utils, "_CACHE_GATE_PATH", tmp_path / "state" / "cache-clean.lock")
     return cache_dir
@@ -118,7 +113,7 @@ def test_clean_caches_preserves_dirty_robot_checkout_and_removes_other_entries(
 
     assert result == cache_utils.CacheCleanResult(
         cleaned=[cache_root.absolute()],
-        skipped=[cache_utils.CacheIssue(checkout.absolute(), "Git checkout has local changes")],
+        skipped=[cache_utils.CacheIssue(checkout.absolute(), "has local changes")],
     )
     assert checkout.exists()
     assert not derived.exists()
@@ -139,9 +134,7 @@ def test_clean_caches_preserves_robot_checkout_with_local_only_commit(
 
     result = cache_utils.clean_caches()
 
-    assert result.skipped == [
-        cache_utils.CacheIssue(checkout.absolute(), "Git checkout has local-only commits")
-    ]
+    assert result.skipped == [cache_utils.CacheIssue(checkout.absolute(), "has local-only commits")]
     assert checkout.exists()
 
 

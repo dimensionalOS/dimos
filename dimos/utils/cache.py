@@ -27,13 +27,12 @@ from typing import ParamSpec, TypeVar
 import uuid
 
 from filelock import FileLock, Timeout
-from git import GitCommandError, InvalidGitRepositoryError, NoSuchPathError, Repo
 
 from dimos.constants import CACHE_DIR, STATE_DIR
+from dimos.robot.assets.cache import protected_robot_checkouts
 
 _CACHE_LOCK_DIR = STATE_DIR / "cache-users"
 _CACHE_GATE_PATH = STATE_DIR / "cache-clean.lock"
-_ROBOT_ASSET_SOURCES_DIR = CACHE_DIR / "robot_assets" / "sources"
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
@@ -76,55 +75,11 @@ def clean_caches(*, force: bool = False) -> CacheCleanResult:
     if not _lexists(target):
         return result
 
-    protected = {} if force else _protected_robot_checkouts()
+    protected = {} if force else protected_robot_checkouts(target / "robot_assets")
     result.skipped.extend(CacheIssue(path, reason) for path, reason in protected.items())
     if _remove_except(target, set(protected), result):
         result.cleaned.append(target)
     return result
-
-
-def _protected_robot_checkouts() -> dict[Path, str]:
-    sources_root = _ROBOT_ASSET_SOURCES_DIR.absolute()
-    if not _lexists(sources_root) or sources_root.is_symlink() or not sources_root.is_dir():
-        return {}
-
-    protected: dict[Path, str] = {}
-
-    def protect_unreadable(error: OSError) -> None:
-        protected[sources_root] = f"could not inspect robot asset checkouts: {error}"
-
-    for directory, dirnames, filenames in os.walk(
-        sources_root,
-        followlinks=False,
-        onerror=protect_unreadable,
-    ):
-        if ".git" not in dirnames and ".git" not in filenames:
-            continue
-
-        checkout = Path(directory).absolute()
-        reason = _git_protection_reason(checkout)
-        if reason is not None:
-            protected[checkout] = reason
-
-        # Source repositories may contain nested repositories. Their state is
-        # represented by the outer checkout and must not be inspected twice.
-        dirnames.clear()
-
-    return protected
-
-
-def _git_protection_reason(checkout: Path) -> str | None:
-    try:
-        repo = Repo(checkout)
-        if repo.is_dirty(untracked_files=True):
-            return "Git checkout has local changes"
-        local_commits = repo.git.rev_list("HEAD", "--not", "--remotes", "--tags")
-    except (GitCommandError, InvalidGitRepositoryError, NoSuchPathError, OSError) as error:
-        return f"could not inspect Git checkout: {error}"
-
-    if local_commits.strip():
-        return "Git checkout has local-only commits"
-    return None
 
 
 def _remove_except(

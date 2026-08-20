@@ -21,7 +21,6 @@ from dimos.constants import CACHE_DIR
 from dimos.robot.assets.git_cache import (
     DEFAULT_ROBOT_ASSET_CACHE_ROOT,
     GitAssetCache,
-    GitAssetCheckout,
 )
 from dimos.robot.assets.source import RobotDescriptionPath, RobotDescriptionSource
 
@@ -31,9 +30,9 @@ class RecordingGitAssetCache(GitAssetCache):
         self.checkout_path = checkout_path
         self.resolve_calls: list[tuple[str, str]] = []
 
-    def resolve(self, repo_url: str, ref: str) -> GitAssetCheckout:
+    def resolve(self, repo_url: str, ref: str) -> Path:
         self.resolve_calls.append((repo_url, ref))
-        return GitAssetCheckout(path=self.checkout_path, repo_url=repo_url, ref=ref)
+        return self.checkout_path
 
 
 def test_default_robot_asset_cache_is_owned_by_dimos_cache_root() -> None:

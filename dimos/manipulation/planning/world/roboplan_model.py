@@ -31,6 +31,7 @@ from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import PlanningGroupID, RobotName
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
+from dimos.robot.assets.processing import load_robot_description
 from dimos.utils.transform_utils import pose_to_matrix
 
 ROBOPLAN_WORLD_FRAME = "dimos_world"
@@ -123,20 +124,7 @@ def build_roboplan_model(
     """Build one composite scene transactionally."""
     if not robots:
         raise ValueError("RoboPlanWorld requires at least one robot")
-    prepared = [
-        (
-            robot,
-            Path(
-                prepare_urdf_for_drake(
-                    robot.config.model_path,
-                    package_paths=robot.config.package_paths,
-                    xacro_args=robot.config.xacro_args,
-                    convert_meshes=robot.config.auto_convert_meshes,
-                )
-            ),
-        )
-        for robot in robots
-    ]
+    prepared = [(robot, _prepared_urdf_xml(robot.config)) for robot in robots]
     composite = len(robots) > 1
     composed = _compose(prepared, composite)
     groups, legacy_ids, all_group = _groups(robots, registry, composed.maps, composite)
@@ -169,7 +157,21 @@ def build_roboplan_model(
     )
 
 
-def _compose(prepared: Sequence[tuple[_BuildRobot, Path]], composite: bool) -> _Composed:
+def _prepared_urdf_xml(config: RobotModelConfig) -> str:
+    description = load_robot_description(
+        config.model_path,
+        package_paths=config.package_paths,
+        xacro_args=config.xacro_args,
+        package_uri_mode="absolute",
+        additional_fixed_frames=tuple(config.additional_fixed_frames),
+    )
+    return prepare_urdf_for_drake(
+        description,
+        convert_meshes=config.auto_convert_meshes,
+    ).xml
+
+
+def _compose(prepared: Sequence[tuple[_BuildRobot, str]], composite: bool) -> _Composed:
     result = ET.Element(
         "robot",
         {"name": "dimos_composite" if composite else prepared[0][0].config.name},
@@ -177,9 +179,9 @@ def _compose(prepared: Sequence[tuple[_BuildRobot, Path]], composite: bool) -> _
     ET.SubElement(result, "link", {"name": _ROOT_LINK})
     maps: dict[RobotName, _NameMap] = {}
     used_names: set[str] = {_ROOT_LINK}
-    for robot, path in prepared:
+    for robot, urdf_xml in prepared:
         config = robot.config
-        root = ET.parse(path).getroot()
+        root = ET.fromstring(urdf_xml)
         if _tag(root.tag) != "robot":
             raise ValueError(f"Prepared model for '{config.name}' is not a URDF robot")
         _add_missing_acceleration_limits(root)

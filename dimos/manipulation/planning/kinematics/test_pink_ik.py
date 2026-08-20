@@ -509,9 +509,8 @@ def test_solve_retries_after_joint_limit_failure(mocker: MockerFixture) -> None:
 
 def test_robot_context_cache_key_includes_tip_frame(mocker: MockerFixture, tmp_path: Path) -> None:
     modules = _fake_modules()
-    modules.pinocchio.buildModelFromUrdf = lambda path: _FakeModel()  # type: ignore[attr-defined]
+    modules.pinocchio.buildModelFromXML = lambda xml: _FakeModel()  # type: ignore[attr-defined]
     mocker.patch.object(pink_ik, "_load_optional_dependencies", return_value=modules)
-    mocker.patch.object(pink_ik, "prepare_urdf_for_drake", return_value=tmp_path / "prepared.urdf")
     model_path = tmp_path / "fake.urdf"
     model_path.write_text("<robot/>")
     world = _FakeWorld()
@@ -531,9 +530,8 @@ def test_build_robot_context_rejects_base_link_not_model_root(
     model = _FakeModel()
     model.frames[0] = _FakeFrame("base", parent_joint=1)
     modules = _fake_modules()
-    modules.pinocchio.buildModelFromUrdf = lambda path: model  # type: ignore[attr-defined]
+    modules.pinocchio.buildModelFromXML = lambda xml: model  # type: ignore[attr-defined]
     mocker.patch.object(pink_ik, "_load_optional_dependencies", return_value=modules)
-    mocker.patch.object(pink_ik, "prepare_urdf_for_drake", return_value=tmp_path / "prepared.urdf")
     model_path = tmp_path / "fake.urdf"
     model_path.write_text("<robot/>")
     config = _robot_config()

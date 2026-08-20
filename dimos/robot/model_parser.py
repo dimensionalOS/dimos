@@ -21,6 +21,7 @@ import os
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
+from dimos.robot.assets.processing import FixedFrameDefinition, load_robot_description
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -69,6 +70,7 @@ def parse_model(
     path: Path | str,
     package_paths: dict[str, Path] | None = None,
     xacro_args: dict[str, str] | None = None,
+    additional_fixed_frames: tuple[FixedFrameDefinition, ...] = (),
 ) -> ModelDescription:
     """Parse a robot description file (.urdf, .xacro, .xml/MJCF)."""
     path = Path(os.fspath(path))
@@ -78,11 +80,14 @@ def parse_model(
     suffix = path.suffix.lower()
     name = path.name.lower()
 
-    if suffix == ".xacro" or name.endswith(".urdf.xacro"):
-        xml_string = _expand_xacro(path, package_paths or {}, xacro_args or {})
-        return _parse_urdf_string(xml_string)
-    elif suffix == ".urdf":
-        return _parse_urdf_string(path.read_text())
+    if suffix in {".urdf", ".xacro"} or name.endswith(".urdf.xacro"):
+        description = load_robot_description(
+            path,
+            package_paths,
+            xacro_args,
+            additional_fixed_frames=additional_fixed_frames,
+        )
+        return parse_urdf(description.xml)
     elif suffix == ".xml":
         return _parse_mjcf_file(path)
     else:
@@ -92,24 +97,7 @@ def parse_model(
         )
 
 
-def _expand_xacro(
-    path: Path,
-    package_paths: dict[str, Path],
-    xacro_args: dict[str, str],
-) -> str:
-    """Expand a xacro file to URDF XML string."""
-    try:
-        from dimos.utils.ament_prefix import process_xacro
-    except ImportError:
-        raise ImportError(
-            "xacro is required for processing .xacro files. "
-            "Install the manipulation extra: pip install dimos[manipulation]"
-        )
-
-    return process_xacro(path, package_paths, xacro_args)
-
-
-def _parse_urdf_string(xml_string: str) -> ModelDescription:
+def parse_urdf(xml_string: str) -> ModelDescription:
     """Parse a URDF XML string."""
     root = ET.fromstring(xml_string)
 
