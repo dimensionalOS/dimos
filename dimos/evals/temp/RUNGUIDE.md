@@ -137,11 +137,17 @@ evo gate add exp_0000 --phase post --name holdout \
 evo gate list exp_0000
 ```
 
+Two draws of the same seed differed by 0.02 on the holdout score and by up
+to 0.2 on a ten-row family, so set `--min-score` below the seed's draw (round
+3: 0.50 against 0.55 / 0.54) and keep `floors` to the frozen families only —
+`--write-floors` records every family, including the ones under optimization.
+
 Gates are node-scoped and **inherit to every descendant**, so registering them
 on the baseline covers the whole tree. Pass/fail is exit-code only — a command
 that prints a bad score and exits 0 passes.
 
-Validate without spending or consuming retry budget:
+Validate the wiring. Both run the post gates too, and `--check` runs the
+benchmark itself — a full paid bench plus the holdout gate, ~218 calls:
 
 ```bash
 evo run exp_0000 --check
