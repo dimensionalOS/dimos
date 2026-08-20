@@ -22,7 +22,6 @@ import inspect
 import os
 from pathlib import Path
 import pickle
-import threading
 import time
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
@@ -297,7 +296,6 @@ class RecorderConfig(MemoryModuleConfig):
     shutdown_timeout_s: float = Field(default=10.0, gt=0)
     batch_max_rows: int = Field(default=64, ge=1)
     batch_max_delay_s: float = Field(default=0.010, gt=0)
-    preparation_concurrency: int | None = Field(default=None, ge=1)
 
 
 PoseSetter = Callable[[Any], "Awaitable[Pose | None]"]
@@ -363,11 +361,6 @@ class Recorder(MemoryModule):
         self._pose_setters = self._collect_pose_setters()
         self._recording_queues = {}
         self._recording_subscriptions = []
-        self._preparation_semaphore = (
-            threading.Semaphore(self.config.preparation_concurrency)
-            if self.config.preparation_concurrency is not None
-            else None
-        )
         self._record_writer = RecordWriter(
             max_rows=self.config.batch_max_rows,
             max_delay_s=self.config.batch_max_delay_s,
@@ -430,19 +423,6 @@ class Recorder(MemoryModule):
         and registers the subscription for cleanup on stop().
         """
 
-        async def prepare(stamped: tuple[float, Any]) -> tuple[Any, float, Pose | None, float]:
-            recv_ts, msg = stamped
-            ts = self._resolve_ts(name, msg)
-            pose = await self._resolve_pose(name, msg, ts)
-            if not pose and name not in self.config.poseless_streams:
-                logger.warning(
-                    "[%s] No pose for time %s (msg ts: %s), storing without pose",
-                    name,
-                    ts,
-                    getattr(msg, "ts", None),
-                )
-            return msg, ts, pose, recv_ts
-
         def process(stamped: tuple[float, Any], accepted_monotonic: float) -> None:
             process_started = time.perf_counter()
             self._on_recording_stage(
@@ -450,25 +430,26 @@ class Recorder(MemoryModule):
                 "ingress_queue",
                 max(0.0, time.monotonic() - accepted_monotonic),
             )
-            if self._preparation_semaphore is not None:
-                self._preparation_semaphore.acquire()
-            try:
-                prepare_and_submit(stamped, accepted_monotonic, process_started)
-            finally:
-                if self._preparation_semaphore is not None:
-                    self._preparation_semaphore.release()
-
-        def prepare_and_submit(
-            stamped: tuple[float, Any], accepted_monotonic: float, process_started: float
-        ) -> None:
-            loop = self._loop
-            if loop is None or not loop.is_running():
-                raise RecorderFailedError("Recorder event loop is not running")
+            recv_ts, msg = stamped
+            ts = self._resolve_ts(name, msg)
             pose_started = time.perf_counter()
-            msg, ts, pose, recv_ts = asyncio.run_coroutine_threadsafe(
-                prepare(stamped), loop
-            ).result()
+            if name in self._pose_setters:
+                loop = self._loop
+                if loop is None or not loop.is_running():
+                    raise RecorderFailedError("Recorder event loop is not running")
+                pose = asyncio.run_coroutine_threadsafe(
+                    self._resolve_pose(name, msg, ts), loop
+                ).result()
+            else:
+                pose = self._resolve_tf_pose(msg, ts)
             self._on_recording_stage(name, "pose", time.perf_counter() - pose_started)
+            if not pose and name not in self.config.poseless_streams:
+                logger.warning(
+                    "[%s] No pose for time %s (msg ts: %s), storing without pose",
+                    name,
+                    ts,
+                    getattr(msg, "ts", None),
+                )
             if hasattr(msg, "ts"):
                 msg.ts = ts
             backend = cast("Backend[Any]", stream._source)  # type: ignore[attr-defined]
@@ -569,6 +550,10 @@ class Recorder(MemoryModule):
         setter = self._pose_setters.get(name)
         if setter is not None:
             return cast("Pose | None", await setter(msg))
+        return self._resolve_tf_pose(msg, ts)
+
+    def _resolve_tf_pose(self, msg: Any, ts: float) -> Pose | None:
+        """Resolve the ordinary TF pose directly from recorder queue threads."""
         if self._tf is None:
             return None
         frame_id = getattr(msg, "frame_id", None) or self.config.default_frame_id
