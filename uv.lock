@@ -1767,6 +1767,7 @@ all = [
     { name = "lap" },
     { name = "manifold3d" },
     { name = "matplotlib" },
+    { name = "mavsdk" },
     { name = "moondream" },
     { name = "mujoco" },
     { name = "ollama" },
@@ -1855,6 +1856,7 @@ dds = [
     { name = "cyclonedds" },
 ]
 drone = [
+    { name = "mavsdk" },
     { name = "pymavlink" },
 ]
 graspgenx = [
@@ -2268,6 +2270,7 @@ requires-dist = [
     { name = "manifold3d", marker = "extra == 'apriltag'", specifier = ">=2.5.0" },
     { name = "matplotlib", marker = "extra == 'graspgenx'", specifier = ">=3.7.1" },
     { name = "matplotlib", marker = "extra == 'manipulation'", specifier = ">=3.7.1" },
+    { name = "mavsdk", marker = "extra == 'drone'", specifier = ">=3.17.2" },
     { name = "mcap", marker = "extra == 'unitree-dds'", specifier = ">=1.2.0" },
     { name = "moondream", marker = "extra == 'perception'" },
     { name = "mujoco", marker = "extra == 'sim'", specifier = ">=3.3.4" },
@@ -5147,6 +5150,26 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/97/c6/cbf8a51dde19c19aeba0d9b075095a2effb9b31fd312b1aae3ac79f8aea2/maturin-1.13.3-py3-none-win32.whl", hash = "sha256:0ef257e692cc756c87af5bea95ddfe7d3ac49d3376a7a87f728d63f06e7b6f8b", size = 8901838, upload-time = "2026-05-11T07:43:23.76Z" },
     { url = "https://files.pythonhosted.org/packages/a1/ff/c6a50a59dc8313097d43ac5f4d74df6a500c8cb62b0dc9e054f53e203a48/maturin-1.13.3-py3-none-win_amd64.whl", hash = "sha256:def4a435ea9d2ee93b18ba579dc8c9cf898889a66f312cd379b5e374ec3e3ad6", size = 10340801, upload-time = "2026-05-11T07:43:29.239Z" },
     { url = "https://files.pythonhosted.org/packages/6c/93/e32e79333f0902ba292b996f504f5f06be59587f7d02ab8d5ed1e3066445/maturin-1.13.3-py3-none-win_arm64.whl", hash = "sha256:2389fe92d017cea9d94e521fa0175314a4c52f79a1057b901fbc9f8686ef7d0b", size = 9706562, upload-time = "2026-05-11T07:43:31.743Z" },
+]
+
+[[package]]
+name = "mavsdk"
+version = "3.17.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "grpcio" },
+    { name = "protobuf" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/38/42/bf38eb788ed238dbfe0b54e2a3c8c6e73ca227bf48abf61171c6cf06162f/mavsdk-3.17.2-py3-none-linux_armv6l.whl", hash = "sha256:90ac3826e37dd70f5fdeea4c2d60b3681c22a54e78162d87955313f3deb77083", size = 16588500, upload-time = "2026-07-22T08:19:46.616Z" },
+    { url = "https://files.pythonhosted.org/packages/45/9e/567b2957c1d12e15edf0837fbfcdbd43f139ca32490d848a095bbc55c3f3/mavsdk-3.17.2-py3-none-linux_armv7l.whl", hash = "sha256:1aa441c7c290c4e1df5cb43376aa776194ea80004ef156826dd60c5d8b13f2c0", size = 16588546, upload-time = "2026-07-22T08:19:43.234Z" },
+    { url = "https://files.pythonhosted.org/packages/9c/91/2005f11804d277a4b599e97bef9c5021c949079ac2c992e5d4f44e304e3f/mavsdk-3.17.2-py3-none-macosx_13_0_x86_64.whl", hash = "sha256:24c40b9f9fa0ce5cea4c05d300cafbb21dfc1483da7518de77c15356112f2c97", size = 12221440, upload-time = "2026-07-22T08:19:53.168Z" },
+    { url = "https://files.pythonhosted.org/packages/10/38/da962106d56d68e9290390ec7e1fbfa6d6914580c11673a89d0a8406241d/mavsdk-3.17.2-py3-none-macosx_14_0_arm64.whl", hash = "sha256:0247c9dcc0d4390b8734358ded178764efa4b83c304cb2f77162758b29cd6f57", size = 11684503, upload-time = "2026-07-22T08:19:48.707Z" },
+    { url = "https://files.pythonhosted.org/packages/73/b6/72dc4499cb7172665c1e0c3af0b18f5d0ca0160b810c1e05ea6668dd5488/mavsdk-3.17.2-py3-none-manylinux1_x86_64.manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:78ac2402306022bb6000e1fa02dfe4af7a634c803d4ca90673b1c7918a23c937", size = 15246122, upload-time = "2026-07-22T08:20:01.196Z" },
+    { url = "https://files.pythonhosted.org/packages/c0/b3/2b177c2350bbc0785bc3a74f770cfc7cdc134128ad566a4f759631b4e549/mavsdk-3.17.2-py3-none-manylinux2014_aarch64.whl", hash = "sha256:99e58f26705127986fa5e1358e3688aa4e4f8d006e719d2d39179d03368039f8", size = 18233585, upload-time = "2026-07-22T08:19:47.112Z" },
+    { url = "https://files.pythonhosted.org/packages/fb/3e/843a6bba46b3d442b870c02186003c27c1f7cbe57d9abcf4df35f855f6ba/mavsdk-3.17.2-py3-none-win32.whl", hash = "sha256:a5bb3618b044820c679f62a4d2b5b1fd4029c2145f53fd3ed80a62bf6768e8e2", size = 14342433, upload-time = "2026-07-22T08:20:16.778Z" },
+    { url = "https://files.pythonhosted.org/packages/47/4e/6bbd365a6119be77d93d7d61d7f3bb54faa8cc026ddc4471fe204b652e80/mavsdk-3.17.2-py3-none-win_amd64.whl", hash = "sha256:b613775dbf9324b542e29814f530a5e361cad0234304cb48fe56da4054642fc1", size = 14342433, upload-time = "2026-07-22T08:20:23.647Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/81/209201c6e2420cc27c377b3bc6e38b7880af19ba8e93f15e082cd7554705/mavsdk-3.17.2-py3-none-win_arm64.whl", hash = "sha256:727b2047e326d64e698bfccb8ca77f7eaada0d4b4d562b57d7e7ac55fa579ac1", size = 14342433, upload-time = "2026-07-22T08:20:10.977Z" },
 ]
 
 [[package]]

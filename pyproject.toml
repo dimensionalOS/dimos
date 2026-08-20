@@ -342,7 +342,8 @@ mapping = [
 # ]
 
 drone = [
-    "pymavlink"
+    "mavsdk>=3.17.2",
+    "pymavlink",
 ]
 
 dds = [

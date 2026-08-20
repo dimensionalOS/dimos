@@ -27,13 +27,14 @@ import numpy as np
 import pytest
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.robot.drone.connection_module import DroneConnectionModule
-from dimos.robot.drone.dji_video_stream import FakeDJIVideoStream
+from dimos.robot.drone.dji.connection_module import DroneConnectionModule
+from dimos.robot.drone.dji.dji_video_stream import FakeDJIVideoStream
 
 # Drone class removed - use blueprints instead
-from dimos.robot.drone.mavlink_connection import FakeMavlinkConnection, MavlinkConnection
+from dimos.robot.drone.dji.mavlink_connection import FakeMavlinkConnection, MavlinkConnection
 
 
 class TestMavlinkProcessing(unittest.TestCase):
@@ -235,8 +236,12 @@ class TestReplayMode(unittest.TestCase):
 
     def test_connection_module_replay_mode(self) -> None:
         """Test connection module uses Fake classes in replay mode."""
-        with patch("dimos.robot.drone.mavlink_connection.FakeMavlinkConnection") as mock_fake_conn:
-            with patch("dimos.robot.drone.dji_video_stream.FakeDJIVideoStream") as mock_fake_video:
+        with patch(
+            "dimos.robot.drone.dji.mavlink_connection.FakeMavlinkConnection"
+        ) as mock_fake_conn:
+            with patch(
+                "dimos.robot.drone.dji.dji_video_stream.FakeDJIVideoStream"
+            ) as mock_fake_video:
                 # Mock the fake connection
                 mock_conn_instance = MagicMock()
                 mock_conn_instance.connected = True
@@ -410,6 +415,156 @@ class TestReplayMode(unittest.TestCase):
             finally:
                 # Clean up
                 module.stop()
+
+
+@unittest.skip("Skipped: TestDroneFullIntegration tests deprecated Drone class")
+class TestDroneFullIntegration(unittest.TestCase):
+    """Full integration test of Drone class with replay mode."""
+
+    def setUp(self) -> None:
+        """Set up test environment."""
+        # Mock the DimOS core module
+        self.mock_dimos = MagicMock()
+        self.mock_dimos.deploy.return_value = MagicMock()
+
+        # Mock pubsub.lcm.autoconf
+        self.pubsub_patch = patch("dimos.protocol.pubsub.lcm.autoconf")
+        self.pubsub_patch.start()
+
+    def tearDown(self) -> None:
+        """Clean up patches."""
+        self.pubsub_patch.stop()
+
+    @patch("dimos.robot.drone.dji.drone.ModuleCoordinator")
+    @patch("dimos.utils.testing.legacy_pickle.LegacyPickleStore")
+    def test_full_system_with_replay(self, mock_replay, mock_coordinator_class) -> None:
+        """Test full drone system initialization and operation with replay mode."""
+        # Set up mock replay data
+        mavlink_messages = [
+            {"mavpackettype": "HEARTBEAT", "type": 2, "base_mode": 193, "armed": True},
+            {"mavpackettype": "ATTITUDE", "roll": 0.1, "pitch": 0.2, "yaw": 0.3},
+            {
+                "mavpackettype": "GLOBAL_POSITION_INT",
+                "lat": 377810501,
+                "lon": -1224069671,
+                "alt": 5000,
+                "relative_alt": 5000,
+                "vx": 100,  # 1 m/s North
+                "vy": 200,  # 2 m/s East
+                "vz": -50,  # 0.5 m/s Up
+                "hdg": 9000,  # 90 degrees
+            },
+            {
+                "mavpackettype": "BATTERY_STATUS",
+                "voltages": [3800, 3800, 3800, 3800],
+                "battery_remaining": 75,
+            },
+        ]
+
+        video_frames = [
+            Image(
+                data=np.random.randint(0, 255, (360, 640, 3), dtype=np.uint8),
+                format=ImageFormat.BGR,
+            )
+        ]
+
+        def replay_side_effect(store_name: str):
+            mock = MagicMock()
+            if "mavlink" in store_name:
+                # Create stream that emits MAVLink messages
+                stream = MagicMock()
+                stream.subscribe = lambda callback: [callback(msg) for msg in mavlink_messages]
+                mock.stream.return_value = stream
+            elif "video" in store_name:
+                # Create stream that emits video frames
+                stream = MagicMock()
+                stream.subscribe = lambda callback: [callback(frame) for frame in video_frames]
+                mock.stream.return_value = stream
+            return mock
+
+        mock_replay.side_effect = replay_side_effect
+
+        # Mock ModuleCoordinator
+        mock_coordinator_class.return_value = self.mock_dimos
+
+        # Create drone in replay mode
+        drone = Drone(connection_string="replay", video_port=5600)
+
+        # Mock the deployed modules
+        mock_connection = MagicMock()
+        mock_camera = MagicMock()
+
+        # Set up return values for module methods
+        mock_connection.start.return_value = True
+        mock_connection.get_odom.return_value = PoseStamped(
+            position=Vector3(1.0, 2.0, 3.0), orientation=Quaternion(0, 0, 0, 1), frame_id="world"
+        )
+        mock_connection.get_status.return_value = {
+            "armed": True,
+            "battery_voltage": 15.2,
+            "battery_remaining": 75,
+            "altitude": 5.0,
+        }
+
+        mock_camera.start.return_value = True
+
+        # Configure deploy to return our mocked modules
+        def deploy_side_effect(module_class, **kwargs):
+            if "DroneConnectionModule" in str(module_class):
+                return mock_connection
+            elif "DroneCameraModule" in str(module_class):
+                return mock_camera
+            return MagicMock()
+
+        self.mock_dimos.deploy.side_effect = deploy_side_effect
+
+        # Start the drone system
+        drone.start()
+
+        # Verify modules were deployed
+        self.assertEqual(self.mock_dimos.deploy.call_count, 4)
+
+        # Test get_odom
+        odom = drone.get_odom()
+        self.assertIsNotNone(odom)
+        self.assertEqual(odom.position.x, 1.0)
+        self.assertEqual(odom.position.y, 2.0)
+        self.assertEqual(odom.position.z, 3.0)
+
+        # Test get_status
+        status = drone.get_status()
+        self.assertIsNotNone(status)
+        self.assertTrue(status["armed"])
+        self.assertEqual(status["battery_remaining"], 75)
+
+        # Test movement command
+        drone.move(Vector3(1.0, 0.0, 0.5), duration=2.0)
+        mock_connection.move.assert_called_once_with(Vector3(1.0, 0.0, 0.5), 2.0)
+
+        # Test control commands
+        drone.arm()
+        mock_connection.arm.assert_called_once()
+
+        drone.takeoff(altitude=10.0)
+        mock_connection.takeoff.assert_called_once_with(10.0)
+
+        drone.land()
+        mock_connection.land.assert_called_once()
+
+        drone.disarm()
+        mock_connection.disarm.assert_called_once()
+
+        # Test mode setting
+        drone.set_mode("GUIDED")
+        mock_connection.set_mode.assert_called_once_with("GUIDED")
+
+        # Clean up
+        drone.stop()
+
+        # Verify cleanup was called
+        mock_connection.stop.assert_called_once()
+        mock_camera.stop.assert_called_once()
+        self.mock_dimos.stop.assert_called_once()
 
 
 class TestDroneControlCommands(unittest.TestCase):
@@ -789,7 +944,7 @@ class TestVisualServoingEdgeCases(unittest.TestCase):
 
     def test_output_clamping(self) -> None:
         """Large errors are clamped to max_velocity."""
-        from dimos.robot.drone.drone_visual_servoing_controller import (
+        from dimos.robot.drone.dji.drone_visual_servoing_controller import (
             DroneVisualServoingController,
         )
 
@@ -809,7 +964,7 @@ class TestVisualServoingEdgeCases(unittest.TestCase):
 
     def test_deadband_prevents_integral_windup(self) -> None:
         """Deadband prevents integral accumulation for small errors."""
-        from dimos.robot.drone.drone_visual_servoing_controller import (
+        from dimos.robot.drone.dji.drone_visual_servoing_controller import (
             DroneVisualServoingController,
         )
 
@@ -831,7 +986,7 @@ class TestVisualServoingEdgeCases(unittest.TestCase):
 
     def test_reset_clears_integral(self) -> None:
         """reset() clears accumulated integral to prevent windup."""
-        from dimos.robot.drone.drone_visual_servoing_controller import (
+        from dimos.robot.drone.dji.drone_visual_servoing_controller import (
             DroneVisualServoingController,
         )
 
@@ -860,7 +1015,7 @@ class TestVisualServoingVelocity(unittest.TestCase):
 
     def test_velocity_from_bbox_center_error(self) -> None:
         """Bbox center offset produces proportional velocity command."""
-        from dimos.robot.drone.drone_visual_servoing_controller import (
+        from dimos.robot.drone.dji.drone_visual_servoing_controller import (
             DroneVisualServoingController,
         )
 

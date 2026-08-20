@@ -37,8 +37,8 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.robot.drone.dji_video_stream import DJIDroneVideoStream
-from dimos.robot.drone.mavlink_connection import MavlinkConnection
+from dimos.robot.drone.dji.dji_video_stream import DJIDroneVideoStream
+from dimos.robot.drone.dji.mavlink_connection import MavlinkConnection
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -103,8 +103,8 @@ class DroneConnectionModule(Module):
         """Start the connection and subscribe to sensor streams."""
         # Check for replay mode
         if self.config.connection_string == "replay":
-            from dimos.robot.drone.dji_video_stream import FakeDJIVideoStream
-            from dimos.robot.drone.mavlink_connection import FakeMavlinkConnection
+            from dimos.robot.drone.dji.dji_video_stream import FakeDJIVideoStream
+            from dimos.robot.drone.dji.mavlink_connection import FakeMavlinkConnection
 
             self.connection = FakeMavlinkConnection("replay")
             self.video_stream = FakeDJIVideoStream(port=self.config.video_port)
