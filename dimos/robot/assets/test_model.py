@@ -20,6 +20,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 import dimos.robot.assets.model as robot_model
+from dimos.utils.data import LfsPath
 
 
 def test_model_load_is_lazy_and_memoized(
@@ -43,6 +44,16 @@ def test_model_load_is_lazy_and_memoized(
     assert first is second
     assert first.xml == "<robot name='expanded'><link name='base'/></robot>"
     expand_xacro.assert_called_once_with(xacro.resolve(), {}, {"dof": "6"})
+
+
+def test_model_construction_does_not_materialize_lazy_source(mocker: MockerFixture) -> None:
+    source_path = LfsPath("robot_description/model.urdf")
+    ensure_downloaded = mocker.patch.object(LfsPath, "_ensure_downloaded")
+
+    model = robot_model.RobotModel.from_file(source_path)
+
+    assert model.source_path is source_path
+    ensure_downloaded.assert_not_called()
 
 
 def test_model_load_resolves_package_uris_without_writing_a_derived_urdf(
@@ -276,6 +287,7 @@ def test_pickle_keeps_model_edits_but_not_materialized_xml(tmp_path: Path) -> No
 
 def test_model_rejects_non_urdf_source(tmp_path: Path) -> None:
     mjcf = tmp_path / "robot.xml"
+    model = robot_model.RobotModel.from_file(mjcf)
 
     with pytest.raises(ValueError, match="must reference a .urdf or .xacro"):
-        robot_model.RobotModel.from_file(mjcf)
+        model.load()

@@ -108,12 +108,6 @@ class RobotModel:
         xacro_args: Mapping[str, str] | None = None,
     ) -> RobotModel:
         """Create a lazy model from a URDF or Xacro source."""
-        suffix = source_path.suffix if isinstance(source_path, Path) else Path(source_path).suffix
-        if suffix.lower() not in {".urdf", ".xacro"}:
-            raise ValueError(
-                f"RobotModel source must reference a .urdf or .xacro file, "
-                f"got {Path(source_path).name!r}"
-            )
         return cls(
             _source_path=source_path,
             _package_paths=tuple((package_paths or {}).items()),
@@ -166,6 +160,10 @@ class RobotModel:
     @cached_property
     def _loaded(self) -> LoadedRobotModel:
         source_path = Path(os.fspath(self._source_path)).resolve()
+        if source_path.suffix.lower() not in {".urdf", ".xacro"}:
+            raise ValueError(
+                f"RobotModel source must reference a .urdf or .xacro file, got {source_path.name!r}"
+            )
         package_paths = _normalize_package_paths(dict(self._package_paths))
         if not source_path.exists():
             raise FileNotFoundError(f"Robot model not found: {source_path}")
