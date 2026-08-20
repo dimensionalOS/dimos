@@ -1,6 +1,6 @@
 ---
 title: "Piper Integration"
-description: "Connect and run a Piper arm with DimOS manipulation and teleoperation blueprints."
+description: "Connect and run a Piper arm with dimOS manipulation and teleoperation blueprints."
 ---
 
 ## Optional SLCAN setup
@@ -18,23 +18,23 @@ the Piper adapter already exposes a native SocketCAN interface.
 ## Bring up a native Piper CAN interface
 
 Piper uses SocketCAN at 1,000,000 bit/s. For the default vendor setup, use
-the DimOS CLI to configure an existing CAN interface and bring it up:
+the dimOS CLI to configure an existing CAN interface and bring it up:
 
 ```bash
-dimos piper can-activate can0
+dimos hardware can setup can0
 ```
 
 For a non-default bitrate, pass `--bitrate` explicitly:
 
 ```bash
-dimos piper can-activate can0 --bitrate 500000
+dimos hardware can setup can0 --bitrate 500000
 ```
 
-The command asks for confirmation before requesting sudo. Verify the interface
-before starting a blueprint:
+The command prints each privileged operation before requesting sudo. Verify the
+interface before starting a blueprint:
 
 ```bash
-ip link show can0
+dimos hardware can status can0
 ```
 
 ## Run a Piper blueprint

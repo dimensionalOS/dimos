@@ -5,12 +5,12 @@ title: "Evals"
 Evals measure what an agent (or a bare model, or a single skill) can do with
 the robot's memory. Two kinds:
 
-- **Passive** — the world is a frozen memory2 recording. Deterministic, cheap,
+- **Passive** — the world is a frozen memory recording. Deterministic, cheap,
   repeatable. Run these constantly.
 - **Interactive** — a live robot or sim; actions change the world; scoring
-  samples the live memory2 store while the agent works.
+  samples the live memory store while the agent works.
 
-memory2 is the source of truth for everything an eval sees: context selectors
+memory is the source of truth for everything an eval sees: context selectors
 return real `Stream`s, and interactive scoring reads a real `Store`.
 
 ## Quick start (CLI)
@@ -31,8 +31,8 @@ and per-case transcripts to `~/.local/state/dimos/evals/run-*/`.
 
 ## Your first eval, end to end
 
-Build a tiny recording (any memory2 store works — this is the same API the
-robot's Recorder uses; see `dimos/memory2/intro.md` for the full Stream API):
+Build a tiny recording (any memory store works — this is the same API the
+robot's Recorder uses; see `dimos/memory/intro.md` for the full Stream API):
 
 ```python session=evals ansi=false no-result
 import os
@@ -40,7 +40,7 @@ from pathlib import Path
 
 os.environ["DIMOS_LOG_LEVEL"] = "WARNING"  # keep doc output stable
 
-from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3

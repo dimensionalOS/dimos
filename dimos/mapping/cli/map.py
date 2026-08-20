@@ -24,14 +24,14 @@ import typer
 
 if TYPE_CHECKING:
     from dimos.mapping.loop_closure.pgo import PoseGraph
-    from dimos.memory2.stream import Stream
-    from dimos.memory2.type.observation import Observation
+    from dimos.memory.stream import Stream
+    from dimos.memory.type.observation import Observation
     from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 PATH_THICKNESS = 0.01
-# Pin pattern (from dimos/memory2/vis/space/rerun.py): thin vertical line
+# Pin pattern (from dimos/memory/vis/space/rerun.py): thin vertical line
 # from each marker with the label floating at the top so multi-marker
 # labels never overlap the boxes.
 MARKER_STEM = 1.0
@@ -183,7 +183,7 @@ def _log_reconstruction(
     import rerun as rr
     import rerun.blueprint as rrb
 
-    from dimos.memory2.vis.color import Color
+    from dimos.memory.vis.color import Color
     from dimos.msgs.geometry_msgs.Transform import Transform
 
     rr.send_blueprint(rrb.Blueprint(rrb.Spatial3DView(origin="world")))
@@ -421,9 +421,9 @@ def main(
     import rerun as rr
 
     from dimos.mapping.loop_closure.pgo import PGO
-    from dimos.memory2.cli.dataset import open_store, resolve_dataset
-    from dimos.memory2.transform import QualityWindow, SpeedLimit
-    from dimos.memory2.utils.progress import progress
+    from dimos.memory.cli.dataset import open_store, resolve_dataset
+    from dimos.memory.transform import QualityWindow, SpeedLimit
+    from dimos.memory.utils.progress import progress
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -449,7 +449,7 @@ def main(
     # clouds with no tf lookup are dropped. Stored per-frame poses are never
     # used for registration — only as trajectory metadata (dedup/path) when
     # the tf stream can't provide a position.
-    from dimos.memory2.tf import StreamTF
+    from dimos.memory.tf import StreamTF
 
     tf_buf = StreamTF.from_store(store)
     # Streams are homogeneous: read the cloud frame from the first observation.

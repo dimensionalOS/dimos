@@ -32,8 +32,8 @@ from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
-from dimos.memory2.replay import Replay, ReplayStream, resolve_db_path
-from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory.replay import Replay, ReplayStream, resolve_db_path
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform

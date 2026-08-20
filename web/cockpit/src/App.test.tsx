@@ -9,6 +9,7 @@ import { ChannelStore, StatusStore } from "./session/store.ts";
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const ODOM = { ch: "odom", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20 } as const;
+const IMAGE = { ch: "color_image", encoding: "jpeg.v1", delivery: "latest", maxHz: 15 } as const;
 
 describe("App session states", () => {
   let container: HTMLElement;
@@ -109,6 +110,25 @@ describe("App session states", () => {
     });
     expect(container.querySelector('[data-testid="ch-odom-decode-error"]')).toBeNull();
     expect(container.querySelector('[data-testid="ch-odom-seq"]')!.textContent).toBe("9");
+  });
+
+  it("marks the jpeg channel unsubscribed until a video panel binds it", () => {
+    act(() => {
+      status.update({
+        robot: { id: "a", name: "A", model: "go2" },
+        robotCount: 1,
+        channels: [ODOM, IMAGE],
+        panels: [],
+      });
+    });
+    const value = () => container.querySelector('[data-testid="ch-color_image-value"]')!;
+    expect(value().textContent).toContain("not subscribed (no panel binds it)");
+
+    // The manifest gains a video panel: the session subscribes, the row waits.
+    act(() => {
+      status.update({ panels: [{ id: "cam", kind: "video", channels: ["color_image"] }] });
+    });
+    expect(value().textContent).toContain("waiting for data...");
   });
 
   it("shows the multi-robot notice instead of channels", () => {
