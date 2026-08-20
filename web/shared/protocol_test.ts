@@ -239,11 +239,29 @@ Deno.test("msgFromUnknown validates nested session-message shapes", () => {
     null,
   );
   assertEquals(msgFromUnknown({ ...full, manifest: { channels: robot } }), null);
+  const panel = { id: "pose", kind: "readout", channels: ["odom"] };
+  assertEquals(
+    msgFromUnknown({ ...full, manifest: { channels: [spec], panels: [panel] } }) !== null,
+    true,
+  );
+  assertEquals(msgFromUnknown({ ...full, manifest: { channels: [spec], panels: null } }), null);
+  assertEquals(
+    msgFromUnknown({ ...full, manifest: { channels: [spec], panels: [{ id: "x" }] } }),
+    null,
+  );
   assertEquals(msgFromUnknown({ t: "robots", robots: [robot] }) !== null, true);
   assertEquals(msgFromUnknown({ t: "robots", robots: {} }), null);
   assertEquals(msgFromUnknown({ t: "robots", robots: [{ id: "a", name: "b" }] }), null);
   assertEquals(msgFromUnknown({ t: "robots" }), null);
   assertEquals(msgFromUnknown({ t: "manifest", robotId: "r", channels: [spec] }) !== null, true);
+  assertEquals(
+    msgFromUnknown({ t: "manifest", robotId: "r", channels: [spec], panels: [panel] }) !== null,
+    true,
+  );
+  assertEquals(
+    msgFromUnknown({ t: "manifest", robotId: "r", channels: [spec], panels: [{ kind: 5 }] }),
+    null,
+  );
   assertEquals(msgFromUnknown({ t: "manifest", channels: [spec] }), null);
   assertEquals(msgFromUnknown({ t: "watch" }), null);
   assertEquals(msgFromUnknown({ t: "subs", chs: ["a", "b"], n: 1 }) !== null, true);
@@ -258,6 +276,11 @@ Deno.test("frameHeaderFromUnknown validates the header shape", () => {
   assertEquals(frameHeaderFromUnknown({ ...ok, seq: "1" }), null);
   assertEquals(frameHeaderFromUnknown({ ...ok, ch: 5 }), null);
   assertEquals(frameHeaderFromUnknown({ ...ok, meta: 7 }), null); // meta not an object
+  // ch is bounded like manifest channel ids (64): only unroutable undeclared
+  // names are dropped.
+  const atBound = { ...ok, ch: "c".repeat(64) };
+  assertEquals(frameHeaderFromUnknown(atBound), atBound as FrameHeader);
+  assertEquals(frameHeaderFromUnknown({ ...ok, ch: "c".repeat(65) }), null);
 });
 
 Deno.test("decodeDataFrame throws on an invalid header", () => {

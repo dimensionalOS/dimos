@@ -28,10 +28,10 @@ from numpy.typing import NDArray
 import typer
 
 from dimos.mapping.ray_tracing.transformer import RayTraceMap
-from dimos.memory2.store.sqlite import SqliteStore
-from dimos.memory2.tf import StreamTF, tf_stream
-from dimos.memory2.transform import FnTransformer
-from dimos.memory2.type.observation import Observation
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.tf import StreamTF, tf_stream
+from dimos.memory.transform import FnTransformer
+from dimos.memory.type.observation import Observation
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -46,7 +46,7 @@ from dimos.utils.data import resolve_named_path
 if TYPE_CHECKING:
     import rerun.blueprint as rrb
 
-    from dimos.memory2.stream import Stream
+    from dimos.memory.stream import Stream
 
 TIMELINE = "ts"
 

@@ -21,7 +21,7 @@ from dimos.core.transport import LCMTransport
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.relocalization.module import RelocalizationModule
 from dimos.mapping.voxels.module import VoxelGridMapper
-from dimos.memory2.module import Recorder, RecorderConfig, pose_setter_for
+from dimos.memory.module import Recorder, RecorderConfig, pose_setter_for
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image

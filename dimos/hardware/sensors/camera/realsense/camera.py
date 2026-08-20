@@ -97,11 +97,7 @@ class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     enable_imu: bool = False
     # Gyro rate, and so the Imu output rate.
     imu_hz: int = 400
-    # Noise model published on ``imu_info`` alongside the samples. Only the Allan
-    # constants are read from here: the frame and delivered rate the driver knows
-    # and stamps itself. The device cannot report these (the calibration table
-    # carries no noise variances), so they ride in config; the defaults are D455
-    # values from a kalibr run. None publishes nothing.
+    # Noise model published on ``imu_info``; the driver stamps frame and rate itself.
     imu_info: ImuInfo | None = Field(default_factory=default_imu_info)
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0

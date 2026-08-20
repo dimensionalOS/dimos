@@ -28,7 +28,7 @@ from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder
 from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.memory2.module import pose_setter_for
+from dimos.memory.module import pose_setter_for
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.basic_path_follower.module import BasicPathFollower

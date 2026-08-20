@@ -25,6 +25,7 @@ import pytest
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.navigation.cmu_nav.tests.deprecation import SKIP_CMU_NAV
 from dimos.navigation.cmu_nav.tests.rosbag_fixtures import (
     LcmCollector,
     NativeProcessRunner,
@@ -36,7 +37,7 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-pytestmark = [pytest.mark.self_hosted]
+pytestmark = [pytest.mark.self_hosted, SKIP_CMU_NAV]
 
 _PROCESS_STARTUP_SEC = 1.0
 _POST_FEED_DRAIN_SEC = 2.0

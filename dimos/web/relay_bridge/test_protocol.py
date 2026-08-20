@@ -31,6 +31,7 @@ from dimos.web.relay_bridge.protocol import (
     DataFrameStreamReader,
     FrameHeader,
     Hello,
+    PanelSpec,
     Ping,
     ProtocolError,
     RobotInfo,
@@ -268,6 +269,12 @@ def test_msg_from_dict_validates_nested_session_shapes():
     )
     # hello stays valid without the optional robot/manifest (viewer form).
     assert msg_from_dict({"t": "hello", "v": 1, "role": "viewer"}) == Hello(v=1, role="viewer")
+    panel = {"id": "pose", "kind": "readout", "channels": ["odom"]}
+    expected_panel = PanelSpec(id="pose", kind="readout", channels=["odom"])
+    with_panels = {**full, "manifest": {"channels": [spec], "panels": [panel]}}
+    assert msg_from_dict(with_panels).manifest.panels == [expected_panel]
+    manifest_msg = {"t": "manifest", "robotId": "r", "channels": [spec], "panels": [panel]}
+    assert msg_from_dict(manifest_msg).panels == [expected_panel]
     bad = [
         # Optional means absent-or-valid: explicit null is rejected on the
         # wire (local construction with robot=None stays fine: absent).
@@ -276,6 +283,9 @@ def test_msg_from_dict_validates_nested_session_shapes():
         {**full, "manifest": {"channels": [{**spec, "maxHz": "20"}]}},
         {**full, "manifest": {"channels": [{**spec, "delivery": "bogus"}]}},
         {**full, "manifest": {"channels": robot}},
+        {**full, "manifest": {"channels": [spec], "panels": None}},
+        {**full, "manifest": {"channels": [spec], "panels": [{"id": "x"}]}},
+        {"t": "manifest", "robotId": "r", "channels": [spec], "panels": [{"kind": 5}]},
         {"t": "robots", "robots": {}},
         {"t": "robots", "robots": [{"id": "a", "name": "b"}]},
         {"t": "robots"},
@@ -322,6 +332,20 @@ def test_data_frame_header_rejects_non_finite():
     hdr = b'{"ch":"c","seq":1,"ts":1e999,"delivery":"latest"}'
     with pytest.raises(ProtocolError):
         decode_data_frame(_raw_data_frame(hdr))
+
+
+def test_data_frame_header_bounds_ch_length():
+    # ch is bounded like manifest channel ids (64, mirrored in protocol.ts):
+    # oversize undeclared names are dropped before routing, and local
+    # construction fails fast too.
+    def hdr(ch):
+        return json.dumps({"ch": ch, "seq": 1, "ts": 1.0, "delivery": "latest"}).encode()
+
+    assert decode_data_frame(_raw_data_frame(hdr("c" * 64))).header.ch == "c" * 64
+    with pytest.raises(ProtocolError):
+        decode_data_frame(_raw_data_frame(hdr("c" * 65)))
+    with pytest.raises(ValueError):
+        FrameHeader(ch="c" * 65, seq=1, ts=1.0, delivery="latest")
 
 
 def test_huge_int_is_a_valid_number():
