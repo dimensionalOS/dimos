@@ -289,7 +289,7 @@ If the executable already exists, the build step is skipped entirely.
 
 ### Faster builds via the Cachix substituter
 
-CI pre-builds the `cmu_nav` native modules and pushes the Nix store paths to the `dimensionalos` Cachix cache. Opt in locally to skip cold compiles when the cache has them:
+Pre-built Nix store paths for the native modules are published to the `dimensionalos` Cachix cache. Opt in locally to skip cold compiles when the cache has them:
 
 ```
 # ~/.config/nix/nix.conf  (single-user)  or  /etc/nix/nix.conf  (multi-user)
