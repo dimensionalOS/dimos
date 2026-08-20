@@ -34,6 +34,7 @@ from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.robot.manipulators.openarm.blueprints.teleop import teleop_quest_openarm
+from dimos.robot.manipulators.openarm.homing_module import OpenArmHomingModule
 from dimos.teleop.quest.blueprints import (
     teleop_quest_piper,
     teleop_quest_xarm7,
@@ -162,10 +163,12 @@ def _rig_camera_blueprint(label: str) -> Blueprint:
 
 
 # Multi-view variant recording all four labeled rig cameras (chest, both
-# hands, waist) as separate observation streams.
+# hands, waist) as separate observation streams. Right thumbstick click with
+# the deadman released sends both arms to the home pose between episodes.
 learning_collect_quest_openarm_multicam = autoconnect(
     teleop_quest_openarm,
     *(_rig_camera_blueprint(label) for label in _MULTICAM_USB_PORTS),
     EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
+    OpenArmHomingModule.blueprint(),
     CollectionRecorder.blueprint(db_path=_session_db("openarm")),
 )
