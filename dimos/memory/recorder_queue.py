@@ -29,17 +29,6 @@ class RecorderFailedError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class RecorderQueueStatus:
-    accepted: int
-    completed: int
-    pending: int
-    oldest_age_s: float
-    max_pending: int
-    max_oldest_age_s: float
-    failed: str | None
-
-
-@dataclass(frozen=True)
 class _QueuedMessage:
     accepted_monotonic: float
     value: Any
@@ -66,11 +55,7 @@ class RecorderQueue:
         self._queue: queue.Queue[_QueuedMessage | None] = queue.Queue(maxsize=max_pending)
         self._max_backlog_s = max_backlog_s
         self._lock = threading.Lock()
-        self._accepted = 0
-        self._completed = 0
         self._oldest_monotonic: float | None = None
-        self._max_pending = 0
-        self._max_oldest_age_s = 0.0
         self._failure: BaseException | None = None
         self._accepting = True
         self._closed = False
@@ -110,8 +95,6 @@ class RecorderQueue:
                 )
             raise RecorderFailedError(f"Recorder queue {self.name!r} is full") from error
         with self._lock:
-            self._accepted += 1
-            self._max_pending = max(self._max_pending, self._accepted - self._completed)
             if self._oldest_monotonic is None:
                 self._oldest_monotonic = accepted_monotonic
 
@@ -150,21 +133,6 @@ class RecorderQueue:
         with self._lock:
             self._raise_if_failed_locked()
 
-    def status(self) -> RecorderQueueStatus:
-        now = time.monotonic()
-        with self._lock:
-            oldest_age = 0.0 if self._oldest_monotonic is None else now - self._oldest_monotonic
-            self._max_oldest_age_s = max(self._max_oldest_age_s, oldest_age)
-            return RecorderQueueStatus(
-                accepted=self._accepted,
-                completed=self._completed,
-                pending=self._accepted - self._completed,
-                oldest_age_s=oldest_age,
-                max_pending=self._max_pending,
-                max_oldest_age_s=self._max_oldest_age_s,
-                failed=str(self._failure) if self._failure is not None else None,
-            )
-
     def _run(self) -> None:
         while True:
             item = self._queue.get()
@@ -176,10 +144,6 @@ class RecorderQueue:
                 if not failed:
                     self._process(item.value, item.accepted_monotonic)
                 with self._lock:
-                    self._max_oldest_age_s = max(
-                        self._max_oldest_age_s, time.monotonic() - item.accepted_monotonic
-                    )
-                    self._completed += 1
                     self._oldest_monotonic = self._next_accepted_monotonic()
             except BaseException as error:
                 with self._lock:

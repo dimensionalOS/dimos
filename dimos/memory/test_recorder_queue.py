@@ -50,11 +50,7 @@ def test_recorder_queue_preserves_fifo_during_stall() -> None:
     recorder_queue.close(timeout_s=1.0)
 
     assert processed == list(range(10))
-    status = recorder_queue.status()
     assert accepted_times == sorted(accepted_times)
-    assert status.completed == 10
-    assert status.max_pending == 10
-    assert status.max_oldest_age_s > 0
 
 
 def test_recorder_queue_reports_worker_failure() -> None:
@@ -67,7 +63,6 @@ def test_recorder_queue_reports_worker_failure() -> None:
     with pytest.raises(RecorderFailedError, match="failed"):
         recorder_queue.flush(timeout_s=1.0)
 
-    assert recorder_queue.status().failed == "disk failed"
     with pytest.raises(RecorderFailedError, match="failed"):
         recorder_queue.close(timeout_s=1.0)
 

@@ -71,11 +71,6 @@ def test_writer_groups_rows_and_notifies_only_after_commit() -> None:
         "notify-2.0",
         "notify-3.0",
     ]
-    status = writer.status()
-    assert status.transactions == 1
-    assert status.committed == 3
-    assert status.mean_rows_per_transaction == 3.0
-    assert status.max_rows_per_transaction == 3
 
 
 def test_writer_rolls_back_and_reports_failure() -> None:
@@ -88,4 +83,3 @@ def test_writer_rolls_back_and_reports_failure() -> None:
         writer.close(timeout_s=1.0)
 
     assert events == ["persist-1.0", "rollback"]
-    assert writer.status().failed == "database unavailable"
