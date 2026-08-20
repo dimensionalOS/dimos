@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import pickle
+
 import pytest
 
 from dimos.core.transport import (
@@ -22,7 +24,6 @@ from dimos.core.transport import (
     LCMTransport,
     SHMTransport,
     pLCMTransport,
-    pSHMQueueTransport,
     pSHMTransport,
 )
 from dimos.msgs.sensor_msgs.Image import Image
@@ -105,9 +106,24 @@ def test_make_pubsub_transport_pshm_uses_pSHMTransport() -> None:
 
 
 def test_reliable_shm_transport_uses_configured_ring() -> None:
-    transport = pSHMQueueTransport("reliable-test", default_capacity=1024)
+    transport = pSHMTransport("reliable-test", queue_size=32, default_capacity=1024)
 
     assert transport.shm._channel_class is CpuShmQueue
+    assert transport.shm._channel_kwargs == {"slots": 32}
+
+
+def test_pshm_transport_rejects_non_positive_queue_size() -> None:
+    with pytest.raises(ValueError, match="queue_size must be positive"):
+        pSHMTransport("invalid", queue_size=0)
+
+
+def test_pshm_transport_preserves_queue_size_when_pickled() -> None:
+    restored = pickle.loads(
+        pickle.dumps(pSHMTransport("pickled", queue_size=17, default_capacity=1024))
+    )
+
+    assert restored.shm.queue_size == 17
+    assert restored.shm.config.default_capacity == 1024
 
 
 def test_make_pubsub_transport_shm_uses_SHMTransport() -> None:

@@ -290,18 +290,19 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
 
     def _fanout_loop(self, topic: str, st: _TopicState) -> None:
         while not st.stop.is_set():
-            seq, _ts_ns, view = st.channel.read(last_seq=st.last_seq, require_new=True)
-            dropped = getattr(st.channel, "dropped_since_last_read", 0)
-            if dropped:
-                error = RuntimeError(
-                    f"Shared-memory reader for {topic!r} lost {dropped} message(s) "
-                    "because its reliable ring overflowed"
-                )
-                for callback in list(st.error_subs):
-                    callback(error)
+            previous_seq = st.last_seq
+            seq, _ts_ns, view = st.channel.read(last_seq=previous_seq, require_new=True)
             if view is None:
                 time.sleep(0.001)
                 continue
+            dropped = max(0, seq - max(1, previous_seq + 1))
+            if dropped:
+                error = RuntimeError(
+                    f"Shared-memory reader for {topic!r} lost {dropped} message(s) "
+                    "because its ring overflowed"
+                )
+                for callback in list(st.error_subs):
+                    callback(error)
             st.last_seq = seq
 
             host = np.array(view, copy=True)
@@ -351,14 +352,13 @@ class PickleSharedMemory(
 ):
     """SharedMemory pubsub that transports arbitrary Python objects via pickle."""
 
-    ...
-
-
-class ReliablePickleSharedMemory(PickleSharedMemory):
-    """Pickled shared memory with an explicit multi-slot delivery ring."""
-
-    _channel_class = CpuShmQueue
-    _channel_kwargs = {"slots": 256}
+    def __init__(self, *, queue_size: int = 256, **kwargs: Any) -> None:
+        if queue_size <= 0:
+            raise ValueError("queue_size must be positive")
+        self.queue_size = queue_size
+        self._channel_class = CpuShmQueue
+        self._channel_kwargs = {"slots": queue_size}
+        super().__init__(**kwargs)
 
 
 class LCMSharedMemoryPubSubBase(PubSub[Topic, Any]):

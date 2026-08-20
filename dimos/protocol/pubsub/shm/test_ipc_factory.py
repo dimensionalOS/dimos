@@ -105,7 +105,6 @@ def test_reader_outpaced_drops_oldest() -> None:
         # The oldest `slots` messages were overwritten; loss is visible as a
         # sequence gap: the first delivered seq is slots+1, not 1.
         assert [seq for seq, _ in got] == list(range(slots + 1, 2 * slots + 1))
-        assert ch.dropped_since_last_read == 0
         assert [payload for _, payload in got] == [
             f"m{i}".encode() for i in range(slots, 2 * slots)
         ]
@@ -113,7 +112,7 @@ def test_reader_outpaced_drops_oldest() -> None:
         ch.close()
 
 
-def test_reader_reports_overflow_on_first_recovery_read() -> None:
+def test_reader_sequence_exposes_overflow_on_first_recovery_read() -> None:
     ch = CpuShmQueue((CAP,), np.uint8, slots=4)
     try:
         for i in range(8):
@@ -123,7 +122,6 @@ def test_reader_reports_overflow_on_first_recovery_read() -> None:
 
         assert seq == 5
         assert payload is not None
-        assert ch.dropped_since_last_read == 4
     finally:
         ch.close()
 
