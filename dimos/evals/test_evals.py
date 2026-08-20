@@ -150,6 +150,7 @@ def test_parsers() -> None:
     compass = choice(["north", "northeast", "east"])
     assert compass(" Northeast. ") == "northeast"
     assert compass("it drifts north, then finally east") == "east"  # last named wins
+    assert compass("north-east") == "northeast"  # not "east"
     with pytest.raises(ValueError):
         compass("no idea")
 

@@ -91,7 +91,8 @@ def choice(options: Sequence[str]) -> Callable[[str], str]:
     pattern = re.compile(r"\b(" + "|".join(sorted(options, key=len, reverse=True)) + r")\b", re.I)
 
     def parse(text: str) -> str:
-        found = pattern.findall(text)
+        # "north-west" must read as northwest, not as west.
+        found = pattern.findall(re.sub(r"(?<=[A-Za-z])-(?=[A-Za-z])", "", text))
         if not found:
             raise ValueError(f"no option from {list(options)} in reply: {text[:80]!r}")
         return str(found[-1]).lower()

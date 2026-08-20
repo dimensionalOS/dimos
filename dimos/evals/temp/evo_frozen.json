@@ -6,7 +6,7 @@
     "dimos/evals/local.py": "54a65017f4ea167ce8f9efb58578e6cd8bd4df5785f42aacf5a189d90ec6d1ff",
     "dimos/evals/module.py": "216a885035550bc3cb1dc40f5aba3a68cb7435cab6bce91eb1ee7f33c6913f34",
     "dimos/evals/runner.py": "f0b3457125e88d9c57aedce281137fd8597d28dc85c51835f8b3036c5a2a01bc",
-    "dimos/evals/scorers.py": "1fe3049ca3e48f8a002a48b7798b5d2d261220ee7c8a2547b2744c69f823f3e0",
+    "dimos/evals/scorers.py": "fa7b22d996fda36124a09af4cb9a7f5f162660fa1bffe9f9e1bd1fc922d41bad",
     "dimos/evals/suites/dimsim_house.py": "954cc025d79eb2329fa90971c74882a3e78463837ce247371bd3597db485cdf2",
     "dimos/evals/suites/examples.py": "7d9499975bdf98a383d62035585ed696b620c659d0e1b9e018b56d0af635c88e",
     "dimos/evals/suites/go2_glass_labels.json": "8fee98f5ddbb4d67f051468eb4394bd030d76bf136f8f4ef4b488b1b7044bc82",
@@ -47,7 +47,7 @@
     "dimos/evals/temp/tool_eval_qa.py": "8abff8fb9d1b7bf70cdfa26cae8c7f3aea430736f18fcc63de914c4db964f3df",
     "dimos/evals/temp/tool_evo_bench.py": "a588607729aee296aaef4377e8eef324c0cbb6055c6b24fc4669e16132e817ee",
     "dimos/evals/temp/tool_evo_gate.py": "b117df17a3164744d7b675d1c9f89e2a88f4a003326fb5a182d750a06e364f31",
-    "dimos/evals/test_evals.py": "b89549ae4cd74dae28d2661990eded530b56e4d7b33336616179e332b14ac283",
+    "dimos/evals/test_evals.py": "5f617db0078531ccc0b1070e8cca334b3de50e87979fb598e28899124aa8451b",
     "dimos/evals/test_mem2_wiring.py": "d4613707fbb59e5599d14a6eecaaca4da481e8f4236ee2d151b351657a6f41d7",
     "dimos/evals/test_smoke.py": "989c87fd0109602529997bc17cc57d3839f36d9726ae806c5b78963d6d6d09a4",
     "dimos/evals/types.py": "0f17989d25027bb5ea9682c8920d97984b19e29eddf16c5c88d57985268d1dd4"
