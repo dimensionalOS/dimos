@@ -41,6 +41,23 @@ uv run python -m dimos.memory.tool_recorder_fidelity run \
   --duration 300 --transport shm --output recorder-fidelity-results
 ```
 
+To measure headroom instead of only testing one fixed rate, run the adaptive
+capacity search. It doubles the production rates until a trial fails, refines
+the passing boundary to the requested resolution, and confirms the winner with
+a longer run:
+
+```bash
+uv run python -m dimos.memory.tool_recorder_fidelity capacity \
+  dimos/memory/testdata/recorder_production_profile.json \
+  --trial-duration 15 --confirm-duration 30 \
+  --max-scale 4 --resolution 0.125 \
+  --output recorder-capacity-results
+```
+
+`capacity.json.max_faithful_scale` is the optimization metric. A scale counts
+only when the source is valid and every published observation is persisted
+exactly once in order with the expected payload.
+
 `--transport` accepts `lcm`, `shm`, or `zenoh`. With no override, each stream
 uses the transport in the profile. A run is only interpretable when
 `source_valid` is true; this proves that the publisher offered the requested

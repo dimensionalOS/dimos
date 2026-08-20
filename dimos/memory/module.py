@@ -474,13 +474,15 @@ class Recorder(MemoryModule):
         # Timestamp and enqueue directly in the transport callback. Recorder
         # owns this FIFO and therefore never enters Module's latest-only async
         # dispatcher.
-        subscription = input_topic.pure_observable().subscribe(
+        def on_message(msg: Any) -> None:
+            self._on_recording_received(name, msg)
             # Snapshot the message wrapper at reception. Some high-rate
             # publishers deliberately reuse a payload object and update its
             # timestamp on the next tick; retaining that wrapper would record
             # the later timestamp after an encoder or SQLite stall.
-            lambda msg: recording_queue.submit((time.time(), _snapshot_recording_message(msg)))
-        )
+            recording_queue.submit((time.time(), _snapshot_recording_message(msg)))
+
+        subscription = input_topic.pure_observable().subscribe(on_message)
         self._recording_subscriptions.append(subscription)
         self.register_disposable(subscription)
         transport = getattr(input_topic, "_transport", None)
@@ -489,6 +491,9 @@ class Recorder(MemoryModule):
             error_subscription = Disposable(subscribe_errors(recording_queue.fail))
             self._recording_subscriptions.append(error_subscription)
             self.register_disposable(error_subscription)
+
+    def _on_recording_received(self, name: str, message: Any) -> None:
+        """Observe an accepted message without adding another transport subscription."""
 
     def _prepare_streams(self) -> None:
         """On APPEND, drop the streams this recorder is about to (re)write — the

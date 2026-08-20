@@ -111,6 +111,19 @@ class WorkloadProfile(BaseModel):
             }
         )
 
+    def with_rate_scale(self, scale: float) -> WorkloadProfile:
+        """Return a copy with every stream rate multiplied by ``scale``."""
+        if not math.isfinite(scale) or scale <= 0:
+            raise ValueError("rate scale must be finite and greater than zero")
+        return self.model_copy(
+            update={
+                "streams": tuple(
+                    stream.model_copy(update={"rate_hz": stream.rate_hz * scale})
+                    for stream in self.streams
+                )
+            }
+        )
+
     def write(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(self.model_dump_json(indent=2) + "\n")

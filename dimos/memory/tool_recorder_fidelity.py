@@ -36,9 +36,9 @@ import sqlite3
 import threading
 import time
 from typing import Any, Literal, cast
+import uuid
 
 import numpy as np
-from reactivex.disposable import Disposable
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
@@ -235,17 +235,6 @@ class FidelityRecorder(Recorder):
 
     def _port_to_stream(self, name: str, input_topic: In[Any], stream: Stream[Any]) -> None:
         """Install taps around the same callback stages used by Recorder."""
-
-        def on_received(message: Any) -> None:
-            ts = getattr(message, "ts", None)
-            if ts is None:
-                return
-            with self._fidelity_lock:
-                self._received[name].append(round(float(ts) * 1e9))
-                self._received_monotonic[name].append(time.monotonic_ns())
-
-        self.register_disposable(Disposable(input_topic.subscribe(on_received)))
-
         backend = cast("Backend[Any]", stream._source)  # type: ignore[attr-defined]
         original_codec = backend.codec
 
@@ -271,6 +260,14 @@ class FidelityRecorder(Recorder):
         )
         stream._source = timed_backend  # type: ignore[assignment]
         super()._port_to_stream(name, input_topic, stream)
+
+    def _on_recording_received(self, name: str, message: Any) -> None:
+        ts = getattr(message, "ts", None)
+        if ts is None:
+            return
+        with self._fidelity_lock:
+            self._received[name].append(round(float(ts) * 1e9))
+            self._received_monotonic[name].append(time.monotonic_ns())
 
     def _record_append(self, name: str, duration: float) -> None:
         with self._fidelity_lock:
@@ -391,8 +388,8 @@ def _message_type(stream: StreamProfile) -> type[Any]:
     }[stream.kind]
 
 
-def _transport(stream: StreamProfile) -> Any:
-    topic = f"/recorder-fidelity/{stream.name}"
+def _transport(stream: StreamProfile, run_id: str) -> Any:
+    topic = f"/recorder-fidelity/{run_id}/{stream.name}"
     message_type = _message_type(stream)
     if stream.transport == "shm":
         capacity = max(3_686_400, stream.raw_bytes * 2, stream.encoded_bytes * 2)
@@ -480,8 +477,12 @@ def run_harness(
     profile = _canonical_profile(profile)
     output_dir.mkdir(parents=True, exist_ok=True)
     db_path = output_dir / "recording.db"
+    # Keep typed LCM channels below its fixed channel-name limit after the
+    # ``#module.MessageType`` suffix is appended by Topic.__str__.
+    run_id = uuid.uuid4().hex[:8]
     transport_map = {
-        (stream.name, _message_type(stream)): _transport(stream) for stream in profile.streams
+        (stream.name, _message_type(stream)): _transport(stream, run_id)
+        for stream in profile.streams
     }
     codecs = {stream.name: stream.codec for stream in profile.streams if stream.kind != "tf"}
     stall_stream = "depth" if mode == "encoder-stall" else None
@@ -585,6 +586,109 @@ def run_harness(
     report.write(output_dir / "report.json")
     (output_dir / "source_manifest.json").write_text(source_run.model_dump_json(indent=2) + "\n")
     return report
+
+
+def run_capacity_search(
+    profile: WorkloadProfile,
+    *,
+    trial_duration_s: float,
+    confirm_duration_s: float,
+    max_scale: float,
+    resolution: float,
+    output_dir: Path,
+) -> dict[str, Any]:
+    """Find the highest source-valid, faithful workload rate multiplier."""
+    if trial_duration_s <= 0 or confirm_duration_s <= 0:
+        raise ValueError("capacity durations must be greater than zero")
+    if max_scale < 1:
+        raise ValueError("max_scale must be at least 1")
+    if resolution <= 0 or resolution > max_scale:
+        raise ValueError("resolution must be greater than zero and no larger than max_scale")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    trials: list[dict[str, Any]] = []
+    reports: dict[float, FidelityReport] = {}
+
+    def measure(scale: float, duration_s: float, phase: str) -> FidelityReport:
+        scale = round(scale, 6)
+        label = f"{phase}-{scale:.3f}x".replace(".", "_")
+        trial_dir = output_dir / label
+        try:
+            report = run_harness(
+                profile.with_rate_scale(scale),
+                duration_s=duration_s,
+                output_dir=trial_dir,
+            )
+        finally:
+            for database_file in trial_dir.glob("recording.db*"):
+                database_file.unlink(missing_ok=True)
+        trials.append(
+            {
+                "phase": phase,
+                "scale": scale,
+                "duration_s": duration_s,
+                "source_valid": report.source_valid,
+                "faithful": report.faithful,
+                "report": f"{label}/report.json",
+            }
+        )
+        reports[scale] = report
+        return report
+
+    best = 0.0
+    upper: float | None = None
+    limiting_stage = "max_scale"
+    scale = 1.0
+    while scale <= max_scale:
+        report = measure(scale, trial_duration_s, "trial")
+        if report.source_valid and report.faithful:
+            best = scale
+            if scale == max_scale:
+                break
+            scale = min(max_scale, scale * 2)
+            continue
+        upper = scale
+        limiting_stage = "source" if not report.source_valid else "recorder"
+        break
+
+    if upper is not None and best > 0:
+        while upper - best > resolution:
+            midpoint = round(((best + upper) / 2) / resolution) * resolution
+            midpoint = max(best + resolution, min(upper - resolution, midpoint))
+            if midpoint <= best or midpoint >= upper:
+                break
+            report = measure(midpoint, trial_duration_s, "trial")
+            if report.source_valid and report.faithful:
+                best = midpoint
+            else:
+                upper = midpoint
+                limiting_stage = "source" if not report.source_valid else "recorder"
+
+    confirmed = False
+    confirmed_scale = best
+    while confirmed_scale > 0:
+        report = measure(confirmed_scale, confirm_duration_s, "confirm")
+        if report.source_valid and report.faithful:
+            confirmed = True
+            break
+        limiting_stage = "source" if not report.source_valid else "recorder"
+        confirmed_scale = max(
+            (candidate for candidate in reports if candidate < confirmed_scale),
+            default=0.0,
+        )
+
+    result = {
+        "profile": profile.name,
+        "max_faithful_scale": confirmed_scale if confirmed else 0.0,
+        "limiting_stage": limiting_stage,
+        "trial_duration_s": trial_duration_s,
+        "confirm_duration_s": confirm_duration_s,
+        "max_scale": max_scale,
+        "resolution": resolution,
+        "trials": trials,
+    }
+    (output_dir / "capacity.json").write_text(json.dumps(result, indent=2) + "\n")
+    return result
 
 
 def _hold_writer_lock(path: Path, delay_s: float, duration_s: float) -> None:
@@ -727,6 +831,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--transport", choices=("lcm", "shm", "zenoh"))
     run.add_argument("--stall-duration", type=float, default=1.0)
+    capacity = commands.add_parser("capacity", help="find maximum faithful rate scale")
+    capacity.add_argument("profile", type=Path)
+    capacity.add_argument("--trial-duration", type=float, default=15.0)
+    capacity.add_argument("--confirm-duration", type=float, default=30.0)
+    capacity.add_argument("--max-scale", type=float, default=4.0)
+    capacity.add_argument("--resolution", type=float, default=0.125)
+    capacity.add_argument("--output", type=Path, default=Path("recorder-capacity-results"))
     control = commands.add_parser("control", help="run one storage-only hypothesis control")
     control.add_argument("profile", type=Path)
     control.add_argument(
@@ -752,6 +863,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         calibrate_recording(args.recording).write(args.output)
         return 0
     profile = WorkloadProfile.read(args.profile)
+    if args.command == "capacity":
+        result = run_capacity_search(
+            profile,
+            trial_duration_s=args.trial_duration,
+            confirm_duration_s=args.confirm_duration,
+            max_scale=args.max_scale,
+            resolution=args.resolution,
+            output_dir=args.output,
+        )
+        print(json.dumps(result, indent=2))
+        return 0 if result["max_faithful_scale"] >= 1.0 else 1
     if args.command == "control":
         result = run_storage_control(
             profile,
