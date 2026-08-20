@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-import copy
 import enum
 import inspect
 import os
@@ -57,11 +56,6 @@ logger = setup_logger()
 T = TypeVar("T")
 TIn = TypeVar("TIn")
 TOut = TypeVar("TOut")
-
-
-def _snapshot_recording_message(message: Any) -> Any:
-    """Detach mutable publisher-owned state before queueing a recording."""
-    return copy.deepcopy(message)
 
 
 def stream_to_port(stream: Stream[T], out: Out[T]) -> DisposableBase:
@@ -401,9 +395,7 @@ class Recorder(MemoryModule):
             self._subscribe_port(name, port)
         if "tf" in processors:
             subscription = Disposable(
-                self.tf.subscribe(
-                    lambda msg: pipeline.submit("tf", _snapshot_recording_message(msg))
-                )
+                self.tf.subscribe(lambda msg: pipeline.submit("tf", msg))
             )
             self._recording_subscriptions.append(subscription)
             self.register_disposable(subscription)
@@ -420,7 +412,7 @@ class Recorder(MemoryModule):
         already in world coords) fall back to ``config.default_frame_id`` —
         so every observation gets a robot-pose anchor when tf is publishing.
 
-        Preparation runs on that stream's pipeline worker, outside the transport
+        Preparation runs on the pipeline's single worker, outside the transport
         callback and the serialized database writer.
         """
 
@@ -459,17 +451,12 @@ class Recorder(MemoryModule):
         return process
 
     def _subscribe_port(self, name: str, input_topic: In[Any]) -> None:
-        """Snapshot and enqueue messages directly from the transport callback."""
+        """Enqueue decoded messages directly from the transport callback."""
         pipeline = self._recording_pipeline
         assert pipeline is not None
 
         def on_message(msg: Any) -> None:
-            # Snapshot the message wrapper at reception. Some high-rate
-            # publishers deliberately reuse a payload object and update its
-            # timestamp on the next tick; retaining that wrapper would record
-            # the later timestamp after an encoder or SQLite stall.
-            snapshot = _snapshot_recording_message(msg)
-            pipeline.submit(name, (time.time(), snapshot))
+            pipeline.submit(name, (time.time(), msg))
 
         subscription = input_topic.pure_observable().subscribe(on_message)
         self._recording_subscriptions.append(subscription)
