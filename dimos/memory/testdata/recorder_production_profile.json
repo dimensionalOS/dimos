@@ -18,7 +18,7 @@
       "dtype": "uint8",
       "point_count": null,
       "raw_bytes": 921600,
-      "encoded_bytes": 80000
+      "encoded_bytes": 13459
     },
     {
       "name": "grayscale_left",
@@ -35,7 +35,7 @@
       "dtype": "uint8",
       "point_count": null,
       "raw_bytes": 307200,
-      "encoded_bytes": 180000
+      "encoded_bytes": 307310
     },
     {
       "name": "grayscale_right",
@@ -52,7 +52,7 @@
       "dtype": "uint8",
       "point_count": null,
       "raw_bytes": 307200,
-      "encoded_bytes": 180000
+      "encoded_bytes": 307311
     },
     {
       "name": "depth",
@@ -69,7 +69,7 @@
       "dtype": "uint16",
       "point_count": null,
       "raw_bytes": 614400,
-      "encoded_bytes": 350000
+      "encoded_bytes": 614521
     },
     {
       "name": "imu",
@@ -82,8 +82,8 @@
       "shape": null,
       "dtype": null,
       "point_count": null,
-      "raw_bytes": 320,
-      "encoded_bytes": 320
+      "raw_bytes": 329,
+      "encoded_bytes": 329
     },
     {
       "name": "pointlio",
@@ -96,8 +96,8 @@
       "shape": null,
       "dtype": null,
       "point_count": 20000,
-      "raw_bytes": 320000,
-      "encoded_bytes": 320000
+      "raw_bytes": 320129,
+      "encoded_bytes": 320129
     },
     {
       "name": "odometry",
@@ -110,8 +110,8 @@
       "shape": null,
       "dtype": null,
       "point_count": null,
-      "raw_bytes": 760,
-      "encoded_bytes": 760
+      "raw_bytes": 724,
+      "encoded_bytes": 724
     },
     {
       "name": "tf",
@@ -124,9 +124,9 @@
       "shape": null,
       "dtype": null,
       "point_count": null,
-      "raw_bytes": 1024,
-      "encoded_bytes": 1024
+      "raw_bytes": 103,
+      "encoded_bytes": 107
     }
   ],
-  "calibration_source": "synthetic defaults; replace with calibrate output"
+  "calibration_source": "30s synthetic recorder baseline, 2026-08-19"
 }
