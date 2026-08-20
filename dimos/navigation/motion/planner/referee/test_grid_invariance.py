@@ -48,10 +48,15 @@ through once one distant point was added).
 
 from __future__ import annotations
 
-import dimos_motion2_target
 import numpy as np
+import pytest
 
 from dimos.navigation.motion.embodiment import EMBODIMENTS
+
+# The crate under test. Skipped rather than failed when it is not built, the
+# way ray_tracing and mls_planner do it: `uv run maturin develop --uv --release
+# -m dimos/navigation/motion/planner/rust/Cargo.toml`.
+dimos_motion2_target = pytest.importorskip("dimos_motion2_target")
 
 EMB = EMBODIMENTS["go2"]
 RAKE = np.radians(60.0)
