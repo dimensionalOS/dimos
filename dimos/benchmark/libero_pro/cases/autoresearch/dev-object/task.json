@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "case_id": "libero-pro-autoresearch-dev-object",
+  "source": {"repository": "Zxy-MLlab/LIBERO-PRO", "revision": "eafdb809426b13153aa1e4c42d6601844217dfec", "dataset_repository": "zhouxueyang/LIBERO-Pro", "dataset_revision": "e9f3a5356efed7a23b06c28cfe880a22c3306074"},
+  "task": {"suite": "libero_object_task", "task_order_index": 0, "task_index": 0, "task_name": "pick_up_the_alphabet_soup_and_place_it_in_the_basket", "instruction": "Pick the cream cheese and place it in the basket"},
+  "assets": {
+    "bddl": {"repository_path": "bddl_files/libero_object_task/pick_up_the_alphabet_soup_and_place_it_in_the_basket.bddl", "sha256": "3dcf0acdbafa28968d7b990520232eac3181b525ec1bcc96030dec172b64e2e2", "size_bytes": 2125},
+    "init_states": {"repository_path": "init_files/libero_object_task/pick_up_the_alphabet_soup_and_place_it_in_the_basket.pruned_init", "sha256": "292758a37a733e44006270bbe706e14f83c086ff16517fca432f851817932340", "size_bytes": 4144}
+  },
+  "episodes": {"debug_init_state_indices": [1, 2, 3, 4, 5], "scored_init_state_index": 0},
+  "contract": {"robot": "Panda", "controller": "OSC_POSE", "cameras": [{"name": "agentview", "width": 128, "height": 128}, {"name": "robot0_eye_in_hand", "width": 128, "height": 128}], "control_frequency_hz": 20, "settling_ticks": 5, "horizon_ticks": 280, "clock": "continuous_real_time", "success": "native_bddl_goal_predicates"}
+}

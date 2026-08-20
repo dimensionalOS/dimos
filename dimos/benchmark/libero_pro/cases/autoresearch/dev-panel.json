@@ -1,0 +1,10 @@
+{
+  "schema_version": "1.0",
+  "name": "libero-pro-development",
+  "cases": [
+    {"id": "dev-goal", "family": "goal", "specification": "dev-goal/evaluation.json"},
+    {"id": "dev-spatial", "family": "spatial", "specification": "dev-spatial/evaluation.json"},
+    {"id": "dev-object", "family": "object", "specification": "dev-object/evaluation.json"},
+    {"id": "dev-long", "family": "libero_10", "specification": "dev-long/evaluation.json"}
+  ]
+}

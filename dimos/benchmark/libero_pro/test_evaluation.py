@@ -3,6 +3,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import cloudpickle
 from pytest_mock import MockerFixture
 
 from dimos.benchmark.evaluation.protocol import PolicyArtifact, PolicyExecution
@@ -14,15 +15,28 @@ from dimos.benchmark.libero_pro.podman import ContainerEndpoints
 CASE = Path(__file__).parent / "cases" / "goal-task-0-single-trial" / "task.json"
 
 
-def test_evaluation_protocol_requires_rich_visual_inspection_of_debug_trials() -> None:
+def test_evaluation_protocol_exposes_only_minimal_harness_contract() -> None:
     protocol = evaluation.EVALUATION_PROTOCOL
 
-    assert "trial.open_memory()" in protocol
-    assert "from IPython.display import display" in protocol
-    assert 'memory.stream("agentview_color_image").last().data' in protocol
-    assert "display(PILImage.fromarray(frame.to_rgb().data))" in protocol
-    assert "ASCII art" in protocol
-    assert "pixel statistics" in protocol
+    assert "policy(app: Dimos) -> None" in protocol
+    assert "submit_policy(policy)" in protocol
+    assert "PolicyCandidate" in protocol
+    assert "candidate.evidence.timeline()" in protocol
+    assert "freeze_policy(candidate)" in protocol
+    assert "exact task input" in protocol
+
+    forbidden = (
+        "segment_best",
+        "GraspExecutionModule",
+        "planning_group",
+        "collision-checked",
+        "skillbook",
+        "verifier",
+        "diagnoser",
+        "privileged",
+        "ASCII art",
+    )
+    assert all(term not in protocol for term in forbidden)
 
 
 def test_trial_starts_clock_and_prepared_policy_only_after_blueprint_is_ready(
@@ -32,7 +46,7 @@ def test_trial_starts_clock_and_prepared_policy_only_after_blueprint_is_ready(
     events: list[str] = []
     manifest = LiberoTaskManifest.model_validate_json(CASE.read_bytes())
     assets = PreparedAssets(tmp_path / "task.bddl", tmp_path / "states.pt")
-    policy = PolicyArtifact(tmp_path / "policy.py", tmp_path / "policy.pkl", "digest")
+    policy = PolicyArtifact("def policy(app): ...\n", cloudpickle.dumps(lambda: None), "digest")
 
     class FakeContainer:
         def __init__(self, *_args: object, **_kwargs: object) -> None:
@@ -84,7 +98,12 @@ def test_trial_starts_clock_and_prepared_policy_only_after_blueprint_is_ready(
         def finish(self, *, grace_s: float = 1.0) -> PolicyExecution:
             del grace_s
             events.append("policy.finish")
-            return PolicyExecution("policy_error", 10.5, "RPC closed after native success")
+            return PolicyExecution(
+                "policy_error",
+                10.5,
+                "RPC closed after native success",
+                "gripper result: succeeded",
+            )
 
     class FakeRuntime:
         def prepare(
@@ -128,9 +147,11 @@ def test_trial_starts_clock_and_prepared_policy_only_after_blueprint_is_ready(
         run_id="scored",
     )
 
-    assert trial.outcome.status == "completed"
+    assert trial.outcome.status == "policy_error"
+    assert trial.policy_output == "gripper result: succeeded"
+    assert (tmp_path / "trial" / "policy-output.log").read_text() == trial.policy_output
     assert native["score"] == 1.0
-    assert native["policy_execution_status"] == "completed"
+    assert native["policy_execution_status"] == "policy_error"
     assert events == [
         "container.start",
         "control.ready",

@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 from collections.abc import Callable
+import json
 import logging
 import secrets
 import socket
@@ -39,7 +41,7 @@ from dimos.agents.code_policy_core import (
     LiveDimosEnvironment,
     SubmissionEnvironment,
 )
-from dimos.benchmark.evaluation.protocol import TrialRun
+from dimos.benchmark.evaluation.protocol import PolicyCandidate, PolicyRequestError
 
 SUBMISSION_PYTHON_EXEC_DESCRIPTION = """Execute Python in a persistent trusted, unsandboxed session.
 
@@ -53,7 +55,8 @@ Imports, functions, and variables persist between calls. The session provides
 `app` for DimOS RPCs and `memory` for read-only public observations.
 """
 
-SubmissionHandler = Callable[[str, bytes], TrialRun]
+SubmissionHandler = Callable[[str, bytes], PolicyCandidate]
+FreezeHandler = Callable[[str], PolicyCandidate]
 
 _NOISY_MCP_TRANSPORT_LOGGERS = (
     "mcp.server.streamable_http",
@@ -68,14 +71,18 @@ class CodePolicyMcpServer:
         self,
         submission_handler: SubmissionHandler | None = None,
         *,
+        freeze_handler: FreezeHandler | None = None,
         live_recording_path: str | None = None,
         host: str = "127.0.0.1",
     ) -> None:
         if (submission_handler is None) == (live_recording_path is None):
             raise ValueError("configure exactly one submission or live DimOS environment")
+        if (submission_handler is None) != (freeze_handler is None):
+            raise ValueError("submission and freeze handlers must be configured together")
         self.host = host
         self.port = 0
         self.submission_handler = submission_handler
+        self.freeze_handler = freeze_handler
         self.live_recording_path = live_recording_path
         self.submission_token = secrets.token_urlsafe(32)
         self.session: CodePolicySession | None = None
@@ -115,6 +122,7 @@ class CodePolicyMcpServer:
             host=host,
         )
         self.app.routes.append(Route("/submit-policy", self._submit_policy, methods=["POST"]))
+        self.app.routes.append(Route("/freeze-policy", self._freeze_policy, methods=["POST"]))
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
         self._socket: socket.socket | None = None
@@ -128,33 +136,62 @@ class CodePolicyMcpServer:
     async def _submit_policy(self, request: Request) -> JSONResponse:
         if request.headers.get("authorization") != f"Bearer {self.submission_token}":
             return JSONResponse({"error": "unauthorized"}, status_code=401)
+        if self.submission_handler is None:
+            return JSONResponse({"error": "policy submission is disabled"}, status_code=404)
         try:
-            if self.submission_handler is None:
-                return JSONResponse({"error": "policy submission is disabled"}, status_code=404)
             body = await request.json()
             source = str(body["source"])
             serialized = base64.b64decode(str(body["serialized"]), validate=True)
-            trial = await asyncio.to_thread(self.submission_handler, source, serialized)
-        except Exception as exc:
+        except (binascii.Error, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
             return JSONResponse(
                 {"error": f"{type(exc).__name__}: {exc}"},
                 status_code=400,
             )
+        try:
+            candidate = await asyncio.to_thread(self.submission_handler, source, serialized)
+        except PolicyRequestError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
         return JSONResponse(
             {
-                "run_id": trial.run_id,
-                "outcome": {
-                    "success": trial.outcome.success,
-                    "reward": trial.outcome.reward,
-                    "status": trial.outcome.status,
-                    "error": trial.outcome.error,
-                    "duration_seconds": trial.outcome.duration_seconds,
+                "candidate_id": candidate.id,
+                "policy": {
+                    "source": candidate.policy.source,
+                    "sha256": candidate.policy.sha256,
                 },
-                "artifacts": str(trial.artifacts),
-                "log_path": str(trial.log_path),
-                "memory_path": str(trial.memory_path),
+                "remaining_submissions": candidate.evidence.remaining_submissions,
+                "run_id": candidate.trial.run_id,
+                "outcome": {
+                    "success": candidate.trial.outcome.success,
+                    "reward": candidate.trial.outcome.reward,
+                    "status": candidate.trial.outcome.status,
+                    "error": candidate.trial.outcome.error,
+                    "duration_seconds": candidate.trial.outcome.duration_seconds,
+                },
+                "artifacts": str(candidate.trial.artifacts),
+                "log_path": str(candidate.trial.log_path),
+                "memory_path": str(candidate.trial.memory_path),
+                "policy_output": candidate.trial.policy_output,
             }
         )
+
+    async def _freeze_policy(self, request: Request) -> JSONResponse:
+        if request.headers.get("authorization") != f"Bearer {self.submission_token}":
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        if self.freeze_handler is None:
+            return JSONResponse({"error": "policy freezing is disabled"}, status_code=404)
+        try:
+            body = await request.json()
+            candidate_id = str(body["candidate_id"])
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            return JSONResponse(
+                {"error": f"{type(exc).__name__}: {exc}"},
+                status_code=400,
+            )
+        try:
+            candidate = await asyncio.to_thread(self.freeze_handler, candidate_id)
+        except PolicyRequestError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return JSONResponse({"candidate_id": candidate.id, "frozen": True})
 
     def start(self) -> None:
         if self._thread is not None:
@@ -172,6 +209,7 @@ class CodePolicyMcpServer:
                 environment=(
                     SubmissionEnvironment(
                         submission_url=f"http://{self.host}:{self.port}/submit-policy",
+                        freeze_url=f"http://{self.host}:{self.port}/freeze-policy",
                         submission_token=self.submission_token,
                     )
                     if self.submission_handler is not None

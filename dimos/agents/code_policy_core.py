@@ -20,22 +20,34 @@ import base64
 from dataclasses import dataclass
 import inspect
 import os
+from pathlib import Path
 import queue
 import re
 import threading
 import time
-from typing import TYPE_CHECKING, Any, Literal, get_type_hints
+from typing import Any, Literal, get_type_hints
 
+import cloudpickle  # type: ignore[import-untyped]
 from pydantic import BaseModel, ConfigDict, Field
+import requests
 
+from dimos.benchmark.evaluation.protocol import (
+    PolicyCandidate,
+    PolicySnapshot,
+    TrialEvidence,
+    TrialOutcome,
+    TrialRun,
+)
 from dimos.core.global_config import global_config
+from dimos.porcelain.dimos import Dimos
 
-if TYPE_CHECKING:
-    from dimos.benchmark.evaluation.protocol import TrialRun
-
-MAX_EXECUTION_TIMEOUT_S = 600.0
+# The MCP transport abandons a request after roughly 300 seconds. Interrupt the
+# kernel with enough headroom for the timeout response to reach the agent; otherwise
+# the abandoned execution keeps the serial session lock and every later call is busy.
+MAX_EXECUTION_TIMEOUT_S = 240.0
 DEFAULT_OUTPUT_LIMIT = 32_000
 _SUBMISSION_URL_ENV = "DIMOS_CODE_POLICY_SUBMISSION_URL"
+_FREEZE_URL_ENV = "DIMOS_CODE_POLICY_FREEZE_URL"
 _SUBMISSION_TOKEN_ENV = "DIMOS_CODE_POLICY_SUBMISSION_TOKEN"
 _RECORDING_PATH_ENV = "DIMOS_CODE_POLICY_RECORDING_PATH"
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -50,6 +62,7 @@ class SubmissionEnvironment(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     kind: Literal["submission"] = "submission"
     submission_url: str = Field(min_length=1)
+    freeze_url: str = Field(min_length=1)
     submission_token: str = Field(min_length=1)
 
 
@@ -137,7 +150,7 @@ def _load_kernel_manager() -> type[Any]:
 def _bootstrap_source(environment: SubmissionEnvironment | LiveDimosEnvironment) -> str:
     if isinstance(environment, SubmissionEnvironment):
         return """
-from dimos.agents.code_policy_core import submit_policy
+from dimos.agents.code_policy_core import freeze_policy, submit_policy
 from dimos.porcelain.dimos import Dimos
 """
     return f"""
@@ -159,13 +172,14 @@ def _kernel_environment(config: CodePolicySessionConfig) -> dict[str, str]:
     result["DIMOS_TRANSPORT"] = global_config.transport
     if isinstance(config.environment, SubmissionEnvironment):
         result[_SUBMISSION_URL_ENV] = config.environment.submission_url
+        result[_FREEZE_URL_ENV] = config.environment.freeze_url
         result[_SUBMISSION_TOKEN_ENV] = config.environment.submission_token
     else:
         result[_RECORDING_PATH_ENV] = config.environment.recording_path
     return result
 
 
-def submit_policy(policy: Any) -> TrialRun:
+def submit_policy(policy: Any) -> PolicyCandidate:
     """Submit a typed callable from the exploration kernel for one fresh trial."""
     validate_policy_callable(policy)
     try:
@@ -173,13 +187,9 @@ def submit_policy(policy: Any) -> TrialRun:
     except (OSError, TypeError) as exc:
         raise TypeError("policy source is unavailable; define it in the exploration REPL") from exc
     try:
-        import cloudpickle  # type: ignore[import-untyped]
-
         serialized = cloudpickle.dumps(policy)
     except Exception as exc:
         raise TypeError(f"policy is not serializable: {type(exc).__name__}: {exc}") from exc
-
-    import requests
 
     response = requests.post(
         os.environ[_SUBMISSION_URL_ENV],
@@ -190,24 +200,50 @@ def submit_policy(policy: Any) -> TrialRun:
     if response.status_code != 200:
         detail = response.json().get("error", response.text)
         raise RuntimeError(f"policy submission failed: {detail}")
-    from pathlib import Path
-
-    from dimos.benchmark.evaluation.protocol import TrialOutcome, TrialRun
-
     payload = response.json()
-    return TrialRun(
+    trial = TrialRun(
         run_id=payload["run_id"],
         outcome=TrialOutcome(**payload["outcome"]),
         artifacts=Path(payload["artifacts"]),
         log_path=Path(payload["log_path"]),
         memory_path=Path(payload["memory_path"]),
+        policy_output=payload["policy_output"],
     )
+    policy_payload = payload["policy"]
+    candidate_id = payload["candidate_id"]
+    return PolicyCandidate(
+        id=candidate_id,
+        policy=PolicySnapshot(
+            source=policy_payload["source"],
+            sha256=policy_payload["sha256"],
+        ),
+        evidence=TrialEvidence(
+            candidate_id=candidate_id,
+            trial=trial,
+            remaining_submissions=payload["remaining_submissions"],
+        ),
+    )
+
+
+def freeze_policy(candidate: PolicyCandidate) -> None:
+    """Irreversibly select a candidate from the current exploration."""
+    if not isinstance(candidate, PolicyCandidate):
+        raise TypeError("freeze_policy requires a PolicyCandidate returned by submit_policy")
+    import requests
+
+    response = requests.post(
+        os.environ[_FREEZE_URL_ENV],
+        headers={"Authorization": f"Bearer {os.environ[_SUBMISSION_TOKEN_ENV]}"},
+        json={"candidate_id": candidate.id},
+        timeout=None,
+    )
+    if response.status_code != 200:
+        detail = response.json().get("error", response.text)
+        raise RuntimeError(f"policy freeze failed: {detail}")
 
 
 def validate_policy_callable(policy: Any) -> None:
     """Enforce the one canonical callable contract before a trial is launched."""
-    from dimos.porcelain.dimos import Dimos
-
     if not inspect.isfunction(policy) or inspect.iscoroutinefunction(policy):
         raise TypeError("policy must be a synchronous Python function")
     if policy.__name__ != "policy":
