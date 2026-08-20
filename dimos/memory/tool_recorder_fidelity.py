@@ -94,7 +94,7 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
-Mode = Literal["baseline", "encoder-stall", "sqlite-lock", "serialized-preparation"]
+Mode = Literal["baseline", "encoder-stall", "sqlite-lock", "bounded-preparation"]
 StorageControlMode = Literal["encoder-control", "split-db-control", "batch-small-control"]
 
 
@@ -602,7 +602,7 @@ def run_harness(
                 stall_duration_s=stall_duration_s,
                 default_frame_id="base_link",
                 tf_tolerance=1.0,
-                preparation_concurrency=1 if mode == "serialized-preparation" else None,
+                preparation_concurrency=2 if mode == "bounded-preparation" else None,
             ),
         )
         .transports(transport_map)
@@ -1120,7 +1120,7 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--output", type=Path, default=Path("recorder-fidelity-results"))
     run.add_argument(
         "--mode",
-        choices=("baseline", "encoder-stall", "sqlite-lock", "serialized-preparation"),
+        choices=("baseline", "encoder-stall", "sqlite-lock", "bounded-preparation"),
         default="baseline",
     )
     run.add_argument("--transport", choices=("lcm", "shm", "zenoh"))
