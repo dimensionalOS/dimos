@@ -46,7 +46,7 @@ from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.core.transport import LCMTransport, pSHMTransport
+from dimos.core.transport import LCMTransport, pSHMQueueTransport
 from dimos.core.transport_factory import make_transport
 from dimos.memory.backend import Backend
 from dimos.memory.codecs.base import Codec
@@ -392,7 +392,8 @@ def _transport(stream: StreamProfile) -> Any:
     message_type = _message_type(stream)
     if stream.transport == "shm":
         capacity = max(3_686_400, stream.raw_bytes * 2, stream.encoded_bytes * 2)
-        return pSHMTransport(topic, default_capacity=capacity)
+        slots = max(8, round(stream.rate_hz * 2.5))
+        return pSHMQueueTransport(topic, default_capacity=capacity, slots=slots)
     if stream.transport == "zenoh":
         return make_transport(topic, message_type, g=GlobalConfig(transport="zenoh"))
     return LCMTransport(topic, message_type)

@@ -118,6 +118,11 @@ class RecorderQueue:
             self._closed = True
         self._queue.put(None)
 
+    def fail(self, error: BaseException) -> None:
+        """Enter the fatal state without discarding already accepted work."""
+        with self._lock:
+            self._fail_locked(error)
+
     def flush(self, timeout_s: float) -> None:
         deadline = time.monotonic() + timeout_s
         while self._queue.unfinished_tasks:
