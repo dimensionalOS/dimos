@@ -234,7 +234,8 @@ def run(
     show_help: bool = typer.Option(False, "--help"),
 ) -> None:
     """Start a robot blueprint"""
-    _reject_legacy_config()
+    if config_path == DEFAULT_CONFIG_PATH:
+        _reject_legacy_config()
     from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
     from dimos.core.coordination.blueprint_config.parser import (
         BlueprintConfigParser,
