@@ -437,12 +437,20 @@ class Recorder(MemoryModule):
             return msg, ts, pose, recv_ts
 
         def process(stamped: tuple[float, Any], accepted_monotonic: float) -> None:
+            process_started = time.perf_counter()
+            self._on_recording_stage(
+                name,
+                "ingress_queue",
+                max(0.0, time.monotonic() - accepted_monotonic),
+            )
             loop = self._loop
             if loop is None or not loop.is_running():
                 raise RecorderFailedError("Recorder event loop is not running")
+            pose_started = time.perf_counter()
             msg, ts, pose, recv_ts = asyncio.run_coroutine_threadsafe(
                 prepare(stamped), loop
             ).result()
+            self._on_recording_stage(name, "pose", time.perf_counter() - pose_started)
             if hasattr(msg, "ts"):
                 msg.ts = ts
             backend = cast("Backend[Any]", stream._source)  # type: ignore[attr-defined]
@@ -453,20 +461,29 @@ class Recorder(MemoryModule):
                 tags={"reception_ts": recv_ts},
                 _data=msg,
             )
+            prepare_started = time.perf_counter()
             prepared = backend.prepare_append(observation)
+            self._on_recording_stage(name, "prepare", time.perf_counter() - prepare_started)
             if getattr(msg, "msg_name", None) == "sensor_msgs.PointCloud2":
+                freeze_started = time.perf_counter()
                 assert prepared.encoded is not None
                 frozen = backend.codec.decode(prepared.encoded)
                 if round(frozen.ts * 1e9) != round(ts * 1e9):
                     frozen.ts = ts
                     observation._data = frozen
                     prepared = backend.prepare_append(observation)
+                self._on_recording_stage(
+                    name, "pointcloud_freeze", time.perf_counter() - freeze_started
+                )
+            submit_started = time.perf_counter()
             self._record_writer.submit(
                 backend,
                 prepared,
                 accepted_monotonic=accepted_monotonic,
                 stream_name=name,
             )
+            self._on_recording_stage(name, "writer_submit", time.perf_counter() - submit_started)
+            self._on_recording_stage(name, "process", time.perf_counter() - process_started)
 
         recording_queue = RecorderQueue(
             name,
@@ -485,7 +502,10 @@ class Recorder(MemoryModule):
             # publishers deliberately reuse a payload object and update its
             # timestamp on the next tick; retaining that wrapper would record
             # the later timestamp after an encoder or SQLite stall.
-            recording_queue.submit((time.time(), _snapshot_recording_message(msg)))
+            snapshot_started = time.perf_counter()
+            snapshot = _snapshot_recording_message(msg)
+            self._on_recording_stage(name, "snapshot", time.perf_counter() - snapshot_started)
+            recording_queue.submit((time.time(), snapshot))
 
         subscription = input_topic.pure_observable().subscribe(on_message)
         self._recording_subscriptions.append(subscription)
@@ -499,6 +519,9 @@ class Recorder(MemoryModule):
 
     def _on_recording_received(self, name: str, message: Any) -> None:
         """Observe an accepted message without adding another transport subscription."""
+
+    def _on_recording_stage(self, name: str, stage: str, duration_s: float) -> None:
+        """Observe recorder stage latency without changing the production path."""
 
     def _prepare_streams(self) -> None:
         """On APPEND, drop the streams this recorder is about to (re)write — the
