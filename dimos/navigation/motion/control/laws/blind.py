@@ -14,14 +14,11 @@
 
 """The blind track's law: follow the path the gait can actually walk.
 
-From ``motion-tc-autoresearch`` branch ``blind_research01`` (evo exp_0013),
-which took the blind track from 98.89 to 110.77 on the reality-mode battery —
-21 timeouts and 4 collisions became arrivals, 228/228 episodes arrive, zero
-collisions. Three mechanisms over :mod:`~...laws.seed`, in order of worth:
+Three mechanisms over :mod:`~...laws.seed`, in order of worth:
 
 1. :func:`walk_command`, the gait slip inverse. The twist is a REQUEST to a
-   learned policy that under-delivers it, and the governor's creep rung sat
-   inside the gait's dead-stall band, so asking for it stopped the robot dead.
+   learned policy that under-delivers it, and the governor's creep rung sits
+   inside the gait's dead-stall band, so asking for it stops the robot dead.
 2. Constant time headway: the carrot distance scales with commanded speed
    instead of staying fixed, shrinking the pursuit chord where the plan is
    tight — and the chord always falls toward the obstacle the planner curved
@@ -29,9 +26,8 @@ collisions. Three mechanisms over :mod:`~...laws.seed`, in order of worth:
 3. The stamped precision profile as the governor's input, since the clearance
    array is exactly what this track does not get.
 
-Only (3) is blind-specific. (1) and (2) are held here rather than shared
-deliberately: the hinted track is researched independently, and handing its
-lab a mechanism biases that search.
+Only (3) is blind-specific; (1) and (2) are held here rather than shared so the
+two tracks stay independent.
 """
 
 from __future__ import annotations
@@ -178,23 +174,18 @@ class BlindPursuitController:
                 nxt = float(ceilings[min(i + 1, n - 1)])
                 vmax = min(nxt, float(np.min(window))) if len(window) else nxt
 
-        # CONSTANT TIME HEADWAY. The seed pursues a point a fixed 0.35 m along
-        # the plan whatever the speed. Steering straight at a carrot that far
-        # away chords the plan's curvature, and the chord always falls to the
-        # INSIDE of the turn -- toward the very obstacle the planner curved
-        # around. The steady-state inset grows with the square of the carrot
-        # distance, so in a passage whose planned clearance is a few
-        # centimetres it is the whole error budget.
+        # CONSTANT TIME HEADWAY, not a constant distance. Steering at a carrot
+        # a fixed distance away chords the plan's curvature, and the chord
+        # always falls to the INSIDE of the turn -- toward the obstacle the
+        # planner curved around -- with an inset that grows as the square of
+        # the carrot distance. Holding the TIME headway constant instead
+        # (lookahead / max_speed) leaves full cruise untouched and shortens the
+        # carrot where the governor has slowed for a pinch.
         #
-        # Holding the TIME headway constant instead (lookahead / max_speed,
-        # 0.7 s at the defaults) is exactly the seed's 0.35 m at full cruise --
-        # open rooms are untouched -- and 0.14 m at the governor floor, cutting
-        # the inward chord by ~6x precisely where the plan has no room to give.
-        #
-        # This costs no speed: the command magnitude is min(k_pos * L, vmax),
-        # so any L >= vmax / k_pos still saturates at vmax, and the floor below
-        # enforces that explicitly so an odd config cannot turn a shorter
-        # carrot into a slower robot.
+        # It costs no speed: the command magnitude is min(k_pos * L, vmax), so
+        # any L >= vmax / k_pos still saturates, and the floor below enforces
+        # that so an odd config cannot turn a shorter carrot into a slower
+        # robot.
         headway = cfg.lookahead / max(cfg.max_speed, 1e-6)
         look = max(vmax * headway, vmax / max(abs(cfg.k_pos), 1e-6))
 

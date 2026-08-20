@@ -15,7 +15,7 @@
 """The reference pursuit law: holonomic, clearance-governed, fixed lookahead.
 
 The permanent baseline. Every track's A/B is against this law and every
-autoresearch lab seeds from it, so it does NOT absorb research results — a
+later law starts from it, so it does NOT absorb their results — a
 moving baseline is not a baseline. Fold those into the track's own law.
 """
 

@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""MotionPlanner: the autoresearch planner as a dimos local planner module.
+"""MotionPlanner: the SE(2) local planner as a dimos module.
 
-Bridges the referee-side ``PlannerEpisode`` protocol onto module streams:
+Bridges the ``PlannerEpisode`` protocol onto module streams:
 the raycaster's ``local_map`` is the cloud, leveled body odometry is the
 pose, and the goal is a carrot — ``goal_lookahead_m`` of arc along the MLS
 global path (``planner_path``), clamped to its end. Ticks on a fixed cadence
@@ -58,21 +58,38 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-def annotate(ref: RefereePath, obstacles: np.ndarray, emb: Any, ts: float, frame_id: str) -> Path:
+def annotate(
+    ref: RefereePath,
+    obstacles: np.ndarray,
+    emb: Any,
+    ts: float,
+    frame_id: str,
+    ground_z: float = 0.0,
+) -> Path:
     """Referee path -> stamped nav Path: precision profile in the timestamps."""
-    nav = to_nav_path(ref, ts=ts, frame_id=frame_id)
+    nav = to_nav_path(ref, ts=ts, frame_id=frame_id, ground_z=ground_z)
     xy = np.array([[p.position.x, p.position.y] for p in ref.poses]).reshape(-1, 2)
     clearance = path_clearance(xy, obstacles, emb.width / 2.0)
     return encode_precision(nav, clearance, t0=ts)
 
 
-def to_nav_path(ref: RefereePath, ts: float = 0.0, frame_id: str = "odom") -> Path:
-    """Referee path -> dimos nav_msgs Path (the type the follower consumes)."""
+def to_nav_path(
+    ref: RefereePath, ts: float = 0.0, frame_id: str = "odom", ground_z: float = 0.0
+) -> Path:
+    """Referee path -> dimos nav_msgs Path (the type the follower consumes).
+
+    The search is planar and hands back z = 0, but `odom` z = 0 is wherever the
+    LIO frame started -- on this rig, a lidar's height above the floor. Stamping
+    the plan with `ground_z` (the surface the feet stand on, which the module
+    already tracks for the obstacle model) puts the route on the ground instead
+    of floating it over the robot. Every consumer of the path is planar; only a
+    viewer reads the z.
+    """
     poses = [
         PoseStamped(
             ts=ts,
             frame_id=frame_id,
-            position=Vector3(p.position.x, p.position.y, p.position.z),
+            position=Vector3(p.position.x, p.position.y, ground_z),
             orientation=Quaternion(
                 p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w
             ),
@@ -125,8 +142,23 @@ def replan_due(
 
 
 class MotionPlannerConfig(ModuleConfig):
-    planner: str = "target"  # referee registry name or "module:factory"
+    planner: str = "target"  # registry name or "module:factory"
     embodiment: str = "go2"
+    # HOW AGGRESSIVE the search is allowed to be, and the only two numbers that
+    # decide whether a gap admits a route. A gap has to be
+    # `box_width + 2 * clearance_margin_m` wide before one exists at all.
+    #
+    # `body_dilate_m` grows (or, negative, shrinks) every planning box PER SIDE.
+    # The table's boxes are MEASURED -- the swinging legs, not the trunk, set
+    # the width, which is why they read wider than the robot looks -- so a
+    # negative value here is a deployment saying "plan me tighter than the legs
+    # measured", and the legs are what pays for it.
+    #
+    # The hard margin the search adds on top stays the embodiment's own
+    # precision floor -- what the follower can actually hold -- because a
+    # `float | None` cannot cross into the native twin, and one knob that both
+    # halves carry beats two that drift.
+    body_dilate_m: float = 0.0
     # Plan when an input that MATTERS changed — a new local map, or a carrot
     # that moved — rather than on every tick of the clock. The planner ticks at
     # 5 Hz over a 1 Hz map, so four ticks in five re-solve an unchanged world;
@@ -147,7 +179,7 @@ class MotionPlannerConfig(ModuleConfig):
     # carries is the lidar's, not the robot's -- 0.30 m ahead and 0.16 m above on
     # this rig. tf resolves it into the body; ticks are dropped until it can.
     base_frame: str = "base_link"
-    replan_hz: float = 5.0  # the control battery's reality default
+    replan_hz: float = 5.0
     goal_lookahead_m: float = 5.0  # carrot arc along the global path
     world_frame: str = "odom"
     # What counts as an obstacle (motion/obstacles.py). "body_band" reads the
@@ -201,7 +233,7 @@ class MotionPlanner(Module):
         self._base_pose: OdomBasePose | None = None
         self._global_xy: np.ndarray | None = None
         self._episode: PlannerEpisode | None = None
-        self._emb = EMBODIMENTS[self.config.embodiment]
+        self._emb = EMBODIMENTS[self.config.embodiment].dilated(by=self.config.body_dilate_m)
         self._model: ObstacleModel = load_model(self.config.obstacle_model, self._emb)
         self._stop_event = Event()
         self._thread: Thread | None = None
@@ -355,7 +387,14 @@ class MotionPlanner(Module):
             logger.exception("planner failed; keeping the last published path")
             return False
         self._incumbent = ref
-        plan = annotate(ref, pts, self._emb, ts=time.time(), frame_id=self.config.world_frame)
+        plan = annotate(
+            ref,
+            pts,
+            self._emb,
+            ts=time.time(),
+            frame_id=self.config.world_frame,
+            ground_z=ground_z,
+        )
         self.path.publish(plan)
         self._stall.ok(f"planning: {len(plan.poses)} waypoints")
         self._publish_viz(plan)

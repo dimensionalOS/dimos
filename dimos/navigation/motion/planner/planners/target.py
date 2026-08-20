@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The autoresearch subject. Seeded as the HONEST gold: the same SE(2)
-search, but its world model is built from the cloud — no truth peeking.
+"""The shipped planner: an SE(2) search whose world model is built from the
+cloud rather than from any ground truth.
 
-Two factories: `make_py` ("target-py") is the python port spec, `make`
-("target") adapts the rust candidate (dimos_motion2_target) — same algorithm,
-the crate is the surface autoresearch agents rewrite.
+Two factories: `make_py` ("target-py") is the python port spec, and `make`
+("target") adapts the rust crate (dimos_motion2_target) — same algorithm, and
+the crate is what runs on a robot.
 """
 
 from __future__ import annotations

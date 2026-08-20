@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `motion_planner`: the autoresearch target planner as a robot-side module.
+//! `motion_planner`: the SE(2) local planner as a robot-side module.
 //!
 //! A port of `adapter/planner.py`, which is the specification. The raycaster's
 //! `local_map` is the cloud, leveled body odometry is the pose, and the goal is
@@ -53,6 +53,10 @@ pub struct Config {
     /// Body dimensions, by `scenarios.py` tag. See `emb.rs` for why the table
     /// is not the pure crate's `Emb::go2()`.
     pub embodiment: String,
+    /// Every planning box grown by this much PER SIDE; negative shrinks it,
+    /// which is how a deployment asks for a tighter plan than the measured
+    /// legs. A gap admits a route when it is `box_width + 2 * precision` wide.
+    pub body_dilate_m: f64,
     /// Plan discretisation (m). The python takes it from
     /// `AvoidanceConfig().resolution`; here it crosses explicitly.
     #[validate(range(exclusive_min = 0.0))]
@@ -167,7 +171,10 @@ pub struct MotionPlanner {
 impl MotionPlanner {
     async fn spawn_worker(&mut self) {
         // validated before the module was built, so the tag is known
-        let emb = emb::by_tag(&self.config.embodiment).expect("validated embodiment tag");
+        let emb = emb::dilated(
+            emb::by_tag(&self.config.embodiment).expect("validated embodiment tag"),
+            self.config.body_dilate_m,
+        );
         let vert = emb::vert_by_tag(&self.config.embodiment).expect("validated embodiment tag");
         let model = obstacles::load(&self.config.obstacle_model, &vert)
             .expect("validated obstacle model name");
@@ -310,8 +317,8 @@ pub fn decide(
 
 /// The planner's refusal: one pose at where the robot is, which every law
 /// reads as "there is nothing to follow, hold position".
-pub fn hold_stub(pose: (f64, f64, f64), frame_id: &str, ts: f64) -> Path {
-    msg::build_path(&[[pose.0, pose.1, pose.2]], &[ts], ts, frame_id)
+pub fn hold_stub(pose: (f64, f64, f64), frame_id: &str, ts: f64, ground_z: f64) -> Path {
+    msg::build_path(&[[pose.0, pose.1, pose.2]], &[ts], ts, frame_id, ground_z)
 }
 
 /// Edge trigger for the stale spell, so a dead map warns once rather than
@@ -400,7 +407,7 @@ pub fn plan_once(
                 plan_ms = ms_since(started),
                 "planner refused; publishing a hold stub"
             );
-            return hold_stub(pose, &config.world_frame, t0);
+            return hold_stub(pose, &config.world_frame, t0, ground_z);
         }
     };
     // The room hint the follower's governor reads back out of the stamps has
@@ -414,7 +421,7 @@ pub fn plan_once(
         plan_ms = ms_since(started),
         "path planned"
     );
-    msg::build_path(&states, &ts, t0, &config.world_frame)
+    msg::build_path(&states, &ts, t0, &config.world_frame, ground_z)
 }
 
 /// Owns the replan cadence and the publishing, off the dispatch loop.
@@ -482,7 +489,12 @@ impl Worker {
                     planned = None;
                     incumbent = None;
                     let pose = snap.pose.expect("Hold implies a pose");
-                    let held = hold_stub(pose, &self.config.world_frame, msg::now_secs());
+                    let held = hold_stub(
+                        pose,
+                        &self.config.world_frame,
+                        msg::now_secs(),
+                        snap.ground_z.unwrap_or(0.0),
+                    );
                     self.publish(&held, now, &mut viz).await;
                 }
                 Tick::Plan => {
@@ -701,7 +713,7 @@ mod tests {
 
     #[test]
     fn a_hold_stub_is_one_pose_at_the_robot() {
-        let held = hold_stub((1.5, -2.0, std::f64::consts::FRAC_PI_2), "odom", 7.0);
+        let held = hold_stub((1.5, -2.0, std::f64::consts::FRAC_PI_2), "odom", 7.0, 0.0);
         assert_eq!(held.header.frame_id, "odom");
         assert_eq!(held.poses.len(), 1);
         assert_eq!(held.poses[0].pose.position.x, 1.5);
@@ -714,7 +726,7 @@ mod tests {
     fn a_hold_stub_is_a_stop_to_every_law() {
         // one pose is under the laws' `path.len() < 2` veto, which is the whole
         // contract the refusal shape rests on
-        let held = hold_stub((1.5, -2.0, 0.0), "odom", 0.0);
+        let held = hold_stub((1.5, -2.0, 0.0), "odom", 0.0, 0.0);
         let states = msg::path_states(&held);
         let cfg = dimos_motion2_tc::laws::hinted::HintedParams::default();
         assert_eq!(
@@ -758,6 +770,7 @@ mod tests {
     fn config() -> Config {
         Config {
             embodiment: "go2".into(),
+            body_dilate_m: 0.0,
             resolution: 0.1,
             replan_hz: 5.0,
             goal_lookahead_m: 5.0,

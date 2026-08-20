@@ -83,15 +83,22 @@ pub fn header(frame_id: &str, ts: f64) -> Header {
     }
 }
 
-/// One plan waypoint as a stamped pose in `frame_id`.
-pub fn pose_stamped(state: &State, ts: f64, frame_id: &str) -> PoseStamped {
+/// One plan waypoint as a stamped pose in `frame_id`, on the plane at
+/// `ground_z`.
+///
+/// The search is planar and knows no z, but `odom` z = 0 is wherever the LIO
+/// frame started -- on a lidar-odometry stack, a sensor's height above the
+/// floor. Stamping the plan with the surface the feet stand on is what puts the
+/// route on the ground instead of floating it over the robot. Every consumer of
+/// the path is planar; only a viewer reads the z.
+pub fn pose_stamped(state: &State, ts: f64, frame_id: &str, ground_z: f64) -> PoseStamped {
     PoseStamped {
         header: header(frame_id, ts),
         pose: Pose {
             position: Point {
                 x: state[0],
                 y: state[1],
-                z: 0.0,
+                z: ground_z,
             },
             orientation: quat_of_yaw(state[2]),
         },
@@ -103,11 +110,17 @@ pub fn pose_stamped(state: &State, ts: f64, frame_id: &str) -> PoseStamped {
 /// `stamps` of the wrong length leaves every pose at `t0`, which is what an
 /// unstamped path looks like to `decode_ceilings` -- the honest shape for a
 /// plan whose profile could not be computed.
-pub fn build_path(states: &[State], stamps: &[f64], t0: f64, frame_id: &str) -> Path {
+pub fn build_path(
+    states: &[State],
+    stamps: &[f64],
+    t0: f64,
+    frame_id: &str,
+    ground_z: f64,
+) -> Path {
     let poses = states
         .iter()
         .enumerate()
-        .map(|(k, s)| pose_stamped(s, stamps.get(k).copied().unwrap_or(t0), frame_id))
+        .map(|(k, s)| pose_stamped(s, stamps.get(k).copied().unwrap_or(t0), frame_id, ground_z))
         .collect();
     Path {
         header: header(frame_id, t0),
@@ -298,7 +311,7 @@ mod tests {
     #[test]
     fn a_built_path_carries_its_stamps_and_yaws() {
         let states = vec![[0.0, 0.0, 0.0], [1.0, 0.0, PI / 2.0]];
-        let path = build_path(&states, &[10.0, 12.0], 10.0, "odom");
+        let path = build_path(&states, &[10.0, 12.0], 10.0, "odom", 0.0);
         assert_eq!(path.header.frame_id, "odom");
         assert_eq!(secs_of(&path.header.stamp), 10.0);
         assert_eq!(path.poses[1].pose.position.x, 1.0);
@@ -317,7 +330,7 @@ mod tests {
         // flat ts is exactly what `decode_ceilings` rejects, which is the
         // honest signal for "this plan carries no profile"
         let states = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
-        let path = build_path(&states, &[], 5.0, "odom");
+        let path = build_path(&states, &[], 5.0, "odom", 0.0);
         assert_eq!(path_stamps(&path), vec![5.0, 5.0]);
     }
 

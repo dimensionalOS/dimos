@@ -14,13 +14,10 @@
 
 """The hinted track's law: clear the plant's dead zone, brake late, ramp itself.
 
-From ``motion-tc-autoresearch`` branch ``hint_research01`` (evo exp_0045), which
-took the hinted track from 73.61 to 115.23 of a 115.5 ceiling over 47
-experiments: 225 goal / 3 refused across 228 episodes, zero collisions, zero
-timeouts, zero falls. Mechanisms over :mod:`~...laws.seed`:
+Four mechanisms over :mod:`~...laws.seed`:
 
 1. WALK-THRESHOLD ENVELOPE (:data:`ENVELOPE`). ``min_speed`` 0.2 sits inside the
-   freewalk policy's dead zone, so the governor's creep was a stand-still.
+   walking policy's dead zone, so the governor's creep was a stand-still.
 2. TANGENT FEEDFORWARD + FOOT CORRECTION replacing the aim-at-the-carrot term,
    whose chord cut corners toward the obstacle the plan curved around.
 3. BRAKE-FEASIBLE PREVIEW: a previewed waypoint imposes only what it can, given
@@ -30,7 +27,7 @@ timeouts, zero falls. Mechanisms over :mod:`~...laws.seed`:
    the only law here that keeps state, and ``reset()`` clears it.
 
 Blind cancels the same dead zone with an actuator inverse instead of by moving
-the envelope; the tracks are researched independently on purpose.
+the envelope.
 """
 
 from __future__ import annotations
@@ -51,27 +48,18 @@ from dimos.navigation.motion.control.controller import (
     path_xy_yaw,
 )
 
-# The envelope this law drives inside, in COMMANDED body-velocity units. It is
-# not the referee's ControllerConfig default, and the difference is a plant
-# measurement, not a preference: swept open loop at the fitted mechanisms, gait
-# initiation is a BIFURCATION rather than a ramp -- 0.20 commanded yields
-# 0.003-0.25 m/s depending only on the actuator draw, and 0.28 is the lowest
-# command that walks at every DR corner. min_speed 0.2 therefore sat squarely in
-# a dead zone, and every episode whose clearance governor sat near its floor
-# commanded ~0.22 m/s and stood still until the 40 s cap.
-#
-# The ceiling is not about pace. Ablating it back to 0.5 while keeping the floor
-# costs 7.26 points and spends them entirely on COLLISIONS (20 -> 35, timeouts
-# unchanged): a body that crosses a tight gap at 0.6 m/s is out the far side
-# before its habitual ~8 cm of tracking drift has eaten the margin. 0.95 stops
-# deliberately short of 1.0, because max(|vx|, |vy|) >= 1.0 switches the policy
-# to a dedicated expert whose on-robot handover has hysteresis this sim does not
-# model -- riding that boundary would be exploiting an artifact.
+# The envelope this law drives inside, in COMMANDED body-velocity units, and a
+# plant measurement rather than a preference. Gait initiation is a BIFURCATION,
+# not a ramp: below ~0.28 commanded the policy stands, so a 0.2 floor is a
+# stand-still wherever the clearance governor sits near it. The ceiling is not
+# about pace either -- a body that crosses a tight gap fast is out the far side
+# before its tracking drift has eaten the margin -- and 0.95 stops short of 1.0
+# because max(|vx|, |vy|) >= 1.0 hands the policy to a dedicated expert.
 ENVELOPE: Final = {"min_speed": 0.45, "max_speed": 0.95}
 
 # The plant's own per-axis command rate limit, in commanded units per SECOND:
-# embodiment.py's GO2_COMMAND_SLEW (0.05, 0.04, 0.10) per GO2_CONTROL_DT = 0.02 s.
-# test_hinted.py holds this to those constants rather than to these numbers.
+# embodiment.py's GO2_COMMAND_SLEW per GO2_CONTROL_DT. test_hinted.py holds this
+# to those constants rather than to these numbers.
 CMD_SLEW_PER_S = (2.5, 2.0, 5.0)
 
 # Tick period assumed when there is no previous tick to difference against, and
@@ -83,7 +71,7 @@ MAX_TICK = 0.10
 
 
 def config() -> ControllerConfig:
-    """This law's own default config — the referee's, with its envelope."""
+    """The shared config, with this law's own envelope."""
     return ControllerConfig(min_speed=ENVELOPE["min_speed"], max_speed=ENVELOPE["max_speed"])
 
 
@@ -199,22 +187,14 @@ def update(
     else:
         s = float(arcs[i]) + cfg.lookahead
         k = min(int(np.searchsorted(arcs, s)), n - 1)
-        # POSITION still leads by `lookahead`; ORIENTATION does not. The seed
-        # commanded the heading the plan wants 0.35 m from here, and a 0.85 m
-        # body held at the next segment's heading while still inside this one
-        # sweeps its corners across the corridor it has not left yet: the
-        # executed body sat 0.2-0.4 rad ahead of the plan's heading at its own
-        # location and paid 3-14 cm of clearance for it. The lead is worst
-        # exactly where it hurts, since the P-loop's standing error is
-        # turn_rate/k_yaw, which shrinks with speed -- so the governor slowing
-        # down in a tight gap left the fixed lead uncancelled.
-        #
-        # So: aim at the heading the plan wants HERE, and cancel the P-loop's
-        # standing error with feedforward instead of with lead. Bounded by
-        # `fan_yaw_per_m`, above which the law has already decided the plan is
-        # rotating rather than curving; `rotation_in_window` carries the fact
-        # that the clamp FIRED down to the command site, where the number is
-        # the threshold rather than a curvature the plan has.
+        # POSITION leads by `lookahead`; ORIENTATION does not. A body held at
+        # the next segment's heading while still inside this one sweeps its
+        # corners across a corridor it has not left yet, so aim at the heading
+        # the plan wants HERE and cancel the P-loop's standing error with
+        # feedforward instead of with lead. Bounded by `fan_yaw_per_m`, past
+        # which the law has decided the plan rotates rather than curves;
+        # `rotation_in_window` carries that the clamp FIRED down to the command
+        # site, where the number is the threshold, not the plan's curvature.
         span = float(arcs[k] - arcs[i])
         raw_rate = angle_diff(float(yaws[k]), float(yaws[i])) / span if span > 0.05 else 0.0
         rotation_in_window = abs(raw_rate) > cfg.fan_yaw_per_m
@@ -230,15 +210,13 @@ def update(
     # `vmax == max_speed` did for them.
     ramp_unlimited = True
     if clearance is not None and len(clearance) == n:
-        # THE PREVIEW IS A BRAKING PROFILE, NOT A MINIMUM. The flat min asked
-        # the body to already be at a pinch's speed 2 m before reaching it,
-        # which is 14x the 0.14 m the 0.95 -> 0.45 deceleration actually costs
-        # at the executor's own slew. Each previewed waypoint now imposes only
-        # what it can given the body may brake on the way there; at
-        # d <= brake_margin that is exactly the flat value, so the waypoint the
-        # body stands on binds as hard as ever. Still a MIN over the same
-        # window, so brake_accel = 0 is the seed's governor bit for bit and
-        # nothing here can make it SLOWER.
+        # THE PREVIEW IS A BRAKING PROFILE, NOT A MINIMUM: a flat min asks the
+        # body to already be at a pinch's speed metres before reaching it. Each
+        # previewed waypoint imposes only what it can given the body may brake
+        # on the way there; at d <= brake_margin that is the flat value, so the
+        # waypoint the body stands on binds as hard as ever. Still a MIN over
+        # the same window, so brake_accel = 0 is the seed's governor bit for
+        # bit and nothing here can make it SLOWER.
         window = (arcs >= arcs[i]) & (arcs <= arcs[i] + cfg.speed_lookahead)
         denom = max(cfg.speed_clearance - cfg.speed_floor_clearance, 1e-6)
         cap = cfg.max_speed
@@ -262,19 +240,14 @@ def update(
         ramp_unlimited = room >= cfg.speed_clearance
         vmax = min(max(cap, cfg.min_speed), cfg.max_speed)
 
-        # PINCH ESCAPE: the lower anchor is not a constant. Where there is room
-        # to spare a low anchor is what lets the annotation modulate speed at
-        # all and is what buys the precision; where the room has run out the
-        # same anchor is a loss, because what kills in a gap is DWELL -- the
-        # cross-track offset is a fixed distance, so the time the body spends
-        # inside decides whether it becomes a contact. Nothing to buy by
-        # creeping either: once the corridor is inside the embodiment's 0.05 m
-        # floor the precision ticks are lost at any speed.
-        #
-        # Taken as a `max` against the ramp, which makes the join continuous and
-        # keeps the leg from ever SLOWING anything. Read over `escape_preview`,
-        # NOT the ramp's 2 m: over 2 m the leg would lift the cap while the
-        # robot was still in open space short of the gap.
+        # PINCH ESCAPE: the lower anchor is not a constant. With room to spare
+        # a low anchor is what buys precision; with the room gone it is a loss,
+        # because what kills in a gap is DWELL -- the cross-track offset is a
+        # fixed distance, so time inside decides whether it becomes a contact.
+        # Taken as a `max` against the ramp, so the join is continuous and the
+        # leg can never SLOW anything, and read over `escape_preview` rather
+        # than the ramp's window, which would lift the cap while the robot is
+        # still in open space short of the gap.
         hi_here = float(arcs[i]) + cfg.escape_preview
         room_here = float(clearance[i])
         for k in range(n):
@@ -287,16 +260,13 @@ def update(
             top = min(cfg.escape_speed, cfg.max_speed)
             vmax = max(vmax, cfg.min_speed + (top - cfg.min_speed) * e)
 
-    # THE SEED AIMED THE WHOLE VELOCITY AT THE CARROT. On anything curved that
-    # vector is a CHORD, and driving down a chord is driving off the plan: on a
-    # corner of radius R the body cuts the inside by about L^2/(8R), 7.6 cm at
-    # L = 0.35 and R = 0.20. That is the follower's habitual drift -- a
-    # distance, not a lag, which is why crossing a gap FASTER is what stops it
-    # eating the margin. Splitting the jobs removes it: a FEEDFORWARD along the
-    # plan's tangent carries the body at the governor's speed, and a
-    # proportional CORRECTION toward the foot is the only term that answers to
-    # being off the line, so the error decays to zero instead of settling at the
-    # chord's sagitta. The carrot survives only as the YAW reference.
+    # Aiming the whole velocity at the carrot drives down a CHORD, which cuts
+    # the inside of every corner by about L^2/(8R) -- a distance, not a lag.
+    # Splitting the jobs removes it: a FEEDFORWARD along the plan's tangent
+    # carries the body at the governor's speed, and a proportional CORRECTION
+    # toward the foot is the only term that answers to being off the line, so
+    # the error decays to zero instead of settling at the chord's sagitta. The
+    # carrot survives only as the YAW reference.
     if rotating:
         # the fan branch is the seed's, gain included
         wx = cfg.k_pos * (float(xy[i][0]) - px)
@@ -315,23 +285,20 @@ def update(
     if speed > vmax:
         vx, vy = vx / speed * vmax, vy / speed * vmax
 
-    # Feedforward: at `cmd_speed` along a plan turning `yaw_ff` rad per metre the
-    # heading must slew at `yaw_ff * cmd_speed` just to stay aligned. Supplying
-    # it open loop is what lets the proportional term settle at zero error;
-    # without it the body stands off by turn_rate/k_yaw, and that offset is the
-    # margin it was spending. Added inside the clamp, so the envelope holds.
+    # Feedforward: at `cmd_speed` along a plan turning `yaw_ff` rad per metre
+    # the heading must slew at `yaw_ff * cmd_speed` just to stay aligned.
+    # Supplying it open loop is what lets the proportional term settle at zero
+    # error. Added inside the clamp, so the envelope holds.
     #
-    # SILENT where it is an artefact: `yaw_ff` is clamped to `fan_yaw_per_m`,
-    # which is the curve-vs-rotate CLASSIFIER, not a yaw-authority bound. Past
-    # it the value fed forward is the threshold, demanding 2.85 rad/s against a
-    # 1.4 ceiling -- the sum clamp then goes FLAT in the heading error, so the
-    # proportional term is deleted rather than attenuated and the heading loop
-    # runs open. That is what the battery's one fall was. Gated on
-    # `ramp_unlimited` and NOT on `vmax >= max_speed`: those were the same
-    # predicate under the flat-min governor and are not under the braking
-    # profile, which reaches max_speed on the APPROACH to a pinch too. Zeroing
-    # it unconditionally measured -0.48 -- the same feedforward that is a hazard
-    # in open room is load-bearing in a gap.
+    # SILENT where it is an artefact: past `fan_yaw_per_m` -- a curve-vs-rotate
+    # CLASSIFIER, not a yaw-authority bound -- the value fed forward is the
+    # threshold itself, which can demand more rate than the ceiling allows; the
+    # sum clamp then goes FLAT in the heading error, deleting the proportional
+    # term rather than attenuating it, and the heading loop runs open. Gated on
+    # `ramp_unlimited`, not on `vmax >= max_speed`: the braking profile reaches
+    # max_speed on the APPROACH to a pinch too. It cannot be zeroed outright --
+    # the same feedforward that is a hazard in open room is load-bearing in a
+    # gap.
     cmd_speed = float(np.hypot(vx, vy))
     ff = 0.0 if (rotation_in_window and ramp_unlimited) else yaw_ff * cmd_speed
     wz = float(

@@ -196,7 +196,7 @@ mod tests {
 
     #[test]
     fn a_ground_already_at_zero_selects_the_same_band() {
-        // the referee's sim worlds put the plan poses on the ground, so the two
+        // the sim worlds put the plan poses on the ground, so the two
         // models agree there and the judge's scores cannot move
         let body = load("body_band", &go2()).expect("known model");
         let raw = load("raw_band", &go2()).expect("known model");

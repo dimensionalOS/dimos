@@ -46,7 +46,7 @@ RAW_BAND = (0.05, 0.45)
 # Ground exclusion for the body-referenced band. TWO voxel layers, not one: a
 # floor whose true height sits near a voxel boundary quantises into both layers
 # either side of it, and one layer leaves the upper one standing as a carpet
-# the search cannot cross. Measured on 20260805-033007: at one layer the robot
+# the search cannot cross: at one layer the robot
 # is inside its own band on every tick, at two on 7 % of them.
 LOW = 0.16
 

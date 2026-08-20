@@ -65,6 +65,9 @@ class TrajectoryFollowerNativeConfig(NativeModuleConfig):
     # Names the body rather than a number, so the half-width the governor reads
     # is the one the planner priced the plan with.
     embodiment: str = "go2"
+    # Every planning box grown by this much PER SIDE; negative shrinks it.
+    # Both modules must carry the SAME value.
+    body_dilate_m: float = 0.0
     base_frame: str = "base_link"
     # The planner's model, because the room hint has to be measured off the
     # slice the plan was priced in (motion/obstacles.py).

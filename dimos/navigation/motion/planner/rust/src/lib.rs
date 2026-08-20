@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Autoresearch candidate for the motion planning benchmark.
+//! The SE(2) local planner crate.
 //!
 //! RULES. Deterministic: same inputs -> bit-identical output (a scoring
 //! pillar; parallel float reductions are order-dependent, so threads buy

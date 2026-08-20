@@ -16,10 +16,8 @@
 
 The local plan already draws as a line, and a line cannot show the thing that
 decides whether a plan fits — the BODY at each pose, at its planned heading.
-The sim viewer has drawn these since the battery existed (the blue floor boxes
-in ``control/tools.md``); this is the same picture over the live stack, so a
-plan that looks fine as a line and is actually threading the robot's corner
-through a wall looks wrong in the same way it does in sim.
+This draws the body over the live stack, so a plan that looks fine as a line
+and is actually threading the robot's corner through a wall looks wrong.
 
 Colour is the required-precision profile, and it costs no extra channel: the
 planner stamps that profile into the path's own per-waypoint timestamps
@@ -80,8 +78,8 @@ def plan_clearance(msg: Path) -> np.ndarray | None:
 
 def render_plan_body(
     msg: Path,
-    length: float = 0.883,  # GO2 union, re-baselined by planner/revision.md
-    width: float = 0.593,
+    length: float = 0.819,  # the GO2 straight-drift box; see motion_visual_override
+    width: float = 0.416,
     height: float = 0.32,
     center_off: float = 0.002,
     precision: float = 0.05,
@@ -157,22 +155,32 @@ def render_plan_body(
 
 
 def motion_visual_override(
-    viz_publish_hz: float, embodiment: str = "go2", line_radius: float = 0.012
+    viz_publish_hz: float,
+    embodiment: str = "go2",
+    line_radius: float = 0.012,
+    body_dilate_m: float = 0.0,
 ) -> dict[str, Any]:
     """rerun overrides for the motion stack, keyed off the planner's publish rate.
 
-    Pass the same ``viz_publish_hz`` and ``embodiment`` given to
-    ``MotionPlanner.blueprint(...)``.
+    Pass the same ``viz_publish_hz``, ``embodiment`` and ``body_dilate_m`` given
+    to ``MotionPlanner.blueprint(...)``: a picture drawn from a body the planner
+    did not plan with is a picture of the wrong question.
+
+    The box is the STRAIGHT-DRIFT row, not the all-gait union. The union is what
+    a turn-in-place is tested against and is ~0.18 m wider than the box a
+    forward edge actually has to fit; drawing it everywhere makes every corridor
+    look impassable and hides the margin the plan really has.
     """
     from dimos.navigation.motion.embodiment import EMBODIMENTS
 
-    emb = EMBODIMENTS[embodiment]
+    emb = EMBODIMENTS[embodiment].dilated(by=body_dilate_m)
+    length, width, off_x, _ = emb.box(0.0)
     on = viz_publish_hz > 0.0
     body = partial(
         render_plan_body,
-        length=emb.length,
-        width=emb.width,
-        center_off=emb.center_off,
+        length=length,
+        width=width,
+        center_off=off_x,
         precision=emb.precision,
         line_radius=line_radius,
     )
