@@ -21,7 +21,6 @@ import enum
 import inspect
 import os
 from pathlib import Path
-import pickle
 import time
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
@@ -63,12 +62,7 @@ TOut = TypeVar("TOut")
 
 def _snapshot_recording_message(message: Any) -> Any:
     """Detach mutable publisher-owned state before queueing a recording."""
-    if getattr(message, "msg_name", None) == "sensor_msgs.PointCloud2":
-        # PointCloud2 wraps mutable native Open3D buffers. Use its explicit
-        # pickle state protocol to detach those buffers without introducing an
-        # extra lossy LCM timestamp conversion before storage encoding.
-        return pickle.loads(pickle.dumps(message))
-    return copy.copy(message)
+    return copy.deepcopy(message)
 
 
 def stream_to_port(stream: Stream[T], out: Out[T]) -> DisposableBase:
