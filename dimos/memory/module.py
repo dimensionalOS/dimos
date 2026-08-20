@@ -577,16 +577,6 @@ class Recorder(MemoryModule):
         self._record_writer.flush(self.config.shutdown_timeout_s)
 
     @rpc
-    def recording_status(self) -> dict[str, Any]:
-        """Return per-stream ingress counts, backlog, and fatal errors."""
-        queues = {
-            name: status.__dict__
-            for name, recording_queue in self._recording_queues.items()
-            if (status := recording_queue.status())
-        }
-        return {"queues": queues, "writer": self._record_writer.status().__dict__}
-
-    @rpc
     def stop(self) -> None:
         """Stop inputs, drain all accepted observations, then close storage."""
         if not hasattr(self, "_recording_queues"):
