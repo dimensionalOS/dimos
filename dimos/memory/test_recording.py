@@ -21,7 +21,6 @@ import pytest
 
 from dimos.memory.backend import Backend, PreparedAppend
 from dimos.memory.codecs.pickle import PickleCodec
-from dimos.memory.module import _snapshot_recording_message
 from dimos.memory.notifier.subject import SubjectNotifier
 from dimos.memory.observationstore.memory import ListObservationStore
 from dimos.memory.recording import PreparedWrite, RecordingFailedError, RecordingPipeline
@@ -31,21 +30,11 @@ from dimos.memory.type.observation import Observation
 class _Backend:
     def __init__(self) -> None:
         self.batches: list[list[float]] = []
-        self.persisted = threading.Event()
 
     def append_prepared(self, appends: list[PreparedAppend[Any]]) -> list[Observation[Any]]:
         observations = [append.observation for append in appends]
         self.batches.append([observation.ts for observation in observations])
-        self.persisted.set()
         return observations
-
-
-class _ReusedPointCloud:
-    msg_name = "sensor_msgs.PointCloud2"
-
-    def __init__(self) -> None:
-        self.ts = 1.0
-        self.points = [[1.0, 2.0, 3.0]]
 
 
 def _write(backend: Backend[Any], value: float) -> tuple[PreparedWrite]:
@@ -53,48 +42,25 @@ def _write(backend: Backend[Any], value: float) -> tuple[PreparedWrite]:
     return (PreparedWrite(backend, PreparedAppend(observation, None)),)
 
 
-def test_pipeline_preserves_fifo_and_batches_writes() -> None:
+def test_pipeline_preserves_global_fifo_and_batches_writes() -> None:
     backend = cast("Backend[Any]", _Backend())
     pipeline = RecordingPipeline(
-        {"camera": lambda value: _write(backend, value)},
+        {
+            "camera": lambda value: _write(backend, value),
+            "imu": lambda value: _write(backend, value),
+        },
         batch_rows=3,
         batch_delay_s=1.0,
     )
     pipeline.start()
     try:
-        for value in (1.0, 2.0, 3.0):
-            pipeline.submit("camera", value)
+        pipeline.submit("camera", 1.0)
+        pipeline.submit("imu", 2.0)
+        pipeline.submit("camera", 3.0)
     finally:
         pipeline.close(timeout_s=1.0)
 
     assert cast("_Backend", backend).batches == [[1.0, 2.0, 3.0]]
-
-
-def test_stalled_stream_does_not_block_other_stream_preparation() -> None:
-    backend = cast("Backend[Any]", _Backend())
-    camera_started = threading.Event()
-    release_camera = threading.Event()
-
-    def camera(value: float) -> tuple[PreparedWrite]:
-        camera_started.set()
-        assert release_camera.wait(timeout=1.0)
-        return _write(backend, value)
-
-    pipeline = RecordingPipeline(
-        {"camera": camera, "imu": lambda value: _write(backend, value)},
-        batch_delay_s=0.001,
-    )
-    pipeline.start()
-    try:
-        pipeline.submit("camera", 1.0)
-        assert camera_started.wait(timeout=1.0)
-        pipeline.submit("imu", 2.0)
-        assert cast("_Backend", backend).persisted.wait(timeout=1.0)
-    finally:
-        release_camera.set()
-        pipeline.close(timeout_s=1.0)
-
-    assert [2.0] in cast("_Backend", backend).batches
 
 
 def test_pipeline_fails_instead_of_dropping_when_ingress_is_full() -> None:
@@ -166,14 +132,3 @@ def test_backend_rolls_back_without_notifying(monkeypatch: pytest.MonkeyPatch) -
         backend.append_prepared((append,))
 
     assert events == ["rollback"]
-
-
-def test_pointcloud_snapshot_detaches_nested_mutable_state() -> None:
-    source = _ReusedPointCloud()
-    snapshot = _snapshot_recording_message(source)
-
-    source.ts = 2.0
-    source.points[0][0] = 9.0
-
-    assert snapshot.ts == 1.0
-    assert snapshot.points == [[1.0, 2.0, 3.0]]

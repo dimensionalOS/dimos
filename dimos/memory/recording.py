@@ -41,19 +41,19 @@ Processor = Callable[[Any], Iterable[PreparedWrite]]
 
 
 class RecordingPipeline:
-    """Prepare streams in parallel and serialize batched database writes."""
+    """Prepare one global FIFO and serialize batched database writes."""
 
     def __init__(
         self,
         processors: dict[str, Processor],
         *,
-        ingress_size: int = 256,
+        ingress_size: int = 4096,
         writer_size: int = 4096,
         batch_rows: int = 64,
         batch_delay_s: float = 0.010,
     ) -> None:
         self._processors = processors
-        self._ingress = {name: DropNew[Any](ingress_size) for name in processors}
+        self._ingress = DropNew[tuple[str, Any]](ingress_size)
         self._writer = DropNew[PreparedWrite](writer_size)
         self._batch_rows = batch_rows
         self._batch_delay_s = batch_delay_s
@@ -61,7 +61,7 @@ class RecordingPipeline:
         self._lock = threading.Lock()
         self._started = threading.Event()
         self._closed = threading.Event()
-        self._preparation_threads: list[threading.Thread] = []
+        self._preparation_thread: threading.Thread | None = None
         self._writer_thread: threading.Thread | None = None
 
     def start(self) -> None:
@@ -75,30 +75,23 @@ class RecordingPipeline:
                 name="recorder-writer",
                 daemon=True,
             )
-            self._preparation_threads = [
-                threading.Thread(
-                    target=self._prepare_loop,
-                    args=(name,),
-                    name=f"recorder-prepare-{name}",
-                    daemon=True,
-                )
-                for name in self._processors
-            ]
+            self._preparation_thread = threading.Thread(
+                target=self._prepare_loop,
+                name="recorder-prepare",
+                daemon=True,
+            )
             self._writer_thread.start()
-            for thread in self._preparation_threads:
-                thread.start()
+            self._preparation_thread.start()
             self._started.set()
 
     def submit(self, stream: str, value: Any) -> None:
         self._raise_if_unavailable()
         try:
-            ingress = self._ingress[stream]
+            self._processors[stream]
         except KeyError as unknown_stream:
             raise KeyError(f"Unknown recording stream {stream!r}") from unknown_stream
-        if not ingress.put(value):
-            capacity_error = RecordingFailedError(
-                f"Recording ingress for {stream!r} reached capacity"
-            )
+        if not self._ingress.put((stream, value)):
+            capacity_error = RecordingFailedError("Recording ingress reached capacity")
             self.fail(capacity_error)
             raise capacity_error
 
@@ -116,12 +109,11 @@ class RecordingPipeline:
         self._closed.set()
         deadline = time.monotonic() + timeout_s
         if first_close:
-            for ingress in self._ingress.values():
-                ingress.close()
+            self._ingress.close()
         shutdown_failure: BaseException | None = None
-        for thread in self._preparation_threads:
+        if self._preparation_thread is not None:
             try:
-                self._join(thread, deadline)
+                self._join(self._preparation_thread, deadline)
             except BaseException as error:
                 shutdown_failure = shutdown_failure or error
         self._writer.close()
@@ -134,9 +126,9 @@ class RecordingPipeline:
             raise RecordingFailedError("Recording pipeline did not stop") from shutdown_failure
         self._raise_if_failed()
 
-    def _prepare_loop(self, stream: str) -> None:
+    def _prepare_loop(self) -> None:
         try:
-            for value in self._ingress[stream]:
+            for stream, value in self._ingress:
                 if self._has_failed():
                     continue
                 for write in self._processors[stream](value):
