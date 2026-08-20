@@ -104,12 +104,12 @@ go2web records everything on the robot: `/tmp/go2-recordings/` — a
 
 ```sh
 scp go2:/tmp/go2-recordings/<stamp>.zenoh.mcap data/ml-trajectory-research/
-python -m dimos.navigation.motion.adapter.diagnose ml-trajectory-research/<stamp>.zenoh.mcap --spawn
 ```
 
-diagnose replays the planner and follower offline, sniffs the deployed
-config from the data, and opens rerun. Oneliners for every tool:
-[../tools.md](../tools.md).
+The offline post-mortem that reads those recordings (map churn, plan flips,
+planner and follower replay with input ablation) is not on this branch -- it is
+`adapter/diagnose.py` on `ivan/feat/trajectory_ctrl`. Oneliners for what IS
+here: [../tools.md](../tools.md).
 
 ---
 

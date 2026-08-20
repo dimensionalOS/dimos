@@ -49,10 +49,6 @@ uv run maturin develop --uv --release -m dimos/navigation/motion/control/rust/Ca
 # raycaster -> MLS carrot -> local planner -> follower -> cmd_vel
 dimos run go2-zenoh-motion
 
-# validate against reality: replay a mem2 recording through the planner,
-# precision circles over real Point-LIO clouds
-python -m dimos.navigation.motion.adapter.replay mid360_athens_stairs.db --spawn
-
 # bake the robot-side host (runs ON the robot, next to the go2web bridge);
 # toolchain prereqs + deploy notes: deployment_plan.md "Baking the motion host"
 dimos bake motion_planner trajectory_follower cmd_vel_mux go2_tf \

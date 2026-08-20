@@ -213,7 +213,7 @@ def test_an_obstacle_across_the_route_diverts_the_very_next_query(planner: str) 
 
     Delaying belief in a detected obstacle is a robustness layer priced in
     collisions. Map noise flapping a corridor is perception's ledger — the
-    diagnose churn pass names it same-map vs new-map — and never something the
+    field post-mortem names it same-map vs new-map — and never something the
     planner absorbs by walking into things for one more tick.
     """
     sc = Scenario("open", [], goal=(4.0, 0.0))

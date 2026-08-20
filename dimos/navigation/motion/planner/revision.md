@@ -1,7 +1,7 @@
 # Spec revision: lattice anchoring + motion-conditioned envelope
 
 AGREED 2026-08-06 (measurement results folded in from
-[envelope_results.md](envelope_results.md)). One revision, gold + candidate +
+the envelope sweep's own results, with the sim on `ivan/feat/trajectory_ctrl`). One revision, gold + candidate +
 judge move together, one re-baseline, one autoresearch re-earn. Phase 1 =
 spec + gold + referee; phase 2 = the rust candidate re-earns.
 

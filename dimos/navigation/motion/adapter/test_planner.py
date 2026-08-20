@@ -187,7 +187,7 @@ def test_only_a_carrot_that_jumped_is_a_new_task():
 
 
 def test_the_gate_is_the_one_the_diagnosis_replays():
-    # the free function is what diagnose.gated_ticks reconstructs the gate with
+    # a free function so a post-mortem can reconstruct the gate off a recording
     assert planner_module.replan_due(None, 7, (2.0, 0.0))
     assert not planner_module.replan_due((7, (2.0, 0.0)), 7, (2.1, 0.0))
     assert planner_module.replan_due((7, (2.0, 0.0)), 7, (2.4, 0.0))
