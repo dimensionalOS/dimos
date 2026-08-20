@@ -249,6 +249,7 @@ class pSHMQueueTransport(pSHMTransport[T]):
             self.start()
         return self.shm.subscribe_errors(self.topic, callback)
 
+
 class SHMTransport(PubSubTransport[T]):
     _started: bool = False
 

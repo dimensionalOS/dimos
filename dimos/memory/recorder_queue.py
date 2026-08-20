@@ -49,7 +49,6 @@ class RecorderQueue:
         self._queue: queue.Queue[Any] = queue.Queue(maxsize=max_pending)
         self._lock = threading.Lock()
         self._failure: BaseException | None = None
-        self._accepting = True
         self._closed = False
         self._thread = threading.Thread(
             target=self._run,
@@ -61,7 +60,7 @@ class RecorderQueue:
     def submit(self, value: Any) -> None:
         with self._lock:
             self._raise_if_failed_locked()
-            if not self._accepting:
+            if self._closed:
                 raise RecorderFailedError(f"Recorder queue {self.name!r} is closed")
         try:
             self._queue.put_nowait(value)
@@ -75,26 +74,25 @@ class RecorderQueue:
                 )
             raise RecorderFailedError(f"Recorder queue {self.name!r} is full") from error
 
-    def close_input(self) -> None:
+    def close(self, timeout_s: float = 10.0) -> None:
         with self._lock:
             if self._closed:
-                return
-            self._accepting = False
-            self._closed = True
-        self._queue.put(_STOP)
-
-    def fail(self, error: BaseException) -> None:
-        """Enter the fatal state without discarding already accepted work."""
-        with self._lock:
-            self._fail_locked(error)
-
-    def close(self, timeout_s: float = 10.0) -> None:
-        self.close_input()
+                should_stop = False
+            else:
+                self._closed = True
+                should_stop = True
+        if should_stop:
+            self._queue.put(_STOP)
         self._thread.join(timeout=timeout_s)
         if self._thread.is_alive():
             raise RecorderFailedError(f"Recorder queue {self.name!r} worker did not stop")
         with self._lock:
             self._raise_if_failed_locked()
+
+    def fail(self, error: BaseException) -> None:
+        """Enter the fatal state without discarding already accepted work."""
+        with self._lock:
+            self._fail_locked(error)
 
     def _run(self) -> None:
         while True:
@@ -115,7 +113,6 @@ class RecorderQueue:
     def _fail_locked(self, error: BaseException) -> None:
         if self._failure is None:
             self._failure = error
-        self._accepting = False
 
     def _raise_if_failed_locked(self) -> None:
         if self._failure is not None:
