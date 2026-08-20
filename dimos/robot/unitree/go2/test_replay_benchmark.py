@@ -83,22 +83,6 @@ def _cgroup_stat(name: str) -> dict[str, str]:
     return dict(line.split() for line in lines)
 
 
-def _heartbeat(message: str) -> None:
-    """Progress breadcrumbs that survive a hard process death.
-
-    Written where CI's crash-diagnostics step already looks: pytest captures
-    stdout, so if the process dies mid-test the log otherwise shows nothing
-    about how far it got.
-    """
-    runner_temp = os.environ.get("RUNNER_TEMP")
-    if not runner_temp:
-        return
-    crash_dir = Path(runner_temp, "pytest-crash")
-    crash_dir.mkdir(parents=True, exist_ok=True)
-    with open(crash_dir / "benchmark-heartbeat.log", "a") as f:
-        f.write(f"+{time.monotonic():.0f}s {message}\n")
-
-
 def _cpu_mark() -> tuple[float, float, float]:
     """(wall, user, system): monotonic seconds and this cgroup's CPU seconds.
 
@@ -237,7 +221,6 @@ def test_go2_replay_realtime_load() -> None:
 
         def build_and_run() -> None:
             nonlocal last_arrival
-            _heartbeat("building the coordinator")
             if METRICS_PATH:
                 cpu_marks["start"] = _cpu_mark()
                 io_marks["start"] = _cgroup_io_bytes()
@@ -245,11 +228,9 @@ def test_go2_replay_realtime_load() -> None:
             state["coordinator"] = ModuleCoordinator.build(blueprint)
             if METRICS_PATH:
                 cpu_marks["built"] = _cpu_mark()
-            _heartbeat("built; replay running")
             with lock:
                 last_arrival = time.monotonic()
             deadline = time.monotonic() + RUN_TIMEOUT
-            last_beat = time.monotonic()
             while time.monotonic() < deadline:
                 with lock:
                     quiet = time.monotonic() - last_arrival
@@ -259,17 +240,11 @@ def test_go2_replay_realtime_load() -> None:
                         cpu_marks["end"] = _cpu_mark()
                         io_marks["end"] = _cgroup_io_bytes()
                         net_marks["end"] = _net_bytes()
-                    _heartbeat(f"replay complete: counts={counts}")
                     return
-                if time.monotonic() - last_beat >= 15:
-                    last_beat = time.monotonic()
-                    _heartbeat(f"counts={counts}")
                 time.sleep(0.2)
-            _heartbeat(f"deadline hit: counts={counts}")
             pytest.fail(f"replay did not complete: counts={counts}, expected~{expected}")
 
         def teardown() -> None:
-            _heartbeat("teardown")
             for transport in transports:
                 transport.stop()
             coordinator = state.pop("coordinator", None)
