@@ -15,38 +15,29 @@
 from pathlib import Path
 
 import pytest
+import typer
 
-from dimos import constants
-from dimos.cli import cloud
+from dimos.cli import dimos as cli
 
 
 @pytest.fixture
 def config_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    monkeypatch.setattr(constants, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(cli, "CONFIG_DIR", tmp_path)
     return tmp_path
 
 
-def test_legacy_flat_file_is_refused_with_instructions(config_home: Path) -> None:
+def test_legacy_flat_file_is_refused_with_instructions(
+    config_home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     (config_home / "dimos").write_text('{"viewer": "rerun"}')
-    with pytest.raises(RuntimeError, match="mv "):
-        constants.reject_legacy_config()
+    with pytest.raises(typer.Exit):
+        cli._reject_legacy_config()
+    assert "mv " in capsys.readouterr().err
+    assert (config_home / "dimos").read_text() == '{"viewer": "rerun"}'
 
 
 def test_no_legacy_file_passes(config_home: Path) -> None:
-    constants.reject_legacy_config()  # nothing exists
+    cli._reject_legacy_config()  # nothing exists
 
     (config_home / "dimos").mkdir()  # already a directory
-    constants.reject_legacy_config()
-
-
-def test_login_store_refuses_on_legacy_config(
-    config_home: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    (config_home / "dimos").write_text('{"viewer": "rerun"}')
-    monkeypatch.setattr(cloud, "_keyring", lambda: None)
-    monkeypatch.setattr(cloud, "CREDENTIALS_PATH", config_home / "dimos" / "credentials")
-    monkeypatch.setattr(cloud, "reject_legacy_config", constants.reject_legacy_config)
-
-    with pytest.raises(RuntimeError, match="old path"):
-        cloud._store("dimos_sk_x")
-    assert (config_home / "dimos").read_text() == '{"viewer": "rerun"}'  # untouched
+    cli._reject_legacy_config()

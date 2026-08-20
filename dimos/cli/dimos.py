@@ -53,7 +53,7 @@ from dimos.cli.cache import app as cache_app
 from dimos.cli.cloud import login as cloud_login, logout as cloud_logout, whoami as cloud_whoami
 from dimos.cli.hardware_cli import app as hardware_app
 from dimos.cli.shell import shell
-from dimos.constants import CONFIG_DIR, LOG_DIR, reject_legacy_config
+from dimos.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.daemon import daemonize, install_signal_handlers
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
@@ -86,11 +86,15 @@ DEFAULT_CONFIG_PATH = CONFIG_DIR / "dimos" / "config"
 
 
 def _reject_legacy_config() -> None:
-    try:
-        reject_legacy_config()
-    except RuntimeError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(2) from None
+    """~/.config/dimos used to BE the config file; it is now a directory."""
+    legacy = CONFIG_DIR / "dimos"
+    if legacy.is_file():
+        typer.echo(
+            f"config found at old path {legacy}, which is now a directory; move it:\n"
+            f"  mv {legacy} {legacy}.tmp && mkdir {legacy} && mv {legacy}.tmp {legacy}/config",
+            err=True,
+        )
+        raise typer.Exit(2)
 
 
 def _normalize_simulation_argv(argv: list[str]) -> list[str]:

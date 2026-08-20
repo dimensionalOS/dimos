@@ -41,16 +41,6 @@ else:
 CREDENTIALS_PATH = CONFIG_DIR / "dimos" / "credentials"
 
 
-def reject_legacy_config() -> None:
-    """~/.config/dimos used to BE the config file; it is now a directory."""
-    legacy = CONFIG_DIR / "dimos"
-    if legacy.is_file():
-        raise RuntimeError(
-            f"config found at old path {legacy}, which is now a directory; move it:\n"
-            f"  mv {legacy} {legacy}.tmp && mkdir {legacy} && mv {legacy}.tmp {legacy}/config"
-        )
-
-
 """
 Constants for shared memory
 Usually, auto-detection for size would be preferred. Sadly, though, channels are made

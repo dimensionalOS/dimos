@@ -34,7 +34,7 @@ import urllib.request
 
 import typer
 
-from dimos.constants import CREDENTIALS_PATH, reject_legacy_config
+from dimos.constants import CREDENTIALS_PATH
 from dimos.core.global_config import global_config
 
 _KEYRING_SERVICE = "dimos-cloud"
@@ -67,7 +67,6 @@ def _store(key: str) -> str:
     if kr := _keyring():
         kr.set_password(_KEYRING_SERVICE, _KEYRING_USER, key)
         return "system keyring"
-    reject_legacy_config()
     CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     # No keyring backend (typical on robots): owner-only file, the same convention
     # gh / aws / kubectl use for exactly this situation.
