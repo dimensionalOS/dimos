@@ -51,7 +51,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.robot.assets.processing import LoadedUrdf, load_urdf
+from dimos.robot.model import LoadedRobotModel
 
 if TYPE_CHECKING:
     from dimos.manipulation.planning.spec.models import (
@@ -267,25 +267,15 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
     def _load_model(self, config: RobotModelConfig) -> Any:
         """Load a URDF or Xacro robot model and return its model instance."""
-        original_path = config.urdf_path.resolve()
-        if not original_path.exists():
-            raise FileNotFoundError(f"Robot model not found: {original_path}")
-
-        description = load_urdf(
-            original_path,
-            package_paths=config.package_paths,
-            xacro_args=config.xacro_args,
-            package_uri_mode="absolute",
-            processors=config.urdf_processors,
-        )
+        description = config.model.load()
         description = prepare_urdf_for_drake(
             description,
             convert_meshes=config.auto_convert_meshes,
         )
         description = self._strip_world_base_joint(description, config)
 
-        if config.package_paths:
-            for pkg_name, pkg_path in config.package_paths.items():
+        if description.package_paths:
+            for pkg_name, pkg_path in description.package_paths.items():
                 self._parser.package_map().Add(pkg_name, pkg_path)
         else:
             self._parser.package_map().Add(
@@ -293,18 +283,18 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             )
 
         logger.info(f"Using in-memory model from: {description.source_path}")
-        model_instances = self._parser.AddModelsFromString(description.urdf_xml, "urdf")
+        model_instances = self._parser.AddModelsFromString(description.xml, "urdf")
 
         if not model_instances:
-            raise ValueError(f"Failed to parse model: {original_path}")
+            raise ValueError(f"Failed to parse model: {description.source_path}")
         return model_instances[0]
 
     @staticmethod
     def _strip_world_base_joint(
-        description: LoadedUrdf,
+        description: LoadedRobotModel,
         config: RobotModelConfig,
-    ) -> LoadedUrdf:
-        root = ET.fromstring(description.urdf_xml)
+    ) -> LoadedRobotModel:
+        root = ET.fromstring(description.xml)
         joints = root.findall("joint")
         joints_to_remove = [
             joint
@@ -331,8 +321,8 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                 if link.get("name") == "world":
                     root.remove(link)
 
-        return LoadedUrdf(
-            urdf_xml=ET.tostring(root, encoding="unicode"),
+        return LoadedRobotModel(
+            xml=ET.tostring(root, encoding="unicode"),
             source_path=description.source_path,
             package_paths=description.package_paths,
         )

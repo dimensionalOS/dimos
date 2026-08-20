@@ -26,6 +26,7 @@ from dimos.robot.manipulators._modeling import (
     coordinator_joint_mapping,
     joint_names,
 )
+from dimos.robot.model import RobotModel
 from dimos.utils.data import LfsPath
 
 OPENYAM_DOF = 6
@@ -75,7 +76,10 @@ def make_openyam_model_config(
     local_joint_names = joint_names(OPENYAM_DOF, prefix="yam_joint")
     return RobotModelConfig(
         name=name,
-        urdf_path=OPENYAM_MODEL_PATH,
+        model=RobotModel.from_file(
+            OPENYAM_MODEL_PATH,
+            package_paths=OPENYAM_PACKAGE_PATHS,
+        ),
         base_pose=base_pose(),
         joint_names=local_joint_names,
         base_link="yam_base_link",
@@ -87,7 +91,6 @@ def make_openyam_model_config(
                 tip_link="yam_hand_tcp",
             )
         ],
-        package_paths=OPENYAM_PACKAGE_PATHS,
         auto_convert_meshes=True,
         collision_exclusion_pairs=[],
         joint_name_mapping=coordinator_joint_mapping(

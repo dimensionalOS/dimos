@@ -21,7 +21,7 @@ import os
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
-from dimos.robot.assets.processing import UrdfProcessor, load_urdf
+from dimos.robot.model import RobotModel
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -70,7 +70,6 @@ def parse_model(
     path: Path | str,
     package_paths: dict[str, Path] | None = None,
     xacro_args: dict[str, str] | None = None,
-    urdf_processors: tuple[UrdfProcessor, ...] = (),
 ) -> ModelDescription:
     """Parse a robot description file (.urdf, .xacro, .xml/MJCF)."""
     path = Path(os.fspath(path))
@@ -81,13 +80,12 @@ def parse_model(
     name = path.name.lower()
 
     if suffix in {".urdf", ".xacro"} or name.endswith(".urdf.xacro"):
-        description = load_urdf(
+        description = RobotModel.from_file(
             path,
-            package_paths,
-            xacro_args,
-            processors=urdf_processors,
-        )
-        return parse_urdf(description.urdf_xml)
+            package_paths=package_paths,
+            xacro_args=xacro_args,
+        ).load()
+        return parse_urdf(description.xml)
     elif suffix == ".xml":
         return _parse_mjcf_file(path)
     else:

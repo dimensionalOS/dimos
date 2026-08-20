@@ -80,43 +80,27 @@ such as `str(path)`, `path.resolve()`, or `path.exists()`.
 
 ## Loading robot descriptions
 
-Use `processing.py` to expand Xacro, resolve package URIs, and apply ordered
-post-load processors without writing a derived URDF file:
+Use `RobotModel` to keep source loading and portable model edits above backend
+adapters:
 
 ```python
-from dataclasses import replace
+from dimos.robot.model import RobotModel
 
-from dimos.robot.assets.processing import AddFixedFrame, LoadedUrdf, load_urdf
-
-
-def rename_robot(description: LoadedUrdf) -> LoadedUrdf:
-    return replace(
-        description,
-        urdf_xml=description.urdf_xml.replace('name="old"', 'name="new"', 1),
-    )
-
-description = load_urdf(
+model = RobotModel.from_file(
     model_path,
-    package_paths,
+    package_paths=package_paths,
     xacro_args={"limited": "true"},
-    package_uri_mode="preserve",  # or "absolute"
-    processors=(
-        rename_robot,
-        AddFixedFrame(
-            name="tool_center_point",
-            parent="tool_flange",
-            xyz=(0.1, 0.0, 0.0),
-        ),
-    ),
+).with_fixed_frame(
+    name="tool_center_point",
+    parent="tool_flange",
+    xyz=(0.1, 0.0, 0.0),
 )
 ```
 
-`LoadedUrdf` carries the expanded `urdf_xml` together with its resolved
-source path and package roots. Consumers pass the URDF XML directly to Drake,
-RoboPlan, Pinocchio, or yourdfpy. Each processor receives and returns that full
-context. Use importable module-level functions or pickle-safe callable objects
-when processors travel through worker configuration. `AddFixedFrame` is one
-such processor; ordered instances can parent frames to earlier additions.
+`RobotModel` is lazy and pickle-safe. It expands Xacro, resolves package URIs,
+and applies model edits when a backend first calls `load()`. Chained fixed
+frames may use earlier additions as parents. Expanded XML stays in memory and
+is not sent across worker boundaries.
 
 Keep consumer-specific processing outside this module. For example, Drake-specific
 cleanup and optional mesh conversion still belong in

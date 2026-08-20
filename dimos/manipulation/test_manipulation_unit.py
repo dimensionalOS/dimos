@@ -63,6 +63,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
+from dimos.robot.model import RobotModel
 
 
 def _control_coordinator(
@@ -82,7 +83,7 @@ def robot_config():
     """Create a robot config for testing."""
     return RobotModelConfig(
         name="test_arm",
-        urdf_path=Path("/path/to/robot.urdf"),
+        model=RobotModel.from_file(Path("/path/to/robot.urdf")),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["joint1", "joint2", "joint3"],
         base_link="link_base",
@@ -104,7 +105,7 @@ def robot_config_with_mapping():
     """Create a robot config with joint name mapping (dual-arm scenario)."""
     return RobotModelConfig(
         name="left_arm",
-        urdf_path=Path("/path/to/robot.urdf"),
+        model=RobotModel.from_file(Path("/path/to/robot.urdf")),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["joint1", "joint2", "joint3"],
         base_link="link_base",
@@ -127,7 +128,7 @@ def robot_config_with_mapping():
 def _one_joint_config(name: str = "arm") -> RobotModelConfig:
     return RobotModelConfig(
         name=name,
-        urdf_path=Path("/path/robot.urdf"),
+        model=RobotModel.from_file(Path("/path/robot.urdf")),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["j0"],
         base_link="base_link",
@@ -827,7 +828,7 @@ class TestPlanningGroupApis:
     ):
         left = RobotModelConfig(
             name="left",
-            urdf_path=Path("/path/robot.urdf"),
+            model=RobotModel.from_file(Path("/path/robot.urdf")),
             base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
             joint_names=["j0", "j1"],
             planning_groups=[
@@ -839,7 +840,7 @@ class TestPlanningGroupApis:
         )
         right = RobotModelConfig(
             name="right",
-            urdf_path=Path("/path/robot.urdf"),
+            model=RobotModel.from_file(Path("/path/robot.urdf")),
             base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
             joint_names=["k0", "k1"],
             planning_groups=[
@@ -905,7 +906,7 @@ class TestPlanningGroupApis:
     ):
         no_pose_config = RobotModelConfig(
             name="test_arm",
-            urdf_path=robot_config.urdf_path,
+            model=robot_config.model,
             base_pose=robot_config.base_pose,
             joint_names=robot_config.joint_names,
             base_link=robot_config.base_link,
@@ -937,7 +938,7 @@ class TestPlanningGroupApis:
     ):
         multi_pose_config = RobotModelConfig(
             name="test_arm",
-            urdf_path=robot_config.urdf_path,
+            model=robot_config.model,
             base_pose=robot_config.base_pose,
             joint_names=robot_config.joint_names,
             base_link=robot_config.base_link,

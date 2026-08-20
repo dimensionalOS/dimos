@@ -47,6 +47,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.xarm.config import XARM_MODEL_PATH, XARM_PACKAGE_PATHS
+from dimos.robot.model import RobotModel
 
 pytestmark = pytest.mark.self_hosted
 
@@ -67,7 +68,7 @@ def _get_xarm7_config() -> RobotModelConfig:
     """Create XArm7 robot config for testing."""
     return RobotModelConfig(
         name="test_arm",
-        urdf_path=XARM_MODEL_PATH,
+        model=RobotModel.from_file(XARM_MODEL_PATH),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"],
         base_link="link_base",

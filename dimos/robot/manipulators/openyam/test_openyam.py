@@ -24,7 +24,6 @@ from dimos.robot.manipulators.openyam.blueprints.basic import (
 )
 from dimos.robot.manipulators.openyam.config import (
     OPENYAM_DOF,
-    OPENYAM_PACKAGE_PATHS,
     make_openyam_hardware,
     make_openyam_model_config,
 )
@@ -47,7 +46,6 @@ def test_openyam_model_config_has_expected_links_and_mapping() -> None:
     }
     assert config.base_link == "yam_base_link"
     assert config.end_effector_link == "yam_hand_tcp"
-    assert list(config.package_paths) == list(OPENYAM_PACKAGE_PATHS)
     assert config.gripper_hardware_id == "arm"
 
 

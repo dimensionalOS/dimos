@@ -75,7 +75,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.robot.assets.processing import LoadedUrdf, UrdfProcessor
+from dimos.robot.model import LoadedRobotModel, RobotModel
 
 
 @dataclass
@@ -176,19 +176,12 @@ class Config:
     home_joints: list[float] | None
     base_link: str = "base"
     end_effector_link: str = "tool"
-    urdf_path: Path | str = "robot.urdf"
-    package_paths: dict[str, str] | None = None
-    xacro_args: dict[str, str] | None = None
+    model: RobotModel = field(default_factory=lambda: RobotModel.from_file("robot.urdf"))
     auto_convert_meshes: bool = False
     max_velocity: float = 1.0
     max_acceleration: float = 1.0
     joint_name_mapping: dict[str, str] | None = None
     pre_grasp_offset: float = 0.0
-    urdf_processors: list[UrdfProcessor] = field(default_factory=list)
-
-    def __post_init__(self) -> None:
-        if isinstance(self.urdf_path, str):
-            self.urdf_path = Path(self.urdf_path)
 
 
 def group(robot: str, name: str, joints: tuple[str, ...], *, pose: bool = False) -> PlanningGroup:
@@ -820,10 +813,10 @@ class Urdf:
 @pytest.fixture(autouse=True)
 def fake_yourdfpy_loader(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        scene_module,
-        "load_urdf",
-        lambda *_args, **_kwargs: LoadedUrdf(
-            urdf_xml='<robot name="test"><link name="base"/></robot>',
+        RobotModel,
+        "load",
+        lambda _self: LoadedRobotModel(
+            xml='<robot name="test"><link name="base"/></robot>',
             source_path=Path("robot.urdf"),
             package_paths={},
         ),
@@ -1283,8 +1276,8 @@ def test_scene_base_pose_requires_urdf_root_to_match(monkeypatch: pytest.MonkeyP
     with pytest.raises(ValueError, match="base_link 'base'.*URDF root 'world'"):
         scene._assert_base_link_is_urdf_root(
             SimpleNamespace(base_link="base"),
-            LoadedUrdf(
-                urdf_xml='<robot name="test"><link name="world"/></robot>',
+            LoadedRobotModel(
+                xml='<robot name="test"><link name="world"/></robot>',
                 source_path=Path("robot.urdf"),
                 package_paths={},
             ),

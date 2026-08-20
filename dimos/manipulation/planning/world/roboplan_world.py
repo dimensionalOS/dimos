@@ -24,7 +24,6 @@ from __future__ import annotations
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from pathlib import Path
 from threading import RLock
 from typing import TYPE_CHECKING, Any
 
@@ -111,8 +110,7 @@ class RoboPlanWorld:
         """Register a robot for the scene built by :meth:`finalize`."""
         if self._finalized:
             raise RuntimeError("Cannot add robot after world is finalized")
-        if not Path(config.urdf_path).exists():
-            raise FileNotFoundError(f"Robot model not found: {Path(config.urdf_path).resolve()}")
+        config.model.load()
         if any(data.config.name == config.name for data in self._robots.values()):
             raise ValueError(f"Robot name '{config.name}' is already registered")
         self._validate_planning_group_config(config)

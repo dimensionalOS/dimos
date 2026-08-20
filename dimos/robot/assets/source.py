@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import SupportsIndex
 
 from dimos.robot.assets.git_cache import GitAssetCache
 
@@ -68,6 +69,10 @@ class RobotDescriptionSource:
     def __hash__(self) -> int:
         return hash((self.url, self.ref))
 
+    def __reduce__(self) -> tuple[type[RobotDescriptionSource], tuple[str, str]]:
+        """Recreate the source without serializing checkout state."""
+        return (RobotDescriptionSource, (self.url, self.ref))
+
 
 class RobotDescriptionPath(type(Path())):  # type: ignore[misc]
     """Lazy Path subclass rooted at a :class:`RobotDescriptionSource`."""
@@ -107,7 +112,11 @@ class RobotDescriptionPath(type(Path())):  # type: ignore[misc]
         except AttributeError:
             return object.__getattribute__(self, name)
 
-        if name.startswith("_robot_description_") or name in {"_resolve"}:
+        if name.startswith("_robot_description_") or name in {
+            "_resolve",
+            "__reduce__",
+            "__reduce_ex__",
+        }:
             return object.__getattribute__(self, name)
 
         if name == "parent":
@@ -154,3 +163,16 @@ class RobotDescriptionPath(type(Path())):  # type: ignore[misc]
                 object.__getattribute__(self, "_robot_description_relative_path"),
             )
         )
+
+    def __reduce__(self) -> tuple[type[RobotDescriptionPath], tuple[RobotDescriptionSource, Path]]:
+        """Preserve the lazy source handle across worker serialization."""
+        source: RobotDescriptionSource = object.__getattribute__(self, "_robot_description_source")
+        relative_path: Path = object.__getattribute__(self, "_robot_description_relative_path")
+        return (RobotDescriptionPath, (source, relative_path))
+
+    def __reduce_ex__(
+        self,
+        protocol: SupportsIndex,
+    ) -> tuple[type[RobotDescriptionPath], tuple[RobotDescriptionSource, Path]]:
+        del protocol
+        return self.__reduce__()

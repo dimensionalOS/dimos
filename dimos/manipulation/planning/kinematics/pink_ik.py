@@ -19,7 +19,6 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import importlib
-from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
@@ -40,7 +39,6 @@ from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.assets.processing import load_urdf
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import pose_to_matrix
 
@@ -537,18 +535,8 @@ class PinkIK:
 
     def _build_robot_context(self, config: RobotModelConfig, frame_name: str) -> _PinkRobotContext:
         pinocchio = self._modules.pinocchio
-        urdf_path = Path(config.urdf_path).resolve()
-        if not urdf_path.exists():
-            raise FileNotFoundError(f"Robot model not found: {urdf_path}")
-
-        description = load_urdf(
-            urdf_path,
-            package_paths=config.package_paths,
-            xacro_args=config.xacro_args,
-            package_uri_mode="absolute",
-            processors=config.urdf_processors,
-        )
-        model = pinocchio.buildModelFromXML(description.urdf_xml)
+        description = config.model.load()
+        model = pinocchio.buildModelFromXML(description.xml)
 
         data = model.createData()
         _assert_base_link_is_model_root(model, config.base_link)

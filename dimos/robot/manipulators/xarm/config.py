@@ -34,6 +34,7 @@ from dimos.robot.manipulators._modeling import (
     coordinator_joint_mapping,
     joint_names,
 )
+from dimos.robot.model import RobotModel
 from dimos.utils.data import LfsPath
 
 XARM_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
@@ -249,7 +250,11 @@ def make_xarm_model_config(
     tip_link = "link_tcp" if add_gripper else f"link{dof}"
     return RobotModelConfig(
         name=name,
-        urdf_path=XARM_MODEL_PATH,
+        model=RobotModel.from_file(
+            XARM_MODEL_PATH,
+            package_paths=XARM_PACKAGE_PATHS,
+            xacro_args=xacro_args,
+        ),
         base_pose=base_pose(x_offset, y_offset, z_offset, pitch),
         joint_names=local_joint_names,
         base_link="link_base",
@@ -261,8 +266,6 @@ def make_xarm_model_config(
                 tip_link=tip_link,
             )
         ],
-        package_paths=XARM_PACKAGE_PATHS,
-        xacro_args=xacro_args,
         auto_convert_meshes=True,
         collision_exclusion_pairs=(XARM_GRIPPER_COLLISION_EXCLUSIONS if add_gripper else []),
         joint_name_mapping=coordinator_joint_mapping(

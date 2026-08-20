@@ -29,6 +29,7 @@ from dimos.robot.manipulators._modeling import (
     coordinator_joint_mapping,
     joint_names,
 )
+from dimos.robot.model import RobotModel
 
 A750_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("base_link", "link1"),
@@ -109,7 +110,7 @@ def make_a750_model_config(
     local_joint_names = joint_names(dof)
     return RobotModelConfig(
         name=name,
-        urdf_path=A750_MODEL_PATH,
+        model=RobotModel.from_file(A750_MODEL_PATH, package_paths=A750_PACKAGE_PATHS),
         base_pose=base_pose(),
         joint_names=local_joint_names,
         base_link="base_link",
@@ -121,7 +122,6 @@ def make_a750_model_config(
                 tip_link="gripper_base",
             )
         ],
-        package_paths=A750_PACKAGE_PATHS,
         auto_convert_meshes=True,
         collision_exclusion_pairs=A750_GRIPPER_COLLISION_EXCLUSIONS,
         joint_name_mapping=coordinator_joint_mapping(

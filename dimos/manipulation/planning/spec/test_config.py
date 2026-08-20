@@ -19,37 +19,36 @@ from pydantic import ValidationError
 import pytest
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.robot.assets.processing import AddFixedFrame
+from dimos.robot.model import RobotModel
 
 
-@pytest.mark.parametrize("filename", ["robot.urdf", "robot.xacro", "robot.urdf.xacro"])
-def test_robot_model_config_accepts_urdf_descriptions(filename: str) -> None:
-    config = RobotModelConfig(name="arm", urdf_path=Path(filename), joint_names=[])
-
-    assert config.urdf_path == Path(filename)
-
-
-@pytest.mark.parametrize("filename", ["robot.xml", "robot.mjcf", "robot"])
-def test_robot_model_config_rejects_non_urdf_descriptions(filename: str) -> None:
-    with pytest.raises(ValidationError, match="must reference a .urdf or .xacro file"):
-        RobotModelConfig(name="arm", urdf_path=Path(filename), joint_names=[])
-
-
-def test_robot_model_config_rejects_obsolete_model_path_field() -> None:
+@pytest.mark.parametrize(
+    "obsolete_field",
+    ["model_path", "urdf_path", "package_paths", "xacro_args", "urdf_processors"],
+)
+def test_robot_model_config_rejects_obsolete_description_fields(
+    obsolete_field: str,
+) -> None:
     with pytest.raises(ValidationError):
         RobotModelConfig.model_validate(
-            {"name": "arm", "model_path": Path("robot.urdf"), "joint_names": []}
+            {
+                "name": "arm",
+                "model": RobotModel.from_file("robot.urdf"),
+                "joint_names": [],
+                obsolete_field: Path("obsolete.urdf"),
+            }
         )
 
 
-def test_robot_model_config_processors_survive_pickle_round_trip() -> None:
+def test_robot_model_config_preserves_model_across_worker_pickle(tmp_path: Path) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text("<robot name='arm'><link name='base'/></robot>")
     config = RobotModelConfig(
         name="arm",
-        urdf_path=Path("robot.urdf"),
+        model=RobotModel.from_file(urdf).with_fixed_frame("tool", "base"),
         joint_names=[],
-        urdf_processors=[AddFixedFrame("tool", "base")],
     )
 
     restored = pickle.loads(pickle.dumps(config))
 
-    assert restored.urdf_processors == [AddFixedFrame("tool", "base")]
+    assert '<link name="tool"' in restored.model.load().xml

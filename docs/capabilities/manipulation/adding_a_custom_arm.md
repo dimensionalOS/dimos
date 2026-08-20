@@ -507,6 +507,7 @@ this backend. Formal per-joint dimOS overrides will be added separately.
 
 ```python skip
 from dimos.robot.assets.source import RobotDescriptionSource
+from dimos.robot.model import RobotModel
 from dimos.manipulation.manipulation_module import manipulation_module
 from dimos.manipulation.planning.spec import RobotModelConfig
 from dimos.manipulation.planning.spec.models import PlanningGroupDefinition
@@ -548,7 +549,10 @@ def _make_yourarm_config(
 
     return RobotModelConfig(
         name=name,
-        urdf_path=_YOURARM_URDF_PATH,
+        model=RobotModel.from_file(
+            _YOURARM_URDF_PATH,
+            package_paths=_YOURARM_PACKAGE_PATHS,
+        ),
         joint_names=joint_names,
         planning_groups=[
             PlanningGroupDefinition(
@@ -560,8 +564,6 @@ def _make_yourarm_config(
         ],
         base_pose=_make_base_pose(y=y_offset),  # world -> base_link placement
         base_link="base_link",                 # Robot-scoped placement/weld/strip link
-        package_paths=_YOURARM_PACKAGE_PATHS,
-        xacro_args={},                  # Xacro arguments if using .xacro files
         collision_exclusion_pairs=[],   # Pairs of links that can touch (e.g., gripper fingers)
         auto_convert_meshes=True,       # Convert DAE/STL meshes for Drake
         max_velocity=1.0,               # Max velocity scaling factor
@@ -610,11 +612,10 @@ yourarm_planner = manipulation_module(
 
 | Field | Description |
 |-------|-------------|
-| `urdf_path` | Path to `.urdf` or `.xacro` file |
+| `model` | Lazy `RobotModel` created from a `.urdf` or `.xacro` source |
 | `joint_names` | Ordered controllable local model joint set (must match URDF); not itself a planning group |
 | `planning_groups` / `srdf_path` | Explicit planning groups or SRDF source; direct `RobotModelConfig(...)` helpers should pass explicit groups, while shared config helpers can discover groups from SRDF/fallback |
 | `base_pose` / `base_link` | Optional robot placement: `base_pose` places `base_link` in the world for weld/strip behavior |
-| `package_paths` | Maps `package://` URIs to filesystem paths (for xacro) |
 | `collision_exclusion_pairs` | List of `(link_a, link_b)` tuples for links that may legitimately touch (e.g., gripper fingers) |
 
 Coordinator-facing joint states and trajectories use global joint names derived
@@ -629,9 +630,9 @@ See [Planning Groups](/docs/capabilities/manipulation/planning_groups.md).
 
 ### 4d. Configure Cartesian, EEF-twist, and teleop control IK
 
-Cartesian, EEF-twist, and engagement-relative teleop tasks use the direct URDF
-or Xacro in `RobotModelConfig`. Set `package_paths` and `xacro_args` when needed,
-name the end-effector link, and map coordinator joints to model joints. The task
+Cartesian, EEF-twist, and engagement-relative teleop tasks use the portable
+`RobotModel` in `RobotModelConfig`. Configure package paths and Xacro arguments
+when creating the model, name the end-effector link, and map coordinator joints to model joints. The task
 validates the prepared model, frame, and joint mapping at startup. Teleop uses
 the named frame and does not accept a separate model path or numeric
 end-effector joint ID.

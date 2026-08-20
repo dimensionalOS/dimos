@@ -19,6 +19,7 @@ import numpy as np
 from pink import Configuration
 from pink.tasks import DampingTask, FrameTask, PostureTask
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.control.tasks.cartesian_ik_task.cartesian_ik_task import CartesianIKTaskConfig
 from dimos.control.tasks.cartesian_ik_task.pink_control_ik import (
@@ -29,7 +30,7 @@ from dimos.control.tasks.cartesian_ik_task.pink_control_ik import (
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.robot.assets.processing import LoadedUrdf
+from dimos.robot.model import LoadedRobotModel, RobotModel
 
 _URDF = """\
 <robot name="tiny">
@@ -86,7 +87,7 @@ def _robot(
     joint_count = len(joint_names)
     return RobotModelConfig(
         name="tiny",
-        urdf_path=path,
+        model=RobotModel.from_file(path),
         base_pose=PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]),
         joint_names=joint_names,
         planning_groups=[
@@ -139,54 +140,22 @@ def test_pink_settings_use_finite_declarative_validation(tmp_path: Path) -> None
         )
 
 
-def test_pink_loads_xacro_in_memory_with_package_paths_and_arguments(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_pink_loads_portable_robot_model(
+    tmp_path: Path,
+    mocker: MockerFixture,
 ) -> None:
     model_path = _write_urdf(tmp_path)
-    package_path = tmp_path / "description"
-    package_path.mkdir()
-    robot = _robot(model_path).model_copy(
-        update={
-            "urdf_path": tmp_path / "robot.xacro",
-            "package_paths": {"description": package_path},
-            "xacro_args": {"dof": "2"},
-        }
-    )
-    prepared: dict[str, Any] = {}
-
-    def load(
-        path: Path,
-        package_paths: dict[str, Path],
-        xacro_args: dict[str, str],
-        *,
-        package_uri_mode: str,
-        processors: list[object],
-    ) -> LoadedUrdf:
-        prepared.update(
-            path=path,
-            package_paths=package_paths,
-            xacro_args=xacro_args,
-            package_uri_mode=package_uri_mode,
-            processors=processors,
-        )
-        return LoadedUrdf(_URDF, model_path, package_paths)
-
-    monkeypatch.setattr(
-        "dimos.control.tasks.cartesian_ik_task.pink_control_ik.load_urdf",
-        load,
+    load = mocker.patch.object(
+        RobotModel,
+        "load",
+        return_value=LoadedRobotModel(_URDF, model_path, {}),
     )
 
     create_pink_control_ik(
-        PinkControlIKConfig(robot_model=robot),
+        PinkControlIKConfig(robot_model=_robot(model_path)),
     )
 
-    assert prepared == {
-        "path": tmp_path / "robot.xacro",
-        "package_paths": {"description": package_path},
-        "xacro_args": {"dof": "2"},
-        "package_uri_mode": "absolute",
-        "processors": [],
-    }
+    load.assert_called_once_with()
 
 
 def test_pink_validates_named_frame_and_exact_joint_mapping(tmp_path: Path) -> None:

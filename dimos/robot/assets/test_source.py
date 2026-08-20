@@ -14,6 +14,7 @@
 
 import os
 from pathlib import Path
+import pickle
 
 import pytest
 
@@ -123,3 +124,16 @@ def test_custom_source_handle_needs_no_registration(tmp_path: Path) -> None:
     assert git_cache.resolve_calls == [
         ("https://example.invalid/custom_robot_description.git", "feature/custom")
     ]
+
+
+def test_lazy_path_survives_pickle_without_checkout(
+    robot_source: tuple[RobotDescriptionSource, RecordingGitAssetCache],
+) -> None:
+    source, git_cache = robot_source
+    model_path = source / "robots" / "testbot" / "model.urdf"
+
+    restored = pickle.loads(pickle.dumps(model_path))
+
+    assert isinstance(restored, RobotDescriptionPath)
+    assert restored.suffix == ".urdf"
+    assert git_cache.resolve_calls == []

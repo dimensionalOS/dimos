@@ -37,7 +37,6 @@ except ModuleNotFoundError as exc:
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.protocol.service.spec import BaseConfig
-from dimos.robot.assets.processing import load_urdf
 
 
 class PinkControlIKConfig(BaseConfig):
@@ -105,14 +104,8 @@ class _PinkControlIKBuilder:
     def build(self) -> _PinkRuntime:
         config = self._config
         robot = config.robot_model
-        description = load_urdf(
-            robot.urdf_path,
-            package_paths=robot.package_paths,
-            xacro_args=robot.xacro_args,
-            package_uri_mode="absolute",
-            processors=robot.urdf_processors,
-        )
-        model = pinocchio.buildModelFromXML(description.urdf_xml)
+        description = robot.model.load()
+        model = pinocchio.buildModelFromXML(description.xml)
         mapping = self._build_mapping(model, robot)
         ee_frame_id = self._validate_frame(model, robot.end_effector_link)
         limits = self._apply_limits(model, mapping, robot)

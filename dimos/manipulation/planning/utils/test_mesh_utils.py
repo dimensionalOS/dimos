@@ -18,7 +18,7 @@ import re
 import pytest
 
 from dimos.manipulation.planning.utils import mesh_utils
-from dimos.robot.assets.processing import LoadedUrdf
+from dimos.robot.model import LoadedRobotModel
 
 
 def test_prepare_urdf_for_drake_keeps_xml_in_memory_and_drake_cleanup(
@@ -38,16 +38,16 @@ def test_prepare_urdf_for_drake_keeps_xml_in_memory_and_drake_cleanup(
         "</robot>"
     )
 
-    description = LoadedUrdf(
-        urdf_xml=urdf.read_text().replace("package://pkg", str(package_root)),
+    description = LoadedRobotModel(
+        xml=urdf.read_text().replace("package://pkg", str(package_root)),
         source_path=urdf,
         package_paths={"pkg": package_root},
     )
     prepared = mesh_utils.prepare_urdf_for_drake(description)
 
-    assert "package://" not in prepared.urdf_xml
-    assert str(mesh) in prepared.urdf_xml
-    assert "<transmission" not in prepared.urdf_xml
+    assert "package://" not in prepared.xml
+    assert str(mesh) in prepared.xml
+    assert "<transmission" not in prepared.xml
     assert not (tmp_path / "drake").exists()
 
 
@@ -62,8 +62,8 @@ def test_mesh_conversion_cache_is_keyed_by_mesh_content(
         "vertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\n"
         "endloop\nendfacet\nendsolid link\n"
     )
-    description = LoadedUrdf(
-        urdf_xml=f'<robot name="r"><link name="base"><visual><geometry><mesh filename="{mesh}"/>'
+    description = LoadedRobotModel(
+        xml=f'<robot name="r"><link name="base"><visual><geometry><mesh filename="{mesh}"/>'
         "</geometry></visual></link></robot>",
         source_path=tmp_path / "robot.urdf",
         package_paths={},
@@ -71,12 +71,12 @@ def test_mesh_conversion_cache_is_keyed_by_mesh_content(
     monkeypatch.setattr(mesh_utils, "_CACHE_DIR", tmp_path / "derived" / "drake_meshes")
 
     first = mesh_utils.prepare_urdf_for_drake(description, convert_meshes=True)
-    first_match = re.search(r'filename="([^"]+\.obj)"', first.urdf_xml)
+    first_match = re.search(r'filename="([^"]+\.obj)"', first.xml)
     assert first_match is not None
     first_obj = Path(first_match.group(1))
     mesh.write_text(mesh.read_text().replace("vertex 1 0 0", "vertex 2 0 0"))
     second = mesh_utils.prepare_urdf_for_drake(description, convert_meshes=True)
-    second_match = re.search(r'filename="([^"]+\.obj)"', second.urdf_xml)
+    second_match = re.search(r'filename="([^"]+\.obj)"', second.xml)
     assert second_match is not None
     second_obj = Path(second_match.group(1))
 

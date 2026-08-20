@@ -46,7 +46,7 @@ from dimos.manipulation.visualization.viser.runtime import (
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.assets.processing import LoadedUrdf, load_urdf
+from dimos.robot.model import LoadedRobotModel
 from dimos.utils.logging_config import setup_logger
 
 try:
@@ -403,7 +403,7 @@ class ViserManipulationScene:
     def _load_robot_model(self, config: RobotModelConfig) -> URDF:
         description = self.loaded_robot_description(config)
         return URDF.load(
-            BytesIO(description.urdf_xml.encode()),
+            BytesIO(description.xml.encode()),
             mesh_dir=str(description.source_path.parent),
             build_scene_graph=True,
             build_collision_scene_graph=True,
@@ -426,7 +426,7 @@ class ViserManipulationScene:
         self._animation_generations.setdefault(robot_id, 0)
         self._target_active.setdefault(robot_id, False)
         self._target_tracks_current.setdefault(robot_id, True)
-        if config.urdf_path and robot_id not in self._models_by_id:
+        if robot_id not in self._models_by_id:
             self._models_by_id[robot_id] = self._load_robot_model(config)
         self._ensure_robot_urdfs(robot_id, config)
 
@@ -687,8 +687,6 @@ class ViserManipulationScene:
             self._robot_display_mode = RobotDisplayMode.VISUAL
 
     def _ensure_robot_urdfs(self, robot_id: str, config: RobotModelConfig) -> None:
-        if not config.urdf_path:
-            return
         model = self._models_by_id.get(robot_id)
         if model is None:
             return
@@ -796,14 +794,8 @@ class ViserManipulationScene:
                 mode in {RobotDisplayMode.COLLISION, RobotDisplayMode.BOTH},
             )
 
-    def loaded_robot_description(self, config: RobotModelConfig) -> LoadedUrdf:
-        description = load_urdf(
-            config.urdf_path,
-            package_paths=config.package_paths,
-            xacro_args=config.xacro_args,
-            package_uri_mode="absolute",
-            processors=config.urdf_processors,
-        )
+    def loaded_robot_description(self, config: RobotModelConfig) -> LoadedRobotModel:
+        description = config.model.load()
         description = prepare_urdf_for_drake(
             description,
             convert_meshes=bool(config.auto_convert_meshes),
@@ -815,10 +807,10 @@ class ViserManipulationScene:
     @staticmethod
     def _strip_visualization_world_root_attachment(
         config: RobotModelConfig,
-        description: LoadedUrdf,
-    ) -> LoadedUrdf:
+        description: LoadedRobotModel,
+    ) -> LoadedRobotModel:
         """Detach a model-owned world root only for Viser base-pose rendering."""
-        urdf_content = description.urdf_xml
+        urdf_content = description.xml
         try:
             root = ET.fromstring(urdf_content)
         except ET.ParseError:
@@ -850,8 +842,8 @@ class ViserManipulationScene:
             return description
         root.remove(world_links[0])
 
-        return LoadedUrdf(
-            urdf_xml=ET.tostring(root, encoding="unicode"),
+        return LoadedRobotModel(
+            xml=ET.tostring(root, encoding="unicode"),
             source_path=description.source_path,
             package_paths=description.package_paths,
         )
@@ -859,9 +851,9 @@ class ViserManipulationScene:
     @staticmethod
     def _assert_base_link_is_urdf_root(
         config: RobotModelConfig,
-        description: LoadedUrdf,
+        description: LoadedRobotModel,
     ) -> None:
-        root = ET.fromstring(description.urdf_xml)
+        root = ET.fromstring(description.xml)
         links = {link.get("name") for link in root.findall("link")}
         child_links = {
             child.get("link")

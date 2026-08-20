@@ -40,7 +40,7 @@ from dimos.manipulation.visualization.viser.visualizer import ViserManipulationV
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.robot.assets.processing import LoadedUrdf
+from dimos.robot.model import LoadedRobotModel, RobotModel
 
 
 class FakeDependency:
@@ -85,7 +85,7 @@ class FakeRuntimeServer(FakeServer):
 def fake_robot_config(name: str) -> RobotModelConfig:
     return RobotModelConfig(
         name=name,
-        urdf_path=Path(f"{name}.urdf"),
+        model=RobotModel.from_file(Path(f"{name}.urdf")),
         base_pose=PoseStamped(),
         joint_names=[],
         planning_groups=[
@@ -516,20 +516,22 @@ def test_scene_prepares_urdf_applies_base_pose_and_rejects_wrong_root(
     config = fake_robot_config("arm")
     config.base_pose.position.x = 1.0
 
-    def load(path: Path, **_kwargs: object) -> LoadedUrdf:
-        source = fixed_world_root if path.name == "arm.urdf" else non_fixed_world_root
-        return LoadedUrdf(source.read_text(), source, {})
+    def load(model: RobotModel) -> LoadedRobotModel:
+        source_path = Path(model.source_path)
+        source = fixed_world_root if source_path.name == "arm.urdf" else non_fixed_world_root
+        return LoadedRobotModel(source.read_text(), source, {})
 
     monkeypatch.setattr(
-        "dimos.manipulation.visualization.viser.scene.load_urdf",
+        RobotModel,
+        "load",
         load,
     )
 
     def prepare(
-        description: LoadedUrdf,
+        description: LoadedRobotModel,
         *,
         convert_meshes: bool,
-    ) -> LoadedUrdf:
+    ) -> LoadedRobotModel:
         prepared.append({"convert_meshes": convert_meshes})
         return description
 
@@ -564,7 +566,7 @@ def test_selected_display_mode_survives_primary_recreation_and_joint_updates(
     monkeypatch.setattr(
         scene,
         "loaded_robot_description",
-        lambda _config: LoadedUrdf(
+        lambda _config: LoadedRobotModel(
             "<robot name='r'><link name='base_link'/></robot>",
             Path("prepared.urdf"),
             {},

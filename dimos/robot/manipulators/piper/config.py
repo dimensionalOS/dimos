@@ -28,6 +28,7 @@ from dimos.robot.manipulators._modeling import (
     coordinator_joint_mapping,
     joint_names,
 )
+from dimos.robot.model import RobotModel
 from dimos.utils.data import LfsPath
 
 PIPER_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
@@ -143,7 +144,7 @@ def make_piper_model_config(
     model_home_joints = list(home_joints) if home_joints is not None else list(PIPER_HOME_JOINTS)
     return RobotModelConfig(
         name=name,
-        urdf_path=PIPER_MODEL_PATH,
+        model=RobotModel.from_file(PIPER_MODEL_PATH, package_paths=PIPER_PACKAGE_PATHS),
         base_pose=base_pose(),
         joint_names=local_joint_names,
         base_link="base_link",
@@ -155,7 +156,6 @@ def make_piper_model_config(
                 tip_link="gripper_base",
             )
         ],
-        package_paths=PIPER_PACKAGE_PATHS,
         auto_convert_meshes=True,
         collision_exclusion_pairs=PIPER_GRIPPER_COLLISION_EXCLUSIONS,
         joint_name_mapping=coordinator_joint_mapping(
