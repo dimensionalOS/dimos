@@ -75,7 +75,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.robot.assets.processing import FixedFrameDefinition, LoadedUrdf
+from dimos.robot.assets.processing import LoadedUrdf, UrdfProcessor
 
 
 @dataclass
@@ -184,7 +184,7 @@ class Config:
     max_acceleration: float = 1.0
     joint_name_mapping: dict[str, str] | None = None
     pre_grasp_offset: float = 0.0
-    additional_fixed_frames: list[FixedFrameDefinition] = field(default_factory=list)
+    urdf_processors: list[UrdfProcessor] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if isinstance(self.urdf_path, str):

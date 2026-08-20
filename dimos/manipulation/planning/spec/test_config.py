@@ -13,11 +13,13 @@
 # limitations under the License.
 
 from pathlib import Path
+import pickle
 
 from pydantic import ValidationError
 import pytest
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.robot.assets.processing import AddFixedFrame
 
 
 @pytest.mark.parametrize("filename", ["robot.urdf", "robot.xacro", "robot.urdf.xacro"])
@@ -38,3 +40,16 @@ def test_robot_model_config_rejects_obsolete_model_path_field() -> None:
         RobotModelConfig.model_validate(
             {"name": "arm", "model_path": Path("robot.urdf"), "joint_names": []}
         )
+
+
+def test_robot_model_config_processors_survive_pickle_round_trip() -> None:
+    config = RobotModelConfig(
+        name="arm",
+        urdf_path=Path("robot.urdf"),
+        joint_names=[],
+        urdf_processors=[AddFixedFrame("tool", "base")],
+    )
+
+    restored = pickle.loads(pickle.dumps(config))
+
+    assert restored.urdf_processors == [AddFixedFrame("tool", "base")]

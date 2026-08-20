@@ -80,19 +80,29 @@ such as `str(path)`, `path.resolve()`, or `path.exists()`.
 
 ## Loading robot descriptions
 
-Use `processing.py` to expand Xacro, resolve package URIs, and add fixed frames
-without writing a derived URDF file:
+Use `processing.py` to expand Xacro, resolve package URIs, and apply ordered
+post-load processors without writing a derived URDF file:
 
 ```python
-from dimos.robot.assets.processing import FixedFrameDefinition, load_urdf
+from dataclasses import replace
+
+from dimos.robot.assets.processing import AddFixedFrame, LoadedUrdf, load_urdf
+
+
+def rename_robot(description: LoadedUrdf) -> LoadedUrdf:
+    return replace(
+        description,
+        urdf_xml=description.urdf_xml.replace('name="old"', 'name="new"', 1),
+    )
 
 description = load_urdf(
     model_path,
     package_paths,
     xacro_args={"limited": "true"},
     package_uri_mode="preserve",  # or "absolute"
-    additional_fixed_frames=(
-        FixedFrameDefinition(
+    processors=(
+        rename_robot,
+        AddFixedFrame(
             name="tool_center_point",
             parent="tool_flange",
             xyz=(0.1, 0.0, 0.0),
@@ -103,9 +113,10 @@ description = load_urdf(
 
 `LoadedUrdf` carries the expanded `urdf_xml` together with its resolved
 source path and package roots. Consumers pass the URDF XML directly to Drake,
-RoboPlan, Pinocchio, or yourdfpy. `FixedFrameDefinition` adds an empty link and
-fixed joint to that in-memory model; declarations are ordered, so a frame may
-use an earlier custom frame as its parent.
+RoboPlan, Pinocchio, or yourdfpy. Each processor receives and returns that full
+context. Use importable module-level functions or pickle-safe callable objects
+when processors travel through worker configuration. `AddFixedFrame` is one
+such processor; ordered instances can parent frames to earlier additions.
 
 Keep consumer-specific processing outside this module. For example, Drake-specific
 cleanup and optional mesh conversion still belong in

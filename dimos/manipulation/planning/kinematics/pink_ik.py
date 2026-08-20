@@ -546,7 +546,7 @@ class PinkIK:
             package_paths=config.package_paths,
             xacro_args=config.xacro_args,
             package_uri_mode="absolute",
-            additional_fixed_frames=tuple(config.additional_fixed_frames),
+            processors=config.urdf_processors,
         )
         model = pinocchio.buildModelFromXML(description.urdf_xml)
 

@@ -27,7 +27,7 @@ from dimos.hardware.manipulators.galaxea_a1z.config import (
 )
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.robot.assets.processing import FixedFrameDefinition
+from dimos.robot.assets.processing import AddFixedFrame
 from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.manipulators._modeling import (
     base_pose,
@@ -57,7 +57,7 @@ A1Z_PACKAGE_PATHS: dict[str, Path] = {
     "A1Z_G1Z": A1Z_G1Z_PACKAGE,
     "A1Z_Flange": A1Z_FLANGE_PACKAGE,
 }
-_A1Z_GRIPPER_EEF_FRAME = FixedFrameDefinition(
+_A1Z_GRIPPER_EEF_PROCESSOR = AddFixedFrame(
     name="gripper_eef_link",
     parent="arm_link6",
     xyz=(0.0727, 0.0, 0.0),
@@ -126,7 +126,7 @@ def make_a1z_model_config(
             )
         ],
         package_paths=A1Z_PACKAGE_PATHS,
-        additional_fixed_frames=[_A1Z_GRIPPER_EEF_FRAME] if has_gripper else [],
+        urdf_processors=[_A1Z_GRIPPER_EEF_PROCESSOR] if has_gripper else [],
         auto_convert_meshes=True,
         collision_exclusion_pairs=A1Z_COLLISION_EXCLUSIONS,
         joint_name_mapping=coordinator_joint_mapping(

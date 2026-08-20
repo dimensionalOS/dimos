@@ -18,7 +18,7 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from dimos.robot.assets.processing import FixedFrameDefinition, load_urdf
+from dimos.robot.assets.processing import AddFixedFrame, load_urdf
 from dimos.robot.manipulators.a1z.config import make_a1z_model_config
 
 
@@ -26,8 +26,8 @@ def test_gripper_model_restores_centered_end_effector_frame() -> None:
     config = make_a1z_model_config(has_gripper=True)
 
     assert config.planning_groups[0].tip_link == "gripper_eef_link"
-    assert config.additional_fixed_frames == [
-        FixedFrameDefinition(
+    assert config.urdf_processors == [
+        AddFixedFrame(
             name="gripper_eef_link",
             parent="arm_link6",
             xyz=(0.0727, 0.0, 0.0),
@@ -39,7 +39,7 @@ def test_flange_model_uses_native_flange_tip() -> None:
     config = make_a1z_model_config(has_gripper=False)
 
     assert config.planning_groups[0].tip_link == "arm_link6"
-    assert config.additional_fixed_frames == []
+    assert config.urdf_processors == []
 
 
 @pytest.mark.self_hosted
@@ -49,7 +49,7 @@ def test_gripper_model_contains_configured_end_effector_frame() -> None:
         config.urdf_path,
         package_paths=config.package_paths,
         xacro_args=config.xacro_args,
-        additional_fixed_frames=tuple(config.additional_fixed_frames),
+        processors=config.urdf_processors,
     )
     root = ET.fromstring(description.urdf_xml)
     joint = root.find("joint[@name='gripper_eef_link_joint']")

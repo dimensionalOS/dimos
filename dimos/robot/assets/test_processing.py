@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import replace
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -82,17 +83,52 @@ def test_load_urdf_reruns_xacro_each_time(
     assert list(tmp_path.iterdir()) == [xacro]
 
 
-def test_load_urdf_adds_ordered_fixed_frames(
+def test_load_urdf_applies_processors_in_order_with_source_context(
     tmp_path: Path,
 ) -> None:
     urdf = tmp_path / "robot.urdf"
     urdf.write_text("<robot name='r'><link name='base'/></robot>")
+    package_root = tmp_path / "description"
+    seen: list[str] = []
+
+    def first(description: processing.LoadedUrdf) -> processing.LoadedUrdf:
+        assert description.source_path == urdf
+        assert description.package_paths == {"description": package_root.resolve()}
+        seen.append("first")
+        return replace(
+            description,
+            urdf_xml=description.urdf_xml.replace("name='r'", "name='processed'"),
+        )
+
+    def second(description: processing.LoadedUrdf) -> processing.LoadedUrdf:
+        assert "processed" in description.urdf_xml
+        seen.append("second")
+        return description
 
     description = processing.load_urdf(
         urdf,
-        additional_fixed_frames=(
-            processing.FixedFrameDefinition("tool", "base", xyz=(0.1, 0.2, 0.3)),
-            processing.FixedFrameDefinition("camera", "tool", rpy=(0.0, 0.0, 1.57)),
+        {"description": package_root},
+        processors=(first, second),
+    )
+
+    assert seen == ["first", "second"]
+    assert "processed" in description.urdf_xml
+
+
+def test_add_fixed_frame_processors_chain_and_preserve_unknown_elements(
+    tmp_path: Path,
+) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(
+        "<robot name='r'><link name='base'/><gazebo reference='base'/>"
+        "<transmission name='drive'/><ros2_control name='control'/></robot>"
+    )
+
+    description = processing.load_urdf(
+        urdf,
+        processors=(
+            processing.AddFixedFrame("tool", "base", xyz=(0.1, 0.2, 0.3)),
+            processing.AddFixedFrame("camera", "tool", rpy=(0.0, 0.0, 1.57)),
         ),
     )
 
@@ -102,25 +138,28 @@ def test_load_urdf_adds_ordered_fixed_frames(
     assert [joint.get("name") for joint in joints] == ["tool_joint", "camera_joint"]
     assert joints[0].find("origin").attrib == {"xyz": "0.1 0.2 0.3", "rpy": "0.0 0.0 0.0"}
     assert joints[1].find("parent").attrib == {"link": "tool"}
+    assert root.find("gazebo") is not None
+    assert root.find("transmission") is not None
+    assert root.find("ros2_control") is not None
 
 
 @pytest.mark.parametrize(
-    ("frames", "message"),
+    ("processor", "message"),
     [
-        ((processing.FixedFrameDefinition("base", "base"),), "link already exists"),
-        ((processing.FixedFrameDefinition("tool", "missing"),), "unknown parent link"),
+        (processing.AddFixedFrame("base", "base"), "link already exists"),
+        (processing.AddFixedFrame("tool", "missing"), "unknown parent link"),
     ],
 )
-def test_load_urdf_rejects_invalid_fixed_frames(
+def test_add_fixed_frame_rejects_invalid_models(
     tmp_path: Path,
-    frames: tuple[processing.FixedFrameDefinition, ...],
+    processor: processing.AddFixedFrame,
     message: str,
 ) -> None:
     urdf = tmp_path / "robot.urdf"
     urdf.write_text("<robot name='r'><link name='base'/></robot>")
 
     with pytest.raises(ValueError, match=message):
-        processing.load_urdf(urdf, additional_fixed_frames=frames)
+        processing.load_urdf(urdf, processors=(processor,))
 
 
 def test_load_urdf_rejects_mjcf(tmp_path: Path) -> None:

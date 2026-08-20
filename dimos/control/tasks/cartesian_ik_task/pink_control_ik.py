@@ -110,7 +110,7 @@ class _PinkControlIKBuilder:
             package_paths=robot.package_paths,
             xacro_args=robot.xacro_args,
             package_uri_mode="absolute",
-            additional_fixed_frames=tuple(robot.additional_fixed_frames),
+            processors=robot.urdf_processors,
         )
         model = pinocchio.buildModelFromXML(description.urdf_xml)
         mapping = self._build_mapping(model, robot)

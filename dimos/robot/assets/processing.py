@@ -16,8 +16,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, replace
 import os
 from pathlib import Path
 import re
@@ -33,8 +33,20 @@ PackageUriMode = Literal["preserve", "absolute"]
 
 
 @dataclass(frozen=True)
-class FixedFrameDefinition:
-    """A model-owned fixed frame added after URDF/Xacro loading."""
+class LoadedUrdf:
+    """In-memory URDF plus the filesystem context needed by consumers."""
+
+    urdf_xml: str
+    source_path: Path
+    package_paths: Mapping[str, Path]
+
+
+UrdfProcessor = Callable[[LoadedUrdf], LoadedUrdf]
+
+
+@dataclass(frozen=True)
+class AddFixedFrame:
+    """URDF processor that adds an empty link connected by a fixed joint."""
 
     name: str
     parent: str
@@ -45,14 +57,29 @@ class FixedFrameDefinition:
     def joint_name(self) -> str:
         return f"{self.name}_joint"
 
+    def __call__(self, description: LoadedUrdf) -> LoadedUrdf:
+        """Return the description with this frame appended."""
+        root = ET.fromstring(description.urdf_xml)
+        link_names = {link.get("name") for link in root.findall("link")}
+        joint_names = {joint.get("name") for joint in root.findall("joint")}
 
-@dataclass(frozen=True)
-class LoadedUrdf:
-    """In-memory URDF plus the filesystem context needed by consumers."""
+        if self.name in link_names:
+            raise ValueError(f"Fixed frame link already exists: {self.name}")
+        if self.joint_name in joint_names:
+            raise ValueError(f"Fixed frame joint already exists: {self.joint_name}")
+        if self.parent not in link_names:
+            raise ValueError(
+                f"Fixed frame {self.name} references unknown parent link: {self.parent}"
+            )
 
-    urdf_xml: str
-    source_path: Path
-    package_paths: Mapping[str, Path]
+        ET.SubElement(root, "link", {"name": self.name})
+        joint = ET.SubElement(root, "joint", {"name": self.joint_name, "type": "fixed"})
+        ET.SubElement(
+            joint, "origin", {"xyz": _vector_text(self.xyz), "rpy": _vector_text(self.rpy)}
+        )
+        ET.SubElement(joint, "parent", {"link": self.parent})
+        ET.SubElement(joint, "child", {"link": self.name})
+        return replace(description, urdf_xml=ET.tostring(root, encoding="unicode"))
 
 
 def load_urdf(
@@ -61,12 +88,12 @@ def load_urdf(
     xacro_args: Mapping[str, str] | None = None,
     *,
     package_uri_mode: PackageUriMode = "preserve",
-    additional_fixed_frames: tuple[FixedFrameDefinition, ...] = (),
+    processors: Sequence[UrdfProcessor] = (),
 ) -> LoadedUrdf:
     """Load a URDF or Xacro artifact entirely in memory.
 
     Xacro expansion and package URI rewriting happen without writing an
-    intermediate URDF. Model-owned fixed frames are appended after expansion.
+    intermediate URDF. Processors run in declaration order after loading.
     """
     if package_uri_mode not in ("preserve", "absolute"):
         raise ValueError(f"Unsupported package URI mode: {package_uri_mode!r}")
@@ -88,46 +115,14 @@ def load_urdf(
     if package_uri_mode == "absolute":
         urdf_content = resolve_package_uris(urdf_content, resolved_package_paths)
 
-    if additional_fixed_frames:
-        urdf_content = add_fixed_frames(urdf_content, additional_fixed_frames)
-
-    return LoadedUrdf(
+    description = LoadedUrdf(
         urdf_xml=urdf_content,
         source_path=source_path,
         package_paths=resolved_package_paths,
     )
-
-
-def add_fixed_frames(
-    urdf_content: str,
-    frames: tuple[FixedFrameDefinition, ...],
-) -> str:
-    """Append model-owned fixed frames to URDF XML in declaration order."""
-    root = ET.fromstring(urdf_content)
-    link_names = {link.get("name") for link in root.findall("link")}
-    joint_names = {joint.get("name") for joint in root.findall("joint")}
-
-    for frame in frames:
-        if frame.name in link_names:
-            raise ValueError(f"Fixed frame link already exists: {frame.name}")
-        if frame.joint_name in joint_names:
-            raise ValueError(f"Fixed frame joint already exists: {frame.joint_name}")
-        if frame.parent not in link_names:
-            raise ValueError(
-                f"Fixed frame {frame.name} references unknown parent link: {frame.parent}"
-            )
-
-        ET.SubElement(root, "link", {"name": frame.name})
-        joint = ET.SubElement(root, "joint", {"name": frame.joint_name, "type": "fixed"})
-        ET.SubElement(
-            joint, "origin", {"xyz": _vector_text(frame.xyz), "rpy": _vector_text(frame.rpy)}
-        )
-        ET.SubElement(joint, "parent", {"link": frame.parent})
-        ET.SubElement(joint, "child", {"link": frame.name})
-        link_names.add(frame.name)
-        joint_names.add(frame.joint_name)
-
-    return ET.tostring(root, encoding="unicode")
+    for processor in processors:
+        description = processor(description)
+    return description
 
 
 def _vector_text(vector: tuple[float, float, float]) -> str:

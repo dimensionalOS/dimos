@@ -160,14 +160,14 @@ def test_pink_loads_xacro_in_memory_with_package_paths_and_arguments(
         xacro_args: dict[str, str],
         *,
         package_uri_mode: str,
-        additional_fixed_frames: tuple[object, ...],
+        processors: list[object],
     ) -> LoadedUrdf:
         prepared.update(
             path=path,
             package_paths=package_paths,
             xacro_args=xacro_args,
             package_uri_mode=package_uri_mode,
-            additional_fixed_frames=additional_fixed_frames,
+            processors=processors,
         )
         return LoadedUrdf(_URDF, model_path, package_paths)
 
@@ -185,7 +185,7 @@ def test_pink_loads_xacro_in_memory_with_package_paths_and_arguments(
         "package_paths": {"description": package_path},
         "xacro_args": {"dof": "2"},
         "package_uri_mode": "absolute",
-        "additional_fixed_frames": (),
+        "processors": [],
     }
 
 
