@@ -331,7 +331,7 @@ def default_profile() -> WorkloadProfile:
                 shape=(480, 640, 3),
                 dtype="uint8",
                 raw_bytes=480 * 640 * 3,
-                encoded_bytes=80_000,
+                encoded_bytes=13_459,
             ),
             *(
                 StreamProfile(
@@ -345,7 +345,7 @@ def default_profile() -> WorkloadProfile:
                     shape=(480, 640),
                     dtype="uint8",
                     raw_bytes=480 * 640,
-                    encoded_bytes=180_000,
+                    encoded_bytes=307_310 if name == "grayscale_left" else 307_311,
                 )
                 for name in ("grayscale_left", "grayscale_right")
             ),
@@ -360,7 +360,7 @@ def default_profile() -> WorkloadProfile:
                 shape=(480, 640),
                 dtype="uint16",
                 raw_bytes=480 * 640 * 2,
-                encoded_bytes=350_000,
+                encoded_bytes=614_521,
             ),
             StreamProfile(
                 name="imu",
@@ -370,8 +370,8 @@ def default_profile() -> WorkloadProfile:
                 transport="lcm",
                 codec="lcm",
                 frame_id="imu_link",
-                raw_bytes=320,
-                encoded_bytes=320,
+                raw_bytes=329,
+                encoded_bytes=329,
             ),
             StreamProfile(
                 name="pointlio",
@@ -382,8 +382,8 @@ def default_profile() -> WorkloadProfile:
                 codec="lcm",
                 frame_id="lidar_link",
                 point_count=20_000,
-                raw_bytes=20_000 * 16,
-                encoded_bytes=20_000 * 16,
+                raw_bytes=320_129,
+                encoded_bytes=320_129,
             ),
             StreamProfile(
                 name="odometry",
@@ -393,8 +393,8 @@ def default_profile() -> WorkloadProfile:
                 transport="lcm",
                 codec="lcm",
                 frame_id="world",
-                raw_bytes=760,
-                encoded_bytes=760,
+                raw_bytes=724,
+                encoded_bytes=724,
             ),
             StreamProfile(
                 name="tf",
@@ -404,8 +404,8 @@ def default_profile() -> WorkloadProfile:
                 transport="lcm",
                 codec="lcm",
                 frame_id="world",
-                raw_bytes=1_024,
-                encoded_bytes=1_024,
+                raw_bytes=103,
+                encoded_bytes=107,
             ),
         ),
     )
