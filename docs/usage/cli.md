@@ -318,20 +318,6 @@ dimos cache clean
 The command does not remove logs, recordings, datasets, configuration, or
 third-party model caches. It refuses to run while a dimOS blueprint is active.
 
-Downloaded robot assets are Git checkouts. By default, cache cleanup preserves
-any checkout with uncommitted changes, untracked files, local-only commits, or
-Git metadata that cannot be inspected. The command still removes all other
-cache entries, reports each preserved checkout, and exits with status 1 to
-signal that cleanup was incomplete. Pass `--force` to delete those checkouts as
-well:
-
-```bash
-dimos cache clean --force
-```
-
-`--force` does not bypass the active-blueprint safety check or the confirmation
-prompt. Combine it with `--yes` only when intentional data loss is acceptable.
-
 Before deleting anything, the command displays the cache root and every
 top-level entry currently present. It then asks for confirmation with a default
 of `No`. Pass `--yes` to skip the prompt in automation.
