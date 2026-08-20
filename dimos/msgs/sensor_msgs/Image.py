@@ -26,7 +26,7 @@ from dimos_lcm.std_msgs.Header import Header
 import numpy as np
 import reactivex as rx
 from reactivex import operators as ops
-from turbojpeg import TJPF_BGR, TJPF_BGRA, TJPF_GRAY, TJPF_RGB, TJPF_RGBA
+from turbojpeg import TJPF_RGB
 
 from dimos.types.timestamped import Timestamped, TimestampedBufferCollection, to_human_readable
 from dimos.utils.reactive import quality_barrier
@@ -544,27 +544,8 @@ class Image(Timestamped):
         Returns:
             Raw JPEG bytes.
         """
-        pixel_formats = {
-            ImageFormat.RGB: TJPF_RGB,
-            ImageFormat.BGR: TJPF_BGR,
-            ImageFormat.RGBA: TJPF_RGBA,
-            ImageFormat.BGRA: TJPF_BGRA,
-            ImageFormat.GRAY: TJPF_GRAY,
-        }
-        pixel_format = pixel_formats.get(self.format)
-        if pixel_format is not None and self.data.dtype == np.uint8:
-            pixels = np.ascontiguousarray(self.data)
-            return get_turbojpeg().encode(  # type: ignore[no-any-return]
-                pixels,
-                quality=quality,
-                pixel_format=pixel_format,
-            )
         rgb_array = self.to_rgb().data
-        return get_turbojpeg().encode(  # type: ignore[no-any-return]
-            rgb_array,
-            quality=quality,
-            pixel_format=TJPF_RGB,
-        )
+        return get_turbojpeg().encode(rgb_array, quality=quality, pixel_format=TJPF_RGB)  # type: ignore[no-any-return]
 
     def lcm_jpeg_encode(self, quality: int = 75, frame_id: str | None = None) -> bytes:
         """Convert to LCM Image message with JPEG-compressed data.
