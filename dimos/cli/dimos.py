@@ -90,16 +90,16 @@ load_dotenv()
 
 SIMULATORS = ("mujoco", "dimsim")
 
-DEFAULT_CONFIG_PATH = CONFIG_DIR / "dimos" / "config"
+DEFAULT_CONFIG_PATH = CONFIG_DIR / "config"
 
 
 def _reject_legacy_config() -> None:
     """~/.config/dimos used to BE the config file; it is now a directory."""
-    legacy = CONFIG_DIR / "dimos"
-    if legacy.is_file():
+    if CONFIG_DIR.is_file():
         typer.echo(
-            f"config found at old path {legacy}, which is now a directory; move it:\n"
-            f"  mv {legacy} {legacy}.tmp && mkdir {legacy} && mv {legacy}.tmp {legacy}/config",
+            f"config found at old path {CONFIG_DIR}, which is now a directory; move it:\n"
+            f"  mv {CONFIG_DIR} {CONFIG_DIR}.tmp && mkdir {CONFIG_DIR}"
+            f" && mv {CONFIG_DIR}.tmp {CONFIG_DIR}/config",
             err=True,
         )
         raise typer.Exit(2)
