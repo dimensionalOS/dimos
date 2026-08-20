@@ -389,3 +389,99 @@ def test_run_dataprep_rejects_shared_obs_action_key() -> None:
     )
     with pytest.raises(ValueError, match="share feature name"):
         run_dataprep(cfg)
+
+
+# ── mixed-width named streams ────────────────────────────────────────────────
+
+
+def _named_stream(values: list[tuple[float, list[str], list[float]]]) -> list[_Obs]:
+    """values = [(ts, names, positions), ...]"""
+
+    @dataclass
+    class N:
+        name: list[str]
+        position: list[float]
+
+    return [_Obs(ts=ts, data=N(name=n, position=p)) for ts, n, p in values]
+
+
+def test_mixed_width_named_stream_aligns_and_holds_missing_joints() -> None:
+    # An action stream that commands (a, b) at t=0, only (a) at t=1, and
+    # (a, b) again at t=2 -- like a trajectory task running amid teleop.
+    store = _FakeStore(
+        {
+            "state": _scalar_stream([(0.0, 1.0), (1.0, 2.0), (2.0, 3.0)]),
+            "target": _named_stream(
+                [
+                    (0.0, ["a", "b"], [0.1, 0.2]),
+                    (1.0, ["a"], [0.5]),
+                    (2.0, ["a", "b"], [0.7, 0.8]),
+                ]
+            ),
+        }
+    )
+    ep = Episode(id="ep_0", start_ts=0.0, end_ts=2.0)
+    streams = {
+        "state": StreamField(stream="state", field="position"),
+        "act": StreamField(stream="target", field="position"),
+    }
+    sync = SyncConfig(anchor="state", rate_hz=1.0, tolerance_ms=100.0, action_shift=0)
+    samples = list(
+        iter_episode_samples(store, ep, streams, sync, obs_keys={"state"}, action_keys={"act"})
+    )
+    assert len(samples) == 3
+    # Every frame is aligned to the (a, b) union; frame 1 holds b's last value.
+    np.testing.assert_allclose(samples[0].action["act"], [0.1, 0.2])
+    np.testing.assert_allclose(samples[1].action["act"], [0.5, 0.2])
+    np.testing.assert_allclose(samples[2].action["act"], [0.7, 0.8])
+
+
+def test_mixed_width_leading_gap_backfills_from_first_report() -> None:
+    # Joint b only appears from t=1 on; the t=0 frame takes b's first value.
+    store = _FakeStore(
+        {
+            "state": _scalar_stream([(0.0, 1.0), (1.0, 2.0)]),
+            "target": _named_stream(
+                [
+                    (0.0, ["a"], [0.5]),
+                    (1.0, ["a", "b"], [0.6, 0.9]),
+                ]
+            ),
+        }
+    )
+    ep = Episode(id="ep_0", start_ts=0.0, end_ts=1.0)
+    streams = {
+        "state": StreamField(stream="state", field="position"),
+        "act": StreamField(stream="target", field="position"),
+    }
+    sync = SyncConfig(anchor="state", rate_hz=1.0, tolerance_ms=100.0, action_shift=0)
+    samples = list(
+        iter_episode_samples(store, ep, streams, sync, obs_keys={"state"}, action_keys={"act"})
+    )
+    np.testing.assert_allclose(samples[0].action["act"], [0.5, 0.9])
+    np.testing.assert_allclose(samples[1].action["act"], [0.6, 0.9])
+
+
+def test_uniform_named_stream_is_untouched() -> None:
+    store = _FakeStore(
+        {
+            "state": _scalar_stream([(0.0, 1.0), (1.0, 2.0)]),
+            "act": _named_stream(
+                [
+                    (0.0, ["a", "b"], [0.1, 0.2]),
+                    (1.0, ["a", "b"], [0.3, 0.4]),
+                ]
+            ),
+        }
+    )
+    ep = Episode(id="ep_0", start_ts=0.0, end_ts=1.0)
+    streams = {
+        "state": StreamField(stream="state", field="position"),
+        "act": StreamField(stream="act", field="position"),
+    }
+    sync = SyncConfig(anchor="state", rate_hz=1.0, tolerance_ms=100.0, action_shift=0)
+    samples = list(
+        iter_episode_samples(store, ep, streams, sync, obs_keys={"state"}, action_keys={"act"})
+    )
+    np.testing.assert_allclose(samples[0].action["act"], [0.1, 0.2])
+    np.testing.assert_allclose(samples[1].action["act"], [0.3, 0.4])

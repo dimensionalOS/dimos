@@ -257,6 +257,50 @@ def inspect_episodes(store: SqliteStore, cfg: EpisodeExtractor) -> EpisodeReport
     return EpisodeReport(episodes=episodes, incomplete=incomplete)
 
 
+def _aligned_named_vectors(msgs: list[Any], ref: StreamField) -> list[NDArray[Any]] | None:
+    """Align variable-width named vector messages onto one joint order.
+
+    Returns one array per message, all shaped to the union of joint names
+    in first-seen order, or None when the stream needs no alignment (empty,
+    unnamed, image-like, or already uniform width). A joint missing from a
+    message holds its previous value; leading gaps take the first value the
+    joint ever reports.
+    """
+    if not msgs:
+        return None
+    names_per_msg: list[list[str]] = []
+    for msg in msgs:
+        names = getattr(msg, "name", None)
+        if not names:
+            return None
+        names_per_msg.append(list(names))
+    if len({len(names) for names in names_per_msg}) == 1:
+        return None
+
+    canonical: list[str] = []
+    seen: set[str] = set()
+    for names in names_per_msg:
+        for name in names:
+            if name not in seen:
+                seen.add(name)
+                canonical.append(name)
+
+    rows: list[dict[str, float]] = []
+    for msg, names in zip(msgs, names_per_msg, strict=True):
+        values = np.asarray(resolve_field(msg, ref), dtype=np.float64).ravel()
+        if len(values) != len(names):
+            return None
+        rows.append(dict(zip(names, values, strict=True)))
+
+    first_value = {name: next(row[name] for row in rows if name in row) for name in canonical}
+    last_value = dict(first_value)
+    aligned: list[NDArray[Any]] = []
+    for row in rows:
+        last_value.update(row)
+        aligned.append(np.array([last_value[name] for name in canonical], dtype=np.float32))
+    return aligned
+
+
 def iter_episode_samples(
     store: SqliteStore,
     episode: Episode,
@@ -305,6 +349,12 @@ def iter_episode_samples(
             msg_list = [msg_list[i] for i in order]
         cached[key] = (ts_list, msg_list)
 
+    # Named vector streams can vary in width within an episode, so frames
+    # only stack after aligning them onto one joint order.
+    aligned: dict[str, list[NDArray[Any]] | None] = {
+        key: _aligned_named_vectors(cached[key][1], ref) for key, ref in streams.items()
+    }
+
     anchor_ts, _ = cached[sync.anchor]
     if not anchor_ts:
         return
@@ -326,8 +376,8 @@ def iter_episode_samples(
         # but not LeRobot-uniform.
         targets = list(anchor_ts)
 
-    def _nearest(key: str, t: float) -> Any | None:
-        ts_list, msg_list = cached[key]
+    def _nearest(key: str, t: float) -> int | None:
+        ts_list, _ = cached[key]
         if not ts_list:
             return None
         # Nearest is i (first sample ≥ t) or i-1 (last sample < t).
@@ -338,7 +388,7 @@ def iter_episode_samples(
             best = i - 1
         else:
             best = i if (ts_list[i] - t) < (t - ts_list[i - 1]) else i - 1
-        return msg_list[best] if abs(ts_list[best] - t) <= tolerance_s else None
+        return best if abs(ts_list[best] - t) <= tolerance_s else None
 
     def _build_frames() -> Iterator[Sample]:
         for t in targets:
@@ -346,11 +396,15 @@ def iter_episode_samples(
             act_dict: dict[str, NDArray[Any]] = {}
             skip = False
             for key, ref in streams.items():
-                msg = _nearest(key, t)
-                if msg is None:
+                index = _nearest(key, t)
+                if index is None:
                     skip = True
                     break
-                arr = resolve_field(msg, ref)
+                aligned_values = aligned[key]
+                if aligned_values is not None:
+                    arr = aligned_values[index]
+                else:
+                    arr = resolve_field(cached[key][1][index], ref)
                 if not is_image_array(arr):
                     arr = arr.astype(np.float32, copy=False)
                 if key in action_keys:
