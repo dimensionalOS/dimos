@@ -436,6 +436,22 @@ class TestPlanningInitialization:
             initialize_execution.assert_called_once_with()
             initialize_planning.assert_called_once_with()
 
+    def test_start_is_idempotent(self, mocker: MockerFixture) -> None:
+        module = ManipulationModule()
+        initialize_planning = mocker.patch.object(module, "_initialize_planning")
+        initialize_execution = mocker.patch.object(module, "_initialize_execution")
+        subscribe = mocker.patch.object(module.coordinator_joint_state, "subscribe")
+
+        try:
+            module.start()
+            module.start()
+
+            initialize_execution.assert_called_once_with()
+            initialize_planning.assert_called_once_with()
+            subscribe.assert_called_once_with(module._on_joint_state)
+        finally:
+            module.stop()
+
     def test_state_is_readable_during_planning_initialization(
         self,
         mocker: MockerFixture,
