@@ -327,11 +327,6 @@ def test_storage_batch_control_reduces_small_message_transactions(tmp_path: Path
 
 
 @pytest.mark.self_hosted
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="Recorder uses a one-slot latest-wins dispatcher while persistence is blocked",
-)
 def test_recorder_preserves_full_stream_mix_during_controlled_encoder_stall(
     tmp_path: Path,
 ) -> None:
