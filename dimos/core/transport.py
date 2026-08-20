@@ -229,19 +229,17 @@ class pSHMTransport(PubSubTransport[T]):
 class pSHMQueueTransport(pSHMTransport[T]):
     """Pickled SHM transport that preserves messages until its ring overflows."""
 
-    def __init__(self, topic: str, *, slots: int = 256, **kwargs: Any) -> None:
+    def __init__(self, topic: str, **kwargs: Any) -> None:
         PubSubTransport.__init__(self, topic)
         from dimos.protocol.pubsub.impl.shmpubsub import ReliablePickleSharedMemory
 
-        self.shm = ReliablePickleSharedMemory(slots=slots, **kwargs)
-        self.slots = slots
+        self.shm = ReliablePickleSharedMemory(**kwargs)
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
         return (
             functools.partial(
                 pSHMQueueTransport,
                 default_capacity=self.shm.config.default_capacity,
-                slots=self.slots,
             ),
             (self.topic,),
         )
