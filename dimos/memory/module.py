@@ -22,6 +22,7 @@ import inspect
 import os
 from pathlib import Path
 import pickle
+import threading
 import time
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
@@ -296,6 +297,7 @@ class RecorderConfig(MemoryModuleConfig):
     shutdown_timeout_s: float = Field(default=10.0, gt=0)
     batch_max_rows: int = Field(default=64, ge=1)
     batch_max_delay_s: float = Field(default=0.010, gt=0)
+    preparation_concurrency: int | None = Field(default=None, ge=1)
 
 
 PoseSetter = Callable[[Any], "Awaitable[Pose | None]"]
@@ -361,6 +363,11 @@ class Recorder(MemoryModule):
         self._pose_setters = self._collect_pose_setters()
         self._recording_queues = {}
         self._recording_subscriptions = []
+        self._preparation_semaphore = (
+            threading.Semaphore(self.config.preparation_concurrency)
+            if self.config.preparation_concurrency is not None
+            else None
+        )
         self._record_writer = RecordWriter(
             max_rows=self.config.batch_max_rows,
             max_delay_s=self.config.batch_max_delay_s,
@@ -443,6 +450,17 @@ class Recorder(MemoryModule):
                 "ingress_queue",
                 max(0.0, time.monotonic() - accepted_monotonic),
             )
+            if self._preparation_semaphore is not None:
+                self._preparation_semaphore.acquire()
+            try:
+                prepare_and_submit(stamped, accepted_monotonic, process_started)
+            finally:
+                if self._preparation_semaphore is not None:
+                    self._preparation_semaphore.release()
+
+        def prepare_and_submit(
+            stamped: tuple[float, Any], accepted_monotonic: float, process_started: float
+        ) -> None:
             loop = self._loop
             if loop is None or not loop.is_running():
                 raise RecorderFailedError("Recorder event loop is not running")
