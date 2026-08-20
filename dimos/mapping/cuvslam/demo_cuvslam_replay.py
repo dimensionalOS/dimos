@@ -42,7 +42,7 @@ from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.mapping.cuvslam.cuvslam import CuvslamOdometry
-from dimos.mapping.odometry_path import OdometryPath
+from dimos.mapping.odometry_hist import OdometryHist
 from dimos.memory2.replay import resolve_db_path
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -129,10 +129,10 @@ def _path_at_true_height(path: Any) -> Any:
 demo_cuvslam_replay = autoconnect(
     CuvslamReplay.blueprint(),
     CuvslamOdometry.blueprint(),
-    OdometryPath.blueprint(),
+    OdometryHist.blueprint(),
     vis_module(
         global_config.viewer,
-        rerun_config={"visual_override": {"world/path": _path_at_true_height}},
+        rerun_config={"visual_override": {"world/odom_hist": _path_at_true_height}},
     ),
     # CuvslamOdometry is a C++ native module, and the native SDK speaks LCM only, so the
     # blueprint pins it rather than inheriting whatever DIMOS_TRANSPORT the shell has

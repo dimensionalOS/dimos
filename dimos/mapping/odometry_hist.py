@@ -27,7 +27,7 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 
 
-class OdometryPathConfig(ModuleConfig):
+class OdometryHistConfig(ModuleConfig):
     # Empty follows the odometry's own frame_id.
     frame_id: str = ""
     min_step_meters: float = 0.02
@@ -35,14 +35,14 @@ class OdometryPathConfig(ModuleConfig):
     min_publish_interval_seconds: float = 0.1
 
 
-class OdometryPath(Module):
+class OdometryHist(Module):
     """``odometry`` in, the trail it has drawn out, as a ``nav_msgs/Path``."""
 
-    config: OdometryPathConfig
+    config: OdometryHistConfig
 
     odometry: In[Odometry]
 
-    path: Out[Path]
+    odom_hist: Out[Path]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -71,4 +71,4 @@ class OdometryPath(Module):
             return
         self._last_publish_ts = msg.ts
         # A copy: Path holds the list by reference.
-        self.path.publish(Path(ts=msg.ts, frame_id=frame_id, poses=list(self._poses)))
+        self.odom_hist.publish(Path(ts=msg.ts, frame_id=frame_id, poses=list(self._poses)))

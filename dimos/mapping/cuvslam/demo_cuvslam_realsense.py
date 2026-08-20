@@ -16,7 +16,7 @@
 
     dimos run demo-cuvslam-realsense --viewer rerun --rerun-host 0.0.0.0
 
-``world/path`` should retrace the route walked; a world frame restart shows up as a
+``world/odom_hist`` should retrace the route walked; a world frame restart shows up as a
 straight jump across it.
 """
 
@@ -28,7 +28,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.mapping.cuvslam.cuvslam import CuvslamOdometry
-from dimos.mapping.odometry_path import OdometryPath
+from dimos.mapping.odometry_hist import OdometryHist
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.visualization.vis_module import vis_module
 
@@ -76,12 +76,12 @@ demo_cuvslam_realsense = (
             enable_imu=False,
         ),
         CuvslamOdometry.blueprint(),
-        OdometryPath.blueprint(),
+        OdometryHist.blueprint(),
         vis_module(
             global_config.viewer,
             rerun_config={
                 "blueprint": cuvslam_rerun_blueprint,
-                "visual_override": {"world/path": path_at_true_height},
+                "visual_override": {"world/odom_hist": path_at_true_height},
             },
         ),
     )
