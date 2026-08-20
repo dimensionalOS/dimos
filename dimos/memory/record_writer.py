@@ -16,12 +16,12 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass
 import queue
 import threading
 import time
-from typing import Any
+from typing import Any, cast
 
 from dimos.memory.backend import Backend, PreparedAppend
 from dimos.memory.recorder_queue import RecorderFailedError
@@ -33,16 +33,47 @@ class RecordWriterStatus:
     committed: int
     transactions: int
     pending: int
+    submitted_payload_bytes: int
+    committed_payload_bytes: int
+    oldest_age_s: float
+    max_pending: int
+    max_oldest_age_s: float
     failed: str | None
     mean_rows_per_transaction: float
     max_rows_per_transaction: int
     commit_p99_ms: float
+    receive_to_commit_p50_ms: float
+    receive_to_commit_p95_ms: float
+    receive_to_commit_p99_ms: float
+    receive_to_commit_max_ms: float
+    streams: dict[str, RecordWriterStreamStatus]
+
+
+@dataclass(frozen=True)
+class RecordWriterStreamStatus:
+    submitted: int
+    committed: int
+    submitted_payload_bytes: int
+    committed_payload_bytes: int
+    receive_to_commit_p99_ms: float
+    receive_to_commit_max_ms: float
 
 
 @dataclass(frozen=True)
 class _Write:
     backend: Backend[Any]
     prepared: PreparedAppend[Any]
+    accepted_monotonic: float
+    stream_name: str
+    payload_bytes: int
+
+
+def _percentile(values: list[float], percentile: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    index = max(0, min(len(ordered) - 1, round(percentile * len(ordered)) - 1))
+    return ordered[index]
 
 
 class RecordWriter:
@@ -56,22 +87,51 @@ class RecordWriter:
         self._submitted = 0
         self._committed = 0
         self._transactions = 0
+        self._submitted_payload_bytes = 0
+        self._committed_payload_bytes = 0
+        self._max_pending = 0
+        self._max_oldest_age_s = 0.0
+        self._oldest_monotonic: float | None = None
         self._failure: BaseException | None = None
-        self._transaction_rows: list[int] = []
-        self._commit_durations_s: list[float] = []
+        self._transaction_rows: deque[int] = deque(maxlen=100_000)
+        self._commit_durations_s: deque[float] = deque(maxlen=100_000)
+        self._receive_to_commit_s: deque[float] = deque(maxlen=100_000)
+        self._stream_submitted: dict[str, int] = defaultdict(int)
+        self._stream_committed: dict[str, int] = defaultdict(int)
+        self._stream_submitted_bytes: dict[str, int] = defaultdict(int)
+        self._stream_committed_bytes: dict[str, int] = defaultdict(int)
+        self._stream_latencies_s: dict[str, deque[float]] = defaultdict(
+            lambda: deque(maxlen=100_000)
+        )
         self._closed = False
         self._thread = threading.Thread(
             target=self._run, name="recorder-sqlite-writer", daemon=True
         )
         self._thread.start()
 
-    def submit(self, backend: Backend[Any], prepared: PreparedAppend[Any]) -> None:
+    def submit(
+        self,
+        backend: Backend[Any],
+        prepared: PreparedAppend[Any],
+        *,
+        accepted_monotonic: float | None = None,
+        stream_name: str | None = None,
+    ) -> None:
+        accepted = time.monotonic() if accepted_monotonic is None else accepted_monotonic
+        name = backend.name if stream_name is None else stream_name
+        payload_bytes = len(prepared.encoded) if prepared.encoded is not None else 0
         with self._lock:
             self._raise_if_failed_locked()
             if self._closed:
                 raise RecorderFailedError("Recorder writer is closed")
             self._submitted += 1
-        self._queue.put(_Write(backend, prepared))
+            self._submitted_payload_bytes += payload_bytes
+            self._stream_submitted[name] += 1
+            self._stream_submitted_bytes[name] += payload_bytes
+            self._max_pending = max(self._max_pending, self._submitted - self._committed)
+            if self._oldest_monotonic is None:
+                self._oldest_monotonic = accepted
+        self._queue.put(_Write(backend, prepared, accepted, name, payload_bytes))
 
     def flush(self, timeout_s: float) -> None:
         deadline = time.monotonic() + timeout_s
@@ -96,20 +156,62 @@ class RecordWriter:
             self._raise_if_failed_locked()
 
     def status(self) -> RecordWriterStatus:
+        now = time.monotonic()
         with self._lock:
-            rows = self._transaction_rows
-            durations = sorted(self._commit_durations_s)
-            p99_index = max(0, min(len(durations) - 1, round(0.99 * len(durations)) - 1))
+            rows = list(self._transaction_rows)
+            durations = list(self._commit_durations_s)
+            latencies = list(self._receive_to_commit_s)
+            oldest_age = 0.0 if self._oldest_monotonic is None else now - self._oldest_monotonic
+            self._max_oldest_age_s = max(self._max_oldest_age_s, oldest_age)
+            streams = {
+                name: RecordWriterStreamStatus(
+                    submitted=self._stream_submitted[name],
+                    committed=self._stream_committed[name],
+                    submitted_payload_bytes=self._stream_submitted_bytes[name],
+                    committed_payload_bytes=self._stream_committed_bytes[name],
+                    receive_to_commit_p99_ms=_percentile(list(self._stream_latencies_s[name]), 0.99)
+                    * 1e3,
+                    receive_to_commit_max_ms=max(self._stream_latencies_s[name], default=0.0) * 1e3,
+                )
+                for name in self._stream_submitted
+            }
             return RecordWriterStatus(
                 submitted=self._submitted,
                 committed=self._committed,
                 transactions=self._transactions,
                 pending=self._submitted - self._committed,
+                submitted_payload_bytes=self._submitted_payload_bytes,
+                committed_payload_bytes=self._committed_payload_bytes,
+                oldest_age_s=oldest_age,
+                max_pending=self._max_pending,
+                max_oldest_age_s=self._max_oldest_age_s,
                 failed=str(self._failure) if self._failure is not None else None,
                 mean_rows_per_transaction=sum(rows) / len(rows) if rows else 0.0,
                 max_rows_per_transaction=max(rows, default=0),
-                commit_p99_ms=durations[p99_index] * 1e3 if durations else 0.0,
+                commit_p99_ms=_percentile(durations, 0.99) * 1e3,
+                receive_to_commit_p50_ms=_percentile(latencies, 0.50) * 1e3,
+                receive_to_commit_p95_ms=_percentile(latencies, 0.95) * 1e3,
+                receive_to_commit_p99_ms=_percentile(latencies, 0.99) * 1e3,
+                receive_to_commit_max_ms=max(latencies, default=0.0) * 1e3,
+                streams=streams,
             )
+
+    def live_status(self) -> dict[str, int | float | str | None]:
+        """Return O(1) counters suitable for frequent benchmark sampling."""
+        now = time.monotonic()
+        with self._lock:
+            oldest_age = 0.0 if self._oldest_monotonic is None else now - self._oldest_monotonic
+            self._max_oldest_age_s = max(self._max_oldest_age_s, oldest_age)
+            return {
+                "submitted": self._submitted,
+                "committed": self._committed,
+                "pending": self._submitted - self._committed,
+                "committed_payload_bytes": self._committed_payload_bytes,
+                "oldest_age_s": oldest_age,
+                "max_pending": self._max_pending,
+                "max_oldest_age_s": self._max_oldest_age_s,
+                "failed": str(self._failure) if self._failure is not None else None,
+            }
 
     def _run(self) -> None:
         stop = False
@@ -165,13 +267,34 @@ class RecordWriter:
             for item in items:
                 backend.notify(item.prepared.observation)
             committed.extend(items)
+            committed_at = time.monotonic()
             with self._lock:
                 self._transactions += 1
                 self._transaction_rows.append(len(items))
                 self._commit_durations_s.append(time.perf_counter() - started)
+                for item in items:
+                    latency = committed_at - item.accepted_monotonic
+                    self._receive_to_commit_s.append(latency)
+                    self._stream_latencies_s[item.stream_name].append(latency)
 
         with self._lock:
             self._committed += len(committed)
+            self._committed_payload_bytes += sum(item.payload_bytes for item in committed)
+            for item in committed:
+                self._stream_committed[item.stream_name] += 1
+                self._stream_committed_bytes[item.stream_name] += item.payload_bytes
+            if self._oldest_monotonic is not None:
+                self._max_oldest_age_s = max(
+                    self._max_oldest_age_s, time.monotonic() - self._oldest_monotonic
+                )
+            self._oldest_monotonic = self._next_accepted_monotonic()
+
+    def _next_accepted_monotonic(self) -> float | None:
+        with self._queue.mutex:
+            for queued in self._queue.queue:
+                if queued is not None:
+                    return cast("_Write", queued).accepted_monotonic
+        return None
 
     def _raise_if_failed_locked(self) -> None:
         if self._failure is not None:

@@ -53,10 +53,13 @@ from dimos.memory.codecs.base import Codec
 from dimos.memory.module import Recorder, RecorderConfig
 from dimos.memory.recorder_fidelity import (
     FidelityReport,
+    RealtimeSample,
     SourceRun,
     StreamProfile,
     WorkloadProfile,
     build_bandwidth_metrics,
+    build_device_write_metrics,
+    build_realtime_metrics,
     calibrate_recording,
     check_source_conformance,
     codec_roundtrip,
@@ -67,6 +70,8 @@ from dimos.memory.recorder_fidelity import (
     payload_digest,
     persisted_payload_sizes,
     persisted_samples,
+    read_device_io,
+    read_io_pressure,
     read_process_io,
     render_report,
     shared_loss_windows,
@@ -165,6 +170,7 @@ class FidelityRecorderConfig(RecorderConfig):
     stall_stream: str | None = None
     stall_after_messages: int = 10
     stall_duration_s: float = 1.0
+    sample_interval_s: float = 0.1
 
 
 class _TimingCodec:
@@ -222,8 +228,10 @@ class FidelityRecorder(Recorder):
 
     @rpc
     def start(self) -> None:
-        self._measurement_started_ns = time.monotonic_ns()
-        self._process_io_start = read_process_io()
+        self._measurement_started_ns: int | None = None
+        self._source_started_ns: int | None = None
+        self._source_ended_ns: int | None = None
+        self._process_io_start: dict[str, int] = {}
         self._fidelity_lock = threading.Lock()
         self._received: dict[str, list[int]] = defaultdict(list)
         self._received_monotonic: dict[str, list[int]] = defaultdict(list)
@@ -231,7 +239,55 @@ class FidelityRecorder(Recorder):
         self._append_s: dict[str, list[float]] = defaultdict(list)
         self._encoded_bytes: dict[str, int] = defaultdict(int)
         self._stall_fired = False
+        self._stall_started_ns: int | None = None
+        self._stall_ended_ns: int | None = None
+        self._samples: list[dict[str, Any]] = []
+        self._sampling_stop = threading.Event()
+        self._sampling_thread: threading.Thread | None = None
         super().start()
+
+    @rpc
+    def begin_measurement(self) -> None:
+        """Start low-overhead recorder and storage sampling."""
+        self._measurement_started_ns = time.monotonic_ns()
+        self._process_io_start = read_process_io()
+        self._sampling_stop.clear()
+        self._sampling_thread = threading.Thread(
+            target=self._sample_loop,
+            name="recorder-fidelity-sampler",
+            daemon=True,
+        )
+        self._sampling_thread.start()
+
+    @rpc
+    def end_measurement(self, source_started_ns: int, source_ended_ns: int) -> None:
+        """Record the exact source-active bounds in the shared monotonic clock."""
+        self._source_started_ns = source_started_ns
+        self._source_ended_ns = source_ended_ns
+
+    def _sample_loop(self) -> None:
+        while not self._sampling_stop.is_set():
+            self._take_sample()
+            self._sampling_stop.wait(self.config.sample_interval_s)
+
+    def _take_sample(self) -> None:
+        now_ns = time.monotonic_ns()
+        queues = {
+            name: recording_queue.status().__dict__
+            for name, recording_queue in self._recording_queues.items()
+        }
+        sample = {
+            "monotonic_ns": now_ns,
+            "queues": queues,
+            "writer": self._record_writer.live_status(),
+            "sqlite_files": sqlite_file_sizes(Path(self.config.db_path)),
+            "process_io": counter_delta(self._process_io_start, read_process_io()),
+            "process_cpu_s": time.process_time(),
+            "device_io": read_device_io(Path(self.config.db_path).parent),
+            "io_pressure": read_io_pressure(),
+        }
+        with self._fidelity_lock:
+            self._samples.append(sample)
 
     def _port_to_stream(self, name: str, input_topic: In[Any], stream: Stream[Any]) -> None:
         """Install taps around the same callback stages used by Recorder."""
@@ -246,7 +302,10 @@ class FidelityRecorder(Recorder):
                 if count < self.config.stall_after_messages or self._stall_fired:
                     return
                 self._stall_fired = True
+                self._stall_started_ns = time.monotonic_ns()
             time.sleep(self.config.stall_duration_s)
+            with self._fidelity_lock:
+                self._stall_ended_ns = time.monotonic_ns()
 
         def record_codec(duration: float, size: int) -> None:
             with self._fidelity_lock:
@@ -275,10 +334,27 @@ class FidelityRecorder(Recorder):
 
     @rpc
     def fidelity_snapshot(self) -> dict[str, Any]:
+        if self._measurement_started_ns is None:
+            raise RuntimeError("measurement has not started")
+        self._take_sample()
         process_io = counter_delta(self._process_io_start, read_process_io())
         active_files = sqlite_file_sizes(Path(self.config.db_path))
-        measurement_elapsed_s = (time.monotonic_ns() - self._measurement_started_ns) / 1e9
+        now_ns = time.monotonic_ns()
+        source_started_ns = self._source_started_ns or self._measurement_started_ns
+        source_ended_ns = self._source_ended_ns or now_ns
+        source_active_s = max(0.0, (source_ended_ns - source_started_ns) / 1e9)
+        drain_elapsed_s = (
+            max(0.0, (now_ns - source_ended_ns) / 1e9) if self._source_ended_ns is not None else 0.0
+        )
         with self._fidelity_lock:
+            samples = [
+                {
+                    "elapsed_s": (sample["monotonic_ns"] - source_started_ns) / 1e9,
+                    "source_active": source_started_ns <= sample["monotonic_ns"] <= source_ended_ns,
+                    **{key: value for key, value in sample.items() if key != "monotonic_ns"},
+                }
+                for sample in self._samples
+            ]
             return {
                 "received": {name: list(values) for name, values in self._received.items()},
                 "received_monotonic": {
@@ -288,11 +364,25 @@ class FidelityRecorder(Recorder):
                 "append_s": {name: list(values) for name, values in self._append_s.items()},
                 "encoded_bytes": dict(self._encoded_bytes),
                 "stall_fired": self._stall_fired,
-                "measurement_elapsed_s": measurement_elapsed_s,
+                "stall_end_elapsed_s": (
+                    (self._stall_ended_ns - source_started_ns) / 1e9
+                    if self._stall_ended_ns is not None
+                    else None
+                ),
+                "source_active_s": source_active_s,
+                "drain_elapsed_s": drain_elapsed_s,
                 "process_io": process_io,
                 "sqlite_active_files": active_files,
                 "recorder": super().recording_status(),
+                "samples": samples,
             }
+
+    @rpc
+    def stop(self) -> None:
+        self._sampling_stop.set()
+        if self._sampling_thread is not None:
+            self._sampling_thread.join(timeout=1.0)
+        super().stop()
 
 
 def _image_template(stream: StreamProfile, seed: int) -> np.ndarray[Any, np.dtype[Any]]:
@@ -432,18 +522,21 @@ def _canonical_profile(profile: WorkloadProfile) -> WorkloadProfile:
     return profile.model_copy(update={"streams": tuple(streams)})
 
 
-def _wait_for_quiet(recorder: Any, *, timeout_s: float = 10.0) -> dict[str, Any]:
+def _wait_for_quiet(
+    recorder: Any, *, expected_committed: int, timeout_s: float = 10.0
+) -> dict[str, Any]:
     deadline = time.monotonic() + timeout_s
-    previous = -1
-    unchanged_since = time.monotonic()
     snapshot: dict[str, Any] = {}
     while time.monotonic() < deadline:
         snapshot = recorder.fidelity_snapshot()
-        count = sum(len(values) for values in snapshot["append_s"].values())
-        if count != previous:
-            previous = count
-            unchanged_since = time.monotonic()
-        elif time.monotonic() - unchanged_since >= 0.5:
+        status = snapshot["recorder"]
+        queues = status["queues"].values()
+        writer = status["writer"]
+        if (
+            all(queue_status["pending"] == 0 for queue_status in queues)
+            and writer["pending"] == 0
+            and writer["committed"] >= expected_committed
+        ):
             return snapshot
         time.sleep(0.05)
     return snapshot
@@ -504,20 +597,33 @@ def run_harness(
     )
     coordinator = ModuleCoordinator.build(blueprint)
     lock_thread: threading.Thread | None = None
+    lock_window_ns: list[int] = []
     try:
+        source_proxy = coordinator.get_instance(SyntheticSource)
+        recorder_proxy = coordinator.get_instance(FidelityRecorder)
+        recorder_proxy.begin_measurement()
         if mode == "sqlite-lock":
             lock_thread = threading.Thread(
                 target=_hold_writer_lock,
-                args=(db_path, 0.75, stall_duration_s),
+                args=(db_path, 0.75, stall_duration_s, lock_window_ns),
                 daemon=True,
             )
             lock_thread.start()
-        source_proxy = coordinator.get_instance(SyntheticSource)
-        recorder_proxy = coordinator.get_instance(FidelityRecorder)
         source_run = SourceRun.model_validate(
             source_proxy.run_profile(profile.model_dump(), duration_s)
         )
-        snapshot = _wait_for_quiet(recorder_proxy)
+        published = [
+            sample for stream in profile.streams for sample in source_run.published(stream.name)
+        ]
+        source_started_ns = min(sample.published_monotonic_ns for sample in published)
+        source_ended_ns = max(sample.published_monotonic_ns for sample in published)
+        recorder_proxy.end_measurement(source_started_ns, source_ended_ns)
+        snapshot = _wait_for_quiet(
+            recorder_proxy,
+            expected_committed=len(published),
+        )
+        if len(lock_window_ns) == 2:
+            snapshot["stall_end_elapsed_s"] = (lock_window_ns[1] - source_started_ns) / 1e9
     finally:
         if lock_thread is not None:
             lock_thread.join(timeout=stall_duration_s + 2)
@@ -549,16 +655,29 @@ def run_harness(
         stream.name: len(source_run.published(stream.name)) for stream in profile.streams
     }
     persisted_counts = {name: len(samples) for name, samples in persisted.items()}
+    source_active_s = float(snapshot.get("source_active_s", duration_s))
+    drain_elapsed_s = float(snapshot.get("drain_elapsed_s", 0.0))
+    samples = tuple(RealtimeSample.model_validate(sample) for sample in snapshot.get("samples", []))
+    writer_status = snapshot.get("recorder", {}).get("writer", {})
     bandwidth = build_bandwidth_metrics(
         profile,
-        duration_s=duration_s,
-        measurement_elapsed_s=float(snapshot.get("measurement_elapsed_s", duration_s)),
+        duration_s=source_active_s,
+        measurement_elapsed_s=source_active_s,
+        drain_elapsed_s=drain_elapsed_s,
         published_counts=published_counts,
         persisted_counts=persisted_counts,
         persisted_bytes=payload_sizes,
         active_files=snapshot.get("sqlite_active_files", {}),
         final_files=sqlite_file_sizes(db_path),
         process_io=snapshot.get("process_io", {}),
+    )
+    realtime = build_realtime_metrics(
+        mode=mode,
+        source_active_s=source_active_s,
+        drain_elapsed_s=drain_elapsed_s,
+        writer=writer_status,
+        samples=samples,
+        stall_end_elapsed_s=snapshot.get("stall_end_elapsed_s"),
     )
     report = FidelityReport(
         profile=profile.name,
@@ -580,6 +699,9 @@ def run_harness(
             },
         },
         bandwidth=bandwidth,
+        realtime=realtime,
+        device=build_device_write_metrics(samples, source_active_s),
+        samples=samples,
         environment=environment_metadata(),
         recorder=snapshot.get("recorder", {}),
     )
@@ -691,13 +813,22 @@ def run_capacity_search(
     return result
 
 
-def _hold_writer_lock(path: Path, delay_s: float, duration_s: float) -> None:
+def _hold_writer_lock(
+    path: Path,
+    delay_s: float,
+    duration_s: float,
+    window_ns: list[int] | None = None,
+) -> None:
     time.sleep(delay_s)
     connection = sqlite3.connect(path, timeout=10.0)
     try:
         connection.execute("BEGIN IMMEDIATE")
+        if window_ns is not None:
+            window_ns.append(time.monotonic_ns())
         time.sleep(duration_s)
         connection.rollback()
+        if window_ns is not None:
+            window_ns.append(time.monotonic_ns())
     finally:
         connection.close()
 
@@ -911,7 +1042,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             + "\n"
         )
         print(render_report(baseline))
-        return 0 if baseline.source_valid and baseline.faithful else 1
+        return 0 if baseline.successful else 1
     if args.transport:
         profile = profile.with_transport(args.transport)
     report = run_harness(
@@ -922,7 +1053,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         stall_duration_s=args.stall_duration,
     )
     print(render_report(report))
-    return 0 if report.source_valid and report.faithful else 1
+    return 0 if report.successful else 1
 
 
 if __name__ == "__main__":

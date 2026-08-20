@@ -24,11 +24,14 @@ from dimos.memory.recorder_fidelity import (
     FidelityReport,
     PersistedSample,
     PublishedSample,
+    RealtimeSample,
     SourceConformance,
     StreamFidelity,
     StreamProfile,
     WorkloadProfile,
     build_bandwidth_metrics,
+    build_device_write_metrics,
+    build_realtime_metrics,
     check_source_conformance,
     compare_stream,
     counter_delta,
@@ -315,6 +318,7 @@ def test_bandwidth_metrics_distinguish_payload_database_and_device_bytes() -> No
         profile,
         duration_s=2.0,
         measurement_elapsed_s=4.0,
+        drain_elapsed_s=0.25,
         published_counts={"imu": 10},
         persisted_counts={"imu": 8},
         persisted_bytes={"imu": 400},
@@ -324,6 +328,7 @@ def test_bandwidth_metrics_distinguish_payload_database_and_device_bytes() -> No
     )
 
     assert result.offered_raw_bytes == 1_000
+    assert result.drain_elapsed_s == 0.25
     assert result.persisted_payload_bytes == 400
     assert result.sqlite_active_bytes == 700
     assert result.sqlite_final_bytes == 600
@@ -365,6 +370,87 @@ def test_bandwidth_metrics_reject_incomplete_kernel_block_counter() -> None:
     assert result.process_reported_block_write_bytes == 4_096
     assert result.process_block_write_bytes is None
     assert result.process_block_write_mib_s is None
+
+
+def _realtime_sample(
+    elapsed_s: float,
+    backlog_s: float,
+    *,
+    source_active: bool = True,
+    sectors_written: int = 0,
+    writes_completed: int = 0,
+) -> RealtimeSample:
+    return RealtimeSample(
+        elapsed_s=elapsed_s,
+        source_active=source_active,
+        queues={"camera": {"oldest_age_s": backlog_s}},
+        writer={"oldest_age_s": backlog_s},
+        sqlite_files={},
+        process_io={},
+        process_cpu_s=0.0,
+        device_io={
+            "device": "nvme0n1",
+            "writes_completed": writes_completed,
+            "sectors_written": sectors_written,
+            "write_time_ms": writes_completed * 2,
+            "io_time_ms": writes_completed,
+        },
+        io_pressure={"some_total": writes_completed * 100},
+    )
+
+
+def test_realtime_metrics_reject_eventual_drain_after_growing_backlog() -> None:
+    samples = tuple(_realtime_sample(float(second), second * 0.01) for second in range(11))
+
+    result = build_realtime_metrics(
+        mode="baseline",
+        source_active_s=10.0,
+        drain_elapsed_s=1.0,
+        writer={"receive_to_commit_p99_ms": 80.0, "receive_to_commit_max_ms": 150.0},
+        samples=samples,
+        stall_end_elapsed_s=None,
+    )
+
+    assert result.passed is False
+    assert result.final_backlog_age_ms == pytest.approx(100.0)
+    assert any("backlog median grew" in violation for violation in result.violations)
+
+
+def test_realtime_metrics_measure_three_sample_stall_recovery() -> None:
+    samples = (
+        _realtime_sample(1.0, 1.0),
+        _realtime_sample(2.0, 0.2),
+        _realtime_sample(2.1, 0.05),
+        _realtime_sample(2.2, 0.04),
+        _realtime_sample(2.3, 0.03),
+    )
+
+    result = build_realtime_metrics(
+        mode="encoder-stall",
+        source_active_s=3.0,
+        drain_elapsed_s=0.0,
+        writer={},
+        samples=samples,
+        stall_end_elapsed_s=2.0,
+    )
+
+    assert result.passed is True
+    assert result.recovery_s == pytest.approx(0.3)
+
+
+def test_device_metrics_report_active_window_write_rate() -> None:
+    samples = (
+        _realtime_sample(0.0, 0.0, sectors_written=100, writes_completed=10),
+        _realtime_sample(2.0, 0.0, sectors_written=4_196, writes_completed=110),
+    )
+
+    result = build_device_write_metrics(samples, source_active_s=2.0)
+
+    assert result.available is True
+    assert result.write_bytes == 4_096 * 512
+    assert result.write_mib_s == pytest.approx(1.0)
+    assert result.write_iops == pytest.approx(50.0)
+    assert result.average_write_time_ms == pytest.approx(2.0)
 
 
 def test_process_io_parser_and_delta_are_portable(tmp_path: Path) -> None:

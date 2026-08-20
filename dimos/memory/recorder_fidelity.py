@@ -207,6 +207,7 @@ class StreamBandwidth(BaseModel):
 
 class BandwidthMetrics(BaseModel):
     measurement_elapsed_s: float
+    drain_elapsed_s: float = 0.0
     offered_raw_bytes: int
     persisted_payload_bytes: int
     sqlite_active_bytes: int
@@ -229,6 +230,43 @@ class BandwidthMetrics(BaseModel):
     streams: dict[str, StreamBandwidth] = Field(default_factory=dict)
 
 
+class RealtimeSample(BaseModel):
+    elapsed_s: float
+    source_active: bool
+    queues: dict[str, dict[str, int | float | str | None]]
+    writer: dict[str, int | float | str | None]
+    sqlite_files: dict[str, int]
+    process_io: dict[str, int]
+    process_cpu_s: float
+    device_io: dict[str, int | str] = Field(default_factory=dict)
+    io_pressure: dict[str, float | int] = Field(default_factory=dict)
+
+
+class RealtimeMetrics(BaseModel):
+    source_active_s: float
+    drain_elapsed_s: float
+    receive_to_commit_p99_ms: float
+    receive_to_commit_max_ms: float
+    initial_backlog_median_ms: float
+    final_backlog_median_ms: float
+    final_backlog_age_ms: float
+    recovery_s: float | None = None
+    passed: bool
+    violations: tuple[str, ...] = ()
+
+
+class DeviceWriteMetrics(BaseModel):
+    available: bool
+    device: str | None = None
+    write_bytes: int | None = None
+    write_mib_s: float | None = None
+    write_iops: float | None = None
+    average_write_time_ms: float | None = None
+    utilization: float | None = None
+    io_pressure_stall_s: float | None = None
+    unavailable_reason: str | None = None
+
+
 class FidelityReport(BaseModel):
     profile: str
     mode: str
@@ -240,8 +278,17 @@ class FidelityReport(BaseModel):
     shared_loss_windows: tuple[tuple[float, float], ...] = ()
     timings: dict[str, dict[str, float | int]] = Field(default_factory=dict)
     bandwidth: BandwidthMetrics | None = None
+    realtime: RealtimeMetrics | None = None
+    device: DeviceWriteMetrics | None = None
+    samples: tuple[RealtimeSample, ...] = ()
     environment: dict[str, str | int] = Field(default_factory=dict)
     recorder: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def successful(self) -> bool:
+        return (
+            self.source_valid and self.faithful and (self.realtime is None or self.realtime.passed)
+        )
 
     def write(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -585,6 +632,51 @@ def read_process_io(path: Path = Path("/proc/self/io")) -> dict[str, int]:
     return counters
 
 
+def read_device_io(path: Path) -> dict[str, int | str]:
+    """Read Linux counters for the block device backing *path*."""
+
+    try:
+        device = path.stat().st_dev
+        major, minor = os.major(device), os.minor(device)
+        lines = Path("/proc/diskstats").read_text().splitlines()
+    except (FileNotFoundError, PermissionError, OSError):
+        return {}
+    for line in lines:
+        fields = line.split()
+        if len(fields) < 14 or int(fields[0]) != major or int(fields[1]) != minor:
+            continue
+        return {
+            "device": fields[2],
+            "writes_completed": int(fields[7]),
+            "sectors_written": int(fields[9]),
+            "write_time_ms": int(fields[10]),
+            "io_time_ms": int(fields[12]),
+        }
+    return {}
+
+
+def read_io_pressure(path: Path = Path("/proc/pressure/io")) -> dict[str, float | int]:
+    """Read system-wide Linux I/O pressure counters when available."""
+
+    try:
+        lines = path.read_text().splitlines()
+    except (FileNotFoundError, PermissionError, OSError):
+        return {}
+    result: dict[str, float | int] = {}
+    for line in lines:
+        fields = line.split()
+        if not fields:
+            continue
+        prefix = fields[0]
+        for field in fields[1:]:
+            name, separator, value = field.partition("=")
+            if not separator:
+                continue
+            key = f"{prefix}_{name}"
+            result[key] = int(value) if name == "total" else float(value)
+    return result
+
+
 def counter_delta(before: Mapping[str, int], after: Mapping[str, int]) -> dict[str, int]:
     """Calculate monotonic counter growth for keys present in both snapshots."""
 
@@ -611,6 +703,7 @@ def build_bandwidth_metrics(
     *,
     duration_s: float,
     measurement_elapsed_s: float,
+    drain_elapsed_s: float = 0.0,
     published_counts: Mapping[str, int],
     persisted_counts: Mapping[str, int],
     persisted_bytes: Mapping[str, int],
@@ -658,6 +751,7 @@ def build_bandwidth_metrics(
     process_syscw = process_io.get("syscw")
     return BandwidthMetrics(
         measurement_elapsed_s=measurement_elapsed_s,
+        drain_elapsed_s=drain_elapsed_s,
         offered_raw_bytes=offered_raw_bytes,
         persisted_payload_bytes=persisted_payload_bytes,
         sqlite_active_bytes=sqlite_active_bytes,
@@ -697,6 +791,126 @@ def build_bandwidth_metrics(
     )
 
 
+def _sample_backlog_age_s(sample: RealtimeSample) -> float:
+    queue_age = max(
+        (float(status.get("oldest_age_s") or 0.0) for status in sample.queues.values()),
+        default=0.0,
+    )
+    return max(queue_age, float(sample.writer.get("oldest_age_s") or 0.0))
+
+
+def build_realtime_metrics(
+    *,
+    mode: str,
+    source_active_s: float,
+    drain_elapsed_s: float,
+    writer: Mapping[str, Any],
+    samples: Sequence[RealtimeSample],
+    stall_end_elapsed_s: float | None,
+) -> RealtimeMetrics:
+    """Apply the recorder's bounded-latency and stall-recovery contract."""
+
+    active = [sample for sample in samples if sample.source_active]
+    initial = [_sample_backlog_age_s(sample) for sample in active if sample.elapsed_s <= 5.0]
+    final = [
+        _sample_backlog_age_s(sample)
+        for sample in active
+        if sample.elapsed_s >= max(0.0, source_active_s - 5.0)
+    ]
+    initial_median = statistics.median(initial) if initial else 0.0
+    final_median = statistics.median(final) if final else 0.0
+    final_age = _sample_backlog_age_s(active[-1]) if active else 0.0
+    p99_ms = float(writer.get("receive_to_commit_p99_ms") or 0.0)
+    max_ms = float(writer.get("receive_to_commit_max_ms") or 0.0)
+    violations: list[str] = []
+    recovery_s: float | None = None
+
+    if mode == "baseline":
+        if p99_ms >= 100.0:
+            violations.append(f"receive-to-commit p99 {p99_ms:.3f}ms is not below 100ms")
+        if final_age >= 0.1:
+            violations.append(f"final backlog age {final_age:.3f}s is not below 0.100s")
+        if final_median - initial_median > 0.010:
+            violations.append(
+                f"backlog median grew by {final_median - initial_median:.3f}s; limit is 0.010s"
+            )
+    elif stall_end_elapsed_s is not None:
+        below = 0
+        for sample in samples:
+            if sample.elapsed_s < stall_end_elapsed_s:
+                continue
+            if _sample_backlog_age_s(sample) < 0.1:
+                below += 1
+                if below == 3:
+                    recovery_s = sample.elapsed_s - stall_end_elapsed_s
+                    break
+            else:
+                below = 0
+        if recovery_s is None or recovery_s > 2.0:
+            rendered = "not observed" if recovery_s is None else f"{recovery_s:.3f}s"
+            violations.append(f"stall recovery was {rendered}; limit is 2.000s")
+
+    return RealtimeMetrics(
+        source_active_s=source_active_s,
+        drain_elapsed_s=drain_elapsed_s,
+        receive_to_commit_p99_ms=p99_ms,
+        receive_to_commit_max_ms=max_ms,
+        initial_backlog_median_ms=initial_median * 1e3,
+        final_backlog_median_ms=final_median * 1e3,
+        final_backlog_age_ms=final_age * 1e3,
+        recovery_s=recovery_s,
+        passed=not violations,
+        violations=tuple(violations),
+    )
+
+
+def build_device_write_metrics(
+    samples: Sequence[RealtimeSample], source_active_s: float
+) -> DeviceWriteMetrics:
+    """Summarize device-wide deltas over the source-active window."""
+
+    active = [sample for sample in samples if sample.source_active and sample.device_io]
+    if len(active) < 2 or source_active_s <= 0:
+        return DeviceWriteMetrics(
+            available=False,
+            unavailable_reason="backing block device counters unavailable",
+        )
+    first, last = active[0], active[-1]
+    if first.device_io.get("device") != last.device_io.get("device"):
+        return DeviceWriteMetrics(available=False, unavailable_reason="backing device changed")
+    elapsed = max(last.elapsed_s - first.elapsed_s, 1e-9)
+    writes = max(
+        0,
+        int(last.device_io.get("writes_completed", 0))
+        - int(first.device_io.get("writes_completed", 0)),
+    )
+    sectors = max(
+        0,
+        int(last.device_io.get("sectors_written", 0))
+        - int(first.device_io.get("sectors_written", 0)),
+    )
+    write_time_ms = max(
+        0,
+        int(last.device_io.get("write_time_ms", 0)) - int(first.device_io.get("write_time_ms", 0)),
+    )
+    io_time_ms = max(
+        0,
+        int(last.device_io.get("io_time_ms", 0)) - int(first.device_io.get("io_time_ms", 0)),
+    )
+    first_pressure = int(first.io_pressure.get("some_total", 0))
+    last_pressure = int(last.io_pressure.get("some_total", 0))
+    return DeviceWriteMetrics(
+        available=True,
+        device=str(first.device_io["device"]),
+        write_bytes=sectors * 512,
+        write_mib_s=sectors * 512 / elapsed / (1024 * 1024),
+        write_iops=writes / elapsed,
+        average_write_time_ms=write_time_ms / writes if writes else 0.0,
+        utilization=io_time_ms / (elapsed * 1_000),
+        io_pressure_stall_s=max(0, last_pressure - first_pressure) / 1e6,
+    )
+
+
 def environment_metadata() -> dict[str, str | int]:
     return {
         "platform": platform.platform(),
@@ -726,7 +940,7 @@ def render_report(report: FidelityReport) -> str:
     """Render a compact operator-facing summary."""
 
     lines = [
-        f"Recorder fidelity: {'PASS' if report.faithful and report.source_valid else 'FAIL'}",
+        f"Recorder fidelity: {'PASS' if report.successful else 'FAIL'}",
         f"profile={report.profile} mode={report.mode} duration={report.duration_s:.1f}s",
         "",
         "stream                 source   receive   stored   missing   corrupt   max-gap",
@@ -769,6 +983,28 @@ def render_report(report: FidelityReport) -> str:
                 f"recorder process block writes: {block_rate}",
             )
         )
+    if report.realtime is not None:
+        realtime = report.realtime
+        lines.extend(
+            (
+                "",
+                f"receive-to-commit p99: {realtime.receive_to_commit_p99_ms:.2f} ms",
+                f"receive-to-commit max: {realtime.receive_to_commit_max_ms:.2f} ms",
+                f"source active / drain: {realtime.source_active_s:.3f}s / "
+                f"{realtime.drain_elapsed_s:.3f}s",
+                f"realtime SLA: {'PASS' if realtime.passed else 'FAIL'}",
+            )
+        )
+        lines.extend(f"  - {violation}" for violation in realtime.violations)
+    if report.device is not None:
+        if report.device.available:
+            lines.append(
+                f"device {report.device.device}: {report.device.write_mib_s:.2f} MiB/s, "
+                f"{report.device.average_write_time_ms:.2f} ms/write, "
+                f"{report.device.utilization:.1%} utilized"
+            )
+        else:
+            lines.append(f"device writes: unavailable ({report.device.unavailable_reason})")
     return "\n".join(lines)
 
 

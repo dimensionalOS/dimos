@@ -29,6 +29,10 @@ class _Backend:
         self.events = events
         self.fail = fail
 
+    @property
+    def name(self) -> str:
+        return "camera"
+
     def persist_prepared(self, prepared: PreparedAppend[Any]) -> Observation[Any]:
         self.events.append(f"persist-{prepared.observation.ts}")
         if self.fail:
@@ -45,8 +49,8 @@ class _Backend:
         self.events.append(f"notify-{observation.ts}")
 
 
-def _prepared(ts: float) -> PreparedAppend[Any]:
-    return PreparedAppend(Observation(ts=ts, _data=ts), None)
+def _prepared(ts: float, encoded: bytes | None = None) -> PreparedAppend[Any]:
+    return PreparedAppend(Observation(ts=ts, _data=ts), encoded)
 
 
 def test_writer_groups_rows_and_notifies_only_after_commit() -> None:
@@ -55,7 +59,7 @@ def test_writer_groups_rows_and_notifies_only_after_commit() -> None:
     writer = RecordWriter(max_rows=3, max_delay_s=1.0)
 
     for ts in (1.0, 2.0, 3.0):
-        writer.submit(backend, _prepared(ts))
+        writer.submit(backend, _prepared(ts, b"data"), accepted_monotonic=0.0)
     writer.close(timeout_s=1.0)
 
     assert events == [
@@ -67,10 +71,14 @@ def test_writer_groups_rows_and_notifies_only_after_commit() -> None:
         "notify-2.0",
         "notify-3.0",
     ]
-    assert writer.status().transactions == 1
-    assert writer.status().committed == 3
-    assert writer.status().mean_rows_per_transaction == 3.0
-    assert writer.status().max_rows_per_transaction == 3
+    status = writer.status()
+    assert status.transactions == 1
+    assert status.committed == 3
+    assert status.committed_payload_bytes == 12
+    assert status.mean_rows_per_transaction == 3.0
+    assert status.max_rows_per_transaction == 3
+    assert status.receive_to_commit_p99_ms > 0
+    assert status.streams["camera"].committed_payload_bytes == 12
 
 
 def test_writer_rolls_back_and_reports_failure() -> None:
