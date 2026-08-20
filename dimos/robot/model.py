@@ -17,7 +17,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
+from functools import cached_property
 import os
 from pathlib import Path
 import re
@@ -58,12 +59,6 @@ class RobotModel:
     _package_paths: tuple[tuple[str, Path | str | os.PathLike[str]], ...] = ()
     _xacro_args: tuple[tuple[str, str], ...] = ()
     _fixed_frames: tuple[_FixedFrame, ...] = ()
-    _loaded: LoadedRobotModel | None = field(
-        default=None,
-        init=False,
-        repr=False,
-        compare=False,
-    )
 
     @classmethod
     def from_file(
@@ -107,9 +102,10 @@ class RobotModel:
 
     def load(self) -> LoadedRobotModel:
         """Materialize and memoize the model for a backend adapter."""
-        if self._loaded is not None:
-            return self._loaded
+        return self._loaded
 
+    @cached_property
+    def _loaded(self) -> LoadedRobotModel:
         source_path = Path(os.fspath(self._source_path)).resolve()
         package_paths = _normalize_package_paths(dict(self._package_paths))
         if not source_path.exists():
@@ -123,14 +119,12 @@ class RobotModel:
         if self._fixed_frames:
             xml = _add_fixed_frames(xml, self._fixed_frames)
 
-        loaded = LoadedRobotModel(xml, source_path, package_paths)
-        object.__setattr__(self, "_loaded", loaded)
-        return loaded
+        return LoadedRobotModel(xml, source_path, package_paths)
 
     def __getstate__(self) -> dict[str, object]:
         """Exclude materialized XML when configurations cross worker processes."""
         state = dict(self.__dict__)
-        state["_loaded"] = None
+        state.pop("_loaded", None)
         return state
 
     def __setstate__(self, state: dict[str, object]) -> None:

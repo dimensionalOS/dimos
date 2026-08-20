@@ -18,6 +18,8 @@ import pickle
 from pydantic import ValidationError
 import pytest
 
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.model import RobotModel
 
@@ -52,3 +54,20 @@ def test_robot_model_config_preserves_model_across_worker_pickle(tmp_path: Path)
     restored = pickle.loads(pickle.dumps(config))
 
     assert '<link name="tool"' in restored.model.load().xml
+
+
+def test_robot_model_survives_blueprint_config_round_trip(tmp_path: Path) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text("<robot name='arm'><link name='base'/></robot>")
+    config = RobotModelConfig(
+        name="arm",
+        model=RobotModel.from_file(urdf),
+        joint_names=[],
+    )
+    blueprint = ManipulationModule.blueprint(robots=[config])
+
+    parsed = BlueprintConfigParser(blueprint).parse(environ={})
+
+    kwargs = parsed.module_kwargs(blueprint.blueprints[0].name)
+    assert kwargs["robots"][0]["model"]["_source_path"] == urdf
+    assert "_loaded" not in kwargs["robots"][0]["model"]
