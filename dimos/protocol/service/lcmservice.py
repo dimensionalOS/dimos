@@ -19,12 +19,13 @@ import os
 import platform
 import threading
 import traceback
-from typing import Any
+from typing import Any, ClassVar
 
 import lcm as lcm_mod
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.protocol.service.spec import BaseConfig, Service
+from dimos.core.global_config import TransportBackend
+from dimos.protocol.service.spec import Service, SessionConfig
 from dimos.protocol.service.system_configurator.base import configure_system
 from dimos.protocol.service.system_configurator.lcm_config import lcm_configurators
 from dimos.utils.logging_config import setup_logger
@@ -47,7 +48,9 @@ def autoconf(check_only: bool = False) -> None:
     configure_system(checks, check_only=check_only)
 
 
-class LCMConfig(BaseConfig):
+class LCMConfig(SessionConfig):
+    transport: ClassVar[TransportBackend] = "lcm"
+
     ttl: int = 0
     url: str = _DEFAULT_LCM_URL
     lcm: lcm_mod.LCM | None = None

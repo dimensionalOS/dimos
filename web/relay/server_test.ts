@@ -93,10 +93,12 @@ function datagramQueue(readable: ReadableStream<Uint8Array>): () => Promise<Msg>
 /**
  * Collect forwarded data frames arriving on relay-initiated uni streams
  * (one frame per latest stream; back-to-back frames on a reliable channel's
- * persistent stream).
+ * persistent stream). `onAcceptLoopDeath` fires if the accept loop errors
+ * for good (client-side bug 10).
  */
 function frameQueue(
   wt: WebTransport,
+  onAcceptLoopDeath?: (e: unknown) => void,
 ): () => Promise<{ header: FrameHeader; payload: Uint8Array }> {
   const queue: { header: FrameHeader; payload: Uint8Array }[] = [];
   const waiters: ((f: { header: FrameHeader; payload: Uint8Array }) => void)[] = [];
@@ -117,7 +119,7 @@ function frameQueue(
         }
       })().catch(() => {});
     }
-  })().catch(() => {});
+  })().catch((e) => onAcceptLoopDeath?.(e));
   return () => {
     const frame = queue.shift();
     if (frame) return Promise.resolve(frame);
@@ -130,6 +132,190 @@ async function sendRobotFrame(robot: WebTransport, header: FrameHeader, payload:
   const writer = stream.writable.getWriter();
   await writer.write(encodeDataFrame(header, payload));
   await writer.close(); // FIN is delayed by Deno (bug 2); the relay reads by byte count
+}
+
+// Test that one suspended viewer must cost only itself. Its stale streams are
+// reset ("aborted, not queued") while the healthy viewer keeps receiving fresh
+// frames at full rate. This is also the permanent proof that reaping keeps
+// working against real quinn streams.
+//
+// MUST RUN FIRST in this file: a preceding test's teardown churn (or plain CPU
+// starvation, e.g. a 2-CPU CI runner) lets a relay reset race Deno's preamble
+// read of a not-yet-accepted incoming uni stream - the client-side analog of
+// README bug 10. The client's accept glue then errors or silently hangs, its
+// stream credit freezes at ~100, and the healthy viewer starves. Not fixable
+// from test code (no client-side raw-QuicConn API), so wedged rounds are
+// retried - but only on the wedge's own signatures. Any other failure, or 4
+// wedged rounds, still fails: a relay regression cannot hide behind the retries.
+Deno.test({
+  name: "a viewer that stops reading is reset, not queued; others keep full rate",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  for (let attempt = 1;; attempt++) {
+    const round: RoundState = { glueDeath: null, lastInflight: NaN };
+    try {
+      await runBackpressureRound(round);
+      return;
+    } catch (e) {
+      // Wedged = accept loop errored, or inflight froze at exactly 1: the
+      // never-reaped unaccepted carrier, only frozen client credit does that.
+      const wedged = round.glueDeath !== null || round.lastInflight === 1;
+      if (!wedged || attempt >= 4) throw e;
+      console.log(
+        `[test] round ${attempt} hit the Deno incoming-uni wedge (` +
+          (round.glueDeath !== null
+            ? `accept loop died: ${round.glueDeath}`
+            : "accept loop hung: carrier stuck unaccepted") +
+          "); retrying",
+      );
+      // 5 s matters: the dead round's churn re-arms the race if we go sooner.
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+    }
+  }
+});
+
+interface RoundState {
+  glueDeath: unknown; // healthy accept-loop error, recorded pre-teardown only
+  lastInflight: number; // healthy inflight as last seen by the reap poll
+}
+
+/** One backpressure round against a fresh relay; fills `round` so the
+ * caller can tell the Deno wedge from a relay regression. */
+async function runBackpressureRound(round: RoundState): Promise<void> {
+  const relay = await startRelay({ port: 0 });
+  const httpBase = `http://127.0.0.1:${relay.httpPort}`;
+  // The healthy viewer is the one that accepted the most sends.
+  const fetchHealthyInflight = async (): Promise<number> => {
+    const stats = await (await fetch(`${httpBase}/api/stats`)).json();
+    const channels = (stats.perViewer as {
+      channels: Record<string, { sent: number; inflight: number }>;
+    }[])
+      .map((v) => v.channels.color_image)
+      .filter((c) => c !== undefined)
+      .sort((a, b) => b.sent - a.sent);
+    return channels[0]?.inflight ?? -1;
+  };
+  const clients: WebTransport[] = [];
+  let tearingDown = false;
+  try {
+    const robot = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
+    clients.push(robot);
+    await within(robot.ready, "robot connect");
+    const robotDatagrams = datagramQueue(robot.datagrams.readable);
+    const robotDgWriter = robot.datagrams.writable.getWriter();
+    await robotDgWriter.write(
+      encodeDatagram({
+        t: "hello",
+        v: PROTOCOL_VERSION,
+        role: "robot",
+        robot: ROBOT,
+        manifest: {
+          channels: [{ ch: "color_image", encoding: "jpeg.v1", delivery: "latest", maxHz: 100 }],
+        },
+      }),
+    );
+    await within(robotDatagrams(), "robot hello reply");
+
+    const attachViewer = async (name: string): Promise<WebTransport> => {
+      const wt = new WebTransport(`${relay.wtUrl}/viewer`, certOpts(relay.certHash));
+      clients.push(wt);
+      await within(wt.ready, `${name} connect`);
+      const control = await wt.createBidirectionalStream();
+      const writer = control.writable.getWriter();
+      const next = controlQueue(control.readable);
+      await writer.write(encodeControlFrame({ t: "hello", v: PROTOCOL_VERSION, role: "viewer" }));
+      await writer.write(encodeControlFrame({ t: "watch", robotId: ROBOT.id }));
+      await writer.write(encodeControlFrame({ t: "sub", ch: "color_image" }));
+      let msg: Msg;
+      do {
+        msg = await within(next(), `${name} manifest`);
+      } while (msg.t !== "manifest");
+      return wt;
+    };
+
+    const healthy = await attachViewer("healthy");
+    const healthyFrames = frameQueue(healthy, (e) => {
+      if (!tearingDown) round.glueDeath = e;
+    });
+    const stalled = await attachViewer("stalled");
+    void stalled; // never reads incomingUnidirectionalStreams: a suspended tab
+
+    const payload = new Uint8Array(8 * 1024).fill(9);
+    const fetchStalled = async () => {
+      const stats = await (await fetch(`${httpBase}/api/stats`)).json();
+      const viewers = stats.perViewer as {
+        channels: Record<string, { aborted: number; queued: number; sent: number }>;
+      }[];
+      // The stalled viewer is the one whose acceptance count froze.
+      return viewers
+        .map((v) => v.channels.color_image)
+        .filter((c) => c !== undefined)
+        .sort((a, b) => a.sent - b.sent)[0];
+    };
+
+    // Pump frames until the stalled viewer's stale streams are being reset
+    // under backpressure. Onset needs its uni-stream credit (~100) exhausted
+    // plus one LATEST_STALE_MS window, so give it a generous frame budget.
+    let lastSeq = 0;
+    let stalledStats = await fetchStalled();
+    for (let seq = 1; seq <= 1200; seq++) {
+      await sendRobotFrame(
+        robot,
+        { ch: "color_image", seq, ts: seq / 100, delivery: "latest" },
+        payload,
+      );
+      lastSeq = seq;
+      if (seq % 50 === 0) {
+        stalledStats = await fetchStalled();
+        if (stalledStats !== undefined && stalledStats.aborted >= 3) break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert(stalledStats !== undefined, "stalled viewer never got a policy");
+    assert(stalledStats.aborted >= 3, `expected aborted resets, got ${stalledStats.aborted}`);
+    assert(stalledStats.queued <= 1, `latest queue must stay 0|1, got ${stalledStats.queued}`);
+
+    // The healthy viewer kept receiving fresh frames the whole time: drain its
+    // queue and require a seq from the era after the stalled viewer wedged.
+    let newest = 0;
+    const drainUntil = Date.now() + 8000;
+    while (newest < lastSeq - 50 && Date.now() < drainUntil) {
+      newest = Math.max(newest, (await within(healthyFrames(), "healthy frame")).header.seq);
+    }
+    assert(newest >= lastSeq - 50, `healthy viewer stalled at seq ${newest} of ${lastSeq}`);
+
+    // The input has quiesced, so no newer offer will reap the healthy viewer's
+    // last accepted stream: only the relay's periodic reap timer can return it
+    // (against real quinn streams).
+    const reapDeadline = Date.now() + 5000;
+    let healthyInflight = -1;
+    while (Date.now() < reapDeadline) {
+      healthyInflight = await fetchHealthyInflight();
+      round.lastInflight = healthyInflight;
+      if (healthyInflight === 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    assertEquals(healthyInflight, 0, "idle reap never reset the healthy viewer's last stream");
+  } catch (e) {
+    // A wedge during pump/drain dies before the reap poll but leaves the
+    // same stuck-carrier signature; settle one stale window, then probe.
+    if (round.glueDeath === null && Number.isNaN(round.lastInflight)) {
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      round.lastInflight = await fetchHealthyInflight().catch(() => NaN);
+    }
+    throw e;
+  } finally {
+    tearingDown = true;
+    for (const wt of clients) {
+      try {
+        wt.close();
+      } catch {
+        // session already dead
+      }
+    }
+    await relay.shutdown();
+  }
 }
 
 Deno.test({
@@ -468,124 +654,6 @@ Deno.test({
   });
 
   viewer.close();
-  robot.close();
-  await relay.shutdown();
-});
-
-// The T5 demo criterion as a test: one suspended viewer must cost only
-// itself. Its stale streams are reset ("aborted, not queued") while the
-// healthy viewer keeps receiving fresh frames at full rate. This is also the
-// permanent proof that reaping keeps working against real quinn streams.
-Deno.test({
-  name: "a viewer that stops reading is reset, not queued; others keep full rate",
-  sanitizeOps: false,
-  sanitizeResources: false,
-}, async () => {
-  const relay = await startRelay({ port: 0 });
-  const httpBase = `http://127.0.0.1:${relay.httpPort}`;
-  const robot = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
-  await within(robot.ready, "robot connect");
-  const robotDatagrams = datagramQueue(robot.datagrams.readable);
-  const robotDgWriter = robot.datagrams.writable.getWriter();
-  await robotDgWriter.write(
-    encodeDatagram({
-      t: "hello",
-      v: PROTOCOL_VERSION,
-      role: "robot",
-      robot: ROBOT,
-      manifest: {
-        channels: [{ ch: "color_image", encoding: "jpeg.v1", delivery: "latest", maxHz: 100 }],
-      },
-    }),
-  );
-  await within(robotDatagrams(), "robot hello reply");
-
-  async function attachViewer(name: string): Promise<WebTransport> {
-    const wt = new WebTransport(`${relay.wtUrl}/viewer`, certOpts(relay.certHash));
-    await within(wt.ready, `${name} connect`);
-    const control = await wt.createBidirectionalStream();
-    const writer = control.writable.getWriter();
-    const next = controlQueue(control.readable);
-    await writer.write(encodeControlFrame({ t: "hello", v: PROTOCOL_VERSION, role: "viewer" }));
-    await writer.write(encodeControlFrame({ t: "watch", robotId: ROBOT.id }));
-    await writer.write(encodeControlFrame({ t: "sub", ch: "color_image" }));
-    let msg: Msg;
-    do {
-      msg = await within(next(), `${name} manifest`);
-    } while (msg.t !== "manifest");
-    return wt;
-  }
-
-  const healthy = await attachViewer("healthy");
-  const healthyFrames = frameQueue(healthy);
-  const stalled = await attachViewer("stalled");
-  void stalled; // never reads incomingUnidirectionalStreams: a suspended tab
-
-  const payload = new Uint8Array(8 * 1024).fill(9);
-  const fetchStalled = async () => {
-    const stats = await (await fetch(`${httpBase}/api/stats`)).json();
-    const viewers = stats.perViewer as {
-      channels: Record<string, { aborted: number; queued: number; sent: number }>;
-    }[];
-    // The stalled viewer is the one whose acceptance count froze.
-    return viewers
-      .map((v) => v.channels.color_image)
-      .filter((c) => c !== undefined)
-      .sort((a, b) => a.sent - b.sent)[0];
-  };
-
-  // Pump frames until the stalled viewer's stale streams are being reset
-  // under backpressure. Onset needs its uni-stream credit (~100) exhausted
-  // plus one LATEST_STALE_MS window, so give it a generous frame budget.
-  let lastSeq = 0;
-  let stalledStats = await fetchStalled();
-  for (let seq = 1; seq <= 1200; seq++) {
-    await sendRobotFrame(
-      robot,
-      { ch: "color_image", seq, ts: seq / 100, delivery: "latest" },
-      payload,
-    );
-    lastSeq = seq;
-    if (seq % 50 === 0) {
-      stalledStats = await fetchStalled();
-      if (stalledStats !== undefined && stalledStats.aborted >= 3) break;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-  assert(stalledStats !== undefined, "stalled viewer never got a policy");
-  assert(stalledStats.aborted >= 3, `expected aborted resets, got ${stalledStats.aborted}`);
-  assert(stalledStats.queued <= 1, `latest queue must stay 0|1, got ${stalledStats.queued}`);
-
-  // The healthy viewer kept receiving fresh frames the whole time: drain its
-  // queue and require a seq from the era after the stalled viewer wedged.
-  let newest = 0;
-  const drainUntil = Date.now() + 8000;
-  while (newest < lastSeq - 50 && Date.now() < drainUntil) {
-    newest = Math.max(newest, (await within(healthyFrames(), "healthy frame")).header.seq);
-  }
-  assert(newest >= lastSeq - 50, `healthy viewer stalled at seq ${newest} of ${lastSeq}`);
-
-  // The input has quiesced, so no newer offer will reap the healthy viewer's
-  // last accepted stream: only the relay's periodic reap timer can return it
-  // (against real quinn streams).
-  const reapDeadline = Date.now() + 5000;
-  let healthyInflight = -1;
-  while (Date.now() < reapDeadline) {
-    const stats = await (await fetch(`${httpBase}/api/stats`)).json();
-    const channels = (stats.perViewer as {
-      channels: Record<string, { sent: number; inflight: number }>;
-    }[])
-      .map((v) => v.channels.color_image)
-      .filter((c) => c !== undefined)
-      .sort((a, b) => b.sent - a.sent); // the healthy viewer accepted the most
-    healthyInflight = channels[0]?.inflight ?? -1;
-    if (healthyInflight === 0) break;
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-  assertEquals(healthyInflight, 0, "idle reap never reset the healthy viewer's last stream");
-
-  healthy.close();
-  stalled.close();
   robot.close();
   await relay.shutdown();
 });
