@@ -5,16 +5,16 @@
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { FocusEvent, KeyboardEvent } from "react";
-import { PanelFrame } from "../layout/PanelFrame.tsx";
-import { useStatus } from "../session/hooks.ts";
-import type { PanelProps } from "./registry.tsx";
-import styles from "./TeleopPanel.module.css";
 import {
   HANDLED_CODES,
   teleopConfigFromChannel,
   TeleopMachine,
   type TeleopSnapshot,
-} from "./teleopMachine.ts";
+} from "@dimos/sdk/internal/teleop";
+import { useStatus } from "@dimos/sdk/react";
+import { PanelFrame } from "../layout/PanelFrame.tsx";
+import type { PanelProps } from "./registry.tsx";
+import styles from "./TeleopPanel.module.css";
 
 const KEY_ROWS: { code: string; label: string }[][] = [
   [
@@ -52,7 +52,7 @@ function TeleopControls({ spec, teleop, ch }: {
   teleop: NonNullable<PanelProps["teleop"]>;
   ch: string;
 }) {
-  const status = useStatus(teleop.status);
+  const status = useStatus(teleop);
   const connected = status.transport.phase === "connected";
   // Config is read once per mount: a manifest edit changes the channel
   // params, which changes the manifest, which remounts via the App epoch.
