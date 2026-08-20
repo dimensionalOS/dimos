@@ -275,6 +275,13 @@ go2_zenoh_htc = autoconnect(
     MovementManager.blueprint(),
 ).global_config(transport="zenoh", n_workers=9, robot_model="unitree_go2")
 
+# The rig the motion stacks run on. It has to equal `go2_tf`'s
+# `mid360_mount_rpy_deg` (robot/unitree/go2/tf/go2_tf.py) on any robot that runs
+# the baked host, because the two publish the SAME tf edges: disagree and
+# base_link jumps between two mounts at their combined publish rate. `MID360_MOUNT`
+# above stays whatever the nav/htc stacks want.
+MOTION_MID360_MOUNT = "ATHENS"
+
 # Its own raycaster tuning: emit less often than the nav stack, because the local
 # planner replans off whole windows rather than off increments.
 #
@@ -333,6 +340,8 @@ _mls_planner_motion = MLSPlannerNative.blueprint(
 # blueprint -- it has no follower and would plan without ever moving.
 _go2_zenoh_motion_base = autoconnect(
     go2_zenoh_raycaster,
+    # Re-declared on the motion rig; autoconnect keeps the newest duplicate.
+    GO2Zenoh.blueprint(mid360_mount=MOTION_MID360_MOUNT),
     # Re-declared with the emitted window PINNED, and autoconnect keeps the
     # newest duplicate, so this raycaster wins over go2_zenoh_raycaster's.
     RayTracingVoxelMap.blueprint(**_motion_raycaster),
@@ -404,7 +413,14 @@ go2_zenoh_motion_local = autoconnect(
         viewer_backend=global_config.viewer,
         rerun_config=_rerun_config({"world/pointlio_map": None, "world/lidar": None}),
     ),
-    GO2Zenoh.blueprint(mid360_mount=MID360_MOUNT),
+    # tf comes from the ROBOT here: go2_tf is baked into the host and publishes
+    # the mount tree there. GO2Zenoh would publish the same three edges from the
+    # laptop, and two publishers of one static tree is not redundancy -- it is
+    # base_link jumping between them, at their combined rate, on whichever mount
+    # each was configured with. So its tf goes nowhere and the robot's wins.
+    GO2Zenoh.blueprint(mid360_mount=MOTION_MID360_MOUNT).remappings(
+        [(GO2Zenoh, "tf", "tf_from_the_laptop_unused")]
+    ),
     RayTracingVoxelMap.blueprint(**_motion_raycaster),
     _mls_planner_motion.remappings([(MLSPlannerNative, "path", "planner_path")]),
     GoalRelay.blueprint(lidar_height=ROBOT_HEIGHT),
