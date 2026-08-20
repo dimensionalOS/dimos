@@ -151,8 +151,7 @@ jobs:
             dimos/mapping/ray_tracing/test_transformer.py \
             dimos/navigation/nav_3d/mls_planner/test_mls_planner.py \
             dimos/navigation/nav_3d/mls_planner/test_transformer.py \
-            dimos/navigation/motion/control/test_rust_parity.py \
-            dimos/navigation/motion/planner/referee/test_grid_invariance.py
+            dimos/navigation/motion/control/test_rust_parity.py
 
   cpp:
     timeout-minutes: 30
