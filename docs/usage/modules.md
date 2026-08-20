@@ -50,9 +50,11 @@ print(CameraModule.io())
 └┬─────────────┘
  ├─ color_image: Image
  ├─ camera_info: CameraInfo
+ ├─ tf: TFMessage
  │
  ├─ RPC build() -> None
  ├─ RPC get_skills() -> list
+ ├─ RPC peek_stream(stream_name: str, timeout: float) -> Any
  ├─ RPC set_module_ref(name: str, module_ref: RPCClient) -> None
  ├─ RPC set_transport(stream_name: str, transport: Transport) -> bool
  ├─ RPC start() -> None
@@ -473,12 +475,13 @@ to_svg(agentic, "assets/go2_agentic.svg")
 
 To see more information on how to use Blueprints, see [Blueprints](/docs/usage/blueprints.md).
 
+## Low level manual plumbing
 
-## Peaking behind a curtain
+Most of the time this is a bad idea, but you can peak behind blueprints, autoconnect etc, and deal with pubsub directly at lower and lower layers of abstraction
 
 ### Connecting via transports
 
-`.connect` wires two modules living in the same process. Alternatively, you can assign a **transport** — a typed pub/sub channel such as LCM or Zenoh. The modules never hold a reference to each other, so they can run as separate scripts.
+`.connect` wires two modules living in the same process. Alternatively, you can assign a **transport** a typed pub/sub channel such as LCM or Zenoh. The modules never hold a reference to each other, so they can run as separate scripts.
 
 `camera_script.py`:
 
@@ -517,7 +520,7 @@ Run each in its own terminal and detections start printing as soon as both are u
 
 Available transports live in `dimos.core.transport` (`LCMTransport`, `ZenohTransport`, `SHMTransport`, ...); see [Transports](/docs/usage/transports/index.md) for choosing between them.
 
-### Raw transports (no module)
+### Raw transports (no modules)
 
 A transport works on its own — init one and send/receive from a plain script, no module or stream declarations needed:
 
@@ -538,27 +541,60 @@ Any other script (or module stream) on the same channel sees the traffic. This i
 
 ### Dynamic streams
 
-Streams don't have to be class annotations — a module can grow inputs and outputs at runtime. Construct the stream with the module as owner and assign it as an attribute; `inputs`/`outputs`/`io()` discover streams by scanning instance attributes, and `handle_<name>` auto-binding picks up anything that exists before `start()`.
+Our system is very flexible, but this is dangerous as you lose essentially all support above pubsub. Autoconnect, blueprints, configuration support (dimos --transport=...) etc
 
-```python skip
+Streams don't have to be class annotations, a module can grow inputs and outputs at runtime, and they can even be attached externally.
+Construct the stream and assign it as an attribute.
+
+module has `inputs`/`outputs`/`io()` attributes and is a ble to discover streams attached.
+
+```python ansi=false
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos.msgs.std_msgs.String import String
 
 class Dyn(Module):
-    pass
+    def start(self):
+        # module can add a random input
+        self.echo = In(String, "echo", m)
+        print("Externally attached output:", self.words)
 
 m = Dyn()
+
 m.words = Out(String, "words", m)
-m.echo = In(String, "echo", m)
+m.start()
+
 
 m.words.transport = LCMTransport("/words", String)
 m.echo.transport = LCMTransport("/words", String)
 
+
+print("\nInputs:")
+print(m.inputs)
+print(m.inputs['echo'])
+print("\nOutputs:")
+print(m.outputs)
+print(m.outputs['words'])
+
+print("\Send/Receive Test:")
+
+# we can subscribe to topics from anywhere also
 m.echo.subscribe(print)
-m.start()
 m.words.publish(String(data="loopback over LCM"))
+
 ```
 
-Useful when the port set depends on config — e.g. one output per configured camera.
+```results
+Externally attached output: Out words[String] @ Dyn
+
+Inputs:
+{'echo': <dimos.core.stream.In object at 0x7f03b4bb32c0>}
+In echo[String] @ Dyn via LCMTransport(/words#std_msgs.String)
+
+Outputs:
+{'words': <dimos.core.stream.Out object at 0x7f03b4b7f860>}
+Out words[String] @ Dyn via LCMTransport(/words#std_msgs.String)
+\Send/Receive Test:
+<dimos.msgs.std_msgs.String.String object at 0x7f03eb2d10d0>
+```
