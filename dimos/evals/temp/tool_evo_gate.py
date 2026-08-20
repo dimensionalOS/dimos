@@ -58,6 +58,158 @@ FROZEN_GLOBS = (
 """Everything the benchmark is made of. The optimizer edits the encoder, not
 the questions, the scorers, the slices, or the harness."""
 
+import re as _re
+
+# -- prose gate ------------------------------------------------------------------
+
+DATA_RE = _re.compile(r"^[-0-9A-U.:@,;| ]*$")
+"""A string value that is encoded data: digits, the raster alphabet 0-9A-U, and
+the separators the encoding uses. Anything else is prose and must be short."""
+
+MAX_PROSE_STR = 40
+"""A string value that is not pure data may still be a short label (frame_id)."""
+
+MAX_PROSE_BYTES = 400
+"""Non-data string bytes allowed in one frame's encoding, over BUDGET_SAMPLE.
+Round 2 carried ~3.6 kB of description per frame; the seed carries a handful."""
+
+BANNED_VOCAB = (
+    # semantic nouns the encoder must not name -- it renders geometry, the
+    # reader names the thing
+    "door",
+    "doorway",
+    "room",
+    "stair",
+    "step",
+    "platform",
+    "landing",
+    "ramp",
+    # classifications the movement controller owns, not the encoder
+    "free",
+    "clear",
+    "navigable",
+    "reachable",
+    "route",
+    "unknown",
+    # scorer / eval words -- naming the question is answering it
+    "answer",
+    "question",
+    "count",
+    # imperatives -- telling the model what to do with a field
+    "never",
+    "always",
+    "use",
+    "take",
+    "instead",
+    "already",
+    "only",
+    "do not",
+    "not a",
+)
+"""Words that turn a rendering into a lookup table. Crude on purpose: an
+optimizer that learns to dodge the list shows up in the per-experiment diff."""
+
+LEGEND_ATTR = "AGENT_ENCODE_LEGEND"
+
+
+def _banned_in(text: str) -> list[str]:
+    low = text.lower()
+    hits = []
+    for word in BANNED_VOCAB:
+        pattern = _re.escape(word) if " " in word else rf"\b{_re.escape(word)}\b"
+        if _re.search(pattern, low):
+            hits.append(word)
+    return hits
+
+
+def _string_values(node: Any) -> list[str]:
+    """Every string value in a JSON-like structure (keys are structure, skipped)."""
+    if isinstance(node, str):
+        return [node]
+    if isinstance(node, dict):
+        return [v for value in node.values() for v in _string_values(value)]
+    if isinstance(node, list):
+        return [v for item in node for v in _string_values(item)]
+    return []
+
+
+def _reachable_strings(source: str) -> tuple[list[str], ast.AST | None]:
+    """String literals reachable from ``agent_encode`` within the PointCloud2 class.
+
+    Follows ``self.<name>`` / ``cls.<name>`` references from ``agent_encode`` to
+    the methods and class constants it uses, transitively, and collects their
+    string constants. Scoped so unrelated docstrings elsewhere in the file
+    (``__add__``, ``filter_by_height``) are not swept in -- they are not part
+    of the encoding.
+    """
+    tree = ast.parse(source)
+    cls = next(
+        (n for n in ast.walk(tree) if isinstance(n, ast.ClassDef) and n.name == "PointCloud2"),
+        None,
+    )
+    if cls is None:
+        return [], tree
+    methods = {
+        n.name: n for n in cls.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    consts: dict[str, ast.AST] = {}
+    for n in cls.body:
+        if isinstance(n, ast.Assign):
+            for t in n.targets:
+                if isinstance(t, ast.Name):
+                    consts[t.id] = n.value
+        elif (
+            isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.value is not None
+        ):
+            consts[n.target.id] = n.value
+    seen: set[str] = set()
+    strings: list[str] = []
+    queue = ["agent_encode", LEGEND_ATTR]
+    while queue:
+        name = queue.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        node = methods.get(name) or consts.get(name)
+        if node is None:
+            continue
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+                strings.append(sub.value)
+            if (
+                isinstance(sub, ast.Attribute)
+                and isinstance(sub.value, ast.Name)
+                and sub.value.id in ("self", "cls")
+            ):
+                if sub.attr in methods or sub.attr in consts:
+                    queue.append(sub.attr)
+    return strings, tree
+
+
+def _legend_is_one_constant(tree: ast.AST) -> bool:
+    """AGENT_ENCODE_LEGEND is assigned exactly once, at class level, to a
+    literal string expression (a name or a concatenation of string constants)."""
+    assigns = []
+    for cls in ast.walk(tree):
+        if isinstance(cls, ast.ClassDef) and cls.name == "PointCloud2":
+            for n in cls.body:
+                if isinstance(n, ast.Assign) and any(
+                    isinstance(t, ast.Name) and t.id == LEGEND_ATTR for t in n.targets
+                ):
+                    assigns.append(n.value)
+    if len(assigns) != 1:
+        return False
+
+    def literal(node: ast.AST) -> bool:
+        if isinstance(node, ast.Constant):
+            return isinstance(node.value, str)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            return literal(node.left) and literal(node.right)
+        return False
+
+    return literal(assigns[0])
+
+
 TARGET = Path("dimos/msgs/sensor_msgs/PointCloud2.py")
 """The one file the loop may change."""
 
@@ -120,8 +272,14 @@ def _sha(path: Path) -> str:
 def freeze(_: argparse.Namespace) -> int:
     """Record the hash of every benchmark file. Run after any deliberate change."""
     manifest = {str(p.relative_to(REPO)): _sha(p) for p in _frozen_files()}
-    MANIFEST.write_text(json.dumps({"files": manifest}, indent=2, sort_keys=True) + "\n")
-    print(f"froze {len(manifest)} files into {MANIFEST}")
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+    legend = hashlib.sha256(PointCloud2.AGENT_ENCODE_LEGEND.encode()).hexdigest()
+    MANIFEST.write_text(
+        json.dumps({"files": manifest, "agent_encode_legend_sha": legend}, indent=2, sort_keys=True)
+        + "\n"
+    )
+    print(f"froze {len(manifest)} files + the encoder legend into {MANIFEST}")
     return 0
 
 
@@ -166,7 +324,17 @@ def static(_: argparse.Namespace) -> int:
     reach = _banned_reach(target.read_text())
     if reach:
         return _fail(f"{TARGET} reaches outside the encoding: " + "; ".join(reach))
-    print(f"static: {len(recorded)} benchmark files unchanged, {TARGET} clean")
+    recorded_legend = json.loads(MANIFEST.read_text()).get("agent_encode_legend_sha")
+    if recorded_legend is not None:
+        from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+        live_legend = hashlib.sha256(PointCloud2.AGENT_ENCODE_LEGEND.encode()).hexdigest()
+        if live_legend != recorded_legend:
+            return _fail(
+                "AGENT_ENCODE_LEGEND changed since freeze -- the format legend is frozen; "
+                "re-freeze deliberately if this was intended"
+            )
+    print(f"static: {len(recorded)} benchmark files unchanged, {TARGET} clean, legend frozen")
     return 0
 
 
@@ -241,11 +409,97 @@ def floors(args: argparse.Namespace) -> int:
     return 0
 
 
+# -- prose -----------------------------------------------------------------------
+
+
+def prose(_: argparse.Namespace) -> int:
+    """The encoding renders geometry and names nothing. Runs from the worktree.
+
+    Six checks (round3.md #2): every output string is encoded data or a short
+    label; non-data bytes per frame stay under the prose cap; no banned word
+    appears in the output or in a string literal reachable from agent_encode;
+    the legend is one class constant; every key is present on every frame; and
+    the two output caps derive from one constant with the encoder no larger.
+    """
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+    source = (REPO / TARGET).read_text()
+    strings, tree = _reachable_strings(source)
+
+    # legend is one class constant
+    if tree is None or not _legend_is_one_constant(tree):
+        return _fail(f"{LEGEND_ATTR} must be exactly one class-level string constant")
+
+    # banned vocabulary in the source reachable from agent_encode (legend included)
+    for literal in strings:
+        hits = _banned_in(literal)
+        if hits:
+            return _fail(f"banned word(s) {hits} in an encoder string literal: {literal[:60]!r}")
+
+    # sample real frames
+    try:
+        from dimos.evals.generate import _dataset, _frame_at
+
+        frames = []
+        for name, timestamps in BUDGET_SAMPLE:
+            with _dataset(name) as store:
+                for t in timestamps:
+                    frames.append(_frame_at(store, t)[0].agent_encode())
+    except Exception as e:
+        return _fail(f"agent_encode raised on the sample: {e!r}")
+    frames.append(PointCloud2.from_numpy(__import__("numpy").zeros((0, 3))).agent_encode())
+
+    reference_keys = _key_set(frames[-1])  # the empty cloud carries every key by construction
+    for encoded in frames:
+        # key stability
+        if _key_set(encoded) != reference_keys:
+            missing = reference_keys - _key_set(encoded)
+            extra = _key_set(encoded) - reference_keys
+            return _fail(f"frame key set differs: missing {missing}, extra {extra}")
+        # output strings and prose bytes
+        prose_bytes = 0
+        for value in _string_values(encoded):
+            hits = _banned_in(value)
+            if hits:
+                return _fail(f"banned word(s) {hits} in the output: {value[:60]!r}")
+            if not DATA_RE.match(value):
+                if len(value) > MAX_PROSE_STR:
+                    return _fail(
+                        f"non-data output string over {MAX_PROSE_STR} chars: {value[:60]!r}"
+                    )
+                prose_bytes += len(value.encode())
+        if prose_bytes > MAX_PROSE_BYTES:
+            return _fail(f"{prose_bytes} prose bytes in one frame, over {MAX_PROSE_BYTES}")
+
+    # cap tie: encoder cap derives from one constant, encoder <= skill
+    from dimos.agents.skills.memory_query import MemoryQuerySkillConfig
+
+    skill_cap = MemoryQuerySkillConfig().max_output_chars
+    if PointCloud2.ENCODE_SOFT_CAP > skill_cap:
+        return _fail(f"encoder cap {PointCloud2.ENCODE_SOFT_CAP} exceeds skill cap {skill_cap}")
+
+    print(
+        f"prose: {len(frames)} frames render only data, legend frozen, "
+        f"caps tied ({PointCloud2.ENCODE_SOFT_CAP} <= {skill_cap})"
+    )
+    return 0
+
+
+def _key_set(encoded: dict[str, Any]) -> frozenset[str]:
+    keys: set[str] = set()
+    for k, v in encoded.items():
+        keys.add(k)
+        if isinstance(v, dict):
+            keys |= {f"{k}.{kk}" for kk in v}
+    return frozenset(keys)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="gate", required=True)
     sub.add_parser("freeze", help="record the benchmark hash manifest")
     sub.add_parser("static", help="benchmark unedited and encoder honest")
+    sub.add_parser("prose", help="encoder renders geometry, names nothing")
     budget_parser = sub.add_parser("budget", help="encoding size and latency")
     budget_parser.add_argument("--report", action="store_true", help="print every sampled frame")
     floors_parser = sub.add_parser("floors", help="no family regressed")
@@ -254,7 +508,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     floors_parser.add_argument("--tolerance", type=float, default=TOLERANCE)
     args = parser.parse_args(argv)
 
-    gates: dict[str, Any] = {"freeze": freeze, "static": static, "budget": budget, "floors": floors}
+    gates: dict[str, Any] = {
+        "freeze": freeze,
+        "static": static,
+        "budget": budget,
+        "prose": prose,
+        "floors": floors,
+    }
     return int(gates[args.gate](args))
 
 
