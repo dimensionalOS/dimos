@@ -73,7 +73,7 @@ jobs:
         uses: pre-commit/action@v3.0.1
 
   rust:
-    timeout-minutes: 20
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     permissions:
       contents: read  # For checkout
@@ -107,6 +107,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: ${{ steps.find-crates.outputs.crates }}
+          # The bake e2e's generated crate: caching it keeps its Cargo.lock, so
+          # dependency resolution stays pinned, and its target dir of built deps.
+          cache-directories: target/dimos-bake
+          key: bake-e2e
       - name: cargo fmt
         env:
           CRATES: ${{ steps.find-crates.outputs.crates }}
@@ -148,6 +152,8 @@ jobs:
             dimos/mapping/ray_tracing/test_transformer.py \
             dimos/navigation/nav_3d/mls_planner/test_mls_planner.py \
             dimos/navigation/nav_3d/mls_planner/test_transformer.py
+      - name: Bake e2e tests
+        run: uv run pytest -m bake_e2e dimos/cli/bake/test_bake_e2e.py --no-cov
 
   cpp:
     timeout-minutes: 30
@@ -462,13 +468,13 @@ jobs:
       - name: Install dependencies
         run: uv sync --group tests --frozen
       - name: Run tests
-        run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large or web_browser)'
+        run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e)'
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf  -m 'not (self_hosted or mujoco or self_hosted_large or web_browser)' && exit 1
+          uv run pytest --no-cov -vvvvv --lf  -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e)' && exit 1
         shell: bash
       - name: Print crash diagnostics
         if: failure()
