@@ -13,11 +13,17 @@ Storage codecs are independent from transport. RGB uses lossy JPEG. Grayscale
 and depth use lossless `lz4+lcm`. IMU, PointLIO, odometry, and TF use plain LCM
 serialization.
 
+The `shm` profile transport uses `pSHMQueueTransport`, sized to 2.5 seconds of
+the configured stream rate. Ordinary `pSHMTransport` remains available for
+latest-frame live consumers. A reliable-ring overflow is a Recorder failure,
+not a silent drop.
+
 ```text
 source worker               recorder worker                  recording.db
-  independent publishers  -> receive timestamp tap          exact oracle
-  source manifest            current Recorder write path  -> count/order/data
-                              codec + append timings          shared gap windows
+  independent publishers  -> reliable SHM/LCM ingress       exact oracle
+  source manifest            bounded per-stream FIFO      -> count/order/data
+                              parallel preparation           shared gap windows
+                              64-row / 10-ms transactions
 ```
 
 ## Run it
@@ -49,6 +55,8 @@ The report localizes loss into two stages:
 | `corrupt_sequences` | timestamp matched, decoded payload did not |
 | `shared_loss_windows` | overlapping gaps across all data streams |
 | `codec/*`, `append/*` | encode and complete append latency distributions |
+| `recorder.queues` | accepted/completed counts and live backlog per stream |
+| `recorder.writer` | committed rows, transaction size, and commit p99 |
 
 Bandwidth is reported at distinct boundaries so “disk bandwidth” is not
 confused with sensor or codec throughput:
