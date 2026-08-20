@@ -439,13 +439,6 @@ class Recorder(MemoryModule):
                 _data=msg,
             )
             prepared = backend.prepare_append(observation)
-            if getattr(msg, "msg_name", None) == "sensor_msgs.PointCloud2":
-                assert prepared.encoded is not None
-                frozen = backend.codec.decode(prepared.encoded)
-                if round(frozen.ts * 1e9) != round(ts * 1e9):
-                    frozen.ts = ts
-                    observation._data = frozen
-                    prepared = backend.prepare_append(observation)
             self._record_writer.submit(backend, prepared)
 
         recording_queue = RecorderQueue(
