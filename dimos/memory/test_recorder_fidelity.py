@@ -557,4 +557,7 @@ def test_recorder_preserves_full_stream_mix_during_controlled_encoder_stall(
 
     if not report.source_valid:
         raise RuntimeError(f"invalid source workload: {report.source}")
-    assert report.faithful, report.streams
+    assert report.successful, {
+        "streams": report.streams,
+        "realtime": report.realtime,
+    }
