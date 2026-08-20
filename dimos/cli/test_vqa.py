@@ -18,15 +18,15 @@ from click import unstyle
 import pytest
 from typer.testing import CliRunner
 
+from dimos.cli.dimos import main as app
 from dimos.evals import runner as runner_module
-from dimos.evals.cli import app
 from dimos.evals.types import EvalResult
 from dimos.evals.vqa import generate as generate_module, suite as suite_module
 from dimos.evals.vqa.generate import GenerationRequest, GenerationResult, PublicCase
 
 
 def test_vqa_cli_exposes_generate_and_run() -> None:
-    result = CliRunner().invoke(app, ["vqa", "--help"])
+    result = CliRunner().invoke(app, ["evals", "vqa", "--help"])
     output = unstyle(result.stdout)
 
     assert result.exit_code == 0
@@ -35,7 +35,7 @@ def test_vqa_cli_exposes_generate_and_run() -> None:
 
 
 def test_vqa_generate_cli_declares_single_image_input() -> None:
-    result = CliRunner().invoke(app, ["vqa", "generate", "--help"])
+    result = CliRunner().invoke(app, ["evals", "vqa", "generate", "--help"])
     output = unstyle(result.stdout)
 
     assert result.exit_code == 0
@@ -48,7 +48,7 @@ def test_vqa_generate_cli_declares_single_image_input() -> None:
 
 
 def test_vqa_run_cli_declares_standalone_dataset_input() -> None:
-    result = CliRunner().invoke(app, ["vqa", "run", "--help"])
+    result = CliRunner().invoke(app, ["evals", "vqa", "run", "--help"])
     output = unstyle(result.stdout)
 
     assert result.exit_code == 0
@@ -77,7 +77,16 @@ def test_vqa_generate_cli_runs_generation(monkeypatch: pytest.MonkeyPatch, tmp_p
 
     result = CliRunner().invoke(
         app,
-        ["vqa", "generate", "recording.db", "--image-index", "3", "--output", str(tmp_path)],
+        [
+            "evals",
+            "vqa",
+            "generate",
+            "recording.db",
+            "--image-index",
+            "3",
+            "--output",
+            str(tmp_path),
+        ],
     )
 
     assert result.exit_code == 0
@@ -99,6 +108,7 @@ def test_vqa_generate_cli_accepts_frame_range(
     result = CliRunner().invoke(
         app,
         [
+            "evals",
             "vqa",
             "generate",
             "recording.db",
@@ -140,7 +150,7 @@ def test_vqa_run_cli_runs_shared_evaluator(monkeypatch: pytest.MonkeyPatch, tmp_
 
     result = CliRunner().invoke(
         app,
-        ["vqa", "run", str(tmp_path), "--model", "test-model"],
+        ["evals", "vqa", "run", str(tmp_path), "--model", "test-model"],
     )
 
     assert result.exit_code == 0

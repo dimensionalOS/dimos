@@ -21,10 +21,7 @@ import importlib
 
 import typer
 
-from dimos.evals.vqa.cli import app as vqa_app
-
 app = typer.Typer(help="Run agent evals on recordings, sim, or a live robot.")
-app.add_typer(vqa_app, name="vqa")
 
 
 @app.command("run")

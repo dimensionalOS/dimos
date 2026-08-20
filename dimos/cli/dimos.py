@@ -56,6 +56,7 @@ from dimos.cli.can import app as can_app
 from dimos.cli.cloud import login as cloud_login, logout as cloud_logout, whoami as cloud_whoami
 from dimos.cli.hardware_cli import app as hardware_app
 from dimos.cli.shell import shell
+from dimos.cli.vqa import app as vqa_app
 from dimos.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.daemon import (
     fork_daemon,
@@ -877,6 +878,7 @@ main.add_typer(mem_app, name="mem")
 
 from dimos.evals.cli import app as evals_app
 
+evals_app.add_typer(vqa_app, name="vqa")
 main.add_typer(evals_app, name="evals")
 
 
