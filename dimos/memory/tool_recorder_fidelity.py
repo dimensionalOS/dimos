@@ -243,6 +243,7 @@ class FidelityRecorder(Recorder):
         self._received_monotonic: dict[str, list[int]] = defaultdict(list)
         self._codec_s: dict[str, list[float]] = defaultdict(list)
         self._append_s: dict[str, list[float]] = defaultdict(list)
+        self._stage_s: dict[str, list[float]] = defaultdict(list)
         self._encoded_bytes: dict[str, int] = defaultdict(int)
         self._stall_fired = False
         self._stall_started_ns: int | None = None
@@ -338,6 +339,10 @@ class FidelityRecorder(Recorder):
         with self._fidelity_lock:
             self._append_s[name].append(duration)
 
+    def _on_recording_stage(self, name: str, stage: str, duration_s: float) -> None:
+        with self._fidelity_lock:
+            self._stage_s[f"{stage}/{name}"].append(duration_s)
+
     @rpc
     def fidelity_snapshot(self) -> dict[str, Any]:
         if self._measurement_started_ns is None:
@@ -368,6 +373,7 @@ class FidelityRecorder(Recorder):
                 },
                 "codec_s": {name: list(values) for name, values in self._codec_s.items()},
                 "append_s": {name: list(values) for name, values in self._append_s.items()},
+                "stage_s": {name: list(values) for name, values in self._stage_s.items()},
                 "encoded_bytes": dict(self._encoded_bytes),
                 "stall_fired": self._stall_fired,
                 "stall_end_elapsed_s": (
@@ -703,6 +709,7 @@ def run_harness(
                 f"append/{name}": values
                 for name, values in summarize_timings(snapshot.get("append_s", {})).items()
             },
+            **summarize_timings(snapshot.get("stage_s", {})),
         },
         bandwidth=bandwidth,
         realtime=realtime,
