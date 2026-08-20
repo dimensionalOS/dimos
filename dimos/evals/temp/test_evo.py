@@ -33,7 +33,7 @@ from dimos.evals.temp.tool_evo_bench import SLICE_TAGS, family_of, means, pool, 
 from dimos.evals.temp.tool_evo_gate import TARGET, _banned_reach, floors
 
 SUITES_DIR = Path(__file__).parents[1] / "suites"
-SLICED = ("clearance", "route", "glass")
+SLICED = split.SLICED_SUITES
 
 
 @pytest.fixture(scope="module")
@@ -84,15 +84,18 @@ def test_spares_are_near_duplicates(rows: list[Row]) -> None:
 
 def test_both_slices_stay_answerable(rows: list[Row]) -> None:
     """Guards the constants: retuning NEAR_S or BLOCK_S must not empty a slice
-    or leave one holding a single answer, which would make its mean unreadable."""
+    or, for a multiple-choice family, leave one holding a single answer, which
+    would make its mean unreadable."""
     table = split.counts(rows)
-    families = {family for family, _ in table}
-    for family in families:
+    kinds = {str(r["family"]): str(r["type"]) for r in rows}
+    for family, kind in kinds.items():
         answers = {a for (f, _), counts in table.items() if f == family for a in counts}
         for slice_ in ("train", "holdout"):
             got = table.get((family, slice_), {})
             assert sum(got.values()) >= 4, f"{family}/{slice_} is too small: {got}"
-            assert set(got) == answers, f"{family}/{slice_} is missing answers: {got}"
+            if kind == "mcq":  # every answer, or three of them for a wide choice
+                need = min(len(answers), 3)
+                assert len(set(got)) >= need, f"{family}/{slice_} is missing answers: {got}"
 
 
 def test_split_tag_reaches_the_case() -> None:

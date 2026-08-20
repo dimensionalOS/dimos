@@ -1,0 +1,902 @@
+[
+  {
+    "id": "go2_agentic_20260819_floorheight_t1125_c10x12",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (-1.625, 0.875) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.05,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          1124.85,
+          1124.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          1124.5,
+          1125.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_floorheight_t1200_c4x20",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (-2.125, 5.875) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.4,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          1199.89,
+          1199.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          1199.5,
+          1200.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_floorheight_t1125_c10x13",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (-1.625, 1.125) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.05,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          1124.85,
+          1124.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          1124.5,
+          1125.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_floorheight_t1200_c5x20",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (-1.875, 5.875) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.4,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          1199.89,
+          1199.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          1199.5,
+          1200.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_floorheight_t1325_c10x1",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (2.375, 1.625) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.05,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          1324.91,
+          1325.01
+        ]
+      ],
+      [
+        "odom",
+        [
+          1324.5,
+          1325.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_floorheight_t1400_c17x22",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (7.125, 4.625) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.35,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          1399.89,
+          1399.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          1399.5,
+          1400.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_floorheight_t1325_c10x10",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (2.375, 3.875) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.05,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          1324.91,
+          1325.01
+        ]
+      ],
+      [
+        "odom",
+        [
+          1324.5,
+          1325.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_floorheight_t1400_c18x16",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (7.375, 3.125) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.3,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          1399.89,
+          1399.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          1399.5,
+          1400.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_floorheight_t1450_c10x11",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (-2.125, -0.875) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.05,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          1449.85,
+          1449.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          1449.5,
+          1450.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_floorheight_t300_c11x18",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (-1.125, 1.875) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": -0.4,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          299.94,
+          300.04
+        ]
+      ],
+      [
+        "odom",
+        [
+          299.5,
+          300.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_floorheight_t1450_c10x12",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (-2.125, -0.625) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.05,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          1449.85,
+          1449.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          1449.5,
+          1450.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_floorheight_t300_c11x19",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (-1.125, 2.125) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": -0.4,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          299.94,
+          300.04
+        ]
+      ],
+      [
+        "odom",
+        [
+          299.5,
+          300.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_floorheight_t1500_c10x10",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (-1.125, -1.125) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.0,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          1499.86,
+          1499.96
+        ]
+      ],
+      [
+        "odom",
+        [
+          1499.5,
+          1500.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_floorheight_t375_c12x24",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (-1.125, 1.875) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": -0.4,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          374.84,
+          374.94
+        ]
+      ],
+      [
+        "odom",
+        [
+          374.5,
+          375.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_floorheight_t1500_c10x11",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (-1.125, -0.875) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.0,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          1499.86,
+          1499.96
+        ]
+      ],
+      [
+        "odom",
+        [
+          1499.5,
+          1500.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_floorheight_t375_c12x25",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (-1.125, 2.125) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": -0.4,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          374.84,
+          374.94
+        ]
+      ],
+      [
+        "odom",
+        [
+          374.5,
+          375.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_floorheight_t500_c0x7",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (-5.125, -4.625) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.05,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          499.95,
+          500.05
+        ]
+      ],
+      [
+        "odom",
+        [
+          499.5,
+          500.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_floorheight_t900_c2x12",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (-4.625, -2.875) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.2,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          899.93,
+          900.03
+        ]
+      ],
+      [
+        "odom",
+        [
+          899.5,
+          900.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_floorheight_t500_c0x8",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (-5.125, -4.375) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.05,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          499.95,
+          500.05
+        ]
+      ],
+      [
+        "odom",
+        [
+          499.5,
+          500.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_floorheight_t900_c3x12",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (-4.375, -2.875) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.2,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          899.93,
+          900.03
+        ]
+      ],
+      [
+        "odom",
+        [
+          899.5,
+          900.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_floorheight_t750_c10x1",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (-2.625, -6.125) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.0,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          749.9,
+          750.0
+        ]
+      ],
+      [
+        "odom",
+        [
+          749.5,
+          750.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_china_office_floorheight_t122_c13x25",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (3.375, 6.375) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.25,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          121.89,
+          121.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          121.5,
+          122.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_agentic_20260819_floorheight_t750_c10x10",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (-2.625, -3.875) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.05,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          749.9,
+          750.0
+        ]
+      ],
+      [
+        "odom",
+        [
+          749.5,
+          750.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_china_office_floorheight_t122_c18x3",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (4.625, 0.875) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.25,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          121.89,
+          121.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          121.5,
+          122.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_floorheight_t100_c10x12",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (2.625, 2.125) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.05,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          99.88,
+          99.98
+        ]
+      ],
+      [
+        "odom",
+        [
+          99.5,
+          100.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_floorheight_t25_c16x6",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (3.125, -1.625) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.25,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          24.87,
+          24.97
+        ]
+      ],
+      [
+        "odom",
+        [
+          24.5,
+          25.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_floorheight_t100_c10x13",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (2.625, 2.375) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.05,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          99.88,
+          99.98
+        ]
+      ],
+      [
+        "odom",
+        [
+          99.5,
+          100.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_floorheight_t25_c16x7",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (3.125, -1.375) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.25,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          24.87,
+          24.97
+        ]
+      ],
+      [
+        "odom",
+        [
+          24.5,
+          25.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_floorheight_t48_c10x10",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (3.375, 2.625) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.0,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          47.82,
+          47.92
+        ]
+      ],
+      [
+        "odom",
+        [
+          47.5,
+          48.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_floorheight_t48_c15x2",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (4.625, 0.625) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.25,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          47.82,
+          47.92
+        ]
+      ],
+      [
+        "odom",
+        [
+          47.5,
+          48.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_floorheight_t62_c10x1",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (4.375, 3.125) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.05,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          61.86,
+          61.96
+        ]
+      ],
+      [
+        "odom",
+        [
+          61.5,
+          62.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_floorheight_t62_c6x20",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (3.375, 7.875) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.25,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          61.86,
+          61.96
+        ]
+      ],
+      [
+        "odom",
+        [
+          61.5,
+          62.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_short_floorheight_t20_c10x10",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (-2.125, 14.625) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": -0.05,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          19.85,
+          19.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          19.5,
+          20.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_floorheight_t40_c16x6",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (3.125, 6.125) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.35,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          39.87,
+          39.97
+        ]
+      ],
+      [
+        "odom",
+        [
+          39.5,
+          40.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_floorheight_t20_c10x11",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (-2.125, 14.875) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.0,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          19.85,
+          19.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          19.5,
+          20.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_floorheight_t40_c16x7",
+    "family": "floor_height",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.25 m squares aligned to multiples of 0.25 m in world x and y. Take the cell containing the world point (3.125, 6.375) and the cell containing your own position; in each, find the lowest lidar return (smallest z). Using only the mapped point cloud, what is the lowest return at the named point minus the lowest return at your position, in meters? Answer with a single signed number.",
+    "a": 0.3,
+    "band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          39.87,
+          39.97
+        ]
+      ],
+      [
+        "odom",
+        [
+          39.5,
+          40.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  }
+]

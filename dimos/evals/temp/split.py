@@ -60,6 +60,18 @@ HOLDOUT_STRIDE = 3  # every third group of each family, so ~1/3 of the groups
 
 SLICES = ("train", "holdout", "spare")
 
+SLICED_SUITES = (
+    "clearance",
+    "route",
+    "glass",
+    "free_range",
+    "floor_height",
+    "free_disk",
+    "gap_width",
+    "coverage",
+)
+"""The ``go2_pointcloud_<name>_vqa.json`` files that go through :func:`assign`."""
+
 
 def _time(row: Row) -> float:
     """Start of the row's first context window — when it was asked."""
@@ -165,7 +177,7 @@ def main() -> None:
     from pathlib import Path
 
     rows: list[Row] = []
-    for name in ("clearance", "route", "glass"):
+    for name in SLICED_SUITES:
         path = Path(__file__).parents[1] / "suites" / f"go2_pointcloud_{name}_vqa.json"
         rows += assign(json.loads(path.read_text()))
     for (family, slice_), answers in sorted(counts(rows).items()):

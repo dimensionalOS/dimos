@@ -85,6 +85,54 @@ def _cloud_at(store: Store, t: float) -> tuple[np.ndarray, list[list[object]]]:
     return cloud.points_f32(), context
 
 
+def _odom_at(store: Store, t: float) -> np.ndarray:
+    """The robot's x-y position at or before ``t``, world meters."""
+    position = store.streams.odom.range_time(0, t).to_list()[-1].data.position
+    return np.array([float(position.x), float(position.y)])
+
+
+def _cell_grid(
+    pts: np.ndarray, cell: float, *, bounds: tuple[np.ndarray, np.ndarray] | None = None
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Per x-y cell return count, lowest z and highest z, as ``(origin, count, zmin, zmax)``.
+
+    Cells are ``cell`` squares aligned to multiples of ``cell`` in world x and
+    y, so a question can name a cell by any point inside it. ``bounds`` widens
+    the grid past the cloud (a goal outside the sensing window is then an empty
+    cell, not an index error). Arrays are ``[row=y, col=x]``.
+    """
+    xy = pts[:, :2]
+    lo, hi = xy.min(axis=0), xy.max(axis=0)
+    if bounds is not None:
+        lo, hi = np.minimum(lo, bounds[0]), np.maximum(hi, bounds[1])
+    origin = np.floor(lo / cell) * cell
+    shape = np.floor((hi - origin) / cell).astype(np.int64) + 1
+    nx, ny = int(shape[0]), int(shape[1])
+    ij = np.floor((xy - origin) / cell).astype(np.int64)
+    lin = ij[:, 1] * nx + ij[:, 0]
+    count = np.bincount(lin, minlength=nx * ny).reshape(ny, nx)
+    zmin = np.full(nx * ny, np.inf)
+    zmax = np.full(nx * ny, -np.inf)
+    np.minimum.at(zmin, lin, pts[:, 2])
+    np.maximum.at(zmax, lin, pts[:, 2])
+    return origin, count, zmin.reshape(ny, nx), zmax.reshape(ny, nx)
+
+
+def _cell_centers(
+    origin: np.ndarray, cell: float, shape: tuple[int, ...]
+) -> tuple[np.ndarray, np.ndarray]:
+    """World x and y of every cell centre of a ``_cell_grid`` array, as two ``[row, col]`` arrays."""
+    rows, cols = np.mgrid[0 : shape[0], 0 : shape[1]]
+    return origin[0] + (cols + 0.5) * cell, origin[1] + (rows + 0.5) * cell
+
+
+def _cell_index(origin: np.ndarray, cell: float, point: np.ndarray) -> tuple[int, int]:
+    """``(row, col)`` of the cell containing ``point``."""
+    return int(np.floor((point[1] - origin[1]) / cell)), int(
+        np.floor((point[0] - origin[0]) / cell)
+    )
+
+
 def displacement_rows(dataset: str, windows: Sequence[tuple[float, float]]) -> list[Row]:
     """Straight-line displacement over each window (odom is the privileged truth;
     the case quizzes the encoded odom summary). Sampling-invariant ground truth."""

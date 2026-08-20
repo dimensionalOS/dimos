@@ -1,0 +1,1158 @@
+[
+  {
+    "id": "go2_china_office_freerange_t85_p1",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (1.88, 5.88) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.8 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "east",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          84.9,
+          85.0
+        ]
+      ],
+      [
+        "odom",
+        [
+          84.5,
+          85.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_agentic_20260819_freerange_t1125_p3",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (-0.88, 0.38) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.4 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "north",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          1124.85,
+          1124.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          1124.5,
+          1125.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_freerange_t1200_p5",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (-0.38, 3.38) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.6 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "northeast",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          1199.89,
+          1199.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          1199.5,
+          1200.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_china_office_freerange_t85_p5",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (2.88, 5.38) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.4 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "northwest",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          84.9,
+          85.0
+        ]
+      ],
+      [
+        "odom",
+        [
+          84.5,
+          85.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_agentic_20260819_freerange_t1125_p1",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (-0.88, 1.88) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.4 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "south",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          1124.85,
+          1124.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          1124.5,
+          1125.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_china_office_freerange_t108_p2",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (0.62, 2.62) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.7 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "southeast",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          107.93,
+          108.03
+        ]
+      ],
+      [
+        "odom",
+        [
+          107.5,
+          108.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_agentic_20260819_freerange_t1375_p5",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (2.38, 9.38) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.1 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "southwest",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          1374.93,
+          1375.03
+        ]
+      ],
+      [
+        "odom",
+        [
+          1374.5,
+          1375.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_china_office_freerange_t25_p1",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (1.88, 0.88) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.4 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "west",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          24.87,
+          24.97
+        ]
+      ],
+      [
+        "odom",
+        [
+          24.5,
+          25.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_freerange_t85_p2",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (2.38, 5.88) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.9 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "east",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          84.9,
+          85.0
+        ]
+      ],
+      [
+        "odom",
+        [
+          84.5,
+          85.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_agentic_20260819_freerange_t1375_p1",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (1.88, 9.12) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.6 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "north",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          1374.93,
+          1375.03
+        ]
+      ],
+      [
+        "odom",
+        [
+          1374.5,
+          1375.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_freerange_t1425_p4",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (-0.88, 2.62) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.7 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "northeast",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          1424.91,
+          1425.01
+        ]
+      ],
+      [
+        "odom",
+        [
+          1424.5,
+          1425.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_freerange_t1125_p2",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (-0.62, 0.88) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.8 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "south",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          1124.85,
+          1124.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          1124.5,
+          1125.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_china_office_freerange_t108_p5",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (0.62, 2.38) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.7 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "southeast",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          107.93,
+          108.03
+        ]
+      ],
+      [
+        "odom",
+        [
+          107.5,
+          108.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_agentic_20260819_freerange_t1450_p3",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (-1.12, 0.38) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.4 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "southwest",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          1449.85,
+          1449.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          1449.5,
+          1450.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_china_office_freerange_t48_p5",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (4.88, 3.62) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.4 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "west",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          47.82,
+          47.92
+        ]
+      ],
+      [
+        "odom",
+        [
+          47.5,
+          48.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_short_freerange_t28_p2",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (2.12, 16.12) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.1 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "east",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          27.91,
+          28.01
+        ]
+      ],
+      [
+        "odom",
+        [
+          27.5,
+          28.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_agentic_20260819_freerange_t1425_p3",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (-0.62, 2.12) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.2 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "north",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          1424.91,
+          1425.01
+        ]
+      ],
+      [
+        "odom",
+        [
+          1424.5,
+          1425.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_freerange_t1450_p1",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (-2.38, -0.88) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.3 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "northeast",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          1449.85,
+          1449.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          1449.5,
+          1450.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_freerange_t1375_p0",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (1.38, 9.62) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.6 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "south",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          1374.93,
+          1375.03
+        ]
+      ],
+      [
+        "odom",
+        [
+          1374.5,
+          1375.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_short_freerange_t28_p3",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (3.12, 16.62) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.4 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "southeast",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          27.91,
+          28.01
+        ]
+      ],
+      [
+        "odom",
+        [
+          27.5,
+          28.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_china_office_freerange_t55_p1",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (5.88, 4.12) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 1.8 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "southwest",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          54.84,
+          54.94
+        ]
+      ],
+      [
+        "odom",
+        [
+          54.5,
+          55.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_short_freerange_t28_p5",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (2.88, 15.88) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.6 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "west",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          27.91,
+          28.01
+        ]
+      ],
+      [
+        "odom",
+        [
+          27.5,
+          28.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_freerange_t52_p0",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (-0.62, 1.12) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.3 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "east",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          51.88,
+          51.98
+        ]
+      ],
+      [
+        "odom",
+        [
+          51.5,
+          52.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_agentic_20260819_freerange_t1500_p1",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (-1.38, -0.88) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.3 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "north",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          1499.86,
+          1499.96
+        ]
+      ],
+      [
+        "odom",
+        [
+          1499.5,
+          1500.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_freerange_t900_p1",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (-2.12, -1.88) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.4 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "northeast",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          899.93,
+          900.03
+        ]
+      ],
+      [
+        "odom",
+        [
+          899.5,
+          900.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_freerange_t300_p4",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (-0.88, 0.38) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.9 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "south",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          299.94,
+          300.04
+        ]
+      ],
+      [
+        "odom",
+        [
+          299.5,
+          300.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_short_freerange_t58_p3",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (-1.62, 4.62) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.6 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "southwest",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          57.94,
+          58.04
+        ]
+      ],
+      [
+        "odom",
+        [
+          57.5,
+          58.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_freerange_t52_p4",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (-2.12, 2.12) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.5 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "west",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          51.88,
+          51.98
+        ]
+      ],
+      [
+        "odom",
+        [
+          51.5,
+          52.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_agentic_20260819_freerange_t375_p1",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (-1.38, -0.62) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.8 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "north",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          374.84,
+          374.94
+        ]
+      ],
+      [
+        "odom",
+        [
+          374.5,
+          375.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_freerange_t900_p5",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (-2.12, -1.62) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.1 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "northeast",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          899.93,
+          900.03
+        ]
+      ],
+      [
+        "odom",
+        [
+          899.5,
+          900.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_freerange_t375_p3",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (-0.88, -0.62) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.9 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "north",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          374.84,
+          374.94
+        ]
+      ],
+      [
+        "odom",
+        [
+          374.5,
+          375.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_freerange_t900_p0",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (-1.88, -2.12) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.6 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "north",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          899.93,
+          900.03
+        ]
+      ],
+      [
+        "odom",
+        [
+          899.5,
+          900.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_china_office_freerange_t122_p0",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (3.88, 3.88) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.6 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "north",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          121.89,
+          121.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          121.5,
+          122.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_freerange_t122_p2",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). From the world point (3.38, 3.62) consider the eight compass bearings (east, northeast, north, northwest, west, southwest, south, southeast). Along each bearing walk outward in a lane 0.6 m wide, starting 0.3 m out from the point, until the lane meets a lidar return above z = 0.15 m, meets a 0.2 m stretch with no lidar return at any height, or reaches 2.9 m from the point (the distance to the nearest edge of the mapped cloud, the same cap for every bearing). Using only the mapped point cloud, which bearing goes furthest before it stops? Answer with exactly one word, the bearing.",
+    "a": "north",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          121.89,
+          121.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          121.5,
+          122.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  }
+]
