@@ -31,6 +31,7 @@ import argparse
 from collections import defaultdict
 from collections.abc import Callable, Sequence
 from dataclasses import asdict
+import gc
 import json
 from pathlib import Path
 import sqlite3
@@ -94,7 +95,7 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
-Mode = Literal["baseline", "encoder-stall", "sqlite-lock"]
+Mode = Literal["baseline", "encoder-stall", "sqlite-lock", "gc-control"]
 StorageControlMode = Literal["encoder-control", "split-db-control", "batch-small-control"]
 
 
@@ -177,6 +178,7 @@ class FidelityRecorderConfig(RecorderConfig):
     stall_after_messages: int = 10
     stall_duration_s: float = 1.0
     sample_interval_s: float = 0.1
+    disable_cyclic_gc: bool = False
 
 
 class _TimingCodec:
@@ -252,6 +254,8 @@ class FidelityRecorder(Recorder):
         self._sampling_stop = threading.Event()
         self._sampling_thread: threading.Thread | None = None
         super().start()
+        if self.config.disable_cyclic_gc:
+            gc.disable()
 
     @rpc
     def begin_measurement(self) -> None:
@@ -394,7 +398,11 @@ class FidelityRecorder(Recorder):
         self._sampling_stop.set()
         if self._sampling_thread is not None:
             self._sampling_thread.join(timeout=1.0)
-        super().stop()
+        try:
+            super().stop()
+        finally:
+            if self.config.disable_cyclic_gc:
+                gc.enable()
 
 
 def _image_template(stream: StreamProfile, seed: int) -> np.ndarray[Any, np.dtype[Any]]:
@@ -602,6 +610,7 @@ def run_harness(
                 stall_duration_s=stall_duration_s,
                 default_frame_id="base_link",
                 tf_tolerance=1.0,
+                disable_cyclic_gc=mode == "gc-control",
             ),
         )
         .transports(transport_map)
@@ -1119,7 +1128,7 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--output", type=Path, default=Path("recorder-fidelity-results"))
     run.add_argument(
         "--mode",
-        choices=("baseline", "encoder-stall", "sqlite-lock"),
+        choices=("baseline", "encoder-stall", "sqlite-lock", "gc-control"),
         default="baseline",
     )
     run.add_argument("--transport", choices=("lcm", "shm", "zenoh"))
