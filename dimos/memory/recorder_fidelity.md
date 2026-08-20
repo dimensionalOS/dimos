@@ -105,11 +105,9 @@ committing it; it contains structural metadata but no recorded payloads.
 
 ## CI behavior
 
-The self-hosted suite has a strict expected-failure regression test for the
-known latest-wins recorder behavior. “Strict” means CI fails if that test ever
-passes, forcing the expectation to be removed when the recorder is fixed. The
-source-validity check raises a different exception, so a bad load generator
-cannot be mistaken for the known recorder failure.
+The self-hosted suite requires the 30-second controlled encoder-stall workload
+to remain fully faithful. Source validity is checked separately, so a bad load
+generator cannot be mistaken for a Recorder success or failure.
 
 CI also runs a non-gating 30-second baseline and uploads its database, source
 manifest, and JSON report. The artifact makes performance changes observable
