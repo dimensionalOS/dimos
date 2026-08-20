@@ -49,20 +49,34 @@ class DimSimConnection:
         frame_id="camera_optical",
     )
 
+    # DimSim already publishes JPEG frames on LCM /color_image. GO2Connection
+    # must cache them for observe() but not republish onto the same topic.
+    video_on_bus: bool = True
+
     def __init__(self, global_config: GlobalConfig) -> None:
         self._dimsim_process: DimSimProcess = DimSimProcess(global_config)
         self._odom_transport: PubSubTransport[PoseStamped] = make_transport("/odom", PoseStamped)
         self._tf_transport: PubSubTransport[TFMessage] = make_transport("/tf", TFMessage)
+        self._video_transport: PubSubTransport[Image] = make_transport("/color_image", Image)
+        self._video_subject = Subject()
         self._unsubscribe_odom: Callable[[], None] | None = None
+        self._unsubscribe_video: Callable[[], None] | None = None
 
     def start(self) -> None:
         self._dimsim_process.start()
         self._odom_transport.start()
+        self._video_transport.start()
         self._unsubscribe_odom = self._odom_transport.subscribe(self._handle_odom)
+        self._unsubscribe_video = self._video_transport.subscribe(self._video_subject.on_next)
 
     def stop(self) -> None:
         if self._unsubscribe_odom is not None:
             self._unsubscribe_odom()
+            self._unsubscribe_odom = None
+        if self._unsubscribe_video is not None:
+            self._unsubscribe_video()
+            self._unsubscribe_video = None
+        self._video_transport.stop()
         self._odom_transport.stop()
         self._dimsim_process.stop()
 
@@ -74,9 +88,8 @@ class DimSimConnection:
     def odom_stream(self) -> Observable[PoseStamped]:
         return Subject()
 
-    @functools.cache
     def video_stream(self) -> Observable[Image]:
-        return Subject()
+        return self._video_subject
 
     @functools.cache
     def lowstate_stream(self) -> Observable[Any]:

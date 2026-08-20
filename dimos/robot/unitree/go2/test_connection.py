@@ -22,10 +22,12 @@ from collections.abc import Callable, Iterator
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.robot.unitree.go2 import connection as go2_conn
 from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection
 
@@ -119,3 +121,37 @@ def test_odom_to_tf_prefixed() -> None:
         "robot0/camera_link",
         "robot0/camera_optical",
     )
+
+
+def _rgb_frame() -> Image:
+    return Image.from_numpy(
+        np.zeros((2, 2, 3), dtype=np.uint8),
+        format=ImageFormat.RGB,
+        frame_id="camera_optical",
+        ts=1.0,
+    )
+
+
+def test_observe_caches_and_republishes_video_frame(stub_webrtc: MagicMock) -> None:
+    module = GO2Connection(g=GlobalConfig(robot_ip="127.0.0.1"))
+    module.color_image = MagicMock()
+    frame = _rgb_frame()
+    try:
+        module._on_video_frame(frame)
+        assert module.observe() is frame
+        module.color_image.publish.assert_called_once_with(frame)
+    finally:
+        module.stop()
+
+
+def test_observe_skips_republish_when_video_already_on_bus(stub_webrtc: MagicMock) -> None:
+    module = GO2Connection(g=GlobalConfig(robot_ip="127.0.0.1"))
+    module.color_image = MagicMock()
+    module.connection.video_on_bus = True
+    frame = _rgb_frame()
+    try:
+        module._on_video_frame(frame)
+        assert module.observe() is frame
+        module.color_image.publish.assert_not_called()
+    finally:
+        module.stop()

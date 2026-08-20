@@ -322,11 +322,6 @@ class GO2Connection(Module, Camera, Pointcloud):
             return
         self.connection.start()
 
-        def onimage(image: Image) -> None:
-            image.frame_id = _prefixed(self.config.frame_id_prefix, image.frame_id)
-            self.color_image.publish(image)
-            self._latest_video_frame = image
-
         if self.config.lidar:
             self.register_disposable(self.connection.lidar_stream().subscribe(self.lidar.publish))
         self.register_disposable(self.connection.odom_stream().subscribe(self._publish_tf))
@@ -334,7 +329,7 @@ class GO2Connection(Module, Camera, Pointcloud):
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
 
         if self.config.camera:
-            self.register_disposable(self.connection.video_stream().subscribe(onimage))
+            self.register_disposable(self.connection.video_stream().subscribe(self._on_video_frame))
             self._camera_info_thread = Thread(
                 target=self.publish_camera_info,
                 daemon=True,
@@ -405,6 +400,14 @@ class GO2Connection(Module, Camera, Pointcloud):
             self.tf.publish(TFMessage(*transforms))
         if self.odom.transport:
             self.odom.publish(msg)
+
+    def _on_video_frame(self, image: Image) -> None:
+        image.frame_id = _prefixed(self.config.frame_id_prefix, image.frame_id)
+        self._latest_video_frame = image
+        # DimSim (and similar) already publish /color_image; republishing would echo.
+        if getattr(self.connection, "video_on_bus", False) is True:
+            return
+        self.color_image.publish(image)
 
     def publish_camera_info(self) -> None:
         while True:
