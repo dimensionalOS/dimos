@@ -73,12 +73,12 @@ class EvalRunnerConfig(BaseConfig):
     # Passive cases are independent single-shot calls, so the run is latency-
     # bound: one 122-case bench is ~23 s of local work against ~24 min of
     # serialized round-trips. Measured on that bench: 32-way finishes in 65 s
-    # with no errors. The default sits at half that because an autoresearch
-    # round runs one bench *per subagent* concurrently -- three subagents at 16
-    # is already 48 in flight, and the rate limit is shared. Raise it with
-    # `--concurrency` for a single run. Interactive cases drive one robot and
-    # always run serially regardless.
-    concurrency: int = 16
+    # with no errors. Note that an autoresearch round runs one bench *per
+    # subagent* concurrently, so a wide round multiplies this against a shared
+    # rate limit -- lower it with `--concurrency` when running several
+    # subagents. Interactive cases drive one robot and always run serially
+    # regardless.
+    concurrency: int = 32
     attach: bool = False  # True: drive an already-running dimos
     launch_timeout_s: float = 1200.0  # blueprint + MCP readiness (e2e parity)
     out_dir: Path = STATE_DIR / "evals"
