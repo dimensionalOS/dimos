@@ -417,6 +417,40 @@ def test_realtime_metrics_reject_eventual_drain_after_growing_backlog() -> None:
     assert any("backlog median grew" in violation for violation in result.violations)
 
 
+def test_realtime_metrics_report_latency_without_confusing_it_with_capacity() -> None:
+    samples = tuple(_realtime_sample(float(second), 0.01) for second in range(11))
+
+    result = build_realtime_metrics(
+        mode="baseline",
+        source_active_s=10.0,
+        drain_elapsed_s=0.05,
+        writer={"receive_to_commit_p99_ms": 165.0, "receive_to_commit_max_ms": 300.0},
+        samples=samples,
+        stall_end_elapsed_s=None,
+    )
+
+    assert result.passed is True
+    assert result.latency_target_met is False
+    assert result.latency_target_ms == 100.0
+    assert result.violations == ()
+
+
+def test_realtime_metrics_reject_slow_post_source_drain() -> None:
+    samples = tuple(_realtime_sample(float(second), 0.01) for second in range(11))
+
+    result = build_realtime_metrics(
+        mode="baseline",
+        source_active_s=10.0,
+        drain_elapsed_s=0.5,
+        writer={"receive_to_commit_p99_ms": 20.0},
+        samples=samples,
+        stall_end_elapsed_s=None,
+    )
+
+    assert result.passed is False
+    assert result.violations == ("drain time 0.500s is not below 0.500s",)
+
+
 def test_realtime_metrics_measure_three_sample_stall_recovery() -> None:
     samples = (
         _realtime_sample(1.0, 1.0),

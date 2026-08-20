@@ -748,14 +748,18 @@ jobs:
         run: uv run bin/build-cmu-nav-natives
       - name: Run tests
         run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not mujoco'
-      - name: Characterize recorder fidelity for 30 seconds
+      - name: Verify recorder fidelity and real-time capacity
         if: matrix.os == 'Linux'
-        continue-on-error: true
-        run: >-
-          uv run python -m dimos.memory.tool_recorder_fidelity run
-          dimos/memory/testdata/recorder_production_profile.json
-          --duration 30
-          --output recorder-fidelity-ci
+        run: |
+          uv run python -m dimos.memory.tool_recorder_fidelity run \
+            dimos/memory/testdata/recorder_production_profile.json \
+            --duration 30 \
+            --output recorder-fidelity-ci/end-to-end
+          uv run python -m dimos.memory.tool_recorder_fidelity writer-capacity \
+            dimos/memory/testdata/recorder_production_profile.json \
+            --duration 30 \
+            --rate-scale 1.5 \
+            --output recorder-fidelity-ci/writer-capacity
       - name: Upload recorder fidelity report
         if: ${{ always() && matrix.os == 'Linux' }}
         uses: actions/upload-artifact@v6
