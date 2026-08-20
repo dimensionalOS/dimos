@@ -9,7 +9,7 @@ node/npm anywhere: vite, vitest, and tsc run as npm packages under Deno (`nodeMo
 and `dimos --local-relay` auto-downloads Deno via `ensure_deno()`.
 
 ```bash
-deno task dev            # relay on http://127.0.0.1:7780 (debug page at /debug.html)
+deno task dev            # relay on http://127.0.0.1:7780 (add --cockpit-dir cockpit/dist for the UI)
 deno task test           # relay + shared tests (unit + loopback e2e)
 deno task check          # type-check relay + shared; deno fmt + deno lint for style (all of web/)
 ```
@@ -91,8 +91,30 @@ Several choices are workarounds for upstream bugs, verified 2026-07-10..15 on De
     FIN goes out lazily (bug 2), so with stream-per-frame the relay's
     `createUnidirectionalStream({waitUntilAvailable})` hangs after ~100 frames, the reliable FIFO
     overflows, and the relay kicks the viewer every ~8 s. Chromium's much larger window masks this.
-    Latest channels keep per-frame streams (their reset semantics need them) and are the known
-    remaining credit pressure for T5 video under Firefox.
+    Latest channels keep per-frame streams (their reset semantics need them); bug 12 is what keeps
+    their credit pressure bounded.
+12. **Relay->viewer latest streams are never FIN'd: every one ends in a RESET.** JS WebTransport
+    exposes no delivery signal (`getStats()` is a zeros stub in Deno 2.6.10) and quinn buffers
+    writes without bound, so "write accepted" says nothing about delivery - and a closed
+    WritableStream can no longer be aborted. The relay therefore keeps each latest stream open and
+    reaps it: streams older than `LATEST_STALE_MS` (500 ms, matching the Python leg's `stale_after`)
+    are reset, discarding buffered-but-undelivered bytes on both ends and returning Firefox's stream
+    credit far faster than the lazy FIN would. Reaping fires from newer offers AND from a periodic
+    reap every `LATEST_STALE_MS`: an idle input stops offering and would otherwise leave up to about
+    100 open streams pinning Firefox's uni-stream credit. The one send still wedged in
+    `createUnidirectionalStream` is never reset - resets do not replenish stream credit while the
+    viewer's application is not reading (verified against Deno's client; a frozen tab behaves the
+    same) - instead newer offers supersede its payload in place (the payload binds only when the
+    write starts), so a resuming viewer receives the newest frame with zero stream churn. Once the
+    write has started the payload can no longer change, so a newer offer resets a write-wedged
+    carrier once it is `LATEST_STALE_MS` old and resends the newest on a fresh stream - bounded to
+    one reset per stale window, and once stream credit runs out the wedge moves back to creation,
+    where superseding is churn-free. In `/api/stats`, `aborted` counts backpressure resets - stale
+    accepted streams reaped while the newest send is unaccepted, plus stale write-wedged carriers
+    (the suspended-viewer signal; 0 when healthy); `expired` counts routine end-of-life resets (~=
+    `sent` on a healthy latest channel); superseded and displaced payloads count as `dropped`.
+    Receivers dispatch frames on byte count (bug 2) and treat the reset as end-of-stream; a reset
+    mid-frame drops a stale partial by design.
 
 Latest streams deliver out of order by design; consumers keep the newest frame by `seq` (a reliable
 channel's persistent stream is ordered) and loss metrics are span-based

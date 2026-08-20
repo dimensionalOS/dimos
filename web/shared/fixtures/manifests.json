@@ -516,6 +516,103 @@
       "error": "unknown_panel_channel"
     },
     {
+      "name": "video_panel_no_channel",
+      "data": {
+        "channels": [
+          {
+            "ch": "color_image",
+            "encoding": "jpeg.v1",
+            "delivery": "latest",
+            "maxHz": 15.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "cam",
+            "kind": "video",
+            "channels": []
+          }
+        ]
+      },
+      "error": "invalid_video_panel"
+    },
+    {
+      "name": "video_panel_two_channels",
+      "data": {
+        "channels": [
+          {
+            "ch": "color_image",
+            "encoding": "jpeg.v1",
+            "delivery": "latest",
+            "maxHz": 15.5
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "cam",
+            "kind": "video",
+            "channels": [
+              "color_image",
+              "odom"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_video_panel"
+    },
+    {
+      "name": "video_panel_wrong_encoding",
+      "data": {
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "cam",
+            "kind": "video",
+            "channels": [
+              "odom"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_video_panel"
+    },
+    {
+      "name": "video_panel_wrong_delivery",
+      "data": {
+        "channels": [
+          {
+            "ch": "color_image",
+            "encoding": "jpeg.v1",
+            "delivery": "reliable",
+            "maxHz": 15.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "cam",
+            "kind": "video",
+            "channels": [
+              "color_image"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_video_panel"
+    },
+    {
       "name": "layout_not_list",
       "data": {
         "channels": [
