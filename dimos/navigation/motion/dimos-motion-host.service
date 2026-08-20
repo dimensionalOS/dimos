@@ -6,14 +6,13 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/root/motion-host
-# The host LISTENS ON NOTHING: dimos-helper (the go2web zenoh bridge) runs as the
-# zenoh router on 7447 and forwards to its clients, so this dials it over
-# loopback and the laptop dials the same router once (--robot-ip <robot>).
+# DIMOS_TRANSPORT is the only zenoh setting the host reads from the environment.
+# Mode, endpoints and scouting come from the `session` block in motion-host.json:
+# the rust module has no DIMOS_ZENOH_* fallbacks, and without that block it opens
+# zenoh's defaults -- a PEER with multicast scouting, which a router does not
+# forward to. The host is a CLIENT of dimos-helper (the go2web bridge, the router
+# on 7447), dials it over loopback, and listens on nothing.
 Environment=DIMOS_TRANSPORT=zenoh
-Environment=DIMOS_ZENOH_CONNECT=tcp/127.0.0.1:7447
-Environment=DIMOS_ZENOH_MODE=client
-# This LAN filters multicast, so scouting finds nothing and only wastes time.
-Environment=DIMOS_ZENOH_SCOUTING=off
 Environment=RUST_LOG=info
 # The host reads its whole config from one line on stdin and exits if it is
 # missing a key, so the file is the unit is the wiring.
