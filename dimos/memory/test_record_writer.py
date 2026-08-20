@@ -78,6 +78,9 @@ def test_writer_groups_rows_and_notifies_only_after_commit() -> None:
     assert status.mean_rows_per_transaction == 3.0
     assert status.max_rows_per_transaction == 3
     assert status.receive_to_commit_p99_ms > 0
+    assert status.writer_queue_p99_ms > 0
+    assert status.commit_max_ms > 0
+    assert status.commits_over_100ms == 0
     assert status.streams["camera"].committed_payload_bytes == 12
 
 
