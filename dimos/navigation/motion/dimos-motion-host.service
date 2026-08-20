@@ -6,8 +6,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/root/motion-host
-# 7448 because dimos-helper (the go2web zenoh bridge) owns 7447. The laptop
-# dials both: --robot-ips <ip>:7447,<ip>:7448.
+# The host LISTENS ON NOTHING: dimos-helper (the go2web zenoh bridge) runs as the
+# zenoh router on 7447 and forwards to its clients, so this dials it over
+# loopback and the laptop dials the same router once (--robot-ip <robot>).
 Environment=DIMOS_TRANSPORT=zenoh
 Environment=DIMOS_ZENOH_CONNECT=tcp/127.0.0.1:7447
 Environment=DIMOS_ZENOH_MODE=client

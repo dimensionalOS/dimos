@@ -39,7 +39,11 @@ before writing it).
 
 Laptop side, one dial — the router forwards to everything behind it:
 
-    dimos --robot-ip <robot> run go2-zenoh-motion
+    dimos --robot-ip <robot> run go2-zenoh-motion-local
+
+`-local` is the point: it is `go2-zenoh-motion` MINUS the three modules the host
+now runs. Running plain `go2-zenoh-motion` against a live host gives you two
+planners, two followers and two muxes publishing onto the same topics.
 
 The `.2.31` in the bake triple pins the glibc floor to the Go2's Ubuntu 20.04
 (glibc 2.31); the artifact links at ≤2.30, so it runs there regardless of how
