@@ -516,7 +516,7 @@ time.sleep(10)
 detector.stop()
 ```
 
-Run each in its own terminal and detections start printing as soon as both are up. The channel name and message type must match on both sides — `LCMTransport("/camera/rgb", Image)` maps to the typed channel `/camera/rgb#sensor_msgs.Image`, which you can watch with `dimos spy` or `dimos topic echo /camera/rgb`.
+Run each in its own terminal and detections start printing as soon as both are up. The channel name and message type must match on both sides `LCMTransport("/camera/rgb", Image)` maps to the typed channel `/camera/rgb#sensor_msgs.Image`, which you can watch with `dimos spy` or `dimos topic echo /camera/rgb`.
 
 Available transports live in `dimos.core.transport` (`LCMTransport`, `ZenohTransport`, `SHMTransport`, ...); see [Transports](/docs/usage/transports/index.md) for choosing between them.
 
@@ -537,7 +537,7 @@ msg = chat.get_next()                   # or block for the next message
 chat.stop()
 ```
 
-Any other script (or module stream) on the same channel sees the traffic. This is handy for quick probes and debug scripts — for a robot system, prefer modules so the streams show up in blueprints and introspection.
+Any other script (or module stream) on the same channel sees the traffic. This is handy for quick probes and debug scripts. For a robot system, prefer modules so the streams show up in blueprints and introspection.
 
 ### Dynamic streams
 
