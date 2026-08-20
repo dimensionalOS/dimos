@@ -250,12 +250,27 @@ class FidelityRecorder(Recorder):
         self._stall_fired = False
         self._stall_started_ns: int | None = None
         self._stall_ended_ns: int | None = None
+        self._gc_started_ns: dict[int, int] = {}
+        self._gc_events: list[tuple[int, int, int]] = []
+        self._gc_callback_ref = self._record_gc
         self._samples: list[dict[str, Any]] = []
         self._sampling_stop = threading.Event()
         self._sampling_thread: threading.Thread | None = None
         super().start()
         if self.config.disable_cyclic_gc:
             gc.disable()
+        else:
+            gc.callbacks.append(self._gc_callback_ref)
+
+    def _record_gc(self, phase: str, info: dict[str, Any]) -> None:
+        generation = int(info["generation"])
+        now_ns = time.monotonic_ns()
+        if phase == "start":
+            self._gc_started_ns[generation] = now_ns
+            return
+        started_ns = self._gc_started_ns.pop(generation, None)
+        if started_ns is not None:
+            self._gc_events.append((generation, now_ns - started_ns, now_ns))
 
     @rpc
     def begin_measurement(self) -> None:
@@ -378,6 +393,14 @@ class FidelityRecorder(Recorder):
                 "codec_s": {name: list(values) for name, values in self._codec_s.items()},
                 "append_s": {name: list(values) for name, values in self._append_s.items()},
                 "stage_s": {name: list(values) for name, values in self._stage_s.items()},
+                "gc_s": {
+                    f"generation_{generation}": [
+                        duration_ns / 1e9
+                        for event_generation, duration_ns, _ in self._gc_events
+                        if event_generation == generation
+                    ]
+                    for generation in range(3)
+                },
                 "encoded_bytes": dict(self._encoded_bytes),
                 "stall_fired": self._stall_fired,
                 "stall_end_elapsed_s": (
@@ -403,6 +426,8 @@ class FidelityRecorder(Recorder):
         finally:
             if self.config.disable_cyclic_gc:
                 gc.enable()
+            elif self._gc_callback_ref in gc.callbacks:
+                gc.callbacks.remove(self._gc_callback_ref)
 
 
 def _image_template(stream: StreamProfile, seed: int) -> np.ndarray[Any, np.dtype[Any]]:
@@ -719,6 +744,10 @@ def run_harness(
                 for name, values in summarize_timings(snapshot.get("append_s", {})).items()
             },
             **summarize_timings(snapshot.get("stage_s", {})),
+            **{
+                f"gc/{name}": values
+                for name, values in summarize_timings(snapshot.get("gc_s", {})).items()
+            },
         },
         bandwidth=bandwidth,
         realtime=realtime,
