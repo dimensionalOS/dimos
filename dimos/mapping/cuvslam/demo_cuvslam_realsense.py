@@ -94,5 +94,8 @@ demo_cuvslam_realsense = (
             (RealSenseCamera, "infrared_right_camera_info", "camera_info"),
         ]
     )
-    .global_config(n_workers=4)
+    # CuvslamOdometry is a C++ native module, and that SDK speaks LCM only, so the
+    # blueprint pins it rather than inheriting whatever DIMOS_TRANSPORT the shell has
+    # (macOS defaults to zenoh).
+    .global_config(transport="lcm", n_workers=4)
 )
