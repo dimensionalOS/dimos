@@ -544,6 +544,7 @@ class Image(Timestamped):
         Returns:
             Raw JPEG bytes.
         """
+        # Canonicalize to RGB so JPEG bytes are deterministic regardless of input format.
         rgb_array = self.to_rgb().data
         return get_turbojpeg().encode(rgb_array, quality=quality, pixel_format=TJPF_RGB)  # type: ignore[no-any-return]
 
