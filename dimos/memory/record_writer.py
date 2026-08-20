@@ -60,7 +60,9 @@ class RecordWriter:
         self._transaction_rows: list[int] = []
         self._commit_durations_s: list[float] = []
         self._closed = False
-        self._thread = threading.Thread(target=self._run, name="recorder-sqlite-writer", daemon=True)
+        self._thread = threading.Thread(
+            target=self._run, name="recorder-sqlite-writer", daemon=True
+        )
         self._thread.start()
 
     def submit(self, backend: Backend[Any], prepared: PreparedAppend[Any]) -> None:
@@ -77,9 +79,7 @@ class RecordWriter:
             with self._lock:
                 self._raise_if_failed_locked()
             if time.monotonic() >= deadline:
-                raise RecorderFailedError(
-                    f"Recorder writer did not drain within {timeout_s:.3f}s"
-                )
+                raise RecorderFailedError(f"Recorder writer did not drain within {timeout_s:.3f}s")
             time.sleep(0.005)
         with self._lock:
             self._raise_if_failed_locked()

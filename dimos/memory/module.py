@@ -440,7 +440,9 @@ class Recorder(MemoryModule):
             loop = self._loop
             if loop is None or not loop.is_running():
                 raise RecorderFailedError("Recorder event loop is not running")
-            msg, ts, pose, recv_ts = asyncio.run_coroutine_threadsafe(prepare(stamped), loop).result()
+            msg, ts, pose, recv_ts = asyncio.run_coroutine_threadsafe(
+                prepare(stamped), loop
+            ).result()
             if hasattr(msg, "ts"):
                 msg.ts = ts
             backend = cast("Backend[Any]", stream._source)  # type: ignore[attr-defined]
