@@ -52,13 +52,12 @@ keyframe it came from.
 import argparse
 from pathlib import Path
 import sys
-from typing import Any, cast
+from typing import cast
 
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.tf import StreamTF
 from dimos.memory.transform import throttle
-from dimos.perception.memory import gates
 from dimos.perception.memory.inventory import DEFAULT_VOCABULARY, NamingVocabulary
+from dimos.perception.memory.rig import Rig
 from dimos.perception.memory.types import Instance, SupportObservation
 from dimos.utils.data import get_data
 
@@ -85,7 +84,7 @@ def instance_label(instance: Instance) -> str:
     return f"{instance.instance_id} {instance.primary_label}"
 
 
-def render(out: str, store: Any, instances: list[Instance], t0: float, t1: float) -> None:
+def render(out: str, rig: Rig, instances: list[Instance], t0: float, t1: float) -> None:
     """Write the .rrd - rerun stays an inline import.
 
     Entity contract: ``map`` backdrop, ``camera/image`` the live feed carrying
@@ -96,12 +95,7 @@ def render(out: str, store: Any, instances: list[Instance], t0: float, t1: float
     import rerun.blueprint as rrb
 
     from dimos.memory.vis.color import Color
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
     from dimos.visualization.rerun.init import rerun_init
-
-    tf = StreamTF.from_store(store)
-    assert tf is not None
-    camera_info = store.streams.camera_info.first().data
 
     rerun_init("memory-inventory")
     rr.save(out)
@@ -115,7 +109,7 @@ def render(out: str, store: Any, instances: list[Instance], t0: float, t1: float
         )
     )
 
-    POINT_SIZE = 0.005
+    point_size = 0.005 if rig.depth is not None else 0.015
 
     def at(ts: float) -> None:
         rr.set_time("ts", timestamp=ts)
@@ -136,24 +130,37 @@ def render(out: str, store: Any, instances: list[Instance], t0: float, t1: float
         for member in instance.members:
             frames.setdefault(member.ts, []).append((i, member))
 
-    # scene backdrop from the last keyframe that carried an instance
-    backdrop_ts = max(frames, default=None)
-    if backdrop_ts is not None:
-        color = store.streams.color_image.at(backdrop_ts, 0.1).first().data
-        depth = gates.depth_at(store, backdrop_ts)
-        transform = tf.get(gates.OPTICAL_FRAME, gates.WORLD_FRAME, backdrop_ts, gates.TF_TOLERANCE)
-        assert depth is not None and transform is not None
-        backdrop = PointCloud2.from_rgbd(color, depth, camera_info, depth_scale=0.001).transform(
-            -transform
-        )
-        rr.log("map", backdrop.voxel_downsample(0.01).to_rerun(voxel_size=POINT_SIZE), static=True)
+    # scene backdrop: for depth rigs the last instance keyframe's RGBD cloud,
+    # for pointcloud rigs the window's scans merged into one map
+    if rig.depth is not None:
+        backdrop_ts = max(frames, default=None)
+        if backdrop_ts is not None:
+            backdrop = rig.backdrop(backdrop_ts)
+            if backdrop is not None:
+                rr.log(
+                    "map",
+                    backdrop.voxel_downsample(0.01).to_rerun(voxel_size=point_size),
+                    static=True,
+                )
+    else:
+        import numpy as np
+
+        from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+        scans = [
+            obs.data.as_numpy()[0]
+            for obs in rig.cloud.after(t0).before(t1).transform(throttle(2.0))
+        ]
+        if scans:
+            merged = PointCloud2.from_numpy(np.vstack(scans), frame_id=rig.world_frame)
+            rr.log("map", merged.voxel_downsample(0.05).to_rerun(voxel_size=0.01), static=True)
 
     # live camera feed + frustum; the empty box clears the overlay off non-keyframes
-    rr.log("camera", camera_info.to_rerun(), static=True)
+    rr.log("camera", rig.camera_info.to_rerun(), static=True)
     feed_throttle = 0.1 if (t1 - t0) <= 160 else 0.4
-    feed = store.streams.color_image.after(t0).before(t1).transform(throttle(feed_throttle))
+    feed = rig.color.after(t0).before(t1).transform(throttle(feed_throttle))
     for obs in feed:
-        pose = gates.camera_pose(tf, obs.ts)
+        pose = rig.camera_pose(obs.ts)
         if pose is None:
             continue
         at(obs.ts)
@@ -164,9 +171,9 @@ def render(out: str, store: Any, instances: list[Instance], t0: float, t1: float
     # keyframes, logged after the feed so their boxes win the shared timestamps
     for ts, entries in sorted(frames.items()):
         at(ts)
-        keyframe_pose = gates.camera_pose(tf, ts)
+        keyframe_pose = rig.camera_pose(ts)
         assert keyframe_pose is not None
-        rr.log("camera/image", store.streams.color_image.at(ts, 0.05).first().data.to_rerun())
+        rr.log("camera/image", rig.color.at(ts, 0.05).first().data.to_rerun())
         rr.log("camera", keyframe_pose.to_rerun())
         rr.log(
             "camera/image/instances",
@@ -180,7 +187,7 @@ def render(out: str, store: Any, instances: list[Instance], t0: float, t1: float
             ),
         )
         for i, member in entries:
-            rr.log(paths[i], member.cloud.to_rerun(voxel_size=POINT_SIZE, colors=colors[i]))
+            rr.log(paths[i], member.cloud.to_rerun(voxel_size=point_size, colors=colors[i]))
 
     # the reported instance: one labeled box, static so it holds over the whole timeline
     for i, instance in enumerate(grounded):
@@ -250,7 +257,8 @@ def main() -> int:
         "xarm6_worldbelief_20260729_203624_161992.db"
     )
     store = SqliteStore(path=dataset)
-    lo, hi = store.streams.color_image.get_time_range()
+    rig = Rig.from_store(store)
+    lo, hi = rig.color.get_time_range()
     after = lo + args.start
     before = lo + args.start + args.duration if args.duration is not None else None
 
@@ -271,6 +279,7 @@ def main() -> int:
             before=before,
             include_ungrounded=args.include_ungrounded,
             log_progress=args.log_progress,
+            rig=rig,
         )
 
     print(f"instances: {len(instances)}")
@@ -297,7 +306,7 @@ def main() -> int:
         )
 
     if out is not None:
-        render(out, store, instances, after, before if before is not None else hi)
+        render(out, rig, instances, after, before if before is not None else hi)
         print(f"saved {out}")
     return 0
 

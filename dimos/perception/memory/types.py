@@ -115,6 +115,10 @@ class LocalizePolicy:
     accept_score: float = 0.40
     refusal_margin: float = 0.15
     min_views: int = 2  # a support seen from one pose only is unconfirmed
+    # Frames retrieved per query for the detection pass. Wrist-camera frames
+    # each cover most of the workspace; room-scale sweeps dilute the
+    # embedding signal across viewpoints and need a larger budget.
+    retrieval_frames: int = 12
 
     cluster_radius_m: float = 0.08  # observations within this are the same support
     min_depth_points: int = 60
@@ -124,6 +128,8 @@ class LocalizePolicy:
     # object: every real object rises above the plane, a surface patch does not.
     surface_patch_max_rise_m: float = 0.003
     surface_patch_min_drop_m: float = -0.02
+    # Cross-view verification looks for re-detections this far from a support.
+    verify_radius_m: float = 1.6
 
 
 @dataclass(frozen=True)
@@ -137,6 +143,7 @@ class InventoryPolicy:
     argument, not as policy.
     """
 
+    keyframe_stride_s: float = 2.5  # proposal keyframe grid
     min_mask_area_px: int = 400
     max_mask_area_fraction: float = 0.25
     min_depth_points: int = 60
@@ -148,6 +155,20 @@ class InventoryPolicy:
     envelope_pad_m: float = 0.015
     search_radius_m: float = 0.15
     overlap_accept: float = 0.20
+    # Same-object views may differ in bounding size by partiality alone; a
+    # gap beyond this is two different bodies.
+    size_gap_max_m: float = 0.25
+    # The majority of a candidate's points must lie within the error envelope
+    # of the track's accumulated support. Partial and newly revealed views of
+    # one object satisfy this; a different object placed at a vacated rest
+    # position does not, which is what AABB overlap cannot express.
+    support_explained: float = 0.5
+    # A lifted cloud plainly spanning more than one object: wider than any
+    # single object at this rig's scale, or taller than one body. Repaired by
+    # stripping support-surface points and splitting by 3D connectivity.
+    split_extent_m: float = 0.30
+    split_height_m: float = 0.10
+    split_eps_m: float = 0.03
     # Same-frame observations whose clouds touch within this gap are one
     # body - rigid objects cannot interpenetrate, and distinct objects on a
     # workspace sit apart by more than sensor noise. This is what fuses
@@ -163,6 +184,10 @@ class InventoryPolicy:
     # frame and again over a track. Otherwise the instance stays unknown-N.
     name_accept_score: float = 0.18
     name_refusal_margin: float = 0.06
+    # An attachment must be the detector drawing a box around this member.
+    # Whole-object masks want a strict overlap; fragment masks of a large
+    # object overlap their object's box only partially.
+    name_attach_iou: float = 0.45
 
     include_object_parts: bool = False
     include_surfaces: bool = False
