@@ -67,6 +67,8 @@ all_blueprints = {
     "go2-zenoh-basic": "dimos.robot.unitree.go2.zenoh.blueprints:go2_zenoh_basic",
     "go2-zenoh-htc": "dimos.robot.unitree.go2.zenoh.blueprints:go2_zenoh_htc",
     "go2-zenoh-nav": "dimos.robot.unitree.go2.zenoh.blueprints:go2_zenoh_nav",
+    "go2-zenoh-nav-baked": "dimos.robot.unitree.go2.zenoh.blueprints:go2_zenoh_nav_baked",
+    "go2-zenoh-nav-remote": "dimos.robot.unitree.go2.zenoh.blueprints:go2_zenoh_nav_remote",
     "go2-zenoh-raycaster": "dimos.robot.unitree.go2.zenoh.blueprints:go2_zenoh_raycaster",
     "keyboard-teleop-a1z": "dimos.robot.manipulators.a1z.blueprints.teleop:keyboard_teleop_a1z",
     "keyboard-teleop-a750": "dimos.robot.manipulators.a750.blueprints.teleop:keyboard_teleop_a750",

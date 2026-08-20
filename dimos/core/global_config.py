@@ -77,8 +77,9 @@ class GlobalConfig(BaseSettings):
     # Whether multicast scouting runs at all. zenoh_scouting only sets its reach.
     zenoh_multicast: bool = True
     # Whether peers propagate the peers they already know over established links.
-    # None follows zenoh_scouting, so gossip stays off when scouting is off.
-    zenoh_gossip: bool | None = None
+    # Unlike multicast scouting this reaches nothing new on the LAN, and zenoh
+    # needs it to resolve the key expressions a linked peer sends.
+    zenoh_gossip: bool | None = True
     # Seconds ZenohService.start() blocks for the configured connect endpoints to
     # link before giving up and continuing. 0 disables the wait.
     zenoh_connect_timeout: float = Field(default=1.0, ge=0, le=86400)

@@ -173,24 +173,59 @@ class TestHealthCheck:
         assert coord.health_check() is False
 
 
-from dimos.core.daemon import daemonize, install_signal_handlers
+from dimos.core.daemon import (
+    fork_daemon,
+    install_signal_handlers,
+    read_daemon_status,
+    write_daemon_status,
+)
 
 
-class TestDaemonize:
-    """test_daemonize_creates_log_dir."""
+class TestForkDaemon:
+    """Launcher-side fork_daemon behavior and the status pipe protocol."""
 
-    def test_daemonize_creates_log_dir(self, tmp_path: Path):
+    def test_launcher_gets_pgid_and_readable_pipe(self, tmp_path: Path):
         log_dir = tmp_path / "nested" / "logs"
-        assert not log_dir.exists()
 
-        # We can't actually double-fork in tests (child would continue running
-        # pytest), so we mock os.fork to return >0 both times (parent path).
-        with mock.patch("os.fork", return_value=1), pytest.raises(SystemExit):
-            # Parent calls os._exit(0) which we let raise
-            with mock.patch("os._exit", side_effect=SystemExit(0)):
-                daemonize(log_dir)
+        # We can't actually double-fork in tests (the child's setsid would
+        # detach the pytest worker), so exercise only the launcher path.
+        with (
+            mock.patch("os.fork", return_value=12345),
+            mock.patch("os.waitpid") as waitpid,
+        ):
+            daemon_pgid, read_fd = fork_daemon(log_dir)
 
         assert log_dir.exists()
+        assert daemon_pgid == 12345
+        waitpid.assert_called_once_with(12345, 0)
+        # The write end is closed in the launcher, so the pipe reports EOF.
+        assert read_daemon_status(read_fd) is None
+
+    def test_status_roundtrip(self):
+        read_fd, write_fd = os.pipe()
+        write_daemon_status(write_fd, {"ok": True, "n_modules": 3})
+        os.close(write_fd)
+        assert read_daemon_status(read_fd) == {"ok": True, "n_modules": 3}
+
+    def test_status_error_roundtrip(self):
+        read_fd, write_fd = os.pipe()
+        write_daemon_status(write_fd, {"ok": False, "error": "boom"})
+        os.close(write_fd)
+        assert read_daemon_status(read_fd) == {"ok": False, "error": "boom"}
+
+    def test_status_garbage_is_none(self):
+        read_fd, write_fd = os.pipe()
+        os.write(write_fd, b"not json\n")
+        os.close(write_fd)
+        assert read_daemon_status(read_fd) is None
+
+    def test_write_tolerates_closed_reader(self):
+        read_fd, write_fd = os.pipe()
+        os.close(read_fd)
+        # os.write raises BrokenPipeError (SIGPIPE is ignored in Python);
+        # write_daemon_status must swallow it.
+        write_daemon_status(write_fd, {"ok": True})
+        os.close(write_fd)
 
 
 class TestSignalHandler:

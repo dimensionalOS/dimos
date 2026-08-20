@@ -19,8 +19,10 @@ import inspect
 import json
 import os
 from pathlib import Path
+import signal
 import sys
 import time
+import traceback
 import types
 from typing import TYPE_CHECKING, Any, Literal, cast, get_args, get_origin
 
@@ -55,7 +57,13 @@ from dimos.cli.cloud import login as cloud_login, logout as cloud_logout, whoami
 from dimos.cli.hardware_cli import app as hardware_app
 from dimos.cli.shell import shell
 from dimos.constants import CONFIG_DIR, LOG_DIR
-from dimos.core.daemon import daemonize, install_signal_handlers
+from dimos.core.daemon import (
+    fork_daemon,
+    install_signal_handlers,
+    read_daemon_status,
+    redirect_stdio_to_devnull,
+    write_daemon_status,
+)
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
 from dimos.mapping.cli.map import main as _map_main
@@ -64,7 +72,7 @@ from dimos.mapping.cli.rename import main as _map_rename_main
 from dimos.mapping.cli.replay import main as _map_replay_main
 from dimos.mapping.cli.replay_marker import main as _map_replay_marker_main
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
-from dimos.utils.cache import cache_usage_locked
+from dimos.utils.cache import cache_usage_guard, cache_usage_locked
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import RerunOpenOption
 
@@ -81,6 +89,20 @@ main = typer.Typer(
 load_dotenv()
 
 SIMULATORS = ("mujoco", "dimsim")
+
+DEFAULT_CONFIG_PATH = CONFIG_DIR / "dimos" / "config"
+
+
+def _reject_legacy_config() -> None:
+    """~/.config/dimos used to BE the config file; it is now a directory."""
+    legacy = CONFIG_DIR / "dimos"
+    if legacy.is_file():
+        typer.echo(
+            f"config found at old path {legacy}, which is now a directory; move it:\n"
+            f"  mv {legacy} {legacy}.tmp && mkdir {legacy} && mv {legacy}.tmp {legacy}/config",
+            err=True,
+        )
+        raise typer.Exit(2)
 
 
 def _normalize_simulation_argv(argv: list[str]) -> list[str]:
@@ -207,7 +229,7 @@ def run(
     daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
     disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
     config_path: Path = typer.Option(
-        CONFIG_DIR / "dimos", "--config", "-c", help="Path to config file"
+        DEFAULT_CONFIG_PATH, "--config", "-c", help="Path to config file"
     ),
     local_relay: bool | None = typer.Option(
         None,
@@ -220,6 +242,8 @@ def run(
     show_help: bool = typer.Option(False, "--help"),
 ) -> None:
     """Start a robot blueprint"""
+    if config_path == DEFAULT_CONFIG_PATH:
+        _reject_legacy_config()
     from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
     from dimos.core.coordination.blueprint_config.parser import (
         BlueprintConfigParser,
@@ -328,43 +352,87 @@ def run(
     # Workers inherit DIMOS_RUN_LOG_DIR env var via forkserver.
     set_run_log_dir(log_dir)
 
-    coordinator = ModuleCoordinator.build(blueprint, parsed_config)
-
     if daemon:
-        # Health check before daemonizing — catch early crashes
-        if not coordinator.health_check():
-            typer.echo("Error: health check failed — a worker process died.", err=True)
-            coordinator.stop()
-            raise typer.Exit(1)
+        # Fork before building: zenoh's process-global runtime does not survive
+        # fork, so the daemon must open every session itself (issue #3395).
+        daemon_pgid, status_fd = fork_daemon(log_dir)
 
-        n_modules = coordinator.n_modules
-        typer.echo(f"✓ All modules started ({n_modules} modules)")
-        typer.echo("✓ Health check passed")
-        typer.echo("✓ DimOS running in background\n")
-        typer.echo(f"  Run ID:    {run_id}")
-        typer.echo(f"  Log:       {log_dir}")
-        typer.echo("  Stop:      dimos stop")
-        typer.echo("  Status:    dimos status")
+        if daemon_pgid:
+            # Launcher: wait for the daemon to report build/health outcome. Its
+            # build output streams to this terminal via the inherited stdio.
+            try:
+                status = read_daemon_status(status_fd)
+            except KeyboardInterrupt:
+                try:
+                    os.killpg(daemon_pgid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                typer.echo("Interrupted; daemon startup aborted.", err=True)
+                raise typer.Exit(130) from None
+            if not status or not status.get("ok"):
+                message = (status or {}).get("error") or "daemon exited during startup"
+                typer.echo(f"Error: {message}", err=True)
+                raise typer.Exit(1)
 
-        coordinator.suppress_console()
+            typer.echo(f"✓ All modules started ({status['n_modules']} modules)")
+            typer.echo("✓ Health check passed")
+            typer.echo("✓ DimOS running in background\n")
+            typer.echo(f"  Run ID:    {run_id}")
+            typer.echo(f"  Log:       {log_dir}")
+            typer.echo("  Stop:      dimos stop")
+            typer.echo("  Status:    dimos status")
+            return
 
-        daemonize(log_dir)
-
-        entry = RunEntry(
-            run_id=run_id,
-            pid=os.getpid(),
-            blueprint=blueprint_name,
-            started_at=datetime.now(timezone.utc).isoformat(),
-            log_dir=str(log_dir),
-            cli_args=list(blueprint_names),
-            config_overrides=global_option_overrides,
-            original_argv=sys.argv,
-        )
-        entry.save()
-        spawn_watchdog(run_id, log_dir=log_dir)
-        install_signal_handlers(entry, coordinator)
-        coordinator.loop()
+        # Daemon grandchild — stdio still attached so build output streams.
+        coordinator = None
+        try:
+            coordinator = ModuleCoordinator.build(blueprint, parsed_config)
+            if not coordinator.health_check():
+                write_daemon_status(
+                    status_fd,
+                    {"ok": False, "error": "health check failed — a worker process died."},
+                )
+                coordinator.stop()
+                os._exit(1)
+            # Workers dup2 /dev/null over the terminal fds they inherited.
+            coordinator.suppress_console()
+            # Idempotent with loop(); serving now means the success status below
+            # guarantees Coordinator RPC is actually reachable.
+            coordinator.start_rpc_service()
+            entry = RunEntry(
+                run_id=run_id,
+                pid=os.getpid(),
+                blueprint=blueprint_name,
+                started_at=datetime.now(timezone.utc).isoformat(),
+                log_dir=str(log_dir),
+                cli_args=list(blueprint_names),
+                config_overrides=global_option_overrides,
+                original_argv=sys.argv,
+            )
+            entry.save()
+            spawn_watchdog(run_id, log_dir=log_dir)
+            install_signal_handlers(entry, coordinator)
+            redirect_stdio_to_devnull()
+        except Exception as exc:
+            traceback.print_exc()
+            write_daemon_status(status_fd, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+            if coordinator is not None:
+                try:
+                    coordinator.stop()
+                except Exception:
+                    logger.error("Error stopping coordinator", exc_info=True)
+            sys.stderr.flush()
+            # os._exit: never unwind the launcher's typer/atexit state in a
+            # forked image.
+            os._exit(1)
+        write_daemon_status(status_fd, {"ok": True, "n_modules": coordinator.n_modules})
+        os.close(status_fd)
+        # The launcher's exit released the pre-fork cache-usage marker (shared
+        # flock); hold a fresh one for the daemon's lifetime.
+        with cache_usage_guard():
+            coordinator.loop()
     else:
+        coordinator = ModuleCoordinator.build(blueprint, parsed_config)
         entry = RunEntry(
             run_id=run_id,
             pid=os.getpid(),
@@ -641,6 +709,21 @@ def show_config() -> None:
     """Show current config settings and their values."""
     for field_name, value in global_config.model_dump().items():
         typer.echo(f"{field_name}: {value}")
+
+
+@main.command(
+    context_settings={
+        "allow_extra_args": True,
+        "ignore_unknown_options": True,
+        # let --help through to the bake command itself
+        "help_option_names": [],
+    }
+)
+def bake(ctx: typer.Context) -> None:
+    """Compose rust native modules into a single host binary."""
+    from dimos.cli.bake.cli import main as bake_main
+
+    bake_main(list(ctx.args))
 
 
 @main.command(name="list")
