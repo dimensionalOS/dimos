@@ -38,7 +38,7 @@ from dimos.navigation.motion.scenarios import (
     se2_search,
 )
 
-from .gold import densify_states, pose_stamped, states_of
+from .base import densify_states, pose_stamped, states_of
 
 PAD = 1.5
 # Free space around the working area, in whole periods -- se2_path's own.

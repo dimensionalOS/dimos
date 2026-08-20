@@ -4,31 +4,24 @@ Three packages: `planner/` plans, `control/` follows a plan, `adapter/`
 deploys both as dimos modules for the go2-zenoh blueprints. Run from the repo
 root; per-package `tools.md` has the full menus.
 
-`planner/` is a runner (`python -m ...planner`) over a `referee/` that scores
-whatever the runner picked. Any candidate is a `module:factory` string, so all
-of them go through the same judge:
+Neither side's benchmark is on this branch: the planner's referee (worlds, gold
+oracle, judge) and the control side's, which drives a MuJoCo plant, both stayed
+on `ivan/feat/trajectory_ctrl` with the sim (see [README.md](README.md), "What
+is not here"). What ships here is what runs on a robot, and the tests that hold
+it: python-vs-rust parity on the laws, the crate's own behavioural invariants,
+and the module wiring.
+
+## planner
 
 ```bash
-python -m dimos.navigation.motion.planner --score --planner gold
-python -m dimos.navigation.motion.planner --score --planner my.candidate:make
-```
+# the crate's behavioural invariants: routes an open world, refuses a sealed
+# box, never hops a thin wall, same answer every call, no cross-call memo.
+# --no-default-features drops pyo3, which the rlib these test does not need
+# (plain `cargo test` runs the doc-tests and nothing else).
+cargo test --release --no-default-features --test invariants \
+    --manifest-path dimos/navigation/motion/planner/rust/Cargo.toml
 
-The control side has no runner here: its referee drives a MuJoCo plant, so it
-stayed with the sim on `ivan/feat/trajectory_ctrl` (see [README.md](README.md),
-"what is not here"). What ships here is the law and its bit-exact rust.
-
-## planner ([planner/referee/README.md](planner/referee/README.md))
-
-```bash
-# score the evolved rust planner: curated 16, or the full 56-world battery
-python -m dimos.navigation.motion.planner --score
-python -m dimos.navigation.motion.planner --score --gen 40 --jobs 8
-
-# watch a plan in rerun (2D referee view: truth, cloud, sweep, gold,
-# required-precision circles along the candidate path)
-python -m dimos.navigation.motion.planner --spawn --score -s corridor_reverse
-
-# rebuild the crate after editing rust/
+# rebuild the extension after editing rust/
 uv run maturin develop --uv --release -m dimos/navigation/motion/planner/rust/Cargo.toml
 ```
 

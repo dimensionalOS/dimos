@@ -28,7 +28,7 @@ from dimos.navigation.motion.control.laws.seed import PursuitController
 from dimos.navigation.motion.embodiment import EMBODIMENTS, Embodiment
 from dimos.navigation.motion.geometry import AvoidanceConfig
 from dimos.navigation.motion.obstacles import RAW_BAND, hard_points, load as load_model
-from dimos.navigation.motion.planner.planners.gold import pose_stamped
+from dimos.navigation.motion.planner.planners.base import pose_stamped
 from dimos.navigation.motion.planner.planners.target import make_py
 from dimos.navigation.motion.scenarios import Scenario
 
