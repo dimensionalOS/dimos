@@ -490,6 +490,16 @@ def payload_digest(value: Any) -> str:
         digest.update(str(value.data.shape).encode())
         digest.update(str(value.data.dtype).encode())
         digest.update(np.ascontiguousarray(value.data).tobytes())
+    elif isinstance(value, PointCloud2):
+        points, colors = value.as_numpy()
+        digest.update(value.frame_id.encode())
+        digest.update(str(points.shape).encode())
+        digest.update(str(points.dtype).encode())
+        digest.update(np.ascontiguousarray(points).tobytes())
+        if colors is not None:
+            digest.update(str(colors.shape).encode())
+            digest.update(str(colors.dtype).encode())
+            digest.update(np.ascontiguousarray(colors).tobytes())
     elif hasattr(value, "lcm_encode"):
         digest.update(value.lcm_encode())
     else:
