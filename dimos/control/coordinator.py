@@ -48,6 +48,13 @@ from dimos.control.hardware_interface import (
 )
 from dimos.control.routing import Routing
 from dimos.control.task import ControlTask
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JointTrajectoryTask,
+    TrajectoryCancellationResult,
+    TrajectoryCancellationStatus,
+    TrajectoryExecutionResult,
+    TrajectoryExecutionStatus,
+)
 from dimos.control.tick_loop import TickLoop
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -57,11 +64,10 @@ from dimos.hardware.drive_trains.spec import (
 )
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.hardware.whole_body.spec import WholeBodyAdapter
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Bool import Bool
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.teleop.quest.quest_types import (
     Buttons,
 )
@@ -79,11 +85,10 @@ class TaskConfig:
 
     name: str
     type: str = "trajectory"
-    joint_names: list[str] = field(default_factory=lambda: [])
+    joint_names: list[str] = field(default_factory=list)
     priority: int = 10
     auto_start: bool = False
     params: dict[str, Any] = field(default_factory=dict)
-    # card input name -> the port this instance reads instead
     stream_bind: dict[str, str] = field(default_factory=dict)
 
 
@@ -124,7 +129,8 @@ class ControlCoordinator(Module):
     Example:
         >>> from dimos.control.components import HardwareComponent, HardwareType
         >>> from dimos.control.components import make_joints
-        >>> from dimos.control.coordinator import ControlCoordinator, TaskConfig
+        >>> from dimos.control.coordinator import ControlCoordinator
+        >>> from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
         >>>
         >>> coordinator = ControlCoordinator.blueprint(
         ...     tick_rate=100.0,
@@ -138,12 +144,7 @@ class ControlCoordinator(Module):
         ...         ),
         ...     ],
         ...     tasks=[
-        ...         TaskConfig(
-        ...             name="traj_arm",
-        ...             type="trajectory",
-        ...             joint_names=make_joints("arm", 7),
-        ...             priority=10,
-        ...         ),
+        ...         joint_trajectory_task(make_joints("arm", 7)),
         ...     ],
         ... )
     """
@@ -155,14 +156,6 @@ class ControlCoordinator(Module):
 
     # Input: Streaming joint commands for real-time control
     joint_command: In[JointState]
-
-    # Input: Streaming cartesian commands for CartesianIKTask
-    # Uses frame_id as task name for routing
-    coordinator_cartesian_command: In[PoseStamped]
-
-    # Input: Routed spatial EEF twist commands for EEFTwistTask.
-    # Uses frame_id as task name for routing.
-    coordinator_ee_twist_command: In[TwistStamped]
 
     # Input: Streaming twist commands for velocity-commanded platforms
     twist_command: In[Twist]
@@ -188,11 +181,12 @@ class ControlCoordinator(Module):
         # Registered tasks
         self._tasks: dict[TaskName, ControlTask] = {}
         self._task_lock = threading.Lock()
+        self._trajectory_task: JointTrajectoryTask | None = None
 
         # Card-declared stream routes, keyed by the port stream_bind resolved to:
-        # port -> (task, handler, routing). Guarded by _task_lock; entries are
-        # added/pruned with their task.
-        self._routes: dict[str, list[tuple[ControlTask, str, Routing]]] = {}
+        # port -> (task, bound handler, routing). Guarded by _task_lock; entries
+        # are added/pruned with their task.
+        self._routes: dict[str, list[tuple[ControlTask, Callable[[Any, float], Any], Routing]]] = {}
 
         # Card-declared command names per task, keyed by task name.
         # Guarded by _task_lock; added/pruned with their task.
@@ -229,9 +223,7 @@ class ControlCoordinator(Module):
                 if self.add_task(task, task_type=task_cfg.type, stream_bind=task_cfg.stream_bind):
                     tasks_added.append(task.name)
                 if task_cfg.auto_start:
-                    start = getattr(task, "start", None)
-                    if callable(start):
-                        start()
+                    self.task_invoke(task.name, "start")
 
         except Exception:
             # Roll back everything this call added, tasks first: an active task
@@ -450,6 +442,29 @@ class ControlCoordinator(Module):
             return positions
 
     @rpc
+    def execute_trajectory(self, trajectory: JointTrajectory) -> TrajectoryExecutionResult:
+        """Execute a trajectory through the coordinator's sole trajectory task."""
+        current_positions = self.get_joint_positions()
+        with self._task_lock:
+            if self._trajectory_task is None:
+                return TrajectoryExecutionResult(
+                    TrajectoryExecutionStatus.NO_TRAJECTORY_TASK,
+                    "Control coordinator has no trajectory task",
+                )
+            return self._trajectory_task.execute(trajectory, current_positions)
+
+    @rpc
+    def cancel_trajectory(self) -> TrajectoryCancellationResult:
+        """Cancel the coordinator's sole trajectory task."""
+        with self._task_lock:
+            if self._trajectory_task is None:
+                return TrajectoryCancellationResult(
+                    TrajectoryCancellationStatus.NO_TRAJECTORY_TASK,
+                    "Control coordinator has no trajectory task",
+                )
+            return self._trajectory_task.cancel()
+
+    @rpc
     def add_task(
         self,
         task: ControlTask,
@@ -472,9 +487,18 @@ class ControlCoordinator(Module):
             if task.name in self._tasks:
                 logger.warning(f"Task {task.name} already registered")
                 return False
+            if isinstance(task, JointTrajectoryTask):
+                if self._trajectory_task is not None:
+                    raise ValueError("ControlCoordinator supports exactly one JointTrajectoryTask")
+                self._trajectory_task = task
             if task_type is not None:
-                self._register_routes(task, task_type, stream_bind)
-                self._task_commands[task.name] = self._commands_for(task_type)
+                try:
+                    self._register_routes(task, task_type, stream_bind)
+                    self._task_commands[task.name] = self._commands_for(task_type)
+                except Exception:
+                    if task is self._trajectory_task:
+                        self._trajectory_task = None
+                    raise
             else:
                 self._task_commands[task.name] = frozenset()
             self._tasks[task.name] = task
@@ -492,6 +516,8 @@ class ControlCoordinator(Module):
             for entries in self._routes.values():
                 entries[:] = [entry for entry in entries if entry[0] is not task]
             self._task_commands.pop(task_name, None)
+            if task is self._trajectory_task:
+                self._trajectory_task = None
             logger.info(f"Removed task {task_name}")
         self._sync_stream_subscriptions()
         return True
@@ -533,6 +559,12 @@ class ControlCoordinator(Module):
 
         for binding in bindings.consumes:
             port = ports[binding.stream]
+            handler = getattr(task, binding.handler, None)
+            if not callable(handler):
+                raise TypeError(
+                    f"{where}: card binds stream {binding.stream!r} to handler "
+                    f"{binding.handler!r}, but the task has no callable {binding.handler!r}"
+                )
             if binding.routing is Routing.DIRECT:
                 sharing = [t.name for t, _h, r in self._routes.get(port, ()) if r is Routing.DIRECT]
                 if sharing:
@@ -543,7 +575,7 @@ class ControlCoordinator(Module):
                         task_name=task.name,
                         also_bound=sharing,
                     )
-            self._routes.setdefault(port, []).append((task, binding.handler, binding.routing))
+            self._routes.setdefault(port, []).append((task, handler, binding.routing))
 
     def _commands_for(self, task_type: str) -> frozenset[str]:
         """The command names the task type declares in its TASK_EXPOSES card."""
@@ -624,7 +656,7 @@ class ControlCoordinator(Module):
     def _dispatch(self, stream: str, msg: Any) -> None:
         """Deliver a stream message to its card-routed tasks per each entry's routing rule.
 
-        BROADCAST and DIRECT are ungated, so only the other two rules appear below.
+        BROADCAST and DIRECT are ungated, so only CLAIM_OVERLAP appears below.
         """
         t_now = time.perf_counter()
         with self._task_lock:
@@ -633,37 +665,21 @@ class ControlCoordinator(Module):
                 return
 
             claimable: set[str] | None = None
-            frame_id = getattr(msg, "frame_id", "")
-            by_name_bound = False
-            by_name_matched = False
 
-            for task, handler_name, routing in entries:
+            for task, handler, routing in entries:
                 if routing is Routing.CLAIM_OVERLAP:
                     if claimable is None:
                         claimable = set(getattr(msg, "name", ()) or ())
                     if not claimable or not (task.claim().joints & claimable):
                         continue
-                elif routing is Routing.BY_TASK_NAME:
-                    by_name_bound = True
-                    if not frame_id or task.name != frame_id:
-                        continue
-                    by_name_matched = True
                 try:
-                    getattr(task, handler_name)(msg, t_now)
+                    handler(msg, t_now)
                 except Exception:
                     logger.exception(
                         "Stream handler raised on task",
-                        handler=handler_name,
+                        handler=handler.__name__,
                         task_name=task.name,
                         stream=stream,
-                    )
-
-            if by_name_bound and not by_name_matched:
-                if not frame_id:
-                    logger.warning("Stream message with empty frame_id (task name)", stream=stream)
-                else:
-                    logger.warning(
-                        "Stream message for unknown task", stream=stream, task_name=frame_id
                     )
 
     def _map_twist_to_base_joints(self, msg: Twist) -> None:
@@ -787,6 +803,8 @@ class ControlCoordinator(Module):
                     f"task_invoke({task_name!r}, {method!r}): task has no such method; "
                     f"declared commands: {sorted(self._task_commands.get(task_name, frozenset()))}"
                 )
+            # TODO: Make TASK_EXPOSES an enforced RPC allowlist after migrating callers
+            # that rely on reflective access to undeclared task methods.
             logger.warning(
                 "undeclared task_invoke; declare it in TASK_EXPOSES",
                 task_name=task_name,

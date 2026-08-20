@@ -7,7 +7,7 @@ Relocalization lets a Go2 navigate on a previously built map instead of only on 
 
 ![relocalize on the live go2 and nav_to a point in the premap](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/reloc_and_nav_to.webp)
 
-> **Note:** Requires DimOS v0.0.13 or newer for PGO loop closure and `dimos map` export.
+> **Note:** Requires dimOS v0.0.13 or newer for PGO loop closure and `dimos map` export.
 
 This guide takes four steps:
 
@@ -16,7 +16,7 @@ This guide takes four steps:
 3. Test relocalization in replay, no robot needed
 4. Deploy on the live Go2
 
-Throughout this guide, `{DB_NAME}` is the stem of your recording, for example `recording_go2` for `recording_go2.db`. For `map_file`, pass the same stem and DimOS appends `.pc2.lcm` automatically.
+Throughout this guide, `{DB_NAME}` is the stem of your recording, for example `recording_go2` for `recording_go2.db`. For `map_file`, pass the same stem and dimOS appends `.pc2.lcm` automatically.
 
 ## 1. Record a run
 
@@ -91,7 +91,7 @@ Test alignment without the robot. `unitree-go2-relocalization` is `unitree-go2` 
 
 ```bash
 dimos --replay --replay-db recording_go2 run unitree-go2-relocalization \
-  -o relocalizationmodule.map_file=recording_go2
+  --map-file=recording_go2
 ```
 
 `map_file` resolves `{DB_NAME}.pc2.lcm` with the same search order as above (cwd, then project root, then `data/`).
@@ -122,7 +122,7 @@ Run the replay test first. On hardware, use the same blueprint and `map_file`:
 
 ```bash
 dimos --robot-ip {YOUR_ROBOT_IP} run unitree-go2-relocalization \
-  -o relocalizationmodule.map_file=recording_go2
+  --map-file=recording_go2
 ```
 
 Before sending navigation goals, walk through this checklist:
@@ -163,17 +163,19 @@ Note that [`CostMapper`](/dimos/mapping/costmapper.py) builds the costmap from t
 
 | File | Format | Produced by | Consumed by |
 |------|--------|-------------|-------------|
-| `{name}.db` | memory2 SQLite (`lidar`, `odom`, `color_image`, …) | `unitree-go2-memory` | `dimos map *`, `--replay-db` |
+| `{name}.db` | memory SQLite (`lidar`, `odom`, `color_image`, …) | `unitree-go2-memory` | `dimos map *`, `--replay-db` |
 | `{name}.pc2.lcm` | LCM-encoded `PointCloud2` premap | `dimos map global --export` | `RelocalizationModule` (`map_file`) |
 | `{name}.rrd` | Rerun recording (visual QA) | `dimos map global` | Rerun viewer |
 
 ## Configuration reference
 
-CLI overrides use blueprint module config (`-o relocalizationmodule.<field>=…`):
+CLI overrides use dynamically generated kebab-case flags such as
+`--map-file=…`. If a shorthand is ambiguous, qualify it with the module key,
+for example `--relocalizationmodule.map-file=…`.
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `map_file` | `None` (module disabled) | Premap stem or path. DimOS appends `.pc2.lcm` automatically |
+| `map_file` | `None` (module disabled) | Premap stem or path. dimOS appends `.pc2.lcm` automatically |
 | `fitness_threshold` | `0.45` | Minimum ICP fitness to accept a relocalization (0 to 1) |
 | `publish_loaded_map` | `false` | Republish raw premap on `loaded_map` every 2 s |
 | `use_carving` | `true` | Column-carve when merging premap and live scan |
@@ -189,14 +191,16 @@ Constants are not overridable via CLI today:
 To accept all candidates for visualization only (not for production nav):
 
 ```bash
--o relocalizationmodule.fitness_threshold=0.0
+dimos run unitree-go2-relocalization \
+  --map-file=recording_go2 \
+  --fitness-threshold=0.0
 ```
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| `Relocalization module disabled (no map_file configured)` | Missing `-o relocalizationmodule.map_file=…` | Set `map_file` to your premap stem |
+| `Relocalization module disabled (no map_file configured)` | Missing `--map-file=…` | Set `map_file` to your premap stem |
 | File not found for `.pc2.lcm` | Export not run or wrong cwd | Run `dimos map global … --export` and check cwd or `data/` |
 | Long stretch of `relocalize skipped` | Map still accumulating points | Wait or drive slowly through mapped geometry |
 | Repeated `relocalize rejected` | Poor overlap with premap or wrong space | Start in a known area and check premap in `.rrd` |

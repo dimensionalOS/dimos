@@ -17,11 +17,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import open3d as o3d  # type: ignore[import-untyped]
-import open3d.core as o3c  # type: ignore[import-untyped]
 
 from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper, local_bounds
-from dimos.memory2.transform import Transformer
+from dimos.memory.transform import Transformer
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -33,7 +31,7 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-    from dimos.memory2.type.observation import Observation
+    from dimos.memory.type.observation import Observation
 
 logger = setup_logger()
 
@@ -91,6 +89,9 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
         batch_points: list[NDArray[np.float32]],
         batch_origins: list[tuple[float, float, float]],
     ) -> Observation[PointCloud2]:
+        import open3d as o3d  # type: ignore[import-untyped]
+        import open3d.core as o3c  # type: ignore[import-untyped]
+
         tags = {**last_obs.tags, "frame_count": count}
         cx, cy, radius, z_min, z_max = self._local_bounds(
             mapper, batch_points, batch_origins, last_obs

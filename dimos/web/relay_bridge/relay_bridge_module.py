@@ -48,14 +48,15 @@ from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
+from dimos.web.relay_bridge.locate import find_web_dir
+from dimos.web.relay_bridge.manifest import parse_manifest
 from dimos.web.relay_bridge.protocol import (
-    ChannelSpec,
     Delivery,
     RobotInfo,
     RobotManifest,
     Subs,
 )
-from dimos.web.relay_bridge.relay_process import RelayProcess
+from dimos.web.relay_bridge.relay_process import RelayProcess, ensure_cockpit_dist
 from dimos.web.relay_bridge.wt_client import (
     RelayClient,
     RelayRejectedError,
@@ -74,6 +75,25 @@ _RECONNECT_PAUSE_S = 2.0
 # notices at idle timeout (tens of seconds). The child watchdog polls the
 # process instead and force-closes the session to trigger a prompt respawn.
 _CHILD_POLL_S = 1.0
+
+# Bounded wait for the build worker thread after cancelling it (the child
+# dies within the SIGTERM-to-SIGKILL grace; this adds a margin on top).
+_BUILD_CANCEL_WAIT_S = 8.0
+
+
+def _probe_local_port(port: int) -> None:
+    if port == 0:
+        return
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            # SO_REUSEADDR matches how the relay itself binds: a live
+            # listener still fails the probe, but the FIN_WAIT/TIME_WAIT
+            # remnants of a just-killed relay (a browser tab was
+            # attached) must not block an immediate restart.
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind(("127.0.0.1", port))
+    except OSError as e:
+        raise RuntimeError(f"cannot start local relay: port {port} is unavailable") from e
 
 
 async def _blocking_call(func: Callable[..., _T], *args: Any) -> _T:
@@ -118,11 +138,17 @@ class RelayBridgeConfig(ModuleConfig):
     """HTTP port of the spawned local relay; 0 picks an ephemeral port (tests)."""
     open_browser: bool = True
     """Open the local relay's page once it is up (local mode only)."""
+    cockpit_build: bool = True
+    """Build the Cockpit dist before spawning the local relay when it is
+    missing or stale (checkouts only; wheels ship it pre-built)."""
     robot_id: str = ""
     """Relay identity; empty falls back to g.robot_id, then the hostname."""
     robot_name: str = ""
     """Display name; empty falls back to robot_id."""
-    jpeg_quality: int = 75
+    jpeg_quality: int = Field(default=75, ge=0, le=100)
+    # MuJoCo publishes video at 20 Hz. Keep enough headroom for that source and
+    # for camera jitter: a cap close to the nominal rate aliases slightly early
+    # frames into an every-other-frame pattern.
     image_max_hz: float = Field(default=30.0, gt=0.0)
     odom_max_hz: float = Field(default=20.0, gt=0.0)
     available_channels: tuple[str, ...] | None = None
@@ -157,6 +183,22 @@ class ChannelDef:
     delivery: Delivery
     max_hz: Callable[[RelayBridgeConfig], float]
     encode: Callable[[RelayBridgeModule, Any], tuple[bytes, _FrameMeta]]
+    # Cockpit panel-component kind rendered for this channel (None: raw row
+    # only). One panel per channel until the T7 authoring API.
+    panel_kind: str | None = None
+
+
+def _passes_rate_gate(
+    last_input: dict[str, float],
+    ch: str,
+    now: float,
+    min_interval: float,
+) -> bool:
+    """Claim the current input when it is outside the channel's rate interval."""
+    if now - last_input.get(ch, 0.0) < min_interval:
+        return False
+    last_input[ch] = now
+    return True
 
 
 @dataclass(slots=True)
@@ -170,20 +212,35 @@ class _Session:
 
 # The v0 channel table; every entry needs a matching `In` on the module.
 CHANNELS: tuple[ChannelDef, ...] = (
-    ChannelDef("color_image", "jpeg.v1", "latest", lambda c: c.image_max_hz, _encode_image),
+    ChannelDef(
+        "color_image", "jpeg.v1", "latest", lambda c: c.image_max_hz, _encode_image, "video"
+    ),
     ChannelDef("odom", "pose.json.v1", "reliable", lambda c: c.odom_max_hz, _encode_odom),
 )
 
 
 def build_manifest(config: RelayBridgeConfig, channels: tuple[ChannelDef, ...]) -> RobotManifest:
-    return RobotManifest(
-        channels=[
-            ChannelSpec(
-                ch=cd.ch, encoding=cd.encoding, delivery=cd.delivery, maxHz=cd.max_hz(config)
-            )
-            for cd in channels
-        ]
+    # Routed through the domain parser so an invalid channel table (duplicate
+    # ids, bad rates) fails module start instead of poisoning the relay.
+    manifest = parse_manifest(
+        {
+            "channels": [
+                {
+                    "ch": cd.ch,
+                    "encoding": cd.encoding,
+                    "delivery": cd.delivery,
+                    "maxHz": cd.max_hz(config),
+                }
+                for cd in channels
+            ],
+            "panels": [
+                {"id": cd.ch, "kind": cd.panel_kind, "channels": [cd.ch]}
+                for cd in channels
+                if cd.panel_kind is not None
+            ],
+        }
     )
+    return RobotManifest(channels=manifest.channels, panels=manifest.panels)
 
 
 def resolve_robot_info(config: RelayBridgeConfig) -> RobotInfo:
@@ -208,6 +265,7 @@ class RelayBridgeModule(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._relay: RelayProcess | None = None
+        self._build_cancel: threading.Event | None = None
         self._session: _Session | None = None
         self._url: str | None = None
         self._robot_info: RobotInfo | None = None
@@ -236,6 +294,14 @@ class RelayBridgeModule(Module):
             self._manifest = build_manifest(self.config, self._channel_defs)
             self._url = self.config.relay_url or self.config.g.relay_url
             if self._url is None:
+                # Probe before the (expensive) build: a start that will lose
+                # the port must not rewrite the dist a running relay serves.
+                _probe_local_port(self.config.local_port)
+                if self.config.cockpit_build:
+                    try:
+                        await self._build_cockpit()
+                    except Exception:
+                        logger.exception("cockpit build failed; continuing with the relay only")
                 self._url = await _blocking_call(self._spawn_relay, self.config.open_browser)
             # The first connect fails fast: a relay that cannot be reached at
             # startup should fail the module start visibly, not retry forever.
@@ -257,21 +323,46 @@ class RelayBridgeModule(Module):
                         # its port (it has no PDEATHSIG), so surface cleanup failure.
                         logger.exception("relay bridge: stopping the local relay failed")
 
+    async def _build_cockpit(self) -> None:
+        """Build the Cockpit dist (checkouts only) before spawning the relay.
+
+        The blocking build runs in a thread but stays cancellable: on
+        cancellation (or module close, via _close_module) the build child is
+        killed and the worker reaped within a bounded grace, so teardown
+        never waits out the 600 s build timeout.
+        """
+        cancel = threading.Event()
+        self._build_cancel = cancel
+        work = asyncio.create_task(
+            asyncio.to_thread(ensure_cockpit_dist, find_web_dir(), cancel=cancel)
+        )
+        try:
+            await asyncio.shield(work)
+        except (asyncio.CancelledError, GeneratorExit):
+            # Generator finalization (aclose) delivers GeneratorExit instead
+            # of CancelledError; both mean the same thing here.
+            cancel.set()
+            await asyncio.wait({work}, timeout=_BUILD_CANCEL_WAIT_S)
+            raise
+        finally:
+            self._build_cancel = None
+
+    def _close_module(self) -> None:
+        # Runs on every stop path, including a stop() racing a still-starting
+        # main(): an in-flight cockpit build must die now, not at its timeout.
+        cancel = self._build_cancel
+        if cancel is not None:
+            cancel.set()
+        super()._close_module()
+
     def _spawn_relay(self, open_browser: bool) -> str:
         """Start a fresh local relay child (blocking; run via to_thread)."""
-        if self.config.local_port != 0:
-            try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-                    probe.bind(("127.0.0.1", self.config.local_port))
-            except OSError as e:
-                raise RuntimeError(
-                    f"cannot start local relay: port {self.config.local_port} is unavailable"
-                ) from e
+        _probe_local_port(self.config.local_port)
         self._relay = RelayProcess(port=self.config.local_port)
         info = self._relay.start()
-        logger.info(f"local relay ready: {info.debug_url}")
+        logger.info(f"local relay ready: {info.open_url}")
         if open_browser:
-            webbrowser.open_new_tab(info.debug_url)
+            webbrowser.open_new_tab(info.open_url)
         return info.wt_url
 
     async def _connect_and_hello(self) -> _Session:
@@ -403,9 +494,8 @@ class RelayBridgeModule(Module):
         if session.retired.is_set():
             return
         now = time.monotonic()
-        if now - self._last_input.get(cd.ch, 0.0) < self._min_interval[cd.ch]:
+        if not _passes_rate_gate(self._last_input, cd.ch, now, self._min_interval[cd.ch]):
             return
-        self._last_input[cd.ch] = now
         try:
             payload, meta = cd.encode(self, msg)
         except Exception:

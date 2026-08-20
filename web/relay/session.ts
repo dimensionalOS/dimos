@@ -16,16 +16,34 @@ import {
   encodeControlFrame,
   encodeDatagram,
   type Msg,
+  type PanelSpec,
   PROTOCOL_VERSION,
   type RobotInfo,
 } from "@dimos/shared";
+import { parseManifest } from "@dimos/shared/manifest";
 import {
   type ChannelPolicy,
+  type FrameSend,
+  type FrameWriter,
   readDataFrameBytes,
   readWebTransportPreamble,
   type ViewerSink,
 } from "./forward.ts";
 import type { Registry, RobotPeer, ViewerPeer } from "./registry.ts";
+
+// Relay->viewer send priorities, all in one place. WebTransport sendOrder
+// (backed by quinn stream priority here): queued bytes of a higher-order
+// stream are sent before those of a lower-order one, so control must outrank
+// reliable telemetry and reliable must outrank latest video, whose per-frame
+// streams count down from -1 to complete oldest-first (README bug 7).
+// Datagrams (the Python viewer's control leg) have no sendOrder API.
+export const CONTROL_SEND_ORDER = 2;
+export const RELIABLE_SEND_ORDER = 1;
+
+// Application error code carried by latest-stream resets (mirrors the Python
+// robot leg's STALE_STREAM_ERROR_CODE). Receivers do not act on it; it only
+// labels the reset for debugging.
+export const STALE_STREAM_ERROR_CODE = 0x01;
 
 function closeAfterFlush(wt: WebTransport, reason: string): void {
   // Session close discards queued stream/datagram data, so give a just-sent
@@ -42,6 +60,7 @@ function closeAfterFlush(wt: WebTransport, reason: string): void {
 export class RobotSession implements RobotPeer {
   info: RobotInfo | null = null;
   channels: ChannelSpec[] = [];
+  panels: PanelSpec[] = [];
   /** Close reason; set before transport close so rejected hello resends
    * cannot register this session. */
   closed: string | null = null;
@@ -111,11 +130,22 @@ export class RobotSession implements RobotPeer {
           "missing robot id",
         );
       }
+      // Manifest-less hellos are legal (transport tests); a declared manifest
+      // must pass the domain rules or duplicate/bogus channels would be
+      // interpreted inconsistently downstream.
+      if (msg.manifest !== undefined) {
+        try {
+          parseManifest(msg.manifest);
+        } catch (e) {
+          return this.#reject("invalid_manifest", (e as Error).message, "invalid manifest");
+        }
+      }
       // First hello wins; resends (the bridge repeats hello until welcome)
       // must not mutate identity mid-session.
       if (this.info === null) {
         this.info = msg.robot;
         this.channels = msg.manifest?.channels ?? [];
+        this.panels = msg.manifest?.panels ?? [];
       }
       if (!this.#registry.registerRobot(this)) {
         return this.#reject(
@@ -164,16 +194,75 @@ export class ViewerSession implements ViewerPeer {
     this.#wt = wt;
     this.id = id;
     this.#registry = registry;
-    let sendOrder = 1;
+    let latestOrder = 1;
     this.sink = {
-      async sendFrame(bytes: Uint8Array): Promise<void> {
+      sendFrame(bytes: Uint8Array): FrameSend {
+        let aborted = false;
+        let writeStarted = false;
+        let writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
+        let settle!: () => void;
+        let fail!: (e: unknown) => void;
+        const done = new Promise<void>((resolve, reject) => {
+          settle = resolve;
+          fail = reject;
+        });
+        const reset = () => {
+          writer?.abort(
+            new WebTransportError("stale frame superseded", {
+              source: "stream",
+              streamErrorCode: STALE_STREAM_ERROR_CODE,
+            }),
+          ).catch(() => {});
+        };
+        (async () => {
+          const stream = await wt.createUnidirectionalStream({
+            waitUntilAvailable: true,
+            sendOrder: -(latestOrder++),
+          });
+          // Keep the writer for the stream's whole life: aborts go through it
+          // (the stream itself stays locked).
+          writer = stream.getWriter();
+          if (aborted) {
+            // abort() raced the create (done already rejected); release the
+            // just-granted stream credit.
+            reset();
+            return;
+          }
+          // Latching writeStarted and starting the write in one synchronous
+          // step is what makes supersede race-free: the payload can no
+          // longer change once bytes may have reached the transport.
+          writeStarted = true;
+          await writer.write(bytes);
+          settle();
+          // No close(): a closed stream cannot be aborted, and every latest
+          // stream ends in a reset (reap, dispose, or session teardown).
+          // Receivers dispatch on byte count and treat the reset as EOF.
+        })().catch((e) => fail(e)); // no-op if done already settled
+        return {
+          done,
+          get aborted() {
+            return aborted;
+          },
+          abort() {
+            if (aborted) return;
+            aborted = true;
+            fail(new Error("frame send aborted"));
+            reset();
+          },
+          supersede(newBytes: Uint8Array): boolean {
+            if (writeStarted || aborted) return false;
+            bytes = newBytes; // the write reads `bytes` only after create resolves
+            return true;
+          },
+        };
+      },
+      async openStream(): Promise<FrameWriter> {
+        // Persistent stream for a reliable channel.
         const stream = await wt.createUnidirectionalStream({
           waitUntilAvailable: true,
-          sendOrder: -(sendOrder++),
+          sendOrder: RELIABLE_SEND_ORDER,
         });
-        const writer = stream.getWriter();
-        await writer.write(bytes);
-        await writer.close();
+        return stream.getWriter();
       },
       kick(reason: string): void {
         console.log(`[relay] kicking viewer: ${reason}`);
@@ -216,6 +305,9 @@ export class ViewerSession implements ViewerPeer {
     (async () => {
       for await (const bidi of this.#wt.incomingBidirectionalStreams) {
         (async () => {
+          // Viewer-opened, so its send half starts at the default order 0,
+          // which a saturated reliable stream would starve.
+          bidi.writable.sendOrder = CONTROL_SEND_ORDER;
           const writer = bidi.writable.getWriter();
           const reply = (m: Msg) => {
             writer.write(encodeControlFrame(m)).catch(() => {});

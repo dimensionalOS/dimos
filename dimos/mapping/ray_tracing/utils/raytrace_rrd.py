@@ -25,13 +25,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-import rerun as rr
 import typer
 
 from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
-from dimos.memory2.store.sqlite import SqliteStore
-from dimos.memory2.transform import FnTransformer
-from dimos.memory2.type.observation import Observation
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.transform import FnTransformer
+from dimos.memory.type.observation import Observation
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import resolve_named_path
@@ -94,6 +93,8 @@ def main(
         None, "--from-time", help="Start replay at this stream timestamp (s)"
     ),
 ) -> None:
+    import rerun as rr
+
     db_path = resolve_named_path(dataset, ".db")
 
     rr.init("raytrace_rrd", recording_id=db_path.stem)

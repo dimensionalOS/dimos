@@ -37,6 +37,7 @@ from dimos.perception.fiducial.fixture_verification import (
 )
 from dimos.perception.fiducial.marker_detect import detect_markers_in_image
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
+from dimos.protocol.tf.tf import TF
 
 
 @pytest.fixture(scope="module")
@@ -188,14 +189,15 @@ def test_marker_tf_replay_synthetic_packed_board_publishes_twelve_markers(
     msg = ImageDetections3D(image, detections).to_ros_detection3d_array(frame_id="world")
 
     mod = MarkerTfModule(marker_namespace_prefix="fixture")
+    view = TF(mod.tf)
     try:
         mod._process_detections(msg)
 
         marker_parent = "fixture/markers"
-        assert mod.tf.get("world", marker_parent, ts, 0.1) is not None
+        assert view.get("world", marker_parent, ts, 0.1) is not None
 
         for tag_id in range(12):
-            tr = mod.tf.get(marker_parent, f"fixture/marker_{tag_id}", ts, 0.1)
+            tr = view.get(marker_parent, f"fixture/marker_{tag_id}", ts, 0.1)
             assert tr is not None, f"missing marker {tag_id}"
             assert np.all(np.isfinite(tr.to_matrix()))
     finally:

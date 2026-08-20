@@ -14,7 +14,7 @@
 
 """Recording blueprints.
 
-`CollectionRecorder` (a memory2 Recorder) captures the obs/action/status
+`CollectionRecorder` (a memory Recorder) captures the obs/action/status
 streams to a SQLite session DB during the run and flushes it durably on
 shutdown. DataPrep reads that DB afterwards.
 """
@@ -49,9 +49,11 @@ def _camera_if_real() -> tuple[Blueprint, ...]:
     return (RealSenseCamera.blueprint(enable_pointcloud=False),)
 
 
-# buttons / color_image / joint_state / status are left to autoconnect — each
-# name is unique across the composed blueprint, so it resolves to a stable
-# /<name> topic shared by producer and recorder.
+# buttons / color_image / coordinator_joint_state / status are left to
+# autoconnect — each name is unique across the composed blueprint, so it
+# resolves to a stable /<name> topic shared by producer and recorder. The
+# recorder captures whatever joints are present, so the coordinator's aggregate
+# stream is its intended input (see dimos/control/README.md).
 learning_collect_quest_xarm7 = autoconnect(
     teleop_quest_xarm7,
     *_camera_if_real(),

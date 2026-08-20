@@ -77,6 +77,9 @@ class RPCClient(Protocol):
 
         unsub_fn = self.call(name, arguments, receive_value)
         if not event.wait(rpc_timeout):
+            # Retries register new callbacks. Remove this expired callback so
+            # repeated timeouts do not accumulate entries in the shared response map.
+            unsub_fn()
             raise TimeoutError(f"RPC call to '{name}' timed out after {rpc_timeout} seconds")
 
         # Check if the result is an exception and raise it

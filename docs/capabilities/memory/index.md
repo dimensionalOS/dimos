@@ -1,3 +1,8 @@
+---
+title: "Spatial Memory"
+sidebarTitle: "Overview"
+---
+
 <details>
 <summary>Python</summary>
 
@@ -5,12 +10,12 @@
 import pickle
 from dimos.mapping.pointclouds.occupancy import general_occupancy, simple_occupancy, height_cost_occupancy
 from dimos.mapping.occupancy.inflation import simple_inflate
-from dimos.memory2.store.sqlite import SqliteStore
-from dimos.memory2.vis.color import Color
-from dimos.memory2.transform import downsample, throttle, speed, smooth
-from dimos.memory2.vis.space.space import Space
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.vis.color import Color
+from dimos.memory.transform import downsample, throttle, speed, smooth
+from dimos.memory.vis.space.space import Space
 from dimos.utils.data import get_data
-from dimos.memory2.vis.space.elements import Point
+from dimos.memory.vis.space.elements import Point
 ```
 
 </details>
@@ -92,8 +97,8 @@ So knowing above, we can create embeddings for the full stream,
 ```python title="Python" session=mem skip
 from dimos.models.embedding.clip import CLIPModel
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.memory2.transform import QualityWindow
-from dimos.memory2.embed import EmbedImages
+from dimos.memory.transform import QualityWindow
+from dimos.memory.embed import EmbedImages
 
 embedded = store.stream("color_image_embedded", Image)
 clip = CLIPModel()
@@ -138,7 +143,7 @@ We don't really have to deal with the whole global map actually, let's get top 1
 
 ```python title="Python" session=mem output=none
 from dimos.models.embedding.clip import CLIPModel
-from dimos.mapping.voxels import VoxelMapTransformer
+from dimos.mapping.voxels.module import VoxelMapTransformer
 drawing = Space()
 
 # this is defined here, but not executed

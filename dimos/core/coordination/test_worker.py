@@ -46,6 +46,10 @@ class SimpleModule(Module):
     def get_counter(self) -> int:
         return self.counter
 
+    @rpc
+    def read_global_robot_ip(self) -> str | None:
+        return global_config.robot_ip
+
 
 class AnotherModule(Module):
     value: int = 100
@@ -133,6 +137,18 @@ def test_worker_manager_basic(create_worker_manager):
 
 
 @pytest.mark.skipif_macos_bug
+def test_worker_inherits_host_global_config(create_worker_manager):
+    worker_manager = create_worker_manager(n_workers=1)
+    host_config = GlobalConfig(robot_ip="10.11.12.13")
+    module = worker_manager.deploy(SimpleModule, host_config, {})
+    module.start()
+
+    assert module.read_global_robot_ip() == "10.11.12.13"
+
+    module.stop()
+
+
+@pytest.mark.skipif_macos_bug
 def test_worker_manager_multiple_different_modules(create_worker_manager):
     worker_manager = create_worker_manager(n_workers=2)
     module1 = worker_manager.deploy(SimpleModule, global_config, {})
@@ -157,16 +173,17 @@ def test_worker_manager_multiple_different_modules(create_worker_manager):
 @pytest.mark.skipif_macos_bug
 def test_worker_manager_parallel_deployment(create_worker_manager):
     worker_manager = create_worker_manager(n_workers=2)
+    simple_kwargs = {}
     modules = worker_manager.deploy_parallel(
         [
-            (SimpleModule, global_config, {}),
+            (SimpleModule, global_config, simple_kwargs),
             (AnotherModule, global_config, {}),
             (ThirdModule, global_config, {}),
         ],
-        {},
     )
 
     assert len(modules) == 3
+    assert simple_kwargs == {}
     module1, module2, module3 = modules
 
     # Start all modules

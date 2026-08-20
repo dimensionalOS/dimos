@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
-from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
+from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import (
     XARM7_SIM_PATH,
@@ -35,7 +35,7 @@ xarm_perception_sim = autoconnect(
     PickAndPlaceModule.blueprint(
         robots=[make_xarm7_sim_robot_config()],
         planning_timeout=10.0,
-        visualization={"backend": "meshcat"},
+        visualization={"backend": "viser"},
     ),
     MujocoSimModule.blueprint(**make_xarm7_sim_module_kwargs(XARM7_SIM_PATH)),
     ObjectSceneRegistrationModule.blueprint(target_frame="world"),

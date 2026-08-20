@@ -15,7 +15,8 @@
 """Quest teleop module extensions and subclasses.
 
 Available subclasses:
-    - ArmTeleopModule: Per-hand press-and-hold engage (X/A hold to track), task name routing
+    - ArmTeleopModule: Per-hand press-and-hold engage (X/A hold to track)
+    - HandTeleopModule: Pinch-to-toggle arm teleop using WebXR hand tracking
     - TwistTeleopModule: Outputs Twist instead of PoseStamped
     - VideoArmTeleopModule: ArmTeleopModule + JPEG frames pushed to the Quest over /ws
     - Go2TeleopModule: Thumbstick → Twist velocity for the Go2 + camera over /ws
@@ -25,7 +26,6 @@ import asyncio
 from typing import Any
 
 from fastapi import WebSocket
-from pydantic import Field
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
@@ -124,35 +124,19 @@ class TwistTeleopModule(QuestTeleopModule):
             self.right_twist.publish(twist)
 
 
-class ArmTeleopConfig(QuestTeleopConfig):
-    """Configuration for ArmTeleopModule.
-
-    Attributes:
-        task_names: Mapping of Hand -> coordinator task name. Used to set
-            frame_id on output PoseStamped so the coordinator routes each
-            hand's commands to the correct TeleopIKTask.
-    """
-
-    task_names: dict[str, str] = Field(default_factory=dict)
-
-
 class ArmTeleopModule(QuestTeleopModule):
-    """Quest teleop with per-hand press-and-hold engage and task name routing.
+    """Quest teleop with per-hand press-and-hold engage.
 
     Each controller's primary button (X for left, A for right)
-    engages that hand while held, disengages on release.
-
-    When task_names is configured, output PoseStamped messages have their
-    frame_id set to the task name, enabling the coordinator to route
-    each hand's commands to the correct TeleopIKTask.
+    engages that hand while held, disengages on release. Each hand's
+    output port is wired to its consuming task's coordinator port in
+    the blueprint; no addressing happens in the message.
 
     Outputs:
         - left_controller_output: PoseStamped (inherited)
         - right_controller_output: PoseStamped (inherited)
         - buttons: Buttons (inherited)
     """
-
-    config: ArmTeleopConfig
 
     @rpc
     def start(self) -> None:
@@ -161,25 +145,6 @@ class ArmTeleopModule(QuestTeleopModule):
     @rpc
     def stop(self) -> None:
         super().stop()
-
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-
-        self._task_names: dict[Hand, str] = {
-            Hand[k.upper()]: v for k, v in self.config.task_names.items()
-        }
-
-    def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
-        """Stamp frame_id with task name and publish."""
-        task_name = self._task_names.get(hand)
-        if task_name:
-            output_msg = PoseStamped(
-                position=output_msg.position,
-                orientation=output_msg.orientation,
-                ts=output_msg.ts,
-                frame_id=task_name,
-            )
-        super()._publish_msg(hand, output_msg)
 
     def _publish_button_state(
         self,
@@ -195,7 +160,47 @@ class ArmTeleopModule(QuestTeleopModule):
         self.teleop_buttons.publish(buttons)
 
 
-class VideoArmTeleopConfig(ArmTeleopConfig):
+class HandTeleopModule(ArmTeleopModule):
+    """WebXR hand teleop with pinch-to-toggle engage and task name routing.
+
+    A thumb-and-index pinch is sent as the primary button by the browser. Each
+    pinch edge toggles that hand between engaged and disengaged, so movement
+    continues after releasing the pinch.
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._primary_was_pressed: dict[Hand, bool] = {Hand.LEFT: False, Hand.RIGHT: False}
+
+    def _handle_engage(self) -> None:
+        """Toggle each hand on the rising edge of its primary button."""
+        for hand in Hand:
+            controller = self._controllers.get(hand)
+            is_pressed = controller is not None and controller.primary
+            if is_pressed and not self._primary_was_pressed[hand]:
+                if self._is_engaged[hand]:
+                    self._disengage(hand)
+                else:
+                    self._engage(hand)
+            self._primary_was_pressed[hand] = is_pressed
+
+    def _publish_button_state(
+        self,
+        left: QuestControllerState | None,
+        right: QuestControllerState | None,
+    ) -> None:
+        """Keep downstream press-and-hold teleop tasks engaged between pinches."""
+        buttons = Buttons.from_controllers(left, right)
+        buttons.pack_analog_triggers(
+            left=left.trigger if left is not None else 0.0,
+            right=right.trigger if right is not None else 0.0,
+        )
+        buttons.left_primary = self._is_engaged[Hand.LEFT]
+        buttons.right_primary = self._is_engaged[Hand.RIGHT]
+        self.teleop_buttons.publish(buttons)
+
+
+class VideoArmTeleopConfig(QuestTeleopConfig):
     """Configuration for VideoArmTeleopModule."""
 
     video_jpeg_quality: int = 70

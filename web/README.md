@@ -1,16 +1,47 @@
 # DimOS web
 
 Deno workspace for the robot web stack. `shared/` holds the wire protocol and its golden vectors;
-`relay/` is the WebTransport relay. The Python mirror + client (`dimos/web/relay_bridge/`) and the
-Cockpit browser app arrive in follow-up PRs.
+`relay/` is the WebTransport relay; `cockpit/` is the browser app (Vite + React + TS). The Python
+mirror + WebTransport client live in `dimos/web/relay_bridge/`.
 
-Everything runs on Deno 2.6.10, pinned in `dimos/utils/deno.py` (CI reads the pin from there).
+Everything runs on Deno 2.6.10, pinned in `dimos/utils/deno.py` (CI reads the pin from there). No
+node/npm anywhere: vite, vitest, and tsc run as npm packages under Deno (`nodeModulesDir: auto`),
+and `dimos --local-relay` auto-downloads Deno via `ensure_deno()`.
 
 ```bash
-deno task dev            # relay on http://127.0.0.1:7780 (debug page at /debug.html)
-deno task test           # unit + loopback e2e tests
-deno task check          # type-check; deno fmt + deno lint for style
+deno task dev            # relay on http://127.0.0.1:7780 (add --cockpit-dir cockpit/dist for the UI)
+deno task test           # relay + shared tests (unit + loopback e2e)
+deno task check          # type-check relay + shared; deno fmt + deno lint for style (all of web/)
 ```
+
+## Cockpit
+
+```bash
+cd cockpit
+deno task dev            # vite dev server on http://localhost:5173 with HMR
+deno task test           # vitest
+deno task check          # tsc --noEmit
+deno task build          # dist/ (what the relay serves at /)
+```
+
+Dev workflow: run the relay (`deno task dev` in `web/`, or just `dimos run <bp> --local-relay`) and
+the vite server side by side. `localhost:5173` is a secure context; vite proxies `/api` to the relay
+on `:7780` and the WebTransport connection goes straight to the advertised `wtUrl`.
+
+Without vite, `--local-relay` serves the built `cockpit/dist` at `/`, building it first when it is
+missing or older than the sources (`ensure_cockpit_dist` in `relay_process.py`). Release wheels ship
+a pre-built dist inside `_relay_dist` (built by the release workflow; see `setup.py`), so a
+pip-installed dimos never builds or downloads npm packages.
+
+After changing cockpit dependencies run `deno install` in `web/` and commit the `deno.lock` update;
+CI validates it with `deno install --frozen`. If vitest ever misbehaves under a new Deno, the
+fallback ladder is `--no-file-parallelism`, then `--pool=threads`, then pinning a different vitest
+minor.
+
+The cockpit browser e2e (`dimos/e2e_tests/test_cockpit_browser.py`, marker `web_browser`) drives the
+whole stack against the go2 replay dataset in both Playwright Chromium and Firefox (their
+WebTransport stacks differ; see bug 11). The CI `web` job runs it; locally it needs
+`uv run playwright install chromium firefox` once.
 
 ## Protocol shape, and why it is odd
 
@@ -54,6 +85,37 @@ Several choices are workarounds for upstream bugs, verified 2026-07-10..15 on De
     still present on Deno main 2026-07). The QUIC-level accept only fails with the connection; the
     relay parses the WebTransport preamble itself (`readWebTransportPreamble`) and a bad/reset
     stream drops alone.
+11. **Reliable channels ride ONE persistent uni stream per (viewer, channel), not a stream per
+    frame** (verified 2026-07-24, Firefox 142/Playwright). Firefox grants a WebTransport session
+    ~100 incoming uni streams and only replenishes the credit as streams complete - but the relay's
+    FIN goes out lazily (bug 2), so with stream-per-frame the relay's
+    `createUnidirectionalStream({waitUntilAvailable})` hangs after ~100 frames, the reliable FIFO
+    overflows, and the relay kicks the viewer every ~8 s. Chromium's much larger window masks this.
+    Latest channels keep per-frame streams (their reset semantics need them); bug 12 is what keeps
+    their credit pressure bounded.
+12. **Relay->viewer latest streams are never FIN'd: every one ends in a RESET.** JS WebTransport
+    exposes no delivery signal (`getStats()` is a zeros stub in Deno 2.6.10) and quinn buffers
+    writes without bound, so "write accepted" says nothing about delivery - and a closed
+    WritableStream can no longer be aborted. The relay therefore keeps each latest stream open and
+    reaps it: streams older than `LATEST_STALE_MS` (500 ms, matching the Python leg's `stale_after`)
+    are reset, discarding buffered-but-undelivered bytes on both ends and returning Firefox's stream
+    credit far faster than the lazy FIN would. Reaping fires from newer offers AND from a periodic
+    reap every `LATEST_STALE_MS`: an idle input stops offering and would otherwise leave up to about
+    100 open streams pinning Firefox's uni-stream credit. The one send still wedged in
+    `createUnidirectionalStream` is never reset - resets do not replenish stream credit while the
+    viewer's application is not reading (verified against Deno's client; a frozen tab behaves the
+    same) - instead newer offers supersede its payload in place (the payload binds only when the
+    write starts), so a resuming viewer receives the newest frame with zero stream churn. Once the
+    write has started the payload can no longer change, so a newer offer resets a write-wedged
+    carrier once it is `LATEST_STALE_MS` old and resends the newest on a fresh stream - bounded to
+    one reset per stale window, and once stream credit runs out the wedge moves back to creation,
+    where superseding is churn-free. In `/api/stats`, `aborted` counts backpressure resets - stale
+    accepted streams reaped while the newest send is unaccepted, plus stale write-wedged carriers
+    (the suspended-viewer signal; 0 when healthy); `expired` counts routine end-of-life resets (~=
+    `sent` on a healthy latest channel); superseded and displaced payloads count as `dropped`.
+    Receivers dispatch frames on byte count (bug 2) and treat the reset as end-of-stream; a reset
+    mid-frame drops a stale partial by design.
 
-One-stream-per-message delivers out of order by design; consumers keep the newest frame by `seq` and
-loss metrics are span-based (`maxSeq - minSeq + 1 - received`).
+Latest streams deliver out of order by design; consumers keep the newest frame by `seq` (a reliable
+channel's persistent stream is ordered) and loss metrics are span-based
+(`maxSeq - minSeq + 1 - received`).

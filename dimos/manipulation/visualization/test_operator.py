@@ -15,10 +15,17 @@
 """Focused tests for the manipulation visualization operator facade."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
-from dimos.agents.skill_result import SkillResult
+from dimos.manipulation.manipulation_spec import (
+    ExecutionResult,
+    ExecutionStatus,
+    ManipulationSnapshot,
+    OperationStatus,
+)
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
+from dimos.manipulation.planning.planners.roboplan_config import RoboPlanCartesianPathConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus, PlanningStatus
 from dimos.manipulation.planning.spec.models import (
@@ -28,6 +35,7 @@ from dimos.manipulation.planning.spec.models import (
     RobotName,
 )
 from dimos.manipulation.visualization.operator import (
+    CartesianTargetRequest,
     JointTargetRequest,
     ManipulationOperator,
     PoseTargetRequest,
@@ -76,6 +84,7 @@ def _robot_config(
 
 class FakeModule:
     def __init__(self) -> None:
+        self.config = SimpleNamespace(default_speed_scale=1.0)
         self.state = "COMPLETED"
         self.error = ""
         self.has_plan = True
@@ -94,6 +103,13 @@ class FakeModule:
         self.plan_pose_targets: list[
             tuple[dict[PlanningGroupID, PoseStamped], tuple[PlanningGroupID, ...]]
         ] = []
+        self.cartesian_targets: list[
+            tuple[
+                dict[PlanningGroupID, tuple[PoseStamped, ...]],
+                RoboPlanCartesianPathConfig,
+                tuple[PlanningGroupID, ...],
+            ]
+        ] = []
         self.ik_calls: list[
             tuple[
                 dict[PlanningGroupID, PoseStamped], tuple[PlanningGroupID, ...], JointState | None
@@ -104,12 +120,18 @@ class FakeModule:
         self.execute_success = True
         self.cancel_success = True
         self.clear_success = True
-        self.reset_success = True
         self.topology_calls = 0
         self.telemetry_calls = 0
 
-    def get_state(self) -> str:
-        return self.state
+    def get_state(self) -> ManipulationSnapshot:
+        return ManipulationSnapshot(
+            timestamp=0.0,
+            operation_status=OperationStatus[self.state],
+            error=self.error or None,
+            has_pending_plan=self.has_plan,
+            execution_status=ExecutionStatus.IDLE,
+            groups={},
+        )
 
     def get_error(self) -> str:
         return self.error
@@ -148,7 +170,9 @@ class FakeModule:
         return self.plan_success
 
     def generate_plan_to_joint_targets(
-        self, targets: dict[PlanningGroupID, JointState]
+        self,
+        targets: dict[PlanningGroupID, JointState],
+        speed_scale: float | None = None,
     ) -> GeneratedPlan | None:
         self.plan_joint_targets.append(targets)
         return self.plan if self.plan_success else None
@@ -165,8 +189,20 @@ class FakeModule:
         self,
         targets: dict[PlanningGroupID, PoseStamped],
         auxiliary_groups: tuple[PlanningGroupID, ...] = (),
+        speed_scale: float | None = None,
     ) -> GeneratedPlan | None:
         self.plan_pose_targets.append((targets, auxiliary_groups))
+        return self.plan if self.plan_success else None
+
+    def generate_cartesian_plan(
+        self,
+        targets: dict[PlanningGroupID, tuple[PoseStamped, ...]],
+        config: RoboPlanCartesianPathConfig,
+        auxiliary_groups: tuple[PlanningGroupID, ...] = (),
+        speed_scale: float | None = None,
+        check_collision: bool = True,
+    ) -> GeneratedPlan | None:
+        self.cartesian_targets.append((targets, config, auxiliary_groups))
         return self.plan if self.plan_success else None
 
     def preview_plan(
@@ -174,19 +210,15 @@ class FakeModule:
     ) -> bool:
         return self.preview_success
 
-    def execute_plan(self, plan: GeneratedPlan | None = None) -> bool:
+    def _execute_generated_plan(self, plan: GeneratedPlan) -> bool:
         return self.execute_success
 
-    def cancel(self) -> bool:
-        return self.cancel_success
+    def cancel(self) -> ExecutionResult:
+        status = ExecutionStatus.ABORTED if self.cancel_success else ExecutionStatus.UNCERTAIN
+        return ExecutionResult(status)
 
     def clear_planned_path(self) -> bool:
         return self.clear_success
-
-    def reset(self) -> SkillResult[str]:
-        if self.reset_success:
-            return SkillResult.ok("reset")
-        return SkillResult.fail("ERR", "no reset")
 
 
 class FakeWorldMonitor:
@@ -368,13 +400,54 @@ def test_planning_methods_return_exact_generated_plan() -> None:
     assert pose_result is module.plan
 
 
+def test_cartesian_planning_prepends_current_pose_and_routes_auxiliary_groups() -> None:
+    groups = (
+        PlanningGroup(
+            "arm/manipulator",
+            "arm",
+            "manipulator",
+            ("arm/j0",),
+            ("j0",),
+            "base",
+            "tool",
+        ),
+        PlanningGroup(
+            "arm/gripper",
+            "arm",
+            "gripper",
+            ("arm/j1",),
+            ("j1",),
+            "tool",
+            None,
+        ),
+    )
+    operator, module, _ = _operator(_robot_config(groups=groups))
+    pose = _pose()
+    config = RoboPlanCartesianPathConfig(speed_mode="time_optimal")
+
+    result = operator.plan_cartesian(
+        CartesianTargetRequest(
+            {"arm/manipulator": pose},
+            config,
+            ("arm/gripper",),
+        )
+    )
+
+    assert result is module.plan
+    assert len(module.cartesian_targets) == 1
+    targets, recorded_config, auxiliary_groups = module.cartesian_targets[0]
+    assert targets["arm/manipulator"][0].position == Vector3(1.0, 2.0, 3.0)
+    assert targets["arm/manipulator"][1] is pose
+    assert recorded_config is config
+    assert auxiliary_groups == ("arm/gripper",)
+
+
 def test_actions_return_typed_results_and_cancel_fallback_ownership() -> None:
     operator, module, monitor = _operator()
 
     assert operator.preview(module.plan, 0.5) is True
     assert operator.execute(module.plan) is True
     assert operator.clear_plan() is True
-    assert operator.reset() is True
     cancel_result = operator.cancel()
     assert cancel_result is True
     assert monitor.cancel_preview_calls == 0

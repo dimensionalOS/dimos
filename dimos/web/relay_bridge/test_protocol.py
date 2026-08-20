@@ -27,9 +27,11 @@ from dimos.web.relay_bridge.protocol import (
     PROTOCOL_VERSION,
     ChannelSpec,
     ControlFrameReader,
-    DataFrameReader,
+    DataFrameStreamError,
+    DataFrameStreamReader,
     FrameHeader,
     Hello,
+    PanelSpec,
     Ping,
     ProtocolError,
     RobotInfo,
@@ -64,7 +66,9 @@ def _header(d):
 
 
 def test_protocol_version():
-    assert PROTOCOL_VERSION == 1
+    # v2: reliable frames pack onto one persistent stream per channel (v1
+    # carried one frame per stream); a v1 peer must fail the handshake.
+    assert PROTOCOL_VERSION == 2
 
 
 @pytest.mark.parametrize("vector", CONTROL, ids=[v["name"] for v in CONTROL])
@@ -127,27 +131,70 @@ def test_data_frame_decode_roundtrips_golden(vector):
     assert frame.payload == base64.b64decode(vector["payload_b64"])
 
 
-def test_data_frame_reader_completes_at_byte_count_split_anywhere():
+def test_data_frame_stream_reader_completes_at_byte_count_split_anywhere():
     vector = next(v for v in DATA if v["name"] == "image_latest_meta")
     frame_bytes = base64.b64decode(vector["frame_b64"])
     for split in range(len(frame_bytes) + 1):
-        reader = DataFrameReader()
+        reader = DataFrameStreamReader()
         first = reader.push(frame_bytes[:split])
         second = reader.push(frame_bytes[split:])
         if split < len(frame_bytes):
-            assert first is None, f"complete before full frame at split {split}"
-        out = first or second
-        assert out is not None, f"incomplete after full frame at split {split}"
-        assert out.header == _header(vector["header"])
-        assert out.payload == base64.b64decode(vector["payload_b64"])
+            assert first == [], f"complete before full frame at split {split}"
+        out = first + second
+        assert len(out) == 1, f"frames after full push at split {split}"
+        assert out[0].header == _header(vector["header"])
+        assert out[0].payload == base64.b64decode(vector["payload_b64"])
 
 
-def test_data_frame_reader_ignores_bytes_past_frame():
+def test_data_frame_stream_reader_parses_back_to_back_frames():
+    all_bytes = b"".join(base64.b64decode(v["frame_b64"]) for v in DATA)
+    out = DataFrameStreamReader().push(all_bytes)
+    assert [f.header for f in out] == [_header(v["header"]) for v in DATA]
+    assert [f.payload for f in out] == [base64.b64decode(v["payload_b64"]) for v in DATA]
+
+    trickle = DataFrameStreamReader()
+    out = []
+    for i in range(len(all_bytes)):
+        out.extend(trickle.push(all_bytes[i : i + 1]))
+    assert len(out) == len(DATA)
+
+
+def test_data_frame_stream_reader_raises_on_garbage_between_frames():
     vector = next(v for v in DATA if v["name"] == "odom_reliable")
-    frame_bytes = base64.b64decode(vector["frame_b64"])
-    out = DataFrameReader().push(frame_bytes + b"\x00" * 32)
-    assert out is not None
-    assert out.header == _header(vector["header"])
+    reader = DataFrameStreamReader()
+    assert len(reader.push(base64.b64decode(vector["frame_b64"]))) == 1
+    # Framing is unrecoverable mid-stream; the caller drops the stream.
+    with pytest.raises(ProtocolError):
+        reader.push(b"\x00" * 32)
+
+
+def test_data_frame_stream_reader_assembles_large_fragmented_frame():
+    payload = bytes(range(256)) * (32 * 1024)  # 8 MiB
+    header = FrameHeader(ch="cam", seq=1, ts=0.5, delivery="latest")
+    frame_bytes = encode_data_frame(header, payload)
+    reader = DataFrameStreamReader()
+    out = []
+    chunk = 64 * 1024
+    for i in range(0, len(frame_bytes), chunk):
+        out.extend(reader.push(frame_bytes[i : i + chunk]))
+    assert len(out) == 1
+    assert out[0].header == header
+    assert out[0].payload == payload
+
+
+def test_data_frame_stream_reader_surfaces_error_with_decoded_batch():
+    vector = next(v for v in DATA if v["name"] == "odom_reliable")
+    good = base64.b64decode(vector["frame_b64"])
+    bad = _raw_data_frame(b"{not json")
+    reader = DataFrameStreamReader()
+    with pytest.raises(DataFrameStreamError) as exc_info:
+        reader.push(good + bad)
+    # The valid frame preceding the corrupt one is delivered, not dropped.
+    assert [f.header for f in exc_info.value.frames] == [_header(vector["header"])]
+    # Poisoned: further input keeps raising with an empty batch.
+    with pytest.raises(DataFrameStreamError) as exc_again:
+        reader.push(good)
+    assert exc_again.value.frames == []
 
 
 def test_peek_and_decode_guard_truncation_and_absurd_headers():
@@ -222,6 +269,12 @@ def test_msg_from_dict_validates_nested_session_shapes():
     )
     # hello stays valid without the optional robot/manifest (viewer form).
     assert msg_from_dict({"t": "hello", "v": 1, "role": "viewer"}) == Hello(v=1, role="viewer")
+    panel = {"id": "pose", "kind": "readout", "channels": ["odom"]}
+    expected_panel = PanelSpec(id="pose", kind="readout", channels=["odom"])
+    with_panels = {**full, "manifest": {"channels": [spec], "panels": [panel]}}
+    assert msg_from_dict(with_panels).manifest.panels == [expected_panel]
+    manifest_msg = {"t": "manifest", "robotId": "r", "channels": [spec], "panels": [panel]}
+    assert msg_from_dict(manifest_msg).panels == [expected_panel]
     bad = [
         # Optional means absent-or-valid: explicit null is rejected on the
         # wire (local construction with robot=None stays fine: absent).
@@ -230,6 +283,9 @@ def test_msg_from_dict_validates_nested_session_shapes():
         {**full, "manifest": {"channels": [{**spec, "maxHz": "20"}]}},
         {**full, "manifest": {"channels": [{**spec, "delivery": "bogus"}]}},
         {**full, "manifest": {"channels": robot}},
+        {**full, "manifest": {"channels": [spec], "panels": None}},
+        {**full, "manifest": {"channels": [spec], "panels": [{"id": "x"}]}},
+        {"t": "manifest", "robotId": "r", "channels": [spec], "panels": [{"kind": 5}]},
         {"t": "robots", "robots": {}},
         {"t": "robots", "robots": [{"id": "a", "name": "b"}]},
         {"t": "robots"},
@@ -276,6 +332,20 @@ def test_data_frame_header_rejects_non_finite():
     hdr = b'{"ch":"c","seq":1,"ts":1e999,"delivery":"latest"}'
     with pytest.raises(ProtocolError):
         decode_data_frame(_raw_data_frame(hdr))
+
+
+def test_data_frame_header_bounds_ch_length():
+    # ch is bounded like manifest channel ids (64, mirrored in protocol.ts):
+    # oversize undeclared names are dropped before routing, and local
+    # construction fails fast too.
+    def hdr(ch):
+        return json.dumps({"ch": ch, "seq": 1, "ts": 1.0, "delivery": "latest"}).encode()
+
+    assert decode_data_frame(_raw_data_frame(hdr("c" * 64))).header.ch == "c" * 64
+    with pytest.raises(ProtocolError):
+        decode_data_frame(_raw_data_frame(hdr("c" * 65)))
+    with pytest.raises(ValueError):
+        FrameHeader(ch="c" * 65, seq=1, ts=1.0, delivery="latest")
 
 
 def test_huge_int_is_a_valid_number():

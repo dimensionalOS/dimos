@@ -25,6 +25,7 @@ from dimos.core.transport import LCMTransport, pSHMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.robot.manipulators.a1z.blueprints.teleop import coordinator_teleop_a1z
 from dimos.robot.manipulators.common.mixed import coordinator_teleop_dual
 from dimos.robot.manipulators.piper.blueprints.teleop import coordinator_teleop_piper
 from dimos.robot.manipulators.xarm.blueprints.teleop import (
@@ -35,6 +36,7 @@ from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.teleop.quest.quest_extensions import (
     ArmTeleopModule,
     Go2TeleopModule,
+    HandTeleopModule,
     VideoArmTeleopModule,
 )
 from dimos.visualization.vis_module import vis_module
@@ -53,20 +55,25 @@ teleop_quest_rerun = autoconnect(
 
 # XArm7 teleop (sim with --simulation, real otherwise): right controller -> xarm7
 teleop_quest_xarm7 = autoconnect(
-    ArmTeleopModule.blueprint(task_names={"right": "teleop_xarm"}),
+    ArmTeleopModule.blueprint(),
     coordinator_teleop_xarm7,
-).remappings([(ArmTeleopModule, "right_controller_output", "coordinator_cartesian_command")])
+).remappings([(ArmTeleopModule, "right_controller_output", "cartesian_command")])
+
+
+# XArm7 hand teleop: thumb-and-index pinch toggles tracking for each hand.
+teleop_quest_hand_xarm7 = autoconnect(
+    HandTeleopModule.blueprint(),
+    coordinator_teleop_xarm7,
+).remappings([(HandTeleopModule, "right_controller_output", "cartesian_command")])
 
 
 # XArm7 teleop + camera streaming into the Quest scene as a panel.
 teleop_quest_xarm7_video = (
     autoconnect(
-        VideoArmTeleopModule.blueprint(task_names={"right": "teleop_xarm"}),
+        VideoArmTeleopModule.blueprint(),
         coordinator_teleop_xarm7,
     )
-    .remappings(
-        [(VideoArmTeleopModule, "right_controller_output", "coordinator_cartesian_command")]
-    )
+    .remappings([(VideoArmTeleopModule, "right_controller_output", "cartesian_command")])
     .transports(
         {
             ("color_image", Image): LCMTransport("/teleop/color_image", Image),
@@ -77,26 +84,33 @@ teleop_quest_xarm7_video = (
 
 # Piper teleop (sim with --simulation, real otherwise): left controller -> piper arm
 teleop_quest_piper = autoconnect(
-    ArmTeleopModule.blueprint(task_names={"left": "teleop_piper"}),
+    ArmTeleopModule.blueprint(),
     coordinator_teleop_piper,
-).remappings([(ArmTeleopModule, "left_controller_output", "coordinator_cartesian_command")])
+).remappings([(ArmTeleopModule, "left_controller_output", "cartesian_command")])
+
+
+# A1Z mock teleop: left controller -> A1Z arm
+teleop_quest_a1z = autoconnect(
+    ArmTeleopModule.blueprint(),
+    coordinator_teleop_a1z,
+).remappings([(ArmTeleopModule, "left_controller_output", "cartesian_command")])
 
 
 # XArm6 teleop (sim with --simulation, real otherwise): right controller -> xarm6
 teleop_quest_xarm6 = autoconnect(
-    ArmTeleopModule.blueprint(task_names={"right": "teleop_xarm"}),
+    ArmTeleopModule.blueprint(),
     coordinator_teleop_xarm6,
-).remappings([(ArmTeleopModule, "right_controller_output", "coordinator_cartesian_command")])
+).remappings([(ArmTeleopModule, "right_controller_output", "cartesian_command")])
 
 
 # Dual arm teleop: right -> piper, left -> xarm6 (TeleopIK, real-only)
 teleop_quest_dual = autoconnect(
-    ArmTeleopModule.blueprint(task_names={"right": "teleop_piper", "left": "teleop_xarm"}),
+    ArmTeleopModule.blueprint(),
     coordinator_teleop_dual,
 ).remappings(
     [
-        (ArmTeleopModule, "right_controller_output", "coordinator_cartesian_command"),
-        (ArmTeleopModule, "left_controller_output", "coordinator_cartesian_command"),
+        (ArmTeleopModule, "right_controller_output", "right_cartesian"),
+        (ArmTeleopModule, "left_controller_output", "left_cartesian"),
     ]
 )
 

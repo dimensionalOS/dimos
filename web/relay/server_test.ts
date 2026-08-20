@@ -2,20 +2,22 @@
 // both robot and viewer. Deno's client CAN receive relay-initiated uni
 // streams (verified; the 2.6.10 incoming-uni bug is server-side receive
 // only), so this covers the full forwarding path without a browser.
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
+import { fileURLToPath } from "node:url";
 import {
   type ChannelSpec,
   ControlFrameReader,
+  DataFrameStreamReader,
   decodeDatagram,
   encodeControlFrame,
   encodeDataFrame,
   encodeDatagram,
   type FrameHeader,
   type Msg,
+  type PanelSpec,
   PROTOCOL_VERSION,
   type RobotInfo,
 } from "@dimos/shared";
-import { readDataFrameBytes } from "./forward.ts";
 import { startRelay } from "./server.ts";
 
 const ROBOT: RobotInfo = { id: "deno-bot", name: "Deno Bot", model: "test" };
@@ -23,6 +25,7 @@ const CHANNELS: ChannelSpec[] = [
   { ch: "color_image", encoding: "jpeg.v1", delivery: "latest", maxHz: 15.5 },
   { ch: "odom", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20.5 },
 ];
+const PANELS: PanelSpec[] = [{ id: "color_image", kind: "video", channels: ["color_image"] }];
 
 function certOpts(hashB64: string): WebTransportOptions {
   return {
@@ -87,28 +90,36 @@ function datagramQueue(readable: ReadableStream<Uint8Array>): () => Promise<Msg>
   };
 }
 
-/** Collect forwarded data frames arriving on relay-initiated uni streams. */
+/**
+ * Collect forwarded data frames arriving on relay-initiated uni streams
+ * (one frame per latest stream; back-to-back frames on a reliable channel's
+ * persistent stream). `onAcceptLoopDeath` fires if the accept loop errors
+ * for good (client-side bug 10).
+ */
 function frameQueue(
   wt: WebTransport,
+  onAcceptLoopDeath?: (e: unknown) => void,
 ): () => Promise<{ header: FrameHeader; payload: Uint8Array }> {
   const queue: { header: FrameHeader; payload: Uint8Array }[] = [];
   const waiters: ((f: { header: FrameHeader; payload: Uint8Array }) => void)[] = [];
+  const deliver = (frame: { header: FrameHeader; payload: Uint8Array }) => {
+    const waiter = waiters.shift();
+    if (waiter) waiter(frame);
+    else queue.push(frame);
+  };
   (async () => {
     for await (const stream of wt.incomingUnidirectionalStreams) {
-      readDataFrameBytes(stream)
-        .then((bytes) => {
-          const headerLen = new DataView(bytes.buffer, bytes.byteOffset).getUint32(0, true);
-          const header = JSON.parse(
-            new TextDecoder().decode(bytes.subarray(8, 8 + headerLen)),
-          ) as FrameHeader;
-          const payload = bytes.subarray(8 + headerLen);
-          const waiter = waiters.shift();
-          if (waiter) waiter({ header, payload });
-          else queue.push({ header, payload });
-        })
-        .catch(() => {});
+      (async () => {
+        const frames = new DataFrameStreamReader();
+        const reader = (stream as ReadableStream<Uint8Array>).getReader();
+        while (true) {
+          const { value, done } = await reader.read();
+          if (value && value.byteLength) frames.push(value).forEach(deliver);
+          if (done) break;
+        }
+      })().catch(() => {});
     }
-  })().catch(() => {});
+  })().catch((e) => onAcceptLoopDeath?.(e));
   return () => {
     const frame = queue.shift();
     if (frame) return Promise.resolve(frame);
@@ -123,6 +134,190 @@ async function sendRobotFrame(robot: WebTransport, header: FrameHeader, payload:
   await writer.close(); // FIN is delayed by Deno (bug 2); the relay reads by byte count
 }
 
+// Test that one suspended viewer must cost only itself. Its stale streams are
+// reset ("aborted, not queued") while the healthy viewer keeps receiving fresh
+// frames at full rate. This is also the permanent proof that reaping keeps
+// working against real quinn streams.
+//
+// MUST RUN FIRST in this file: a preceding test's teardown churn (or plain CPU
+// starvation, e.g. a 2-CPU CI runner) lets a relay reset race Deno's preamble
+// read of a not-yet-accepted incoming uni stream - the client-side analog of
+// README bug 10. The client's accept glue then errors or silently hangs, its
+// stream credit freezes at ~100, and the healthy viewer starves. Not fixable
+// from test code (no client-side raw-QuicConn API), so wedged rounds are
+// retried - but only on the wedge's own signatures. Any other failure, or 4
+// wedged rounds, still fails: a relay regression cannot hide behind the retries.
+Deno.test({
+  name: "a viewer that stops reading is reset, not queued; others keep full rate",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  for (let attempt = 1;; attempt++) {
+    const round: RoundState = { glueDeath: null, lastInflight: NaN };
+    try {
+      await runBackpressureRound(round);
+      return;
+    } catch (e) {
+      // Wedged = accept loop errored, or inflight froze at exactly 1: the
+      // never-reaped unaccepted carrier, only frozen client credit does that.
+      const wedged = round.glueDeath !== null || round.lastInflight === 1;
+      if (!wedged || attempt >= 4) throw e;
+      console.log(
+        `[test] round ${attempt} hit the Deno incoming-uni wedge (` +
+          (round.glueDeath !== null
+            ? `accept loop died: ${round.glueDeath}`
+            : "accept loop hung: carrier stuck unaccepted") +
+          "); retrying",
+      );
+      // 5 s matters: the dead round's churn re-arms the race if we go sooner.
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+    }
+  }
+});
+
+interface RoundState {
+  glueDeath: unknown; // healthy accept-loop error, recorded pre-teardown only
+  lastInflight: number; // healthy inflight as last seen by the reap poll
+}
+
+/** One backpressure round against a fresh relay; fills `round` so the
+ * caller can tell the Deno wedge from a relay regression. */
+async function runBackpressureRound(round: RoundState): Promise<void> {
+  const relay = await startRelay({ port: 0 });
+  const httpBase = `http://127.0.0.1:${relay.httpPort}`;
+  // The healthy viewer is the one that accepted the most sends.
+  const fetchHealthyInflight = async (): Promise<number> => {
+    const stats = await (await fetch(`${httpBase}/api/stats`)).json();
+    const channels = (stats.perViewer as {
+      channels: Record<string, { sent: number; inflight: number }>;
+    }[])
+      .map((v) => v.channels.color_image)
+      .filter((c) => c !== undefined)
+      .sort((a, b) => b.sent - a.sent);
+    return channels[0]?.inflight ?? -1;
+  };
+  const clients: WebTransport[] = [];
+  let tearingDown = false;
+  try {
+    const robot = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
+    clients.push(robot);
+    await within(robot.ready, "robot connect");
+    const robotDatagrams = datagramQueue(robot.datagrams.readable);
+    const robotDgWriter = robot.datagrams.writable.getWriter();
+    await robotDgWriter.write(
+      encodeDatagram({
+        t: "hello",
+        v: PROTOCOL_VERSION,
+        role: "robot",
+        robot: ROBOT,
+        manifest: {
+          channels: [{ ch: "color_image", encoding: "jpeg.v1", delivery: "latest", maxHz: 100 }],
+        },
+      }),
+    );
+    await within(robotDatagrams(), "robot hello reply");
+
+    const attachViewer = async (name: string): Promise<WebTransport> => {
+      const wt = new WebTransport(`${relay.wtUrl}/viewer`, certOpts(relay.certHash));
+      clients.push(wt);
+      await within(wt.ready, `${name} connect`);
+      const control = await wt.createBidirectionalStream();
+      const writer = control.writable.getWriter();
+      const next = controlQueue(control.readable);
+      await writer.write(encodeControlFrame({ t: "hello", v: PROTOCOL_VERSION, role: "viewer" }));
+      await writer.write(encodeControlFrame({ t: "watch", robotId: ROBOT.id }));
+      await writer.write(encodeControlFrame({ t: "sub", ch: "color_image" }));
+      let msg: Msg;
+      do {
+        msg = await within(next(), `${name} manifest`);
+      } while (msg.t !== "manifest");
+      return wt;
+    };
+
+    const healthy = await attachViewer("healthy");
+    const healthyFrames = frameQueue(healthy, (e) => {
+      if (!tearingDown) round.glueDeath = e;
+    });
+    const stalled = await attachViewer("stalled");
+    void stalled; // never reads incomingUnidirectionalStreams: a suspended tab
+
+    const payload = new Uint8Array(8 * 1024).fill(9);
+    const fetchStalled = async () => {
+      const stats = await (await fetch(`${httpBase}/api/stats`)).json();
+      const viewers = stats.perViewer as {
+        channels: Record<string, { aborted: number; queued: number; sent: number }>;
+      }[];
+      // The stalled viewer is the one whose acceptance count froze.
+      return viewers
+        .map((v) => v.channels.color_image)
+        .filter((c) => c !== undefined)
+        .sort((a, b) => a.sent - b.sent)[0];
+    };
+
+    // Pump frames until the stalled viewer's stale streams are being reset
+    // under backpressure. Onset needs its uni-stream credit (~100) exhausted
+    // plus one LATEST_STALE_MS window, so give it a generous frame budget.
+    let lastSeq = 0;
+    let stalledStats = await fetchStalled();
+    for (let seq = 1; seq <= 1200; seq++) {
+      await sendRobotFrame(
+        robot,
+        { ch: "color_image", seq, ts: seq / 100, delivery: "latest" },
+        payload,
+      );
+      lastSeq = seq;
+      if (seq % 50 === 0) {
+        stalledStats = await fetchStalled();
+        if (stalledStats !== undefined && stalledStats.aborted >= 3) break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert(stalledStats !== undefined, "stalled viewer never got a policy");
+    assert(stalledStats.aborted >= 3, `expected aborted resets, got ${stalledStats.aborted}`);
+    assert(stalledStats.queued <= 1, `latest queue must stay 0|1, got ${stalledStats.queued}`);
+
+    // The healthy viewer kept receiving fresh frames the whole time: drain its
+    // queue and require a seq from the era after the stalled viewer wedged.
+    let newest = 0;
+    const drainUntil = Date.now() + 8000;
+    while (newest < lastSeq - 50 && Date.now() < drainUntil) {
+      newest = Math.max(newest, (await within(healthyFrames(), "healthy frame")).header.seq);
+    }
+    assert(newest >= lastSeq - 50, `healthy viewer stalled at seq ${newest} of ${lastSeq}`);
+
+    // The input has quiesced, so no newer offer will reap the healthy viewer's
+    // last accepted stream: only the relay's periodic reap timer can return it
+    // (against real quinn streams).
+    const reapDeadline = Date.now() + 5000;
+    let healthyInflight = -1;
+    while (Date.now() < reapDeadline) {
+      healthyInflight = await fetchHealthyInflight();
+      round.lastInflight = healthyInflight;
+      if (healthyInflight === 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    assertEquals(healthyInflight, 0, "idle reap never reset the healthy viewer's last stream");
+  } catch (e) {
+    // A wedge during pump/drain dies before the reap poll but leaves the
+    // same stuck-carrier signature; settle one stale window, then probe.
+    if (round.glueDeath === null && Number.isNaN(round.lastInflight)) {
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      round.lastInflight = await fetchHealthyInflight().catch(() => NaN);
+    }
+    throw e;
+  } finally {
+    tearingDown = true;
+    for (const wt of clients) {
+      try {
+        wt.close();
+      } catch {
+        // session already dead
+      }
+    }
+    await relay.shutdown();
+  }
+}
+
 Deno.test({
   name: "relay loopback e2e",
   // QUIC endpoint + WT sessions keep background ops alive past shutdown();
@@ -133,7 +328,7 @@ Deno.test({
   const relay = await startRelay({ port: 0 });
   const httpBase = `http://127.0.0.1:${relay.httpPort}`;
 
-  await t.step("/api/info matches the handle and the debug page serves", async () => {
+  await t.step("/api/info matches the handle; no cockpit dist -> 404 with a hint", async () => {
     const info = await (await fetch(`${httpBase}/api/info`)).json();
     assertEquals(info, {
       wtUrl: `${relay.wtUrl}/viewer`,
@@ -141,25 +336,14 @@ Deno.test({
       v: PROTOCOL_VERSION,
     });
     assert(relay.wtUrl.startsWith("https://127.0.0.1:"), relay.wtUrl);
-    const page = await (await fetch(`${httpBase}/debug.html`)).text();
-    assert(page.includes("DimOS relay debug"));
-    const index = await (await fetch(`${httpBase}/`)).text();
-    assert(index.includes("DimOS relay debug"));
-    // Traversal probes. The client/URL parser normalizes these two away from
-    // the tree before the guard sees them, so they 404 on absence.
-    for (const path of ["/../etc/passwd", "/%2e%2e/etc/passwd"]) {
-      const res = await fetch(`${httpBase}${path}`);
-      await res.body?.cancel();
-      assertEquals(res.status, 404, path);
-    }
-    // These survive normalization and must be rejected by the containment
-    // check: a leading "//" makes new URL() jump to the filesystem root, and
-    // encoded slashes let a "../" escape reassemble after decoding.
-    for (const path of ["//etc/passwd", "/..%2f..%2f..%2f..%2fetc%2fpasswd"]) {
-      const res = await fetch(`${httpBase}${path}`);
-      await res.body?.cancel();
-      assertEquals(res.status, 400, path);
-    }
+    // Without a cockpit dist the relay serves no files at all: / explains how
+    // to get one (traversal guards are covered by the cockpit-dist test).
+    const index = await fetch(`${httpBase}/`);
+    assertEquals(index.status, 404);
+    assert((await index.text()).includes("cockpit dist not built"));
+    const stray = await fetch(`${httpBase}/debug.html`);
+    await stray.body?.cancel();
+    assertEquals(stray.status, 404);
   });
 
   const viewer = new WebTransport(`${relay.wtUrl}/viewer`, certOpts(relay.certHash));
@@ -206,7 +390,7 @@ Deno.test({
         v: PROTOCOL_VERSION,
         role: "robot",
         robot: ROBOT,
-        manifest: { channels: CHANNELS },
+        manifest: { channels: CHANNELS, panels: PANELS },
       }),
     );
     // Registration and welcome are separate datagrams, so their relative
@@ -239,6 +423,7 @@ Deno.test({
       t: "manifest",
       robotId: ROBOT.id,
       channels: CHANNELS,
+      panels: PANELS,
     });
     await controlWriter.write(encodeControlFrame({ t: "sub", ch: "odom" }));
     await controlWriter.write(encodeControlFrame({ t: "sub", ch: "color_image" }));
@@ -345,6 +530,15 @@ Deno.test({
     );
     assertEquals(viewerStats.subs, ["odom"]);
     assertEquals(viewerStats.channels.odom.sent, 3);
+    // Reset counters and rates (T5): a healthy reliable channel never resets.
+    assertEquals(viewerStats.channels.odom.delivery, "reliable");
+    assertEquals(viewerStats.channels.odom.aborted, 0);
+    assertEquals(viewerStats.channels.odom.expired, 0);
+    assertEquals(viewerStats.channels.odom.inflight, 0);
+    assert(viewerStats.channels.odom.bytesOut > 0);
+    assertEquals(typeof viewerStats.channels.odom.fps, "number");
+    assert(stats.perRobot[ROBOT.id].channels.odom.bytesIn > 0);
+    assertEquals(typeof stats.perRobot[ROBOT.id].channels.odom.bps, "number");
   });
 
   await t.step("robot hello without robot{} -> missing_robot_id + close", async () => {
@@ -357,6 +551,43 @@ Deno.test({
     assertEquals(err.t, "error");
     assertEquals((err as { code: string }).code, "missing_robot_id");
     await within(bare.closed.catch(() => {}), "bare robot session close");
+  });
+
+  await t.step("robot hello with an invalid manifest -> invalid_manifest + close", async () => {
+    const dup = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
+    await within(dup.ready, "dup-manifest robot connect");
+    const dupDatagrams = datagramQueue(dup.datagrams.readable);
+    const dupWriter = dup.datagrams.writable.getWriter();
+    await dupWriter.write(encodeDatagram({
+      t: "hello",
+      v: PROTOCOL_VERSION,
+      role: "robot",
+      robot: { id: "dup-bot", name: "Dup Bot", model: "test" },
+      manifest: { channels: [CHANNELS[0], CHANNELS[0]] },
+    }));
+    const err = await within(dupDatagrams(), "invalid_manifest error");
+    assertEquals(err.t, "error");
+    assertEquals((err as { code: string }).code, "invalid_manifest");
+    await within(dup.closed.catch(() => {}), "dup-manifest robot close");
+  });
+
+  await t.step("robot hello with the previous protocol version -> error + close", async () => {
+    // A v1 bridge would misread the v2 persistent reliable stream as one
+    // frame; the handshake must fail loudly instead.
+    const old = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
+    await within(old.ready, "old-version robot connect");
+    const oldDatagrams = datagramQueue(old.datagrams.readable);
+    const oldWriter = old.datagrams.writable.getWriter();
+    await oldWriter.write(encodeDatagram({
+      t: "hello",
+      v: 1,
+      role: "robot",
+      robot: { id: "old-bot", name: "Old Bot", model: "test" },
+    }));
+    const err = await within(oldDatagrams(), "old-version error");
+    assertEquals(err.t, "error");
+    assertEquals((err as { code: string }).code, "version_mismatch");
+    await within(old.closed.catch(() => {}), "old-version robot close");
   });
 
   await t.step("hello with a wrong version -> error + close", async () => {
@@ -425,4 +656,63 @@ Deno.test({
   viewer.close();
   robot.close();
   await relay.shutdown();
+});
+
+Deno.test({
+  name: "relay serves the cockpit dist when configured",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const cockpitDir = fileURLToPath(new URL("./testdata/fake_cockpit", import.meta.url));
+  const relay = await startRelay({ port: 0, cockpitDir });
+  const httpBase = `http://127.0.0.1:${relay.httpPort}`;
+  try {
+    const index = await (await fetch(`${httpBase}/`)).text();
+    assert(index.includes("fake cockpit index"));
+    const asset = await fetch(`${httpBase}/assets/app.js`);
+    assertEquals(asset.status, 200);
+    assertEquals(asset.headers.get("content-type"), "application/javascript");
+    await asset.body?.cancel();
+    // Traversal probes. The client/URL parser normalizes these two away from
+    // the tree before the guard sees them, so they 404 on absence.
+    for (const path of ["/../etc/passwd", "/%2e%2e/etc/passwd"]) {
+      const probe = await fetch(`${httpBase}${path}`);
+      await probe.body?.cancel();
+      assertEquals(probe.status, 404, path);
+    }
+    // These survive normalization and must be rejected by the containment
+    // check: a leading "//" makes new URL() jump to the filesystem root, and
+    // encoded slashes let a "../" escape reassemble after decoding.
+    for (const path of ["//etc/passwd", "/..%2f..%2f..%2f..%2fetc%2fpasswd"]) {
+      const probe = await fetch(`${httpBase}${path}`);
+      await probe.body?.cancel();
+      assertEquals(probe.status, 400, path);
+    }
+    // A symlink whose target lies outside the root must not be followed
+    // (readFile follows symlinks; the containment check compares realpaths).
+    const escape = await fetch(`${httpBase}/escape.txt`);
+    await escape.body?.cancel();
+    assertEquals(escape.status, 400);
+    // A symlink staying inside the root still serves.
+    const alias = await (await fetch(`${httpBase}/alias.txt`)).text();
+    assert(alias.includes("fake cockpit index"));
+  } finally {
+    await relay.shutdown();
+  }
+});
+
+Deno.test("startRelay rejects a bad served dir with a labeled error", async () => {
+  // Before binding anything, so nothing leaks: a typo'd path names the
+  // offending option, and a file (realpath-able, would 404 everything) is
+  // rejected too.
+  await assertRejects(
+    () => startRelay({ cockpitDir: "/no/such/dir" }),
+    Error,
+    "cockpitDir does not exist: /no/such/dir",
+  );
+  await assertRejects(
+    () => startRelay({ cockpitDir: fileURLToPath(import.meta.url) }),
+    Error,
+    "cockpitDir is not a directory",
+  );
 });

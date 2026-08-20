@@ -14,6 +14,7 @@ import {
   type Delivery,
   encodeDatagram,
   type Msg,
+  type PanelSpec,
   PROTOCOL_VERSION,
   type RobotInfo,
 } from "@dimos/shared";
@@ -22,6 +23,7 @@ import {
   type ChannelPolicy,
   LatestChannel,
   parseRobotFrameHeader,
+  Rate,
   ReliableChannel,
   type ViewerSink,
 } from "./forward.ts";
@@ -36,6 +38,7 @@ export interface RobotPeer {
   /** Set by the session once a valid robot hello arrived. */
   readonly info: RobotInfo | null;
   readonly channels: ChannelSpec[];
+  readonly panels: PanelSpec[];
   /** Close reason once closed; a closed session must never (re)register. */
   readonly closed: string | null;
   /** Control message upstream to the bridge (datagram: lossy, never blocks). */
@@ -55,10 +58,19 @@ export interface ViewerPeer {
   sendMsg(msg: Msg): void;
 }
 
+/** Dispose and drop every delivery policy of `viewer` (queued frames from the
+ * old watch must not reach the viewer, and persistent writers must release
+ * their streams). */
+function disposePolicies(viewer: ViewerPeer): void {
+  for (const policy of viewer.policies.values()) policy.dispose();
+  viewer.policies.clear();
+}
+
 interface ChannelInStats {
   delivery: Delivery;
   framesIn: number;
   bytesIn: number;
+  rate: Rate;
 }
 
 interface RobotEntry {
@@ -69,7 +81,12 @@ interface RobotEntry {
   n: number;
   /** Last snapshot content, for change detection and periodic resend. */
   lastChs: string[];
+  /** Per-channel ingress stats, declared channels only. */
   channelsIn: Map<string, ChannelInStats>;
+  /** One aggregate bucket for frames on undeclared channels: arbitrary
+   * header ch strings must not grow channelsIn. A manifest-less robot's
+   * traffic lands entirely here. */
+  undeclared: { framesIn: number; bytesIn: number; rate: Rate };
 }
 
 export class Registry {
@@ -84,6 +101,7 @@ export class Registry {
 
   viewerClosed(viewer: ViewerPeer): void {
     if (!this.#viewers.delete(viewer)) return;
+    disposePolicies(viewer);
     if (viewer.watched !== null) this.#syncSubs(viewer.watched);
   }
 
@@ -108,6 +126,7 @@ export class Registry {
       n: 0,
       lastChs: [],
       channelsIn: new Map(),
+      undeclared: { framesIn: 0, bytesIn: 0, rate: new Rate() },
     });
     this.#pushRobots();
     // Forced: gives a fresh bridge its baseline and reattaches surviving
@@ -175,12 +194,17 @@ export class Registry {
         const previous = viewer.watched;
         if (previous !== null && previous !== msg.robotId) {
           viewer.subs.clear();
-          viewer.policies.clear();
+          disposePolicies(viewer);
         }
         viewer.watched = msg.robotId;
         if (previous !== null && previous !== msg.robotId) this.#syncSubs(previous);
         this.#syncSubs(msg.robotId);
-        reply({ t: "manifest", robotId: msg.robotId, channels: entry.peer.channels });
+        reply({
+          t: "manifest",
+          robotId: msg.robotId,
+          channels: entry.peer.channels,
+          panels: entry.peer.panels,
+        });
         break;
       }
       case "sub":
@@ -211,6 +235,8 @@ export class Registry {
           viewer.subs.add(msg.ch);
         } else {
           viewer.subs.delete(msg.ch);
+          viewer.policies.get(msg.ch)?.dispose();
+          viewer.policies.delete(msg.ch);
         }
         this.#syncSubs(viewer.watched);
         break;
@@ -238,18 +264,33 @@ export class Registry {
       return;
     }
     const ch = header.ch;
-    const delivery = entry.delivery.get(ch) ?? header.delivery;
+    const declared = entry.delivery.get(ch);
+    // Manifest delivery wins; the header's is the undeclared-channel fallback.
+    const delivery = declared ?? header.delivery;
 
-    const stats = entry.channelsIn.get(ch) ?? { delivery, framesIn: 0, bytesIn: 0 };
-    stats.delivery = delivery;
-    stats.framesIn++;
-    stats.bytesIn += bytes.byteLength;
-    entry.channelsIn.set(ch, stats);
+    if (declared === undefined) {
+      // Aggregate bucket only: arbitrary header ch strings must not grow the
+      // per-channel map. Routing below still forwards to subscribed viewers
+      // (a robot that declared no manifest accepts any sub).
+      entry.undeclared.framesIn++;
+      entry.undeclared.bytesIn += bytes.byteLength;
+      entry.undeclared.rate.push(bytes.byteLength, Date.now());
+    } else {
+      // delivery is fixed at creation: the manifest cannot change within a
+      // registration.
+      const stats = entry.channelsIn.get(ch) ??
+        { delivery, framesIn: 0, bytesIn: 0, rate: new Rate() };
+      stats.framesIn++;
+      stats.bytesIn += bytes.byteLength;
+      stats.rate.push(bytes.byteLength, Date.now());
+      entry.channelsIn.set(ch, stats);
+    }
 
     for (const viewer of this.#viewers) {
       if (viewer.watched !== id || !viewer.subs.has(ch)) continue;
       let policy = viewer.policies.get(ch);
       if (policy === undefined || policy.delivery !== delivery) {
+        policy?.dispose();
         policy = delivery === "reliable"
           ? new ReliableChannel(viewer.sink)
           : new LatestChannel(viewer.sink);
@@ -270,6 +311,15 @@ export class Registry {
     }
   }
 
+  /** Reap stale accepted latest streams on every viewer. Offers reap
+   * opportunistically, but an idle input stops offering; server.ts drives
+   * this on an interval. Clock passed in so tests fabricate time. */
+  reapAll(nowMs: number): void {
+    for (const viewer of this.#viewers) {
+      for (const policy of viewer.policies.values()) policy.reap(nowMs);
+    }
+  }
+
   robotsMsg(): Msg {
     return { t: "robots", robots: this.#robotInfos() };
   }
@@ -283,6 +333,7 @@ export class Registry {
   }
 
   stats(): unknown {
+    const now = Date.now();
     return {
       robots: this.#robotInfos(),
       viewers: this.#viewers.size,
@@ -291,7 +342,19 @@ export class Registry {
       perRobot: Object.fromEntries(
         [...this.#robots].map(([id, e]) => [id, {
           subs: e.lastChs,
-          channels: Object.fromEntries(e.channelsIn),
+          channels: Object.fromEntries(
+            [...e.channelsIn].map(([ch, s]) => [ch, {
+              delivery: s.delivery,
+              framesIn: s.framesIn,
+              bytesIn: s.bytesIn,
+              ...s.rate.snapshot(now),
+            }]),
+          ),
+          undeclared: {
+            framesIn: e.undeclared.framesIn,
+            bytesIn: e.undeclared.bytesIn,
+            ...e.undeclared.rate.snapshot(now),
+          },
         }]),
       ),
       perViewer: [...this.#viewers].map((v) => ({
@@ -299,10 +362,17 @@ export class Registry {
         watched: v.watched,
         subs: [...v.subs].sort(),
         channels: Object.fromEntries(
-          [...v.policies].map(([ch, p]) => [
-            ch,
-            { sent: p.sent, dropped: p.dropped, queued: p.queued() },
-          ]),
+          [...v.policies].map(([ch, p]) => [ch, {
+            delivery: p.delivery,
+            sent: p.sent,
+            dropped: p.dropped,
+            queued: p.queued(),
+            aborted: p.aborted,
+            expired: p.expired,
+            inflight: p.inflight(),
+            bytesOut: p.bytesOut,
+            ...p.rate.snapshot(now),
+          }]),
         ),
       })),
     };

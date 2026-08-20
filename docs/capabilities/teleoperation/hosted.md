@@ -1,9 +1,10 @@
 ---
 title: "Remote Teleop"
+sidebarTitle: "dimTELE Remote Teleop"
 description: "Drive robots from anywhere in the world, with low latency, from a browser, phone, or VR headset."
 ---
 
-**dimTELE** is hosted teleoperation for DimOS robots: operate them remotely
+**dimTELE** is hosted teleoperation for dimOS robots: operate them remotely
 from any browser or Quest headset over WebRTC.
 The robot dials out to a hosted broker
 ([teleop.dimensionalos.com](https://teleop.dimensionalos.com)), so you don't
@@ -60,7 +61,7 @@ robot appears under **Available Robots**. Click **Connect** and you're driving.
 The API key alone is enough — the broker derives the robot identity from it.
 `TRANSPORTS__BROKER__ROBOT_ID` / `TRANSPORTS__BROKER__ROBOT_NAME` are optional
 overrides. All broker settings can also be passed on the CLI, e.g.
-`-o transports.broker.api_key=dtk_live_...`.
+`--transports.broker.api-key=dtk_live_...`.
 
 ## Get an API key
 
@@ -83,7 +84,7 @@ broker-bound modules run in one worker so they share a single broker session;
 the `GO2Connection` driver runs in a second worker (`n_workers=2`).
 
 Enable the glass-to-glass latency benchmark with
-`-o cameramuxmodule.latency_stamp=true`.
+`--latency-stamp=true`.
 
 ## Operating the robot
 
@@ -121,7 +122,7 @@ The command bar exposes the robot's allow-listed actions:
   (relax the joints).
 - **Greetings / stretch** — `Hello`, `Stretch`.
 - **Acrobatics** — `FrontJump`, `FrontPounce` — only available when the robot
-  was launched with `-o go2commandmodule.allow_acrobatics=true`.
+  was launched with `--allow-acrobatics=true`.
 - **Obstacle avoidance** — toggle the onboard avoidance layer on or off.
 - **Rage mode** — toggle the high-agility gait on or off.
 - **Head LED** — set the head light brightness.
@@ -178,8 +179,9 @@ regenerate from an old .db with `python -m dimos.teleop.utils.report path.db`.
 ## Configuration
 
 Each concern is its own module, so its commonly-tuned fields live under that
-module's config key (module class name, lowercased). Pass with `-o`, e.g.
-`-o hostedstatsmodule.telemetry_hz=5`.
+module's config key (module class name, lowercased). Pass a unique field directly,
+for example `--telemetry-hz=5`; if a field is ambiguous, qualify it with the
+module key, such as `--hostedstatsmodule.telemetry-hz=5`.
 
 `hostedstatsmodule` — `HostedStatsModule`:
 

@@ -25,7 +25,7 @@ Channels (topic == DataChannel name):
     map_unreliable      robot → operator   map (unordered, lossy) — publishable
 
 Media rides the same session: a sendonly camera track (``set_video_frame``)
-and, opt-in (``audio_in``), the operator's mic (``set_audio_frame_callback``).
+and the operator's mic (``set_audio_frame_callback``).
 The aiortc/CF quirks (MAX_BUNDLE, the id=0 throwaway channel) are documented
 in ``dimos/teleop/hosted/README.md``. Config via ``transports.broker.*``.
 """
@@ -77,7 +77,6 @@ class BrokerConfig(ProviderConfig):
     ordered: bool = False
     max_retransmits: int | None = 0
     video_codec: str = "h264"
-    audio_in: bool = False
 
     def _create(self) -> BrokerProvider:
         return BrokerProvider(self)
@@ -109,8 +108,8 @@ class BrokerProvider(AsyncProviderBase):
     (robot → operator): ``publish()`` on ``state_reliable_back`` /
     ``map_unreliable``; while no operator is connected the channel doesn't
     exist and messages drop, which is normal pubsub behaviour. Media rides the
-    same session: a sendonly camera track (``set_video_frame``) and, opt-in,
-    the operator's mic track (``audio_in`` → ``set_audio_frame_callback``).
+    same session: a sendonly camera track (``set_video_frame``) and the
+    operator's mic track (``set_audio_frame_callback``).
     """
 
     INBOUND_CHANNELS = ("cmd_unreliable", "state_reliable")
@@ -124,7 +123,7 @@ class BrokerProvider(AsyncProviderBase):
         if not config.api_key:
             raise RuntimeError(
                 "BrokerConfig.api_key required "
-                "(set -o transports.broker.api_key=dtk_live_... or "
+                "(set --transports.broker.api-key=dtk_live_... or "
                 "TRANSPORTS__BROKER__API_KEY=dtk_live_...; "
                 "create one in the teleop dashboard: New Key)"
             )
@@ -218,11 +217,10 @@ class BrokerProvider(AsyncProviderBase):
             if self._config.video_codec:
                 self._prefer_video_codec(self._config.video_codec)
             # Operator → robot audio: recvonly m=audio in the offer so CF can
-            # bridge the operator's mic track into this session. The frames are
-            # read off the track in the on("track") handler below. Opt-in.
-            if self._config.audio_in:
-                self._pc.addTransceiver("audio", direction="recvonly")
-                self._attach_audio_receiver()
+            # bridge the operator's mic track into this session. Frames are
+            # dropped unless a module registers an audio callback.
+            self._pc.addTransceiver("audio", direction="recvonly")
+            self._attach_audio_receiver()
             self._pc.createDataChannel("_sctp_init", negotiated=True, id=0)
 
             offer = await self._pc.createOffer()
@@ -300,7 +298,8 @@ class BrokerProvider(AsyncProviderBase):
     def set_audio_frame_callback(self, cb: Callable[[bytes, int, int], None] | None) -> None:
         """Register a sink for received operator audio: cb(pcm_bytes, sample_rate,
         channels). Thread-safe to set; frames are dropped until it's wired."""
-        self._audio_frame_cb = cb
+        with self._lock:
+            self._audio_frame_cb = cb
 
     def _attach_audio_receiver(self) -> None:
         """Fan the operator's inbound audio track to the sink callback."""
@@ -321,8 +320,9 @@ class BrokerProvider(AsyncProviderBase):
         try:
             while True:
                 frame = await track.recv()  # av.AudioFrame
-                cb = self._audio_frame_cb
-                if cb is None:
+                with self._lock:
+                    callback = self._audio_frame_cb
+                if callback is None:
                     continue
                 try:
                     # aiortc's Opus decode yields packed s16: to_ndarray() is
@@ -330,7 +330,11 @@ class BrokerProvider(AsyncProviderBase):
                     # come from the layout, not the array shape.
                     pcm = frame.to_ndarray()
                     channels = len(frame.layout.channels) or 1
-                    cb(pcm.tobytes(), int(frame.sample_rate), channels)
+                except Exception:
+                    logger.warning("audio frame conversion error", exc_info=True)
+                    continue
+                try:
+                    callback(pcm.tobytes(), int(frame.sample_rate), channels)
                 except Exception:
                     # A raising sink is a bug in the wired module, not the wire.
                     logger.warning("audio sink callback error", exc_info=True)
