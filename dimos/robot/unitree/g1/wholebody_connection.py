@@ -88,6 +88,12 @@ class G1WholeBodyConnectionConfig(ModuleConfig):
     publish_rate_hz: float = 500.0
     frame_id: str = "g1_pelvis"
     mode_machine: int = _MODE_MACHINE_G1
+    # Stiffness soft-start on taking low-level control: the first commands go
+    # out with full damping (kd) but kp and tau scaled in over this window,
+    # mirroring the remote's damp -> lock-stand feel. Full commanded stiffness
+    # in the very first frame slams the robot from wherever it hangs to the
+    # commanded pose. 0 disables.
+    soft_start_seconds: float = Field(default=3.0, ge=0.0)
 
 
 @dataclass(frozen=True)
@@ -137,6 +143,9 @@ class G1WholeBodyConnection(Module):
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._publish_thread: Thread | None = None
+        # Soft-start clock, armed by the first motor command after start().
+        self._soft_start_t0: float | None = None
+        self._soft_start_done = False
 
     @rpc
     def start(self) -> None:
@@ -196,6 +205,10 @@ class G1WholeBodyConnection(Module):
             logger.info("Skipping sport mode release (release_sport_mode=False)")
 
         logger.info("G1WholeBodyConnection connected", mode_machine=self._mode_machine)
+
+        # Fresh soft-start every time control is (re)acquired.
+        self._soft_start_t0 = None
+        self._soft_start_done = False
 
         self.register_disposable(Disposable(self.motor_command.subscribe(self._on_motor_command)))
 
@@ -365,6 +378,20 @@ class G1WholeBodyConnection(Module):
             else:
                 next_tick = time.perf_counter()
 
+    def _soft_start_scale(self, now: float) -> float:
+        """Stiffness scale in [0, 1] for this command frame. Caller holds the lock."""
+        duration = self.config.soft_start_seconds
+        if duration <= 0.0:
+            return 1.0
+        if self._soft_start_t0 is None:
+            self._soft_start_t0 = now
+            logger.info(f"Soft-start: full damping now, stiffness ramping in over {duration:.1f}s")
+        scale = min(1.0, (now - self._soft_start_t0) / duration)
+        if scale >= 1.0 and not self._soft_start_done:
+            self._soft_start_done = True
+            logger.info("Soft-start complete - full commanded stiffness")
+        return scale
+
     def _on_motor_command(self, msg: MotorCommandArray) -> None:
         if msg.num_joints != _NUM_MOTORS:
             logger.warning(f"Expected {_NUM_MOTORS} motor commands, got {msg.num_joints}; ignoring")
@@ -383,12 +410,17 @@ class G1WholeBodyConnection(Module):
             # G1 firmware requires mode_machine on every LowCmd frame.
             self._low_cmd.mode_machine = self._mode_machine
 
+            # Damping-first bring-up: kd applies in full from the first frame
+            # (that is Unitree's own damp mode), while kp and tau fade in so
+            # taking control never step-changes the stiffness.
+            scale = self._soft_start_scale(time.perf_counter())
+
             for i in range(_NUM_MOTORS):
                 self._low_cmd.motor_cmd[i].q = msg.q[i]
                 self._low_cmd.motor_cmd[i].dq = msg.dq[i]
-                self._low_cmd.motor_cmd[i].kp = msg.kp[i]
+                self._low_cmd.motor_cmd[i].kp = msg.kp[i] * scale
                 self._low_cmd.motor_cmd[i].kd = msg.kd[i]
-                self._low_cmd.motor_cmd[i].tau = msg.tau[i]
+                self._low_cmd.motor_cmd[i].tau = msg.tau[i] * scale
 
             self._low_cmd.crc = self._crc.Crc(self._low_cmd)
             self._publisher.Write(self._low_cmd)
