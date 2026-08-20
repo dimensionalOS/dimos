@@ -394,9 +394,7 @@ class Recorder(MemoryModule):
         for name, port in self._data_ports().items():
             self._subscribe_port(name, port)
         if "tf" in processors:
-            subscription = Disposable(
-                self.tf.subscribe(lambda msg: pipeline.submit("tf", msg))
-            )
+            subscription = Disposable(self.tf.subscribe(lambda msg: pipeline.submit("tf", msg)))
             self._recording_subscriptions.append(subscription)
             self.register_disposable(subscription)
 
