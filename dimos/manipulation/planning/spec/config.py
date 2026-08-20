@@ -27,7 +27,7 @@ from dimos.manipulation.planning.groups.identifiers import (
 )
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.robot.model import RobotModel
+from dimos.robot.assets.model import RobotModel
 
 
 class RobotModelConfig(ModuleConfig):

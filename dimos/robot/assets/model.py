@@ -31,12 +31,42 @@ logger = setup_logger()
 
 
 @dataclass(frozen=True)
+class JointDescription:
+    """A joint parsed from a materialized URDF description."""
+
+    name: str
+    type: str
+    parent_link: str = ""
+    child_link: str = ""
+    origin_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    origin_rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+
+@dataclass(frozen=True)
 class LoadedRobotModel:
     """Materialized model description and its resolved filesystem context."""
 
     xml: str
     source_path: Path
     package_paths: Mapping[str, Path]
+
+    @cached_property
+    def _topology(self) -> tuple[tuple[JointDescription, ...], str]:
+        return _parse_topology(self.xml)
+
+    @property
+    def joints(self) -> tuple[JointDescription, ...]:
+        """Return joints in source-document order."""
+        return self._topology[0]
+
+    @property
+    def root_link(self) -> str:
+        """Return the unique URDF root link, or an empty string if none exists."""
+        return self._topology[1]
+
+    def get_joint(self, name: str) -> JointDescription | None:
+        """Return the named joint when it exists."""
+        return next((joint for joint in self.joints if joint.name == name), None)
 
 
 @dataclass(frozen=True)
@@ -160,6 +190,48 @@ def _add_fixed_frames(xml: str, frames: tuple[_FixedFrame, ...]) -> str:
         joint_names.add(frame.joint_name)
 
     return ET.tostring(root, encoding="unicode")
+
+
+def _parse_topology(xml: str) -> tuple[tuple[JointDescription, ...], str]:
+    root = ET.fromstring(xml)
+    links = [name for link in root.findall("link") if (name := link.get("name")) is not None]
+    child_links: set[str] = set()
+    joints: list[JointDescription] = []
+
+    for joint in root.findall("joint"):
+        parent = joint.find("parent")
+        child = joint.find("child")
+        parent_link = parent.get("link", "") if parent is not None else ""
+        child_link = child.get("link", "") if child is not None else ""
+        if child_link:
+            child_links.add(child_link)
+
+        origin = joint.find("origin")
+        joints.append(
+            JointDescription(
+                name=joint.get("name", ""),
+                type=joint.get("type", "fixed"),
+                parent_link=parent_link,
+                child_link=child_link,
+                origin_xyz=_triple(origin.get("xyz") if origin is not None else None),
+                origin_rpy=_triple(origin.get("rpy") if origin is not None else None),
+            )
+        )
+
+    root_candidates = [link for link in links if link not in child_links]
+    if len(root_candidates) > 1:
+        logger.warning(f"Multiple root candidates: {root_candidates}; using {root_candidates[0]}")
+    root_link = root_candidates[0] if root_candidates else ""
+    return tuple(joints), root_link
+
+
+def _triple(value: str | None) -> tuple[float, float, float]:
+    if value is None:
+        return (0.0, 0.0, 0.0)
+    parts = tuple(float(part) for part in value.split())
+    if len(parts) != 3:
+        raise ValueError(f"Expected 3 values, got {value!r}")
+    return (parts[0], parts[1], parts[2])
 
 
 def _vector_text(vector: tuple[float, float, float]) -> str:

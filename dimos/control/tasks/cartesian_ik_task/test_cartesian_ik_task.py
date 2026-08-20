@@ -36,7 +36,7 @@ from dimos.control.tasks.registry import control_task_registry
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.robot.model import RobotModel
+from dimos.robot.assets.model import RobotModel
 
 
 def _robot(path: Path) -> RobotModelConfig:

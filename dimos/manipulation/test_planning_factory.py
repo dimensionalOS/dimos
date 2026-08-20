@@ -52,7 +52,7 @@ from dimos.manipulation.planning.trajectory_generator.config import (
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.robot.model import RobotModel
+from dimos.robot.assets.model import RobotModel
 
 
 @pytest.fixture

@@ -35,7 +35,7 @@ from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
-from dimos.robot.model import RobotModel
+from dimos.robot.assets.model import RobotModel
 
 
 def _plan() -> GeneratedPlan:

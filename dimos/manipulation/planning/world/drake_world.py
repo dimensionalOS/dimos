@@ -51,7 +51,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.robot.model import LoadedRobotModel
+from dimos.robot.assets.model import LoadedRobotModel
 
 if TYPE_CHECKING:
     from dimos.manipulation.planning.spec.models import (

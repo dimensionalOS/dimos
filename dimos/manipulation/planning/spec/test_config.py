@@ -21,7 +21,7 @@ import pytest
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.robot.model import RobotModel
+from dimos.robot.assets.model import RobotModel
 
 
 @pytest.mark.parametrize(

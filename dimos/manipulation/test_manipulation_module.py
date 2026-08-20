@@ -46,8 +46,8 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.xarm.config import XARM_MODEL_PATH, XARM_PACKAGE_PATHS
-from dimos.robot.model import RobotModel
 
 pytestmark = pytest.mark.self_hosted
 

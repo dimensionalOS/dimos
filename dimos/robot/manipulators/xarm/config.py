@@ -28,13 +28,13 @@ from dimos.control.components import (
 from dimos.core.global_config import global_config
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.manipulators._modeling import (
     base_pose,
     coordinator_joint_mapping,
     joint_names,
 )
-from dimos.robot.model import RobotModel
 from dimos.utils.data import LfsPath
 
 XARM_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [

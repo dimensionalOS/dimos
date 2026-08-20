@@ -22,8 +22,8 @@ from typing import Any
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators._modeling import base_pose
-from dimos.robot.model import RobotModel
 from dimos.utils.data import LfsPath
 
 OPENARM_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [

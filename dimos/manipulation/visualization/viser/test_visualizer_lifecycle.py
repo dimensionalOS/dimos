@@ -40,7 +40,7 @@ from dimos.manipulation.visualization.viser.visualizer import ViserManipulationV
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.robot.model import LoadedRobotModel, RobotModel
+from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
 class FakeDependency:

@@ -18,7 +18,7 @@ import re
 import pytest
 
 from dimos.manipulation.planning.utils import mesh_utils
-from dimos.robot.model import LoadedRobotModel
+from dimos.robot.assets.model import LoadedRobotModel
 
 
 def test_prepare_urdf_for_drake_keeps_xml_in_memory_and_drake_cleanup(

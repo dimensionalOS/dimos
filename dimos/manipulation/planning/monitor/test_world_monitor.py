@@ -40,7 +40,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.robot.model import RobotModel
+from dimos.robot.assets.model import RobotModel
 
 
 class _VectorLike(list[float]):

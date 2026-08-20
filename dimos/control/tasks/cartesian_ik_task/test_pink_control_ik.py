@@ -30,7 +30,7 @@ from dimos.control.tasks.cartesian_ik_task.pink_control_ik import (
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.robot.model import LoadedRobotModel, RobotModel
+from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 _URDF = """\
 <robot name="tiny">

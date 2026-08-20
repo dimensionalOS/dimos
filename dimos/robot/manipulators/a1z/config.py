@@ -27,13 +27,13 @@ from dimos.hardware.manipulators.galaxea_a1z.config import (
 )
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.manipulators._modeling import (
     base_pose,
     coordinator_joint_mapping,
     joint_names,
 )
-from dimos.robot.model import RobotModel
 
 A1Z_DOF = 6
 

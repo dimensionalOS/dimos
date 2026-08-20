@@ -62,7 +62,7 @@ execute()               # Execute via coordinator
 ```python skip
 from dimos.manipulation import ManipulationModule
 from dimos.manipulation.planning.spec import RobotModelConfig
-from dimos.robot.model import RobotModel
+from dimos.robot.assets.model import RobotModel
 
 config = RobotModelConfig(
     name="xarm7",

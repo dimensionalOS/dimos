@@ -32,7 +32,7 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.std_msgs.Bool import Bool
-from dimos.robot.model import RobotModel
+from dimos.robot.assets.model import RobotModel
 
 
 @dataclass

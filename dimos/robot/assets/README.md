@@ -84,7 +84,7 @@ Use `RobotModel` to keep source loading and portable model edits above backend
 adapters:
 
 ```python
-from dimos.robot.model import RobotModel
+from dimos.robot.assets.model import RobotModel
 
 model = RobotModel.from_file(
     model_path,

@@ -19,7 +19,7 @@ import xml.etree.ElementTree as ET
 import pytest
 from pytest_mock import MockerFixture
 
-import dimos.robot.model as robot_model
+import dimos.robot.assets.model as robot_model
 
 
 def test_model_load_is_lazy_and_memoized(
@@ -67,6 +67,41 @@ def test_model_load_resolves_package_uris_without_writing_a_derived_urdf(
     assert "package://" not in loaded.xml
     assert str(mesh) in loaded.xml
     assert set(tmp_path.iterdir()) == {package, urdf}
+
+
+def test_loaded_model_exposes_cached_urdf_topology(tmp_path: Path) -> None:
+    loaded = robot_model.LoadedRobotModel(
+        """
+        <robot name="test">
+          <link name="base"/>
+          <link name="tool"/>
+          <joint name="tool_joint" type="fixed">
+            <origin xyz="0.1 0.2 0.3" rpy="0.0 0.0 1.57"/>
+            <parent link="base"/>
+            <child link="tool"/>
+          </joint>
+        </robot>
+        """,
+        tmp_path / "robot.urdf",
+        {},
+    )
+
+    joints = loaded.joints
+
+    assert joints is loaded.joints
+    assert joints == (
+        robot_model.JointDescription(
+            name="tool_joint",
+            type="fixed",
+            parent_link="base",
+            child_link="tool",
+            origin_xyz=(0.1, 0.2, 0.3),
+            origin_rpy=(0.0, 0.0, 1.57),
+        ),
+    )
+    assert loaded.root_link == "base"
+    assert loaded.get_joint("tool_joint") == joints[0]
+    assert loaded.get_joint("missing") is None
 
 
 def test_with_fixed_frame_builds_ordered_model_chain_and_preserves_extensions(

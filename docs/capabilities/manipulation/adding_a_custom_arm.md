@@ -507,7 +507,7 @@ this backend. Formal per-joint dimOS overrides will be added separately.
 
 ```python skip
 from dimos.robot.assets.source import RobotDescriptionSource
-from dimos.robot.model import RobotModel
+from dimos.robot.assets.model import RobotModel
 from dimos.manipulation.manipulation_module import manipulation_module
 from dimos.manipulation.planning.spec import RobotModelConfig
 from dimos.manipulation.planning.spec.models import PlanningGroupDefinition

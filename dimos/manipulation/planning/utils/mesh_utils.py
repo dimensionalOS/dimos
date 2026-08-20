@@ -28,7 +28,7 @@ import shutil
 from typing import TYPE_CHECKING
 
 from dimos.robot.assets.git_cache import DEFAULT_ROBOT_ASSET_CACHE_ROOT
-from dimos.robot.model import LoadedRobotModel
+from dimos.robot.assets.model import LoadedRobotModel
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:

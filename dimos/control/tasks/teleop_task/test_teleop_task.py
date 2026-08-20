@@ -38,7 +38,7 @@ from dimos.control.tasks.teleop_task.teleop_task import (
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.robot.model import RobotModel
+from dimos.robot.assets.model import RobotModel
 from dimos.teleop.quest.quest_types import Buttons
 
 
