@@ -17,6 +17,10 @@
 ``DanDetector`` owns the models behind :func:`embed_index`, :func:`localize`,
 and :func:`inventory`: enter once, query many times on warm weights, and
 ``stop()`` (or leave the ``with`` block) releases whatever loaded.
+
+Every entry point takes an optional :class:`~dimos.perception.memory.rig.Rig`
+describing where poses and 3D geometry come from; without one the store's
+shape decides.
 """
 
 from __future__ import annotations
@@ -25,12 +29,10 @@ from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from dimos.core.resource import Resource
 from dimos.memory.embed import EmbedImages
-from dimos.memory.tf import StreamTF
 from dimos.memory.transform import throttle
-from dimos.perception.memory import gates
-from dimos.perception.memory.gates import OPTICAL_FRAME, TF_TOLERANCE, WORLD_FRAME
 from dimos.perception.memory.inventory import DEFAULT_VOCABULARY, NamingVocabulary, inventory
-from dimos.perception.memory.localize import EMBED_HZ, embed_index, localize
+from dimos.perception.memory.localize import embed_index, localize
+from dimos.perception.memory.rig import Rig
 
 if TYPE_CHECKING:
     from reactivex.abc import DisposableBase
@@ -79,9 +81,7 @@ class DanDetector(Resource):
         before: float,
         *,
         live: Literal[False] = False,
-        optical_frame: str = ...,
-        world_frame: str = ...,
-        tf_tolerance: float = ...,
+        rig: Rig | None = ...,
     ) -> Stream[Any, Any]: ...
     @overload
     def embed(
@@ -89,9 +89,7 @@ class DanDetector(Resource):
         store: Any,
         *,
         live: Literal[True],
-        optical_frame: str = ...,
-        world_frame: str = ...,
-        tf_tolerance: float = ...,
+        rig: Rig | None = ...,
     ) -> Stream[Any, Any]: ...
     def embed(
         self,
@@ -100,43 +98,32 @@ class DanDetector(Resource):
         before: float | None = None,
         *,
         live: bool = False,
-        optical_frame: str = OPTICAL_FRAME,
-        world_frame: str = WORLD_FRAME,
-        tf_tolerance: float = TF_TOLERANCE,
+        rig: Rig | None = None,
     ) -> Stream[Any, Any]:
         """SigLIP-embedded, world-posed frame index for :meth:`localize`.
 
         Replay mode indexes ``[after, before]`` in memory and returns when
-        done. ``live=True`` instead tails ``color_image`` and keeps saving
-        into the store's named ``color_image_embedded`` stream on a
+        done. ``live=True`` instead tails the rig's color stream and keeps
+        saving into the store's named ``color_image_embedded`` stream on a
         background thread; the returned stream is that named stream.
         """
+        rig = rig or Rig.from_store(store)
         if not live:
             return embed_index(
                 store,
                 self.siglip,
                 cast("float", after),
                 cast("float", before),
-                optical_frame=optical_frame,
-                world_frame=world_frame,
-                tf_tolerance=tf_tolerance,
+                rig=rig,
             )
 
         from dimos.msgs.sensor_msgs.Image import Image
 
-        tf = StreamTF.from_store(store)
-        if tf is None:
-            raise ValueError("store has no tf stream")
         embedded: Stream[Any, Any] = store.stream("color_image_embedded", Image)
         pipeline = (
-            store.streams.color_image.live()
-            .transform(throttle(1.0 / EMBED_HZ))
-            .map(
-                lambda obs: obs.derive(
-                    data=obs.data,
-                    pose=gates.camera_pose(tf, obs.ts, optical_frame, world_frame, tf_tolerance),
-                )
-            )
+            rig.color.live()
+            .transform(throttle(1.0 / rig.embed_hz))
+            .map(lambda obs: obs.derive(data=obs.data, pose=rig.index_pose(obs)))
             .filter(lambda obs: obs.pose is not None)
             .transform(EmbedImages(self.siglip, batch_size=1))
             .save(embedded)

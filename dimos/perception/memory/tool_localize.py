@@ -12,13 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Query memory for objects, localize them in 3D via depth, render in rerun.
+"""Query memory for objects, localize them in 3D, render in rerun.
 
 Run: uv run python -m dimos.perception.memory.tool_localize [query ...] [out.rrd]
-         [--from <s>] [--duration <s>] [--multi]
+         [--dataset <db>] [--from <s>] [--duration <s>] [--multi]
 
-Queries share one model load and one .rrd; with --multi they go to
-localize() as one list, sharing a single detection pass per frame.
+The recording's shape decides the rig: an xArm-style store lifts through
+aligned depth and tf, a mobile-robot store (Go2/G1 replay) lifts through
+registered lidar and stamped poses. Queries share one model load and one
+.rrd; with --multi they go to localize() as one list, sharing a single
+detection pass per frame.
 Exit code 0 with a printed
 position per verified hit; exit code 1 when no query is verified, with
 "no verified detection of ..." per miss - the honest answer that the object
@@ -29,13 +32,11 @@ ambiguity margin flagged.
 import argparse
 from pathlib import Path
 import sys
-from typing import Any, cast
 
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.tf import StreamTF
 from dimos.memory.transform import throttle
-from dimos.perception.memory import gates
 from dimos.perception.memory.localize import LocalizeTrace
+from dimos.perception.memory.rig import Rig
 from dimos.perception.memory.types import Localization
 from dimos.utils.data import get_data
 
@@ -43,7 +44,7 @@ REFUSAL_MARGIN = 0.15
 
 
 def render(
-    out: str, store: Any, traces: list[tuple[str, LocalizeTrace]], t0: float, t1: float
+    out: str, rig: Rig, traces: list[tuple[str, LocalizeTrace]], t0: float, t1: float
 ) -> None:
     """Write the .rrd - rerun stays an inline import.
 
@@ -55,11 +56,7 @@ def render(
     import rerun as rr
     import rerun.blueprint as rrb
 
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
     from dimos.visualization.rerun.init import rerun_init
-
-    tf = cast("StreamTF", StreamTF.from_store(store))
-    camera_info = store.streams.camera_info.first().data
 
     rerun_init("memory-localize")
     rr.save(out)
@@ -74,40 +71,48 @@ def render(
     )
 
     GREEN, RED, BLUE = [46, 204, 113], [231, 76, 60], [52, 120, 246]
-    POINT_SIZE = 0.005
+    point_size = 0.005 if rig.depth is not None else 0.015
 
     def at(ts: float) -> None:
         rr.set_time("ts", timestamp=ts)
 
-    # scene backdrop from an answer frame's depth (or the first detection)
-    backdrop_ts = next((t.backdrop_ts for _, t in traces if t.backdrop_ts is not None), None)
-    if backdrop_ts is None:
-        backdrop_ts = next((t.matched[0][0] for _, t in traces if t.matched), None)
-    if backdrop_ts is not None:
-        try:
-            color = store.streams.color_image.at(backdrop_ts, 0.1).first().data
-            depth = gates.depth_at(store, backdrop_ts)
-            transform = tf.get(
-                gates.OPTICAL_FRAME, gates.WORLD_FRAME, backdrop_ts, gates.TF_TOLERANCE
-            )
-            if depth is not None and transform is not None:
-                backdrop = PointCloud2.from_rgbd(
-                    color, depth, camera_info, depth_scale=0.001
-                ).transform(-transform)
+    # scene backdrop: for depth rigs the answer frame's RGBD cloud, for
+    # pointcloud rigs the window's scans merged into one map
+    if rig.depth is not None:
+        backdrop_ts = next((t.backdrop_ts for _, t in traces if t.backdrop_ts is not None), None)
+        if backdrop_ts is None:
+            backdrop_ts = next((t.matched[0][0] for _, t in traces if t.matched), None)
+        if backdrop_ts is not None:
+            backdrop = rig.backdrop(backdrop_ts)
+            if backdrop is not None:
                 rr.log(
                     "map",
-                    backdrop.voxel_downsample(0.01).to_rerun(voxel_size=POINT_SIZE),
+                    backdrop.voxel_downsample(0.01).to_rerun(voxel_size=point_size),
                     static=True,
                 )
-        except LookupError:
-            pass
+    else:
+        import numpy as np
 
-    # live camera feed + frustum tracking the wrist along the timeline
-    rr.log("camera", camera_info.to_rerun(), static=True)
+        from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+        scans = [
+            obs.data.as_numpy()[0]
+            for obs in rig.cloud.after(t0).before(t1).transform(throttle(2.0))
+        ]
+        if scans:
+            merged = PointCloud2.from_numpy(np.vstack(scans), frame_id=rig.world_frame)
+            rr.log(
+                "map",
+                merged.voxel_downsample(0.05).to_rerun(voxel_size=0.01),
+                static=True,
+            )
+
+    # live camera feed + frustum tracking the capture pose along the timeline
+    rr.log("camera", rig.camera_info.to_rerun(), static=True)
     feed_throttle = 0.1 if (t1 - t0) <= 160 else 0.4
-    feed = store.streams.color_image.after(t0).before(t1).transform(throttle(feed_throttle))
+    feed = rig.color.after(t0).before(t1).transform(throttle(feed_throttle))
     for obs in feed:
-        pose = gates.camera_pose(tf, obs.ts)
+        pose = rig.camera_pose(obs.ts)
         if pose is None:
             continue
         at(obs.ts)
@@ -119,7 +124,7 @@ def render(
 
         # marked frames: into the live feed, plus a frozen frustum at the capture pose
         for i, obs in enumerate(trace.detection_frames):
-            pose = gates.camera_pose(tf, obs.ts)
+            pose = rig.camera_pose(obs.ts)
             if pose is None:
                 continue
             at(obs.ts)
@@ -127,7 +132,7 @@ def render(
             rr.log("camera/image", annotated.to_rerun())
             frame = f"{root}/frames/{i}"
             rr.log(frame, pose.to_rerun())
-            rr.log(frame, camera_info.to_rerun())
+            rr.log(frame, rig.camera_info.to_rerun())
             rr.log(f"{frame}/image", annotated.to_rerun())
 
         # 3d detections: green = matched candidates, red = cross-view re-detections
@@ -139,7 +144,7 @@ def render(
                 at(ts)
                 rr.log(
                     f"{root}/{tag}/{i}_{det.name.replace(' ', '_')}",
-                    det.pointcloud.to_rerun(voxel_size=POINT_SIZE, colors=rgb),
+                    det.pointcloud.to_rerun(voxel_size=point_size, colors=rgb),
                 )
 
         # the answer: always blue, whatever the query
@@ -147,7 +152,7 @@ def render(
             at(trace.answer.ts)
             rr.log(
                 f"{root}/answer",
-                trace.answer.pointcloud.to_rerun(voxel_size=POINT_SIZE, colors=BLUE),
+                trace.answer.pointcloud.to_rerun(voxel_size=point_size, colors=BLUE),
             )
 
 
@@ -213,7 +218,8 @@ def main() -> int:
         "xarm6_worldbelief_20260729_203624_161992.db"
     )
     store = SqliteStore(path=dataset)
-    lo, hi = store.streams.color_image.get_time_range()
+    rig = Rig.from_store(store)
+    lo, hi = rig.color.get_time_range()
     after = lo + args.start
     before = lo + args.start + args.duration if args.duration is not None else hi
 
@@ -222,13 +228,14 @@ def main() -> int:
     traces: list[tuple[str, LocalizeTrace]] = []
     hits = 0
     with DanDetector() as dan:
-        index = dan.embed(store, after, before)
+        index = dan.embed(store, after, before, rig=rig)
         if args.multi:
             qtraces = [LocalizeTrace() for _ in queries]
             results = dan.localize(
                 store,
                 queries,
                 index=index,
+                rig=rig,
                 require_pose=not args.allow_no_pose,
                 trace=qtraces,
             )
@@ -243,6 +250,7 @@ def main() -> int:
                     store,
                     query,
                     index=index,
+                    rig=rig,
                     require_pose=not args.allow_no_pose,
                     trace=trace,
                 )
@@ -254,7 +262,7 @@ def main() -> int:
         return 1
 
     if out is not None:
-        render(out, store, traces, after, before)
+        render(out, rig, traces, after, before)
         print(f"saved {out}")
     return 0
 
