@@ -33,175 +33,19 @@ from dimos.benchmark.libero_pro.podman import LiberoPodmanContainer
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
 
-EVALUATION_PROTOCOL = """Develop a task-specific real-time DimOS policy.
-Use submit_policy to test each revision. Every submission runs a fresh episode of
-the exact task below. The final submitted callable is frozen and evaluated on a
-fresh initial state. The simulator advances continuously at 20 Hz while the
-callable runs, so policies must tolerate real execution latency.
+EVALUATION_PROTOCOL = """Develop a task-specific synchronous policy for the exact task input.
 
-Inspect the actual recorded RGB images after every debug submission. `python_exec`
-supports rich image output, just as it does in the navigation benchmark:
+Define `policy(app: Dimos) -> None`. Use discoverable typed DimOS modules and
+read-only `app.memory`; no evaluator-only state is available. Call
+`submit_policy(policy)` for up to five fresh Debug Trials. It returns an immutable
+PolicyCandidate with a bounded Trial Evidence summary. Drill down only as needed via
+`candidate.evidence.timeline()`, `.logs()`, `.frame()`, `.policy_output`,
+`.open_memory()`, and `.artifacts`. Recorded facts may be unavailable; do not infer
+missing causes.
 
-    trial = submit_policy(policy)
-    from IPython.display import display
-    from PIL import Image as PILImage
-    with trial.open_memory() as memory:
-        frame = memory.stream("agentview_color_image").last().data
-        display(PILImage.fromarray(frame.to_rgb().data))
-
-Displayed images are delivered to you visually. Inspect both `agentview_color_image`
-and `eye_in_hand_color_image` when the wrist view can disambiguate contact. Do not
-substitute ASCII art, pixel statistics, database internals, or textual image
-representations for viewing the RGB frames directly.
-
-Inside policy(app), `app.memory` is the live read-only Memory2 recording and normal
-modules are available by class name. Use the calibrated RGB-D helper rather than
-guessing camera geometry. A policy can start while the first synchronized observation
-is being recorded: if `latest_rgbd` raises `LookupError`, retry briefly (for at most two
-seconds with a 50 ms sleep) rather than failing or returning:
-
-    from dimos.perception.rgbd import latest_rgbd, project_depth
-    observation = latest_rgbd(
-        app.memory,
-        color_stream="agentview_color_image",
-        depth_stream="agentview_depth_image",
-        camera_info_stream="agentview_camera_info",
-        optical_frame="agentview_optical",
-    )
-    masks = app.GroundedSegmentationModule.segment(observation.color, ["object description"])
-    objects = project_depth(masks, observation)
-
-`objects` is an iterable of `Detection3DPC`. Each detection has `.name`, `.center`
-(a `Vector3` property, not a method), `.bbox` (`x_min, y_min, x_max, y_max` pixels
-in the displayed image), `.pose`, and `.pointcloud`. Use `.bbox` to connect multiple
-same-label detections to the instance you selected visually. A `PointCloud2`
-supports `len(pointcloud)`, the `.center` and `.bounding_box_dimensions` properties,
-and `.as_numpy()`, which returns `(points, colors)`. These are the exact public shapes;
-do not spend submissions rediscovering them with `dir()` or deliberate exceptions.
-
-Grounded segmentation returns query-conditioned hypotheses, not verified object
-identities: every proposal for a query can carry that query's name, including false
-positives. A label match alone therefore never proves identity. When a query returns
-multiple detections, do not select `[0]`, `min`, `max`, leftmost, or rightmost as an
-unsupported shortcut. Print every candidate's `.bbox`, inspect the displayed RGB image,
-and map the requested object's visual appearance to the matching box. If identity is
-still ambiguous, refine the visual query and test on another fresh debug episode.
-
-Resolve relational language from all named references rather than a positional guess.
-Detect every reference object explicitly and use bbox centers in the same image. For
-"between", project each candidate center onto the segment joining the two reference
-centers and compare both the along-segment parameter and perpendicular distance; for
-"not between", exclude the candidate supported by that relation. Confirm the resulting
-identity in the displayed image before freezing the policy.
-
-For one uniquely described object, avoid enumerating query hypotheses entirely:
-
-    masks = app.GroundedSegmentationModule.segment_best(
-        observation.color,
-        "specific visual description of the requested object",
-    )
-    objects = list(project_depth(masks, observation))
-
-`segment_best` point-grounds the requested identity first and returns at most one mask.
-Use ordinary `segment` only when the task genuinely requires enumerating multiple
-instances or references. Still inspect the returned box against the displayed image.
-
-Request ranked grasps with
-`grasps = app.GraspGenXModule.propose_grasps(objects[0].pointcloud)`. The returned
-`GraspCandidateArray` is directly iterable and also exposes `.candidates`; it has no
-`.poses` attribute and does not support indexing (`grasps[0]` is invalid; use
-`grasps.candidates[0]` or iterate it). Candidates are already calibrated Panda TCP
-poses. A proposal's header supplies its timestamp and frame. Construct targets with
-the exact message imports and keywords:
-
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-    from dimos.msgs.geometry_msgs.Vector3 import Vector3
-    target = PoseStamped(
-        ts=grasps.header.timestamp,
-        frame_id=grasps.header.frame_id,
-        position=candidate.pose.position,
-        orientation=candidate.pose.orientation,
-    )
-
-Use `Vector3(x, y, z)` when changing a target position. Inspect
-`app.ManipulationModule.list_planning_groups()` and use a returned `.id` instead of
-guessing group IDs. Try targets in rank order with `plan_to_poses({group.id: target})`,
-then call `execute()` only for a successful PlanResult. Every operation returns a typed
-result; inspect `.succeeded`. `PlanResult`, `ExecutionResult`, and `CommandResult` expose
-`.message`. `MoveResult` instead exposes `.plan` and optional `.execution`; inspect
-`move.plan.message` or `move.execution.message`, never `move.message`. Re-observe after
-motion and keep the policy closed-loop. The Panda gripper positions are 0.04 m open and
-0.0 m closed.
-Use the ordinary manipulation RPC exactly as
-`app.ManipulationModule.set_gripper_position(0.04, planning_group=group.id)` to open
-and `set_gripper_position(0.0, planning_group=group.id)` to close; there is no separate
-`GripperModule` in this blueprint.
-Use collision-checked planning for the free-space approach. Once that route is clear,
-`move_to_pose(..., check_collision=False)` provides the low-latency absolute Cartesian
-updates needed for contact-rich motion; keep those updates small and verify each result.
-
-For ordinary object grasps, prefer the general closed-loop executor after segmentation:
-
-    result = app.GraspExecutionModule.execute_grasp_candidates(
-        grasps,
-        planning_group=group.id,
-    )
-
-It tries ranked candidates with a collision-checked pre-grasp, a short contact move,
-gripper closure, verifies that the measured aperture retained an object, and retracts.
-It retries after an empty closure. Inspect `result.succeeded` and `result.message`. Use
-the lower-level primitives directly when the task needs contact without retracting,
-such as hooking an articulated handle.
-
-For a tabletop pick-and-place with uniquely described source and destination, use the
-single grounded executor. Pass the current calibrated observation explicitly; the RPC
-does not read a hidden camera stream:
-
-    result = app.GraspExecutionModule.grounded_pick_and_place(
-        observation,
-        "specific visual description of the source",
-        "specific visual description of the destination",
-        planning_group=group.id,
-    )
-
-This point-grounds both identities from the supplied RGB image, projects their masks
-through the supplied depth and calibration, and executes the pick and place as one
-operation. Use the task's object nouns plus visible attributes in each description.
-Do not replace it with agent-side candidate enumeration unless this call returns an
-explicit grounding failure in a debug trial. For already-grounded geometry, the lower
-level equivalent is:
-
-    result = app.GraspExecutionModule.pick_and_place_pointclouds(
-        source.pointcloud,
-        destination.pointcloud,
-        planning_group=group.id,
-    )
-
-It aligns the gripper's closing direction to elongated source geometry while retaining
-the downward tool axis, approaches through collision-checked free space, and verifies
-object retention after retracting from contact. It places onto thin supporting surfaces
-or inside tall receptacles. Prefer it over assembling an unverified sequence of raw plan
-calls. Re-observe before each additional object in a multi-object task.
-
-Use the first debug submission for a perception-and-motion attempt, not module or type
-discovery. Print concise typed results and inspect `trial.policy_output` after every
-submission. Keep reachability searches to the first six ranked candidates so planning
-does not consume the real-time horizon. Never hard-code scene coordinates or planning
-group IDs, and never swallow broad exceptions: fresh initial states require perception,
-returned group IDs, and explicit result checks. Leave the last accepted submission as
-a complete task policy; do not replace a working policy with a diagnostic probe or an
-unverified hard-coded rewrite.
-
-Plan with the complete hand volume, not only the TCP. Infer the grasp and motion axes
-from observed geometry. For articulated handles, compare a force-closure pinch with a
-geometric hook: approach through free space, place closed fingers behind the handle,
-engage it orthogonally, then withdraw along the articulation axis. Test equivalent
-wrist-roll candidates because the fingers can reach while the wrist or forearm still
-collides with nearby objects. If IK fails at a joint boundary, retry nearby poses a few
-millimeters away instead of abandoning the strategy. Prefer short, smooth, measured
-waypoint updates over one large target jump, but do not waste the real-time horizon on
-long sleeps. A held final setpoint continues executing after policy(app) returns, so
-finish the callable once the commanded motion is safely engaged.
+Before finishing, call `freeze_policy(candidate)` exactly once. The frozen candidate
+is evaluated in a clean policy-only process. Freezing is irreversible and later
+submissions are rejected.
 """
 
 

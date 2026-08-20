@@ -24,7 +24,13 @@ import pytest
 
 from dimos.benchmark.evaluation.models import RuntimeCondition
 from dimos.benchmark.evaluation.pi_process import PiRunError, PiRunResult
-from dimos.benchmark.evaluation.protocol import PolicyArtifact, TrialOutcome, TrialRun
+from dimos.benchmark.evaluation.protocol import (
+    EvidenceCategory,
+    PolicyArtifact,
+    TrialEvidence,
+    TrialOutcome,
+    TrialRun,
+)
 import dimos.benchmark.evaluation.runtime as runtime_module
 from dimos.benchmark.evaluation.runtime import (
     CodePolicyRuntimeFactory,
@@ -45,8 +51,9 @@ class _FakeCodePolicyServer:
     current = None
     mcp_url = "http://127.0.0.1:1/mcp"
 
-    def __init__(self, submission_handler) -> None:
+    def __init__(self, submission_handler, *, freeze_handler) -> None:
         self.submission_handler = submission_handler
+        self.freeze_handler = freeze_handler
         _FakeCodePolicyServer.current = self
 
     def start(self) -> None:
@@ -71,6 +78,8 @@ def _trial(path: Path, number: int) -> TrialRun:
     memory_path = path / "recording.db"
     with SqliteStore(path=str(memory_path)) as memory:
         memory.stream("events", int).append(number)
+        memory.stream("agentview_color_image", int).append(number, ts=float(number))
+        memory.stream("agentview_color_image", int).append(number + 1, ts=float(number + 1))
     return TrialRun(
         run_id=f"debug-{number}",
         outcome=TrialOutcome(
@@ -87,7 +96,9 @@ def _trial(path: Path, number: int) -> TrialRun:
     )
 
 
-def test_submission_manager_caps_trials_and_selects_last_policy(tmp_path: Path) -> None:
+def test_submission_manager_preserves_candidates_and_freezes_earlier_policy(
+    tmp_path: Path,
+) -> None:
     artifacts = []
     manager = _SubmissionManager(
         workspace=tmp_path,
@@ -100,13 +111,38 @@ def test_submission_manager_caps_trials_and_selects_last_policy(tmp_path: Path) 
     manager.path.mkdir()
     serialized = cloudpickle.dumps(policy)
 
-    trials = [manager.submit("def policy(app: Dimos) -> None: ...", serialized) for _ in range(5)]
+    candidates = [
+        manager.submit("def policy(app: Dimos) -> None: ...", serialized) for _ in range(5)
+    ]
 
-    assert [trial.run_id for trial in trials] == [f"debug-{number}" for number in range(1, 6)]
-    assert manager.last_policy is not None
-    assert manager.last_policy.serialized_path.parent.name == "submission-0005"
+    assert [candidate.trial.run_id for candidate in candidates] == [
+        f"debug-{number}" for number in range(1, 6)
+    ]
+    assert len({candidate.id for candidate in candidates}) == 5
     with pytest.raises(RuntimeError, match="budget exhausted"):
         manager.submit("def policy(app: Dimos) -> None: ...", serialized)
+    frozen = manager.freeze(candidates[1].id)
+    assert frozen is candidates[1]
+    assert manager.frozen_policy is candidates[1].policy
+    with pytest.raises(RuntimeError, match="already frozen"):
+        manager.freeze(candidates[0].id)
+    with pytest.raises(RuntimeError, match="closed"):
+        manager.submit("def policy(app: Dimos) -> None: ...", serialized)
+
+
+def test_submission_manager_rejects_foreign_candidate(tmp_path: Path) -> None:
+    manager = _SubmissionManager(
+        workspace=tmp_path,
+        path=tmp_path / "exploration",
+        relative_path=Path("exploration"),
+        submit_debug_trial=lambda _policy, number, path: _trial(path, number),
+        max_submissions=5,
+        record_artifact=lambda _artifact: None,
+    )
+    manager.path.mkdir()
+
+    with pytest.raises(ValueError, match="does not belong"):
+        manager.freeze("candidate-from-another-exploration")
 
 
 def test_trial_run_exposes_logs_and_read_only_memory(tmp_path: Path) -> None:
@@ -117,6 +153,51 @@ def test_trial_run_exposes_logs_and_read_only_memory(tmp_path: Path) -> None:
         assert memory.streams.events.last().data == 2
         with pytest.raises(PermissionError):
             memory.streams.events.append(3)
+
+
+@pytest.mark.parametrize(
+    ("status", "success", "module"),
+    [
+        ("completed", True, "Evaluator"),
+        ("policy_error", False, "PolicyWorker"),
+        ("completed", False, "Planner"),
+        ("infrastructure_error", False, "Runtime"),
+    ],
+)
+def test_trial_evidence_recovers_recorded_trace_without_diagnosing(
+    tmp_path: Path, status: str, success: bool, module: str
+) -> None:
+    trial = _trial(tmp_path / status, 1)
+    trial.log_path.write_text(
+        json.dumps({"timestamp": 1.5, "module": module, "status": status}) + "\n"
+    )
+    trial = TrialRun(
+        run_id=trial.run_id,
+        outcome=TrialOutcome(
+            success=success,
+            reward=float(success),
+            status=status,
+            error="recorded failure" if not success else None,
+            duration_seconds=2.0,
+        ),
+        artifacts=trial.artifacts,
+        log_path=trial.log_path,
+        memory_path=trial.memory_path,
+        policy_output="x" * 50_000,
+    )
+    evidence = TrialEvidence("candidate-0001", trial, 4)
+
+    assert evidence.summary.status == status
+    assert evidence.timeline(module=module)[0]["timestamp"] == 1.5
+    assert {frame.position for frame in evidence.summary.frames} == {"initial", "terminal"}
+    assert EvidenceCategory.FRAMES in evidence.summary.categories
+    assert "diagnosis" not in repr(evidence).lower()
+    assert len(repr(evidence)) < 1_000
+    assert evidence.policy_output == "x" * 50_000
+    assert evidence.artifacts == trial.artifacts
+    assert evidence.frame("agentview_color_image", "initial").ts == 1.0
+    with pytest.raises(LookupError, match="unavailable"):
+        evidence.frame("missing_color_image")
 
 
 def test_policy_artifact_records_serialized_callable(tmp_path: Path) -> None:
@@ -221,7 +302,7 @@ def test_policy_result_larger_than_pipe_buffer_does_not_deadlock(tmp_path: Path)
     assert result.output == "diagnostic"
 
 
-def test_explore_freezes_last_of_five_debug_submissions(mocker, tmp_path: Path) -> None:
+def test_explore_uses_explicitly_frozen_earlier_candidate(mocker, tmp_path: Path) -> None:
     class FakePiRunner:
         def __init__(self, **_kwargs) -> None:
             pass
@@ -229,11 +310,17 @@ def test_explore_freezes_last_of_five_debug_submissions(mocker, tmp_path: Path) 
         def run(self, **_kwargs) -> PiRunResult:
             assert _FakeCodePolicyServer.current is not None
             serialized = cloudpickle.dumps(policy)
+            candidates = []
             for _ in range(5):
-                _FakeCodePolicyServer.current.submission_handler(
-                    "def policy(app: Dimos) -> None: ...",
-                    serialized,
+                candidates.append(
+                    _FakeCodePolicyServer.current.submission_handler(
+                        "def policy(app: Dimos) -> None: ...",
+                        serialized,
+                    )
                 )
+            assert candidates[0].evidence.timeline(module="Planner")
+            assert candidates[0].evidence.frame("agentview_color_image").data == 2
+            _FakeCodePolicyServer.current.freeze_handler(candidates[1].id)
             return PiRunResult("done", 5, 2.0, None, "")
 
     marker = tmp_path / "pi"
@@ -256,7 +343,7 @@ def test_explore_freezes_last_of_five_debug_submissions(mocker, tmp_path: Path) 
     assert outcome.status == "valid"
     assert len(outcome.trials) == 5
     assert outcome.policy is not None
-    assert outcome.policy.serialized_path.parent.name == "submission-0005"
+    assert outcome.policy.serialized_path.parent.name == "submission-0002"
 
 
 def test_explore_publishes_jsonl_and_rendered_transcript(mocker, tmp_path: Path) -> None:

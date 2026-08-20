@@ -33,7 +33,13 @@ from dimos.agents.code_policy_core import (
     validate_policy_callable,
 )
 from dimos.agents.code_policy_server import CodePolicyMcpServer
-from dimos.benchmark.evaluation.protocol import TrialOutcome, TrialRun
+from dimos.benchmark.evaluation.protocol import (
+    PolicyArtifact,
+    PolicyCandidate,
+    TrialEvidence,
+    TrialOutcome,
+    TrialRun,
+)
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.porcelain.dimos import Dimos
 
@@ -58,7 +64,7 @@ def test_validate_policy_callable_rejects_noncanonical_functions(candidate, mess
         validate_policy_callable(candidate)
 
 
-def test_exploration_repl_submits_callable_and_receives_trial(tmp_path: Path) -> None:
+def test_exploration_repl_submits_candidate_and_freezes_it(tmp_path: Path) -> None:
     artifacts = tmp_path / "trial"
     artifacts.mkdir()
     log_path = artifacts / "main.jsonl"
@@ -68,10 +74,17 @@ def test_exploration_repl_submits_callable_and_receives_trial(tmp_path: Path) ->
         memory.stream("events", str).append("attempted")
     submitted: list[object] = []
 
-    def handle(source: str, serialized: bytes) -> TrialRun:
+    policy_artifact = PolicyArtifact(
+        source_path=tmp_path / "policy.py",
+        serialized_path=tmp_path / "policy.pkl",
+        sha256="digest",
+    )
+    handled_candidates: list[PolicyCandidate] = []
+
+    def handle(source: str, serialized: bytes) -> PolicyCandidate:
         submitted.append(cloudpickle.loads(serialized))
         assert "def policy" in source
-        return TrialRun(
+        trial = TrialRun(
             run_id="debug-1",
             outcome=TrialOutcome(
                 success=False,
@@ -85,18 +98,33 @@ def test_exploration_repl_submits_callable_and_receives_trial(tmp_path: Path) ->
             memory_path=memory_path,
             policy_output="planner diagnostic",
         )
+        candidate = PolicyCandidate(
+            id="candidate-0001-digest",
+            policy=policy_artifact,
+            evidence=TrialEvidence("candidate-0001-digest", trial, 4),
+        )
+        handled_candidates.append(candidate)
+        return candidate
 
-    with CodePolicyMcpServer(handle) as server:
+    frozen: list[str] = []
+
+    def freeze(candidate_id: str) -> PolicyCandidate:
+        frozen.append(candidate_id)
+        return handled_candidates[0]
+
+    with CodePolicyMcpServer(handle, freeze_handler=freeze) as server:
         assert server.session is not None
         result = server.session.python_exec(
             "def policy(app: Dimos) -> None:\n"
             "    app.list_modules()\n\n"
-            "trial = submit_policy(policy)\n"
-            "(trial.run_id, trial.outcome.success, trial.policy_output)"
+            "candidate = submit_policy(policy)\n"
+            "freeze_policy(candidate)\n"
+            "(candidate.id, candidate.trial.run_id, candidate.evidence.policy_output)"
         )
 
-    assert "('debug-1', False, 'planner diagnostic')" in result.text
+    assert "('candidate-0001-digest', 'debug-1', 'planner diagnostic')" in result.text
     assert len(submitted) == 1
+    assert frozen == ["candidate-0001-digest"]
 
 
 def test_live_repl_bootstraps_public_runtime_without_credentials(
@@ -146,6 +174,7 @@ def test_python_exec_returns_displayed_image() -> None:
         CodePolicySessionConfig(
             environment=SubmissionEnvironment(
                 submission_url="http://127.0.0.1:1",
+                freeze_url="http://127.0.0.1:1",
                 submission_token="unused",
             )
         )
@@ -171,6 +200,7 @@ def test_python_exec_rejects_timeout_longer_than_transport_request() -> None:
         CodePolicySessionConfig(
             environment=SubmissionEnvironment(
                 submission_url="http://127.0.0.1:1",
+                freeze_url="http://127.0.0.1:1",
                 submission_token="unused",
             )
         )

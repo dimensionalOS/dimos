@@ -31,7 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from dimos.core.global_config import global_config
 
 if TYPE_CHECKING:
-    from dimos.benchmark.evaluation.protocol import TrialRun
+    from dimos.benchmark.evaluation.protocol import PolicyCandidate
 
 # The MCP transport abandons a request after roughly 300 seconds. Interrupt the
 # kernel with enough headroom for the timeout response to reach the agent; otherwise
@@ -39,6 +39,7 @@ if TYPE_CHECKING:
 MAX_EXECUTION_TIMEOUT_S = 240.0
 DEFAULT_OUTPUT_LIMIT = 32_000
 _SUBMISSION_URL_ENV = "DIMOS_CODE_POLICY_SUBMISSION_URL"
+_FREEZE_URL_ENV = "DIMOS_CODE_POLICY_FREEZE_URL"
 _SUBMISSION_TOKEN_ENV = "DIMOS_CODE_POLICY_SUBMISSION_TOKEN"
 _RECORDING_PATH_ENV = "DIMOS_CODE_POLICY_RECORDING_PATH"
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -53,6 +54,7 @@ class SubmissionEnvironment(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     kind: Literal["submission"] = "submission"
     submission_url: str = Field(min_length=1)
+    freeze_url: str = Field(min_length=1)
     submission_token: str = Field(min_length=1)
 
 
@@ -140,7 +142,7 @@ def _load_kernel_manager() -> type[Any]:
 def _bootstrap_source(environment: SubmissionEnvironment | LiveDimosEnvironment) -> str:
     if isinstance(environment, SubmissionEnvironment):
         return """
-from dimos.agents.code_policy_core import submit_policy
+from dimos.agents.code_policy_core import freeze_policy, submit_policy
 from dimos.porcelain.dimos import Dimos
 """
     return f"""
@@ -162,13 +164,14 @@ def _kernel_environment(config: CodePolicySessionConfig) -> dict[str, str]:
     result["DIMOS_TRANSPORT"] = global_config.transport
     if isinstance(config.environment, SubmissionEnvironment):
         result[_SUBMISSION_URL_ENV] = config.environment.submission_url
+        result[_FREEZE_URL_ENV] = config.environment.freeze_url
         result[_SUBMISSION_TOKEN_ENV] = config.environment.submission_token
     else:
         result[_RECORDING_PATH_ENV] = config.environment.recording_path
     return result
 
 
-def submit_policy(policy: Any) -> TrialRun:
+def submit_policy(policy: Any) -> PolicyCandidate:
     """Submit a typed callable from the exploration kernel for one fresh trial."""
     validate_policy_callable(policy)
     try:
@@ -195,10 +198,16 @@ def submit_policy(policy: Any) -> TrialRun:
         raise RuntimeError(f"policy submission failed: {detail}")
     from pathlib import Path
 
-    from dimos.benchmark.evaluation.protocol import TrialOutcome, TrialRun
+    from dimos.benchmark.evaluation.protocol import (
+        PolicyArtifact,
+        PolicyCandidate,
+        TrialEvidence,
+        TrialOutcome,
+        TrialRun,
+    )
 
     payload = response.json()
-    return TrialRun(
+    trial = TrialRun(
         run_id=payload["run_id"],
         outcome=TrialOutcome(**payload["outcome"]),
         artifacts=Path(payload["artifacts"]),
@@ -206,6 +215,40 @@ def submit_policy(policy: Any) -> TrialRun:
         memory_path=Path(payload["memory_path"]),
         policy_output=payload["policy_output"],
     )
+    policy_payload = payload["policy"]
+    candidate_id = payload["candidate_id"]
+    return PolicyCandidate(
+        id=candidate_id,
+        policy=PolicyArtifact(
+            source_path=Path(policy_payload["source_path"]),
+            serialized_path=Path(policy_payload["serialized_path"]),
+            sha256=policy_payload["sha256"],
+        ),
+        evidence=TrialEvidence(
+            candidate_id=candidate_id,
+            trial=trial,
+            remaining_submissions=payload["remaining_submissions"],
+        ),
+    )
+
+
+def freeze_policy(candidate: PolicyCandidate) -> None:
+    """Irreversibly select a candidate from the current exploration."""
+    from dimos.benchmark.evaluation.protocol import PolicyCandidate
+
+    if not isinstance(candidate, PolicyCandidate):
+        raise TypeError("freeze_policy requires a PolicyCandidate returned by submit_policy")
+    import requests
+
+    response = requests.post(
+        os.environ[_FREEZE_URL_ENV],
+        headers={"Authorization": f"Bearer {os.environ[_SUBMISSION_TOKEN_ENV]}"},
+        json={"candidate_id": candidate.id},
+        timeout=None,
+    )
+    if response.status_code != 200:
+        detail = response.json().get("error", response.text)
+        raise RuntimeError(f"policy freeze failed: {detail}")
 
 
 def validate_policy_callable(policy: Any) -> None:

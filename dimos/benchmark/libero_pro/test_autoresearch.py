@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 from typing import Literal
 
@@ -28,13 +29,21 @@ from dimos.benchmark.evaluation.models import (
     RuntimeCondition,
     RuntimeIdentity,
 )
-from dimos.benchmark.libero_pro.autoresearch import ResearchPanel, run_panel
+from dimos.benchmark.libero_pro.autoresearch import (
+    InvalidMeasurementError,
+    PanelCase,
+    ResearchPanel,
+    publish_evo_result,
+    run_panel,
+)
 from dimos.benchmark.libero_pro.models import LiberoTaskManifest
 
 CASES = Path(__file__).parent / "cases" / "autoresearch"
 
 
 def _panel(tmp_path: Path) -> Path:
+    for name in ("goal", "spatial", "object", "long"):
+        (tmp_path / f"{name}.json").write_text(json.dumps({"case": name}) + "\n")
     path = tmp_path / "panel.json"
     path.write_text(
         """{
@@ -125,12 +134,109 @@ def test_panel_counts_only_native_successes_and_continues_failures(tmp_path: Pat
     assert (output / "panel-score.json").is_file()
 
 
-def test_panel_requires_one_case_per_family(tmp_path: Path) -> None:
+def test_panel_allows_configurable_size_and_families(tmp_path: Path) -> None:
     payload = ResearchPanel.model_validate_json(_panel(tmp_path).read_bytes()).model_dump()
-    payload["cases"][3]["family"] = "goal"
+    payload["cases"] = payload["cases"][:1]
+    payload["cases"][0]["family"] = "custom-suite"
 
-    with pytest.raises(ValueError, match="one case from each suite family"):
-        ResearchPanel.model_validate(payload)
+    panel = ResearchPanel.model_validate(payload)
+
+    assert len(panel.cases) == 1
+    assert panel.cases[0].family == "custom-suite"
+
+
+def test_panel_rejects_empty_duplicate_and_unsafe_cases() -> None:
+    with pytest.raises(ValueError, match="at least one"):
+        ResearchPanel(name="empty", cases=())
+    duplicate = PanelCase(id="same", family="a", specification="a.json")
+    with pytest.raises(ValueError, match="unique"):
+        ResearchPanel(name="duplicate", cases=(duplicate, duplicate))
+    with pytest.raises(ValueError, match="safe relative"):
+        PanelCase(id="unsafe", family="a", specification="../a.json")
+
+
+def test_panel_hash_changes_with_resolved_specification(tmp_path: Path) -> None:
+    panel = _panel(tmp_path)
+    first = run_panel(panel, output=tmp_path / "first", executor=lambda *_args, **_kwargs: _run())
+    (tmp_path / "goal.json").write_text('{"case": "changed"}\n')
+    second = run_panel(panel, output=tmp_path / "second", executor=lambda *_args, **_kwargs: _run())
+
+    assert first.panel_hash != second.panel_hash
+
+
+def test_evo_publishes_atomic_score_tasks_and_traces(tmp_path: Path) -> None:
+    outcomes = iter((True, False, True, False))
+
+    def execute(*_args: object, **kwargs: object) -> EvaluationRun:
+        case_output = Path(str(kwargs["output"]))
+        trial = case_output / "runtime" / "trial"
+        trial.mkdir(parents=True)
+        for name in ("policy.py", "main.jsonl", "trial.mp4", "recording.db", "score.json"):
+            (trial / name).write_text(name)
+        return _run(success=next(outcomes))
+
+    score = run_panel(
+        _panel(tmp_path),
+        output=tmp_path / "panel-output",
+        executor=execute,
+    )
+    result_path = tmp_path / "evo" / "result.json"
+    traces = tmp_path / "evo" / "traces"
+
+    publish_evo_result(
+        score,
+        result_path=result_path,
+        traces_dir=traces,
+        experiment_id="experiment-1",
+    )
+
+    result = json.loads(result_path.read_text())
+    assert result["score"] == 0.5
+    assert result["tasks"] == {"goal": 1.0, "spatial": 0.0, "object": 1.0, "long": 0.0}
+    assert result["panel_hash"] == score.panel_hash
+    assert {path.stem for path in traces.glob("*.json")} == {
+        "task_goal",
+        "task_spatial",
+        "task_object",
+        "task_long",
+    }
+    trace = json.loads((traces / "task_spatial.json").read_text())
+    assert trace["failure_reason"] == "native_failure"
+    assert trace["score"] == 0.0
+    assert trace["status"] == "failed"
+    assert trace["runtime"]["profile"] == "code-policy-v1"
+    assert Path(trace["artifacts"]["policy"][0]).is_absolute()
+    assert Path(trace["artifacts"]["videos"][0]).name == "trial.mp4"
+    with pytest.raises(FileExistsError, match="already claimed"):
+        publish_evo_result(
+            score,
+            result_path=result_path,
+            traces_dir=traces,
+            experiment_id="experiment-2",
+        )
+
+
+def test_evo_rejects_invalid_measurement_but_preserves_trace(tmp_path: Path) -> None:
+    score = run_panel(
+        _panel(tmp_path),
+        output=tmp_path / "panel-output",
+        executor=lambda *_args, **_kwargs: _run(status="failed"),
+    )
+    result_path = tmp_path / "result.json"
+    traces = tmp_path / "traces"
+
+    with pytest.raises(InvalidMeasurementError, match="invalid panel measurement"):
+        publish_evo_result(
+            score,
+            result_path=result_path,
+            traces_dir=traces,
+            experiment_id="unknown",
+        )
+
+    assert not result_path.exists()
+    assert json.loads((traces / "task_goal.json").read_text())["failure_reason"] == (
+        "measurement_failure"
+    )
 
 
 @pytest.mark.parametrize(

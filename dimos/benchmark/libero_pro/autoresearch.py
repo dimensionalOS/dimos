@@ -18,6 +18,10 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Callable, Sequence
+from datetime import datetime, timezone
+import hashlib
+import json
+import os
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
@@ -33,7 +37,7 @@ class ResearchModel(BaseModel):
 
 class PanelCase(ResearchModel):
     id: str = Field(min_length=1, pattern=r"^[a-z][a-z0-9-]*$")
-    family: Literal["goal", "spatial", "object", "libero_10"]
+    family: str = Field(min_length=1)
     specification: str = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -50,15 +54,12 @@ class ResearchPanel(ResearchModel):
     cases: tuple[PanelCase, ...]
 
     @model_validator(mode="after")
-    def cases_are_representative(self) -> ResearchPanel:
-        if len(self.cases) != 4:
-            raise ValueError("research panels require exactly four cases")
+    def cases_are_valid(self) -> ResearchPanel:
+        if not self.cases:
+            raise ValueError("research panels require at least one case")
         ids = [case.id for case in self.cases]
         if len(set(ids)) != len(ids):
             raise ValueError("research panel case ids must be unique")
-        families = [case.family for case in self.cases]
-        if set(families) != {"goal", "spatial", "object", "libero_10"}:
-            raise ValueError("research panels require one case from each suite family")
         return self
 
 
@@ -70,11 +71,18 @@ class PanelCaseResult(ResearchModel):
     success: bool
     native_score: float
     error: str | None = None
+    failure_category: str | None = None
+    run_id: str | None = None
+    runtime: dict[str, str] | None = None
+    artifacts: dict[str, tuple[str, ...]]
 
 
 class PanelScore(ResearchModel):
     schema_version: Literal["1.0"] = "1.0"
     panel: str
+    panel_hash: str = Field(min_length=64, max_length=64)
+    started_at: str
+    ended_at: str
     native_successes: int = Field(ge=0)
     attempts: int = Field(gt=0)
     success_rate: float = Field(ge=0.0, le=1.0)
@@ -83,6 +91,10 @@ class PanelScore(ResearchModel):
 
 
 EvaluationExecutor = Callable[..., EvaluationRun]
+
+
+class InvalidMeasurementError(RuntimeError):
+    """Raised when a panel cannot produce comparable native measurements."""
 
 
 def run_panel(
@@ -94,25 +106,32 @@ def run_panel(
 ) -> PanelScore:
     """Run every frozen case and aggregate only its native result."""
     panel_path = panel_path.expanduser().resolve()
+    started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     output = output.expanduser().resolve()
     if output.exists() and (not output.is_dir() or any(output.iterdir())):
         raise FileExistsError(f"Output must be absent or an empty directory: {output}")
     output.mkdir(parents=True, exist_ok=True)
-    panel = ResearchPanel.model_validate_json(panel_path.read_bytes())
+    panel_bytes = panel_path.read_bytes()
+    panel = ResearchPanel.model_validate_json(panel_bytes)
+    resolved_specs = _resolve_specifications(panel, panel_path.parent)
+    panel_hash = _panel_hash(panel_bytes, resolved_specs)
     results = tuple(
         _run_case(
             case,
-            panel_dir=panel_path.parent,
+            specification_path=specification_path,
             output=output,
             api_key_env=api_key_env,
             executor=executor,
         )
-        for case in panel.cases
+        for case, specification_path, _content in resolved_specs
     )
     successes = sum(result.success for result in results)
     failures = sum(result.status != "completed" for result in results)
     score = PanelScore(
         panel=panel.name,
+        panel_hash=panel_hash,
+        started_at=started_at,
+        ended_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         native_successes=successes,
         attempts=len(results),
         success_rate=successes / len(results),
@@ -126,10 +145,34 @@ def run_panel(
     return score
 
 
+def _resolve_specifications(
+    panel: ResearchPanel, panel_dir: Path
+) -> tuple[tuple[PanelCase, Path, bytes], ...]:
+    resolved: list[tuple[PanelCase, Path, bytes]] = []
+    for case in panel.cases:
+        path = (panel_dir / case.specification).resolve()
+        if not path.is_relative_to(panel_dir.resolve()):
+            raise ValueError(f"case specification escapes panel directory: {case.id}")
+        resolved.append((case, path, path.read_bytes()))
+    return tuple(resolved)
+
+
+def _panel_hash(panel_bytes: bytes, specs: tuple[tuple[PanelCase, Path, bytes], ...]) -> str:
+    digest = hashlib.sha256()
+    digest.update(b"panel\0")
+    digest.update(panel_bytes)
+    for case, _path, content in specs:
+        digest.update(b"\0case\0")
+        digest.update(case.id.encode())
+        digest.update(b"\0")
+        digest.update(content)
+    return digest.hexdigest()
+
+
 def _run_case(
     case: PanelCase,
     *,
-    panel_dir: Path,
+    specification_path: Path,
     output: Path,
     api_key_env: str,
     executor: EvaluationExecutor,
@@ -137,7 +180,7 @@ def _run_case(
     case_output = output / case.id
     try:
         run = executor(
-            panel_dir / case.specification,
+            specification_path,
             output=case_output,
             api_key_env=api_key_env,
             progress=None,
@@ -151,6 +194,8 @@ def _run_case(
             success=False,
             native_score=0.0,
             error=f"{type(exc).__name__}: {exc}",
+            failure_category="preflight_error",
+            artifacts=_artifact_index(case_output),
         )
     if run.status != "completed" or run.report is None:
         return PanelCaseResult(
@@ -161,6 +206,10 @@ def _run_case(
             success=False,
             native_score=0.0,
             error=run.error.message if run.error is not None else None,
+            failure_category="measurement_failure",
+            run_id=run.run_id,
+            runtime=_runtime_identity(run),
+            artifacts=_artifact_index(case_output),
         )
     native = run.report.native_result
     if not isinstance(native, InlineNativeResult) or not isinstance(native.value, dict):
@@ -177,6 +226,10 @@ def _run_case(
         status="completed",
         success=value["success"],
         native_score=float(value["score"]),
+        failure_category=None if value["success"] else "native_failure",
+        run_id=run.run_id,
+        runtime=_runtime_identity(run),
+        artifacts=_artifact_index(case_output),
     )
 
 
@@ -189,7 +242,104 @@ def _invalid_result(case: PanelCase, output: Path, error: str) -> PanelCaseResul
         success=False,
         native_score=0.0,
         error=error,
+        failure_category="invalid_result",
+        artifacts=_artifact_index(output),
     )
+
+
+def _runtime_identity(run: EvaluationRun) -> dict[str, str]:
+    return {
+        "profile": run.runtime.profile,
+        "driver": run.runtime.driver,
+        "driver_version": run.runtime.driver_version,
+        "model": run.runtime.model,
+        "thinking_level": run.runtime.thinking_level,
+    }
+
+
+def _artifact_index(output: Path) -> dict[str, tuple[str, ...]]:
+    patterns = {
+        "policy": ("policy.py", "policy.pkl"),
+        "logs": ("*.jsonl", "*.log"),
+        "videos": ("*.mp4",),
+        "memory": ("*.db",),
+        "results": ("*.json",),
+    }
+    if not output.exists():
+        return {category: () for category in patterns}
+    return {
+        category: tuple(
+            sorted(
+                path.resolve().as_posix()
+                for pattern in category_patterns
+                for path in output.rglob(pattern)
+            )
+        )
+        for category, category_patterns in patterns.items()
+    }
+
+
+def publish_evo_result(
+    score: PanelScore,
+    *,
+    result_path: Path | None,
+    traces_dir: Path | None,
+    experiment_id: str,
+) -> None:
+    """Publish Evo's inline result and per-task traces without importing Evo."""
+    if traces_dir is not None:
+        traces_dir.mkdir(parents=True, exist_ok=True)
+        for case in score.cases:
+            trace = {
+                "experiment_id": experiment_id,
+                "task_id": case.id,
+                "score": case.native_score,
+                "status": "passed" if case.success else "failed",
+                "ended_at": score.ended_at,
+                "native_status": case.status,
+                "success": case.success,
+                "failure_reason": case.failure_category,
+                "error": case.error,
+                "run_id": case.run_id,
+                "runtime": case.runtime,
+                "panel_hash": score.panel_hash,
+                "artifacts": case.artifacts,
+                "output": case.output,
+            }
+            (traces_dir / f"task_{case.id}.json").write_text(
+                json.dumps(trace, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+    invalid = [case for case in score.cases if case.status != "completed"]
+    if invalid:
+        ids = ", ".join(case.id for case in invalid)
+        raise InvalidMeasurementError(f"invalid panel measurement for: {ids}")
+    payload = {
+        "score": score.success_rate,
+        "tasks": {case.id: case.native_score for case in score.cases},
+        "panel_hash": score.panel_hash,
+        "started_at": score.started_at,
+        "ended_at": score.ended_at,
+    }
+    if result_path is None:
+        print(json.dumps(payload, sort_keys=True))
+    else:
+        _atomic_publish_json(result_path, payload)
+
+
+def _atomic_publish_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        claim = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError as exc:
+        raise FileExistsError(f"Evo result already claimed: {path}") from exc
+    os.close(claim)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+        os.replace(temporary, path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -200,6 +350,18 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--json", action="store_true", dest="json_output")
     args = parser.parse_args(argv)
     result = run_panel(args.panel, output=args.output, api_key_env=args.api_key_env)
+    result_path = os.environ.get("EVO_RESULT_PATH")
+    traces_dir = os.environ.get("EVO_TRACES_DIR")
+    evo_environment = result_path is not None or traces_dir is not None
+    if evo_environment:
+        publish_evo_result(
+            result,
+            result_path=Path(result_path) if result_path is not None else None,
+            traces_dir=Path(traces_dir) if traces_dir is not None else None,
+            experiment_id=os.environ.get("EVO_EXPERIMENT_ID", "unknown"),
+        )
+    if evo_environment and result_path is None:
+        return
     if args.json_output:
         print(result.model_dump_json())
     else:

@@ -34,6 +34,7 @@ from dimos.benchmark.evaluation.protocol import (
     DebugTrialSubmitter,
     ExplorationOutcome,
     PolicyArtifact,
+    PolicyCandidate,
     PolicyExecution,
     PolicyExecutionHandle,
     TrialRun,
@@ -49,13 +50,15 @@ SYSTEM_INSTRUCTIONS = """You are a CodePolicy exploration agent.
 Use the single `python_exec` tool to solve the supplied robotics task. Python
 executes in a persistent trusted environment. Define a synchronous function
 with the exact signature `def policy(app: Dimos) -> None`, then call
-`submit_policy(policy)` to test it. Every accepted submission starts a fresh
+`submit_policy(policy)` to test it. Every accepted submission returns an immutable
+PolicyCandidate and starts a fresh
 debug environment and a fresh policy-only DimOS blueprint. Inspect the returned
-TrialRun's outcome, policy_output, logs, Memory2 recording, and artifacts to
-diagnose failures.
-You may submit at most five trials. The last accepted submission becomes the
-task-level policy evaluated later without an agent. Do not connect to DimOS
-directly from the exploration REPL.
+candidate's bounded evidence summary, then drill into its timeline, filtered logs,
+frames, policy output, read-only Memory2 recording, or raw artifacts as needed.
+You may submit at most five trials. Before finishing, call
+`freeze_policy(candidate)` exactly once to select the task-level policy evaluated
+later without an agent. Freezing is irreversible and closes submissions. Do not
+connect to DimOS directly from the exploration REPL.
 """
 
 
@@ -122,7 +125,7 @@ class CodePolicyRuntimeFactory:
             max_submissions=max_submissions,
             record_artifact=self._runtime_artifacts.append,
         )
-        server = CodePolicyMcpServer(manager.submit)
+        server = CodePolicyMcpServer(manager.submit, freeze_handler=manager.freeze)
         server.start()
         try:
             user_message = _assemble_user_message(evaluation_protocol, task_input)
@@ -165,8 +168,8 @@ class CodePolicyRuntimeFactory:
             )
             if result.stderr:
                 self._record_text(path, relative, "stderr.log", result.stderr, "Pi stderr")
-            policy = manager.last_policy
-            error = None if policy is not None else "Pi did not submit a valid policy"
+            policy = manager.frozen_policy
+            error = None if policy is not None else "Pi did not freeze a policy candidate"
             outcome = ExplorationOutcome(
                 status="valid" if policy is not None else "invalid",
                 policy=policy,
@@ -181,6 +184,11 @@ class CodePolicyRuntimeFactory:
                 json.dumps(
                     {
                         "status": outcome.status,
+                        "frozen_candidate_id": (
+                            manager.frozen_candidate.id
+                            if manager.frozen_candidate is not None
+                            else None
+                        ),
                         "policy_sha256": policy.sha256 if policy is not None else None,
                         "submission_count": manager.accepted_count,
                         "error": error,
@@ -366,11 +374,21 @@ class _SubmissionManager:
         self.submit_debug_trial = submit_debug_trial
         self.max_submissions = max_submissions
         self.record_artifact = record_artifact
-        self.last_policy: PolicyArtifact | None = None
-        self.trials: list[TrialRun] = []
+        self.candidates: list[PolicyCandidate] = []
+        self.frozen_candidate: PolicyCandidate | None = None
         self.accepted_count = 0
 
-    def submit(self, source: str, serialized: bytes) -> TrialRun:
+    @property
+    def trials(self) -> list[TrialRun]:
+        return [candidate.trial for candidate in self.candidates]
+
+    @property
+    def frozen_policy(self) -> PolicyArtifact | None:
+        return self.frozen_candidate.policy if self.frozen_candidate is not None else None
+
+    def submit(self, source: str, serialized: bytes) -> PolicyCandidate:
+        if self.frozen_candidate is not None:
+            raise RuntimeError("submissions are closed after policy freezing")
         if self.accepted_count >= self.max_submissions:
             raise RuntimeError(f"submission budget exhausted ({self.max_submissions})")
         import cloudpickle  # type: ignore[import-untyped]
@@ -393,7 +411,6 @@ class _SubmissionManager:
             serialized_path=serialized_path,
             sha256=hashlib.sha256(serialized).hexdigest(),
         )
-        self.last_policy = policy
         self.record_artifact(_artifact(relative / "policy.py", "Policy source", "text/x-python"))
         self.record_artifact(
             _artifact(relative / "policy.pkl", "Serialized policy", "application/octet-stream")
@@ -401,8 +418,31 @@ class _SubmissionManager:
         trial_path = submission_path / "trial"
         trial_path.mkdir()
         trial = self.submit_debug_trial(policy, submission_number, trial_path)
-        self.trials.append(trial)
-        return trial
+        from dimos.benchmark.evaluation.protocol import TrialEvidence
+
+        candidate_id = f"candidate-{submission_number:04d}-{policy.sha256[:12]}"
+        candidate = PolicyCandidate(
+            id=candidate_id,
+            policy=policy,
+            evidence=TrialEvidence(
+                candidate_id=candidate_id,
+                trial=trial,
+                remaining_submissions=self.max_submissions - self.accepted_count,
+            ),
+        )
+        self.candidates.append(candidate)
+        return candidate
+
+    def freeze(self, candidate_id: str) -> PolicyCandidate:
+        if self.frozen_candidate is not None:
+            raise RuntimeError("policy candidate is already frozen")
+        candidate = next(
+            (candidate for candidate in self.candidates if candidate.id == candidate_id), None
+        )
+        if candidate is None:
+            raise ValueError("candidate does not belong to this exploration")
+        self.frozen_candidate = candidate
+        return candidate
 
 
 def _execute_policy_worker(

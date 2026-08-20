@@ -14,47 +14,28 @@ from dimos.benchmark.libero_pro.podman import ContainerEndpoints
 CASE = Path(__file__).parent / "cases" / "goal-task-0-single-trial" / "task.json"
 
 
-def test_evaluation_protocol_requires_rich_visual_inspection_of_debug_trials() -> None:
+def test_evaluation_protocol_exposes_only_minimal_harness_contract() -> None:
     protocol = evaluation.EVALUATION_PROTOCOL
 
-    assert "trial.open_memory()" in protocol
-    assert "from IPython.display import display" in protocol
-    assert 'memory.stream("agentview_color_image").last().data' in protocol
-    assert "display(PILImage.fromarray(frame.to_rgb().data))" in protocol
-    assert "ASCII art" in protocol
-    assert "pixel statistics" in protocol
-    assert "app.GraspExecutionModule.execute_grasp_candidates(" in protocol
-    assert "app.GraspExecutionModule.grounded_pick_and_place(" in protocol
-    assert "app.GraspExecutionModule.pick_and_place_pointclouds(" in protocol
-    assert "does not read a hidden camera stream" in protocol
-    assert "verifies\nobject retention after retracting" in protocol
-    assert "collision-checked pre-grasp" in protocol
+    assert "policy(app: Dimos) -> None" in protocol
+    assert "submit_policy(policy)" in protocol
+    assert "PolicyCandidate" in protocol
+    assert "candidate.evidence.timeline()" in protocol
+    assert "freeze_policy(candidate)" in protocol
+    assert "exact task input" in protocol
 
-
-def test_evaluation_protocol_documents_exact_public_manipulation_shapes() -> None:
-    protocol = evaluation.EVALUATION_PROTOCOL
-
-    assert "`.center` and `.bounding_box_dimensions` properties" in protocol
-    assert "`.bbox` (`x_min, y_min, x_max, y_max` pixels" in protocol
-    assert "query-conditioned hypotheses, not verified object\nidentities" in protocol
-    assert "do not select `[0]`, `min`, `max`, leftmost, or rightmost" in protocol
-    assert "project each candidate center onto the segment" in protocol
-    assert "app.GroundedSegmentationModule.segment_best(" in protocol
-    assert "point-grounds the requested identity first" in protocol
-    assert "`.as_numpy()`, which returns `(points, colors)`" in protocol
-    assert "`GraspCandidateArray` is directly iterable" in protocol
-    assert "it has no\n`.poses` attribute" in protocol
-    assert "`grasps.candidates[0]` or iterate it" in protocol
-    assert "from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped" in protocol
-    assert "set_gripper_position(0.04, planning_group=group.id)" in protocol
-    assert "there is no separate\n`GripperModule`" in protocol
-    assert "`MoveResult` instead exposes `.plan` and optional `.execution`" in protocol
-    assert "never `move.message`" in protocol
-    assert "retry briefly (for at most two\nseconds with a 50 ms sleep)" in protocol
-    assert "inspect `trial.policy_output` after every\nsubmission" in protocol
-    assert "first six ranked candidates" in protocol
-    assert "Never hard-code scene coordinates or planning\ngroup IDs" in protocol
-    assert "do not replace a working policy with a diagnostic probe" in protocol
+    forbidden = (
+        "segment_best",
+        "GraspExecutionModule",
+        "planning_group",
+        "collision-checked",
+        "skillbook",
+        "verifier",
+        "diagnoser",
+        "privileged",
+        "ASCII art",
+    )
+    assert all(term not in protocol for term in forbidden)
 
 
 def test_trial_starts_clock_and_prepared_policy_only_after_blueprint_is_ready(
