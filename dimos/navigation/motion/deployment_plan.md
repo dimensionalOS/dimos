@@ -29,11 +29,14 @@ a local guess.
 On the robot, install `dimos-motion-host.service` (this directory) — it carries
 the load-bearing zenoh wiring: go2web runs as the zenoh ROUTER on 7447, and the
 host connects to it as a client over loopback
-(`DIMOS_ZENOH_MODE=client`, `DIMOS_ZENOH_CONNECT=tcp/127.0.0.1:7447` — that is
-where odometry comes from). The host listens on nothing; the router does all
-forwarding. Config arrives as one JSON line on stdin
-(`/root/motion-host/motion-host.json` — see "Config is the sharp edge" below
-before writing it).
+(mode `client`, connect `tcp/127.0.0.1:7447` — that is where odometry comes
+from). The host listens on nothing; the router does all forwarding. Those
+settings live in the config's `session` block, NOT in the unit's environment:
+the rust module reads only `DIMOS_TRANSPORT` from the env, and with no `session`
+block it opens zenoh's own defaults, which makes it a peer with multicast
+scouting — and a router forwards to clients, not to peers. Config arrives as one
+JSON line on stdin (`/root/motion-host/motion-host.json` — see "Config is the
+sharp edge" below before writing it).
 
     systemctl enable --now dimos-motion-host
 
@@ -344,6 +347,18 @@ not the class of problem.
 Either teach bake to read a blueprint, or hand-write the stdin JSON and treat
 it as the deployment artifact — but decide deliberately. `mount_rotation` is
 the test case.
+
+What `motion-host.json` here actually is, since 2026-08-20: `--emit-config`'s
+output (which carries the `graph` stamp, so a config baked for another graph is
+refused) with the one value the deployment tunes — `max_speed` 0.7 — and a
+`session` block. Its per-module `topics` maps are gone: the bake bakes the
+wiring into the binary and stdin topics are overrides only, so restating them
+was just another thing to drift.
+
+It is ONE LINE, and it has to be: `read_launch_config` reads a single line, so a
+pretty-printed blob crash-loops the host with `EOF while parsing an object at
+line 1 column 1`. That is why the file is excluded from the repo's
+`pretty-format-json` hook.
 
 ### Blueprint-as-arg
 
