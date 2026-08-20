@@ -1,5 +1,9 @@
 # Spec revision: lattice anchoring + motion-conditioned envelope
 
+> Kept as the design record for numbers the shipped code still cites (the body
+> box, the lattice pitch, the commitment margin). The `referee/` tests it ticks
+> off are on `ivan/feat/trajectory_ctrl` with the rest of the benchmark.
+
 AGREED 2026-08-06 (measurement results folded in from
 the envelope sweep's own results, with the sim on `ivan/feat/trajectory_ctrl`). One revision, gold + candidate +
 judge move together, one re-baseline, one autoresearch re-earn. Phase 1 =
