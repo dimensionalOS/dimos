@@ -31,7 +31,7 @@ import os
 from pathlib import Path
 import threading
 
-from dimos.constants import CACHE_DIR
+from dimos.robot.assets.git_cache import DEFAULT_ROBOT_ASSET_CACHE_ROOT
 
 _lock = threading.Lock()
 
@@ -55,7 +55,7 @@ def _setup_ament_index(package_paths: dict[str, Path]) -> None:
     global _prefix_dir
 
     if _prefix_dir is None:
-        _prefix_dir = CACHE_DIR / "ament_prefix"
+        _prefix_dir = DEFAULT_ROBOT_ASSET_CACHE_ROOT / "derived" / "ament_prefix"
 
     prefix = _prefix_dir
     resource_dir = prefix / "share" / "ament_index" / "resource_index" / "packages"
@@ -111,7 +111,7 @@ def ensure_ament_packages(package_paths: dict[str, Path]) -> None:
     """Register packages so xacro $(find pkg) resolves to our paths.
 
     Uses ament_index_python when available, otherwise stores paths for
-    the monkey-patch fallback used in process_xacro().
+    the monkey-patch fallback used in :func:`expand_xacro`.
     """
     if not package_paths or not _has_ament:
         return
@@ -120,19 +120,20 @@ def ensure_ament_packages(package_paths: dict[str, Path]) -> None:
         _setup_ament_index(package_paths)
 
 
-def process_xacro(path: Path, package_paths: dict[str, Path], xacro_args: dict[str, str]) -> str:
-    """Process a xacro file to URDF XML, resolving $(find pkg) from package_paths.
+def expand_xacro(path: Path, package_paths: dict[str, Path], xacro_args: dict[str, str]) -> str:
+    """Expand a Xacro file to URDF XML, resolving $(find pkg) from package paths.
 
     Uses ament_index_python when available, falls back to patching xacro otherwise.
     """
     import xacro
 
-    ensure_ament_packages(package_paths)
-
     if _has_ament:
+        ensure_ament_packages(package_paths)
         doc = xacro.process_file(str(path), mappings=xacro_args)
     else:
-        with _patch_xacro_find(package_paths):
+        # xacro's substitution handler is process-global, so serialize the
+        # temporary fallback patch.
+        with _lock, _patch_xacro_find(package_paths):
             doc = xacro.process_file(str(path), mappings=xacro_args)
 
     return str(doc.toprettyxml(indent="  "))

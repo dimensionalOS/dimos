@@ -18,6 +18,7 @@ from typing import Any
 import numpy as np
 from pink import Configuration
 from pink.tasks import DampingTask, FrameTask, PostureTask
+import pinocchio
 import pytest
 
 from dimos.control.tasks.cartesian_ik_task.cartesian_ik_task import CartesianIKTaskConfig
@@ -29,7 +30,7 @@ from dimos.control.tasks.cartesian_ik_task.pink_control_ik import (
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.robot.assets.processing import LoadedRobotDescription
+from dimos.robot.assets.processing import FixedFrameDefinition, LoadedUrdf
 
 _URDF = """\
 <robot name="tiny">
@@ -161,7 +162,7 @@ def test_pink_loads_xacro_in_memory_with_package_paths_and_arguments(
         *,
         package_uri_mode: str,
         additional_fixed_frames: tuple[object, ...],
-    ) -> LoadedRobotDescription:
+    ) -> LoadedUrdf:
         prepared.update(
             path=path,
             package_paths=package_paths,
@@ -169,10 +170,10 @@ def test_pink_loads_xacro_in_memory_with_package_paths_and_arguments(
             package_uri_mode=package_uri_mode,
             additional_fixed_frames=additional_fixed_frames,
         )
-        return LoadedRobotDescription(_URDF, model_path, package_paths)
+        return LoadedUrdf(_URDF, model_path, package_paths)
 
     monkeypatch.setattr(
-        "dimos.control.tasks.cartesian_ik_task.pink_control_ik.load_robot_description",
+        "dimos.control.tasks.cartesian_ik_task.pink_control_ik.load_urdf",
         load,
     )
 
@@ -187,6 +188,41 @@ def test_pink_loads_xacro_in_memory_with_package_paths_and_arguments(
         "package_uri_mode": "absolute",
         "additional_fixed_frames": (),
     }
+
+
+def test_pink_loads_mjcf_with_filename_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    model_path = tmp_path / "robot.xml"
+    model_path.write_text("<mujoco/>")
+    loaded_paths: list[str] = []
+
+    def build_model(path: str) -> Any:
+        loaded_paths.append(path)
+        return pinocchio.buildModelFromXML(_URDF)
+
+    monkeypatch.setattr(pinocchio, "buildModelFromMJCF", build_model)
+    monkeypatch.setattr(
+        "dimos.control.tasks.cartesian_ik_task.pink_control_ik.load_urdf",
+        lambda *_args, **_kwargs: pytest.fail("MJCF must not use the URDF loader"),
+    )
+
+    create_pink_control_ik(PinkControlIKConfig(robot_model=_robot(model_path)))
+
+    assert loaded_paths == [str(model_path)]
+
+
+def test_pink_rejects_fixed_frames_for_mjcf(tmp_path: Path) -> None:
+    model_path = tmp_path / "robot.xml"
+    model_path.write_text("<mujoco/>")
+    robot = _robot(model_path).model_copy(
+        update={
+            "additional_fixed_frames": [
+                FixedFrameDefinition(name="tcp", parent="tool"),
+            ]
+        }
+    )
+
+    with pytest.raises(ValueError, match="fixed frames.*MJCF"):
+        create_pink_control_ik(PinkControlIKConfig(robot_model=robot))
 
 
 def test_pink_validates_named_frame_and_exact_joint_mapping(tmp_path: Path) -> None:

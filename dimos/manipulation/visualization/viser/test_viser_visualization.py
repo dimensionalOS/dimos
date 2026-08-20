@@ -75,7 +75,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.robot.assets.processing import FixedFrameDefinition, LoadedRobotDescription
+from dimos.robot.assets.processing import FixedFrameDefinition, LoadedUrdf
 
 
 @dataclass
@@ -821,9 +821,9 @@ class Urdf:
 def fake_yourdfpy_loader(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         scene_module,
-        "load_robot_description",
-        lambda *_args, **_kwargs: LoadedRobotDescription(
-            xml='<robot name="test"><link name="base"/></robot>',
+        "load_urdf",
+        lambda *_args, **_kwargs: LoadedUrdf(
+            urdf_xml='<robot name="test"><link name="base"/></robot>',
             source_path=Path("robot.urdf"),
             package_paths={},
         ),
@@ -1283,8 +1283,8 @@ def test_scene_base_pose_requires_urdf_root_to_match(monkeypatch: pytest.MonkeyP
     with pytest.raises(ValueError, match="base_link 'base'.*URDF root 'world'"):
         scene._assert_base_link_is_urdf_root(
             SimpleNamespace(base_link="base"),
-            LoadedRobotDescription(
-                xml='<robot name="test"><link name="world"/></robot>',
+            LoadedUrdf(
+                urdf_xml='<robot name="test"><link name="world"/></robot>',
                 source_path=Path("robot.urdf"),
                 package_paths={},
             ),

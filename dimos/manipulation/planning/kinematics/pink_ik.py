@@ -40,7 +40,7 @@ from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.assets.processing import load_robot_description
+from dimos.robot.assets.processing import load_urdf
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import pose_to_matrix
 
@@ -544,14 +544,14 @@ class PinkIK:
         if model_path.suffix == ".xml":
             model = pinocchio.buildModelFromMJCF(str(model_path))
         else:
-            description = load_robot_description(
+            description = load_urdf(
                 model_path,
                 package_paths=config.package_paths,
                 xacro_args=config.xacro_args,
                 package_uri_mode="absolute",
                 additional_fixed_frames=tuple(config.additional_fixed_frames),
             )
-            model = pinocchio.buildModelFromXML(description.xml)
+            model = pinocchio.buildModelFromXML(description.urdf_xml)
 
         data = model.createData()
         _assert_base_link_is_model_root(model, config.base_link)

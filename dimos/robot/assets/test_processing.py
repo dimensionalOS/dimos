@@ -20,7 +20,7 @@ import pytest
 import dimos.robot.assets.processing as processing
 
 
-def test_load_robot_description_preserves_package_uris_without_writing_output(
+def test_load_urdf_preserves_package_uris_without_writing_output(
     tmp_path: Path,
 ) -> None:
     urdf = tmp_path / "robot.urdf"
@@ -30,14 +30,14 @@ def test_load_robot_description_preserves_package_uris_without_writing_output(
         "</geometry></visual></link></robot>"
     )
 
-    description = processing.load_robot_description(urdf, {"pkg": tmp_path / "pkg"})
+    description = processing.load_urdf(urdf, {"pkg": tmp_path / "pkg"})
 
     assert description.source_path == urdf
-    assert "package://pkg/meshes/link.stl" in description.xml
+    assert "package://pkg/meshes/link.stl" in description.urdf_xml
     assert list(tmp_path.iterdir()) == [urdf]
 
 
-def test_load_robot_description_can_rewrite_package_uris_to_absolute_paths(
+def test_load_urdf_can_rewrite_package_uris_to_absolute_paths(
     tmp_path: Path,
 ) -> None:
     package_root = tmp_path / "pkg"
@@ -51,17 +51,17 @@ def test_load_robot_description_can_rewrite_package_uris_to_absolute_paths(
         "</geometry></visual></link></robot>"
     )
 
-    description = processing.load_robot_description(
+    description = processing.load_urdf(
         urdf,
         {"pkg": package_root},
         package_uri_mode="absolute",
     )
 
-    assert "package://" not in description.xml
-    assert str(mesh) in description.xml
+    assert "package://" not in description.urdf_xml
+    assert str(mesh) in description.urdf_xml
 
 
-def test_load_robot_description_reruns_xacro_each_time(
+def test_load_urdf_reruns_xacro_each_time(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -70,25 +70,25 @@ def test_load_robot_description_reruns_xacro_each_time(
     calls = iter(("first", "second"))
     monkeypatch.setattr(
         processing,
-        "_process_xacro",
+        "_expand_xacro",
         lambda _path, _package_paths, _xacro_args: f"<robot name='{next(calls)}'/>",
     )
 
-    first = processing.load_robot_description(xacro)
-    second = processing.load_robot_description(xacro)
+    first = processing.load_urdf(xacro)
+    second = processing.load_urdf(xacro)
 
-    assert first.xml == "<robot name='first'/>"
-    assert second.xml == "<robot name='second'/>"
+    assert first.urdf_xml == "<robot name='first'/>"
+    assert second.urdf_xml == "<robot name='second'/>"
     assert list(tmp_path.iterdir()) == [xacro]
 
 
-def test_load_robot_description_adds_ordered_fixed_frames(
+def test_load_urdf_adds_ordered_fixed_frames(
     tmp_path: Path,
 ) -> None:
     urdf = tmp_path / "robot.urdf"
     urdf.write_text("<robot name='r'><link name='base'/></robot>")
 
-    description = processing.load_robot_description(
+    description = processing.load_urdf(
         urdf,
         additional_fixed_frames=(
             processing.FixedFrameDefinition("tool", "base", xyz=(0.1, 0.2, 0.3)),
@@ -96,7 +96,7 @@ def test_load_robot_description_adds_ordered_fixed_frames(
         ),
     )
 
-    root = ET.fromstring(description.xml)
+    root = ET.fromstring(description.urdf_xml)
     assert [link.get("name") for link in root.findall("link")] == ["base", "tool", "camera"]
     joints = root.findall("joint")
     assert [joint.get("name") for joint in joints] == ["tool_joint", "camera_joint"]
@@ -111,7 +111,7 @@ def test_load_robot_description_adds_ordered_fixed_frames(
         ((processing.FixedFrameDefinition("tool", "missing"),), "unknown parent link"),
     ],
 )
-def test_load_robot_description_rejects_invalid_fixed_frames(
+def test_load_urdf_rejects_invalid_fixed_frames(
     tmp_path: Path,
     frames: tuple[processing.FixedFrameDefinition, ...],
     message: str,
@@ -120,15 +120,12 @@ def test_load_robot_description_rejects_invalid_fixed_frames(
     urdf.write_text("<robot name='r'><link name='base'/></robot>")
 
     with pytest.raises(ValueError, match=message):
-        processing.load_robot_description(urdf, additional_fixed_frames=frames)
+        processing.load_urdf(urdf, additional_fixed_frames=frames)
 
 
-def test_load_robot_description_rejects_fixed_frames_for_mjcf(tmp_path: Path) -> None:
+def test_load_urdf_rejects_mjcf(tmp_path: Path) -> None:
     mjcf = tmp_path / "robot.xml"
     mjcf.write_text("<mujoco/>")
 
-    with pytest.raises(ValueError, match="only for URDF/Xacro"):
-        processing.load_robot_description(
-            mjcf,
-            additional_fixed_frames=(processing.FixedFrameDefinition("tool", "base"),),
-        )
+    with pytest.raises(ValueError, match="MJCF .xml files must be loaded by the backend"):
+        processing.load_urdf(mjcf)

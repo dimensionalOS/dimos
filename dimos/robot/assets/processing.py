@@ -46,22 +46,22 @@ class FixedFrameDefinition:
 
 
 @dataclass(frozen=True)
-class LoadedRobotDescription:
+class LoadedUrdf:
     """In-memory URDF plus the filesystem context needed by consumers."""
 
-    xml: str
+    urdf_xml: str
     source_path: Path
     package_paths: Mapping[str, Path]
 
 
-def load_robot_description(
+def load_urdf(
     urdf_path: Path | str | os.PathLike[str],
     package_paths: Mapping[str, Path | str | os.PathLike[str]] | None = None,
     xacro_args: Mapping[str, str] | None = None,
     *,
     package_uri_mode: PackageUriMode = "preserve",
     additional_fixed_frames: tuple[FixedFrameDefinition, ...] = (),
-) -> LoadedRobotDescription:
+) -> LoadedUrdf:
     """Load a URDF or Xacro artifact entirely in memory.
 
     Xacro expansion and package URI rewriting happen without writing an
@@ -73,11 +73,14 @@ def load_robot_description(
     source_path = Path(os.fspath(urdf_path)).resolve()
     resolved_package_paths = normalize_package_paths(package_paths or {})
     resolved_xacro_args = dict(xacro_args or {})
-    if source_path.suffix == ".xml" and additional_fixed_frames:
-        raise ValueError("Additional fixed frames are supported only for URDF/Xacro models")
+    if source_path.suffix.lower() not in {".urdf", ".xacro"}:
+        raise ValueError(
+            f"Expected a URDF or Xacro model, got {source_path.name!r}; "
+            "MJCF .xml files must be loaded by the backend"
+        )
 
-    if source_path.suffix == ".xacro":
-        urdf_content = _process_xacro(source_path, resolved_package_paths, resolved_xacro_args)
+    if source_path.suffix.lower() == ".xacro":
+        urdf_content = _expand_xacro(source_path, resolved_package_paths, resolved_xacro_args)
     else:
         urdf_content = source_path.read_text()
 
@@ -87,8 +90,8 @@ def load_robot_description(
     if additional_fixed_frames:
         urdf_content = add_fixed_frames(urdf_content, additional_fixed_frames)
 
-    return LoadedRobotDescription(
-        xml=urdf_content,
+    return LoadedUrdf(
+        urdf_xml=urdf_content,
         source_path=source_path,
         package_paths=resolved_package_paths,
     )
@@ -163,17 +166,17 @@ def normalize_package_paths(
     }
 
 
-def _process_xacro(
+def _expand_xacro(
     xacro_path: Path,
     package_paths: dict[str, Path],
     xacro_args: dict[str, str],
 ) -> str:
     try:
-        from dimos.utils.ament_prefix import process_xacro
+        from dimos.robot.assets.xacro import expand_xacro
     except ImportError:
         raise ImportError(
             "xacro is required for processing .xacro files. "
             "Install the manipulation extra: pip install dimos[manipulation]"
         )
 
-    return process_xacro(xacro_path, package_paths, xacro_args)
+    return expand_xacro(xacro_path, package_paths, xacro_args)

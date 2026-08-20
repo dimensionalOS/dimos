@@ -40,7 +40,7 @@ from dimos.manipulation.visualization.viser.visualizer import ViserManipulationV
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.robot.assets.processing import LoadedRobotDescription
+from dimos.robot.assets.processing import LoadedUrdf
 
 
 class FakeDependency:
@@ -516,20 +516,20 @@ def test_scene_prepares_urdf_applies_base_pose_and_rejects_wrong_root(
     config = fake_robot_config("arm")
     config.base_pose.position.x = 1.0
 
-    def load(path: Path, **_kwargs: object) -> LoadedRobotDescription:
+    def load(path: Path, **_kwargs: object) -> LoadedUrdf:
         source = fixed_world_root if path.name == "arm.urdf" else non_fixed_world_root
-        return LoadedRobotDescription(source.read_text(), source, {})
+        return LoadedUrdf(source.read_text(), source, {})
 
     monkeypatch.setattr(
-        "dimos.manipulation.visualization.viser.scene.load_robot_description",
+        "dimos.manipulation.visualization.viser.scene.load_urdf",
         load,
     )
 
     def prepare(
-        description: LoadedRobotDescription,
+        description: LoadedUrdf,
         *,
         convert_meshes: bool,
-    ) -> LoadedRobotDescription:
+    ) -> LoadedUrdf:
         prepared.append({"convert_meshes": convert_meshes})
         return description
 
@@ -564,7 +564,7 @@ def test_selected_display_mode_survives_primary_recreation_and_joint_updates(
     monkeypatch.setattr(
         scene,
         "loaded_robot_description",
-        lambda _config: LoadedRobotDescription(
+        lambda _config: LoadedUrdf(
             "<robot name='r'><link name='base_link'/></robot>",
             Path("prepared.urdf"),
             {},

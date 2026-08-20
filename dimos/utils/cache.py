@@ -29,7 +29,7 @@ import uuid
 from filelock import FileLock, Timeout
 
 from dimos.constants import CACHE_DIR, STATE_DIR
-from dimos.robot.assets.cache import protected_robot_checkouts
+from dimos.robot.assets.git_cache import git_checkout_protection_reason
 
 _CACHE_LOCK_DIR = STATE_DIR / "cache-users"
 _CACHE_GATE_PATH = STATE_DIR / "cache-clean.lock"
@@ -75,11 +75,41 @@ def clean_caches(*, force: bool = False) -> CacheCleanResult:
     if not _lexists(target):
         return result
 
-    protected = {} if force else protected_robot_checkouts(target / "robot_assets")
+    protected = {} if force else _protected_robot_checkouts(target / "robot_assets")
     result.skipped.extend(CacheIssue(path, reason) for path, reason in protected.items())
     if _remove_except(target, set(protected), result):
         result.cleaned.append(target)
     return result
+
+
+def _protected_robot_checkouts(robot_cache_root: Path) -> dict[Path, str]:
+    """Return cached robot checkouts that contain or may contain local work."""
+    sources_root = (robot_cache_root / "sources").absolute()
+    if not _lexists(sources_root) or sources_root.is_symlink() or not sources_root.is_dir():
+        return {}
+
+    protected: dict[Path, str] = {}
+
+    def protect_unreadable(error: OSError) -> None:
+        protected[sources_root] = f"could not inspect robot asset checkouts: {error}"
+
+    for directory, dirnames, filenames in os.walk(
+        sources_root,
+        followlinks=False,
+        onerror=protect_unreadable,
+    ):
+        if ".git" not in dirnames and ".git" not in filenames:
+            continue
+
+        checkout = Path(directory).absolute()
+        reason = git_checkout_protection_reason(checkout)
+        if reason is not None:
+            protected[checkout] = reason
+
+        # Nested repositories are owned by the outer cached checkout.
+        dirnames.clear()
+
+    return protected
 
 
 def _remove_except(

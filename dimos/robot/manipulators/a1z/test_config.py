@@ -18,7 +18,7 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from dimos.robot.assets.processing import FixedFrameDefinition, load_robot_description
+from dimos.robot.assets.processing import FixedFrameDefinition, load_urdf
 from dimos.robot.manipulators.a1z.config import make_a1z_model_config
 
 
@@ -45,13 +45,13 @@ def test_flange_model_uses_native_flange_tip() -> None:
 @pytest.mark.self_hosted
 def test_gripper_model_contains_configured_end_effector_frame() -> None:
     config = make_a1z_model_config(has_gripper=True)
-    description = load_robot_description(
+    description = load_urdf(
         config.model_path,
         package_paths=config.package_paths,
         xacro_args=config.xacro_args,
         additional_fixed_frames=tuple(config.additional_fixed_frames),
     )
-    root = ET.fromstring(description.xml)
+    root = ET.fromstring(description.urdf_xml)
     joint = root.find("joint[@name='gripper_eef_link_joint']")
 
     assert root.find("link[@name='gripper_eef_link']") is not None

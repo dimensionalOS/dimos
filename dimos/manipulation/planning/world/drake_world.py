@@ -51,7 +51,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.robot.assets.processing import LoadedRobotDescription, load_robot_description
+from dimos.robot.assets.processing import LoadedUrdf, load_urdf
 
 if TYPE_CHECKING:
     from dimos.manipulation.planning.spec.models import (
@@ -276,7 +276,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             logger.info(f"Using model: {original_path}")
             model_instances = self._parser.AddModels(original_path)
         else:
-            description = load_robot_description(
+            description = load_urdf(
                 original_path,
                 package_paths=config.package_paths,
                 xacro_args=config.xacro_args,
@@ -299,7 +299,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                 )
 
             logger.info(f"Using in-memory model from: {description.source_path}")
-            model_instances = self._parser.AddModelsFromString(description.xml, "urdf")
+            model_instances = self._parser.AddModelsFromString(description.urdf_xml, "urdf")
 
         if not model_instances:
             raise ValueError(f"Failed to parse model: {original_path}")
@@ -307,10 +307,10 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
     @staticmethod
     def _strip_world_base_joint(
-        description: LoadedRobotDescription,
+        description: LoadedUrdf,
         config: RobotModelConfig,
-    ) -> LoadedRobotDescription:
-        root = ET.fromstring(description.xml)
+    ) -> LoadedUrdf:
+        root = ET.fromstring(description.urdf_xml)
         joints = root.findall("joint")
         joints_to_remove = [
             joint
@@ -337,8 +337,8 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                 if link.get("name") == "world":
                     root.remove(link)
 
-        return LoadedRobotDescription(
-            xml=ET.tostring(root, encoding="unicode"),
+        return LoadedUrdf(
+            urdf_xml=ET.tostring(root, encoding="unicode"),
             source_path=description.source_path,
             package_paths=description.package_paths,
         )

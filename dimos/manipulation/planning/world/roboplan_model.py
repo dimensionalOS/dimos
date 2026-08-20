@@ -31,7 +31,7 @@ from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import PlanningGroupID, RobotName
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
-from dimos.robot.assets.processing import load_robot_description
+from dimos.robot.assets.processing import load_urdf
 from dimos.utils.transform_utils import pose_to_matrix
 
 ROBOPLAN_WORLD_FRAME = "dimos_world"
@@ -158,7 +158,7 @@ def build_roboplan_model(
 
 
 def _prepared_urdf_xml(config: RobotModelConfig) -> str:
-    description = load_robot_description(
+    description = load_urdf(
         config.model_path,
         package_paths=config.package_paths,
         xacro_args=config.xacro_args,
@@ -168,7 +168,7 @@ def _prepared_urdf_xml(config: RobotModelConfig) -> str:
     return prepare_urdf_for_drake(
         description,
         convert_meshes=config.auto_convert_meshes,
-    ).xml
+    ).urdf_xml
 
 
 def _compose(prepared: Sequence[tuple[_BuildRobot, str]], composite: bool) -> _Composed:

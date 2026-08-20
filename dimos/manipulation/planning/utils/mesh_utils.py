@@ -28,7 +28,7 @@ import shutil
 from typing import TYPE_CHECKING
 
 from dimos.robot.assets.git_cache import DEFAULT_ROBOT_ASSET_CACHE_ROOT
-from dimos.robot.assets.processing import LoadedRobotDescription
+from dimos.robot.assets.processing import LoadedUrdf
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -42,9 +42,9 @@ _CACHE_DIR = DEFAULT_ROBOT_ASSET_CACHE_ROOT / "derived" / "drake_meshes"
 
 
 def prepare_urdf_for_drake(
-    description: LoadedRobotDescription,
+    description: LoadedUrdf,
     convert_meshes: bool = False,
-) -> LoadedRobotDescription:
+) -> LoadedUrdf:
     """Apply Drake-specific cleanup to an in-memory URDF.
 
     This function:
@@ -58,7 +58,7 @@ def prepare_urdf_for_drake(
     Returns:
         Prepared in-memory URDF and its original filesystem context
     """
-    urdf_content = description.xml
+    urdf_content = description.urdf_xml
 
     # Strip transmission blocks (Drake doesn't need them, and they can cause issues)
     urdf_content = _strip_transmission_blocks(urdf_content)
@@ -67,8 +67,8 @@ def prepare_urdf_for_drake(
     if convert_meshes:
         urdf_content = _convert_meshes(urdf_content, _CACHE_DIR)
 
-    return LoadedRobotDescription(
-        xml=urdf_content,
+    return LoadedUrdf(
+        urdf_xml=urdf_content,
         source_path=description.source_path,
         package_paths=description.package_paths,
     )

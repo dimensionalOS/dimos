@@ -84,9 +84,9 @@ Use `processing.py` to expand Xacro, resolve package URIs, and add fixed frames
 without writing a derived URDF file:
 
 ```python
-from dimos.robot.assets.processing import FixedFrameDefinition, load_robot_description
+from dimos.robot.assets.processing import FixedFrameDefinition, load_urdf
 
-description = load_robot_description(
+description = load_urdf(
     model_path,
     package_paths,
     xacro_args={"limited": "true"},
@@ -101,8 +101,8 @@ description = load_robot_description(
 )
 ```
 
-`LoadedRobotDescription` carries the expanded XML together with its resolved
-source path and package roots. Consumers pass its XML directly to Drake,
+`LoadedUrdf` carries the expanded `urdf_xml` together with its resolved
+source path and package roots. Consumers pass the URDF XML directly to Drake,
 RoboPlan, Pinocchio, or yourdfpy. `FixedFrameDefinition` adds an empty link and
 fixed joint to that in-memory model; declarations are ordered, so a frame may
 use an earlier custom frame as its parent.
