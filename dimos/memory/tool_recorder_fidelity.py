@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 from collections import defaultdict
 from collections.abc import Callable, Sequence
+from dataclasses import asdict
 import json
 from pathlib import Path
 import sqlite3
@@ -48,13 +49,15 @@ from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport, pSHMQueueTransport
 from dimos.core.transport_factory import make_transport
-from dimos.memory.backend import Backend
-from dimos.memory.codecs.base import Codec
+from dimos.memory.backend import Backend, PreparedAppend
+from dimos.memory.codecs.base import Codec, resolve_payload_type
 from dimos.memory.module import Recorder, RecorderConfig
+from dimos.memory.record_writer import RecordWriter
 from dimos.memory.recorder_fidelity import (
     FidelityReport,
     RealtimeSample,
     SourceRun,
+    StorageCapacityReport,
     StreamProfile,
     WorkloadProfile,
     build_bandwidth_metrics,
@@ -78,7 +81,10 @@ from dimos.memory.recorder_fidelity import (
     sqlite_file_sizes,
     summarize_timings,
 )
+from dimos.memory.recorder_queue import RecorderFailedError
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
+from dimos.memory.type.observation import Observation
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -813,6 +819,153 @@ def run_capacity_search(
     return result
 
 
+def _capacity_payloads(
+    profile: WorkloadProfile,
+    recording: Path | None,
+    *,
+    duration_s: float,
+) -> dict[str, list[bytes]]:
+    if recording is None:
+        return {stream.name: [bytes(max(1, stream.encoded_bytes))] for stream in profile.streams}
+
+    connection = sqlite3.connect(recording)
+    try:
+        result: dict[str, list[bytes]] = {}
+        for stream in profile.streams:
+            first_row = connection.execute(f'SELECT MIN(ts) FROM "{stream.name}"').fetchone()
+            if first_row is None or first_row[0] is None:
+                raise ValueError(f"recording stream {stream.name!r} is empty")
+            first_ts = float(first_row[0])
+            rows = connection.execute(
+                f'SELECT blob.data FROM "{stream.name}" AS metadata '
+                f'JOIN "{stream.name}_blob" AS blob ON blob.id = metadata.id '
+                "WHERE metadata.ts >= ? AND metadata.ts < ? ORDER BY metadata.ts",
+                (first_ts, first_ts + duration_s),
+            ).fetchall()
+            if not rows:
+                raise ValueError(f"recording stream {stream.name!r} has no encoded payloads")
+            result[stream.name] = [bytes(row[0]) for row in rows]
+        return result
+    finally:
+        connection.close()
+
+
+def run_writer_capacity(
+    profile: WorkloadProfile,
+    *,
+    duration_s: float,
+    rate_scale: float,
+    output_dir: Path,
+    recording: Path | None = None,
+) -> StorageCapacityReport:
+    """Measure the real RecordWriter and SQLite path without transport or encoding."""
+
+    if duration_s <= 0:
+        raise ValueError("duration must be greater than zero")
+    if rate_scale <= 0:
+        raise ValueError("rate scale must be greater than zero")
+    profile = _canonical_profile(profile)
+    payloads = _capacity_payloads(profile, recording, duration_s=duration_s)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    db_path = output_dir / "writer-capacity.db"
+    if db_path.exists():
+        raise FileExistsError(db_path)
+
+    store = SqliteStore(path=str(db_path))
+    writer = RecordWriter()
+    backends: dict[str, Backend[Any]] = {}
+    expected_counts: dict[str, int] = {}
+    schedule: list[tuple[float, str, int]] = []
+    for stream in profile.streams:
+        payload_type = resolve_payload_type(stream.payload_type)
+        target = store.stream(stream.name, payload_type, codec=stream.codec)
+        backends[stream.name] = cast("Backend[Any]", target._source)  # type: ignore[attr-defined]
+        count = max(1, round(duration_s * stream.rate_hz * rate_scale))
+        expected_counts[stream.name] = count
+        schedule.extend(
+            (sequence / (stream.rate_hz * rate_scale), stream.name, sequence)
+            for sequence in range(count)
+        )
+    schedule.sort(key=lambda item: item[0])
+
+    start = time.monotonic() + 0.1
+    last_submit = start
+    try:
+        for relative_s, stream_name, sequence in schedule:
+            deadline = start + relative_s
+            now = time.monotonic()
+            if now < deadline:
+                time.sleep(deadline - now)
+            accepted = time.monotonic()
+            last_submit = accepted
+            stream_payloads = payloads[stream_name]
+            encoded = stream_payloads[sequence % len(stream_payloads)]
+            prepared = PreparedAppend(
+                observation=Observation(id=-1, ts=relative_s, pose=None, _data=None),
+                encoded=encoded,
+            )
+            writer.submit(
+                backends[stream_name],
+                prepared,
+                accepted_monotonic=accepted,
+                stream_name=stream_name,
+            )
+        source_deadline = start + duration_s
+        writer.close(timeout_s=max(30.0, duration_s))
+        finished = time.monotonic()
+        status = writer.status()
+        persisted_counts = {name: int(store.stream(name).count()) for name in expected_counts}
+        persisted_bytes = {
+            name: int(store.stream(name).size_bytes() or 0) for name in expected_counts
+        }
+    finally:
+        if writer.status().failed is None:
+            try:
+                writer.close(timeout_s=1.0)
+            except RecorderFailedError:
+                pass
+        store.stop()
+
+    submitted = sum(expected_counts.values())
+    committed = sum(persisted_counts.values())
+    committed_bytes = sum(persisted_bytes.values())
+    active_elapsed_s = max(duration_s, last_submit - start)
+    drain_elapsed_s = max(0.0, finished - source_deadline)
+    violations: list[str] = []
+    source_valid = last_submit <= source_deadline + 0.1
+    if not source_valid:
+        violations.append("writer load generator fell more than 100ms behind schedule")
+    if committed != submitted:
+        violations.append(f"committed {committed} of {submitted} submitted rows")
+    if status.receive_to_commit_p99_ms >= 100.0:
+        violations.append(
+            f"receive-to-commit p99 {status.receive_to_commit_p99_ms:.3f}ms is not below 100ms"
+        )
+    if drain_elapsed_s >= 0.1:
+        violations.append(f"drain time {drain_elapsed_s:.3f}s is not below 0.100s")
+    report = StorageCapacityReport(
+        profile=profile.name,
+        duration_s=duration_s,
+        rate_scale=rate_scale,
+        source_valid=source_valid,
+        submitted_messages=submitted,
+        committed_messages=committed,
+        committed_payload_bytes=committed_bytes,
+        offered_mib_s=status.submitted_payload_bytes / duration_s / (1024 * 1024),
+        effective_committed_mib_s=committed_bytes
+        / (active_elapsed_s + drain_elapsed_s)
+        / (1024 * 1024),
+        drain_elapsed_s=drain_elapsed_s,
+        receive_to_commit_p99_ms=status.receive_to_commit_p99_ms,
+        receive_to_commit_max_ms=status.receive_to_commit_max_ms,
+        passed=not violations,
+        violations=tuple(violations),
+        writer=asdict(status),
+    )
+    (output_dir / "writer-capacity.json").write_text(report.model_dump_json(indent=2) + "\n")
+    return report
+
+
 def _hold_writer_lock(
     path: Path,
     delay_s: float,
@@ -969,6 +1122,16 @@ def _parser() -> argparse.ArgumentParser:
     capacity.add_argument("--max-scale", type=float, default=4.0)
     capacity.add_argument("--resolution", type=float, default=0.125)
     capacity.add_argument("--output", type=Path, default=Path("recorder-capacity-results"))
+    writer_capacity = commands.add_parser(
+        "writer-capacity", help="measure isolated RecordWriter and SQLite headroom"
+    )
+    writer_capacity.add_argument("profile", type=Path)
+    writer_capacity.add_argument("--duration", type=float, default=30.0)
+    writer_capacity.add_argument("--rate-scale", type=float, default=1.5)
+    writer_capacity.add_argument("--recording", type=Path)
+    writer_capacity.add_argument(
+        "--output", type=Path, default=Path("recorder-writer-capacity-results")
+    )
     control = commands.add_parser("control", help="run one storage-only hypothesis control")
     control.add_argument("profile", type=Path)
     control.add_argument(
@@ -994,6 +1157,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         calibrate_recording(args.recording).write(args.output)
         return 0
     profile = WorkloadProfile.read(args.profile)
+    if args.command == "writer-capacity":
+        capacity_report = run_writer_capacity(
+            profile,
+            duration_s=args.duration,
+            rate_scale=args.rate_scale,
+            output_dir=args.output,
+            recording=args.recording,
+        )
+        print(capacity_report.model_dump_json(indent=2))
+        return 0 if capacity_report.passed else 1
     if args.command == "capacity":
         result = run_capacity_search(
             profile,

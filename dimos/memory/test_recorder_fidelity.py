@@ -45,6 +45,7 @@ from dimos.memory.tool_recorder_fidelity import (
     run_capacity_search,
     run_harness,
     run_storage_control,
+    run_writer_capacity,
 )
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -489,6 +490,23 @@ def test_storage_batch_control_reduces_small_message_transactions(tmp_path: Path
     assert result["rows"]["odometry"] == 40
     assert result["transactions"]["imu"] < result["rows"]["imu"]
     assert result["transactions"]["odometry"] < result["rows"]["odometry"]
+
+
+def test_writer_capacity_requires_exact_realtime_commits(tmp_path: Path) -> None:
+    report = run_writer_capacity(
+        default_profile(),
+        duration_s=0.05,
+        rate_scale=1.5,
+        output_dir=tmp_path,
+    )
+
+    assert report.source_valid is True
+    assert report.committed_messages == report.submitted_messages
+    assert report.committed_payload_bytes > 0
+    assert report.drain_elapsed_s < 0.1
+    assert report.receive_to_commit_p99_ms < 100.0
+    assert report.passed is True
+    assert json.loads((tmp_path / "writer-capacity.json").read_text())["passed"] is True
 
 
 @pytest.mark.self_hosted
