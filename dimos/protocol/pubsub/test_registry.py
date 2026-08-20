@@ -105,9 +105,8 @@ def test_make_pubsub_transport_pshm_uses_pSHMTransport() -> None:
 
 
 def test_reliable_shm_transport_uses_configured_ring() -> None:
-    transport = pSHMQueueTransport("reliable-test", slots=19, default_capacity=1024)
+    transport = pSHMQueueTransport("reliable-test", default_capacity=1024)
 
-    assert transport.slots == 19
     assert transport.shm._channel_class is CpuShmQueue
 
 

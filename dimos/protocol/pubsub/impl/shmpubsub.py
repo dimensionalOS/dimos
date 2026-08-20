@@ -358,10 +358,7 @@ class ReliablePickleSharedMemory(PickleSharedMemory):
     """Pickled shared memory with an explicit multi-slot delivery ring."""
 
     _channel_class = CpuShmQueue
-
-    def __init__(self, *, slots: int = 256, **kwargs: Any) -> None:
-        self._channel_kwargs = {"slots": slots}
-        super().__init__(**kwargs)
+    _channel_kwargs = {"slots": 256}
 
 
 class LCMSharedMemoryPubSubBase(PubSub[Topic, Any]):
