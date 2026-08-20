@@ -275,6 +275,11 @@ def test_runner_end_to_end_offline(dataset: str, tmp_path: Path) -> None:
     runner = EvalRunner(
         chat_model=FakeListChatModel(responses=["4.0", "no numbers here"]),
         out_dir=tmp_path / "evals",
+        # FakeListChatModel hands out responses in call order, so which case
+        # gets which reply is only defined while cases run one at a time. The
+        # subject here is error isolation, not throughput -- concurrency has
+        # its own test below.
+        concurrency=1,
     )
     results = runner.run(cases)
 
@@ -291,6 +296,46 @@ def test_runner_end_to_end_offline(dataset: str, tmp_path: Path) -> None:
     assert len(lines) == 3
     summary = json.loads((run_dir / "summary.json").read_text())
     assert summary["n"] == 3 and "model" in summary
+
+
+def test_concurrent_passive_cases_keep_their_own_answers(dataset: str, tmp_path: Path) -> None:
+    """Fanning out must not cross answers between cases, or reorder results.
+
+    The failure this guards against is silent: with an order-dependent model
+    every case still gets *an* answer, just the wrong one, and the run looks
+    healthy while every score is meaningless.
+    """
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage
+
+    from dimos.evals.runner import EvalRunner
+
+    class EchoModel(FakeMessagesListChatModel):
+        """Answers with the number embedded in the question it was asked."""
+
+        def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> AIMessage:
+            import re
+
+            text = str(input[-1].content)
+            return AIMessage(content=re.search(r"case (\d+)", text).group(1))
+
+    cases = [
+        PassiveEval(
+            id=f"c{i}",
+            inputs=f"case {i}",
+            expected=float(i),
+            parse=first_number,
+            score=within(0.5),
+            context=(lambda s: s.streams.odom.limit(1),),
+            dataset=dataset,
+        )
+        for i in range(12)
+    ]
+    runner = EvalRunner(chat_model=EchoModel(responses=[]), out_dir=tmp_path, concurrency=8)
+    results = runner.run(cases)
+
+    assert [r.case_id for r in results] == [c.id for c in cases]  # order preserved
+    assert all(r.score == 1.0 for r in results), [(r.case_id, r.outputs) for r in results]
 
 
 def test_runner_encode_budget(dataset: str, tmp_path: Path) -> None:

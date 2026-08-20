@@ -390,10 +390,16 @@ def _select(name: str, window: tuple[float, ...], fuse: dict[str, Any] | None) -
     if fuse is None:
         return lambda s: s.streams[name].range_time(*window)
 
-    def select(s: Store) -> Any:
-        from dimos.mapping.voxels.module import VoxelMapTransformer
-        from dimos.memory.transform import downsample
+    # Imported here rather than inside the closure: `_select` runs at suite
+    # import time, on one thread, while the closure runs inside the runner's
+    # thread pool. open3d initializes its submodules lazily, and racing that
+    # first import across workers has produced a `No module named
+    # 'open3d.core'` on a case that is otherwise fine. Still lazy for every
+    # suite that does not fuse -- this branch only runs when one does.
+    from dimos.mapping.voxels.module import VoxelMapTransformer
+    from dimos.memory.transform import downsample
 
+    def select(s: Store) -> Any:
         return (
             s.streams[name]
             .range_time(*window)

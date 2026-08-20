@@ -287,6 +287,17 @@ class EvalRunner(Configurable, CompositeResource):
         if self.config.chat_model is not None:
             return self.config.chat_model  # type: ignore[no-any-return]
         if self._model is None:
+            # Entry-point parity: `dimos evals run` picks up .env because the
+            # CLI calls load_dotenv() at import, but the evo bench and pytest
+            # import this runner directly and would otherwise start with no
+            # credential. load_dotenv() never overrides a variable already in
+            # the environment, so an injected one (evo env, CI secrets) still
+            # wins -- which is what makes this correct inside an experiment
+            # worktree, where .env is gitignored and therefore absent.
+            from dotenv import load_dotenv
+
+            load_dotenv()
+
             # Same construction as the production agent (Responses-API branch
             # for gpt-5.x) so evals measure the deployed model config.
             from dimos.agents.mcp.mcp_client import _init_model
