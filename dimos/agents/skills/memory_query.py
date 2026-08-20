@@ -135,10 +135,11 @@ class MemoryQuerySkill(Module):
             cloud = lidar.last().data                  # newest sweep, a PointCloud2
             print(cloud.agent_encode())                # <- your main readout
 
-        agent_encode() is how you read a pointcloud. It returns a compact,
-        self-describing summary of the cloud — call it on any PointCloud2 you want to
-        understand, and go by the fields and notes it hands back. If the answer to
-        your question isn't in there, compute it from the raw points (below).
+        agent_encode() is how you read a pointcloud: a compact summary of what the
+        lidar measured. Its format is described once, in
+        ``PointCloud2.AGENT_ENCODE_LEGEND`` — print that first, then read the
+        summary against it. If the answer to your question isn't in there, compute
+        it from the raw points (below).
 
         Time windows. ``range_time``/``from_time``/``to_time`` are seconds from the
         start of the recording; ``at``/``to_timestamp`` take absolute epoch seconds::

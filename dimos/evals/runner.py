@@ -259,6 +259,11 @@ class EvalRunner(Configurable, CompositeResource):
                 f"(t is seconds from the first shown):",
             }
         ]
+        # A type that describes its encoding once, as a class constant, gets
+        # that description delivered once per stream rather than per frame.
+        legend = getattr(type(observations[0].data), "AGENT_ENCODE_LEGEND", None)
+        if isinstance(legend, str):
+            blocks.append({"type": "text", "text": f"format: {legend}"})
         for obs in observations:
             data = obs.data
             encoded = data.agent_encode() if hasattr(data, "agent_encode") else None

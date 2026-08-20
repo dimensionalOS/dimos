@@ -5,7 +5,7 @@
     "dimos/evals/generate.py": "651cbe902dc4e59463aeea292c817d420f0445b6c14c3d60a4e4e4e8a9c2e6c5",
     "dimos/evals/local.py": "54a65017f4ea167ce8f9efb58578e6cd8bd4df5785f42aacf5a189d90ec6d1ff",
     "dimos/evals/module.py": "216a885035550bc3cb1dc40f5aba3a68cb7435cab6bce91eb1ee7f33c6913f34",
-    "dimos/evals/runner.py": "6705f717f8ed15ca2c5be4e103eb89f24bbb3147c1d456fea5fcfba97c70fd56",
+    "dimos/evals/runner.py": "f0b3457125e88d9c57aedce281137fd8597d28dc85c51835f8b3036c5a2a01bc",
     "dimos/evals/scorers.py": "1fe3049ca3e48f8a002a48b7798b5d2d261220ee7c8a2547b2744c69f823f3e0",
     "dimos/evals/suites/dimsim_house.py": "954cc025d79eb2329fa90971c74882a3e78463837ce247371bd3597db485cdf2",
     "dimos/evals/suites/examples.py": "7d9499975bdf98a383d62035585ed696b620c659d0e1b9e018b56d0af635c88e",
