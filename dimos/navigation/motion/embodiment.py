@@ -142,9 +142,9 @@ def box_offsets(box: tuple[float, float, float, float], step: float = 0.05) -> n
 
 
 # Baked by the fitted-sim envelope sweep over the governed slow band (stand +
-# 0.35 + 0.50 m/s); see planner/envelope_results.md for the surface these fold
-# out of. The sweep itself is the sim's, and lives with it (README, "what is
-# not here") -- these are its measured output, and the branch reads them.
+# 0.35 + 0.50 m/s). The sweep and the surface these fold out of are the sim's,
+# and live with it (README, "What is not here") -- what is here is its measured
+# output, which is what the planner and the judge actually read.
 GO2_ENVELOPE: tuple[tuple[float, float, float, float, float], ...] = (
     (0.0, 0.819, 0.416, -0.023, 0.000),
     (26.6, 0.802, 0.436, -0.032, -0.008),

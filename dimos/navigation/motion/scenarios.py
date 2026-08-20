@@ -422,9 +422,9 @@ _GRID_PAD = 3 * PERIOD  # 0.72
 #
 # MEASURED, not tuned, and it has to cover every way a route's price can move
 # while the world stands still. Two such ways were measured, and the constant is
-# their sum plus headroom -- see `planner/referee/measure_margin.py`, which
-# bakes this number the way `simulation/envelope.py --bake` bakes the envelope,
-# and planner/revision.md's commitment amendment for why it exists at all.
+# their sum plus headroom, measured by the referee's margin bake -- which lives
+# with the sim on `ivan/feat/trajectory_ctrl`, like the envelope sweep does.
+# planner/revision.md's commitment amendment says why the margin exists at all.
 # One copy: the rust candidate is handed this very value across the extension
 # boundary, and it is in the gold's cache key.
 COMMIT_MARGIN = 1.50
