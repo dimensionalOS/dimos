@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
 
 import typer
 
@@ -31,9 +30,6 @@ def generate(
     start: int | None = typer.Option(None, min=0, help="First color_image index in range mode"),
     stop: int | None = typer.Option(None, min=1, help="Exclusive color_image stop index"),
     stride: int | None = typer.Option(None, min=1, help="Frame stride in range mode"),
-    calibration_profile: Literal["go2"] | None = typer.Option(
-        None, help="Explicit Go2 fallback for recordings without calibration streams"
-    ),
     output: Path | None = typer.Option(None, help="Override the generated dataset directory"),
 ) -> None:
     """Generate questions for one image or an indexed image range."""
@@ -47,7 +43,6 @@ def generate(
         start=start,
         stop=stop,
         stride=stride,
-        calibration_profile=calibration_profile,
     )
     result = generate_dataset(request)
     typer.echo(f"Generated {len(result.cases)} VQA case(s) in {result.output}")

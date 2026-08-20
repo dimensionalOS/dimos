@@ -22,7 +22,7 @@ import json
 from pathlib import Path
 import re
 import tempfile
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -42,7 +42,6 @@ from dimos.evals.vqa.families import (
     AVAILABLE_FAMILIES,
     answer_question,
 )
-from dimos.memory.cli.dataset import open_dataset
 from dimos.msgs.sensor_msgs.Image import Image
 
 _UNORDERED_FAMILIES = frozenset(
@@ -64,7 +63,6 @@ class GenerationRequest(BaseModel):
     start: int | None = Field(default=None, ge=0)
     stop: int | None = Field(default=None, gt=0)
     stride: int | None = Field(default=None, ge=1)
-    calibration_profile: Literal["go2"] | None = None
 
     @model_validator(mode="after")
     def valid_selection(self) -> GenerationRequest:
@@ -154,7 +152,6 @@ def generate_dataset(
     from dimos.evals.vqa.preprocessing import (
         FrameGeometryUnavailableError,
         RecordingFramePreprocessor,
-        recorded_calibration_available,
     )
     from dimos.evals.vqa.primitives.edgetam import EdgeTamObjectMaskPipeline
     from dimos.evals.vqa.primitives.range import LidarRangeEstimator
@@ -165,64 +162,25 @@ def generate_dataset(
 
     config = config or VqaGenerationConfig()
     indices = request.frame_indices()
-    probe = open_dataset(request.dataset)
-    try:
-        streams = set(probe.list_streams())
-    finally:
-        probe.stop()
-    has_recorded_geometry = recorded_calibration_available(streams) and bool(
-        {"pointlio_lidar", "lidar"} & streams
-    )
-    use_geometry = request.calibration_profile is not None or has_recorded_geometry
+    with RecordingFramePreprocessor(
+        request.dataset,
+        tolerance_s=config.synchronization_tolerance_s,
+    ) as preprocessor:
+        image_count = preprocessor.image_count
+        if indices[-1] >= image_count:
+            raise IndexError(
+                f"color_image index {indices[-1]} is out of range for {image_count} images"
+            )
 
-    author_model = OpenAIVlModel()
-    detector_model = MoondreamVlModel()
-    try:
-        detector = detector_model
-        model_names = {
-            "author": author_model.config.model_name,
-            "detector": detector_model.config.model_name,
-        }
-        mask_estimator = EdgeTamObjectMaskPipeline(detector)
-        if not use_geometry:
-            store = open_dataset(request.dataset)
-            try:
-                images = store.streams.color_image
-                image_count = images.count()
-                if indices[-1] >= image_count:
-                    raise IndexError(
-                        f"color_image index {indices[-1]} is out of range for {image_count} images"
-                    )
-
-                def visual_frames() -> Iterable[GenerationFrame]:
-                    for index in indices:
-                        observation = images.offset(index).first()
-                        yield GenerationFrame(
-                            index, _copy_observation_image(observation.data, observation.ts)
-                        )
-
-                return generate_frames_dataset(
-                    request,
-                    visual_frames(),
-                    OpenAIQuestionAuthor(author_model),
-                    detector,
-                    mask_estimator=mask_estimator,
-                    config=config,
-                    model_names=model_names,
-                )
-            finally:
-                store.stop()
-
-        with RecordingFramePreprocessor(
-            request.dataset,
-            calibration_profile=request.calibration_profile,
-            tolerance_s=config.synchronization_tolerance_s,
-        ) as preprocessor:
-            image_count = preprocessor.image_count
-            if indices[-1] >= image_count:
-                raise IndexError(
-                    f"color_image index {indices[-1]} is out of range for {image_count} images"
-                )
+        author_model = OpenAIVlModel()
+        detector_model = MoondreamVlModel()
+        try:
+            detector = detector_model
+            model_names = {
+                "author": author_model.config.model_name,
+                "detector": detector_model.config.model_name,
+            }
+            mask_estimator = EdgeTamObjectMaskPipeline(detector)
 
             def calibrated_frames() -> Iterable[GenerationFrame]:
                 for index in indices:
@@ -243,17 +201,9 @@ def generate_dataset(
                 config=config,
                 model_names=model_names,
             )
-    finally:
-        author_model.stop()
-        detector_model.stop()
-
-
-def _copy_observation_image(value: object, timestamp: float) -> Image:
-    if not isinstance(value, Image):
-        raise TypeError("color_image stream must contain dimos Image values")
-    image = value.copy()
-    image.ts = timestamp
-    return image
+        finally:
+            author_model.stop()
+            detector_model.stop()
 
 
 def generate_frames_dataset(

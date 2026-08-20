@@ -16,23 +16,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import numpy as np
 
 from dimos.memory.cli.dataset import open_dataset
 from dimos.memory.store.base import Store
 from dimos.memory.tf import StreamTF
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.unitree.go2.connection import BASE_TO_OPTICAL, GO2Connection
 
 if TYPE_CHECKING:
     from dimos.memory.stream import Stream
@@ -64,21 +61,6 @@ class CalibratedFrameLoader(Protocol):
     def load(self, frame_index: int) -> CalibratedFrame: ...
 
 
-CalibrationProfile = Literal["go2"]
-
-
-def recorded_calibration_available(streams: Collection[str]) -> bool:
-    """Return whether a recording contains the complete calibration stream pair."""
-    has_camera_info = "camera_info" in streams
-    has_tf = "tf" in streams
-    if has_camera_info != has_tf:
-        raise ValueError(
-            "recording calibration is incomplete; camera_info and tf streams must both be present "
-            "or both be absent"
-        )
-    return has_camera_info
-
-
 class FrameGeometryUnavailableError(ValueError):
     """A selected image lacks the recorded evidence needed for metric geometry."""
 
@@ -93,25 +75,19 @@ class RecordingFramePreprocessor:
     def __init__(
         self,
         recording: str | Path,
-        calibration_profile: CalibrationProfile | None = None,
         tolerance_s: float = 0.1,
     ) -> None:
         if not recording:
             raise ValueError("recording must be set")
-        if calibration_profile not in (None, "go2"):
-            raise ValueError(f"unsupported calibration profile: {calibration_profile!r}")
         if tolerance_s <= 0:
             raise ValueError("tolerance_s must be positive")
         self._recording = recording
-        self._calibration_profile = calibration_profile
         self._tolerance_s = tolerance_s
         self._store: Store | None = None
         self._images: Stream[Image] | None = None
         self._lidar: Stream[PointCloud2] | None = None
-        self._odom: Stream[PoseStamped] | None = None
         self._recorded_camera_info: CameraInfo | None = None
         self._recorded_tf: TFLookup | None = None
-        self._calibration_source: str | None = None
         self._rectifier = _ImageRectifier()
 
     def __enter__(self) -> RecordingFramePreprocessor:
@@ -136,7 +112,10 @@ class RecordingFramePreprocessor:
             streams = set(store.list_streams())
             if "color_image" not in streams:
                 raise ValueError("recording has no 'color_image' stream")
-            has_recorded_calibration = recorded_calibration_available(streams)
+            missing_calibration = {"camera_info", "tf"} - streams
+            if missing_calibration:
+                listing = ", ".join(sorted(missing_calibration))
+                raise ValueError(f"recording is missing required calibration stream(s): {listing}")
             lidar_name = next(
                 (name for name in ("pointlio_lidar", "lidar") if name in streams), None
             )
@@ -145,26 +124,15 @@ class RecordingFramePreprocessor:
 
             self._images = store.stream("color_image", Image).order_by("ts")
             self._lidar = store.stream(lidar_name, PointCloud2).order_by("ts")
-
-            if has_recorded_calibration:
-                try:
-                    self._recorded_camera_info = (
-                        store.stream("camera_info", CameraInfo).order_by("ts").first().data
-                    )
-                except LookupError as exc:
-                    raise ValueError("recorded camera_info stream is empty") from exc
-                self._recorded_tf = StreamTF.from_store(store)
-                self._calibration_source = "recorded"
-            elif self._calibration_profile == "go2":
-                if "odom" not in streams:
-                    raise ValueError("Go2 calibration profile requires an 'odom' stream")
-                self._odom = store.stream("odom", PoseStamped).order_by("ts")
-                self._calibration_source = "profile:go2"
-            else:
-                raise ValueError(
-                    "recording has no camera_info or tf calibration streams; "
-                    "set calibration_profile='go2' explicitly to use the Go2 profile"
+            try:
+                self._recorded_camera_info = (
+                    store.stream("camera_info", CameraInfo).order_by("ts").first().data
                 )
+            except LookupError as exc:
+                raise ValueError("recorded camera_info stream is empty") from exc
+            self._recorded_tf = StreamTF.from_store(store)
+            if self._recorded_tf is None:
+                raise ValueError("recorded tf stream is unavailable")
             self._store = store
         except BaseException:
             store.stop()
@@ -189,16 +157,14 @@ class RecordingFramePreprocessor:
         self._store = None
         self._images = None
         self._lidar = None
-        self._odom = None
         self._recorded_camera_info = None
         self._recorded_tf = None
-        self._calibration_source = None
 
     def load(self, frame_index: int) -> CalibratedFrame:
         """Load the indexed image and its nearest calibrated point cloud."""
         if frame_index < 0:
             raise ValueError("frame_index must be non-negative")
-        if self._images is None or self._lidar is None or self._calibration_source is None:
+        if self._images is None or self._lidar is None:
             raise RuntimeError("frame preprocessor must be started before loading frames")
 
         image_query = self._images.offset(frame_index).limit(1)
@@ -207,34 +173,18 @@ class RecordingFramePreprocessor:
         source_image = image_obs.data.copy()
         source_image.ts = image_obs.ts
 
-        if self._calibration_source == "recorded":
-            source_camera_info = self._recorded_camera_info
-            if source_camera_info is None or self._recorded_tf is None:
-                raise RuntimeError("recorded calibration was not initialized")
-            image, camera_info = self._rectifier.rectify(source_image, source_camera_info)
-            pointcloud_to_camera = _recorded_pointcloud_to_camera(
-                image_obs,
-                lidar_obs,
-                camera_info.frame_id,
-                self._recorded_tf,
-                self._tolerance_s,
-            )
-        else:
-            if self._odom is None:
-                raise RuntimeError("Go2 calibration profile was not initialized")
-            try:
-                odom_obs = cast(
-                    "Observation[PoseStamped]",
-                    image_query.align(self._odom, tolerance=self._tolerance_s).first().data[1],
-                )
-            except LookupError as exc:
-                raise FrameGeometryUnavailableError(
-                    "recording has no synchronized odometry within tolerance"
-                ) from exc
-            image, camera_info = self._rectifier.rectify(
-                source_image, GO2Connection.camera_info_static
-            )
-            pointcloud_to_camera = _profile_pointcloud_to_camera(odom_obs, lidar_obs)
+        source_camera_info = self._recorded_camera_info
+        recorded_tf = self._recorded_tf
+        if source_camera_info is None or recorded_tf is None:
+            raise RuntimeError("recorded calibration was not initialized")
+        image, camera_info = self._rectifier.rectify(source_image, source_camera_info)
+        pointcloud_to_camera = _recorded_pointcloud_to_camera(
+            image_obs,
+            lidar_obs,
+            camera_info.frame_id,
+            recorded_tf,
+            self._tolerance_s,
+        )
 
         return CalibratedFrame(
             index=frame_index,
@@ -244,23 +194,19 @@ class RecordingFramePreprocessor:
             pointcloud_to_camera=pointcloud_to_camera,
             image_observation_timestamp=image_obs.ts,
             pointcloud_observation_timestamp=lidar_obs.ts,
-            calibration_source=self._calibration_source,
+            calibration_source="recorded",
         )
 
     def load_image(self, frame_index: int) -> Image:
         """Load a rectified image when synchronized point-cloud evidence is unavailable."""
         if frame_index < 0:
             raise ValueError("frame_index must be non-negative")
-        if self._images is None or self._calibration_source is None:
+        if self._images is None:
             raise RuntimeError("frame preprocessor must be started before loading frames")
         observation = self._images.offset(frame_index).limit(1).first()
         image = observation.data.copy()
         image.ts = observation.ts
-        camera_info = (
-            self._recorded_camera_info
-            if self._calibration_source == "recorded"
-            else GO2Connection.camera_info_static
-        )
+        camera_info = self._recorded_camera_info
         if camera_info is None:
             raise RuntimeError("camera calibration was not initialized")
         return self._rectifier.rectify(image, camera_info)[0]
@@ -360,25 +306,6 @@ def _recorded_pointcloud_to_camera(
             f"at point-cloud timestamp {lidar_obs.ts}"
         )
     return camera_from_world + world_from_cloud
-
-
-def _profile_pointcloud_to_camera(
-    odom_obs: Observation[PoseStamped], lidar_obs: Observation[PointCloud2]
-) -> Transform:
-    """Resolve the explicit Go2 profile from base odometry and its static mount."""
-    odom = odom_obs.data
-    if odom.frame_id != "world":
-        raise FrameGeometryUnavailableError(
-            "Go2 calibration profile requires odometry with frame_id='world'"
-        )
-    world_from_camera = Transform.from_pose("base_link", odom) + BASE_TO_OPTICAL
-    camera_from_world = -world_from_camera
-    cloud_frame = lidar_obs.data.frame_id
-    if cloud_frame != "world":
-        raise FrameGeometryUnavailableError(
-            "Go2 calibration profile requires a world-frame point cloud"
-        )
-    return camera_from_world
 
 
 def _rectification_maps(

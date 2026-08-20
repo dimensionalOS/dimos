@@ -44,7 +44,6 @@ def test_vqa_generate_cli_declares_single_image_input() -> None:
     assert "--start" in output
     assert "--stop" in output
     assert "--stride" in output
-    assert "--calibration-profile" in output
     assert "--sync-tolerance" not in output
     assert "--output" in output
 

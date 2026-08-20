@@ -7,16 +7,17 @@ shared dimOS evaluation runner.
 
 ## Generate a Dataset
 
-Generate from one image:
+Generate from one image in a recording containing `color_image`, `camera_info`, `tf`, and either
+`pointlio_lidar` or `lidar`:
 
 ```bash skip
-dimos evals vqa generate go2_short.db --image-index 100
+dimos evals vqa generate /path/to/calibrated-recording.db --image-index 100
 ```
 
 Generate from a range. `stop` is exclusive:
 
 ```bash skip
-dimos evals vqa generate go2_short.db --start 0 --stop 100 --stride 10
+dimos evals vqa generate /path/to/calibrated-recording.db --start 0 --stop 100 --stride 10
 ```
 
 Generated datasets default to:
@@ -25,17 +26,10 @@ Generated datasets default to:
 ~/.local/state/dimos/datasets/vqa/<recording-stem>-frames
 ```
 
-Use `--output <directory>` to override that location. The destination must be empty.
-
-Go2 recordings without `camera_info` and `tf` require the explicit fallback profile and a recorded
-`odom` stream:
-
-```bash skip
-dimos evals vqa generate go2_short.db --image-index 500 --calibration-profile go2
-```
-
-Recordings containing only one calibration stream are rejected. The VQA generation configuration
-requires image and LiDAR observations to be within `0.1` seconds by default.
+Use `--output <directory>` to override that location. The destination must be empty. Recordings
+without complete camera calibration and TF streams are rejected. Point-cloud evidence is available
+when image and LiDAR observations are within `0.1` seconds by default; unmatched frames retain only
+image-based question families.
 
 ## Question Families
 
@@ -90,7 +84,7 @@ answers, evidence, rejected proposals, source indices, and timestamps.
 ## Run Evaluation
 
 ```bash skip
-dimos evals vqa run ~/.local/state/dimos/datasets/vqa/go2_short-frames \
+dimos evals vqa run ~/.local/state/dimos/datasets/vqa/calibrated-recording-frames \
   --model gpt-4o-mini
 ```
 
