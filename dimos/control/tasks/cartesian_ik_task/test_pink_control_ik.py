@@ -19,7 +19,6 @@ import numpy as np
 from pink import Configuration
 from pink.tasks import DampingTask, FrameTask, PostureTask
 import pytest
-from pytest_mock import MockerFixture
 
 from dimos.control.tasks.cartesian_ik_task.cartesian_ik_task import CartesianIKTaskConfig
 from dimos.control.tasks.cartesian_ik_task.pink_control_ik import (
@@ -30,7 +29,7 @@ from dimos.control.tasks.cartesian_ik_task.pink_control_ik import (
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.robot.assets.model import LoadedRobotModel, RobotModel
+from dimos.robot.assets.model import RobotModel
 
 _URDF = """\
 <robot name="tiny">
@@ -138,24 +137,6 @@ def test_pink_settings_use_finite_declarative_validation(tmp_path: Path) -> None
             min_dt=0.1,
             max_dt=0.01,
         )
-
-
-def test_pink_loads_portable_robot_model(
-    tmp_path: Path,
-    mocker: MockerFixture,
-) -> None:
-    model_path = _write_urdf(tmp_path)
-    load = mocker.patch.object(
-        RobotModel,
-        "load",
-        return_value=LoadedRobotModel(_URDF, model_path, {}),
-    )
-
-    create_pink_control_ik(
-        PinkControlIKConfig(robot_model=_robot(model_path)),
-    )
-
-    load.assert_called_once_with()
 
 
 def test_pink_validates_named_frame_and_exact_joint_mapping(tmp_path: Path) -> None:

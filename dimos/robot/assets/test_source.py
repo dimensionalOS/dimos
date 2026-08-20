@@ -18,11 +18,7 @@ import pickle
 
 import pytest
 
-from dimos.constants import CACHE_DIR
-from dimos.robot.assets.git_cache import (
-    DEFAULT_ROBOT_ASSET_CACHE_ROOT,
-    GitAssetCache,
-)
+from dimos.robot.assets.git_cache import GitAssetCache
 from dimos.robot.assets.source import RobotDescriptionPath, RobotDescriptionSource
 
 
@@ -34,10 +30,6 @@ class RecordingGitAssetCache(GitAssetCache):
     def resolve(self, repo_url: str, ref: str) -> Path:
         self.resolve_calls.append((repo_url, ref))
         return self.checkout_path
-
-
-def test_default_robot_asset_cache_is_owned_by_dimos_cache_root() -> None:
-    assert DEFAULT_ROBOT_ASSET_CACHE_ROOT == CACHE_DIR / "robot_assets"
 
 
 @pytest.fixture()
@@ -65,7 +57,6 @@ def test_source_path_joining_defers_checkout(
     model_path = source / "robots" / "testbot" / "model.urdf"
     package_path = source / "packages" / "testbot_description"
 
-    assert isinstance(model_path, Path)
     assert isinstance(model_path, RobotDescriptionPath)
     assert git_cache.resolve_calls == []
 

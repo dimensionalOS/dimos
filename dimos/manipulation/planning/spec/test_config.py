@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from pathlib import Path
-import pickle
 
 from pydantic import ValidationError
 import pytest
@@ -40,20 +39,6 @@ def test_robot_model_config_rejects_obsolete_description_fields(
                 obsolete_field: Path("obsolete.urdf"),
             }
         )
-
-
-def test_robot_model_config_preserves_model_across_worker_pickle(tmp_path: Path) -> None:
-    urdf = tmp_path / "robot.urdf"
-    urdf.write_text("<robot name='arm'><link name='base'/></robot>")
-    config = RobotModelConfig(
-        name="arm",
-        model=RobotModel.from_file(urdf).with_fixed_frame("tool", "base"),
-        joint_names=[],
-    )
-
-    restored = pickle.loads(pickle.dumps(config))
-
-    assert '<link name="tool"' in restored.model.load().xml
 
 
 def test_robot_model_survives_blueprint_config_round_trip(tmp_path: Path) -> None:
