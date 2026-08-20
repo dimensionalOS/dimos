@@ -115,9 +115,12 @@ def test_load_uses_recorded_camera_info_and_tf(
         rectify,
     )
     with preprocessor:
+        raw_image = preprocessor.load_raw_image(0)
+        assert calibrations == []
         frame = preprocessor.load(0)
 
     assert calibrations == [camera_info]
+    assert raw_image.ts == image.ts
     assert frame.calibration_source == "recorded"
     assert frame.camera_info.ts == image.ts
     assert np.allclose(frame.pointcloud_to_camera.to_matrix(), (-world_from_camera).to_matrix())

@@ -199,6 +199,14 @@ class RecordingFramePreprocessor:
 
     def load_image(self, frame_index: int) -> Image:
         """Load a rectified image when synchronized point-cloud evidence is unavailable."""
+        image = self.load_raw_image(frame_index)
+        camera_info = self._recorded_camera_info
+        if camera_info is None:
+            raise RuntimeError("camera calibration was not initialized")
+        return self._rectifier.rectify(image, camera_info)[0]
+
+    def load_raw_image(self, frame_index: int) -> Image:
+        """Load an indexed source image without rectification."""
         if frame_index < 0:
             raise ValueError("frame_index must be non-negative")
         if self._images is None:
@@ -206,10 +214,7 @@ class RecordingFramePreprocessor:
         observation = self._images.offset(frame_index).limit(1).first()
         image = observation.data.copy()
         image.ts = observation.ts
-        camera_info = self._recorded_camera_info
-        if camera_info is None:
-            raise RuntimeError("camera calibration was not initialized")
-        return self._rectifier.rectify(image, camera_info)[0]
+        return image
 
 
 class _ImageRectifier:

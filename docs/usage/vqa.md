@@ -31,6 +31,24 @@ without complete camera calibration and TF streams are rejected. Point-cloud evi
 when image and LiDAR observations are within `0.1` seconds by default; unmatched frames retain only
 image-based question families.
 
+## Edit a Dataset
+
+Open the local editor with a calibrated recording and an existing VQA dataset:
+
+```bash skip
+dimos evals vqa edit /path/to/calibrated-recording.db /path/to/vqa-dataset
+```
+
+The interface runs on `http://127.0.0.1:8765` by default; use `--port` to select another local port.
+Frame navigation displays raw recorded images. Generating a single frame or a `start`, `stop`,
+`stride` range applies the normal rectification and image/point-cloud question pipelines only to the
+selected frames.
+
+Questions, choices, and ground-truth answers can be edited, added, or removed. Navigation retains
+drafts in the editor process but does not modify the dataset. **Submit dataset** replaces questions
+for edited frames in `cases.jsonl` and `labels.jsonl`, writes their rectified assets, and preserves
+all untouched cases and assets.
+
 ## Question Families
 
 The image-only question author selects object names and applicable families. It does not produce
