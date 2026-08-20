@@ -92,7 +92,7 @@ class InsufficientEvidenceError(ValueError):
 class ObjectDetector(Protocol):
     """Object evidence required by visual question families."""
 
-    def detect(self, image: Image, object_name: str) -> ImageDetections2D: ...
+    def query_detections(self, image: Image, query: str) -> ImageDetections2D: ...
 
 
 def answer_question(
@@ -111,7 +111,7 @@ def answer_question(
 def _answer_presence(
     proposal: QuestionProposal, image: Image, detector: ObjectDetector
 ) -> FamilyAnswer:
-    detections = detector.detect(image, proposal.object_name)
+    detections = detector.query_detections(image, proposal.object_name)
     if not detections.detections:
         raise InsufficientEvidenceError(
             f"object detector did not confirm visible {proposal.object_name!r}"
@@ -133,7 +133,7 @@ def _answer_presence(
 def _answer_horizontal_direction(
     proposal: QuestionProposal, image: Image, detector: ObjectDetector
 ) -> FamilyAnswer:
-    detections = detector.detect(image, proposal.object_name)
+    detections = detector.query_detections(image, proposal.object_name)
     if len(detections) != 1:
         raise InsufficientEvidenceError(
             f"horizontal direction requires exactly one detected {proposal.object_name!r}, "
@@ -167,7 +167,7 @@ def _answer_horizontal_direction(
 def _answer_object_count(
     proposal: QuestionProposal, image: Image, detector: ObjectDetector
 ) -> FamilyAnswer:
-    detections = detector.detect(image, proposal.object_name)
+    detections = detector.query_detections(image, proposal.object_name)
     count = len(detections)
     if count == 0:
         raise InsufficientEvidenceError(

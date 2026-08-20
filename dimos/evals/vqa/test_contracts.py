@@ -82,7 +82,7 @@ class _Detector:
     def __init__(self, present: bool) -> None:
         self._present = present
 
-    def detect(self, image: Image, object_name: str) -> ImageDetections2D:
+    def query_detections(self, image: Image, query: str) -> ImageDetections2D:
         detections = []
         if self._present:
             detections.append(
@@ -91,7 +91,7 @@ class _Detector:
                     track_id=0,
                     class_id=-1,
                     confidence=1.0,
-                    name=object_name,
+                    name=query,
                     ts=image.ts,
                     image=image,
                 )
@@ -103,7 +103,7 @@ class _BoxesDetector:
     def __init__(self, boxes: tuple[tuple[float, float, float, float], ...]) -> None:
         self._boxes = boxes
 
-    def detect(self, image: Image, object_name: str) -> ImageDetections2D:
+    def query_detections(self, image: Image, query: str) -> ImageDetections2D:
         return ImageDetections2D(
             image,
             [
@@ -112,7 +112,7 @@ class _BoxesDetector:
                     track_id=index,
                     class_id=-1,
                     confidence=1.0,
-                    name=object_name,
+                    name=query,
                     ts=image.ts,
                     image=image,
                 )
@@ -144,7 +144,7 @@ class _PartlyInvalidQuestionModel:
 
 
 class _BrokenDetector:
-    def detect(self, image: Image, object_name: str) -> ImageDetections2D:
+    def query_detections(self, image: Image, query: str) -> ImageDetections2D:
         raise ValueError("detector broke")
 
 
@@ -153,11 +153,11 @@ class _FailsSecondDetector(_Detector):
         super().__init__(present=True)
         self._calls = 0
 
-    def detect(self, image: Image, object_name: str) -> ImageDetections2D:
+    def query_detections(self, image: Image, query: str) -> ImageDetections2D:
         self._calls += 1
         if self._calls == 2:
             raise ValueError("detector broke")
-        return super().detect(image, object_name)
+        return super().query_detections(image, query)
 
 
 class _Rig:
@@ -349,6 +349,66 @@ def test_standalone_rows_match_public_private_contract() -> None:
         "id": "frame-000004-chair-presence",
         "answer": "yes",
     }
+
+
+def test_suite_loads_jsonl_without_reading_whole_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / "frame.png").write_bytes(b"image")
+    (tmp_path / "cases.jsonl").write_text(
+        "\n"
+        + json.dumps(
+            {
+                "id": "q",
+                "image": "frame.png",
+                "question": "Is there a chair?",
+                "choices": ["yes", "no"],
+            }
+        )
+        + "\n\n"
+    )
+    (tmp_path / "labels.jsonl").write_text(json.dumps({"id": "q", "answer": "yes"}) + "\n")
+
+    def fail_read_text(*args: object, **kwargs: object) -> str:
+        raise AssertionError("load_suite must stream JSONL instead of reading the whole file")
+
+    monkeypatch.setattr(Path, "read_text", fail_read_text)
+
+    suite = load_suite(tmp_path)
+
+    assert len(suite) == 1
+    assert suite[0].id == "q"
+
+
+def test_suite_rejects_malformed_jsonl(tmp_path: Path) -> None:
+    (tmp_path / "labels.jsonl").write_text("")
+    (tmp_path / "cases.jsonl").write_text("{not-json}\n")
+
+    with pytest.raises(ValueError, match="invalid VQA dataset file"):
+        load_suite(tmp_path)
+
+
+def test_suite_validates_all_case_ids_before_images(tmp_path: Path) -> None:
+    case = {
+        "id": "duplicate",
+        "image": "missing.png",
+        "question": "Is there a chair?",
+        "choices": ["yes", "no"],
+    }
+    (tmp_path / "cases.jsonl").write_text(f"{json.dumps(case)}\n{json.dumps(case)}\n")
+    (tmp_path / "labels.jsonl").write_text(json.dumps({"id": "duplicate", "answer": "yes"}) + "\n")
+
+    with pytest.raises(ValueError, match="duplicate case IDs"):
+        load_suite(tmp_path)
+
+
+def test_suite_reports_empty_cases_before_duplicate_labels(tmp_path: Path) -> None:
+    label = json.dumps({"id": "duplicate", "answer": "yes"})
+    (tmp_path / "cases.jsonl").write_text("")
+    (tmp_path / "labels.jsonl").write_text(f"{label}\n{label}\n")
+
+    with pytest.raises(ValueError, match="contains no cases"):
+        load_suite(tmp_path)
 
 
 def test_generate_and_evaluate_one_image(tmp_path: Path) -> None:

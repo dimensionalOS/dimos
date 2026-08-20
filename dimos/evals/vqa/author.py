@@ -60,7 +60,7 @@ class OpenAIQuestionAuthor:
             "Do not duplicate a family/object pair. Do not answer questions or add fields. "
             f"Available families: {json.dumps(family_shapes)}"
         )
-        payload: object = self._model.query_json(image, prompt)
+        payload = self._model.query_json(image, prompt)
         if not isinstance(payload, list):
             raise ValueError("question author response must be a JSON array")
         proposals: list[QuestionProposal] = []

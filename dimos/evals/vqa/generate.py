@@ -36,7 +36,6 @@ from dimos.evals.vqa.families import (
     QuestionProposal,
     answer_question,
 )
-from dimos.evals.vqa.primitives.moondream import MoondreamObjectDetector
 from dimos.memory.cli.dataset import open_dataset
 from dimos.msgs.sensor_msgs.Image import Image
 
@@ -142,7 +141,7 @@ def generate_dataset(request: GenerationRequest) -> GenerationResult:
             request,
             selected_frames(),
             OpenAIQuestionAuthor(author_model),
-            MoondreamObjectDetector(detector_model),
+            detector_model,
             model_names={
                 "author": author_model.config.model_name,
                 "detector": detector_model.config.model_name,

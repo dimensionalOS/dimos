@@ -16,17 +16,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 import json
 from pathlib import Path, PurePosixPath
-from typing import Any, TypeVar, cast
+from typing import Any, cast
+
+import jsonlines
 
 from dimos.evals.scorers import exact
 from dimos.evals.types import EvalCase, EvalResult, EvalRig, Suite
 from dimos.evals.vqa.generate import PrivateLabel, PublicCase
 from dimos.msgs.sensor_msgs.Image import Image
-
-Row = TypeVar("Row", PublicCase, PrivateLabel)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -67,23 +68,39 @@ def _parse_choice(response: str, choices: tuple[str, ...]) -> str:
 def load_suite(dataset: Path) -> Suite:
     """Load public cases, private labels, and images from a generated dataset."""
     root = dataset.resolve()
-    cases = [PublicCase.model_validate(row) for row in _read_jsonl(root / "cases.jsonl")]
-    labels = [PrivateLabel.model_validate(row) for row in _read_jsonl(root / "labels.jsonl")]
-    if not cases:
+    case_ids: set[str] = set()
+    duplicate_cases = False
+    for row in _read_jsonl(root / "cases.jsonl"):
+        case = PublicCase.model_validate(row)
+        duplicate_cases |= case.id in case_ids
+        case_ids.add(case.id)
+
+    label_by_id: dict[str, PrivateLabel] = {}
+    duplicate_labels = False
+    for row in _read_jsonl(root / "labels.jsonl"):
+        parsed_label = PrivateLabel.model_validate(row)
+        duplicate_labels |= parsed_label.id in label_by_id
+        label_by_id[parsed_label.id] = parsed_label
+
+    if not case_ids:
         raise ValueError(f"VQA dataset contains no cases: {root}")
-    case_by_id = _unique_by_id(cases, "case")
-    label_by_id = _unique_by_id(labels, "label")
-    if case_by_id.keys() != label_by_id.keys():
-        missing_labels = sorted(case_by_id.keys() - label_by_id.keys())
-        missing_cases = sorted(label_by_id.keys() - case_by_id.keys())
+    if duplicate_cases:
+        raise ValueError("VQA dataset contains duplicate case IDs")
+    if duplicate_labels:
+        raise ValueError("VQA dataset contains duplicate label IDs")
+    missing_labels = sorted(case_ids - label_by_id.keys())
+    missing_cases = sorted(label_by_id.keys() - case_ids)
+    if missing_labels or missing_cases:
         raise ValueError(
             f"VQA case/label IDs do not match: missing_labels={missing_labels}, "
             f"missing_cases={missing_cases}"
         )
 
+    case_ids.clear()
     suite: list[VqaEvalCase] = []
-    for case in cases:
-        label = label_by_id[case.id]
+    for row in _read_jsonl(root / "cases.jsonl"):
+        case = PublicCase.model_validate(row)
+        label = label_by_id.pop(case.id)
         if len(case.choices) < 2 or len(set(case.choices)) != len(case.choices):
             raise ValueError(f"VQA case {case.id!r} requires at least two unique choices")
         if label.answer not in case.choices:
@@ -101,19 +118,12 @@ def load_suite(dataset: Path) -> Suite:
     return suite
 
 
-def _read_jsonl(path: Path) -> list[Any]:
+def _read_jsonl(path: Path) -> Iterator[Any]:
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-        return [json.loads(line) for line in lines if line.strip()]
-    except (OSError, json.JSONDecodeError) as exc:
+        with jsonlines.open(path) as reader:
+            yield from reader.iter(skip_empty=True)
+    except (OSError, jsonlines.Error) as exc:
         raise ValueError(f"invalid VQA dataset file: {path}") from exc
-
-
-def _unique_by_id(rows: list[Row], name: str) -> dict[str, Row]:
-    by_id = {row.id: row for row in rows}
-    if len(by_id) != len(rows):
-        raise ValueError(f"VQA dataset contains duplicate {name} IDs")
-    return by_id
 
 
 def _resolve_image(root: Path, relative: str) -> Path:

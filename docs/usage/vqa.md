@@ -2,10 +2,8 @@
 title: "Visual Question Answering"
 ---
 
-# Visual Question Answering
-
 The VQA tools generate deterministic questions from recorded images and evaluate them through the
-shared DimOS evaluation runner.
+shared dimOS evaluation runner.
 
 ## Generate a Dataset
 
@@ -72,14 +70,3 @@ dimos evals vqa run ~/.local/state/dimos/datasets/vqa/go2_short-frames \
 
 Evaluation exposes only each public image, question, and fixed choices to the model. The shared runner
 writes results under `~/.local/state/dimos/evals/run-*/`.
-
-## Architecture
-
-- `author.py` proposes constrained family inputs from an image.
-- `families.py` owns question text, choices, and deterministic answer rules.
-- `primitives/moondream.py` supplies private object detections.
-- `generate.py` loads frames, reuses models, and writes datasets atomically.
-- `suite.py` validates generated artifacts and creates shared evaluation cases.
-
-The initial implementation intentionally defers negative-presence policy, retries, and resume
-behavior.
