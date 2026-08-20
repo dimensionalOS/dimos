@@ -36,6 +36,9 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus
 from dimos.manipulation.planning.spec.models import IKResult, RobotName, WorldRobotID
 from dimos.manipulation.planning.spec.protocols import WorldSpec
+from dimos.manipulation.planning.utils.joint_positions import (
+    repair_unconfigured_joint_positions,
+)
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -558,9 +561,7 @@ class PinkIK:
         upper_limits: NDArray[np.float64],
         attempt: int,
     ) -> NDArray[np.float64]:
-        pinocchio = self._modules.pinocchio
-        neutral = pinocchio.neutral(context.model)
-        q = np.array(neutral, dtype=np.float64)
+        q = self._neutral_q(context)
 
         if attempt == 0:
             positions = _seed_positions_for_mapping(seed, context.mapping)
@@ -576,8 +577,7 @@ class PinkIK:
         context: _PinkRobotContext,
         positions: NDArray[np.float64],
     ) -> NDArray[np.float64]:
-        pinocchio = self._modules.pinocchio
-        q = np.array(pinocchio.neutral(context.model), dtype=np.float64)
+        q = self._neutral_q(context)
         if len(positions) != len(context.mapping.idx_q):
             raise ValueError(
                 f"Seed has {len(positions)} positions for {len(context.mapping.idx_q)} joints"
@@ -585,6 +585,12 @@ class PinkIK:
         for value, idx_q in zip(positions, context.mapping.idx_q, strict=True):
             q[idx_q] = value
         return q
+
+    def _neutral_q(self, context: _PinkRobotContext) -> NDArray[np.float64]:
+        q = np.asarray(self._modules.pinocchio.neutral(context.model), dtype=np.float64).copy()
+        lower = np.asarray(context.model.lowerPositionLimit, dtype=np.float64)
+        upper = np.asarray(context.model.upperPositionLimit, dtype=np.float64)
+        return repair_unconfigured_joint_positions(q, lower, upper, context.mapping.idx_q)
 
     def _q_to_dimos_positions(
         self, context: _PinkRobotContext, q: NDArray[np.float64]

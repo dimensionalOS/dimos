@@ -164,6 +164,8 @@ class FakeScene:
     joint_group_joint_names: ClassVar[list[str] | None] = None
     position_limits_lower: ClassVar[list[float]] = [-1.0, -2.0]
     position_limits_upper: ClassVar[list[float]] = [1.0, 2.0]
+    full_position_limits_lower: ClassVar[list[float]] = [-1.0, -2.0, -3.0]
+    full_position_limits_upper: ClassVar[list[float]] = [1.0, 2.0, 3.0]
     valid_frames: ClassVar[set[str]] = {"dimos_world"}
 
     def __init__(
@@ -219,6 +221,12 @@ class FakeScene:
     def getPositionLimitVectors(
         self, group_name: str = "", collapsed: bool = False
     ) -> tuple[np.ndarray, np.ndarray]:
+        if not group_name:
+            robot_count = len(self.native_joint_names) // len(self.full_position_limits_lower)
+            return (
+                np.tile(self.full_position_limits_lower, robot_count),
+                np.tile(self.full_position_limits_upper, robot_count),
+            )
         return np.asarray(self.position_limits_lower), np.asarray(self.position_limits_upper)
 
     def getJointGroupInfo(self, name: str) -> FakeJointGroupInfo:
@@ -653,6 +661,37 @@ def test_context_cloning_and_joint_state_round_trip(
 
     live_round_trip = world.get_joint_state(world.get_live_context(), robot_id)
     assert live_round_trip.position == [0.1, 0.2]
+
+
+def test_full_scene_state_neutralizes_unconfigured_joint_with_nonzero_limits(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(FakeScene, "full_position_limits_lower", [-1.0, -2.0, 0.018])
+    monkeypatch.setattr(FakeScene, "full_position_limits_upper", [1.0, 2.0, 0.06])
+    captured_q: np.ndarray | None = None
+
+    def capture_jacobian_q(
+        scene: FakeScene,
+        q: np.ndarray,
+        frame_name: str,
+        local: bool = True,
+    ) -> np.ndarray:
+        nonlocal captured_q
+        captured_q = q.copy()
+        return np.ones((6, len(scene.native_joint_names)))
+
+    monkeypatch.setattr(FakeScene, "computeFrameJacobian", capture_jacobian_q)
+    world, _ = _make_world(fake_roboplan, robot_config)
+
+    world.get_group_jacobian(
+        world.get_live_context(),
+        "arm/manipulator",
+    )
+
+    assert captured_q is not None
+    np.testing.assert_allclose(captured_q, [0.0, 0.0, 0.018])
 
 
 def test_joint_name_mapping_is_applied_to_input_states(

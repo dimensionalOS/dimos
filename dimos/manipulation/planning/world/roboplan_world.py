@@ -49,6 +49,9 @@ from dimos.manipulation.planning.spec.models import (
     WorldRobotID,
 )
 from dimos.manipulation.planning.spec.validation import validate_obstacle
+from dimos.manipulation.planning.utils.joint_positions import (
+    repair_unconfigured_joint_positions,
+)
 from dimos.manipulation.planning.world.roboplan_model import (
     ROBOPLAN_WORLD_FRAME,
     RoboPlanGroup,
@@ -523,10 +526,28 @@ class RoboPlanWorld:
         overlay: tuple[WorldRobotID, NDArray[np.float64]] | None = None,
     ) -> NDArray[np.float64]:
         scene = self._require_scene()
-        group = self._require_model().all_group
+        model = self._require_model()
+        group = model.all_group
         positions = self._current_global_positions(ctx, overlay)
         q = np.asarray([positions[name] for name in group.public_names], dtype=np.float64)
-        return np.asarray(scene.toFullJointPositions(group.name, q), dtype=np.float64)
+        full_q = np.asarray(scene.toFullJointPositions(group.name, q), dtype=np.float64)
+
+        joint_names = scene.getJointNames()
+        if len(joint_names) != len(full_q):
+            raise ValueError("RoboPlan joint names and full joint state do not match")
+        lower, upper = scene.getPositionLimitVectors()
+        lower = np.asarray(lower, dtype=np.float64)
+        upper = np.asarray(upper, dtype=np.float64)
+        configured_joints = set(model.native_joint_by_global.values())
+        configured_indices = [
+            index for index, name in enumerate(joint_names) if name in configured_joints
+        ]
+        return repair_unconfigured_joint_positions(
+            full_q,
+            lower,
+            upper,
+            configured_indices,
+        )
 
     def _current_global_positions(
         self,
