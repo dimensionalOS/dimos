@@ -1,0 +1,79 @@
+name: transport-benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Benchmark campaign to run
+        type: choice
+        options: [smoke, public]
+        default: smoke
+      stack:
+        description: Optional stack filter (lcm, zenoh, or ros2-zenoh)
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: [self-hosted, Linux, transport-benchmark]
+    timeout-minutes: 2160
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Verify benchmark host
+        run: |
+          test "$(uname -s)" = Linux
+          command -v docker
+          command -v uv
+
+      - name: Install campaign runner
+        run: uv sync --frozen --extra benchmark --no-default-groups
+
+      - name: Build public ROS campaign image
+        run: |
+          docker build \
+            --file docker/transport-benchmark/Dockerfile \
+            --tag dimos-transport-benchmark:${{ github.sha }} \
+            .
+
+      - name: Run three-stack gate
+        run: |
+          .venv/bin/dimos benchmark transport run \
+            --suite smoke \
+            --environment emulated \
+            --image dimos-transport-benchmark:${{ github.sha }} \
+            --output benchmark-gate
+          jq --exit-status 'length == 3 and all(.[]; .error == null) and all(.[]; .delivered > 0)' \
+            benchmark-gate/summary.json
+
+      - name: Run campaign
+        env:
+          SUITE: ${{ inputs.suite }}
+          STACK: ${{ inputs.stack }}
+        run: |
+          stack_args=()
+          if [[ -n "$STACK" ]]; then
+            stack_args=(--stack "$STACK")
+          fi
+          .venv/bin/dimos benchmark transport run \
+            --suite "$SUITE" \
+            --environment emulated \
+            --image dimos-transport-benchmark:${{ github.sha }} \
+            --output benchmark-results \
+            "${stack_args[@]}"
+
+      - name: Upload evidence bundle
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: transport-benchmark-${{ inputs.suite }}-${{ github.sha }}
+          path: |
+            benchmark-gate
+            benchmark-results
+          if-no-files-found: error
+          retention-days: 90

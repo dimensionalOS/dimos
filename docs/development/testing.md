@@ -173,7 +173,7 @@ There are other useful things in `mocker`, like `mocker.MagicMock()` for creatin
 
 ## Tool files
 
-Dev-only pseudo-tests -- the kind that need human interaction or make no assertions -- live in `tool_*.py` files (e.g. `dimos/protocol/pubsub/benchmark/tool_benchmark.py`). pytest never collects them, because the filename doesn't match the `test_*.py` pattern, so a normal `pytest` run stays clean. Run one on demand by naming it directly:
+Dev-only pseudo-tests -- the kind that need human interaction or make no assertions -- live in `tool_*.py` files. pytest never collects them, because the filename doesn't match the `test_*.py` pattern, so a normal `pytest` run stays clean. Run one on demand by naming it directly:
 
 ```bash
 pytest -s dimos/path/to/tool_file.py

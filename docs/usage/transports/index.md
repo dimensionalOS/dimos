@@ -78,13 +78,15 @@ Architecture notes (Rerun bridge, TF still on LCM) live under [Zenoh](#zenoh) in
 
 ## Benchmarks
 
-Quick view on performance of our pubsub backends:
+The transport benchmark compares LCM, native Zenoh, and ROS 2 over
+`rmw_zenoh_cpp` with separate publisher and subscriber processes:
 
-```sh skip
-python -m pytest -sv -k "not bytes" dimos/protocol/pubsub/benchmark/tool_benchmark.py
+```bash skip
+dimos benchmark transport run --suite smoke --stack lcm --output ./benchmark-results
 ```
 
-![Benchmark results](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/usage/assets/pubsub_benchmark.png)
+See the [transport benchmark methodology](/docs/development/transport-benchmark-methodology.md)
+for the public campaign, network emulation, metrics, and interpretation rules.
 
 ## Abstraction layers
 
@@ -351,8 +353,6 @@ Use Zenoh when:
 
 At the stream level, the transport wrappers are `ZenohTransport` and `pZenohTransport`. Install, defaults, and CLI versus environment overrides are in the [Zenoh quickstart](#zenoh-quickstart) above.
 
-Performance note: zenoh's session-to-session path (modules in different processes, the common case) benchmarks faster than LCM for small messages and for >=2MiB ones. Delivery *within* one shared session (co-located modules in one worker) is its slow path for 256KiB-1MiB messages (a few GiB/s); pin shared memory transports for heavy co-located streams. The benchmark has both cases (`Zenoh` = shared session, `ZenohPeers` = separate sessions).
-
 The Rerun bridge also follows the global transport. When `transport=zenoh`, the bridge listens on Zenoh and on LCM for TF data.
 
 #### Per-topic QoS
@@ -522,11 +522,15 @@ See [`pubsub/test_spec.py`](/dimos/protocol/pubsub/test_spec.py) for the grid te
 
 ### Benchmarks
 
-Add your backend to benchmarks to compare in context:
+Run the separate-process smoke suite after adding or changing a backend:
 
-```sh skip
-python -m pytest -sv -k "not bytes" dimos/protocol/pubsub/benchmark/tool_benchmark.py
+```bash skip
+dimos benchmark transport run --suite smoke --output ./benchmark-results
 ```
+
+The full reproducible campaign uses Linux, Docker, and symmetric `tc netem`
+conditions on a dedicated bridge. Details are
+in the [benchmark methodology](/docs/development/transport-benchmark-methodology.md).
 
 # Available transports
 

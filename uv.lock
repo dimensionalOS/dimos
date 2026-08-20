@@ -1763,6 +1763,7 @@ all = [
     { name = "pillow" },
     { name = "piper-sdk" },
     { name = "playground" },
+    { name = "plotly" },
     { name = "portal" },
     { name = "pycollada" },
     { name = "pygame" },
@@ -1827,6 +1828,9 @@ base = [
     { name = "ultralytics" },
     { name = "uvicorn" },
     { name = "yourdfpy" },
+]
+benchmark = [
+    { name = "plotly" },
 ]
 cpu = [
     { name = "onnxruntime" },
@@ -2205,7 +2209,7 @@ requires-dist = [
     { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = "==13.6.0" },
     { name = "cyclonedds", marker = "extra == 'dds'", specifier = ">=0.10.5" },
     { name = "cyclonedds", marker = "extra == 'unitree-dds'", specifier = ">=0.10.5" },
-    { name = "dimos", extras = ["agents", "apriltag", "base", "cpu", "cuda", "drone", "manipulation", "misc", "perception", "scene", "sim", "unitree", "visualization", "web", "webrtc"], marker = "extra == 'all'" },
+    { name = "dimos", extras = ["agents", "apriltag", "base", "benchmark", "cpu", "cuda", "drone", "manipulation", "misc", "perception", "scene", "sim", "unitree", "visualization", "web", "webrtc"], marker = "extra == 'all'" },
     { name = "dimos", extras = ["agents", "web", "perception", "visualization"], marker = "extra == 'base'" },
     { name = "dimos", extras = ["base", "mapping"], marker = "extra == 'unitree'" },
     { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
@@ -2268,6 +2272,7 @@ requires-dist = [
     { name = "piper-sdk", marker = "extra == 'manipulation'" },
     { name = "playground", marker = "extra == 'sim'", specifier = ">=0.0.5" },
     { name = "plotext", specifier = "==5.3.2" },
+    { name = "plotly", marker = "extra == 'benchmark'", specifier = ">=6.5,<7" },
     { name = "plum-dispatch", specifier = "==2.5.7" },
     { name = "portal", marker = "extra == 'misc'" },
     { name = "protobuf", specifier = ">=6.33.5,<7" },
@@ -2327,7 +2332,7 @@ requires-dist = [
     { name = "yourdfpy", marker = "(platform_machine != 'aarch64' and extra == 'visualization') or (sys_platform != 'linux' and extra == 'visualization')", specifier = ">=0.0.60" },
     { name = "yourdfpy", marker = "extra == 'manipulation'", specifier = ">=0.0.60" },
 ]
-provides-extras = ["misc", "spot", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "cpu", "cuda", "sim", "mapping", "drone", "dds", "webrtc", "base", "apriltag", "scene", "graspgenx", "all"]
+provides-extras = ["benchmark", "misc", "spot", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "cpu", "cuda", "sim", "mapping", "drone", "dds", "webrtc", "base", "apriltag", "scene", "graspgenx", "all"]
 
 [package.metadata.requires-dev]
 autofix = [{ name = "ruff", specifier = "==0.14.3" }]

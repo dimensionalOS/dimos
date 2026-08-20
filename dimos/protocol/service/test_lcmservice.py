@@ -101,6 +101,7 @@ class TestLCMConfig:
         assert config.ttl == 0
         assert config.url == _DEFAULT_LCM_URL
         assert config.lcm is None
+        assert config.subscription_queue_capacity == 10000
 
     def test_custom_url(self) -> None:
         custom_url = "udpm://192.168.1.1:7777?ttl=1"

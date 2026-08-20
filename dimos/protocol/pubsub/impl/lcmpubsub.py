@@ -131,8 +131,10 @@ class LCMPubSubBase(LCMService, AllPubSub[Topic, Any]):
 
             lcm_subscription = self.l.subscribe(topic_str, plain_handler)
 
-        # Set queue capacity to 10000 to handle high-volume bursts
-        lcm_subscription.set_queue_capacity(10000)
+        # A transport should deliver fresh stream state rather than replay a stale
+        # backlog after a slow subscriber catches up. Callers that need a deeper
+        # history can configure it explicitly on LCMConfig.
+        lcm_subscription.set_queue_capacity(self.config.subscription_queue_capacity)
 
         def unsubscribe() -> None:
             nonlocal alive

@@ -177,6 +177,10 @@ Issues = "https://github.com/dimensionalOS/dimos/issues"
 Changelog = "https://github.com/dimensionalOS/dimos/releases"
 
 [project.optional-dependencies]
+benchmark = [
+    "plotly>=6.5,<7",
+]
+
 misc = [
     # Core requirements
     "python-multipart>=0.0.27",
@@ -384,7 +388,7 @@ graspgenx = [
 ]
 
 all = [
-    "dimos[agents,apriltag,base,cpu,cuda,drone,manipulation,misc,perception,scene,sim,unitree,visualization,web,webrtc]",
+    "dimos[agents,apriltag,base,benchmark,cpu,cuda,drone,manipulation,misc,perception,scene,sim,unitree,visualization,web,webrtc]",
 ]
 
 [dependency-groups]

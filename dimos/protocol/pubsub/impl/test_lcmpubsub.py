@@ -15,6 +15,7 @@
 from collections.abc import Iterator
 import threading
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -94,6 +95,17 @@ def test_LCMPubSubBase_pubsub(lcm_pub_sub_base: LCMPubSubBase) -> None:
 
     assert isinstance(received_topic, Topic)
     assert received_topic == topic
+
+
+def test_subscription_queue_capacity_is_configurable(lcm_url: str) -> None:
+    backend = MagicMock()
+    subscription = backend.subscribe.return_value
+    pubsub = LCMPubSubBase(url=lcm_url, subscription_queue_capacity=7)
+    pubsub.l = backend
+
+    pubsub.subscribe(Topic("/queue"), lambda _message, _topic: None)
+
+    subscription.set_queue_capacity.assert_called_once_with(7)
 
 
 def test_subscribe_calls_lcm_warmup(lcm: LCM) -> None:

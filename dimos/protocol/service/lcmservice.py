@@ -51,6 +51,7 @@ class LCMConfig(BaseConfig):
     ttl: int = 0
     url: str = _DEFAULT_LCM_URL
     lcm: lcm_mod.LCM | None = None
+    subscription_queue_capacity: int = 10000
 
 
 _LCM_LOOP_TIMEOUT = 50

@@ -60,6 +60,8 @@ assets/model-cache
 
 # Logs
 *.log
+benchmark-results/
+benchmark-gate/
 
 # Large media files (not needed for functionality)
 *.png
