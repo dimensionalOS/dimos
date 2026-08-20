@@ -267,6 +267,24 @@ class DeviceWriteMetrics(BaseModel):
     unavailable_reason: str | None = None
 
 
+class StorageCapacityReport(BaseModel):
+    profile: str
+    duration_s: float
+    rate_scale: float
+    source_valid: bool
+    submitted_messages: int
+    committed_messages: int
+    committed_payload_bytes: int
+    offered_mib_s: float
+    effective_committed_mib_s: float
+    drain_elapsed_s: float
+    receive_to_commit_p99_ms: float
+    receive_to_commit_max_ms: float
+    passed: bool
+    violations: tuple[str, ...] = ()
+    writer: dict[str, Any] = Field(default_factory=dict)
+
+
 class FidelityReport(BaseModel):
     profile: str
     mode: str
