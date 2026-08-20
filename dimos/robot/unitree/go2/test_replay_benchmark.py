@@ -174,7 +174,7 @@ def _net_bytes() -> tuple[int, int, int]:
     return int(ipext["InMcastOctets"]), ext_rx, ext_tx
 
 
-@pytest.mark.self_hosted
+@pytest.mark.self_hosted_large  # Needs 8+ GB memory
 # macOS: coordinator->worker zenoh RPC times out (set_transport), and the
 # in-test LCM subscriptions would need lo0 route + maxdgram host tuning.
 @pytest.mark.skipif_macos_bug
