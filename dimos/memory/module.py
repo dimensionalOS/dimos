@@ -415,7 +415,7 @@ class Recorder(MemoryModule):
         and registers the subscription for cleanup on stop().
         """
 
-        def process(stamped: tuple[float, Any], _accepted_monotonic: float) -> None:
+        def process(stamped: tuple[float, Any]) -> None:
             recv_ts, msg = stamped
             ts = self._resolve_ts(name, msg)
             if name in self._pose_setters:
@@ -537,7 +537,7 @@ class Recorder(MemoryModule):
             return
         tf_stream = self.store.stream("tf", TFMessage)
 
-        def process_tf(msg: TFMessage, _accepted_monotonic: float) -> None:
+        def process_tf(msg: TFMessage) -> None:
             for transform in msg.transforms:
                 backend = cast("Backend[Any]", tf_stream._source)  # type: ignore[attr-defined]
                 observation = Observation(

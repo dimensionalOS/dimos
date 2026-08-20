@@ -21,7 +21,7 @@ from dataclasses import dataclass
 import queue
 import threading
 import time
-from typing import Any, cast
+from typing import Any
 
 
 class RecorderFailedError(RuntimeError):
@@ -30,7 +30,6 @@ class RecorderFailedError(RuntimeError):
 
 @dataclass(frozen=True)
 class _QueuedMessage:
-    accepted_monotonic: float
     value: Any
 
 
@@ -45,17 +44,14 @@ class RecorderQueue:
     def __init__(
         self,
         name: str,
-        process: Callable[[Any, float], None],
+        process: Callable[[Any], None],
         *,
         max_pending: int = 65_536,
-        max_backlog_s: float = 2.0,
     ) -> None:
         self.name = name
         self._process = process
         self._queue: queue.Queue[_QueuedMessage | None] = queue.Queue(maxsize=max_pending)
-        self._max_backlog_s = max_backlog_s
         self._lock = threading.Lock()
-        self._oldest_monotonic: float | None = None
         self._failure: BaseException | None = None
         self._accepting = True
         self._closed = False
@@ -67,22 +63,11 @@ class RecorderQueue:
         self._thread.start()
 
     def submit(self, value: Any) -> None:
-        accepted_monotonic = time.monotonic()
         with self._lock:
             self._raise_if_failed_locked()
             if not self._accepting:
                 raise RecorderFailedError(f"Recorder queue {self.name!r} is closed")
-            if self._oldest_monotonic is not None:
-                age = accepted_monotonic - self._oldest_monotonic
-                if age > self._max_backlog_s:
-                    self._fail_locked(
-                        RecorderFailedError(
-                            f"Recorder queue {self.name!r} backlog is {age:.3f}s; "
-                            f"limit is {self._max_backlog_s:.3f}s"
-                        )
-                    )
-                    self._raise_if_failed_locked()
-        item = _QueuedMessage(accepted_monotonic, value)
+        item = _QueuedMessage(value)
         try:
             self._queue.put_nowait(item)
         except queue.Full as error:
@@ -94,9 +79,6 @@ class RecorderQueue:
                     )
                 )
             raise RecorderFailedError(f"Recorder queue {self.name!r} is full") from error
-        with self._lock:
-            if self._oldest_monotonic is None:
-                self._oldest_monotonic = accepted_monotonic
 
     def close_input(self) -> None:
         with self._lock:
@@ -142,21 +124,12 @@ class RecorderQueue:
                 with self._lock:
                     failed = self._failure is not None
                 if not failed:
-                    self._process(item.value, item.accepted_monotonic)
-                with self._lock:
-                    self._oldest_monotonic = self._next_accepted_monotonic()
+                    self._process(item.value)
             except BaseException as error:
                 with self._lock:
                     self._fail_locked(error)
             finally:
                 self._queue.task_done()
-
-    def _next_accepted_monotonic(self) -> float | None:
-        with self._queue.mutex:
-            for queued in self._queue.queue:
-                if queued is not None:
-                    return cast("_QueuedMessage", queued).accepted_monotonic
-        return None
 
     def _fail_locked(self, error: BaseException) -> None:
         if self._failure is None:
