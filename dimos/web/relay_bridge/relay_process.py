@@ -173,7 +173,7 @@ def _input_stamp(web_dir: Path) -> str:
 
 def _build_inputs(web_dir: Path) -> list[Path]:
     files = [path for path in (web_dir / "deno.json", web_dir / "deno.lock") if path.is_file()]
-    for tree in (web_dir / "cockpit", web_dir / "shared"):
+    for tree in (web_dir / "cockpit", web_dir / "shared", web_dir / "sdk"):
         if not tree.is_dir():
             continue
         for path in sorted(tree.rglob("*")):

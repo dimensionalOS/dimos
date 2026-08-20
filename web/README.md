@@ -1,8 +1,9 @@
 # DimOS web
 
 Deno workspace for the robot web stack. `shared/` holds the wire protocol and its golden vectors;
-`relay/` is the WebTransport relay; `cockpit/` is the browser app (Vite + React + TS). The Python
-mirror + WebTransport client live in `dimos/web/relay_bridge/`.
+`relay/` is the WebTransport relay; `sdk/` is the viewer SDK (`@dimos/sdk`: transport, session,
+stores, decoders, React hooks); `cockpit/` is the browser app (Vite + React + TS) built on the SDK.
+The Python mirror + WebTransport client live in `dimos/web/relay_bridge/`.
 
 Everything runs on Deno 2.6.10, pinned in `dimos/utils/deno.py` (CI reads the pin from there). No
 node/npm anywhere: vite, vitest, and tsc run as npm packages under Deno (`nodeModulesDir: auto`),
@@ -13,6 +14,25 @@ deno task dev            # relay on http://127.0.0.1:7780 (add --cockpit-dir coc
 deno task test           # relay + shared tests (unit + loopback e2e)
 deno task check          # type-check relay + shared; deno fmt + deno lint for style (all of web/)
 ```
+
+## SDK
+
+`sdk/` is the read-only viewer library the cockpit is built on: reconnecting WebTransport, session
+state, channel/status stores, per-session decoder registries, refcounted subscriptions (`connect`,
+`Session.watch/subscribe/close`), and React hooks on the `@dimos/sdk/react` subpath (the root entry
+is React-free). The SDK subscribes to nothing by itself; the cockpit's panel policy lives in
+`cockpit/src/subscriptions.ts`.
+
+```bash
+cd sdk
+deno task test           # vitest
+deno task check          # tsc --noEmit
+deno task fixture        # demo consumer on http://localhost:5174 (run a relay first)
+```
+
+`fixture/` is a minimal non-cockpit consumer: it lists robots, auto-watches the lone robot, and
+subscribes to `odom` by hand. Run `dimos run <bp> --local-relay` and `deno task fixture` side by
+side; like the cockpit dev server it proxies `/api` to the relay on `:7780`.
 
 ## Cockpit
 
@@ -33,10 +53,10 @@ missing or older than the sources (`ensure_cockpit_dist` in `relay_process.py`).
 a pre-built dist inside `_relay_dist` (built by the release workflow; see `setup.py`), so a
 pip-installed dimos never builds or downloads npm packages.
 
-After changing cockpit dependencies run `deno install` in `web/` and commit the `deno.lock` update;
-CI validates it with `deno install --frozen`. If vitest ever misbehaves under a new Deno, the
-fallback ladder is `--no-file-parallelism`, then `--pool=threads`, then pinning a different vitest
-minor.
+After changing cockpit or sdk dependencies run `deno install` in `web/` and commit the `deno.lock`
+update; CI validates it with `deno install --frozen`. If vitest ever misbehaves under a new Deno,
+the fallback ladder is `--no-file-parallelism`, then `--pool=threads`, then pinning a different
+vitest minor.
 
 The cockpit browser e2e (`dimos/e2e_tests/test_cockpit_browser.py`, marker `web_browser`) drives the
 whole stack against the go2 replay dataset in both Playwright Chromium and Firefox (their
