@@ -65,10 +65,10 @@ class ControllerConfig(BaseConfig):
     # Gait calibration, read by the blind law only (laws/blind.py).
     # The twist is a request to a walking policy that under-delivers it; these
     # inverse the measured deficit. They are properties of the POLICY BLOB,
-    # not of any law: the defaults are `ml-trajectory-research/freewalk_mcf.bin`
-    # as measured by the referee's walk-slip probe (with the sim, see README),
-    # and on a different gait they are a ~23% over-speed: re-probe before
-    # driving hardware.
+    # not of any law: the defaults were measured off the freewalk gait blob by
+    # the referee's walk-slip probe (with the sim, see README). That blob is NOT
+    # in this repo and is not ours to redistribute. On a different gait these
+    # are a ~23% over-speed, so re-probe before driving hardware.
     walk_gain: float = 0.964
     walk_slip: float = 0.132
     walk_slip_ramp: float = 0.08  # below this intended speed the correction fades out
