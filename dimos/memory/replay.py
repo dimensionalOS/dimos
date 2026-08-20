@@ -37,6 +37,7 @@ from reactivex.scheduler import TimeoutScheduler
 from dimos.memory.store.base import Store, StreamAccessor
 from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.utils.data import resolve_named_path
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -44,6 +45,8 @@ if TYPE_CHECKING:
     from dimos.memory.stream import Stream
 
 T = TypeVar("T")
+
+logger = setup_logger()
 
 _LOOP_GAP = 0.05  # min wall-time gap inserted between loop wraps (seconds)
 _LATE_TOLERANCE = 0.05  # don't skip frames within this many seconds of "now"
@@ -94,6 +97,12 @@ class Replay(Configurable):
             try:
                 candidates.append(float(self.store.stream(name).first().ts))
             except LookupError:
+                continue
+            except ImportError:
+                # A stream whose payload type has since moved or been removed. Only the
+                # streams actually replayed need to be loadable; opening one by name
+                # still raises.
+                logger.warning("Skipping stream with unresolvable payload type", stream=name)
                 continue
         return min(candidates) if candidates else None
 

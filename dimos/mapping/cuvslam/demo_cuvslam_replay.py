@@ -18,7 +18,7 @@
         --dataset ~/datasets/d455/sf_office_stairs/main.db
 
 Same wiring as ``demo-cuvslam-realsense`` with the camera swapped for a replay of a
-memory2 recording. It is the only way to exercise the tracker on a machine with no
+memory recording. It is the only way to exercise the tracker on a machine with no
 camera attached (macOS has no realsense support), and the only way to get a repeatable
 trajectory out of it.
 
@@ -34,7 +34,6 @@ from __future__ import annotations
 from typing import Any
 
 import reactivex as rx
-from reactivex import operators as ops
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
@@ -43,8 +42,8 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.mapping.cuvslam.cuvslam import CuvslamOdometry
 from dimos.mapping.odometry_hist import OdometryHist
-from dimos.memory2.replay import resolve_db_path
-from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory.replay import resolve_db_path
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -63,8 +62,6 @@ class CuvslamReplayConfig(ModuleConfig):
     left_info_stream: str = "realsense_infra_left_camera_info"
     right_info_stream: str = "realsense_infra_right_camera_info"
     tf_stream: str = "tf"
-    # Enough to carry the whole static chain, which repeats every few messages.
-    tf_messages: int = 100
 
 
 class CuvslamReplay(Module):
@@ -107,14 +104,10 @@ class CuvslamReplay(Module):
             self.register_disposable(
                 replay.stream(stream_name).observable().subscribe(on_next=self.camera_info.publish)
             )
-        # The recorded tf runs at the lidar's rate, and cuVSLAM stops reading it the
-        # moment the rig resolves. Replayed whole it just floods the native module's
-        # queue, which starves the image handler and skews the stereo pairs apart.
+        # tf has to keep flowing: the tracker looks the rig up at each image's stamp, so
+        # stopping once the rig first resolves leaves every later frame unplaceable.
         self.register_disposable(
-            replay.stream(self.config.tf_stream)
-            .observable()
-            .pipe(ops.take(self.config.tf_messages))
-            .subscribe(on_next=self.tf.publish)
+            replay.stream(self.config.tf_stream).observable().subscribe(on_next=self.tf.publish)
         )
 
     def _publish_stereo_pair(self, pair: tuple[Image, Image]) -> None:
