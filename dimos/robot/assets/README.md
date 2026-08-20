@@ -20,7 +20,7 @@ except at the root package to avoid accidental import side effects.
 Assets live under:
 
 ```text
-<platform user cache>/dimos/robot_assets/
+<DimOS cache root>/robot_assets/
 ├── sources/                 # Git checkouts by source identity
 ├── locks/                   # per-source file locks
 └── derived/
@@ -34,6 +34,13 @@ Assets live under:
 - update clean cached repos before use;
 - warn and keep cached content if update fails;
 - warn and skip update for dirty cached repos, preserving local edits.
+
+`dimos cache clean` removes robot assets along with all other DimOS caches.
+Because source entries are Git checkouts, the command preserves checkouts with
+uncommitted changes, untracked files, local-only commits, or Git state that
+cannot be inspected. It removes the remaining cache entries and exits with
+status 1 when anything is preserved. Use `dimos cache clean --force` to delete
+the preserved checkouts too.
 
 ## Using a robot description source
 

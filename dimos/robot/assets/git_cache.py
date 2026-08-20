@@ -26,9 +26,10 @@ import warnings
 
 from filelock import FileLock
 from git import GitCommandError, InvalidGitRepositoryError, NoSuchPathError, Repo
-from platformdirs import user_cache_path
 
-DEFAULT_ROBOT_ASSET_CACHE_ROOT = user_cache_path("dimos", appauthor=False) / "robot_assets"
+from dimos.constants import CACHE_DIR
+
+DEFAULT_ROBOT_ASSET_CACHE_ROOT = CACHE_DIR / "robot_assets"
 
 
 class GitAssetCacheError(RuntimeError):

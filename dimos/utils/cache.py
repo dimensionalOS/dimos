@@ -27,11 +27,13 @@ from typing import ParamSpec, TypeVar
 import uuid
 
 from filelock import FileLock, Timeout
+from git import GitCommandError, InvalidGitRepositoryError, NoSuchPathError, Repo
 
 from dimos.constants import CACHE_DIR, STATE_DIR
 
 _CACHE_LOCK_DIR = STATE_DIR / "cache-users"
 _CACHE_GATE_PATH = STATE_DIR / "cache-clean.lock"
+_ROBOT_ASSET_SOURCES_DIR = CACHE_DIR / "robot_assets" / "sources"
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
@@ -43,7 +45,7 @@ class CacheInUseError(RuntimeError):
 
 @dataclass(frozen=True)
 class CacheIssue:
-    """A cache path that could not be removed."""
+    """A cache path that was skipped or could not be removed."""
 
     path: Path
     reason: str
@@ -54,28 +56,104 @@ class CacheCleanResult:
     """Summary returned by :func:`clean_caches`."""
 
     cleaned: list[Path] = field(default_factory=list)
+    skipped: list[CacheIssue] = field(default_factory=list)
     failed: list[CacheIssue] = field(default_factory=list)
 
     @property
     def complete(self) -> bool:
         """Whether every discovered cache path was removed."""
-        return not self.failed
+        return not self.skipped and not self.failed
 
 
-def clean_caches() -> CacheCleanResult:
-    """Remove all files beneath the DimOS cache root."""
+def clean_caches(*, force: bool = False) -> CacheCleanResult:
+    """Remove files beneath the DimOS cache root.
+
+    Robot asset Git checkouts containing local work are preserved unless
+    ``force`` is true. Other cache entries are still removed.
+    """
     result = CacheCleanResult()
     target = CACHE_DIR.absolute()
     if not _lexists(target):
         return result
 
-    try:
-        _remove_path(target)
-    except OSError as error:
-        result.failed.append(CacheIssue(target, str(error)))
-    else:
+    protected = {} if force else _protected_robot_checkouts()
+    result.skipped.extend(CacheIssue(path, reason) for path, reason in protected.items())
+    if _remove_except(target, set(protected), result):
         result.cleaned.append(target)
     return result
+
+
+def _protected_robot_checkouts() -> dict[Path, str]:
+    sources_root = _ROBOT_ASSET_SOURCES_DIR.absolute()
+    if not _lexists(sources_root) or sources_root.is_symlink() or not sources_root.is_dir():
+        return {}
+
+    protected: dict[Path, str] = {}
+
+    def protect_unreadable(error: OSError) -> None:
+        protected[sources_root] = f"could not inspect robot asset checkouts: {error}"
+
+    for directory, dirnames, filenames in os.walk(
+        sources_root,
+        followlinks=False,
+        onerror=protect_unreadable,
+    ):
+        if ".git" not in dirnames and ".git" not in filenames:
+            continue
+
+        checkout = Path(directory).absolute()
+        reason = _git_protection_reason(checkout)
+        if reason is not None:
+            protected[checkout] = reason
+
+        # Source repositories may contain nested repositories. Their state is
+        # represented by the outer checkout and must not be inspected twice.
+        dirnames.clear()
+
+    return protected
+
+
+def _git_protection_reason(checkout: Path) -> str | None:
+    try:
+        repo = Repo(checkout)
+        if repo.is_dirty(untracked_files=True):
+            return "Git checkout has local changes"
+        local_commits = repo.git.rev_list("HEAD", "--not", "--remotes", "--tags")
+    except (GitCommandError, InvalidGitRepositoryError, NoSuchPathError, OSError) as error:
+        return f"could not inspect Git checkout: {error}"
+
+    if local_commits.strip():
+        return "Git checkout has local-only commits"
+    return None
+
+
+def _remove_except(
+    path: Path,
+    protected: set[Path],
+    result: CacheCleanResult,
+) -> bool:
+    if path in protected:
+        return False
+
+    protected_below = {item for item in protected if _is_below(item, path)}
+    if not protected_below:
+        try:
+            _remove_path(path)
+        except OSError as error:
+            result.failed.append(CacheIssue(path, str(error)))
+            return False
+        return True
+
+    try:
+        children = tuple(path.iterdir())
+    except OSError as error:
+        result.failed.append(CacheIssue(path, str(error)))
+        return False
+
+    removed_any = False
+    for child in children:
+        removed_any = _remove_except(child, protected_below, result) or removed_any
+    return removed_any
 
 
 @contextlib.contextmanager
@@ -129,6 +207,10 @@ def _remove_path(path: Path) -> None:
         path.unlink()
     else:
         shutil.rmtree(path)
+
+
+def _is_below(path: Path, parent: Path) -> bool:
+    return path != parent and parent in path.parents
 
 
 def _lexists(path: Path) -> bool:

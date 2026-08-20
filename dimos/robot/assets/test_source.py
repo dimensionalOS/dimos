@@ -17,7 +17,12 @@ from pathlib import Path
 
 import pytest
 
-from dimos.robot.assets.git_cache import GitAssetCache, GitAssetCheckout
+from dimos.constants import CACHE_DIR
+from dimos.robot.assets.git_cache import (
+    DEFAULT_ROBOT_ASSET_CACHE_ROOT,
+    GitAssetCache,
+    GitAssetCheckout,
+)
 from dimos.robot.assets.source import RobotDescriptionPath, RobotDescriptionSource
 
 
@@ -29,6 +34,10 @@ class RecordingGitAssetCache(GitAssetCache):
     def resolve(self, repo_url: str, ref: str) -> GitAssetCheckout:
         self.resolve_calls.append((repo_url, ref))
         return GitAssetCheckout(path=self.checkout_path, repo_url=repo_url, ref=ref)
+
+
+def test_default_robot_asset_cache_is_owned_by_dimos_cache_root() -> None:
+    assert DEFAULT_ROBOT_ASSET_CACHE_ROOT == CACHE_DIR / "robot_assets"
 
 
 @pytest.fixture()
