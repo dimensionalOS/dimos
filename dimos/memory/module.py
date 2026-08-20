@@ -21,6 +21,7 @@ import enum
 import inspect
 import os
 from pathlib import Path
+import pickle
 import time
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
@@ -58,6 +59,16 @@ logger = setup_logger()
 T = TypeVar("T")
 TIn = TypeVar("TIn")
 TOut = TypeVar("TOut")
+
+
+def _snapshot_recording_message(message: Any) -> Any:
+    """Detach mutable publisher-owned state before queueing a recording."""
+    if getattr(message, "msg_name", None) == "sensor_msgs.PointCloud2":
+        # PointCloud2 wraps mutable native Open3D buffers. Use its explicit
+        # pickle state protocol to detach those buffers without introducing an
+        # extra lossy LCM timestamp conversion before storage encoding.
+        return pickle.loads(pickle.dumps(message))
+    return copy.copy(message)
 
 
 def stream_to_port(stream: Stream[T], out: Out[T]) -> DisposableBase:
@@ -440,7 +451,15 @@ class Recorder(MemoryModule):
                 tags={"reception_ts": recv_ts},
                 _data=msg,
             )
-            self._record_writer.submit(backend, backend.prepare_append(observation))
+            prepared = backend.prepare_append(observation)
+            if getattr(msg, "msg_name", None) == "sensor_msgs.PointCloud2":
+                assert prepared.encoded is not None
+                frozen = backend.codec.decode(prepared.encoded)
+                if round(frozen.ts * 1e9) != round(ts * 1e9):
+                    frozen.ts = ts
+                    observation._data = frozen
+                    prepared = backend.prepare_append(observation)
+            self._record_writer.submit(backend, prepared)
 
         recording_queue = RecorderQueue(
             name,
@@ -458,7 +477,7 @@ class Recorder(MemoryModule):
             # publishers deliberately reuse a payload object and update its
             # timestamp on the next tick; retaining that wrapper would record
             # the later timestamp after an encoder or SQLite stall.
-            lambda msg: recording_queue.submit((time.time(), copy.copy(msg)))
+            lambda msg: recording_queue.submit((time.time(), _snapshot_recording_message(msg)))
         )
         self._recording_subscriptions.append(subscription)
         self.register_disposable(subscription)

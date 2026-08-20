@@ -18,7 +18,16 @@ import threading
 
 import pytest
 
+from dimos.memory.module import _snapshot_recording_message
 from dimos.memory.recorder_queue import RecorderFailedError, RecorderQueue
+
+
+class _ReusedPointCloud:
+    msg_name = "sensor_msgs.PointCloud2"
+
+    def __init__(self) -> None:
+        self.ts = 1.0
+        self.points = [[1.0, 2.0, 3.0]]
 
 
 def test_recorder_queue_preserves_fifo_during_stall() -> None:
@@ -75,3 +84,14 @@ def test_recorder_queue_fails_instead_of_dropping_when_full() -> None:
     release.set()
     with pytest.raises(RecorderFailedError, match="failed"):
         recorder_queue.close(timeout_s=1.0)
+
+
+def test_pointcloud_snapshot_detaches_nested_mutable_state() -> None:
+    source = _ReusedPointCloud()
+    snapshot = _snapshot_recording_message(source)
+
+    source.ts = 2.0
+    source.points[0][0] = 9.0
+
+    assert snapshot.ts == 1.0
+    assert snapshot.points == [[1.0, 2.0, 3.0]]
