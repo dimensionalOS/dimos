@@ -34,6 +34,9 @@ class RecordWriterStatus:
     transactions: int
     pending: int
     failed: str | None
+    mean_rows_per_transaction: float
+    max_rows_per_transaction: int
+    commit_p99_ms: float
 
 
 @dataclass(frozen=True)
@@ -54,6 +57,8 @@ class RecordWriter:
         self._committed = 0
         self._transactions = 0
         self._failure: BaseException | None = None
+        self._transaction_rows: list[int] = []
+        self._commit_durations_s: list[float] = []
         self._closed = False
         self._thread = threading.Thread(target=self._run, name="recorder-sqlite-writer", daemon=True)
         self._thread.start()
@@ -92,12 +97,18 @@ class RecordWriter:
 
     def status(self) -> RecordWriterStatus:
         with self._lock:
+            rows = self._transaction_rows
+            durations = sorted(self._commit_durations_s)
+            p99_index = max(0, min(len(durations) - 1, round(0.99 * len(durations)) - 1))
             return RecordWriterStatus(
                 submitted=self._submitted,
                 committed=self._committed,
                 transactions=self._transactions,
                 pending=self._submitted - self._committed,
                 failed=str(self._failure) if self._failure is not None else None,
+                mean_rows_per_transaction=sum(rows) / len(rows) if rows else 0.0,
+                max_rows_per_transaction=max(rows, default=0),
+                commit_p99_ms=durations[p99_index] * 1e3 if durations else 0.0,
             )
 
     def _run(self) -> None:
@@ -143,6 +154,7 @@ class RecordWriter:
         committed: list[_Write] = []
         for key, items in grouped.items():
             backend = backends[key]
+            started = time.perf_counter()
             try:
                 for item in items:
                     backend.persist_prepared(item.prepared)
@@ -155,6 +167,8 @@ class RecordWriter:
             committed.extend(items)
             with self._lock:
                 self._transactions += 1
+                self._transaction_rows.append(len(items))
+                self._commit_durations_s.append(time.perf_counter() - started)
 
         with self._lock:
             self._committed += len(committed)

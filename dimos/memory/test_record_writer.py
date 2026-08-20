@@ -69,6 +69,8 @@ def test_writer_groups_rows_and_notifies_only_after_commit() -> None:
     ]
     assert writer.status().transactions == 1
     assert writer.status().committed == 3
+    assert writer.status().mean_rows_per_transaction == 3.0
+    assert writer.status().max_rows_per_transaction == 3
 
 
 def test_writer_rolls_back_and_reports_failure() -> None:

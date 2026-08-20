@@ -228,6 +228,7 @@ class FidelityReport(BaseModel):
     timings: dict[str, dict[str, float | int]] = Field(default_factory=dict)
     bandwidth: BandwidthMetrics | None = None
     environment: dict[str, str | int] = Field(default_factory=dict)
+    recorder: dict[str, Any] = Field(default_factory=dict)
 
     def write(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

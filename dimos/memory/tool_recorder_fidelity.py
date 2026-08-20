@@ -294,6 +294,7 @@ class FidelityRecorder(Recorder):
                 "measurement_elapsed_s": measurement_elapsed_s,
                 "process_io": process_io,
                 "sqlite_active_files": active_files,
+                "recorder": super().recording_status(),
             }
 
 
@@ -579,6 +580,7 @@ def run_harness(
         },
         bandwidth=bandwidth,
         environment=environment_metadata(),
+        recorder=snapshot.get("recorder", {}),
     )
     report.write(output_dir / "report.json")
     (output_dir / "source_manifest.json").write_text(source_run.model_dump_json(indent=2) + "\n")
