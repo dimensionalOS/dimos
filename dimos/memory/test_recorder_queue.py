@@ -34,10 +34,13 @@ def test_recorder_queue_preserves_fifo_during_stall() -> None:
     release = threading.Event()
     processed: list[int] = []
 
-    def process(value: int) -> None:
+    accepted_times: list[float] = []
+
+    def process(value: int, accepted_monotonic: float) -> None:
         if value == 0:
             assert release.wait(timeout=1.0)
         processed.append(value)
+        accepted_times.append(accepted_monotonic)
 
     recorder_queue = RecorderQueue("camera", process, max_pending=16, max_backlog_s=1.0)
     for value in range(10):
@@ -47,11 +50,15 @@ def test_recorder_queue_preserves_fifo_during_stall() -> None:
     recorder_queue.close(timeout_s=1.0)
 
     assert processed == list(range(10))
-    assert recorder_queue.status().completed == 10
+    status = recorder_queue.status()
+    assert accepted_times == sorted(accepted_times)
+    assert status.completed == 10
+    assert status.max_pending == 10
+    assert status.max_oldest_age_s > 0
 
 
 def test_recorder_queue_reports_worker_failure() -> None:
-    def process(_: int) -> None:
+    def process(_: int, __: float) -> None:
         raise OSError("disk failed")
 
     recorder_queue = RecorderQueue("imu", process, max_pending=4, max_backlog_s=1.0)
@@ -69,7 +76,7 @@ def test_recorder_queue_fails_instead_of_dropping_when_full() -> None:
     release = threading.Event()
     started = threading.Event()
 
-    def process(_: int) -> None:
+    def process(_: int, __: float) -> None:
         started.set()
         release.wait(timeout=1.0)
 

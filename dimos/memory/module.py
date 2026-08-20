@@ -436,7 +436,7 @@ class Recorder(MemoryModule):
                 )
             return msg, ts, pose, recv_ts
 
-        def process(stamped: tuple[float, Any]) -> None:
+        def process(stamped: tuple[float, Any], accepted_monotonic: float) -> None:
             loop = self._loop
             if loop is None or not loop.is_running():
                 raise RecorderFailedError("Recorder event loop is not running")
@@ -461,7 +461,12 @@ class Recorder(MemoryModule):
                     frozen.ts = ts
                     observation._data = frozen
                     prepared = backend.prepare_append(observation)
-            self._record_writer.submit(backend, prepared)
+            self._record_writer.submit(
+                backend,
+                prepared,
+                accepted_monotonic=accepted_monotonic,
+                stream_name=name,
+            )
 
         recording_queue = RecorderQueue(
             name,
@@ -547,7 +552,7 @@ class Recorder(MemoryModule):
             return
         tf_stream = self.store.stream("tf", TFMessage)
 
-        def process_tf(msg: TFMessage) -> None:
+        def process_tf(msg: TFMessage, accepted_monotonic: float) -> None:
             for transform in msg.transforms:
                 backend = cast("Backend[Any]", tf_stream._source)  # type: ignore[attr-defined]
                 observation = Observation(
@@ -556,7 +561,12 @@ class Recorder(MemoryModule):
                     pose=None,
                     _data=TFMessage(transform),
                 )
-                self._record_writer.submit(backend, backend.prepare_append(observation))
+                self._record_writer.submit(
+                    backend,
+                    backend.prepare_append(observation),
+                    accepted_monotonic=accepted_monotonic,
+                    stream_name="tf",
+                )
 
         recording_queue = RecorderQueue(
             "tf",
