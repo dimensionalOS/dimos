@@ -349,6 +349,7 @@ class CpuShmQueue(FrameChannel):
         self._frame_nbytes = int(self._dtype.itemsize * np.prod(self._shape))
         self._slots = int(slots)
         self._pub_lock = threading.Lock()
+        self.dropped_since_last_read = 0
 
         data_size = self._header_bytes + self._slots * self._frame_nbytes
         ctrl_size = self._CTRL_SLOTS * 8
@@ -468,6 +469,7 @@ class CpuShmQueue(FrameChannel):
     def read(
         self, last_seq: int = -1, require_new: bool = True
     ) -> tuple[int, int, NDArray[np.uint8] | None]:
+        self.dropped_since_last_read = 0
         current = int(self._ctrl[0])
         if current <= 0:
             return last_seq, int(self._ctrl[1]), None
@@ -480,6 +482,7 @@ class CpuShmQueue(FrameChannel):
             want = max(1, last_seq + 1)
             oldest = max(1, current - self._slots + 1)
             if want < oldest:
+                self.dropped_since_last_read = oldest - want
                 logger.warning(
                     f"CpuShmQueue reader outpaced: dropping {oldest - want} message(s) "
                     f"(seq {want} -> {oldest}); increase slots or poll faster"
@@ -516,6 +519,7 @@ class CpuShmQueue(FrameChannel):
         obj._frame_nbytes = int(desc["frame_nbytes"])
         obj._slots = int(desc["slots"])
         obj._pub_lock = threading.Lock()
+        obj.dropped_since_last_read = 0
         data_name = desc["data_name"]
         ctrl_name = desc["ctrl_name"]
         try:

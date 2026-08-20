@@ -438,6 +438,12 @@ class Recorder(MemoryModule):
         )
         self._recording_subscriptions.append(subscription)
         self.register_disposable(subscription)
+        transport = getattr(input_topic, "_transport", None)
+        subscribe_errors = getattr(transport, "subscribe_errors", None)
+        if subscribe_errors is not None:
+            error_subscription = Disposable(subscribe_errors(recording_queue.fail))
+            self._recording_subscriptions.append(error_subscription)
+            self.register_disposable(error_subscription)
 
     def _prepare_streams(self) -> None:
         """On APPEND, drop the streams this recorder is about to (re)write — the

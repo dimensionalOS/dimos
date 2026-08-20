@@ -31,7 +31,7 @@ import numpy.typing as npt
 
 from dimos.protocol.pubsub.encoders import LCMEncoderMixin, PickleEncoderMixin
 from dimos.protocol.pubsub.impl.lcmpubsub import Topic
-from dimos.protocol.pubsub.shm.ipc_factory import CpuShmChannel, FrameChannel
+from dimos.protocol.pubsub.shm.ipc_factory import CpuShmChannel, CpuShmQueue, FrameChannel
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.utils.logging_config import setup_logger
 
@@ -79,6 +79,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
             "channel",
             "cp",
             "dtype",
+            "error_subs",
             "last_local_payload",
             "last_seq",
             "publish_buffer",
@@ -96,6 +97,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
             self.shape = (self.capacity + 20,)  # +20 for header: length(4) + uuid(16)
             self.dtype = np.uint8
             self.subs: list[Callable[[bytes, str], None]] = []
+            self.error_subs: list[Callable[[BaseException], None]] = []
             self.stop = threading.Event()
             self.thread: threading.Thread | None = None
             self.last_seq = 0  # start at 0 to avoid b"" on first poll
@@ -219,6 +221,21 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
 
         return _unsub
 
+    def subscribe_errors(
+        self, topic: str, callback: Callable[[BaseException], None]
+    ) -> Callable[[], None]:
+        """Subscribe to reliable-transport delivery failures for *topic*."""
+        st = self._ensure_topic(topic)
+        st.error_subs.append(callback)
+
+        def _unsub() -> None:
+            try:
+                st.error_subs.remove(callback)
+            except ValueError:
+                pass
+
+        return _unsub
+
     # Capacity mgmt
 
     def reconfigure(self, topic: str, *, capacity: int) -> dict:  # type: ignore[type-arg]
@@ -274,6 +291,14 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
     def _fanout_loop(self, topic: str, st: _TopicState) -> None:
         while not st.stop.is_set():
             seq, _ts_ns, view = st.channel.read(last_seq=st.last_seq, require_new=True)
+            dropped = getattr(st.channel, "dropped_since_last_read", 0)
+            if dropped:
+                error = RuntimeError(
+                    f"Shared-memory reader for {topic!r} lost {dropped} message(s) "
+                    "because its reliable ring overflowed"
+                )
+                for callback in list(st.error_subs):
+                    callback(error)
             if view is None:
                 time.sleep(0.001)
                 continue
@@ -327,6 +352,16 @@ class PickleSharedMemory(
     """SharedMemory pubsub that transports arbitrary Python objects via pickle."""
 
     ...
+
+
+class ReliablePickleSharedMemory(PickleSharedMemory):
+    """Pickled shared memory with an explicit multi-slot delivery ring."""
+
+    _channel_class = CpuShmQueue
+
+    def __init__(self, *, slots: int = 256, **kwargs: Any) -> None:
+        self._channel_kwargs = {"slots": slots}
+        super().__init__(**kwargs)
 
 
 class LCMSharedMemoryPubSubBase(PubSub[Topic, Any]):

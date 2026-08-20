@@ -22,6 +22,7 @@ from dimos.core.transport import (
     LCMTransport,
     SHMTransport,
     pLCMTransport,
+    pSHMQueueTransport,
     pSHMTransport,
 )
 from dimos.msgs.sensor_msgs.Image import Image
@@ -31,6 +32,7 @@ from dimos.protocol.pubsub.registry import (
     subscribe_pubsub_uri,
     supported_protos,
 )
+from dimos.protocol.pubsub.shm.ipc_factory import CpuShmQueue
 
 
 def test_supported_protos_includes_known_set() -> None:
@@ -100,6 +102,13 @@ def test_make_pubsub_transport_plcm_uses_pLCMTransport() -> None:
 def test_make_pubsub_transport_pshm_uses_pSHMTransport() -> None:
     t = make_pubsub_transport("pshm:color_image")
     assert isinstance(t, pSHMTransport)
+
+
+def test_reliable_shm_transport_uses_configured_ring() -> None:
+    transport = pSHMQueueTransport("reliable-test", slots=19, default_capacity=1024)
+
+    assert transport.slots == 19
+    assert transport.shm._channel_class is CpuShmQueue
 
 
 def test_make_pubsub_transport_shm_uses_SHMTransport() -> None:

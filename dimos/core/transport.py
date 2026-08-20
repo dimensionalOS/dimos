@@ -226,6 +226,54 @@ class pSHMTransport(PubSubTransport[T]):
         self._started = False
 
 
+class pSHMQueueTransport(PubSubTransport[T]):
+    """Pickled SHM transport that preserves messages until its ring overflows."""
+
+    _started: bool = False
+
+    def __init__(self, topic: str, *, slots: int = 256, **kwargs: Any) -> None:
+        super().__init__(topic)
+        from dimos.protocol.pubsub.impl.shmpubsub import ReliablePickleSharedMemory
+
+        self.shm = ReliablePickleSharedMemory(slots=slots, **kwargs)
+        self.slots = slots
+
+    def __reduce__(self):  # type: ignore[no-untyped-def]
+        return (
+            functools.partial(
+                pSHMQueueTransport,
+                default_capacity=self.shm.config.default_capacity,
+                slots=self.slots,
+            ),
+            (self.topic,),
+        )
+
+    def broadcast(self, _, msg: T) -> None:  # type: ignore[no-untyped-def]
+        if not self._started:
+            self.start()
+        self.shm.publish(self.topic, msg)
+
+    def subscribe(
+        self, callback: Callable[[T], None], selfstream: In[T] | None = None  # type: ignore[override]
+    ) -> Callable[[], None]:
+        if not self._started:
+            self.start()
+        return self.shm.subscribe(self.topic, lambda msg, topic: callback(msg))
+
+    def subscribe_errors(self, callback: Callable[[BaseException], None]) -> Callable[[], None]:
+        if not self._started:
+            self.start()
+        return self.shm.subscribe_errors(self.topic, callback)
+
+    def start(self) -> None:
+        self.shm.start()
+        self._started = True
+
+    def stop(self) -> None:
+        self.shm.stop()
+        self._started = False
+
+
 class SHMTransport(PubSubTransport[T]):
     _started: bool = False
 
