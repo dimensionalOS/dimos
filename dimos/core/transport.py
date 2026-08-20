@@ -254,7 +254,9 @@ class pSHMQueueTransport(PubSubTransport[T]):
         self.shm.publish(self.topic, msg)
 
     def subscribe(
-        self, callback: Callable[[T], None], selfstream: In[T] | None = None  # type: ignore[override]
+        self,
+        callback: Callable[[T], None],
+        selfstream: In[T] | None = None,  # type: ignore[override]
     ) -> Callable[[], None]:
         if not self._started:
             self.start()
