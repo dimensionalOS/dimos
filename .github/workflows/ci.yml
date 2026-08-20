@@ -960,9 +960,8 @@ jobs:
   benchmark:
     timeout-minutes: 30
     runs-on: ubuntu-latest
-    permissions:
-      contents: write  # To push the benchmark series to gh-pages branch
-      pull-requests: write  # For PR comments
+    permissions:  # Restricted to run untested code. Reporting in next job.
+      contents: read  # For checkout
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -999,6 +998,26 @@ jobs:
         run: uv run pytest -m '' --no-cov dimos/robot/unitree/go2/test_replay_benchmark.py
         env:
           DIMOS_BENCH_METRICS: benchmark.json
+      - name: Upload the metrics
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-metrics
+          path: benchmark.json
+
+  benchmark-track:
+    needs: benchmark
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # To push the benchmark series to gh-pages branch
+      pull-requests: write  # For PR comments
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Download the metrics
+        uses: actions/download-artifact@v8
+        with:
+          name: benchmark-metrics
       # Re-runs reuse the original event payload, which predates any label
       # added in response to a failure — so query the live labels instead.
       - name: Check for an acknowledged regression
@@ -1066,7 +1085,7 @@ jobs:
     - tests
     - cmu-nav-natives
     - self-hosted-tests
-    - benchmark
+    - benchmark-track
     #- self-hosted-large-tests
 
     runs-on: ubuntu-latest
