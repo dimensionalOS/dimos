@@ -291,9 +291,6 @@ class RecorderConfig(MemoryModuleConfig):
     stream_codecs: dict[str, str] = Field(default_factory=dict)
     # Port names that inherently have no pose to anchor (command streams, etc.).
     poseless_streams: list[str] = Field(default_factory=list)
-    max_pending_messages: int = Field(default=65_536, ge=1)
-    max_backlog_s: float = Field(default=2.0, gt=0)
-    shutdown_timeout_s: float = Field(default=10.0, gt=0)
 
 
 PoseSetter = Callable[[Any], "Awaitable[Pose | None]"]
@@ -460,8 +457,6 @@ class Recorder(MemoryModule):
         recording_queue = RecorderQueue(
             name,
             process,
-            max_pending=self.config.max_pending_messages,
-            max_backlog_s=self.config.max_backlog_s,
         )
         self._recording_queues[name] = recording_queue
 
@@ -556,8 +551,6 @@ class Recorder(MemoryModule):
         recording_queue = RecorderQueue(
             "tf",
             process_tf,
-            max_pending=self.config.max_pending_messages,
-            max_backlog_s=self.config.max_backlog_s,
         )
         self._recording_queues["tf"] = recording_queue
         subscription = Disposable(self.tf.subscribe(recording_queue.submit))
@@ -575,11 +568,11 @@ class Recorder(MemoryModule):
         failure: BaseException | None = None
         for recording_queue in self._recording_queues.values():
             try:
-                recording_queue.close(self.config.shutdown_timeout_s)
+                recording_queue.close()
             except BaseException as error:
                 failure = failure or error
         try:
-            self._record_writer.close(self.config.shutdown_timeout_s)
+            self._record_writer.close()
         except BaseException as error:
             failure = failure or error
         super().stop()
