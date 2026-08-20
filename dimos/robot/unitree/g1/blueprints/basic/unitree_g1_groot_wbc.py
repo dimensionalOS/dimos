@@ -328,14 +328,17 @@ else:
     # One process per heavy module; fewer workers starve the Rerun bridge.
     _n_workers = 10
     # Real hardware needs the arms held -- kd damping alone would let
-    # them sag toward singular configurations between trajectories.
+    # them sag toward singular configurations between trajectories. The hold
+    # starts from the measured pose, not ARM_DEFAULT_POSE: the servo has no
+    # ramp, so a configured pose slams the arms there from wherever the robot
+    # actually is, at full GR00T stiffness, on the very first tick.
     _arm_holder = TaskConfig(
         name="servo_arms",
         type="servo",
         joint_names=g1_arms,
         priority=10,
         auto_start=True,
-        params={"default_positions": ARM_DEFAULT_POSE},
+        params={"hold_measured_on_start": True},
     )
     # Same nav middle as unitree-g1-nav-simple, fed by Point-LIO from the
     # MID-360, executed through the coordinator's twist_command.
