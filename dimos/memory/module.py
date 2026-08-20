@@ -570,13 +570,6 @@ class Recorder(MemoryModule):
         self.register_disposable(subscription)
 
     @rpc
-    def flush(self) -> None:
-        """Wait until every observation accepted by Recorder is persisted."""
-        for recording_queue in self._recording_queues.values():
-            recording_queue.flush(self.config.shutdown_timeout_s)
-        self._record_writer.flush(self.config.shutdown_timeout_s)
-
-    @rpc
     def stop(self) -> None:
         """Stop inputs, drain all accepted observations, then close storage."""
         if not hasattr(self, "_recording_queues"):
