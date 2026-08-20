@@ -358,8 +358,11 @@ def make_message(stream: StreamProfile, sequence: int, ts_ns: int, seed: int) ->
             points = rng.normal(size=(stream.point_count or 0, 3)).astype(np.float32)
             template = PointCloud2.from_numpy(points, frame_id=stream.frame_id, timestamp=ts)
             _MESSAGE_TEMPLATES[key] = template
-        template.ts = ts
-        return template
+        # The payload tensor is immutable for this workload, but the timestamp
+        # is per observation. Return a distinct message wrapper so an accepted
+        # publication can never be changed by the source's next tick while a
+        # deliberately stalled Recorder still holds it.
+        return PointCloud2(template._pcd_tensor, frame_id=stream.frame_id, ts=ts)
     if stream.kind == "tf":
         data_frames = (
             "rgb_link",
