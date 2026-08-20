@@ -27,7 +27,7 @@ unitree_g1_shm = autoconnect(
     unitree_g1.transports(
         {
             ("color_image", Image): pSHMTransport(
-                "/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+                "/color_image", queue_size=1, default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
             ),
         }
     ),
