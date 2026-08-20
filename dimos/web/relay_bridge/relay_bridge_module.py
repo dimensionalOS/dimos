@@ -41,6 +41,7 @@ from dataclasses import dataclass, field
 import functools
 import json
 import math
+from pathlib import Path
 import socket
 import threading
 import time
@@ -87,7 +88,7 @@ from dimos.web.relay_bridge.protocol import (
     TeleopStop as WireTeleopStop,
     Twist as WireTwist,
 )
-from dimos.web.relay_bridge.relay_process import RelayProcess, ensure_cockpit_dist
+from dimos.web.relay_bridge.relay_process import RelayProcess, ensure_web_dist
 from dimos.web.relay_bridge.wt_client import (
     RelayClient,
     RelayRejectedError,
@@ -193,9 +194,14 @@ class RelayBridgeConfig(ModuleConfig):
     """HTTP port of the spawned local relay; 0 picks an ephemeral port (tests)."""
     open_browser: bool = True
     """Open the local relay's page once it is up (local mode only)."""
-    cockpit_build: bool = True
-    """Build the Cockpit dist before spawning the local relay when it is
-    missing or stale (checkouts only; wheels ship it pre-built)."""
+    web_build: bool = True
+    """Build the web dists (SDK bundle + Cockpit) before spawning the local
+    relay when they are missing or stale (checkouts only; wheels ship them
+    pre-built)."""
+    serve_dir: str | None = None
+    """Directory the spawned local relay serves at / instead of the Cockpit
+    (index.html for /); /api/* and /sdk.js keep precedence over it. Local
+    relay only: rejected when relay_url attaches to an existing relay."""
     robot_id: str = ""
     """Relay identity; empty falls back to g.robot_id, then the hostname."""
     robot_name: str = ""
@@ -421,6 +427,8 @@ class RelayBridgeModule(Module):
         self._build_cancel: threading.Event | None = None
         self._session: _Session | None = None
         self._url: str | None = None
+        # Resolved config.serve_dir, kept for relay-child respawns.
+        self._serve_dir: Path | None = None
         self._robot_info: RobotInfo | None = None
         self._manifest: RobotManifest | None = None
         self._channel_defs: tuple[ChannelDef, ...] = ()
@@ -524,16 +532,25 @@ class RelayBridgeModule(Module):
                     )
             self._manifest = manifest.model_dump()
             self._url = self.config.relay_url or self.config.g.relay_url
+            if self._url is not None and self.config.serve_dir is not None:
+                raise RuntimeError(
+                    "serve_dir requires the spawned local relay (--local-relay); "
+                    "an external relay (--relay-url) cannot serve local files"
+                )
             if self._url is None:
                 # Probe before the (expensive) build: a start that will lose
                 # the port must not rewrite the dist a running relay serves.
                 _probe_local_port(self.config.local_port)
-                if self.config.cockpit_build:
+                # Before the build too: fail fast on a typo'd directory.
+                self._serve_dir = self._resolve_serve_dir()
+                if self.config.web_build:
                     try:
-                        await self._build_cockpit()
+                        await self._build_web_dist()
                     except Exception:
-                        logger.exception("cockpit build failed; continuing with the relay only")
-                self._url = await _blocking_call(self._spawn_relay, self.config.open_browser)
+                        logger.exception("web build failed; continuing with the relay only")
+                self._url = await _blocking_call(
+                    self._spawn_relay, self.config.open_browser, self._serve_dir
+                )
             # The first connect fails fast: a relay that cannot be reached at
             # startup should fail the module start visibly, not retry forever.
             session = await self._connect_and_hello()
@@ -554,8 +571,20 @@ class RelayBridgeModule(Module):
                         # its port (it has no PDEATHSIG), so surface cleanup failure.
                         logger.exception("relay bridge: stopping the local relay failed")
 
-    async def _build_cockpit(self) -> None:
-        """Build the Cockpit dist (checkouts only) before spawning the relay.
+    def _resolve_serve_dir(self) -> Path | None:
+        """Validated config.serve_dir; a clean labeled error beats the
+        relay child dying with a stderr-tail dump."""
+        if self.config.serve_dir is None:
+            return None
+        path = Path(self.config.serve_dir)
+        if not path.is_dir():
+            raise RuntimeError(
+                f"serve_dir does not exist or is not a directory: {self.config.serve_dir}"
+            )
+        return path
+
+    async def _build_web_dist(self) -> None:
+        """Build the web dists (checkouts only) before spawning the relay.
 
         The blocking build runs in a thread but stays cancellable: on
         cancellation (or module close, via _close_module) the build child is
@@ -565,7 +594,7 @@ class RelayBridgeModule(Module):
         cancel = threading.Event()
         self._build_cancel = cancel
         work = asyncio.create_task(
-            asyncio.to_thread(ensure_cockpit_dist, find_web_dir(), cancel=cancel)
+            asyncio.to_thread(ensure_web_dist, find_web_dir(), cancel=cancel)
         )
         try:
             await asyncio.shield(work)
@@ -580,7 +609,7 @@ class RelayBridgeModule(Module):
 
     def _close_module(self) -> None:
         # Runs on every stop path, including a stop() racing a still-starting
-        # main(): an in-flight cockpit build must die now, not at its timeout.
+        # main(): an in-flight web build must die now, not at its timeout.
         cancel = self._build_cancel
         if cancel is not None:
             cancel.set()
@@ -606,10 +635,10 @@ class RelayBridgeModule(Module):
             quality = candidate
         return quality
 
-    def _spawn_relay(self, open_browser: bool) -> str:
+    def _spawn_relay(self, open_browser: bool, serve_dir: Path | None) -> str:
         """Start a fresh local relay child (blocking; run via to_thread)."""
         _probe_local_port(self.config.local_port)
-        self._relay = RelayProcess(port=self.config.local_port)
+        self._relay = RelayProcess(port=self.config.local_port, serve_dir=serve_dir)
         info = self._relay.start()
         logger.info(f"local relay ready: {info.open_url}")
         if open_browser:
@@ -851,7 +880,7 @@ class RelayBridgeModule(Module):
                 logger.warning("local relay child died; respawning")
                 try:
                     await _blocking_call(self._relay.stop)
-                    self._url = await _blocking_call(self._spawn_relay, False)
+                    self._url = await _blocking_call(self._spawn_relay, False, self._serve_dir)
                 except Exception:
                     logger.exception("relay respawn failed; retrying")
                     await asyncio.sleep(_RECONNECT_PAUSE_S)
