@@ -294,8 +294,6 @@ class RecorderConfig(MemoryModuleConfig):
     max_pending_messages: int = Field(default=65_536, ge=1)
     max_backlog_s: float = Field(default=2.0, gt=0)
     shutdown_timeout_s: float = Field(default=10.0, gt=0)
-    batch_max_rows: int = Field(default=64, ge=1)
-    batch_max_delay_s: float = Field(default=0.010, gt=0)
 
 
 PoseSetter = Callable[[Any], "Awaitable[Pose | None]"]
@@ -361,10 +359,7 @@ class Recorder(MemoryModule):
         self._pose_setters = self._collect_pose_setters()
         self._recording_queues = {}
         self._recording_subscriptions = []
-        self._record_writer = RecordWriter(
-            max_rows=self.config.batch_max_rows,
-            max_delay_s=self.config.batch_max_delay_s,
-        )
+        self._record_writer = RecordWriter()
 
         # TODO: store reset API/logic is not implemented yet. This module
         # shouldn't need to know about files (SqliteStore specific), and
