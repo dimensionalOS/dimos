@@ -14,17 +14,17 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 import enum
 import inspect
 import os
 from pathlib import Path
-import sqlite3
 import time
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 from pydantic import Field, field_validator
-from reactivex import operators as ops
+from reactivex.abc import DisposableBase
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
@@ -33,6 +33,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.memory.embed import EmbedImages
+from dimos.memory.recorder_queue import RecorderFailedError, RecorderQueue
 from dimos.memory.store.null import NullStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
@@ -46,8 +47,6 @@ from dimos.utils.data import backup_file
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from reactivex.abc import DisposableBase
-
     from dimos.core.stream import Out
     from dimos.msgs.geometry_msgs.Pose import Pose
 
@@ -278,6 +277,9 @@ class RecorderConfig(MemoryModuleConfig):
     stream_codecs: dict[str, str] = Field(default_factory=dict)
     # Port names that inherently have no pose to anchor (command streams, etc.).
     poseless_streams: list[str] = Field(default_factory=list)
+    max_pending_messages: int = Field(default=65_536, ge=1)
+    max_backlog_s: float = Field(default=2.0, gt=0)
+    shutdown_timeout_s: float = Field(default=10.0, gt=0)
 
 
 PoseSetter = Callable[[Any], "Awaitable[Pose | None]"]
@@ -326,6 +328,8 @@ class Recorder(MemoryModule):
     tf: In[TFMessage]
 
     _pose_setters: dict[str, Any] = {}
+    _recording_queues: dict[str, RecorderQueue]
+    _recording_subscriptions: list[DisposableBase]
 
     @rpc
     def start(self) -> None:
@@ -338,6 +342,8 @@ class Recorder(MemoryModule):
             return
 
         self._pose_setters = self._collect_pose_setters()
+        self._recording_queues = {}
+        self._recording_subscriptions = []
 
         # TODO: store reset API/logic is not implemented yet. This module
         # shouldn't need to know about files (SqliteStore specific), and
@@ -396,7 +402,7 @@ class Recorder(MemoryModule):
         and registers the subscription for cleanup on stop().
         """
 
-        async def on_msg(stamped: tuple[float, Any]) -> None:
+        async def prepare(stamped: tuple[float, Any]) -> tuple[Any, float, Pose | None, float]:
             recv_ts, msg = stamped
             ts = self._resolve_ts(name, msg)
             pose = await self._resolve_pose(name, msg, ts)
@@ -407,11 +413,31 @@ class Recorder(MemoryModule):
                     ts,
                     getattr(msg, "ts", None),
                 )
+            return msg, ts, pose, recv_ts
+
+        def process(stamped: tuple[float, Any]) -> None:
+            loop = self._loop
+            if loop is None or not loop.is_running():
+                raise RecorderFailedError("Recorder event loop is not running")
+            msg, ts, pose, recv_ts = asyncio.run_coroutine_threadsafe(prepare(stamped), loop).result()
             stream.append(msg, ts=ts, pose=pose, tags={"reception_ts": recv_ts})
 
-        # Stamp arrival time before the coalescing dispatch queue.
-        stamped = input_topic.pure_observable().pipe(ops.map(lambda msg: (time.time(), msg)))
-        self.process_observable(stamped, on_msg)
+        recording_queue = RecorderQueue(
+            name,
+            process,
+            max_pending=self.config.max_pending_messages,
+            max_backlog_s=self.config.max_backlog_s,
+        )
+        self._recording_queues[name] = recording_queue
+
+        # Timestamp and enqueue directly in the transport callback. Recorder
+        # owns this FIFO and therefore never enters Module's latest-only async
+        # dispatcher.
+        subscription = input_topic.pure_observable().subscribe(
+            lambda msg: recording_queue.submit((time.time(), msg))
+        )
+        self._recording_subscriptions.append(subscription)
+        self.register_disposable(subscription)
 
     def _prepare_streams(self) -> None:
         """On APPEND, drop the streams this recorder is about to (re)write — the
@@ -460,12 +486,50 @@ class Recorder(MemoryModule):
             return
         tf_stream = self.store.stream("tf", TFMessage)
 
-        def on_tf(msg: TFMessage) -> None:
-            try:
-                for transform in msg.transforms:
-                    tf_stream.append(TFMessage(transform), ts=transform.ts, pose=None)
-            except sqlite3.ProgrammingError:
-                # A late LCM callback raced teardown and hit the closed store.
-                pass
+        def process_tf(msg: TFMessage) -> None:
+            for transform in msg.transforms:
+                tf_stream.append(TFMessage(transform), ts=transform.ts, pose=None)
 
-        self.register_disposable(Disposable(self.tf.subscribe(on_tf)))
+        recording_queue = RecorderQueue(
+            "tf",
+            process_tf,
+            max_pending=self.config.max_pending_messages,
+            max_backlog_s=self.config.max_backlog_s,
+        )
+        self._recording_queues["tf"] = recording_queue
+        subscription = Disposable(self.tf.subscribe(recording_queue.submit))
+        self._recording_subscriptions.append(subscription)
+        self.register_disposable(subscription)
+
+    @rpc
+    def flush(self) -> None:
+        """Wait until every observation accepted by Recorder is persisted."""
+        for recording_queue in self._recording_queues.values():
+            recording_queue.flush(self.config.shutdown_timeout_s)
+
+    @rpc
+    def recording_status(self) -> dict[str, Any]:
+        """Return per-stream ingress counts, backlog, and fatal errors."""
+        return {
+            name: status.__dict__
+            for name, recording_queue in self._recording_queues.items()
+            if (status := recording_queue.status())
+        }
+
+    @rpc
+    def stop(self) -> None:
+        """Stop inputs, drain all accepted observations, then close storage."""
+        if not hasattr(self, "_recording_queues"):
+            super().stop()
+            return
+        for subscription in self._recording_subscriptions:
+            subscription.dispose()
+        failure: BaseException | None = None
+        for recording_queue in self._recording_queues.values():
+            try:
+                recording_queue.close(self.config.shutdown_timeout_s)
+            except BaseException as error:
+                failure = failure or error
+        super().stop()
+        if failure is not None:
+            raise RecorderFailedError("Recorder failed while draining") from failure
