@@ -289,26 +289,6 @@ go2_zenoh_htc = autoconnect(
 # above stays whatever the nav/htc stacks want.
 MOTION_MID360_MOUNT = "ATHENS"
 
-# Its own raycaster tuning: emit less often than the nav stack, because the local
-# planner replans off whole windows rather than off increments.
-#
-# KNOWN ISSUE, not fixed here: the emitted window is sized to a percentile of what the
-# last ten sweeps happened to see, so it BREATHES. On 20260805-033007 its radius swung
-# 2.53 -> 5.88 m, up to 2.36 m in a single frame, and 68 % of all voxel churn the local
-# planner saw was that window moving rather than the world changing -- every collapse
-# deletes thousands of voxels the plan was routing around, every expansion invents them
-# back, and the plan flips. The fix is a fixed radius (region_radius_m=5.0, covering the
-# 5 m carrot) threaded through the raycaster's rust; it lives on ivan/feat/trajectory_ctrl
-# and is deliberately NOT part of this port, which is planner + follower only.
-_motion_raycaster = dict(
-    voxel_size=voxel_size,
-    emit_every=10,
-    global_emit_every=100,
-    min_health=-1,
-    max_health=5,
-    support_min=4,
-)
-
 # Its own MLS tuning: the local planner + follower are the precision layer (embodiment
 # 0.05 floor, clearance-governed speed), so the global graph can be permissive where
 # `_mls_planner` has to be the safety margin for BasicPathFollower. Hard clearance drops
@@ -349,9 +329,6 @@ _go2_zenoh_motion_base = autoconnect(
     go2_zenoh_raycaster,
     # Re-declared on the motion rig; autoconnect keeps the newest duplicate.
     GO2Zenoh.blueprint(mid360_mount=MOTION_MID360_MOUNT),
-    # Re-declared with the emitted window PINNED, and autoconnect keeps the
-    # newest duplicate, so this raycaster wins over go2_zenoh_raycaster's.
-    RayTracingVoxelMap.blueprint(**_motion_raycaster),
     GoalRelay.blueprint(lidar_height=ROBOT_HEIGHT),
     _mls_planner_motion.remappings([(MLSPlannerNative, "path", "planner_path")]),
     # The obstacle band rides the BODY (obstacle_model="body_band", the default): the
@@ -428,7 +405,7 @@ go2_zenoh_motion_local = autoconnect(
     GO2Zenoh.blueprint(mid360_mount=MOTION_MID360_MOUNT).remappings(
         [(GO2Zenoh, "tf", "tf_from_the_laptop_unused")]
     ),
-    RayTracingVoxelMap.blueprint(**_motion_raycaster),
+    RayTracingVoxelMap.blueprint(**ray_tracing_config.model_dump(exclude_unset=True)),
     _mls_planner_motion.remappings([(MLSPlannerNative, "path", "planner_path")]),
     GoalRelay.blueprint(lidar_height=ROBOT_HEIGHT),
     MovementManager.blueprint(),
