@@ -59,7 +59,7 @@ class RecordWriter:
                 raise RecorderFailedError("Recorder writer is closed")
         self._queue.put(_Write(backend, prepared))
 
-    def flush(self, timeout_s: float) -> None:
+    def flush(self, timeout_s: float = 10.0) -> None:
         deadline = time.monotonic() + timeout_s
         while self._queue.unfinished_tasks:
             with self._lock:
@@ -70,7 +70,7 @@ class RecordWriter:
         with self._lock:
             self._raise_if_failed_locked()
 
-    def close(self, timeout_s: float) -> None:
+    def close(self, timeout_s: float = 10.0) -> None:
         with self._lock:
             if not self._closed:
                 self._closed = True

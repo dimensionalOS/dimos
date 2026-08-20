@@ -47,8 +47,8 @@ class RecorderQueue:
         name: str,
         process: Callable[[Any, float], None],
         *,
-        max_pending: int,
-        max_backlog_s: float,
+        max_pending: int = 65_536,
+        max_backlog_s: float = 2.0,
     ) -> None:
         self.name = name
         self._process = process
@@ -111,7 +111,7 @@ class RecorderQueue:
         with self._lock:
             self._fail_locked(error)
 
-    def flush(self, timeout_s: float) -> None:
+    def flush(self, timeout_s: float = 10.0) -> None:
         deadline = time.monotonic() + timeout_s
         while self._queue.unfinished_tasks:
             with self._lock:
@@ -124,7 +124,7 @@ class RecorderQueue:
         with self._lock:
             self._raise_if_failed_locked()
 
-    def close(self, timeout_s: float) -> None:
+    def close(self, timeout_s: float = 10.0) -> None:
         self.close_input()
         deadline = time.monotonic() + timeout_s
         self._thread.join(timeout=max(0.0, deadline - time.monotonic()))
