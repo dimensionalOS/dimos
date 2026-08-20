@@ -17,9 +17,8 @@
 A thin transport shell around the pluggable ``TrajectoryController`` — the
 controller stays a pure pose+path -> twist law (the piece that later ports
 to rust); this module owns subscriptions, the control clock, the on-robot
-clearance annotation and goal arrival. Clearance is recomputed from the
-local map per (path, map) pair, the same room hint the control battery's
-judge hands the controller in sim.
+clearance annotation and goal arrival. Clearance is recomputed from the local
+map per (path, map) pair.
 
 It reads the map through the planner's own obstacle model
 (``motion/obstacles.py``), because the governor and the planner's stamped
@@ -133,6 +132,10 @@ class TrajectoryFollowerConfig(ModuleConfig):
     # (`to_config_dict` drops None and `#[native_config]` bans Option), and a
     # knob the deployed twin cannot carry is a knob that drifts.
     embodiment: str = "go2"
+    # Must equal the planner's `body_dilate_m`: the room hint has to price the
+    # body the plan was made for, or the governor creeps through gaps the plan
+    # calls fine.
+    body_dilate_m: float = 0.0
     # Odometry is stamped at the SENSOR (mid360_link on the go2), so the pose it
     # carries is the lidar's, not the robot's -- 0.30 m ahead and 0.16 m above on
     # this rig. tf resolves it into the body; ticks are dropped until it can.
@@ -172,7 +175,9 @@ class TrajectoryFollower(Module):
         self._clearance_key: tuple[int, int] | None = None
         self._latch = GoalLatch(self.config.goal_tolerance)
         self._track = TRACKS[self.config.track]
-        self._emb = EMBODIMENTS[self.config.embodiment]
+        # The same dilation the planner used, or the governor prices a body
+        # the plan was not made for and creeps through gaps the plan calls fine.
+        self._emb = EMBODIMENTS[self.config.embodiment].dilated(by=self.config.body_dilate_m)
         self._model: ObstacleModel = load_model(self.config.obstacle_model, self._emb)
         self._half_width = self._emb.width / 2.0
         self._controller: TrajectoryController | None = None

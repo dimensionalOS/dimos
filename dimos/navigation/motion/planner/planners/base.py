@@ -23,8 +23,7 @@ setup, not for peeking at truth.
 `plan` also takes the route the caller has PUBLISHED, or None on the first call
 and after a reset. The shell owns that memory (`adapter/planner.py` and the
 episode loop already hold the last plan); the planner owns the judgment of
-whether a fresh answer has earned the switch. See planner/revision.md's
-commitment amendment.
+whether a fresh answer has earned the switch.
 
 The search is PLANAR. `plan` is handed obstacle positions as (N, 2) xy, with
 no z to read and therefore none to re-interpret: which returns are obstacles
@@ -114,7 +113,7 @@ def densify_states(states: np.ndarray, res: float) -> list[np.ndarray]:
             # exactly at sweep_yaw_step still lets a station accumulate past
             # it. This keeps per-station yaw-in well under the threshold, which
             # is what makes scored clearance track truth instead of merely
-            # clearing the veto. Same constant exp_0010 adopted candidate-side.
+            # clearing the veto.
             math.ceil(abs(dyaw) / 0.045),
         )
         for t in np.linspace(1.0 / n, 1.0, n):

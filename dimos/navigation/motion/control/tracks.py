@@ -41,17 +41,15 @@ from dataclasses import dataclass
 class Track:
     name: str
     controller: str  # REGISTRY name of the law this track currently runs
-    annotate_clearance: bool  # does the referee hand over the clearance array
-    cruise: float  # m/s the executor should hold through curves; pace = 1 here
-    pace_weight: float  # the pace pillar's weight in the world score
+    annotate_clearance: bool  # is the follower handed the clearance array
+    cruise: float  # m/s to hold through curves
+    pace_weight: float  # how much pace counts when this track is scored
 
 
 TRACKS: dict[str, Track] = {
     # The python law is the default so nothing needs the crate built; its
     # rust twin ("seed-rs" / "blind-rs") is parity-locked and is what deploys.
-    # hinted runs hint_research01 (motion-tc-autoresearch, evo exp_0045).
     "hinted": Track("hinted", "hinted", True, 0.75, 5.0),
-    # blind runs blind_research01 (motion-tc-autoresearch, evo exp_0013).
     "blind": Track("blind", "blind", False, 0.35, 0.5),
 }
 

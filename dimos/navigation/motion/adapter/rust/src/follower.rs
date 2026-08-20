@@ -170,6 +170,10 @@ pub struct Config {
     /// Names the body rather than a number, so `emb.width / 2` is read the same
     /// way the planner read it when it priced the plan.
     pub embodiment: String,
+    /// Must equal the planner's `body_dilate_m`, for the same reason: the room
+    /// hint has to price the body the plan was made for, or the governor creeps
+    /// through gaps the plan calls fine.
+    pub body_dilate_m: f64,
     /// Odometry is stamped at the SENSOR, so the pose it carries is the
     /// lidar's, not the robot's. tf resolves it into the body; messages are
     /// dropped until the mount leg arrives.
@@ -329,9 +333,10 @@ impl TrajectoryFollower {
         let worker = Worker {
             shared: Arc::clone(&self.shared),
             track: Track::parse(&self.config.track).expect("validated track"),
-            half_width: emb::half_width(
-                &emb::by_tag(&self.config.embodiment).expect("validated embodiment tag"),
-            ),
+            half_width: emb::half_width(&emb::dilated(
+                emb::by_tag(&self.config.embodiment).expect("validated embodiment tag"),
+                self.config.body_dilate_m,
+            )),
             model: obstacles::load(&self.config.obstacle_model, &vert)
                 .expect("validated obstacle model name"),
             config: self.config.clone(),
@@ -773,7 +778,7 @@ mod tests {
     // the goal a path carries
 
     fn path_of(states: &[State]) -> Path {
-        msg::build_path(states, &[], 0.0, "odom")
+        msg::build_path(states, &[], 0.0, "odom", 0.0)
     }
 
     #[test]
@@ -788,7 +793,7 @@ mod tests {
 
     #[test]
     fn a_hold_stub_never_latches_the_goal_at_the_robots_own_feet() {
-        let stub = planner::hold_stub((5.0, 5.0, 0.0), "odom", 0.0);
+        let stub = planner::hold_stub((5.0, 5.0, 0.0), "odom", 0.0, 0.0);
         assert_eq!(goal_of(&stub), None);
         let mut l = latch();
         if let Some(goal) = goal_of(&stub) {
@@ -974,6 +979,7 @@ mod tests {
             control_frequency: 10.0,
             goal_tolerance: 0.2,
             embodiment: "go2".to_string(),
+            body_dilate_m: 0.0,
             base_frame: "base_link".to_string(),
             obstacle_model: "body_band".into(),
             idle_speed: 0.02,
@@ -1053,7 +1059,7 @@ mod tests {
 
     #[test]
     fn a_room_hint_on_a_ground_already_at_zero_matches_the_raw_band() {
-        // the referee's sim worlds put the plan poses on the ground; the two
+        // the sim worlds put the plan poses on the ground; the two
         // models agree there, so the hint the judge hands the controller
         // cannot move
         let room = room_with_a_post(0.0);
@@ -1090,7 +1096,7 @@ mod tests {
 
     #[test]
     fn a_veto_stub_commands_zero_on_both_tracks() {
-        let stub = planner::hold_stub((1.0, 2.0, 0.5), "odom", 0.0);
+        let stub = planner::hold_stub((1.0, 2.0, 0.5), "odom", 0.0, 0.0);
         let states = msg::path_states(&stub);
         let ts = msg::path_stamps(&stub);
         let cfg = controller_config();

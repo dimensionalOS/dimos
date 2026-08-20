@@ -135,7 +135,7 @@ class TrajectoryController(Protocol):
 
 
 # name -> "module:factory"; arbitrary "module:factory" strings load too, so
-# autoresearch candidates plug in without registering (planners/base pattern).
+# a candidate plugs in without registering (planners/base does the same).
 # Tracks name these; see tracks.py.
 REGISTRY = {
     "seed": "dimos.navigation.motion.control.laws.seed:make",

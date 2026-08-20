@@ -72,6 +72,13 @@ planner_viz_hz = 2.0
 # Drives MotionPlanner's publishing and the rerun override together.
 motion_viz_hz = 2.0
 
+# How much tighter than the MEASURED body the local planner is allowed to plan,
+# per side. The body table's boxes are the swinging legs, not the trunk (0.31 m
+# on a Go2), so straight-line planning asks for a 0.516 m gap at 0.0 and 0.456 m
+# here. The planner and the follower must be given the SAME value: one prices
+# the route, the other prices the room hint that governs speed along it.
+MOTION_BODY_DILATE_M = -0.03
+
 # GO2Zenoh publishes this mount onto tf, where nav reads its odometry corrections.
 # Either a raw (roll, pitch, yaw) tuple in degrees or a GO2ZenohConfig.mid360_mount preset.
 MID360_MOUNT = "SF"
@@ -163,7 +170,7 @@ def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, An
             **planner_visual_override(planner_viz_hz, voxel_size=voxel_size, wall_clearance_m=0.1),
             # keyed by entity path, so it is inert on the stacks that have no
             # MotionPlanner to publish world/plan_body -- same as the MLS one
-            **motion_visual_override(motion_viz_hz),
+            **motion_visual_override(motion_viz_hz, body_dilate_m=MOTION_BODY_DILATE_M),
             **(visual_override or {}),
         },
     }
@@ -352,7 +359,7 @@ _go2_zenoh_motion_base = autoconnect(
     # referenced to that surface says what the planner can hit. Nothing about the map's
     # z origin -- which on a LIO stack is base height -- has to be guessed
     # (motion/obstacles.py).
-    MotionPlanner.blueprint(viz_publish_hz=motion_viz_hz),
+    MotionPlanner.blueprint(viz_publish_hz=motion_viz_hz, body_dilate_m=MOTION_BODY_DILATE_M),
     MovementManager.blueprint(),
     # Teleop preempts nav on cmd_vel and a watchdog zeros it when the follower dies.
     # MovementManager keeps the click relay; both see tele_cmd_vel.
@@ -365,7 +372,7 @@ _go2_zenoh_motion_base = autoconnect(
 # the room hint has to be measured off the slice the plan was priced in.
 go2_zenoh_motion = autoconnect(
     _go2_zenoh_motion_base,
-    TrajectoryFollower.blueprint(track="hinted"),
+    TrajectoryFollower.blueprint(track="hinted", body_dilate_m=MOTION_BODY_DILATE_M),
 ).global_config(transport="zenoh", n_workers=9, robot_model="unitree_go2")
 
 # blind: the same graph with the clearance hint withheld. The law recovers the required
@@ -373,7 +380,7 @@ go2_zenoh_motion = autoconnect(
 # regime that survives when the local map is stale, empty, or not the follower's to read.
 go2_zenoh_motion_blind = autoconnect(
     _go2_zenoh_motion_base,
-    TrajectoryFollower.blueprint(track="blind"),
+    TrajectoryFollower.blueprint(track="blind", body_dilate_m=MOTION_BODY_DILATE_M),
 ).global_config(transport="zenoh", n_workers=9, robot_model="unitree_go2")
 
 # go2-zenoh-motion with the time-critical half lifted off the laptop. The three modules

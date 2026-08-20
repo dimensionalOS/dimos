@@ -22,7 +22,7 @@ geometry and gait-cost numbers, no dependency on worlds or on the sim.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 
 import numpy as np
@@ -39,15 +39,10 @@ class Embodiment:
     below it is fiction, planning it is planning a contact).
     """
 
-    # Moving-body envelope measured in the fitted MuJoCo sim (union of all
-    # robot geometry over the full 95-cell command protocol of
-    # simulation/envelope.py, yaw-aligned base frame): the swinging legs, not
-    # the 0.31 m trunk, set the width. Measured 0.883 x 0.593, centre +0.002.
-    # Re-baselined from 0.852 x 0.495 by planner/revision.md: that number came
-    # from a smaller command sweep and was NOT conservative for fast strafe or
-    # for slow tight arcs. The union's jobs -- judge veto, half_diag, body
-    # carve, and the fallback for embodiments with no measured `envelope` --
-    # are exactly where honest-conservative is the only acceptable property.
+    # Moving-body envelope, measured: the union of all robot geometry over a
+    # command sweep, in the yaw-aligned base frame. The swinging legs, not the
+    # 0.31 m trunk, set the width. It is the fallback wherever a body has no
+    # per-heading `envelope`, so it has to stay conservative.
     tag: str = "go2"
     length: float = 0.883
     width: float = 0.593
@@ -71,9 +66,8 @@ class Embodiment:
     # nearest-row lookup is exact for every edge the SE(2) search generates.
     # off_y is stored for POSITIVE drift and mirrored by sign at lookup: the
     # swept box lags the drift laterally, and a row that covers +theta covers
-    # -theta only when it is mirrored with it. EMPTY = the union
-    # length/width/center_off applies at every heading (the fallback for any
-    # unmeasured embodiment). See planner/revision.md.
+    # -theta only when it is mirrored with it. EMPTY = the union applies at
+    # every heading.
     envelope: tuple[tuple[float, float, float, float, float], ...] = ()
     # Extra swept WIDTH per rad-per-metre of curvature (edge dyaw / edge
     # length). Curvature, not per-edge yaw, so the number survives a lattice
@@ -99,6 +93,27 @@ class Embodiment:
             return self.length, self.width, self.center_off, 0.0
         return self.envelope_at(drift)
 
+    def dilated(self, by: float = 0.0, precision: float | None = None) -> Embodiment:
+        """This body with every box grown by `by` PER SIDE, and an optional
+        clearance floor.
+
+        Negative shrinks it. The table's own numbers are measured -- the union
+        and the per-heading rows are where the legs actually swing -- so this is
+        the one place a deployment says "plan me tighter than measured" and owns
+        the consequence. `precision` is the hard fits/does-not-fit margin the
+        search tests against, so a gap has to be `width + 2 * precision` wide
+        before a route through it exists at all.
+        """
+        pad = 2.0 * by
+        rows = tuple((a, ln + pad, w + pad, ox, oy) for a, ln, w, ox, oy in self.envelope)
+        return replace(
+            self,
+            length=self.length + pad,
+            width=self.width + pad,
+            envelope=rows,
+            precision=self.precision if precision is None else precision,
+        )
+
     def stand_box(self) -> tuple[float, float, float, float]:
         """The STANDING body: the largest box nested in every envelope row.
 
@@ -109,7 +124,7 @@ class Embodiment:
         a pose whose row clears the margin clears this too, which is what makes
         replanning from a route this planner emitted unable to refuse. No
         measured envelope means no rows to intersect and the union is all there
-        is — nothing changes for those bodies. See planner/revision.md.
+        is — nothing changes for those bodies.
         """
         if not self.envelope:
             return self.length, self.width, self.center_off, 0.0

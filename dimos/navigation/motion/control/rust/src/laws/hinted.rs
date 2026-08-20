@@ -15,18 +15,13 @@
 //! The hinted track's law: clear the plant's dead zone, brake late, ramp your
 //! own command.
 //!
-//! From `motion-tc-autoresearch` branch `hint_research01` (evo exp_0045, epoch
-//! 2), which took the hinted track from 73.61 to 115.23 of a 115.5 ceiling over
-//! 47 experiments: 225 goal / 3 refused across 228 episodes, zero collisions,
-//! zero timeouts, zero falls.
-//!
 //! Mechanisms over the seed:
 //!
 //! 1. WALK-THRESHOLD ENVELOPE. `min_speed` 0.2 sits inside the freewalk
 //!    policy's dead zone -- gait initiation is a bifurcation, not a ramp, and
 //!    below ~0.28 commanded the robot stands. The envelope is 0.45/0.95
-//!    commanded, carried by this law's own config default rather than by the
-//!    referee's (see `laws/hinted.py::ENVELOPE`).
+//!    commanded, carried by this law's own config default (see
+//!    `laws/hinted.py::ENVELOPE`).
 //! 2. TANGENT FEEDFORWARD + FOOT CORRECTION, replacing the seed's aim-at-the-
 //!    carrot term, whose chord cut corners toward the obstacle the plan curved
 //!    around. This is also what makes the governor authoritative: an on-plan
@@ -53,7 +48,7 @@ use crate::geom::{angle_diff, arcs_of, progress_index, Params};
 /// `simulation/walk.py`: `COMMAND_SLEW = (0.05, 0.04, 0.10)` applied per
 /// `CONTROL_DT = 0.02` s tick on `(vx, vy, wz)`. Kept as a rate rather than a
 /// per-tick step so the limiter is correct at any control period;
-/// `test_hinted.py` holds it to the referee's own constants.
+/// `test_hinted.py` holds it to the shared plant constants.
 pub const CMD_SLEW_PER_S: [f64; 3] = [2.5, 2.0, 5.0];
 
 /// Tick period assumed when the law has no previous tick to difference against
@@ -186,20 +181,13 @@ fn tangent_at(path: &[[f64; 3]], arcs: &[f64], s: f64, preview: f64) -> (f64, f6
 /// time that command was issued at.
 ///
 /// WHY THE LAW OWNS A RATE LIMITER AT ALL. Rate limiting and a pure transport
-/// delay COMMUTE, and the plant's limiter is idempotent on a stream that
-/// already satisfies it -- so feeding the plant a slew-compliant stream leaves
-/// what the policy sees unchanged to one ulp. The closed loop is NOT unchanged,
-/// because it amplifies that. What this buys is therefore not a quieter loop
-/// but an honest one: the request the law signs its name to is the request the
-/// robot executes. On the RK3588 the difference between "the law commanded a
-/// 0.26 m/s lateral step" and "the robot performed a 0.04 m/s one" is the
-/// difference between a law whose authority is real and one whose authority is
-/// a fiction the ramp edits.
-///
-/// It is NOT anti-churn reasoning and it is not a collision heuristic. Churn
-/// was measured to ANTI-predict failure on this workspace (rank-AUC 0.373);
-/// nothing here treats a fast command as dangerous. The claim is narrower and
-/// mechanical: a command the plant cannot deliver is not a command.
+/// delay COMMUTE, and the plant's limiter is idempotent on a stream that already
+/// satisfies it -- so feeding the plant a slew-compliant stream leaves what the
+/// policy sees unchanged. What this buys is not a quieter loop but an honest
+/// one: the request the law signs its name to is the request the robot executes,
+/// rather than one the plant's ramp silently edits. It is not anti-churn
+/// reasoning -- nothing here treats a fast command as dangerous. The claim is
+/// narrower and mechanical: a command the plant cannot deliver is not a command.
 #[derive(Debug, Default, Clone)]
 pub struct Law {
     last_cmd: Option<(f64, f64, f64)>,
@@ -268,11 +256,9 @@ impl Law {
         // taken toward a point inside the disc can still leave it: `vx` and
         // `vy` each land somewhere between the previous command and the
         // request, and that rectangle has corners the disc does not contain.
-        // Probed by building this branch as a panic and running the full
-        // battery: it fires, and the largest overshoot anywhere is |v| = 0.9509
-        // against a `max_speed` of 0.95 -- always a REDUCTION, but three orders
-        // of magnitude past the parity tolerance, so dropping the
-        // renormalisation would put the law outside its own declared envelope.
+        // The overshoot is tiny and correcting it always REDUCES speed, but it
+        // is orders of magnitude past the parity tolerance -- dropping this
+        // would put the law outside its own declared envelope.
         let speed = vx.hypot(vy);
         if speed > cfg.base.max_speed && speed > 0.0 {
             vx = vx / speed * cfg.base.max_speed;
@@ -328,22 +314,12 @@ pub fn update(
         let s = arcs[i] + base.lookahead;
         let k = arcs.partition_point(|&a| a < s).min(n - 1);
         // POSITION still leads by `lookahead` -- the carrot is what makes the
-        // holonomic body converge onto the line. ORIENTATION does not. The seed
-        // commanded the heading the plan wants 0.35 m from here, and a 0.85 m
-        // body held at the next segment's heading while still inside this one
-        // sweeps its corners across the corridor it has not left yet: the
-        // executed body sat 0.2-0.4 rad ahead of the plan's heading at its own
-        // location and paid 3-14 cm of clearance for it. The lead is worst
-        // exactly where it hurts, since the P-loop's standing error is
-        // turn_rate/k_yaw, which shrinks with speed.
-        //
-        // So: aim at the heading the plan wants HERE, and cancel the P-loop's
-        // standing error with feedforward instead of with lead. Estimated over
-        // a real span only, and bounded by `fan_yaw_per_m` -- above that rate
-        // the law has already decided the plan is rotating, not curving.
-        // `rotation_in_window` carries the fact that the clamp FIRED to the
-        // command site, where the number is the threshold rather than a
-        // curvature the plan has.
+        // holonomic body converge onto the line. ORIENTATION does not: a body
+        // held at the next segment's heading while still inside this one sweeps
+        // its corners across a corridor it has not left yet. So aim at the
+        // heading the plan wants HERE, and cancel the P-loop's standing error
+        // with feedforward instead of with lead. Estimated over a real span
+        // only, and bounded by `fan_yaw_per_m`.
         let span = arcs[k] - arcs[i];
         let raw_rate = if span > 0.05 {
             angle_diff(path[k][2], path[i][2]) / span
@@ -407,25 +383,16 @@ pub fn update(
             ramp_unlimited = room >= base.speed_clearance;
             vmax = cap.clamp(base.min_speed, base.max_speed);
 
-            // -- PINCH ESCAPE: the lower anchor is not a constant -------------
+            // -- PINCH ESCAPE: the lower anchor is not a constant
             //
-            // The ramp has one lower anchor and is asked to do two incompatible
-            // jobs. Where there is room to spare, a low anchor is what lets the
-            // clearance annotation modulate speed at all and is what buys the
-            // precision. Where the room has run out, the same anchor is a loss,
-            // because what kills in a pinch is DWELL: the follower's
-            // cross-track offset is a fixed distance, so the time the body
-            // spends inside the gap decides whether that offset becomes a
-            // contact. There is also nothing to buy by creeping down there --
-            // once the plan's own corridor is inside the embodiment's 0.05 m
-            // floor the precision ticks are lost at any speed.
-            //
-            // Taken as a `max` against the ramp rather than replacing it, which
-            // makes the join continuous and keeps the leg from ever SLOWING
-            // anything. It reads `room_here` over `escape_preview`, NOT the
-            // ramp's 2 m `room`: a preview is the wrong shape for the opposite
-            // move, and read over 2 m the leg would lift the cap while the
-            // robot was still in open space short of the gap.
+            // The ramp's one lower anchor is asked to do two incompatible jobs.
+            // With room to spare, a low anchor is what lets the clearance
+            // annotation modulate speed at all and is what buys precision. With
+            // the room gone it is a loss: what kills in a pinch is DWELL, since
+            // the cross-track offset is a fixed distance and the time spent
+            // inside decides whether it becomes a contact. Taken as a `max`
+            // against the ramp, so the join is continuous and the leg can never
+            // SLOW anything.
             let hi_here = arcs[i] + cfg.escape_preview;
             let mut room_here = clr[i];
             for (k, &a) in arcs.iter().enumerate() {
@@ -442,24 +409,15 @@ pub fn update(
         }
     }
 
-    // -- the world-frame velocity request ------------------------------------
+    // -- the world-frame velocity request
     //
-    // THE SEED AIMED THE WHOLE VELOCITY AT THE CARROT. On anything curved that
-    // vector is a CHORD, and driving down a chord is driving off the plan: on a
-    // corner of radius R the body cuts the inside by about L^2/(8R), which is
-    // 7.6 cm at L = 0.35 m and R = 0.20 m. That is the follower's habitual
-    // cross-track drift -- not a lag artefact (it is invariant across the
-    // mechanism draws) and not a speed artefact (it is a distance).
-    //
-    // Splitting the two jobs removes it outright. A FEEDFORWARD along the
-    // plan's own tangent carries the body forward at the governor's speed, and
-    // a proportional CORRECTION toward the foot of the perpendicular is then
-    // the only term that answers to being off the line -- so the error decays
-    // to zero instead of settling at the chord's sagitta. The carrot survives
-    // only as the YAW reference.
-    //
-    // Costs no speed: on a straight, on-plan tick this commands exactly `vmax`,
-    // which is what the seed's saturated pursuit term commanded too.
+    // Aiming the whole velocity at the carrot drives down a CHORD, cutting the
+    // inside of every corner by about L^2/(8R) -- a distance, not a lag, and the
+    // follower's habitual cross-track drift. Splitting the two jobs removes it:
+    // a FEEDFORWARD along the plan's tangent carries the body at the governor's
+    // speed, and a proportional CORRECTION toward the foot of the perpendicular
+    // is the only term answering to being off the line, so the error decays to
+    // zero instead of settling at the chord's sagitta.
     let (wx, wy) = if rotating {
         // the fan branch is the seed's, gain included: hold the fan's own
         // position and let the yaw term do the work
@@ -487,34 +445,17 @@ pub fn update(
         vy = vy / speed * vmax;
     }
 
-    // Feedforward: at `cmd_speed` along a plan turning `yaw_ff` rad per metre
-    // the heading must slew at `yaw_ff * cmd_speed` just to stay aligned.
-    // Supplying that open loop is what lets the proportional term settle at
-    // zero error -- without it the body has to stand off by turn_rate/k_yaw to
-    // generate the same rate, and that standing offset is the margin it was
-    // spending. Added inside the clamp, so the envelope still holds.
+    // Feedforward: at `cmd_speed` along a plan turning `yaw_ff` rad per metre the
+    // heading must slew at `yaw_ff * cmd_speed` just to stay aligned. Supplying
+    // that open loop is what lets the proportional term settle at zero error.
+    // Added inside the clamp, so the envelope still holds.
     //
-    // SILENT in the one regime where it is an artefact. `yaw_ff` is clamped to
-    // `fan_yaw_per_m`, which is not a yaw-authority bound at all: it is the
-    // CLASSIFIER used above to decide whether the plan curves or rotates. When
-    // the window's raw rate runs past it, the value fed forward is the
-    // threshold rather than a curvature the plan has, and at the cruise ceiling
-    // it demands 3.0 * 0.95 = 2.85 rad/s against a `max_yaw_rate` of 1.4. Past
-    // that the sum clamp is FLAT in the heading error, so the proportional term
-    // is not attenuated, it is deleted, and the heading loop is open for as
-    // long as the plan stays that tight. That is what the battery's one fall
-    // was: wz pinned +1.400 at v = 0.950 for 0.7 s, tilt 0.02 -> 0.18 on the
-    // spin alone, then the plan's fan fires and tilt runs to 1.09.
-    //
-    // ONLY where the governor is not limiting, and that is the design, not a
-    // hedge: zeroing it unconditionally measured -0.48 over the battery,
-    // fixing the fall and then flipping two pinch worlds to collisions. The
-    // same feedforward that is a hazard in open room is load-bearing in a gap.
-    //
-    // The separator is `ramp_unlimited`, NOT `vmax >= max_speed`. Those were the
-    // same predicate under the flat-min governor and are not the same under the
-    // braking profile, which reaches `max_speed` on the APPROACH to a pinch as
-    // well as in open room.
+    // SILENT in the one regime where it is an artefact: past `fan_yaw_per_m` --
+    // the curve-vs-rotate CLASSIFIER, not a yaw-authority bound -- the value fed
+    // forward is the threshold itself, which can demand more rate than the
+    // ceiling allows. The sum clamp then goes FLAT in the heading error,
+    // deleting the proportional term rather than attenuating it, and the heading
+    // loop runs open. Gated on `ramp_unlimited`, not on `vmax >= max_speed`.
     let cmd_speed = vx.hypot(vy);
     let ff = if rotation_in_window && ramp_unlimited {
         0.0

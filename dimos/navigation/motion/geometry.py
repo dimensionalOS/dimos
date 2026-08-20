@@ -204,8 +204,6 @@ class CollisionShape(BaseConfig):
 # the width — fast strafe and slow tight arcs splay them to ~0.59 m. Planner
 # paths are ground-level (z=0), so the box is lifted half its height to sit on
 # the ground rather than straddle the waypoint.
-# Re-baselined from 0.85 x 0.50 by planner/revision.md: this box is the judge's
-# veto shape, where honest-conservative is the only acceptable property.
 GO2_BODY = CollisionShape(
     primitive=SolidPrimitive.box(0.883, 0.593, 0.40),
     pose=Pose(0.002, 0.0, 0.20),

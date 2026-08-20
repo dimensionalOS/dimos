@@ -18,7 +18,7 @@
 //! has an `Emb::go2()`, but it is a TEST FIXTURE: the python never calls it
 //! (`RustTargetEpisode.plan` marshals the numbers itself from
 //! `embodiment.py`), and the crate has no business carrying the OTHER three
-//! tags, whose overrides only exist because the battery scores them. The
+//! tags, whose overrides only exist for the benchmark. The
 //! fixture has gone stale before -- it carried the 0.31 m trunk width for a
 //! while after the measured moving-body envelope landed (`1e4750b03`) -- and
 //! deploying against a stale one would plan for a body narrower than the one
@@ -55,6 +55,28 @@ fn unmeasured(emb: Emb) -> Emb {
     Emb {
         envelope: Vec::new(),
         arc_inflate: 0.0,
+        ..emb
+    }
+}
+
+/// Every box grown by `by` PER SIDE; negative shrinks it.
+///
+/// `embodiment.py::Embodiment.dilated`, formula for formula. The table's
+/// numbers are measured -- the swinging legs, not the trunk, set the width --
+/// so a negative value is a deployment planning tighter than the legs measured.
+pub fn dilated(emb: Emb, by: f64) -> Emb {
+    if by == 0.0 {
+        return emb;
+    }
+    let pad = 2.0 * by;
+    Emb {
+        length: emb.length + pad,
+        width: emb.width + pad,
+        envelope: emb
+            .envelope
+            .iter()
+            .map(|r| [r[0], r[1] + pad, r[2] + pad, r[3], r[4]])
+            .collect(),
         ..emb
     }
 }

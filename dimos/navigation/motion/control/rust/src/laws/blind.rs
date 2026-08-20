@@ -14,11 +14,6 @@
 
 //! The blind track's law: follow the path the gait can actually walk.
 //!
-//! From `motion-tc-autoresearch` branch `blind_research01` (evo exp_0013),
-//! which took the blind track from 98.89 to 110.77 on the reality-mode
-//! battery -- 21 timeouts and 4 collisions became arrivals, 228/228 episodes
-//! arrive, zero collisions.
-//!
 //! Three mechanisms over the seed, in order of what they are worth:
 //!
 //! 1. `walk_command`, the gait slip inverse. The twist is a REQUEST to a
@@ -40,59 +35,26 @@ use crate::geom::{
 };
 use crate::stamps::{ceiling_ahead, decode_ceilings};
 
-/// Locomotion feed-forward, in m/s -- the default calibration of
-/// `ml-trajectory-research/freewalk_mcf.bin`.
+/// Locomotion feed-forward, in m/s.
 ///
 /// The twist this law emits is not a velocity, it is a *request* to a learned
-/// walking policy -- and that policy under-delivers. Measured open loop by
-/// `control/probe_walk_slip.py` (flat empty world, constant command held 12 s,
-/// body pose differenced after the 3 s settle):
+/// walking policy -- and that policy under-delivers. Measured open loop, the
+/// map is affine and well behaved above ~0.32 commanded, with a deficit of
+/// 0.11-0.13 m/s across the working range; below ~0.30 the gait does not
+/// initiate at all and the robot marches on the spot. `min_speed` is 0.20, so
+/// the creep rung of the clearance governor sits inside that stall band and
+/// asking for it stops the robot dead.
 ///
-/// ```text
-///   cmd  0.20  0.25  0.30  0.35  0.40  0.50  0.65  0.80  1.00
-///   got  0.002 0.036 0.130 0.217 0.275 0.388 0.532 0.707 0.932
-/// ```
+/// The correction is an actuator inverse over the reachable command range, not
+/// a speed increase: the *intended* ground speed stays the one the governor
+/// chose and the correction cancels the deficit rather than exceeding it. A
+/// flat offset would instead overshoot at cruise, which is not solving the
+/// stall, it is driving faster than the clearance annotation licensed.
 ///
-/// Two things fall out of that table.
-///
-/// Above cmd ~0.32 the map is affine and well behaved: a least-squares fit
-/// over cmd >= 0.35 gives `got ~= 1.10*cmd - 0.168`, i.e. a deficit of
-/// 0.11-0.13 m/s across the whole working range. The same probe run at 45 and
-/// 90 degrees of heading and with |wz| up to 0.5 rad/s returns the same
-/// deficit to within 0.02 -- it is gait slip, not a direction artefact.
-///
-/// Below cmd ~0.30 the gait does not initiate at all. A 0.20 m/s request moves
-/// the body 0.002 m/s: the robot marches on the spot, and it wobbles doing it
-/// (tilt p99 0.09-0.16 through the stall band against 0.06-0.07 at cruise).
-///
-/// `min_speed` is 0.20. So the creep rung of the clearance governor -- the
-/// speed the plan's own precision profile asks for in a tight room -- sits
-/// inside the stall band, and asking for it stops the robot dead. Executed
-/// traces show it plainly: an episode commanding 0.207 m/s for 39 s of a 40 s
-/// horizon covered 0.88 m of ground and timed out having never come within
-/// 0.45 m of a wall. That is the clock the timeouts lose to. Not a follower
-/// that drives too carefully -- one whose careful speeds are not speeds.
-///
-/// The correction is an actuator inverse, not a speed increase. `WALK_GAIN`
-/// and `WALK_SLIP` are the inverse of that affine fit taken over the reachable
-/// command range only -- cmd 0.35 to 0.65, which is what `want <= max_speed`
-/// can ask for -- so the *intended* ground speed is still exactly the one the
-/// governor chose and the correction cancels rather than exceeds the deficit.
-/// Deliberately not a flat offset: `want + 0.15` matches the inverse near the
-/// governor floor but overshoots it by ~9% at cruise, and a follower that
-/// quietly runs 9% over the speed its own clearance annotation licensed is not
-/// solving the stall, it is just driving faster.
-///
-/// At the floor the inverse errs slightly careful (`want = 0.20` asks 0.325,
-/// worth about 0.18 m/s rather than 0.20, because the fit's linearity is
-/// giving out as the stall band approaches). Erring careful in the tight rooms
-/// is the right direction for the error to point.
-///
-/// DEPLOY. These are properties of the policy blob, not of the law: on a
-/// different gait the 0.614 command becomes a ~23% over-speed. They are config
-/// fields (`BlindControllerConfig`) for exactly that reason -- re-run
-/// `control/probe_walk_slip.py` against the deployed gait and key them to it
-/// before this drives hardware.
+/// DEPLOY. These are properties of the gait blob, not of the law -- on a
+/// different gait they are a ~23% over-speed. They are config fields
+/// (`BlindControllerConfig`) for exactly that reason: re-probe against the
+/// deployed gait and key them to it before this drives hardware.
 pub const WALK_GAIN: f64 = 0.964;
 pub const WALK_SLIP: f64 = 0.132;
 
