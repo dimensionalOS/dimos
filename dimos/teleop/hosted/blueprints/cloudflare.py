@@ -162,7 +162,7 @@ class WristCamera(RealSenseCamera):
 
 teleop_hosted_xarm6 = (
     autoconnect(
-        ArmCommandModule.blueprint(task_names={"right": "teleop_xarm"}),
+        ArmCommandModule.blueprint(),
         HostedStatsModule.blueprint(),
         CameraMuxModule.blueprint(cameras=["cam1", "cam2"]),
         coordinator_teleop_xarm6,
@@ -173,7 +173,7 @@ teleop_hosted_xarm6 = (
         [
             (FrontCamera, "color_image", "cam1"),
             (WristCamera, "color_image", "cam2"),
-            (ArmCommandModule, "right_controller_output", "coordinator_cartesian_command"),
+            (ArmCommandModule, "right_controller_output", "cartesian_command"),
         ]
     )
     .transports(
@@ -194,7 +194,7 @@ teleop_hosted_xarm6 = (
 
 teleop_hosted_xarm7 = (
     autoconnect(
-        ArmCommandModule.blueprint(task_names={"right": "teleop_xarm"}),
+        ArmCommandModule.blueprint(),
         HostedStatsModule.blueprint(),
         CameraMuxModule.blueprint(cameras=["cam1", "cam2"]),
         coordinator_teleop_xarm7,
@@ -205,7 +205,7 @@ teleop_hosted_xarm7 = (
         [
             (FrontCamera, "color_image", "cam1"),
             (WristCamera, "color_image", "cam2"),
-            (ArmCommandModule, "right_controller_output", "coordinator_cartesian_command"),
+            (ArmCommandModule, "right_controller_output", "cartesian_command"),
         ]
     )
     .transports(

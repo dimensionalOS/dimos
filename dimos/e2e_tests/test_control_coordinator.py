@@ -22,6 +22,7 @@ import time
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JOINT_TRAJECTORY_TASK_NAME,
     TrajectoryCancellationStatus,
     TrajectoryExecutionStatus,
 )
@@ -61,7 +62,7 @@ class TestControlCoordinatorE2E:
             # Test list_tasks RPC
             tasks = client.list_tasks()
             assert tasks is not None
-            assert "traj_arm" in tasks
+            assert JOINT_TRAJECTORY_TASK_NAME in tasks
 
             # Test list_hardware RPC
             hardware = client.list_hardware()
@@ -112,7 +113,8 @@ class TestControlCoordinatorE2E:
 
             # Poll for completion
             wait_until(
-                lambda: client.task_invoke("traj_arm", "get_state") == TrajectoryState.COMPLETED,
+                lambda: client.task_invoke(JOINT_TRAJECTORY_TASK_NAME, "get_state")
+                == TrajectoryState.COMPLETED,
                 timeout=5.0,
                 message="Trajectory did not complete within timeout",
             )
@@ -186,7 +188,7 @@ class TestControlCoordinatorE2E:
             assert cancel_result.status is TrajectoryCancellationStatus.CANCELLED, cancel_result
 
             # Check status is ABORTED
-            state = client.task_invoke("traj_arm", "get_state")
+            state = client.task_invoke(JOINT_TRAJECTORY_TASK_NAME, "get_state")
             assert state is not None
             assert state == TrajectoryState.ABORTED
         finally:
@@ -210,7 +212,7 @@ class TestControlCoordinatorE2E:
             # The coordinator supports exactly one trajectory task, so the
             # dual-arm blueprint has a single task spanning both arms
             tasks = client.list_tasks()
-            assert tasks == ["traj_arm"]
+            assert tasks == [JOINT_TRAJECTORY_TASK_NAME]
 
             # One trajectory moving the left arm (7 joints) and right arm
             # (6 joints) together
@@ -227,7 +229,8 @@ class TestControlCoordinatorE2E:
             assert result.status is TrajectoryExecutionStatus.ACCEPTED, result
 
             wait_until(
-                lambda: client.task_invoke("traj_arm", "get_state") == TrajectoryState.COMPLETED,
+                lambda: client.task_invoke(JOINT_TRAJECTORY_TASK_NAME, "get_state")
+                == TrajectoryState.COMPLETED,
                 timeout=5.0,
                 message="Trajectory did not complete within timeout",
             )

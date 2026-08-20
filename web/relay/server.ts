@@ -6,6 +6,7 @@
 import { PROTOCOL_VERSION } from "@dimos/shared";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { makeEphemeralCert } from "./cert.ts";
+import { LATEST_STALE_MS } from "./forward.ts";
 import { Registry } from "./registry.ts";
 import { RobotSession, ViewerSession } from "./session.ts";
 
@@ -18,12 +19,9 @@ export interface RelayOptions {
   port?: number;
   /** Bind host for both listeners. The default is the only secure-context-friendly choice. */
   host?: string;
-  /** Directory served over HTTP. Defaults to ./static next to this module. */
-  staticDir?: string;
   /**
-   * Built Cockpit app (web/cockpit/dist). When set, / serves its index.html
-   * and files resolve here first, with staticDir as the fallback (so
-   * /debug.html keeps working). Without it, / serves the debug page.
+   * Built Cockpit app (web/cockpit/dist): / serves its index.html. Without it
+   * the relay has no UI (/ answers 404 with a build hint); only /api/* works.
    */
   cockpitDir?: string;
 }
@@ -117,14 +115,9 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
   installUnhandledRejectionGuard();
   const host = options.host ?? "127.0.0.1";
 
-  // Resolve the served roots before binding anything so a bad path fails
+  // Resolve the served root before binding anything so a bad path fails
   // fast, without a QUIC endpoint or timer left behind.
-  const staticRoot = resolveDirUrl(
-    options.staticDir ?? fileURLToPath(new URL("./static/", import.meta.url)),
-    "staticDir",
-  );
   const cockpitRoot = options.cockpitDir ? resolveDirUrl(options.cockpitDir, "cockpitDir") : null;
-  const roots = cockpitRoot !== null ? [cockpitRoot, staticRoot] : [staticRoot];
 
   const cert = await makeEphemeralCert();
 
@@ -156,6 +149,11 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
   const resendTimer = setInterval(() => registry.resendSnapshots(), SNAPSHOT_RESEND_MS);
   // A pending resend must not keep the Deno process alive after shutdown().
   Deno.unrefTimer(resendTimer);
+  // Offers reap stale latest streams opportunistically, but an idle input
+  // stops offering; this interval bounds an idle stream's lifetime to just
+  // under 2x the stale window.
+  const reapTimer = setInterval(() => registry.reapAll(Date.now()), LATEST_STALE_MS);
+  Deno.unrefTimer(reapTimer);
 
   (async () => {
     for await (const incoming of listener) {
@@ -189,14 +187,15 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
     if (url.pathname === "/api/stats") {
       return Response.json(registry.stats());
     }
-    const name = url.pathname === "/"
-      ? (cockpitRoot !== null ? "index.html" : "debug.html")
-      : url.pathname.slice(1);
-    for (const root of roots) {
-      const resp = await serveFrom(root, name);
-      if (resp !== null) return resp;
+    if (cockpitRoot === null) {
+      return new Response(
+        "cockpit dist not built (dimos run --local-relay builds it; " +
+          "or run `deno task build` in web/cockpit)",
+        { status: 404 },
+      );
     }
-    return new Response("not found", { status: 404 });
+    const name = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
+    return await serveFrom(cockpitRoot, name) ?? new Response("not found", { status: 404 });
   }
 
   const httpServer = Deno.serve(
@@ -212,6 +211,7 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
     certHash: cert.certHashB64,
     async shutdown(): Promise<void> {
       clearInterval(resendTimer);
+      clearInterval(reapTimer);
       for (const wt of sessions) {
         try {
           wt.close({ closeCode: 0, reason: "relay shutdown" });

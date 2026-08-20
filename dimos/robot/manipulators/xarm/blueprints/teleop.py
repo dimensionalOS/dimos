@@ -28,6 +28,10 @@ from dimos.robot.manipulators.common.blueprints import (
     teleop_ik_task,
     trajectory_task,
 )
+from dimos.robot.manipulators.common.coordinators import (
+    ArmPoseTwistCoordinator,
+    ArmTwistCoordinator,
+)
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.xarm.config import (
     XARM6_SIM_PATH,
@@ -49,7 +53,8 @@ _xarm_gripper_params = cast("GripperTaskOverrides", XARM_GRIPPER_PARAMS)
 
 keyboard_teleop_xarm6 = autoconnect(
     KeyboardTeleopModule.blueprint(),
-    ControlCoordinator.blueprint(
+    ArmTwistCoordinator.blueprint(
+        instance_name="ControlCoordinator",
         tick_rate=100.0,
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
@@ -71,7 +76,8 @@ keyboard_teleop_xarm6 = autoconnect(
 
 keyboard_teleop_xarm7 = autoconnect(
     KeyboardTeleopModule.blueprint(),
-    ControlCoordinator.blueprint(
+    ArmTwistCoordinator.blueprint(
+        instance_name="ControlCoordinator",
         tick_rate=100.0,
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
@@ -165,7 +171,8 @@ _xarm6_teleop_model = make_xarm6_model_config(add_gripper=True)
 
 
 coordinator_teleop_xarm7 = autoconnect(
-    ControlCoordinator.blueprint(
+    ArmPoseTwistCoordinator.blueprint(
+        instance_name="ControlCoordinator",
         hardware=[_xarm7_teleop_hw],
         tasks=[
             teleop_ik_task(
@@ -194,7 +201,8 @@ coordinator_teleop_xarm7 = autoconnect(
 )
 
 coordinator_teleop_xarm6 = autoconnect(
-    ControlCoordinator.blueprint(
+    ArmPoseTwistCoordinator.blueprint(
+        instance_name="ControlCoordinator",
         hardware=[_xarm6_teleop_hw],
         tasks=[
             teleop_ik_task(

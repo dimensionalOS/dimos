@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Records the Go2 + Mid-360 rig into a memory2 SQLite db.
+"""Records the Go2 + Mid-360 rig into a memory SQLite db.
 
 Captures Point-LIO odom + lidar (trajectory baked into ``pointlio_lidar`` via the
 inherited ``@pose_setter_for``) plus the Go2's companion streams. The raw Livox

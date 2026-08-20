@@ -16,6 +16,7 @@
 frames are fed straight into the protocol callbacks)."""
 
 from aioquic.quic.connection import QuicConnection
+from aioquic.quic.events import StreamReset
 
 from dimos.web.relay_bridge._wt_session import (
     _FRAME_QUEUE_MAX,
@@ -111,3 +112,23 @@ async def test_per_encoding_payload_caps():
     session._stream_data_received(12, _frame_bytes("mystery", 1, 9 * 1024 * 1024), True)
     assert session.frames.qsize() == 3
     assert session.frames_oversized == 1
+
+
+async def test_stream_reset_drops_the_frame_reader():
+    # The relay ends every latest stream with a reset (reap/dispose); the
+    # reader map must not grow one leaked entry per stream, and a partial
+    # frame is stale by definition.
+    session = _session()
+    full = _frame_bytes("cam", 1, 1024)
+    session._stream_data_received(4, full[: len(full) // 2], False)
+    assert 4 in session._frame_readers
+    session.quic_event_received(StreamReset(error_code=1, stream_id=4))
+    assert 4 not in session._frame_readers
+    assert session.frames.qsize() == 0
+
+    # A reset for a stream that already dispatched its frame is a no-op.
+    session._stream_data_received(8, _frame_bytes("cam", 2, 16), False)
+    assert session.frames.qsize() == 1
+    session.quic_event_received(StreamReset(error_code=1, stream_id=8))
+    assert 8 not in session._frame_readers
+    assert session.frames.qsize() == 1

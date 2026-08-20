@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from dimos.memory2.cli.dataset import open_dataset
+from dimos.memory.cli.dataset import open_dataset
 
 Row = dict[str, object]
 

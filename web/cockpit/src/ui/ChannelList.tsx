@@ -1,18 +1,26 @@
-import type { ChannelSpec } from "@dimos/shared";
+import type { ChannelSpec, PanelSpec } from "@dimos/shared";
 import { useChannel } from "../session/hooks.ts";
 import { getDecoder } from "../session/decoders/index.ts";
+import { channelSubscribable } from "../session/session.ts";
 import type { ChannelStore } from "../session/store.ts";
 import styles from "./ChannelList.module.css";
 
-function ChannelRow({ spec, store }: { spec: ChannelSpec; store: ChannelStore }) {
+function ChannelRow(
+  { spec, panels, store }: { spec: ChannelSpec; panels: PanelSpec[]; store: ChannelStore },
+) {
   const { slot, stats } = useChannel(store, spec.ch);
   const supported = getDecoder(spec.encoding) !== undefined;
+  const subscribed = channelSubscribable(spec, panels);
 
   let value;
   if (!supported) {
     // Not an error: this build has no decoder for the encoding (binary
     // decoders arrive with their panels), so the channel is not subscribed.
     value = <span className={styles.muted}>not subscribed (no decoder for {spec.encoding})</span>;
+  } else if (!subscribed) {
+    // Decodable, but a panel-only encoding with no renderable panel binding
+    // it: the session skipped the sub to save encode CPU and bandwidth.
+    value = <span className={styles.muted}>not subscribed (no panel binds it)</span>;
   } else if (slot === null) {
     value = <span className={styles.muted}>waiting for data...</span>;
   } else if (slot.preview !== undefined) {
@@ -44,7 +52,13 @@ function ChannelRow({ spec, store }: { spec: ChannelSpec; store: ChannelStore })
   );
 }
 
-export function ChannelList({ channels, store }: { channels: ChannelSpec[]; store: ChannelStore }) {
+export function ChannelList(
+  { channels, panels, store }: {
+    channels: ChannelSpec[];
+    panels: PanelSpec[];
+    store: ChannelStore;
+  },
+) {
   return (
     <table className={styles.table}>
       <thead>
@@ -58,7 +72,9 @@ export function ChannelList({ channels, store }: { channels: ChannelSpec[]; stor
         </tr>
       </thead>
       <tbody>
-        {channels.map((spec) => <ChannelRow key={spec.ch} spec={spec} store={store} />)}
+        {channels.map((spec) => (
+          <ChannelRow key={spec.ch} spec={spec} panels={panels} store={store} />
+        ))}
       </tbody>
     </table>
   );

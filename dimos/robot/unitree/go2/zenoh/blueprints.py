@@ -38,7 +38,7 @@ from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_3d.mls_planner.goal_relay import GoalRelay
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.nav_3d.mls_planner.viz import planner_visual_override
-from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT
+from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT, ROBOT_LENGTH, ROBOT_WIDTH
 from dimos.robot.unitree.go2.zenoh.zenohconnection import GO2Zenoh
 from dimos.visualization.vis_module import vis_module
 
@@ -48,7 +48,19 @@ voxel_size = 0.08
 planner_viz_hz = 2.0
 
 # GO2Zenoh publishes this mount onto tf, where nav reads its odometry corrections.
-MID360_MOUNT_RPY_DEG = (-60.0, 0.0, -90.0)
+# Either a raw (roll, pitch, yaw) tuple in degrees or a GO2ZenohConfig.mid360_mount preset.
+MID360_MOUNT = "SF"
+
+
+def _static_robot_body(rr: Any) -> list[Any]:
+    """Go2-shaped box on the body frame."""
+    return [
+        rr.Boxes3D(
+            half_sizes=[ROBOT_LENGTH / 2, ROBOT_WIDTH / 2, ROBOT_HEIGHT / 2],
+            colors=[(0, 255, 127)],
+        ),
+        rr.Transform3D(parent_frame="tf#/base_link"),
+    ]
 
 
 def _camera_info_to_pinhole(camera_info: Any) -> Any:
@@ -110,6 +122,12 @@ def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, An
     """The bridge's own view, plus whatever the layer above it adds."""
     return {
         "blueprint": _rerun_blueprint,
+        "tf_axes": 0.5,
+        # The robot box hangs off base_link on its own entity: a static transform
+        # under world/tf would override the live one.
+        "static": {
+            "world/robot_body": _static_robot_body,
+        },
         "visual_override": {
             "world/camera_info": _camera_info_to_pinhole,
             "world/pointlio_map": _render_map,
@@ -127,7 +145,7 @@ def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, An
 # is the layer to drive from when something upstream is suspect.
 go2_zenoh_basic = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config()),
-    GO2Zenoh.blueprint(mid360_mount_rpy_deg=MID360_MOUNT_RPY_DEG),
+    GO2Zenoh.blueprint(mid360_mount=MID360_MOUNT),
     MovementManager.blueprint(),
 ).global_config(transport="zenoh", n_workers=4, robot_model="unitree_go2")
 

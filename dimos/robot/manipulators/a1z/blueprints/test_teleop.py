@@ -22,11 +22,14 @@ from dimos.core.global_config import global_config
 from dimos.robot.manipulators.a1z.blueprints.teleop import coordinator_teleop_a1z
 from dimos.robot.manipulators.a1z.config import a1z_hardware
 from dimos.teleop.quest.blueprints import teleop_quest_a1z
-from dimos.teleop.quest.quest_extensions import ArmTeleopModule
 
 
 def _coordinator_kwargs(blueprint: Blueprint) -> dict[str, Any]:
-    return next(atom.kwargs for atom in blueprint.blueprints if atom.module is ControlCoordinator)
+    return next(
+        atom.kwargs
+        for atom in blueprint.blueprints
+        if isinstance(atom.module, type) and issubclass(atom.module, ControlCoordinator)
+    )
 
 
 def test_quest_teleop_uses_mock_a1z_hardware_and_gripper_by_default() -> None:
@@ -46,13 +49,8 @@ def test_quest_teleop_uses_mock_a1z_hardware_and_gripper_by_default() -> None:
 
 
 def test_quest_left_controller_routes_to_a1z_teleop() -> None:
-    arm_kwargs = next(
-        atom.kwargs for atom in teleop_quest_a1z.blueprints if atom.module is ArmTeleopModule
-    )
-
-    assert arm_kwargs["task_names"] == {"left": "teleop_a1z"}
     assert teleop_quest_a1z.remapping_map == {
-        ("armteleopmodule", "left_controller_output"): "coordinator_cartesian_command"
+        ("armteleopmodule", "left_controller_output"): "cartesian_command"
     }
 
 

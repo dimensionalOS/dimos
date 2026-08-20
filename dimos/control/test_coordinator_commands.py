@@ -79,6 +79,14 @@ class CommandRecordingTask(BaseControlTask):
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
         pass
 
+    # Card-consumed streams: add_task resolves handlers at registration,
+    # so a stub registered under servo / g1_groot_wbc must carry them.
+    def on_joint_command(self, msg: Any, t_now: float) -> None:
+        pass
+
+    def on_twist_command(self, msg: Any, t_now: float) -> None:
+        pass
+
     # Trajectory commands
     def execute(self, trajectory: Any) -> bool:
         self.executed = trajectory

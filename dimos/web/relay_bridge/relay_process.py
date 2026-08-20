@@ -83,9 +83,9 @@ def ensure_cockpit_dist(
     hash over the cockpit/shared sources, workspace config, and lockfile) no
     longer matches; the build runs under a cross-process lock, into a
     temporary directory published atomically, so concurrent starts serialize
-    and a failed build leaves the served dist untouched (the relay still runs,
-    and serves the debug page when there is no dist at all). Setting `cancel`
-    kills the build child within a bounded grace.
+    and a failed build leaves the served dist untouched (the relay still runs;
+    with no dist at all it serves only /api plus a build hint at /). Setting
+    `cancel` kills the build child within a bounded grace.
     """
     dist = find_cockpit_dist(web_dir)
     cockpit = web_dir / "cockpit"
@@ -256,13 +256,10 @@ class RelayReadyInfo:
     cockpit: bool = False
 
     @property
-    def debug_url(self) -> str:
-        return f"http://127.0.0.1:{self.http_port}/debug.html"
-
-    @property
     def open_url(self) -> str:
-        """What a browser should open: the Cockpit, or the debug page without one."""
-        return f"http://127.0.0.1:{self.http_port}/" if self.cockpit else self.debug_url
+        """What a browser should open (without a cockpit dist the relay
+        answers it with a 404 build hint)."""
+        return f"http://127.0.0.1:{self.http_port}/"
 
 
 class RelayProcess:

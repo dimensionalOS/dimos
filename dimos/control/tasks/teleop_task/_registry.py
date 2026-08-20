@@ -18,7 +18,7 @@ TASK_FACTORIES = {
 
 TASK_CONSUMES = {
     "teleop_ik": {
-        "coordinator_cartesian_command": ("on_cartesian_command", "by_task_name"),
+        "cartesian_command": ("on_cartesian_command", "direct"),
         "teleop_buttons": ("on_teleop_buttons", "broadcast"),
     },
 }

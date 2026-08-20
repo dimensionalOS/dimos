@@ -74,7 +74,7 @@ results/
 
 /thread_monitor_report.csv
 
-# Memory2 autorecord
+# Memory autorecord
 recording*.db
 
 # Rerun recordings

@@ -21,15 +21,14 @@ from typing import Any, TypedDict
 
 from dimos.control.components import HardwareComponent
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.manipulators.common.topics import (
     CARTESIAN_IK_TASK_NAME,
     COORDINATOR_FRAME_ID,
-    DEFAULT_TRAJECTORY_TASK_NAME,
     EEF_TWIST_TASK_NAME,
-    trajectory_task_name,
 )
 
 
@@ -62,24 +61,14 @@ class GripperTaskOverrides(TypedDict, total=False):
 def trajectory_task(
     hardware: HardwareComponent,
     *additional_hardware: HardwareComponent,
-    name: str | None = None,
     priority: int = 10,
     start_position_tolerance: float = 0.05,
 ) -> TaskConfig:
     hardware_components = (hardware, *additional_hardware)
-    return TaskConfig(
-        name=name
-        or (
-            trajectory_task_name(hardware.hardware_id)
-            if not additional_hardware
-            else DEFAULT_TRAJECTORY_TASK_NAME
-        ),
-        type="trajectory",
-        joint_names=[
-            joint_name for component in hardware_components for joint_name in component.joints
-        ],
+    return joint_trajectory_task(
+        [joint_name for component in hardware_components for joint_name in component.joints],
         priority=priority,
-        params={"start_position_tolerance": start_position_tolerance},
+        start_position_tolerance=start_position_tolerance,
     )
 
 
@@ -174,6 +163,7 @@ def teleop_ik_task(
     max_dt: float = 0.05,
     control_ik: PinkControlIKOverrides | None = None,
     params: GripperTaskOverrides | None = None,
+    stream_bind: dict[str, str] | None = None,
 ) -> TaskConfig:
     resolved_control_ik = _resolve_control_ik(hardware, robot_model, control_ik)
     task_params: dict[str, Any] = {
@@ -193,6 +183,7 @@ def teleop_ik_task(
         joint_names=hardware.joints,
         priority=priority,
         params=task_params,
+        stream_bind=stream_bind or {},
     )
 
 
@@ -235,9 +226,3 @@ def planner(
     if visualization is not None:
         module_kwargs["visualization"] = visualization
     return ManipulationModule.blueprint(**module_kwargs)
-
-
-def default_trajectory_task_name(hardware_id: str) -> str:
-    if hardware_id == "arm":
-        return DEFAULT_TRAJECTORY_TASK_NAME
-    return trajectory_task_name(hardware_id)

@@ -198,6 +198,22 @@ def pytest_configure(config):
         )
 
 
+@pytest.fixture(autouse=True)
+def _restore_global_config():
+    """Undo global_config mutations after every test.
+
+    A build from a parsed config resets the singleton to the parse's full
+    resolution. With a hermetic parse (environ={}) that reverts mcp_port to
+    its schema default, and every later test on the worker then binds the
+    port every other worker also defaults to.
+    """
+    from dimos.core.global_config import global_config
+
+    snapshot = global_config.model_dump()
+    yield
+    global_config.update(**snapshot)
+
+
 @pytest.fixture(scope="session")
 def mcp_port() -> int:
     """The MCP server port pinned for this xdist worker (or the default)."""

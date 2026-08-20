@@ -266,8 +266,20 @@ async def test_stats_reflect_traffic(
     assert {"id": ROBOT.id, "name": ROBOT.name, "model": ROBOT.model} in stats["robots"]
     assert stats["viewers"] >= 1
     assert stats["perRobot"][ROBOT.id]["subs"] == ["odom"]
-    assert stats["perRobot"][ROBOT.id]["channels"]["odom"]["framesIn"] >= 1
-    assert stats["perRobot"][ROBOT.id]["channels"]["odom"]["delivery"] == "reliable"
+    # This module's robot declares no manifest, so its traffic lands in the
+    # one aggregate bucket: per-channel ingress stats exist only for declared
+    # channels (arbitrary ch strings must not grow the map).
+    assert stats["perRobot"][ROBOT.id]["channels"] == {}
+    undeclared = stats["perRobot"][ROBOT.id]["undeclared"]
+    assert undeclared["framesIn"] >= 1
+    assert undeclared["bytesIn"] >= 2
+    assert isinstance(undeclared["fps"], (int, float))
+    viewer_stats = next(v for v in stats["perViewer"] if v["watched"] == ROBOT.id)
+    odom = viewer_stats["channels"]["odom"]
+    assert odom["sent"] >= 1
+    assert odom["bytesOut"] >= 2
+    # A healthy reliable channel never resets anything.
+    assert (odom["aborted"], odom["expired"], odom["inflight"]) == (0, 0, 0)
 
 
 async def test_duplicate_robot_id_is_terminal_until_first_disconnects(

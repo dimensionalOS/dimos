@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Render Go2 odom sources to rerun — memory2 store pipelines (standalone).
+"""Render Go2 odom sources to rerun — memory store pipelines (standalone).
 
 Each *pipeline* is a function ``(store, seconds) -> None`` composed from
 reusable stream transforms over standard dimos messages. ``leg_odom`` logs both
@@ -37,8 +37,8 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 import typer
 
-from dimos.memory2.transform import throttle
-from dimos.memory2.utils.progress import progress
+from dimos.memory.transform import throttle
+from dimos.memory.utils.progress import progress
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
@@ -51,7 +51,7 @@ from dimos.robot.unitree.go2.dds.store import Go2McapStore
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from dimos.memory2.type.observation import Observation
+    from dimos.memory.type.observation import Observation
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 

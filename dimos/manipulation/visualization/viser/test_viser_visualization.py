@@ -274,9 +274,6 @@ class Module:
         self.motion_speed_updates.append(float(speed_scale))
         return True
 
-    def reset(self) -> SimpleNamespace:
-        return SimpleNamespace(is_success=lambda: True)
-
     def plan_to_joint_targets(self, targets: dict[str, JointState]) -> bool:
         self.plans.append((tuple(targets), targets))
         return True
@@ -426,10 +423,6 @@ class Operator:
 
     def clear_plan(self) -> bool:
         return self.module.clear_planned_path()
-
-    def reset(self) -> bool:
-        result = self.module.reset()
-        return result.is_success()
 
 
 def session_inputs(module: Module) -> tuple[PlanningSceneInfo, Operator, dict[str, JointState]]:

@@ -27,7 +27,7 @@ class RoboPlanCartesianPathConfig(BaseConfig):
     """Runtime options for the official RoboPlan Cartesian path planner."""
 
     backend: Literal["roboplan"] = "roboplan"
-    speed_mode: Literal["bounded", "time_optimal"] = "bounded"
+    speed_mode: Literal["bounded", "time_optimal"] = "time_optimal"
     dt: float = Field(default=0.01, gt=0.0)
     max_linear_speed: float = Field(default=0.1, gt=0.0)
     max_angular_speed: float = Field(default=0.5, gt=0.0)
@@ -43,10 +43,8 @@ class RoboPlanCartesianPathConfig(BaseConfig):
     config_task_weight: float = Field(default=0.05, ge=0.0)
     velocity_scale: float = Field(default=1.0, gt=0.0, le=1.0)
     acceleration_scale: float = Field(default=1.0, gt=0.0, le=1.0)
-    limit_ratio_tolerance: float = Field(default=1.05, ge=1.0)
-    toppra_blend_deviation: float = 0.05
+    toppra_blend_deviation: float = Field(default=0.05, ge=0.0)
     position_limit_gain: float = Field(default=1.0, gt=0.0, le=1.0)
-    max_attempts_per_step: int = Field(default=16, ge=1)
 
 
 class RoboPlanPathShortcuttingConfig(BaseConfig):

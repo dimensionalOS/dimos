@@ -12,7 +12,7 @@
 // producer brings a new clock, and published ages clamp at 0 when a slot
 // predates the current estimate.
 
-import type { ChannelSpec, FrameHeader, RobotInfo } from "@dimos/shared";
+import type { ChannelSpec, FrameHeader, PanelSpec, RobotInfo } from "@dimos/shared";
 import type { TransportPhase } from "./transport.ts";
 
 /** Latest successfully decoded frame of one channel (latest-wins by header seq). */
@@ -305,6 +305,7 @@ export interface SessionStatus {
   robot: RobotInfo | null;
   robotCount: number;
   channels: ChannelSpec[];
+  panels: PanelSpec[];
   epoch: number;
   lastError: string | null;
 }
@@ -315,6 +316,7 @@ export class StatusStore {
     robot: null,
     robotCount: 0,
     channels: [],
+    panels: [],
     epoch: 0,
     lastError: null,
   };

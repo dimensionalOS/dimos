@@ -40,6 +40,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.simulation.mujoco.constants import VIDEO_FPS
 from dimos.web.relay_bridge import relay_bridge_module
 from dimos.web.relay_bridge.e2e_support import stop_module
 from dimos.web.relay_bridge.protocol import Msg, RobotManifest, Subs
@@ -250,6 +251,10 @@ def test_manifest_and_robot_info_content() -> None:
     image, odom = manifest.channels
     assert (image.encoding, image.delivery, image.maxHz) == ("jpeg.v1", "latest", 12.0)
     assert (odom.encoding, odom.delivery, odom.maxHz) == ("pose.json.v1", "reliable", 20.0)
+    # One video panel for the camera; odom stays a raw channel row.
+    assert [(p.id, p.kind, p.channels) for p in manifest.panels] == [
+        ("color_image", "video", ["color_image"])
+    ]
 
     info = resolve_robot_info(config)
     assert (info.id, info.name) == ("go2-lab", "Lab")
@@ -266,9 +271,11 @@ def test_manifest_and_robot_info_content() -> None:
         ("image_max_hz", -1.0),
         ("odom_max_hz", 0.0),
         ("odom_max_hz", -1.0),
+        ("jpeg_quality", -1),
+        ("jpeg_quality", 101),
     ],
 )
-def test_channel_rates_must_be_positive(field: str, value: float) -> None:
+def test_config_rejects_out_of_range_values(field: str, value: float) -> None:
     with pytest.raises(ValidationError):
         RelayBridgeConfig(**{field: value})
 
@@ -344,6 +351,49 @@ def test_encode_paths_and_max_hz_gate(bridge) -> None:
     time.sleep(0.06)
     odom_transport(module).publish(pose)
     assert wait_until(lambda: module.encoded["odom"] == count + 2)
+
+
+def test_default_image_gate_preserves_mujoco_video_rate() -> None:
+    config = RelayBridgeConfig()
+    last_input: dict[str, float] = {}
+    times = [100.0 + frame / VIDEO_FPS for frame in range(VIDEO_FPS)]
+    accepted = [
+        now
+        for now in times
+        if relay_bridge_module._passes_rate_gate(
+            last_input,
+            "color_image",
+            now,
+            1.0 / config.image_max_hz,
+        )
+    ]
+
+    assert accepted == times
+
+
+def test_no_jpeg_encode_while_unsubscribed(bridge, monkeypatch) -> None:
+    # The ticket-mandated spy: encode work must not happen without viewers,
+    # independent of the module.encoded bookkeeping.
+    module, clients = bridge
+    calls = {"n": 0}
+    real = Image.to_jpeg_bytes
+
+    def spy(self: Image, quality: int = 75) -> bytes:
+        calls["n"] += 1
+        return real(self, quality=quality)
+
+    monkeypatch.setattr(Image, "to_jpeg_bytes", spy)
+    image = Image.from_numpy(np.zeros((8, 12, 3), dtype=np.uint8))
+    image_transport(module).publish(image)
+    image_transport(module).publish(image)
+    flush_loop(module)
+    assert calls["n"] == 0
+    assert module.encoded["color_image"] == 0
+
+    push(module, clients[0], Subs(chs=["color_image"], n=1))
+    assert wait_until(lambda: image_transport(module).subscribers)
+    image_transport(module).publish(image)
+    assert calls["n"] == 1
 
 
 def test_session_loss_stops_encoders_and_reconnects(bridge) -> None:
@@ -571,6 +621,7 @@ def test_unwired_input_is_not_advertised_or_subscribed(monkeypatch) -> None:
         _, manifest = clients[0].hello_args
         assert isinstance(manifest, RobotManifest)
         assert [channel.ch for channel in manifest.channels] == ["odom"]
+        assert manifest.panels == []  # the video panel drops with its channel
 
         push(module, clients[0], Subs(chs=["color_image", "odom"], n=1))
         assert wait_until(lambda: len(odom_transport(module).subscribers) == 1)

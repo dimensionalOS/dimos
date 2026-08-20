@@ -4,7 +4,7 @@ title: "Native Modules"
 
 Prerequisite for this is to understand dimos [Modules](/docs/usage/modules.md) and [Blueprints](/docs/usage/blueprints.md).
 
-Native modules let you wrap **any executable** as a first-class DimOS module, given it speaks LCM.
+Native modules let you wrap **any executable** as a first-class dimOS module, given it speaks LCM.
 
 Python will handle blueprint wiring, lifecycle, and logging. Native binary handles the actual computation, publishing and subscribing directly on LCM.
 
@@ -38,7 +38,7 @@ class MyLidar(NativeModule):
 
 ```
 
-That's it. `MyLidar` is a full DimOS module. You can use it with `autoconnect`, blueprints, transport overrides, and specs. Once this module is started, your `./build/my_lidar` will get called with specific CLI args.
+That's it. `MyLidar` is a full dimOS module. You can use it with `autoconnect`, blueprints, transport overrides, and specs. Once this module is started, your `./build/my_lidar` will get called with specific CLI args.
 
 ## How it works
 
@@ -228,7 +228,7 @@ A complete ping-pong pair lives at [/examples/native-modules/cpp/](/examples/nat
 
 ## Examples
 
-For language interop examples (subscribing to DimOS topics from C++, TypeScript, Lua), see [/examples/language-interop/](/examples/language-interop/README.md).
+For language interop examples (subscribing to dimOS topics from C++, TypeScript, Lua), see [/examples/language-interop/](/examples/language-interop/README.md).
 
 ### Livox Mid-360 Module
 

@@ -331,6 +331,7 @@ class PlannerSpec(Protocol):
         config: CartesianPathConfig,
         *,
         auxiliary_groups: Sequence[PlanningGroupID] = (),
+        check_collision: bool = True,
     ) -> PlanningResult:
         """Plan synchronized TCP waypoint paths for an ordered group selection."""
         ...

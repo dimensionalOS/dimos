@@ -40,7 +40,8 @@ def _joint_streams(blueprint: Blueprint) -> dict[tuple[str, str], str]:
 def test_recorder_reads_aggregate_joint_state(blueprint: Blueprint) -> None:
     streams = _joint_streams(blueprint)
 
-    # Plain name pairing on both ends, no remap in between.
+    # Plain name pairing on both ends, no remap in between. The coordinator
+    # atom carries its explicit instance_name (the RPC lookup contract).
     assert streams[("collectionrecorder", AGGREGATE)] == AGGREGATE
-    assert streams[("controlcoordinator", AGGREGATE)] == AGGREGATE
+    assert streams[("ControlCoordinator", AGGREGATE)] == AGGREGATE
     assert not [port for _instance, port in streams if port.endswith("_joints")]

@@ -17,7 +17,8 @@
 Spawns the Deno relay (unless --url points at a running one), then drives a
 robot client pushing synthetic color_image JPEGs as fast as they encode
 (latest-wins) plus odom at 20 Hz (reliable), and a viewer client receiving
-both. Open the printed debug URL in Chrome/Firefox to watch the same stream.
+both. Open the printed URL in Chrome/Firefox to watch the same stream in the
+Cockpit (build web/cockpit first if the page reports a missing dist).
 
 Run: uv run python -m dimos.web.relay_bridge.demo_smoke [--secs 20] [--url https://...]
 """
@@ -39,6 +40,7 @@ from dimos.web.relay_bridge.protocol import (
     ChannelSpec,
     DataFrame,
     Manifest,
+    PanelSpec,
     RobotInfo,
     RobotManifest,
     Sub,
@@ -55,7 +57,9 @@ MANIFEST = RobotManifest(
     channels=[
         ChannelSpec(ch="color_image", encoding="jpeg.v1", delivery="latest", maxHz=60.0),
         ChannelSpec(ch="odom", encoding="pose.json.v1", delivery="reliable", maxHz=20.0),
-    ]
+    ],
+    # The Cockpit only subscribes jpeg.v1 when a video panel binds it.
+    panels=[PanelSpec(id="color_image", kind="video", channels=["color_image"])],
 )
 
 
@@ -235,7 +239,7 @@ def main() -> None:
         asyncio.run(run(url, args.secs))
         return
     with RelayProcess() as info:
-        print(f"relay up; open {info.debug_url} in Chrome/Firefox to watch")
+        print(f"relay up; open {info.open_url} in Chrome/Firefox to watch")
         with contextlib.suppress(KeyboardInterrupt):
             asyncio.run(run(info.wt_url, args.secs))
 

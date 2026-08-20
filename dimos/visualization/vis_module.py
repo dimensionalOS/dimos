@@ -43,7 +43,7 @@ def vis_module(
                     "world/camera_info": lambda ci: ci.to_rerun(...),
                 },
                 "static": {
-                    "world/tf/base_link": lambda rr: [rr.Boxes3D(...)],
+                    "world/robot_body": lambda rr: [rr.Boxes3D(...)],
                 },
             },
         )

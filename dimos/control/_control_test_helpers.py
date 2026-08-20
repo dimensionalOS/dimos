@@ -40,6 +40,7 @@ class RecordingTask(BaseControlTask):
         self.cartesian_calls: list[tuple[Any, float]] = []
         self.ee_twist_calls: list[tuple[Any, float]] = []
         self.buttons_calls: list[Any] = []
+        self.gripper_calls: list[tuple[Any, float]] = []
 
     def claim(self) -> ResourceClaim:
         return ResourceClaim(joints=self._joints)
@@ -59,6 +60,10 @@ class RecordingTask(BaseControlTask):
 
     def on_ee_twist_command(self, twist: Any, t_now: float) -> bool:
         self.ee_twist_calls.append((twist, t_now))
+        return True
+
+    def on_gripper_command(self, msg: Any, t_now: float) -> bool:
+        self.gripper_calls.append((msg, t_now))
         return True
 
     def on_buttons(self, msg: Any) -> bool:

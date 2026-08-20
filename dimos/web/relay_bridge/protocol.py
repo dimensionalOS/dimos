@@ -53,7 +53,12 @@ from dimos.utils.logging_config import setup_logger
 # Channel/manifest domain types live in manifest.py; re-exported here (the
 # redundant aliases mark them as such for mypy) so protocol consumers keep a
 # single import surface, mirroring protocol.ts.
-from dimos.web.relay_bridge.manifest import ChannelSpec as ChannelSpec, Delivery as Delivery
+from dimos.web.relay_bridge.manifest import (
+    MAX_MANIFEST_ID_LEN,
+    ChannelSpec as ChannelSpec,
+    Delivery as Delivery,
+    PanelSpec as PanelSpec,
+)
 
 logger = setup_logger()
 
@@ -97,6 +102,9 @@ class RobotInfo(_WireModel):
 
 class RobotManifest(_WireModel):
     channels: list[ChannelSpec]
+    # Empty and absent are equivalent on the wire (TS omits undefined; the
+    # local default always serializes as []).
+    panels: list[PanelSpec] = Field(default_factory=list)
 
 
 # Sentinel validation context passed by every wire-decode path: lets Hello
@@ -162,6 +170,7 @@ class Manifest(_WireModel):
     t: Literal["manifest"] = "manifest"
     robotId: str
     channels: list[ChannelSpec]
+    panels: list[PanelSpec] = Field(default_factory=list)
 
 
 class Sub(_WireModel):
@@ -232,7 +241,10 @@ class FrameHeader(_WireModel):
     `meta` carries encoding-specific extras.
     """
 
-    ch: str
+    # Bounded like manifest channel ids: the relay drops frames with oversize
+    # undeclared names, so local construction fails fast instead of emitting
+    # a frame the relay cannot route (the file's encode-fail-fast policy).
+    ch: str = Field(max_length=MAX_MANIFEST_ID_LEN)
     seq: int | float
     ts: int | float
     delivery: Delivery

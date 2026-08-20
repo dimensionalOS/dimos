@@ -16,7 +16,8 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import ControlCoordinator
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
@@ -83,11 +84,6 @@ _xarm6_right = xarm6_hardware("right_arm")
 coordinator_dual_xarm = ControlCoordinator.blueprint(
     hardware=[_xarm7_left, _xarm6_right],
     tasks=[
-        TaskConfig(
-            name="traj_arm",
-            type="trajectory",
-            joint_names=[*_xarm7_left.joints, *_xarm6_right.joints],
-            priority=10,
-        ),
+        joint_trajectory_task([*_xarm7_left.joints, *_xarm6_right.joints]),
     ],
 )

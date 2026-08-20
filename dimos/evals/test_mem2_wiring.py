@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Integration tests for the memory2 <-> EvalCase connection.
+"""Integration tests for the memory <-> EvalCase connection.
 
 Passive: a case's context Selects pull real Streams from a recording, the
 runner encodes them, and the *actual observation data* (image blocks, pose
@@ -54,7 +54,7 @@ def _pose(x: float, y: float) -> PoseStamped:
 
 
 def _open_store(path: Path) -> Any:
-    from dimos.memory2.store.sqlite import SqliteStore
+    from dimos.memory.store.sqlite import SqliteStore
 
     try:
         return SqliteStore(path=str(path))

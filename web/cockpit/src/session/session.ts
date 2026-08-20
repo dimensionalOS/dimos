@@ -10,10 +10,12 @@ import {
   DataFrameStreamReader,
   encodeControlFrame,
   type Msg,
+  type PanelSpec,
   PROTOCOL_VERSION,
   type RobotInfo,
 } from "@dimos/shared";
-import { parseManifest } from "@dimos/shared/manifest";
+import { type Manifest, parseManifest } from "@dimos/shared/manifest";
+import { getPanel } from "../panels/registry.ts";
 import { getDecoder } from "./decoders/index.ts";
 import { ChannelStore, StatusStore } from "./store.ts";
 import { ReconnectingTransport, type TransportDeps, type WebTransportLike } from "./transport.ts";
@@ -26,19 +28,31 @@ export interface SessionHandle {
   stop(): void;
 }
 
-/** True when both lists describe the same channels (order-insensitive). */
-export function manifestsEqual(a: ChannelSpec[], b: ChannelSpec[]): boolean {
-  if (a.length !== b.length) return false;
+/** True when both manifests describe the same channels (order-insensitive)
+ * and the same panels (order-sensitive: panel order is display order). */
+export function manifestsEqual(a: Manifest, b: Manifest): boolean {
+  if (a.channels.length !== b.channels.length || a.panels.length !== b.panels.length) {
+    return false;
+  }
   const key = (c: ChannelSpec) => c.ch;
-  const sortedA = [...a].sort((x, y) => key(x).localeCompare(key(y)));
-  const sortedB = [...b].sort((x, y) => key(x).localeCompare(key(y)));
-  return sortedA.every((c, i) => {
+  const sortedA = [...a.channels].sort((x, y) => key(x).localeCompare(key(y)));
+  const sortedB = [...b.channels].sort((x, y) => key(x).localeCompare(key(y)));
+  const channelsEqual = sortedA.every((c, i) => {
     const other = sortedB[i];
     return (
       c.ch === other.ch &&
       c.encoding === other.encoding &&
       c.delivery === other.delivery &&
       c.maxHz === other.maxHz
+    );
+  });
+  return channelsEqual && a.panels.every((p, i) => {
+    const other = b.panels[i];
+    return (
+      p.id === other.id &&
+      p.kind === other.kind &&
+      p.channels.length === other.channels.length &&
+      p.channels.every((ch, j) => ch === other.channels[j])
     );
   });
 }
@@ -48,16 +62,29 @@ export function pickAutoWatch(robots: RobotInfo[]): RobotInfo | null {
   return robots.length === 1 ? robots[0] : null;
 }
 
+// Encodings whose subscription costs real encode CPU and bandwidth;
+// subscribed only when a panel this build can render binds them. T7 moves
+// all subscription decisions to panels.
+const PANEL_ONLY_ENCODINGS = new Set(["jpeg.v1"]);
+
+/** True when this build can put the channel to use: it has a decoder, and a
+ * panel-only encoding is additionally bound by a renderable panel. */
+export function channelSubscribable(spec: ChannelSpec, panels: PanelSpec[]): boolean {
+  if (getDecoder(spec.encoding) === undefined) return false;
+  if (!PANEL_ONLY_ENCODINGS.has(spec.encoding)) return true;
+  return panels.some((p) => getPanel(p.kind) !== undefined && p.channels.includes(spec.ch));
+}
+
 /**
- * Channels worth subscribing: only those with a decoder. Subscribing to
- * undecodable channels wastes encode CPU and bandwidth, and a 15 Hz JPEG
- * stream nobody renders overflows the relay's reliable FIFO under Firefox's
- * tighter QUIC credit (the relay kicks the viewer every ~8 s). Panels take
- * over subscription decisions in T7; the video channel joins in T5 with its
- * decoder.
+ * Channels worth subscribing: only those with a decoder, and panel-only
+ * encodings only when a renderable panel binds them. Subscribing to channels
+ * nobody can render wastes encode CPU and bandwidth, and a high-rate JPEG stream
+ * nobody renders overflows the relay's reliable FIFO under Firefox's tighter
+ * QUIC credit (the relay kicks the viewer every ~8 s). Panels take over all
+ * subscription decisions in T7.
  */
-export function subscribableChannels(channels: ChannelSpec[]): ChannelSpec[] {
-  return channels.filter((spec) => getDecoder(spec.encoding) !== undefined);
+export function subscribableChannels(channels: ChannelSpec[], panels: PanelSpec[]): ChannelSpec[] {
+  return channels.filter((spec) => channelSubscribable(spec, panels));
 }
 
 class Session {
@@ -68,7 +95,7 @@ class Session {
   // Bumped per connection; data-plane writes from a previous connection's
   // still-draining reader loops are dropped by comparing against it.
   #runId = 0;
-  #manifest: ChannelSpec[] | null = null;
+  #manifest: Manifest | null = null;
   #ticker: ReturnType<typeof setInterval>;
 
   constructor(transportDeps: TransportDeps = {}) {
@@ -129,21 +156,21 @@ class Session {
               // A reply to a watch that raced a robot change must not be
               // adopted: only the currently picked robot's manifest counts.
               if (msg.robotId !== this.status.get().robot?.id) break;
-              let channels: ChannelSpec[];
+              let manifest: Manifest;
               try {
-                // Domain validation (duplicate/bogus ids) on top of the
-                // transport shape check: a duplicate id would make the
-                // store and the channel list disagree on the winner.
-                channels = parseManifest({ channels: msg.channels }).channels;
+                // Domain validation (duplicate/bogus ids, panel channel refs)
+                // on top of the transport shape check: a duplicate id would
+                // make the store and the channel list disagree on the winner.
+                manifest = parseManifest({ channels: msg.channels, panels: msg.panels });
               } catch (e) {
                 this.status.update({ lastError: `invalid manifest: ${(e as Error).message}` });
                 break;
               }
               this.status.update({ lastError: null });
-              for (const spec of subscribableChannels(channels)) {
+              for (const spec of subscribableChannels(manifest.channels, manifest.panels)) {
                 await send({ t: "sub", ch: spec.ch });
               }
-              this.#applyManifest(channels);
+              this.#applyManifest(manifest);
               break;
             }
             case "error": {
@@ -171,17 +198,18 @@ class Session {
    * tracking always rebaselines; a first adopt drops data left over from a
    * dead producer, and a changed manifest additionally remounts.
    */
-  #applyManifest(channels: ChannelSpec[]): void {
+  #applyManifest(manifest: Manifest): void {
     const prev = this.#manifest;
-    this.#manifest = channels;
+    this.#manifest = manifest;
+    const patch = { channels: manifest.channels, panels: manifest.panels };
     if (prev === null) {
       this.channels.reset();
-      this.status.update({ channels });
-    } else if (!manifestsEqual(prev, channels)) {
+      this.status.update(patch);
+    } else if (!manifestsEqual(prev, manifest)) {
       this.channels.reset();
-      this.status.update({ channels, epoch: this.status.get().epoch + 1 });
+      this.status.update({ ...patch, epoch: this.status.get().epoch + 1 });
     } else {
-      this.status.update({ channels });
+      this.status.update(patch);
     }
     this.channels.rebaseline();
   }
@@ -195,7 +223,7 @@ class Session {
     if (this.#manifest === null) return;
     this.#manifest = null;
     this.channels.reset();
-    this.status.update({ channels: [], epoch: this.status.get().epoch + 1 });
+    this.status.update({ channels: [], panels: [], epoch: this.status.get().epoch + 1 });
   }
 
   async #readUniStreams(wt: WebTransportLike, runId: number): Promise<void> {
@@ -240,7 +268,7 @@ class Session {
     // No adopted manifest means no confirmed producer: anything arriving is
     // stale drain from a dead robot session and must not re-dirty the store.
     if (this.#manifest === null) return;
-    const spec = this.#manifest.find((c) => c.ch === frame.header.ch);
+    const spec = this.#manifest.channels.find((c) => c.ch === frame.header.ch);
     const decoder = getDecoder(spec?.encoding);
     let value: unknown;
     let preview: string | undefined;

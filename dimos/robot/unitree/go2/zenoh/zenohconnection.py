@@ -29,8 +29,9 @@ import asyncio
 import math
 import threading
 import time
+from typing import Any
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
@@ -55,13 +56,33 @@ MID360_XYZ = Vector3(-0.032, 0.0, 0.12)  # front_camera -> mid360_link: 3.2cm ba
 # rpy mapping a sensor frame to its optical frame (x-right, y-down, z-forward)
 OPTICAL_RPY = Vector3(-math.pi / 2, 0.0, -math.pi / 2)
 
+# front_camera -> mid360_link, fixed-axis rpy in degrees, by rig.
+MID360_MOUNT_PRESETS: dict[str, tuple[float, float, float]] = {
+    # Pointing straight ahead, pitched 60 deg down.
+    "SF": (0.0, 60.0, 0.0),
+    # The 60 deg tilt lands on roll because this lidar sits yawed 90 deg on its bracket.
+    "ATHENS": (-60.0, 0.0, -90.0),
+}
+
 
 class GO2ZenohConfig(StaticTfPublisherConfig):
-    # front_camera -> mid360_link, fixed-axis rpy in degrees. The 60 deg tilt lands on
-    # roll because the lidar sits yawed 90 deg on its bracket. Both yaw signs level the
-    # body but differ by 180 deg of heading — flip it if the camera looks backwards.
-    mid360_mount_rpy_deg: tuple[float, float, float] = (-60.0, 0.0, -90.0)
+    # front_camera -> mid360_link, fixed-axis rpy in degrees. Either a raw (roll, pitch,
+    # yaw) tuple or a name from MID360_MOUNT_PRESETS.
+    mid360_mount: tuple[float, float, float] | str = MID360_MOUNT_PRESETS["SF"]
     camera_info_hz: float = Field(default=1.0, gt=0.0)
+
+    @field_validator("mid360_mount", mode="before")
+    @classmethod
+    def _resolve_mid360_mount(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            try:
+                return MID360_MOUNT_PRESETS[value]
+            except KeyError:
+                raise ValueError(
+                    f"unknown mid360_mount preset {value!r}; "
+                    f"expected one of {sorted(MID360_MOUNT_PRESETS)}"
+                ) from None
+        return value
 
 
 class GO2Zenoh(StaticTfPublisher):
@@ -162,7 +183,7 @@ class GO2Zenoh(StaticTfPublisher):
         camera_to_mid360 = Transform(
             translation=MID360_XYZ,
             rotation=Quaternion.from_euler(
-                Vector3(*(math.radians(d) for d in self.config.mid360_mount_rpy_deg))
+                Vector3(*(math.radians(float(d)) for d in self.config.mid360_mount))
             ),
             frame_id="front_camera",
             child_frame_id="mid360_link",

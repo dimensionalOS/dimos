@@ -165,7 +165,7 @@ print(matrix)
 
 ## Frame IDs in Modules
 
-Modules in DimOS automatically get a `frame_id` property. This is controlled by two config options in [`core/module.py`](/dimos/core/module.py#L78):
+Modules in dimOS automatically get a `frame_id` property. This is controlled by two config options in [`core/module.py`](/dimos/core/module.py#L78):
 
 - `frame_id` - The base frame name (defaults to the class name)
 - `frame_id_prefix` - Optional prefix for namespacing

@@ -39,8 +39,8 @@ from dimos.constants import STATE_DIR
 from dimos.protocol.service.spec import BaseConfig
 
 if TYPE_CHECKING:
-    from dimos.memory2.store.sqlite import SqliteStore
-    from dimos.memory2.stream import Stream
+    from dimos.memory.store.sqlite import SqliteStore
+    from dimos.memory.stream import Stream
 
 # Each `formats/<name>/` package's writer/reader expose these, via get_writer/get_inspector.
 Writer = Callable[[Iterator["Sample"], "OutputConfig"], Path]

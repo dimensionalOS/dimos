@@ -16,7 +16,7 @@
 """Drive-and-record blueprint for the Go2 + Mid-360 rig.
 
 Pygame WASD teleop drives the dog while Point-LIO odom+lidar, the Go2's lidar/odom,
-and the front camera are recorded into a memory2 db. The Go2/Mid-360 mount frames are
+and the front camera are recorded into a memory db. The Go2/Mid-360 mount frames are
 published continuously onto tf so they're captured in the recording. Raw Livox capture
 is opt-in: set ``RECORD_PCAP=1`` to also record a .pcap of the Mid-360 UDP stream.
 

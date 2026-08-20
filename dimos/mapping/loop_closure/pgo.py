@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PGO drift corrections as a memory2 Transformer.
+"""PGO drift corrections as a memory Transformer.
 
 A lidar/odom stream comes in with poses that drift over time — the robot's
 estimate of where it is in the world slowly diverges from ground truth as
@@ -51,8 +51,8 @@ from typing import TYPE_CHECKING, Any, Literal, TypedDict, TypeVar, Unpack, cast
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 
-from dimos.memory2.transform import Transformer
-from dimos.memory2.type.observation import Observation
+from dimos.memory.transform import Transformer
+from dimos.memory.type.observation import Observation
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -240,7 +240,7 @@ class PoseGraph(Transformer[Any, Any]):
 
 
 class PGO(Transformer[PointCloud2, "PoseGraph"]):
-    """Pose-graph optimization as a memory2 Transformer.
+    """Pose-graph optimization as a memory Transformer.
 
     Emits one cumulative :class:`PoseGraph` snapshot per state change. By
     default (``emit_on="loop"``) that's one emit per accepted loop closure

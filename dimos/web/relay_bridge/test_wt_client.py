@@ -110,13 +110,62 @@ async def test_offer_survives_delivery_and_keeps_sending() -> None:
     # A healthy pump keeps accepting; sanity check that the stub path works.
     session = StubSession()
     writer = _client(session).latest_writer("cam")
-    for i in range(5):
-        writer.offer(i.to_bytes(4, "little"))
-        await asyncio.sleep(0)
-    await asyncio.sleep(0.02)
-    assert not writer._task.done()
-    assert writer.sent >= 1
-    writer.stop()
+    try:
+        for i in range(5):
+            writer.offer(i.to_bytes(4, "little"))
+            await asyncio.sleep(0)
+        await asyncio.sleep(0.02)
+        assert not writer._task.done()
+        assert writer.sent >= 1
+    finally:
+        writer.stop()
+
+
+async def test_mailbox_drops_stale_frames_under_slow_writer() -> None:
+    # A wedged transport must never queue stale frames: the 1-slot mailbox
+    # sheds everything but the newest, which is what goes out on unwedge.
+    session = StubSession()
+    payloads: list[bytes] = []
+    polls = 0
+
+    real_send = session.send_frame
+
+    def send_frame(header: FrameHeader, payload: bytes) -> int:
+        payloads.append(payload)
+        return real_send(header, payload)
+
+    def stream_in_flight(stream_id: int) -> bool:
+        nonlocal polls
+        polls += 1
+        return polls < 20  # first send stays in flight for ~20 pump polls
+
+    session.send_frame = send_frame  # type: ignore[method-assign]
+    session.stream_in_flight = stream_in_flight  # type: ignore[method-assign]
+
+    # stale_after high enough that the wedge never triggers the reset path:
+    # this test pins the mailbox semantics alone.
+    writer = _client(session).latest_writer("cam", stale_after=10.0)
+    try:
+        writer.offer(b"f0")
+        # Wait until the pump provably took f0 (send_frame ran): it is wedged
+        # in its in-flight poll, so the offers below only touch the mailbox.
+        for _ in range(500):
+            if payloads:
+                break
+            await asyncio.sleep(0.005)
+        assert payloads, "pump did not send f0 within 2.5 s"
+        for i in range(1, 6):
+            writer.offer(b"f%d" % i)
+        assert writer.dropped == 4  # f1..f4 displaced by their successors
+
+        for _ in range(500):
+            if writer.sent == 2:
+                break
+            await asyncio.sleep(0.005)
+        assert payloads == [b"f0", b"f5"]  # only the newest frame followed the wedge
+        assert writer.sent == 2
+    finally:
+        writer.stop()
 
 
 async def test_frames_cancel_does_not_steal_next_frame() -> None:

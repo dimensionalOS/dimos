@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from dimos.memory2.transform import Transformer
+from dimos.memory.transform import Transformer
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
 
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
     from dimos_lcm.sensor_msgs import CameraInfo
 
-    from dimos.memory2.type.observation import Observation
+    from dimos.memory.type.observation import Observation
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
     from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
@@ -122,6 +122,10 @@ def sees(
     time_tolerance: float = 5.0,
     margin: float = 0.0,
     max_range: float | None = None,
+    extent: Any | None = None,
+    min_fraction: float = 1.0,
+    depth: Callable[[Observation[Any]], Image | None] | None = None,
+    occlusion_tolerance: float = 0.08,
 ) -> Callable[[Observation[Any]], bool]:
     """Predicate for ``Stream.filter()``: keep frames whose camera sees the world point.
 
@@ -129,9 +133,19 @@ def sees(
 
         images.near(det.pose, radius=6.0).filter(sees(det.pose, camera_info, ...))
 
-    ``margin`` requires the point that many pixels inside the image edges;
-    ``max_range`` drops frames further than that from the point. Occlusion is
-    not checked.
+    ``margin`` requires projections that many pixels inside the image edges;
+    ``max_range`` drops frames further than that from the point.
+
+    ``extent`` turns the point into a support box: the center plus the eight
+    box corners are projected, and the frame passes when at least
+    ``min_fraction`` of those samples land inside the image. A half-framed
+    object is then no longer treated like a fully framed one.
+
+    ``depth`` enables a cheap occlusion test: measured depth at the visible
+    sample pixels is compared against each sample's expected range, and the
+    frame is rejected when a majority of samples sit behind nearer geometry
+    by more than ``occlusion_tolerance`` meters. Invalid depth (0) counts as
+    unknown, not as occluding.
     """
     if tf is None and base_to_optical is None:
         raise ValueError("sees needs either tf or base_to_optical")
@@ -141,20 +155,57 @@ def sees(
     cx, cy = camera_info.K[2], camera_info.K[5]
     width, height = float(camera_info.width), float(camera_info.height)
 
+    if extent is not None:
+        half = 0.5 * (
+            np.array([extent.x, extent.y, extent.z])
+            if hasattr(extent, "x")
+            else np.asarray(extent, dtype=float)
+        )
+        corners = np.array(
+            [[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)], dtype=float
+        )
+        samples = np.vstack([target, target + corners * half])
+    else:
+        samples = target.reshape(1, 3)
+
     def _sees(obs: Observation[Any]) -> bool:
         transform = _world_to_optical(
             obs, world_frame, tf, base_to_optical, optical_frame, time_tolerance
         )
         if transform is None:
             return False
-        p = (transform.to_matrix() @ np.append(target, 1.0))[:3]
-        if p[2] <= 0:
+        matrix = transform.to_matrix()
+        pts = (matrix @ np.column_stack([samples, np.ones(len(samples))]).T).T[:, :3]
+        in_front = pts[:, 2] > 0
+        if not in_front.any():
             return False
-        if max_range is not None and float(np.linalg.norm(p)) > max_range:
+        if max_range is not None and float(np.linalg.norm(pts[0])) > max_range:
             return False
-        u = float(fx * p[0] / p[2] + cx)
-        v = float(fy * p[1] / p[2] + cy)
-        return margin <= u < width - margin and margin <= v < height - margin
+        u = fx * pts[:, 0] / np.where(in_front, pts[:, 2], 1.0) + cx
+        v = fy * pts[:, 1] / np.where(in_front, pts[:, 2], 1.0) + cy
+        visible = (
+            in_front & (u >= margin) & (u < width - margin) & (v >= margin) & (v < height - margin)
+        )
+        if float(visible.mean()) < min_fraction:
+            return False
+
+        if depth is not None and visible.any():
+            depth_frame = depth(obs)
+            if depth_frame is not None:
+                depth_m = np.asarray(depth_frame.data, dtype=np.float32)
+                if depth_frame.data.dtype == np.uint16:
+                    depth_m = depth_m * 0.001
+                rows = np.clip(v[visible].astype(int), 0, depth_m.shape[0] - 1)
+                cols = np.clip(u[visible].astype(int), 0, depth_m.shape[1] - 1)
+                measured = depth_m[rows, cols]
+                expected = pts[visible][:, 2]
+                known = measured > 0
+                if known.any():
+                    occluded = measured[known] + occlusion_tolerance < expected[known]
+                    if float(occluded.mean()) > 0.5:
+                        return False
+
+        return True
 
     return _sees
 

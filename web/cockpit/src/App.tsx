@@ -1,3 +1,4 @@
+import { PanelGrid } from "./panels/PanelGrid.tsx";
 import { useStatus } from "./session/hooks.ts";
 import type { SessionHandle } from "./session/session.ts";
 import { ChannelList } from "./ui/ChannelList.tsx";
@@ -19,7 +20,12 @@ export function App({ session }: { session: SessionHandle }) {
   } else if (status.channels.length === 0) {
     content = <p className={styles.notice}>Waiting for a robot to register...</p>;
   } else {
-    content = <ChannelList channels={status.channels} store={session.channels} />;
+    content = (
+      <>
+        <PanelGrid panels={status.panels} store={session.channels} />
+        <ChannelList channels={status.channels} panels={status.panels} store={session.channels} />
+      </>
+    );
   }
 
   return (

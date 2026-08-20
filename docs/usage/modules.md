@@ -1,5 +1,5 @@
 ---
-title: "DimOS Modules"
+title: "dimOS Modules"
 ---
 
 Modules are subsystems on a robot that operate autonomously and communicate with other subsystems using standardized messages.
@@ -154,7 +154,7 @@ camera.stop()
 
 As we build module structures, we'll quickly want to utilize all cores on the machine (which Python doesn't allow as a single process) and potentially distribute modules across machines or even the internet.
 
-For this, we use `dimos.core` and DimOS transport protocols.
+For this, we use `dimos.core` and dimOS transport protocols.
 
 Defining message exchange protocols and message types also gives us the ability to write models in faster languages.
 

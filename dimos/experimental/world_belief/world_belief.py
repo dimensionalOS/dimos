@@ -191,7 +191,7 @@ class _GalleryStore:
         novelty: float,
         max_views: int,
     ) -> None:
-        from dimos.memory2.store.sqlite import SqliteStore
+        from dimos.memory.store.sqlite import SqliteStore
 
         self._store = SqliteStore(path=path)
         self._namespace = _gallery_namespace(model_id)

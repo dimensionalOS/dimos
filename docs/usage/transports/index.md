@@ -44,11 +44,11 @@ dimos --transport=lcm run unitree-go2
 dimos --transport=zenoh run unitree-go2
 ```
 
-On macOS, large replay workloads can be unreliable over LCM UDP, so DimOS defaults the global stream transport to `zenoh` there. Other platforms default to `lcm`.
+On macOS, large replay workloads can be unreliable over LCM UDP, so dimOS defaults the global stream transport to `zenoh` there. Other platforms default to `lcm`.
 
 ## Zenoh quickstart
 
-Zenoh ships with DimOS by default (`eclipse-zenoh` is a base dependency), so there is nothing extra to install.
+Zenoh ships with dimOS by default (`eclipse-zenoh` is a base dependency), so there is nothing extra to install.
 
 **Default global stream transport** (only applies when you do not pass `--transport` or set `DIMOS_TRANSPORT`):
 
@@ -241,7 +241,7 @@ See [Modules](/docs/usage/modules.md) for more on module architecture.
 ## Inspecting traffic (CLI)
 
 `dimos spy` is the universal transport spy: one live view of every topic moving on every
-DimOS pubsub transport — names, message rates, bandwidth, sizes, and liveness — whether the
+dimOS pubsub transport — names, message rates, bandwidth, sizes, and liveness — whether the
 system runs on LCM, Zenoh, or both.
 
 ```bash
@@ -341,13 +341,13 @@ Received velocity: x=1.0, y=0.0, z=0.5
 
 ### Zenoh
 
-Zenoh provides network pubsub without relying on UDP multicast for the user-facing stream transport. In DimOS it carries the same typed messages by encoding them with `LCMEncoderMixin`, so existing `dimos.msgs.*` types still work.
+Zenoh provides network pubsub without relying on UDP multicast for the user-facing stream transport. In dimOS it carries the same typed messages by encoding them with `LCMEncoderMixin`, so existing `dimos.msgs.*` types still work.
 
 Use Zenoh when:
 
 * you want a transport that behaves better than UDP multicast on macOS
 * you are replaying large or high-rate data and want a more reliable network path
-* you want to keep the DimOS typed stream model while changing the transport backend
+* you want to keep the dimOS typed stream model while changing the transport backend
 
 At the stream level, the transport wrappers are `ZenohTransport` and `pZenohTransport`. Install, defaults, and CLI versus environment overrides are in the [Zenoh quickstart](#zenoh-quickstart) above.
 

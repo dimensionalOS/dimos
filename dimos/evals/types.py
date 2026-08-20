@@ -20,13 +20,13 @@ Two taxonomies, orthogonal:
   time window). The model's output never feeds back into its input. Cheap,
   deterministic, repeatable.
 - **Interactive** evals: actions feed back into observations; state is
-  mutable. Needs sim or a real robot, scored by sampling the live memory2
+  mutable. Needs sim or a real robot, scored by sampling the live memory
   store the robot's Recorder writes.
 
 Suites are Python modules exporting ``SUITE: Suite`` (behavior is typed code;
-JSON holds only data rows). memory2 is the source of truth for all input and
-perception: context selectors return real :class:`~dimos.memory2.stream.Stream`
-objects and scoring reads :class:`~dimos.memory2.store.base.Store`.
+JSON holds only data rows). memory is the source of truth for all input and
+perception: context selectors return real :class:`~dimos.memory.stream.Stream`
+objects and scoring reads :class:`~dimos.memory.store.base.Store`.
 """
 
 from __future__ import annotations
@@ -40,8 +40,8 @@ from dimos.evals.scorers import exact, final
 
 if TYPE_CHECKING:
     from dimos.e2e_tests.dim_sim_client import DimSimClient
-    from dimos.memory2.store.base import Store
-    from dimos.memory2.stream import Stream
+    from dimos.memory.store.base import Store
+    from dimos.memory.stream import Stream
 
 T = TypeVar("T")
 

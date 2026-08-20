@@ -41,7 +41,7 @@ Check with: `ip addr show`
 
 Recommended to setup [tailscale](https://tailscale.com/tailscale-ssh) to avoid needing to setup rounter specific configuraions for wireless control.
 
-## 2. Install DimOS
+## 2. Install dimOS
 
 SSH into the robot, then:
 
@@ -52,7 +52,7 @@ bash <(curl -fsSL https://pub-4767fdd15e6a41b6b2ce2558d71ec8d9.r2.dev/install.sh
 
 #### Notes
 
-DimOS handles DDS setup automatically. If you're using the Unitree SDK directly, set:
+dimOS handles DDS setup automatically. If you're using the Unitree SDK directly, set:
 ```bash
 export CYCLONEDDS_HOME="$HOME/cyclonedds/install"
 ```

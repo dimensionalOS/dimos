@@ -17,8 +17,9 @@
 Pinned by the golden vectors in web/shared/fixtures/manifests.json (tested
 from both pytest and deno test). The transport (protocol.py) checks only
 field shapes; this module owns the domain rules: bounded unique ids, positive
-rates, and panel/layout references that resolve. Panels and layout are
-minimal until T7 (the layout is a flat panel-id order, not a tree).
+rates, panel/layout references that resolve, and kind-specific panel rules
+(video). Panels and layout are minimal until T7 (the layout is a flat
+panel-id order, not a tree).
 """
 
 import json
@@ -97,7 +98,7 @@ def parse_manifest(data: Any) -> Manifest:
     except ValidationError as e:
         raise ManifestError("invalid_shape", str(e)) from e
 
-    ch_ids: set[str] = set()
+    ch_ids: dict[str, ChannelSpec] = {}
     for spec in manifest.channels:
         if not _bounded_id(spec.ch):
             raise ManifestError(
@@ -105,7 +106,7 @@ def parse_manifest(data: Any) -> Manifest:
             )
         if spec.ch in ch_ids:
             raise ManifestError("duplicate_channel_id", f"duplicate channel {spec.ch}")
-        ch_ids.add(spec.ch)
+        ch_ids[spec.ch] = spec
         if not _bounded_id(spec.encoding):
             raise ManifestError(
                 "invalid_encoding", f"encoding must be 1..{MAX_MANIFEST_ID_LEN} chars"
@@ -130,6 +131,18 @@ def parse_manifest(data: Any) -> Manifest:
             if ch not in ch_ids:
                 raise ManifestError(
                     "unknown_panel_channel", f"panel {panel.id} wants undeclared channel {ch}"
+                )
+        # Kind-specific rules; unknown kinds stay unvalidated (forward
+        # compatibility with newer bridges).
+        if panel.kind == "video":
+            if len(panel.channels) != 1:
+                raise ManifestError(
+                    "invalid_video_panel", f"video panel {panel.id} must bind exactly one channel"
+                )
+            bound = ch_ids[panel.channels[0]]
+            if bound.encoding != "jpeg.v1" or bound.delivery != "latest":
+                raise ManifestError(
+                    "invalid_video_panel", f"video panel {panel.id} needs a jpeg.v1 latest channel"
                 )
 
     for panel_id in manifest.layout:

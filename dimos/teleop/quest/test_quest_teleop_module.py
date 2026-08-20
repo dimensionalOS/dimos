@@ -16,6 +16,7 @@ from collections.abc import Iterator
 
 import pytest
 
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.teleop.quest.quest_extensions import HandTeleopModule
 from dimos.teleop.quest.quest_teleop_module import QuestTeleopModule
 from dimos.teleop.quest.quest_types import Hand, QuestControllerState
@@ -42,6 +43,29 @@ def test_quest_web_server_is_initialized_during_start(module: QuestTeleopModule,
     setup_routes.assert_called_once_with()
     start_server.assert_called_once_with()
     start_control_loop.assert_called_once_with()
+
+
+def test_translation_scale_changes_pose_delta(module: QuestTeleopModule) -> None:
+    module._initial_poses[Hand.RIGHT] = PoseStamped(position=[1.0, 2.0, 3.0])
+    module._current_poses[Hand.RIGHT] = PoseStamped(position=[1.2, 1.5, 4.0])
+
+    module._set_translation_scale(2.0)
+
+    output = module._get_output_pose(Hand.RIGHT)
+    assert output is not None
+    assert output.position.x == pytest.approx(0.4)
+    assert output.position.y == pytest.approx(-1.0)
+    assert output.position.z == pytest.approx(2.0)
+
+
+@pytest.mark.parametrize("translation_scale", [0.0, -1.0, float("inf")])
+def test_translation_scale_must_be_positive_and_finite(
+    module: QuestTeleopModule, translation_scale: float
+) -> None:
+    with pytest.raises(ValueError):
+        module._set_translation_scale(translation_scale)
+
+    assert module._translation_scale == 1.0
 
 
 def test_hand_teleop_pinch_toggles_engagement(mocker) -> None:

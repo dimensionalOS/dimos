@@ -88,7 +88,7 @@ dimos hardware a1z doctor
 
 The A1Z has no brakes or hardware e-stop button; the PSU switch is the hardware
 kill switch. Support the arm and clear its workspace before starting or
-stopping DimOS. Disabling the motors makes the arm fall.
+stopping dimOS. Disabling the motors makes the arm fall.
 
 ```bash
 dimos run keyboard-teleop-a1z

@@ -36,7 +36,7 @@ from dimos.imitation.dataprep.core import (
     get_writer,
     iter_episode_samples,
 )
-from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

@@ -38,7 +38,7 @@ class VoxelGrid:
     300k voxels). Both produce identical voxel sets.
 
     No Module/framework dependency. Can be used standalone or wrapped
-    by VoxelGridMapper (Module) or VoxelMapTransformer (memory2 Transformer).
+    by VoxelGridMapper (Module) or VoxelMapTransformer (memory Transformer).
     """
 
     def __init__(

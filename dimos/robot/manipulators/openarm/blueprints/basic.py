@@ -27,8 +27,8 @@ from dimos.robot.manipulators.openarm.config import (
 )
 
 
-def openarm_task(hw: HardwareComponent, name: str | None = None) -> TaskConfig:
-    return trajectory_task(hw, name=name)
+def openarm_task(hw: HardwareComponent) -> TaskConfig:
+    return trajectory_task(hw)
 
 
 mock_left = openarm_hardware(side="left")

@@ -1,5 +1,6 @@
 ---
 title: "Go2 Navigation Overview"
+sidebarTitle: "Overview"
 description: "Live column-carving navigation and premap relocalization for the Unitree Go2."
 ---
 

@@ -17,7 +17,7 @@
 The default `spot` blueprint (click/teleop driving + full sensor streaming +
 Rerun) with `SpotRecorder` added, so every one of `SpotHighLevel`'s streams
 (the five fisheye + five depth cameras and odometry, plus the live tf tree) is
-written to a memory2 SQLite db as you drive. `autoconnect` wires the recorder's
+written to a memory SQLite db as you drive. `autoconnect` wires the recorder's
 In ports to `SpotHighLevel`'s outputs by name.
 
 Usage:
