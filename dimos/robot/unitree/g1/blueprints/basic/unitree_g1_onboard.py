@@ -13,15 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Basic G1 stack: base sensors plus real robot connection and ROS nav."""
+from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_primitive_no_nav import (
-    unitree_g1_primitive_no_nav,
-)
-from dimos.robot.unitree.g1.connection import G1Connection
+from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_vis import unitree_g1_vis
+from dimos.robot.unitree.g1.config import G1
+from dimos.robot.unitree.g1.effectors.high_level.dds_sdk import G1HighLevelDdsSdk
 
-unitree_g1_basic = autoconnect(
-    unitree_g1_primitive_no_nav,
-    G1Connection.blueprint(),
-)
+# Underscore-prefixed: a shared sub-blueprint, not a runnable blueprint of its own.
+_unitree_g1_onboard = autoconnect(
+    PointLio.blueprint(host_ip=G1.lidar_host_ip, lidar_ip=G1.lidar_ip),
+    G1HighLevelDdsSdk.blueprint(),
+    unitree_g1_vis,
+).global_config(n_workers=12, robot_model="unitree_g1")

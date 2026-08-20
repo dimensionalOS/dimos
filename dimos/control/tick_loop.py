@@ -162,7 +162,9 @@ class TickLoop:
             try:
                 self._tick()
             except Exception as e:
-                logger.error(f"TickLoop tick error: {e}")
+                # Without the traceback a tick failure is just a bare message
+                # with no way to tell which task or adapter raised it.
+                logger.error(f"TickLoop tick error: {e}", exc_info=True)
 
             # Rate control - recalculate sleep time to account for overhead
             next_tick_time = tick_start + period
