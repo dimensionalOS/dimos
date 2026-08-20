@@ -9,6 +9,7 @@ from dimos.benchmark.libero_pro.video import LiberoVideoRecorder
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.manipulation.grasp_execution import GraspExecutionModule
 from dimos.manipulation.grasping.grasp_gen_x import GraspGenXModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
@@ -19,6 +20,12 @@ from dimos.robot.manipulators._modeling import base_pose, coordinator_joint_mapp
 from dimos.robot.manipulators.common.blueprints import trajectory_task
 
 PANDA_MODEL_PATH = Path(__file__).with_name("panda.urdf")
+PANDA_GRASP_FRAME_TO_TCP = (
+    (1.0, 0.0, 0.0, 0.0),
+    (0.0, 1.0, 0.0, 0.0),
+    (0.0, 0.0, 1.0, 0.097),
+    (0.0, 0.0, 0.0, 1.0),
+)
 
 
 def _panda_model() -> RobotModelConfig:
@@ -80,11 +87,17 @@ def libero_trial_blueprint(
                 trajectory_task(
                     panda,
                     start_position_tolerance=0.2,
-                    goal_position_tolerance=0.1,
+                    # LIBERO tracks each commanded joint vector as its
+                    # equivalent OSC end-effector setpoint. A redundant arm
+                    # can reach that pose without returning to the same joint
+                    # vector, so completion is the nominal trajectory duration
+                    # while the final OSC setpoint remains held.
+                    goal_position_tolerance=10.0,
                 )
             ],
         ),
         ManipulationModule.blueprint(robots=[_panda_model()]),
+        GraspExecutionModule.blueprint(),
         GroundedSegmentationModule.blueprint(),
         GraspGenXModule.blueprint(
             gripper={
@@ -95,6 +108,7 @@ def libero_trial_blueprint(
                 "fingertip_depth": 0.10,
                 "family": "parallel_2f",
             },
+            grasp_frame_to_tcp=PANDA_GRASP_FRAME_TO_TCP,
             max_candidates=25,
         ),
         LiberoRecorder.blueprint(
