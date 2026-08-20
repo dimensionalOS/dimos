@@ -635,6 +635,8 @@ module = [
     "dimos_lcm.*",
     "dimos_mls_planner",
     "dimos_voxel_ray_tracing",
+    "cuvslam",
+    "cuvslam.*",
     "etils",
     "faster_whisper",
     "geometry_msgs.*",

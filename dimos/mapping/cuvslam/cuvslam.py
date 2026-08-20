@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Native C++ NVIDIA cuVSLAM stereo visual odometry module."""
+"""Native C++ NVIDIA cuVSLAM visual odometry module."""
 
 from __future__ import annotations
 
@@ -154,18 +154,28 @@ class CuvslamConfig(NativeModuleConfig):
     cwd: str | None = str(MODULE_DIR)
     executable: str = "result/bin/cuvslam_odometry"
     # The C++ lives in dimSLAM (cuVSLAM + the module built on it); dimos just
-    # builds the pinned rev (jeff/feat/imu_info tip; tag on merge). `nix build`
-    # drops the `result` symlink in the cwd.
+    # builds the pinned tag. `nix build` drops the `result` symlink in the cwd.
     build_command: str | None = Field(
-        default_factory=lambda: f"nix build github:dimensionalOS/dimSLAM/v0.2.0#{sdk_variant()}"
+        default_factory=lambda: f"nix build github:dimensionalOS/dimSLAM/v0.3.0-rc1#{sdk_variant()}"
     )
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
 
-    # "stereo" is two or more overlapping cameras; "mono" is accurate up to scale.
-    camera_mode: Literal["stereo", "mono", "rgbd"] = "stereo"
-    # Empty discovers a single camera or a single pair off camera_info.
+    # "stereo" is two or more overlapping cameras; "mono" is accurate up to scale;
+    # "multicam" is an arbitrary rig of mono cameras sharing one resolution.
+    camera_mode: Literal["stereo", "mono", "rgbd", "multicam"] = "stereo"
+    # Empty discovers a single camera or a single pair off camera_info. multicam has no
+    # discoverable camera count and requires the list, in cuVSLAM index order.
     camera_frames: list[str] = Field(default_factory=list)
+    # multicam only: cameras whose registered depth anchors metric scale (cuVSLAM's
+    # Multisensor mode). Empty falls back to Multicamera, which cannot recover scale
+    # from mono cameras. On Spot, the front pair's floor-dominated depth degrades the
+    # solve (ATE 14.5 m vs 1.7 m on spot_small_loop): anchor on the side/back cameras.
+    depth_camera_frames: list[str] = Field(default_factory=list)
+    # multicam only: stamp spread one frame set (and its depth) may span, in
+    # milliseconds. Spot's images land within ~15 ms of each other but depth trails its
+    # camera by up to ~90 ms; stereo keeps cuVSLAM's 1 ms contract regardless.
+    max_skew_ms: float = 90.0
     # Asserts the images arrive rectified: no distortion, rows already aligned.
     rectified: bool = True
     # Off runs the tracker on the CPU (deterministic, no CUDA). Needs a libcuvslam built
