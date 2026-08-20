@@ -36,6 +36,8 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
+import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
@@ -48,6 +50,18 @@ if TYPE_CHECKING:
     from dimos.memory.store.base import Store
 
 Row = dict[str, object]
+
+VETOES = Path(__file__).parent / "suites" / "go2_pointcloud_vetoes.json"
+"""Row ids a reviewer struck out, with a reason: ``{"<id>": "<why>"}``. Written
+by ``dimos.evals.temp.tool_eval_qa``; a vetoed row never becomes a case, in
+any slice. Hashed by the static gate like every other suite file."""
+
+
+def vetoes() -> dict[str, str]:
+    if not VETOES.exists():
+        return {}
+    return cast("dict[str, str]", json.loads(VETOES.read_text()))
+
 
 COMPASS = ("east", "northeast", "north", "northwest", "west", "southwest", "south", "southeast")
 BODY_Z = (0.15, 1.0)  # world-frame band: above floor returns, below robot cap
@@ -469,7 +483,10 @@ def cases(rows: Sequence[Row], *, tags: frozenset[str] = frozenset()) -> list[Pa
     on a band, mcq rows on exact match against the named options, coords rows
     on set overlap within a radius."""
     out: list[PassiveEval[Any]] = []
+    struck = vetoes()
     for row in rows:
+        if str(row["id"]) in struck:
+            continue
         context = tuple(
             _select(str(entry[0]), tuple(cast("list[float]", entry[1])), _fuse_of(entry))
             for entry in cast("list[list[Any]]", row["context"])

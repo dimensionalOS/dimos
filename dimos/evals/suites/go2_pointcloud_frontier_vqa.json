@@ -1,0 +1,408 @@
+[
+  {
+    "id": "go2_agentic_20260819_frontier_t1450_-0.55_-3.06",
+    "family": "frontier",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The lidar returned nothing from the area around the world point (-0.55, -3.06), so it is unmapped. Reasoning only from the floor and obstacles the lidar did map, could you drive there across mapped floor to explore it, or is it closed off from you behind walls or other obstacles? Answer with one word: reachable if an open path over mapped floor leads to it, or walled if it is blocked off. Use only the mapped point cloud.",
+    "a": "reachable",
+    "choices": [
+      "reachable",
+      "walled"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          1449.85,
+          1449.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          1449.5,
+          1450.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "train"
+  },
+  {
+    "id": "go2_agentic_memory_20260820_frontier_t150_-1.43_9.79",
+    "family": "frontier",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The lidar returned nothing from the area around the world point (-1.43, 9.79), so it is unmapped. Reasoning only from the floor and obstacles the lidar did map, could you drive there across mapped floor to explore it, or is it closed off from you behind walls or other obstacles? Answer with one word: reachable if an open path over mapped floor leads to it, or walled if it is blocked off. Use only the mapped point cloud.",
+    "a": "reachable",
+    "choices": [
+      "reachable",
+      "walled"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          149.94,
+          150.04
+        ]
+      ],
+      [
+        "odom",
+        [
+          149.5,
+          150.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_memory_20260820",
+    "split": "train"
+  },
+  {
+    "id": "go2_agentic_memory_20260820_frontier_t30_4.49_6.51",
+    "family": "frontier",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The lidar returned nothing from the area around the world point (4.49, 6.51), so it is unmapped. Reasoning only from the floor and obstacles the lidar did map, could you drive there across mapped floor to explore it, or is it closed off from you behind walls or other obstacles? Answer with one word: reachable if an open path over mapped floor leads to it, or walled if it is blocked off. Use only the mapped point cloud.",
+    "a": "reachable",
+    "choices": [
+      "reachable",
+      "walled"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          29.9,
+          30.0
+        ]
+      ],
+      [
+        "odom",
+        [
+          29.5,
+          30.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_memory_20260820",
+    "split": "train"
+  },
+  {
+    "id": "go2_agentic_memory_20260820_frontier_t480_3.58_10",
+    "family": "frontier",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The lidar returned nothing from the area around the world point (3.58, 10.00), so it is unmapped. Reasoning only from the floor and obstacles the lidar did map, could you drive there across mapped floor to explore it, or is it closed off from you behind walls or other obstacles? Answer with one word: reachable if an open path over mapped floor leads to it, or walled if it is blocked off. Use only the mapped point cloud.",
+    "a": "reachable",
+    "choices": [
+      "reachable",
+      "walled"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          479.86,
+          479.96
+        ]
+      ],
+      [
+        "odom",
+        [
+          479.5,
+          480.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_memory_20260820",
+    "split": "train"
+  },
+  {
+    "id": "go2_agentic_memory_20260820_frontier_t600_-0.04_2.7",
+    "family": "frontier",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The lidar returned nothing from the area around the world point (-0.04, 2.70), so it is unmapped. Reasoning only from the floor and obstacles the lidar did map, could you drive there across mapped floor to explore it, or is it closed off from you behind walls or other obstacles? Answer with one word: reachable if an open path over mapped floor leads to it, or walled if it is blocked off. Use only the mapped point cloud.",
+    "a": "reachable",
+    "choices": [
+      "reachable",
+      "walled"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          599.94,
+          600.04
+        ]
+      ],
+      [
+        "odom",
+        [
+          599.5,
+          600.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_memory_20260820",
+    "split": "train"
+  },
+  {
+    "id": "go2_agentic_20260819_frontier_t900_-4.3_-0.54",
+    "family": "frontier",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The lidar returned nothing from the area around the world point (-4.30, -0.54), so it is unmapped. Reasoning only from the floor and obstacles the lidar did map, could you drive there across mapped floor to explore it, or is it closed off from you behind walls or other obstacles? Answer with one word: reachable if an open path over mapped floor leads to it, or walled if it is blocked off. Use only the mapped point cloud.",
+    "a": "walled",
+    "choices": [
+      "reachable",
+      "walled"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          899.93,
+          900.03
+        ]
+      ],
+      [
+        "odom",
+        [
+          899.5,
+          900.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "train"
+  },
+  {
+    "id": "go2_china_office_frontier_t108_4.1_-0.34",
+    "family": "frontier",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The lidar returned nothing from the area around the world point (4.10, -0.34), so it is unmapped. Reasoning only from the floor and obstacles the lidar did map, could you drive there across mapped floor to explore it, or is it closed off from you behind walls or other obstacles? Answer with one word: reachable if an open path over mapped floor leads to it, or walled if it is blocked off. Use only the mapped point cloud.",
+    "a": "walled",
+    "choices": [
+      "reachable",
+      "walled"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          107.93,
+          108.03
+        ]
+      ],
+      [
+        "odom",
+        [
+          107.5,
+          108.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office",
+    "split": "train"
+  },
+  {
+    "id": "go2_china_office_frontier_t25_3.6_-2.02",
+    "family": "frontier",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The lidar returned nothing from the area around the world point (3.60, -2.02), so it is unmapped. Reasoning only from the floor and obstacles the lidar did map, could you drive there across mapped floor to explore it, or is it closed off from you behind walls or other obstacles? Answer with one word: reachable if an open path over mapped floor leads to it, or walled if it is blocked off. Use only the mapped point cloud.",
+    "a": "walled",
+    "choices": [
+      "reachable",
+      "walled"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          24.87,
+          24.97
+        ]
+      ],
+      [
+        "odom",
+        [
+          24.5,
+          25.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office",
+    "split": "train"
+  },
+  {
+    "id": "go2_china_office_frontier_t55_6.92_1.46",
+    "family": "frontier",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The lidar returned nothing from the area around the world point (6.92, 1.46), so it is unmapped. Reasoning only from the floor and obstacles the lidar did map, could you drive there across mapped floor to explore it, or is it closed off from you behind walls or other obstacles? Answer with one word: reachable if an open path over mapped floor leads to it, or walled if it is blocked off. Use only the mapped point cloud.",
+    "a": "walled",
+    "choices": [
+      "reachable",
+      "walled"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          54.84,
+          54.94
+        ]
+      ],
+      [
+        "odom",
+        [
+          54.5,
+          55.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office",
+    "split": "train"
+  },
+  {
+    "id": "go2_china_office_frontier_t93_1.54_2.3",
+    "family": "frontier",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The lidar returned nothing from the area around the world point (1.54, 2.30), so it is unmapped. Reasoning only from the floor and obstacles the lidar did map, could you drive there across mapped floor to explore it, or is it closed off from you behind walls or other obstacles? Answer with one word: reachable if an open path over mapped floor leads to it, or walled if it is blocked off. Use only the mapped point cloud.",
+    "a": "walled",
+    "choices": [
+      "reachable",
+      "walled"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          92.84,
+          92.94
+        ]
+      ],
+      [
+        "odom",
+        [
+          92.5,
+          93.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office",
+    "split": "train"
+  },
+  {
+    "id": "go2_agentic_20260819_frontier_t100_-1.15_0.18",
+    "family": "frontier",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The lidar returned nothing from the area around the world point (-1.15, 0.18), so it is unmapped. Reasoning only from the floor and obstacles the lidar did map, could you drive there across mapped floor to explore it, or is it closed off from you behind walls or other obstacles? Answer with one word: reachable if an open path over mapped floor leads to it, or walled if it is blocked off. Use only the mapped point cloud.",
+    "a": "reachable",
+    "choices": [
+      "reachable",
+      "walled"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          99.92,
+          100.02
+        ]
+      ],
+      [
+        "odom",
+        [
+          99.5,
+          100.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "holdout"
+  },
+  {
+    "id": "go2_agentic_20260819_frontier_t1200_-0.28_6.83",
+    "family": "frontier",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The lidar returned nothing from the area around the world point (-0.28, 6.83), so it is unmapped. Reasoning only from the floor and obstacles the lidar did map, could you drive there across mapped floor to explore it, or is it closed off from you behind walls or other obstacles? Answer with one word: reachable if an open path over mapped floor leads to it, or walled if it is blocked off. Use only the mapped point cloud.",
+    "a": "reachable",
+    "choices": [
+      "reachable",
+      "walled"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          1199.89,
+          1199.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          1199.5,
+          1200.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "holdout"
+  },
+  {
+    "id": "go2_agentic_20260819_frontier_t300_-3.66_2.69",
+    "family": "frontier",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The lidar returned nothing from the area around the world point (-3.66, 2.69), so it is unmapped. Reasoning only from the floor and obstacles the lidar did map, could you drive there across mapped floor to explore it, or is it closed off from you behind walls or other obstacles? Answer with one word: reachable if an open path over mapped floor leads to it, or walled if it is blocked off. Use only the mapped point cloud.",
+    "a": "walled",
+    "choices": [
+      "reachable",
+      "walled"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          299.94,
+          300.04
+        ]
+      ],
+      [
+        "odom",
+        [
+          299.5,
+          300.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "holdout"
+  },
+  {
+    "id": "go2_agentic_20260819_frontier_t500_-0.82_-5.13",
+    "family": "frontier",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). The lidar returned nothing from the area around the world point (-0.82, -5.13), so it is unmapped. Reasoning only from the floor and obstacles the lidar did map, could you drive there across mapped floor to explore it, or is it closed off from you behind walls or other obstacles? Answer with one word: reachable if an open path over mapped floor leads to it, or walled if it is blocked off. Use only the mapped point cloud.",
+    "a": "walled",
+    "choices": [
+      "reachable",
+      "walled"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          499.95,
+          500.05
+        ]
+      ],
+      [
+        "odom",
+        [
+          499.5,
+          500.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "holdout"
+  }
+]

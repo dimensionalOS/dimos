@@ -1,146 +1,47 @@
 [
   {
-    "id": "go2_agentic_20260819_freedisk_t100_p2",
+    "id": "go2_agentic_20260819_freedisk_t375_p0",
     "family": "free_disk",
     "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (0.83, -0.82) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (-1.03, -0.81). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
     "a": [
       [
-        -0.5,
-        -1.5,
-        1.0
+        -0.9,
+        -0.9
       ]
     ],
     "radius": 1.0,
-    "value_band": 0.4,
     "context": [
       [
         "lidar",
         [
-          99.92,
-          100.02
+          374.84,
+          374.94
         ]
       ],
       [
         "odom",
         [
-          99.5,
-          100.1
+          374.5,
+          375.1
         ]
       ]
     ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_china_office_freedisk_t108_p1",
-    "family": "free_disk",
-    "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (0.42, 3.44) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        1.7,
-        1.3,
-        1.17
-      ]
-    ],
-    "radius": 1.0,
-    "value_band": 0.4,
-    "context": [
-      [
-        "lidar",
-        [
-          107.93,
-          108.03
-        ]
-      ],
-      [
-        "odom",
-        [
-          107.5,
-          108.1
-        ]
-      ]
-    ],
-    "dataset": "go2_china_office"
-  },
-  {
-    "id": "go2_short_freedisk_t36_p2",
-    "family": "free_disk",
-    "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (3.32, 11.44) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        3.1,
-        9.1,
-        1.2
-      ]
-    ],
-    "radius": 1.0,
-    "value_band": 0.4,
-    "context": [
-      [
-        "lidar",
-        [
-          35.85,
-          35.95
-        ]
-      ],
-      [
-        "odom",
-        [
-          35.5,
-          36.1
-        ]
-      ]
-    ],
-    "dataset": "go2_short"
-  },
-  {
-    "id": "go2_agentic_20260819_freedisk_t1125_p0",
-    "family": "free_disk",
-    "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (-0.92, 1.15) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        -1.1,
-        -0.3,
-        1.13
-      ]
-    ],
-    "radius": 1.0,
-    "value_band": 0.4,
-    "context": [
-      [
-        "lidar",
-        [
-          1124.85,
-          1124.95
-        ]
-      ],
-      [
-        "odom",
-        [
-          1124.5,
-          1125.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
+    "dataset": "go2_agentic_20260819",
+    "split": "train"
   },
   {
     "id": "go2_china_office_freedisk_t122_p0",
     "family": "free_disk",
     "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (3.35, 3.51) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (3.35, 3.51). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
     "a": [
       [
         3.9,
-        3.5,
-        1.22
+        3.5
       ]
     ],
     "radius": 1.0,
-    "value_band": 0.4,
     "context": [
       [
         "lidar",
@@ -157,214 +58,161 @@
         ]
       ]
     ],
-    "dataset": "go2_china_office"
+    "dataset": "go2_china_office",
+    "split": "train"
   },
   {
-    "id": "go2_short_freedisk_t52_p1",
+    "id": "go2_china_office_freedisk_t55_p0",
     "family": "free_disk",
     "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (-2.95, 1.78) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (5.82, 3.79). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
     "a": [
       [
-        -3.3,
-        2.7,
-        1.02
+        3.7,
+        3.3
       ]
     ],
     "radius": 1.0,
-    "value_band": 0.4,
     "context": [
       [
         "lidar",
         [
-          51.88,
-          51.98
+          54.84,
+          54.94
         ]
       ],
       [
         "odom",
         [
-          51.5,
-          52.1
+          54.5,
+          55.1
         ]
       ]
     ],
-    "dataset": "go2_short"
+    "dataset": "go2_china_office",
+    "split": "train"
   },
   {
-    "id": "go2_agentic_20260819_freedisk_t1125_p1",
+    "id": "go2_china_office_freedisk_t78_p0",
     "family": "free_disk",
     "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (-2.31, 1.19) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (2.15, 5.82). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
     "a": [
       [
-        -1.1,
-        -0.3,
-        1.13
+        4.1,
+        5.3
       ]
     ],
     "radius": 1.0,
-    "value_band": 0.4,
     "context": [
       [
         "lidar",
         [
-          1124.85,
-          1124.95
+          77.88,
+          77.98
         ]
       ],
       [
         "odom",
         [
-          1124.5,
-          1125.1
+          77.5,
+          78.1
         ]
       ]
     ],
-    "dataset": "go2_agentic_20260819"
+    "dataset": "go2_china_office",
+    "split": "train"
   },
   {
-    "id": "go2_china_office_freedisk_t122_p1",
+    "id": "go2_china_office_freedisk_t130_p0",
     "family": "free_disk",
     "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (3.37, 4.62) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (4.01, 4.86). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
     "a": [
       [
-        3.9,
-        3.5,
-        1.22
+        4.7,
+        6.3
       ]
     ],
     "radius": 1.0,
-    "value_band": 0.4,
     "context": [
       [
         "lidar",
         [
-          121.89,
-          121.99
+          129.91,
+          130.01
         ]
       ],
       [
         "odom",
         [
-          121.5,
-          122.1
+          129.5,
+          130.1
         ]
       ]
     ],
-    "dataset": "go2_china_office"
+    "dataset": "go2_china_office",
+    "split": "train"
   },
   {
-    "id": "go2_agentic_20260819_freedisk_t1200_p0",
+    "id": "go2_agentic_20260819_freedisk_t500_p0",
     "family": "free_disk",
     "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (0.14, 3.96) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        1.7,
-        4.9,
-        1.72
-      ]
-    ],
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (-3.51, -3.81). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
+    "a": [],
     "radius": 1.0,
-    "value_band": 0.4,
     "context": [
       [
         "lidar",
         [
-          1199.89,
-          1199.99
+          499.95,
+          500.05
         ]
       ],
       [
         "odom",
         [
-          1199.5,
-          1200.1
+          499.5,
+          500.1
         ]
       ]
     ],
-    "dataset": "go2_agentic_20260819"
+    "dataset": "go2_agentic_20260819",
+    "split": "train"
   },
   {
-    "id": "go2_china_office_freedisk_t122_p2",
+    "id": "go2_agentic_20260819_freedisk_t750_p0",
     "family": "free_disk",
     "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (2.93, 3.80) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        3.9,
-        3.5,
-        1.22
-      ]
-    ],
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (-2.44, -3.18). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
+    "a": [],
     "radius": 1.0,
-    "value_band": 0.4,
     "context": [
       [
         "lidar",
         [
-          121.89,
-          121.99
+          749.9,
+          750.0
         ]
       ],
       [
         "odom",
         [
-          121.5,
-          122.1
+          749.5,
+          750.1
         ]
       ]
     ],
-    "dataset": "go2_china_office"
-  },
-  {
-    "id": "go2_agentic_20260819_freedisk_t1200_p1",
-    "family": "free_disk",
-    "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (0.53, 4.01) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        1.7,
-        4.9,
-        1.72
-      ]
-    ],
-    "radius": 1.0,
-    "value_band": 0.4,
-    "context": [
-      [
-        "lidar",
-        [
-          1199.89,
-          1199.99
-        ]
-      ],
-      [
-        "odom",
-        [
-          1199.5,
-          1200.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
+    "dataset": "go2_agentic_20260819",
+    "split": "train"
   },
   {
     "id": "go2_china_office_freedisk_t25_p2",
     "family": "free_disk",
     "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (3.25, -0.64) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        1.7,
-        1.3,
-        0.89
-      ]
-    ],
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (3.25, -0.64). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
+    "a": [],
     "radius": 1.0,
-    "value_band": 0.4,
     "context": [
       [
         "lidar",
@@ -381,22 +229,73 @@
         ]
       ]
     ],
-    "dataset": "go2_china_office"
+    "dataset": "go2_china_office",
+    "split": "train"
   },
   {
-    "id": "go2_agentic_20260819_freedisk_t1200_p2",
+    "id": "go2_short_freedisk_t20_p0",
     "family": "free_disk",
     "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (0.13, 3.21) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (-1.44, 15.44). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
+    "a": [],
+    "radius": 1.0,
+    "context": [
+      [
+        "lidar",
+        [
+          19.85,
+          19.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          19.5,
+          20.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short",
+    "split": "train"
+  },
+  {
+    "id": "go2_agentic_20260819_freedisk_t750_p1",
+    "family": "free_disk",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (-0.96, -2.31). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
+    "a": [],
+    "radius": 1.0,
+    "context": [
+      [
+        "lidar",
+        [
+          749.9,
+          750.0
+        ]
+      ],
+      [
+        "odom",
+        [
+          749.5,
+          750.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "train"
+  },
+  {
+    "id": "go2_agentic_20260819_freedisk_t1200_p0",
+    "family": "free_disk",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (0.14, 3.96). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
     "a": [
       [
         1.7,
-        4.9,
-        1.72
+        4.9
       ]
     ],
     "radius": 1.0,
-    "value_band": 0.4,
     "context": [
       [
         "lidar",
@@ -413,310 +312,21 @@
         ]
       ]
     ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_china_office_freedisk_t48_p1",
-    "family": "free_disk",
-    "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (5.14, 3.07) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        3.7,
-        3.3,
-        1.2
-      ]
-    ],
-    "radius": 1.0,
-    "value_band": 0.4,
-    "context": [
-      [
-        "lidar",
-        [
-          47.82,
-          47.92
-        ]
-      ],
-      [
-        "odom",
-        [
-          47.5,
-          48.1
-        ]
-      ]
-    ],
-    "dataset": "go2_china_office"
-  },
-  {
-    "id": "go2_agentic_20260819_freedisk_t1350_p0",
-    "family": "free_disk",
-    "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (4.86, 5.47) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        3.9,
-        4.1,
-        2.0
-      ]
-    ],
-    "radius": 1.0,
-    "value_band": 0.4,
-    "context": [
-      [
-        "lidar",
-        [
-          1349.87,
-          1349.97
-        ]
-      ],
-      [
-        "odom",
-        [
-          1349.5,
-          1350.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_china_office_freedisk_t55_p0",
-    "family": "free_disk",
-    "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (5.82, 3.79) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        3.7,
-        3.3,
-        1.2
-      ]
-    ],
-    "radius": 1.0,
-    "value_band": 0.4,
-    "context": [
-      [
-        "lidar",
-        [
-          54.84,
-          54.94
-        ]
-      ],
-      [
-        "odom",
-        [
-          54.5,
-          55.1
-        ]
-      ]
-    ],
-    "dataset": "go2_china_office"
-  },
-  {
-    "id": "go2_agentic_20260819_freedisk_t1350_p1",
-    "family": "free_disk",
-    "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (4.47, 3.98) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        3.9,
-        4.1,
-        2.0
-      ]
-    ],
-    "radius": 1.0,
-    "value_band": 0.4,
-    "context": [
-      [
-        "lidar",
-        [
-          1349.87,
-          1349.97
-        ]
-      ],
-      [
-        "odom",
-        [
-          1349.5,
-          1350.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_china_office_freedisk_t55_p1",
-    "family": "free_disk",
-    "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (5.09, 3.62) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        3.7,
-        3.3,
-        1.2
-      ]
-    ],
-    "radius": 1.0,
-    "value_band": 0.4,
-    "context": [
-      [
-        "lidar",
-        [
-          54.84,
-          54.94
-        ]
-      ],
-      [
-        "odom",
-        [
-          54.5,
-          55.1
-        ]
-      ]
-    ],
-    "dataset": "go2_china_office"
-  },
-  {
-    "id": "go2_agentic_20260819_freedisk_t1350_p2",
-    "family": "free_disk",
-    "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (5.85, 4.44) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        3.9,
-        4.1,
-        2.0
-      ]
-    ],
-    "radius": 1.0,
-    "value_band": 0.4,
-    "context": [
-      [
-        "lidar",
-        [
-          1349.87,
-          1349.97
-        ]
-      ],
-      [
-        "odom",
-        [
-          1349.5,
-          1350.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_china_office_freedisk_t62_p0",
-    "family": "free_disk",
-    "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (5.15, 5.98) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        4.5,
-        5.9,
-        1.46
-      ]
-    ],
-    "radius": 1.0,
-    "value_band": 0.4,
-    "context": [
-      [
-        "lidar",
-        [
-          61.86,
-          61.96
-        ]
-      ],
-      [
-        "odom",
-        [
-          61.5,
-          62.1
-        ]
-      ]
-    ],
-    "dataset": "go2_china_office"
-  },
-  {
-    "id": "go2_agentic_20260819_freedisk_t1375_p0",
-    "family": "free_disk",
-    "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (1.64, 9.24) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        1.5,
-        6.9,
-        1.13
-      ]
-    ],
-    "radius": 1.0,
-    "value_band": 0.4,
-    "context": [
-      [
-        "lidar",
-        [
-          1374.93,
-          1375.03
-        ]
-      ],
-      [
-        "odom",
-        [
-          1374.5,
-          1375.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_china_office_freedisk_t62_p1",
-    "family": "free_disk",
-    "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (6.63, 6.85) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        4.5,
-        5.9,
-        1.46
-      ]
-    ],
-    "radius": 1.0,
-    "value_band": 0.4,
-    "context": [
-      [
-        "lidar",
-        [
-          61.86,
-          61.96
-        ]
-      ],
-      [
-        "odom",
-        [
-          61.5,
-          62.1
-        ]
-      ]
-    ],
-    "dataset": "go2_china_office"
+    "dataset": "go2_agentic_20260819",
+    "split": "holdout"
   },
   {
     "id": "go2_agentic_20260819_freedisk_t1400_p0",
     "family": "free_disk",
     "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (6.23, 2.26) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (6.23, 2.26). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
     "a": [
       [
         4.3,
-        3.7,
-        1.46
+        3.7
       ]
     ],
     "radius": 1.0,
-    "value_band": 0.4,
     "context": [
       [
         "lidar",
@@ -733,278 +343,16 @@
         ]
       ]
     ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_china_office_freedisk_t62_p2",
-    "family": "free_disk",
-    "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (5.51, 7.44) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        4.5,
-        5.9,
-        1.46
-      ]
-    ],
-    "radius": 1.0,
-    "value_band": 0.4,
-    "context": [
-      [
-        "lidar",
-        [
-          61.86,
-          61.96
-        ]
-      ],
-      [
-        "odom",
-        [
-          61.5,
-          62.1
-        ]
-      ]
-    ],
-    "dataset": "go2_china_office"
-  },
-  {
-    "id": "go2_agentic_20260819_freedisk_t1400_p1",
-    "family": "free_disk",
-    "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (6.65, 2.98) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        4.3,
-        3.7,
-        1.46
-      ]
-    ],
-    "radius": 1.0,
-    "value_band": 0.4,
-    "context": [
-      [
-        "lidar",
-        [
-          1399.89,
-          1399.99
-        ]
-      ],
-      [
-        "odom",
-        [
-          1399.5,
-          1400.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_china_office_freedisk_t93_p0",
-    "family": "free_disk",
-    "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (4.50, 5.15) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        4.9,
-        5.9,
-        1.52
-      ]
-    ],
-    "radius": 1.0,
-    "value_band": 0.4,
-    "context": [
-      [
-        "lidar",
-        [
-          92.84,
-          92.94
-        ]
-      ],
-      [
-        "odom",
-        [
-          92.5,
-          93.1
-        ]
-      ]
-    ],
-    "dataset": "go2_china_office"
-  },
-  {
-    "id": "go2_agentic_20260819_freedisk_t1400_p2",
-    "family": "free_disk",
-    "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (5.01, 2.38) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        4.3,
-        3.7,
-        1.46
-      ]
-    ],
-    "radius": 1.0,
-    "value_band": 0.4,
-    "context": [
-      [
-        "lidar",
-        [
-          1399.89,
-          1399.99
-        ]
-      ],
-      [
-        "odom",
-        [
-          1399.5,
-          1400.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_china_office_freedisk_t93_p2",
-    "family": "free_disk",
-    "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (5.08, 4.26) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        4.9,
-        5.9,
-        1.52
-      ]
-    ],
-    "radius": 1.0,
-    "value_band": 0.4,
-    "context": [
-      [
-        "lidar",
-        [
-          92.84,
-          92.94
-        ]
-      ],
-      [
-        "odom",
-        [
-          92.5,
-          93.1
-        ]
-      ]
-    ],
-    "dataset": "go2_china_office"
-  },
-  {
-    "id": "go2_agentic_20260819_freedisk_t1425_p0",
-    "family": "free_disk",
-    "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (-0.43, 3.21) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        0.9,
-        4.5,
-        1.61
-      ]
-    ],
-    "radius": 1.0,
-    "value_band": 0.4,
-    "context": [
-      [
-        "lidar",
-        [
-          1424.91,
-          1425.01
-        ]
-      ],
-      [
-        "odom",
-        [
-          1424.5,
-          1425.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_agentic_20260819_freedisk_t1425_p1",
-    "family": "free_disk",
-    "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (-0.40, 4.32) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        0.9,
-        4.5,
-        1.61
-      ]
-    ],
-    "radius": 1.0,
-    "value_band": 0.4,
-    "context": [
-      [
-        "lidar",
-        [
-          1424.91,
-          1425.01
-        ]
-      ],
-      [
-        "odom",
-        [
-          1424.5,
-          1425.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_agentic_20260819_freedisk_t1425_p2",
-    "family": "free_disk",
-    "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (-0.84, 3.50) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        0.9,
-        4.5,
-        1.61
-      ]
-    ],
-    "radius": 1.0,
-    "value_band": 0.4,
-    "context": [
-      [
-        "lidar",
-        [
-          1424.91,
-          1425.01
-        ]
-      ],
-      [
-        "odom",
-        [
-          1424.5,
-          1425.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
+    "dataset": "go2_agentic_20260819",
+    "split": "holdout"
   },
   {
     "id": "go2_agentic_20260819_freedisk_t1450_p0",
     "family": "free_disk",
     "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (-1.55, -0.43) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        -1.7,
-        -1.1,
-        0.85
-      ]
-    ],
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (-1.55, -0.43). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
+    "a": [],
     "radius": 1.0,
-    "value_band": 0.4,
     "context": [
       [
         "lidar",
@@ -1021,134 +369,33 @@
         ]
       ]
     ],
-    "dataset": "go2_agentic_20260819"
+    "dataset": "go2_agentic_20260819",
+    "split": "holdout"
   },
   {
-    "id": "go2_agentic_20260819_freedisk_t1450_p1",
+    "id": "go2_agentic_20260819_freedisk_t1500_p0",
     "family": "free_disk",
     "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (-2.87, -0.77) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        -1.7,
-        -1.1,
-        0.85
-      ]
-    ],
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (-0.51, -1.10). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
+    "a": [],
     "radius": 1.0,
-    "value_band": 0.4,
     "context": [
       [
         "lidar",
         [
-          1449.85,
-          1449.95
+          1499.86,
+          1499.96
         ]
       ],
       [
         "odom",
         [
-          1449.5,
-          1450.1
+          1499.5,
+          1500.1
         ]
       ]
     ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_agentic_20260819_freedisk_t1450_p2",
-    "family": "free_disk",
-    "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (-2.08, -1.48) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        -1.7,
-        -1.1,
-        0.85
-      ]
-    ],
-    "radius": 1.0,
-    "value_band": 0.4,
-    "context": [
-      [
-        "lidar",
-        [
-          1449.85,
-          1449.95
-        ]
-      ],
-      [
-        "odom",
-        [
-          1449.5,
-          1450.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_agentic_20260819_freedisk_t375_p0",
-    "family": "free_disk",
-    "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (-1.03, -0.81) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        -0.9,
-        -0.9,
-        1.41
-      ]
-    ],
-    "radius": 1.0,
-    "value_band": 0.4,
-    "context": [
-      [
-        "lidar",
-        [
-          374.84,
-          374.94
-        ]
-      ],
-      [
-        "odom",
-        [
-          374.5,
-          375.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_agentic_20260819_freedisk_t375_p1",
-    "family": "free_disk",
-    "type": "coords",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Cells are 0.2 m squares aligned to multiples of 0.2 m. Call a cell swept if it holds at least one lidar return and none of its returns is above z = 0.15 m; cells within 0.35 m of your own position hold your body's returns and count as swept if they hold any return. Consider circles whose centre is within 2.5 m of the world point (-0.14, -0.91) and which cover swept cells only: no cell inside the circle may be without returns or hold a return above z = 0.15 m, and the circle may not reach past the edge of the mapped cloud. Using only the mapped point cloud, give the largest such circle as its centre and radius, x,y,r on one line, nothing else.",
-    "a": [
-      [
-        -0.9,
-        -0.9,
-        1.41
-      ]
-    ],
-    "radius": 1.0,
-    "value_band": 0.4,
-    "context": [
-      [
-        "lidar",
-        [
-          374.84,
-          374.94
-        ]
-      ],
-      [
-        "odom",
-        [
-          374.5,
-          375.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
+    "dataset": "go2_agentic_20260819",
+    "split": "holdout"
   }
 ]

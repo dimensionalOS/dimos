@@ -13,27 +13,26 @@
 # limitations under the License.
 
 
-"""Lowest return at a point, relative to the robot's cell — VQA over the go2 replays.
+"""Off-level floor near the robot — VQA over the go2 replays.
 
 Rows (``go2_pointcloud_floor_height_vqa.json``) are pure data emitted by
 :func:`rows` — ground truth read off the full-resolution cloud, quizzing
 whatever lossy encoding the agent receives for a ``PointCloud2``.
 
-``floor_height`` asks for the lowest lidar return in the 0.25 m cell at a
-named point minus the lowest return in the cell the robot stands in. Half the
-rows sit on the same level as the robot; the other half are cells a patch of
-something higher or lower, so a reading that carries no elevation per cell
-can be right on neither half by knowing the other. The band is 0.2 m: per-cell
-min z on flat floor wanders by about one 0.1 m level between neighbours.
+The task: is any floor within a few meters of the robot at a different level
+than the floor it stands on — raised or sunken — and if so, where and by how
+much. Ten rows, five with a real step or drop and five where the floor is one
+level; the prompt does not say which. The answer locates each off-level area
+and its height offset, or is ``level``.
 
-``go2_stairs_20260819`` carries the raised patch the hand-authored floor
-rows label; the frames here are the moving stretches between those rows'
-frames. ``go2_teleop_20260819`` is absent on purpose: its map has a false
-depression from the robot being carried before the recording started.
+``go2_stairs_20260819`` carries the raised area the hand-authored floor rows
+label; the frames here are the moving stretches around them.
+``go2_teleop_20260819`` is absent — its map has a false depression from the
+robot being carried before recording.
 
-Rows are sliced train / holdout / spare by :mod:`dimos.evals.temp.split`.
+Ten hand-picked rows, tagged ``train``: too few to slice.
 
-Regenerate (needs the four recordings)::
+Regenerate (needs the recordings)::
 
     python -m dimos.evals.suites.go2_pointcloud_floor_height
 """
@@ -45,151 +44,120 @@ import json
 from pathlib import Path
 
 import numpy as np
+from scipy import ndimage
 
 from dimos.evals import generate
-from dimos.evals.temp import split
 from dimos.evals.types import Suite
 
 _JSON = Path(__file__).parent / "go2_pointcloud_floor_height_vqa.json"
 
-SUITE: Suite = generate.cases(
-    split.assign(json.loads(_JSON.read_text())), tags=frozenset({"pointcloud"})
-)
+SUITE: Suite = generate.cases(json.loads(_JSON.read_text()), tags=frozenset({"pointcloud"}))
 
 CELL = 0.25
-BAND = 0.2  # within() band on the answer, meters
-MIN_PTS = 10  # returns a cell needs before its lowest is trusted
+MIN_PTS = 8  # returns a cell needs before its floor height is trusted
 ROBOT_MIN_PTS = 5
-NEAR, FAR = 0.5, 3.0  # where query cells are taken from, meters from the robot
-FLAT = 0.05  # |dz| at or under this is the robot's own level
-OFF = 0.2  # |dz| at or over this is a different level
-PATCH = 3  # an off-level cell needs this many like neighbours, or it is speckle
+FAR = 3.0  # off-level areas are looked for within this of the robot
+FLAT = 0.08  # |dz| at or under this is the robot's own level
+OFF = 0.2  # |dz| at or over this is a different level, above the min-z noise floor
+MIN_AREA = 4  # cells an off-level area needs, so one noisy cell is not a step
+RADIUS = 1.2  # match tolerance on an area's centre, meters
+VALUE_BAND = 0.2  # band on the height offset
 
-_AGENTIC_TS = [
-    100.0,
-    300.0,
-    375.0,
-    500.0,
-    750.0,
-    900.0,
-    1125.0,
-    1200.0,
-    1325.0,
-    1400.0,
-    1450.0,
-    1500.0,
-]
+_AGENTIC_TS = [100.0, 300.0, 500.0, 900.0, 1200.0, 1450.0]
 _SHORT_TS = [5.0, 20.0, 40.0, 58.0]
-_OFFICE_TS = [25.0, 48.0, 62.0, 85.0, 100.0, 122.0, 130.0]
-_STAIRS_TS = [20.0, 30.0, 50.0, 60.0, 70.0, 80.0, 110.0]
+_OFFICE_TS = [25.0, 48.0, 100.0, 130.0]
+_STAIRS_TS = [20.0, 30.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0, 110.0, 120.0, 130.0]
+
+QUESTION = (
+    "You are the robot; your current pose is the odom observation shown (world frame: +x is "
+    "east, +y is north, coordinates in meters). Is any part of the floor within a few meters "
+    "of you at a different level than the floor beneath you — noticeably raised or sunken? If "
+    "so, give the middle of each such area and how far it sits above (positive) or below "
+    "(negative) your level, as x,y,dz — one area per line. If the floor around you is all one "
+    "level, answer level. Use only the mapped point cloud."
+)
 
 
-def _question(point: np.ndarray) -> str:
-    return (
-        "You are the robot; your current pose is the odom observation shown (world frame: "
-        "+x is east, +y is north, coordinates in meters). Cells are "
-        f"{CELL:g} m squares aligned to multiples of {CELL:g} m in world x and y. Take the "
-        f"cell containing the world point ({point[0]:.3f}, {point[1]:.3f}) and the cell "
-        "containing your own position; in each, find the lowest lidar return (smallest z). "
-        "Using only the mapped point cloud, what is the lowest return at the named point "
-        "minus the lowest return at your position, in meters? Answer with a single signed number."
-    )
+def off_level_areas(pts: np.ndarray, robot: np.ndarray) -> list[list[float]]:
+    """Connected patches of floor near the robot at a different level, as ``[x, y, dz]``.
+
+    Floor height per cell is the lowest return; a cell is off-level when it
+    holds ``MIN_PTS`` returns and its floor sits ``OFF`` from the robot's cell.
+    Adjacent off-level cells of the same sign are one area, reported by its
+    centroid and mean offset; areas under ``MIN_AREA`` cells are dropped.
+    """
+    origin, count, zmin, _ = generate._cell_grid(pts, CELL)
+    rj, ri = generate._cell_index(origin, CELL, robot)
+    if not (0 <= rj < count.shape[0] and 0 <= ri < count.shape[1]) or count[rj, ri] < ROBOT_MIN_PTS:
+        return []
+    base = zmin[rj, ri]
+    wx, wy = generate._cell_centers(origin, CELL, count.shape)
+    near = (count >= MIN_PTS) & (np.hypot(wx - robot[0], wy - robot[1]) <= FAR)
+    dz = np.where(near, zmin - base, 0.0)
+    out: list[list[float]] = []
+    for sign in (1.0, -1.0):
+        mask = near & (sign * dz >= OFF)
+        labels, n = ndimage.label(mask, structure=np.ones((3, 3)))
+        for label in range(1, n + 1):
+            cells = labels == label
+            if int(cells.sum()) < MIN_AREA:
+                continue
+            out.append(
+                [
+                    round(float(wx[cells].mean()), 2),
+                    round(float(wy[cells].mean()), 2),
+                    round(float(dz[cells].mean()), 2),
+                ]
+            )
+    return out
 
 
 def floor_height_rows(dataset: str, timestamps: Sequence[float]) -> list[generate.Row]:
-    """Lowest return per cell relative to the robot's own cell.
-
-    Candidate cells lie NEAR..FAR from the robot and hold MIN_PTS
-    returns. A cell counts as off-level when PATCH of its eight neighbours
-    agree with it to within 0.1 m — one odd cell is lidar speckle, not a level.
-    Every flat and every off-level candidate is returned, labelled by
-    kind for the selection in :func:`rows`; the cell between them is not.
-    """
+    """One row per frame, tagged ``kind`` step or level for the split in :func:`rows`."""
     with generate._dataset(dataset) as store:
         rows: list[generate.Row] = []
         for t in timestamps:
             pts, context = generate._cloud_at(store, t)
             robot = generate._odom_at(store, t)
-            origin, count, zmin, _ = generate._cell_grid(pts, CELL)
-            rj, ri = generate._cell_index(origin, CELL, robot)
-            if not (0 <= rj < count.shape[0] and 0 <= ri < count.shape[1]):
-                continue
-            if count[rj, ri] < ROBOT_MIN_PTS:
-                continue  # nothing measured under the robot to measure against
-            dz = zmin - zmin[rj, ri]
-            wx, wy = generate._cell_centers(origin, CELL, count.shape)
-            r = np.hypot(wx - robot[0], wy - robot[1])
-            usable = (count >= MIN_PTS) & (r >= NEAR) & (r <= FAR)
-            for j, i in zip(*np.nonzero(usable), strict=True):
-                value = float(dz[j, i])
-                if abs(value) <= FLAT:
-                    kind = "flat"
-                elif abs(value) >= OFF:
-                    block = dz[max(0, j - 1) : j + 2, max(0, i - 1) : i + 2]
-                    alike = np.isfinite(block) & (np.abs(block - value) <= 0.1)
-                    if int(alike.sum()) - 1 < PATCH:
-                        continue
-                    kind = "off"
-                else:
-                    continue
-                point = np.array([wx[j, i], wy[j, i]])
-                rows.append(
-                    {
-                        "id": f"{dataset}_floorheight_t{t:g}_c{int(i)}x{int(j)}",
-                        "family": "floor_height",
-                        "type": "numeric",
-                        "q": _question(point),
-                        "a": round(value, 2),
-                        "band": BAND,
-                        "kind": kind,
-                        "context": [
-                            *context,
-                            ["odom", [round(max(0.0, t - 0.5), 2), round(t + 0.1, 2)]],
-                        ],
-                        "dataset": dataset,
-                    }
-                )
+            areas = off_level_areas(pts, robot)
+            rows.append(
+                {
+                    "id": f"{dataset}_floorheight_t{t:g}",
+                    "family": "floor_height",
+                    "type": "coords",
+                    "q": QUESTION,
+                    "a": areas,
+                    "radius": RADIUS,
+                    "value_band": VALUE_BAND,
+                    "kind": "step" if areas else "level",
+                    "context": [
+                        *context,
+                        ["odom", [round(max(0.0, t - 0.5), 2), round(t + 0.1, 2)]],
+                    ],
+                    "dataset": dataset,
+                }
+            )
         return rows
 
 
-# The dataset: answers spread across their range, at most three rows per scene.
-_CASES = (
-    "go2_agentic_20260819_floorheight_t1125_c10x12",
-    "go2_agentic_20260819_floorheight_t1200_c4x20",
-    "go2_agentic_20260819_floorheight_t1125_c10x13",
-    "go2_agentic_20260819_floorheight_t1200_c5x20",
-    "go2_agentic_20260819_floorheight_t1325_c10x1",
-    "go2_agentic_20260819_floorheight_t1400_c17x22",
-    "go2_agentic_20260819_floorheight_t1325_c10x10",
-    "go2_agentic_20260819_floorheight_t1400_c18x16",
-    "go2_agentic_20260819_floorheight_t1450_c10x11",
-    "go2_agentic_20260819_floorheight_t300_c11x18",
-    "go2_agentic_20260819_floorheight_t1450_c10x12",
-    "go2_agentic_20260819_floorheight_t300_c11x19",
-    "go2_agentic_20260819_floorheight_t1500_c10x10",
-    "go2_agentic_20260819_floorheight_t375_c12x24",
-    "go2_agentic_20260819_floorheight_t1500_c10x11",
-    "go2_agentic_20260819_floorheight_t375_c12x25",
-    "go2_agentic_20260819_floorheight_t500_c0x7",
-    "go2_agentic_20260819_floorheight_t900_c2x12",
-    "go2_agentic_20260819_floorheight_t500_c0x8",
-    "go2_agentic_20260819_floorheight_t900_c3x12",
-    "go2_agentic_20260819_floorheight_t750_c10x1",
-    "go2_china_office_floorheight_t122_c13x25",
-    "go2_agentic_20260819_floorheight_t750_c10x10",
-    "go2_china_office_floorheight_t122_c18x3",
-    "go2_china_office_floorheight_t100_c10x12",
-    "go2_china_office_floorheight_t25_c16x6",
-    "go2_china_office_floorheight_t100_c10x13",
-    "go2_china_office_floorheight_t25_c16x7",
-    "go2_china_office_floorheight_t48_c10x10",
-    "go2_china_office_floorheight_t48_c15x2",
-    "go2_china_office_floorheight_t62_c10x1",
-    "go2_china_office_floorheight_t62_c6x20",
-    "go2_short_floorheight_t20_c10x10",
-    "go2_short_floorheight_t40_c16x6",
-    "go2_short_floorheight_t20_c10x11",
-    "go2_short_floorheight_t40_c16x7",
+# Five positive and five negative, one per scene; holdout shares no scene block.
+_TRAIN = (
+    "go2_agentic_20260819_floorheight_t900",
+    "go2_china_office_floorheight_t25",
+    "go2_short_floorheight_t20",
+    "go2_short_floorheight_t58",
+    "go2_stairs_20260819_floorheight_t100",
+    "go2_agentic_20260819_floorheight_t500",
+    "go2_china_office_floorheight_t100",
+    "go2_china_office_floorheight_t130",
+    "go2_china_office_floorheight_t48",
+    "go2_short_floorheight_t5",
+)
+_HOLDOUT = (
+    "go2_agentic_20260819_floorheight_t1200",
+    "go2_agentic_20260819_floorheight_t300",
+    "go2_agentic_20260819_floorheight_t100",
+    "go2_agentic_20260819_floorheight_t1450",
 )
 
 
@@ -206,13 +174,15 @@ def candidates() -> dict[str, generate.Row]:
 
 
 def rows() -> list[generate.Row]:
-    """The generator calls behind the committed JSON."""
+    """The committed rows: curated ids, each tagged with its split."""
     found = candidates()
     out = []
-    for i in _CASES:
-        row = dict(found[i])
-        row.pop("kind")
-        out.append(row)
+    for split, ids in (("train", _TRAIN), ("holdout", _HOLDOUT)):
+        for i in ids:
+            row = dict(found[i])
+            row.pop("kind", None)
+            row["split"] = split
+            out.append(row)
     return out
 
 

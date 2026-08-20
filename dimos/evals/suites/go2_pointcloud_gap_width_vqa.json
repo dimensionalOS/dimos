@@ -1,136 +1,18 @@
 [
   {
-    "id": "go2_agentic_20260819_gapwidth_t1125_p1",
-    "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (-0.38, 2.26), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 0.65,
-    "band": 0.3,
-    "context": [
-      [
-        "lidar",
-        [
-          1124.85,
-          1124.95
-        ]
-      ],
-      [
-        "odom",
-        [
-          1124.5,
-          1125.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_agentic_20260819_gapwidth_t100_p2",
-    "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (0.05, -0.64), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 1.06,
-    "band": 0.3,
-    "context": [
-      [
-        "lidar",
-        [
-          99.92,
-          100.02
-        ]
-      ],
-      [
-        "odom",
-        [
-          99.5,
-          100.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_agentic_20260819_gapwidth_t1125_p0",
-    "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (-0.92, 1.15), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 1.53,
-    "band": 0.3,
-    "context": [
-      [
-        "lidar",
-        [
-          1124.85,
-          1124.95
-        ]
-      ],
-      [
-        "odom",
-        [
-          1124.5,
-          1125.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_agentic_20260819_gapwidth_t1125_p2",
-    "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (-1.74, 2.33), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 0.65,
-    "band": 0.3,
-    "context": [
-      [
-        "lidar",
-        [
-          1124.85,
-          1124.95
-        ]
-      ],
-      [
-        "odom",
-        [
-          1124.5,
-          1125.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_agentic_20260819_gapwidth_t1375_p0",
-    "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (1.64, 9.24), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 1.27,
-    "band": 0.3,
-    "context": [
-      [
-        "lidar",
-        [
-          1374.93,
-          1375.03
-        ]
-      ],
-      [
-        "odom",
-        [
-          1374.5,
-          1375.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
     "id": "go2_agentic_20260819_gapwidth_t1400_p0",
     "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (6.23, 2.26), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 1.8,
-    "band": 0.3,
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Within 2 m of the world point (6.23, 2.26), are there two or more separate things standing above the floor (returns above z = 0.15 m, not your own body within 0.35 m of you) with a gap between them? If so, give the location of the narrowest gap between two separate things and how wide it is, as x,y,width on one line. If there is at most one such thing, or none, answer none. Use only the mapped point cloud.",
+    "a": [
+      [
+        5.53,
+        3.08,
+        1.8
+      ]
+    ],
+    "radius": 1.0,
+    "value_band": 0.3,
     "context": [
       [
         "lidar",
@@ -147,165 +29,23 @@
         ]
       ]
     ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_agentic_20260819_gapwidth_t1350_p2",
-    "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (3.81, 6.07), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 0.58,
-    "band": 0.3,
-    "context": [
-      [
-        "lidar",
-        [
-          1349.87,
-          1349.97
-        ]
-      ],
-      [
-        "odom",
-        [
-          1349.5,
-          1350.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_agentic_20260819_gapwidth_t1375_p1",
-    "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (1.49, 10.14), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 1.27,
-    "band": 0.3,
-    "context": [
-      [
-        "lidar",
-        [
-          1374.93,
-          1375.03
-        ]
-      ],
-      [
-        "odom",
-        [
-          1374.5,
-          1375.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_china_office_gapwidth_t115_p2",
-    "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (1.76, 0.84), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 1.9,
-    "band": 0.3,
-    "context": [
-      [
-        "lidar",
-        [
-          114.89,
-          114.99
-        ]
-      ],
-      [
-        "odom",
-        [
-          114.5,
-          115.1
-        ]
-      ]
-    ],
-    "dataset": "go2_china_office"
-  },
-  {
-    "id": "go2_agentic_20260819_gapwidth_t1400_p2",
-    "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (6.25, 1.47), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 0.5,
-    "band": 0.3,
-    "context": [
-      [
-        "lidar",
-        [
-          1399.89,
-          1399.99
-        ]
-      ],
-      [
-        "odom",
-        [
-          1399.5,
-          1400.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_agentic_20260819_gapwidth_t1375_p2",
-    "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (0.85, 8.70), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 1.27,
-    "band": 0.3,
-    "context": [
-      [
-        "lidar",
-        [
-          1374.93,
-          1375.03
-        ]
-      ],
-      [
-        "odom",
-        [
-          1374.5,
-          1375.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_china_office_gapwidth_t130_p0",
-    "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (4.01, 4.86), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 1.92,
-    "band": 0.3,
-    "context": [
-      [
-        "lidar",
-        [
-          129.91,
-          130.01
-        ]
-      ],
-      [
-        "odom",
-        [
-          129.5,
-          130.1
-        ]
-      ]
-    ],
-    "dataset": "go2_china_office"
+    "dataset": "go2_agentic_20260819",
+    "split": "train"
   },
   {
     "id": "go2_agentic_20260819_gapwidth_t1450_p0",
     "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (-1.55, -0.43), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 0.75,
-    "band": 0.3,
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Within 2 m of the world point (-1.55, -0.43), are there two or more separate things standing above the floor (returns above z = 0.15 m, not your own body within 0.35 m of you) with a gap between them? If so, give the location of the narrowest gap between two separate things and how wide it is, as x,y,width on one line. If there is at most one such thing, or none, answer none. Use only the mapped point cloud.",
+    "a": [
+      [
+        -1.8,
+        1.4,
+        0.75
+      ]
+    ],
+    "radius": 1.0,
+    "value_band": 0.3,
     "context": [
       [
         "lidar",
@@ -322,90 +62,23 @@
         ]
       ]
     ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_agentic_20260819_gapwidth_t1500_p1",
-    "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (-0.34, -1.88), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 1.15,
-    "band": 0.3,
-    "context": [
-      [
-        "lidar",
-        [
-          1499.86,
-          1499.96
-        ]
-      ],
-      [
-        "odom",
-        [
-          1499.5,
-          1500.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_china_office_gapwidth_t40_p0",
-    "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (2.92, 3.75), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 1.65,
-    "band": 0.3,
-    "context": [
-      [
-        "lidar",
-        [
-          39.89,
-          39.99
-        ]
-      ],
-      [
-        "odom",
-        [
-          39.5,
-          40.1
-        ]
-      ]
-    ],
-    "dataset": "go2_china_office"
-  },
-  {
-    "id": "go2_agentic_20260819_gapwidth_t1450_p1",
-    "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (-1.94, 0.92), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 0.73,
-    "band": 0.3,
-    "context": [
-      [
-        "lidar",
-        [
-          1449.85,
-          1449.95
-        ]
-      ],
-      [
-        "odom",
-        [
-          1449.5,
-          1450.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
+    "dataset": "go2_agentic_20260819",
+    "split": "train"
   },
   {
     "id": "go2_agentic_20260819_gapwidth_t1500_p2",
     "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (0.22, -0.58), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 1.15,
-    "band": 0.3,
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Within 2 m of the world point (-0.49, -1.89), are there two or more separate things standing above the floor (returns above z = 0.15 m, not your own body within 0.35 m of you) with a gap between them? If so, give the location of the narrowest gap between two separate things and how wide it is, as x,y,width on one line. If there is at most one such thing, or none, answer none. Use only the mapped point cloud.",
+    "a": [
+      [
+        1.17,
+        -1.6,
+        1.15
+      ]
+    ],
+    "radius": 1.0,
+    "value_band": 0.3,
     "context": [
       [
         "lidar",
@@ -422,240 +95,23 @@
         ]
       ]
     ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_china_office_gapwidth_t40_p2",
-    "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (2.64, 2.38), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 1.65,
-    "band": 0.3,
-    "context": [
-      [
-        "lidar",
-        [
-          39.89,
-          39.99
-        ]
-      ],
-      [
-        "odom",
-        [
-          39.5,
-          40.1
-        ]
-      ]
-    ],
-    "dataset": "go2_china_office"
-  },
-  {
-    "id": "go2_agentic_20260819_gapwidth_t1450_p2",
-    "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (-1.85, 0.88), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 0.73,
-    "band": 0.3,
-    "context": [
-      [
-        "lidar",
-        [
-          1449.85,
-          1449.95
-        ]
-      ],
-      [
-        "odom",
-        [
-          1449.5,
-          1450.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_agentic_20260819_gapwidth_t375_p2",
-    "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (-0.57, -1.61), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 1.14,
-    "band": 0.3,
-    "context": [
-      [
-        "lidar",
-        [
-          374.84,
-          374.94
-        ]
-      ],
-      [
-        "odom",
-        [
-          374.5,
-          375.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_agentic_20260819_gapwidth_t1500_p0",
-    "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (-0.51, -1.10), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 0.99,
-    "band": 0.3,
-    "context": [
-      [
-        "lidar",
-        [
-          1499.86,
-          1499.96
-        ]
-      ],
-      [
-        "odom",
-        [
-          1499.5,
-          1500.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_china_office_gapwidth_t100_p0",
-    "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (3.20, 2.36), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 1.41,
-    "band": 0.3,
-    "context": [
-      [
-        "lidar",
-        [
-          99.88,
-          99.98
-        ]
-      ],
-      [
-        "odom",
-        [
-          99.5,
-          100.1
-        ]
-      ]
-    ],
-    "dataset": "go2_china_office"
-  },
-  {
-    "id": "go2_agentic_20260819_gapwidth_t300_p0",
-    "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (-0.63, 0.52), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 0.65,
-    "band": 0.3,
-    "context": [
-      [
-        "lidar",
-        [
-          299.94,
-          300.04
-        ]
-      ],
-      [
-        "odom",
-        [
-          299.5,
-          300.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_china_office_gapwidth_t108_p0",
-    "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (1.12, 2.30), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 1.11,
-    "band": 0.3,
-    "context": [
-      [
-        "lidar",
-        [
-          107.93,
-          108.03
-        ]
-      ],
-      [
-        "odom",
-        [
-          107.5,
-          108.1
-        ]
-      ]
-    ],
-    "dataset": "go2_china_office"
-  },
-  {
-    "id": "go2_agentic_20260819_gapwidth_t300_p2",
-    "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (-0.90, -0.84), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 0.67,
-    "band": 0.3,
-    "context": [
-      [
-        "lidar",
-        [
-          299.94,
-          300.04
-        ]
-      ],
-      [
-        "odom",
-        [
-          299.5,
-          300.1
-        ]
-      ]
-    ],
-    "dataset": "go2_agentic_20260819"
-  },
-  {
-    "id": "go2_china_office_gapwidth_t48_p0",
-    "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (4.24, 3.17), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 1.17,
-    "band": 0.3,
-    "context": [
-      [
-        "lidar",
-        [
-          47.82,
-          47.92
-        ]
-      ],
-      [
-        "odom",
-        [
-          47.5,
-          48.1
-        ]
-      ]
-    ],
-    "dataset": "go2_china_office"
+    "dataset": "go2_agentic_20260819",
+    "split": "train"
   },
   {
     "id": "go2_agentic_20260819_gapwidth_t750_p2",
     "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (-1.91, -4.50), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 0.52,
-    "band": 0.3,
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Within 2 m of the world point (-1.91, -4.50), are there two or more separate things standing above the floor (returns above z = 0.15 m, not your own body within 0.35 m of you) with a gap between them? If so, give the location of the narrowest gap between two separate things and how wide it is, as x,y,width on one line. If there is at most one such thing, or none, answer none. Use only the mapped point cloud.",
+    "a": [
+      [
+        -2.12,
+        -2.65,
+        0.52
+      ]
+    ],
+    "radius": 1.0,
+    "value_band": 0.3,
     "context": [
       [
         "lidar",
@@ -672,190 +128,158 @@
         ]
       ]
     ],
-    "dataset": "go2_agentic_20260819"
+    "dataset": "go2_agentic_20260819",
+    "split": "train"
   },
   {
-    "id": "go2_china_office_gapwidth_t70_p1",
+    "id": "go2_china_office_gapwidth_t108_p0",
     "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (3.92, 5.14), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 1.18,
-    "band": 0.3,
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Within 2 m of the world point (1.12, 2.30), are there two or more separate things standing above the floor (returns above z = 0.15 m, not your own body within 0.35 m of you) with a gap between them? If so, give the location of the narrowest gap between two separate things and how wide it is, as x,y,width on one line. If there is at most one such thing, or none, answer none. Use only the mapped point cloud.",
+    "a": [
+      [
+        0.75,
+        3.15,
+        1.11
+      ]
+    ],
+    "radius": 1.0,
+    "value_band": 0.3,
     "context": [
       [
         "lidar",
         [
-          69.83,
-          69.93
+          107.93,
+          108.03
         ]
       ],
       [
         "odom",
         [
-          69.5,
-          70.1
+          107.5,
+          108.1
         ]
       ]
     ],
-    "dataset": "go2_china_office"
+    "dataset": "go2_china_office",
+    "split": "train"
   },
   {
-    "id": "go2_china_office_gapwidth_t130_p1",
+    "id": "go2_agentic_20260819_gapwidth_t300_p1",
     "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (3.62, 6.21), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 0.66,
-    "band": 0.3,
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Within 2 m of the world point (-1.96, 0.17), are there two or more separate things standing above the floor (returns above z = 0.15 m, not your own body within 0.35 m of you) with a gap between them? If so, give the location of the narrowest gap between two separate things and how wide it is, as x,y,width on one line. If there is at most one such thing, or none, answer none. Use only the mapped point cloud.",
+    "a": [],
+    "radius": 1.0,
+    "value_band": 0.3,
     "context": [
       [
         "lidar",
         [
-          129.91,
-          130.01
+          299.94,
+          300.04
         ]
       ],
       [
         "odom",
         [
-          129.5,
-          130.1
+          299.5,
+          300.1
         ]
       ]
     ],
-    "dataset": "go2_china_office"
+    "dataset": "go2_agentic_20260819",
+    "split": "train"
   },
   {
-    "id": "go2_china_office_gapwidth_t85_p1",
+    "id": "go2_agentic_20260819_gapwidth_t500_p0",
     "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (3.33, 4.43), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 1.02,
-    "band": 0.3,
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Within 2 m of the world point (-3.51, -3.81), are there two or more separate things standing above the floor (returns above z = 0.15 m, not your own body within 0.35 m of you) with a gap between them? If so, give the location of the narrowest gap between two separate things and how wide it is, as x,y,width on one line. If there is at most one such thing, or none, answer none. Use only the mapped point cloud.",
+    "a": [],
+    "radius": 1.0,
+    "value_band": 0.3,
     "context": [
       [
         "lidar",
         [
-          84.9,
-          85.0
+          499.95,
+          500.05
         ]
       ],
       [
         "odom",
         [
-          84.5,
-          85.1
+          499.5,
+          500.1
         ]
       ]
     ],
-    "dataset": "go2_china_office"
+    "dataset": "go2_agentic_20260819",
+    "split": "train"
   },
   {
-    "id": "go2_china_office_gapwidth_t130_p2",
+    "id": "go2_agentic_20260819_gapwidth_t900_p2",
     "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (3.71, 6.17), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 0.66,
-    "band": 0.3,
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Within 2 m of the world point (-1.15, -3.84), are there two or more separate things standing above the floor (returns above z = 0.15 m, not your own body within 0.35 m of you) with a gap between them? If so, give the location of the narrowest gap between two separate things and how wide it is, as x,y,width on one line. If there is at most one such thing, or none, answer none. Use only the mapped point cloud.",
+    "a": [],
+    "radius": 1.0,
+    "value_band": 0.3,
     "context": [
       [
         "lidar",
         [
-          129.91,
-          130.01
+          899.93,
+          900.03
         ]
       ],
       [
         "odom",
         [
-          129.5,
-          130.1
+          899.5,
+          900.1
         ]
       ]
     ],
-    "dataset": "go2_china_office"
+    "dataset": "go2_agentic_20260819",
+    "split": "train"
   },
   {
-    "id": "go2_china_office_gapwidth_t85_p2",
+    "id": "go2_china_office_gapwidth_t62_p2",
     "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (2.83, 4.37), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 1.02,
-    "band": 0.3,
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Within 2 m of the world point (6.34, 7.01), are there two or more separate things standing above the floor (returns above z = 0.15 m, not your own body within 0.35 m of you) with a gap between them? If so, give the location of the narrowest gap between two separate things and how wide it is, as x,y,width on one line. If there is at most one such thing, or none, answer none. Use only the mapped point cloud.",
+    "a": [],
+    "radius": 1.0,
+    "value_band": 0.3,
     "context": [
       [
         "lidar",
         [
-          84.9,
-          85.0
+          61.86,
+          61.96
         ]
       ],
       [
         "odom",
         [
-          84.5,
-          85.1
+          61.5,
+          62.1
         ]
       ]
     ],
-    "dataset": "go2_china_office"
-  },
-  {
-    "id": "go2_short_gapwidth_t20_p0",
-    "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (-1.44, 15.44), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 0.64,
-    "band": 0.3,
-    "context": [
-      [
-        "lidar",
-        [
-          19.85,
-          19.95
-        ]
-      ],
-      [
-        "odom",
-        [
-          19.5,
-          20.1
-        ]
-      ]
-    ],
-    "dataset": "go2_short"
-  },
-  {
-    "id": "go2_short_gapwidth_t12_p0",
-    "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (-2.09, 9.83), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 1.03,
-    "band": 0.3,
-    "context": [
-      [
-        "lidar",
-        [
-          11.9,
-          12.0
-        ]
-      ],
-      [
-        "odom",
-        [
-          11.5,
-          12.1
-        ]
-      ]
-    ],
-    "dataset": "go2_short"
+    "dataset": "go2_china_office",
+    "split": "train"
   },
   {
     "id": "go2_short_gapwidth_t20_p1",
     "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (-2.79, 16.94), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 0.64,
-    "band": 0.3,
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Within 2 m of the world point (-2.78, 15.09), are there two or more separate things standing above the floor (returns above z = 0.15 m, not your own body within 0.35 m of you) with a gap between them? If so, give the location of the narrowest gap between two separate things and how wide it is, as x,y,width on one line. If there is at most one such thing, or none, answer none. Use only the mapped point cloud.",
+    "a": [],
+    "radius": 1.0,
+    "value_band": 0.3,
     "context": [
       [
         "lidar",
@@ -872,31 +296,127 @@
         ]
       ]
     ],
-    "dataset": "go2_short"
+    "dataset": "go2_short",
+    "split": "train"
   },
   {
-    "id": "go2_short_gapwidth_t36_p0",
+    "id": "go2_agentic_20260819_gapwidth_t100_p2",
     "family": "gap_width",
-    "type": "numeric",
-    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Consider the lidar returns above z = 0.15 m within 2 m of the world point (2.95, 9.97), leaving out returns within 0.35 m of your own position (your body). Group them: two returns are in the same group when they are within 0.4 m of each other, directly or through a chain of such returns; ignore groups with fewer than 10 returns. Using only the mapped point cloud, what is the narrowest gap between two different groups \u2014 the smallest horizontal distance from a return in one group to a return in another \u2014 in meters? Answer with a single number.",
-    "a": 1.45,
-    "band": 0.3,
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Within 2 m of the world point (0.05, -0.64), are there two or more separate things standing above the floor (returns above z = 0.15 m, not your own body within 0.35 m of you) with a gap between them? If so, give the location of the narrowest gap between two separate things and how wide it is, as x,y,width on one line. If there is at most one such thing, or none, answer none. Use only the mapped point cloud.",
+    "a": [
+      [
+        0.25,
+        -1.92,
+        1.06
+      ]
+    ],
+    "radius": 1.0,
+    "value_band": 0.3,
     "context": [
       [
         "lidar",
         [
-          35.85,
-          35.95
+          99.92,
+          100.02
         ]
       ],
       [
         "odom",
         [
-          35.5,
-          36.1
+          99.5,
+          100.1
         ]
       ]
     ],
-    "dataset": "go2_short"
+    "dataset": "go2_agentic_20260819",
+    "split": "holdout"
+  },
+  {
+    "id": "go2_agentic_20260819_gapwidth_t1125_p0",
+    "family": "gap_width",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Within 2 m of the world point (-0.92, 1.15), are there two or more separate things standing above the floor (returns above z = 0.15 m, not your own body within 0.35 m of you) with a gap between them? If so, give the location of the narrowest gap between two separate things and how wide it is, as x,y,width on one line. If there is at most one such thing, or none, answer none. Use only the mapped point cloud.",
+    "a": [
+      [
+        -0.75,
+        0.62,
+        1.53
+      ]
+    ],
+    "radius": 1.0,
+    "value_band": 0.3,
+    "context": [
+      [
+        "lidar",
+        [
+          1124.85,
+          1124.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          1124.5,
+          1125.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "holdout"
+  },
+  {
+    "id": "go2_agentic_20260819_gapwidth_t1200_p1",
+    "family": "gap_width",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Within 2 m of the world point (1.26, 2.52), are there two or more separate things standing above the floor (returns above z = 0.15 m, not your own body within 0.35 m of you) with a gap between them? If so, give the location of the narrowest gap between two separate things and how wide it is, as x,y,width on one line. If there is at most one such thing, or none, answer none. Use only the mapped point cloud.",
+    "a": [],
+    "radius": 1.0,
+    "value_band": 0.3,
+    "context": [
+      [
+        "lidar",
+        [
+          1199.89,
+          1199.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          1199.5,
+          1200.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "holdout"
+  },
+  {
+    "id": "go2_agentic_20260819_gapwidth_t1325_p0",
+    "family": "gap_width",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Within 2 m of the world point (2.92, 4.52), are there two or more separate things standing above the floor (returns above z = 0.15 m, not your own body within 0.35 m of you) with a gap between them? If so, give the location of the narrowest gap between two separate things and how wide it is, as x,y,width on one line. If there is at most one such thing, or none, answer none. Use only the mapped point cloud.",
+    "a": [],
+    "radius": 1.0,
+    "value_band": 0.3,
+    "context": [
+      [
+        "lidar",
+        [
+          1324.91,
+          1325.01
+        ]
+      ],
+      [
+        "odom",
+        [
+          1324.5,
+          1325.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "holdout"
   }
 ]

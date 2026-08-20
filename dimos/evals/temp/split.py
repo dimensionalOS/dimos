@@ -60,17 +60,10 @@ HOLDOUT_STRIDE = 3  # every third group of each family, so ~1/3 of the groups
 
 SLICES = ("train", "holdout", "spare")
 
-SLICED_SUITES = (
-    "clearance",
-    "route",
-    "glass",
-    "free_range",
-    "floor_height",
-    "free_disk",
-    "gap_width",
-    "coverage",
-)
-"""The ``go2_pointcloud_<name>_vqa.json`` files that go through :func:`assign`."""
+SLICED_SUITES = ("clearance", "route", "glass")
+"""The ``go2_pointcloud_<name>_vqa.json`` files that go through :func:`assign`.
+The round-3 generated families carry a committed per-row split instead — ten
+curated rows are too few for :func:`assign`'s group-disjoint holdout."""
 
 
 def _time(row: Row) -> float:

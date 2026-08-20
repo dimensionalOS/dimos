@@ -50,12 +50,12 @@ from dimos.evals.types import Suite
 
 _JSON = Path(__file__).parent / "go2_pointcloud_rooms_vqa.json"
 
-# Not sliced: 24 hand-authored rows are too few to hold a group-disjoint holdout,
-# and split.py groups by 30 s blocks, which would collapse most of them. Tagged
-# `train` so the autoresearch bench sees them — with no holdout to verify a gain
-# against. See dimos/evals/temp/autoresearch.md.
+# Holdout, never train: the autoresearch loop is scored on generated geometry
+# families and never sees a number from these hand-authored rows. They test
+# whether a model can find the answer in a good rendering on its own. See
+# dimos/evals/temp/round3.md.
 SUITE: Suite = generate.cases(
-    json.loads(_JSON.read_text()), tags=frozenset({"pointcloud", "train"})
+    json.loads(_JSON.read_text()), tags=frozenset({"pointcloud", "holdout"})
 )
 
 BAND = 1.0  # within() band on the count — one room out scores zero

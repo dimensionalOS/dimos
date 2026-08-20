@@ -58,7 +58,8 @@ SUITES = (
     "dimos.evals.suites.go2_pointcloud_floor_height",
     "dimos.evals.suites.go2_pointcloud_free_disk",
     "dimos.evals.suites.go2_pointcloud_gap_width",
-    "dimos.evals.suites.go2_pointcloud_coverage",
+    "dimos.evals.suites.go2_pointcloud_frontier",
+    "dimos.evals.suites.go2_pointcloud_free_range_holdout",
     "dimos.evals.suites.go2_pointcloud_doorway",
     "dimos.evals.suites.go2_pointcloud_rooms",
     "dimos.evals.suites.go2_pointcloud_floor_level",
@@ -70,18 +71,21 @@ SCORED_FAMILIES = (
     "clearance",
     "route",
     "crossing",
-    "doorway",
-    "rooms",
-    "floorlevel",
-    "stairs",
+    "free_range",
+    "floor_height",
+    "free_disk",
+    "gap_width",
+    "frontier",
 )
-"""Families the loop optimizes. Geometry families ride along in the same run
-so the regression gate costs no extra model calls, but they cannot buy score.
+"""Families the loop optimizes, all geometry with computed truth. The frozen
+geometry suite rides along in the same run so the regression gate costs no
+extra model calls, but it cannot buy score.
 
-The last four are hand-authored and carry no holdout — see
-dimos/evals/temp/autoresearch.md. Read their ``positive`` mean, not their
-family mean: three of the six rows in each expect the negative answer, and a
-model that says "none" every time banks 0.50 for free."""
+The hand-authored semantic families (doorway, rooms, floorlevel, stairs) are
+holdout, not scored here — see dimos/evals/temp/round3.md. Half of each new
+family's rows expect the negative answer (none / boxed / walled / level), so
+read the ``positive`` mean printed beside the family: a model that always says
+"none" banks 0.50 without seeing anything."""
 
 SLICE_TAGS: dict[str, frozenset[str]] = {
     "bench": frozenset({"train", "frozen"}),

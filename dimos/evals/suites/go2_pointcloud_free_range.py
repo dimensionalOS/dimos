@@ -13,21 +13,23 @@
 # limitations under the License.
 
 
-"""Longest measured, empty bearing from a point — VQA over the go2 replays.
+"""Longest clear heading from a point — VQA over the go2 replays.
 
 Rows (``go2_pointcloud_free_range_vqa.json``) are pure data emitted by
-:func:`rows` — ground truth ray-marched on the full-resolution cloud, quizzing
-whatever lossy encoding the agent receives for a ``PointCloud2``.
+:func:`rows` — ground truth ray-marched on the full-resolution cloud,
+quizzing whatever lossy encoding the agent receives for a ``PointCloud2``.
 
-``free_range`` asks which of the eight compass bearings from a point runs
-furthest through lidar-swept floor with nothing above 0.15 m before it meets
-a return, a stretch nobody measured, or the cap. The cap is the distance to
-the nearest edge of the sensing window, the same for every bearing, so a
-diagonal that merely reaches further into the corner of the box cannot win.
-The 0.15 m edge is this question's definition of "nothing on the floor"; the
-encoder carries no such edge.
+The task is a robot's: which way is it most open, if any. From a point, the
+agent picks the compass heading it could travel furthest along over floor the
+lidar mapped and found nothing standing on above 0.15 m — or answers that no
+heading is clear that far, when the point is boxed in. Ten rows, five with a
+clear heading and five without; the prompt does not say which, and a heading
+that merely points into the window's corner cannot win because every heading
+is capped at the distance to the nearest edge of the mapped cloud.
 
-Rows are sliced train / holdout / spare by :mod:`dimos.evals.temp.split`.
+Ten hand-picked rows, tagged ``train``: too few to hold a group-disjoint
+holdout, so like the hand-authored families they are not sliced. The 0.15 m
+edge is the eval's, stated in the prompt; the encoder never sees it.
 
 Regenerate (needs the three recordings)::
 
@@ -43,28 +45,26 @@ from pathlib import Path
 import numpy as np
 
 from dimos.evals import generate
-from dimos.evals.temp import split
 from dimos.evals.types import Suite
 
 _JSON = Path(__file__).parent / "go2_pointcloud_free_range_vqa.json"
 
-SUITE: Suite = generate.cases(
-    split.assign(json.loads(_JSON.read_text())), tags=frozenset({"pointcloud"})
-)
+SUITE: Suite = generate.cases(json.loads(_JSON.read_text()), tags=frozenset({"pointcloud"}))
 
 LOW_Z = 0.15  # the question's "nothing on the floor" edge, world z
 HALF_WIDTH = 0.3  # half the lane width; ~Go2 body width plus margin
 SELF_RETURN = 0.15  # returns closer than this along the lane are the robot's own body
 START = 0.3  # the lane is judged from here out; under the robot is not asked about
 BIN = 0.2  # a stretch of lane this long with no return at all ends the run
-MIN_MARGIN = 0.4  # the winner must beat the runner-up by this much
-MIN_RUN = 1.0  # and run at least this far, or the frame is clutter
-QUERY_RADIUS = 1.0  # query points sit this close to the window centre
+CLEAR = 2.0  # a heading "goes far" when it runs at least this far
+BOXED = 1.2  # every heading under this and the point is boxed in — the negative
+MIN_MARGIN = 0.4  # a clear winner beats the runner-up by this much
 QUERY_CELL = 0.25
-PER_FRAME = 6  # candidate points per frame before selection
 
 _AGENTIC_TS = [
     100.0,
+    150.0,
+    200.0,
     300.0,
     375.0,
     500.0,
@@ -73,10 +73,7 @@ _AGENTIC_TS = [
     1125.0,
     1200.0,
     1325.0,
-    1350.0,
-    1375.0,
     1400.0,
-    1425.0,
     1450.0,
     1500.0,
 ]
@@ -98,24 +95,26 @@ _OFFICE_TS = [
     130.0,
 ]
 
+CHOICES = (*generate.COMPASS, "none")
+
 
 def _question(point: np.ndarray, cap: float) -> str:
-    bearings = ", ".join(generate.COMPASS)
     return (
         "You are the robot; your current pose is the odom observation shown (world frame: "
-        "+x is east, +y is north, coordinates in meters). From the world point "
-        f"({point[0]:.2f}, {point[1]:.2f}) consider the eight compass bearings ({bearings}). "
-        f"Along each bearing walk outward in a lane {2 * HALF_WIDTH:g} m wide, starting "
-        f"{START:g} m out from the point, until the lane meets a lidar return above "
-        f"z = {LOW_Z} m, meets a {BIN:g} m stretch with no lidar return at any height, or "
-        f"reaches {cap:.1f} m from the point (the distance to the nearest edge of the mapped "
-        "cloud, the same cap for every bearing). Using only the mapped point cloud, which "
-        "bearing goes furthest before it stops? Answer with exactly one word, the bearing."
+        "+x is east, +y is north, coordinates in meters). Starting from the world point "
+        f"({point[0]:.2f}, {point[1]:.2f}), which single compass direction (north, "
+        "north-east, east, and so on) could you travel furthest in a straight line over "
+        f"floor the lidar has mapped and found clear — nothing standing on it above z = "
+        f"{LOW_Z} m — before you would reach something above that height or run off the edge "
+        f"of what the lidar mapped? Measure no further than {cap:.1f} m in any direction, "
+        "since the mapped area is closer than that on some sides. Using only the mapped point "
+        f"cloud, answer with the single most open direction, or none if no direction stays "
+        f"clear for even {CLEAR:g} m."
     )
 
 
 def runs(pts: np.ndarray, point: np.ndarray) -> tuple[np.ndarray, float]:
-    """Per compass bearing, how far the lane runs before it stops, and the cap.
+    """Per compass heading, how far a lane runs clear before it stops, and the cap.
 
     The lane stops at the first return above LOW_Z (past SELF_RETURN),
     at the first BIN of lane with no return at any height, or at the cap —
@@ -128,9 +127,10 @@ def runs(pts: np.ndarray, point: np.ndarray) -> tuple[np.ndarray, float]:
         np.floor(min(point[0] - lo[0], hi[0] - point[0], point[1] - lo[1], hi[1] - point[1]) / 0.1)
         * 0.1
     )
+    cap = max(cap, 0.0)
     d = xy - point
     out = np.zeros(len(generate.COMPASS))
-    n_bins = int(np.ceil(cap / BIN))
+    n_bins = max(1, int(np.ceil(cap / BIN)))
     for i in range(len(generate.COMPASS)):
         theta = np.radians(i * 45.0)
         u = np.array([np.cos(theta), np.sin(theta)])
@@ -149,7 +149,7 @@ def runs(pts: np.ndarray, point: np.ndarray) -> tuple[np.ndarray, float]:
 
 
 def _nearest_bearing(pts: np.ndarray, point: np.ndarray) -> int | None:
-    """Compass index of the nearest return above LOW_Z — the bearing an
+    """Compass index of the nearest return above LOW_Z — the heading an
     obstacle-only reading is anchored on."""
     high = pts[pts[:, 2] > LOW_Z]
     d = np.hypot(high[:, 0] - point[0], high[:, 1] - point[1])
@@ -160,50 +160,53 @@ def _nearest_bearing(pts: np.ndarray, point: np.ndarray) -> int | None:
     return int(np.round(np.degrees(np.arctan2(q[1] - point[1], q[0] - point[0])) / 45.0)) % 8
 
 
-def _query_points(pts: np.ndarray, rng: np.random.Generator) -> list[np.ndarray]:
-    """Centres of swept, empty cells near the middle of the window, shuffled."""
-    xy = pts[:, :2]
-    centre = (xy.min(axis=0) + xy.max(axis=0)) / 2
+def _query_points(pts: np.ndarray) -> list[np.ndarray]:
+    """Centres of swept, empty cells — every candidate stance on mapped floor."""
     origin, count, _, zmax = generate._cell_grid(pts, QUERY_CELL)
     wx, wy = generate._cell_centers(origin, QUERY_CELL, count.shape)
-    ok = (count >= 3) & (zmax <= LOW_Z) & (np.hypot(wx - centre[0], wy - centre[1]) <= QUERY_RADIUS)
-    points = [np.array([float(x), float(y)]) for x, y in zip(wx[ok], wy[ok], strict=True)]
-    rng.shuffle(points)  # type: ignore[arg-type]
-    return points[:PER_FRAME]
+    ok = (count >= 3) & (zmax <= LOW_Z)
+    return [np.array([float(x), float(y)]) for x, y in zip(wx[ok], wy[ok], strict=True)]
 
 
 def free_range_rows(dataset: str, timestamps: Sequence[float]) -> list[generate.Row]:
-    """Which bearing runs furthest: one row per query point that has a clean winner.
+    """Candidate rows, each tagged kind open or boxed for the split in :func:`rows`.
 
-    Built adversarially, as far as a single sweep allows: the winner must not
-    be the bearing of the nearest return above LOW_Z, so a reading that
-    carries obstacle distance alone and nothing about what was swept is not
-    handed the answer. It must also win by MIN_MARGIN and run MIN_RUN.
-
-    Every candidate is returned.
+    A point is open when one heading runs at least CLEAR m, beats the
+    runner-up by MIN_MARGIN, and — so an obstacle-distance reader is not
+    handed the answer — is not the heading of the nearest return above the
+    edge. It is boxed when no heading clears BOXED m. Points between are
+    dropped.
     """
-    rng = np.random.default_rng(3)
     with generate._dataset(dataset) as store:
         rows: list[generate.Row] = []
         for t in timestamps:
             pts, context = generate._cloud_at(store, t)
-            for k, point in enumerate(_query_points(pts, rng)):
+            for k, point in enumerate(_query_points(pts)):
                 lengths, cap = runs(pts, point)
+                if cap < CLEAR:
+                    continue  # too near the window edge to judge a clear run
                 order = np.argsort(-lengths)
                 win = int(order[0])
                 margin = float(lengths[order[0]] - lengths[order[1]])
-                if margin < MIN_MARGIN or lengths[win] < MIN_RUN:
-                    continue  # no clean winner, or a point buried in clutter
-                if win == _nearest_bearing(pts, point):
-                    continue  # the nearest obstacle gives it away
+                if (
+                    lengths[win] >= CLEAR
+                    and margin >= MIN_MARGIN
+                    and win != _nearest_bearing(pts, point)
+                ):
+                    kind, answer = "open", generate.COMPASS[win]
+                elif lengths.max() < BOXED:
+                    kind, answer = "boxed", "none"
+                else:
+                    continue
                 rows.append(
                     {
                         "id": f"{dataset}_freerange_t{t:g}_p{k}",
                         "family": "free_range",
                         "type": "mcq",
                         "q": _question(point, cap),
-                        "a": generate.COMPASS[win],
-                        "choices": list(generate.COMPASS),
+                        "a": answer,
+                        "choices": list(CHOICES),
+                        "kind": kind,
                         "context": [
                             *context,
                             ["odom", [round(max(0.0, t - 0.5), 2), round(t + 0.1, 2)]],
@@ -214,42 +217,24 @@ def free_range_rows(dataset: str, timestamps: Sequence[float]) -> list[generate.
         return rows
 
 
-# The dataset: answers spread across their range, at most three rows per scene.
-_CASES = (
-    "go2_china_office_freerange_t85_p1",
-    "go2_agentic_20260819_freerange_t1125_p3",
-    "go2_agentic_20260819_freerange_t1200_p5",
-    "go2_china_office_freerange_t85_p5",
-    "go2_agentic_20260819_freerange_t1125_p1",
-    "go2_china_office_freerange_t108_p2",
-    "go2_agentic_20260819_freerange_t1375_p5",
-    "go2_china_office_freerange_t25_p1",
-    "go2_china_office_freerange_t85_p2",
-    "go2_agentic_20260819_freerange_t1375_p1",
-    "go2_agentic_20260819_freerange_t1425_p4",
-    "go2_agentic_20260819_freerange_t1125_p2",
-    "go2_china_office_freerange_t108_p5",
-    "go2_agentic_20260819_freerange_t1450_p3",
-    "go2_china_office_freerange_t48_p5",
-    "go2_short_freerange_t28_p2",
-    "go2_agentic_20260819_freerange_t1425_p3",
-    "go2_agentic_20260819_freerange_t1450_p1",
-    "go2_agentic_20260819_freerange_t1375_p0",
-    "go2_short_freerange_t28_p3",
-    "go2_china_office_freerange_t55_p1",
-    "go2_short_freerange_t28_p5",
-    "go2_short_freerange_t52_p0",
-    "go2_agentic_20260819_freerange_t1500_p1",
-    "go2_agentic_20260819_freerange_t900_p1",
-    "go2_agentic_20260819_freerange_t300_p4",
-    "go2_short_freerange_t58_p3",
-    "go2_short_freerange_t52_p4",
-    "go2_agentic_20260819_freerange_t375_p1",
-    "go2_agentic_20260819_freerange_t900_p5",
-    "go2_agentic_20260819_freerange_t375_p3",
-    "go2_agentic_20260819_freerange_t900_p0",
-    "go2_china_office_freerange_t122_p0",
-    "go2_china_office_freerange_t122_p2",
+# Five positive and five negative, one per scene; holdout shares no scene block.
+_TRAIN = (
+    "go2_agentic_20260819_freerange_t1400_p155",
+    "go2_agentic_20260819_freerange_t1450_p102",
+    "go2_agentic_20260819_freerange_t900_p67",
+    "go2_china_office_freerange_t100_p152",
+    "go2_china_office_freerange_t108_p122",
+    "go2_agentic_20260819_freerange_t750_p58",
+    "go2_china_office_freerange_t25_p54",
+    "go2_china_office_freerange_t48_p88",
+    "go2_short_freerange_t12_p187",
+    "go2_short_freerange_t44_p106",
+)
+_HOLDOUT = (
+    "go2_agentic_20260819_freerange_t100_p116",
+    "go2_agentic_20260819_freerange_t1125_p146",
+    "go2_agentic_20260819_freerange_t1200_p233",
+    "go2_agentic_20260819_freerange_t500_p30",
 )
 
 
@@ -265,9 +250,16 @@ def candidates() -> dict[str, generate.Row]:
 
 
 def rows() -> list[generate.Row]:
-    """The generator calls behind the committed JSON."""
+    """The committed rows: curated ids, each tagged with its split."""
     found = candidates()
-    return [found[i] for i in _CASES]
+    out = []
+    for split, ids in (("train", _TRAIN), ("holdout", _HOLDOUT)):
+        for i in ids:
+            row = dict(found[i])
+            row.pop("kind", None)
+            row["split"] = split
+            out.append(row)
+    return out
 
 
 if __name__ == "__main__":
