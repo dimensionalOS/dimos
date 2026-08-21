@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from dimos.control.task import CoordinatorState, JointStateSnapshot
 from dimos.control.tasks.servo_task.servo_task import JointServoTask, JointServoTaskConfig
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -31,6 +33,64 @@ def test_on_joint_command_sets_position_targets() -> None:
     out = task.compute(CoordinatorState(joints=JointStateSnapshot(), t_now=1.0))
     assert out is not None
     assert out.positions == [0.1, 0.2]
+    assert task.is_active()
+
+
+def test_on_joint_command_uses_shared_velocity_limited_tracking() -> None:
+    task = JointServoTask(
+        "servo",
+        JointServoTaskConfig(
+            joint_names=["a/j1"],
+            velocity_limits={"a/j1": 0.5},
+        ),
+    )
+    assert task.on_joint_command(JointState(name=["a/j1"], position=[1.0]), 1.0)
+
+    first = task.compute(_state(1.0, {"a/j1": 0.0}))
+    second = task.compute(
+        CoordinatorState(
+            joints=JointStateSnapshot(joint_positions={"a/j1": 0.0}),
+            t_now=1.1,
+            dt=0.1,
+        )
+    )
+
+    assert first is not None
+    assert first.positions == [0.0]
+    assert second is not None
+    assert second.positions == pytest.approx([0.05])
+
+
+def test_stream_replacement_preserves_bounded_command_continuity() -> None:
+    task = JointServoTask(
+        "servo",
+        JointServoTaskConfig(
+            joint_names=["a/j1"],
+            velocity_limits={"a/j1": 1.0},
+        ),
+    )
+    assert task.on_joint_command(JointState(name=["a/j1"], position=[1.0]), 1.0)
+    before = task.compute(
+        CoordinatorState(
+            joints=JointStateSnapshot(joint_positions={"a/j1": 0.0}),
+            t_now=1.0,
+            dt=0.1,
+        )
+    )
+
+    assert task.on_joint_command(JointState(name=["a/j1"], position=[-1.0]), 1.1)
+    after = task.compute(
+        CoordinatorState(
+            joints=JointStateSnapshot(joint_positions={"a/j1": 0.0}),
+            t_now=1.1,
+            dt=0.1,
+        )
+    )
+
+    assert before is not None
+    assert before.positions == pytest.approx([0.1])
+    assert after is not None
+    assert after.positions == pytest.approx([0.0])
 
 
 def test_on_joint_command_ignores_messages_without_positions() -> None:

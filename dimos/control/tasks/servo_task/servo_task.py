@@ -12,27 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Streaming joint servo task for real-time position control.
-
-Accepts streaming joint positions (e.g., from teleoperation) and outputs them
-directly to hardware each tick. Useful for teleoperation, visual servoing,
-or any real-time control where you don't want trajectory planning overhead.
-"""
+"""Streaming policy wrapper around joint trajectory execution."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+from pydantic import Field
+
+from dimos.control.joint_limits import resolve_velocity_limits
 from dimos.control.task import (
     BaseControlTask,
-    ControlMode,
     CoordinatorState,
     JointCommandOutput,
     ResourceClaim,
 )
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JointTrajectoryTask,
+    JointTrajectoryTaskConfig,
+)
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
@@ -59,6 +63,7 @@ class JointServoTaskConfig:
             measured state instead of a configured pose. Startup is then
             bumpless: a configured pose would snap the joints there from
             wherever the robot actually is, at full stiffness.
+        velocity_limits: Effective physical limits resolved by the task factory.
     """
 
     joint_names: list[str]
@@ -66,49 +71,20 @@ class JointServoTaskConfig:
     timeout: float = 0.5  # 500ms default timeout
     default_positions: list[float] | None = None
     hold_measured_on_start: bool = False
+    velocity_limits: dict[str, float] | None = None
 
 
 class JointServoTask(BaseControlTask):
-    """Streaming joint position control for teleoperation/visual servoing.
-
-    Accepts target positions via set_target() or set_target_by_name() and
-    outputs them each tick. Uses SERVO_POSITION mode for high-frequency control.
-
-    No trajectory planning - just pass-through with optional timeout.
-
-    Example:
-        >>> task = JointServoTask(
-        ...     name="servo_arm",
-        ...     config=JointServoTaskConfig(
-        ...         joint_names=["arm/joint1", "arm/joint2", "arm/joint3"],
-        ...         priority=10,
-        ...         timeout=0.5,
-        ...     ),
-        ... )
-        >>> coordinator.add_task(task)
-        >>> task.start()
-        >>>
-        >>> # From teleop callback or other source:
-        >>> task.set_target([0.1, 0.2, 0.3], t_now=time.perf_counter())
-    """
+    """Translate streamed position targets into replacement JTT trajectories."""
 
     def __init__(self, name: str, config: JointServoTaskConfig) -> None:
-        """Initialize servo task.
-
-        Args:
-            name: Unique task name
-            config: Task configuration
-        """
         if not config.joint_names:
             raise ValueError(f"JointServoTask '{name}' requires at least one joint")
-
         self._name = name
         self._config = config
         self._joint_names = frozenset(config.joint_names)
         self._joint_names_list = list(config.joint_names)
         self._num_joints = len(config.joint_names)
-
-        # Current target (thread-safe)
         self._lock = threading.Lock()
         self._target: list[float] | None = None
         self._last_update_time: float = 0.0
@@ -116,7 +92,14 @@ class JointServoTask(BaseControlTask):
         self._name_to_index = {name: i for i, name in enumerate(self._joint_names_list)}
         self._preempted_joints: set[str] = set()
         self._logged_preemption: frozenset[str] = frozenset()
-
+        self._trajectory_task = JointTrajectoryTask(
+            JointTrajectoryTaskConfig(
+                joint_names=tuple(config.joint_names),
+                priority=config.priority,
+                velocity_limits=config.velocity_limits,
+                hold_final=True,
+            )
+        )
         if config.default_positions is not None:
             if len(config.default_positions) != self._num_joints:
                 raise ValueError(
@@ -124,107 +107,72 @@ class JointServoTask(BaseControlTask):
                     f"{len(config.default_positions)} does not match "
                     f"joint_names length {self._num_joints}"
                 )
+            if any(not math.isfinite(position) for position in config.default_positions):
+                raise ValueError(f"JointServoTask '{name}': default_positions must be finite")
             self._target = list(config.default_positions)
-
+            self._trajectory_task.replace(self._target_trajectory())
         logger.info(f"JointServoTask {name} initialized for joints: {config.joint_names}")
 
     def claim(self) -> ResourceClaim:
-        """Declare resource requirements."""
-        return ResourceClaim(
-            joints=self._joint_names,
-            priority=self._config.priority,
-            mode=ControlMode.SERVO_POSITION,
-        )
+        return self._trajectory_task.claim()
 
     def is_active(self) -> bool:
-        """Check if task should run this tick."""
         with self._lock:
-            if self._active and self._config.hold_measured_on_start and self._target is None:
-                # No target yet, but compute() will latch one from measured
-                # state; stay active so it gets the chance.
-                return True
-            return self._active and self._target is not None
+            waiting_for_state = self._config.hold_measured_on_start and self._target is None
+            return self._active and (waiting_for_state or self._target is not None)
 
     def _latch_measured(self, state: CoordinatorState) -> bool:
-        """Adopt measured positions as the hold target. False until all arrive."""
-        measured = []
+        measured: dict[str, float] = {}
         for name in self._joint_names_list:
             position = state.joints.joint_positions.get(name)
             if position is None:
                 return False
-            measured.append(float(position))
-        self._target = measured
+            measured[name] = float(position)
+        self._target = [measured[name] for name in self._joint_names_list]
+        self._trajectory_task.replace(self._target_trajectory(), measured)
         logger.info(f"JointServoTask {self._name} holding measured start pose")
         return True
 
+    def _target_trajectory(self) -> JointTrajectory:
+        assert self._target is not None
+        return JointTrajectory(
+            joint_names=self._joint_names_list,
+            points=[TrajectoryPoint(positions=list(self._target))],
+        )
+
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
-        """Output current target positions.
-
-        Args:
-            state: Current coordinator state
-
-        Returns:
-            JointCommandOutput with positions, or None if inactive/timed out
-        """
         with self._lock:
             if not self._active:
                 return None
             if self._target is None:
-                # Latching from measured keeps startup bumpless: commanding a
-                # configured pose here would snap the joints there from
-                # wherever the robot actually is, at full stiffness.
                 if not self._config.hold_measured_on_start or not self._latch_measured(state):
                     return None
-            target = self._target
-            assert target is not None  # narrowed by the latch above
-
+            assert self._target is not None
             if self._preempted_joints:
-                # Bumpless handoff: while a higher-priority task drives some of
-                # our joints, track their measured positions so the hold
-                # resumes from wherever that task releases them instead of
-                # snapping back to the previously latched target.
-                # A joint missing from this snapshot stays pending: clearing
-                # it unmeasured resumes the hold on the stale pre-preemption
-                # target, and no further callback arrives once released.
                 still_pending: set[str] = set()
+                handoff: dict[str, float] = {}
                 for name in self._preempted_joints:
                     position = state.joints.joint_positions.get(name)
                     if position is None:
                         still_pending.add(name)
                         continue
-                    target[self._name_to_index[name]] = position
+                    self._target[self._name_to_index[name]] = position
+                    handoff[name] = position
                 self._preempted_joints = still_pending
-                # Preemption defers the timeout: the joints are actively
-                # driven, and the hold must be alive when they are released.
+                self._trajectory_task.replace(self._target_trajectory(), handoff)
                 self._last_update_time = state.t_now
             elif self._logged_preemption:
                 self._logged_preemption = frozenset()
                 logger.info(f"JointServoTask {self._name} resumed hold at handed-off positions")
-
-            # Check timeout
-            if self._config.timeout > 0:
-                time_since_update = state.t_now - self._last_update_time
-                if time_since_update > self._config.timeout:
-                    logger.warning(
-                        f"JointServoTask {self._name} timed out "
-                        f"(no update for {time_since_update:.3f}s)"
-                    )
-                    self._active = False
-                    return None
-
-            return JointCommandOutput(
-                joint_names=self._joint_names_list,
-                positions=list(target),
-                mode=ControlMode.SERVO_POSITION,
-            )
+            elapsed = state.t_now - self._last_update_time
+            if self._config.timeout > 0 and elapsed > self._config.timeout:
+                logger.warning(f"JointServoTask {self._name} timed out after {elapsed:.3f}s")
+                self._active = False
+                self._trajectory_task.cancel()
+                return None
+            return self._trajectory_task.compute(state)
 
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
-        """Handle preemption by higher-priority task.
-
-        Args:
-            by_task: Name of preempting task
-            joints: Joints that were preempted
-        """
         overlap = joints & self._joint_names
         if not overlap:
             return
@@ -240,45 +188,24 @@ class JointServoTask(BaseControlTask):
             )
 
     def set_target(self, positions: list[float], t_now: float) -> bool:
-        """Set target joint positions.
-
-        Call this from your teleop callback or other data source.
-
-        Args:
-            positions: Joint positions in radians (must match joint_names length)
-            t_now: Current time (from coordinator or time.perf_counter())
-
-        Returns:
-            True if accepted, False if wrong number of joints
-        """
         if len(positions) != self._num_joints:
             logger.warning(
                 f"JointServoTask {self._name}: expected {self._num_joints} "
                 f"positions, got {len(positions)}"
             )
             return False
-
+        if any(not math.isfinite(position) for position in positions):
+            logger.warning(f"JointServoTask {self._name}: positions must be finite")
+            return False
         with self._lock:
             self._target = list(positions)
+            self._trajectory_task.replace(self._target_trajectory())
             self._last_update_time = t_now
             self._active = True
-
         return True
 
     def set_target_by_name(self, positions: dict[str, float], t_now: float) -> bool:
-        """Set target positions by joint name.
-
-        Extracts only the joints this task controls from the dict.
-        Useful for routing when multiple tasks share an input stream.
-
-        Args:
-            positions: {joint_name: position} dict (can contain extra joints)
-            t_now: Current time
-
-        Returns:
-            True if all required joints found, False if any missing
-        """
-        ordered = []
+        ordered: list[float] = []
         for name in self._joint_names_list:
             if name not in positions:
                 logger.warning(
@@ -292,37 +219,32 @@ class JointServoTask(BaseControlTask):
         return self.set_target(ordered, t_now)
 
     def on_joint_command(self, msg: JointState, t_now: float) -> bool:
-        """Uniform stream handler: digest the position half of a joint_command."""
         if not msg.position:
             return False
         return self.set_target_by_name(dict(zip(msg.name, msg.position, strict=True)), t_now)
 
     def start(self) -> None:
-        """Activate the task (start accepting and outputting commands)."""
         with self._lock:
             self._active = True
-            # Refresh the timeout reference so a caller that re-starts
-            # the task after a long idle window (or uses default_positions
-            # with a non-zero timeout) doesn't time out on the first tick
-            # from the stale 0.0 left at construction.
+            if self._target is not None:
+                self._trajectory_task.replace(self._target_trajectory())
             self._last_update_time = time.perf_counter()
         logger.info(f"JointServoTask {self._name} started")
 
     def stop(self) -> None:
-        """Deactivate the task (stop outputting commands)."""
         with self._lock:
             self._active = False
+            self._trajectory_task.cancel()
         logger.info(f"JointServoTask {self._name} stopped")
 
     def clear(self) -> None:
-        """Clear current target and deactivate."""
         with self._lock:
             self._target = None
             self._active = False
+            self._trajectory_task.cancel()
         logger.info(f"JointServoTask {self._name} cleared")
 
     def is_streaming(self) -> bool:
-        """Check if actively receiving and outputting commands."""
         with self._lock:
             return self._active and self._target is not None
 
@@ -331,13 +253,20 @@ class JointServoTaskParams(BaseConfig):
     timeout: float | None = None
     default_positions: list[float] | None = None
     hold_measured_on_start: bool = False
+    speed_scale: float = Field(default=1.0, gt=0.0, le=1.0, allow_inf_nan=False)
 
 
 def create_task(cfg: Any, hardware: Any) -> JointServoTask:
     params = JointServoTaskParams.model_validate(cfg.params)
+    velocity_limits = resolve_velocity_limits(
+        cfg.joint_names,
+        hardware,
+        speed_scale=params.speed_scale,
+    )
     kwargs: dict[str, object] = {
         "joint_names": cfg.joint_names,
         "priority": cfg.priority,
+        "velocity_limits": velocity_limits,
     }
     if params.timeout is not None:
         kwargs["timeout"] = params.timeout

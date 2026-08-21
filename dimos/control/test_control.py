@@ -801,6 +801,41 @@ class TestJointTrajectoryTask:
         assert not trajectory_task.is_active()
         assert trajectory_task.get_state() == TrajectoryState.COMPLETED
 
+    def test_trajectory_waits_for_velocity_limited_output_to_reach_goal(self):
+        task = JointTrajectoryTask(
+            JointTrajectoryTaskConfig(
+                joint_names=["arm/joint1"],
+                velocity_limits={"arm/joint1": 0.5},
+            )
+        )
+        trajectory = JointTrajectory(
+            joint_names=["arm/joint1"],
+            points=[
+                TrajectoryPoint(positions=[0.0], velocities=[0.0], time_from_start=0.0),
+                TrajectoryPoint(positions=[1.0], velocities=[0.0], time_from_start=1.0),
+            ],
+        )
+        state = JointStateSnapshot(joint_positions={"arm/joint1": 0.0})
+        assert (
+            task.execute(trajectory, state.joint_positions).status
+            is TrajectoryExecutionStatus.ACCEPTED
+        )
+
+        task.compute(CoordinatorState(joints=state, t_now=0.0, dt=0.1))
+        nominal_end = task.compute(CoordinatorState(joints=state, t_now=1.0, dt=0.1))
+
+        assert nominal_end is not None
+        assert nominal_end.positions == pytest.approx([0.05])
+        assert task.get_state() == TrajectoryState.EXECUTING
+
+        final = None
+        for step in range(2, 21):
+            final = task.compute(CoordinatorState(joints=state, t_now=1.0 + step * 0.1, dt=0.1))
+
+        assert final is not None
+        assert final.positions == pytest.approx([1.0])
+        assert task.get_state() == TrajectoryState.COMPLETED
+
     def test_cancel_trajectory(self, trajectory_task, simple_trajectory):
         trajectory_task.execute(simple_trajectory, trajectory_start_positions(simple_trajectory))
         assert trajectory_task.is_active()
