@@ -54,6 +54,15 @@ logger = setup_logger()
 STATIC_DIR = Path(__file__).parent / "web" / "static"
 
 
+async def _ws_send_text(ws: WebSocket, data: str) -> None:
+    try:
+        await ws.send_text(data)
+    except Exception:
+        # The receive loop removes disconnected clients. Outbound status
+        # updates should not disrupt teleoperation while that happens.
+        pass
+
+
 @dataclass
 class QuestTeleopStatus:
     """Current teleoperation status."""
@@ -189,6 +198,16 @@ class QuestTeleopModule(Module):
             self._connected_clients.discard(ws)
             if was_connected:
                 self._reset_controller_state()
+
+    def _broadcast_text(self, data: str) -> None:
+        """Schedule a text message for the active Quest client."""
+        loop = self._ws_loop
+        if loop is None:
+            return
+        with self._clients_lock:
+            clients = tuple(self._connected_clients)
+        for ws in clients:
+            asyncio.run_coroutine_threadsafe(_ws_send_text(ws, data), loop)
 
     @rpc
     def start(self) -> None:

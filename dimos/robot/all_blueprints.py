@@ -253,6 +253,7 @@ all_modules = {
     "pick-and-place-module": "dimos.manipulation.pick_and_place_module.PickAndPlaceModule",
     "point-lio": "dimos.hardware.sensors.lidar.pointlio.module.PointLio",
     "pointlio-recorder": "dimos.hardware.sensors.lidar.pointlio.recorder.PointlioRecorder",
+    "quest-collection-teleop-module": "dimos.imitation.collection.quest_hud.QuestCollectionTeleopModule",
     "quest-teleop-module": "dimos.teleop.quest.quest_teleop_module.QuestTeleopModule",
     "ray-tracing-voxel-map": "dimos.mapping.ray_tracing.module.RayTracingVoxelMap",
     "real-sense-camera": "dimos.hardware.sensors.camera.realsense.camera.RealSenseCamera",

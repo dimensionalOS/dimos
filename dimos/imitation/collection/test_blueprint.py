@@ -22,6 +22,7 @@ from dimos.imitation.collection.blueprint import (
     learning_collect_quest_xarm7,
 )
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
+from dimos.imitation.collection.quest_hud import QuestCollectionTeleopModule
 from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.msgs.sensor_msgs.JointState import JointState
 
@@ -57,6 +58,18 @@ def test_collection_recorder_stops_after_producers(blueprint: Blueprint) -> None
 )
 def test_episode_monitor_stops_after_input_producers(blueprint: Blueprint) -> None:
     assert blueprint.active_blueprints[1].module is EpisodeMonitorModule
+
+
+@pytest.mark.parametrize(
+    "blueprint",
+    [learning_collect_quest_xarm7, learning_collect_quest_piper],
+)
+def test_collection_status_is_wired_to_quest_hud(blueprint: Blueprint) -> None:
+    hud = next(atom for atom in blueprint.blueprints if atom.module is QuestCollectionTeleopModule)
+    status = next(stream for stream in hud.streams if stream.name == "status")
+
+    assert status.direction == "in"
+    assert status.type.__name__ == "EpisodeStatus"
 
 
 def _joint_streams(blueprint: Blueprint) -> dict[tuple[str, str], str]:

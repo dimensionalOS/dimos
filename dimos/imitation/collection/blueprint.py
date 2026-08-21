@@ -28,11 +28,20 @@ from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
+from dimos.imitation.collection.quest_hud import QuestCollectionTeleopModule
 from dimos.imitation.collection.recorder import CollectionRecorder
-from dimos.teleop.quest.blueprints import (
-    teleop_quest_piper,
-    teleop_quest_xarm7,
-)
+from dimos.robot.manipulators.piper.blueprints.teleop import coordinator_teleop_piper
+from dimos.robot.manipulators.xarm.blueprints.teleop import coordinator_teleop_xarm7
+
+_collection_teleop_xarm7 = autoconnect(
+    QuestCollectionTeleopModule.blueprint(),
+    coordinator_teleop_xarm7,
+).remappings([(QuestCollectionTeleopModule, "right_controller_output", "cartesian_command")])
+
+_collection_teleop_piper = autoconnect(
+    QuestCollectionTeleopModule.blueprint(),
+    coordinator_teleop_piper,
+).remappings([(QuestCollectionTeleopModule, "left_controller_output", "cartesian_command")])
 
 
 def _session_db(robot: str) -> str:
@@ -61,7 +70,7 @@ learning_collect_quest_xarm7 = autoconnect(
         record_tf=False,
     ),
     EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
-    teleop_quest_xarm7,
+    _collection_teleop_xarm7,
     *_camera_if_real(),
 )
 
@@ -73,6 +82,6 @@ learning_collect_quest_piper = autoconnect(
         record_tf=False,
     ),
     EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
-    teleop_quest_piper,
+    _collection_teleop_piper,
     *_camera_if_real(),
 )

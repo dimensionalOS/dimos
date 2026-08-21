@@ -22,7 +22,7 @@ import pytest_mock
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.teleop.quest.quest_extensions import Go2TeleopModule, HandTeleopModule
-from dimos.teleop.quest.quest_teleop_module import QuestTeleopModule
+from dimos.teleop.quest.quest_teleop_module import QuestTeleopModule, _ws_send_text
 from dimos.teleop.quest.quest_types import (
     Buttons,
     Hand,
@@ -66,6 +66,20 @@ def test_unknown_joy_controller_identity_is_rejected(
 
     with pytest.raises(ValueError, match="Unexpected frame_id"):
         module._on_joy_bytes(b"data")
+
+
+def test_websocket_text_message_is_sent(
+    module: QuestTeleopModule, mocker: pytest_mock.MockerFixture
+) -> None:
+    ws = mocker.MagicMock()
+    ws.send_text = mocker.AsyncMock()
+
+    assert module._loop is not None
+    asyncio.run_coroutine_threadsafe(_ws_send_text(ws, '{"type":"status"}'), module._loop).result(
+        timeout=5
+    )
+
+    ws.send_text.assert_awaited_once_with('{"type":"status"}')
 
 
 def test_control_client_disconnect_clears_state(
