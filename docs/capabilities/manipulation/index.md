@@ -21,6 +21,7 @@ Each blueprint launches the full stack — keyboard UI, mock controller, IK solv
 dimos run keyboard-teleop-a750    # A-750 6-DOF
 dimos run keyboard-teleop-a1z     # Galaxea A1Z 6-DOF
 dimos run keyboard-teleop-piper   # Piper 6-DOF
+dimos run keyboard-teleop-openyam # OpenYAM 6-DOF + gripper
 dimos run keyboard-teleop-xarm6   # XArm6 6-DOF
 dimos run keyboard-teleop-xarm7   # XArm7 7-DOF
 ```
@@ -235,8 +236,8 @@ tool, or CLI motion command yet.
 ### Cartesian control IK
 
 Cartesian, keyboard EEF-twist, and engagement-relative teleop IK tasks use the
-direct URDF/Xacro model from `RobotModelConfig`. The configuration supplies
-package paths, Xacro arguments, the named end-effector frame, and
+portable `RobotModel` from `RobotModelConfig`. The model owns source loading,
+package paths, and Xacro arguments; the configuration supplies the named end-effector frame and
 coordinator-to-model joint mapping. Invalid models, frames, or mappings fail at
 startup; teleop configuration does not use a separate model path or numeric
 end-effector joint ID.
@@ -312,6 +313,15 @@ CLI example:
 ```bash
 uv run dimos run xarm7-planner-coordinator \
   --visualization.backend=viser
+```
+
+Viser binds to `127.0.0.1` by default. To expose it on the network, opt in
+explicitly with the nested host override:
+
+```bash
+uv run dimos run xarm7-planner-coordinator \
+  -o manipulationmodule.visualization.backend=viser \
+  -o manipulationmodule.visualization.host=0.0.0.0
 ```
 
 Blueprint example:

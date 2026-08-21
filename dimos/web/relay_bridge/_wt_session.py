@@ -37,7 +37,7 @@ from aioquic.h3.events import (
     WebTransportStreamDataReceived,
 )
 from aioquic.quic.configuration import QuicConfiguration
-from aioquic.quic.events import ConnectionTerminated, QuicEvent
+from aioquic.quic.events import ConnectionTerminated, QuicEvent, StreamReset
 
 from dimos.utils.logging_config import setup_logger
 from dimos.web.relay_bridge.protocol import (
@@ -172,6 +172,12 @@ class SessionProtocol(QuicConnectionProtocol):
     def quic_event_received(self, event: QuicEvent) -> None:
         if isinstance(event, ConnectionTerminated):
             self.closed.set()
+        elif isinstance(event, StreamReset):
+            # aioquic's H3 layer ignores resets, and the relay ends every
+            # latest stream with one (reap, dispose, or teardown): without
+            # this pop the reader map grows by one entry per latest stream.
+            # A partial frame in that reader is stale by definition.
+            self._frame_readers.pop(event.stream_id, None)
         for h3_event in self.h3.handle_event(event):
             self._h3_event_received(h3_event)
 

@@ -12,15 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Cockpit browser e2e (the T3 acceptance demo, in CI).
+"""Cockpit browser e2e (the T3 + T5 acceptance demos, in CI).
 
 Starts `dimos --robot-ip fake run unitree-go2-basic --local-relay` (the go2
 blueprint on the go2_short replay dataset: real recorded odom + camera, no
 MuJoCo and no hardware) and drives the served Cockpit with a real headless
-browser: live odom must tick, the session must stay connected (Firefox's
-tight QUIC stream credit found the relay's stream-per-frame overflow the
-first time), and killing + restarting the dimos process must take the page
-through reconnecting and back to live data without a reload.
+browser: live odom must tick, the video panel must decode real camera frames
+at rate, the session must stay connected (Firefox's tight QUIC stream credit
+found the relay's stream-per-frame overflow the first time; T5's video load
+is exactly the traffic that pressures it), and killing + restarting the
+dimos process must take the page through reconnecting and back to live data
+without a reload.
 
 Runs in both Chromium and Firefox: their WebTransport implementations differ
 enough that one browser staying green says little about the other.
@@ -111,6 +113,38 @@ def _assert_odom_ticks(page: Page) -> None:
     expect(page.get_by_test_id("ch-odom-value")).to_contain_text("yaw")
 
 
+def _assert_video_plays(page: Page) -> None:
+    # The manifest-driven video panel is live: the badge reporting an fps
+    # proves frames arrive, the canvas leaving its 300 px HTML default width
+    # proves one frame decoded, and two successive pixel changes prove frames
+    # keep drawing (the replay dataset has genuinely varying content).
+    expect(page.get_by_test_id("video-color_image-badge")).to_contain_text("fps", timeout=60_000)
+    page.wait_for_function(
+        """() => {
+          const canvas = document.querySelector('[data-testid="video-color_image-canvas"]');
+          return canvas !== null && canvas.width !== 300;
+        }""",
+        timeout=30_000,
+    )
+
+    def wait_pixels_change() -> None:
+        baseline = page.evaluate(
+            """() =>
+              document.querySelector('[data-testid="video-color_image-canvas"]').toDataURL()"""
+        )
+        page.wait_for_function(
+            """(baseline) => {
+              const canvas = document.querySelector('[data-testid="video-color_image-canvas"]');
+              return canvas.toDataURL() !== baseline;
+            }""",
+            arg=baseline,
+            timeout=30_000,
+        )
+
+    wait_pixels_change()
+    wait_pixels_change()
+
+
 def test_cockpit_live_data_and_reconnect(
     start_go2_replay: Callable[[], DimosCliCall], page: Page
 ) -> None:
@@ -122,6 +156,7 @@ def test_cockpit_live_data_and_reconnect(
     expect(status).to_have_attribute("data-phase", "connected", timeout=120_000)
     expect(page.get_by_test_id("robot")).not_to_have_text("no robot", timeout=30_000)
     _assert_odom_ticks(page)
+    _assert_video_plays(page)
 
     # Stability: record every phase change and require none for the window.
     page.evaluate("""() => {
@@ -134,6 +169,7 @@ def test_cockpit_live_data_and_reconnect(
     flaps = page.evaluate("() => window.__phases")
     assert flaps == [], f"session flapped during the stability window: {flaps}"
     _assert_odom_ticks(page)
+    _assert_video_plays(page)
 
     # Kill dimos (relay dies with it): the page must notice on its own.
     call.stop()
@@ -144,3 +180,4 @@ def test_cockpit_live_data_and_reconnect(
     _wait_for_relay(restarted, START_TIMEOUT_S)
     expect(status).to_have_attribute("data-phase", "connected", timeout=120_000)
     _assert_odom_ticks(page)
+    _assert_video_plays(page)
