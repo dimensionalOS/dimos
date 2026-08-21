@@ -178,6 +178,7 @@ def test_session_creates_or_accepts_blank_dataset_directory(
 
     assert output.is_dir()
     assert session.state().existing_frames == ()
+    assert session.state().total_questions == 0
     session.replace_draft(
         FrameDraft(
             index=2,
@@ -224,6 +225,7 @@ def test_session_keeps_edits_in_memory_until_submit_and_preserves_other_cases(
     original_cases = (tmp_path / "cases.jsonl").read_text(encoding="utf-8")
 
     assert session.draft(1).questions[0].id == "frame-000001-old"
+    assert session.state().total_questions == 3
     session.replace_draft(
         FrameDraft(
             index=1,
@@ -252,6 +254,7 @@ def test_session_keeps_edits_in_memory_until_submit_and_preserves_other_cases(
     )
 
     assert (tmp_path / "cases.jsonl").read_text(encoding="utf-8") == original_cases
+    assert session.state().total_questions == 4
     result = session.submit()
     cases = _read_rows(tmp_path / "cases.jsonl")
     labels = {row["id"]: row["answer"] for row in _read_rows(tmp_path / "labels.jsonl")}
@@ -352,6 +355,60 @@ def test_generate_uses_rectified_image_and_retains_generated_draft(tmp_path: Pat
     assert run_audit["attempted_families"] == ["object_distance"]
     assert run_audit["rejected_question_count"] == 1
     session.stop()
+
+
+def test_generate_stages_range_and_preserves_questions_when_no_cases(tmp_path: Path) -> None:
+    _write_dataset(tmp_path)
+
+    def generate(source: GenerationFrame) -> GeneratedFrame:
+        if source.index == 2:
+            raise RuntimeError("generation failed")
+        return GeneratedFrame(
+            index=source.index,
+            image=source.image,
+            cases=(),
+            labels=(),
+            audit_rows=(),
+            families=(),
+        )
+
+    session = VqaEditorSession(
+        "recording.db",
+        tmp_path,
+        preprocessor=FakePreprocessor(),  # type: ignore[arg-type]
+        frame_generator=generate,
+    ).start()
+
+    generated = session.generate((1,))
+    assert generated[0].questions[0].id == "frame-000001-old"
+
+    session.submit()
+    assert session.state().total_questions == 3
+    with pytest.raises(RuntimeError, match="generation failed"):
+        session.generate((1, 2))
+    assert session.state().dirty_frames == ()
+    session.stop()
+
+
+def test_session_exclusively_locks_dataset_output(tmp_path: Path) -> None:
+    _write_dataset(tmp_path)
+    first = VqaEditorSession(
+        "recording.db",
+        tmp_path,
+        preprocessor=FakePreprocessor(),  # type: ignore[arg-type]
+    ).start()
+    second = VqaEditorSession(
+        "recording.db",
+        tmp_path,
+        preprocessor=FakePreprocessor(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(RuntimeError, match="already open"):
+        second.start()
+
+    first.stop()
+    second.start()
+    second.stop()
 
 
 def test_submit_rejects_question_id_from_an_untouched_frame(tmp_path: Path) -> None:

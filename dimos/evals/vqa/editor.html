@@ -5,35 +5,56 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>DimOS VQA Dataset Console</title>
   <style>
+    @font-face {
+      font-family: "Roboto Mono";
+      font-style: normal;
+      font-weight: 400;
+      font-display: swap;
+      src: url("https://fonts.gstatic.com/s/robotomono/v31/L0xuDF4xlVMF-BfR8bXMIhJHg45mwgGEFl0_3vq_ROW4.woff2") format("woff2");
+    }
+    @font-face {
+      font-family: "Inconsolata";
+      font-style: normal;
+      font-weight: 500;
+      font-display: swap;
+      src: url("https://fonts.gstatic.com/s/inconsolata/v37/QldgNThLqRwH-OJ1UHjlKENVzkWGVkL3GZQmAwLYxYWI2qfdm7Lpp7c8WR32lw.woff2") format("woff2");
+    }
     :root {
       color-scheme: dark;
-      --ink: #e5e9f0;
-      --muted: #8d98a8;
-      --paper: #0c1118;
-      --panel: #121923;
-      --line: #2a3544;
-      --accent: #6fa8e8;
+      --ink: #fff;
+      --muted: #c1c1c1;
+      --paper: #101111;
+      --panel: #151515;
+      --line: #404040;
+      --strong-line: #d9d9d9;
+      --accent: #b0e1f0;
       --danger: #df7b7b;
-      --info: #86a9cc;
-      font-family: "IBM Plex Mono", "Liberation Mono", monospace;
+      --info: #b0e1f0;
+      font-family: "Roboto Mono", "Liberation Mono", monospace;
     }
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     html, body { height: 100%; }
     body { margin: 0; overflow: hidden; color: var(--ink); background: var(--paper); }
     button, input, select, textarea { font: inherit; }
     button { color: var(--ink); background: transparent; border: 1px solid var(--line); cursor: pointer; }
     button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
     button:disabled { opacity: .42; cursor: wait; }
-    input, select, textarea { width: 100%; color: var(--ink); background: #0a0f16; border: 1px solid var(--line); padding: .7rem; }
+    input, select, textarea { width: 100%; color: var(--ink); background: #151515; border: 1px solid var(--line); padding: .7rem; }
     input:focus, select:focus, textarea:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
     .shell { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100dvh; overflow: hidden; }
-    header { display: grid; grid-template-columns: 1fr auto; gap: 1rem; align-items: end; padding: .9rem 1.5rem; border-bottom: 1px solid var(--line); background: #0e141d; }
+    header { display: grid; grid-template-columns: auto 1fr auto; gap: 1.5rem; align-items: end; padding: .9rem 1.5rem; border-bottom: 1px solid #2b2b2b; background: #151515; }
     .eyebrow { color: var(--accent); font-size: .68rem; letter-spacing: .14em; text-transform: uppercase; }
-    h1 { margin: .25rem 0 0; font-size: clamp(1.15rem, 2vw, 1.55rem); font-weight: 600; line-height: 1.2; letter-spacing: -.02em; }
+    h1 { margin: .25rem 0 0; font-family: "Inconsolata", monospace; font-size: clamp(1.15rem, 2vw, 1.55rem); font-weight: 500; line-height: 1.2; letter-spacing: -.02em; }
     .meta { color: var(--muted); font-size: .72rem; text-align: right; max-width: 44vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    main { display: grid; grid-template-columns: minmax(0, 1.28fr) minmax(390px, .72fr); min-height: 0; overflow: hidden; }
-    .viewer { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: .8rem; min-width: 0; min-height: 0; overflow: hidden; padding: 1rem 1.5rem 1.2rem; border-right: 1px solid var(--line); }
-    .toolbar { display: flex; gap: .55rem; align-items: center; }
+    .stats { display: flex; flex-wrap: wrap; justify-content: center; gap: .6rem clamp(1rem, 3vw, 2.5rem); }
+    .stat { min-width: 5rem; }
+    .stat-value { display: block; color: var(--ink); font-size: 1rem; line-height: 1.1; }
+    .stat-label { color: var(--muted); font-size: .62rem; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; }
+    main { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); min-height: 0; overflow: hidden; }
+    .viewer { display: grid; grid-column: 1; grid-row: 1; grid-template-rows: auto minmax(0, 1fr) auto auto; gap: .65rem; min-width: 0; min-height: 0; overflow: hidden; padding: 1rem 1.5rem 1.2rem; border-right: 1px solid var(--line); }
+    .viewer > * { width: 100%; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: .55rem; align-items: center; }
     .toolbar button { width: 2.7rem; height: 2.7rem; font-size: 1.2rem; }
     .toolbar .primary { width: auto; }
     .frame-input { display: flex; align-items: center; gap: .5rem; width: 13rem; }
@@ -42,48 +63,70 @@
     .spacer { flex: 1; }
     .badge { border: 1px solid var(--line); padding: .35rem .55rem; font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; }
     .badge.dirty { color: var(--danger); border-color: var(--danger); }
-    .image-stage { position: relative; display: grid; place-items: center; min-height: 0; overflow: hidden; background: #070b10; border: 1px solid var(--line); }
+    .image-stage { position: relative; display: grid; place-items: center; flex: 1.15 1 0; min-height: 0; overflow: hidden; background: #151515; border: 1px solid var(--strong-line); }
     .image-stage::after { content: "RAW RECORDING"; position: absolute; left: .7rem; bottom: .6rem; color: var(--muted); font-size: .65rem; letter-spacing: .16em; }
     #frame-image { display: block; width: 100%; height: 100%; object-fit: contain; }
-    .batch { padding: .85rem; border: 1px solid var(--line); background: var(--panel); }
-    .batch-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: .65rem; }
-    .batch-fields { display: grid; grid-template-columns: repeat(3, 1fr) auto; gap: .6rem; align-items: end; }
+    .frame-empty { color: var(--muted); font-size: .68rem; letter-spacing: .1em; text-align: center; text-transform: uppercase; }
+    .visual-stack { display: flex; flex-direction: column; min-height: 0; gap: .65rem; }
+    .lidar-stage { position: relative; display: grid; place-items: center; flex: .85 1 0; min-height: 0; overflow: hidden; background: #151515; border: 1px solid var(--strong-line); }
+    .lidar-stage::after { content: "GLOBAL MAP / WORLD"; position: absolute; right: .7rem; bottom: .6rem; color: var(--muted); font-size: .65rem; letter-spacing: .16em; }
+    #topdown-image { display: block; width: 100%; height: 100%; object-fit: contain; }
+    .map-empty { color: var(--muted); font-size: .68rem; letter-spacing: .1em; text-align: center; text-transform: uppercase; }
+    .timeline { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .8rem; align-items: center; }
+    .timeline input { height: 1.4rem; padding: 0; accent-color: var(--accent); cursor: pointer; }
+    .shortcut { color: var(--muted); font-size: .65rem; white-space: nowrap; }
+    .batch { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .8rem; align-items: end; padding: .65rem .75rem; border: 1px solid var(--line); background: var(--panel); }
+    .batch-title { min-width: 6rem; padding-bottom: .15rem; }
+    .batch-title .meta { display: block; margin-top: .35rem; text-align: left; }
+    .batch-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: .6rem; align-items: end; }
+    .generation-status { grid-column: 1 / -1; min-height: .85rem; overflow: hidden; color: var(--info); font-size: .65rem; letter-spacing: .06em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+    .generation-status.error { color: var(--danger); }
     label { display: block; color: var(--muted); font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; }
     label input { margin-top: .3rem; }
-    .primary { padding: .72rem 1rem; border-color: #3976b8; color: #f2f6fb; background: #245b94; font-weight: 600; }
-    .primary:hover:not(:disabled) { border-color: var(--accent); color: white; background: #2b68a8; }
-    .questions { height: 100%; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 1rem; scrollbar-color: #445267 var(--paper); scrollbar-width: thin; }
+    .primary { padding: .72rem 1rem; border-color: var(--accent); color: var(--paper); background: var(--accent); font-weight: 600; }
+    .primary:hover:not(:disabled) { border-color: white; color: var(--paper); background: white; }
+    .questions { grid-column: 2; grid-row: 1; height: 100%; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 1rem 1.5rem; scrollbar-color: #404040 var(--paper); scrollbar-width: thin; }
     .questions-head { display: flex; justify-content: space-between; align-items: center; position: sticky; top: -1rem; z-index: 4; padding: 1rem 0 .75rem; background: var(--paper); }
     .questions-head h2 { margin: 0; font-size: 1rem; font-weight: 600; }
-    .depth-summary { display: none; margin-bottom: .8rem; padding: .75rem; border: 1px solid #344b63; color: var(--info); background: #101923; font-size: .75rem; line-height: 1.55; }
+    .depth-summary { display: none; margin-bottom: .8rem; padding: .75rem; border: 1px solid var(--line); color: var(--info); background: var(--panel); font-size: .75rem; line-height: 1.55; }
     .depth-summary.show { display: block; }
-    .question { position: relative; margin-bottom: .7rem; padding: .85rem; border: 1px solid var(--line); background: var(--panel); }
-    .question-number { margin-bottom: .65rem; color: var(--info); font-size: .68rem; letter-spacing: .1em; }
-    .delete { position: absolute; top: .6rem; right: .6rem; border: 0; color: var(--muted); font-size: 1.1rem; }
+    .question { position: relative; margin-bottom: 1rem; padding: .85rem; border: 1px solid var(--line); background: var(--panel); box-shadow: 0 6px 18px #0003; }
+    .question-number { overflow: hidden; margin: -.85rem -.85rem .85rem; padding: .55rem 2.7rem .55rem .75rem; color: white; background: #404040; font-size: .68rem; letter-spacing: .1em; text-overflow: ellipsis; white-space: nowrap; }
+    .delete { position: absolute; top: .18rem; right: .35rem; border: 0; color: white; font-size: 1.1rem; }
     .question textarea, .question input, .question select { padding: .5rem .6rem; font-size: .8rem; }
     textarea { min-height: 3.5rem; resize: vertical; }
-    .choices { display: grid; gap: .35rem; margin: .6rem 0; }
+    .choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .35rem; margin: .6rem 0; }
     .choice { display: grid; grid-template-columns: 1fr auto; gap: .35rem; }
     .choice button { width: 2.45rem; }
     .add-choice { width: 100%; padding: .5rem; border-style: dashed; }
-    .answer { margin-top: .7rem; }
+    .answer { display: grid; grid-template-columns: auto minmax(0, 14rem); gap: .7rem; align-items: center; margin-top: .7rem; }
     .empty { padding: 3rem 1rem; color: var(--muted); border: 1px dashed var(--line); text-align: center; line-height: 1.6; }
     .footer-actions { position: sticky; bottom: -1rem; display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; padding: .9rem 0 1rem; background: linear-gradient(transparent, var(--paper) 18%); }
     .footer-actions button { padding: .8rem; }
-    #toast { position: fixed; left: 50%; bottom: 1.2rem; z-index: 20; transform: translateX(-50%) translateY(5rem); padding: .75rem 1rem; color: white; background: #245b94; box-shadow: 0 6px 24px #0008; transition: transform .2s; }
+    #toast { position: fixed; left: 50%; bottom: 1.2rem; z-index: 20; transform: translateX(-50%) translateY(5rem); padding: .75rem 1rem; color: var(--paper); background: var(--accent); box-shadow: 0 6px 24px #0008; transition: transform .2s; }
     #toast.show { transform: translateX(-50%) translateY(0); }
     #toast.error { color: white; background: #9b4141; }
+    @media (max-width: 1100px) {
+      .batch { display: block; }
+      .batch-title { display: flex; justify-content: space-between; margin-bottom: .55rem; }
+      .batch-title .meta { margin-top: 0; text-align: right; }
+    }
     @media (max-width: 850px) {
-      header { grid-template-columns: 1fr; gap: .35rem; padding: .65rem .8rem; }
+      header { grid-template-columns: 1fr auto; gap: .55rem 1rem; padding: .65rem .8rem; }
+      .stats { grid-column: 1 / -1; grid-row: 2; justify-content: flex-start; }
       .meta { max-width: 100%; text-align: left; }
       main { grid-template-columns: 1fr; grid-template-rows: minmax(300px, 52%) minmax(0, 1fr); }
-      .viewer { gap: .55rem; padding: .65rem .8rem; border-right: 0; border-bottom: 1px solid var(--line); }
+      .viewer { grid-column: 1; grid-row: 1; gap: .55rem; overflow-y: auto; padding: .65rem .8rem; border-right: 0; border-bottom: 1px solid var(--line); }
+      .viewer > * { width: 100%; }
       .toolbar { flex-wrap: wrap; }
       .toolbar .spacer { display: none; }
       .frame-input { flex: 1; width: auto; }
-      .batch-fields { grid-template-columns: repeat(3, 1fr); }
+      .viewer { grid-template-rows: auto auto auto auto; }
+      .visual-stack { min-height: 320px; }
+      .batch-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
       .batch-fields button { grid-column: 1 / -1; }
-      .questions { padding: .8rem; }
+      .questions { grid-column: 1; grid-row: 2; padding: .8rem; }
+      .choices { grid-template-columns: 1fr; }
       .questions-head { top: -.8rem; }
     }
   </style>
@@ -92,27 +135,44 @@
   <div class="shell">
     <header>
       <div><div class="eyebrow">DimOS / VQA dataset</div><h1>VQA Dataset Console</h1></div>
+      <div class="stats" aria-label="Dataset summary">
+        <div class="stat"><span id="total-frames" class="stat-value">--</span><span class="stat-label">Recording frames</span></div>
+        <div class="stat"><span id="dataset-frames" class="stat-value">--</span><span class="stat-label">Dataset frames</span></div>
+        <div class="stat"><span id="total-questions" class="stat-value">--</span><span class="stat-label">Questions</span></div>
+        <div class="stat"><span id="pending-frames" class="stat-value">--</span><span class="stat-label">Draft frames</span></div>
+      </div>
       <div class="meta"><div id="recording">Loading recording...</div><div id="output"></div></div>
     </header>
     <main>
       <section class="viewer">
         <div class="toolbar">
           <button id="previous" title="Previous frame">&#8592;</button>
-          <div class="frame-input"><input id="frame" type="number" min="0" value="0"><span id="frame-total">/ --</span></div>
+          <div class="frame-input"><input id="frame" type="number" min="0" value="0" aria-label="Frame index"><span id="frame-total">/ --</span></div>
           <button id="next" title="Next frame">&#8594;</button>
           <div class="spacer"></div>
           <span id="frame-state" class="badge">Empty</span>
           <button id="generate-one" class="primary">Generate</button>
         </div>
-        <div class="image-stage"><img id="frame-image" alt="Recording frame"></div>
+        <div class="visual-stack">
+          <div class="image-stage">
+            <img id="frame-image" alt="Recording frame">
+            <div id="frame-empty" class="frame-empty" hidden></div>
+          </div>
+          <div id="lidar-stage" class="lidar-stage">
+            <img id="topdown-image" alt="Global LiDAR map and current robot footprint" hidden>
+            <div id="map-empty" class="map-empty"></div>
+          </div>
+        </div>
+        <div class="timeline"><input id="timeline" type="range" min="0" max="0" value="0" aria-label="Recording frame"><span class="shortcut">&#8592; / &#8594; navigate</span></div>
         <div class="batch">
-          <div class="batch-title"><span class="eyebrow">Batch generation</span><span class="meta">stop is exclusive</span></div>
+          <div class="batch-title"><span class="eyebrow">Batch generation</span><span id="batch-count" class="meta" title="Stop frame is exclusive">0 frames</span></div>
           <div class="batch-fields">
             <label>Start<input id="start" type="number" min="0" value="0"></label>
             <label>Stop<input id="stop" type="number" min="1" value="1"></label>
             <label>Stride<input id="stride" type="number" min="1" value="1"></label>
             <button id="generate-range" class="primary">Generate range</button>
           </div>
+          <div id="generation-status" class="generation-status" role="status" aria-live="polite"></div>
         </div>
       </section>
       <section class="questions">
@@ -126,15 +186,18 @@
       </section>
     </main>
   </div>
-  <div id="toast"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
   <script>
     const $ = (id) => document.getElementById(id);
     let session = null;
     let current = 0;
     let draft = {index: 0, questions: []};
     let localDirty = false;
+    let loadedQuestionCount = 0;
     let busy = false;
     let navigating = false;
+    let toastTimer = null;
+    let visualRevision = 0;
 
     async function request(url, options = {}) {
       const response = await fetch(url, {headers: {"Content-Type": "application/json"}, ...options});
@@ -150,12 +213,25 @@
       const node = $("toast");
       node.textContent = message;
       node.className = error ? "show error" : "show";
-      setTimeout(() => node.className = "", 2800);
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => node.className = "", 2800);
+    }
+
+    function syncDisabledControls() {
+      const disabled = busy || navigating;
+      document.querySelectorAll("button, input, select, textarea").forEach(control => control.disabled = disabled);
+      if (!disabled) {
+        document.querySelectorAll(".question").forEach(card => {
+          const lockChoices = card.querySelectorAll(".choice").length <= 2;
+          card.querySelectorAll(".choice button").forEach(button => button.disabled = lockChoices);
+        });
+      }
+      document.querySelector("main").setAttribute("aria-busy", String(disabled));
     }
 
     function setBusy(value, label = "Working...") {
       busy = value;
-      document.querySelectorAll("button").forEach(button => button.disabled = value);
+      syncDisabledControls();
       if (value) toast(label);
       else render();
     }
@@ -171,7 +247,7 @@
         id: card.dataset.id,
         question: card.querySelector("textarea").value.trim(),
         choices: [...card.querySelectorAll(".choice input")].map(input => input.value.trim()),
-        answer: card.querySelector("select").value
+        answer: card.querySelector("select").value.trim()
       }));
       return {
         ...draft,
@@ -182,7 +258,10 @@
 
     async function saveDraft() {
       if (!localDirty) return;
-      draft = await request(`/api/frames/${current}`, {method: "PUT", body: JSON.stringify(readDraft())});
+      const pendingDraft = readDraft();
+      draft = await request(`/api/frames/${current}`, {method: "PUT", body: JSON.stringify(pendingDraft)});
+      session.total_questions += draft.questions.length - loadedQuestionCount;
+      loadedQuestionCount = draft.questions.length;
       localDirty = false;
       session.dirty_frames = [...new Set([...session.dirty_frames, current])];
       updateBadges();
@@ -191,10 +270,30 @@
     function updateBadges() {
       const exists = session.existing_frames.includes(current);
       const changed = session.dirty_frames.includes(current) || localDirty;
+      const pendingFrames = new Set(session.dirty_frames);
+      if (localDirty) pendingFrames.add(current);
       $("frame-state").textContent = changed ? "Draft" : exists ? "Existing" : "Empty";
       $("frame-state").className = changed ? "badge dirty" : "badge";
-      $("dirty-count").textContent = localDirty ? "Unsaved draft" : `${session.dirty_frames.length} pending frame${session.dirty_frames.length === 1 ? "" : "s"}`;
+      $("dirty-count").textContent = localDirty ? "Editing draft" : session.dirty_frames.length ? `${session.dirty_frames.length} draft frame${session.dirty_frames.length === 1 ? "" : "s"}` : "On disk";
       $("dirty-count").className = session.dirty_frames.length || localDirty ? "badge dirty" : "badge";
+      $("total-frames").textContent = session.image_count;
+      $("dataset-frames").textContent = session.existing_frames.length;
+      $("total-questions").textContent = session.total_questions + (localDirty ? draft.questions.length - loadedQuestionCount : 0);
+      $("pending-frames").textContent = pendingFrames.size;
+    }
+
+    function updateBatchCount() {
+      try {
+        const count = rangeIndices().length;
+        $("batch-count").textContent = `${count} frame${count === 1 ? "" : "s"}`;
+      } catch (_) {
+        $("batch-count").textContent = "Invalid range";
+      }
+    }
+
+    function setGenerationStatus(message, error = false) {
+      $("generation-status").textContent = message;
+      $("generation-status").className = error ? "generation-status error" : "generation-status";
     }
 
     function render() {
@@ -233,9 +332,10 @@
         populateAnswers(card, question);
         list.appendChild(card);
       });
+      updateBadges();
+      syncDisabledControls();
       $("previous").disabled = busy || navigating || current === 0;
       $("next").disabled = busy || navigating || current === session.image_count - 1;
-      updateBadges();
     }
 
     function addChoiceRow(container, question, value, index) {
@@ -277,57 +377,215 @@
       return escapeHtml(value).replace(/"/g, "&quot;");
     }
 
+    function waitForImage(url, target, onLoad, onError) {
+      return new Promise(resolve => {
+        const loader = new Image();
+        loader.id = target.id;
+        loader.alt = target.alt;
+        loader.hidden = true;
+        let settled = false;
+        const finish = callback => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          loader.onload = null;
+          loader.onerror = null;
+          callback(loader);
+          resolve();
+        };
+        const timeout = setTimeout(() => finish(onError), 5000);
+        loader.onload = () => finish(onLoad);
+        loader.onerror = () => finish(onError);
+        loader.src = url;
+      });
+    }
+
+    function showFrameVisuals(index) {
+      const revision = ++visualRevision;
+      current = Math.max(0, Math.min(session.image_count - 1, Number(index)));
+      $("frame").value = current;
+      $("timeline").value = current;
+      const frameImage = $("frame-image");
+      const frameEmpty = $("frame-empty");
+      frameImage.hidden = true;
+      frameEmpty.hidden = false;
+      frameEmpty.textContent = "";
+      const frameReady = waitForImage(
+        `/api/frames/${current}/image?t=${Date.now()}`,
+        frameImage,
+        image => {
+          if (revision !== visualRevision) return;
+          frameImage.replaceWith(image);
+          image.hidden = false;
+          frameEmpty.hidden = true;
+        },
+        () => {
+          if (revision !== visualRevision) return;
+          frameImage.hidden = true;
+          frameEmpty.hidden = false;
+          frameEmpty.textContent = "Frame image unavailable";
+        }
+      );
+      const lidarStage = $("lidar-stage");
+      const topdownImage = $("topdown-image");
+      const mapEmpty = $("map-empty");
+      lidarStage.hidden = false;
+      let mapReady = Promise.resolve();
+      if (session.has_topdown) {
+        topdownImage.hidden = true;
+        mapEmpty.hidden = false;
+        mapEmpty.textContent = "";
+        mapReady = waitForImage(
+          `/api/frames/${current}/topdown?t=${Date.now()}`,
+          topdownImage,
+          image => {
+            if (revision !== visualRevision) return;
+            topdownImage.replaceWith(image);
+            image.hidden = false;
+            mapEmpty.hidden = true;
+          },
+          () => {
+            if (revision !== visualRevision) return;
+            topdownImage.hidden = true;
+            mapEmpty.hidden = false;
+            mapEmpty.textContent = "No synchronized odometry for this frame";
+          }
+        );
+      } else {
+        topdownImage.hidden = true;
+        mapEmpty.hidden = false;
+        mapEmpty.textContent = "Global map unavailable";
+      }
+      return Promise.all([frameReady, mapReady]);
+    }
+
     async function loadFrame(index) {
       if (busy || navigating || !session) return;
       navigating = true;
       render();
       try {
         await saveDraft();
-        current = Math.max(0, Math.min(session.image_count - 1, Number(index)));
-        $("frame").value = current;
-        $("frame-image").src = `/api/frames/${current}/image?t=${Date.now()}`;
-        draft = await request(`/api/frames/${current}`);
-        draft.questions = draft.questions.map(question => ({...question, choices: [...question.choices]}));
+        if (String(index).trim() === "" || !Number.isInteger(Number(index))) {
+          throw new Error("Frame index must be an integer");
+        }
+        const target = Number(index);
+        if (target < 0 || target >= session.image_count) {
+          throw new Error(`Frame index must be within 0-${session.image_count - 1}`);
+        }
+        const nextDraft = await request(`/api/frames/${target}`);
+        nextDraft.questions = nextDraft.questions.map(question => ({...question, choices: [...question.choices]}));
+        draft = nextDraft;
+        loadedQuestionCount = draft.questions.length;
         localDirty = false;
-      } catch (error) { toast(error.message, true); }
+        const visualsReady = showFrameVisuals(target);
+        await visualsReady;
+      } catch (error) {
+        $("frame").value = current;
+        $("timeline").value = current;
+        toast(error.message, true);
+      }
       finally { navigating = false; render(); }
     }
 
-    async function generate(payload) {
+    function rangeIndices() {
+      if (["start", "stop", "stride"].some(id => $(id).value.trim() === "")) {
+        throw new Error("Start, stop, and stride are required");
+      }
+      const start = Number($("start").value);
+      const stop = Number($("stop").value);
+      const stride = Number($("stride").value);
+      if (!Number.isInteger(start) || !Number.isInteger(stop) || !Number.isInteger(stride)) {
+        throw new Error("Start, stop, and stride must be integers");
+      }
+      if (start < 0 || stop > session.image_count || stop <= start || stride < 1) {
+        throw new Error(`Select a valid range within 0-${session.image_count}`);
+      }
+      const indices = [];
+      for (let index = start; index < stop; index += stride) indices.push(index);
+      return indices;
+    }
+
+    function confirmGeneration(indices) {
+      const draftFrames = new Set(session.dirty_frames);
+      if (localDirty) draftFrames.add(current);
+      const draftCount = indices.filter(index => draftFrames.has(index)).length;
+      return !draftCount || window.confirm(`Regenerate and replace ${draftCount} existing draft frame${draftCount === 1 ? "" : "s"}?`);
+    }
+
+    async function generateFrames(indices) {
+      let completed = 0;
+      let refreshFailed = false;
+      setBusy(true, "Generating calibrated questions...");
       try {
-        await saveDraft(); setBusy(true, "Generating calibrated questions...");
-        const generated = await request("/api/generate", {method: "POST", body: JSON.stringify(payload)});
-        session = await request("/api/session");
-        const currentDraft = generated.find(item => item.index === current);
-        if (currentDraft) {
-          draft = currentDraft;
+        await saveDraft();
+        for (const [position, index] of indices.entries()) {
+          setGenerationStatus(`Generating ${position + 1} / ${indices.length} / frame ${index}`);
+          const generated = await request("/api/generate", {
+            method: "POST",
+            body: JSON.stringify({image_index: index})
+          });
+          draft = generated[0];
           draft.questions = draft.questions.map(question => ({...question, choices: [...question.choices]}));
-          localDirty = false; render();
+          loadedQuestionCount = draft.questions.length;
+          localDirty = false;
+          completed += 1;
+          session.dirty_frames = [...new Set([...session.dirty_frames, index])];
+          try { session = await request("/api/session"); }
+          catch (_) { refreshFailed = true; }
+          const visualsReady = showFrameVisuals(index);
+          setGenerationStatus(`Generated ${completed} / ${indices.length} / frame ${index} / ${draft.questions.length} questions`);
+          render();
+          if (position === indices.length - 1) await visualsReady;
+          else await new Promise(resolve => requestAnimationFrame(resolve));
         }
-        toast(`Generated ${generated.length} frame${generated.length === 1 ? "" : "s"}`);
-      } catch (error) { toast(error.message, true); }
+        setGenerationStatus(`Complete / ${completed} frames${refreshFailed ? " / session refresh pending" : ""}`, refreshFailed);
+        toast(`Generated ${completed} frame${completed === 1 ? "" : "s"}`);
+      } catch (error) {
+        setGenerationStatus(`Stopped after ${completed} / ${indices.length}: ${error.message}`, true);
+        toast(error.message, true);
+      }
       finally { setBusy(false); updateBadges(); }
     }
 
     $("previous").onclick = () => loadFrame(current - 1);
     $("next").onclick = () => loadFrame(current + 1);
     $("frame").onchange = event => loadFrame(event.target.value);
-    $("generate-one").onclick = () => generate({image_index: current});
-    $("generate-range").onclick = () => generate({start: Number($("start").value), stop: Number($("stop").value), stride: Number($("stride").value)});
+    $("timeline").onchange = event => loadFrame(event.target.value);
+    ["start", "stop", "stride"].forEach(id => $(id).oninput = updateBatchCount);
+    $("generate-one").onclick = () => {
+      if (confirmGeneration([current])) generateFrames([current]);
+    };
+    $("generate-range").onclick = () => {
+      try {
+        const indices = rangeIndices();
+        if (confirmGeneration(indices)) generateFrames(indices);
+      }
+      catch (error) { toast(error.message, true); }
+    };
     $("add-question").onclick = () => {
       const id = `frame-${String(current).padStart(6, "0")}-manual-${Date.now().toString(36)}`;
       draft.questions.push({id, question: "", choices: ["yes", "no"], answer: "yes"});
       markDirty(); render();
     };
     $("submit").onclick = async () => {
+      setBusy(true, "Updating dataset...");
       try {
-        await saveDraft(); setBusy(true, "Updating dataset...");
+        await saveDraft();
         const result = await request("/api/submit", {method: "POST"});
-        session = await request("/api/session");
-        toast(`Submitted ${result.question_count} questions across ${result.frame_count} frames`);
+        try {
+          session = await request("/api/session");
+          toast(`Submitted ${result.question_count} questions across ${result.frame_count} frames`);
+        } catch (_) {
+          toast("Dataset submitted, but session status could not be refreshed", true);
+        }
       } catch (error) { toast(error.message, true); }
       finally { setBusy(false); updateBadges(); }
     };
+    window.addEventListener("beforeunload", event => {
+      if (!localDirty) return;
+      event.preventDefault();
+      event.returnValue = "";
+    });
     document.addEventListener("keydown", event => {
       if (["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName)) return;
       if (event.key === "ArrowLeft") loadFrame(current - 1);
@@ -340,7 +598,12 @@
         $("recording").textContent = session.recording;
         $("output").textContent = session.output;
         $("frame-total").textContent = `/ ${session.image_count - 1}`;
+        $("timeline").max = session.image_count - 1;
+        $("frame").max = session.image_count - 1;
+        $("start").max = session.image_count - 1;
+        $("stop").max = session.image_count;
         $("stop").value = session.image_count;
+        updateBatchCount();
         await loadFrame(0);
       } catch (error) { toast(error.message, true); }
     })();
