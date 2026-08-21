@@ -17,8 +17,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from pathlib import Path
-from typing import NoReturn
+from typing import Any, NoReturn
 
 import can_motor_control
 import numpy as np
@@ -49,7 +50,7 @@ class DamiaoWholeBodyAdapter(ABC):
         self,
         address: str | Path | None = None,
         *,
-        runtime_config: DamiaoRuntimeConfig | None = None,
+        runtime_config: DamiaoRuntimeConfig | Mapping[str, Any] | None = None,
         dof: int | None = None,
         hardware_id: str = "whole_body",
         domain_id: int = 0,
@@ -64,7 +65,12 @@ class DamiaoWholeBodyAdapter(ABC):
         del domain_id
         if address is not None:
             raise ValueError("configure Damiao CAN buses through runtime_config.bus_addresses")
-        config = runtime_config or DamiaoRuntimeConfig()
+        if runtime_config is None:
+            config = DamiaoRuntimeConfig()
+        elif isinstance(runtime_config, DamiaoRuntimeConfig):
+            config = runtime_config
+        else:
+            config = DamiaoRuntimeConfig(**runtime_config)
         unknown_buses = config.bus_addresses.keys() - self.bus_defaults.keys()
         if unknown_buses:
             raise ValueError(f"unknown CAN bus overrides: {sorted(unknown_buses)}")
@@ -85,8 +91,8 @@ class DamiaoWholeBodyAdapter(ABC):
         self._active = False
         self._has_state = False
         self._robot: can_motor_control.Robot
-        self._arms: dict[str, can_motor_control.Arm]
-        self._grippers: dict[str, can_motor_control.Gripper]
+        self._arms: dict[str, can_motor_control.Arm] = {}
+        self._grippers: dict[str, can_motor_control.Gripper] = {}
         self._pin_model: pinocchio.Model
         self._pin_data: pinocchio.Data
         self._arm_position_limits: tuple[tuple[float, float], ...] = ()
@@ -143,18 +149,7 @@ class DamiaoWholeBodyAdapter(ABC):
                 "Damiao whole-body adapter failed to connect",
                 hardware_id=self._hardware_id,
             )
-            try:
-                if robot.is_connected():
-                    robot.disable()
-            except Exception:
-                logger.warning(
-                    "Damiao whole-body connect rollback failed",
-                    hardware_id=self._hardware_id,
-                    exc_info=True,
-                )
-            self._connected = False
-            self._active = False
-            self._has_state = False
+            self._release_robot(robot)
             return False
 
     @staticmethod
@@ -180,14 +175,23 @@ class DamiaoWholeBodyAdapter(ABC):
     def disconnect(self) -> None:
         if not self._connected:
             return
+        self._release_robot(self._robot)
+
+    def _release_robot(self, robot: can_motor_control.Robot) -> None:
+        """Disable hardware and drop every handle that owns the robot transport."""
         try:
-            self._robot.disable()
+            if robot.is_connected():
+                robot.disable()
         except Exception:
             logger.warning(
-                "Damiao whole-body adapter failed to disable while disconnecting",
+                "Damiao whole-body adapter failed to disable while releasing robot",
                 hardware_id=self._hardware_id,
                 exc_info=True,
             )
+        self._arms.clear()
+        self._grippers.clear()
+        if hasattr(self, "_robot") and self._robot is robot:
+            del self._robot
         self._connected = False
         self._active = False
         self._has_state = False

@@ -18,6 +18,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import cast
 from unittest.mock import Mock
+import weakref
 
 import can_motor_control
 import numpy as np
@@ -70,6 +71,11 @@ class FakeGripper:
         if self.command_error is not None:
             raise self.command_error
         self.commands.append(opening)
+
+
+class FakeTransport:
+    def __init__(self) -> None:
+        self.closed = False
 
 
 class FakeRobot:
@@ -144,6 +150,19 @@ class DualAdapter(DamiaoWholeBodyAdapter):
 
     def _build_robot(self) -> can_motor_control.Robot:
         return cast("can_motor_control.Robot", self.fake_robot)
+
+
+class RebuildingDualAdapter(DualAdapter):
+    def __init__(
+        self,
+        robot_factory: Callable[[], FakeRobot],
+        runtime_config: DamiaoRuntimeConfig,
+    ) -> None:
+        self.robot_factory = robot_factory
+        DamiaoWholeBodyAdapter.__init__(self, runtime_config=runtime_config)
+
+    def _build_robot(self) -> can_motor_control.Robot:
+        return cast("can_motor_control.Robot", self.robot_factory())
 
 
 class GravityDualAdapter(DualAdapter):
@@ -312,6 +331,19 @@ def test_bus_address_runtime_override_returns_configured_interface(
     assert adapter.bus_address("left") == "can8"
 
 
+def test_init_rehydrates_serialized_runtime_config(dual_robot: FakeRobot) -> None:
+    adapter = DualAdapter(
+        dual_robot,
+        runtime_config={
+            "bus_addresses": {"left": "can8"},
+            "gravity_comp": False,
+            "tick_deadline_us": 2_000,
+        },
+    )
+
+    assert adapter.bus_address("left") == "can8"
+
+
 def test_bus_address_without_override_returns_declared_default(
     dual_robot: FakeRobot,
 ) -> None:
@@ -353,6 +385,73 @@ def test_connect_invalid_upstream_group_rolls_back_robot(
     assert not adapter.connect()
     assert dual_robot.disable_count == 1
     assert not adapter.is_connected()
+
+
+@pytest.mark.parametrize("failure_stage", ["group", "kinematic", "refresh"])
+def test_connect_post_connect_failure_releases_transport_and_allows_reconnect(
+    failure_stage: str,
+    mocker: MockerFixture,
+) -> None:
+    transports: list[FakeTransport] = []
+
+    def build_robot() -> FakeRobot:
+        robot = FakeRobot(
+            {
+                "left_arm": FakeArm([0.1, 0.2]),
+                "right_arm": FakeArm([0.3, 0.4]),
+                "left_gripper": FakeGripper(0.5),
+                "right_gripper": FakeGripper(0.6),
+            }
+        )
+        transport = FakeTransport()
+        transports.append(transport)
+        weakref.finalize(robot, setattr, transport, "closed", True)
+        return robot
+
+    adapter = RebuildingDualAdapter(
+        build_robot,
+        runtime_config=DamiaoRuntimeConfig(gravity_comp=False),
+    )
+    group_failure_pending = failure_stage == "group"
+    kinematic_failure_pending = failure_stage == "kinematic"
+    refresh_failure_pending = failure_stage == "refresh"
+
+    def require_arm(robot: FakeRobot, name: str) -> FakeArm:
+        nonlocal group_failure_pending
+        if group_failure_pending:
+            group_failure_pending = False
+            raise TypeError("wrong group")
+        return cast("FakeArm", robot[name])
+
+    mocker.patch.object(adapter, "_require_arm", new=require_arm)
+    mocker.patch.object(
+        adapter,
+        "_require_gripper",
+        new=lambda robot, name: robot[name],
+    )
+
+    def load_kinematic_model() -> None:
+        nonlocal kinematic_failure_pending
+        if kinematic_failure_pending:
+            kinematic_failure_pending = False
+            raise RuntimeError("kinematic load failed")
+
+    def refresh() -> None:
+        nonlocal refresh_failure_pending
+        if refresh_failure_pending:
+            refresh_failure_pending = False
+            raise RuntimeError("refresh failed")
+
+    mocker.patch.object(adapter, "_load_kinematic_model", new=load_kinematic_model)
+    mocker.patch.object(adapter, "_refresh", new=refresh)
+
+    assert not adapter.connect()
+    assert transports[0].closed
+    try:
+        assert adapter.connect()
+    finally:
+        adapter.disconnect()
+    assert transports[1].closed
 
 
 def test_disconnect_connected_robot_disables_and_clears_state(
