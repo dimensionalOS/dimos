@@ -1,0 +1,191 @@
+<?xml version="1.0"?>
+<!-- Alfred: an i2rt FLOW holonomic base carrying a Livox Mid-360 and a RealSense
+     D455 on the linear rail. Caster layout and wheel radius are the FLOW's own
+     kinematic constants; the two sensor mounts are measured from the robot. -->
+<robot name="alfred">
+
+  <material name="shell"><color rgba="0.85 0.85 0.83 1"/></material>
+  <material name="frame"><color rgba="0.35 0.38 0.37 1"/></material>
+  <material name="rubber"><color rgba="0.11 0.11 0.10 1"/></material>
+  <material name="sensor"><color rgba="0.20 0.45 0.70 1"/></material>
+
+  <link name="base_link"/>
+
+  <link name="base_body">
+    <visual>
+      <origin xyz="0 0 0.165" rpy="0 0 0"/>
+      <geometry><box size="0.52 0.52 0.33"/></geometry>
+      <material name="shell"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.165" rpy="0 0 0"/>
+      <geometry><box size="0.52 0.52 0.33"/></geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 0.165" rpy="0 0 0"/>
+      <mass value="60.0"/>
+      <inertia ixx="1.6" ixy="0" ixz="0" iyy="1.6" iyz="0" izz="2.7"/>
+    </inertial>
+  </link>
+  <joint name="base_body_joint" type="fixed">
+    <parent link="base_link"/><child link="base_body"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Powered casters, at the FLOW's h_x/h_y kingpin positions. -->
+  <link name="caster_front_left_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5707963 0 0"/>
+      <geometry><cylinder radius="0.05" length="0.04"/></geometry>
+      <material name="rubber"/>
+    </visual>
+  </link>
+  <joint name="caster_front_left_joint" type="fixed">
+    <parent link="base_link"/><child link="caster_front_left_link"/>
+    <origin xyz="0.2 0.2 0.05" rpy="0 0 0"/>
+  </joint>
+
+  <link name="caster_front_right_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5707963 0 0"/>
+      <geometry><cylinder radius="0.05" length="0.04"/></geometry>
+      <material name="rubber"/>
+    </visual>
+  </link>
+  <joint name="caster_front_right_joint" type="fixed">
+    <parent link="base_link"/><child link="caster_front_right_link"/>
+    <origin xyz="0.2 -0.2 0.05" rpy="0 0 0"/>
+  </joint>
+
+  <link name="caster_rear_left_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5707963 0 0"/>
+      <geometry><cylinder radius="0.05" length="0.04"/></geometry>
+      <material name="rubber"/>
+    </visual>
+  </link>
+  <joint name="caster_rear_left_joint" type="fixed">
+    <parent link="base_link"/><child link="caster_rear_left_link"/>
+    <origin xyz="-0.2 0.2 0.05" rpy="0 0 0"/>
+  </joint>
+
+  <link name="caster_rear_right_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5707963 0 0"/>
+      <geometry><cylinder radius="0.05" length="0.04"/></geometry>
+      <material name="rubber"/>
+    </visual>
+  </link>
+  <joint name="caster_rear_right_joint" type="fixed">
+    <parent link="base_link"/><child link="caster_rear_right_link"/>
+    <origin xyz="-0.2 -0.2 0.05" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Vertical extrusion carrying the linear rail. -->
+  <link name="mast_link">
+    <visual>
+      <origin xyz="0 0 0.325" rpy="0 0 0"/>
+      <geometry><box size="0.12 0.18 0.65"/></geometry>
+      <material name="frame"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.325" rpy="0 0 0"/>
+      <geometry><box size="0.12 0.18 0.65"/></geometry>
+    </collision>
+  </link>
+  <joint name="mast_joint" type="fixed">
+    <parent link="base_link"/><child link="mast_link"/>
+    <origin xyz="-0.04 0 0.331" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Livox Mid-360 on an angled bracket, pitched ~22.5 deg forward.
+       Calibrated 2026-08-17 from point-lio odometry vs wheel spin-in-place
+       segments (drive_2026-08-16_23-46-03.db, 3-6 mm residual). -->
+  <link name="mid360_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><box size="0.065 0.065 0.06"/></geometry>
+      <material name="sensor"/>
+    </visual>
+  </link>
+  <joint name="mid360_joint" type="fixed">
+    <parent link="base_link"/><child link="mid360_link"/>
+    <origin xyz="0.2307 -0.1636 0.437" rpy="-0.0096 0.3933 -0.0219"/>
+  </joint>
+
+  <!-- RealSense D455 on the rear corner bracket, facing backward and pitched up
+       22.9 deg (no roll). Calibrated 2026-08-17: tilt from IMU gravity, yaw from
+       cuvslam straight-drive direction, lever from spin-in-place segments
+       (drive_2026-08-16_23-46-03.db). Height (z) is a photo estimate -
+       unobservable from planar motion.
+       camera_link sits at the depth (left infrared) imager, which is where the
+       RealSense driver puts it, so the child offsets below are the factory
+       extrinsics read back off the device. -->
+  <link name="camera_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><box size="0.026 0.124 0.029"/></geometry>
+      <material name="sensor"/>
+    </visual>
+  </link>
+  <joint name="camera_joint" type="fixed">
+    <parent link="base_link"/><child link="camera_link"/>
+    <origin xyz="-0.2518 -0.2736 0.42" rpy="-0.0097 0.1571 -3.1030"/>
+  </joint>
+
+  <link name="camera_depth_frame"/>
+  <joint name="camera_depth_joint" type="fixed">
+    <parent link="camera_link"/><child link="camera_depth_frame"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+  <link name="camera_depth_optical_frame"/>
+  <joint name="camera_depth_optical_joint" type="fixed">
+    <parent link="camera_depth_frame"/><child link="camera_depth_optical_frame"/>
+    <origin xyz="0 0 0" rpy="-1.5707963 0 -1.5707963"/>
+  </joint>
+
+  <link name="camera_color_frame"/>
+  <joint name="camera_color_joint" type="fixed">
+    <parent link="camera_link"/><child link="camera_color_frame"/>
+    <origin xyz="-0.0004 0.0149 -0.0002" rpy="0 0 0"/>
+  </joint>
+  <link name="camera_color_optical_frame"/>
+  <joint name="camera_color_optical_joint" type="fixed">
+    <parent link="camera_color_frame"/><child link="camera_color_optical_frame"/>
+    <origin xyz="0 0 0" rpy="-1.5707963 0 -1.5707963"/>
+  </joint>
+
+  <link name="camera_infra1_frame"/>
+  <joint name="camera_infra1_joint" type="fixed">
+    <parent link="camera_link"/><child link="camera_infra1_frame"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+  <link name="camera_infra1_optical_frame"/>
+  <joint name="camera_infra1_optical_joint" type="fixed">
+    <parent link="camera_infra1_frame"/><child link="camera_infra1_optical_frame"/>
+    <origin xyz="0 0 0" rpy="-1.5707963 0 -1.5707963"/>
+  </joint>
+
+  <link name="camera_infra2_frame"/>
+  <joint name="camera_infra2_joint" type="fixed">
+    <parent link="camera_link"/><child link="camera_infra2_frame"/>
+    <origin xyz="0 -0.0499 0" rpy="0 0 0"/>
+  </joint>
+  <link name="camera_infra2_optical_frame"/>
+  <joint name="camera_infra2_optical_joint" type="fixed">
+    <parent link="camera_infra2_frame"/><child link="camera_infra2_optical_frame"/>
+    <origin xyz="0 0 0" rpy="-1.5707963 0 -1.5707963"/>
+  </joint>
+
+  <link name="camera_accel_frame"/>
+  <joint name="camera_accel_joint" type="fixed">
+    <parent link="camera_link"/><child link="camera_accel_frame"/>
+    <origin xyz="-0.0117 -0.0055 0.0051" rpy="0 0 0"/>
+  </joint>
+  <link name="camera_accel_optical_frame"/>
+  <joint name="camera_accel_optical_joint" type="fixed">
+    <parent link="camera_accel_frame"/><child link="camera_accel_optical_frame"/>
+    <origin xyz="0 0 0" rpy="-1.5707963 0 -1.5707963"/>
+  </joint>
+
+</robot>
