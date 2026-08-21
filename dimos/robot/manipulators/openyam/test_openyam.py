@@ -18,6 +18,7 @@ import pytest
 
 from dimos.control.components import HardwareType
 from dimos.control.coordinator import ControlCoordinator
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
 from dimos.robot.manipulators.openyam.blueprints.basic import (
@@ -25,8 +26,11 @@ from dimos.robot.manipulators.openyam.blueprints.basic import (
     openyam_planner_coordinator,
 )
 from dimos.robot.manipulators.openyam.blueprints.teleop import (
+    OpenYamTeleopCoordinator,
+    _openyam_quest_hardware,
     keyboard_teleop_openyam,
     keyboard_teleop_openyam_planner,
+    teleop_quest_openyam,
 )
 from dimos.robot.manipulators.openyam.config import (
     OPENYAM_ARM_JOINTS,
@@ -37,6 +41,8 @@ from dimos.robot.manipulators.openyam.config import (
     make_openyam_model_config,
     openyam_hardware,
 )
+from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolver
+from dimos.teleop.quest.quest_extensions import ArmTeleopModule
 
 
 def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
@@ -59,6 +65,38 @@ def test_make_openyam_model_config_maps_only_arm_joints() -> None:
     assert OPENYAM_GRIPPER_JOINT not in config.joint_name_mapping
     assert config.base_link == "base"
     assert config.end_effector_link == "gripper_tip"
+    assert config.velocity_limits == [2.0] * OPENYAM_DOF
+    assert config.max_velocity == 2.0
+
+
+def test_quest_teleop_matches_dual_openyam_response_tuning() -> None:
+    tasks = _coordinator_kwargs(teleop_quest_openyam)["tasks"]
+    teleop = next(task for task in tasks if task.type == "teleop_ik")
+
+    assert teleop.params["pink"].gain == 1.0
+    assert teleop.params["solver_type"] is OpenYamPinkPoseTargetSolver
+    assert teleop.params["max_joint_velocity_rad_s"] == 2.0
+    assert teleop.params["joint_command_filter_cutoff_hz"] == 30.0
+
+
+def test_quest_teleop_defaults_to_fake_hardware() -> None:
+    coordinator = _module_kwargs(teleop_quest_openyam, OpenYamTeleopCoordinator)
+    hardware = _openyam_quest_hardware(None)
+
+    assert "hardware" not in coordinator
+    assert hardware.adapter_type == "mock_whole_body"
+
+
+def test_quest_teleop_selects_physical_hardware_with_explicit_can_port() -> None:
+    parsed = BlueprintConfigParser(teleop_quest_openyam).parse(
+        ["--can-port", "can8"],
+        environ={},
+    )
+    hardware = _openyam_quest_hardware("can8")
+
+    assert parsed.global_config_values()["can_port"] == "can8"
+    assert hardware.adapter_type == "openyam_damiao"
+    assert hardware.adapter_kwargs["runtime_config"].bus_devices == {"openyam": "can8"}
 
 
 def test_openyam_hardware_physical_mode_returns_one_whole_body(
@@ -96,6 +134,13 @@ def test_openyam_hardware_simulation_mode_returns_generic_whole_body_mock(
     hardware = openyam_hardware()
 
     assert hardware.adapter_type == "mock_whole_body"
+
+
+def test_quest_teleop_module_accepts_blueprint_config() -> None:
+    kwargs = _module_kwargs(teleop_quest_openyam, ArmTeleopModule)
+
+    module = ArmTeleopModule(**kwargs)
+    module.stop()
 
 
 @pytest.mark.parametrize(

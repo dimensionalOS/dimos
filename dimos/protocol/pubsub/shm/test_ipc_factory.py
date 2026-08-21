@@ -112,6 +112,20 @@ def test_reader_outpaced_drops_oldest() -> None:
         ch.close()
 
 
+def test_reader_sequence_exposes_overflow_on_first_recovery_read() -> None:
+    ch = CpuShmQueue((CAP,), np.uint8, slots=4)
+    try:
+        for i in range(8):
+            _publish(ch, f"m{i}".encode())
+
+        seq, _, payload = ch.read(last_seq=0)
+
+        assert seq == 5
+        assert payload is not None
+    finally:
+        ch.close()
+
+
 def test_concurrent_publishers_no_loss() -> None:
     """Threads sharing ONE instance publish concurrently with no loss or dupes.
 

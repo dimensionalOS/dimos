@@ -49,6 +49,10 @@ exclude = [
     "**/*.svg",
     "**/*.tcss",
     "**/*.pyi",
+    # Locked Python-native runtime definition. Keep these exact rather than
+    # shipping arbitrary manifests from the source tree.
+    "imitation/policy/lerobot/python/pyproject.toml",
+    "imitation/policy/lerobot/python/uv.lock",
 ]
 
 [tool.setuptools.exclude-package-data]
@@ -621,7 +625,7 @@ strict = true
 warn_unused_ignores = false
 untyped_calls_exclude = ["zenoh"]
 explicit_package_bases = true
-exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/tool_.|.*/conftest.py*"
+exclude = "^dimos/models/Detic(/|$)|^dimos/imitation/policy/lerobot/python/|.*/test_.|.*/tool_.|.*/conftest.py*"
 
 [[tool.mypy.overrides]]
 module = [
@@ -736,7 +740,7 @@ exclude_also = [
 max_size_kb = 75
 ignore = [
     "uv.lock",
-    "examples/external_python_module/python/uv.lock",
+    "*/uv.lock",
     "*/package-lock.json",
     "*/Cargo.lock",
     "dimos/web/dimos_interface/themes.json",

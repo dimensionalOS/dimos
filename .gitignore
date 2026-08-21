@@ -75,6 +75,38 @@ results/
 /thread_monitor_report.csv
 
 # Memory autorecord
+
+# symlink one of .envrc.* if you'd like to use
+.envrc
+.claude
+.opencode/
+**/CLAUDE.md
+.direnv/
+.omo/
+
+/logs
+
+*.so
+
+/.mypy_cache*
+
+*mobileclip*
+/results
+results/
+**/cpp/result
+
+CLAUDE.MD
+/assets/teleop_certs/
+
+/.mcp.json
+*.speedscope.json
+
+# Coverage
+htmlcov/
+.coverage
+.coverage.*
+
+# Memory2 autorecord
 recording*.db
 
 # Rerun recordings
