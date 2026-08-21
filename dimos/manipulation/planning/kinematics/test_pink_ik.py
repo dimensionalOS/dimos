@@ -530,11 +530,11 @@ def test_robot_context_applies_configured_velocity_limits_by_joint_name(
 ) -> None:
     modules = _install_fake_modules(mocker)
     model = _FakeModel()
-    modules.pinocchio.buildModelFromUrdf = mocker.Mock(return_value=model)
-    mocker.patch.object(pink_ik, "prepare_urdf", return_value=tmp_path / "prepared.urdf")
+    modules.pinocchio.buildModelFromXML = mocker.Mock(return_value=model)
     config = _robot_config()
-    config.model_path = tmp_path / "fake.urdf"
-    config.model_path.write_text("<robot/>")
+    model_path = tmp_path / "fake.urdf"
+    model_path.write_text("<robot/>")
+    config.model = RobotModel.from_file(model_path)
     config.velocity_limits = [0.5, 1.5, 2.5]
 
     context = _StreamingTestPinkIK(PinkIKConfig())._build_robot_context(
