@@ -74,7 +74,7 @@ class MySkillContainer(Module):
 | `relative_move(forward, left, degrees)` | `UnitreeSkillContainer` | Move robot relative to current position |
 | `execute_sport_command(command_name)` | `UnitreeSkillContainer` | Unitree sport commands (sit, stand, flip, etc.) |
 | `wait(seconds)` | `UnitreeSkillContainer` | Pause execution |
-| `observe()` | `GO2Connection` | Capture and return current camera frame |
+| `observe()` | `ObserveSkill` | Capture and return current camera frame |
 | `navigate_with_text(query)` | `NavigationSkillContainer` | Navigate to a location by description |
 | `tag_location(location_name)` | `NavigationSkillContainer` | Tag current position for later recall |
 | `stop_navigation()` | `NavigationSkillContainer` | Cancel current navigation goal |

@@ -57,7 +57,6 @@ print(CameraModule.io())
  ├─ RPC set_transport(stream_name: str, transport: Transport) -> bool
  ├─ RPC start() -> None
  ├─ RPC stop() -> None
- ├─ RPC take_a_picture() -> Image
 ```
 
 We can see that the camera module outputs two streams:
@@ -67,7 +66,7 @@ We can see that the camera module outputs two streams:
 
 It offers two RPC calls: `start()` and `stop()` (lifecycle methods).
 
-It also exposes an agentic [skill](/docs/usage/blueprints.md#defining-skills) called `take_a_picture` (more on skills in the Blueprints guide).
+Camera observation as an agentic [skill](/docs/usage/blueprints.md#defining-skills) is provided separately by the reusable `ObserveSkill` container (`dimos/agents/skills/observe_skill.py`), which subscribes to `color_image` and can be added to any blueprint (more on skills in the Blueprints guide).
 
 We can start this module and explore the output of its streams in real time (this will use your webcam).
 
