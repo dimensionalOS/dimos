@@ -14,8 +14,10 @@
 
 """cuVSLAM fed by a recorded stereo pair instead of a live camera.
 
-    dimos run demo-cuvslam-replay --viewer rerun \
-        --dataset ~/datasets/d455/sf_office_stairs/main.db
+    dimos run demo-cuvslam-replay --viewer rerun --dataset sf_office_stairs
+
+``--dataset`` takes an absolute .db path or a dataset name; a name is downloaded from
+LFS on first use. ``sf_office_stairs`` is the stereo recording this demo was built on.
 
 Same wiring as ``demo-cuvslam-realsense`` with the camera swapped for a replay of a
 memory recording. It is the only way to exercise the tracker on a machine with no
