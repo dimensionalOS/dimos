@@ -16,13 +16,12 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from dimos.constants import STATE_DIR
 from dimos.core.core import rpc
 from dimos.core.stream import In
-from dimos.memory.module import PoseSetter, Recorder, RecorderConfig
-from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.memory.module import Recorder, RecorderConfig, pose_setter_for
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
@@ -88,9 +87,7 @@ class WorldBeliefRecorder(Recorder):
         depth = self.config.stream_remapping.get("depth_image", "depth_image")
         self.store.stream(depth, Image, codec="lz4+lcm")
 
-    async def _proprio_pose(self, msg: JointState) -> Pose:
+    @pose_setter_for("coordinator_joint_state")
+    async def _proprio_pose(self, msg: Any) -> Any:
         """Use an identity pose for proprioceptive joint-state records."""
         return Transform.identity().to_pose()
-
-    def pose_setters(self) -> dict[str, PoseSetter]:
-        return {"coordinator_joint_state": self._proprio_pose}

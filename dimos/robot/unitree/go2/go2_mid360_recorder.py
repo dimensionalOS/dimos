@@ -15,7 +15,7 @@
 """Records the Go2 + Mid-360 rig into a memory SQLite db.
 
 Captures Point-LIO odom + lidar (trajectory baked into ``pointlio_lidar`` via the
-inherited pose setter) plus the Go2's companion streams. The raw Livox
+inherited ``@pose_setter_for``) plus the Go2's companion streams. The raw Livox
 stream is NOT recorded here — enable the pcap recorder in the record blueprint to
 capture it. Companion streams are recorded as-is and anchored via the static mount
 frames published on tf.

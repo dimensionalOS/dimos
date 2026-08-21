@@ -284,6 +284,23 @@ class RecorderConfig(MemoryModuleConfig):
 PoseSetter = Callable[[Any], "Awaitable[Pose | None]"]
 
 
+def pose_setter_for(*stream_names: str) -> Callable[[Any], Any]:
+    """Mark an ``async def`` method ``(self, msg) -> Pose | None`` as the pose
+    setter for the given recorded stream(s). Streams without a setter fall back
+    to the tf-based ``world <- frame_id`` lookup."""
+
+    def decorate(fn: Any) -> Any:
+        if not inspect.iscoroutinefunction(fn):
+            raise TypeError(
+                f"@pose_setter_for must decorate an `async def` method; "
+                f"{getattr(fn, '__qualname__', fn)} is not async"
+            )
+        fn._pose_setter_for = tuple(stream_names)
+        return fn
+
+    return decorate
+
+
 class Recorder(MemoryModule):
     """Records all ``In`` ports to a memory SQLite database, plus the live tf tree.
 
@@ -295,15 +312,14 @@ class Recorder(MemoryModule):
 
         blueprint.add(MyRecorder, db_path="session.db")
 
-    Each stream's pose defaults to a ``world <- frame_id`` tf lookup. Override
-    :meth:`pose_setters` to source poses elsewhere (e.g. from odometry). Setters
-    run on the module's event loop and are ``async def``::
+    Each stream's pose defaults to a ``world <- frame_id`` tf lookup; decorate a
+    method with ``@pose_setter_for("stream")`` to source it elsewhere (e.g. from
+    an odometry stream). Setters run on the module's event loop and may be
+    ``async def``::
 
+        @pose_setter_for("lidar")
         async def _lidar_pose(self, msg):
             return self._last_odom_pose
-
-        def pose_setters(self):
-            return {"lidar": self._lidar_pose}
     """
 
     config: RecorderConfig
@@ -327,7 +343,7 @@ class Recorder(MemoryModule):
             )
             return
 
-        self._pose_setters = self.pose_setters()
+        self._pose_setters = self._collect_pose_setters()
 
         # TODO: store reset API/logic is not implemented yet. This module
         # shouldn't need to know about files (SqliteStore specific), and
@@ -480,9 +496,14 @@ class Recorder(MemoryModule):
         )
         return transform.to_pose() if transform is not None else None
 
-    def pose_setters(self) -> dict[str, PoseSetter]:
-        """Return explicit stream-to-pose-setter bindings for this Recorder."""
-        return {}
+    def _collect_pose_setters(self) -> dict[str, PoseSetter]:
+        """Map stream name -> bound ``@pose_setter_for`` method."""
+        setters: dict[str, PoseSetter] = {}
+        for attr_name in dir(type(self)):
+            fn = getattr(type(self), attr_name, None)
+            for stream in getattr(fn, "_pose_setter_for", ()):
+                setters[stream] = getattr(self, attr_name)
+        return setters
 
     def _tf_processor(self) -> Processor | None:
         """Build the preparation stage for tf, or return None when it is unwired."""

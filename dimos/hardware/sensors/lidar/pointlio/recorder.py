@@ -17,7 +17,7 @@
 A ``Recorder`` that records its In ports under their own names
 (``pointlio_odometry`` / ``pointlio_lidar``) — wire them to PointLio's
 ``odometry`` / ``lidar`` outputs with ``.remappings()``. Poses come straight
-from the odometry stream: each lidar frame is stamped with
+from the odometry stream (``@pose_setter_for``): each lidar frame is stamped with
 the latest odometry pose so ``pointlio_lidar`` carries the trajectory and ``dimos
 map global`` can register the body-frame cloud directly (no ``pose-fill`` pass).
 """
@@ -25,7 +25,7 @@ map global`` can register the body-frame cloud directly (no ``pose-fill`` pass).
 from __future__ import annotations
 
 from dimos.core.stream import In
-from dimos.memory.module import OnExisting, PoseSetter, Recorder, RecorderConfig
+from dimos.memory.module import OnExisting, Recorder, RecorderConfig, pose_setter_for
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -44,15 +44,12 @@ class PointlioRecorder(Recorder):
 
     _last_odom_pose: Pose | None = None
 
+    @pose_setter_for("pointlio_odometry")
     async def _odom_pose(self, msg: Odometry) -> Pose | None:
-        self._last_odom_pose = msg.pose.pose
+        pose = getattr(msg, "pose", None)
+        self._last_odom_pose = getattr(pose, "pose", None) if pose is not None else None
         return self._last_odom_pose
 
+    @pose_setter_for("pointlio_lidar")
     async def _lidar_pose(self, msg: PointCloud2) -> Pose | None:
-        return self._last_odom_pose
-
-    def pose_setters(self) -> dict[str, PoseSetter]:
-        return {
-            "pointlio_odometry": self._odom_pose,
-            "pointlio_lidar": self._lidar_pose,
-        }
+        return getattr(self, "_last_odom_pose", None)

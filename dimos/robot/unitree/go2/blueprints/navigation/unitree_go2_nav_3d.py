@@ -28,7 +28,7 @@ from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder
 from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.memory.module import PoseSetter
+from dimos.memory.module import pose_setter_for
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.basic_path_follower.module import BasicPathFollower
@@ -51,11 +51,9 @@ class Go2Mid360Recorder(PointlioRecorder):
     lidar_l1: In[PointCloud2]
     odom_go2: In[PoseStamped]
 
+    @pose_setter_for("odom_go2")
     async def _odom_go2_pose(self, msg: PoseStamped) -> PoseStamped:
         return msg
-
-    def pose_setters(self) -> dict[str, PoseSetter]:
-        return {**super().pose_setters(), "odom_go2": self._odom_go2_pose}
 
 
 # Opt-in recording: set DIMOS_NAV_RECORD=1 to capture pointlio_lidar +
