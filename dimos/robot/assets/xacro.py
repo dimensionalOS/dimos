@@ -31,7 +31,7 @@ import os
 from pathlib import Path
 import threading
 
-from dimos.constants import CACHE_DIR
+from dimos.robot.assets.git_cache import DEFAULT_ROBOT_ASSET_CACHE_ROOT
 
 _lock = threading.Lock()
 
@@ -55,14 +55,14 @@ def _setup_ament_index(package_paths: dict[str, Path]) -> None:
     global _prefix_dir
 
     if _prefix_dir is None:
-        _prefix_dir = CACHE_DIR / "ament_prefix"
+        _prefix_dir = DEFAULT_ROBOT_ASSET_CACHE_ROOT / "derived" / "ament_prefix"
 
     prefix = _prefix_dir
     resource_dir = prefix / "share" / "ament_index" / "resource_index" / "packages"
     resource_dir.mkdir(parents=True, exist_ok=True)
 
     for pkg_name, pkg_path in package_paths.items():
-        resolved = Path(pkg_path).resolve()
+        resolved = Path(os.fspath(pkg_path)).resolve()
         if _ament_registered.get(pkg_name) == resolved:
             continue
 
@@ -96,7 +96,7 @@ def _patch_xacro_find(package_paths: dict[str, Path]) -> Iterator[None]:
     def custom_find(resolved: str, a: str, args: list[str], context: dict[str, str]) -> str:
         pkg_name = args[0] if args else ""
         if pkg_name in package_paths:
-            pkg_path = str(Path(package_paths[pkg_name]).resolve())
+            pkg_path = str(Path(os.fspath(package_paths[pkg_name])).resolve())
             return resolved.replace(f"$({a})", pkg_path)
         return str(original_find(resolved, a, args, context))
 
@@ -111,7 +111,7 @@ def ensure_ament_packages(package_paths: dict[str, Path]) -> None:
     """Register packages so xacro $(find pkg) resolves to our paths.
 
     Uses ament_index_python when available, otherwise stores paths for
-    the monkey-patch fallback used in process_xacro().
+    the monkey-patch fallback used in :func:`expand_xacro`.
     """
     if not package_paths or not _has_ament:
         return
@@ -120,19 +120,28 @@ def ensure_ament_packages(package_paths: dict[str, Path]) -> None:
         _setup_ament_index(package_paths)
 
 
-def process_xacro(path: Path, package_paths: dict[str, Path], xacro_args: dict[str, str]) -> str:
-    """Process a xacro file to URDF XML, resolving $(find pkg) from package_paths.
+def expand_xacro(path: Path, package_paths: dict[str, Path], xacro_args: dict[str, str]) -> str:
+    """Expand a Xacro file to URDF XML, resolving $(find pkg) from package paths.
 
     Uses ament_index_python when available, falls back to patching xacro otherwise.
     """
+    try:
+        import xacro
+    except ImportError:
+        msg = (
+            "xacro is required for processing .xacro files. "
+            "Install the manipulation extra: pip install dimos[manipulation]"
+        )
+        raise ImportError(msg)
     import xacro
 
-    ensure_ament_packages(package_paths)
-
     if _has_ament:
+        ensure_ament_packages(package_paths)
         doc = xacro.process_file(str(path), mappings=xacro_args)
     else:
-        with _patch_xacro_find(package_paths):
+        # xacro's substitution handler is process-global, so serialize the
+        # temporary fallback patch.
+        with _lock, _patch_xacro_find(package_paths):
             doc = xacro.process_file(str(path), mappings=xacro_args)
 
     return str(doc.toprettyxml(indent="  "))
