@@ -18,8 +18,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crate::edges::{edges_to_segments, PlannerGraph};
 use crate::mls_planner::{Config, Planner, RegionBounds};
 use crate::voxel::surface_point_xyz;
-use dimos_module::{error_throttled, warn_throttled, Input, Module, Output};
-use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion};
+use dimos_module::{error_throttled, warn_throttled, Input, Module, Output, Tf};
+use lcm_msgs::geometry_msgs::{Point, PointStamped, Pose, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::Path;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
@@ -57,11 +57,11 @@ pub struct MlsPlanner {
     #[input(decode = PoseStamped::decode, handler = on_region_bounds)]
     region_bounds: Input<PoseStamped>,
 
-    #[input(decode = PoseStamped::decode, handler = on_start_pose)]
-    start_pose: Input<PoseStamped>,
+    #[input(decode = PointStamped::decode, handler = on_goal)]
+    goal: Input<PointStamped>,
 
-    #[input(decode = PoseStamped::decode, handler = on_goal_pose)]
-    goal_pose: Input<PoseStamped>,
+    #[tf]
+    tf: Tf,
 
     #[output(encode = PointCloud2::encode)]
     surface_map: Output<PointCloud2>,
@@ -86,7 +86,6 @@ pub struct MlsPlanner {
     // Written by the handle loop, read by the worker, so the loop never blocks
     // on map processing.
     pending: Shared<MapUpdate>,
-    latest_start: Shared<Xyz>,
     active_goal: Shared<Xyz>,
     wake: Arc<Notify>,
 
@@ -97,9 +96,9 @@ impl MlsPlanner {
     async fn spawn_worker(&mut self) {
         let worker = Worker {
             pending: Arc::clone(&self.pending),
-            latest_start: Arc::clone(&self.latest_start),
             active_goal: Arc::clone(&self.active_goal),
             wake: Arc::clone(&self.wake),
+            tf: self.tf.clone(),
             config: self.config.clone(),
             surface_map: self.surface_map.clone(),
             nodes: self.nodes.clone(),
@@ -144,17 +143,9 @@ impl MlsPlanner {
         self.wake.notify_one();
     }
 
-    /// Record the latest start pose. No wake here, so odometry never drives
-    /// replanning.
-    async fn on_start_pose(&mut self, msg: PoseStamped) {
-        let p = &msg.pose.position;
-        *self.latest_start.lock().expect("start mutex") =
-            Some((p.x as f32, p.y as f32, p.z as f32));
-    }
-
     /// Set or cancel the active goal from a click, then wake the worker.
-    async fn on_goal_pose(&mut self, msg: PoseStamped) {
-        *self.active_goal.lock().expect("goal mutex") = goal_position(&msg.pose.position);
+    async fn on_goal(&mut self, msg: PointStamped) {
+        *self.active_goal.lock().expect("goal mutex") = goal_position(&msg.point);
         self.wake.notify_one();
     }
 }
@@ -178,9 +169,9 @@ fn goal_position(p: &Point) -> Option<Xyz> {
 /// off the handle loop. Woken by the handlers.
 struct Worker {
     pending: Shared<MapUpdate>,
-    latest_start: Shared<Xyz>,
     active_goal: Shared<Xyz>,
     wake: Arc<Notify>,
+    tf: Tf,
     config: Config,
     surface_map: Output<PointCloud2>,
     nodes: Output<PointCloud2>,
@@ -248,11 +239,7 @@ impl Worker {
                     }
                 };
                 let z_max = bounds.pose.orientation.z as f32;
-                let sensor_z = self
-                    .latest_start
-                    .lock()
-                    .expect("start mutex")
-                    .map_or(z_max, |(_, _, z)| z);
+                let sensor_z = self.base_position().map_or(z_max, |(_, _, z)| z);
                 let bounds = RegionBounds::capped(
                     bounds.pose.position.x as f32,
                     bounds.pose.position.y as f32,
@@ -315,9 +302,18 @@ impl Worker {
         (surface, node_cloud, edges)
     }
 
+    /// The base frame position in the world frame, from the latest tf.
+    fn base_position(&self) -> Option<Xyz> {
+        let t = self
+            .tf
+            .get_latest(&self.config.world_frame, &self.config.base_frame)?
+            .translation();
+        Some((t.x as f32, t.y as f32, t.z as f32))
+    }
+
     /// Gate and publish a replan. The planning itself lives in Planner::plan.
     async fn maybe_replan(&self, planner: &mut Planner, last_path_at: &mut Option<Instant>) {
-        let Some(start) = *self.latest_start.lock().expect("start mutex") else {
+        let Some(start) = self.base_position() else {
             return;
         };
         let start = (start.0, start.1, start.2 - self.config.start_z_offset_m);
