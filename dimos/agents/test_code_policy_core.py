@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -33,7 +34,15 @@ from dimos.agents.code_policy_core import (
     validate_policy_callable,
 )
 from dimos.agents.code_policy_server import CodePolicyMcpServer
-from dimos.benchmark.evaluation.protocol import TrialOutcome, TrialRun
+from dimos.benchmark.evaluation.protocol import (
+    PolicyArtifact,
+    PolicyCandidate,
+    PolicyRequestError,
+    PolicySnapshot,
+    TrialEvidence,
+    TrialOutcome,
+    TrialRun,
+)
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.porcelain.dimos import Dimos
 
@@ -58,7 +67,7 @@ def test_validate_policy_callable_rejects_noncanonical_functions(candidate, mess
         validate_policy_callable(candidate)
 
 
-def test_exploration_repl_submits_callable_and_receives_trial(tmp_path: Path) -> None:
+def test_exploration_repl_submits_candidate_and_freezes_it(tmp_path: Path) -> None:
     artifacts = tmp_path / "trial"
     artifacts.mkdir()
     log_path = artifacts / "main.jsonl"
@@ -68,10 +77,17 @@ def test_exploration_repl_submits_callable_and_receives_trial(tmp_path: Path) ->
         memory.stream("events", str).append("attempted")
     submitted: list[object] = []
 
-    def handle(source: str, serialized: bytes) -> TrialRun:
+    policy_artifact = PolicyArtifact(
+        source="def policy(app: Dimos) -> None: ...\n",
+        serialized=cloudpickle.dumps(policy),
+        sha256="digest",
+    )
+    handled_candidates: list[PolicyCandidate] = []
+
+    def handle(source: str, serialized: bytes) -> PolicyCandidate:
         submitted.append(cloudpickle.loads(serialized))
         assert "def policy" in source
-        return TrialRun(
+        trial = TrialRun(
             run_id="debug-1",
             outcome=TrialOutcome(
                 success=False,
@@ -83,19 +99,70 @@ def test_exploration_repl_submits_callable_and_receives_trial(tmp_path: Path) ->
             artifacts=artifacts,
             log_path=log_path,
             memory_path=memory_path,
+            policy_output="planner diagnostic",
         )
+        candidate = PolicyCandidate(
+            id="candidate-0001-digest",
+            policy=PolicySnapshot(
+                source=policy_artifact.source,
+                sha256=policy_artifact.sha256,
+            ),
+            evidence=TrialEvidence("candidate-0001-digest", trial, 4),
+        )
+        handled_candidates.append(candidate)
+        return candidate
 
-    with CodePolicyMcpServer(handle) as server:
+    frozen: list[str] = []
+
+    def freeze(candidate_id: str) -> PolicyCandidate:
+        frozen.append(candidate_id)
+        return handled_candidates[0]
+
+    with CodePolicyMcpServer(handle, freeze_handler=freeze) as server:
         assert server.session is not None
         result = server.session.python_exec(
             "def policy(app: Dimos) -> None:\n"
             "    app.list_modules()\n\n"
-            "trial = submit_policy(policy)\n"
-            "(trial.run_id, trial.outcome.success)"
+            "candidate = submit_policy(policy)\n"
+            "freeze_policy(candidate)\n"
+            "(candidate.id, candidate.trial.run_id, candidate.evidence.policy_output)"
         )
 
-    assert "('debug-1', False)" in result.text
+    assert "('candidate-0001-digest', 'debug-1', 'planner diagnostic')" in result.text
     assert len(submitted) == 1
+    assert frozen == ["candidate-0001-digest"]
+
+
+def test_submission_endpoint_maps_contract_errors_to_bad_request(mocker: MockerFixture) -> None:
+    def reject(_source: str, _serialized: bytes) -> PolicyCandidate:
+        raise PolicyRequestError("submission budget exhausted")
+
+    server = CodePolicyMcpServer(reject, freeze_handler=lambda _candidate_id: None)  # type: ignore[arg-type]
+    request = mocker.Mock()
+    request.headers = {"authorization": f"Bearer {server.submission_token}"}
+    request.json = mocker.AsyncMock(
+        return_value={"source": "def policy(app): ...", "serialized": "eA=="}
+    )
+
+    response = asyncio.run(server._submit_policy(request))
+
+    assert response.status_code == 400
+    assert json.loads(response.body) == {"error": "submission budget exhausted"}
+
+
+def test_submission_endpoint_does_not_mask_server_bugs(mocker: MockerFixture) -> None:
+    def crash(_source: str, _serialized: bytes) -> PolicyCandidate:
+        raise AssertionError("server bug")
+
+    server = CodePolicyMcpServer(crash, freeze_handler=lambda _candidate_id: None)  # type: ignore[arg-type]
+    request = mocker.Mock()
+    request.headers = {"authorization": f"Bearer {server.submission_token}"}
+    request.json = mocker.AsyncMock(
+        return_value={"source": "def policy(app): ...", "serialized": "eA=="}
+    )
+
+    with pytest.raises(AssertionError, match="server bug"):
+        asyncio.run(server._submit_policy(request))
 
 
 def test_live_repl_bootstraps_public_runtime_without_credentials(
@@ -145,6 +212,7 @@ def test_python_exec_returns_displayed_image() -> None:
         CodePolicySessionConfig(
             environment=SubmissionEnvironment(
                 submission_url="http://127.0.0.1:1",
+                freeze_url="http://127.0.0.1:1",
                 submission_token="unused",
             )
         )
@@ -163,3 +231,22 @@ def test_python_exec_returns_displayed_image() -> None:
     assert len(result.images) == 1
     assert result.images[0].mime_type in {"image/png", "image/jpeg"}
     assert result.images[0].data
+
+
+def test_python_exec_rejects_timeout_longer_than_transport_request() -> None:
+    session = CodePolicySession(
+        CodePolicySessionConfig(
+            environment=SubmissionEnvironment(
+                submission_url="http://127.0.0.1:1",
+                freeze_url="http://127.0.0.1:1",
+                submission_token="unused",
+            )
+        )
+    )
+    session.start()
+    try:
+        result = session.python_exec("1 + 1", timeout_s=300.0)
+    finally:
+        session.stop()
+
+    assert result.text == "timeout_s must be in (0, 240]"

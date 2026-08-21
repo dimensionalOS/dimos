@@ -1,0 +1,10 @@
+{
+  "schema_version": "1.0",
+  "name": "libero-pro-heldout",
+  "cases": [
+    {"id": "held-goal", "family": "goal", "specification": "held-goal/evaluation.json"},
+    {"id": "held-spatial", "family": "spatial", "specification": "held-spatial/evaluation.json"},
+    {"id": "held-object", "family": "object", "specification": "held-object/evaluation.json"},
+    {"id": "held-long", "family": "libero_10", "specification": "held-long/evaluation.json"}
+  ]
+}

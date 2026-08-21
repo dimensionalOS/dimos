@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "case_id": "libero-pro-autoresearch-held-goal",
+  "source": {"repository": "Zxy-MLlab/LIBERO-PRO", "revision": "eafdb809426b13153aa1e4c42d6601844217dfec", "dataset_repository": "zhouxueyang/LIBERO-Pro", "dataset_revision": "e9f3a5356efed7a23b06c28cfe880a22c3306074"},
+  "task": {"suite": "libero_goal_task", "task_order_index": 0, "task_index": 3, "task_name": "open_the_top_drawer_and_put_the_bowl_inside", "instruction": "Open the top layer of the drawer and put the cream cheese inside"},
+  "assets": {
+    "bddl": {"repository_path": "bddl_files/libero_goal_task/open_the_top_drawer_and_put_the_bowl_inside.bddl", "sha256": "468fc65a5aa7e63cc829efb9f7970cadbfc39bfe5695930c5e1d252f05ed5078", "size_bytes": 2988},
+    "init_states": {"repository_path": "init_files/libero_goal_task/open_the_top_drawer_and_put_the_bowl_inside.pruned_init", "sha256": "74b021b8965a24e7cda501c236683f862853ca4fe883621328156c78ad5414c0", "size_bytes": 4139}
+  },
+  "episodes": {"debug_init_state_indices": [1, 2, 3, 4, 5], "scored_init_state_index": 0},
+  "contract": {"robot": "Panda", "controller": "OSC_POSE", "cameras": [{"name": "agentview", "width": 128, "height": 128}, {"name": "robot0_eye_in_hand", "width": 128, "height": 128}], "control_frequency_hz": 20, "settling_ticks": 5, "horizon_ticks": 300, "clock": "continuous_real_time", "success": "native_bddl_goal_predicates"}
+}

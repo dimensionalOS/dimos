@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "case_id": "libero-pro-autoresearch-dev-spatial",
+  "source": {"repository": "Zxy-MLlab/LIBERO-PRO", "revision": "eafdb809426b13153aa1e4c42d6601844217dfec", "dataset_repository": "zhouxueyang/LIBERO-Pro", "dataset_revision": "e9f3a5356efed7a23b06c28cfe880a22c3306074"},
+  "task": {"suite": "libero_spatial_task", "task_order_index": 0, "task_index": 0, "task_name": "pick_up_the_black_bowl_between_the_plate_and_the_ramekin_and_place_it_on_the_plate", "instruction": "Pick the akita black bowl not between the plate and the ramekin and place it on the plate"},
+  "assets": {
+    "bddl": {"repository_path": "bddl_files/libero_spatial_task/pick_up_the_black_bowl_between_the_plate_and_the_ramekin_and_place_it_on_the_plate.bddl", "sha256": "61ff13656df194011d9c5fb3873098fcce18563d380d4437622d8d910a996bdc", "size_bytes": 3019},
+    "init_states": {"repository_path": "init_files/libero_spatial_task/pick_up_the_black_bowl_between_the_plate_and_the_ramekin_and_place_it_on_the_plate.pruned_init", "sha256": "2d7fa6a57dcfa1563ff61ca595753967318634a0ae19b204dd7750d02bf2be99", "size_bytes": 4872}
+  },
+  "episodes": {"debug_init_state_indices": [1, 2, 3, 4, 5], "scored_init_state_index": 0},
+  "contract": {"robot": "Panda", "controller": "OSC_POSE", "cameras": [{"name": "agentview", "width": 128, "height": 128}, {"name": "robot0_eye_in_hand", "width": 128, "height": 128}], "control_frequency_hz": 20, "settling_ticks": 5, "horizon_ticks": 220, "clock": "continuous_real_time", "success": "native_bddl_goal_predicates"}
+}

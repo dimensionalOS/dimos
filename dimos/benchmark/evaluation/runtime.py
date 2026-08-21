@@ -16,14 +16,20 @@
 
 from __future__ import annotations
 
+from contextlib import redirect_stderr, redirect_stdout
 import hashlib
+import io
 import json
 import multiprocessing
 from pathlib import Path
+import pickle
 import shutil
 import time
-from typing import Any, Literal
+from typing import Any, Literal, TextIO
 
+import cloudpickle  # type: ignore[import-untyped]
+
+from dimos.agents.code_policy_core import validate_policy_callable
 from dimos.agents.code_policy_server import CodePolicyMcpServer
 from dimos.benchmark.evaluation.models import ArtifactReference, RuntimeCondition, RuntimeIdentity
 from dimos.benchmark.evaluation.pi_process import PI_VERSION, PiCliRunner, PiRunError
@@ -32,26 +38,34 @@ from dimos.benchmark.evaluation.protocol import (
     DebugTrialSubmitter,
     ExplorationOutcome,
     PolicyArtifact,
+    PolicyCandidate,
     PolicyExecution,
     PolicyExecutionHandle,
+    PolicyRequestError,
+    PolicySnapshot,
+    TrialEvidence,
     TrialRun,
 )
 
 CODE_POLICY_PROFILE: Literal["code-policy-v1"] = "code-policy-v1"
 TURN_TIMEOUT_SECONDS = 600.0
 DEFAULT_MAX_SUBMISSIONS = 5
+MAX_POLICY_OUTPUT = 32_000
 
 SYSTEM_INSTRUCTIONS = """You are a CodePolicy exploration agent.
 
 Use the single `python_exec` tool to solve the supplied robotics task. Python
 executes in a persistent trusted environment. Define a synchronous function
 with the exact signature `def policy(app: Dimos) -> None`, then call
-`submit_policy(policy)` to test it. Every accepted submission starts a fresh
+`submit_policy(policy)` to test it. Every accepted submission returns an immutable
+PolicyCandidate and starts a fresh
 debug environment and a fresh policy-only DimOS blueprint. Inspect the returned
-TrialRun's outcome, logs, Memory2 recording, and artifacts to diagnose failures.
-You may submit at most five trials. The last accepted submission becomes the
-task-level policy evaluated later without an agent. Do not connect to DimOS
-directly from the exploration REPL.
+candidate's bounded evidence summary, then drill into its timeline, filtered logs,
+frames, policy output, read-only Memory2 recording, or raw artifacts as needed.
+You may submit at most five trials. Before finishing, call
+`freeze_policy(candidate)` exactly once to select the task-level policy evaluated
+later without an agent. Freezing is irreversible and closes submissions. Do not
+connect to DimOS directly from the exploration REPL.
 """
 
 
@@ -118,7 +132,7 @@ class CodePolicyRuntimeFactory:
             max_submissions=max_submissions,
             record_artifact=self._runtime_artifacts.append,
         )
-        server = CodePolicyMcpServer(manager.submit)
+        server = CodePolicyMcpServer(manager.submit, freeze_handler=manager.freeze)
         server.start()
         try:
             user_message = _assemble_user_message(evaluation_protocol, task_input)
@@ -161,8 +175,8 @@ class CodePolicyRuntimeFactory:
             )
             if result.stderr:
                 self._record_text(path, relative, "stderr.log", result.stderr, "Pi stderr")
-            policy = manager.last_policy
-            error = None if policy is not None else "Pi did not submit a valid policy"
+            policy = manager.frozen_policy
+            error = None if policy is not None else "Pi did not freeze a policy candidate"
             outcome = ExplorationOutcome(
                 status="valid" if policy is not None else "invalid",
                 policy=policy,
@@ -177,6 +191,11 @@ class CodePolicyRuntimeFactory:
                 json.dumps(
                     {
                         "status": outcome.status,
+                        "frozen_candidate_id": (
+                            manager.frozen_candidate.id
+                            if manager.frozen_candidate is not None
+                            else None
+                        ),
                         "policy_sha256": policy.sha256 if policy is not None else None,
                         "submission_count": manager.accepted_count,
                         "error": error,
@@ -209,7 +228,13 @@ class CodePolicyRuntimeFactory:
         start_event = context.Event()
         process = context.Process(
             target=_execute_policy_worker,
-            args=(str(policy.serialized_path), str(memory_path), worker_messages, start_event),
+            args=(
+                policy.serialized,
+                str(memory_path),
+                str(memory_path.parent / "policy-output.log"),
+                worker_messages,
+                start_event,
+            ),
             daemon=True,
         )
         try:
@@ -223,7 +248,12 @@ class CodePolicyRuntimeFactory:
                 _stop_process(process)
                 messages.close()
                 raise RuntimeError(error or "policy worker failed before readiness")
-            return _PolicyExecutionProcess(process, messages, start_event)
+            return _PolicyExecutionProcess(
+                process,
+                messages,
+                start_event,
+                memory_path.parent / "policy-output.log",
+            )
         except BaseException:
             if process.is_alive():
                 _stop_process(process)
@@ -351,19 +381,31 @@ class _SubmissionManager:
         self.submit_debug_trial = submit_debug_trial
         self.max_submissions = max_submissions
         self.record_artifact = record_artifact
-        self.last_policy: PolicyArtifact | None = None
-        self.trials: list[TrialRun] = []
+        self.candidates: list[PolicyCandidate] = []
+        self._policies: dict[str, PolicyArtifact] = {}
+        self.frozen_candidate: PolicyCandidate | None = None
         self.accepted_count = 0
 
-    def submit(self, source: str, serialized: bytes) -> TrialRun:
+    @property
+    def trials(self) -> list[TrialRun]:
+        return [candidate.trial for candidate in self.candidates]
+
+    @property
+    def frozen_policy(self) -> PolicyArtifact | None:
+        if self.frozen_candidate is None:
+            return None
+        return self._policies[self.frozen_candidate.id]
+
+    def submit(self, source: str, serialized: bytes) -> PolicyCandidate:
+        if self.frozen_candidate is not None:
+            raise PolicyRequestError("submissions are closed after policy freezing")
         if self.accepted_count >= self.max_submissions:
-            raise RuntimeError(f"submission budget exhausted ({self.max_submissions})")
-        import cloudpickle  # type: ignore[import-untyped]
-
-        from dimos.agents.code_policy_core import validate_policy_callable
-
-        policy_callable = cloudpickle.loads(serialized)
-        validate_policy_callable(policy_callable)
+            raise PolicyRequestError(f"submission budget exhausted ({self.max_submissions})")
+        try:
+            policy_callable = cloudpickle.loads(serialized)
+            validate_policy_callable(policy_callable)
+        except (EOFError, TypeError, ValueError, pickle.UnpicklingError) as exc:
+            raise PolicyRequestError(str(exc)) from exc
         self.accepted_count += 1
         submission_number = self.accepted_count
         relative = self.relative_path / f"submission-{submission_number:04d}"
@@ -374,11 +416,10 @@ class _SubmissionManager:
         source_path.write_text(source.rstrip() + "\n", encoding="utf-8")
         serialized_path.write_bytes(serialized)
         policy = PolicyArtifact(
-            source_path=source_path,
-            serialized_path=serialized_path,
+            source=source.rstrip() + "\n",
+            serialized=serialized,
             sha256=hashlib.sha256(serialized).hexdigest(),
         )
-        self.last_policy = policy
         self.record_artifact(_artifact(relative / "policy.py", "Policy source", "text/x-python"))
         self.record_artifact(
             _artifact(relative / "policy.pkl", "Serialized policy", "application/octet-stream")
@@ -386,60 +427,93 @@ class _SubmissionManager:
         trial_path = submission_path / "trial"
         trial_path.mkdir()
         trial = self.submit_debug_trial(policy, submission_number, trial_path)
-        self.trials.append(trial)
-        return trial
+        candidate_id = f"candidate-{submission_number:04d}-{policy.sha256[:12]}"
+        candidate = PolicyCandidate(
+            id=candidate_id,
+            policy=PolicySnapshot(source=policy.source, sha256=policy.sha256),
+            evidence=TrialEvidence(
+                candidate_id=candidate_id,
+                trial=trial,
+                remaining_submissions=self.max_submissions - self.accepted_count,
+            ),
+        )
+        self._policies[candidate_id] = policy
+        self.candidates.append(candidate)
+        return candidate
+
+    def freeze(self, candidate_id: str) -> PolicyCandidate:
+        if self.frozen_candidate is not None:
+            raise PolicyRequestError("policy candidate is already frozen")
+        candidate = next(
+            (candidate for candidate in self.candidates if candidate.id == candidate_id), None
+        )
+        if candidate is None:
+            raise PolicyRequestError("candidate does not belong to this exploration")
+        self.frozen_candidate = candidate
+        return candidate
 
 
 def _execute_policy_worker(
-    serialized_path: str,
+    serialized: bytes,
     memory_path: str,
+    output_path: str,
     messages: Any,
     start_event: Any,
 ) -> None:
-    try:
+    with _BoundedPolicyWriter(Path(output_path)) as output:
         try:
-            import cloudpickle
+            try:
+                policy = cloudpickle.loads(serialized)
+            except Exception as exc:
+                messages.send(
+                    ("infrastructure_error", f"policy load failed: {type(exc).__name__}: {exc}")
+                )
+                return
+            try:
+                # Keep process-heavy runtime imports inside the spawned worker.
+                from dimos.memory2.store.sqlite import SqliteStore
+                from dimos.porcelain.dimos import Dimos
 
-            with Path(serialized_path).open("rb") as handle:
-                policy = cloudpickle.load(handle)
-        except Exception as exc:
-            messages.send(
-                ("infrastructure_error", f"policy load failed: {type(exc).__name__}: {exc}")
-            )
-            return
-        try:
-            from dimos.memory2.store.sqlite import SqliteStore
-            from dimos.porcelain.dimos import Dimos
-
-            memory = SqliteStore(path=memory_path, must_exist=True, read_only=True)
-            memory.start()
-            app = Dimos.connect(memory=memory)
-        except Exception as exc:
-            messages.send(
-                ("infrastructure_error", f"DimOS connection failed: {type(exc).__name__}: {exc}")
-            )
-            return
-        messages.send(("ready", None))
-        start_event.wait()
-        try:
-            result = policy(app)
-            if result is not None:
-                raise TypeError("policy(app) must return None")
-        except Exception as exc:
-            messages.send(("policy_error", f"{type(exc).__name__}: {exc}"))
-        else:
-            messages.send(("completed", None))
+                memory = SqliteStore(path=memory_path, must_exist=True, read_only=True)
+                memory.start()
+                app = Dimos.connect(memory=memory)
+            except Exception as exc:
+                messages.send(
+                    (
+                        "infrastructure_error",
+                        f"DimOS connection failed: {type(exc).__name__}: {exc}",
+                    )
+                )
+                return
+            messages.send(("ready", None))
+            start_event.wait()
+            try:
+                with redirect_stdout(output), redirect_stderr(output):
+                    result = policy(app)
+                if result is not None:
+                    raise TypeError("policy(app) must return None")
+            except Exception as exc:
+                messages.send(("policy_error", f"{type(exc).__name__}: {exc}"))
+            else:
+                messages.send(("completed", None))
+            finally:
+                app.stop()
         finally:
-            app.stop()
-    finally:
-        messages.close()
+            messages.close()
 
 
 class _PolicyExecutionProcess:
-    def __init__(self, process: Any, messages: Any, start_event: Any) -> None:
+    def __init__(
+        self,
+        process: Any,
+        messages: Any,
+        start_event: Any,
+        output_path: Path,
+    ) -> None:
         self._process = process
         self._messages = messages
         self._start_event = start_event
+        self._output_path = output_path
         self._started_at: float | None = None
         self._finished: PolicyExecution | None = None
 
@@ -475,12 +549,56 @@ class _PolicyExecutionProcess:
                 status = "infrastructure_error"
                 error = f"policy worker exited with code {self._process.exitcode} without a result"
         self._messages.close()
+        output = self._output_path.read_text(encoding="utf-8")
         self._finished = PolicyExecution(
             status=status,
             duration_seconds=time.monotonic() - self._started_at,
             error=error,
+            output=output,
         )
         return self._finished
+
+
+class _BoundedPolicyWriter(io.TextIOBase):
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._handle: TextIO | None = None
+        self._remaining = MAX_POLICY_OUTPUT
+        self._truncated = False
+
+    def __enter__(self) -> _BoundedPolicyWriter:
+        self._handle = self._path.open("w", encoding="utf-8")
+        return self
+
+    def __exit__(
+        self,
+        *_args: object,
+    ) -> None:
+        if self._handle is not None:
+            self._handle.close()
+
+    def write(self, value: str) -> int:
+        if self._handle is None:
+            raise RuntimeError("policy output is not open")
+        if self._remaining <= 0:
+            if not self._truncated:
+                self._handle.write("\n... [policy output truncated]")
+                self._handle.flush()
+                self._truncated = True
+            return len(value)
+        if len(value) <= self._remaining:
+            written = value
+        else:
+            written = value[: self._remaining] + "\n... [policy output truncated]"
+            self._truncated = True
+        self._handle.write(written)
+        self._handle.flush()
+        self._remaining -= len(written)
+        return len(value)
+
+    def flush(self) -> None:
+        if self._handle is not None:
+            self._handle.flush()
 
 
 def _stop_process(process: Any) -> None:

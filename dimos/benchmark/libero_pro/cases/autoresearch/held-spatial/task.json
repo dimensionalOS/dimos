@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "case_id": "libero-pro-autoresearch-held-spatial",
+  "source": {"repository": "Zxy-MLlab/LIBERO-PRO", "revision": "eafdb809426b13153aa1e4c42d6601844217dfec", "dataset_repository": "zhouxueyang/LIBERO-Pro", "dataset_revision": "e9f3a5356efed7a23b06c28cfe880a22c3306074"},
+  "task": {"suite": "libero_spatial_task", "task_order_index": 0, "task_index": 3, "task_name": "pick_up_the_black_bowl_on_the_cookie_box_and_place_it_on_the_plate", "instruction": "Pick the akita black bowl on the top of the cabinet and place it on the plate"},
+  "assets": {
+    "bddl": {"repository_path": "bddl_files/libero_spatial_task/pick_up_the_black_bowl_on_the_cookie_box_and_place_it_on_the_plate.bddl", "sha256": "ef1a87899afcf9b4553aff37a8f7bfc8fd5c433c7784c14f930e9512cb85a2e4", "size_bytes": 2974},
+    "init_states": {"repository_path": "init_files/libero_spatial_task/pick_up_the_black_bowl_on_the_cookie_box_and_place_it_on_the_plate.pruned_init", "sha256": "8552541e2609bc05c03f76996e3d68e0d9eb3fad887c2949d6e12cb45c9c9f7a", "size_bytes": 364}
+  },
+  "episodes": {"debug_init_state_indices": [1, 2, 3, 4, 5], "scored_init_state_index": 0},
+  "contract": {"robot": "Panda", "controller": "OSC_POSE", "cameras": [{"name": "agentview", "width": 128, "height": 128}, {"name": "robot0_eye_in_hand", "width": 128, "height": 128}], "control_frequency_hz": 20, "settling_ticks": 5, "horizon_ticks": 220, "clock": "continuous_real_time", "success": "native_bddl_goal_predicates"}
+}

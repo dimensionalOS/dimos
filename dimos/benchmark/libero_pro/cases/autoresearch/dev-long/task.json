@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "case_id": "libero-pro-autoresearch-dev-long",
+  "source": {"repository": "Zxy-MLlab/LIBERO-PRO", "revision": "eafdb809426b13153aa1e4c42d6601844217dfec", "dataset_repository": "zhouxueyang/LIBERO-Pro", "dataset_revision": "e9f3a5356efed7a23b06c28cfe880a22c3306074"},
+  "task": {"suite": "libero_10_task", "task_order_index": 0, "task_index": 0, "task_name": "LIVING_ROOM_SCENE2_put_both_the_alphabet_soup_and_the_tomato_sauce_in_the_basket", "instruction": "put both the cream cheese and the tomato sauce in the basket"},
+  "assets": {
+    "bddl": {"repository_path": "bddl_files/libero_10_task/LIVING_ROOM_SCENE2_put_both_the_alphabet_soup_and_the_tomato_sauce_in_the_basket.bddl", "sha256": "b04e67b9118b6b0a41956541ef4f66e479a341dd408c21f045c372a169fe01ef", "size_bytes": 3284},
+    "init_states": {"repository_path": "init_files/libero_10_task/LIVING_ROOM_SCENE2_put_both_the_alphabet_soup_and_the_tomato_sauce_in_the_basket.pruned_init", "sha256": "25a941904f264e6ee6f8d06d64d26f18fafb9d94e390038fcd76e048bef38c8e", "size_bytes": 7442}
+  },
+  "episodes": {"debug_init_state_indices": [1, 2, 3, 4, 5], "scored_init_state_index": 0},
+  "contract": {"robot": "Panda", "controller": "OSC_POSE", "cameras": [{"name": "agentview", "width": 128, "height": 128}, {"name": "robot0_eye_in_hand", "width": 128, "height": 128}], "control_frequency_hz": 20, "settling_ticks": 5, "horizon_ticks": 520, "clock": "continuous_real_time", "success": "native_bddl_goal_predicates"}
+}

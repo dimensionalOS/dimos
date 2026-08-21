@@ -45,8 +45,36 @@ The callable produced during exploration and replayed without an agent during ev
 _Avoid_: Agent, exploration transcript, execution mode
 
 **Policy Artifact**:
-The serialized callable and human-readable source captured when `submit_policy(policy)` is called. One artifact is produced per benchmark task and reused across fresh evaluation episodes or seeds of that task. REPL outputs and the agent transcript are separate exploration evidence.
-_Avoid_: Exploration transcript, policy source
+The one Policy Candidate explicitly frozen at the end of exploration, including its serialized callable and human-readable source. It is reused across fresh evaluation episodes or seeds of that task; REPL outputs and the agent transcript are separate exploration evidence.
+_Avoid_: Policy Candidate, exploration transcript, policy source
+
+**Policy Candidate**:
+An immutable submitted policy paired with its Debug Trial and Trial Evidence, eligible to be selected as the task's Policy Artifact. Later submissions do not replace or mutate earlier candidates.
+_Avoid_: Policy Artifact, latest submission, experiment branch
+
+**Research Artifact**:
+The versioned Manipulation Agent Harness revised and measured by autoresearch to improve how later Policy Artifacts are produced across tasks. It excludes task instructions, robot primitives, benchmark cases, and native scoring.
+_Avoid_: Policy Artifact, skillbook, task policy
+
+**Manipulation Agent Harness**:
+The deterministic, task-independent exploration machinery that structures observation access, execution evidence, failure feedback, and policy-candidate lifecycle for an Agent producing a manipulation Policy Artifact. It aligns behavior through executable affordances and feedback rather than task-specific instructions, manipulation algorithms, or secondary verifier and diagnoser models.
+_Avoid_: System prompt, manipulation primitive, evaluator, skillbook
+
+**Trial Evidence**:
+The structured, non-privileged account of a completed Debug Trial presented by the Manipulation Agent Harness as a compact summary with on-demand drilldown into timelines, logs, frames, policy output, Memory2, and complete raw artifacts. It is indexed deterministically without model interpretation, prescribed diagnoses, or hidden evidence.
+_Avoid_: Evaluation Oracle, model critique, raw trial directory
+
+**Autoresearch Experiment**:
+One Evo-managed attempt to improve a Research Artifact from a selected parent, producing an immutable benchmark outcome, task-level traces, and experiment lineage. Experiments may branch from different parents and run concurrently.
+_Avoid_: Evaluation Run, linear iteration, debug trial
+
+**Research Frontier**:
+The Evo-managed set of non-dominated Autoresearch Experiments eligible to parent later experiments. For manipulation research, task-level native scores preserve specialists that an aggregate score would hide.
+_Avoid_: Champion, current best, single branch
+
+**Research Panel**:
+A configurable collection of Evaluation Cases measured by an autoresearch run, with one task-level score per case and a combined score across cases. Its composition may change between runs but is content-hashed and immutable within a run.
+_Avoid_: Benchmark suite, fixed four-case panel, seed list
 
 **Exploration Stage**:
 The unscored training stage in which an agent receives the selected benchmark task's exact instruction, uses a persistent Python REPL, and calls `submit_policy(policy)` to run complete debug trials of that task in fresh environments and blueprints. It is part of the evaluated code-as-policy system, while model latency remains outside the evaluation horizon.

@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "case_id": "libero-pro-autoresearch-held-long",
+  "source": {"repository": "Zxy-MLlab/LIBERO-PRO", "revision": "eafdb809426b13153aa1e4c42d6601844217dfec", "dataset_repository": "zhouxueyang/LIBERO-Pro", "dataset_revision": "e9f3a5356efed7a23b06c28cfe880a22c3306074"},
+  "task": {"suite": "libero_10_task", "task_order_index": 0, "task_index": 3, "task_name": "KITCHEN_SCENE4_put_the_black_bowl_in_the_bottom_drawer_of_the_cabinet_and_close_it", "instruction": "put the bottle in the bottom drawer of the cabinet and close it"},
+  "assets": {
+    "bddl": {"repository_path": "bddl_files/libero_10_task/KITCHEN_SCENE4_put_the_black_bowl_in_the_bottom_drawer_of_the_cabinet_and_close_it.bddl", "sha256": "a2e337fb11319c753beb7d0b83e6f952783e982a4cede7d9bf2dbb4e81aa3ee8", "size_bytes": 2255},
+    "init_states": {"repository_path": "init_files/libero_10_task/KITCHEN_SCENE4_put_the_black_bowl_in_the_bottom_drawer_of_the_cabinet_and_close_it.pruned_init", "sha256": "bd5569f6c7325a8944ee3fa55f1b2e3c5915427692793b78cc26d84b1faeef36", "size_bytes": 2736}
+  },
+  "episodes": {"debug_init_state_indices": [1, 2, 3, 4, 5], "scored_init_state_index": 0},
+  "contract": {"robot": "Panda", "controller": "OSC_POSE", "cameras": [{"name": "agentview", "width": 128, "height": 128}, {"name": "robot0_eye_in_hand", "width": 128, "height": 128}], "control_frequency_hz": 20, "settling_ticks": 5, "horizon_ticks": 520, "clock": "continuous_real_time", "success": "native_bddl_goal_predicates"}
+}

@@ -10,9 +10,9 @@ Evaluations select the runtime that matches the benchmark condition.
 Pi + Python REPL                           native Evaluation
       │                                           │
       ├── submit_policy(policy) ── fresh debug trial
-      │                         ◀── outcome, logs, Memory2, artifacts
+      │                         ◀── immutable candidate + Trial Evidence
       │
-      └── last submitted policy ── held-out trials without Pi
+      └── freeze_policy(candidate) ── held-out trials without Pi
                                                   │
                                       privileged native scorer
 ```
@@ -48,7 +48,7 @@ policy process, trial logs, or Memory2 recording.
 
 The `code-policy-v1` profile runs the model and thinking level pinned by the run
 specification with one tool: `python_exec`. The persistent Python REPL contains
-`Dimos` and `submit_policy`.
+`Dimos`, `submit_policy`, and `freeze_policy`.
 
 ```python
 def policy(app: Dimos) -> None:
@@ -56,22 +56,25 @@ def policy(app: Dimos) -> None:
     app.skills.move_to(target.position)
 
 
-trial = submit_policy(policy)
-trial.outcome
-trial.read_logs(module="MotionPlanner", tail=100)
-memory = trial.open_memory()
+candidate = submit_policy(policy)
+candidate.evidence.summary
+candidate.evidence.logs(module="MotionPlanner", tail=100)
+memory = candidate.evidence.open_memory()
 list(memory.streams)
-list(trial.artifacts.iterdir())
+list(candidate.evidence.artifacts.iterdir())
+freeze_policy(candidate)
 ```
 
 The callable must have the exact synchronous signature shown above. Each
 accepted submission starts a fresh debug environment and a fresh policy-only
 blueprint. The Evaluation chooses the debug-case sequence. Pi may submit five
-trials; its last accepted callable becomes the task-level policy artifact.
+candidates and must explicitly freeze one. Freezing is irreversible, closes
+submissions, and is the only way to produce the task-level policy artifact.
 
-`TrialRun` describes a stopped run. It exposes debug success and reward, policy
-errors, DimOS logs, a read-only Memory2 store, primitive traces, and recorded
-artifacts. It does not expose simulator state or scorer internals.
+`TrialEvidence` gives a bounded summary before exposing the underlying stopped
+`TrialRun`, filtered DimOS logs, selected frames, policy output, a read-only
+Memory2 store, and raw artifacts on demand. Missing evidence remains unavailable;
+the harness does not diagnose from incomplete facts or expose scorer internals.
 
 ## Held-out execution
 

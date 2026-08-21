@@ -1,0 +1,3 @@
+# Use Evo for branching autoresearch
+
+Evo owns manipulation autoresearch experiment worktrees, branching lineage, shared traces, frontier selection, and concurrent agent orchestration, while DimOS owns the Research Artifact and native benchmark measurement. We use unmodified upstream Evo through its public CLI, plugin, target, benchmark, gate, and trace contracts; DimOS does not fork, patch, vendor, subclass, or reproduce Evo orchestration. We use Evo's built-in GEPA-inspired per-task Pareto frontier instead of building a linear champion-challenger loop in DimOS, because aggregate-only hill climbing would discard task specialists and duplicate orchestration that Evo already provides.
