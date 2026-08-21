@@ -76,8 +76,7 @@ class GitAssetCache:
     def _repo_slug(repo_url: str) -> str:
         parsed_path = urlparse(repo_url).path or repo_url
         slug = Path(parsed_path.rstrip("/")).name
-        if slug.endswith(".git"):
-            slug = slug[:-4]
+        slug = slug.removesuffix(".git")
         slug = "".join(char if char.isalnum() or char in {"-", "_", "."} else "-" for char in slug)
         return slug or "checkout"
 

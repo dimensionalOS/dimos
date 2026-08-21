@@ -63,7 +63,6 @@ class GenesisStream(StreamBase):
     def _load_stage(self, usd_path: str | Path) -> None:
         """Load stage from file."""
         # Genesis handles stage loading through simulator
-        pass
 
     def _setup_camera(self) -> None:
         """Setup and validate camera."""
@@ -78,7 +77,6 @@ class GenesisStream(StreamBase):
     def _setup_annotator(self) -> None:
         """Setup the specified annotator."""
         # Genesis handles different render types through camera.render()
-        pass
 
     def stream(self) -> None:
         """Start the streaming loop."""

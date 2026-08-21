@@ -99,7 +99,7 @@ def _find_safe_goal_bfs(
 
     # BFS queue and visited set
     queue = deque([(gx, gy, 0)])
-    visited = set([(gx, gy)])
+    visited = {(gx, gy)}
 
     # 8-connected neighbors
     neighbors = [(0, 1), (1, 0), (0, -1), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)]
@@ -164,7 +164,7 @@ def _find_safe_goal_bfs_contiguous(
 
     # BFS queue and visited set
     queue = deque([(gx, gy, 0)])
-    visited = set([(gx, gy)])
+    visited = {(gx, gy)}
 
     # 8-connected neighbors
     neighbors = [(0, 1), (1, 0), (0, -1), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)]
@@ -258,7 +258,4 @@ def _is_position_safe(
                     free_count += 1
 
     # Require at least 50% of neighbors to be free (not surrounded)
-    if total_count > 0 and free_count < total_count * 0.5:
-        return False
-
-    return True
+    return not (total_count > 0 and free_count < total_count * 0.5)

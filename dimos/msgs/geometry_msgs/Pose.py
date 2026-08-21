@@ -54,18 +54,18 @@ class Pose(LCMPose):  # type: ignore[misc]
     def __init__(self) -> None: ...
 
     @overload
-    def __init__(self, x: int | float, y: int | float, z: int | float) -> None: ...
+    def __init__(self, x: float, y: float, z: float) -> None: ...
 
     @overload
     def __init__(
         self,
-        x: int | float,
-        y: int | float,
-        z: int | float,
-        qx: int | float,
-        qy: int | float,
-        qz: int | float,
-        qw: int | float,
+        x: float,
+        y: float,
+        z: float,
+        qx: float,
+        qy: float,
+        qz: float,
+        qw: float,
     ) -> None: ...
 
     @overload

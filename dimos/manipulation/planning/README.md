@@ -19,11 +19,11 @@ python -i -m dimos.manipulation.planning.examples.manipulation_client  # termina
 
 In the interactive client:
 ```python skip
-commands()              # List available commands
-joints()                # Get current joint positions
-plan([0.1] * 7)         # Plan to target
-preview()               # Preview in Meshcat (url() for link)
-execute()               # Execute via coordinator
+commands()  # List available commands
+joints()  # Get current joint positions
+plan([0.1] * 7)  # Plan to target
+preview()  # Preview in Meshcat (url() for link)
+execute()  # Execute via coordinator
 ```
 
 ## Architecture

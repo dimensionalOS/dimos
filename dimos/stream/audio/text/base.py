@@ -27,7 +27,6 @@ class AbstractTextEmitter(ABC):
         Returns:
             Observable emitting audio frames
         """
-        pass
 
 
 class AbstractTextConsumer(ABC):
@@ -43,7 +42,6 @@ class AbstractTextConsumer(ABC):
         Returns:
             Self for method chaining
         """
-        pass
 
 
 class AbstractTextTransform(AbstractTextConsumer, AbstractTextEmitter):
@@ -51,5 +49,3 @@ class AbstractTextTransform(AbstractTextConsumer, AbstractTextEmitter):
 
     This represents a transform in an audio processing pipeline.
     """
-
-    pass
