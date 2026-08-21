@@ -27,6 +27,9 @@ def open_sqlite_connection(path: str | Path) -> sqlite3.Connection:
     conn = sqlite3.connect(path, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
+    # WAL has one writer at a time; concurrent writer threads (a recorder
+    # feed plus a live embed save) can starve past the 5s default and die.
+    conn.execute("PRAGMA busy_timeout=30000")
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)
