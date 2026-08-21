@@ -33,6 +33,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.ImuInfo import ImuInfo
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
@@ -150,16 +151,23 @@ def _driver_env() -> dict[str, str]:
     return {"LD_LIBRARY_PATH": ":".join(parts)}
 
 
+# Both native modules come out of one dimSLAM derivation, so they share a pin.
+# fused-odom-rust tip; tag on merge.
+DIMSLAM_REV = "395dd26664ef914dc81e5c6f38a6317ccb2ce874"
+
+
+def dimslam_build_command() -> str:
+    """`nix build` line for the dimSLAM binaries, resolved for this host.
+
+    It drops the `result` symlink in the module's cwd.
+    """
+    return f"nix build github:dimensionalOS/dimSLAM/{DIMSLAM_REV}#{sdk_variant()}"
+
+
 class CuvslamConfig(NativeModuleConfig):
     cwd: str | None = str(MODULE_DIR)
     executable: str = "result/bin/cuvslam_odometry"
-    # The module lives in dimSLAM (cuVSLAM + the Rust module built on it); dimos just
-    # builds the pinned rev (fused-odom-rust tip; tag on merge). `nix build`
-    # drops the `result` symlink in the cwd.
-    build_command: str | None = Field(
-        default_factory=lambda: "nix build github:dimensionalOS/dimSLAM/"
-        f"f64e67879b6ef969360e8341c140ecbcb43f2637#{sdk_variant()}"
-    )
+    build_command: str | None = Field(default_factory=dimslam_build_command)
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
 
@@ -184,6 +192,9 @@ class CuvslamConfig(NativeModuleConfig):
     # map->odom can only be identity: this module carries no map correction. Loop
     # closure and relocalization moved downstream, into the fusion filter.
     publish_map_to_odom: bool = True
+    # Off publishes odometry only. Downstream of a fusion filter this has to be off: the
+    # filter owns odom -> base_frame, and a second publisher on that edge races it.
+    publish_tf: bool = True
 
     # cuVSLAM's Inertial mode: the stereo pair plus one IMU. The noise model and frame
     # come from the imu_info stream, published by the driver the way camera_info is.
@@ -206,6 +217,11 @@ class CuvslamConfig(NativeModuleConfig):
     # rgbd only: raw depth units per metre. cuVSLAM assumes 1, and depth images are
     # 16-bit millimetres.
     depth_units_per_meter: float = 1000.0
+    # Range gate on the published depth_cloud, metres. Stereo depth error grows as range
+    # squared, so the far gate decides whether the cloud is worth mapping with; 0 leaves
+    # it open.
+    depth_cloud_min_range: float = 0.0
+    depth_cloud_max_range: float = 0.0
 
 
 class CuvslamOdometry(NativeModule):
@@ -233,4 +249,5 @@ class CuvslamOdometry(NativeModule):
     imu_info: In[ImuInfo]
 
     odometry: Out[Odometry]
+    depth_cloud: Out[PointCloud2]
     tf: IO[TFMessage]

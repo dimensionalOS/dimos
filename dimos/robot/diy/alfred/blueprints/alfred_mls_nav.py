@@ -17,9 +17,10 @@
     dimos run alfred-mls-nav
 
 ``alfred_nav`` needs the lidar twice over: FastLIO2 for odometry and registered scans
-for the costmap. This drops it entirely. cuVSLAM tracks the D455's infrared stereo pair
-for odometry, and the same camera's depth feeds a ray-traced voxel map that MLS plans
-over.
+for the costmap. This drops it entirely. cuVSLAM tracks the D455's infrared stereo pair,
+``OdometryFusion`` runs an error-state Kalman filter over that, the base's wheel
+odometry and the D455's IMU, and the same camera's depth feeds a ray-traced voxel map
+that MLS plans over.
 
 The mapper is ``RayTracingVoxelMap`` rather than ``VoxelGridMapper`` on purpose. The
 latter carves whole (X, Y) columns on every insert, which is last-write-wins: measured
@@ -34,6 +35,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.mapping.cuvslam.cuvslam import CuvslamOdometry
+from dimos.mapping.odometry_fusion.odometry_fusion import OdometryFusion
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -85,19 +87,53 @@ alfred_mls_nav = (
             # The camera only assembles a pointcloud when colour is also streaming.
             enable_color=True,
             enable_pointcloud=True,
-            # Feeding the D455's own IMU made cuVSLAM worse on every handheld recording
-            # benchmarked, 4x at jogging pace.
-            enable_imu=False,
+            # Goes to the fusion filter, not to cuVSLAM: see the CuvslamOdometry note.
+            enable_imu=True,
             base_transform=D455_MOUNT,
         ),
+        # cuVSLAM's inertial mode is implemented only on the CUDA path, so asking for it
+        # here aborts the tracker with "CUDA driver version is insufficient" on Alfred,
+        # which has no usable driver. The IMU goes to the fusion filter instead, which is
+        # also where it belongs: the filter carries a gyro bias state and cuVSLAM does not.
         CuvslamOdometry.blueprint(
             enable_imu=False,
             # Alfred's computer has no GPU; the fork-built libcuvslam carries the CPU path.
             use_gpu=False,
             base_frame="base_link",
-            odom_frame="odom",
+            # Its own root, so the filter reads it as a drifting source and fuses
+            # consecutive poses as deltas rather than trusting its accumulated pose.
+            odom_frame="visual_odom",
             map_frame="map",
-        ),
+            # The filter owns odom -> base_link; a second publisher on that edge would
+            # leave base_link with two parents.
+            publish_tf=False,
+        ).remappings([(CuvslamOdometry, "odometry", "source_odometry")]),
+        # cuVSLAM drops out whenever the IR pair loses texture and recovers by jumping;
+        # wheel odometry never drops out but its heading drifts without bound; the IMU
+        # has the heading rate and no position. Offline on drive_2026-08-18_23-05-04.db,
+        # wheel alone ends 2.66 m from the point-lio reference and wheel with a
+        # bias-corrected gyro heading ends 1.33 m, against a 0.59 m ceiling set by
+        # replaying the wheel steps along the reference's own heading.
+        OdometryFusion.blueprint(
+            # Smoke-test only, not for commit: the pinned dimSLAM rev predates the
+            # anchor fix and use_imu, so let the locally built result/ binary stand.
+            build_command=None,
+            odom_frame="odom",
+            base_frame="base_link",
+            source_frames=["visual_odom", "wheel_odom"],
+            # Fixed variances, not the message covariances: both sources report the drift
+            # they have accumulated, which says nothing about the delta being fused.
+            # cuVSLAM's translation is the better of the two and its heading the worse.
+            source_pose_variances=[
+                *(0.01, 0.01, 0.01, 0.05, 0.05, 0.05),
+                *(0.05, 0.05, 0.0, 0.0, 0.0, 0.02),
+            ],
+            # Only the wheels measure velocity; cuVSLAM's twist is differentiated pose.
+            source_twist_variances=[*(0.0,) * 6, *(0.02, 0.02, 0.0, 0.0, 0.0, 0.05)],
+            # Alfred is holonomic in the plane, so only the out-of-plane directions are
+            # constrained: it cannot climb, roll or pitch.
+            constraint_twist_variances=[0.0, 0.0, 0.01, 0.01, 0.01, 0.0],
+        ).remappings([(OdometryFusion, "sources", "source_odometry")]),
         RayTracingVoxelMap.blueprint(
             voxel_size=VOXEL_SIZE_METERS,
             max_range=DEPTH_MAX_RANGE_METERS,
@@ -140,6 +176,9 @@ alfred_mls_nav = (
             (RealSenseCamera, "camera_info", "color_camera_info"),
             # The depth pointcloud stands in for the lidar the mapper normally consumes.
             (RealSenseCamera, "pointcloud", "lidar"),
+            # Both odometry sources onto the one stream; the filter tells them apart by
+            # frame_id, the same way the tracker tells the two imagers apart.
+            (AlfredHighLevel, "wheel_odometry", "source_odometry"),
         ]
     )
     .global_config(n_workers=10, robot_model="alfred", obstacle_avoidance=False)
