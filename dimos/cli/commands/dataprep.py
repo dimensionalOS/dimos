@@ -42,11 +42,11 @@ def dataprep_build(
 @dataprep_app.command("inspect")
 def dataprep_inspect(
     dataset: Path | None = typer.Argument(
-        None, help="Built dataset: a .hdf5 file or a lerobot directory"
+        None, help="Recording .db, built .hdf5 file, or lerobot directory"
     ),
     output_format: str = typer.Option(
         None, "--format", "-f", help="lerobot | hdf5 (auto-detected from the path if omitted)"
     ),
 ) -> None:
-    """Summarize a built dataset: features, shapes, episode/frame counts, uniformity."""
+    """Summarize a recording or built dataset, including incomplete episodes."""
     inspect(dataset, cast("Literal['lerobot', 'hdf5'] | None", output_format))
