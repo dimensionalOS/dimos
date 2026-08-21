@@ -57,12 +57,14 @@ class DanDetector(Resource):
     segmenter: EdgeTAMImageSegmenter
 
     def start(self) -> None:
+        import torch
+
         from dimos.models.embedding.siglip import SigLIPModel
         from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
         from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
 
         self.siglip = SigLIPModel()
-        self.detector = Owlv2Detector()
+        self.detector = Owlv2Detector(dtype=torch.float16)
         self.segmenter = EdgeTAMImageSegmenter()
         self._live: list[DisposableBase] = []
 

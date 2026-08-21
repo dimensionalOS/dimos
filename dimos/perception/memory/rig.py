@@ -32,12 +32,16 @@ be supplied directly for live stores whose streams are still filling.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass, field
+import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
 from dimos.memory.tf import StreamTF
+from dimos.memory.transform import Transformer
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.perception.detection.project import sees as project_sees
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
@@ -48,9 +52,10 @@ from dimos.perception.detection.type.detection3d.pointcloud_filters import (
 from dimos.perception.memory import gates
 from dimos.perception.memory.gates import SPEED_MAX, STILL_ENVELOPE, TF_TOLERANCE
 from dimos.perception.memory.types import InventoryPolicy, LocalizePolicy
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
     from dimos_lcm.sensor_msgs import CameraInfo
 
@@ -62,13 +67,21 @@ if TYPE_CHECKING:
     from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
     from dimos.protocol.tf.tf import TFLookup
 
+logger = setup_logger()
+
 # Pose-stamped rigs ride per-frame odometry, so walking does not stale the
 # projection the way a sweeping wrist stales interpolated tf; the gate only
 # drops speed glitches and sprints.
 WALK_SPEED_MAX = 1.5
 
 DEPTH_TOLERANCE = 0.06  # s - temporal join color->depth
-CLOUD_ACCUM_S = 2.0  # s - scans within this of a frame form its geometry
+# Scans within this of a frame form its geometry. Wide enough that a
+# spinning lidar's near-floor blind ring is filled by scans taken from
+# earlier and later poses - the scene is static in world frame.
+CLOUD_ACCUM_S = 4.0
+
+_SCAN_CACHE_MAX = 256  # registered scans held per rig; a window needs a few dozen
+_CELL_OFFSET = 1 << 20  # shifts lattice cell indices positive for 21-bit key packing
 
 EMBED_HZ = 1.0  # index density for a wrist camera parked over a workspace
 # A walking robot changes viewpoint every frame and its frames blur
@@ -96,6 +109,108 @@ ROOM_LOCALIZE_POLICY = LocalizePolicy(
     surface_patch_min_drop_m=-0.06,
     verify_radius_m=5.0,
 )
+
+
+MOBILE_SPAN_M = 3.0  # camera translation beyond this means a mobile base
+
+
+def _tf_root(store: Any, tf_name: str) -> str | None:
+    """The tf tree's root frame: a parent that is never a child."""
+    parents: set[str] = set()
+    children: set[str] = set()
+    for obs in store.stream(tf_name).limit(500):
+        for transform in obs.data.transforms:
+            parents.add(transform.frame_id)
+            children.add(transform.child_frame_id)
+    roots = parents - children
+    return roots.pop() if len(roots) == 1 else None
+
+
+def _stream_rate(stream: Any) -> float:
+    count: int = stream.count()
+    if count < 2:
+        return float(count)
+    t0, t1 = stream.get_time_range()
+    return count / max(float(t1 - t0), 1e-6)
+
+
+def _camera_span(rig: Rig) -> float:
+    """Diagonal of the camera positions' bounding box over the recording."""
+    if rig.tf is None and rig.poses is None:
+        return 0.0  # no pose source at all: an embed-only store being seeded
+    try:
+        t0, t1 = rig.color.get_time_range()
+    except LookupError:
+        return 0.0  # live store, nothing recorded yet
+    positions = []
+    for k in range(12):
+        pose = rig.camera_pose(t0 + (t1 - t0) * k / 11)
+        if pose is not None:
+            positions.append([pose.position.x, pose.position.y, pose.position.z])
+    if len(positions) < 2:
+        return 0.0
+    spread = np.array(positions)
+    return float(np.linalg.norm(spread.max(axis=0) - spread.min(axis=0)))
+
+
+def _lattice_quantum(points: np.ndarray) -> float | None:
+    """The grid pitch when coordinates lie on a lattice; None for continuous scans.
+
+    Grid-quantized sources (an occupancy map streamed as clouds) repeat the
+    same cell across snapshots and dedup by cell key; continuous scans never
+    collide and skip dedup entirely.
+    """
+    sample = points[:2048]
+    x = np.unique(sample[:, 0])
+    if len(x) < 8:
+        return None
+    diffs = np.diff(x)
+    diffs = diffs[diffs > 1e-9]
+    if len(diffs) == 0:
+        return None
+    quantum = float(diffs.min())
+    if quantum < 1e-4:
+        return None
+    scaled = sample / quantum
+    if float(np.abs(scaled - np.round(scaled)).max()) > 0.01:
+        return None
+    return quantum
+
+
+class RegisterScans(Transformer["PointCloud2", "PointCloud2"]):
+    """Map sensor-frame scans into a world frame through tf, one transform per scan.
+
+    A plain stream transformer, so the registered cloud is a derived stream:
+    ``scans.transform(RegisterScans(tf, world))`` yields world-frame clouds,
+    ``.save(...)`` persists them, and a live pipeline can tail-register the
+    same way the embed pipeline does. Scans already in the world frame pass
+    through untouched; scans with no transform at their time are dropped.
+    """
+
+    def __init__(self, tf: TFLookup, world_frame: str, tolerance: float = TF_TOLERANCE) -> None:
+        self.tf = tf
+        self.world_frame = world_frame
+        self.tolerance = tolerance
+
+    def __call__(
+        self, upstream: Iterator[Observation[PointCloud2]]
+    ) -> Iterator[Observation[PointCloud2]]:
+        from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+        for obs in upstream:
+            if obs.data.frame_id == self.world_frame:
+                yield obs
+                continue
+            transform = self.tf.get(self.world_frame, obs.data.frame_id, obs.ts, self.tolerance)
+            if transform is None:
+                continue
+            matrix = transform.to_matrix()
+            points = obs.data.as_numpy()[0] @ matrix[:3, :3].T + matrix[:3, 3]
+            yield obs.derive(
+                data=PointCloud2.from_numpy(points, frame_id=self.world_frame, timestamp=obs.ts)
+            )
+
+
 ROOM_INVENTORY_POLICY = InventoryPolicy(
     keyframe_stride_s=1.25,
     min_mask_area_px=900,
@@ -133,64 +248,211 @@ class Rig:
     base_to_optical: Transform | None = None
     poses: Any = None  # stream carrying world base poses (e.g. odom)
     depth: Any = None  # aligned depth stream, lifted via from_depth
-    cloud: Any = None  # world-frame pointcloud stream, lifted via from_2d
+    cloud: Any = None  # pointcloud stream, lifted via from_2d after registration
     tf_tolerance: float = TF_TOLERANCE
     cloud_accum_s: float = CLOUD_ACCUM_S
     speed_max: float = SPEED_MAX
     scene_gate: bool = True
     embed_hz: float = EMBED_HZ
+    mobile: bool = False  # camera rides a mobile base: room-scale policies
     _cloud_memo: tuple[float, PointCloud2] | None = field(default=None, repr=False, init=False)
+    _scan_cache: OrderedDict[float, np.ndarray | None] = field(
+        default_factory=OrderedDict, repr=False, init=False
+    )
+    _quantum: float | None = field(default=None, repr=False, init=False)
+    _quantum_known: bool = field(default=False, repr=False, init=False)
 
     @classmethod
-    def from_store(cls, store: Any) -> Rig:
-        """Recognize the store's shape.
+    def from_store(
+        cls,
+        store: Any,
+        manifest: dict[str, Any] | None = None,
+        overrides: dict[str, str] | None = None,
+    ) -> Rig:
+        """Recognize the store's shape without depending on stream names.
 
-        A ``tf`` stream wins as pose source; without one the observations'
-        stamped poses are used with the Go2 front-camera mount. ``depth_image``
-        wins as geometry source; a ``lidar`` stream is next, registered in
-        whatever world frame its scans carry; a store with neither can still
-        embed and retrieve, just never lift. Intrinsics and the optical frame
-        name come from the ``camera_info`` stream, or - for stores that carry
-        none - the static Go2 front-camera calibration. Stream contents are
-        only read where a name must be sniffed, so a live store whose streams
-        are still empty resolves too.
+        Resolution order per role: ``overrides`` (explicit stream names from
+        a caller or CLI), then ``manifest`` (passed in, or the ``<db>.rig.json``
+        sidecar next to the recording), then discovery by stream data type
+        and content: TFMessage-typed stream as tf, Image streams classified
+        by their frames (uint16/float is depth, distinct-channel uint8 is
+        color; a lossy-coded gray stream is neither), a PointCloud2 stream as
+        geometry when there is no metric depth, and - when tf is absent - the
+        highest-rate pose-stamped stream as pose source. On tf rigs the world
+        frame is the tf tree's root; ambiguity or missing calibration raises
+        with the candidates rather than guessing.
+
+        The manifest carries roles as stream names plus, for recordings whose
+        calibration was never recorded, an inline ``camera_info`` dict and a
+        ``base_to_optical`` mount.
         """
-        streams = store.list_streams()
-        color = store.streams.color_image
-        tf = StreamTF.from_store(store)
+        from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+        from dimos.msgs.geometry_msgs.Vector3 import Vector3
+        from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo as CameraInfoMsg
+        from dimos.msgs.sensor_msgs.Image import Image as ImageMsg
+        from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2 as PointCloudMsg
+        from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
-        depth = store.streams.depth_image if "depth_image" in streams else None
-        cloud = None
+        names = store.list_streams()
+        types = {name: store.stream(name).data_type for name in names}
+
+        if manifest is None:
+            path = getattr(store.config, "path", None)
+            if path:
+                sidecar = Path(f"{path}.rig.json")
+                if sidecar.exists():
+                    manifest = json.loads(sidecar.read_text())
+                    logger.info(f"rig: manifest {sidecar}")
+        roles: dict[str, Any] = dict(manifest or {})
+        roles.update(overrides or {})
+
+        claimed = {value for value in roles.values() if isinstance(value, str)}
+        color_name: str | None = roles.get("color")
+        depth_name: str | None = roles.get("depth")
+        cloud_name: str | None = roles.get("cloud")
+        poses_name: str | None = roles.get("poses")
+
+        tf_names = [n for n in names if types[n] is TFMessage]
+        tf_name = tf_names[0] if len(tf_names) == 1 else ("tf" if "tf" in tf_names else None)
+        tf = StreamTF.from_store(store, tf_name) if tf_name is not None else None
+
+        # image streams classify by content: metric depth or genuine color
+        image_names = [n for n in names if types[n] is ImageMsg and n not in claimed]
+        color_candidates: list[str] = []
+        depth_candidates: list[str] = []
+        empty_images: list[str] = []
+        for name in image_names:
+            stream = store.stream(name)
+            if stream.count() == 0:
+                empty_images.append(name)
+                continue
+            frame = stream.first().data.data
+            if frame.dtype == np.uint16 or frame.dtype.kind == "f":
+                depth_candidates.append(name)
+            elif (
+                frame.ndim == 3
+                and frame.shape[2] == 3
+                and not np.array_equal(frame[..., 0], frame[..., 1])
+            ):
+                color_candidates.append(name)
+            else:
+                logger.info(f"rig: image stream {name!r} is neither color nor metric depth")
+        if color_name is None:
+            if len(color_candidates) > 1:
+                color_name = max(color_candidates, key=lambda n: _stream_rate(store.stream(n)))
+                logger.info(f"rig: several color streams, using highest-rate {color_name!r}")
+            elif color_candidates:
+                color_name = color_candidates[0]
+            elif len(empty_images) == 1:
+                color_name = empty_images[0]  # a live store's not-yet-filled feed
+        if color_name is None:
+            raise ValueError(f"no color image stream among {names}; pass a manifest or --color")
+        claimed.add(color_name)
+        if depth_name is None:
+            if len(depth_candidates) > 1:
+                raise ValueError(f"several depth streams {depth_candidates}; pass --depth")
+            depth_name = depth_candidates[0] if depth_candidates else None
+
+        if cloud_name is None and depth_name is None:
+            cloud_names = [n for n in names if types[n] is PointCloudMsg and n not in claimed]
+            if len(cloud_names) > 1:
+                raise ValueError(f"several pointcloud streams {cloud_names}; pass --cloud")
+            cloud_name = cloud_names[0] if cloud_names else None
+
+        color = store.stream(color_name)
+        depth = store.stream(depth_name) if depth_name is not None else None
+        cloud = store.stream(cloud_name) if cloud_name is not None and depth is None else None
+        if cloud_name is not None:
+            claimed.add(cloud_name)
+
         world_frame = gates.WORLD_FRAME
-        if depth is None and "lidar" in streams:
-            cloud = store.streams.lidar
+        if tf is not None:
+            world_frame = _tf_root(store, cast("str", tf_name)) or world_frame
+        elif cloud is not None:
             try:
                 world_frame = cloud.first().data.frame_id
             except LookupError:
                 pass  # live store, nothing recorded yet
 
-        if "camera_info" in streams:
-            camera_info = store.streams.camera_info.first().data
-            optical_frame = camera_info.frame_id
+        # intrinsics: inline manifest dict, named stream, or discovery by
+        # type with the color camera's frame deciding among several
+        camera_info = None
+        camera_info_role = roles.get("camera_info")
+        if isinstance(camera_info_role, dict):
+            camera_info = CameraInfoMsg(
+                height=camera_info_role["height"],
+                width=camera_info_role["width"],
+                distortion_model=camera_info_role.get("distortion_model", ""),
+                D=camera_info_role.get("D"),
+                K=camera_info_role["K"],
+                R=camera_info_role.get("R"),
+                P=camera_info_role.get("P"),
+                frame_id=camera_info_role["frame_id"],
+            )
         else:
-            from dimos.robot.unitree.go2.connection import GO2Connection
-
-            camera_info = GO2Connection.camera_info_static
-            # With a tf tree the optical name must match that tree; the Go2
-            # calibration names apply only to the tf-less Go2 shape.
-            optical_frame = camera_info.frame_id if tf is None else gates.OPTICAL_FRAME
+            ci_name = camera_info_role if isinstance(camera_info_role, str) else None
+            if ci_name is None:
+                candidates = [
+                    n for n in names if types[n] is CameraInfoMsg and store.stream(n).count()
+                ]
+                try:
+                    color_frame = color.first().data.frame_id
+                except LookupError:
+                    color_frame = None
+                matching = [
+                    n for n in candidates if store.stream(n).first().data.frame_id == color_frame
+                ]
+                if matching:
+                    ci_name = sorted(matching)[0]
+                elif len(candidates) == 1:
+                    ci_name = candidates[0]
+                elif len(candidates) > 1:
+                    raise ValueError(f"several camera_info streams {candidates}; pass a manifest")
+            if ci_name is not None:
+                camera_info = store.stream(ci_name).first().data
 
         base_to_optical = None
+        mount = roles.get("base_to_optical")
+        if isinstance(mount, dict):
+            base_to_optical = Transform(
+                translation=Vector3(*mount["translation"]),
+                rotation=Quaternion(*mount["rotation"]),
+                frame_id="base_link",
+                child_frame_id=camera_info.frame_id if camera_info else "camera_optical",
+            )
+
         poses = None
         if tf is None:
-            from dimos.robot.unitree.go2.connection import BASE_TO_OPTICAL
+            if poses_name is None:
+                posed = [
+                    n
+                    for n in names
+                    if n not in claimed
+                    and n != color_name
+                    and store.stream(n).count()
+                    and store.stream(n).first().pose_tuple is not None
+                ]
+                if posed:
+                    poses_name = max(posed, key=lambda n: _stream_rate(store.stream(n)))
+            poses = store.stream(poses_name) if poses_name is not None else None
 
-            base_to_optical = BASE_TO_OPTICAL
-            poses = store.streams.odom
+        if depth is not None or cloud is not None:
+            if camera_info is None:
+                raise ValueError(
+                    "store has 3D geometry but no camera calibration; add a CameraInfo "
+                    "stream role or an inline camera_info to the <db>.rig.json manifest"
+                )
+            if tf is None and (poses is None or base_to_optical is None):
+                raise ValueError(
+                    "store has no tf; a pose-stamped rig needs a poses stream and a "
+                    "base_to_optical mount in the <db>.rig.json manifest"
+                )
 
-        mobile = cloud is not None
-        return cls(
-            camera_info=camera_info,
+        # embed-only stores (no geometry) may carry no calibration at all;
+        # every geometry API raises on use, embedding never touches it
+        optical_frame = camera_info.frame_id if camera_info is not None else gates.OPTICAL_FRAME
+        rig = cls(
+            camera_info=cast("CameraInfo", camera_info),
             color=color,
             world_frame=world_frame,
             optical_frame=optical_frame,
@@ -199,12 +461,21 @@ class Rig:
             poses=poses,
             depth=depth,
             cloud=cloud,
-            speed_max=WALK_SPEED_MAX if mobile else SPEED_MAX,
-            scene_gate=not mobile,
-            embed_hz=WALK_EMBED_HZ if mobile else EMBED_HZ,
         )
 
-    # pose 
+        span = _camera_span(rig)
+        rig.mobile = span > MOBILE_SPAN_M
+        if rig.mobile:
+            rig.speed_max = WALK_SPEED_MAX
+            rig.scene_gate = False
+            rig.embed_hz = WALK_EMBED_HZ
+        logger.info(
+            f"rig: color={color_name!r} depth={depth_name!r} cloud={cloud_name!r} "
+            f"tf={tf_name!r} world={world_frame!r} span={span:.1f}m mobile={rig.mobile}"
+        )
+        return rig
+
+    # pose
 
     def world_to_optical(self, ts: float) -> Transform | None:
         if self.tf is not None:
@@ -279,7 +550,7 @@ class Rig:
             intervals.append((run_start, float(times[-1])))
         return [(a, b) for a, b in intervals if b >= a]
 
-    # geometry 
+    # geometry
 
     def depth_at(self, ts: float) -> Image | None:
         """Temporal join: aligned depth frame for a color timestamp."""
@@ -289,24 +560,67 @@ class Rig:
             return None
         return depth
 
+    def registered_scan(self, scan: Observation[PointCloud2]) -> np.ndarray | None:
+        """A scan's points in the world frame, registered via tf when needed.
+
+        Decode and registration run once per scan per run: accumulation
+        windows of neighboring frames overlap almost entirely, and every
+        query of a multi-label run shares every window.
+        """
+        key = scan.ts
+        if key in self._scan_cache:
+            self._scan_cache.move_to_end(key)
+            return self._scan_cache[key]
+        points: np.ndarray | None = scan.data.as_numpy()[0]
+        frame = scan.data.frame_id
+        if frame != self.world_frame:
+            transform = (
+                self.tf.get(self.world_frame, frame, scan.ts, self.tf_tolerance)
+                if self.tf is not None
+                else None
+            )
+            if transform is None:
+                points = None
+            else:
+                matrix = transform.to_matrix()
+                points = points @ matrix[:3, :3].T + matrix[:3, 3]
+        self._scan_cache[key] = points
+        if len(self._scan_cache) > _SCAN_CACHE_MAX:
+            self._scan_cache.popitem(last=False)
+        return points
+
+    def _cloud_quantum(self, points: np.ndarray) -> float | None:
+        if not self._quantum_known:
+            self._quantum = _lattice_quantum(points)
+            self._quantum_known = True
+        return self._quantum
+
     def cloud_at(self, ts: float) -> PointCloud2 | None:
         """World-frame geometry at ts: the scans accumulated around it."""
         if self._cloud_memo is not None and self._cloud_memo[0] == ts:
             return self._cloud_memo[1]
         from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
-        scans = list(self.cloud.after(ts - self.cloud_accum_s).before(ts + self.cloud_accum_s))
-        if not scans:
+        scans = self.cloud.after(ts - self.cloud_accum_s).before(ts + self.cloud_accum_s)
+        parts = [p for p in (self.registered_scan(scan) for scan in scans) if p is not None]
+        if not parts:
             return None
-        merged: PointCloud2
-        if len(scans) == 1:
-            merged = scans[0].data
+        if len(parts) == 1:
+            points = parts[0]
         else:
-            # A grid-quantized source (the Go2 occupancy stream) repeats the
-            # same cell in every snapshot it persists through; accumulation
-            # must not count one voxel once per snapshot.
-            points = np.unique(np.vstack([scan.data.as_numpy()[0] for scan in scans]), axis=0)
-            merged = PointCloud2.from_numpy(points, frame_id=self.world_frame, timestamp=ts)
+            stacked = np.vstack(parts)
+            quantum = self._cloud_quantum(parts[0])
+            if quantum is None:
+                points = stacked
+            else:
+                # A grid-quantized source repeats the same cell in every
+                # snapshot it persists through; accumulation must not count
+                # one voxel once per snapshot. Cell keys dedup in one pass.
+                cells = np.round(stacked / quantum).astype(np.int64) + _CELL_OFFSET
+                keys = (cells[:, 0] << 42) | (cells[:, 1] << 21) | cells[:, 2]
+                _, index = np.unique(keys, return_index=True)
+                points = stacked[index]
+        merged = PointCloud2.from_numpy(points, frame_id=self.world_frame, timestamp=ts)
         self._cloud_memo = (ts, merged)
         return merged
 
@@ -345,7 +659,7 @@ class Rig:
             color, depth, self.camera_info, depth_scale=0.001, depth_trunc=1.5
         ).transform(-transform)
 
-    # predicates 
+    # predicates
 
     def sees(
         self,
@@ -424,7 +738,7 @@ class Rig:
         return selected
 
     def default_localize_policy(self) -> LocalizePolicy:
-        return LocalizePolicy() if self.depth is not None else ROOM_LOCALIZE_POLICY
+        return ROOM_LOCALIZE_POLICY if self.mobile else LocalizePolicy()
 
     def default_inventory_policy(self) -> InventoryPolicy:
-        return InventoryPolicy() if self.depth is not None else ROOM_INVENTORY_POLICY
+        return ROOM_INVENTORY_POLICY if self.mobile else InventoryPolicy()

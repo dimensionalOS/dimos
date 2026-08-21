@@ -38,6 +38,7 @@ import numpy as np
 
 from dimos.memory.embed import EmbedImages
 from dimos.memory.transform import throttle
+from dimos.perception.detection.identity import Identity, spatial
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.memory.rig import Rig
 from dimos.perception.memory.types import Localization, LocalizePolicy, Support
@@ -54,51 +55,54 @@ logger = setup_logger()
 
 TIME_BANDS = 6  # stratify retrieval across the window so late scans always compete
 BOXES_PER_FRAME = 4
+# Frames per OWLv2 forward. The forward's softmax transient is fp32 even
+# under autocast (~580MB per image at 960px), so the profitable batch is
+# whatever VRAM holds beyond the resident models - 1 on an 8GB card.
+DETECT_BATCH = 1
 CONFIRM_FLOOR = 0.22  # geometric confirmation accept for re-detections
 VERIFY_FRAMES = 20
 
 
-@dataclass
-class _ClusterObservation:
-    ts: float
-    score: float
-    centroid: np.ndarray
-    cloud: Any
-    camera_position: np.ndarray
-    detection: Detection3DPC
+# A support candidate is an identity group: the member sightings of one
+# object. Everything a group reports is a plain function over its members.
 
 
-@dataclass
-class _Cluster:
-    center: np.ndarray
-    observations: list[_ClusterObservation] = field(default_factory=list)
+def _centroid(det: Detection3DPC) -> np.ndarray:
+    centroid: np.ndarray = np.asarray(det.pointcloud.pointcloud.points).mean(axis=0)
+    return centroid
 
-    def add(self, obs: _ClusterObservation) -> None:
-        self.observations.append(obs)
-        self.center = np.mean(np.stack([o.centroid for o in self.observations]), axis=0)
 
-    @property
-    def max_score(self) -> float:
-        return max(o.score for o in self.observations)
+def _camera_position(det: Detection3DPC) -> np.ndarray:
+    position = (-det.transform).translation
+    return np.array([position.x, position.y, position.z])
 
-    @property
-    def latest(self) -> _ClusterObservation:
-        return max(self.observations, key=lambda o: o.ts)
 
-    @property
-    def interval(self) -> tuple[float, float]:
-        times = [o.ts for o in self.observations]
-        return min(times), max(times)
+def _group_center(members: list[Detection3DPC]) -> np.ndarray:
+    center: np.ndarray = np.mean(np.stack([_centroid(d) for d in members]), axis=0)
+    return center
 
-    @property
-    def n_views(self) -> int:
-        return len({tuple(np.round(o.camera_position, 2)) for o in self.observations})
 
-    @property
-    def extent(self) -> np.ndarray:
-        points = np.concatenate([np.asarray(o.cloud.pointcloud.points) for o in self.observations])
-        extent: np.ndarray = points.max(axis=0) - points.min(axis=0)
-        return extent
+def _max_score(members: list[Detection3DPC]) -> float:
+    return max(d.confidence for d in members)
+
+
+def _latest(members: list[Detection3DPC]) -> Detection3DPC:
+    return max(members, key=lambda d: d.ts)
+
+
+def _interval(members: list[Detection3DPC]) -> tuple[float, float]:
+    times = [d.ts for d in members]
+    return min(times), max(times)
+
+
+def _n_views(members: list[Detection3DPC]) -> int:
+    return len({tuple(np.round(_camera_position(d), 2)) for d in members})
+
+
+def _group_extent(members: list[Detection3DPC]) -> np.ndarray:
+    points = np.concatenate([np.asarray(d.pointcloud.pointcloud.points) for d in members])
+    extent: np.ndarray = points.max(axis=0) - points.min(axis=0)
+    return extent
 
 
 @dataclass
@@ -119,10 +123,10 @@ def _quaternion_from_matrix(rotation: np.ndarray) -> tuple[float, float, float, 
     return (float(x), float(y), float(z), float(w))
 
 
-def _azimuth_coverage(observations: list[_ClusterObservation], center: np.ndarray) -> float:
+def _azimuth_coverage(members: list[Detection3DPC], center: np.ndarray) -> float:
     directions = []
-    for obs in observations:
-        v = obs.camera_position - center
+    for det in members:
+        v = _camera_position(det) - center
         norm = np.linalg.norm(v)
         if norm > 1e-6:
             directions.append(v / norm)
@@ -134,12 +138,10 @@ def _azimuth_coverage(observations: list[_ClusterObservation], center: np.ndarra
     return len(bins) / 8.0
 
 
-def _axes_observed(
-    observations: list[_ClusterObservation], center: np.ndarray
-) -> tuple[bool, bool, bool]:
+def _axes_observed(members: list[Detection3DPC], center: np.ndarray) -> tuple[bool, bool, bool]:
     directions = []
-    for obs in observations:
-        v = obs.camera_position - center
+    for det in members:
+        v = _camera_position(det) - center
         norm = np.linalg.norm(v)
         if norm > 1e-6:
             directions.append(v / norm)
@@ -150,54 +152,82 @@ def _axes_observed(
 
 
 class _DetectionCache:
-    """One OWLv2 + EdgeTAM pass per unique frame, shared across queries and clusters."""
+    """One OWLv2 + EdgeTAM + lift pass per unique frame, shared across queries and clusters."""
 
-    def __init__(self, detector: Any, segmenter: Any, queries: list[str], floor: float) -> None:
+    def __init__(
+        self, detector: Any, segmenter: Any, rig: Rig, queries: list[str], floor: float
+    ) -> None:
         self.detector = detector
         self.segmenter = segmenter
+        self.rig = rig
         self.queries = queries
         self.floor = floor
         self._cache: dict[float, ImageDetections2D] = {}
+        self._lifted: dict[float, list[Detection3DPC]] = {}
+
+    def _ingest(self, image: Any, detections: ImageDetections2D) -> None:
+        ranked = sorted(detections.detections, key=lambda d: -d.confidence)
+        kept = [
+            det
+            for label in self.queries
+            for det in [d for d in ranked if d.name == label][:BOXES_PER_FRAME]
+        ]
+        for i, det in enumerate(kept):
+            det.track_id = i
+        cached = ImageDetections2D(image, kept)
+        if len(cached):
+            cached = self.segmenter.segment(cached)
+        self._cache[image.ts] = cached
+
+    def prefetch(self, images: list[Any]) -> None:
+        """Detect and segment every uncached frame, batching the OWLv2 forwards."""
+        todo: dict[float, Any] = {}
+        for image in images:
+            if image.ts not in self._cache and image.ts not in todo:
+                todo[image.ts] = image
+        pending = list(todo.values())
+        for start in range(0, len(pending), DETECT_BATCH):
+            chunk = pending[start : start + DETECT_BATCH]
+            for image, detections in zip(
+                chunk,
+                self.detector.query_detections_batch(chunk, self.queries, threshold=self.floor),
+                strict=True,
+            ):
+                self._ingest(image, detections)
 
     def detect(self, image: Any, query: str) -> ImageDetections2D:
-        key = image.ts
-        cached = self._cache.get(key)
-        if cached is None:
-            detections: ImageDetections2D = self.detector.query_detections(
-                image, self.queries, threshold=self.floor
+        if image.ts not in self._cache:
+            self._ingest(
+                image, self.detector.query_detections(image, self.queries, threshold=self.floor)
             )
-            ranked = sorted(detections.detections, key=lambda d: -d.confidence)
-            cached = ImageDetections2D(
-                image,
-                [
-                    det
-                    for label in self.queries
-                    for det in [d for d in ranked if d.name == label][:BOXES_PER_FRAME]
-                ],
-            )
-            if len(cached):
-                cached = self.segmenter.segment(cached)
-            self._cache[key] = cached
-        return cached.filter(lambda d: d.name == query)
+        return self._cache[image.ts].filter(lambda d: d.name == query)
+
+    def lift(self, ts: float) -> list[Detection3DPC]:
+        """All of a frame's detections lifted once, whatever their label."""
+        if ts not in self._lifted:
+            lifted = self.rig.lift(self._cache[ts])
+            self._lifted[ts] = list(lifted) if lifted is not None else []
+        return self._lifted[ts]
 
 
 def _lift(
     detections: ImageDetections2D,
+    cache: _DetectionCache,
     rig: Rig,
     policy: LocalizePolicy,
     plane: Any | None = None,
 ) -> list[tuple[Detection3DPC, np.ndarray]]:
-    """Lift 2D detections through the rig; returns valid (detection3d, camera_position) pairs."""
+    """Gate a query's share of the frame's shared lift; (detection3d, camera_position) pairs."""
     pose = rig.camera_pose(detections.ts)
     if pose is None:
         return []
     camera = np.array([pose.position.x, pose.position.y, pose.position.z])
 
-    lifted = rig.lift(detections)
-    if lifted is None:
-        return []
+    track_ids = {det.track_id for det in detections}
     valid: list[tuple[Detection3DPC, np.ndarray]] = []
-    for det3d in lifted:
+    for det3d in cache.lift(detections.ts):
+        if det3d.track_id not in track_ids:
+            continue
         points = np.asarray(det3d.pointcloud.pointcloud.points)
         if len(points) < policy.min_depth_points:
             continue
@@ -321,7 +351,7 @@ def localize(
     traces: list[LocalizeTrace | None] = (
         list(trace) if isinstance(trace, list) else [trace] * len(queries)
     )
-    cache = _DetectionCache(detector, segmenter, queries, policy.candidate_floor)
+    cache = _DetectionCache(detector, segmenter, rig, queries, policy.candidate_floor)
     results = [
         _localize_one(
             q,
@@ -361,9 +391,12 @@ def _localize_one(
     from dimos.perception.memory.support_plane import fit_support_plane
 
     plane = fit_support_plane(rig, frames)
+    cache.prefetch([obs.data for obs in frames])
 
-    # Pass 2 - OWLv2 + EdgeTAM: detect, segment, lift, verify.
-    clusters: list[_Cluster] = []
+    # Pass 2 - OWLv2 + EdgeTAM: detect, segment, lift, verify. Support
+    # candidates are identity groups: sightings joined by the spatial
+    # is_same strategy at the policy's cluster radius.
+    identity = Identity(is_same=spatial(policy.cluster_radius_m))
     ungrounded_best: tuple[float, float] | None = None  # (score, ts)
     processed: set[float] = set()
 
@@ -377,43 +410,29 @@ def _localize_one(
             return
         if trace is not None and not is_verify:
             trace.detection_frames.append(frame_obs.derive(data=detections))
-        lifted = _lift(detections, rig, policy, plane)
+        lifted = _lift(detections, cache, rig, policy, plane)
         for det2d in detections:
             if not any(d.track_id == det2d.track_id for d, _ in lifted):
                 best = (det2d.confidence, det2d.ts)
                 if ungrounded_best is None or best[0] > ungrounded_best[0]:
                     ungrounded_best = best
-        for det3d, camera in lifted:
-            observation = _ClusterObservation(
-                ts=det3d.ts,
-                score=det3d.confidence,
-                centroid=np.asarray(det3d.pointcloud.pointcloud.points).mean(axis=0),
-                cloud=det3d.pointcloud,
-                camera_position=camera,
-                detection=det3d,
-            )
+        for det3d, _camera in lifted:
             if trace is not None:
                 (trace.verified if is_verify else trace.matched).append((det3d.ts, det3d))
-            for cluster in clusters:
-                distance = float(np.linalg.norm(observation.centroid - cluster.center))
-                if distance <= policy.cluster_radius_m:
-                    cluster.add(observation)
-                    break
-            else:
-                clusters.append(_Cluster(center=observation.centroid, observations=[observation]))
+            identity.add(det3d)
 
     for frame_obs in frames:
         _absorb(frame_obs, is_verify=False)
-    logger.info(f"detection: {len(clusters)} support candidates")
+    logger.info(f"detection: {len(identity.groups)} support candidates")
 
     # Cross-view verification: a support seen from one pose only is
     # unconfirmed. Frames whose camera could observe the support are found
     # geometrically (near + sees with occlusion), then re-detected.
-    clusters.sort(key=lambda c: -c.max_score)
-    for cluster in list(clusters[:4]):
+    for members in sorted(identity.groups, key=_max_score, reverse=True)[:4]:
+        center = _group_center(members)
         predicate = rig.sees(
-            cluster.center,
-            extent=np.minimum(cluster.extent, 0.4),
+            center,
+            extent=np.minimum(_group_extent(members), 0.4),
             # A large object overflows close-up frames; a third of its box in
             # view is still a usable re-detection pass, and those close-ups
             # are exactly the distinct viewpoints verification needs.
@@ -422,7 +441,7 @@ def _localize_one(
         )
         observing = [
             obs
-            for obs in index.near(cluster.center, radius=policy.verify_radius_m)
+            for obs in index.near(center, radius=policy.verify_radius_m)
             if obs.ts not in processed and rig.camera_still(obs.ts) and predicate(obs)
         ]
         if len(observing) > VERIFY_FRAMES:
@@ -430,16 +449,19 @@ def _localize_one(
             # latest seeing frames would bias the latest-pose answer early.
             picks = np.unique(np.linspace(0, len(observing) - 1, VERIFY_FRAMES).astype(int))
             observing = [observing[i] for i in picks]
+        cache.prefetch([obs.data for obs in observing])
         for frame_obs in observing:
             _absorb(frame_obs, is_verify=True)
 
     verified = [
-        c for c in clusters if c.max_score >= policy.accept_score and c.n_views >= policy.min_views
+        members
+        for members in identity.groups
+        if _max_score(members) >= policy.accept_score and _n_views(members) >= policy.min_views
     ]
     logger.info(
         "verification: "
         + ", ".join(
-            f"score={c.max_score:.2f} views={c.n_views} obs={len(c.observations)}" for c in clusters
+            f"score={_max_score(g):.2f} views={_n_views(g)} obs={len(g)}" for g in identity.groups
         )
     )
 
@@ -469,54 +491,56 @@ def _localize_one(
             )
         return None
 
-    winner = max(verified, key=lambda c: c.latest.ts)
-    w_lo, w_hi = winner.interval
+    winner = max(verified, key=lambda g: _latest(g).ts)
+    w_lo, w_hi = _interval(winner)
     rival_scores = [
-        c.max_score
-        for c in verified
-        if c is not winner
-        and not (c.interval[1] < w_lo or c.interval[0] > w_hi)  # coexisting in time
+        _max_score(g)
+        for g in verified
+        if g is not winner
+        and not (_interval(g)[1] < w_lo or _interval(g)[0] > w_hi)  # coexisting in time
     ]
-    margin = winner.max_score - max(rival_scores) if rival_scores else 1.0
+    margin = _max_score(winner) - max(rival_scores) if rival_scores else 1.0
     reason = "ambiguous_between_coexisting_candidates" if margin < policy.refusal_margin else None
 
-    latest = winner.latest
-    points = np.asarray(latest.cloud.pointcloud.points)
+    latest = _latest(winner)
+    points = np.asarray(latest.pointcloud.pointcloud.points)
     aabb_min, aabb_max = points.min(axis=0), points.max(axis=0)
     try:
-        orientation = _quaternion_from_matrix(np.asarray(latest.cloud.oriented_bounding_box.R))
+        orientation = _quaternion_from_matrix(np.asarray(latest.pointcloud.oriented_bounding_box.R))
     except Exception:
         orientation = (0.0, 0.0, 0.0, 1.0)
     center = (aabb_min + aabb_max) / 2
     extent = np.maximum(aabb_max - aabb_min, 0.005)
     sigma = (
-        np.stack([o.centroid for o in winner.observations]).std(axis=0)
-        if len(winner.observations) > 1
+        np.stack([_centroid(d) for d in winner]).std(axis=0)
+        if len(winner) > 1
         else np.full(3, 0.01)
     )
+    winner_center = _group_center(winner)
     support = Support(
         center_xyz=(float(center[0]), float(center[1]), float(center[2])),
         extent_xyz_m=(float(extent[0]), float(extent[1]), float(extent[2])),
         orientation_xyzw=(0.0, 0.0, 0.0, 1.0),
         sigma_xyz_m=(float(sigma[0]), float(sigma[1]), float(sigma[2])),
-        coverage=_azimuth_coverage(winner.observations, winner.center),
-        axes_observed=_axes_observed(winner.observations, winner.center),
+        coverage=_azimuth_coverage(winner, winner_center),
+        axes_observed=_axes_observed(winner, winner_center),
         frame_id=rig.world_frame,
     )
 
     if trace is not None:
-        trace.answer = latest.detection
+        trace.answer = latest
         trace.backdrop_ts = latest.ts
 
+    latest_centroid = _centroid(latest)
     return Localization(
         instance_id="query-0",
-        semantic_score=winner.max_score,
-        identity_score=min(1.0, winner.n_views / 4.0),
+        semantic_score=_max_score(winner),
+        identity_score=min(1.0, _n_views(winner) / 4.0),
         ambiguity_margin=margin,
         position_world_xyz=(
-            float(latest.centroid[0]),
-            float(latest.centroid[1]),
-            float(latest.centroid[2]),
+            float(latest_centroid[0]),
+            float(latest_centroid[1]),
+            float(latest_centroid[2]),
         ),
         orientation_world_xyzw=orientation,
         frame_id=rig.world_frame,
@@ -524,9 +548,9 @@ def _localize_one(
         pose_timestamp=latest.ts,
         geometry_timestamp=latest.ts,
         last_seen_timestamp=latest.ts,
-        point_cloud=latest.cloud,
+        point_cloud=latest.pointcloud,
         cloud_mode=cloud_mode,
         coverage=support.coverage,
-        n_views=winner.n_views,
+        n_views=_n_views(winner),
         reason=reason,
     )
