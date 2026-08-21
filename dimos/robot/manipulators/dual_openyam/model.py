@@ -16,6 +16,7 @@
 
 from pathlib import Path
 
+from dimos.robot.assets.model import RobotModel
 from dimos.utils.data import LfsPath
 
 # LFS extraction caches by directory name. Version revised artifacts so they cannot
@@ -26,6 +27,10 @@ DUAL_OPENYAM_MODEL_PATH = DUAL_OPENYAM_PACKAGE / "dual_openyam.urdf"
 DUAL_OPENYAM_PACKAGE_PATHS: dict[str, Path] = {
     "dual_openyam_abc_box": DUAL_OPENYAM_PACKAGE,
 }
+DUAL_OPENYAM_MODEL = RobotModel.from_file(
+    DUAL_OPENYAM_MODEL_PATH,
+    package_paths=DUAL_OPENYAM_PACKAGE_PATHS,
+)
 DUAL_OPENYAM_SOURCE_PATH = DUAL_OPENYAM_PACKAGE / "SOURCE.md"
 DUAL_OPENYAM_ABC_LICENSE_PATH = DUAL_OPENYAM_PACKAGE / "ABC_LICENSE"
 DUAL_OPENYAM_I2RT_LICENSE_PATH = DUAL_OPENYAM_PACKAGE / "I2RT_YAM_LICENSE"
