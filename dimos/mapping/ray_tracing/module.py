@@ -28,7 +28,10 @@ from dimos.spec import mapping
 class RayTracingVoxelMapConfig(NativeModuleConfig):
     cwd: str | None = "rust"
     executable: str = "result/bin/voxel_ray_tracing"
-    build_command: str | None = "nix build -L path:."
+    # --no-write-lock-file: locking the relative dimos-repo input records a NAR
+    # hash of the checkout, and writing the lock dirties the tree so the very
+    # next build mismatches it.
+    build_command: str | None = "nix build -L --no-write-lock-file path:."
     stdin_config: bool = True
 
     voxel_size: float = 0.1
