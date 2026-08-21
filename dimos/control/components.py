@@ -76,6 +76,9 @@ class HardwareComponent:
             on hardware_type=WHOLE_BODY components.  Keeps WB-only knobs
             off the generic HardwareComponent shared by manipulators,
             bases, and grippers.
+        joint_velocity_limits: Optional physical velocity limits keyed by
+            coordinator joint name. Values use each joint's declared position
+            coordinate per second and override adapter-reported limits.
     """
 
     hardware_id: HardwareId
@@ -87,6 +90,7 @@ class HardwareComponent:
     domain_id: int = 0
     adapter_kwargs: dict[str, Any] = field(default_factory=dict)
     wb_config: WholeBodyConfig | None = None
+    joint_velocity_limits: dict[JointName, float] = field(default_factory=dict)
 
 
 def make_joints(hardware_id: HardwareId, dof: int) -> list[JointName]:

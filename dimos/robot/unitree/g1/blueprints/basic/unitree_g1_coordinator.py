@@ -30,6 +30,7 @@ from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.robot.unitree.g1.joint_limits import g1_velocity_limits
 from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
 
 _g1_joints = make_humanoid_joints("g1")
@@ -56,6 +57,7 @@ unitree_g1_coordinator = (
                     hardware_type=HardwareType.WHOLE_BODY,
                     joints=_g1_joints,
                     adapter_type="transport_lcm",
+                    joint_velocity_limits=g1_velocity_limits(),
                 ),
             ],
             tasks=[
