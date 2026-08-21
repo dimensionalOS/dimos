@@ -14,17 +14,18 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 import enum
 import inspect
 import os
 from pathlib import Path
 import sqlite3
+import threading
 import time
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 from pydantic import Field, field_validator
-from reactivex import operators as ops
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
@@ -32,6 +33,7 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
+from dimos.memory.buffer import Unbounded
 from dimos.memory.embed import EmbedImages
 from dimos.memory.store.null import NullStore
 from dimos.memory.store.sqlite import SqliteStore
@@ -282,6 +284,74 @@ class RecorderConfig(MemoryModuleConfig):
 
 PoseSetter = Callable[[Any], "Awaitable[Pose | None]"]
 
+# A writer thread this far behind means the disk cannot take the data; say so
+# once in a while rather than per message.
+BACKLOG_WARN_DEPTH = 200
+BACKLOG_WARN_INTERVAL = 5.0
+MISSING_POSE_WARN_INTERVAL = 5.0
+POSE_SETTER_TIMEOUT = 1.0
+# Time to finish writing what is already queued once the ports are unsubscribed.
+WRITER_FLUSH_TIMEOUT = 30.0
+WRITE_STATS_INTERVAL = 10.0
+
+
+def merge_stream_dbs(base: Path, stream_names: list[str] | None = None) -> None:
+    """Combine per-stream db files (``<base>.<stream>.db``) into ``base``.
+
+    Each shard holds only its own stream's tables (``"{s}"``, ``"{s}_blob"``,
+    ``"{s}_rtree"`` + the ``_streams`` registry row), so the merge is a straight
+    schema copy + INSERT..SELECT per shard. The shards are left on disk; delete
+    them once the merged db checks out. With *stream_names* omitted, merges
+    every ``<base>.<stream>.db`` found next to *base* — usable standalone after
+    a hard kill that skipped the recorder's stop()."""
+    if stream_names is None:
+        prefix = f"{base.stem}."
+        stream_names = sorted(
+            shard.name[len(prefix) : -len(base.suffix)]
+            for shard in base.parent.glob(f"{prefix}*{base.suffix}")
+        )
+    started = time.perf_counter()
+    dest = sqlite3.connect(str(base))
+    try:
+        dest.execute("PRAGMA journal_mode=WAL")
+        # The merge is re-runnable, so skip fsyncs and checkpoint once at the
+        # end — halves the IO on a disk that is the bottleneck to begin with.
+        dest.execute("PRAGMA synchronous=OFF")
+        dest.execute("PRAGMA wal_autocheckpoint=0")
+        dest.execute(
+            "CREATE TABLE IF NOT EXISTS _streams (name TEXT PRIMARY KEY, config TEXT NOT NULL)"
+        )
+        for stream_name in stream_names:
+            shard = base.with_name(f"{base.stem}.{stream_name}{base.suffix}")
+            dest.execute("ATTACH DATABASE ? AS src", (str(shard),))
+            try:
+                schema = dest.execute(
+                    "SELECT type, name, sql FROM src.sqlite_master"
+                    " WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'"
+                    " AND name != '_streams' AND name NOT GLOB '*_rtree_*'"
+                ).fetchall()
+                for _, _, sql in schema:
+                    try:
+                        dest.execute(sql)
+                    except sqlite3.OperationalError as e:
+                        if "already exists" not in str(e):
+                            raise
+                for kind, table, _ in schema:
+                    if kind == "table":
+                        dest.execute(f'INSERT INTO main."{table}" SELECT * FROM src."{table}"')
+                dest.execute("INSERT OR REPLACE INTO main._streams SELECT * FROM src._streams")
+                dest.commit()
+            finally:
+                dest.execute("DETACH DATABASE src")
+    finally:
+        dest.close()
+    logger.info(
+        "Merged %d per-stream dbs into %s in %.1fs",
+        len(stream_names),
+        base,
+        time.perf_counter() - started,
+    )
+
 
 def pose_setter_for(*stream_names: str) -> Callable[[Any], Any]:
     """Mark an ``async def`` method ``(self, msg) -> Pose | None`` as the pose
@@ -326,10 +396,24 @@ class Recorder(MemoryModule):
     tf: In[TFMessage]
 
     _pose_setters: dict[str, Any] = {}
+    # One store (own db file), queue, and writer thread per stream: the WAL
+    # write lock is per file, so per-stream files remove all contention. The
+    # per-stream dbs are merged into config.db_path afterwards.
+    _stream_stores: dict[str, SqliteStore] = {}
+    _writers: dict[str, tuple[Unbounded[Callable[[], None]], threading.Thread]] = {}
+    _write_subscriptions: list[Any] = []
+    _missing_pose: dict[str, tuple[int, float]] = {}
+    _backlog_warned: dict[str, float] = {}
 
     @rpc
     def start(self) -> None:
         super().start()
+
+        self._stream_stores = {}
+        self._writers = {}
+        self._write_subscriptions = []
+        self._missing_pose = {}
+        self._backlog_warned = {}
 
         if self.config.g.replay:
             logger.info(
@@ -346,7 +430,7 @@ class Recorder(MemoryModule):
         db_path = Path(self.config.db_path)
         if db_path.exists():
             if self.config.on_existing is OnExisting.APPEND:
-                pass  # keep the db; _prepare_streams handles any per-stream replacement
+                pass  # keep the db; the merge in stop() adds this run's streams
             elif self.config.on_existing is OnExisting.OVERWRITE:
                 db_path.unlink()
                 logger.info("Deleted existing recording %s", db_path)
@@ -362,8 +446,6 @@ class Recorder(MemoryModule):
         if getattr(self.tf, "_transport", None) is not None:
             self._tf = self.tfbuffer
 
-        self._prepare_streams()
-
         if not self._data_ports() and not self.config.record_tf:
             logger.warning("Recorder has no In ports — nothing to record, subclass the Recorder")
             return
@@ -372,12 +454,38 @@ class Recorder(MemoryModule):
             stream_name = self.config.stream_remapping.get(name, name)
             codec = self.config.stream_codecs.get(stream_name)
             overrides = {"codec": codec} if codec is not None else {}
-            stream: Stream[Any] = self.store.stream(stream_name, port.type, **overrides)
+            stream: Stream[Any] = self._stream_store(stream_name).stream(
+                stream_name, port.type, **overrides
+            )
+            self._start_writer(name)
             self._port_to_stream(name, port, stream)
             logger.info("Recording %s -> %s (%s)", name, stream_name, port.type.__name__)
 
         if self.config.record_tf:
             self._record_tf()
+
+    def _stream_store(self, stream_name: str) -> SqliteStore:
+        """A dedicated store (own db file) for one stream: <base>.<stream>.db.
+
+        A fresh file every run — the merge into config.db_path happens after
+        the recording stops."""
+        base = Path(self.config.db_path)
+        path = base.with_name(f"{base.stem}.{stream_name}{base.suffix}")
+        for stale in (path, Path(f"{path}-wal"), Path(f"{path}-shm")):
+            if stale.exists():
+                stale.unlink()
+        store = self.register_disposable(SqliteStore(path=str(path)))
+        store.start()
+        self._stream_stores[stream_name] = store
+        return store
+
+    def _start_writer(self, name: str) -> None:
+        queue: Unbounded[Callable[[], None]] = Unbounded()
+        thread = threading.Thread(
+            target=self._write_queued, args=(name, queue), name=f"record-{name}", daemon=True
+        )
+        self._writers[name] = (queue, thread)
+        thread.start()
 
     def _data_ports(self) -> dict[str, In[Any]]:
         """The In ports to record generically — everything but the tf port."""
@@ -391,58 +499,128 @@ class Recorder(MemoryModule):
         already in world coords) fall back to ``config.default_frame_id`` —
         so every observation gets a robot-pose anchor when tf is publishing.
 
-        Each port is recorded by an async callback dispatched on the module's
-        event loop via :meth:`process_observable`, which serialises invocations
-        and registers the subscription for cleanup on stop().
+        Messages are queued and written by the stream's own writer thread.
+        Writing on the module's event loop loses data: the dispatcher behind
+        ``process_observable`` coalesces to LATEST, so whatever piles up behind
+        a slow write is discarded rather than delayed. Each stream writes to
+        its own db file — the WAL write lock is per file, so writers never
+        contend (a shared file starves low-rate streams behind the image blobs
+        until appends fail with "database is locked").
         """
 
-        async def on_msg(stamped: tuple[float, Any]) -> None:
-            recv_ts, msg = stamped
+        def write_one(recv_ts: float, msg: Any) -> None:
             ts = self._resolve_ts(name, msg)
-            pose = await self._resolve_pose(name, msg, ts)
-            if not pose and name not in self.config.poseless_streams:
-                logger.warning(
-                    "[%s] No pose for time %s (msg ts: %s), storing without pose",
-                    name,
-                    ts,
-                    getattr(msg, "ts", None),
-                )
+            pose = self._resolve_pose(name, msg, ts)
             stream.append(msg, ts=ts, pose=pose, tags={"reception_ts": recv_ts})
 
-        # Stamp arrival time before the coalescing dispatch queue.
-        stamped = input_topic.pure_observable().pipe(ops.map(lambda msg: (time.time(), msg)))
-        self.process_observable(stamped, on_msg)
+        def enqueue(msg: Any) -> None:
+            recv_ts = time.time()
+            self._enqueue_write(name, lambda: write_one(recv_ts, msg))
 
-    def _prepare_streams(self) -> None:
-        """On APPEND, drop the streams this recorder is about to (re)write — the
-        remapped In-port streams plus ``tf`` — so a re-run replaces them instead
-        of duplicating, while leaving any other streams in the db untouched."""
-        if self.config.on_existing is not OnExisting.APPEND:
+        subscription = self.register_disposable(Disposable(input_topic.subscribe(enqueue)))
+        self._write_subscriptions.append(subscription)
+
+    def _enqueue_write(self, name: str, write: Callable[[], None]) -> None:
+        writer = self._writers.get(name)
+        if writer is None:
             return
-        targets = {self.config.stream_remapping.get(name, name) for name in self._data_ports()}
-        if self.config.record_tf:
-            targets.add("tf")
-        for stream in targets.intersection(self.store.list_streams()):
-            self.store.delete_stream(stream)
+        queue, _ = writer
+        queue.put(write)
+        depth = len(queue)
+        now = time.time()
+        if (
+            depth > BACKLOG_WARN_DEPTH
+            and now - self._backlog_warned.get(name, 0.0) > BACKLOG_WARN_INTERVAL
+        ):
+            self._backlog_warned[name] = now
+            logger.warning(
+                "[%s] %d observations waiting to be written — writes are not keeping up",
+                name,
+                depth,
+            )
+
+    def _write_queued(self, name: str, queue: Unbounded[Callable[[], None]]) -> None:
+        count, spent = 0, 0.0
+        stats_logged_at = time.time()
+        for write in queue:
+            started = time.perf_counter()
+            try:
+                write()
+            except sqlite3.ProgrammingError:
+                return  # The store closed under us during teardown.
+            except Exception:
+                logger.exception("[%s] Failed to record an observation", name)
+            count += 1
+            spent += time.perf_counter() - started
+            now = time.time()
+            if now - stats_logged_at >= WRITE_STATS_INTERVAL:
+                interval = now - stats_logged_at
+                logger.info(
+                    "[%s] writer: %.0f%% busy, backlog %d, %d writes @ %.1fms",
+                    name,
+                    100 * spent / interval,
+                    len(queue),
+                    count,
+                    1000 * spent / count,
+                )
+                stats_logged_at = now
+                count, spent = 0, 0.0
 
     def _resolve_ts(self, name: str, msg: Any) -> float:
         """Timestamp to record *msg* at. Override to re-base onto another clock."""
         return getattr(msg, "ts", None) or time.time()
 
-    async def _resolve_pose(self, name: str, msg: Any, ts: float) -> Pose | None:
+    def _resolve_pose(self, name: str, msg: Any, ts: float) -> Pose | None:
         """Pose to anchor *msg* with. Dispatches to the stream's (async)
         ``@pose_setter_for`` if one is defined, else falls back to a
-        ``world <- frame_id`` tf lookup."""
+        ``world <- frame_id`` tf lookup.
+
+        Called from the stream's writer thread. The tf buffer is thread-safe;
+        setters are coroutines, so they go to the module's event loop and are
+        given a deadline — a wedged loop must not silently stop a recording.
+        """
+        pose: Pose | None = None
         setter = self._pose_setters.get(name)
         if setter is not None:
-            return cast("Pose | None", await setter(msg))
-        if self._tf is None:
-            return None
-        frame_id = getattr(msg, "frame_id", None) or self.config.default_frame_id
-        transform = self._tf.get(
-            self.config.root_frame, frame_id, time_point=ts, time_tolerance=self.config.tf_tolerance
+            try:
+                pose = cast(
+                    "Pose | None",
+                    asyncio.run_coroutine_threadsafe(setter(msg), self._loop).result(
+                        POSE_SETTER_TIMEOUT
+                    ),
+                )
+            except TimeoutError:
+                logger.warning("[%s] Pose setter timed out, storing without pose", name)
+        elif self._tf is not None:
+            frame_id = getattr(msg, "frame_id", None) or self.config.default_frame_id
+            transform = self._tf.get(
+                self.config.root_frame,
+                frame_id,
+                time_point=ts,
+                time_tolerance=self.config.tf_tolerance,
+            )
+            pose = transform.to_pose() if transform is not None else None
+        if pose is None and name not in self.config.poseless_streams:
+            self._warn_missing_pose(name, ts)
+        return pose
+
+    def _warn_missing_pose(self, name: str, ts: float) -> None:
+        """One line per stream per interval. Warning per message is its own
+        outage: at full sensor rate the formatting and the pipe to the log
+        collector cost more than the write they are describing."""
+        missed, warned_at = self._missing_pose.get(name, (0, 0.0))
+        missed += 1
+        now = time.time()
+        if now - warned_at < MISSING_POSE_WARN_INTERVAL:
+            self._missing_pose[name] = (missed, warned_at)
+            return
+        self._missing_pose[name] = (0, now)
+        logger.warning(
+            "[%s] No pose for %d observation(s) (latest ts %s), storing them without pose",
+            name,
+            missed,
+            ts,
         )
-        return transform.to_pose() if transform is not None else None
 
     def _collect_pose_setters(self) -> dict[str, PoseSetter]:
         """Map stream name -> bound ``@pose_setter_for`` method."""
@@ -458,14 +636,45 @@ class Recorder(MemoryModule):
         if getattr(self.tf, "_transport", None) is None:
             logger.warning("Recorder: tf port has no transport — not recording tf")
             return
-        tf_stream = self.store.stream("tf", TFMessage)
+        tf_stream = self._stream_store("tf").stream("tf", TFMessage)
+        self._start_writer("tf")
+
+        def write_tf(msg: TFMessage) -> None:
+            for transform in msg.transforms:
+                tf_stream.append(TFMessage(transform), ts=transform.ts, pose=None)
 
         def on_tf(msg: TFMessage) -> None:
-            try:
-                for transform in msg.transforms:
-                    tf_stream.append(TFMessage(transform), ts=transform.ts, pose=None)
-            except sqlite3.ProgrammingError:
-                # A late LCM callback raced teardown and hit the closed store.
-                pass
+            self._enqueue_write("tf", lambda: write_tf(msg))
 
-        self.register_disposable(Disposable(self.tf.subscribe(on_tf)))
+        subscription = self.register_disposable(Disposable(self.tf.subscribe(on_tf)))
+        self._write_subscriptions.append(subscription)
+
+    @rpc
+    def stop(self) -> None:
+        """Stop taking messages, write what is already queued, then tear down.
+
+        Order matters: ``super().stop()`` closes the sqlite store, so anything
+        still sitting in a writer queue has to reach the disk before that.
+        """
+        for subscription in self._write_subscriptions:
+            subscription.dispose()
+        self._write_subscriptions = []
+        writers = self._writers
+        self._writers = {}
+        for queue, _ in writers.values():
+            queue.close()
+        deadline = time.monotonic() + WRITER_FLUSH_TIMEOUT
+        for name, (queue, thread) in writers.items():
+            thread.join(max(0.0, deadline - time.monotonic()))
+            if thread.is_alive():
+                logger.warning(
+                    "[%s] Writer did not finish in %.0fs — %d observations dropped",
+                    name,
+                    WRITER_FLUSH_TIMEOUT,
+                    len(queue),
+                )
+        stream_names = list(self._stream_stores)
+        self._stream_stores = {}
+        super().stop()  # disposes the per-stream stores, flushing their WALs
+        if stream_names:
+            merge_stream_dbs(Path(self.config.db_path), stream_names)

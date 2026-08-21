@@ -32,6 +32,27 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
+# One line per frame pair per interval — a missing edge otherwise floods the log
+# at the full sensor rate, and formatting those lines costs more than the lookups
+# they describe.
+_FAILED_LOOKUP_WARN_INTERVAL = 5.0
+_failed_lookup_warnings: dict[tuple[str, str], tuple[int, float]] = {}
+
+
+def _warn_failed_lookup(parent_frame: str, child_frame: str, time_point: float | None) -> None:
+    key = (parent_frame, child_frame)
+    missed, warned_at = _failed_lookup_warnings.get(key, (0, 0.0))
+    missed += 1
+    now = time.time()
+    if now - warned_at < _FAILED_LOOKUP_WARN_INTERVAL:
+        _failed_lookup_warnings[key] = (missed, warned_at)
+        return
+    _failed_lookup_warnings[key] = (0, now)
+    logger.warning(
+        f"No transform found between '{parent_frame}' and '{child_frame}' at "
+        f"'{to_human_readable(time_point or time.time())}' ({missed} failed lookup(s))"
+    )
+
 
 @runtime_checkable
 class TFLookup(Protocol):
@@ -216,9 +237,7 @@ class MultiTBuffer:
                 parent_frame, child_frame, time_point, time_tolerance, forward_tolerance
             )
         if result is None:
-            logger.warning(
-                f"No direct transform found between '{parent_frame}' and '{child_frame}' at '{to_human_readable(time_point or time.time())}'"
-            )
+            _warn_failed_lookup(parent_frame, child_frame, time_point)
         return result
 
     def get_pose(

@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import sqlite3
 
@@ -27,6 +28,12 @@ def open_sqlite_connection(path: str | Path) -> sqlite3.Connection:
     conn = sqlite3.connect(path, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
+    if os.environ.get("DIMOS_RECORDING_FAST_WRITES"):
+        # Recording mode: the disk can't take payload + WAL double-write +
+        # per-commit fsync. Write the data once (WAL, sequential), skip fsyncs,
+        # and defer the checkpoint to connection close.
+        conn.execute("PRAGMA synchronous=OFF")
+        conn.execute("PRAGMA wal_autocheckpoint=0")
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)

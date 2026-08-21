@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass, field
 from enum import Enum
+import threading
 import time
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 import warnings
@@ -29,6 +30,19 @@ from reactivex import operators as ops
 
 from dimos.types.timestamped import Timestamped, TimestampedBufferCollection, to_human_readable
 from dimos.utils.reactive import quality_barrier
+
+_turbojpeg_local = threading.local()
+
+
+def _shared_turbojpeg():
+    # A TurboJPEG handle is expensive to create and not thread-safe, so keep one
+    # per thread instead of one per encode.
+    if not hasattr(_turbojpeg_local, "jpeg"):
+        from turbojpeg import TurboJPEG
+
+        _turbojpeg_local.jpeg = TurboJPEG()
+    return _turbojpeg_local.jpeg
+
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -542,9 +556,9 @@ class Image(Timestamped):
         Returns:
             Raw JPEG bytes.
         """
-        from turbojpeg import TJPF_RGB, TurboJPEG
+        from turbojpeg import TJPF_RGB
 
-        jpeg = TurboJPEG()
+        jpeg = _shared_turbojpeg()
         # Canonicalize to RGB so JPEG bytes are deterministic regardless of input format.
         rgb_array = self.to_rgb().data
         return jpeg.encode(rgb_array, quality=quality, pixel_format=TJPF_RGB)  # type: ignore[no-any-return]
@@ -599,9 +613,9 @@ class Image(Timestamped):
         Returns:
             Image instance
         """
-        from turbojpeg import TJPF_RGB, TurboJPEG
+        from turbojpeg import TJPF_RGB
 
-        jpeg = TurboJPEG()
+        jpeg = _shared_turbojpeg()
         msg = LCMImage.lcm_decode(data)
 
         if msg.encoding != "jpeg":
