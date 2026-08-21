@@ -16,9 +16,8 @@
 
 A `Recorder` (memory2) subscribes each declared `In` port and appends every
 message to a SQLite store, flushing durably on stop(). Only *connected*
-streams are recorded, so the same recorder works for any arm once the
-collection blueprint remaps the joint port onto that coordinator's per-robot
-joint output.
+streams are recorded, so the same recorder works for any arm whose
+coordinator publishes `coordinator_joint_state`.
 
 The recorded stream names are the port names, and match what DataPrep reads:
 `color_image` and `coordinator_joint_state` (observation), `status` (episode
@@ -32,6 +31,7 @@ from pydantic import Field
 from dimos.core.stream import In
 from dimos.imitation.collection.episode_monitor import EpisodeStatus
 from dimos.memory2.module import Recorder, RecorderConfig
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 
@@ -52,6 +52,7 @@ class CollectionRecorderConfig(RecorderConfig):
             "waist_image",
         ]
     )
+    record_tf: bool = False
 
 
 class CollectionRecorder(Recorder):
@@ -71,3 +72,8 @@ class CollectionRecorder(Recorder):
     # publish_joint_targets on, silent otherwise
     coordinator_joint_target: In[JointState]
     status: In[EpisodeStatus]  # episode start/save/discard segmentation
+
+    async def _resolve_pose(self, name: str, msg: object, ts: float) -> Pose | None:
+        if name in self.config.poseless_streams:
+            return None
+        return await super()._resolve_pose(name, msg, ts)

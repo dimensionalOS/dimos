@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the rig camera USB-port resolver used by the multicam blueprint."""
+"""Tests for the collection blueprints and the rig camera USB-port resolver."""
 
 from __future__ import annotations
 
@@ -20,10 +20,84 @@ from pathlib import Path
 
 import pytest
 
+from dimos.core.coordination.blueprints import Blueprint
 from dimos.imitation.collection.blueprint import (
     _MULTICAM_USB_PORTS,
     _video_index_for_usb_port,
+    learning_collect_quest_openarm,
+    learning_collect_quest_openarm_multicam,
+    learning_collect_quest_openarm_webcam,
+    learning_collect_quest_piper,
+    learning_collect_quest_xarm7,
 )
+from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
+from dimos.imitation.collection.recorder import CollectionRecorder
+from dimos.msgs.sensor_msgs.JointState import JointState
+
+AGGREGATE = "coordinator_joint_state"
+
+ALL_COLLECTION_BLUEPRINTS = [
+    learning_collect_quest_xarm7,
+    learning_collect_quest_piper,
+    learning_collect_quest_openarm,
+    learning_collect_quest_openarm_webcam,
+    learning_collect_quest_openarm_multicam,
+]
+
+
+@pytest.mark.parametrize(
+    "blueprint",
+    [learning_collect_quest_xarm7, learning_collect_quest_piper],
+)
+def test_collection_streams_are_poseless(blueprint: Blueprint) -> None:
+    recorder = next(atom for atom in blueprint.blueprints if atom.module is CollectionRecorder)
+
+    assert recorder.kwargs["poseless_streams"] == [
+        "color_image",
+        "coordinator_joint_state",
+        "status",
+    ]
+    assert recorder.kwargs["record_tf"] is False
+
+
+@pytest.mark.parametrize("blueprint", ALL_COLLECTION_BLUEPRINTS)
+def test_collection_recorder_stops_after_producers(blueprint: Blueprint) -> None:
+    assert blueprint.active_blueprints[0].module is CollectionRecorder
+
+
+@pytest.mark.parametrize("blueprint", ALL_COLLECTION_BLUEPRINTS)
+def test_episode_monitor_stops_after_input_producers(blueprint: Blueprint) -> None:
+    assert blueprint.active_blueprints[1].module is EpisodeMonitorModule
+
+
+def _joint_streams(blueprint: Blueprint) -> dict[tuple[str, str], str]:
+    """(instance, port) -> effective stream name, as ModuleCoordinator pairs streams."""
+    return {
+        (atom.name, stream.name): blueprint.remapping_map.get((atom.name, stream.name), stream.name)
+        for atom in blueprint.active_blueprints
+        for stream in atom.streams
+        if stream.type is JointState
+    }
+
+
+@pytest.mark.parametrize("blueprint", [learning_collect_quest_xarm7, learning_collect_quest_piper])
+def test_recorder_reads_aggregate_joint_state(blueprint: Blueprint) -> None:
+    streams = _joint_streams(blueprint)
+
+    # Plain name pairing on both ends, no remap in between. The coordinator
+    # atom carries its explicit instance_name (the RPC lookup contract).
+    assert streams[("collectionrecorder", AGGREGATE)] == AGGREGATE
+    assert streams[("ControlCoordinator", AGGREGATE)] == AGGREGATE
+    # This base still exposes per-robot *_joints coordinator ports; the
+    # recorder must not read them.
+    assert not [
+        port
+        for instance, port in streams
+        if instance == "collectionrecorder" and port.endswith("_joints")
+    ]
+
+
+# ── rig camera USB-port resolver ─────────────────────────────────────────────
 
 
 def _add_camera(sysfs_root: Path, video_index: int, port: str) -> None:

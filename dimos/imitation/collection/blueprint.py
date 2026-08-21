@@ -17,6 +17,10 @@
 `CollectionRecorder` (a memory2 Recorder) captures the obs/action/status
 streams to a SQLite session DB during the run and flushes it durably on
 shutdown. DataPrep reads that DB afterwards.
+
+The recorder is listed first in each blueprint so producers (cameras,
+teleop, coordinator, episode monitor) stop before it and their final
+events still land in the session DB.
 """
 
 from __future__ import annotations
@@ -55,36 +59,43 @@ def _camera_if_real() -> tuple[Blueprint, ...]:
     return (RealSenseCamera.blueprint(enable_pointcloud=False),)
 
 
-# buttons / color_image / status are left to autoconnect — each name is unique
-# across the composed blueprint, so it resolves to a stable /<name> topic shared
-# by producer and recorder. The joint stream is remapped onto the coordinator's
-# per-robot `arm_joints` output; the recorder still writes it to the db under its
-# port name (`coordinator_joint_state`), which is what DataPrep reads.
-_JOINTS_FROM_ARM = [(CollectionRecorder, "coordinator_joint_state", "arm_joints")]
-
+# buttons / color_image / coordinator_joint_state / status are left to
+# autoconnect — each name is unique across the composed blueprint, so it
+# resolves to a stable /<name> topic shared by producer and recorder. The
+# recorder captures whatever joints are present, so the coordinator's aggregate
+# stream is its intended input (see dimos/control/README.md).
 learning_collect_quest_xarm7 = autoconnect(
+    CollectionRecorder.blueprint(
+        db_path=_session_db("xarm7"),
+        poseless_streams=["color_image", "coordinator_joint_state", "status"],
+        record_tf=False,
+    ),
+    EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
     teleop_quest_xarm7,
     *_camera_if_real(),
-    EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
-    CollectionRecorder.blueprint(db_path=_session_db("xarm7")),
-).remappings(_JOINTS_FROM_ARM)
+)
 
 
 learning_collect_quest_piper = autoconnect(
+    CollectionRecorder.blueprint(
+        db_path=_session_db("piper"),
+        poseless_streams=["color_image", "coordinator_joint_state", "status"],
+        record_tf=False,
+    ),
+    EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
     teleop_quest_piper,
     *_camera_if_real(),
-    EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
-    CollectionRecorder.blueprint(db_path=_session_db("piper")),
-).remappings(_JOINTS_FROM_ARM)
+)
 
 
 # The OpenArm coordinator publishes the combined coordinator_joint_state, so
-# the recorder connects without a per-robot remapping.
+# the recorder connects without a per-robot remapping. Poseless streams and
+# record_tf come from CollectionRecorderConfig defaults.
 learning_collect_quest_openarm = autoconnect(
+    CollectionRecorder.blueprint(db_path=_session_db("openarm")),
+    EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
     teleop_quest_openarm,
     *_camera_if_real(),
-    EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
-    CollectionRecorder.blueprint(db_path=_session_db("openarm")),
 )
 
 
@@ -104,10 +115,10 @@ def _scene_webcam() -> Webcam:
 
 # Variant for a plain UVC scene camera instead of a RealSense.
 learning_collect_quest_openarm_webcam = autoconnect(
+    CollectionRecorder.blueprint(db_path=_session_db("openarm")),
+    EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
     teleop_quest_openarm,
     CameraModule.blueprint(hardware=_scene_webcam),
-    EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
-    CollectionRecorder.blueprint(db_path=_session_db("openarm")),
 )
 
 
@@ -166,9 +177,9 @@ def _rig_camera_blueprint(label: str) -> Blueprint:
 # hands, waist) as separate observation streams. Right thumbstick click with
 # the deadman released sends both arms to the home pose between episodes.
 learning_collect_quest_openarm_multicam = autoconnect(
-    teleop_quest_openarm,
-    *(_rig_camera_blueprint(label) for label in _MULTICAM_USB_PORTS),
+    CollectionRecorder.blueprint(db_path=_session_db("openarm")),
     EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
     OpenArmHomingModule.blueprint(),
-    CollectionRecorder.blueprint(db_path=_session_db("openarm")),
+    teleop_quest_openarm,
+    *(_rig_camera_blueprint(label) for label in _MULTICAM_USB_PORTS),
 )
