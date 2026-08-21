@@ -78,12 +78,16 @@ class AlfredHighLevel(Module):
         self._stop_task: asyncio.Task[None] | None = None
         self._odometry_task: asyncio.Task[None] | None = None
         self._last_velocities = [0.0, 0.0, 0.0]
-        # The controller multiplexes one connection; a velocity command issued
-        # while the odometry poll is mid-call would interleave on it.
-        self._client_lock = asyncio.Lock()
 
     async def main(self) -> AsyncGenerator[None, None]:
-        self._client = portal.Client(self.config.address)
+        # The controller multiplexes one connection; a velocity command issued
+        # while the odometry poll is mid-call would interleave on it. Created
+        # here rather than in __init__ so each run binds the lock to its own
+        # event loop — a module restart replaces self._loop, and an inherited
+        # lock raises "bound to a different event loop" and kills the client.
+        self._client_lock = asyncio.Lock()
+        client = portal.Client(self.config.address)
+        self._client = client
         logger.info(f"Connected to Alfred at {self.config.address}")
         self._odometry_task = asyncio.create_task(self._poll_wheel_odometry())
         try:
@@ -97,11 +101,13 @@ class AlfredHighLevel(Module):
                 await self._send_velocity(0.0, 0.0, 0.0)
             except Exception as e:
                 logger.error(f"Error stopping Alfred: {e}")
-            if self._client is not None:
-                try:
-                    self._client.close()
-                except Exception:
-                    pass
+            try:
+                client.close()
+            except Exception:
+                pass
+            # A restart can overlap: this run's teardown must not null out a
+            # newer run's client.
+            if self._client is client:
                 self._client = None
             logger.info("Alfred high-level connection stopped")
 

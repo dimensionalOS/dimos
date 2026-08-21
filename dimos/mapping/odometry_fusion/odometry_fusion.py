@@ -40,7 +40,7 @@ class OdometryFusionConfig(NativeModuleConfig):
     base_frame: str = "base_link"
     # The filter itself steps at the IMU rate; this is only how often it emits.
     publish_rate: float = 50.0
-    replay_buffer_seconds: float = 0.5
+    replay_buffer_seconds: float = 2.0
     # Standard deviations per measurement dimension before a reading is called an
     # outlier. 0 disables the gate.
     mahalanobis_gate: float = 5.0
