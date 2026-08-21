@@ -1171,3 +1171,20 @@ def test_io_port_autoconnects_and_flows_both_ways(wait_until) -> None:
         wait_until(lambda: "from_echo" in echo.seen(), timeout=10.0)
     finally:
         coordinator.stop()
+
+
+def test_shutdown_unblocks_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """shutdown() (the RPC handler) releases loop(), which stops everything."""
+    coordinator = ModuleCoordinator(g=GlobalConfig())
+    monkeypatch.setattr(coordinator, "start_rpc_service", lambda: None)
+    stopped = threading.Event()
+    monkeypatch.setattr(coordinator, "stop", stopped.set)
+
+    looper = threading.Thread(target=coordinator.loop, daemon=True)
+    looper.start()
+    assert not stopped.wait(0.1)
+
+    coordinator.shutdown()
+    looper.join(timeout=5)
+    assert not looper.is_alive()
+    assert stopped.is_set()

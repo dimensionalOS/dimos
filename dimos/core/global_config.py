@@ -55,6 +55,8 @@ class GlobalConfig(BaseSettings):
     simulation: str = ""
     replay: bool = False
     replay_db: str = "go2_short"
+    # Exit once every subscribed replay stream finishes (with --replay).
+    replay_exit: bool = False
     new_memory: bool = False
     # Discover zenoh peers across the network.
     # Toggling off drops back to loopback-only discovery:

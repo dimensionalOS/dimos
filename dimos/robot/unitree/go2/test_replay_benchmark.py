@@ -17,20 +17,21 @@
 import json
 import os
 from pathlib import Path
+import signal
+import subprocess
+import sys
 import threading
 import time
 
 import pytest
 
-from dimos.core.global_config import global_config
 from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 REPLAY_DB = os.environ.get("DIMOS_BENCH_REPLAY_DB", "go2_short")
-QUIET_S = 3.0  # all watched streams silent this long => replay complete
-RUN_TIMEOUT = 420.0  # build+run deadline, inside the test timeout
+RUN_TIMEOUT = 420.0  # spawn -> exit deadline, inside the test timeout
 # GO2Connection source streams. camera_info is deliberately absent: it is
 # published by a 1 Hz forever-loop thread, so it never quiesces.
 WATCHED = (("odom", PoseStamped), ("lidar", PointCloud2), ("color_image", Image))
@@ -164,151 +165,144 @@ def _net_bytes() -> tuple[int, int, int]:
 @pytest.mark.skipif_macos_bug
 @pytest.mark.timeout(900)
 def test_go2_replay_realtime_load() -> None:
-    """Build the unitree-go2 blueprint and run the replay to completion at realtime pace."""
-    from dimos.core.coordination.module_coordinator import ModuleCoordinator
+    """Run `dimos --replay --replay-exit run unitree-go2` to completion."""
     from dimos.memory.replay import resolve_db_path
-    from dimos.robot.get_all_blueprints import get_blueprint_by_name
 
-    # Configure before resolving the blueprint: unitree_go2_basic composes its
-    # vis bundle from global_config.viewer at import time. build() also writes
-    # the blueprint's own overrides into global_config, so restore everything.
-    saved = global_config.model_dump()
-    global_config.update(
-        replay=True,
-        replay_db=REPLAY_DB,
-        viewer="none",
-    )
-    try:
-        db_path = str(resolve_db_path(REPLAY_DB))  # LFS pull/extract on miss
-        expected = _expected_counts(db_path)
-        assert all(count > 0 for count in expected.values()), f"empty window: {expected}"
-        floors = {name: int(expected[name] * fraction) for name, fraction in FLOOR_FRACTION.items()}
+    db_path = str(resolve_db_path(REPLAY_DB))  # LFS pull/extract on miss
+    expected = _expected_counts(db_path)
+    assert all(count > 0 for count in expected.values()), f"empty recording: {expected}"
+    floors = {name: int(expected[name] * fraction) for name, fraction in FLOOR_FRACTION.items()}
 
-        blueprint = get_blueprint_by_name("unitree-go2")
+    counts = dict.fromkeys(FLOOR_FRACTION, 0)
+    lock = threading.Lock()
+    cpu_marks: dict[str, tuple[float, float, float]] = {}
+    io_marks: dict[str, tuple[int, int]] = {}
+    net_marks: dict[str, tuple[int, int, int]] = {}
 
-        counts = dict.fromkeys(FLOOR_FRACTION, 0)
-        last_arrival = time.monotonic()
-        lock = threading.Lock()
+    def mark(name: str) -> None:
+        if METRICS_PATH:
+            cpu_marks[name] = _cpu_mark()
+            io_marks[name] = _cgroup_io_bytes()
+            net_marks[name] = _net_bytes()
 
-        def record(name: str) -> None:
-            nonlocal last_arrival
-            with lock:
-                counts[name] += 1
-                last_arrival = time.monotonic()
+    def record(name: str) -> None:
+        with lock:
+            if not any(counts.values()):
+                mark("first frame")
+                _heartbeat("first frame")
+            counts[name] += 1
 
-        # Same topics and backend the blueprint materializes for these
-        # name-unique streams. Subscribe before build: replay data flows as
-        # soon as GO2Connection starts, mid-build.
-        transports = [make_transport(name, typ) for name, typ in WATCHED]
-        for (name, _), transport in zip(WATCHED, transports, strict=True):
-            transport.subscribe(lambda _msg, _name=name: record(_name))
+    # Same topics and backend the blueprint materializes for these
+    # name-unique streams. Subscribe before spawning: replay data flows as
+    # soon as GO2Connection starts, mid-build.
+    transports = [make_transport(name, typ) for name, typ in WATCHED]
+    for (name, _), transport in zip(WATCHED, transports, strict=True):
+        transport.subscribe(lambda _msg, _name=name: record(_name))
 
-        state: dict[str, ModuleCoordinator] = {}
-        cpu_marks: dict[str, tuple[float, float, float]] = {}
-        io_marks: dict[str, tuple[int, int]] = {}
-        net_marks: dict[str, tuple[int, int, int]] = {}
-        peak_anon = 0
-        peak_tasks = 0
-        stop_sampling = threading.Event()
+    peak_anon = 0
+    peak_tasks = 0
+    stop_sampling = threading.Event()
 
-        def sample_peaks() -> None:
-            nonlocal peak_anon, peak_tasks
-            while not stop_sampling.wait(0.1):
+    def sample_peaks() -> None:
+        nonlocal peak_anon, peak_tasks
+        ticks = 0
+        while not stop_sampling.wait(0.1):
+            if METRICS_PATH:
                 peak_anon = max(peak_anon, _cgroup_anon_bytes())
                 peak_tasks = max(peak_tasks, _cgroup_tasks())
+            ticks += 1
+            if ticks % 150 == 0:
+                _heartbeat(f"counts={counts}")
 
-        sampler = threading.Thread(target=sample_peaks, daemon=True)
+    sampler = threading.Thread(target=sample_peaks, daemon=True)
 
-        def build_and_run() -> None:
-            nonlocal last_arrival
-            if METRICS_PATH:
-                cpu_marks["start"] = _cpu_mark()
-                io_marks["start"] = _cgroup_io_bytes()
-                net_marks["start"] = _net_bytes()
-            state["coordinator"] = ModuleCoordinator.build(blueprint)
-            if METRICS_PATH:
-                cpu_marks["built"] = _cpu_mark()
-            with lock:
-                last_arrival = time.monotonic()
-            deadline = time.monotonic() + RUN_TIMEOUT
-            while time.monotonic() < deadline:
-                with lock:
-                    quiet = time.monotonic() - last_arrival
-                    done = all(counts[name] >= floors[name] for name in counts)
-                if done and quiet >= QUIET_S:
-                    if METRICS_PATH:
-                        cpu_marks["end"] = _cpu_mark()
-                        io_marks["end"] = _cgroup_io_bytes()
-                        net_marks["end"] = _net_bytes()
-                    return
-                time.sleep(0.2)
-            pytest.fail(f"replay did not complete: counts={counts}, expected~{expected}")
-
-        def teardown() -> None:
-            for transport in transports:
-                transport.stop()
-            coordinator = state.pop("coordinator", None)
-            if coordinator is not None:
-                # coordinator.stop() can hang on worker teardown; a hard exit
-                # (tool_replay_bench style) would lose the metrics upload.
-                stopper = threading.Thread(target=coordinator.stop, daemon=True)
-                stopper.start()
-                stopper.join(timeout=90)
-                if stopper.is_alive():
-                    pytest.fail("coordinator.stop() hung")
-
-        if METRICS_PATH:
-            sampler.start()
+    # The venv's console script: the CLI entrypoint, not an in-process build,
+    # so the benchmark measures what `dimos run` users get. --replay-exit
+    # makes the process exit once the recording finishes.
+    cmd = [
+        str(Path(sys.executable).with_name("dimos")),
+        "--replay",
+        "--replay-db",
+        REPLAY_DB,
+        "--replay-exit",
+        "--viewer",
+        "none",
+        "run",
+        "unitree-go2",
+    ]
+    _heartbeat("spawning dimos")
+    mark("start")
+    sampler.start()
+    proc = subprocess.Popen(cmd)
+    try:
         try:
-            build_and_run()
-        finally:
-            stop_sampling.set()
-            if sampler.is_alive():
-                sampler.join(timeout=5)
-            teardown()
-
-        if METRICS_PATH:
-            start, built, end = cpu_marks["start"], cpu_marks["built"], cpu_marks["end"]
-            entries = (
-                # Startup cost: worker spawn + imports + transport setup.
-                ("build wall", built[0] - start[0], "s"),
-                ("build cpu", (built[1] + built[2]) - (start[1] + start[2]), "s"),
-                # Steady-state cost of the realtime run — the headline.
-                ("run cpu", (end[1] + end[2]) - (built[1] + built[2]), "s"),
-                ("run cpu (user)", end[1] - built[1], "s"),
-                ("run cpu (system)", end[2] - built[2], "s"),
-                # Maxima sampled at 10Hz across build+run, whole process tree.
-                ("peak memory", peak_anon / 2**20, "MB"),
-                ("peak threads", float(peak_tasks), "threads"),
-                # Block-device totals across build+run; page-cache hits are free.
-                ("disk read", (io_marks["end"][0] - io_marks["start"][0]) / 2**20, "MB"),
-                ("disk write", (io_marks["end"][1] - io_marks["start"][1]) / 2**20, "MB"),
-                # Deltas across build+run: multicast = LCM transport volume;
-                # external ~0 unless something in-region talks to the network.
-                (
-                    "network (multicast)",
-                    (net_marks["end"][0] - net_marks["start"][0]) / 2**20,
-                    "MB",
-                ),
-                (
-                    "network (external rx)",
-                    (net_marks["end"][1] - net_marks["start"][1]) / 2**20,
-                    "MB",
-                ),
-                (
-                    "network (external tx)",
-                    (net_marks["end"][2] - net_marks["start"][2]) / 2**20,
-                    "MB",
-                ),
+            returncode = proc.wait(timeout=RUN_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            _heartbeat(f"deadline hit: counts={counts}")
+            pytest.fail(
+                f"dimos did not exit within {RUN_TIMEOUT:.0f}s: counts={counts}, "
+                f"expected~{expected}"
             )
-            Path(METRICS_PATH).write_text(
-                json.dumps(
-                    [
-                        {"name": name, "unit": unit, "value": round(value, 3)}
-                        for name, value, unit in entries
-                    ],
-                    indent=2,
-                )
-            )
+        mark("end")
+        _heartbeat(f"dimos exited {returncode}: counts={counts}")
     finally:
-        global_config.update(**saved)
+        stop_sampling.set()
+        sampler.join(timeout=5)
+        if proc.poll() is None:
+            # SIGINT first: the CLI's ctrl-c path stops the modules cleanly.
+            proc.send_signal(signal.SIGINT)
+            try:
+                proc.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=30)
+        for transport in transports:
+            transport.stop()
+
+    assert returncode == 0, f"dimos exited with {returncode}"
+    low = {name: (counts[name], floors[name]) for name in floors if counts[name] < floors[name]}
+    assert not low, f"floors not met (got, floor): {low}, expected~{expected}"
+
+    if METRICS_PATH:
+        start, first, end = cpu_marks["start"], cpu_marks["first frame"], cpu_marks["end"]
+        entries = (
+            # Startup: process spawn until the first frame reaches the bus.
+            ("first frame wall", first[0] - start[0], "s"),
+            ("first frame cpu", (first[1] + first[2]) - (start[1] + start[2]), "s"),
+            # Steady-state cost of the realtime run — the headline.
+            ("run cpu", (end[1] + end[2]) - (first[1] + first[2]), "s"),
+            ("run cpu (user)", end[1] - first[1], "s"),
+            ("run cpu (system)", end[2] - first[2], "s"),
+            # Maxima sampled at 10Hz across the run, whole process tree.
+            ("peak memory", peak_anon / 2**20, "MB"),
+            ("peak threads", float(peak_tasks), "threads"),
+            # Block-device totals; page-cache hits are free.
+            ("disk read", (io_marks["end"][0] - io_marks["start"][0]) / 2**20, "MB"),
+            ("disk write", (io_marks["end"][1] - io_marks["start"][1]) / 2**20, "MB"),
+            # Multicast = LCM transport volume; external ~0 unless something
+            # in the run talks to the network.
+            (
+                "network (multicast)",
+                (net_marks["end"][0] - net_marks["start"][0]) / 2**20,
+                "MB",
+            ),
+            (
+                "network (external rx)",
+                (net_marks["end"][1] - net_marks["start"][1]) / 2**20,
+                "MB",
+            ),
+            (
+                "network (external tx)",
+                (net_marks["end"][2] - net_marks["start"][2]) / 2**20,
+                "MB",
+            ),
+        )
+        Path(METRICS_PATH).write_text(
+            json.dumps(
+                [
+                    {"name": name, "unit": unit, "value": round(value, 3)}
+                    for name, value, unit in entries
+                ],
+                indent=2,
+            )
+        )
