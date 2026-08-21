@@ -4,6 +4,12 @@ on:
     branches: [main]
   pull_request:
   merge_group:
+  workflow_dispatch:
+    inputs:
+      force-cachix-build:
+        description: Publish to Cachix even if the inputs marker says nothing changed
+        type: boolean
+        default: false
 
 concurrency:
   # Cancels runs from previous pushes in a PR.
@@ -440,6 +446,14 @@ jobs:
         run: uv run pytest -m web_browser dimos/e2e_tests/test_cockpit_browser.py --no-cov
 
   tests:
+    # Native-module binaries come from Cachix, so when their inputs changed the
+    # publish job must finish before tests may fetch them. Both cachix jobs are
+    # skipped on fork PRs (and only there): tolerate skips, never failures.
+    if: |
+      !cancelled() &&
+      contains(fromJSON('["success", "skipped"]'), needs.cachix-build-check.result) &&
+      contains(fromJSON('["success", "skipped"]'), needs.cachix-build.result)
+    needs: [cachix-build-check, cachix-build]
     timeout-minutes: 20
     strategy:
       matrix:
@@ -557,59 +571,53 @@ jobs:
     # run unconditionally would log every CI run as a Cachix deployment and
     # destroy the audit trail that says which run pushed a given binary.
     #
-    # `nix build --dry-run` resolves each module's full input hash and reports
-    # what it would realise; if nothing would be built, nothing new can be
-    # pushed, so the publishing job is skipped outright. This job holds no
-    # secrets, but mirrors cachix-build's trusted-event guard so forks skip both.
+    # The decision is a content-addressed marker probe — no nix, no uv, a few
+    # seconds, because every test job waits on it. `--inputs-hash` hashes every
+    # committed tree that can reach a module's derivation (see
+    # bin/build-native-modules), and a successful cachix-build saves a marker
+    # under that key: marker present means those exact inputs were already
+    # published. A stale-but-plausible miss (marker evicted, comment-only edit
+    # inside a module dir) just reruns the publish job, which substitutes
+    # everything and pushes nothing. This job holds no secrets, but mirrors
+    # cachix-build's trusted-event guard so forks skip both.
     if: |
       !cancelled() &&
-      (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)
-    timeout-minutes: 60
+      (github.event_name == 'push' || github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository)
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     permissions:
       contents: read  # For checkout
+    env:
+      CACHIX_CACHE_NAME: dimensionalos
     outputs:
-      needs-build: ${{ steps.dry-run.outputs.needs-build }}
+      needs-build: ${{ steps.decide.outputs.needs-build }}
+      inputs-hash: ${{ steps.hash.outputs.inputs-hash }}
 
     steps:
       - name: Checkout
+        # Depth-1 is enough: the hash reads committed objects of HEAD only.
         uses: actions/checkout@v7
+      - name: Compute native-module inputs hash
+        id: hash
+        run: python3 bin/build-native-modules --inputs-hash
+      - name: Probe publish marker
+        id: marker
+        uses: actions/cache/restore@v6
         with:
-          # ray_tracing's flake input dimos-repo (git+file:../../../..?ref=main)
-          # pins a historical rev; a shallow checkout omits that object.
-          fetch-depth: 0
-      - name: Free runner disk space
-        uses: BRAINSia/free-disk-space@v2.1.3
-      - name: Install uv
-        uses: astral-sh/setup-uv@v8.3.2
-        with:
-          enable-cache: true
-      - name: Install minimal dimos for module discovery
-        run: uv sync --no-default-groups --frozen
-      - name: Install Nix (with Cachix substituter)
-        # Read-only substituter, no auth token. The dry run has to see what
-        # Cachix already holds, or it would report a build for every module
-        # that merely isn't present on this fresh runner.
+          path: .cachix-marker
+          key: cachix-published-${{ runner.os }}-${{ runner.arch }}-${{ steps.hash.outputs.inputs-hash }}
+          lookup-only: true
+      - name: Decide whether a publish is needed
+        id: decide
         env:
-          INPUT_EXTRA_NIX_CONFIG: |
-            extra-substituters = https://dimensionalos.cachix.org
-            extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
-          INPUT_SET_AS_TRUSTED_USER: "true"
-        run: bash docker/ros/install-nix.sh
-      - name: Cache Nix fetcher + eval cache
-        # Distinct key prefix from cachix-build's cache: both jobs can run in the
-        # same workflow, and two jobs saving one key just makes the loser warn
-        # about a collision.
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cache/nix
-            ~/.local/state/nix
-          key: nix-fetcher-check-${{ runner.os }}-${{ hashFiles('bin/build-native-modules', '**/flake.lock', '**/flake.nix') }}
-          restore-keys: nix-fetcher-check-${{ runner.os }}-
-      - name: Check whether any module would be built
-        id: dry-run
-        run: uv run bin/build-native-modules --dry-run
+          FORCE: ${{ inputs.force-cachix-build }}
+          MARKER_HIT: ${{ steps.marker.outputs.cache-hit }}
+        run: |
+          if [ "$FORCE" != "true" ] && [ "$MARKER_HIT" = "true" ]; then
+            echo "needs-build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs-build=true" >> "$GITHUB_OUTPUT"
+          fi
 
   cachix-build:
     # ⚠️ NEVER RUN ON UNTRUSTED (fork) CODE ⚠️
@@ -627,7 +635,7 @@ jobs:
     # always corresponds to a real publish — see that job for why.
     if: |
       !cancelled() &&
-      (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name == 'push' || github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository) &&
       needs.cachix-build-check.outputs.needs-build == 'true'
     needs: cachix-build-check
     timeout-minutes: 300
@@ -645,12 +653,6 @@ jobs:
           fetch-depth: 0
       - name: Free runner disk space
         uses: BRAINSia/free-disk-space@v2.1.3
-      - name: Install uv
-        uses: astral-sh/setup-uv@v8.3.2
-        with:
-          enable-cache: true
-      - name: Install minimal dimos for module discovery
-        run: uv sync --no-default-groups --frozen
       - name: Install Nix (with Cachix substituter)
         env:
           INPUT_EXTRA_NIX_CONFIG: |
@@ -680,7 +682,24 @@ jobs:
       - name: Build native modules
         env:
           BUILD_WORKERS: "1"
-        run: uv run bin/build-native-modules
+        run: python3 bin/build-native-modules
+      - name: Record the published inputs manifest
+        # Forensics for the marker saved below: the manifest names every tree
+        # hash behind the inputs-hash this publish ran for.
+        env:
+          CACHIX_CACHE_NAME: dimensionalos
+        run: |
+          mkdir -p .cachix-marker
+          python3 bin/build-native-modules --inputs-hash \
+            > .cachix-marker/inputs-hash.txt 2> .cachix-marker/manifest.txt
+      - name: Save publish marker
+        # Only reached on success, so a marker always means these exact inputs
+        # were published. The key reuses the check job's hash — same commit,
+        # same result — so the probe and the save can never disagree.
+        uses: actions/cache/save@v6
+        with:
+          path: .cachix-marker
+          key: cachix-published-${{ runner.os }}-${{ runner.arch }}-${{ needs.cachix-build-check.outputs.inputs-hash }}
 
   self-hosted-tests:
     # Runs on push, merge_group (trusted — a maintainer must approve + queue the
@@ -689,8 +708,9 @@ jobs:
     if: |
       !cancelled() &&
       (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      needs.cachix-build-check.result == 'success' &&
       contains(fromJSON('["success", "skipped"]'), needs.cachix-build.result)
-    needs: [compute-ros-pin, cachix-build]
+    needs: [compute-ros-pin, cachix-build-check, cachix-build]
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -817,7 +837,7 @@ jobs:
           echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
       - name: Fetch native modules from Cachix
         if: contains(matrix.markers, 'skipif_no_ros')
-        run: uv run bin/build-native-modules
+        run: python3 bin/build-native-modules
       - name: Run tests
         run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not mujoco'
       - name: Re-run the failing tests with maximum verbosity
@@ -881,8 +901,15 @@ jobs:
 
   self-hosted-large-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
+    # Also waits for the Cachix gate like every other test job (skips are fine,
+    # failures are not); !cancelled() overrides the implicit success() that a
+    # skipped cachix-build would otherwise fail.
     if: |
-      github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+      !cancelled() &&
+      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      needs.cachix-build-check.result == 'success' &&
+      contains(fromJSON('["success", "skipped"]'), needs.cachix-build.result)
+    needs: [cachix-build-check, cachix-build]
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
