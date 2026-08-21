@@ -46,7 +46,12 @@ from dimos.navigation.nav_3d.mls_planner.mls_planner_native import (
     MLSPlannerNativeConfig,
 )
 from dimos.navigation.nav_3d.mls_planner.viz import planner_visual_override
-from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT, ROBOT_LENGTH, ROBOT_WIDTH
+from dimos.robot.unitree.go2.constants import (
+    BASE_LINK_HEIGHT,
+    ROBOT_HEIGHT,
+    ROBOT_LENGTH,
+    ROBOT_WIDTH,
+)
 from dimos.robot.unitree.go2.zenoh.zenohconnection import GO2Zenoh
 from dimos.visualization.vis_module import vis_module
 
@@ -163,6 +168,7 @@ mls_planner_config = MLSPlannerNativeConfig(
     world_frame="odom",
     voxel_size=voxel_size,
     robot_height=ROBOT_HEIGHT,
+    start_z_offset_m=BASE_LINK_HEIGHT,
     surface_closing_radius=0.3,
     wall_clearance_m=0.1,
     wall_buffer_m=0.75,
@@ -205,7 +211,7 @@ go2_zenoh_raycaster = autoconnect(
 go2_zenoh_nav = autoconnect(
     go2_zenoh_raycaster,
     _mls_planner,
-    GoalRelay.blueprint(lidar_height=ROBOT_HEIGHT),
+    GoalRelay.blueprint(),
     BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6),
     MovementManager.blueprint(),
 ).global_config(transport="zenoh", n_workers=8, robot_model="unitree_go2")
@@ -216,7 +222,7 @@ go2_zenoh_nav = autoconnect(
 go2_zenoh_nav_remote = autoconnect(
     go2_zenoh_basic,
     _raytraced_vis,
-    GoalRelay.blueprint(lidar_height=ROBOT_HEIGHT),
+    GoalRelay.blueprint(),
     BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6),
     MovementManager.blueprint(),
 ).global_config(transport="zenoh", n_workers=6, robot_model="unitree_go2")
@@ -237,7 +243,7 @@ go2_zenoh_nav_baked = autoconnect(
         ray_tracing_config=ray_tracing_config,
         mls_planner_config=mls_planner_config,
     ),
-    GoalRelay.blueprint(lidar_height=ROBOT_HEIGHT),
+    GoalRelay.blueprint(),
     BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6),
     MovementManager.blueprint(),
 ).global_config(transport="zenoh", n_workers=7, robot_model="unitree_go2")
@@ -245,7 +251,7 @@ go2_zenoh_nav_baked = autoconnect(
 go2_zenoh_htc = autoconnect(
     go2_zenoh_raycaster,
     _mls_planner.remappings([(MLSPlannerNative, "path", "planner_path")]),
-    GoalRelay.blueprint(lidar_height=ROBOT_HEIGHT),
+    GoalRelay.blueprint(),
     DanLocalPlanner.blueprint(resample_spacing_m=0.1).remappings(
         [(DanLocalPlanner, "odom", "start_pose")]
     ),

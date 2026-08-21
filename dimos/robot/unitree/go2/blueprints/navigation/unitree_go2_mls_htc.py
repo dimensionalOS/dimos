@@ -82,7 +82,6 @@ unitree_go2_mls_htc = autoconnect(
         world_frame="world",
         voxel_size=voxel_size,
         robot_height=go2_lidar_height,
-        # The start pose is raw go2 odometry, so the planner ground-projects it.
         start_z_offset_m=go2_lidar_height,
         wall_clearance_m=0.2,
         wall_buffer_m=0.75,
@@ -90,14 +89,8 @@ unitree_go2_mls_htc = autoconnect(
         step_threshold_m=0.16,
         step_penalty_weight=1.0,
         viz_publish_hz=planner_viz_hz,
-    ).remappings(
-        [
-            (MLSPlannerNative, "path", "planner_path"),
-            # The planner's start pose is the robot's odom pose
-            (MLSPlannerNative, "start_pose", "odom"),
-        ]
-    ),
-    GoalRelay.blueprint(),
+    ).remappings([(MLSPlannerNative, "path", "planner_path")]),
+    GoalRelay.blueprint(world_frame="world"),
     # Setting resample_spacing_m to > 0.0 will smooth out jagged paths retunned my MLSP
     DanLocalPlanner.blueprint(resample_spacing_m=0.1),
     DanHolonomicTC.blueprint(run_profile="walk"),
