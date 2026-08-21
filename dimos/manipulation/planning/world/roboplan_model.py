@@ -336,8 +336,6 @@ def _groups(
     generated = 0
     for size in range(2, len(configured) + 1):
         for selected in combinations(configured, size):
-            if len({group.robot_name for group in selected}) < 2:
-                continue
             if len({name for group in selected for name in group.joint_names}) != sum(
                 len(group.joint_names) for group in selected
             ):

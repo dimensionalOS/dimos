@@ -89,3 +89,41 @@ def test_mesh_conversion_cache_is_keyed_by_mesh_content(
     assert second_obj.exists()
     assert first_obj != second_obj
     assert not list(tmp_path.glob("*.urdf"))
+
+
+def test_mesh_conversion_keeps_different_same_stem_meshes_distinct(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    visual_mesh = tmp_path / "visual" / "link.stl"
+    collision_mesh = tmp_path / "collision" / "link.stl"
+    visual_mesh.parent.mkdir()
+    collision_mesh.parent.mkdir()
+    mesh_template = (
+        "solid link\n"
+        "facet normal 0 0 1\nouter loop\n"
+        "vertex 0 0 0\nvertex {extent} 0 0\nvertex 0 1 0\n"
+        "endloop\nendfacet\nendsolid link\n"
+    )
+    visual_mesh.write_text(mesh_template.format(extent=1))
+    collision_mesh.write_text(mesh_template.format(extent=2))
+    description = LoadedRobotModel(
+        xml=(
+            '<robot name="r"><link name="base">'
+            f'<visual><geometry><mesh filename="{visual_mesh}"/></geometry></visual>'
+            f'<collision><geometry><mesh filename="{collision_mesh}"/></geometry></collision>'
+            "</link></robot>"
+        ),
+        source_path=tmp_path / "robot.urdf",
+        package_paths={},
+    )
+    monkeypatch.setattr(mesh_utils, "_CACHE_DIR", tmp_path / "derived" / "drake_meshes")
+
+    prepared = mesh_utils.prepare_urdf_for_drake(description, convert_meshes=True)
+
+    obj_uris = re.findall(r'filename="([^"]+\.obj)"', prepared.xml)
+    obj_paths = [Path(unquote(urlparse(uri).path)) for uri in obj_uris]
+    assert len(obj_paths) == 2
+    assert obj_paths[0] != obj_paths[1]
+    assert all(path.exists() for path in obj_paths)
+    assert obj_paths[0].read_text() != obj_paths[1].read_text()
