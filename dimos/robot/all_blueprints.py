@@ -17,6 +17,7 @@
 
 all_blueprints = {
     "a1z-planner-coordinator": "dimos.robot.manipulators.a1z.blueprints.basic:a1z_planner_coordinator",
+    "alfred-mls-nav": "dimos.robot.diy.alfred.blueprints.alfred_mls_nav:alfred_mls_nav",
     "alfred-nav": "dimos.robot.diy.alfred.blueprints.alfred_nav:alfred_nav",
     "coordinator-a1z": "dimos.robot.manipulators.a1z.blueprints.basic:coordinator_a1z",
     "coordinator-basic": "dimos.control.blueprints.basic:coordinator_basic",
@@ -52,6 +53,7 @@ all_blueprints = {
     "demo-camera": "dimos.hardware.sensors.camera.module:demo_camera",
     "demo-capabilities": "dimos.agents.demos.demo_capabilities:demo_capabilities",
     "demo-cuvslam-realsense": "dimos.mapping.dim_slam.demo_cuvslam_realsense:demo_cuvslam_realsense",
+    "demo-cuvslam-replay": "dimos.mapping.dim_slam.demo_cuvslam_replay:demo_cuvslam_replay",
     "demo-error-on-name-conflicts": "dimos.robot.unitree.demo_error_on_name_conflicts:demo_error_on_name_conflicts",
     "demo-google-maps-skill": "dimos.agents.skills.demo_google_maps_skill:demo_google_maps_skill",
     "demo-gps-nav": "dimos.agents.skills.demo_gps_nav:demo_gps_nav",
@@ -182,6 +184,7 @@ all_modules = {
     "collection-recorder": "dimos.imitation.collection.recorder.CollectionRecorder",
     "control-coordinator": "dimos.control.coordinator.ControlCoordinator",
     "cost-mapper": "dimos.mapping.costmapper.CostMapper",
+    "cuvslam-replay": "dimos.mapping.dim_slam.demo_cuvslam_replay.CuvslamReplay",
     "dan-holonomic-tc": "dimos.navigation.dannav.holonomic_tc.module.DanHolonomicTC",
     "dan-local-planner": "dimos.navigation.dannav.local_planner.module.DanLocalPlanner",
     "demo-calculator-skill": "dimos.agents.skills.demo_calculator_skill.DemoCalculatorSkill",
@@ -256,6 +259,7 @@ all_modules = {
     "object-tracker2-d": "dimos.perception.experimental.object_tracker_2d.ObjectTracker2D",
     "object-tracker3-d": "dimos.perception.experimental.object_tracker_3d.ObjectTracker3D",
     "object-tracking": "dimos.perception.experimental.object_tracker.ObjectTracking",
+    "odometry-hist": "dimos.mapping.odometry_hist.OdometryHist",
     "odometry-path": "dimos.mapping.odometry_path.OdometryPath",
     "osm-skill": "dimos.agents.skills.osm.OsmSkill",
     "path-follower": "dimos.navigation.cmu_nav.modules.path_follower.path_follower.PathFollower",
