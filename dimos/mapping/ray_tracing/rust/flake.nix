@@ -7,7 +7,7 @@
     # Relative git+file: will be deprecated (nix#12281) but there's no
     # viable alternative for reaching local path deps outside the flake dir currently
     # presumably an alternative will be added before this is removed.
-    dimos-repo = { url = "git+file:../../../.."; flake = false; };
+    dimos-repo = { url = "git+file:../../../..?ref=main"; flake = false; };
   };
 
   outputs = { self, nixpkgs, flake-utils, dimos-repo }:
