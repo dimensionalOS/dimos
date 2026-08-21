@@ -25,6 +25,7 @@ import pinocchio
 
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
+from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -101,8 +102,8 @@ class DamiaoWholeBodyAdapter(ABC):
             raise ValueError(f"subclass did not declare CAN bus {name!r}") from exc
 
     @property
-    def gravity_model_path(self) -> Path | None:
-        """Return the subclass's gravity URDF without resolving it at import time."""
+    def gravity_model(self) -> RobotModel | None:
+        """Return the subclass's gravity model without resolving it at import time."""
         return None
 
     @abstractmethod
@@ -248,6 +249,11 @@ class DamiaoWholeBodyAdapter(ABC):
                 for position, velocity, effort in zip(q, dq, tau, strict=True)
             )
         for name in self.gripper_joints:
+            if not self._active:
+                # Gripper opening calibrates during activation; report a
+                # placeholder so read-only sessions still stream arm state.
+                states.append(MotorState(q=0.0, dq=0.0, tau=0.0))
+                continue
             opening = float(self._grippers[name].opening)
             if not np.isfinite(opening) or not 0.0 <= opening <= 1.0:
                 raise RuntimeError(f"gripper {name!r} returned invalid opening {opening}")
@@ -325,10 +331,24 @@ class DamiaoWholeBodyAdapter(ABC):
     def _load_gravity_model(self) -> None:
         if not self._runtime_config.gravity_comp:
             return
-        model_path = self.gravity_model_path
-        if model_path is None or not model_path.is_file():
-            raise ValueError("gravity compensation requires an existing URDF")
-        self._pin_model = pinocchio.buildModelFromUrdf(str(model_path))
+        robot_model = self.gravity_model
+        if robot_model is None:
+            raise ValueError("gravity compensation requires a robot model")
+        description = robot_model.load()
+        model = pinocchio.buildModelFromXML(description.xml)
+        controlled_joints = set(self.gravity_joint_names)
+        locked_joint_ids = [
+            joint_id
+            for joint_id, name in enumerate(model.names)
+            if joint_id != 0 and str(name) not in controlled_joints
+        ]
+        if locked_joint_ids:
+            model = pinocchio.buildReducedModel(
+                model,
+                locked_joint_ids,
+                pinocchio.neutral(model),
+            )
+        self._pin_model = model
         self._pin_data = self._pin_model.createData()
 
     def _preflight_gravity(self) -> None:
