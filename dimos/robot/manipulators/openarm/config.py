@@ -60,11 +60,14 @@ def openarm_urdf_joints(side: str) -> list[str]:
 
 
 def openarm_hardware() -> HardwareComponent:
-    """Select the physical or in-memory whole-body adapter for OpenArm."""
-    adapter_type = "mock_whole_body" if global_config.simulation else "openarm_damiao"
+    """Use mock hardware unless a physical right-arm CAN interface is set."""
+    adapter_type = "openarm_damiao" if global_config.can_port else "mock_whole_body"
     adapter_kwargs: dict[str, object] = {}
-    if not global_config.simulation:
-        adapter_kwargs["runtime_config"] = DamiaoRuntimeConfig(gravity_comp=True)
+    if global_config.can_port:
+        adapter_kwargs["runtime_config"] = DamiaoRuntimeConfig(
+            bus_addresses={"right": global_config.can_port},
+            gravity_comp=True,
+        )
     return HardwareComponent(
         hardware_id=OPENARM_HARDWARE_ID,
         hardware_type=HardwareType.WHOLE_BODY,

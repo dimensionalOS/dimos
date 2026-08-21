@@ -43,15 +43,18 @@ robots.
 ## Bring-up
 
 ```bash
+dimos run openarm-planner-coordinator # mock hardware
+
 dimos hardware can setup can0
 dimos hardware can setup can1
-dimos run openarm-planner-coordinator
+dimos --can-port can0 run openarm-planner-coordinator # physical hardware
 ```
 
 Linux assigns `can0`/`can1` in USB enumeration order. If the arms come up
-swapped, override the mapping through
-`DamiaoRuntimeConfig(bus_addresses={"left": ..., "right": ...})` rather than
-editing the adapter topology.
+swapped, override the full mapping through
+`DamiaoRuntimeConfig(bus_addresses={"left": ..., "right": ...})`. The
+`--can-port` value selects the right-arm bus; the left-arm bus defaults to
+`can1`.
 
 ## Blueprints
 
@@ -60,8 +63,8 @@ editing the adapter topology.
 | `coordinator-openarm` | coordinator + trajectory task over both arms |
 | `openarm-planner-coordinator` | planner (bimanual model) + coordinator |
 
-All blueprints run against the in-memory whole-body adapter under
-`--simulation`; the physical adapter is selected automatically otherwise.
+Both blueprints use the in-memory whole-body adapter by default. Passing
+`--can-port` explicitly selects the physical adapter.
 
 ## Files
 

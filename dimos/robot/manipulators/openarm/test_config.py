@@ -12,10 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
+
+from dimos.control.components import HardwareType
+from dimos.core.global_config import global_config
+from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.robot.manipulators.openarm.config import (
     OPENARM_ARM_JOINTS,
+    OPENARM_HARDWARE_ID,
     OPENARM_SIDES,
     openarm_bimanual_model_config,
+    openarm_hardware,
     openarm_urdf_joints,
 )
 from dimos.robot.manipulators.openarm.model import (
@@ -53,3 +60,31 @@ def test_openarm_config_exposes_one_bimanual_robot() -> None:
     assert [group.joint_names for group in config.planning_groups] == [
         tuple(openarm_urdf_joints(side)) for side in OPENARM_SIDES
     ]
+
+
+def test_openarm_hardware_defaults_to_mock_without_can_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(global_config, "can_port", None)
+
+    hardware = openarm_hardware()
+
+    assert (hardware.hardware_id, hardware.hardware_type, hardware.adapter_type) == (
+        OPENARM_HARDWARE_ID,
+        HardwareType.WHOLE_BODY,
+        "mock_whole_body",
+    )
+    assert hardware.adapter_kwargs == {}
+
+
+def test_openarm_hardware_uses_physical_adapter_with_can_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(global_config, "can_port", "can0")
+
+    hardware = openarm_hardware()
+
+    assert hardware.adapter_type == "openarm_damiao"
+    runtime_config = hardware.adapter_kwargs["runtime_config"]
+    assert isinstance(runtime_config, DamiaoRuntimeConfig)
+    assert runtime_config.bus_addresses == {"right": "can0"}
