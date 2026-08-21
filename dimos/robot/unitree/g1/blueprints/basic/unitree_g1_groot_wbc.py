@@ -80,6 +80,7 @@ from dimos.robot.unitree.g1.g1_rerun import (
     g1_urdf_joint_state,
     g1_urdf_static_robot,
 )
+from dimos.robot.unitree.g1.joint_limits import g1_velocity_limits
 from dimos.simulation.scene_assets.spec import ScenePackage
 from dimos.utils.data import LfsPath
 from dimos.visualization.rerun.scene_package import scene_package_static_entities
@@ -329,9 +330,8 @@ else:
     _n_workers = 10
     # Real hardware needs the arms held -- kd damping alone would let
     # them sag toward singular configurations between trajectories. The hold
-    # starts from the measured pose, not ARM_DEFAULT_POSE: the servo has no
-    # ramp, so a configured pose slams the arms there from wherever the robot
-    # actually is, at full GR00T stiffness, on the very first tick.
+    # starts from the measured pose, not ARM_DEFAULT_POSE, so taking ownership
+    # produces no commanded arm motion on the first tick.
     _arm_holder = TaskConfig(
         name="servo_arms",
         type="servo",
@@ -503,6 +503,7 @@ _coordinator = _G1GrootCoordinator.blueprint(
             adapter_type=_adapter_type,
             address=_adapter_address,
             wb_config=WholeBodyConfig(kp=tuple(G1_GROOT_KP), kd=tuple(G1_GROOT_KD)),
+            joint_velocity_limits=g1_velocity_limits(),
         ),
     ],
     tasks=[
