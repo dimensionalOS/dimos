@@ -56,6 +56,9 @@ pub struct Config {
     /// stray far hit cannot inflate it.
     #[validate(range(min = 0.0, max = 100.0))]
     pub region_percentile: f32,
+    /// Fixed frame clouds are registered and published in.
+    #[validate(length(min = 1))]
+    pub world_frame: String,
 }
 
 fn validate_health_range(cfg: &Config) -> Result<(), ValidationError> {
@@ -732,6 +735,7 @@ mod tests {
             emit_every: 1,
             global_emit_every: 1,
             region_percentile: 95.0,
+            world_frame: "world".to_string(),
         }
     }
 
@@ -929,16 +933,9 @@ mod tests {
         let cfg = Config {
             voxel_size,
             max_range: 50.0,
-            ray_subsample: 1,
             shadow_depth: 0.2,
             grace_depth: 0.2,
-            min_health: 0,
-            max_health: 1,
-            graze_cos: 0.5,
-            support_min: 0,
-            emit_every: 1,
-            global_emit_every: 1,
-            region_percentile: 95.0,
+            ..basic_config()
         };
         // Build the floor over a y band so it is a 2d plane, not a wire.
         let max_x = 25.0_f32;
@@ -1084,16 +1081,9 @@ mod tests {
         let cfg = Config {
             voxel_size,
             max_range: 50.0,
-            ray_subsample: 1,
             shadow_depth: 0.2,
             grace_depth: 0.2,
-            min_health: 0,
-            max_health: 1,
-            graze_cos: 0.5,
-            support_min: 0,
-            emit_every: 1,
-            global_emit_every: 1,
-            region_percentile: 95.0,
+            ..basic_config()
         };
 
         // Staircase
@@ -1158,16 +1148,9 @@ mod tests {
         let cfg = Config {
             voxel_size,
             max_range: 50.0,
-            ray_subsample: 1,
             shadow_depth: 0.2,
             grace_depth: 0.2,
-            min_health: 0,
-            max_health: 1,
-            graze_cos: 0.5,
-            support_min: 0,
-            emit_every: 1,
-            global_emit_every: 1,
-            region_percentile: 95.0,
+            ..basic_config()
         };
 
         // Flat floor from the sensor out to a vertical wall.
@@ -1220,16 +1203,10 @@ mod tests {
         let cfg = |graze_cos| Config {
             voxel_size,
             max_range: 50.0,
-            ray_subsample: 1,
             shadow_depth: 0.2,
             grace_depth: 0.2,
-            min_health: 0,
-            max_health: 1,
             graze_cos,
-            support_min: 0,
-            emit_every: 1,
-            global_emit_every: 1,
-            region_percentile: 95.0,
+            ..basic_config()
         };
 
         // Staircase topped by a flat landing and a back wall.
@@ -1351,16 +1328,9 @@ mod tests {
         let cfg = Config {
             voxel_size,
             max_range: 50.0,
-            ray_subsample: 1,
             shadow_depth: 0.2,
             grace_depth: 0.2,
-            min_health: 0,
-            max_health: 1,
-            graze_cos: 0.5,
-            support_min: 0,
-            emit_every: 1,
-            global_emit_every: 1,
-            region_percentile: 95.0,
+            ..basic_config()
         };
         let (mut map, _) = build_surface(&floor, voxel_size, cfg.max_health);
         let row: Vec<VoxelKey> = map

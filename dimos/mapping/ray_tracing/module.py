@@ -20,8 +20,8 @@ from typing import TYPE_CHECKING
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.spec import mapping
 
 
@@ -56,6 +56,9 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     global_emit_every: int = 1
     # Size the local region to this percentile of batch point distances.
     region_percentile: float = 95.0
+    # Fixed frame clouds are registered and published in. Each cloud is placed
+    # by the tf lookup world_frame -> cloud frame_id at the cloud stamp.
+    world_frame: str = "odom"
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
@@ -64,7 +67,7 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
     config: RayTracingVoxelMapConfig
 
     lidar: In[PointCloud2]
-    odometry: In[Odometry]
+    tf: In[TFMessage]
     global_map: Out[PointCloud2]
     local_map: Out[PointCloud2]
     region_bounds: Out[PoseStamped]
