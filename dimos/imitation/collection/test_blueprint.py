@@ -17,6 +17,7 @@ from __future__ import annotations
 import pytest
 
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.transport import pSHMTransport
 from dimos.hardware.sensors.camera.module import CameraModule
@@ -110,6 +111,10 @@ def test_openyam_collection_has_one_wrist_webcam_and_all_joints() -> None:
 
     assert len(camera_atoms) == 1
     assert camera_atoms[0].instance_name == "WristCamera"
+    webcam = camera_atoms[0].kwargs["webcam"]
+    assert webcam.width == 640
+    assert webcam.height == 480
+    assert webcam.fps == 30.0
     hardware = coordinator.kwargs["hardware"]
     assert len(hardware) == 1
     assert hardware[0].joints == OPENYAM_JOINTS
@@ -120,3 +125,18 @@ def test_openyam_collection_records_wrist_camera_over_shared_memory() -> None:
 
     assert isinstance(transport, pSHMTransport)
     assert transport.shm.config.default_capacity == DEFAULT_CAPACITY_COLOR_IMAGE
+
+
+@pytest.mark.parametrize(
+    ("argument", "expected"),
+    [("2", 2), ("/dev/v4l/by-id/usb-wrist-camera", "/dev/v4l/by-id/usb-wrist-camera")],
+)
+def test_openyam_wrist_camera_device_is_configurable_from_cli(
+    argument: str, expected: int | str
+) -> None:
+    parsed = BlueprintConfigParser(learning_collect_quest_openyam).parse(
+        ["--WristCamera.webcam.camera-index", argument],
+        environ={},
+    )
+
+    assert parsed.module_kwargs("WristCamera")["webcam"]["camera_index"] == expected

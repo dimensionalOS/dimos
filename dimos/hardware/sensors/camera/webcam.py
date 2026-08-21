@@ -15,9 +15,9 @@
 from functools import cache
 import threading
 import time
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import Field
+from pydantic import BeforeValidator, Field
 from reactivex import create
 from reactivex.observable import Observable
 
@@ -27,8 +27,17 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.utils.reactive import backpressure
 
 
+def _parse_camera_device(value: object) -> object:
+    if isinstance(value, str) and value.isdecimal():
+        return int(value)
+    return value
+
+
+CameraDevice = Annotated[int | str, BeforeValidator(_parse_camera_device)]
+
+
 class WebcamConfig(CameraConfig):
-    camera_index: int = 0  # /dev/videoN
+    camera_index: CameraDevice = 0  # Index or device path such as /dev/v4l/by-id/...
     width: int = 640
     height: int = 480
     fps: float = 15.0
