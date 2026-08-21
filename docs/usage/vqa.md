@@ -43,9 +43,9 @@ projects valid points into the image, keeps the nearest camera-depth point per p
 inside each object mask, and derives robust range statistics. Keeping dataset access and calibration
 preparation outside the primitive lets range estimation operate only on explicit geometry.
 
-## Edit a Dataset
+## Create or Edit a Dataset
 
-Open the local editor with a calibrated recording and an existing VQA dataset:
+Open the local editor with a calibrated recording and a new or existing VQA dataset directory:
 
 ```bash skip
 dimos evals vqa edit /path/to/calibrated-recording.db /path/to/vqa-dataset
@@ -57,9 +57,11 @@ Frame navigation displays raw recorded images. Generating a single frame or a `s
 selected frames.
 
 Questions, choices, and ground-truth answers can be edited, added, or removed. Navigation retains
-drafts in the editor process but does not modify the dataset. **Submit dataset** replaces questions
-for edited frames in `cases.jsonl` and `labels.jsonl`, writes their rectified assets, and preserves
-all untouched cases and assets.
+drafts in the editor process but does not modify dataset files. A nonexistent output directory is
+created as a blank workspace; an empty directory is also accepted. **Submit dataset** creates or
+updates `cases.jsonl` and `labels.jsonl`, writes rectified assets for edited frames, and preserves all
+untouched cases and assets when editing an existing dataset. Partially initialized or nonempty
+non-dataset directories are rejected rather than overwritten.
 
 ## Question Families
 

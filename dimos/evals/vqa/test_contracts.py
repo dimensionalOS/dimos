@@ -216,6 +216,8 @@ class _QuestionModel:
         assert "object_distance" in prompt
         assert "closest_object" in prompt
         assert "JSON array" in prompt
+        assert "'left box' and 'right box'" in prompt
+        assert "Do not call an object 'closest'" in prompt
         return [
             {"family": "presence", "object_names": ["chair"]},
             {"family": "horizontal_direction", "object_names": ["robot"]},

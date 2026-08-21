@@ -62,7 +62,7 @@ def generate(
 @app.command("edit")
 def edit(
     recording: str = typer.Argument(help="Memory dataset name or .db/.mcap path"),
-    output: Path = typer.Argument(help="Existing standalone VQA dataset to update"),
+    output: Path = typer.Argument(help="New or existing standalone VQA dataset directory"),
     port: int = typer.Option(8765, min=1, max=65535, help="Local editor HTTP port"),
 ) -> None:
     """Open a local interface for generating and editing VQA cases."""

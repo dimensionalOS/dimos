@@ -22,6 +22,7 @@ import numpy as np
 from pydantic import ValidationError
 import pytest
 
+from dimos.evals.vqa import editor
 from dimos.evals.vqa.editor import EditableQuestion, FrameDraft, VqaEditorSession
 from dimos.evals.vqa.families import OBJECT_DISTANCE_FAMILY
 from dimos.evals.vqa.generate import (
@@ -112,6 +113,102 @@ def test_editable_question_requires_valid_unique_choices() -> None:
         EditableQuestion(id="q", question="Question?", choices=("yes", "yes"), answer="yes")
     with pytest.raises(ValidationError, match="answer must be one of the choices"):
         EditableQuestion(id="q", question="Question?", choices=("yes", "no"), answer="maybe")
+
+
+def test_session_preloads_and_reuses_generation_models(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from dimos.models.segmentation import edge_tam
+    from dimos.models.vl import moondream, openai
+
+    calls = {"author_stop": 0, "detector_start": 0, "detector_stop": 0, "segmenter": 0}
+
+    class FakeAuthorModel:
+        def stop(self) -> None:
+            calls["author_stop"] += 1
+
+    class FakeDetectorModel:
+        def start(self) -> None:
+            calls["detector_start"] += 1
+
+        def stop(self) -> None:
+            calls["detector_stop"] += 1
+
+    class FakeSegmenter:
+        def __init__(self) -> None:
+            calls["segmenter"] += 1
+
+    monkeypatch.setattr(openai, "OpenAIVlModel", FakeAuthorModel)
+    monkeypatch.setattr(moondream, "MoondreamVlModel", FakeDetectorModel)
+    monkeypatch.setattr(edge_tam, "EdgeTAMImageSegmenter", FakeSegmenter)
+
+    session = VqaEditorSession(
+        "recording.db",
+        tmp_path,
+        preprocessor=FakePreprocessor(),  # type: ignore[arg-type]
+    ).start()
+    session.preload_generation_models()
+    session.preload_generation_models()
+
+    assert calls == {
+        "author_stop": 0,
+        "detector_start": 1,
+        "detector_stop": 0,
+        "segmenter": 1,
+    }
+
+    session.stop()
+
+    assert calls["author_stop"] == 1
+    assert calls["detector_stop"] == 1
+
+
+@pytest.mark.parametrize("precreate", [False, True])
+def test_session_creates_or_accepts_blank_dataset_directory(
+    tmp_path: Path, precreate: bool
+) -> None:
+    output = tmp_path / "new-dataset"
+    if precreate:
+        output.mkdir()
+    session = VqaEditorSession(
+        "recording.db",
+        output,
+        preprocessor=FakePreprocessor(),  # type: ignore[arg-type]
+    ).start()
+
+    assert output.is_dir()
+    assert session.state().existing_frames == ()
+    session.replace_draft(
+        FrameDraft(
+            index=2,
+            questions=(
+                EditableQuestion(
+                    id="frame-000002-manual",
+                    question="Manual question?",
+                    choices=("yes", "no"),
+                    answer="yes",
+                ),
+            ),
+        )
+    )
+    session.submit()
+
+    assert _read_rows(output / "cases.jsonl")[0]["id"] == "frame-000002-manual"
+    assert _read_rows(output / "labels.jsonl") == [{"id": "frame-000002-manual", "answer": "yes"}]
+    session.stop()
+
+
+def test_session_rejects_partially_initialized_dataset_directory(tmp_path: Path) -> None:
+    output = tmp_path / "partial"
+    output.mkdir()
+    (output / "cases.jsonl").write_text("", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="both cases.jsonl and labels.jsonl"):
+        VqaEditorSession(
+            "recording.db",
+            output,
+            preprocessor=FakePreprocessor(),  # type: ignore[arg-type]
+        ).start()
 
 
 def test_session_keeps_edits_in_memory_until_submit_and_preserves_other_cases(
@@ -235,6 +332,9 @@ def test_generate_uses_rectified_image_and_retains_generated_draft(tmp_path: Pat
 
     assert generated == (session.draft(2),)
     assert generated[0].questions[0].answer == "yes"
+    assert generated[0].depth_attempt_count == 1
+    assert generated[0].depth_answered_count == 0
+    assert generated[0].depth_rejections == ("not enough projected points",)
     assert seen[0].image.ts == 12.0
     assert session.state().dirty_frames == (2,)
     session.submit()
@@ -277,4 +377,48 @@ def test_submit_rejects_question_id_from_an_untouched_frame(tmp_path: Path) -> N
 
     with pytest.raises(ValueError, match="another frame"):
         session.submit()
+    session.stop()
+
+
+def test_submit_restores_all_outputs_after_write_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_dataset(tmp_path)
+    original_cases = (tmp_path / "cases.jsonl").read_bytes()
+    original_labels = (tmp_path / "labels.jsonl").read_bytes()
+    session = VqaEditorSession(
+        "recording.db",
+        tmp_path,
+        preprocessor=FakePreprocessor(),  # type: ignore[arg-type]
+    ).start()
+    session.replace_draft(
+        FrameDraft(
+            index=2,
+            questions=(
+                EditableQuestion(
+                    id="frame-000002-manual",
+                    question="Manual?",
+                    choices=("yes", "no"),
+                    answer="yes",
+                ),
+            ),
+        )
+    )
+    original_write = editor._write_jsonl_atomic
+
+    def fail_cases(path: Path, rows: Any) -> None:
+        if path.name == "cases.jsonl":
+            raise OSError("disk full")
+        original_write(path, rows)
+
+    monkeypatch.setattr(editor, "_write_jsonl_atomic", fail_cases)
+
+    with pytest.raises(OSError, match="disk full"):
+        session.submit()
+
+    assert (tmp_path / "cases.jsonl").read_bytes() == original_cases
+    assert (tmp_path / "labels.jsonl").read_bytes() == original_labels
+    assert not (tmp_path / "assets" / "frame-000002.png").exists()
+    assert not (tmp_path / "audit" / "frame-000002").exists()
+    assert session.state().dirty_frames == (2,)
     session.stop()

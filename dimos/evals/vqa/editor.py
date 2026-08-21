@@ -16,10 +16,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 import json
 from pathlib import Path, PurePosixPath
 import re
+import shutil
 import tempfile
 from threading import RLock
 from typing import TYPE_CHECKING, Any
@@ -75,6 +77,9 @@ class FrameDraft(BaseModel):
 
     index: int = Field(ge=0)
     questions: tuple[EditableQuestion, ...] = ()
+    depth_attempt_count: int = Field(default=0, ge=0)
+    depth_answered_count: int = Field(default=0, ge=0)
+    depth_rejections: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def unique_question_ids(self) -> FrameDraft:
@@ -137,7 +142,7 @@ class VqaEditorSession:
         self.stop()
 
     def start(self) -> VqaEditorSession:
-        """Open recording streams and validate the target dataset."""
+        """Open recording streams and initialize or load the target dataset."""
         with self._lock:
             self._load_dataset()
             self._preprocessor.start()
@@ -154,6 +159,12 @@ class VqaEditorSession:
                 author_model.stop()
                 detector_model.stop()
                 self._models = None
+
+    def preload_generation_models(self) -> None:
+        """Load the editor's local generation models before serving requests."""
+        with self._lock:
+            if self._frame_generator is None:
+                self._generation_models()
 
     def state(self) -> EditorState:
         """Return immutable metadata used to initialize the browser."""
@@ -227,6 +238,18 @@ class VqaEditorSession:
                         )
                         for case in frame.cases
                     ),
+                    depth_attempt_count=sum(_is_depth_audit_row(row) for row in frame.audit_rows),
+                    depth_answered_count=sum(
+                        _is_depth_audit_row(row) and row.get("status") == "answered"
+                        for row in frame.audit_rows
+                    ),
+                    depth_rejections=tuple(
+                        str(row["reason"])
+                        for row in frame.audit_rows
+                        if _is_depth_audit_row(row)
+                        and row.get("status") == "rejected"
+                        and "reason" in row
+                    ),
                 )
                 self._drafts[index] = draft
                 self._generated_frames[index] = frame
@@ -264,46 +287,58 @@ class VqaEditorSession:
             if len(labels) != len(cases):
                 raise ValueError("question IDs must be unique across the dataset")
 
-            assets = self.output / "assets"
-            assets.mkdir(parents=True, exist_ok=True)
-            for index in sorted(dirty):
-                if not self._drafts[index].questions:
-                    continue
-                generated_frame = self._generated_frames.get(index)
-                image = (
-                    generated_frame.image
-                    if generated_frame is not None
-                    else self._preprocessor.load_image(index)
-                )
-                temporary_image = assets / f".frame-{index:06d}.tmp.png"
-                if not image.save(str(temporary_image)):
-                    raise RuntimeError(f"failed to write VQA image: {temporary_image}")
-                temporary_image.replace(assets / f"frame-{index:06d}.png")
-
-            for index in sorted(dirty):
-                frame_cases = [case for case in cases if _case_frame_index(case) == index]
-                _write_frame_audit(
-                    self.output,
-                    index,
-                    frame_cases,
-                    [labels[case.id] for case in frame_cases],
-                    self._generated_frames.get(index),
-                )
-            _write_run_audit(
-                self.output,
-                self.recording,
-                cases,
-                dirty,
-            )
-
-            _write_jsonl_atomic(
-                self.output / "labels.jsonl",
-                (labels[case.id].model_dump(mode="json") for case in cases),
-            )
-            _write_jsonl_atomic(
+            changed_paths = [
                 self.output / "cases.jsonl",
-                (case.model_dump(mode="json") for case in cases),
-            )
+                self.output / "labels.jsonl",
+                self.output / "audit" / "run.json",
+                *(self.output / "audit" / f"frame-{index:06d}" for index in sorted(dirty)),
+                *(
+                    self.output / "assets" / f"frame-{index:06d}.png"
+                    for index in sorted(dirty)
+                    if self._drafts[index].questions
+                ),
+            ]
+            with _rollback_paths(changed_paths):
+                assets = self.output / "assets"
+                assets.mkdir(parents=True, exist_ok=True)
+                for index in sorted(dirty):
+                    if not self._drafts[index].questions:
+                        continue
+                    generated_frame = self._generated_frames.get(index)
+                    image = (
+                        generated_frame.image
+                        if generated_frame is not None
+                        else self._preprocessor.load_image(index)
+                    )
+                    temporary_image = assets / f".frame-{index:06d}.tmp.png"
+                    if not image.save(str(temporary_image)):
+                        raise RuntimeError(f"failed to write VQA image: {temporary_image}")
+                    temporary_image.replace(assets / f"frame-{index:06d}.png")
+
+                for index in sorted(dirty):
+                    frame_cases = [case for case in cases if _case_frame_index(case) == index]
+                    _write_frame_audit(
+                        self.output,
+                        index,
+                        frame_cases,
+                        [labels[case.id] for case in frame_cases],
+                        self._generated_frames.get(index),
+                    )
+                _write_run_audit(
+                    self.output,
+                    self.recording,
+                    cases,
+                    dirty,
+                )
+
+                _write_jsonl_atomic(
+                    self.output / "labels.jsonl",
+                    (labels[case.id].model_dump(mode="json") for case in cases),
+                )
+                _write_jsonl_atomic(
+                    self.output / "cases.jsonl",
+                    (case.model_dump(mode="json") for case in cases),
+                )
             self._cases = cases
             self._labels = labels
             for index in dirty:
@@ -318,8 +353,21 @@ class VqaEditorSession:
     def _load_dataset(self) -> None:
         cases_path = self.output / "cases.jsonl"
         labels_path = self.output / "labels.jsonl"
+        if not self.output.exists():
+            self.output.mkdir(parents=True)
+            return
+        if not self.output.is_dir():
+            raise ValueError(f"VQA output is not a directory: {self.output}")
+        if not cases_path.exists() and not labels_path.exists():
+            if any(self.output.iterdir()):
+                raise ValueError(
+                    f"VQA output must be empty or contain cases.jsonl and labels.jsonl: {self.output}"
+                )
+            return
         if not cases_path.is_file() or not labels_path.is_file():
-            raise ValueError(f"target is not an existing VQA dataset: {self.output}")
+            raise ValueError(
+                f"VQA output must contain both cases.jsonl and labels.jsonl: {self.output}"
+            )
         try:
             with jsonlines.open(cases_path) as reader:
                 cases = [PublicCase.model_validate(row) for row in reader.iter(skip_empty=True)]
@@ -366,12 +414,20 @@ class VqaEditorSession:
         if self._models is None:
             from dimos.evals.vqa.primitives.edge_tam import EdgeTAMObjectMaskPipeline
             from dimos.evals.vqa.primitives.range import LidarRangeEstimator
+            from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
             from dimos.models.vl.moondream import MoondreamVlModel
             from dimos.models.vl.openai import OpenAIVlModel
 
             author_model = OpenAIVlModel()
             detector_model = MoondreamVlModel()
-            mask_estimator = EdgeTAMObjectMaskPipeline(detector_model)
+            try:
+                detector_model.start()
+                segmenter = EdgeTAMImageSegmenter()
+            except Exception:
+                author_model.stop()
+                detector_model.stop()
+                raise
+            mask_estimator = EdgeTAMObjectMaskPipeline(detector_model, segmenter)
             self._models = (
                 author_model,
                 detector_model,
@@ -393,6 +449,14 @@ def _case_frame_index(case: PublicCase) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def _is_depth_audit_row(row: dict[str, object]) -> bool:
+    proposal = row.get("proposal")
+    return isinstance(proposal, dict) and proposal.get("family") in {
+        "object_distance",
+        "closest_object",
+    }
+
+
 def _write_jsonl_atomic(path: Path, rows: Iterable[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary: Path | None = None
@@ -408,6 +472,40 @@ def _write_jsonl_atomic(path: Path, rows: Iterable[dict[str, Any]]) -> None:
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
+
+
+@contextmanager
+def _rollback_paths(paths: Iterable[Path]) -> Iterator[None]:
+    unique_paths = tuple(dict.fromkeys(paths))
+    with tempfile.TemporaryDirectory(prefix=".vqa-editor-", dir=unique_paths[0].parent) as raw:
+        backup_root = Path(raw)
+        existing: set[int] = set()
+        for index, path in enumerate(unique_paths):
+            if not path.exists():
+                continue
+            existing.add(index)
+            backup = backup_root / str(index)
+            if path.is_dir():
+                shutil.copytree(path, backup)
+            else:
+                shutil.copy2(path, backup)
+        try:
+            yield
+        except Exception:
+            for index, path in enumerate(unique_paths):
+                if path.is_dir():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink(missing_ok=True)
+                if index not in existing:
+                    continue
+                backup = backup_root / str(index)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if backup.is_dir():
+                    shutil.copytree(backup, path)
+                else:
+                    shutil.copy2(backup, path)
+            raise
 
 
 def _write_frame_audit(
