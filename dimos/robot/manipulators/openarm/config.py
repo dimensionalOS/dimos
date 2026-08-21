@@ -35,6 +35,9 @@ OPENARM_RIGHT_ARM_JOINTS = [f"right_arm/joint{i}" for i in range(1, OPENARM_DOF 
 OPENARM_ARM_JOINTS = [*OPENARM_LEFT_ARM_JOINTS, *OPENARM_RIGHT_ARM_JOINTS]
 OPENARM_GRIPPER_JOINTS = ["left_arm/gripper", "right_arm/gripper"]
 OPENARM_JOINTS = [*OPENARM_ARM_JOINTS, *OPENARM_GRIPPER_JOINTS]
+OPENARM_GRIPPER_COLLISION_EXCLUSIONS = [
+    (f"openarm_{side}_ee_link1", f"openarm_{side}_ee_link2") for side in OPENARM_SIDES
+]
 
 # MIT gains measured on v1.0 hardware, carried over as the v2.0 starting
 # point: with gravity compensation active the PD terms only handle transient
@@ -108,6 +111,7 @@ def openarm_bimanual_model_config(name: str = OPENARM_HARDWARE_ID) -> RobotModel
                 tip_link="openarm_right_grasp_frame",
             ),
         ],
+        collision_exclusion_pairs=OPENARM_GRIPPER_COLLISION_EXCLUSIONS,
         auto_convert_meshes=True,
         max_velocity=0.5,
         max_acceleration=1.0,

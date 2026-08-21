@@ -2,7 +2,7 @@
 title: "OpenArm Integration"
 ---
 
-DimOS drives the [OpenArm](https://openarm.dev) bimanual platform (two 7-DOF
+dimOS drives the [OpenArm](https://openarm.dev) bimanual platform (two 7-DOF
 arms + grippers, Damiao motors, one CAN bus per arm) as a single whole-body
 device through the generic Damiao adapter stack introduced for OpenYAM.
 
@@ -31,7 +31,7 @@ Per arm, shoulder to wrist (send ids `0x01..0x07`, feedback `send | 0x10`):
 2x DM8009, 2x DM4340, 3x DM4310, plus a DM4310 gripper at `0x08`.
 
 Gravity compensation and planning use the official bimanual OpenArm v2.0
-Xacro. DimOS pins the description repository to an immutable commit and checks
+Xacro. dimOS pins the description repository to an immutable commit and checks
 it out lazily through the robot asset cache. Gravity compensation locks the
 finger joints and preflights the remaining 14 joints against the declared arm
 order before enabling the motors.

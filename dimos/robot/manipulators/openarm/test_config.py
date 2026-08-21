@@ -12,11 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import cast
+
 import pytest
 
 from dimos.control.components import HardwareType
 from dimos.core.global_config import global_config
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
+from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.robot.manipulators.openarm.config import (
     OPENARM_ARM_JOINTS,
     OPENARM_HARDWARE_ID,
@@ -39,7 +42,7 @@ def test_openarm_model_uses_pinned_official_bimanual_xacro() -> None:
     assert OPENARM_DESCRIPTION_REF == "1fba2cbc05001f05b4514120b70130b4ac06f409"
     assert OPENARM_DESCRIPTION_SOURCE.url == OPENARM_DESCRIPTION_URL
     assert OPENARM_DESCRIPTION_SOURCE.ref == OPENARM_DESCRIPTION_REF
-    assert OPENARM_BIMANUAL_XACRO.parts[-5:] == (
+    assert cast("tuple[str, ...]", OPENARM_BIMANUAL_XACRO.parts)[-5:] == (
         "assets",
         "robot",
         "openarm_v2.0",
@@ -50,6 +53,7 @@ def test_openarm_model_uses_pinned_official_bimanual_xacro() -> None:
 
 def test_openarm_config_exposes_one_bimanual_robot() -> None:
     config = openarm_bimanual_model_config()
+    registry = PlanningGroupRegistry([config])
 
     assert config.model is OPENARM_BIMANUAL_MODEL
     assert config.get_coordinator_joint_names() == OPENARM_ARM_JOINTS
@@ -59,6 +63,14 @@ def test_openarm_config_exposes_one_bimanual_robot() -> None:
     ]
     assert [group.joint_names for group in config.planning_groups] == [
         tuple(openarm_urdf_joints(side)) for side in OPENARM_SIDES
+    ]
+    assert config.collision_exclusion_pairs == [
+        ("openarm_left_ee_link1", "openarm_left_ee_link2"),
+        ("openarm_right_ee_link1", "openarm_right_ee_link2"),
+    ]
+    assert [group.id for group in registry.list()] == [
+        "openarm/left_manipulator",
+        "openarm/right_manipulator",
     ]
 
 
