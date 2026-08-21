@@ -23,15 +23,15 @@ from typing import TypeVar
 
 import pytest
 
-from dimos.utils import ament_prefix
-from dimos.utils.ament_prefix import ensure_ament_packages, process_xacro
+from dimos.robot.assets import xacro as xacro_assets
+from dimos.robot.assets.xacro import ensure_ament_packages, expand_xacro
 
 _F = TypeVar("_F", bound=Callable[..., object])
 
 
 def _needs_ament(f: _F) -> _F:
     """Marker for tests that need ament_index_python (ROS-only)."""
-    f = pytest.mark.skipif(not ament_prefix._has_ament, reason="ament_index_python not installed")(
+    f = pytest.mark.skipif(not xacro_assets._has_ament, reason="ament_index_python not installed")(
         f
     )
     return pytest.mark.self_hosted(f)
@@ -50,8 +50,8 @@ _needs_xacro = pytest.mark.skipif(not _has_xacro, reason="xacro not installed")
 @pytest.fixture(autouse=True)
 def _isolate_ament_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Reset module state for each test."""
-    monkeypatch.setattr(ament_prefix, "_prefix_dir", tmp_path / "dimos_ament_prefix")
-    monkeypatch.setattr(ament_prefix, "_ament_registered", {})
+    monkeypatch.setattr(xacro_assets, "_prefix_dir", tmp_path / "dimos_ament_prefix")
+    monkeypatch.setattr(xacro_assets, "_ament_registered", {})
     monkeypatch.delenv("AMENT_PREFIX_PATH", raising=False)
 
 
@@ -103,7 +103,7 @@ def test_updates_symlink_on_target_change(tmp_path: Path) -> None:
     new_dir.mkdir()
 
     ensure_ament_packages({"pkg": old_dir})
-    ament_prefix._ament_registered.clear()
+    xacro_assets._ament_registered.clear()
     ensure_ament_packages({"pkg": new_dir})
 
     prefix = tmp_path / "dimos_ament_prefix"
@@ -148,8 +148,8 @@ def test_ament_index_resolves(tmp_path: Path) -> None:
 
 
 @_needs_xacro
-def test_process_xacro_with_simple_file(tmp_path: Path) -> None:
-    """Test process_xacro works with a minimal xacro file (no $(find))."""
+def test_expand_xacro_with_simple_file(tmp_path: Path) -> None:
+    """Test expand_xacro works with a minimal xacro file (no $(find))."""
     xacro_file = tmp_path / "test.urdf.xacro"
     xacro_file.write_text(
         '<?xml version="1.0"?>\n'
@@ -158,6 +158,34 @@ def test_process_xacro_with_simple_file(tmp_path: Path) -> None:
         "</robot>\n"
     )
 
-    result = process_xacro(xacro_file, {}, {})
+    result = expand_xacro(xacro_file, {}, {})
     assert "<robot" in result
     assert "base_link" in result
+
+
+@_needs_xacro
+def test_expand_xacro_resolves_package_find_without_ros(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    package = tmp_path / "test_description"
+    package.mkdir()
+    (package / "links.xacro").write_text(
+        '<robot xmlns:xacro="http://www.ros.org/wiki/xacro">\n'
+        '  <xacro:macro name="add_package_link">\n'
+        '    <link name="from_package"/>\n'
+        "  </xacro:macro>\n"
+        "</robot>\n"
+    )
+    model = tmp_path / "model.urdf.xacro"
+    model.write_text(
+        '<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="test">\n'
+        '  <xacro:include filename="$(find test_description)/links.xacro"/>\n'
+        "  <xacro:add_package_link/>\n"
+        "</robot>\n"
+    )
+    monkeypatch.setattr(xacro_assets, "_has_ament", False)
+
+    result = expand_xacro(model, {"test_description": package}, {})
+
+    assert '<link name="from_package"/>' in result

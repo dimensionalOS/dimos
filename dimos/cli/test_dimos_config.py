@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 import typer
 
-from dimos.cli import dimos as cli
+from dimos.cli.commands import lifecycle as cli
 
 
 @pytest.fixture

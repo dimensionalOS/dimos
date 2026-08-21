@@ -24,6 +24,7 @@ from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators._modeling import (
     base_pose,
     coordinator_joint_mapping,
@@ -75,7 +76,10 @@ def make_openyam_model_config(
     local_joint_names = joint_names(OPENYAM_DOF)
     return RobotModelConfig(
         name=name,
-        model_path=OPENYAM_MODEL_PATH,
+        model=RobotModel.from_file(
+            OPENYAM_MODEL_PATH,
+            package_paths=OPENYAM_PACKAGE_PATHS,
+        ),
         base_pose=base_pose(),
         joint_names=local_joint_names,
         base_link="base",
@@ -87,7 +91,6 @@ def make_openyam_model_config(
                 tip_link="gripper_tip",
             )
         ],
-        package_paths=OPENYAM_PACKAGE_PATHS,
         auto_convert_meshes=True,
         collision_exclusion_pairs=[],
         joint_name_mapping=coordinator_joint_mapping(
