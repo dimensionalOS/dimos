@@ -31,6 +31,9 @@ as ray tracing and ate the walls MLS needs to plan around (IoU 0.076 vs 0.107, r
 
 from __future__ import annotations
 
+from functools import partial
+from pathlib import Path
+
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
@@ -46,7 +49,70 @@ from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_3d.mls_planner.goal_relay import GoalRelay
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
+from dimos.visualization.rerun.urdf_robot import UrdfRobotStaticRerunFactory
 from dimos.visualization.vis_module import vis_module
+
+ALFRED_URDF = Path(__file__).resolve().parent.parent / "alfred.urdf"
+ALFRED_RERUN_ROOT = "world/alfred"
+CAMERA_RERUN_ROOT = "world/camera"
+
+IR_ENTITY_BY_FRAME = {
+    "camera_infra1_optical_frame": f"{CAMERA_RERUN_ROOT}/infra1",
+    "camera_infra2_optical_frame": f"{CAMERA_RERUN_ROOT}/infra2",
+}
+"""Both imagers arrive on one topic, so the entity has to come from the message."""
+
+
+def _image_at(msg, entity_path):
+    return [(entity_path, msg.to_rerun())]
+
+
+def _pinhole_at(msg, entity_path):
+    return msg.to_rerun(image_topic=entity_path, optical_frame=msg.frame_id)
+
+
+def _ir_image(msg):
+    entity_path = IR_ENTITY_BY_FRAME.get(msg.frame_id)
+    return _image_at(msg, entity_path) if entity_path else None
+
+
+def _ir_pinhole(msg):
+    entity_path = IR_ENTITY_BY_FRAME.get(msg.frame_id)
+    return _pinhole_at(msg, entity_path) if entity_path else None
+
+
+def _rerun_blueprint():
+    """The stock bridge blueprint is 3D only, so no image view exists to render into."""
+    import rerun as rr
+    import rerun.blueprint as rrb
+
+    return rrb.Blueprint(
+        rrb.Horizontal(
+            rrb.Spatial3DView(
+                origin="world",
+                background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
+                line_grid=rrb.LineGrid3D(plane=rr.components.Plane3D.XY.with_distance(0.5)),
+            ),
+            rrb.Vertical(
+                rrb.Spatial2DView(origin=f"{CAMERA_RERUN_ROOT}/color", name="color"),
+                rrb.Spatial2DView(origin=f"{CAMERA_RERUN_ROOT}/depth", name="depth"),
+                rrb.Spatial2DView(origin=f"{CAMERA_RERUN_ROOT}/infra1", name="infra1"),
+                rrb.Spatial2DView(origin=f"{CAMERA_RERUN_ROOT}/infra2", name="infra2"),
+            ),
+            column_shares=[3, 1],
+        ),
+        collapse_panels=True,
+    )
+
+
+def _alfred_urdf_static(rr):
+    """The URDF meshes, pinned to the live base_link frame so they follow odometry."""
+    factory = UrdfRobotStaticRerunFactory(urdf_path=ALFRED_URDF, root_path=ALFRED_RERUN_ROOT)
+    return [
+        *factory(rr),
+        (ALFRED_RERUN_ROOT, rr.Transform3D(parent_frame="tf#/base_link")),
+    ]
+
 
 VOXEL_SIZE_METERS = 0.05
 DEPTH_MAX_RANGE_METERS = 6.0
@@ -159,7 +225,32 @@ alfred_mls_nav = (
         DanHolonomicTC.blueprint(run_profile="walk"),
         MovementManager.blueprint(),
         AlfredHighLevel.blueprint(),
-        vis_module(global_config.viewer),
+        vis_module(
+            global_config.viewer,
+            rerun_config={
+                "blueprint": _rerun_blueprint,
+                "static": {ALFRED_RERUN_ROOT: _alfred_urdf_static},
+                # Each image has to sit on the same entity as its Pinhole or rerun has
+                # nothing to project it through, which is what made the camera read as
+                # rotated and left the image views empty.
+                "visual_override": {
+                    "world/color_image": partial(
+                        _image_at, entity_path=f"{CAMERA_RERUN_ROOT}/color"
+                    ),
+                    "world/color_camera_info": partial(
+                        _pinhole_at, entity_path=f"{CAMERA_RERUN_ROOT}/color"
+                    ),
+                    "world/depth_image": partial(
+                        _image_at, entity_path=f"{CAMERA_RERUN_ROOT}/depth"
+                    ),
+                    "world/depth_camera_info": partial(
+                        _pinhole_at, entity_path=f"{CAMERA_RERUN_ROOT}/depth"
+                    ),
+                    "world/image": _ir_image,
+                    "world/camera_info": _ir_pinhole,
+                },
+            },
+        ),
     )
     .remappings(
         [
