@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""cuVSLAM on a RealSense stereo camera.
+"""cuVSLAM on a RealSense stereo camera and nothing else.
 
     dimos run demo-cuvslam-realsense --viewer rerun --rerun-host 0.0.0.0
 
-``world/path`` should retrace the route walked.
+``world/odom_hist`` should retrace the route walked; a world frame restart shows up as a
+straight jump across it.
 """
 
 from __future__ import annotations
@@ -27,18 +28,29 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.mapping.dim_slam.dim_slam import DimSlam
-from dimos.mapping.odometry_path import OdometryPath, path_at_true_height
+from dimos.mapping.odometry_hist import OdometryHist
+from dimos.msgs.nav_msgs.Path import Path
 from dimos.visualization.vis_module import vis_module
 
 
+def path_at_true_height(path: Path) -> Any:
+    """Draw the trail where it actually is; the default lift clears a costmap we have not got."""
+    return path.to_rerun(z_offset=0.0, radii=0.02)
+
+
 def cuvslam_rerun_blueprint() -> Any:
-    """Rerun names entities after the topic, which both cameras share."""
+    """The cameras down one side, the 3D world taking the rest.
+
+    One view for all of them: rerun names an entity after the topic, which they share.
+    """
     import rerun as rr
     import rerun.blueprint as rrb
 
     return rrb.Blueprint(
         rrb.Horizontal(
-            rrb.Spatial2DView(origin="world/image", name="cameras"),
+            rrb.Vertical(
+                rrb.Spatial2DView(origin="world/image", name="cameras"),
+            ),
             rrb.Spatial3DView(
                 origin="world",
                 name="3D",
@@ -60,24 +72,30 @@ demo_cuvslam_realsense = (
             emitter_enabled=False,
             enable_color=False,
             enable_depth=False,
+            enable_pointcloud=False,
+            enable_imu=False,
         ),
-        DimSlam.blueprint(),
-        OdometryPath.blueprint(),
+        # No IMU streaming here, so the filter seeds level off the first tracked pose.
+        DimSlam.blueprint(use_imu=False),
+        OdometryHist.blueprint(),
         vis_module(
             global_config.viewer,
             rerun_config={
                 "blueprint": cuvslam_rerun_blueprint,
-                "visual_override": {"world/path": path_at_true_height},
+                "visual_override": {"world/odom_hist": path_at_true_height},
             },
         ),
     )
     .remappings(
         [
+            # Both imagers onto the one stream; the tracker tells them apart by frame_id.
             (RealSenseCamera, "infrared_left", "image"),
             (RealSenseCamera, "infrared_right", "image"),
             (RealSenseCamera, "infrared_left_camera_info", "camera_info"),
             (RealSenseCamera, "infrared_right_camera_info", "camera_info"),
         ]
     )
-    .global_config(n_workers=4)
+    # DimSlam is a native module and speaks LCM only, so the blueprint pins it rather
+    # than inheriting whatever DIMOS_TRANSPORT the shell has (macOS defaults to zenoh).
+    .global_config(transport="lcm", n_workers=4)
 )
