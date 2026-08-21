@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Replay a lidar+odometry .db through several voxel-mapper variants into rerun.
+"""Replay a lidar .db through several voxel-mapper variants into rerun.
 
-Each variant's global map is a separate, toggleable entity under world/maps.
+Clouds are registered by the recorded tf stream at the cloud stamp, exactly as
+the live module registers them. Each variant's global map is a separate,
+toggleable entity under world/maps.
 
 Usage:
-    uv run python -m dimos.mapping.ray_tracing.utils.raytrace_rrd go2_mid360_stairs
+    uv run python -m dimos.mapping.ray_tracing.utils.raytrace_rrd mid360_athens_stairs
 """
 
 from __future__ import annotations
@@ -29,15 +31,15 @@ import typer
 
 from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.transform import FnTransformer
-from dimos.memory.type.observation import Observation
-from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.memory.tf import StreamTF
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import resolve_named_path
 
 TIMELINE = "ts"
 
-PairObs = Observation[tuple[Observation[PointCloud2], Observation[Odometry]]]
+# Max stamp gap between a cloud and the transform used to register it (s),
+# matching the live module.
+TF_MATCH_TOLERANCE_S = 0.1
 
 COLORS = {
     "naive": [90, 200, 90],
@@ -61,29 +63,15 @@ def _height_colors(centers: np.ndarray, base: list[int]) -> np.ndarray:
     return (np.asarray(base, np.float32) * brightness[:, None]).astype(np.uint8)
 
 
-def _attach_pose_from_odom(pair_obs: PairObs) -> Observation[PointCloud2]:
-    lidar_obs, odom_obs = pair_obs.data
-    odom = odom_obs.data
-    pose_tuple = (
-        float(odom.position.x),
-        float(odom.position.y),
-        float(odom.position.z),
-        float(odom.orientation.x),
-        float(odom.orientation.y),
-        float(odom.orientation.z),
-        float(odom.orientation.w),
-    )
-    return lidar_obs.with_pose(pose_tuple)
-
-
 def main(
     dataset: str = typer.Argument(..., help="Dataset .db: bare name (cwd or data/) or path"),
     out: Path | None = typer.Option(
         None, "--out", help="Output .rrd path. If omitted, spawn rerun live."
     ),
-    lidar_stream: str = typer.Option("fastlio_lidar", "--lidar-stream"),
-    odom_stream: str = typer.Option("fastlio_odometry", "--odom-stream"),
-    align_tol: float = typer.Option(0.05, "--align-tol", help="Lidar/odom alignment tolerance (s)"),
+    lidar_stream: str = typer.Option("pointlio_lidar", "--lidar-stream"),
+    world_frame: str = typer.Option(
+        "world", "--world-frame", help="Fixed frame clouds are registered in"
+    ),
     voxel_size: float = typer.Option(0.1, "--voxel-size", help="Voxel edge length (m)"),
     max_range: float = typer.Option(30.0, "--max-range", help="Max ray cast distance (m)"),
     emit_every: int = typer.Option(1, "--emit-every", help="Log the maps every N frames"),
@@ -129,18 +117,29 @@ def main(
         lidar = store.stream(lidar_stream, PointCloud2).order_by("ts")
         if from_time is not None:
             lidar = lidar.from_time(from_time)
-        odom = store.stream(odom_stream, Odometry).order_by("ts")
-        pose_tagged = lidar.align(odom, tolerance=align_tol).transform(
-            FnTransformer(_attach_pose_from_odom)
-        )
+        tf = StreamTF.from_store(store)
+        if tf is None:
+            raise typer.BadParameter(f"{db_path} has no tf stream to register clouds from")
 
         trajectory: list[tuple[float, float, float]] = []
         count = 0
-        for obs in pose_tagged:
-            if obs.pose_tuple is None:
+        dropped = 0
+        for obs in lidar:
+            t = tf.get(
+                world_frame,
+                obs.data.frame_id,
+                time_point=obs.ts,
+                time_tolerance=TF_MATCH_TOLERANCE_S,
+            )
+            if t is None:
+                dropped += 1
                 continue
-            x, y, z, qx, qy, qz, qw = obs.pose_tuple
-            pts = obs.data.points_f32()
+            mat = t.to_matrix()
+            rot = mat[:3, :3].astype(np.float32)
+            trans = mat[:3, 3].astype(np.float32)
+            x, y, z = (float(v) for v in trans)
+            qx, qy, qz, qw = t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w
+            pts = obs.data.points_f32() @ rot.T + trans
             for mapper in mappers.values():
                 mapper.add_frame(pts, (x, y, z))
             count += 1
@@ -196,6 +195,8 @@ def main(
                 rr.log("world/robot_path", rr.LineStrips3D([trajectory], colors=[[255, 165, 0]]))
             print(f"frame={count}", end="\r", flush=True)
         print()
+        if dropped:
+            print(f"dropped {dropped} clouds with no transform within tolerance")
 
     if out is not None:
         print(f"wrote {out}\nopen with: rerun {out}")
