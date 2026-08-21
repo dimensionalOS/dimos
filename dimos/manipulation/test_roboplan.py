@@ -1720,7 +1720,7 @@ def test_native_selected_planner_uses_explicit_start_after_live_state_advances(
     assert observed_scene_start[:2] == pytest.approx(start.position)
 
 
-def test_native_selected_planner_rejects_multi_group_selection(
+def test_native_selected_planner_composes_disjoint_groups_within_one_robot(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
     config = robot_config.model_copy(
@@ -1741,8 +1741,25 @@ def test_native_selected_planner_rejects_multi_group_selection(
         JointState(name=list(selection.joint_names), position=[0.1, 0.1]),
     )
 
-    assert result.status == PlanningStatus.UNSUPPORTED
-    assert "no generated group" in result.message
+    assert result.status == PlanningStatus.SUCCESS
+    assert result.path
+
+
+def test_overlapping_group_selection_rejected_before_planning(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    config = robot_config.model_copy(
+        update={
+            "planning_groups": [
+                PlanningGroupDefinition("left", ("joint1", "joint2"), "base", "left_tip"),
+                PlanningGroupDefinition("right", ("joint2",), "base", "right_tip"),
+            ]
+        }
+    )
+    _make_world(fake_roboplan, config)
+
+    with pytest.raises(ValueError, match="overlap"):
+        _selection((config,), "arm/left", "arm/right")
 
 
 def test_native_planner_coordinates_groups_across_two_robots(
