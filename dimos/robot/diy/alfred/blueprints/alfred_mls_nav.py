@@ -200,6 +200,7 @@ alfred_mls_nav = (
         RayTracingVoxelMap.blueprint(
             voxel_size=VOXEL_SIZE_METERS,
             max_range=DEPTH_MAX_RANGE_METERS,
+            world_frame="odom",
         ),
         MLSPlannerNative.blueprint(
             # Nothing closes loops here, so map -> odom stays identity and odom is the
