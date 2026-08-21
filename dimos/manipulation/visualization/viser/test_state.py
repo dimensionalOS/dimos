@@ -14,10 +14,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import threading
 
 from dimos.manipulation.planning.spec.models import PlanningGroupID
+from dimos.manipulation.visualization.operator import TargetEvaluationResult
 from dimos.manipulation.visualization.viser.state import (
     ActionStatus,
     BackendConnectionStatus,
@@ -25,6 +25,7 @@ from dimos.manipulation.visualization.viser.state import (
     PanelRuntime,
     PanelState,
     PlanStatus,
+    TargetEvaluationRequest,
     TargetEvaluationWorker,
     TargetStatus,
 )
@@ -117,6 +118,36 @@ def test_operation_worker_uses_operation_error_callback_on_timeout() -> None:
     assert operation_errors == ["Operation timed out after 0.0s"]
 
 
-class FakeTargetEvaluationWorker(TargetEvaluationWorker):
-    def __init__(self, calls: list[Callable[[], None]]) -> None:
-        self.calls = calls
+def test_target_evaluation_worker_cancels_active_request_and_applies_latest() -> None:
+    first_started = threading.Event()
+    latest_applied = threading.Event()
+    applied: list[int] = []
+
+    def handler(request: TargetEvaluationRequest) -> TargetEvaluationResult:
+        if request.sequence_id == 1:
+            first_started.set()
+            assert request.cancel_event.wait(timeout=1.0)
+        return TargetEvaluationResult(True, "FEASIBLE", "", True)
+
+    def apply_result(
+        request: TargetEvaluationRequest,
+        _result: TargetEvaluationResult,
+    ) -> None:
+        applied.append(request.sequence_id)
+        latest_applied.set()
+
+    worker = TargetEvaluationWorker(handler, apply_result)
+    first = TargetEvaluationRequest(1, "cartesian")
+    latest = TargetEvaluationRequest(2, "cartesian")
+    worker.start()
+    try:
+        worker.submit(first)
+        assert first_started.wait(timeout=1.0)
+        worker.submit(latest)
+        assert latest_applied.wait(timeout=1.0)
+    finally:
+        worker.stop()
+
+    assert first.cancel_event.is_set()
+    assert latest.cancel_event.is_set() is False
+    assert applied == [2]

@@ -14,6 +14,7 @@
 
 """Focused tests for the manipulation visualization operator facade."""
 
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -123,6 +124,8 @@ class FakeModule:
         self.clear_success = True
         self.topology_calls = 0
         self.telemetry_calls = 0
+        self.ik_timeout_seconds: float | None = None
+        self.ik_cancel_check_called = False
 
     def get_state(self) -> ManipulationSnapshot:
         return ManipulationSnapshot(
@@ -151,14 +154,19 @@ class FakeModule:
         self.telemetry_calls += 1
         return JointState(name=[f"{robot_name}/j0"], position=[0.0])
 
-    def inverse_kinematics(
+    def evaluate_inverse_kinematics(
         self,
         pose_targets: dict[PlanningGroupID, PoseStamped],
         auxiliary_group_ids: tuple[PlanningGroupID, ...] = (),
         seed: JointState | None = None,
         check_collision: bool = True,
+        *,
+        timeout_seconds: float,
+        cancel_check: Callable[[], bool],
     ) -> IKResult:
         assert check_collision is True
+        self.ik_timeout_seconds = timeout_seconds
+        self.ik_cancel_check_called = cancel_check()
         self.ik_calls.append((pose_targets, auxiliary_group_ids, seed))
         return IKResult(
             status=IKStatus.SUCCESS,
@@ -351,12 +359,18 @@ def test_pose_evaluation_accepts_world_frame_and_delegates_original_request() ->
     seed = JointState(name=["arm/j0", "arm/j1"], position=[0.0, 0.0])
     request = PoseTargetRequest({"arm/manipulator": pose}, seed=seed)
 
-    result = operator.evaluate_pose_target(request)
+    result = operator.evaluate_pose_target(
+        request,
+        timeout_seconds=0.1,
+        cancel_check=lambda: False,
+    )
 
     assert result.success is True
     assert result.target_joints is not None
     assert list(result.target_joints.name) == ["arm/j0", "arm/j1"]
     assert module.ik_calls == [({"arm/manipulator": pose}, (), seed)]
+    assert module.ik_timeout_seconds == 0.1
+    assert module.ik_cancel_check_called is False
 
 
 def test_pose_validation_rejects_frame_capability_and_seed_errors() -> None:
@@ -377,11 +391,19 @@ def test_pose_validation_rejects_frame_capability_and_seed_errors() -> None:
     ]
     operator, _, _ = _operator()
 
-    no_pose = no_pose_operator.evaluate_pose_target(PoseTargetRequest({"arm/no_pose": _pose()}))
+    no_pose = no_pose_operator.evaluate_pose_target(
+        PoseTargetRequest({"arm/no_pose": _pose()}),
+        timeout_seconds=0.1,
+        cancel_check=lambda: False,
+    )
     assert no_pose.success is False
     assert no_pose.status == "INVALID"
     for request in bad_seed_cases:
-        result = operator.evaluate_pose_target(request)
+        result = operator.evaluate_pose_target(
+            request,
+            timeout_seconds=0.1,
+            cancel_check=lambda: False,
+        )
         assert result.success is False
         assert result.status == "INVALID"
 

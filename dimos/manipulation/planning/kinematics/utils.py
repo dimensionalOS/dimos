@@ -16,6 +16,7 @@
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+import time
 
 import numpy as np
 from numpy.typing import NDArray
@@ -24,7 +25,7 @@ from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGro
 from dimos.manipulation.planning.groups.utils import filter_joint_state_to_selected_joints
 from dimos.manipulation.planning.spec.enums import IKStatus
 from dimos.manipulation.planning.spec.models import IKResult, RobotName, WorldRobotID
-from dimos.manipulation.planning.spec.protocols import WorldSpec
+from dimos.manipulation.planning.spec.protocols import IKCancelCheck, WorldSpec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 
@@ -37,6 +38,44 @@ class SinglePoseTargetRequest:
     joint_names: list[str]
     seed_positions: NDArray[np.float64]
     group_indices: list[int]
+
+
+def ik_deadline(timeout_seconds: float | None) -> float | None:
+    """Return a monotonic deadline for one IK request."""
+    if timeout_seconds is None:
+        return None
+    return time.monotonic() + max(0.0, timeout_seconds)
+
+
+def ik_interruption(
+    deadline: float | None,
+    cancel_check: IKCancelCheck | None,
+    *,
+    iterations: int = 0,
+) -> IKResult | None:
+    """Return a timeout result when cancellation or the deadline requests a stop."""
+    if cancel_check is not None and cancel_check():
+        return IKResult(
+            status=IKStatus.TIMEOUT,
+            joint_state=None,
+            iterations=iterations,
+            message="IK evaluation cancelled by a newer target",
+        )
+    if deadline is not None and time.monotonic() >= deadline:
+        return IKResult(
+            status=IKStatus.TIMEOUT,
+            joint_state=None,
+            iterations=iterations,
+            message="IK evaluation timed out",
+        )
+    return None
+
+
+def ik_time_remaining(deadline: float | None) -> float | None:
+    """Return non-negative seconds remaining before an IK deadline."""
+    if deadline is None:
+        return None
+    return max(0.0, deadline - time.monotonic())
 
 
 def unique_pose_target_frame_for_robot(world: WorldSpec, robot_id: WorldRobotID) -> str | None:

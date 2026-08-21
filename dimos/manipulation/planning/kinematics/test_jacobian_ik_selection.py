@@ -146,3 +146,31 @@ def test_solve_pose_targets_rejects_group_without_pose_target_frame() -> None:
 
     assert result.status == IKStatus.UNSUPPORTED
     assert "no pose target frame" in result.message
+
+
+def test_solve_pose_targets_honors_cancellation_before_iteration() -> None:
+    world = _World()
+
+    result = JacobianIK().solve_pose_targets(
+        world=world,
+        pose_targets={_group(): _pose()},
+        cancel_check=lambda: True,
+    )
+
+    assert result.status == IKStatus.TIMEOUT
+    assert "newer target" in result.message
+    assert world.group_pose_calls == 0
+
+
+def test_solve_pose_targets_honors_expired_deadline_before_iteration() -> None:
+    world = _World()
+
+    result = JacobianIK().solve_pose_targets(
+        world=world,
+        pose_targets={_group(): _pose()},
+        timeout_seconds=0.0,
+    )
+
+    assert result.status == IKStatus.TIMEOUT
+    assert result.message == "IK evaluation timed out"
+    assert world.group_pose_calls == 0

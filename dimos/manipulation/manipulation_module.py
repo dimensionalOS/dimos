@@ -87,6 +87,7 @@ from dimos.manipulation.planning.spec.models import (
     WorldRobotID,
 )
 from dimos.manipulation.planning.spec.protocols import (
+    IKCancelCheck,
     KinematicsSpec,
     PlannerSpec,
     TrajectoryParametrizerSpec,
@@ -719,6 +720,46 @@ class ManipulationModule(Module):
         check_collision: bool = True,
     ) -> IKResult:
         """Solve planning-group pose targets without planning a joint path."""
+        return self._inverse_kinematics(
+            pose_targets,
+            auxiliary_group_ids,
+            seed,
+            check_collision,
+            max_attempts=10,
+        )
+
+    def evaluate_inverse_kinematics(
+        self,
+        pose_targets: Mapping[PlanningGroupID, PoseStamped],
+        auxiliary_group_ids: Sequence[PlanningGroupID] = (),
+        seed: JointState | None = None,
+        check_collision: bool = True,
+        *,
+        timeout_seconds: float,
+        cancel_check: IKCancelCheck,
+    ) -> IKResult:
+        """Solve one bounded IK attempt for an interactive target evaluation."""
+        return self._inverse_kinematics(
+            pose_targets,
+            auxiliary_group_ids,
+            seed,
+            check_collision,
+            max_attempts=1,
+            timeout_seconds=timeout_seconds,
+            cancel_check=cancel_check,
+        )
+
+    def _inverse_kinematics(
+        self,
+        pose_targets: Mapping[PlanningGroupID, PoseStamped],
+        auxiliary_group_ids: Sequence[PlanningGroupID],
+        seed: JointState | None,
+        check_collision: bool,
+        *,
+        max_attempts: int,
+        timeout_seconds: float | None = None,
+        cancel_check: IKCancelCheck | None = None,
+    ) -> IKResult:
         if self._kinematics is None or self._world_monitor is None:
             return IKResult(status=IKStatus.NO_SOLUTION, message="Planning not initialized")
         if not pose_targets:
@@ -754,6 +795,9 @@ class ManipulationModule(Module):
             auxiliary_groups=auxiliary_groups,
             seed=seed_state,
             check_collision=check_collision,
+            max_attempts=max_attempts,
+            timeout_seconds=timeout_seconds,
+            cancel_check=cancel_check,
         )
 
     def inverse_kinematics_single(

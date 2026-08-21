@@ -20,8 +20,8 @@ Use factory functions from dimos.manipulation.planning.factory to create instanc
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from collections.abc import Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, runtime_checkable
 
 if TYPE_CHECKING:
     from contextlib import AbstractContextManager
@@ -46,6 +46,9 @@ if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.sensor_msgs.JointState import JointState
     from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+
+
+IKCancelCheck: TypeAlias = Callable[[], bool]
 
 
 @runtime_checkable
@@ -262,6 +265,8 @@ class KinematicsSpec(Protocol):
         orientation_tolerance: float = 0.01,
         check_collision: bool = True,
         max_attempts: int = 10,
+        timeout_seconds: float | None = None,
+        cancel_check: IKCancelCheck | None = None,
     ) -> IKResult:
         """Solve IK with optional collision checking."""
         ...
@@ -276,6 +281,8 @@ class KinematicsSpec(Protocol):
         orientation_tolerance: float = 0.01,
         check_collision: bool = True,
         max_attempts: int = 10,
+        timeout_seconds: float | None = None,
+        cancel_check: IKCancelCheck | None = None,
     ) -> IKResult:
         """Solve planning-group-scoped pose targets."""
         ...

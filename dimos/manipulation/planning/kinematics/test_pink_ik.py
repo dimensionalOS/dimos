@@ -608,6 +608,23 @@ def test_solve_pose_targets_rejects_group_without_tip(mocker: MockerFixture) -> 
     assert "no pose target frame" in result.message
 
 
+def test_solve_pose_targets_honors_cancellation_before_model_setup(
+    mocker: MockerFixture,
+) -> None:
+    ik = _pink_ik(mocker)
+    get_context = mocker.patch.object(ik, "_get_robot_context")
+
+    result = ik.solve_pose_targets(
+        world=cast("Any", _FakeWorld()),
+        pose_targets={},
+        cancel_check=lambda: True,
+    )
+
+    assert result.status == IKStatus.TIMEOUT
+    assert "newer target" in result.message
+    get_context.assert_not_called()
+
+
 def test_solve_pose_targets_partial_seed_reads_world_state(mocker: MockerFixture) -> None:
     ik = _pink_ik(mocker)
     mocker.patch.object(ik, "_get_robot_context", return_value=_context())

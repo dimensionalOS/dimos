@@ -16,8 +16,10 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.kinematics import drake_optimization_ik as drake_ik
@@ -28,6 +30,14 @@ from dimos.manipulation.planning.spec.models import IKResult
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
+
+
+class FakeSolverId:
+    def __init__(self, name: str) -> None:
+        self._name = name
+
+    def name(self) -> str:
+        return self._name
 
 
 class FakeWorld:
@@ -116,6 +126,61 @@ def test_solve_pose_targets_uses_group_tip_locks_seed_fallback_and_filters(monke
     assert calls[0]["target_frame_name"] == "group_tip_link"
     np.testing.assert_allclose(calls[0]["seed"], [1.0, 22.0, 3.0, 4.0])
     assert calls[0]["locked_joint_positions"] == {0: 1.0, 2: 3.0}
+
+
+def test_solve_pose_targets_honors_cancellation_before_solver(monkeypatch) -> None:
+    monkeypatch.setattr(drake_ik, "DRAKE_AVAILABLE", True)
+    monkeypatch.setattr(DrakeOptimizationIK, "_validate_world", lambda self, world: None)
+
+    result = DrakeOptimizationIK().solve_pose_targets(
+        world=FakeWorld(),  # type: ignore[arg-type]
+        pose_targets={},
+        cancel_check=lambda: True,
+    )
+
+    assert result.status == IKStatus.TIMEOUT
+    assert "newer target" in result.message
+
+
+@pytest.mark.parametrize(
+    ("selected_solver", "option_name"),
+    (("SNOPT", "Time limit"), ("IPOPT", "max_wall_time")),
+)
+def test_bounded_drake_solve_sets_native_solver_timeout(
+    monkeypatch,
+    selected_solver: str,
+    option_name: str,
+) -> None:
+    snopt_id = FakeSolverId("SNOPT")
+    ipopt_id = FakeSolverId("IPOPT")
+    selected_id = snopt_id if selected_solver == "SNOPT" else ipopt_id
+    option_calls: list[tuple[FakeSolverId, str, float]] = []
+    solver_options = SimpleNamespace(
+        SetOption=lambda solver_id, name, value: option_calls.append((solver_id, name, value))
+    )
+    solve_calls: list[tuple[object, object]] = []
+    expected = object()
+    monkeypatch.setattr(drake_ik, "ChooseBestSolver", lambda _prog: selected_id, raising=False)
+    monkeypatch.setattr(
+        drake_ik, "SnoptSolver", SimpleNamespace(id=lambda: snopt_id), raising=False
+    )
+    monkeypatch.setattr(
+        drake_ik, "IpoptSolver", SimpleNamespace(id=lambda: ipopt_id), raising=False
+    )
+    monkeypatch.setattr(drake_ik, "SolverOptions", lambda: solver_options, raising=False)
+    monkeypatch.setattr(
+        drake_ik,
+        "Solve",
+        lambda prog, *, solver_options: (solve_calls.append((prog, solver_options)), expected)[1],
+        raising=False,
+    )
+
+    result, unsupported = drake_ik._solve_program("program", 0.1)
+
+    assert result is expected
+    assert unsupported is None
+    assert option_calls == [(selected_id, option_name, 0.1)]
+    assert solve_calls == [("program", solver_options)]
 
 
 class FakeRigidTransform:

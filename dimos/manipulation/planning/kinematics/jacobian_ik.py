@@ -31,11 +31,13 @@ import numpy as np
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.kinematics.utils import (
+    ik_deadline as _ik_deadline,
+    ik_interruption as _ik_interruption,
     resolve_single_pose_target_request as _resolve_single_pose_target_request,
 )
 from dimos.manipulation.planning.spec.enums import IKStatus
 from dimos.manipulation.planning.spec.models import IKResult, WorldRobotID
-from dimos.manipulation.planning.spec.protocols import WorldSpec
+from dimos.manipulation.planning.spec.protocols import IKCancelCheck, WorldSpec
 from dimos.manipulation.planning.utils.kinematics_utils import (
     check_singularity,
     compute_error_twist,
@@ -108,6 +110,8 @@ class JacobianIK:
         orientation_tolerance: float = 0.01,
         check_collision: bool = True,
         max_attempts: int = 10,
+        timeout_seconds: float | None = None,
+        cancel_check: IKCancelCheck | None = None,
     ) -> IKResult:
         """Solve IK with multiple random restarts.
 
@@ -140,10 +144,13 @@ class JacobianIK:
         # Extract joint names for creating random seeds
         joint_names = seed.name
 
+        deadline = _ik_deadline(timeout_seconds)
         best_result: IKResult | None = None
         best_error = float("inf")
 
         for attempt in range(max_attempts):
+            if interrupted := _ik_interruption(deadline, cancel_check):
+                return interrupted
             # Generate seed JointState
             if attempt == 0:
                 current_seed = seed
@@ -163,6 +170,8 @@ class JacobianIK:
                 max_iterations=self._max_iterations,
                 position_tolerance=position_tolerance,
                 orientation_tolerance=orientation_tolerance,
+                cancel_check=cancel_check,
+                _deadline=deadline,
             )
 
             if result.is_success() and result.joint_state is not None:
@@ -202,6 +211,8 @@ class JacobianIK:
         orientation_tolerance: float = 0.01,
         check_collision: bool = True,
         max_attempts: int = 10,
+        timeout_seconds: float | None = None,
+        cancel_check: IKCancelCheck | None = None,
     ) -> IKResult:
         """Solve a planning-group pose target using group FK/Jacobian."""
         if not world.is_finalized:
@@ -218,6 +229,9 @@ class JacobianIK:
         if request is None:
             return _create_failure_result(IKStatus.NO_SOLUTION, "Invalid pose target request")
 
+        deadline = _ik_deadline(timeout_seconds)
+        if interrupted := _ik_interruption(deadline, cancel_check):
+            return interrupted
         full_seed = JointState(
             {"name": request.joint_names, "position": request.seed_positions.tolist()}
         )
@@ -231,6 +245,8 @@ class JacobianIK:
             orientation_tolerance=orientation_tolerance,
             group=request.group,
             active_joint_indices=request.group_indices,
+            cancel_check=cancel_check,
+            _deadline=deadline,
         )
         if not result.is_success() or result.joint_state is None:
             return result
@@ -243,7 +259,12 @@ class JacobianIK:
             full_state = JointState(
                 {"name": request.joint_names, "position": full_positions.tolist()}
             )
-            if not world.check_config_collision_free(request.robot_id, full_state):
+            collision_free = world.check_config_collision_free(request.robot_id, full_state)
+            if interrupted := _ik_interruption(
+                deadline, cancel_check, iterations=result.iterations
+            ):
+                return interrupted
+            if not collision_free:
                 return _create_failure_result(IKStatus.COLLISION, "IK solution is in collision")
         return result
 
@@ -258,6 +279,9 @@ class JacobianIK:
         orientation_tolerance: float = 0.01,
         group: PlanningGroup | None = None,
         active_joint_indices: list[int] | None = None,
+        timeout_seconds: float | None = None,
+        cancel_check: IKCancelCheck | None = None,
+        _deadline: float | None = None,
     ) -> IKResult:
         """Iterative Jacobian-based IK until convergence.
 
@@ -276,6 +300,8 @@ class JacobianIK:
         Returns:
             IKResult with solution or failure status
         """
+        deadline = _ik_deadline(timeout_seconds) if _deadline is None else _deadline
+
         # Convert to internal representation
         target_matrix = Transform(
             translation=target_pose.position,
@@ -290,6 +316,8 @@ class JacobianIK:
         lower_limits, upper_limits = world.get_joint_limits(robot_id)
 
         for iteration in range(max_iterations):
+            if interrupted := _ik_interruption(deadline, cancel_check, iterations=iteration):
+                return interrupted
             with world.scratch_context() as ctx:
                 # Set current position (convert to JointState for API)
                 current_state = JointState(
@@ -304,6 +332,8 @@ class JacobianIK:
 
                 # Compute error
                 pos_error, ori_error = compute_pose_error(current_pose, target_matrix)
+                if interrupted := _ik_interruption(deadline, cancel_check, iterations=iteration):
+                    return interrupted
 
                 # Check convergence
                 if pos_error <= position_tolerance and ori_error <= orientation_tolerance:
@@ -348,6 +378,9 @@ class JacobianIK:
                 lower_limits[active_joint_indices],
                 upper_limits[active_joint_indices],
             )
+
+        if interrupted := _ik_interruption(deadline, cancel_check, iterations=max_iterations):
+            return interrupted
 
         # Compute final error
         with world.scratch_context() as ctx:

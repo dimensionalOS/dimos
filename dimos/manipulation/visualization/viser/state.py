@@ -110,7 +110,8 @@ class PanelState:
     selected_group_ids: tuple[PlanningGroupID, ...] = ()
     planning_mode: PlanningMode = PlanningMode.JOINT_SPACE
     selection_epoch: int = 0
-    pose_targets: dict[PlanningGroupID, Pose] = field(default_factory=dict)
+    candidate_pose_targets: dict[PlanningGroupID, Pose] = field(default_factory=dict)
+    accepted_pose_targets: dict[PlanningGroupID, Pose] = field(default_factory=dict)
     group_joint_targets: dict[PlanningGroupID, JointState] = field(default_factory=dict)
     target_joints: JointState | None = None
     group_poses: dict[PlanningGroupID, Pose] = field(default_factory=dict)
@@ -120,7 +121,6 @@ class PanelState:
     action_status: ActionStatus = ActionStatus.IDLE
     manipulation_state: str = "DISCONNECTED"
     current_joints: list[float] | None = None
-    cartesian_target: Pose | None = None
     feasibility: FeasibilityState = field(default_factory=FeasibilityState)
     latest_sequence_id: int = 0
     plan_state: PanelPlanState = field(default_factory=PanelPlanState)
@@ -216,6 +216,11 @@ class TargetEvaluationRequest:
     auxiliary_group_ids: tuple[PlanningGroupID, ...] = ()
     pose_targets: dict[PlanningGroupID, Pose] = field(default_factory=dict)
     joint_targets: dict[PlanningGroupID, JointState] = field(default_factory=dict)
+    cancel_event: threading.Event = field(
+        default_factory=threading.Event,
+        repr=False,
+        compare=False,
+    )
 
 
 class TargetEvaluationWorker:
@@ -235,6 +240,7 @@ class TargetEvaluationWorker:
         self._apply_result = apply_result
         self._requests: queue.Queue[TargetEvaluationRequest] = queue.Queue(maxsize=1)
         self._submit_lock = threading.Lock()
+        self._active_request: TargetEvaluationRequest | None = None
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -248,6 +254,10 @@ class TargetEvaluationWorker:
 
     def stop(self, timeout: float | None = 2.0) -> None:
         self._stop_event.set()
+        with self._submit_lock:
+            if self._active_request is not None:
+                self._active_request.cancel_event.set()
+            self._cancel_queued_requests()
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=timeout)
         if self._thread is not None and not self._thread.is_alive():
@@ -255,12 +265,17 @@ class TargetEvaluationWorker:
 
     def submit(self, request: TargetEvaluationRequest) -> None:
         with self._submit_lock:
-            while True:
-                try:
-                    self._requests.get_nowait()
-                except queue.Empty:
-                    break
+            if self._active_request is not None:
+                self._active_request.cancel_event.set()
+            self._cancel_queued_requests()
             self._requests.put_nowait(request)
+
+    def _cancel_queued_requests(self) -> None:
+        while True:
+            try:
+                self._requests.get_nowait().cancel_event.set()
+            except queue.Empty:
+                return
 
     def _run(self) -> None:
         while not self._stop_event.is_set():
@@ -268,16 +283,25 @@ class TargetEvaluationWorker:
                 request = self._requests.get(timeout=0.1)
             except queue.Empty:
                 continue
-            while True:
-                try:
-                    request = self._requests.get_nowait()
-                except queue.Empty:
-                    break
+            with self._submit_lock:
+                while True:
+                    try:
+                        newer_request = self._requests.get_nowait()
+                    except queue.Empty:
+                        break
+                    request.cancel_event.set()
+                    request = newer_request
+                self._active_request = request
             try:
                 result = self._handler(request)
-                self._apply_result(request, result)
+                if not request.cancel_event.is_set():
+                    self._apply_result(request, result)
             except Exception:
                 logger.warning("Target evaluation worker caught unhandled exception", exc_info=True)
+            finally:
+                with self._submit_lock:
+                    if self._active_request is request:
+                        self._active_request = None
 
 
 class OperationWorker:

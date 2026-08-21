@@ -351,7 +351,15 @@ class Operator:
             poses,
         )
 
-    def evaluate_pose_target(self, request: object) -> TargetEvaluationResult:
+    def evaluate_pose_target(
+        self,
+        request: object,
+        *,
+        timeout_seconds: float,
+        cancel_check: Callable[[], bool],
+    ) -> TargetEvaluationResult:
+        assert timeout_seconds > 0.0
+        assert cancel_check() is False
         group_ids = tuple(
             dict.fromkeys((*request.pose_targets.keys(), *request.auxiliary_group_ids))
         )  # type: ignore[attr-defined]
@@ -611,6 +619,10 @@ def test_cartesian_space_mode_requests_sparse_time_optimal_trajectory(
     auxiliary_group = group("arm", "gripper", ("j2",))
     gui, module, server = panel([pose_group, auxiliary_group], states("arm"))
     gui._toggle_group_selected(auxiliary_group.id)
+    accepted_pose = gui.state.accepted_pose_targets[pose_group.id]
+    gui.state.candidate_pose_targets[pose_group.id] = Pose(
+        {"position": [9.0, 9.0, 9.0], "orientation": [0.0, 0.0, 0.0, 1.0]}
+    )
     gui.state.target_status = TargetStatus.FEASIBLE
     gui._operation_worker.stop()
     monkeypatch.setattr(
@@ -628,6 +640,7 @@ def test_cartesian_space_mode_requests_sparse_time_optimal_trajectory(
     targets, config, auxiliary_ids = module.cartesian_plans[0]
     assert tuple(targets) == (pose_group.id,)
     assert targets[pose_group.id].frame_id == "world"
+    assert targets[pose_group.id].position == accepted_pose.position
     assert config.speed_mode == "time_optimal"  # type: ignore[attr-defined]
     assert config.dt == 0.05  # type: ignore[attr-defined]
     assert auxiliary_ids == (auxiliary_group.id,)
@@ -879,6 +892,9 @@ def test_theme_and_reference_scene_contract() -> None:
     assert server.gui.theme_kwargs["dark_mode"] is True
     assert server.gui.theme_kwargs["control_layout"] == "fixed"
     assert ViserVisualizationConfig().panel_enabled is True
+    assert ViserVisualizationConfig().target_evaluation_timeout == 0.1
+    with pytest.raises(ValueError):
+        ViserVisualizationConfig(target_evaluation_timeout=0.0)
 
 
 def test_preview_selection_rejects_malformed_before_visibility() -> None:
@@ -968,8 +984,9 @@ def test_initial_pose_targets_are_group_id_keyed_for_same_robot_groups() -> None
         gui.start()
         gui._toggle_group_selected(second.id)
 
-        assert list(gui.state.pose_targets[first.id].position) == [1.0, 0.0, 0.0]
-        assert list(gui.state.pose_targets[second.id].position) == [2.0, 0.0, 0.0]
+        assert list(gui.state.candidate_pose_targets[first.id].position) == [1.0, 0.0, 0.0]
+        assert list(gui.state.candidate_pose_targets[second.id].position) == [2.0, 0.0, 0.0]
+        assert gui.state.accepted_pose_targets == gui.state.candidate_pose_targets
     finally:
         gui.close()
 
@@ -1450,6 +1467,9 @@ def test_transform_control_callback_preserves_pose_through_gui_and_backend(
     submitted: list[TargetEvaluationRequest] = []
     gui._worker.submit = submitted.append  # type: ignore[method-assign]
     gui.start()
+    gui.state.planning_mode = PlanningMode.CARTESIAN_SPACE
+    accepted_before = dict(gui.state.accepted_pose_targets)
+    joints_before = JointState(gui.state.target_joints)
     control = scene._handles[f"{selected.id}:ee_control"]
     control.position = (1.0, 2.0, 3.0)
     control.wxyz = (0.4, 0.1, 0.2, 0.3)
@@ -1457,11 +1477,27 @@ def test_transform_control_callback_preserves_pose_through_gui_and_backend(
     control.callback(SimpleNamespace(target=control))
 
     request = submitted[-1]
-    assert list(gui.state.pose_targets[selected.id].position) == [1.0, 2.0, 3.0]
-    assert list(gui.state.pose_targets[selected.id].orientation) == [0.1, 0.2, 0.3, 0.4]
+    assert list(gui.state.candidate_pose_targets[selected.id].position) == [1.0, 2.0, 3.0]
+    assert list(gui.state.candidate_pose_targets[selected.id].orientation) == [0.1, 0.2, 0.3, 0.4]
     assert control.position == (1.0, 2.0, 3.0)
     assert control.wxyz == (0.4, 0.1, 0.2, 0.3)
-    assert request.pose_targets[selected.id] == gui.state.pose_targets[selected.id]
+    assert request.pose_targets[selected.id] == gui.state.candidate_pose_targets[selected.id]
+    assert gui.state.accepted_pose_targets == accepted_before
+
+    robot_visual_states: list[bool] = []
+    scene.set_target_robot_visual_state = lambda _robot_id, feasible: robot_visual_states.append(
+        feasible
+    )  # type: ignore[method-assign]
+    gui._apply_target_evaluation_result(
+        request,
+        TargetEvaluationResult(False, "TIMEOUT", "IK evaluation timed out", False),
+    )
+
+    assert gui.state.candidate_pose_targets[selected.id] == request.pose_targets[selected.id]
+    assert gui.state.accepted_pose_targets == accepted_before
+    assert gui.state.target_joints == joints_before
+    assert control.color == TARGET_CONTROL_INFEASIBLE_COLOR
+    assert robot_visual_states[-1] is True
     gui.close()
 
 

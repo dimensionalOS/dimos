@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, MutableMapping, Sequence
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 import math
 from typing import TypeAlias, cast
 
@@ -276,6 +276,7 @@ class ViserPanelGui:
         pose_targets: Mapping[PlanningGroupID, Pose],
         auxiliary_group_ids: Sequence[PlanningGroupID] = (),
         seed: JointState | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> TargetEvaluationResult:
         stamped = {
             group_id: PoseStamped(
@@ -284,7 +285,9 @@ class ViserPanelGui:
             for group_id, pose in pose_targets.items()
         }
         return self.operator.evaluate_pose_target(
-            PoseTargetRequest(stamped, tuple(auxiliary_group_ids), _copy_joint_state(seed))
+            PoseTargetRequest(stamped, tuple(auxiliary_group_ids), _copy_joint_state(seed)),
+            timeout_seconds=self.config.target_evaluation_timeout,
+            cancel_check=cancel_check or (lambda: False),
         )
 
     def cancel(self) -> bool:
@@ -638,7 +641,7 @@ class ViserPanelGui:
             )
             if control is not None:
                 self._handles[f"ee_control:{group_id}"] = control
-            pose = self.state.pose_targets.get(group_id)
+            pose = self.state.candidate_pose_targets.get(group_id)
             if pose is not None:
                 self._suppress_target_callbacks = True
                 try:
@@ -771,19 +774,19 @@ class ViserPanelGui:
                     "position": [float(values[str(name)]) for name in group.local_joint_names],
                 }
             )
-            if group.has_pose_target and group_id not in self.state.pose_targets:
+            if group.has_pose_target and group_id not in self.state.candidate_pose_targets:
                 pose = self.get_group_ee_pose(group_id)
                 if pose is not None:
-                    self.state.pose_targets[group_id] = pose
+                    self.state.candidate_pose_targets[group_id] = pose
+                    self.state.accepted_pose_targets[group_id] = pose
                     self.state.group_poses[group_id] = pose
-                    if self.state.cartesian_target is None:
-                        self.state.cartesian_target = pose
         self._refresh_target_joints_from_groups()
 
     def _prune_inactive_group_state(self) -> None:
         selected = set(self.state.selected_group_ids)
         for values in (
-            self.state.pose_targets,
+            self.state.candidate_pose_targets,
+            self.state.accepted_pose_targets,
             self.state.group_joint_targets,
             self.state.group_poses,
         ):
@@ -804,11 +807,18 @@ class ViserPanelGui:
             JointState({"name": names, "position": positions}) if names else None
         )
 
-    def _active_pose_targets(self) -> dict[PlanningGroupID, Pose]:
+    def _candidate_pose_targets(self) -> dict[PlanningGroupID, Pose]:
         return {
-            group_id: self.state.pose_targets[group_id]
+            group_id: self.state.candidate_pose_targets[group_id]
             for group_id in self.state.selected_group_ids
-            if group_id in self.state.pose_targets
+            if group_id in self.state.candidate_pose_targets
+        }
+
+    def _accepted_pose_targets(self) -> dict[PlanningGroupID, Pose]:
+        return {
+            group_id: self.state.accepted_pose_targets[group_id]
+            for group_id in self.state.selected_group_ids
+            if group_id in self.state.accepted_pose_targets
         }
 
     def _preset_values_by_local_name(self, preset: str, robot_name: str) -> dict[str, float]:
@@ -941,8 +951,7 @@ class ViserPanelGui:
         pose = self._pose_from_transform_target(target)
         if pose is None:
             return
-        self.state.cartesian_target = pose
-        self.state.pose_targets[group_id] = pose
+        self.state.candidate_pose_targets[group_id] = pose
         sequence_id = self.state.next_sequence_id()
         self._worker.submit(
             TargetEvaluationRequest(
@@ -953,14 +962,14 @@ class ViserPanelGui:
                 auxiliary_group_ids=tuple(
                     selected_group_id
                     for selected_group_id in self.state.selected_group_ids
-                    if selected_group_id not in self._active_pose_targets()
+                    if selected_group_id not in self._candidate_pose_targets()
                 ),
                 joints=(
                     None
                     if self.state.target_joints is None
                     else JointState(self.state.target_joints)
                 ),
-                pose_targets=dict(self._active_pose_targets()),
+                pose_targets=dict(self._candidate_pose_targets()),
             )
         )
         self.refresh()
@@ -1050,7 +1059,10 @@ class ViserPanelGui:
             if not request.pose_targets:
                 return TargetEvaluationResult(False, "INVALID", "No pose target")
             return self.evaluate_pose_target_set(
-                request.pose_targets, request.auxiliary_group_ids, request.joints
+                request.pose_targets,
+                request.auxiliary_group_ids,
+                request.joints,
+                request.cancel_event.is_set,
             )
         if not request.joint_targets:
             return TargetEvaluationResult(False, "INVALID", "No joint target")
@@ -1075,18 +1087,21 @@ class ViserPanelGui:
             TargetStatus.FEASIBLE if success and collision_free else TargetStatus.INFEASIBLE
         )
         self.state.error = "" if success and collision_free else self.state.feasibility.message
-        if result.target_joints is not None:
+        accepted = success and collision_free
+        if accepted and result.target_joints is not None:
             self.state.target_joints = JointState(result.target_joints)
             self._split_target_joints_by_group(result.target_joints)
-        self.state.group_poses = {
-            str(group_id): pose
-            for group_id, pose in result.group_poses.items()
-            if isinstance(pose, Pose)
-        }
-        if request.source == "joints":
-            self._sync_pose_targets_from_group_poses()
-        else:
-            self._sync_controls_from_targets()
+        if accepted:
+            self.state.group_poses = {
+                str(group_id): pose
+                for group_id, pose in result.group_poses.items()
+                if isinstance(pose, Pose)
+            }
+            if request.source == "joints":
+                self._sync_pose_targets_from_group_poses()
+            else:
+                self.state.accepted_pose_targets = dict(request.pose_targets)
+                self._sync_controls_from_targets()
         self._update_target_visual_state()
         self.refresh()
 
@@ -1126,14 +1141,17 @@ class ViserPanelGui:
                 continue
             if group_id not in self.state.selected_group_ids:
                 continue
-            self.state.pose_targets[group_id] = pose
+            self.state.candidate_pose_targets[group_id] = pose
+            self.state.accepted_pose_targets[group_id] = pose
             active_group_ids.append(group_id)
         if self.scene is None:
             return
         self._suppress_target_callbacks = True
         try:
             for group_id in active_group_ids:
-                self.scene.set_target_pose(str(group_id), self.state.pose_targets[group_id])
+                self.scene.set_target_pose(
+                    str(group_id), self.state.candidate_pose_targets[group_id]
+                )
         finally:
             self._suppress_target_callbacks = False
 
@@ -1192,8 +1210,11 @@ class ViserPanelGui:
                 if (robot_id := self.robot_id_for_name(str(group.robot_name))) is not None
             )
         )
+        ghost_feasible = feasible
+        if self.state.planning_mode == PlanningMode.CARTESIAN_SPACE:
+            ghost_feasible = bool(self._accepted_pose_targets())
         for robot_id in robot_ids:
-            self.scene.set_target_robot_visual_state(robot_id, feasible)
+            self.scene.set_target_robot_visual_state(robot_id, ghost_feasible)
 
     def _can_execute(self) -> bool:
         return self.state.can_execute()
@@ -1214,7 +1235,7 @@ class ViserPanelGui:
         pose_targets: dict[PlanningGroupID, Pose] = {}
         auxiliary_group_ids: tuple[PlanningGroupID, ...] = ()
         if planning_mode == PlanningMode.CARTESIAN_SPACE:
-            pose_targets = self._active_pose_targets()
+            pose_targets = self._accepted_pose_targets()
             pose_capable_ids = {
                 group_id
                 for group_id in group_ids

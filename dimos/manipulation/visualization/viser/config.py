@@ -50,6 +50,7 @@ class ViserVisualizationConfig(BaseModel):
         default=5.0,
         validation_alias=AliasChoices("preview_request_timeout", "viser_preview_request_timeout"),
     )
+    target_evaluation_timeout: float = Field(default=0.1, gt=0.0)
     current_match_tolerance: float = Field(
         default=0.02,
         validation_alias=AliasChoices("current_match_tolerance", "viser_current_match_tolerance"),

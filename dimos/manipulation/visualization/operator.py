@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, cast
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.planners.config import CartesianPathConfig
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningGroupID, RobotName
+from dimos.manipulation.planning.spec.protocols import IKCancelCheck
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 
@@ -124,16 +125,24 @@ class ManipulationOperator:
             return self._invalid(request.group_ids, "Incomplete robot target state")
         return self._evaluate_global_target(groups, JointState(request.target), complete)
 
-    def evaluate_pose_target(self, request: PoseTargetRequest) -> TargetEvaluationResult:
+    def evaluate_pose_target(
+        self,
+        request: PoseTargetRequest,
+        *,
+        timeout_seconds: float,
+        cancel_check: IKCancelCheck,
+    ) -> TargetEvaluationResult:
         """Validate and evaluate explicit world-frame pose targets."""
         group_ids, validation = self._validate_pose_request(request)
         if validation is not None:
             return validation
-        ik = self._module.inverse_kinematics(
+        ik = self._module.evaluate_inverse_kinematics(
             pose_targets=dict(request.pose_targets),
             auxiliary_group_ids=request.auxiliary_group_ids,
             seed=JointState(request.seed) if request.seed is not None else None,
             check_collision=True,
+            timeout_seconds=timeout_seconds,
+            cancel_check=cancel_check,
         )
         if not ik.is_success() or ik.joint_state is None:
             return TargetEvaluationResult(

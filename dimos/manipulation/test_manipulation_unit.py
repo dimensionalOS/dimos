@@ -642,6 +642,37 @@ class TestPlanningGroupApis:
             "test_arm/joint3",
         )
 
+    def test_interactive_ik_is_one_bounded_cancellable_attempt(
+        self, robot_config, module_factory
+    ) -> None:
+        module = module_factory()
+        module._world_monitor = MagicMock()
+        module._world_monitor.world = MagicMock()
+        module._world_monitor.planning_groups = PlanningGroupRegistry([robot_config])
+        module._kinematics = MagicMock()
+        expected = IKResult(status=IKStatus.TIMEOUT, message="cancelled")
+        module._kinematics.solve_pose_targets.return_value = expected
+        seed = JointState(
+            name=[f"test_arm/{name}" for name in robot_config.joint_names],
+            position=[0.0, 0.0, 0.0],
+        )
+        cancel_check = MagicMock(return_value=False)
+
+        result = module.evaluate_inverse_kinematics(
+            {"test_arm/manipulator": PoseStamped()},
+            seed=seed,
+            timeout_seconds=0.1,
+            cancel_check=cancel_check,
+        )
+
+        assert result is expected
+        _, kwargs = module._kinematics.solve_pose_targets.call_args
+        assert kwargs["seed"] is seed
+        assert kwargs["check_collision"] is True
+        assert kwargs["max_attempts"] == 1
+        assert kwargs["timeout_seconds"] == 0.1
+        assert kwargs["cancel_check"] is cancel_check
+
     def test_plan_to_joint_targets_stores_generated_plan_and_legacy_caches(
         self, robot_config, module_factory
     ):

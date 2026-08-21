@@ -28,6 +28,8 @@ from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGro
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.kinematics.utils import (
     groups_by_robot as _groups_by_robot,
+    ik_deadline as _ik_deadline,
+    ik_interruption as _ik_interruption,
     robot_ids_by_name as _robot_ids_by_name,
     seed_positions_with_world_fallback as _seed_positions_with_world_fallback,
     unique_pose_target_frame_for_robot as _unique_pose_target_frame_for_robot,
@@ -35,7 +37,7 @@ from dimos.manipulation.planning.kinematics.utils import (
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus
 from dimos.manipulation.planning.spec.models import IKResult, RobotName, WorldRobotID
-from dimos.manipulation.planning.spec.protocols import WorldSpec
+from dimos.manipulation.planning.spec.protocols import IKCancelCheck, WorldSpec
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -116,10 +118,15 @@ class PinkIK:
         orientation_tolerance: float = 0.01,
         check_collision: bool = True,
         max_attempts: int = 10,
+        timeout_seconds: float | None = None,
+        cancel_check: IKCancelCheck | None = None,
     ) -> IKResult:
         """Solve IK with Pink, returning the standard planning ``IKResult``."""
         if not world.is_finalized:
             return _failure(IKStatus.NO_SOLUTION, "World must be finalized before IK")
+        deadline = _ik_deadline(timeout_seconds)
+        if interrupted := _ik_interruption(deadline, cancel_check):
+            return interrupted
 
         target_frame_name = _unique_pose_target_frame_for_robot(world, robot_id)
         if target_frame_name is None:
@@ -143,6 +150,8 @@ class PinkIK:
         fallback_result: IKResult | None = None
 
         for attempt in range(max_attempts):
+            if interrupted := _ik_interruption(deadline, cancel_check):
+                return interrupted
             try:
                 q0 = self._initial_q(robot_context, seed, lower_limits, upper_limits, attempt)
                 result = self._solve_single(
@@ -153,23 +162,35 @@ class PinkIK:
                     upper_limits=upper_limits,
                     position_tolerance=position_tolerance,
                     orientation_tolerance=orientation_tolerance,
+                    deadline=deadline,
+                    cancel_check=cancel_check,
                 )
             except ValueError as exc:
                 return _failure(IKStatus.NO_SOLUTION, f"Pink IK mapping failed: {exc}")
             except Exception as exc:
                 return _failure(IKStatus.NO_SOLUTION, f"Pink IK solver failed: {exc}")
 
+            if result.status == IKStatus.TIMEOUT:
+                return result
             if not result.is_success() or result.joint_state is None:
                 if fallback_result is None:
                     fallback_result = result
                 continue
 
-            if check_collision and not world.check_config_collision_free(
-                robot_id, result.joint_state
-            ):
-                fallback_result = _collision_failure(result)
-                continue
+            if check_collision:
+                collision_free = world.check_config_collision_free(robot_id, result.joint_state)
+                if interrupted := _ik_interruption(
+                    deadline, cancel_check, iterations=result.iterations
+                ):
+                    return interrupted
+                if not collision_free:
+                    fallback_result = _collision_failure(result)
+                    continue
 
+            if interrupted := _ik_interruption(
+                deadline, cancel_check, iterations=result.iterations
+            ):
+                return interrupted
             return result
 
         if fallback_result is not None:
@@ -187,10 +208,15 @@ class PinkIK:
         orientation_tolerance: float = 0.01,
         check_collision: bool = True,
         max_attempts: int = 10,
+        timeout_seconds: float | None = None,
+        cancel_check: IKCancelCheck | None = None,
     ) -> IKResult:
         """Solve planning-group-scoped pose targets with Pink IK."""
         if not world.is_finalized:
             return _failure(IKStatus.NO_SOLUTION, "World must be finalized before IK")
+        deadline = _ik_deadline(timeout_seconds)
+        if interrupted := _ik_interruption(deadline, cancel_check):
+            return interrupted
         all_groups = tuple(pose_targets.keys()) + tuple(auxiliary_groups)
         if not all_groups:
             return _failure(
@@ -215,6 +241,8 @@ class PinkIK:
 
         results_by_robot: dict[RobotName, IKResult] = {}
         for robot_name, groups in _groups_by_robot(all_groups).items():
+            if interrupted := _ik_interruption(deadline, cancel_check):
+                return interrupted
             robot_id = robot_ids_by_name[robot_name]
             config = world.get_robot_config(robot_id)
             joint_names = list(config.joint_names)
@@ -255,6 +283,8 @@ class PinkIK:
 
             fallback_result: IKResult | None = None
             for attempt in range(max_attempts):
+                if interrupted := _ik_interruption(deadline, cancel_check):
+                    return interrupted
                 current_positions = seed_positions.copy()
                 if attempt > 0:
                     current_positions[selected_indices] = np.random.uniform(
@@ -272,6 +302,8 @@ class PinkIK:
                             position_tolerance=position_tolerance,
                             orientation_tolerance=orientation_tolerance,
                             locked_joint_positions=locked_positions,
+                            deadline=deadline,
+                            cancel_check=cancel_check,
                         )
                     else:
                         result = self._solve_multi(
@@ -282,12 +314,16 @@ class PinkIK:
                             position_tolerance=position_tolerance,
                             orientation_tolerance=orientation_tolerance,
                             locked_joint_positions=locked_positions,
+                            deadline=deadline,
+                            cancel_check=cancel_check,
                         )
                 except ValueError as exc:
                     return _failure(IKStatus.NO_SOLUTION, f"Pink IK mapping failed: {exc}")
                 except Exception as exc:
                     return _failure(IKStatus.NO_SOLUTION, f"Pink IK solver failed: {exc}")
 
+                if result.status == IKStatus.TIMEOUT:
+                    return result
                 if not result.is_success() or result.joint_state is None:
                     if fallback_result is None:
                         fallback_result = result
@@ -349,12 +385,16 @@ class PinkIK:
             iterations=iterations,
             message="Pink IK solution found",
         )
-        if check_collision and not _combined_robot_results_collision_free(
-            world,
-            robot_ids_by_name,
-            results_by_robot,
-        ):
-            return _collision_failure(combined)
+        if check_collision:
+            collision_free = _combined_robot_results_collision_free(
+                world,
+                robot_ids_by_name,
+                results_by_robot,
+            )
+            if interrupted := _ik_interruption(deadline, cancel_check, iterations=iterations):
+                return interrupted
+            if not collision_free:
+                return _collision_failure(combined)
         return combined
 
     def _solve_multi(
@@ -366,6 +406,8 @@ class PinkIK:
         position_tolerance: float,
         orientation_tolerance: float,
         locked_joint_positions: Mapping[int, float] | None = None,
+        deadline: float | None = None,
+        cancel_check: IKCancelCheck | None = None,
     ) -> IKResult:
         robot_context = targets[0][0]
         pink = self._modules.pink
@@ -389,12 +431,16 @@ class PinkIK:
         final_position_error = float("inf")
         final_orientation_error = float("inf")
         for iteration in range(self.config.max_iterations):
+            if interrupted := _ik_interruption(deadline, cancel_check, iterations=iteration):
+                return interrupted
             errors = [
                 compute_pose_error(self._current_frame_matrix(ctx, configuration.q), target_model)
                 for ctx, target_model in targets
             ]
             final_position_error = max(error[0] for error in errors)
             final_orientation_error = max(error[1] for error in errors)
+            if interrupted := _ik_interruption(deadline, cancel_check, iterations=iteration):
+                return interrupted
             if (
                 final_position_error <= position_tolerance
                 and final_orientation_error <= orientation_tolerance
@@ -427,6 +473,10 @@ class PinkIK:
                     iterations=iteration + 1,
                     message="Pink IK candidate violates DimOS joint limits",
                 )
+        if interrupted := _ik_interruption(
+            deadline, cancel_check, iterations=self.config.max_iterations
+        ):
+            return interrupted
         return IKResult(
             status=IKStatus.NO_SOLUTION,
             joint_state=None,
@@ -446,6 +496,8 @@ class PinkIK:
         position_tolerance: float,
         orientation_tolerance: float,
         locked_joint_positions: Mapping[int, float] | None = None,
+        deadline: float | None = None,
+        cancel_check: IKCancelCheck | None = None,
     ) -> IKResult:
         pink = self._modules.pink
         pinocchio = self._modules.pinocchio
@@ -472,10 +524,14 @@ class PinkIK:
         final_orientation_error = float("inf")
 
         for iteration in range(self.config.max_iterations):
+            if interrupted := _ik_interruption(deadline, cancel_check, iterations=iteration):
+                return interrupted
             current_pose = self._current_frame_matrix(robot_context, configuration.q)
             final_position_error, final_orientation_error = compute_pose_error(
                 current_pose, target_model
             )
+            if interrupted := _ik_interruption(deadline, cancel_check, iterations=iteration):
+                return interrupted
             if (
                 final_position_error <= position_tolerance
                 and final_orientation_error <= orientation_tolerance
@@ -511,6 +567,10 @@ class PinkIK:
                     message="Pink IK candidate violates DimOS joint limits",
                 )
 
+        if interrupted := _ik_interruption(
+            deadline, cancel_check, iterations=self.config.max_iterations
+        ):
+            return interrupted
         return IKResult(
             status=IKStatus.NO_SOLUTION,
             joint_state=None,

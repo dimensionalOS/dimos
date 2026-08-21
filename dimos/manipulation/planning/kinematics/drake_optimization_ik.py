@@ -17,19 +17,22 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.kinematics.utils import (
     filter_result_to_group as _filter_result_to_group,
+    ik_deadline as _ik_deadline,
+    ik_interruption as _ik_interruption,
+    ik_time_remaining as _ik_time_remaining,
     resolve_single_pose_target_request as _resolve_single_pose_target_request,
     unique_pose_target_frame_for_robot as _unique_pose_target_frame_for_robot,
 )
 from dimos.manipulation.planning.spec.enums import IKStatus
 from dimos.manipulation.planning.spec.models import IKResult, WorldRobotID
-from dimos.manipulation.planning.spec.protocols import WorldSpec
+from dimos.manipulation.planning.spec.protocols import IKCancelCheck, WorldSpec
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -44,7 +47,13 @@ try:
     from pydrake.multibody.inverse_kinematics import (
         InverseKinematics,
     )
-    from pydrake.solvers import Solve
+    from pydrake.solvers import (
+        ChooseBestSolver,
+        IpoptSolver,
+        SnoptSolver,
+        Solve,
+        SolverOptions,
+    )
 
     DRAKE_AVAILABLE = True
 except ImportError:
@@ -84,11 +93,16 @@ class DrakeOptimizationIK:
         orientation_tolerance: float = 0.01,
         check_collision: bool = True,
         max_attempts: int = 10,
+        timeout_seconds: float | None = None,
+        cancel_check: IKCancelCheck | None = None,
     ) -> IKResult:
         """Solve IK with multiple random restarts, returning the best collision-free solution."""
         error = self._validate_world(world)
         if error is not None:
             return error
+        deadline = _ik_deadline(timeout_seconds)
+        if interrupted := _ik_interruption(deadline, cancel_check):
+            return interrupted
 
         target_frame_name = _unique_pose_target_frame_for_robot(world, robot_id)
         if target_frame_name is None:
@@ -122,6 +136,8 @@ class DrakeOptimizationIK:
         best_error = float("inf")
 
         for attempt in range(max_attempts):
+            if interrupted := _ik_interruption(deadline, cancel_check):
+                return interrupted
             # Generate seed positions
             if attempt == 0:
                 current_seed = seed_positions
@@ -141,12 +157,18 @@ class DrakeOptimizationIK:
                 lower_limits=lower_limits,
                 upper_limits=upper_limits,
                 target_frame_name=target_frame_name,
+                timeout_seconds=_ik_time_remaining(deadline),
             )
+            if interrupted := _ik_interruption(deadline, cancel_check):
+                return interrupted
 
             if result.is_success() and result.joint_state is not None:
                 # Check collision if requested
                 if check_collision:
-                    if not world.check_config_collision_free(robot_id, result.joint_state):
+                    collision_free = world.check_config_collision_free(robot_id, result.joint_state)
+                    if interrupted := _ik_interruption(deadline, cancel_check):
+                        return interrupted
+                    if not collision_free:
                         continue  # Try another seed
 
                 # Check error
@@ -180,11 +202,16 @@ class DrakeOptimizationIK:
         orientation_tolerance: float = 0.01,
         check_collision: bool = True,
         max_attempts: int = 10,
+        timeout_seconds: float | None = None,
+        cancel_check: IKCancelCheck | None = None,
     ) -> IKResult:
         """Solve a planning-group-scoped pose target with Drake IK."""
         error = self._validate_world(world)
         if error is not None:
             return error
+        deadline = _ik_deadline(timeout_seconds)
+        if interrupted := _ik_interruption(deadline, cancel_check):
+            return interrupted
         request, request_error = _resolve_single_pose_target_request(
             world,
             pose_targets,
@@ -215,6 +242,8 @@ class DrakeOptimizationIK:
         best_result: IKResult | None = None
         best_error = float("inf")
         for attempt in range(max_attempts):
+            if interrupted := _ik_interruption(deadline, cancel_check):
+                return interrupted
             if attempt == 0:
                 current_seed = request.seed_positions
             else:
@@ -236,13 +265,20 @@ class DrakeOptimizationIK:
                 upper_limits=upper_limits,
                 target_frame_name=request.group.tip_link,
                 locked_joint_positions=locked_positions,
+                timeout_seconds=_ik_time_remaining(deadline),
             )
+            if interrupted := _ik_interruption(deadline, cancel_check):
+                return interrupted
             if not result.is_success() or result.joint_state is None:
                 continue
-            if check_collision and not world.check_config_collision_free(
-                request.robot_id, result.joint_state
-            ):
-                continue
+            if check_collision:
+                collision_free = world.check_config_collision_free(
+                    request.robot_id, result.joint_state
+                )
+                if interrupted := _ik_interruption(deadline, cancel_check):
+                    return interrupted
+                if not collision_free:
+                    continue
             total_error = result.position_error + result.orientation_error
             if total_error < best_error:
                 best_error = total_error
@@ -273,6 +309,7 @@ class DrakeOptimizationIK:
         upper_limits: NDArray[np.float64],
         target_frame_name: str,
         locked_joint_positions: Mapping[int, float] | None = None,
+        timeout_seconds: float | None = None,
     ) -> IKResult:
         # Get robot data from world internals (Drake-specific access)
         robot_data = world._robots[robot_id]  # type: ignore[attr-defined]
@@ -317,8 +354,10 @@ class DrakeOptimizationIK:
             full_seed[joint_idx] = seed[i]
         prog.SetInitialGuess(q, full_seed)
 
-        # Solve
-        result = Solve(prog)
+        result, unsupported = _solve_program(prog, timeout_seconds)
+        if unsupported is not None:
+            return _create_failure_result(IKStatus.UNSUPPORTED, unsupported)
+        assert result is not None
 
         if not result.is_success():
             return _create_failure_result(
@@ -351,6 +390,22 @@ class DrakeOptimizationIK:
             orientation_error=orientation_error,
             iterations=1,
         )
+
+
+def _solve_program(prog: Any, timeout_seconds: float | None) -> tuple[Any | None, str | None]:
+    """Solve a Drake program with a native wall/CPU limit when requested."""
+    if timeout_seconds is None:
+        return Solve(prog), None
+
+    solver_id = ChooseBestSolver(prog)
+    options = SolverOptions()
+    if solver_id == SnoptSolver.id():
+        options.SetOption(solver_id, "Time limit", timeout_seconds)
+    elif solver_id == IpoptSolver.id():
+        options.SetOption(solver_id, "max_wall_time", timeout_seconds)
+    else:
+        return None, f"Interactive IK timeout is unsupported by Drake solver '{solver_id.name()}'"
+    return Solve(prog, solver_options=options), None
 
 
 def _create_success_result(
