@@ -26,7 +26,7 @@ else:
     from typing_extensions import TypeVar
 
 from dimos.core.resource import CompositeResource
-from dimos.memory.backend import Backend
+from dimos.memory.backend import Backend, PreparedWrite
 from dimos.memory.buffer import BackpressureBuffer, KeepLast
 from dimos.memory.transform import FnIterTransformer, FnTransformer, Transformer
 from dimos.memory.type.filter import (
@@ -698,3 +698,9 @@ class Stream(CompositeResource, Generic[T, O]):
         else:
             obs = Observation(id=-1, ts=_ts, pose=pose, tags=_tags, _data=payload)
         return self._source.append(obs)
+
+    def prepare_write(self, observation: Observation[T]) -> PreparedWrite:
+        """Prepare a direct backend write for Recorder's serialized writer."""
+        if isinstance(self._source, Stream) or self._source is None:
+            raise TypeError("Cannot prepare a write for a transform/unbound stream")
+        return self._source.prepare_write(observation)

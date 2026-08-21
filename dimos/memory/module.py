@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 import enum
 import inspect
 import os
@@ -25,16 +25,16 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 from pydantic import Field, field_validator
 from reactivex.abc import DisposableBase
-from reactivex.disposable import Disposable
+from reactivex.disposable import CompositeDisposable, Disposable
 
 from dimos.agents.annotation import skill
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
-from dimos.memory.backend import Backend
+from dimos.memory.backend import PreparedWrite
 from dimos.memory.embed import EmbedImages
-from dimos.memory.recording import PreparedWrite, Processor, RecordingFailedError, RecordingPipeline
+from dimos.memory.recording import RecordingFailedError, RecordingPipeline
 from dimos.memory.store.null import NullStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
@@ -56,6 +56,7 @@ logger = setup_logger()
 T = TypeVar("T")
 TIn = TypeVar("TIn")
 TOut = TypeVar("TOut")
+MessageT = TypeVar("MessageT")
 
 
 def stream_to_port(stream: Stream[T], out: Out[T]) -> DisposableBase:
@@ -326,12 +327,15 @@ class Recorder(MemoryModule):
     tf: In[TFMessage]
 
     _pose_setters: dict[str, Any] = {}
-    _recording_subscriptions: list[DisposableBase]
+    _recording_subscriptions: CompositeDisposable | None = None
     _recording_pipeline: RecordingPipeline | None = None
 
     @rpc
     def start(self) -> None:
         super().start()
+        self._recording_subscriptions = CompositeDisposable()
+        self.register_disposable(self._recording_subscriptions)
+        self._recording_pipeline = None
 
         if self.config.g.replay:
             logger.info(
@@ -340,8 +344,6 @@ class Recorder(MemoryModule):
             return
 
         self._pose_setters = self._collect_pose_setters()
-        self._recording_subscriptions = []
-        self._recording_pipeline = None
 
         # TODO: store reset API/logic is not implemented yet. This module
         # shouldn't need to know about files (SqliteStore specific), and
@@ -372,37 +374,37 @@ class Recorder(MemoryModule):
             logger.warning("Recorder has no In ports — nothing to record, subclass the Recorder")
             return
 
-        processors: dict[str, Processor] = {}
-        for name, port in self._data_ports().items():
+        data_ports = self._data_ports()
+        record_tf = self.config.record_tf and getattr(self.tf, "_transport", None) is not None
+        if self.config.record_tf and not record_tf:
+            logger.warning("Recorder: tf port has no transport — not recording tf")
+        if not data_ports and not record_tf:
+            return
+        bindings: list[tuple[In[object], Callable[[float, object], Iterable[PreparedWrite]]]] = []
+        for name, port in data_ports.items():
             stream_name = self.config.stream_remapping.get(name, name)
             codec = self.config.stream_codecs.get(stream_name)
             overrides = {"codec": codec} if codec is not None else {}
-            stream: Stream[Any] = self.store.stream(stream_name, port.type, **overrides)
-            processors[name] = self._port_processor(name, stream)
+            stream = self.store.stream(stream_name, port.type, **overrides)
+            bindings.append((port, self._port_processor(name, stream)))
             logger.info("Recording %s -> %s (%s)", name, stream_name, port.type.__name__)
+        tf_binding = self._tf_processor(self.store.stream("tf", TFMessage)) if record_tf else None
 
-        if self.config.record_tf:
-            tf_processor = self._tf_processor()
-            if tf_processor is not None:
-                processors["tf"] = tf_processor
-
-        if not processors:
-            return
-        pipeline = RecordingPipeline(processors)
+        pipeline = RecordingPipeline()
         pipeline.start()
         self._recording_pipeline = pipeline
-        for name, port in self._data_ports().items():
-            self._subscribe_port(name, port)
-        if "tf" in processors:
-            subscription = Disposable(self.tf.subscribe(lambda msg: pipeline.submit("tf", msg)))
-            self._recording_subscriptions.append(subscription)
-            self.register_disposable(subscription)
+        for port, prepare in bindings:
+            self._subscribe_port(port, prepare)
+        if tf_binding is not None:
+            self._subscribe_port(self.tf, tf_binding)
 
-    def _data_ports(self) -> dict[str, In[Any]]:
+    def _data_ports(self) -> dict[str, In[object]]:
         """The In ports to record generically — everything but the tf port."""
         return {name: port for name, port in self.inputs.items() if port is not self.tf}
 
-    def _port_processor(self, name: str, stream: Stream[Any]) -> Processor:
+    def _port_processor(
+        self, name: str, stream: Stream[object]
+    ) -> Callable[[float, object], tuple[PreparedWrite]]:
         """Build the preparation stage for a stream, including world-pose lookup.
 
         Stamped messages use their own ``.frame_id`` and ``.ts``; unstamped
@@ -414,10 +416,7 @@ class Recorder(MemoryModule):
         callback and the serialized database writer.
         """
 
-        backend = cast("Backend[Any]", stream._source)  # type: ignore[attr-defined]
-
-        def process(stamped: tuple[float, Any]) -> tuple[PreparedWrite]:
-            recv_ts, msg = stamped
+        def process(recv_ts: float, msg: object) -> tuple[PreparedWrite]:
             ts = self._resolve_ts(name, msg)
             if name in self._pose_setters:
                 loop = self._loop
@@ -444,27 +443,32 @@ class Recorder(MemoryModule):
                 tags={"reception_ts": recv_ts},
                 _data=msg,
             )
-            return (PreparedWrite(backend, backend.prepare_append(observation)),)
+            return (stream.prepare_write(observation),)
 
         return process
 
-    def _subscribe_port(self, name: str, input_topic: In[Any]) -> None:
+    def _subscribe_port(
+        self,
+        input_topic: In[MessageT],
+        prepare: Callable[[float, MessageT], Iterable[PreparedWrite]],
+    ) -> None:
         """Enqueue decoded messages directly from the transport callback."""
         pipeline = self._recording_pipeline
+        subscriptions = self._recording_subscriptions
         assert pipeline is not None
+        assert subscriptions is not None
 
-        def on_message(msg: Any) -> None:
-            pipeline.submit(name, (time.time(), msg))
+        def on_message(msg: MessageT) -> None:
+            reception_ts = time.time()
+            pipeline.submit(lambda: prepare(reception_ts, msg))
 
         subscription = input_topic.pure_observable().subscribe(on_message)
-        self._recording_subscriptions.append(subscription)
-        self.register_disposable(subscription)
+        subscriptions.add(subscription)
         transport = getattr(input_topic, "_transport", None)
         subscribe_errors = getattr(transport, "subscribe_errors", None)
         if subscribe_errors is not None:
             error_subscription = Disposable(subscribe_errors(pipeline.fail))
-            self._recording_subscriptions.append(error_subscription)
-            self.register_disposable(error_subscription)
+            subscriptions.add(error_subscription)
 
     def _prepare_streams(self) -> None:
         """On APPEND, drop the streams this recorder is about to (re)write — the
@@ -478,11 +482,11 @@ class Recorder(MemoryModule):
         for stream in targets.intersection(self.store.list_streams()):
             self.store.delete_stream(stream)
 
-    def _resolve_ts(self, name: str, msg: Any) -> float:
+    def _resolve_ts(self, name: str, msg: object) -> float:
         """Timestamp to record *msg* at. Override to re-base onto another clock."""
         return getattr(msg, "ts", None) or time.time()
 
-    async def _resolve_pose(self, name: str, msg: Any, ts: float) -> Pose | None:
+    async def _resolve_pose(self, name: str, msg: object, ts: float) -> Pose | None:
         """Pose to anchor *msg* with. Dispatches to the stream's (async)
         ``@pose_setter_for`` if one is defined, else falls back to a
         ``world <- frame_id`` tf lookup."""
@@ -491,7 +495,7 @@ class Recorder(MemoryModule):
             return cast("Pose | None", await setter(msg))
         return self._resolve_tf_pose(msg, ts)
 
-    def _resolve_tf_pose(self, msg: Any, ts: float) -> Pose | None:
+    def _resolve_tf_pose(self, msg: object, ts: float) -> Pose | None:
         """Resolve the ordinary TF pose directly from recorder queue threads."""
         if self._tf is None:
             return None
@@ -510,15 +514,12 @@ class Recorder(MemoryModule):
                 setters[stream] = getattr(self, attr_name)
         return setters
 
-    def _tf_processor(self) -> Processor | None:
-        """Build the preparation stage for tf, or return None when it is unwired."""
-        if getattr(self.tf, "_transport", None) is None:
-            logger.warning("Recorder: tf port has no transport — not recording tf")
-            return None
-        tf_stream = self.store.stream("tf", TFMessage)
-        backend = cast("Backend[Any]", tf_stream._source)  # type: ignore[attr-defined]
+    def _tf_processor(
+        self, tf_stream: Stream[TFMessage]
+    ) -> Callable[[float, TFMessage], list[PreparedWrite]]:
+        """Build the preparation stage for tf."""
 
-        def process_tf(msg: TFMessage) -> list[PreparedWrite]:
+        def process_tf(_reception_ts: float, msg: TFMessage) -> list[PreparedWrite]:
             writes: list[PreparedWrite] = []
             for transform in msg.transforms:
                 observation = Observation(
@@ -527,7 +528,7 @@ class Recorder(MemoryModule):
                     pose=None,
                     _data=TFMessage(transform),
                 )
-                writes.append(PreparedWrite(backend, backend.prepare_append(observation)))
+                writes.append(tf_stream.prepare_write(observation))
             return writes
 
         return process_tf
@@ -536,17 +537,15 @@ class Recorder(MemoryModule):
     def stop(self) -> None:
         """Stop inputs, drain all accepted observations, then close storage."""
         pipeline = self._recording_pipeline
-        if pipeline is None:
-            super().stop()
-            return
-        for subscription in self._recording_subscriptions:
-            subscription.dispose()
-        try:
-            pipeline.close()
-        except BaseException as error:
-            failure: BaseException | None = error
-        else:
-            failure = None
+        subscriptions = self._recording_subscriptions
+        if subscriptions is not None:
+            subscriptions.dispose()
+        failure: BaseException | None = None
+        if pipeline is not None:
+            try:
+                pipeline.close()
+            except BaseException as error:
+                failure = error
         super().stop()
         if failure is not None:
             raise RecordingFailedError("Recorder failed while draining") from failure

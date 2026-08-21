@@ -69,5 +69,11 @@ class ObservationStore(Configurable, CompositeResource, Generic[T]):
         """Batch fetch by id (for vector search results)."""
         ...
 
+    def commit(self) -> None:
+        """Commit pending writes, or do nothing for non-transactional stores."""
+
+    def rollback(self) -> None:
+        """Roll back pending writes, or do nothing for non-transactional stores."""
+
     def serialize(self) -> dict[str, Any]:
         return {"class": qual(type(self)), "config": self.config.model_dump()}

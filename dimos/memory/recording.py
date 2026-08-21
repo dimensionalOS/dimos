@@ -16,14 +16,11 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
 import threading
 import time
-from typing import Any
 
-from dimos.memory.backend import Backend, PreparedAppend
+from dimos.memory.backend import PreparedWrite, WriteTransaction
 from dimos.memory.buffer import ClosedError, DropNew
 
 
@@ -31,13 +28,7 @@ class RecordingFailedError(RuntimeError):
     """Raised when the pipeline cannot persist every accepted message."""
 
 
-@dataclass(frozen=True)
-class PreparedWrite:
-    backend: Backend[Any]
-    append: PreparedAppend[Any]
-
-
-Processor = Callable[[Any], Iterable[PreparedWrite]]
+Preparation = Callable[[], Iterable[PreparedWrite]]
 
 
 class RecordingPipeline:
@@ -45,15 +36,13 @@ class RecordingPipeline:
 
     def __init__(
         self,
-        processors: dict[str, Processor],
         *,
         ingress_size: int = 4096,
         writer_size: int = 4096,
         batch_rows: int = 64,
         batch_delay_s: float = 0.010,
     ) -> None:
-        self._processors = processors
-        self._ingress = DropNew[tuple[str, Any]](ingress_size)
+        self._ingress = DropNew[Preparation](ingress_size)
         self._writer = DropNew[PreparedWrite](writer_size)
         self._batch_rows = batch_rows
         self._batch_delay_s = batch_delay_s
@@ -84,13 +73,9 @@ class RecordingPipeline:
             self._preparation_thread.start()
             self._started.set()
 
-    def submit(self, stream: str, value: Any) -> None:
+    def submit(self, preparation: Preparation) -> None:
         self._raise_if_unavailable()
-        try:
-            self._processors[stream]
-        except KeyError as unknown_stream:
-            raise KeyError(f"Unknown recording stream {stream!r}") from unknown_stream
-        if not self._ingress.put((stream, value)):
+        if not self._ingress.put(preparation):
             capacity_error = RecordingFailedError("Recording ingress reached capacity")
             self.fail(capacity_error)
             raise capacity_error
@@ -128,10 +113,10 @@ class RecordingPipeline:
 
     def _prepare_loop(self) -> None:
         try:
-            for stream, value in self._ingress:
+            for preparation in self._ingress:
                 if self._has_failed():
                     continue
-                for write in self._processors[stream](value):
+                for write in preparation():
                     if not self._writer.put(write):
                         raise RecordingFailedError("Recording writer buffer reached capacity")
         except BaseException as error:
@@ -160,14 +145,19 @@ class RecordingPipeline:
 
     @staticmethod
     def _persist(batch: list[PreparedWrite]) -> None:
-        grouped: dict[int, list[PreparedAppend[Any]]] = defaultdict(list)
-        backends: dict[int, Backend[Any]] = {}
+        grouped: dict[WriteTransaction, list[PreparedWrite]] = {}
         for write in batch:
-            key = id(write.backend)
-            backends[key] = write.backend
-            grouped[key].append(write.append)
-        for key, appends in grouped.items():
-            backends[key].append_prepared(appends)
+            grouped.setdefault(write.transaction, []).append(write)
+        for transaction, writes in grouped.items():
+            try:
+                for write in writes:
+                    write.persist()
+                transaction.commit()
+            except BaseException:
+                transaction.rollback()
+                raise
+        for write in batch:
+            write.notify()
 
     def _raise_if_unavailable(self) -> None:
         if not self._started.is_set():

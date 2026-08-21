@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
@@ -46,6 +47,23 @@ class PreparedAppend(Generic[T]):
     encoded: bytes | None
 
 
+@dataclass(frozen=True, eq=False)
+class WriteTransaction:
+    """Storage transaction shared by prepared writes for one backend."""
+
+    commit: Callable[[], None]
+    rollback: Callable[[], None]
+
+
+@dataclass(frozen=True)
+class PreparedWrite:
+    """Type-erased write operations ready for the serialized writer."""
+
+    transaction: WriteTransaction
+    persist: Callable[[], None]
+    notify: Callable[[], None]
+
+
 class Backend(CompositeResource, Generic[T]):
     """Orchestrates metadata, blob, vector, and live stores for one stream.
     (encode → insert → store blob → index vector → notify) lives here,
@@ -70,6 +88,7 @@ class Backend(CompositeResource, Generic[T]):
         self.vector_store = self.register_disposable(vector_store) if vector_store else None
         self.notifier: Notifier[T] = self.register_disposable(notifier or SubjectNotifier())
         self.eager_blobs = eager_blobs
+        self._write_transaction = WriteTransaction(self._commit, self._rollback)
 
     def start(self) -> None:
         self.metadata_store.start()
@@ -109,15 +128,31 @@ class Backend(CompositeResource, Generic[T]):
         try:
             for prepared in prepared_appends:
                 results.append(self._persist_prepared(prepared))
-            if hasattr(self.metadata_store, "commit"):
-                self.metadata_store.commit()
+            self._commit()
         except BaseException:
-            if hasattr(self.metadata_store, "rollback"):
-                self.metadata_store.rollback()
+            self._rollback()
             raise
         for result in results:
             self.notifier.notify(result)
         return results
+
+    def prepare_write(self, obs: Observation[T]) -> PreparedWrite:
+        """Prepare a write command while retaining the backend's payload type."""
+        prepared = self.prepare_append(obs)
+
+        def persist() -> None:
+            self._persist_prepared(prepared)
+
+        def notify() -> None:
+            self.notifier.notify(prepared.observation)
+
+        return PreparedWrite(self._write_transaction, persist, notify)
+
+    def _commit(self) -> None:
+        self.metadata_store.commit()
+
+    def _rollback(self) -> None:
+        self.metadata_store.rollback()
 
     def prepare_append(self, obs: Observation[T]) -> PreparedAppend[T]:
         """Validate and encode an observation without touching storage."""
