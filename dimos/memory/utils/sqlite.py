@@ -14,17 +14,32 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 import sqlite3
 
 from reactivex.disposable import Disposable
 
 
+@contextmanager
+def sqlite_transaction(connection: sqlite3.Connection) -> Iterator[None]:
+    """Commit a SQLite write batch on success and roll it back on failure."""
+    connection.execute("BEGIN")
+    try:
+        yield
+    except BaseException:
+        connection.rollback()
+        raise
+    else:
+        connection.commit()
+
+
 def open_sqlite_connection(path: str | Path) -> sqlite3.Connection:
     """Open a WAL-mode SQLite connection with sqlite-vec loaded."""
     import sqlite_vec
 
-    conn = sqlite3.connect(path, check_same_thread=False)
+    conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.enable_load_extension(True)

@@ -86,9 +86,3 @@ class ListObservationStore(ObservationStore[T]):
         id_set = set(ids)
         with self._lock:
             return [obs for obs in self._observations if obs.id in id_set]
-
-    def commit(self) -> None:
-        """List storage applies inserts immediately."""
-
-    def rollback(self) -> None:
-        """List storage has no transactional state to roll back."""

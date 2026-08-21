@@ -359,15 +359,9 @@ class SqliteObservationStore(ObservationStore[T]):
                     (row_id, px, px, py, py, pz, pz),
                 )
 
-            # Do NOT commit here — Backend calls commit() after blob/vector writes
+            # The Backend-owned transaction commits after blob/vector writes.
 
         return row_id
-
-    def commit(self) -> None:
-        self._conn.commit()
-
-    def rollback(self) -> None:
-        self._conn.rollback()
 
     def query(self, q: StreamQuery) -> Iterator[Observation[T]]:
         if q.search_text is not None:

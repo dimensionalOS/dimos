@@ -14,23 +14,42 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
 import threading
 
 import pytest
 
-from dimos.memory.backend import Backend, PreparedWrite
+from dimos.memory.backend import Backend, PreparedWrite, TransactionFactory
 from dimos.memory.codecs.pickle import PickleCodec
 from dimos.memory.notifier.subject import SubjectNotifier
 from dimos.memory.observationstore.memory import ListObservationStore
 from dimos.memory.recording import RecordingFailedError, RecordingPipeline
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.observation import Observation
 
 
-def _backend(name: str) -> Backend[float]:
+def _transaction(events: list[str], name: str) -> TransactionFactory:
+    @contextmanager
+    def transaction() -> Iterator[None]:
+        try:
+            yield
+        except BaseException:
+            events.append(f"rollback-{name}")
+            raise
+        else:
+            events.append(f"commit-{name}")
+
+    return transaction
+
+
+def _backend(name: str, transaction: TransactionFactory | None = None) -> Backend[float]:
     return Backend[float](
         metadata_store=ListObservationStore[float](name=name),
         codec=PickleCodec(),
         notifier=SubjectNotifier[float](),
+        transaction=transaction,
     )
 
 
@@ -43,10 +62,8 @@ def test_pipeline_batches_backends_and_preserves_global_notification_fifo(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     events: list[str] = []
-    camera = _backend("camera")
-    imu = _backend("imu")
-    monkeypatch.setattr(camera.metadata_store, "commit", lambda: events.append("commit-camera"))
-    monkeypatch.setattr(imu.metadata_store, "commit", lambda: events.append("commit-imu"))
+    camera = _backend("camera", _transaction(events, "camera"))
+    imu = _backend("imu", _transaction(events, "imu"))
     monkeypatch.setattr(
         camera.notifier, "notify", lambda observation: events.append(f"notify-{observation.ts}")
     )
@@ -122,15 +139,13 @@ def test_pipeline_does_not_notify_when_a_backend_group_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     events: list[str] = []
-    camera = _backend("camera")
-    depth = _backend("depth")
-    monkeypatch.setattr(camera.metadata_store, "commit", lambda: events.append("commit-camera"))
+    camera = _backend("camera", _transaction(events, "camera"))
+    depth = _backend("depth", _transaction(events, "depth"))
 
     def fail_insert(_observation: Observation[float]) -> int:
         raise OSError("locked")
 
     monkeypatch.setattr(depth.metadata_store, "insert", fail_insert)
-    monkeypatch.setattr(depth.metadata_store, "rollback", lambda: events.append("rollback-depth"))
     monkeypatch.setattr(camera.notifier, "notify", lambda _observation: events.append("notify"))
     monkeypatch.setattr(depth.notifier, "notify", lambda _observation: events.append("notify"))
     pipeline = RecordingPipeline(
@@ -175,14 +190,18 @@ def test_backend_commits_batch_before_notifying(monkeypatch: pytest.MonkeyPatch)
     events: list[str] = []
     store = ListObservationStore[float](name="camera")
     notifier = SubjectNotifier[float]()
-    monkeypatch.setattr(store, "commit", lambda: events.append("commit"))
     monkeypatch.setattr(notifier, "notify", lambda obs: events.append(f"notify-{obs.ts}"))
-    backend = Backend[float](metadata_store=store, codec=PickleCodec(), notifier=notifier)
+    backend = Backend[float](
+        metadata_store=store,
+        codec=PickleCodec(),
+        notifier=notifier,
+        transaction=_transaction(events, "batch"),
+    )
     appends = [backend.prepare_append(Observation(ts=ts, _data=ts)) for ts in (1.0, 2.0)]
 
     backend.append_prepared(appends)
 
-    assert events == ["commit", "notify-1.0", "notify-2.0"]
+    assert events == ["commit-batch", "notify-1.0", "notify-2.0"]
 
 
 def test_backend_rolls_back_without_notifying(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -194,12 +213,36 @@ def test_backend_rolls_back_without_notifying(monkeypatch: pytest.MonkeyPatch) -
         raise OSError("locked")
 
     monkeypatch.setattr(store, "insert", fail_insert)
-    monkeypatch.setattr(store, "rollback", lambda: events.append("rollback"))
     monkeypatch.setattr(notifier, "notify", lambda _observation: events.append("notify"))
-    backend = Backend[float](metadata_store=store, codec=PickleCodec(), notifier=notifier)
+    backend = Backend[float](
+        metadata_store=store,
+        codec=PickleCodec(),
+        notifier=notifier,
+        transaction=_transaction(events, "batch"),
+    )
     append = backend.prepare_append(Observation(ts=1.0, _data=1.0))
 
     with pytest.raises(OSError, match="locked"):
         backend.append_prepared((append,))
 
-    assert events == ["rollback"]
+    assert events == ["rollback-batch"]
+
+
+def test_sqlite_backend_rolls_back_metadata_when_blob_write_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with SqliteStore(path=tmp_path / "recording.db") as store:
+        stream = store.stream("camera", bytes)
+        write = stream.prepare_write(Observation(ts=1.0, _data=b"frame"))
+        blob_store = write.backend.blob_store
+        assert blob_store is not None
+
+        def fail_put(_stream_name: str, _key: int, _data: bytes) -> None:
+            raise OSError("blob write failed")
+
+        monkeypatch.setattr(blob_store, "put", fail_put)
+
+        with pytest.raises(OSError, match="blob write failed"):
+            write.backend.append_prepared((write.append,))
+
+        assert stream.count() == 0
