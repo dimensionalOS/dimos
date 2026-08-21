@@ -67,6 +67,7 @@ EXPECTED_NAMES = {
         "unitree_go2",
     },
     "whole_body": {
+        "dual_openyam_damiao",
         "mock_whole_body",
         "openarm_damiao",
         "openyam_damiao",
