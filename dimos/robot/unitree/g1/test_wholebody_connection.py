@@ -17,11 +17,15 @@ from __future__ import annotations
 from contextlib import contextmanager
 from types import SimpleNamespace
 
+from pydantic import ValidationError
+import pytest
+
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.robot.unitree.g1.wholebody_connection import (
     _NUM_MOTOR_SLOTS,
     _NUM_MOTORS,
     G1WholeBodyConnection,
+    G1WholeBodyConnectionConfig,
 )
 
 
@@ -121,3 +125,12 @@ def test_wrong_joint_count_is_dropped():
         connection._on_motor_command(MotorCommandArray(q=[0.0] * 5))
 
         assert publisher.frames == []
+
+
+@pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])
+def test_non_finite_soft_start_is_rejected(value):
+    # inf satisfies a bare ge=0.0, and every finite elapsed time over inf is
+    # zero, so the scale would pin at 0 forever: full damping, no stiffness,
+    # and no way back to the commanded gains.
+    with pytest.raises(ValidationError):
+        G1WholeBodyConnectionConfig(soft_start_seconds=value)
