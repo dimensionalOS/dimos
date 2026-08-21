@@ -30,6 +30,7 @@ ambiguity margin flagged.
 """
 
 import argparse
+import json
 from pathlib import Path
 import sys
 
@@ -96,8 +97,9 @@ def render(
         from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
         scans = [
-            obs.data.as_numpy()[0]
+            points
             for obs in rig.cloud.after(t0).before(t1).transform(throttle(2.0))
+            if (points := rig.registered_scan(obs)) is not None
         ]
         if scans:
             merged = PointCloud2.from_numpy(np.vstack(scans), frame_id=rig.world_frame)
@@ -192,6 +194,11 @@ def main() -> int:
         help="one or more object queries, optionally followed by an out.rrd to write",
     )
     parser.add_argument("--dataset", type=Path, help="memory recording database")
+    parser.add_argument("--manifest", type=Path, help="rig manifest json (default: <db>.rig.json)")
+    parser.add_argument("--color", help="stream name override for the color role")
+    parser.add_argument("--depth", help="stream name override for the depth role")
+    parser.add_argument("--cloud", help="stream name override for the pointcloud role")
+    parser.add_argument("--odom", help="stream name override for the poses role")
     parser.add_argument(
         "--from", dest="start", type=float, default=0.0, help="start offset into the recording (s)"
     )
@@ -217,8 +224,19 @@ def main() -> int:
         "xarm6_worldbelief_realsense_d435i_stationery_calibrated/"
         "xarm6_worldbelief_20260729_203624_161992.db"
     )
+    manifest = json.loads(args.manifest.read_text()) if args.manifest else None
+    overrides = {
+        role: name
+        for role, name in [
+            ("color", args.color),
+            ("depth", args.depth),
+            ("cloud", args.cloud),
+            ("poses", args.odom),
+        ]
+        if name
+    }
     store = SqliteStore(path=dataset)
-    rig = Rig.from_store(store)
+    rig = Rig.from_store(store, manifest=manifest, overrides=overrides)
     lo, hi = rig.color.get_time_range()
     after = lo + args.start
     before = lo + args.start + args.duration if args.duration is not None else hi

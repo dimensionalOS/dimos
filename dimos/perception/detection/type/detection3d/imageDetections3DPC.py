@@ -41,16 +41,26 @@ class ImageDetections3DPC(ImageDetections[Detection3DPC]):
         world_to_optical_transform: Transform,
         filters: list[PointCloudFilter] | None = None,
     ) -> ImageDetections3DPC:
-        """Project every 2D detection into 3D, dropping any that yield no valid points."""
+        """Project every 2D detection into 3D, dropping any that yield no valid points.
+
+        The cloud is projected through the camera once; each detection then
+        selects its points from that shared projection.
+        """
+        world_points, points_2d = Detection3DPC.project_cloud(
+            world_pointcloud, camera_info, world_to_optical_transform
+        )
         detections_3d = [
             d3d
             for det in detections_2d
             if (
-                d3d := Detection3DPC.from_2d(
+                d3d := Detection3DPC.from_projection(
                     det,
-                    world_pointcloud,
+                    world_points,
+                    points_2d,
                     camera_info,
                     world_to_optical_transform,
+                    world_pointcloud.frame_id,
+                    world_pointcloud.ts,
                     filters,
                 )
             )
