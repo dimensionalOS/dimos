@@ -153,7 +153,7 @@ def _driver_env() -> dict[str, str]:
 
 
 # jeff/feat/dim_slam tip; tag on merge.
-DIMSLAM_REV = "3f3275490038f38f8d5565416a660786131f11da"
+DIMSLAM_REV = "8d08c61a874d45453857488d8c8d1aeac8e2d210"
 
 
 def dimslam_build_command() -> str:
@@ -217,6 +217,12 @@ class DimSlamConfig(NativeModuleConfig):
     # it open.
     depth_cloud_min_range: float = 0.0
     depth_cloud_max_range: float = 0.0
+    # Emit one point per k x k depth block instead of every pixel: the median of the
+    # block's in-gate depths, deprojected at the block centre. The median (not mean)
+    # keeps a block on one surface at depth discontinuities instead of inventing a
+    # flying pixel, and blocks with under half their pixels valid are dropped as edge
+    # noise. <= 1 emits every pixel.
+    depth_cloud_decimation: int = 1
 
     map_frame: str = "map"
     odom_frame: str = "odom"
