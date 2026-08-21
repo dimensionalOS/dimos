@@ -35,6 +35,10 @@ def run(
     attach: bool = typer.Option(False, help="Drive an already-running dimos (interactive cases)"),
     limit: int = typer.Option(0, help="Run at most N cases"),
     live_db: str = typer.Option("recording.db", help="Live Recorder db (interactive cases)"),
+    min_mean: float = typer.Option(0.0, help="Exit non-zero if mean score falls below this"),
+    max_mean: float = typer.Option(
+        1.0, help="Exit non-zero if mean score exceeds this (blind-ablation ceiling)"
+    ),
 ) -> None:
     from dimos.evals.runner import EvalRunner, summarize
 
@@ -58,6 +62,9 @@ def run(
         f"\n{s.n} cases | mean {s.mean_score:.2f} | pass {s.pass_rate:.0%} "
         f"| errors {s.errors} | {s.duration_s:.0f}s | {runner.run_dir}"
     )
+    if not min_mean <= s.mean_score <= max_mean:
+        typer.echo(f"FAIL: mean {s.mean_score:.3f} outside [{min_mean}, {max_mean}]", err=True)
+        raise typer.Exit(1)
 
 
 @app.command("list")
