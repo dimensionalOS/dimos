@@ -8,6 +8,7 @@ device through the generic Damiao adapter stack introduced for OpenYAM.
 
 Related:
 - Upstream hardware + C++ reference: [enactic/openarm_can](https://github.com/enactic/openarm_can)
+- Robot model: [enactic/openarm_description](https://github.com/enactic/openarm_description)
 - How to integrate any new arm: [adding_a_custom_arm.md](/docs/capabilities/manipulation/adding_a_custom_arm.md)
 
 ## Architecture
@@ -29,21 +30,22 @@ cycle. The command vector order is `left_arm/joint1..7`, `right_arm/joint1..7`,
 Per arm, shoulder to wrist (send ids `0x01..0x07`, feedback `send | 0x10`):
 2x DM8009, 2x DM4340, 3x DM4310, plus a DM4310 gripper at `0x08`.
 
-Gravity compensation uses the bimanual URDF
-(`openarm_description/urdf/robot/openarm_v20_bimanual.urdf`, resolved lazily
-from LFS at connect time) and is preflighted against the declared joint order
-before the motors enable.
+Gravity compensation and planning use the official bimanual OpenArm v2.0
+Xacro. DimOS pins the description repository to an immutable commit and checks
+it out lazily through the robot asset cache. Gravity compensation locks the
+finger joints and preflights the remaining 14 joints against the declared arm
+order before enabling the motors.
 
-Planning also uses the bimanual URDF: one robot model with a
-`left_manipulator` and a `right_manipulator` planning group, since collision
-exclusions cannot span robots.
+Planning treats the two arms as one robot with `left_manipulator` and
+`right_manipulator` planning groups because collision exclusions cannot span
+robots.
 
 ## Bring-up
 
 ```bash
 dimos hardware can setup can0
 dimos hardware can setup can1
-dimos run keyboard-teleop-openarm
+dimos run openarm-planner-coordinator
 ```
 
 Linux assigns `can0`/`can1` in USB enumeration order. If the arms come up
@@ -57,28 +59,24 @@ editing the adapter topology.
 |---|---|
 | `coordinator-openarm` | coordinator + trajectory task over both arms |
 | `openarm-planner-coordinator` | planner (bimanual model) + coordinator |
-| `keyboard-teleop-openarm` | keyboard + per-arm EEF twist + viser |
-| `keyboard-teleop-openarm-planner` | teleop + planner + preempting trajectory task |
 
 All blueprints run against the in-memory whole-body adapter under
 `--simulation`; the physical adapter is selected automatically otherwise.
-
-The keyboard jogs the left arm (`eef_twist_left_arm`); the right arm's twist
-task holds its anchor pose. Keyboard gripper bindings for the two grippers are
-a follow-up; the gripper joints accept normalized `/joint_command` targets in
-the meantime.
 
 ## Files
 
 | Path | Role |
 |---|---|
-| `dimos/hardware/whole_body/openarm_damiao/adapter.py` | physical topology (motors, buses, gravity URDF) |
-| `dimos/robot/manipulators/openarm/config.py` | joints, gains, hardware + planning model configs |
-| `dimos/robot/manipulators/openarm/blueprints/` | coordinator/planner/teleop blueprints |
+| `dimos/hardware/whole_body/openarm_damiao/adapter.py` | physical topology, motors, buses, and gravity model |
+| `dimos/robot/manipulators/openarm/model.py` | pinned official robot description source |
+| `dimos/robot/manipulators/openarm/config.py` | joints, gains, hardware, and planning config |
+| `dimos/robot/manipulators/openarm/blueprints/` | coordinator and planner blueprints |
 
 ## Validation
 
 ```bash
 uv run pytest dimos/hardware/whole_body/openarm_damiao \
+    dimos/hardware/whole_body/damiao \
+    dimos/robot/manipulators/openarm \
     dimos/hardware/test_adapter_registries.py
 ```

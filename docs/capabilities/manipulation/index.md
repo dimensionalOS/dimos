@@ -19,7 +19,7 @@ Each blueprint launches the full stack — keyboard UI, mock controller, IK solv
 
 ```bash
 dimos run keyboard-teleop-a750    # A-750 6-DOF
-dimos run keyboard-teleop-openarm # OpenArm bimanual 2x(7-DOF + gripper)
+dimos run openarm-planner-coordinator # OpenArm bimanual 2x(7-DOF + gripper)
 dimos run keyboard-teleop-a1z     # Galaxea A1Z 6-DOF
 dimos run keyboard-teleop-piper   # Piper 6-DOF
 dimos run keyboard-teleop-openyam # OpenYAM 6-DOF + gripper

@@ -28,6 +28,7 @@ from pytest_mock import MockerFixture
 from dimos.hardware.whole_body.damiao.adapter import DamiaoWholeBodyAdapter
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.spec import MotorCommand, MotorState
+from dimos.robot.assets.model import RobotModel
 
 
 class FakeArm:
@@ -167,13 +168,13 @@ class RebuildingDualAdapter(DualAdapter):
 class GravityDualAdapter(DualAdapter):
     gravity_joint_names = ("left1", "left2", "right1", "right2")
 
-    def __init__(self, robot: FakeRobot, model_path: Path, **kwargs: object) -> None:
-        self.model_path = model_path
+    def __init__(self, robot: FakeRobot, model: RobotModel, **kwargs: object) -> None:
+        self.model = model
         super().__init__(robot, **kwargs)
 
     @property
-    def gravity_model_path(self) -> Path:
-        return self.model_path
+    def gravity_model(self) -> RobotModel:
+        return self.model
 
 
 class FakePinModel:
@@ -245,7 +246,7 @@ def active_dual_adapter(connected_dual_adapter: DualAdapter) -> DualAdapter:
 @pytest.fixture
 def pin_model_builder(mocker: MockerFixture) -> Mock:
     return mocker.patch(
-        "dimos.hardware.whole_body.damiao.adapter.pinocchio.buildModelFromUrdf",
+        "dimos.hardware.whole_body.damiao.adapter.pinocchio.buildModelFromXML",
     )
 
 
@@ -264,7 +265,7 @@ def gravity_adapter_factory(
         pin_model_builder.return_value = model
         adapter = GravityDualAdapter(
             dual_robot,
-            model_path,
+            RobotModel.from_file(model_path),
             runtime_config=DamiaoRuntimeConfig(gravity_comp=True),
         )
         adapters.append(adapter)
@@ -721,7 +722,7 @@ def test_connect_missing_gravity_model_rolls_back_robot(
 ) -> None:
     adapter = GravityDualAdapter(
         dual_robot,
-        tmp_path / "missing.urdf",
+        RobotModel.from_file(tmp_path / "missing.urdf"),
         runtime_config=DamiaoRuntimeConfig(gravity_comp=True),
     )
 
@@ -736,7 +737,32 @@ def test_connect_existing_gravity_model_loads_model(
     adapter = gravity_adapter_factory(model=FakePinModel())
 
     assert adapter.connect()
-    pin_model_builder.assert_called_once()
+    pin_model_builder.assert_called_once_with("<robot/>")
+
+
+def test_connect_gravity_model_locks_non_arm_joints(
+    gravity_adapter_factory: Callable[..., GravityDualAdapter],
+    mocker: MockerFixture,
+) -> None:
+    full_model = FakePinModel(
+        nq=5,
+        nv=5,
+        names=("universe", "left1", "left2", "right1", "right2", "finger"),
+    )
+    reduced_model = FakePinModel()
+    neutral = np.zeros(5, dtype=np.float64)
+    mocker.patch(
+        "dimos.hardware.whole_body.damiao.adapter.pinocchio.neutral",
+        return_value=neutral,
+    )
+    reduce_model = mocker.patch(
+        "dimos.hardware.whole_body.damiao.adapter.pinocchio.buildReducedModel",
+        return_value=reduced_model,
+    )
+    adapter = gravity_adapter_factory(model=full_model)
+
+    assert adapter.connect()
+    reduce_model.assert_called_once_with(full_model, [5], neutral)
 
 
 def test_activate_gravity_model_dimension_mismatch_returns_false(

@@ -16,13 +16,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import can_motor_control
 from can_motor_control import damiao
 
 from dimos.hardware.whole_body.damiao.adapter import DamiaoWholeBodyAdapter
-from dimos.utils.data import LfsPath
+from dimos.robot.assets.model import RobotModel
+from dimos.robot.manipulators.openarm.model import OPENARM_BIMANUAL_MODEL
 
 
 def _arm_motors(side: str) -> list[can_motor_control.MotorSpec]:
@@ -66,9 +65,9 @@ class OpenArmDamiaoAdapter(DamiaoWholeBodyAdapter):
     )
 
     @property
-    def gravity_model_path(self) -> Path:
-        """Return the lazy bimanual gravity-compensation URDF path."""
-        return LfsPath("openarm_description") / "urdf/robot/openarm_v20_bimanual.urdf"
+    def gravity_model(self) -> RobotModel:
+        """Return the official bimanual model for gravity compensation."""
+        return OPENARM_BIMANUAL_MODEL
 
     def _build_robot(self) -> can_motor_control.Robot:
         return (

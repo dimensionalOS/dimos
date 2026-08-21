@@ -16,17 +16,14 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.core.global_config import global_config
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators._modeling import base_pose
-from dimos.utils.data import LfsPath
+from dimos.robot.manipulators.openarm.model import OPENARM_BIMANUAL_MODEL
 
 OPENARM_DOF = 7
 OPENARM_HARDWARE_ID = "openarm"
@@ -38,12 +35,6 @@ OPENARM_RIGHT_ARM_JOINTS = [f"right_arm/joint{i}" for i in range(1, OPENARM_DOF 
 OPENARM_ARM_JOINTS = [*OPENARM_LEFT_ARM_JOINTS, *OPENARM_RIGHT_ARM_JOINTS]
 OPENARM_GRIPPER_JOINTS = ["left_arm/gripper", "right_arm/gripper"]
 OPENARM_JOINTS = [*OPENARM_ARM_JOINTS, *OPENARM_GRIPPER_JOINTS]
-
-OPENARM_PKG = LfsPath("openarm_description")
-OPENARM_LEFT_MODEL = OPENARM_PKG / "urdf/robot/openarm_v20_left.urdf"
-OPENARM_RIGHT_MODEL = OPENARM_PKG / "urdf/robot/openarm_v20_right.urdf"
-OPENARM_BIMANUAL_MODEL = OPENARM_PKG / "urdf/robot/openarm_v20_bimanual.urdf"
-OPENARM_PACKAGE_PATHS: dict[str, Path] = {"openarm_description": OPENARM_PKG}
 
 # MIT gains measured on v1.0 hardware, carried over as the v2.0 starting
 # point: with gravity compensation active the PD terms only handle transient
@@ -88,33 +79,6 @@ def openarm_hardware() -> HardwareComponent:
     )
 
 
-def openarm_control_model_config(side: str) -> RobotModelConfig:
-    """Build one arm's seven-joint model for its independent control-IK task."""
-    validate_side(side)
-    local_joint_names = openarm_urdf_joints(side)
-    return RobotModelConfig(
-        name=f"{side}_arm",
-        model=RobotModel.from_file(
-            OPENARM_LEFT_MODEL if side == "left" else OPENARM_RIGHT_MODEL,
-            package_paths=OPENARM_PACKAGE_PATHS,
-        ),
-        base_pose=base_pose(),
-        joint_names=local_joint_names,
-        base_link="openarm_body_link0",
-        planning_groups=[
-            PlanningGroupDefinition(
-                name="manipulator",
-                joint_names=tuple(local_joint_names),
-                base_link="openarm_body_link0",
-                tip_link=f"openarm_{side}_link7",
-            )
-        ],
-        auto_convert_meshes=True,
-        joint_name_mapping=dict(zip(openarm_arm_joints(side), local_joint_names, strict=True)),
-        home_joints=[0.0] * OPENARM_DOF,
-    )
-
-
 def openarm_bimanual_model_config(name: str = OPENARM_HARDWARE_ID) -> RobotModelConfig:
     """Build the single fourteen-joint planning model with one group per arm.
 
@@ -123,10 +87,7 @@ def openarm_bimanual_model_config(name: str = OPENARM_HARDWARE_ID) -> RobotModel
     local_joint_names = [*openarm_urdf_joints("left"), *openarm_urdf_joints("right")]
     return RobotModelConfig(
         name=name,
-        model=RobotModel.from_file(
-            OPENARM_BIMANUAL_MODEL,
-            package_paths=OPENARM_PACKAGE_PATHS,
-        ),
+        model=OPENARM_BIMANUAL_MODEL,
         base_pose=base_pose(),
         joint_names=local_joint_names,
         base_link="openarm_body_link0",

@@ -35,12 +35,12 @@ def openarm_adapter(mocker: MockerFixture) -> Iterator[OpenArmDamiaoAdapter]:
     adapter.disconnect()
 
 
-def test_import_lazy_gravity_model_does_not_resolve_lfs(mocker: MockerFixture) -> None:
-    get_data = mocker.patch("dimos.utils.data.get_data")
+def test_import_lazy_gravity_model_does_not_resolve_asset(mocker: MockerFixture) -> None:
+    checkout_path = mocker.patch("dimos.robot.assets.source.RobotDescriptionSource.checkout_path")
 
     runpy.run_path(adapter_module.__file__)
 
-    get_data.assert_not_called()
+    checkout_path.assert_not_called()
 
 
 def test_openarm_topology_connects_arms_and_grippers(
