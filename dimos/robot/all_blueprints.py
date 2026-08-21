@@ -249,6 +249,7 @@ all_modules = {
     "object-tracker2-d": "dimos.perception.experimental.object_tracker_2d.ObjectTracker2D",
     "object-tracker3-d": "dimos.perception.experimental.object_tracker_3d.ObjectTracker3D",
     "object-tracking": "dimos.perception.experimental.object_tracker.ObjectTracking",
+    "observe-skill": "dimos.agents.skills.observe_skill.ObserveSkill",
     "osm-skill": "dimos.agents.skills.osm.OsmSkill",
     "path-following-coordinator": "dimos.control.path_following_coordinator.PathFollowingCoordinator",
     "patrolling-module": "dimos.navigation.patrolling.module.PatrollingModule",
