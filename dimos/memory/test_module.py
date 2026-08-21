@@ -16,39 +16,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
-from pathlib import Path
-from typing import Any
+from collections.abc import Iterator
 
 import pytest
 
 from dimos.core.module import ModuleConfig
-from dimos.core.stream import In, Out, Stream as PortStream, Transport
-from dimos.memory.module import Recorder, StreamModule
+from dimos.core.stream import In, Out
+from dimos.memory.module import StreamModule
 from dimos.memory.stream import Stream
 from dimos.memory.transform import Transformer
 from dimos.memory.type.observation import Observation
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-
-
-class _TFTransport(Transport[TFMessage]):
-    def start(self) -> None:
-        pass
-
-    def stop(self) -> None:
-        pass
-
-    def broadcast(self, selfstream: PortStream[TFMessage] | None, value: TFMessage) -> None:
-        pass
-
-    def subscribe(
-        self,
-        callback: Callable[[TFMessage], Any],
-        selfstream: PortStream[TFMessage] | None = None,
-    ) -> Callable[[], None]:
-        return lambda: None
-
 
 # -- Shared transformer ---------------------------------------------------
 
@@ -107,7 +84,7 @@ module_cases = [
 
 
 @pytest.mark.parametrize("module_cls", module_cases)
-def test_blueprint_ports(module_cls: type[StreamModule[Any, Any]]) -> None:
+def test_blueprint_ports(module_cls: type[StreamModule]) -> None:
     """All pipeline styles produce a blueprint with the correct In/Out ports."""
     bp = module_cls.blueprint()
 
@@ -116,16 +93,3 @@ def test_blueprint_ports(module_cls: type[StreamModule[Any, Any]]) -> None:
     stream_names = {s.name for s in atom.streams}
     assert "numbers" in stream_names
     assert "doubled" in stream_names
-
-
-def test_recorder_tf_processor_accepts_subscription_envelope(tmp_path: Path) -> None:
-    recorder = Recorder(db_path=tmp_path / "recording.db")
-    recorder.tf.transport = _TFTransport()
-    processor = recorder._tf_processor()
-    assert processor is not None
-
-    writes = list(processor((123.0, TFMessage(Transform(ts=1.0)))))
-
-    assert len(writes) == 1
-    assert writes[0].append.observation.ts == 1.0
-    recorder.stop()

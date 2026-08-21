@@ -21,10 +21,8 @@ from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.types.timestamped import (
-    FramedMessage,
     Timestamped,
     TimestampedBufferCollection,
-    TimestampedMessage,
     align_timestamped,
     to_datetime,
     to_ros_stamp,
@@ -33,20 +31,6 @@ from dimos.utils.data import get_data
 from dimos.utils.reactive import backpressure
 from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 from dimos.utils.timeseries.inmemory import InMemoryStore
-
-
-class StructuralStampedMessage:
-    ts = 12.5
-    frame_id = "camera"
-
-
-def test_message_capabilities_are_structural() -> None:
-    message = StructuralStampedMessage()
-
-    assert isinstance(message, TimestampedMessage)
-    assert isinstance(message, FramedMessage)
-    assert not isinstance(b"unstamped", TimestampedMessage)
-    assert not isinstance(b"unframed", FramedMessage)
 
 
 def test_timestamped_dt_method() -> None:

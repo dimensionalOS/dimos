@@ -14,197 +14,129 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import threading
+from typing import Any
 
 import pytest
+from pytest_mock import MockerFixture
 
-from dimos.memory.backend import Backend, PreparedWrite
-from dimos.memory.codecs.pickle import PickleCodec
-from dimos.memory.notifier.subject import SubjectNotifier
-from dimos.memory.observationstore.memory import ListObservationStore
+from dimos.memory.module import Recorder, pose_setter_for
 from dimos.memory.recording import RecordingFailedError, RecordingPipeline
-from dimos.memory.type.filter import StreamQuery
-from dimos.memory.type.observation import Observation
+from dimos.memory.stream import Stream
+from dimos.msgs.geometry_msgs.Pose import Pose
 
 
-def _backend(name: str) -> Backend[float]:
-    return Backend[float](
-        metadata_store=ListObservationStore[float](name=name),
-        codec=PickleCodec(),
-        notifier=SubjectNotifier[float](),
-    )
+class _StampedMessage:
+    def __init__(self) -> None:
+        self.ts = 12.5
+        self.frame_id = "camera"
 
 
-def _write(backend: Backend[float], value: float) -> tuple[PreparedWrite[float]]:
-    observation = Observation(ts=value, _data=value)
-    return (PreparedWrite(backend, backend.prepare_append(observation)),)
+class _PoseRecorder(Recorder):
+    @pose_setter_for("camera")
+    async def _camera_pose(self, _message: Any) -> Pose:
+        return Pose(1.0, 2.0, 3.0)
 
 
-def test_pipeline_batches_backends_and_preserves_global_notification_fifo(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_pipeline_preserves_global_fifo_and_drains_on_close() -> None:
     events: list[str] = []
-    camera = _backend("camera")
-    imu = _backend("imu")
-    monkeypatch.setattr(
-        camera.notifier, "notify", lambda observation: events.append(f"notify-{observation.ts}")
-    )
-    monkeypatch.setattr(
-        imu.notifier, "notify", lambda observation: events.append(f"notify-{observation.ts}")
-    )
     pipeline = RecordingPipeline(
         {
-            "camera": lambda value: _write(camera, value),
-            "imu": lambda value: _write(imu, value),
-        },
-        batch_rows=4,
-        batch_delay_s=1.0,
+            "camera": lambda value: events.append(f"camera-{value}"),
+            "imu": lambda value: events.append(f"imu-{value}"),
+        }
     )
 
     pipeline.start()
-    try:
-        pipeline.submit("camera", 1.0)
-        pipeline.submit("imu", 2.0)
-        pipeline.submit("camera", 3.0)
-        pipeline.submit("imu", 4.0)
-    finally:
-        pipeline.close(timeout_s=1.0)
+    pipeline.submit("camera", 1)
+    pipeline.submit("imu", 2)
+    pipeline.submit("camera", 3)
+    pipeline.submit("imu", 4)
+    pipeline.close(timeout_s=1.0)
 
-    assert events == ["notify-1.0", "notify-2.0", "notify-3.0", "notify-4.0"]
+    assert events == ["camera-1", "imu-2", "camera-3", "imu-4"]
 
 
-def test_pipeline_fails_instead_of_dropping_when_ingress_is_full() -> None:
-    backend = _backend("depth")
+def test_pipeline_fails_instead_of_dropping_when_queue_is_full() -> None:
     started = threading.Event()
     release = threading.Event()
 
-    def process(value: float) -> tuple[PreparedWrite[float]]:
+    def process(_value: int) -> None:
         started.set()
-        assert release.wait(timeout=1.0)
-        return _write(backend, value)
+        if not release.wait(timeout=1.0):
+            raise TimeoutError("test did not release processor")
 
-    pipeline = RecordingPipeline({"depth": process}, ingress_size=1)
+    pipeline = RecordingPipeline({"depth": process}, queue_size=1)
     pipeline.start()
-    pipeline.submit("depth", 1.0)
-    assert started.wait(timeout=1.0)
-    pipeline.submit("depth", 2.0)
+    try:
+        pipeline.submit("depth", 1)
+        assert started.wait(timeout=1.0)
+        pipeline.submit("depth", 2)
+        with pytest.raises(RecordingFailedError, match="reached capacity"):
+            pipeline.submit("depth", 3)
+    finally:
+        release.set()
 
-    with pytest.raises(RecordingFailedError, match="reached capacity"):
-        pipeline.submit("depth", 3.0)
-
-    release.set()
     with pytest.raises(RecordingFailedError, match="failed"):
         pipeline.close(timeout_s=1.0)
 
 
-def test_pipeline_reports_preparation_failure() -> None:
-    def process(_value: float) -> tuple[PreparedWrite[float]]:
-        raise OSError("encoder failed")
+def test_pipeline_surfaces_processor_failure() -> None:
+    def process(_value: int) -> None:
+        raise OSError("database locked")
 
     pipeline = RecordingPipeline({"depth": process})
     pipeline.start()
-    pipeline.submit("depth", 1.0)
+    pipeline.submit("depth", 1)
 
     with pytest.raises(RecordingFailedError, match="failed") as exc:
         pipeline.close(timeout_s=1.0)
+
     assert isinstance(exc.value.__cause__, OSError)
 
 
-def test_pipeline_does_not_notify_when_a_backend_group_fails(
-    monkeypatch: pytest.MonkeyPatch,
+def test_pipeline_rejects_messages_after_close() -> None:
+    pipeline = RecordingPipeline({"camera": lambda _value: None})
+    pipeline.start()
+    pipeline.close(timeout_s=1.0)
+
+    with pytest.raises(RecordingFailedError, match="closed"):
+        pipeline.submit("camera", 1)
+
+
+def test_pipeline_rejects_unknown_stream() -> None:
+    pipeline = RecordingPipeline({"camera": lambda _value: None})
+    pipeline.start()
+    try:
+        with pytest.raises(KeyError, match="Unknown recording stream"):
+            pipeline.submit("depth", 1)
+    finally:
+        pipeline.close(timeout_s=1.0)
+
+
+def test_pipeline_requires_positive_queue_size() -> None:
+    with pytest.raises(ValueError, match="queue_size must be positive"):
+        RecordingPipeline({}, queue_size=0)
+
+
+def test_recorder_worker_preserves_payload_and_async_pose_setter(
+    tmp_path: Path, mocker: MockerFixture
 ) -> None:
-    events: list[str] = []
-    camera = _backend("camera")
-    depth = _backend("depth")
+    recorder = _PoseRecorder(db_path=tmp_path / "recording.db")
+    recorder._pose_setters = recorder._collect_pose_setters()
+    stream = mocker.Mock(spec=Stream)
+    message = _StampedMessage()
 
-    def fail_insert(_observation: Observation[float]) -> int:
-        raise OSError("locked")
+    try:
+        recorder._port_processor("camera", stream)((20.0, message))
+    finally:
+        recorder.stop()
 
-    monkeypatch.setattr(depth.metadata_store, "insert", fail_insert)
-    monkeypatch.setattr(camera.notifier, "notify", lambda _observation: events.append("notify"))
-    monkeypatch.setattr(depth.notifier, "notify", lambda _observation: events.append("notify"))
-    pipeline = RecordingPipeline(
-        {
-            "camera": lambda value: _write(camera, value),
-            "depth": lambda value: _write(depth, value),
-        },
-        batch_rows=2,
-        batch_delay_s=1.0,
+    assert message.ts == 12.5
+    stream.append.assert_called_once_with(
+        message,
+        ts=12.5,
+        pose=Pose(1.0, 2.0, 3.0),
+        tags={"reception_ts": 20.0},
     )
-
-    pipeline.start()
-    pipeline.submit("camera", 1.0)
-    pipeline.submit("depth", 2.0)
-
-    with pytest.raises(RecordingFailedError, match="failed"):
-        pipeline.close(timeout_s=1.0)
-
-    assert events == []
-    assert camera.count(StreamQuery()) == 1
-    assert depth.count(StreamQuery()) == 0
-
-
-def test_pipeline_reports_notification_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    backend = _backend("camera")
-
-    def fail_notify(_observation: Observation[float]) -> None:
-        raise OSError("consumer failed")
-
-    monkeypatch.setattr(backend.notifier, "notify", fail_notify)
-    pipeline = RecordingPipeline(
-        {"camera": lambda value: _write(backend, value)},
-        batch_rows=1,
-    )
-    pipeline.start()
-    pipeline.submit("camera", 1.0)
-
-    with pytest.raises(RecordingFailedError, match="failed") as exc:
-        pipeline.close(timeout_s=1.0)
-    assert isinstance(exc.value.__cause__, OSError)
-
-
-def test_backend_persists_batch_before_notifying(monkeypatch: pytest.MonkeyPatch) -> None:
-    events: list[str] = []
-    store = ListObservationStore[float](name="camera")
-    notifier = SubjectNotifier[float]()
-    insert = store.insert
-
-    def record_insert(observation: Observation[float]) -> int:
-        events.append(f"persist-{observation.ts}")
-        return insert(observation)
-
-    monkeypatch.setattr(store, "insert", record_insert)
-    monkeypatch.setattr(notifier, "notify", lambda obs: events.append(f"notify-{obs.ts}"))
-    backend = Backend[float](
-        metadata_store=store,
-        codec=PickleCodec(),
-        notifier=notifier,
-    )
-    appends = [backend.prepare_append(Observation(ts=ts, _data=ts)) for ts in (1.0, 2.0)]
-
-    backend.append_prepared(appends)
-
-    assert events == ["persist-1.0", "persist-2.0", "notify-1.0", "notify-2.0"]
-
-
-def test_backend_does_not_notify_when_persistence_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    events: list[str] = []
-    store = ListObservationStore[float](name="camera")
-    notifier = SubjectNotifier[float]()
-
-    def fail_insert(_observation: Observation[float]) -> int:
-        raise OSError("locked")
-
-    monkeypatch.setattr(store, "insert", fail_insert)
-    monkeypatch.setattr(notifier, "notify", lambda _observation: events.append("notify"))
-    backend = Backend[float](
-        metadata_store=store,
-        codec=PickleCodec(),
-        notifier=notifier,
-    )
-    append = backend.prepare_append(Observation(ts=1.0, _data=1.0))
-
-    with pytest.raises(OSError, match="locked"):
-        backend.append_prepared((append,))
-
-    assert events == []

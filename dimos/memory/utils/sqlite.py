@@ -24,7 +24,7 @@ def open_sqlite_connection(path: str | Path) -> sqlite3.Connection:
     """Open a WAL-mode SQLite connection with sqlite-vec loaded."""
     import sqlite_vec
 
-    conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+    conn = sqlite3.connect(path, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.enable_load_extension(True)

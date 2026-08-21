@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from dimos.core.resource import CompositeResource
@@ -25,7 +25,7 @@ from dimos.memory.notifier.subject import SubjectNotifier
 from dimos.memory.type.observation import _UNLOADED
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Iterator
 
     from reactivex.abc import DisposableBase
 
@@ -38,20 +38,6 @@ if TYPE_CHECKING:
     from dimos.memory.vectorstore.base import VectorStore
 
 T = TypeVar("T")
-
-
-@dataclass(frozen=True)
-class PreparedAppend(Generic[T]):
-    observation: Observation[T]
-    encoded: bytes | None
-
-
-@dataclass(frozen=True)
-class PreparedWrite(Generic[T]):
-    """One encoded observation paired with its typed backend."""
-
-    backend: Backend[T]
-    append: PreparedAppend[T]
 
 
 class Backend(CompositeResource, Generic[T]):
@@ -107,29 +93,6 @@ class Backend(CompositeResource, Generic[T]):
         return loader
 
     def append(self, obs: Observation[T]) -> Observation[T]:
-        return self.append_prepared((self.prepare_append(obs),))[0]
-
-    def append_prepared(
-        self, prepared_appends: Sequence[PreparedAppend[T]]
-    ) -> list[Observation[T]]:
-        """Persist prepared observations, then publish them."""
-        results = self.persist_prepared(prepared_appends)
-        for result in results:
-            self.notify(result)
-        return results
-
-    def persist_prepared(
-        self, prepared_appends: Sequence[PreparedAppend[T]]
-    ) -> list[Observation[T]]:
-        """Persist prepared observations without publishing."""
-        return [self._persist_prepared(prepared) for prepared in prepared_appends]
-
-    def notify(self, observation: Observation[T]) -> None:
-        """Publish one persisted observation to live consumers."""
-        self.notifier.notify(observation)
-
-    def prepare_append(self, obs: Observation[T]) -> PreparedAppend[T]:
-        """Validate and encode an observation without touching storage."""
         # Materialize lazy payloads (e.g. from with_pose()/tag()/derived
         # streams) in place — validation and encoding below read obs._data,
         # and we must encode it to store anyway.
@@ -150,26 +113,34 @@ class Backend(CompositeResource, Generic[T]):
         if self.blob_store is not None and not is_scalar:
             encoded = self.codec.encode(payload)
 
-        return PreparedAppend(observation=obs, encoded=encoded)
+        try:
+            # Insert metadata, get assigned id
+            row_id = self.metadata_store.insert(obs)
+            obs.id = row_id
 
-    def _persist_prepared(self, prepared: PreparedAppend[T]) -> Observation[T]:
-        """Insert one prepared observation."""
-        obs = prepared.observation
-        encoded = prepared.encoded
-        row_id = self.metadata_store.insert(obs)
-        obs.id = row_id
+            # Store blob (non-scalar data only)
+            if encoded is not None:
+                assert self.blob_store is not None
+                self.blob_store.put(self.name, row_id, encoded)
+                # Replace inline data with lazy loader
+                obs._data = _UNLOADED
+                obs._loader = self._make_loader(row_id)
 
-        if encoded is not None:
-            assert self.blob_store is not None
-            self.blob_store.put(self.name, row_id, encoded)
-            obs._data = _UNLOADED
-            obs._loader = self._make_loader(row_id)
+            # Store embedding vector
+            if self.vector_store is not None:
+                emb = getattr(obs, "embedding", None)
+                if emb is not None:
+                    self.vector_store.put(self.name, row_id, emb)
 
-        if self.vector_store is not None:
-            emb = getattr(obs, "embedding", None)
-            if emb is not None:
-                self.vector_store.put(self.name, row_id, emb)
+            # Commit if the metadata store supports it (e.g. SqliteObservationStore)
+            if hasattr(self.metadata_store, "commit"):
+                self.metadata_store.commit()
+        except BaseException:
+            if hasattr(self.metadata_store, "rollback"):
+                self.metadata_store.rollback()
+            raise
 
+        self.notifier.notify(obs)
         return obs
 
     def iterate(self, query: StreamQuery) -> Iterator[Observation[T]]:

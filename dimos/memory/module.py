@@ -32,7 +32,6 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
-from dimos.memory.backend import PreparedWrite
 from dimos.memory.embed import EmbedImages
 from dimos.memory.recording import Processor, RecordingFailedError, RecordingPipeline
 from dimos.memory.store.null import NullStore
@@ -41,16 +40,15 @@ from dimos.memory.stream import Stream
 from dimos.memory.transform import QualityWindow
 from dimos.memory.type.observation import EmbeddedObservation, Observation
 from dimos.models.embedding.base import EmbeddingModel
-from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.types.timestamped import FramedMessage, TimestampedMessage
 from dimos.utils.data import backup_file
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.core.stream import Out
+    from dimos.msgs.geometry_msgs.Pose import Pose
 
 logger = setup_logger()
 
@@ -326,7 +324,7 @@ class Recorder(MemoryModule):
 
     tf: In[TFMessage]
 
-    _pose_setters: dict[str, PoseSetter] = {}
+    _pose_setters: dict[str, Any] = {}
     _recording_subscriptions: CompositeDisposable | None = None
     _recording_pipeline: RecordingPipeline | None = None
 
@@ -365,7 +363,7 @@ class Recorder(MemoryModule):
             else:
                 raise FileExistsError(f"Recording already exists: {db_path}")
 
-        if self.tf.connected:
+        if getattr(self.tf, "_transport", None) is not None:
             self._tf = self.tfbuffer
 
         self._prepare_streams()
@@ -403,18 +401,18 @@ class Recorder(MemoryModule):
         return {name: port for name, port in self.inputs.items() if port is not self.tf}
 
     def _port_processor(self, name: str, stream: Stream[Any]) -> Processor:
-        """Build the preparation stage for a stream, including world-pose lookup.
+        """Build the FIFO worker callback for one recorded stream.
 
         Stamped messages use their own ``.frame_id`` and ``.ts``; unstamped
         messages (or ones whose frame isn't in the tf graph, e.g. a payload
         already in world coords) fall back to ``config.default_frame_id`` —
         so every observation gets a robot-pose anchor when tf is publishing.
 
-        Preparation runs on the pipeline's single worker, outside the transport
-        callback and the serialized database writer.
+        Processing runs outside the transport callback so temporary pose,
+        encoding, or SQLite stalls are absorbed by the recorder queue.
         """
 
-        def process(stamped: tuple[float, Any]) -> tuple[PreparedWrite[Any]]:
+        def process(stamped: tuple[float, Any]) -> None:
             recv_ts, msg = stamped
             ts = self._resolve_ts(name, msg)
             if name in self._pose_setters:
@@ -431,18 +429,9 @@ class Recorder(MemoryModule):
                     "[%s] No pose for time %s (msg ts: %s), storing without pose",
                     name,
                     ts,
-                    msg.ts if isinstance(msg, TimestampedMessage) else None,
+                    getattr(msg, "ts", None),
                 )
-            if isinstance(msg, TimestampedMessage):
-                msg.ts = ts
-            observation = Observation(
-                id=-1,
-                ts=ts,
-                pose=pose,
-                tags={"reception_ts": recv_ts},
-                _data=msg,
-            )
-            return (stream.prepare_write(observation),)
+            stream.append(msg, ts=ts, pose=pose, tags={"reception_ts": recv_ts})
 
         return process
 
@@ -473,24 +462,20 @@ class Recorder(MemoryModule):
 
     def _resolve_ts(self, name: str, msg: Any) -> float:
         """Timestamp to record *msg* at. Override to re-base onto another clock."""
-        return msg.ts if isinstance(msg, TimestampedMessage) and msg.ts else time.time()
+        return getattr(msg, "ts", None) or time.time()
 
     async def _resolve_pose(self, name: str, msg: Any, ts: float) -> Pose | None:
         """Pose to anchor *msg* with, using an explicit setter or tf lookup."""
         setter = self._pose_setters.get(name)
         if setter is not None:
-            return await setter(msg)
+            return cast("Pose | None", await setter(msg))
         return self._resolve_tf_pose(msg, ts)
 
     def _resolve_tf_pose(self, msg: Any, ts: float) -> Pose | None:
         """Resolve the ordinary TF pose directly from recorder queue threads."""
         if self._tf is None:
             return None
-        frame_id = (
-            msg.frame_id
-            if isinstance(msg, FramedMessage) and msg.frame_id
-            else self.config.default_frame_id
-        )
+        frame_id = getattr(msg, "frame_id", None) or self.config.default_frame_id
         transform = self._tf.get(
             self.config.root_frame, frame_id, time_point=ts, time_tolerance=self.config.tf_tolerance
         )
@@ -506,24 +491,16 @@ class Recorder(MemoryModule):
         return setters
 
     def _tf_processor(self) -> Processor | None:
-        """Build the preparation stage for tf, or return None when it is unwired."""
-        if not self.tf.connected:
+        """Build the FIFO worker callback for tf, or None when it is unwired."""
+        if getattr(self.tf, "_transport", None) is None:
             logger.warning("Recorder: tf port has no transport — not recording tf")
             return None
         tf_stream = self.store.stream("tf", TFMessage)
 
-        def process_tf(stamped: tuple[float, TFMessage]) -> list[PreparedWrite[Any]]:
+        def process_tf(stamped: tuple[float, TFMessage]) -> None:
             _recv_ts, msg = stamped
-            writes: list[PreparedWrite[Any]] = []
             for transform in msg.transforms:
-                observation = Observation(
-                    id=-1,
-                    ts=transform.ts,
-                    pose=None,
-                    _data=TFMessage(transform),
-                )
-                writes.append(tf_stream.prepare_write(observation))
-            return writes
+                tf_stream.append(TFMessage(transform), ts=transform.ts, pose=None)
 
         return process_tf
 
@@ -534,11 +511,11 @@ class Recorder(MemoryModule):
         subscriptions = self._recording_subscriptions
         if subscriptions is not None:
             subscriptions.dispose()
-        failure: BaseException | None = None
+        failure: Exception | None = None
         if pipeline is not None:
             try:
                 pipeline.close()
-            except BaseException as error:
+            except Exception as error:
                 failure = error
         super().stop()
         if failure is not None:

@@ -441,9 +441,9 @@ class TestStandaloneComponents:
         with SqliteObservationStore(path=db, name="events", codec=codec) as store:
             obs = Observation(id=0, ts=1.0, _data="hello")
             row_id = store.insert(obs)
+            store.commit()
             assert row_id == 1
 
-        with SqliteObservationStore(path=db, name="events", codec=codec) as store:
             results = list(store.query(StreamQuery()))
             assert len(results) == 1
             assert results[0].ts == 1.0

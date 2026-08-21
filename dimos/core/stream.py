@@ -114,12 +114,10 @@ class Stream(Generic[T]):
         self.name = name
         self.owner = owner
         self.type = type
-        self._transport = transport
-
-    @property
-    def connected(self) -> bool:
-        """Whether this stream has a runtime transport."""
-        return self._transport is not None
+        if transport:
+            self._transport = transport
+        if not hasattr(self, "_transport"):
+            self._transport = None
 
     @property
     def type_name(self) -> str:

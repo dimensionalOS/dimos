@@ -15,10 +15,11 @@
 from __future__ import annotations
 
 import pickle
+import threading
+from uuid import uuid4
 
 import pytest
 
-from dimos.core.stream import In
 from dimos.core.transport import (
     JpegLcmTransport,
     JpegShmTransport,
@@ -34,7 +35,6 @@ from dimos.protocol.pubsub.registry import (
     subscribe_pubsub_uri,
     supported_protos,
 )
-from dimos.protocol.pubsub.shm.ipc_factory import CpuShmQueue
 
 
 def test_supported_protos_includes_known_set() -> None:
@@ -106,20 +106,11 @@ def test_make_pubsub_transport_pshm_uses_pSHMTransport() -> None:
     assert isinstance(t, pSHMTransport)
 
 
-def test_input_exposes_transport_connection_state() -> None:
-    input_topic = In(int, "numbers")
-    assert not input_topic.connected
+def test_pshm_transport_preserves_latest_value_default_when_pickled() -> None:
+    restored = pickle.loads(pickle.dumps(pSHMTransport("latest", default_capacity=1024)))
 
-    input_topic.transport = pSHMTransport("numbers")
-
-    assert input_topic.connected
-
-
-def test_reliable_shm_transport_uses_configured_ring() -> None:
-    transport = pSHMTransport("reliable-test", queue_size=32, default_capacity=1024)
-
-    assert transport.shm._channel_class is CpuShmQueue
-    assert transport.shm._channel_kwargs == {"slots": 32}
+    assert restored.queue_size is None
+    assert restored.shm.config.default_capacity == 1024
 
 
 def test_pshm_transport_rejects_non_positive_queue_size() -> None:
@@ -127,13 +118,28 @@ def test_pshm_transport_rejects_non_positive_queue_size() -> None:
         pSHMTransport("invalid", queue_size=0)
 
 
-def test_pshm_transport_preserves_queue_size_when_pickled() -> None:
-    restored = pickle.loads(
-        pickle.dumps(pSHMTransport("pickled", queue_size=17, default_capacity=1024))
-    )
+def test_pshm_transport_configured_queue_delivers_burst_in_order() -> None:
+    topic = f"reliable-{uuid4().hex}"
+    publisher = pSHMTransport(topic, queue_size=8, default_capacity=1024)
+    subscriber = pickle.loads(pickle.dumps(publisher))
+    received: list[int] = []
+    done = threading.Event()
 
-    assert restored.shm.queue_size == 17
-    assert restored.shm.config.default_capacity == 1024
+    def collect(value: int) -> None:
+        received.append(value)
+        if len(received) == 8:
+            done.set()
+
+    unsubscribe = subscriber.subscribe(collect)
+    try:
+        for value in range(8):
+            publisher.publish(value)
+        assert done.wait(timeout=1.0)
+        assert received == list(range(8))
+    finally:
+        unsubscribe()
+        publisher.stop()
+        subscriber.stop()
 
 
 def test_make_pubsub_transport_shm_uses_SHMTransport() -> None:

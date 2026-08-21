@@ -326,12 +326,12 @@ class PickleSharedMemory(
 ):
     """SharedMemory pubsub that transports arbitrary Python objects via pickle."""
 
-    def __init__(self, *, queue_size: int = 256, **kwargs: Any) -> None:
-        if queue_size <= 0:
-            raise ValueError("queue_size must be positive")
-        self.queue_size = queue_size
-        self._channel_class = CpuShmQueue
-        self._channel_kwargs = {"slots": queue_size}
+    def __init__(self, *, queue_size: int | None = None, **kwargs: Any) -> None:
+        if queue_size is not None:
+            if queue_size <= 0:
+                raise ValueError("queue_size must be positive")
+            self._channel_class = CpuShmQueue
+            self._channel_kwargs = {"slots": queue_size}
         super().__init__(**kwargs)
 
 
