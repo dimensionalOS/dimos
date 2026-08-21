@@ -17,13 +17,39 @@
 from __future__ import annotations
 
 from dimos.control.components import HardwareComponent, HardwareType
-from dimos.core.global_config import global_config
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.manipulators._modeling import base_pose
-from dimos.robot.manipulators.openarm.model import OPENARM_BIMANUAL_MODEL
+
+OPENARM_DESCRIPTION_URL = "https://github.com/enactic/openarm_description"
+OPENARM_DESCRIPTION_REF = "1fba2cbc05001f05b4514120b70130b4ac06f409"
+
+OPENARM_DESCRIPTION_SOURCE = RobotDescriptionSource(
+    url=OPENARM_DESCRIPTION_URL,
+    ref=OPENARM_DESCRIPTION_REF,
+)
+OPENARM_DESCRIPTION_ROOT = OPENARM_DESCRIPTION_SOURCE / "."
+OPENARM_BIMANUAL_XACRO = (
+    OPENARM_DESCRIPTION_SOURCE
+    / "assets"
+    / "robot"
+    / "openarm_v2.0"
+    / "urdf"
+    / "openarm_v20.urdf.xacro"
+)
+
+OPENARM_BIMANUAL_MODEL = RobotModel.from_file(
+    OPENARM_BIMANUAL_XACRO,
+    package_paths={"openarm_description": OPENARM_DESCRIPTION_ROOT},
+    xacro_args={
+        "robot_preset": "default_bimanual",
+        "emit_grasp_frame": "true",
+    },
+)
 
 OPENARM_DOF = 7
 OPENARM_HARDWARE_ID = "openarm"
@@ -62,13 +88,20 @@ def openarm_urdf_joints(side: str) -> list[str]:
     return [f"openarm_{side}_joint{i}" for i in range(1, OPENARM_DOF + 1)]
 
 
-def openarm_hardware() -> HardwareComponent:
-    """Use mock hardware unless a physical right-arm CAN interface is set."""
-    adapter_type = "openarm_damiao" if global_config.can_port else "mock_whole_body"
+def openarm_hardware(
+    *,
+    left_can_port: str | None = None,
+    right_can_port: str | None = None,
+) -> HardwareComponent:
+    """Use mock hardware unless both physical CAN interfaces are explicit."""
+    if (left_can_port is None) != (right_can_port is None):
+        raise ValueError("OpenArm hardware requires both left and right CAN ports")
+
+    adapter_type = "openarm_damiao" if left_can_port is not None else "mock_whole_body"
     adapter_kwargs: dict[str, object] = {}
-    if global_config.can_port:
+    if left_can_port is not None and right_can_port is not None:
         adapter_kwargs["runtime_config"] = DamiaoRuntimeConfig(
-            bus_addresses={"right": global_config.can_port},
+            bus_addresses={"left": left_can_port, "right": right_can_port},
             gravity_comp=True,
         )
     return HardwareComponent(

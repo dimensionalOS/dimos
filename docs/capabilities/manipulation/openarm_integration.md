@@ -47,14 +47,12 @@ dimos run openarm-planner-coordinator # mock hardware
 
 dimos hardware can setup can0
 dimos hardware can setup can1
-dimos --can-port can0 run openarm-planner-coordinator # physical hardware
+dimos run openarm-planner-coordinator --left-can-port can1 --right-can-port can0
 ```
 
 Linux assigns `can0`/`can1` in USB enumeration order. If the arms come up
-swapped, override the full mapping through
-`DamiaoRuntimeConfig(bus_addresses={"left": ..., "right": ...})`. The
-`--can-port` value selects the right-arm bus; the left-arm bus defaults to
-`can1`.
+swapped, exchange the two explicit CLI values. Supplying only one interface is
+rejected so physical operation can never depend on USB/CAN enumeration defaults.
 
 ## Blueprints
 
@@ -64,15 +62,14 @@ swapped, override the full mapping through
 | `openarm-planner-coordinator` | planner (bimanual model) + coordinator |
 
 Both blueprints use the in-memory whole-body adapter by default. Passing
-`--can-port` explicitly selects the physical adapter.
+both `--left-can-port` and `--right-can-port` selects the physical adapter.
 
 ## Files
 
 | Path | Role |
 |---|---|
 | `dimos/hardware/whole_body/openarm_damiao/adapter.py` | physical topology, motors, buses, and gravity model |
-| `dimos/robot/manipulators/openarm/model.py` | pinned official robot description source |
-| `dimos/robot/manipulators/openarm/config.py` | joints, gains, hardware, and planning config |
+| `dimos/robot/manipulators/openarm/config.py` | pinned model, joints, gains, hardware, and planning config |
 | `dimos/robot/manipulators/openarm/blueprints/` | coordinator and planner blueprints |
 
 ## Validation

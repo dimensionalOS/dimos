@@ -21,7 +21,7 @@ from can_motor_control import damiao
 
 from dimos.hardware.whole_body.damiao.adapter import DamiaoWholeBodyAdapter
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.manipulators.openarm.model import OPENARM_BIMANUAL_MODEL
+from dimos.robot.manipulators.openarm.config import OPENARM_BIMANUAL_MODEL
 
 
 def _arm_motors(side: str) -> list[can_motor_control.MotorSpec]:

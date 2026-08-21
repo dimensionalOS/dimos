@@ -17,23 +17,22 @@ from typing import cast
 import pytest
 
 from dimos.control.components import HardwareType
-from dimos.core.global_config import global_config
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
+from dimos.robot.manipulators.openarm.blueprints.basic import openarm_planner_coordinator
 from dimos.robot.manipulators.openarm.config import (
     OPENARM_ARM_JOINTS,
-    OPENARM_HARDWARE_ID,
-    OPENARM_SIDES,
-    openarm_bimanual_model_config,
-    openarm_hardware,
-    openarm_urdf_joints,
-)
-from dimos.robot.manipulators.openarm.model import (
     OPENARM_BIMANUAL_MODEL,
     OPENARM_BIMANUAL_XACRO,
     OPENARM_DESCRIPTION_REF,
     OPENARM_DESCRIPTION_SOURCE,
     OPENARM_DESCRIPTION_URL,
+    OPENARM_HARDWARE_ID,
+    OPENARM_SIDES,
+    openarm_bimanual_model_config,
+    openarm_hardware,
+    openarm_urdf_joints,
 )
 
 
@@ -74,11 +73,7 @@ def test_openarm_config_exposes_one_bimanual_robot() -> None:
     ]
 
 
-def test_openarm_hardware_defaults_to_mock_without_can_port(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(global_config, "can_port", None)
-
+def test_openarm_hardware_defaults_to_mock_without_can_ports() -> None:
     hardware = openarm_hardware()
 
     assert (hardware.hardware_id, hardware.hardware_type, hardware.adapter_type) == (
@@ -89,14 +84,36 @@ def test_openarm_hardware_defaults_to_mock_without_can_port(
     assert hardware.adapter_kwargs == {}
 
 
-def test_openarm_hardware_uses_physical_adapter_with_can_port(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(global_config, "can_port", "can0")
-
-    hardware = openarm_hardware()
+def test_openarm_hardware_uses_physical_adapter_with_explicit_can_ports() -> None:
+    hardware = openarm_hardware(left_can_port="can1", right_can_port="can0")
 
     assert hardware.adapter_type == "openarm_damiao"
     runtime_config = hardware.adapter_kwargs["runtime_config"]
     assert isinstance(runtime_config, DamiaoRuntimeConfig)
-    assert runtime_config.bus_addresses == {"right": "can0"}
+    assert runtime_config.bus_addresses == {"left": "can1", "right": "can0"}
+
+
+@pytest.mark.parametrize(
+    ("left_can_port", "right_can_port"),
+    [("can1", None), (None, "can0")],
+)
+def test_openarm_hardware_rejects_partial_can_configuration(
+    left_can_port: str | None,
+    right_can_port: str | None,
+) -> None:
+    with pytest.raises(ValueError, match="requires both left and right CAN ports"):
+        openarm_hardware(
+            left_can_port=left_can_port,
+            right_can_port=right_can_port,
+        )
+
+
+def test_openarm_can_ports_are_blueprint_cli_options() -> None:
+    parsed = BlueprintConfigParser(openarm_planner_coordinator).parse(
+        ["--left-can-port", "can1", "--right-can-port", "can0"],
+        environ={},
+    )
+
+    coordinator = parsed.module_kwargs("ControlCoordinator")
+    assert coordinator["left_can_port"] == "can1"
+    assert coordinator["right_can_port"] == "can0"
