@@ -18,6 +18,7 @@ import pytest
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+from dimos.perception.detection.type.detection2d.point import Detection2DPoint
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 from dimos.perception.grounded_segmentation import GroundedSegmentationModule
 
@@ -41,9 +42,32 @@ class FakeGrounder:
             [Detection2DBBox((1.0, 1.0, 3.0, 3.0), 99, -1, 1.0, query, image.ts, image)],
         )
 
+    def query_points(
+        self, image: Image, query: str, **_kwargs: object
+    ) -> ImageDetections2D[Detection2DPoint]:
+        self.queries.append((image, f"point:{query}"))
+        return ImageDetections2D(image, [Detection2DPoint(2.0, 2.0, query, image.ts, image)])
+
 
 class FakeSegmenter:
     def segment(self, detections: ImageDetections2D) -> ImageDetections2D[Detection2DSeg]:
+        masks = []
+        for detection in detections:
+            mask = np.zeros((4, 4), dtype=np.uint8)
+            mask[1:3, 1:3] = 255
+            masks.append(
+                Detection2DSeg.from_sam2_result(
+                    mask,
+                    detection.track_id,
+                    detections.image,
+                    name=detection.name,
+                )
+            )
+        return ImageDetections2D(detections.image, masks)
+
+    def segment_points(
+        self, detections: ImageDetections2D[Detection2DPoint]
+    ) -> ImageDetections2D[Detection2DSeg]:
         masks = []
         for detection in detections:
             mask = np.zeros((4, 4), dtype=np.uint8)
@@ -98,3 +122,20 @@ def test_segment_rejects_empty_prompts() -> None:
             module.segment(image, [" "])
     finally:
         module.stop()
+
+
+def test_segment_best_uses_one_point_grounding() -> None:
+    image = Image(np.zeros((4, 4, 3), dtype=np.uint8), ImageFormat.RGB, "camera", 2.0)
+    grounder = FakeGrounder()
+    module = GroundedSegmentationModule(grounder=lambda: grounder, segmenter=FakeSegmenter)
+
+    module.start()
+    try:
+        result = module.segment_best(image, " cream cheese package ")
+    finally:
+        module.stop()
+
+    assert grounder.queries == [(image, "point:cream cheese package")]
+    assert len(result) == 1
+    assert result[0].name == "cream cheese package"
+    assert result[0].track_id == 0

@@ -102,7 +102,7 @@ class CodePolicyMcpServer:
                 content=[
                     TextContent(type="text", text=result.text),
                     *(
-                        ImageContent(type="image", data=image.data, mimeType=image.mime_type)
+                        ImageContent(type="image", data=image.data, mime_type=image.mime_type)
                         for image in result.images
                     ),
                 ]

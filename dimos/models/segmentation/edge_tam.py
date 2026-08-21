@@ -30,6 +30,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.detectors.base import Detector
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+from dimos.perception.detection.type.detection2d.point import Detection2DPoint
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
@@ -130,6 +131,38 @@ class EdgeTAMImageSegmenter:
             )
             for det, mask in zip(detections, masks, strict=False)
         ]
+        return ImageDetections2D(image, segmented)
+
+    def segment_points(
+        self,
+        detections: ImageDetections2D[Detection2DPoint],
+    ) -> ImageDetections2D[Detection2DSeg]:
+        """Segment objects selected by positive image-space point prompts."""
+        import cv2
+
+        if not len(detections):
+            return ImageDetections2D(detections.image)
+        image = detections.image
+        rgb = cv2.cvtColor(image.to_opencv(), cv2.COLOR_BGR2RGB)
+        segmented: list[Detection2DSeg] = []
+        with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+            self._predictor.set_image(rgb)
+            for detection in detections:
+                masks, _, _ = self._predictor.predict(
+                    point_coords=np.asarray([[detection.x, detection.y]], dtype=np.float32),
+                    point_labels=np.asarray([1], dtype=np.int32),
+                    multimask_output=False,
+                )
+                segmented.append(
+                    Detection2DSeg.from_sam2_result(
+                        masks[0],
+                        detection.track_id,
+                        image,
+                        class_id=detection.class_id,
+                        name=detection.name,
+                        confidence=detection.confidence,
+                    )
+                )
         return ImageDetections2D(image, segmented)
 
 

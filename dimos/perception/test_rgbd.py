@@ -121,4 +121,7 @@ def test_crop_masks_selects_a_normalized_spatial_subregion() -> None:
 
     assert len(result) == 1
     assert result[0].bbox == (3.0, 4.0, 4.0, 6.0)
-    assert np.array_equal(np.argwhere(result[0].mask), np.argwhere(mask[4:7, 3:5]) + [4, 3])
+    assert np.array_equal(
+        np.argwhere(result[0].mask),
+        np.add(np.argwhere(mask[4:7, 3:5]), [4, 3]),
+    )

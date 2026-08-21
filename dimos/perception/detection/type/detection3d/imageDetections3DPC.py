@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.perception.detection.type.imageDetections import ImageDetections
@@ -61,7 +61,7 @@ class ImageDetections3DPC(ImageDetections[Detection3DPC]):
     @classmethod
     def from_depth(
         cls,
-        detections_2d: ImageDetections2D,
+        detections_2d: ImageDetections2D[Any],
         depth: Image,
         camera_info: CameraInfo,
         world_to_optical_transform: Transform,
