@@ -152,6 +152,8 @@ alfred_mls_nav = (
             # The camera only assembles a pointcloud when colour is also streaming.
             enable_color=True,
             enable_pointcloud=True,
+            # The default 5 Hz cap starves the mapper; the depth stream itself is the limit.
+            pointcloud_fps=30,
             # Goes to the fusion filter, not to cuVSLAM: see the DimSlam note.
             enable_imu=True,
             base_transform=D455_MOUNT,
