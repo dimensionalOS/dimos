@@ -176,8 +176,6 @@ class Store(Configurable, CompositeResource):
         if notifier is None or isinstance(notifier, type):
             notifier = (notifier or SubjectNotifier)()
 
-        transaction = config.pop("transaction", None)
-
         return Backend(
             metadata_store=obs,
             codec=codec,
@@ -186,7 +184,6 @@ class Store(Configurable, CompositeResource):
             vector_store=vs,
             notifier=notifier,
             eager_blobs=config.get("eager_blobs", False),
-            transaction=transaction,
         )
 
     def stream(self, name: str, payload_type: type[T] | None = None, **overrides: Any) -> Stream[T]:

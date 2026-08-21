@@ -16,8 +16,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
@@ -40,7 +38,6 @@ if TYPE_CHECKING:
     from dimos.memory.vectorstore.base import VectorStore
 
 T = TypeVar("T")
-TransactionFactory = Callable[[], AbstractContextManager[None]]
 
 
 @dataclass(frozen=True)
@@ -72,7 +69,6 @@ class Backend(CompositeResource, Generic[T]):
         vector_store: VectorStore | None = None,
         notifier: Notifier[T] | None = None,
         eager_blobs: bool = False,
-        transaction: TransactionFactory | None = None,
     ) -> None:
         super().__init__()
         self.metadata_store = self.register_disposable(metadata_store)
@@ -82,7 +78,6 @@ class Backend(CompositeResource, Generic[T]):
         self.vector_store = self.register_disposable(vector_store) if vector_store else None
         self.notifier: Notifier[T] = self.register_disposable(notifier or SubjectNotifier())
         self.eager_blobs = eager_blobs
-        self._transaction: TransactionFactory = transaction or nullcontext
 
     def start(self) -> None:
         self.metadata_store.start()
@@ -117,7 +112,7 @@ class Backend(CompositeResource, Generic[T]):
     def append_prepared(
         self, prepared_appends: Sequence[PreparedAppend[T]]
     ) -> list[Observation[T]]:
-        """Persist prepared observations in one transaction, then publish them."""
+        """Persist prepared observations, then publish them."""
         results = self.persist_prepared(prepared_appends)
         for result in results:
             self.notify(result)
@@ -126,15 +121,11 @@ class Backend(CompositeResource, Generic[T]):
     def persist_prepared(
         self, prepared_appends: Sequence[PreparedAppend[T]]
     ) -> list[Observation[T]]:
-        """Persist prepared observations in one transaction without publishing."""
-        results: list[Observation[T]] = []
-        with self._transaction():
-            for prepared in prepared_appends:
-                results.append(self._persist_prepared(prepared))
-        return results
+        """Persist prepared observations without publishing."""
+        return [self._persist_prepared(prepared) for prepared in prepared_appends]
 
     def notify(self, observation: Observation[T]) -> None:
-        """Publish one committed observation to live consumers."""
+        """Publish one persisted observation to live consumers."""
         self.notifier.notify(observation)
 
     def prepare_append(self, obs: Observation[T]) -> PreparedAppend[T]:
@@ -162,7 +153,7 @@ class Backend(CompositeResource, Generic[T]):
         return PreparedAppend(observation=obs, encoded=encoded)
 
     def _persist_prepared(self, prepared: PreparedAppend[T]) -> Observation[T]:
-        """Insert one prepared observation into the current transaction."""
+        """Insert one prepared observation."""
         obs = prepared.observation
         encoded = prepared.encoded
         row_id = self.metadata_store.insert(obs)

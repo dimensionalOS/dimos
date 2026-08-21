@@ -147,9 +147,6 @@ def pose_fill_db(
                 assert dest_b.blob_store is not None
                 dest_b.blob_store.put(name, row_id, blob)
             n += 1
-        commit = getattr(dest_b.metadata_store, "commit", None)
-        if commit is not None:
-            commit()
         written[name] = n
 
     src.stop()

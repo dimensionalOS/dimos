@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-from functools import partial
 import os
 import sqlite3
 from typing import Annotated, Any
@@ -28,7 +27,7 @@ from dimos.memory.codecs.base import codec_id
 from dimos.memory.observationstore.sqlite import SqliteObservationStore
 from dimos.memory.registry import RegistryStore, deserialize_component, qual
 from dimos.memory.store.base import Store, StoreConfig
-from dimos.memory.utils.sqlite import open_disposable_sqlite_connection, sqlite_transaction
+from dimos.memory.utils.sqlite import open_disposable_sqlite_connection
 from dimos.memory.utils.validation import validate_identifier
 from dimos.memory.vectorstore.base import VectorStore
 from dimos.memory.vectorstore.sqlite import SqliteVectorStore
@@ -126,7 +125,6 @@ class SqliteStore(Store):
             vector_store=vs,
             notifier=notifier,
             eager_blobs=eager_blobs,
-            transaction=partial(sqlite_transaction, backend_conn),
         )
         return backend
 
@@ -194,7 +192,6 @@ class SqliteStore(Store):
             page_size=config.pop("page_size", self.config.page_size),
         )
         config["observation_store"] = obs_store
-        config["transaction"] = partial(sqlite_transaction, backend_conn)
 
         backend = super()._create_backend(name, payload_type, **config)
 

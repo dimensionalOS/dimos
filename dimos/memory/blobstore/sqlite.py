@@ -52,7 +52,7 @@ class SqliteBlobStore(BlobStore):
     - ``SqliteBlobStore(conn=conn)`` — borrows an externally-managed connection.
     - ``SqliteBlobStore(path="file.db")`` — opens and owns its own connection.
 
-    Does NOT commit; the caller (typically Backend) is responsible for commits.
+    Writes use the connection's autocommit mode.
     """
 
     config: SqliteBlobStoreConfig

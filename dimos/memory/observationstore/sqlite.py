@@ -359,8 +359,6 @@ class SqliteObservationStore(ObservationStore[T]):
                     (row_id, px, px, py, py, pz, pz),
                 )
 
-            # The Backend-owned transaction commits after blob/vector writes.
-
         return row_id
 
     def query(self, q: StreamQuery) -> Iterator[Observation[T]]:
