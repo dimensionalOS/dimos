@@ -2,6 +2,13 @@
 .git
 .gitignore
 .github/
+.evo/
+.container-eval/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+logs/
+recordings/
 
 # Editor and IDE files
 .vscode
@@ -82,6 +89,14 @@ node_modules/
 package-lock.json
 package.json
 bin/node_modules/
+
+# The code-policy agent is part of the locked evaluation environment.
+!packages/pi-code-policy-extension/package.json
+!packages/pi-code-policy-extension/package-lock.json
+!packages/pi-code-policy-extension/tsconfig.json
+!packages/pi-code-policy-extension/tsconfig.build.json
+!packages/pi-code-policy-extension/src/
+!packages/pi-code-policy-extension/src/**
 
 # Database files
 *.db

@@ -67,3 +67,36 @@ publication-grade manipulation performance. Multi-seed measurement is a later la
 
 Outside Evo, omit the Evo environment variables. The same command still writes
 `panel-score.json` and prints normal JSON, which is useful for local contract checks.
+
+## Reproducible container runner
+
+For measured runs, use the locked outer runner. It builds the existing LIBERO
+simulator image first, builds the current DimOS candidate from digest-pinned Python
+and Node bases plus `uv.lock` and `package-lock.json`, and executes the resulting local
+image by its immutable ID. Start the rootless service and verify NVIDIA CDI first:
+
+```bash
+systemctl --user enable --now podman.socket
+nvidia-smi -L
+
+uv run python -m dimos.benchmark.libero_pro.container_runner check \
+  --output "$PWD/.container-eval/check"
+```
+
+Then run the panel:
+
+```bash
+uv run python -m dimos.benchmark.libero_pro.container_runner run \
+  --panel dimos/benchmark/libero_pro/cases/autoresearch/dev-panel.json \
+  --output "$(dirname "$EVO_RESULT_PATH")/dimos-panel" --json
+```
+
+The outer runner uses host networking and the mounted rootless Podman socket to launch
+the existing simulator containers as siblings. It mounts only the DimOS cache,
+benchmark output, and configured Evo result/trace directories at identical absolute
+paths. Agent IPC uses a short `/runner-tmp` mount backed by the output filesystem, so
+it does not consume host `/tmp` or inherit long worktree socket paths. Only
+OpenAI/Hugging Face credentials and `EVO_RESULT_PATH`, `EVO_TRACES_DIR`, and
+`EVO_EXPERIMENT_ID` are forwarded. For each invocation, the launcher generates an
+NVIDIA CDI spec inside that scratch directory and passes it through Podman's
+`--cdi-spec-dir`; it does not read or replace system CDI configuration.
