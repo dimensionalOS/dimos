@@ -39,7 +39,6 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
 from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
 from dimos.navigation.nav_3d.mls_planner.mls_planner import MLSPlanner
-from dimos.navigation.tf_pose import base_height_above_ground
 from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT, ROBOT_LENGTH, ROBOT_WIDTH
 from dimos.utils.data import resolve_named_path
 
@@ -623,8 +622,9 @@ def main(
         rr.log("world/goal", rr.Points3D([goal], colors=[[255, 0, 0]], radii=0.1), static=True)
 
         base_from_sensor = _base_from_sensor(store)
+        # Base height above ground: lidar height minus the mount rise.
         base_height = (
-            base_height_above_ground(robot_height, base_from_sensor.inverse())
+            robot_height - base_from_sensor.inverse().translation.z
             if base_from_sensor is not None
             else 0.0
         )
