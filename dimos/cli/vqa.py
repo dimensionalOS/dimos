@@ -68,7 +68,7 @@ def edit(
     """Open a local interface for generating and editing VQA cases."""
     from dimos.evals.vqa.visualizer import run_editor
 
-    typer.echo(f"VQA editor: http://127.0.0.1:{port}")
+    typer.echo(f"Launching VQA editor and loading Moondream + EdgeTAM: http://127.0.0.1:{port}")
     run_editor(recording, output, port)
 
 

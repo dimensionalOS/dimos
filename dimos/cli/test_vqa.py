@@ -207,6 +207,7 @@ def test_vqa_edit_cli_starts_local_editor(monkeypatch: pytest.MonkeyPatch, tmp_p
 
     assert result.exit_code == 0
     assert seen == [("recording.db", tmp_path, 9876)]
+    assert "Launching VQA editor and loading Moondream + EdgeTAM" in result.stdout
     assert "http://127.0.0.1:9876" in result.stdout
 
 
