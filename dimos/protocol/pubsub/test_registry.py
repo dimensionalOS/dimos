@@ -14,6 +14,10 @@
 
 from __future__ import annotations
 
+import pickle
+import threading
+from uuid import uuid4
+
 import pytest
 
 from dimos.core.transport import (
@@ -100,6 +104,42 @@ def test_make_pubsub_transport_plcm_uses_pLCMTransport() -> None:
 def test_make_pubsub_transport_pshm_uses_pSHMTransport() -> None:
     t = make_pubsub_transport("pshm:color_image")
     assert isinstance(t, pSHMTransport)
+
+
+def test_pshm_transport_preserves_latest_value_default_when_pickled() -> None:
+    restored = pickle.loads(pickle.dumps(pSHMTransport("latest", default_capacity=1024)))
+
+    assert restored.queue_size is None
+    assert restored.shm.config.default_capacity == 1024
+
+
+def test_pshm_transport_rejects_non_positive_queue_size() -> None:
+    with pytest.raises(ValueError, match="queue_size must be positive"):
+        pSHMTransport("invalid", queue_size=0)
+
+
+def test_pshm_transport_configured_queue_delivers_burst_in_order() -> None:
+    topic = f"reliable-{uuid4().hex}"
+    publisher = pSHMTransport(topic, queue_size=8, default_capacity=1024)
+    subscriber = pickle.loads(pickle.dumps(publisher))
+    received: list[int] = []
+    done = threading.Event()
+
+    def collect(value: int) -> None:
+        received.append(value)
+        if len(received) == 8:
+            done.set()
+
+    unsubscribe = subscriber.subscribe(collect)
+    try:
+        for value in range(8):
+            publisher.publish(value)
+        assert done.wait(timeout=1.0)
+        assert received == list(range(8))
+    finally:
+        unsubscribe()
+        publisher.stop()
+        subscriber.stop()
 
 
 def test_make_pubsub_transport_shm_uses_SHMTransport() -> None:

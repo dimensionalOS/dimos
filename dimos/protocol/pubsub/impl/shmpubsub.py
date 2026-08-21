@@ -31,7 +31,7 @@ import numpy.typing as npt
 
 from dimos.protocol.pubsub.encoders import LCMEncoderMixin, PickleEncoderMixin
 from dimos.protocol.pubsub.impl.lcmpubsub import Topic
-from dimos.protocol.pubsub.shm.ipc_factory import CpuShmChannel, FrameChannel
+from dimos.protocol.pubsub.shm.ipc_factory import CpuShmChannel, CpuShmQueue, FrameChannel
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.utils.logging_config import setup_logger
 
@@ -326,7 +326,13 @@ class PickleSharedMemory(
 ):
     """SharedMemory pubsub that transports arbitrary Python objects via pickle."""
 
-    ...
+    def __init__(self, *, queue_size: int | None = None, **kwargs: Any) -> None:
+        if queue_size is not None:
+            if queue_size <= 0:
+                raise ValueError("queue_size must be positive")
+            self._channel_class = CpuShmQueue
+            self._channel_kwargs = {"slots": queue_size}
+        super().__init__(**kwargs)
 
 
 class LCMSharedMemoryPubSubBase(PubSub[Topic, Any]):

@@ -196,13 +196,18 @@ class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
 class pSHMTransport(PubSubTransport[T]):
     _started: bool = False
 
-    def __init__(self, topic: str, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, topic: str, *, queue_size: int | None = None, **kwargs: Any) -> None:
         super().__init__(topic)
-        self.shm = PickleSharedMemory(**kwargs)
+        self.queue_size = queue_size
+        self.shm = PickleSharedMemory(queue_size=queue_size, **kwargs)
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
         return (
-            functools.partial(pSHMTransport, default_capacity=self.shm.config.default_capacity),
+            functools.partial(
+                pSHMTransport,
+                queue_size=self.queue_size,
+                default_capacity=self.shm.config.default_capacity,
+            ),
             (self.topic,),
         )
 
