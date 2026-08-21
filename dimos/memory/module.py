@@ -31,7 +31,7 @@ from dimos.agents.annotation import skill
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import ErrorReportingTransport, In
+from dimos.core.stream import In
 from dimos.memory.backend import PreparedWrite
 from dimos.memory.embed import EmbedImages
 from dimos.memory.recording import Processor, RecordingFailedError, RecordingPipeline
@@ -442,9 +442,6 @@ class Recorder(MemoryModule):
 
         subscription = input_topic.pure_observable().subscribe(on_message)
         subscriptions.add(subscription)
-        transport = input_topic.transport
-        if isinstance(transport, ErrorReportingTransport):
-            subscriptions.add(Disposable(transport.subscribe_errors(pipeline.fail)))
 
     def _prepare_streams(self) -> None:
         """On APPEND, drop the streams this recorder is about to (re)write — the

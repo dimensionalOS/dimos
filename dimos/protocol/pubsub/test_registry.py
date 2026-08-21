@@ -15,12 +15,10 @@
 from __future__ import annotations
 
 import pickle
-import threading
-import uuid
 
 import pytest
 
-from dimos.core.stream import ErrorReportingTransport, In
+from dimos.core.stream import In
 from dimos.core.transport import (
     JpegLcmTransport,
     JpegShmTransport,
@@ -108,11 +106,6 @@ def test_make_pubsub_transport_pshm_uses_pSHMTransport() -> None:
     assert isinstance(t, pSHMTransport)
 
 
-def test_reliable_shm_exposes_error_reporting_capability() -> None:
-    assert isinstance(pSHMTransport("errors"), ErrorReportingTransport)
-    assert not isinstance(LCMTransport("/no-errors", int), ErrorReportingTransport)
-
-
 def test_input_exposes_transport_connection_state() -> None:
     input_topic = In(int, "numbers")
     assert not input_topic.connected
@@ -141,42 +134,6 @@ def test_pshm_transport_preserves_queue_size_when_pickled() -> None:
 
     assert restored.shm.queue_size == 17
     assert restored.shm.config.default_capacity == 1024
-
-
-def test_pshm_transport_reports_sequence_gap_when_ring_overflows() -> None:
-    topic = f"overflow-{uuid.uuid4().hex}"
-    publisher = pSHMTransport[int](topic, queue_size=2, default_capacity=1024)
-    subscriber = pSHMTransport[int](topic, queue_size=2, default_capacity=1024)
-    callback_started = threading.Event()
-    release_callback = threading.Event()
-    overflow_reported = threading.Event()
-    errors: list[str] = []
-
-    def receive(value: int) -> None:
-        if value == 0:
-            callback_started.set()
-            assert release_callback.wait(timeout=1.0)
-
-    def receive_error(error: BaseException) -> None:
-        errors.append(str(error))
-        overflow_reported.set()
-
-    unsubscribe = subscriber.subscribe(receive)
-    unsubscribe_errors = subscriber.subscribe_errors(receive_error)
-    try:
-        publisher.broadcast(None, 0)
-        assert callback_started.wait(timeout=1.0)
-        for value in range(1, 5):
-            publisher.broadcast(None, value)
-        release_callback.set()
-        assert overflow_reported.wait(timeout=1.0)
-        assert any("lost 2 message(s)" in error for error in errors)
-    finally:
-        release_callback.set()
-        unsubscribe()
-        unsubscribe_errors()
-        publisher.stop()
-        subscriber.stop()
 
 
 def test_make_pubsub_transport_shm_uses_SHMTransport() -> None:

@@ -225,11 +225,6 @@ class pSHMTransport(PubSubTransport[T]):
             self.start()
         return self.shm.subscribe(self.topic, lambda msg, topic: callback(msg))
 
-    def subscribe_errors(self, callback: Callable[[BaseException], None]) -> Callable[[], None]:
-        if not self._started:
-            self.start()
-        return self.shm.subscribe_errors(self.topic, callback)
-
     def start(self) -> None:
         self.shm.start()
         self._started = True

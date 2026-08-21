@@ -79,7 +79,6 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
             "channel",
             "cp",
             "dtype",
-            "error_subs",
             "last_local_payload",
             "last_seq",
             "publish_buffer",
@@ -97,7 +96,6 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
             self.shape = (self.capacity + 20,)  # +20 for header: length(4) + uuid(16)
             self.dtype = np.uint8
             self.subs: list[Callable[[bytes, str], None]] = []
-            self.error_subs: list[Callable[[BaseException], None]] = []
             self.stop = threading.Event()
             self.thread: threading.Thread | None = None
             self.last_seq = 0  # start at 0 to avoid b"" on first poll
@@ -221,21 +219,6 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
 
         return _unsub
 
-    def subscribe_errors(
-        self, topic: str, callback: Callable[[BaseException], None]
-    ) -> Callable[[], None]:
-        """Subscribe to reliable-transport delivery failures for *topic*."""
-        st = self._ensure_topic(topic)
-        st.error_subs.append(callback)
-
-        def _unsub() -> None:
-            try:
-                st.error_subs.remove(callback)
-            except ValueError:
-                pass
-
-        return _unsub
-
     # Capacity mgmt
 
     def reconfigure(self, topic: str, *, capacity: int) -> dict:  # type: ignore[type-arg]
@@ -290,19 +273,10 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
 
     def _fanout_loop(self, topic: str, st: _TopicState) -> None:
         while not st.stop.is_set():
-            previous_seq = st.last_seq
-            seq, _ts_ns, view = st.channel.read(last_seq=previous_seq, require_new=True)
+            seq, _ts_ns, view = st.channel.read(last_seq=st.last_seq, require_new=True)
             if view is None:
                 time.sleep(0.001)
                 continue
-            dropped = max(0, seq - max(1, previous_seq + 1))
-            if dropped:
-                error = RuntimeError(
-                    f"Shared-memory reader for {topic!r} lost {dropped} message(s) "
-                    "because its ring overflowed"
-                )
-                for callback in list(st.error_subs):
-                    callback(error)
             st.last_seq = seq
 
             host = np.array(view, copy=True)

@@ -19,9 +19,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Generic,
-    Protocol,
     TypeVar,
-    runtime_checkable,
 )
 
 from pydantic import BaseModel
@@ -44,13 +42,6 @@ T = TypeVar("T")
 
 
 logger = setup_logger()
-
-
-@runtime_checkable
-class ErrorReportingTransport(Protocol):
-    """Transport capability that reports asynchronous delivery failures."""
-
-    def subscribe_errors(self, callback: Callable[[BaseException], None]) -> Callable[[], None]: ...
 
 
 class ObservableMixin(Generic[T]):
