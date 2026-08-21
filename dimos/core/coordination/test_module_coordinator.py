@@ -971,13 +971,13 @@ def test_start_rpc_service_is_idempotent(dynamic_coordinator) -> None:
 def test_loop_starts_rpc_service_and_stops_on_interrupt(dynamic_coordinator, mocker) -> None:
     start_rpc = mocker.patch.object(dynamic_coordinator, "start_rpc_service")
     stop = mocker.patch.object(dynamic_coordinator, "stop")
-    event = mocker.patch("dimos.core.coordination.module_coordinator.threading.Event")
-    event.return_value.wait.side_effect = KeyboardInterrupt
+    wait = mocker.patch.object(dynamic_coordinator._shutdown_event, "wait")
+    wait.side_effect = KeyboardInterrupt
 
     dynamic_coordinator.loop()
 
     start_rpc.assert_called_once_with()
-    event.return_value.wait.assert_called_once_with()
+    wait.assert_called_once_with()
     stop.assert_called_once_with()
 
 
