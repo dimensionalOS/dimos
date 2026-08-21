@@ -183,11 +183,17 @@ class JointServoTask(BaseControlTask):
                 # our joints, track their measured positions so the hold
                 # resumes from wherever that task releases them instead of
                 # snapping back to the previously latched target.
+                # A joint missing from this snapshot stays pending: clearing
+                # it unmeasured resumes the hold on the stale pre-preemption
+                # target, and no further callback arrives once released.
+                still_pending: set[str] = set()
                 for name in self._preempted_joints:
                     position = state.joints.joint_positions.get(name)
-                    if position is not None:
-                        target[self._name_to_index[name]] = position
-                self._preempted_joints.clear()
+                    if position is None:
+                        still_pending.add(name)
+                        continue
+                    target[self._name_to_index[name]] = position
+                self._preempted_joints = still_pending
                 # Preemption defers the timeout: the joints are actively
                 # driven, and the hold must be alive when they are released.
                 self._last_update_time = state.t_now
@@ -339,7 +345,7 @@ def create_task(cfg: Any, hardware: Any) -> JointServoTask:
         kwargs["default_positions"] = params.default_positions
         # Zero timeout pairs naturally with default-hold.
         kwargs.setdefault("timeout", 0.0)
+    kwargs["hold_measured_on_start"] = params.hold_measured_on_start
     if params.hold_measured_on_start:
-        kwargs["hold_measured_on_start"] = True
         kwargs.setdefault("timeout", 0.0)
     return JointServoTask(cfg.name, JointServoTaskConfig(**kwargs))  # type: ignore[arg-type]
