@@ -74,10 +74,50 @@ def test_replay_exit_fires_after_the_last_stream_completes(
     second: Subject[int] = Subject()
     conn._tracked(first).subscribe()
     conn._tracked(second).subscribe()
+    conn.seal_subscriptions()
 
     first.on_completed()
     assert not fired.wait(0.1)
     second.on_completed()
+    assert fired.wait(2)
+
+
+def test_replay_exit_waits_for_the_seal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A stream completing before the next one subscribes must not fire.
+
+    Subscriptions register one at a time, so a synchronously-completing first
+    stream briefly matches the counters (1/1); only the seal says the set is
+    complete.
+    """
+    conn = go2_conn.ReplayConnection(exit_on_complete=True)
+    fired = threading.Event()
+    monkeypatch.setattr(conn, "_request_shutdown", fired.set)
+
+    first: Subject[int] = Subject()
+    conn._tracked(first).subscribe()
+    first.on_completed()  # counters now 1/1 with more subscriptions to come
+    assert not fired.wait(0.1)
+
+    second: Subject[int] = Subject()
+    conn._tracked(second).subscribe()
+    conn.seal_subscriptions()
+    assert not fired.wait(0.1)
+
+    second.on_completed()
+    assert fired.wait(2)
+
+
+def test_replay_exit_fires_at_the_seal_when_already_complete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = go2_conn.ReplayConnection(exit_on_complete=True)
+    fired = threading.Event()
+    monkeypatch.setattr(conn, "_request_shutdown", fired.set)
+
+    only: Subject[int] = Subject()
+    conn._tracked(only).subscribe()
+    only.on_completed()
+    conn.seal_subscriptions()
     assert fired.wait(2)
 
 

@@ -185,6 +185,8 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
         self._completion_lock = Lock()
         self._subscribed = 0
         self._completed = 0
+        self._sealed = False
+        self._fired = False
 
     @cached_property
     def replay(self) -> Replay:
@@ -247,8 +249,10 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
         """With exit_on_complete, count every subscription to a replay stream
         and request coordinator shutdown once the last one finishes.
 
-        Streams of a recording all span it, so completions arrive together at
-        the end — long after the subscriptions that raced them at startup.
+        Completions only count once the module has sealed the subscription
+        set: subscriptions register one at a time, so without the seal a
+        stream that completes synchronously (an empty one, say) would match
+        the counters before the next stream ever subscribed.
         """
         if not self._exit_on_complete:
             return source
@@ -260,11 +264,34 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
 
         return defer(factory)
 
+    def seal_subscriptions(self) -> None:
+        """Mark the subscription set complete; exit-on-complete may now fire.
+
+        Called by the module once start() has wired every stream it is going
+        to. A no-op without exit_on_complete.
+        """
+        with self._completion_lock:
+            self._sealed = True
+        self._maybe_request_shutdown()
+
     def _stream_completed(self) -> None:
         with self._completion_lock:
             self._completed += 1
-            if self._completed != self._subscribed:
-                return
+        self._maybe_request_shutdown()
+
+    def _maybe_request_shutdown(self) -> None:
+        with self._completion_lock:
+            done = (
+                self._exit_on_complete
+                and self._sealed
+                and not self._fired
+                and self._subscribed > 0
+                and self._completed == self._subscribed
+            )
+            if done:
+                self._fired = True
+        if not done:
+            return
         logger.info("Replay finished; requesting coordinator shutdown")
         # Off the replay emission thread: the RPC round trip must not block
         # the stream's own teardown.
@@ -392,6 +419,11 @@ class GO2Connection(Module, Camera, Pointcloud):
                 daemon=True,
             )
             self._camera_info_thread.start()
+
+        if isinstance(self.connection, ReplayConnection):
+            # Every stream this module will subscribe is wired; a finished
+            # replay may now shut the run down (--replay-exit).
+            self.connection.seal_subscriptions()
 
         if self.config.motion_mode and isinstance(self.connection, UnitreeWebRTCConnection):
             self.connection.set_motion_mode(self.config.motion_mode)
