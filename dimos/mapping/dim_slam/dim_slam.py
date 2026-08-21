@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Native C++ NVIDIA cuVSLAM stereo visual odometry module."""
+"""Native Rust dimSLAM module: cuVSLAM visual odometry fused with an IMU and any
+number of odometry sources by an error-state Kalman filter, in one process."""
 
 from __future__ import annotations
 
@@ -33,6 +34,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.ImuInfo import ImuInfo
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
@@ -150,15 +152,22 @@ def _driver_env() -> dict[str, str]:
     return {"LD_LIBRARY_PATH": ":".join(parts)}
 
 
-class CuvslamConfig(NativeModuleConfig):
+# jeff/feat/dim_slam tip; tag on merge.
+DIMSLAM_REV = "8d08c61a874d45453857488d8c8d1aeac8e2d210"
+
+
+def dimslam_build_command() -> str:
+    """`nix build` line for the dimSLAM binary, resolved for this host.
+
+    It drops the `result` symlink in the module's cwd.
+    """
+    return f"nix build github:dimensionalOS/dimSLAM/{DIMSLAM_REV}#{sdk_variant()}"
+
+
+class DimSlamConfig(NativeModuleConfig):
     cwd: str | None = str(MODULE_DIR)
-    executable: str = "result/bin/cuvslam_odometry"
-    # The C++ lives in dimSLAM (cuVSLAM + the module built on it); dimos just
-    # builds the pinned rev (jeff/feat/imu_info tip; tag on merge). `nix build`
-    # drops the `result` symlink in the cwd.
-    build_command: str | None = Field(
-        default_factory=lambda: f"nix build github:dimensionalOS/dimSLAM/v0.2.0#{sdk_variant()}"
-    )
+    executable: str = "result/bin/dim_slam"
+    build_command: str | None = Field(default_factory=dimslam_build_command)
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
 
@@ -172,28 +181,19 @@ class CuvslamConfig(NativeModuleConfig):
     # with ENFORCE_GPU=OFF (the jeff-hykin/cuVSLAM fork); NVIDIA's stock SDK is GPU-only.
     use_gpu: bool = True
 
-    map_frame: str = "map"
-    odom_frame: str = "odom"
-    # Poses are published relative to this.
-    base_frame: str = "base_link"
+    # The tracker's own world frame, drifting freely; the filter fuses it as a
+    # drifting source, so it must appear in source_frames.
+    visual_odom_frame: str = "visual_odom"
     # Frame the cuVSLAM rig is built in. Empty means base_frame. Pointing it at a camera's
     # optical frame reproduces NVIDIA's examples, whose rig is the left camera; output stays
     # on base_frame either way, the two differing by a fixed transform.
     rig_frame: str = ""
-    # Only read when Slam is off, where map->odom can only be identity.
-    publish_map_to_odom: bool = True
 
-    # Pose graph and loop closure; without it map->odom is identity.
-    enable_slam: bool = True
-    # Runs Slam on its own thread. Its GetPose() carries no timestamp, so a thread running
-    # behind cannot be matched to the odometry pose it corrects.
-    slam_async: bool = False
-    # Poses in the pose graph, not a distance. 0 is unlimited.
-    slam_max_poses: int = 300
-    slam_throttling_ms: int = 0
-    # The noise model arrives on the ``imu_info`` stream, published by the driver
-    # the way ``camera_info`` is; the tracker waits for it before building the rig.
-    enable_imu: bool = False
+    # cuVSLAM's Inertial mode: the stereo pair plus one IMU. The noise model and frame
+    # come from the imu_info stream, published by the driver the way camera_info is.
+    # Separate from use_imu, which feeds the fusion filter. Implemented only on the
+    # CUDA path.
+    cuvslam_enable_imu: bool = False
     # Rebase guard: a frame whose translation standard deviation (root of the largest
     # translation term of cuVSLAM's covariance) exceeds this has its motion dropped and the
     # path rebased onto the held pose, so the published odometry never carries a teleport
@@ -212,10 +212,76 @@ class CuvslamConfig(NativeModuleConfig):
     # rgbd only: raw depth units per metre. cuVSLAM assumes 1, and depth images are
     # 16-bit millimetres.
     depth_units_per_meter: float = 1000.0
+    # Range gate on the published depth_cloud, metres. Stereo depth error grows as range
+    # squared, so the far gate decides whether the cloud is worth mapping with; 0 leaves
+    # it open.
+    depth_cloud_min_range: float = 0.0
+    depth_cloud_max_range: float = 0.0
+    # Emit one point per k x k depth block instead of every pixel: the median of the
+    # block's in-gate depths, deprojected at the block centre. The median (not mean)
+    # keeps a block on one surface at depth discontinuities instead of inventing a
+    # flying pixel, and blocks with under half their pixels valid are dropped as edge
+    # noise. <= 1 emits every pixel.
+    depth_cloud_decimation: int = 1
+
+    map_frame: str = "map"
+    odom_frame: str = "odom"
+    # Poses are published relative to this.
+    base_frame: str = "base_link"
+    # map->odom can only be identity: this module carries no map correction yet.
+    publish_map_to_odom: bool = True
+    # Off publishes odometry only, for when something downstream owns odom -> base_frame.
+    publish_tf: bool = True
+
+    # The filter itself steps at the IMU rate; this is only how often it emits.
+    publish_rate: float = 50.0
+    replay_buffer_seconds: float = 0.5
+    # Standard deviations per measurement dimension before a reading is called an
+    # outlier. 0 disables the gate.
+    mahalanobis_gate: float = 5.0
+
+    # With this off the filter is seeded level from the first source message and coasts
+    # at constant world velocity between measurements instead of propagating on IMU.
+    use_imu: bool = True
+
+    # Bosch BMI055 figures for the D455's IMU, in the continuous-time units the filter
+    # wants: rad/s/sqrt(Hz), rad/s^2/sqrt(Hz), m/s^2/sqrt(Hz), m/s^3/sqrt(Hz).
+    imu_gyro_noise_density: float = 0.0018
+    imu_gyro_random_walk: float = 2e-5
+    imu_accel_noise_density: float = 0.02
+    imu_accel_random_walk: float = 3e-3
+    gravity: float = 9.81
+    # Averaged while stationary to level the filter and take the gyro bias. Offline on a
+    # 517 s Alfred drive, leaving that bias in cost 19.8 m of final error against 1.6 m
+    # with it removed, so this is the single most load-bearing number here. At 200 Hz
+    # this is one second of standing still at startup.
+    imu_init_samples: int = 200
+
+    initial_position_std: float = 0.01
+    initial_velocity_std: float = 0.1
+    initial_rotation_std: float = 0.05
+    initial_bias_std: float = 0.05
+
+    # One entry per source, matched against each message's header.frame_id. A source
+    # whose frame is odom_frame is fused absolutely; anything else is fused as
+    # filter-anchored deltas, since its own pose has drifted. The tracker feeds the
+    # filter under visual_odom_frame without a wire hop; external sources arrive on
+    # ``sources``.
+    source_frames: list[str] = Field(default_factory=lambda: ["visual_odom"])
+    # 6 per source, [x y z roll pitch yaw] then [vx vy vz wx wy wz]: below zero takes the
+    # message covariance, zero drops the dimension, above zero is a fixed variance.
+    source_pose_variances: list[float] = Field(
+        default_factory=lambda: [0.01, 0.01, 0.01, 0.05, 0.05, 0.05]
+    )
+    source_twist_variances: list[float] = Field(default_factory=lambda: [0.0] * 6)
+    # A virtual zero-twist measurement applied with every source message, for the
+    # directions the platform cannot move in. Above zero pulls that dimension toward
+    # zero with this variance; zero leaves it free.
+    constraint_twist_variances: list[float] = Field(default_factory=lambda: [0.0] * 6)
 
 
-class CuvslamOdometry(NativeModule):
-    """Visual odometry on the GPU, on one to thirty-two cameras.
+class DimSlam(NativeModule):
+    """cuVSLAM visual odometry feeding an error-state Kalman fusion filter in-process.
 
     Every camera publishes onto the same ``image`` and ``camera_info`` streams and is
     told apart by ``frame_id``; ``camera_frames`` fixes which frames are on the rig and
@@ -224,13 +290,17 @@ class CuvslamOdometry(NativeModule):
     different sensor than the rig camera (a D455 aligns depth to the left IR camera, not
     color) is reprojected onto the rig camera through ``depth_camera_info`` and tf.
 
-    ``odometry`` is one continuous ``odom`` -> ``base_link`` path; restarts after a
-    tracking loss are rebased onto the last published pose. ``corrected_odometry`` is
-    the pose-graph ``map`` -> ``base_link`` and jumps at loop closures. ``tf`` carries
-    ``odom`` -> ``base_link`` and ``map`` -> ``odom``.
+    The tracker's pose stream never touches the wire: it enters the filter as a
+    drifting source under ``visual_odom_frame``. Any number of external sources
+    (wheel odometry, ...) publish onto ``sources`` and are told apart by
+    ``header.frame_id``, so adding one is a config change rather than a port change.
+    Late messages roll the filter back to their own slot and replay everything after.
+
+    ``odometry`` is the fused ``odom_frame`` -> ``base_frame`` pose; ``tf`` carries the
+    same edge and an identity ``map`` -> ``odom``.
     """
 
-    config: CuvslamConfig
+    config: DimSlamConfig
 
     image: In[Image]
     depth_image: In[Image]
@@ -238,7 +308,8 @@ class CuvslamOdometry(NativeModule):
     depth_camera_info: In[CameraInfo]
     imu: In[Imu]
     imu_info: In[ImuInfo]
+    sources: In[Odometry]
 
     odometry: Out[Odometry]
-    corrected_odometry: Out[Odometry]
+    depth_cloud: Out[PointCloud2]
     tf: IO[TFMessage]
