@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from dimos.control.components import HardwareComponent, HardwareType
+from dimos.core.global_config import global_config
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
@@ -88,12 +89,10 @@ def openarm_urdf_joints(side: str) -> list[str]:
     return [f"openarm_{side}_joint{i}" for i in range(1, OPENARM_DOF + 1)]
 
 
-def openarm_hardware(
-    *,
-    left_can_port: str | None = None,
-    right_can_port: str | None = None,
-) -> HardwareComponent:
+def openarm_hardware() -> HardwareComponent:
     """Use mock hardware unless both physical CAN interfaces are explicit."""
+    left_can_port = global_config.left_can_port
+    right_can_port = global_config.right_can_port
     if (left_can_port is None) != (right_can_port is None):
         raise ValueError("OpenArm hardware requires both left and right CAN ports")
 

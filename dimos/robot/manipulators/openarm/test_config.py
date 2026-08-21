@@ -18,6 +18,7 @@ import pytest
 
 from dimos.control.components import HardwareType
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.global_config import global_config
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.robot.manipulators.openarm.blueprints.basic import openarm_planner_coordinator
@@ -73,7 +74,12 @@ def test_openarm_config_exposes_one_bimanual_robot() -> None:
     ]
 
 
-def test_openarm_hardware_defaults_to_mock_without_can_ports() -> None:
+def test_openarm_hardware_defaults_to_mock_without_can_ports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(global_config, "left_can_port", None)
+    monkeypatch.setattr(global_config, "right_can_port", None)
+
     hardware = openarm_hardware()
 
     assert (hardware.hardware_id, hardware.hardware_type, hardware.adapter_type) == (
@@ -84,8 +90,13 @@ def test_openarm_hardware_defaults_to_mock_without_can_ports() -> None:
     assert hardware.adapter_kwargs == {}
 
 
-def test_openarm_hardware_uses_physical_adapter_with_explicit_can_ports() -> None:
-    hardware = openarm_hardware(left_can_port="can1", right_can_port="can0")
+def test_openarm_hardware_uses_physical_adapter_with_explicit_can_ports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(global_config, "left_can_port", "can1")
+    monkeypatch.setattr(global_config, "right_can_port", "can0")
+
+    hardware = openarm_hardware()
 
     assert hardware.adapter_type == "openarm_damiao"
     runtime_config = hardware.adapter_kwargs["runtime_config"]
@@ -98,14 +109,15 @@ def test_openarm_hardware_uses_physical_adapter_with_explicit_can_ports() -> Non
     [("can1", None), (None, "can0")],
 )
 def test_openarm_hardware_rejects_partial_can_configuration(
+    monkeypatch: pytest.MonkeyPatch,
     left_can_port: str | None,
     right_can_port: str | None,
 ) -> None:
+    monkeypatch.setattr(global_config, "left_can_port", left_can_port)
+    monkeypatch.setattr(global_config, "right_can_port", right_can_port)
+
     with pytest.raises(ValueError, match="requires both left and right CAN ports"):
-        openarm_hardware(
-            left_can_port=left_can_port,
-            right_can_port=right_can_port,
-        )
+        openarm_hardware()
 
 
 def test_openarm_can_ports_are_blueprint_cli_options() -> None:
@@ -114,6 +126,6 @@ def test_openarm_can_ports_are_blueprint_cli_options() -> None:
         environ={},
     )
 
-    coordinator = parsed.module_kwargs("ControlCoordinator")
-    assert coordinator["left_can_port"] == "can1"
-    assert coordinator["right_can_port"] == "can0"
+    config = parsed.global_config_values()
+    assert config["left_can_port"] == "can1"
+    assert config["right_can_port"] == "can0"

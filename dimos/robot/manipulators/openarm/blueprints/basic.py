@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig, TaskConfig
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.common.blueprints import planner
@@ -37,37 +37,18 @@ def _trajectory_task() -> TaskConfig:
     )
 
 
-class _OpenArmCoordinatorConfig(ControlCoordinatorConfig):
-    """OpenArm deployment configuration requiring an explicit bus pair."""
-
-    left_can_port: str | None = None
-    right_can_port: str | None = None
-
-
-class _OpenArmCoordinator(ControlCoordinator):
-    """Select mock or explicitly addressed dual-CAN OpenArm hardware."""
-
-    config: _OpenArmCoordinatorConfig
-
-    def _setup_from_config(self) -> None:
-        self.config.hardware = [
-            openarm_hardware(
-                left_can_port=self.config.left_can_port,
-                right_can_port=self.config.right_can_port,
-            )
-        ]
-        super()._setup_from_config()
+_openarm_hw = openarm_hardware()
 
 
 openarm_planner_coordinator = autoconnect(
     planner(robots=[openarm_bimanual_model_config()]),
-    _OpenArmCoordinator.blueprint(
-        instance_name="ControlCoordinator",
+    ControlCoordinator.blueprint(
+        hardware=[_openarm_hw],
         tasks=[_trajectory_task()],
     ),
 )
 
-coordinator_openarm = _OpenArmCoordinator.blueprint(
-    instance_name="ControlCoordinator",
+coordinator_openarm = ControlCoordinator.blueprint(
+    hardware=[_openarm_hw],
     tasks=[_trajectory_task()],
 )
