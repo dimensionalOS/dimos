@@ -26,7 +26,7 @@ from typing import Any
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.mapping.cuvslam.cuvslam import CuvslamOdometry
+from dimos.mapping.dim_slam.dim_slam import DimSlam
 from dimos.mapping.odometry_path import OdometryPath
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.visualization.vis_module import vis_module
@@ -67,7 +67,8 @@ demo_cuvslam_realsense = (
             enable_color=False,
             enable_depth=False,
         ),
-        CuvslamOdometry.blueprint(),
+        # No IMU streaming here, so the filter seeds level off the first tracked pose.
+        DimSlam.blueprint(use_imu=False),
         OdometryPath.blueprint(),
         vis_module(
             global_config.viewer,
