@@ -327,6 +327,19 @@ def test_bus_address_runtime_override_returns_configured_interface(
     assert adapter.bus_address("left") == "can8"
 
 
+def test_init_rehydrates_serialized_runtime_config(dual_robot: FakeRobot) -> None:
+    adapter = DualAdapter(
+        dual_robot,
+        runtime_config={
+            "bus_addresses": {"left": "can8"},
+            "gravity_comp": False,
+            "tick_deadline_us": 2_000,
+        },
+    )
+
+    assert adapter.bus_address("left") == "can8"
+
+
 def test_bus_address_without_override_returns_declared_default(
     dual_robot: FakeRobot,
 ) -> None:

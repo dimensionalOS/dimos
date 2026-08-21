@@ -17,7 +17,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import can_motor_control
 import numpy as np
@@ -47,7 +49,7 @@ class DamiaoWholeBodyAdapter(ABC):
         self,
         address: str | Path | None = None,
         *,
-        runtime_config: DamiaoRuntimeConfig | None = None,
+        runtime_config: DamiaoRuntimeConfig | Mapping[str, Any] | None = None,
         dof: int | None = None,
         hardware_id: str = "whole_body",
         domain_id: int = 0,
@@ -62,7 +64,12 @@ class DamiaoWholeBodyAdapter(ABC):
         del domain_id
         if address is not None:
             raise ValueError("configure Damiao CAN buses through runtime_config.bus_addresses")
-        config = runtime_config or DamiaoRuntimeConfig()
+        if runtime_config is None:
+            config = DamiaoRuntimeConfig()
+        elif isinstance(runtime_config, DamiaoRuntimeConfig):
+            config = runtime_config
+        else:
+            config = DamiaoRuntimeConfig(**runtime_config)
         unknown_buses = config.bus_addresses.keys() - self.bus_defaults.keys()
         if unknown_buses:
             raise ValueError(f"unknown CAN bus overrides: {sorted(unknown_buses)}")
