@@ -177,7 +177,7 @@ def make_runtime(mocker: pytest_mock.MockerFixture) -> Iterator[RuntimeFactory]:
         mocker.patch.object(policy_runtime, "register_third_party_plugins")
 
         module = LeRobotPolicyRuntime(
-            _python_native_runtime=True,
+            _isolated_python_runtime=True,
             policies=policy_configs,
             joint_names=JOINTS,
             fps=50.0,

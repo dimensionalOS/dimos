@@ -19,7 +19,7 @@ from typing import TypedDict
 from pydantic import Field, field_validator
 
 from dimos.core.core import rpc
-from dimos.core.python_native_module import PythonNativeModule, PythonNativeModuleConfig
+from dimos.core.isolated_python_module import IsolatedPythonModule, IsolatedPythonModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -47,7 +47,7 @@ class LeRobotPolicyConfig(BaseConfig):
     default_duration: float = Field(default=10.0, gt=0)
 
 
-class LeRobotPolicyModuleConfig(PythonNativeModuleConfig):
+class LeRobotPolicyModuleConfig(IsolatedPythonModuleConfig):
     """Configuration shared by the host contract and isolated runtime."""
 
     policies: dict[str, LeRobotPolicyConfig] = Field(min_length=1)
@@ -73,7 +73,7 @@ class LeRobotPolicyModuleConfig(PythonNativeModuleConfig):
         return joint_names
 
 
-class LeRobotPolicyModule(PythonNativeModule):
+class LeRobotPolicyModule(IsolatedPythonModule):
     """Convert live image and joint-state observations into joint targets."""
 
     implementation = "dimos_lerobot.runtime:LeRobotPolicyRuntime"

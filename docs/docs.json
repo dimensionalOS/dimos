@@ -91,6 +91,7 @@
             "pages": [
               "capabilities/manipulation/index",
               "capabilities/manipulation/agentic",
+              "capabilities/manipulation/learning",
               "capabilities/manipulation/adding_a_custom_arm",
               "capabilities/manipulation/planning_groups",
               "capabilities/manipulation/pink_ik_tuning",
@@ -429,6 +430,10 @@
     {
       "source": "/docs/capabilities/manipulation/agentic.md",
       "destination": "/capabilities/manipulation/agentic"
+    },
+    {
+      "source": "/docs/capabilities/manipulation/learning.md",
+      "destination": "/capabilities/manipulation/learning"
     },
     {
       "source": "/docs/capabilities/manipulation/adding_a_custom_arm.md",
