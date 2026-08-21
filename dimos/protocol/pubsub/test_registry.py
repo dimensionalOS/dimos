@@ -14,6 +14,10 @@
 
 from __future__ import annotations
 
+import pickle
+import threading
+import uuid
+
 import pytest
 
 from dimos.core.transport import (
@@ -31,6 +35,7 @@ from dimos.protocol.pubsub.registry import (
     subscribe_pubsub_uri,
     supported_protos,
 )
+from dimos.protocol.pubsub.shm.ipc_factory import CpuShmQueue
 
 
 def test_supported_protos_includes_known_set() -> None:
@@ -100,6 +105,63 @@ def test_make_pubsub_transport_plcm_uses_pLCMTransport() -> None:
 def test_make_pubsub_transport_pshm_uses_pSHMTransport() -> None:
     t = make_pubsub_transport("pshm:color_image")
     assert isinstance(t, pSHMTransport)
+
+
+def test_reliable_shm_transport_uses_configured_ring() -> None:
+    transport = pSHMTransport("reliable-test", queue_size=32, default_capacity=1024)
+
+    assert transport.shm._channel_class is CpuShmQueue
+    assert transport.shm._channel_kwargs == {"slots": 32}
+
+
+def test_pshm_transport_rejects_non_positive_queue_size() -> None:
+    with pytest.raises(ValueError, match="queue_size must be positive"):
+        pSHMTransport("invalid", queue_size=0)
+
+
+def test_pshm_transport_preserves_queue_size_when_pickled() -> None:
+    restored = pickle.loads(
+        pickle.dumps(pSHMTransport("pickled", queue_size=17, default_capacity=1024))
+    )
+
+    assert restored.shm.queue_size == 17
+    assert restored.shm.config.default_capacity == 1024
+
+
+def test_pshm_transport_reports_sequence_gap_when_ring_overflows() -> None:
+    topic = f"overflow-{uuid.uuid4().hex}"
+    publisher = pSHMTransport[int](topic, queue_size=2, default_capacity=1024)
+    subscriber = pSHMTransport[int](topic, queue_size=2, default_capacity=1024)
+    callback_started = threading.Event()
+    release_callback = threading.Event()
+    overflow_reported = threading.Event()
+    errors: list[str] = []
+
+    def receive(value: int) -> None:
+        if value == 0:
+            callback_started.set()
+            assert release_callback.wait(timeout=1.0)
+
+    def receive_error(error: BaseException) -> None:
+        errors.append(str(error))
+        overflow_reported.set()
+
+    unsubscribe = subscriber.subscribe(receive)
+    unsubscribe_errors = subscriber.subscribe_errors(receive_error)
+    try:
+        publisher.broadcast(None, 0)
+        assert callback_started.wait(timeout=1.0)
+        for value in range(1, 5):
+            publisher.broadcast(None, value)
+        release_callback.set()
+        assert overflow_reported.wait(timeout=1.0)
+        assert any("lost 2 message(s)" in error for error in errors)
+    finally:
+        release_callback.set()
+        unsubscribe()
+        unsubscribe_errors()
+        publisher.stop()
+        subscriber.stop()
 
 
 def test_make_pubsub_transport_shm_uses_SHMTransport() -> None:

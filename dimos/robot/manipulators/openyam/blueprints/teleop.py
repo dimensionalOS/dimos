@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from dimos.control.components import HardwareComponent
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
@@ -36,7 +37,9 @@ from dimos.robot.manipulators.openyam.config import (
     OPENYAM_GRIPPER_JOINT,
     make_openyam_model_config,
     openyam_hardware,
+    openyam_mock_hardware,
 )
+from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolver
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 from dimos.teleop.quest.quest_extensions import ArmTeleopModule
 
@@ -92,6 +95,21 @@ keyboard_teleop_openyam = autoconnect(
 
 OPENYAM_QUEST_TASK_NAME = "teleop_openyam"
 
+
+def _openyam_quest_hardware(can_port: str | None) -> HardwareComponent:
+    if can_port is None:
+        return openyam_mock_hardware()
+    return openyam_hardware(can_port=can_port)
+
+
+class OpenYamTeleopCoordinator(TeleopControlCoordinator):
+    """Select fake or explicit-CAN OpenYAM hardware during coordinator setup."""
+
+    def _setup_from_config(self) -> None:
+        self.config.hardware = [_openyam_quest_hardware(self.config.g.can_port)]
+        super()._setup_from_config()
+
+
 _openyam_quest_pink = PinkKinematicsConfig(
     dt=0.01,
     position_cost=8.0,
@@ -99,9 +117,9 @@ _openyam_quest_pink = PinkKinematicsConfig(
     posture_cost=0.01,
     joint_limit_posture_margin=0.3,
     lm_damping=0.01,
-    gain=0.25,
+    gain=1.0,
 )
-_openyam_quest_hw = openyam_hardware()
+_openyam_quest_hw = openyam_mock_hardware()
 _openyam_quest_model = make_openyam_model_config(name="arm")
 _openyam_quest_task = teleop_ik_task(
     _openyam_quest_hw,
@@ -109,6 +127,7 @@ _openyam_quest_task = teleop_ik_task(
     name=OPENYAM_QUEST_TASK_NAME,
     joint_names=OPENYAM_ARM_JOINTS,
     priority=10,
+    solver_type=OpenYamPinkPoseTargetSolver,
     bindings=[
         {
             "hand": "right",
@@ -123,16 +142,15 @@ _openyam_quest_task = teleop_ik_task(
         "timeout": 0.5,
         "max_command_tracking_error_deg": 10.0,
         "max_joint_velocity_rad_s": 2.0,
-        "joint_command_filter_cutoff_hz": 5.0,
+        "joint_command_filter_cutoff_hz": 30.0,
     },
 )
 
 # Single-arm Quest teleop: right controller -> OpenYAM arm
 teleop_quest_openyam = autoconnect(
-    ArmTeleopModule.blueprint(task_names={"right": OPENYAM_QUEST_TASK_NAME}),
-    TeleopControlCoordinator.blueprint(
+    ArmTeleopModule.blueprint(),
+    OpenYamTeleopCoordinator.blueprint(
         instance_name="ControlCoordinator",
-        hardware=[_openyam_quest_hw],
         tasks=[
             _openyam_quest_task,
             _trajectory_task(priority=20),
