@@ -185,7 +185,13 @@ class HitVoxelMap:
         lse_temperature: float = LSE_TEMPERATURE,
         hot_threshold: float = HOT_SCORE_THRESHOLD,
     ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
-        """(centers (N, 3), scores (N,)) of every seed voxel for a text query."""
+        """(centers (N, 3), scores (N,)) of every seed voxel for a text query.
+
+        For object-level results feed the output through ``cluster.top_clusters``
+        (e.g. ``top_clusters(*m.query(model, "trash can"), m.voxel_size,
+        top_k=10, score_percentile=99.5)``) — weakly-seen objects that miss a
+        voxel-level threshold still surface as lower-ranked clusters.
+        """
         if not self._grids:
             return self.centers, np.zeros(len(self.centers), dtype=np.float32)
         prompts = [query, *background_prompts]
@@ -219,13 +225,8 @@ class HitVoxelMap:
         starts = np.flatnonzero(np.diff(sv, prepend=-1))
         counts = np.diff(np.append(starts, len(sv)))
         t = lse_temperature
-        lse = np.array(
-            [
-                t * np.log(np.exp(ss[s : s + c] / t).mean())
-                for s, c in zip(starts, counts, strict=True)
-            ],
-            dtype=np.float32,
-        )
+        group_sums = np.add.reduceat(np.exp(ss.astype(np.float64) / t), starts)
+        lse = (t * np.log(group_sums / counts)).astype(np.float32)
 
         # view-diversity factor: distinct yaw bins whose per-(voxel, frame)
         # max score is hot
