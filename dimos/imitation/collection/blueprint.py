@@ -29,7 +29,7 @@ from dimos.core.global_config import global_config
 from dimos.core.transport import pSHMTransport
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.hardware.sensors.camera.webcam import Webcam
+from dimos.hardware.sensors.camera.webcam import WebcamConfig
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.msgs.sensor_msgs.Image import Image
@@ -81,21 +81,17 @@ learning_collect_quest_piper = autoconnect(
 )
 
 
-def _openyam_wrist_camera() -> Webcam:
-    return Webcam(
-        camera_index=0,
-        width=640,
-        height=480,
-        fps=15.0,
-        frame_id_prefix="wrist",
-    )
-
-
 learning_collect_quest_openyam = autoconnect(
     teleop_quest_openyam,
     CameraModule.blueprint(
         instance_name="WristCamera",
-        hardware=_openyam_wrist_camera,
+        webcam=WebcamConfig(
+            camera_index=0,
+            width=640,
+            height=480,
+            fps=30.0,
+            frame_id_prefix="wrist",
+        ),
         frame_id="wrist_camera_link",
     ),
     EpisodeMonitorModule.blueprint(default_task_label="openyam_task"),
