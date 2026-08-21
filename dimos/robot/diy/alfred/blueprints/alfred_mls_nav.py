@@ -149,9 +149,9 @@ alfred_mls_nav = (
             # onto it and bias motion toward zero.
             emitter_enabled=False,
             enable_depth=True,
-            # Colour itself is unconsumed, but depth arrives aligned to the colour frame
-            # and the tracker's depth path is validated that way.
+            # The camera only assembles a pointcloud when colour is also streaming.
             enable_color=True,
+            enable_pointcloud=True,
             # Goes to the fusion filter, not to cuVSLAM: see the DimSlam note.
             enable_imu=True,
             base_transform=D455_MOUNT,
@@ -199,10 +199,6 @@ alfred_mls_nav = (
             voxel_size=VOXEL_SIZE_METERS,
             max_range=DEPTH_MAX_RANGE_METERS,
             world_frame="odom",
-        ).remappings(
-            # The tracker's range-gated depth cloud stands in for the lidar the mapper
-            # normally consumes; there is none on Alfred.
-            [(RayTracingVoxelMap, "lidar", "depth_cloud")]
         ),
         MLSPlannerNative.blueprint(
             # Nothing closes loops here, so map -> odom stays identity and odom is the
@@ -262,8 +258,11 @@ alfred_mls_nav = (
             (RealSenseCamera, "infrared_right", "image"),
             (RealSenseCamera, "infrared_left_camera_info", "camera_info"),
             (RealSenseCamera, "infrared_right_camera_info", "camera_info"),
-            # Keep the colour info off the stream cuVSLAM reads its rig from.
+            # Colour is on only to unlock the pointcloud, so keep its info off the stream
+            # cuVSLAM reads its rig from.
             (RealSenseCamera, "camera_info", "color_camera_info"),
+            # The depth pointcloud stands in for the lidar the mapper normally consumes.
+            (RealSenseCamera, "pointcloud", "lidar"),
             # Both odometry sources onto the one stream; the filter tells them apart by
             # frame_id, the same way the tracker tells the two imagers apart.
             (AlfredHighLevel, "wheel_odometry", "source_odometry"),
