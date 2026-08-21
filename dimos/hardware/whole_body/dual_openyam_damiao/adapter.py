@@ -16,14 +16,13 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import can_motor_control
 from can_motor_control import damiao
 
 from dimos.hardware.whole_body.damiao.adapter import DamiaoWholeBodyAdapter
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM_URDF_ARM_JOINTS
-from dimos.robot.manipulators.dual_openyam.model import DUAL_OPENYAM_MODEL_PATH
+from dimos.robot.manipulators.dual_openyam.model import DUAL_OPENYAM_MODEL
 
 
 def _arm_motors(side: str) -> list[can_motor_control.MotorSpec]:
@@ -57,25 +56,25 @@ class DualOpenYamDamiaoAdapter(DamiaoWholeBodyAdapter):
         "left_gripper": "left_arm/gripper",
         "right_gripper": "right_arm/gripper",
     }
-    bus_defaults = {"left": "", "right": ""}
+    bus_names = ("left", "right")
     kinematic_joint_names = tuple(DUAL_OPENYAM_URDF_ARM_JOINTS)
 
     @property
-    def kinematic_model_path(self) -> Path:
+    def kinematic_model(self) -> RobotModel:
         """Return the authoritative dual copy of the verified OpenYAM URDF."""
-        return DUAL_OPENYAM_MODEL_PATH
+        return DUAL_OPENYAM_MODEL
 
     def _build_robot(self) -> can_motor_control.Robot:
         return (
             can_motor_control.Robot.builder()
             .add_bus(
                 "left",
-                can_motor_control.SocketCanBus(self.bus_address("left")),
+                self._make_can_bus("left"),
                 damiao.DamiaoCodec(),
             )
             .add_bus(
                 "right",
-                can_motor_control.SocketCanBus(self.bus_address("right")),
+                self._make_can_bus("right"),
                 damiao.DamiaoCodec(),
             )
             .add_arm("left_arm", bus="left", motors=_arm_motors("left"))

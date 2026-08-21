@@ -21,8 +21,7 @@ from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.manipulators._modeling import base_pose
 from dimos.robot.manipulators.dual_openyam.model import (
-    DUAL_OPENYAM_MODEL_PATH,
-    DUAL_OPENYAM_PACKAGE_PATHS,
+    DUAL_OPENYAM_MODEL,
 )
 
 DUAL_OPENYAM_DOF_PER_ARM = 6
@@ -78,7 +77,7 @@ def dual_openyam_hardware(
         DUAL_OPENYAM_ADAPTER_TYPE,
         {
             "runtime_config": DamiaoRuntimeConfig(
-                bus_addresses={"left": left_can_port, "right": right_can_port},
+                bus_devices={"left": left_can_port, "right": right_can_port},
                 gravity_comp=True,
             )
         },
@@ -122,7 +121,7 @@ def dual_openyam_model_config() -> RobotModelConfig:
     )
     return RobotModelConfig(
         name=DUAL_OPENYAM_HARDWARE_ID,
-        model_path=DUAL_OPENYAM_MODEL_PATH,
+        model=DUAL_OPENYAM_MODEL,
         base_pose=base_pose(),
         joint_names=list(DUAL_OPENYAM_URDF_ARM_JOINTS),
         base_link="dual_openyam_base",
@@ -140,7 +139,6 @@ def dual_openyam_model_config() -> RobotModelConfig:
                 tip_link="right_grasp_frame",
             ),
         ],
-        package_paths=DUAL_OPENYAM_PACKAGE_PATHS,
         auto_convert_meshes=True,
         joint_name_mapping=mapping,
         home_joints=list(DUAL_OPENYAM_HOME_JOINTS),
