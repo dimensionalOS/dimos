@@ -992,12 +992,28 @@ jobs:
           enable-cache: true
       - name: Install dependencies
         run: uv sync --group tests --frozen
+        env:
+          # Compile bytecode at install rather than at first import.
+          UV_COMPILE_BYTECODE: "1"
       - name: Pre-extract the replay database
         run: uv run python -c "from dimos.utils.data import get_data; print(get_data('go2_short.db'))"
+      - name: Precompile the numba kernels
+        run: |
+          uv run python -c "
+          import numpy as np
+          from dimos.mapping.pointclouds.occupancy import height_cost_occupancy
+          from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+          points = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32)
+          height_cost_occupancy(PointCloud2.from_numpy(points, timestamp=1.0))
+          "
       - name: Run the replay under cgroup accounting
         run: uv run pytest -m '' --no-cov dimos/robot/unitree/go2/test_replay_benchmark.py
         env:
           DIMOS_BENCH_METRICS: benchmark.json
+          # Hash randomization is per-process; pin it so the processes don't
+          # each bring their own dict-ordering jitter.
+          PYTHONHASHSEED: "0"
       - name: Upload the metrics
         uses: actions/upload-artifact@v7
         with:
