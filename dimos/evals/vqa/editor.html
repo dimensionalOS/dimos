@@ -155,7 +155,7 @@
         </div>
         <div class="visual-stack">
           <div class="image-stage">
-            <img id="frame-image" alt="Recording frame">
+            <img id="frame-image" alt="Recording frame" hidden>
             <div id="frame-empty" class="frame-empty" hidden></div>
           </div>
           <div id="lidar-stage" class="lidar-stage">
@@ -218,15 +218,15 @@
     }
 
     function syncDisabledControls() {
-      const disabled = busy || navigating;
-      document.querySelectorAll("button, input, select, textarea").forEach(control => control.disabled = disabled);
-      if (!disabled) {
+      const locked = busy || navigating;
+      document.querySelector("main").inert = locked;
+      if (!locked) {
         document.querySelectorAll(".question").forEach(card => {
           const lockChoices = card.querySelectorAll(".choice").length <= 2;
           card.querySelectorAll(".choice button").forEach(button => button.disabled = lockChoices);
         });
       }
-      document.querySelector("main").setAttribute("aria-busy", String(disabled));
+      document.querySelector("main").setAttribute("aria-busy", String(locked));
     }
 
     function setBusy(value, label = "Working...") {
@@ -334,8 +334,8 @@
       });
       updateBadges();
       syncDisabledControls();
-      $("previous").disabled = busy || navigating || current === 0;
-      $("next").disabled = busy || navigating || current === session.image_count - 1;
+      $("previous").disabled = current === 0;
+      $("next").disabled = current === session.image_count - 1;
     }
 
     function addChoiceRow(container, question, value, index) {
@@ -407,9 +407,10 @@
       $("timeline").value = current;
       const frameImage = $("frame-image");
       const frameEmpty = $("frame-empty");
-      frameImage.hidden = true;
-      frameEmpty.hidden = false;
-      frameEmpty.textContent = "";
+      if (frameImage.hidden) {
+        frameEmpty.hidden = false;
+        frameEmpty.textContent = "";
+      }
       const frameReady = waitForImage(
         `/api/frames/${current}/image?t=${Date.now()}`,
         frameImage,
@@ -432,9 +433,10 @@
       lidarStage.hidden = false;
       let mapReady = Promise.resolve();
       if (session.has_topdown) {
-        topdownImage.hidden = true;
-        mapEmpty.hidden = false;
-        mapEmpty.textContent = "";
+        if (topdownImage.hidden) {
+          mapEmpty.hidden = false;
+          mapEmpty.textContent = "";
+        }
         mapReady = waitForImage(
           `/api/frames/${current}/topdown?t=${Date.now()}`,
           topdownImage,
