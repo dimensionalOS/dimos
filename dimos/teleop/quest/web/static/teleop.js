@@ -34,6 +34,28 @@ const PANEL_POS_Y = 1.4;   // ~eye height
 const PANEL_POS_Z = -1.5;  // 1.5m in front of starting position
 const PANEL_HEIGHT = 0.9;
 
+// Collection HUD state. The texture is rendered in view space so it stays
+// fixed near the bottom of the operator's view while their head moves.
+let episodeStatus = null;
+let episodeStatusReceivedAtMs = 0;
+let hudOffline = false;
+let hudCanvas = null;
+let hudContext = null;
+let hudTexture = null;
+let hudProgram = null;
+let hudVbo = null;
+let hudAttribs = null;
+let hudUniforms = null;
+let hudDirty = false;
+let hudElapsedSecond = -1;
+
+const HUD_WIDTH_PX = 2048;
+const HUD_HEIGHT_PX = 256;
+const HUD_WIDTH_METERS = 1.08;
+const HUD_HEIGHT_METERS = HUD_WIDTH_METERS * HUD_HEIGHT_PX / HUD_WIDTH_PX;
+const HUD_CENTER_Y = -0.34;
+const HUD_CENTER_Z = -1.2;
+
 // UI elements
 const statusEl = document.getElementById('status');
 const connectBtn = document.getElementById('connectBtn');
@@ -55,6 +77,8 @@ function setupWebSocket() {
         ws.binaryType = 'blob';
 
         ws.onopen = () => {
+            hudOffline = false;
+            hudDirty = true;
             setStatus('Server connected');
             resolve();
         };
@@ -64,12 +88,18 @@ function setupWebSocket() {
             reject(error);
         };
         ws.onclose = () => {
+            hudOffline = true;
+            hudDirty = true;
             setStatus('WebSocket closed');
         };
         // Defer revoking the previous blob URL by one message — revoking
         // immediately after setting src can race with the browser's load
         // on some engines, briefly dropping naturalWidth to 0.
         ws.onmessage = (e) => {
+            if (typeof e.data === 'string') {
+                handleServerMessage(e.data);
+                return;
+            }
             if (!(e.data instanceof Blob)) return;
             const newUrl = URL.createObjectURL(e.data);
             if (prevBlobUrl) URL.revokeObjectURL(prevBlobUrl);
@@ -90,6 +120,7 @@ function initGL() {
     }
     gl.clearColor(0, 0, 0, 0); // Transparent background for passthrough
     initVideoPanel();
+    initCollectionHud();
 }
 
 // Compile + link a textured-quad pipeline that renders the camera
@@ -217,6 +248,253 @@ function renderVideoPanel(view, viewport) {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 }
 
+function handleServerMessage(data) {
+    try {
+        const message = JSON.parse(data);
+        if (message.type !== 'episode_status') return;
+        episodeStatus = message;
+        episodeStatusReceivedAtMs = performance.now();
+        hudOffline = false;
+        hudDirty = true;
+    } catch (error) {
+        console.warn('Ignoring invalid server message', error);
+    }
+}
+
+function initCollectionHud() {
+    hudCanvas = document.createElement('canvas');
+    hudCanvas.width = HUD_WIDTH_PX;
+    hudCanvas.height = HUD_HEIGHT_PX;
+    hudContext = hudCanvas.getContext('2d');
+
+    const vsSrc = `
+        attribute vec2 a_pos;
+        attribute vec2 a_uv;
+        uniform mat4 u_proj;
+        varying vec2 v_uv;
+        void main() {
+            vec3 position = vec3(
+                a_pos.x * ${HUD_WIDTH_METERS * 0.5},
+                ${HUD_CENTER_Y} + a_pos.y * ${HUD_HEIGHT_METERS * 0.5},
+                ${HUD_CENTER_Z}
+            );
+            gl_Position = u_proj * vec4(position, 1.0);
+            v_uv = a_uv;
+        }`;
+    const fsSrc = `
+        precision mediump float;
+        varying vec2 v_uv;
+        uniform sampler2D u_tex;
+        void main() {
+            gl_FragColor = texture2D(u_tex, v_uv);
+        }`;
+
+    const compile = (type, source) => {
+        const shader = gl.createShader(type);
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            throw new Error(
+                'HUD shader compile failed: ' + gl.getShaderInfoLog(shader),
+            );
+        }
+        return shader;
+    };
+
+    hudProgram = gl.createProgram();
+    gl.attachShader(hudProgram, compile(gl.VERTEX_SHADER, vsSrc));
+    gl.attachShader(hudProgram, compile(gl.FRAGMENT_SHADER, fsSrc));
+    gl.linkProgram(hudProgram);
+    if (!gl.getProgramParameter(hudProgram, gl.LINK_STATUS)) {
+        throw new Error(
+            'HUD program link failed: ' + gl.getProgramInfoLog(hudProgram),
+        );
+    }
+
+    const verts = new Float32Array([
+        -1,
+        -1,
+        0,
+        1,
+        1,
+        -1,
+        1,
+        1,
+        -1,
+        1,
+        0,
+        0,
+        1,
+        1,
+        1,
+        0,
+    ]);
+    hudVbo = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, hudVbo);
+    gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
+
+    hudAttribs = {
+        pos: gl.getAttribLocation(hudProgram, 'a_pos'),
+        uv: gl.getAttribLocation(hudProgram, 'a_uv'),
+    };
+    hudUniforms = {
+        proj: gl.getUniformLocation(hudProgram, 'u_proj'),
+        tex: gl.getUniformLocation(hudProgram, 'u_tex'),
+    };
+
+    hudTexture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, hudTexture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+}
+
+function roundedRect(context, x, y, width, height, radius) {
+    context.beginPath();
+    context.moveTo(x + radius, y);
+    context.lineTo(x + width - radius, y);
+    context.quadraticCurveTo(x + width, y, x + width, y + radius);
+    context.lineTo(x + width, y + height - radius);
+    context.quadraticCurveTo(
+        x + width,
+        y + height,
+        x + width - radius,
+        y + height,
+    );
+    context.lineTo(x + radius, y + height);
+    context.quadraticCurveTo(x, y + height, x, y + height - radius);
+    context.lineTo(x, y + radius);
+    context.quadraticCurveTo(x, y, x + radius, y);
+    context.closePath();
+}
+
+function fitHudText(context, text, maxWidth) {
+    if (context.measureText(text).width <= maxWidth) return text;
+    let shortened = text;
+    while (
+        shortened.length > 1 &&
+        context.measureText(shortened + '...').width > maxWidth
+    ) {
+        shortened = shortened.slice(0, -1);
+    }
+    return shortened + '...';
+}
+
+function drawHudSection(
+    context,
+    x,
+    width,
+    label,
+    value,
+    color,
+    dotColor = null,
+) {
+    if (x > 24) {
+        context.fillStyle = 'rgba(178, 196, 219, 0.22)';
+        context.fillRect(x, 36, 2, HUD_HEIGHT_PX - 72);
+    }
+
+    const left = x + 28;
+    context.fillStyle = '#93a7bf';
+    context.font = '600 27px sans-serif';
+    context.fillText(label, left, 78);
+
+    let valueLeft = left;
+    if (dotColor) {
+        context.fillStyle = dotColor;
+        context.beginPath();
+        context.arc(left + 10, 159, 10, 0, Math.PI * 2);
+        context.fill();
+        valueLeft += 34;
+    }
+    context.fillStyle = color;
+    context.font = '600 43px ui-monospace, SFMono-Regular, Menlo, monospace';
+    context.fillText(
+        fitHudText(context, value, x + width - valueLeft - 24),
+        valueLeft,
+        174,
+    );
+}
+
+function collectionElapsedSeconds() {
+    if (!episodeStatus || episodeStatus.state !== 'recording') return 0;
+    const sinceUpdate = (performance.now() - episodeStatusReceivedAtMs) / 1000;
+    return Math.max(0, Math.floor(episodeStatus.elapsed_s + sinceUpdate));
+}
+
+function formatElapsed(seconds) {
+    const minutes = Math.floor(seconds / 60).toString().padStart(2, '0');
+    const remainder = (seconds % 60).toString().padStart(2, '0');
+    return `${minutes}:${remainder}`;
+}
+
+function updateHudTexture() {
+    if (!episodeStatus || !hudContext) return;
+    const elapsed = collectionElapsedSeconds();
+    if (!hudDirty && elapsed === hudElapsedSecond) return;
+    hudDirty = false;
+    hudElapsedSecond = elapsed;
+
+    const saved = episodeStatus.episodes_saved;
+    const discarded = episodeStatus.episodes_discarded;
+    const recording = episodeStatus.state === 'recording';
+    const state = hudOffline ? 'OFFLINE' : recording ? 'RECORDING' : 'READY';
+    const stateColor = hudOffline ? '#f6b94d' : recording ? '#ff6b6b' : '#63d6a3';
+    const lastEvent = episodeStatus.last_event === 'init' ? 'NONE' : episodeStatus.last_event.toUpperCase();
+    const sections = [
+        [310, 'STATE', state, '#f4f7fb', stateColor],
+        [160, 'TAKE', String(saved + discarded + 1).padStart(3, '0'), '#f4f7fb'],
+        [210, 'ELAPSED', hudOffline ? '--:--' : formatElapsed(elapsed), '#f4f7fb'],
+        [230, 'COLLECTED', String(saved).padStart(3, '0'), '#8de2bd'],
+        [240, 'DISCARDED', String(discarded).padStart(3, '0'), '#f7c66d'],
+        [180, 'LAST', lastEvent, '#f4f7fb'],
+        [718, 'TASK', episodeStatus.task_label || 'UNASSIGNED', '#f4f7fb'],
+    ];
+
+    hudContext.clearRect(0, 0, HUD_WIDTH_PX, HUD_HEIGHT_PX);
+    roundedRect(hudContext, 8, 8, HUD_WIDTH_PX - 16, HUD_HEIGHT_PX - 16, 34);
+    hudContext.fillStyle = 'rgba(8, 16, 29, 0.76)';
+    hudContext.fill();
+    hudContext.strokeStyle = 'rgba(188, 210, 235, 0.35)';
+    hudContext.lineWidth = 3;
+    hudContext.stroke();
+
+    let x = 0;
+    for (const [width, label, value, color, dotColor] of sections) {
+        drawHudSection(hudContext, x, width, label, value, color, dotColor);
+        x += width;
+    }
+
+    gl.bindTexture(gl.TEXTURE_2D, hudTexture);
+    gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGBA,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        hudCanvas,
+    );
+}
+
+function renderCollectionHud(view, viewport) {
+    if (!episodeStatus) return;
+    gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
+    gl.useProgram(hudProgram);
+    gl.bindBuffer(gl.ARRAY_BUFFER, hudVbo);
+    gl.enableVertexAttribArray(hudAttribs.pos);
+    gl.vertexAttribPointer(hudAttribs.pos, 2, gl.FLOAT, false, 16, 0);
+    gl.enableVertexAttribArray(hudAttribs.uv);
+    gl.vertexAttribPointer(hudAttribs.uv, 2, gl.FLOAT, false, 16, 8);
+    gl.uniformMatrix4fv(hudUniforms.proj, false, view.projectionMatrix);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, hudTexture);
+    gl.uniform1i(hudUniforms.tex, 0);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    gl.disable(gl.BLEND);
+}
 
 function sendPose(handedness, pose) {
     const pos = pose.transform.position;
@@ -342,17 +620,19 @@ function onXRFrame(_time, frame) {
     gl.bindFramebuffer(gl.FRAMEBUFFER, glLayer.framebuffer);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-    if (!videoReady) return;
     // Keep rendering the existing texture between loads to avoid blinking.
-    if (videoDirty && videoEl.naturalWidth) {
+    if (videoReady && videoDirty && videoEl.naturalWidth) {
         uploadVideoTexture();
         videoDirty = false;
     }
-    updateModelMatrix();
+    if (videoReady) updateModelMatrix();
+    updateHudTexture();
     const pose = frame.getViewerPose(xrRefSpace);
     if (pose) {
         for (const view of pose.views) {
-            renderVideoPanel(view, glLayer.getViewport(view));
+            const viewport = glLayer.getViewport(view);
+            if (videoReady) renderVideoPanel(view, viewport);
+            renderCollectionHud(view, viewport);
         }
     }
 }
