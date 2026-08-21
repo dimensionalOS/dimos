@@ -26,7 +26,7 @@ use lcm_msgs::std_msgs::{Header, Time};
 use nalgebra::{UnitQuaternion, Vector3};
 
 #[derive(Module)]
-#[module(name = "ray_tracing")]
+#[module()]
 pub struct RayTracingVoxelMap {
     #[input(decode = PointCloud2::decode, handler = on_lidar)]
     lidar: Input<PointCloud2>,
