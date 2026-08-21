@@ -23,18 +23,12 @@ if global_config.simulation and global_config.simulation != "mujoco":
 # imports are branched because the hardware stack needs the optional unitree-dds extra
 if global_config.simulation == "mujoco":
     from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_groot_wbc import (
-        unitree_g1_groot_wbc,
+        unitree_g1_groot_wbc as _g1_stack,
     )
-
-    _g1_stack = unitree_g1_groot_wbc
 else:
-    from dimos.core.coordination.blueprints import autoconnect
-    from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_onboard import _unitree_g1_onboard
-    from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_nav_simple import (
-        _unitree_g1_nav_simple,
+    from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_onboard import (
+        _unitree_g1_onboard_nav as _g1_stack,
     )
-
-    _g1_stack = autoconnect(_unitree_g1_onboard, _unitree_g1_nav_simple).global_config(n_workers=10)
 
 # the all_blueprints generator AST-scans for a top-level `.global_config(...)` call
 unitree_g1 = _g1_stack.global_config(robot_model="unitree_g1")

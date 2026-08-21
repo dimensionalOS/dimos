@@ -18,6 +18,7 @@ from __future__ import annotations
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_vis import unitree_g1_vis
+from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_nav_simple import _unitree_g1_nav_simple
 from dimos.robot.unitree.g1.config import G1
 from dimos.robot.unitree.g1.effectors.high_level.dds_sdk import G1HighLevelDdsSdk
 
@@ -26,3 +27,7 @@ _unitree_g1_onboard = autoconnect(
     G1HighLevelDdsSdk.blueprint(),
     unitree_g1_vis,
 ).global_config(n_workers=12, robot_model="unitree_g1")
+
+_unitree_g1_onboard_nav = autoconnect(_unitree_g1_onboard, _unitree_g1_nav_simple).global_config(
+    n_workers=10
+)
