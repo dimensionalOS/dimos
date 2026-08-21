@@ -26,19 +26,19 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
-class GoalRelayConfig(ModuleConfig):
+class StartRelayConfig(ModuleConfig):
     world_frame: str = "odom"
     base_frame: str = "base_link"
 
 
-class GoalRelay(Module):
+class StartRelay(Module):
     """Publish the tf base pose as the PoseStamped topic legacy consumers expect."""
 
     # While the tf chain is incomplete, retry the lookup at most this often.
     # The buffer warns on every miss, so per-message retries would flood the log.
     RETRY_PERIOD_S = 1.0
 
-    config: GoalRelayConfig
+    config: StartRelayConfig
 
     tf: In[TFMessage]
 

@@ -19,7 +19,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.navigation.nav_3d.mls_planner.goal_relay import GoalRelay
+from dimos.navigation.nav_3d.mls_planner.start_relay import StartRelay
 from dimos.protocol.tf.tf import MultiTBuffer
 
 MOUNT_Z = 0.163
@@ -74,8 +74,8 @@ def _odom_edge(z: float = 3.0) -> Transform:
     )
 
 
-def _relay(tf: FakeTF, **config: Any) -> tuple[GoalRelay, list[PoseStamped]]:
-    module = GoalRelay(**config)
+def _relay(tf: FakeTF, **config: Any) -> tuple[StartRelay, list[PoseStamped]]:
+    module = StartRelay(**config)
     module._tf = tf
     captured: list[PoseStamped] = []
     module.start_pose.subscribe(captured.append)

@@ -40,11 +40,11 @@ from dimos.navigation.basic_path_follower.module import BasicPathFollower
 from dimos.navigation.dannav.holonomic_tc.module import DanHolonomicTC
 from dimos.navigation.dannav.local_planner.module import DanLocalPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.nav_3d.mls_planner.goal_relay import GoalRelay
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import (
     MLSPlannerNative,
     MLSPlannerNativeConfig,
 )
+from dimos.navigation.nav_3d.mls_planner.start_relay import StartRelay
 from dimos.navigation.nav_3d.mls_planner.viz import planner_visual_override
 from dimos.robot.unitree.go2.constants import (
     BASE_LINK_HEIGHT,
@@ -249,7 +249,7 @@ go2_zenoh_htc = autoconnect(
     go2_zenoh_raycaster,
     _mls_planner.remappings([(MLSPlannerNative, "path", "planner_path")]),
     # Solely the tf-driven start_pose source for the dannav odom remaps below.
-    GoalRelay.blueprint(),
+    StartRelay.blueprint(),
     DanLocalPlanner.blueprint(resample_spacing_m=0.1).remappings(
         [(DanLocalPlanner, "odom", "start_pose")]
     ),
