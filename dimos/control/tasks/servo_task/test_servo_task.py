@@ -43,3 +43,86 @@ def test_on_joint_command_requires_all_claimed_joints() -> None:
     task = _task()
     assert not task.on_joint_command(JointState(name=["a/j1"], position=[0.1]), 1.0)
     assert not task.is_active()
+
+
+def _state(t_now: float, positions: dict[str, float] | None = None) -> CoordinatorState:
+    return CoordinatorState(joints=JointStateSnapshot(joint_positions=positions or {}), t_now=t_now)
+
+
+def test_preempted_joints_track_measured_positions() -> None:
+    task = _task()
+    task.on_joint_command(JointState(name=["a/j1", "a/j2"], position=[0.0, 0.0]), 1.0)
+
+    task.on_preempted("traj", frozenset({"a/j2"}))
+    out = task.compute(_state(1.1, {"a/j1": 0.5, "a/j2": 0.8}))
+    assert out is not None
+    assert out.positions == [0.0, 0.8]
+
+    out = task.compute(_state(1.2, {"a/j1": 0.5, "a/j2": 0.0}))
+    assert out is not None
+    assert out.positions == [0.0, 0.8]
+
+
+def test_hold_resumes_at_handoff_position_after_release() -> None:
+    task = _task()
+    task.on_joint_command(JointState(name=["a/j1", "a/j2"], position=[0.0, 0.0]), 1.0)
+
+    for step in range(5):
+        task.on_preempted("traj", frozenset({"a/j1", "a/j2"}))
+        task.compute(_state(1.0 + 0.1 * step, {"a/j1": 0.2 * step, "a/j2": 0.1 * step}))
+
+    out = task.compute(_state(1.5, {"a/j1": 0.81, "a/j2": 0.41}))
+    assert out is not None
+    assert out.positions == [0.8, 0.4]
+
+
+def test_hold_measured_on_start_latches_the_real_pose() -> None:
+    # A configured pose would snap the joints there from wherever the robot
+    # is, at full stiffness, on the first tick — the G1 arms did exactly that.
+    task = JointServoTask(
+        "servo_arms",
+        JointServoTaskConfig(joint_names=["a", "b"], timeout=0.0, hold_measured_on_start=True),
+    )
+    task.start()
+
+    # Stays active while waiting so it gets a chance to latch.
+    assert task.is_active()
+    assert task.compute(_state(1.0)) is None, "must not command before state arrives"
+
+    out = task.compute(_state(1.1, {"a": 0.4, "b": -0.25}))
+    assert out is not None
+    assert out.positions == [0.4, -0.25]
+
+    # Once latched it holds that pose, not whatever the joints drift to.
+    held = task.compute(_state(1.2, {"a": 0.9, "b": -0.9}))
+    assert held is not None
+    assert held.positions == [0.4, -0.25]
+
+
+def test_default_positions_still_command_the_configured_pose() -> None:
+    task = JointServoTask(
+        "servo",
+        JointServoTaskConfig(joint_names=["a"], timeout=0.0, default_positions=[0.0]),
+    )
+    task.start()
+    out = task.compute(_state(1.0, {"a": 0.7}))
+    assert out is not None
+    assert out.positions == [0.0]
+
+
+def test_unmeasured_preempted_joint_stays_pending() -> None:
+    task = _task()
+    task.on_joint_command(JointState(name=["a/j1", "a/j2"], position=[0.0, 0.0]), 1.0)
+
+    task.on_preempted("traj", frozenset({"a/j2"}))
+    # a/j2 is missing from this snapshot, so there is nothing to hand off yet.
+    out = task.compute(_state(1.1, {"a/j1": 0.5}))
+    assert out is not None
+    assert out.positions == [0.0, 0.0]
+
+    # Arbitration released the joint, so no further preemption callback comes.
+    # The first complete snapshot must still adopt the handed-off position
+    # rather than resuming on the stale pre-preemption target.
+    out = task.compute(_state(1.2, {"a/j1": 0.5, "a/j2": 0.8}))
+    assert out is not None
+    assert out.positions == [0.0, 0.8]
