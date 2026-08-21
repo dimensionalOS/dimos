@@ -241,9 +241,9 @@ class CuvslamOdometry(NativeModule):
     color) is reprojected onto the rig camera through ``depth_camera_info`` and tf.
 
     ``odometry`` is one continuous ``odom`` -> ``base_link`` path; restarts after a
-    tracking loss are rebased onto the last published pose. ``corrected_odometry`` is
-    the pose-graph ``map`` -> ``base_link`` and jumps at loop closures. ``tf`` carries
-    ``odom`` -> ``base_link`` and ``map`` -> ``odom``.
+    tracking loss are rebased onto the last published pose. ``tf`` carries
+    ``odom`` -> ``base_link`` and ``map`` -> ``odom``, the latter identity while
+    nothing closes loops.
     """
 
     config: CuvslamConfig
@@ -256,6 +256,5 @@ class CuvslamOdometry(NativeModule):
     imu_info: In[ImuInfo]
 
     odometry: Out[Odometry]
-    corrected_odometry: Out[Odometry]
     depth_cloud: Out[PointCloud2]
     tf: IO[TFMessage]
