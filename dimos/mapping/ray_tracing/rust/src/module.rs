@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::VecDeque;
 use std::time::Duration;
 
 use crate::voxel_ray_tracer::{
@@ -20,20 +19,15 @@ use crate::voxel_ray_tracer::{
 };
 use dimos_module::{error_throttled, warn_throttled, Input, Module, Output, Tf};
 use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion};
-use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
-use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
-use tracing::info;
+use nalgebra::{Isometry3, Translation3, Vector3};
 
 #[derive(Module)]
 #[module()]
 pub struct RayTracingVoxelMap {
     #[input(decode = PointCloud2::decode, handler = on_lidar)]
     lidar: Input<PointCloud2>,
-
-    #[input(decode = Odometry::decode, handler = on_odometry)]
-    odometry: Input<Odometry>,
 
     #[output(encode = PointCloud2::encode)]
     global_map: Output<PointCloud2>,
@@ -53,89 +47,38 @@ pub struct RayTracingVoxelMap {
     tf: Tf,
 
     map: VoxelMap,
-    poses: VecDeque<(f64, Vector3<f32>, UnitQuaternion<f32>)>,
-    /// The frame the odometry places, taken from its child_frame_id.
-    body_frame: String,
-    /// body_frame <- the frame the clouds are stamped with, resolved once from tf.
-    body_from_sensor: Option<Isometry3<f32>>,
     frame_count: u32,
     batch_points: Vec<(f32, f32, f32)>,
     batch_origins: Vec<(f32, f32, f32)>,
 }
 
 impl RayTracingVoxelMap {
-    async fn on_odometry(&mut self, msg: Odometry) {
-        if self.body_frame.is_empty() && !msg.child_frame_id.is_empty() {
-            self.body_frame = msg.child_frame_id.clone();
-        }
-        let p = &msg.pose.pose.position;
-        let q = &msg.pose.pose.orientation;
-        push_pose(
-            &mut self.poses,
-            (
-                time_secs(&msg.header.stamp),
-                Vector3::new(p.x as f32, p.y as f32, p.z as f32),
-                UnitQuaternion::from_quaternion(nalgebra::Quaternion::new(
-                    q.w as f32, q.x as f32, q.y as f32, q.z as f32,
-                )),
-            ),
-        );
-    }
-
-    /// The fixed body_frame <- sensor_frame mount, resolved once from tf and cached.
-    fn resolve_body_from_sensor(&mut self, sensor_frame: &str) -> Option<Isometry3<f32>> {
-        if let Some(mount) = self.body_from_sensor {
-            return Some(mount);
-        }
-        if sensor_frame.is_empty() || sensor_frame == self.body_frame {
-            let identity = Isometry3::identity();
-            self.body_from_sensor = Some(identity);
-            return Some(identity);
-        }
-        let Some(transform) = self.tf.get_latest(&self.body_frame, sensor_frame) else {
+    async fn on_lidar(&mut self, msg: PointCloud2) {
+        // The cloud arrives in its own sensor's frame; tf gives that sensor's
+        // pose in the world frame at the cloud stamp. Points register through
+        // it and clearing rays start at its origin, while the accumulated map
+        // stays in world coordinates. Looked up fresh every cloud, no caching.
+        let stamp = time_secs(&msg.header.stamp);
+        let Some(transform) = self
+            .tf
+            .lookup(&self.config.world_frame, &msg.header.frame_id)
+            .at(stamp)
+            .tolerance(TF_MATCH_TOLERANCE_S)
+            .get()
+        else {
             warn_throttled!(
-                Duration::from_secs(5),
-                body_frame = %self.body_frame,
-                sensor_frame = %sensor_frame,
-                "ray_tracing is holding clouds until tf places the sensor",
+                Duration::from_secs(1),
+                world_frame = %self.config.world_frame,
+                cloud_frame = %msg.header.frame_id,
+                "No tf between the world frame and the cloud frame, dropped a cloud.",
             );
-            return None;
+            return;
         };
-        let mount = Isometry3::from_parts(
+        let sensor_pose: Isometry3<f32> = Isometry3::from_parts(
             Translation3::from(transform.translation()),
             transform.rotation(),
         )
         .cast::<f32>();
-        info!(
-            body_frame = %self.body_frame,
-            sensor_frame = %sensor_frame,
-            "ray_tracing resolved the sensor mount from tf",
-        );
-        Some(*self.body_from_sensor.insert(mount))
-    }
-
-    async fn on_lidar(&mut self, msg: PointCloud2) {
-        // Register with the pose nearest the cloud stamp, never a stale one.
-        let stamp = time_secs(&msg.header.stamp);
-        let Some((translation, rotation)) = nearest_pose(&self.poses, stamp) else {
-            // An empty buffer means no odometry is arriving at all; a large gap
-            // means it is arriving but cannot be paired.
-            let gap = self
-                .poses
-                .iter()
-                .map(|&(t, ..)| (t - stamp).abs())
-                .fold(f64::INFINITY, f64::min);
-            warn_throttled!(
-                Duration::from_secs(1),
-                poses = self.poses.len(),
-                gap_s = gap,
-                "No odometry within tolerance of the cloud stamp, dropped a cloud.",
-            );
-            return;
-        };
-        let Some(mount) = self.resolve_body_from_sensor(&msg.header.frame_id) else {
-            return;
-        };
 
         let voxel_size = self.config.voxel_size;
 
@@ -154,13 +97,9 @@ impl RayTracingVoxelMap {
             return;
         }
 
-        // Transform sensor-frame points into the world: odom pose of the body,
-        // then the tf-resolved sensor mount.
-        let world_from_body = Isometry3::from_parts(Translation3::from(translation), rotation);
-        let world_from_sensor = world_from_body * mount;
-        let rot = world_from_sensor.rotation.to_rotation_matrix();
-        let trans = world_from_sensor.translation.vector;
-        // Rays start at the sensor, not the body center.
+        let rot = sensor_pose.rotation.to_rotation_matrix();
+        let trans = sensor_pose.translation.vector;
+        // Rays start at the sensor origin.
         let origin = (trans.x, trans.y, trans.z);
         let points: Vec<(f32, f32, f32)> = points
             .iter()
@@ -170,7 +109,7 @@ impl RayTracingVoxelMap {
             })
             .collect();
 
-        let out_frame_id = "world";
+        let out_frame_id = self.config.world_frame.clone();
 
         let live = update_map(&mut self.map, origin, &points, &self.config);
 
@@ -199,7 +138,7 @@ impl RayTracingVoxelMap {
                 header: Header {
                     seq: 0,
                     stamp: msg.header.stamp.clone(),
-                    frame_id: out_frame_id.to_string(),
+                    frame_id: out_frame_id.clone(),
                 },
                 pose: Pose {
                     position: Point {
@@ -239,12 +178,12 @@ impl RayTracingVoxelMap {
         let support_min = self.config.support_min;
         if global_due {
             let points = emit_points(&self.map, voxel_size, None, 0, &live);
-            let global = points_to_cloud(&points, out_frame_id, stamp.clone());
+            let global = points_to_cloud(&points, &out_frame_id, stamp.clone());
             publish_cloud(&self.global_map, &global).await;
         }
         if let Some(cyl) = &cylinder {
             let points = emit_points(&self.map, voxel_size, Some(cyl), support_min, &live);
-            let local = points_to_cloud(&points, out_frame_id, stamp);
+            let local = points_to_cloud(&points, &out_frame_id, stamp);
             publish_cloud(&self.local_map, &local).await;
         }
     }
@@ -255,46 +194,11 @@ fn emit_due(frame_count: u32, every: u32) -> bool {
     every != 0 && frame_count.is_multiple_of(every)
 }
 
-/// Odometry samples kept for cloud-stamp matching.
-const POSE_BUFFER_LEN: usize = 256;
-
-/// Max stamp gap between a cloud and the pose used to register it (s).
-const POSE_MATCH_TOLERANCE_S: f64 = 0.1;
+/// Max age of a tf sample used to place a cloud (s).
+const TF_MATCH_TOLERANCE_S: f64 = 0.5;
 
 fn time_secs(t: &Time) -> f64 {
     t.sec as f64 + t.nsec as f64 * 1e-9
-}
-
-/// Append a pose sample, evicting the oldest to keep the buffer bounded.
-fn push_pose(
-    poses: &mut VecDeque<(f64, Vector3<f32>, UnitQuaternion<f32>)>,
-    sample: (f64, Vector3<f32>, UnitQuaternion<f32>),
-) {
-    poses.push_back(sample);
-    if poses.len() > POSE_BUFFER_LEN {
-        poses.pop_front();
-    }
-}
-
-/// The buffered pose with the stamp nearest the cloud stamp, within tolerance.
-fn nearest_pose(
-    poses: &VecDeque<(f64, Vector3<f32>, UnitQuaternion<f32>)>,
-    stamp: f64,
-) -> Option<(Vector3<f32>, UnitQuaternion<f32>)> {
-    let mut best_gap = f64::INFINITY;
-    let mut best = None;
-    for &(t, v, q) in poses {
-        let gap = (t - stamp).abs();
-        if gap < best_gap {
-            best_gap = gap;
-            best = Some((v, q));
-        }
-    }
-    if best_gap <= POSE_MATCH_TOLERANCE_S {
-        best
-    } else {
-        None
-    }
 }
 
 struct ExtractError(&'static str);
@@ -426,39 +330,6 @@ mod tests {
     use super::*;
     use crate::voxel_ray_tracer::{Voxel, VoxelKey};
     use ahash::AHashSet;
-
-    #[test]
-    fn nearest_pose_picks_by_stamp_and_gates_on_tolerance() {
-        let mut poses: VecDeque<(f64, Vector3<f32>, UnitQuaternion<f32>)> = VecDeque::new();
-        for (t, x) in [(1.0, 1.0f32), (2.0, 2.0), (3.0, 3.0)] {
-            poses.push_back((t, Vector3::new(x, 0.0, 0.0), UnitQuaternion::identity()));
-        }
-        let (v, _) = nearest_pose(&poses, 2.04).expect("within tolerance");
-        assert_eq!(v.x, 2.0, "nearest stamp wins, not the latest");
-        assert!(
-            nearest_pose(&poses, 3.5).is_none(),
-            "stale poses must not register a cloud"
-        );
-        assert!(nearest_pose(&VecDeque::new(), 1.0).is_none());
-    }
-
-    #[test]
-    fn push_pose_evicts_oldest_beyond_capacity() {
-        let mut poses: VecDeque<(f64, Vector3<f32>, UnitQuaternion<f32>)> = VecDeque::new();
-        for i in 0..(POSE_BUFFER_LEN + 10) {
-            push_pose(
-                &mut poses,
-                (i as f64, Vector3::zeros(), UnitQuaternion::identity()),
-            );
-        }
-        assert_eq!(
-            poses.len(),
-            POSE_BUFFER_LEN,
-            "buffer capped at POSE_BUFFER_LEN"
-        );
-        assert_eq!(poses.front().unwrap().0, 10.0, "oldest 10 evicted");
-        assert_eq!(poses.back().unwrap().0, (POSE_BUFFER_LEN + 9) as f64);
-    }
 
     fn cloud_points(c: &PointCloud2) -> AHashSet<(u32, u32, u32)> {
         let mut out = AHashSet::new();
