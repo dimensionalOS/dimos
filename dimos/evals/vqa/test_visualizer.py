@@ -20,6 +20,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 import numpy as np
 
+from dimos.evals.vqa import visualizer
 from dimos.evals.vqa.editor import EditorState, FrameDraft, SubmitResult
 from dimos.evals.vqa.visualizer import create_editor_app
 from dimos.msgs.sensor_msgs.Image import Image
@@ -73,13 +74,22 @@ class FakeSession:
         return SubmitResult(output=self.output, frame_count=1, question_count=2)
 
 
-def test_editor_app_serves_page_and_session_routes(tmp_path: Path) -> None:
+def test_editor_app_serves_page_and_session_routes(tmp_path: Path, monkeypatch: Any) -> None:
     session = FakeSession(tmp_path)
-    app = create_editor_app(session)  # type: ignore[arg-type]
+    ready_messages: list[str] = []
+
+    def capture_ready(message: str) -> None:
+        assert session.started
+        assert session.preload_calls == 1
+        ready_messages.append(message)
+
+    monkeypatch.setattr(visualizer.logger, "info", capture_ready)
+    app = create_editor_app(session, ready_url="http://127.0.0.1:9876")  # type: ignore[arg-type]
 
     with TestClient(app) as client:
         assert session.started
         assert session.preload_calls == 1
+        assert ready_messages == ["VQA editor ready: http://127.0.0.1:9876"]
         page = client.get("/")
         assert page.status_code == 200
         assert "VQA Dataset Console" in page.text

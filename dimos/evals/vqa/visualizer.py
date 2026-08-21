@@ -25,9 +25,11 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from dimos.evals.vqa.editor import FrameDraft, SubmitResult, VqaEditorSession
+from dimos.utils.logging_config import setup_logger
 
 DEFAULT_EDITOR_PORT = 8765
 _INDEX = Path(__file__).with_name("editor.html")
+logger = setup_logger()
 
 
 class GenerationSelection(BaseModel):
@@ -59,7 +61,7 @@ class GenerationSelection(BaseModel):
         return range(self.start, self.stop, self.stride)
 
 
-def create_editor_app(session: VqaEditorSession) -> FastAPI:
+def create_editor_app(session: VqaEditorSession, *, ready_url: str | None = None) -> FastAPI:
     """Create a localhost-oriented editor application around one session."""
 
     @asynccontextmanager
@@ -67,6 +69,7 @@ def create_editor_app(session: VqaEditorSession) -> FastAPI:
         session.start()
         try:
             session.preload_generation_models()
+            logger.info(f"VQA editor ready: {ready_url}" if ready_url else "VQA editor ready")
             yield
         finally:
             session.stop()
@@ -127,4 +130,5 @@ def run_editor(recording: str, output: Path, port: int = DEFAULT_EDITOR_PORT) ->
     import uvicorn
 
     session = VqaEditorSession(recording, output)
-    uvicorn.run(create_editor_app(session), host="127.0.0.1", port=port)
+    url = f"http://127.0.0.1:{port}"
+    uvicorn.run(create_editor_app(session, ready_url=url), host="127.0.0.1", port=port)
