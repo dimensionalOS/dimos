@@ -17,10 +17,10 @@
 from __future__ import annotations
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.common.blueprints import coordinator, planner
-from dimos.robot.manipulators.common.topics import DEFAULT_TRAJECTORY_TASK_NAME
 from dimos.robot.manipulators.openarm.config import (
     OPENARM_ARM_JOINTS,
     openarm_arm_joints,
@@ -51,7 +51,7 @@ def _eef_twist_task(side: str, *, priority: int = 10) -> TaskConfig:
 
 def _trajectory_task(*, priority: int = 10) -> TaskConfig:
     return TaskConfig(
-        name=DEFAULT_TRAJECTORY_TASK_NAME,
+        name=JOINT_TRAJECTORY_TASK_NAME,
         type="trajectory",
         joint_names=list(OPENARM_ARM_JOINTS),
         priority=priority,
