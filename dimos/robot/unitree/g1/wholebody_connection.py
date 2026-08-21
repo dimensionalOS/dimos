@@ -93,7 +93,7 @@ class G1WholeBodyConnectionConfig(ModuleConfig):
     # mirroring the remote's damp -> lock-stand feel. Full commanded stiffness
     # in the very first frame slams the robot from wherever it hangs to the
     # commanded pose. 0 disables.
-    soft_start_seconds: float = Field(default=3.0, ge=0.0)
+    soft_start_seconds: float = Field(default=3.0, ge=0.0, allow_inf_nan=False)
 
 
 @dataclass(frozen=True)
