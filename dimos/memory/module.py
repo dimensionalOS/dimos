@@ -380,7 +380,7 @@ class Recorder(MemoryModule):
             logger.warning("Recorder: tf port has no transport — not recording tf")
         if not data_ports and not record_tf:
             return
-        bindings: list[tuple[In[object], Callable[[float, object], Iterable[PreparedWrite]]]] = []
+        bindings: list[tuple[In[Any], Callable[[float, Any], Iterable[PreparedWrite]]]] = []
         for name, port in data_ports.items():
             stream_name = self.config.stream_remapping.get(name, name)
             codec = self.config.stream_codecs.get(stream_name)
@@ -398,13 +398,13 @@ class Recorder(MemoryModule):
         if tf_binding is not None:
             self._subscribe_port(self.tf, tf_binding)
 
-    def _data_ports(self) -> dict[str, In[object]]:
+    def _data_ports(self) -> dict[str, In[Any]]:
         """The In ports to record generically — everything but the tf port."""
         return {name: port for name, port in self.inputs.items() if port is not self.tf}
 
     def _port_processor(
-        self, name: str, stream: Stream[object]
-    ) -> Callable[[float, object], tuple[PreparedWrite]]:
+        self, name: str, stream: Stream[Any]
+    ) -> Callable[[float, Any], tuple[PreparedWrite]]:
         """Build the preparation stage for a stream, including world-pose lookup.
 
         Stamped messages use their own ``.frame_id`` and ``.ts``; unstamped
@@ -416,7 +416,7 @@ class Recorder(MemoryModule):
         callback and the serialized database writer.
         """
 
-        def process(recv_ts: float, msg: object) -> tuple[PreparedWrite]:
+        def process(recv_ts: float, msg: Any) -> tuple[PreparedWrite]:
             ts = self._resolve_ts(name, msg)
             if name in self._pose_setters:
                 loop = self._loop
@@ -482,11 +482,11 @@ class Recorder(MemoryModule):
         for stream in targets.intersection(self.store.list_streams()):
             self.store.delete_stream(stream)
 
-    def _resolve_ts(self, name: str, msg: object) -> float:
+    def _resolve_ts(self, name: str, msg: Any) -> float:
         """Timestamp to record *msg* at. Override to re-base onto another clock."""
         return getattr(msg, "ts", None) or time.time()
 
-    async def _resolve_pose(self, name: str, msg: object, ts: float) -> Pose | None:
+    async def _resolve_pose(self, name: str, msg: Any, ts: float) -> Pose | None:
         """Pose to anchor *msg* with. Dispatches to the stream's (async)
         ``@pose_setter_for`` if one is defined, else falls back to a
         ``world <- frame_id`` tf lookup."""
@@ -495,7 +495,7 @@ class Recorder(MemoryModule):
             return cast("Pose | None", await setter(msg))
         return self._resolve_tf_pose(msg, ts)
 
-    def _resolve_tf_pose(self, msg: object, ts: float) -> Pose | None:
+    def _resolve_tf_pose(self, msg: Any, ts: float) -> Pose | None:
         """Resolve the ordinary TF pose directly from recorder queue threads."""
         if self._tf is None:
             return None
