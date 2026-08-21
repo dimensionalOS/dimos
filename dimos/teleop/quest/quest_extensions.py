@@ -266,7 +266,12 @@ class Go2TeleopModule(QuestTeleopModule):
         return 0.0 if abs(v) < self.config.deadzone else v
 
     def _on_joy_bytes(self, data: bytes) -> bool:
-        if not super()._on_joy_bytes(data):
+        try:
+            valid = super()._on_joy_bytes(data)
+        except ValueError:
+            self._publish_safe_command()
+            raise
+        if not valid:
             self._publish_safe_command()
             return False
         with self._lock:

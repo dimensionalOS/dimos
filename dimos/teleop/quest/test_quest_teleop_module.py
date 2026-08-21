@@ -223,6 +223,29 @@ def test_go2_malformed_joy_clears_stale_state_and_publishes_zero_velocity(
         module.stop()
 
 
+def test_go2_unknown_controller_identity_publishes_zero_velocity(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    module = Go2TeleopModule()
+    publish = mocker.patch.object(module.cmd_vel, "publish")
+    mocker.patch(
+        "dimos.teleop.quest.quest_teleop_module.Joy.lcm_decode",
+        return_value=SimpleNamespace(frame_id="unknown"),
+    )
+    module._controllers[Hand.LEFT] = QuestControllerState(thumbstick=ThumbstickState(y=-1.0))
+    try:
+        with pytest.raises(ValueError, match="Unexpected frame_id"):
+            module._on_joy_bytes(b"unknown")
+
+        publish.assert_called_once()
+        twist = publish.call_args.args[0]
+        assert twist.linear.x == 0.0
+        assert twist.linear.y == 0.0
+        assert twist.angular.z == 0.0
+    finally:
+        module.stop()
+
+
 def test_translation_scale_changes_pose_delta(module: QuestTeleopModule) -> None:
     module._initial_poses[Hand.RIGHT] = PoseStamped(position=[1.0, 2.0, 3.0])
     module._current_poses[Hand.RIGHT] = PoseStamped(position=[1.2, 1.5, 4.0])
