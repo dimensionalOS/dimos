@@ -76,6 +76,7 @@ from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.unitree.g1.config import G1
 from dimos.robot.unitree.g1.g1_rerun import (
     G1_RERUN_ROOT,
+    G1_RERUN_URDF,
     g1_costmap,
     g1_urdf_joint_state,
     g1_urdf_static_robot,
@@ -389,7 +390,7 @@ def _g1_nav_path(path: NavPath) -> Any:
 # /odometry, whose world frame is the lidar boot pose (ground ~1.2 m below 0).
 _G1_ROOT = G1_RERUN_ROOT if global_config.simulation == "mujoco" else "world/odometry/g1"
 
-_G1_URDF_PATH = Path(__file__).resolve().parents[2] / "g1.urdf"
+_G1_URDF_PATH = LfsPath(G1_RERUN_URDF)
 # Nominal standing pelvis height; matches G1GrootWBCTask's height_cmd.
 _G1_NOMINAL_PELVIS_Z = 0.74
 _g1_pelvis_mid360_cache: list[Any] = []
