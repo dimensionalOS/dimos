@@ -108,3 +108,21 @@ def test_default_positions_still_command_the_configured_pose() -> None:
     out = task.compute(_state(1.0, {"a": 0.7}))
     assert out is not None
     assert out.positions == [0.0]
+
+
+def test_unmeasured_preempted_joint_stays_pending() -> None:
+    task = _task()
+    task.on_joint_command(JointState(name=["a/j1", "a/j2"], position=[0.0, 0.0]), 1.0)
+
+    task.on_preempted("traj", frozenset({"a/j2"}))
+    # a/j2 is missing from this snapshot, so there is nothing to hand off yet.
+    out = task.compute(_state(1.1, {"a/j1": 0.5}))
+    assert out is not None
+    assert out.positions == [0.0, 0.0]
+
+    # Arbitration released the joint, so no further preemption callback comes.
+    # The first complete snapshot must still adopt the handed-off position
+    # rather than resuming on the stale pre-preemption target.
+    out = task.compute(_state(1.2, {"a/j1": 0.5, "a/j2": 0.8}))
+    assert out is not None
+    assert out.positions == [0.0, 0.8]
