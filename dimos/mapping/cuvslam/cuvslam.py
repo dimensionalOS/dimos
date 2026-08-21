@@ -111,6 +111,10 @@ def driver_cuda_major() -> int:
     return 0
 
 
+DIMSLAM_REV = "62154c984843066aa23126a4d6be6dcecad2c07b"
+"""dimSLAM rev holding the Rust cuvslam_odometry this config is written against."""
+
+
 def sdk_variant() -> str:
     """Pick the dim-slam flake attr for this host.
 
@@ -153,11 +157,15 @@ def _driver_env() -> dict[str, str]:
 class CuvslamConfig(NativeModuleConfig):
     cwd: str | None = str(MODULE_DIR)
     executable: str = "result/bin/cuvslam_odometry"
-    # The C++ lives in dimSLAM (cuVSLAM + the module built on it); dimos just
-    # builds the pinned rev (jeff/feat/imu_info tip; tag on merge). `nix build`
-    # drops the `result` symlink in the cwd.
+    # The C++ lives in dimSLAM (cuVSLAM + the module built on it); dimos just builds
+    # the pinned rev. `nix build` drops the `result` symlink in the cwd. Pinned by rev
+    # rather than by tag because no tag carries the Rust module: v0.2.0 is the merge that
+    # introduced it and its tree predates the port. The config below has to name exactly
+    # the fields this rev declares -- the module rejects both unknown and missing ones.
     build_command: str | None = Field(
-        default_factory=lambda: f"nix build github:dimensionalOS/dimSLAM/v0.2.0#{sdk_variant()}"
+        default_factory=lambda: (
+            f"nix build github:dimensionalOS/dimSLAM/{DIMSLAM_REV}#{sdk_variant()}"
+        )
     )
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
@@ -183,14 +191,6 @@ class CuvslamConfig(NativeModuleConfig):
     # Only read when Slam is off, where map->odom can only be identity.
     publish_map_to_odom: bool = True
 
-    # Pose graph and loop closure; without it map->odom is identity.
-    enable_slam: bool = True
-    # Runs Slam on its own thread. Its GetPose() carries no timestamp, so a thread running
-    # behind cannot be matched to the odometry pose it corrects.
-    slam_async: bool = False
-    # Poses in the pose graph, not a distance. 0 is unlimited.
-    slam_max_poses: int = 300
-    slam_throttling_ms: int = 0
     # The noise model arrives on the ``imu_info`` stream, published by the driver
     # the way ``camera_info`` is; the tracker waits for it before building the rig.
     enable_imu: bool = False
