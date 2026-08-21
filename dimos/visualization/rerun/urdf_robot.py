@@ -120,13 +120,7 @@ def _build_link_paths(
 
 
 class UrdfRobotStaticRerunFactory:
-    """Log a URDF robot's static visual meshes under a Rerun root path.
-
-    Deliberately not a ``@dataclass``: these factories travel inside module
-    configs, and pydantic's ``model_dump(mode="python")`` rewrites dataclass
-    instances into plain dicts. The worker then re-validates the dumped config
-    and rejects the dict against the ``Callable`` field type.
-    """
+    """Log a URDF robot's static visual meshes under a Rerun root path."""
 
     def __init__(self, urdf_path: str | Path, root_path: str) -> None:
         self.urdf_path = urdf_path
@@ -176,11 +170,7 @@ class UrdfRobotStaticRerunFactory:
 
 
 class UrdfRobotJointStateRerunFactory:
-    """Convert JointState-like messages into animated URDF link transforms.
-
-    Not a ``@dataclass`` for the same reason as
-    ``UrdfRobotStaticRerunFactory`` -- see the note there.
-    """
+    """Convert JointState-like messages into animated URDF link transforms."""
 
     def __init__(
         self,
