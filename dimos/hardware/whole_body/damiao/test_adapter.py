@@ -28,6 +28,7 @@ from pytest_mock import MockerFixture
 from dimos.hardware.whole_body.damiao.adapter import DamiaoWholeBodyAdapter
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.spec import MotorCommand, MotorState
+from dimos.robot.assets.model import RobotModel
 
 
 class FakeArm:
@@ -167,13 +168,13 @@ class RebuildingDualAdapter(DualAdapter):
 class GravityDualAdapter(DualAdapter):
     gravity_joint_names = ("left1", "left2", "right1", "right2")
 
-    def __init__(self, robot: FakeRobot, model_path: Path, **kwargs: object) -> None:
-        self.model_path = model_path
+    def __init__(self, robot: FakeRobot, model: RobotModel, **kwargs: object) -> None:
+        self.model = model
         super().__init__(robot, **kwargs)
 
     @property
-    def gravity_model_path(self) -> Path:
-        return self.model_path
+    def gravity_model(self) -> RobotModel:
+        return self.model
 
 
 class FakePinModel:
@@ -245,7 +246,7 @@ def active_dual_adapter(connected_dual_adapter: DualAdapter) -> DualAdapter:
 @pytest.fixture
 def pin_model_builder(mocker: MockerFixture) -> Mock:
     return mocker.patch(
-        "dimos.hardware.whole_body.damiao.adapter.pinocchio.buildModelFromUrdf",
+        "dimos.hardware.whole_body.damiao.adapter.pinocchio.buildModelFromXML",
     )
 
 
@@ -264,7 +265,7 @@ def gravity_adapter_factory(
         pin_model_builder.return_value = model
         adapter = GravityDualAdapter(
             dual_robot,
-            model_path,
+            RobotModel.from_file(model_path),
             runtime_config=DamiaoRuntimeConfig(gravity_comp=True),
         )
         adapters.append(adapter)
@@ -321,6 +322,19 @@ def test_bus_address_runtime_override_returns_configured_interface(
             bus_addresses={"left": "can8"},
             gravity_comp=False,
         ),
+    )
+
+    assert adapter.bus_address("left") == "can8"
+
+
+def test_init_rehydrates_serialized_runtime_config(dual_robot: FakeRobot) -> None:
+    adapter = DualAdapter(
+        dual_robot,
+        runtime_config={
+            "bus_addresses": {"left": "can8"},
+            "gravity_comp": False,
+            "tick_deadline_us": 2_000,
+        },
     )
 
     assert adapter.bus_address("left") == "can8"
@@ -721,7 +735,7 @@ def test_connect_missing_gravity_model_rolls_back_robot(
 ) -> None:
     adapter = GravityDualAdapter(
         dual_robot,
-        tmp_path / "missing.urdf",
+        RobotModel.from_file(tmp_path / "missing.urdf"),
         runtime_config=DamiaoRuntimeConfig(gravity_comp=True),
     )
 
@@ -736,7 +750,32 @@ def test_connect_existing_gravity_model_loads_model(
     adapter = gravity_adapter_factory(model=FakePinModel())
 
     assert adapter.connect()
-    pin_model_builder.assert_called_once()
+    pin_model_builder.assert_called_once_with("<robot/>")
+
+
+def test_connect_gravity_model_locks_non_arm_joints(
+    gravity_adapter_factory: Callable[..., GravityDualAdapter],
+    mocker: MockerFixture,
+) -> None:
+    full_model = FakePinModel(
+        nq=5,
+        nv=5,
+        names=("universe", "left1", "left2", "right1", "right2", "finger"),
+    )
+    reduced_model = FakePinModel()
+    neutral = np.zeros(5, dtype=np.float64)
+    mocker.patch(
+        "dimos.hardware.whole_body.damiao.adapter.pinocchio.neutral",
+        return_value=neutral,
+    )
+    reduce_model = mocker.patch(
+        "dimos.hardware.whole_body.damiao.adapter.pinocchio.buildReducedModel",
+        return_value=reduced_model,
+    )
+    adapter = gravity_adapter_factory(model=full_model)
+
+    assert adapter.connect()
+    reduce_model.assert_called_once_with(full_model, [5], neutral)
 
 
 def test_activate_gravity_model_dimension_mismatch_returns_false(
@@ -811,3 +850,33 @@ def test_write_motor_commands_gravity_enabled_adds_computed_torque(
     assert compute_gravity.call_count == 1
     assert cast("FakeArm", dual_robot["left_arm"]).commands[-1][:, 4].tolist() == [1.5, 2.5]
     assert cast("FakeArm", dual_robot["right_arm"]).commands[-1][:, 4].tolist() == [3.5, 4.5]
+
+
+def test_read_motor_states_inactive_gripper_reports_placeholder(
+    connected_dual_adapter: DualAdapter,
+    dual_robot: FakeRobot,
+) -> None:
+    """Gripper opening calibrates at activation; before that the read path
+    must not touch it so read-only bring-up sessions still stream arm state."""
+    cast("FakeGripper", dual_robot["left_gripper"]).opening = None
+    cast("FakeGripper", dual_robot["right_gripper"]).opening = None
+
+    states = connected_dual_adapter.read_motor_states()
+
+    assert states[4:] == [MotorState(q=0.0), MotorState(q=0.0)]
+
+
+def test_read_motor_states_inactive_adapter_pumps_feedback(
+    connected_dual_adapter: DualAdapter,
+    dual_robot: FakeRobot,
+) -> None:
+    """Without the active write path ticking the bus, the read path must
+    refresh feedback itself or read-only sessions stream a frozen snapshot."""
+    refreshes_before = dual_robot.refresh_count
+    ticks_before = dual_robot.tick_count
+
+    connected_dual_adapter.read_motor_states()
+    connected_dual_adapter.read_motor_states()
+
+    assert dual_robot.refresh_count == refreshes_before + 2
+    assert dual_robot.tick_count == ticks_before + 2
