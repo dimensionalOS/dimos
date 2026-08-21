@@ -23,6 +23,7 @@ deltas, and publishes PoseStamped commands.
 
 import asyncio
 from dataclasses import dataclass
+import json
 import math
 from pathlib import Path
 import threading
@@ -35,11 +36,13 @@ from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import Field
+from reactivex.disposable import Disposable
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import Out
+from dimos.core.stream import In, Out
+from dimos.imitation.collection.episode_monitor import EpisodeStatus
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Joy import Joy
 
@@ -104,6 +107,7 @@ class QuestTeleopModule(Module):
     left_controller_output: Out[PoseStamped]
     right_controller_output: Out[PoseStamped]
     teleop_buttons: Out[Buttons]
+    status: In[EpisodeStatus]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -144,6 +148,7 @@ class QuestTeleopModule(Module):
         self._connected_clients: set[WebSocket] = set()
         self._clients_lock = threading.Lock()
         self._ws_loop: asyncio.AbstractEventLoop | None = None
+        self._latest_episode_status: EpisodeStatus | None = None
 
     def _setup_routes(self) -> None:
         """Register teleop routes on the embedded web server."""
@@ -190,6 +195,10 @@ class QuestTeleopModule(Module):
                 return False
             self._connected_clients.add(ws)
             self._reset_controller_state()
+        with self._lock:
+            status = self._latest_episode_status
+        if status is not None:
+            self._broadcast_text(self._encode_episode_status(status))
         return True
 
     def _client_disconnected(self, ws: WebSocket) -> None:
@@ -208,6 +217,26 @@ class QuestTeleopModule(Module):
             clients = tuple(self._connected_clients)
         for ws in clients:
             asyncio.run_coroutine_threadsafe(_ws_send_text(ws, data), loop)
+
+    def _on_episode_status(self, status: EpisodeStatus) -> None:
+        with self._lock:
+            self._latest_episode_status = status
+        self._broadcast_text(self._encode_episode_status(status))
+
+    @staticmethod
+    def _encode_episode_status(status: EpisodeStatus) -> str:
+        payload = status.model_dump(mode="json")
+        payload["type"] = "episode_status"
+        payload["elapsed_s"] = (
+            max(0.0, time.time() - status.ts) if status.state == "recording" else 0.0
+        )
+        return json.dumps(payload, separators=(",", ":"))
+
+    @rpc
+    def build(self) -> None:
+        super().build()
+        if self.status.connection is not None or self.status._transport is not None:
+            self.register_disposable(Disposable(self.status.subscribe(self._on_episode_status)))
 
     @rpc
     def start(self) -> None:

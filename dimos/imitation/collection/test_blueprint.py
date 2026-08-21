@@ -22,9 +22,9 @@ from dimos.imitation.collection.blueprint import (
     learning_collect_quest_xarm7,
 )
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
-from dimos.imitation.collection.quest_hud import QuestCollectionTeleopModule
 from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.teleop.quest.quest_extensions import ArmTeleopModule
 
 AGGREGATE = "coordinator_joint_state"
 
@@ -65,7 +65,7 @@ def test_episode_monitor_stops_after_input_producers(blueprint: Blueprint) -> No
     [learning_collect_quest_xarm7, learning_collect_quest_piper],
 )
 def test_collection_status_is_wired_to_quest_hud(blueprint: Blueprint) -> None:
-    hud = next(atom for atom in blueprint.blueprints if atom.module is QuestCollectionTeleopModule)
+    hud = next(atom for atom in blueprint.blueprints if atom.module is ArmTeleopModule)
     status = next(stream for stream in hud.streams if stream.name == "status")
 
     assert status.direction == "in"
