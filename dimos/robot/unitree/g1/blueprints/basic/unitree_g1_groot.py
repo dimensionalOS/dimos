@@ -13,14 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""G1 GR00T blueprint: whole-body control + raytracing lidar navigation.
-
-Real hardware runs the GR00T WBC policy (from ``unitree-g1-groot-wbc``) fed by
-the shared raytracing nav middle (``_unitree_g1_nav_simple``) via Point-LIO
-(MID-360), executed through the coordinator's twist_command. In simulation the
-groot-wbc blueprint already runs its own voxel-grid nav, so this is just that
-blueprint.
-"""
+"""G1 GR00T blueprint: whole-body control + raytracing lidar navigation."""
 
 from __future__ import annotations
 
@@ -33,8 +26,7 @@ from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_groot_wbc import uni
 from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_nav_simple import _unitree_g1_nav_simple
 from dimos.robot.unitree.g1.config import G1
 
-# groot-wbc already runs its own voxel-grid nav stack in simulation; on real
-# hardware add Point-LIO plus the shared raytracing nav middle.
+# groot-wbc already runs its own voxel-grid nav stack in simulation
 if global_config.simulation:
     _nav_modules: tuple[Any, ...] = ()
 else:

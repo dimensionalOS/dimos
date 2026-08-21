@@ -39,11 +39,7 @@ def get_assets() -> dict[str, bytes]:
     data_dir = _get_data_dir()
     assets: dict[str, bytes] = {}
 
-    # update_assets() silently contributes nothing when the directory is
-    # absent, so without this the menagerie meshes just go missing and MuJoCo
-    # fails much later with a bare "Error opening file 'pelvis.STL'". Callers
-    # that can afford the clone earlier (MujocoConnection) already call this;
-    # it no-ops once the checkout exists.
+    # update_assets() silently skips a missing dir, so make sure the checkout exists first
     mjx_env.ensure_menagerie_exists()
 
     # Assets used from https://sketchfab.com/3d-models/mersus-office-8714be387bcd406898b2615f7dae3a47

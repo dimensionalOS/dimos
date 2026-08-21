@@ -21,7 +21,6 @@ from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_vis import unitree_g1_vi
 from dimos.robot.unitree.g1.config import G1
 from dimos.robot.unitree.g1.effectors.high_level.dds_sdk import G1HighLevelDdsSdk
 
-# Underscore-prefixed: a shared sub-blueprint, not a runnable blueprint of its own.
 _unitree_g1_onboard = autoconnect(
     PointLio.blueprint(host_ip=G1.lidar_host_ip, lidar_ip=G1.lidar_ip),
     G1HighLevelDdsSdk.blueprint(),

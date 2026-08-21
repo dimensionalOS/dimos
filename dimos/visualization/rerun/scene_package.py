@@ -30,20 +30,9 @@ StaticRerunFactory = Callable[[Any], Any]
 
 
 class SceneVisualFactory:
-    """Log a cooked scene package's GLB visual under a Rerun entity path.
-
-    Deliberately not a ``@dataclass``: these factories travel inside module
-    configs, and pydantic's ``model_dump(mode="python")`` rewrites dataclass
-    instances into plain dicts. The worker then re-validates the dumped config
-    and rejects the dict against the ``Callable`` field type.
-    """
-
     def __init__(self, visual_path: Path, alignment: SceneMeshAlignment) -> None:
         self.visual_path = visual_path
         self.alignment = alignment
-
-    def __repr__(self) -> str:
-        return f"{type(self).__name__}(visual_path={self.visual_path!r})"
 
     def __call__(self, rr: Any) -> list[Any]:
         if not self.visual_path.exists():

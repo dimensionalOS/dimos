@@ -337,8 +337,6 @@ else:
         auto_start=True,
         params={"default_positions": ARM_DEFAULT_POSE},
     )
-    # Same nav middle as unitree-g1, fed by Point-LIO from the
-    # MID-360, executed through the coordinator's twist_command.
     _nav_stack = autoconnect(
         PointLio.blueprint(),
         RayTracingVoxelMap.blueprint(

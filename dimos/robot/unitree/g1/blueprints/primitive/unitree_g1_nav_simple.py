@@ -13,12 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared G1 raytracing nav middle (no lidar source, no locomotion).
-
-RayTracingVoxelMap -> CostMapper -> ReplanningAStarPlanner -> MovementManager,
-plus the nav viewer. Consumers supply the lidar and locomotion: the onboard
-high-level SDK (unitree-g1) or the GR00T WBC stack (unitree-g1-groot).
-"""
+"""Shared G1 raytracing nav middle (no lidar source, no locomotion)."""
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.mapping.costmapper import CostMapper
@@ -38,7 +33,6 @@ g1_rotation_diameter = 0.8
 voxel_resolution = 0.05
 g1_safe_radius_margin = 0.6
 
-# Underscore-prefixed: a shared sub-blueprint, not a runnable blueprint of its own.
 _unitree_g1_nav_simple = autoconnect(
     RayTracingVoxelMap.blueprint(voxel_size=voxel_resolution),
     CostMapper.blueprint(
