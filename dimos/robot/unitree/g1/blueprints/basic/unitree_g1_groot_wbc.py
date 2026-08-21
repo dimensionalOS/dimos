@@ -445,15 +445,26 @@ def _g1_groot_rerun_blueprint() -> Any:
     import rerun as rr
     import rerun.blueprint as rrb
 
-    return rrb.Blueprint(
-        rrb.Spatial3DView(
-            origin="world",
-            name="G1 GR00T WBC",
-            background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
-            line_grid=rrb.LineGrid3D(
-                plane=rr.components.Plane3D.XY.with_distance(0.0),
-            ),
+    world = rrb.Spatial3DView(
+        origin="world",
+        name="G1 GR00T WBC",
+        background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
+        line_grid=rrb.LineGrid3D(
+            plane=rr.components.Plane3D.XY.with_distance(0.0),
         ),
+    )
+    contents: Any = world
+    if _using_simulation_provider:
+        contents = rrb.Horizontal(
+            world,
+            rrb.Vertical(
+                rrb.Spatial2DView(origin="world/color_image", name="Camera"),
+                rrb.Spatial2DView(origin="world/depth_image", name="Depth"),
+            ),
+            column_shares=[2, 1],
+        )
+    return rrb.Blueprint(
+        contents,
         rrb.TimePanel(state="collapsed"),
     )
 
@@ -524,12 +535,6 @@ if not _using_simulation_provider:
 _rerun_config: dict[str, Any] = {
     "blueprint": _g1_groot_rerun_blueprint,
     "visual_override": {
-        # This blueprint uses raycast lidar, so suppress raw camera streams
-        # in Rerun.
-        "world/color_image": None,
-        "world/camera_info": None,
-        "world/depth_image": None,
-        "world/depth_camera_info": None,
         _G1_JOINTS_ENTITY: g1_urdf_joint_state(root_path=_G1_ROOT),
         "world/tf": g1_scene_transform_filter(),
         "world/global_costmap": g1_costmap,
@@ -554,6 +559,9 @@ _rerun_config: dict[str, Any] = {
         "world/global_map": 1.0,
         "world/global_costmap": 2.0,
         "world/navigation_costmap": 2.0,
+        "world/camera_info": 1.0,
+        "world/color_image": 10.0,
+        "world/depth_image": 10.0,
         # The planner publishes an empty Path() immediately before the new
         # planned path. Throttling this entity drops the real path.
         "world/path": 0,
