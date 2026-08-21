@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import PurePosixPath
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -92,3 +93,10 @@ class LiberoTaskManifest(LiberoModel):
 
 class LiberoProConfig(LiberoModel):
     task_manifest: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def task_manifest_is_relative(self) -> LiberoProConfig:
+        path = PurePosixPath(self.task_manifest)
+        if path.is_absolute() or not path.parts or ".." in path.parts:
+            raise ValueError("task_manifest must be a safe relative path")
+        return self

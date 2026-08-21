@@ -34,8 +34,7 @@ unchanged. Complete benchmarks use the `Evaluation` interface and the
 
 An `Evaluation` owns its native environment, cases, seeds, blueprint lifecycle,
 step or real-time horizon, privileged scorer, aggregation, and native result.
-Built-in evaluations resolve in-repo; external packages may use the existing
-`dimos.evaluations` entry point. Each Evaluation declares `code-policy-v1` or
+Evaluations are explicit in-repo built-ins. Each declares `code-policy-v1` or
 `live-agent-v1`. The shared runner constructs that runtime and publishes one
 immutable result directory.
 
@@ -101,12 +100,13 @@ model generation do not consume real-time or simulator-step budgets.
 
 ## CLI
 
-Install the agent dependencies and build the Pi extension:
+Start the rootless Podman service and verify the required GPU runtime:
 
 ```bash
-uv sync --extra agents
-npm --prefix packages/pi-code-policy-extension install
-npm --prefix packages/pi-code-policy-extension run build
+systemctl --user enable --now podman.socket
+nvidia-smi -L
+
+uv run dimos eval check --workspace "$PWD/.container-eval/check"
 ```
 
 Run an installed Evaluation from a strict JSON specification:
@@ -129,10 +129,17 @@ Run an installed Evaluation from a strict JSON specification:
 dimos eval run specification.json --output evaluation-run
 ```
 
+`dimos eval run` always builds the current checkout into the locked evaluation
+image and executes that immutable image ID. There is no host execution mode. The
+specification directory is mounted read-only; task-manifest references must be
+relative to it. Outputs are staged on a private host-backed mount and published
+atomically after the container exits, including valid failed or cancelled run
+records.
+
 The in-repo LIBERO-PRO smoke case runs each debug submission and the scored
-trial in a fresh rootless Podman container and a fresh DimOS blueprint. Podman
-owns the pinned simulator environment; LIBERO is never imported into the host
-DimOS Python environment.
+trial in a fresh sibling Podman container and a fresh DimOS blueprint. The same
+outer evaluation image also runs VLN-CE; each Evaluation retains ownership of its
+native simulator image and scoring.
 
 ```bash
 dimos eval run \

@@ -12,67 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pydantic import BaseModel
 import pytest
 
-from dimos.benchmark.evaluation.models import EvaluationReport, InlineNativeResult
-from dimos.benchmark.evaluation.protocol import EvaluationContext
 import dimos.benchmark.evaluation.registry as registry
 
 
-class Config(BaseModel):
-    value: int
-
-
-class PluginEvaluation:
-    name = "sample"
-    runtime_profile = "code-policy-v1"
-    config_model: type[BaseModel] = Config
-
-    def run(self, config: BaseModel, context: EvaluationContext) -> EvaluationReport:
-        return EvaluationReport(native_result=InlineNativeResult(value=None))
-
-
-class Distribution:
-    metadata = {"Name": "Acme_Evals"}
-    version = "2.0"
-
-
-class EntryPoint:
-    name = "sample"
-    value = "acme.evals:sample"
-    dist = Distribution()
-
-    def __init__(self, target) -> None:
-        self.target = target
-
-    def load(self):
-        return self.target
-
-
-def test_external_evaluation_uses_distribution_namespace(monkeypatch) -> None:
-    entry = EntryPoint(PluginEvaluation())
-    monkeypatch.setattr(
-        registry.importlib_metadata,
-        "entry_points",
-        lambda **_kwargs: [entry],
-    )
-
-    resolved = registry.resolve_evaluation("acme-evals.sample")
-
-    assert resolved.provider == "Acme_Evals"
-    assert resolved.version == "2.0"
-    assert resolved.evaluation is entry.target
-
-
-def test_unknown_evaluation_reports_name(monkeypatch) -> None:
-    monkeypatch.setattr(
-        registry.importlib_metadata,
-        "entry_points",
-        lambda **_kwargs: [],
-    )
-
-    with pytest.raises(registry.EvaluationRegistryError, match="Unknown evaluation 'missing'"):
+def test_unknown_evaluation_reports_available_builtins() -> None:
+    with pytest.raises(
+        registry.EvaluationRegistryError,
+        match="Available evaluations: libero-pro, vlnce-r2r",
+    ):
         registry.resolve_evaluation("missing")
 
 
@@ -88,26 +37,3 @@ def test_builtin_vlnce_r2r_evaluation_resolves_with_live_agent() -> None:
 
     assert resolved.provider == "dimos"
     assert resolved.evaluation.runtime_profile == "live-agent-v1"
-
-
-def test_external_target_must_implement_whole_evaluation(monkeypatch) -> None:
-    entry = EntryPoint(object())
-    monkeypatch.setattr(
-        registry.importlib_metadata,
-        "entry_points",
-        lambda **_kwargs: [entry],
-    )
-
-    with pytest.raises(registry.EvaluationRegistryError, match="runtime_profile"):
-        registry.resolve_evaluation("acme-evals.sample")
-
-
-def test_duplicate_external_evaluation_names_are_rejected(monkeypatch) -> None:
-    monkeypatch.setattr(
-        registry.importlib_metadata,
-        "entry_points",
-        lambda **_kwargs: [EntryPoint(PluginEvaluation()), EntryPoint(PluginEvaluation())],
-    )
-
-    with pytest.raises(registry.EvaluationRegistryError, match="Multiple installed"):
-        registry.available_evaluations()

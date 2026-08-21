@@ -153,6 +153,11 @@ class VlnceConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
     task_manifest: str = Field(min_length=1)
 
+    @model_validator(mode="after")
+    def task_manifest_is_relative(self) -> VlnceConfig:
+        _validate_relative_path(self.task_manifest, "task_manifest")
+        return self
+
 
 def _validate_relative_path(value: str, label: str) -> None:
     path = PurePosixPath(value)

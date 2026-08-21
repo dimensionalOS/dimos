@@ -15,6 +15,7 @@
 import json
 from pathlib import Path
 
+import pytest
 from pytest_mock import MockerFixture
 
 from dimos.benchmark.evaluation.models import RuntimeIdentity
@@ -23,6 +24,11 @@ import dimos.benchmark.vlnce_r2r.evaluation as evaluation
 from dimos.benchmark.vlnce_r2r.models import VlnceConfig, VlnceTaskManifest
 
 CASE = Path(__file__).parent / "cases/mp3d-example-episode-515/task.json"
+
+
+def test_evaluation_config_rejects_absolute_task_manifest() -> None:
+    with pytest.raises(ValueError, match="safe relative path"):
+        VlnceConfig(task_manifest="/tmp/task.json")
 
 
 def test_live_agent_starts_after_runtime_barrier_and_native_score_survives_render_failure(

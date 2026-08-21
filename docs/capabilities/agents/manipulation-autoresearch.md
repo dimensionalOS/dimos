@@ -67,3 +67,32 @@ publication-grade manipulation performance. Multi-seed measurement is a later la
 
 Outside Evo, omit the Evo environment variables. The same command still writes
 `panel-score.json` and prints normal JSON, which is useful for local contract checks.
+
+## Reproducible evaluation container
+
+The benchmark command automatically launches through the shared locked Evaluation
+container. It builds the current DimOS candidate from digest-pinned Python and Node
+bases plus `uv.lock` and `package-lock.json`, then executes the resulting local image
+by immutable ID. Start the rootless service and verify the generic environment first:
+
+```bash
+systemctl --user enable --now podman.socket
+nvidia-smi -L
+
+uv run dimos eval check --workspace "$PWD/.container-eval/check"
+```
+
+Then use the same panel command configured in Evo:
+
+```bash
+uv run python -m dimos.benchmark.libero_pro.autoresearch \
+  --panel dimos/benchmark/libero_pro/cases/autoresearch/dev-panel.json \
+  --output "$(dirname "$EVO_RESULT_PATH")/dimos-panel" --json
+```
+
+The shared launcher uses host networking and the mounted rootless Podman socket to
+launch simulator containers as siblings. It mounts only private output staging,
+DimOS cache, and configured Evo result/trace directories at identical absolute paths.
+Agent IPC uses a short `/runner-tmp` mount. Only named OpenAI/Hugging Face credentials
+and Evo result variables are forwarded. Each invocation uses a fresh run-scoped NVIDIA
+CDI spec and never reads or replaces system CDI configuration.

@@ -60,9 +60,7 @@ class LiberoProEvaluation:
         if not isinstance(context.runtime, CodePolicyRuntime):
             raise TypeError("libero-pro requires the code-policy-v1 runtime")
         runtime = context.runtime
-        manifest_path = Path(config.task_manifest)
-        if not manifest_path.is_absolute():
-            manifest_path = context.spec_dir / manifest_path
+        manifest_path = context.spec_dir / config.task_manifest
         manifest = LiberoTaskManifest.model_validate_json(manifest_path.read_bytes())
         emit_progress(
             context.progress,

@@ -27,6 +27,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from dimos.benchmark.evaluation import container
 from dimos.benchmark.evaluation.models import EvaluationRun, InlineNativeResult
 from dimos.benchmark.evaluation.runner import execute_evaluation
 
@@ -361,6 +362,39 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--api-key-env", default="OPENAI_API_KEY")
     parser.add_argument("--json", action="store_true", dest="json_output")
     args = parser.parse_args(argv)
+    if not container.inside_container():
+        panel = container.candidate_path(args.panel)
+
+        def command(result_path: Path) -> Sequence[str]:
+            inner = [
+                "/opt/dimos/.venv/bin/python",
+                "-m",
+                "dimos.benchmark.libero_pro.autoresearch",
+                "--panel",
+                str(panel),
+                "--output",
+                str(result_path),
+                "--api-key-env",
+                args.api_key_env,
+            ]
+            if args.json_output:
+                inner.append("--json")
+            return inner
+
+        exit_code = container.run_in_container(
+            command,
+            output=args.output,
+            input_directories=(),
+            forwarded_environment=(
+                args.api_key_env,
+                "EVO_RESULT_PATH",
+                "EVO_TRACES_DIR",
+                "EVO_EXPERIMENT_ID",
+            ),
+        )
+        if exit_code:
+            raise SystemExit(exit_code)
+        return
     result = run_panel(args.panel, output=args.output, api_key_env=args.api_key_env)
     result_path = os.environ.get("EVO_RESULT_PATH")
     traces_dir = os.environ.get("EVO_TRACES_DIR")

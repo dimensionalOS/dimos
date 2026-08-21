@@ -39,6 +39,20 @@ def execute_evaluation(*args: Any, **kwargs: Any) -> Any:
     return execute(*args, **kwargs)
 
 
+@app.command("check")
+def check(
+    workspace: Path = typer.Option(..., "--workspace"),
+) -> None:
+    """Build and verify the locked Evaluation environment."""
+    try:
+        from dimos.benchmark.evaluation.container import check_environment
+
+        check_environment(workspace)
+    except Exception as exc:
+        typer.echo(f"Evaluation preflight failed: {type(exc).__name__}: {exc}", err=True)
+        raise typer.Exit(2) from exc
+
+
 @app.command("run")
 def run(
     specification: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True),
@@ -47,7 +61,34 @@ def run(
     json_output: bool = typer.Option(False, "--json", help="Print compact JSON"),
     quiet: bool = typer.Option(False, "--quiet", help="Suppress live evaluation progress"),
 ) -> None:
-    """Run one Evaluation Run Specification synchronously."""
+    """Run one Evaluation Run Specification in the locked environment."""
+    try:
+        from dimos.benchmark.evaluation.container import run_evaluation
+
+        exit_code = run_evaluation(
+            specification,
+            output=output,
+            api_key_env=api_key_env,
+            json_output=json_output,
+            quiet=quiet,
+        )
+    except Exception as exc:
+        typer.echo(f"Evaluation preflight failed: {type(exc).__name__}: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    if exit_code:
+        raise typer.Exit(exit_code)
+
+
+@app.command("_inside-run", hidden=True)
+def inside_run(
+    specification: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True),
+    api_key_env: str = typer.Option("OPENAI_API_KEY", "--api-key-env"),
+    output: Path = typer.Option(..., "--output"),
+    display_output: Path | None = typer.Option(None, "--display-output", hidden=True),
+    json_output: bool = typer.Option(False, "--json"),
+    quiet: bool = typer.Option(False, "--quiet"),
+) -> None:
+    """Execute the Python Evaluation runner inside the locked image."""
     renderer = None if quiet else ProgressRenderer()
     try:
         result = execute_evaluation(
@@ -63,7 +104,11 @@ def run(
         raise typer.Exit(2) from exc
     if renderer is not None:
         renderer.finish()
-    typer.echo(result.model_dump_json() if json_output else format_result(result, output))
+    typer.echo(
+        result.model_dump_json()
+        if json_output
+        else format_result(result, display_output if display_output is not None else output)
+    )
     if result.status == "cancelled":
         raise typer.Exit(130)
     if result.status == "failed":

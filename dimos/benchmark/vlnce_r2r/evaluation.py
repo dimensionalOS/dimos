@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import threading
 import time
 
@@ -99,9 +98,7 @@ class VlnceR2REvaluation:
             raise TypeError("vlnce-r2r received the wrong configuration type")
         if not isinstance(context.runtime, LiveAgentRuntime):
             raise TypeError("vlnce-r2r requires the live-agent-v1 runtime")
-        manifest_path = Path(config.task_manifest)
-        if not manifest_path.is_absolute():
-            manifest_path = context.spec_dir / manifest_path
+        manifest_path = context.spec_dir / config.task_manifest
         manifest = VlnceTaskManifest.model_validate_json(manifest_path.read_bytes())
         emit_progress(context.progress, StatusProgress(channel="eval", message="VLN-CE preflight"))
         preparation = prepare_public_assets(manifest.source, manifest.task)

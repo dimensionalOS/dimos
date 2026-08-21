@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from dimos.benchmark.libero_pro.models import LiberoTaskManifest
+from dimos.benchmark.libero_pro.models import LiberoProConfig, LiberoTaskManifest
 
 CASE = Path(__file__).parent / "cases" / "goal-task-0-single-trial" / "task.json"
 
@@ -22,3 +22,8 @@ def test_manifest_rejects_scored_row_used_for_debugging() -> None:
 
     with pytest.raises(ValueError, match="must not be used for debugging"):
         LiberoTaskManifest.model_validate(payload)
+
+
+def test_evaluation_config_rejects_absolute_task_manifest() -> None:
+    with pytest.raises(ValueError, match="safe relative path"):
+        LiberoProConfig(task_manifest="/tmp/task.json")

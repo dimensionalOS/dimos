@@ -298,3 +298,48 @@ def test_checked_in_panel_freezes_representative_contracts(
         assert manifest.contract.horizon_ticks == expected_horizons[case.family]
         assert manifest.episodes.debug_init_state_indices == (1, 2, 3, 4, 5)
         assert manifest.episodes.scored_init_state_index == 0
+
+
+def test_main_bootstraps_through_shared_evaluation_container(mocker, tmp_path: Path) -> None:
+    panel = CASES / "dev-panel.json"
+    baked_panel = Path("/opt/dimos/dimos/benchmark/libero_pro/cases/autoresearch/dev-panel.json")
+    output = tmp_path / "panel-output"
+    mocker.patch.object(autoresearch.container, "inside_container", return_value=False)
+    mocker.patch.object(autoresearch.container, "candidate_path", return_value=baked_panel)
+    run = mocker.patch.object(autoresearch.container, "run_in_container", return_value=0)
+
+    autoresearch.main(
+        [
+            "--panel",
+            str(panel),
+            "--output",
+            str(output),
+            "--api-key-env",
+            "TEST_API_KEY",
+            "--json",
+        ]
+    )
+
+    command = run.call_args.args[0](Path("/staging/result"))
+    assert command == [
+        "/opt/dimos/.venv/bin/python",
+        "-m",
+        "dimos.benchmark.libero_pro.autoresearch",
+        "--panel",
+        str(baked_panel),
+        "--output",
+        "/staging/result",
+        "--api-key-env",
+        "TEST_API_KEY",
+        "--json",
+    ]
+    assert run.call_args.kwargs == {
+        "output": output,
+        "input_directories": (),
+        "forwarded_environment": (
+            "TEST_API_KEY",
+            "EVO_RESULT_PATH",
+            "EVO_TRACES_DIR",
+            "EVO_EXPERIMENT_ID",
+        ),
+    }
