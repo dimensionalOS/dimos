@@ -22,6 +22,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.spec import mapping
 
 
@@ -65,6 +66,7 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
 
     lidar: In[PointCloud2]
     odometry: In[Odometry]
+    tf: In[TFMessage]
     global_map: Out[PointCloud2]
     local_map: Out[PointCloud2]
     region_bounds: Out[PoseStamped]

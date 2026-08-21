@@ -18,12 +18,13 @@ use std::time::Duration;
 use crate::voxel_ray_tracer::{
     batch_local_bounds, emit_points, update_map, Config, LocalBounds, VoxelMap,
 };
-use dimos_module::{error_throttled, warn_throttled, Input, Module, Output};
+use dimos_module::{error_throttled, warn_throttled, Input, Module, Output, Tf};
 use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
-use nalgebra::{UnitQuaternion, Vector3};
+use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
+use tracing::info;
 
 #[derive(Module)]
 #[module()]
@@ -48,8 +49,15 @@ pub struct RayTracingVoxelMap {
     #[config]
     config: Config,
 
+    #[tf]
+    tf: Tf,
+
     map: VoxelMap,
     poses: VecDeque<(f64, Vector3<f32>, UnitQuaternion<f32>)>,
+    /// The frame the odometry places, taken from its child_frame_id.
+    body_frame: String,
+    /// body_frame <- the frame the clouds are stamped with, resolved once from tf.
+    body_from_sensor: Option<Isometry3<f32>>,
     frame_count: u32,
     batch_points: Vec<(f32, f32, f32)>,
     batch_origins: Vec<(f32, f32, f32)>,
@@ -57,6 +65,9 @@ pub struct RayTracingVoxelMap {
 
 impl RayTracingVoxelMap {
     async fn on_odometry(&mut self, msg: Odometry) {
+        if self.body_frame.is_empty() && !msg.child_frame_id.is_empty() {
+            self.body_frame = msg.child_frame_id.clone();
+        }
         let p = &msg.pose.pose.position;
         let q = &msg.pose.pose.orientation;
         push_pose(
@@ -69,6 +80,38 @@ impl RayTracingVoxelMap {
                 )),
             ),
         );
+    }
+
+    /// The fixed body_frame <- sensor_frame mount, resolved once from tf and cached.
+    fn resolve_body_from_sensor(&mut self, sensor_frame: &str) -> Option<Isometry3<f32>> {
+        if let Some(mount) = self.body_from_sensor {
+            return Some(mount);
+        }
+        if sensor_frame.is_empty() || sensor_frame == self.body_frame {
+            let identity = Isometry3::identity();
+            self.body_from_sensor = Some(identity);
+            return Some(identity);
+        }
+        let Some(transform) = self.tf.get_latest(&self.body_frame, sensor_frame) else {
+            warn_throttled!(
+                Duration::from_secs(5),
+                body_frame = %self.body_frame,
+                sensor_frame = %sensor_frame,
+                "ray_tracing is holding clouds until tf places the sensor",
+            );
+            return None;
+        };
+        let mount = Isometry3::from_parts(
+            Translation3::from(transform.translation()),
+            transform.rotation(),
+        )
+        .cast::<f32>();
+        info!(
+            body_frame = %self.body_frame,
+            sensor_frame = %sensor_frame,
+            "ray_tracing resolved the sensor mount from tf",
+        );
+        Some(*self.body_from_sensor.insert(mount))
     }
 
     async fn on_lidar(&mut self, msg: PointCloud2) {
@@ -90,7 +133,9 @@ impl RayTracingVoxelMap {
             );
             return;
         };
-        let origin = (translation.x, translation.y, translation.z);
+        let Some(mount) = self.resolve_body_from_sensor(&msg.header.frame_id) else {
+            return;
+        };
 
         let voxel_size = self.config.voxel_size;
 
@@ -109,12 +154,18 @@ impl RayTracingVoxelMap {
             return;
         }
 
-        // Transform sensor-frame points into the world by the odom pose.
-        let rot = rotation.to_rotation_matrix();
+        // Transform sensor-frame points into the world: odom pose of the body,
+        // then the tf-resolved sensor mount.
+        let world_from_body = Isometry3::from_parts(Translation3::from(translation), rotation);
+        let world_from_sensor = world_from_body * mount;
+        let rot = world_from_sensor.rotation.to_rotation_matrix();
+        let trans = world_from_sensor.translation.vector;
+        // Rays start at the sensor, not the body center.
+        let origin = (trans.x, trans.y, trans.z);
         let points: Vec<(f32, f32, f32)> = points
             .iter()
             .map(|&(x, y, z)| {
-                let p = rot * Vector3::new(x, y, z) + translation;
+                let p = rot * Vector3::new(x, y, z) + trans;
                 (p.x, p.y, p.z)
             })
             .collect();
