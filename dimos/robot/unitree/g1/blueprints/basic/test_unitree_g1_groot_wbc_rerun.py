@@ -21,7 +21,13 @@ def test_g1_rerun_live_streams_are_bounded() -> None:
 
     assert config["memory_limit"] == "2GB"
     assert config["max_hz"]["world/lidar"] == 2.0
+    assert config["max_hz"]["world/global_map"] == 1.0
+    assert config["max_hz"]["world/global_costmap"] == 2.0
+    assert config["max_hz"]["world/navigation_costmap"] == 2.0
     assert config["max_hz"]["world/tf"] == 15.0
     assert config["max_hz"][unitree_g1_groot_wbc._G1_JOINTS_ENTITY] == 20.0
     assert "world/lidar" in config["latest_state"]
+    assert "world/global_map" in config["latest_state"]
+    assert "world/global_costmap" in config["latest_state"]
+    assert "world/navigation_costmap" in config["latest_state"]
     assert isinstance(config["visual_override"]["world/tf"], UrdfRobotTransformFilter)

@@ -564,7 +564,7 @@ _rerun_config: dict[str, Any] = {
         "world/global_costmap",
         "world/navigation_costmap",
     },
-    # Bound both the Rerun gRPC history buffer and the native viewer store.
+    # Bound Rerun's diagnostic history independently of the MuJoCo viewer.
     "memory_limit": "2GB",
     "static": _static_rerun_entities,
 }
