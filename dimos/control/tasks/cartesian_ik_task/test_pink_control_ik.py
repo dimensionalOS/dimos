@@ -29,6 +29,7 @@ from dimos.control.tasks.cartesian_ik_task.pink_control_ik import (
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.robot.assets.model import RobotModel
 
 _URDF = """\
 <robot name="tiny">
@@ -85,7 +86,7 @@ def _robot(
     joint_count = len(joint_names)
     return RobotModelConfig(
         name="tiny",
-        model_path=path,
+        model=RobotModel.from_file(path),
         base_pose=PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]),
         joint_names=joint_names,
         planning_groups=[
@@ -136,52 +137,6 @@ def test_pink_settings_use_finite_declarative_validation(tmp_path: Path) -> None
             min_dt=0.1,
             max_dt=0.01,
         )
-
-
-def test_pink_prepares_xacro_with_package_paths_and_arguments(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    model_path = _write_urdf(tmp_path)
-    package_path = tmp_path / "description"
-    package_path.mkdir()
-    robot = _robot(model_path).model_copy(
-        update={
-            "model_path": tmp_path / "robot.xacro",
-            "package_paths": {"description": package_path},
-            "xacro_args": {"dof": "2"},
-        }
-    )
-    prepared: dict[str, Any] = {}
-
-    def prepare(
-        path: Path,
-        package_paths: dict[str, Path],
-        xacro_args: dict[str, str],
-        convert_meshes: bool,
-    ) -> str:
-        prepared.update(
-            path=path,
-            package_paths=package_paths,
-            xacro_args=xacro_args,
-            convert_meshes=convert_meshes,
-        )
-        return str(model_path)
-
-    monkeypatch.setattr(
-        "dimos.control.tasks.cartesian_ik_task.pink_control_ik.prepare_urdf_for_drake",
-        prepare,
-    )
-
-    create_pink_control_ik(
-        PinkControlIKConfig(robot_model=robot),
-    )
-
-    assert prepared == {
-        "path": tmp_path / "robot.xacro",
-        "package_paths": {"description": package_path},
-        "xacro_args": {"dof": "2"},
-        "convert_meshes": False,
-    }
 
 
 def test_pink_validates_named_frame_and_exact_joint_mapping(tmp_path: Path) -> None:

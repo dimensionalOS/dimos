@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 
 import numpy as np
 from numpy.typing import NDArray
@@ -37,7 +36,6 @@ except ModuleNotFoundError as exc:
     ) from exc
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.protocol.service.spec import BaseConfig
 
 
@@ -106,18 +104,8 @@ class _PinkControlIKBuilder:
     def build(self) -> _PinkRuntime:
         config = self._config
         robot = config.robot_model
-        prepared_path = Path(
-            prepare_urdf_for_drake(
-                robot.model_path,
-                package_paths=robot.package_paths,
-                xacro_args=robot.xacro_args,
-                convert_meshes=False,
-            )
-        )
-        if not prepared_path.exists():
-            raise FileNotFoundError(f"prepared Pink control URDF not found: {prepared_path}")
-
-        model = pinocchio.buildModelFromUrdf(str(prepared_path))
+        description = robot.model.load()
+        model = pinocchio.buildModelFromXML(description.xml)
         mapping = self._build_mapping(model, robot)
         ee_frame_id = self._validate_frame(model, robot.end_effector_link)
         limits = self._apply_limits(model, mapping, robot)

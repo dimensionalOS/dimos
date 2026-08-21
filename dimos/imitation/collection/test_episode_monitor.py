@@ -24,7 +24,9 @@ state machine these events feed into `extract_episodes`.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+import threading
 
+from pydantic import ValidationError
 import pytest
 import pytest_mock
 
@@ -165,3 +167,99 @@ def test_reset_counters(make_monitor: Callable[..., EpisodeMonitorModule]) -> No
     assert status.episodes_discarded == 0
     assert status.state == "idle"
     assert status.last_event == "init"
+
+
+def test_shutdown_discards_recording(make_monitor: Callable[..., EpisodeMonitorModule]) -> None:
+    m = make_monitor()
+    _press(m, "B")
+
+    m.stop()
+
+    last = _events(m)[-1]
+    assert last.last_event == "discard"
+    assert last.state == "idle"
+    assert last.episodes_discarded == 1
+
+
+def test_invalid_button_mapping_fails_at_startup(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    with pytest.raises(ValidationError, match="unknown Quest button mappings"):
+        make_monitor(button_map={"toggle": "not_a_button"})
+
+
+def test_duplicate_button_mapping_fails_at_startup(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    with pytest.raises(ValidationError, match="distinct Quest button"):
+        make_monitor(button_map={"toggle": "B", "discard": "right_secondary"})
+
+
+def test_buttons_are_ignored_after_shutdown_begins(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+    m.stop()
+
+    _press(m, "B")
+
+    assert _events(m) == []
+    with pytest.raises(RuntimeError, match="during shutdown"):
+        m.reset_counters()
+
+
+def test_stop_waits_for_in_flight_transition_and_blocks_later_transitions(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    class TrackingLock:
+        def __init__(self) -> None:
+            self._lock = threading.Lock()
+            self.shutdown_attempted = threading.Event()
+
+        def __enter__(self) -> None:
+            if threading.current_thread().name == "episode-monitor-shutdown":
+                self.shutdown_attempted.set()
+            self._lock.acquire()
+
+        def __exit__(self, *_: object) -> None:
+            self._lock.release()
+
+    m = make_monitor()
+    transition_lock = TrackingLock()
+    m._transition_lock = transition_lock  # type: ignore[assignment]
+    m._transition("start", 1.0)
+    emit_entered = threading.Event()
+    release_emit = threading.Event()
+    stop_done = threading.Event()
+    original_emit = m._emit
+
+    def blocking_emit(status: EpisodeStatus) -> EpisodeStatus:
+        emit_entered.set()
+        assert release_emit.wait(timeout=5.0)
+        return original_emit(status)
+
+    def stop_monitor() -> None:
+        m.stop()
+        stop_done.set()
+
+    m._emit = blocking_emit  # type: ignore[method-assign]
+    transition = threading.Thread(target=m._transition, args=("save", 2.0))
+    transition.start()
+    assert emit_entered.wait(timeout=5.0)
+
+    shutdown = threading.Thread(target=stop_monitor, name="episode-monitor-shutdown")
+    shutdown.start()
+    try:
+        assert transition_lock.shutdown_attempted.wait(timeout=5.0)
+        assert not stop_done.is_set()
+    finally:
+        release_emit.set()
+    transition.join(timeout=5.0)
+    shutdown.join(timeout=5.0)
+
+    assert stop_done.is_set()
+    assert not transition.is_alive()
+    assert not shutdown.is_alive()
+    event_count = len(_events(m))
+    m._transition("start", 3.0)
+    assert len(_events(m)) == event_count

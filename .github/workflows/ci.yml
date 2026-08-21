@@ -69,6 +69,9 @@ jobs:
 
       - name: Run pre-commit
         uses: pre-commit/action@v3.0.1
+        env:
+          # clippy and fmt are checked in the rust job, so we can skip them here
+          SKIP: cargo-fmt,cargo-clippy
 
   rust:
     timeout-minutes: 30
@@ -109,6 +112,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: ${{ steps.find-crates.outputs.crates }}
+          # The bake e2e's generated crate: caching it keeps its Cargo.lock, so
+          # dependency resolution stays pinned, and its target dir of built deps.
+          cache-directories: target/dimos-bake
+          key: bake-e2e
       - name: Install Nix (with Cachix substituter)
         # Read-only substituter: pulls the flake dev shells from the cache. No
         # auth token, so this job stays unprivileged (unlike cachix-build).
@@ -183,6 +190,8 @@ jobs:
             dimos/mapping/ray_tracing/test_transformer.py \
             dimos/navigation/nav_3d/mls_planner/test_mls_planner.py \
             dimos/navigation/nav_3d/mls_planner/test_transformer.py
+      - name: Bake e2e tests
+        run: uv run pytest -m bake_e2e dimos/cli/bake/test_bake_e2e.py --no-cov
 
   cpp:
     timeout-minutes: 30
@@ -497,13 +506,13 @@ jobs:
       - name: Install dependencies
         run: uv sync --group tests --frozen
       - name: Run tests
-        run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large or web_browser)'
+        run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e)'
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf  -m 'not (self_hosted or mujoco or self_hosted_large or web_browser)' && exit 1
+          uv run pytest --no-cov -vvvvv --lf  -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e)' && exit 1
         shell: bash
       - name: Print crash diagnostics
         if: failure()
@@ -700,10 +709,7 @@ jobs:
               # Hard-cap container RAM so a runaway test OOMs inside the container, not
               # as a host global-OOM that takes out sshd/tmux.
               options: --memory=6g --memory-swap=6g
-              # Persist Nix state on the self-hosted runner's filesystem so
-              # the ~3 GB module closures survive between jobs.
               volumes:
-                - /var/cache/dimos-nix:/nix
                 - /var/cache/dimos-root-cache:/root/.cache
             markers: "self_hosted or skipif_no_ros"
             experimental: false
@@ -857,23 +863,9 @@ jobs:
         if: failure()
         run: |
           df -h
-      - name: Garbage-collect the persistent Nix store
-        # /nix is bind-mounted from the runner host's /var/cache/dimos-nix
-        # (see this job's container.volumes) so module closures survive between
-        # jobs. But every run also imports a fresh `…-source` closure of the
-        # tree — including the large data/.lfs recordings — and nothing ever
-        # reclaims them, so the store grows unbounded until jobs fail with
-        # "No space left on device". GC after each run keeps the last few days
-        # (module closures fetched from Cachix stay warm; stale source closures
-        # are freed). Runs on the Linux entry, the only one that mounts /nix and
-        # puts nix on PATH (Install Nix step above).
-        if: ${{ always() && contains(matrix.markers, 'skipif_no_ros') }}
-        run: |
-          df -h /nix || true
-          nix-collect-garbage --delete-older-than 3d
-          df -h /nix || true
       - name: Prune the persistent uv cache
-        # Same story as /nix above: lock bumps accumulate superseded wheels
+        # The cache persists on the runner (see "Point uv at a persistent
+        # cache" above), so lock bumps accumulate superseded wheels
         # forever. Drop unreachable objects each run; past 25 GB, `--ci` also
         # evicts pre-built wheels (re-downloaded on the next run) while keeping
         # the expensive wheels built from source. uv has nothing age-based.
