@@ -23,24 +23,24 @@ import pink
 
 from dimos.control.tasks.pose_target_ik import PinkPoseTargetSolver
 
-_FRAME_POSITION_COST = 8.0
-_FRAME_ORIENTATION_COST = 2.0
-_POSTURE_WEIGHTS = np.tile(
-    # Match the proven G1 bimanual tuning: stabilize shoulders and elbows
-    # while leaving the redundant elbow-roll and wrist-yaw joints nearly free.
-    np.array([4.0, 3.0, 0.1, 3.0, 1.0, 1.0, 0.1], dtype=np.float64),
-    2,
-)
-_NOMINAL_POSTURE = np.tile(
-    # Canonical zero with joint 4 moved off its lower limit. Unlike the common
-    # current-posture target, this remains stable across streaming ticks.
-    np.array([0.0, 0.0, 0.0, 0.3, 0.0, 0.0, 0.0], dtype=np.float64),
-    2,
-)
-
 
 class OpenArmPinkPoseTargetSolver(PinkPoseTargetSolver):
     """Shape OpenArm redundancy without changing common solve or safety logic."""
+
+    FRAME_POSITION_COST = 8.0
+    FRAME_ORIENTATION_COST = 2.0
+    # Match the proven G1 bimanual tuning: stabilize shoulders and elbows
+    # while leaving the redundant elbow-roll and wrist-yaw joints nearly free.
+    POSTURE_WEIGHTS = np.tile(
+        np.array([4.0, 3.0, 0.1, 3.0, 1.0, 1.0, 0.1], dtype=np.float64),
+        2,
+    )
+    # Canonical zero with joint 4 moved off its lower limit. Unlike the common
+    # current-posture target, this remains stable across streaming ticks.
+    NOMINAL_POSTURE = np.tile(
+        np.array([0.0, 0.0, 0.0, 0.3, 0.0, 0.0, 0.0], dtype=np.float64),
+        2,
+    )
 
     def _create_tasks(
         self,
@@ -51,13 +51,13 @@ class OpenArmPinkPoseTargetSolver(PinkPoseTargetSolver):
 
         for frame_name in target_frames:
             frame_task = tasks[f"frame/{frame_name}"]
-            frame_task.set_position_cost(_FRAME_POSITION_COST)
-            frame_task.set_orientation_cost(_FRAME_ORIENTATION_COST)
+            frame_task.set_position_cost(self.FRAME_POSITION_COST)
+            frame_task.set_orientation_cost(self.FRAME_ORIENTATION_COST)
 
         posture_task = tasks.get("posture/current")
         if posture_task is None:
             raise ValueError("OpenArmPinkPoseTargetSolver requires a positive posture cost")
-        posture_task.cost = self.config.posture_cost * _POSTURE_WEIGHTS
+        posture_task.cost = self.config.posture_cost * self.POSTURE_WEIGHTS
 
         return tasks
 
@@ -69,9 +69,9 @@ class OpenArmPinkPoseTargetSolver(PinkPoseTargetSolver):
         posture_task = tasks.get("posture/current")
         if not isinstance(posture_task, pink.tasks.PostureTask):
             raise ValueError("OpenArmPinkPoseTargetSolver requires a posture task")
-        if configuration.model.nq != len(_NOMINAL_POSTURE):
+        if configuration.model.nq != len(self.NOMINAL_POSTURE):
             raise ValueError(
-                f"OpenArm nominal posture has {len(_NOMINAL_POSTURE)} joints, "
+                f"OpenArm nominal posture has {len(self.NOMINAL_POSTURE)} joints, "
                 f"model has {configuration.model.nq}"
             )
-        posture_task.set_target(_NOMINAL_POSTURE)
+        posture_task.set_target(self.NOMINAL_POSTURE)

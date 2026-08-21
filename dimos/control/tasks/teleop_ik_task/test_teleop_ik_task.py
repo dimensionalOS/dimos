@@ -298,6 +298,56 @@ def test_bimanual_timeout_clears_both_sides_and_reengagement_recaptures(
     assert solver.reset.call_count >= 1
 
 
+@pytest.mark.parametrize(
+    ("bindings", "buttons"),
+    [
+        ((_binding("left", "left_tool"),), _buttons(left=True)),
+        (
+            (_binding("left", "left_tool"), _binding("right", "right_tool")),
+            _buttons(left=True, right=True),
+        ),
+    ],
+)
+def test_stale_deadman_stops_fresh_pose_streams(
+    mocker: MockerFixture,
+    bindings: tuple[TeleopHandBinding, ...],
+    buttons: Buttons,
+) -> None:
+    solver = _solver(mocker)
+    task = TeleopIKTask("quest", _config(bindings, timeout=0.2), solver=solver)
+    task.on_teleop_buttons(buttons, 1.0)
+    task.on_left_cartesian_command(_pose(0.1), 1.0)
+    if len(bindings) == 2:
+        task.on_right_cartesian_command(_pose(-0.1), 1.0)
+    assert task.compute(_state(1.0)) is not None
+
+    task.on_left_cartesian_command(_pose(0.2), 1.25)
+    if len(bindings) == 2:
+        task.on_right_cartesian_command(_pose(-0.2), 1.25)
+
+    assert task.compute(_state(1.25)) is None
+    assert not task.is_active()
+    assert solver.step.call_count == 1
+
+
+def test_fresh_deadman_keeps_pose_stream_active(mocker: MockerFixture) -> None:
+    solver = _solver(mocker)
+    task = TeleopIKTask(
+        "quest",
+        _config((_binding("left", "left_tool"),), timeout=0.2),
+        solver=solver,
+    )
+    task.on_teleop_buttons(_buttons(left=True), 1.0)
+    task.on_left_cartesian_command(_pose(0.1), 1.0)
+    assert task.compute(_state(1.0)) is not None
+
+    task.on_teleop_buttons(_buttons(left=True), 1.15)
+    task.on_left_cartesian_command(_pose(0.2), 1.25)
+
+    assert task.compute(_state(1.25)) is not None
+    assert task.is_active()
+
+
 def test_bimanual_step_contains_both_targets_and_grippers(
     mocker: MockerFixture,
 ) -> None:

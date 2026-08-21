@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from dimos.control.coordinator import TaskConfig
+from dimos.control.coordinator import ControlCoordinatorConfig, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
@@ -58,8 +58,17 @@ def _trajectory_task(*, priority: int = 10) -> TaskConfig:
     )
 
 
+class OpenArmTeleopCoordinatorConfig(ControlCoordinatorConfig):
+    """OpenArm teleop deployment configuration requiring a complete bus pair."""
+
+    left_can_port: str | None = None
+    right_can_port: str | None = None
+
+
 class OpenArmTeleopCoordinator(TeleopControlCoordinator):
     """Install the fixed OpenArm model and resolved hardware adapter."""
+
+    config: OpenArmTeleopCoordinatorConfig
 
     def _setup_from_config(self) -> None:
         self.config.tasks = [
@@ -74,7 +83,12 @@ class OpenArmTeleopCoordinator(TeleopControlCoordinator):
             else task
             for task in self.config.tasks
         ]
-        self.config.hardware = [openarm_hardware()]
+        self.config.hardware = [
+            openarm_hardware(
+                left_can_port=self.config.left_can_port,
+                right_can_port=self.config.right_can_port,
+            )
+        ]
         super()._setup_from_config()
 
 
@@ -127,11 +141,9 @@ _openarm_quest_task = TaskConfig(
 )
 
 # Safe default: both controllers feed one bimanual task backed by in-memory
-# hardware. Supplying --can-port selects the physical adapter.
+# hardware. Supplying both CAN ports selects the physical adapter.
 teleop_quest_openarm = autoconnect(
-    ArmTeleopModule.blueprint(
-        task_names={"left": OPENARM_QUEST_TASK_NAME, "right": OPENARM_QUEST_TASK_NAME}
-    ),
+    ArmTeleopModule.blueprint(),
     OpenArmTeleopCoordinator.blueprint(
         instance_name="ControlCoordinator",
         tasks=[

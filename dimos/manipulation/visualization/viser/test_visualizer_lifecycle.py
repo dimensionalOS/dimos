@@ -536,7 +536,7 @@ def test_scene_prepares_urdf_applies_base_pose_and_rejects_wrong_root(
         return description
 
     monkeypatch.setattr(
-        "dimos.manipulation.visualization.viser.scene.prepare_urdf",
+        "dimos.manipulation.visualization.viser.scene.prepare_urdf_for_drake",
         prepare,
     )
     scene = ViserManipulationScene(Server(), Urdf)

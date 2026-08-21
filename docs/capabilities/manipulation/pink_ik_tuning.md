@@ -2,7 +2,7 @@
 title: "Pink IK Configuration and Tuning"
 ---
 
-DimOS uses [Pink](https://github.com/stephane-caron/pink) for Cartesian,
+dimOS uses [Pink](https://github.com/stephane-caron/pink) for Cartesian,
 EEF-twist, and engagement-relative teleoperation control. This guide explains
 how to tune that shared backend after a robot model and control task are wired.
 For the integration steps, see [Adding a Custom Arm](/docs/capabilities/manipulation/adding_a_custom_arm.md).

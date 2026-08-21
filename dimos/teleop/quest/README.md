@@ -54,7 +54,7 @@ Specify both CAN interfaces to select real OpenArm hardware. Supplying only one
 is rejected:
 
 ```bash
-dimos run teleop-quest-openarm --left-can-port can0 --right-can-port can1
+dimos run teleop-quest-openarm --left-can-port can1 --right-can-port can0
 ```
 
 The blueprint also includes `ManipulationModule` with the same bimanual model

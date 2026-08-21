@@ -137,6 +137,7 @@ class TeleopIKTask(PoseTargetIKTask):
         }
         self._session_state = _SessionState.DISENGAGED
         self._session_epoch = 0
+        self._last_button_update_time = 0.0
         gripper_joints = tuple(
             binding.gripper_joint
             for binding in config.bindings
@@ -206,7 +207,6 @@ class TeleopIKTask(PoseTargetIKTask):
 
     def on_teleop_buttons(self, msg: Buttons, t_now: float) -> bool:
         """Update the all-bound-hands deadman condition and gripper targets."""
-        del t_now
         primary_by_hand = {
             OperatorHand.LEFT: msg.left_primary,
             OperatorHand.RIGHT: msg.right_primary,
@@ -216,6 +216,7 @@ class TeleopIKTask(PoseTargetIKTask):
             OperatorHand.RIGHT: msg.right_trigger_analog,
         }
         with self._lock:
+            self._last_button_update_time = t_now
             for hand, binding in self._bindings.items():
                 if binding.gripper_joint is None:
                     continue
@@ -243,6 +244,7 @@ class TeleopIKTask(PoseTargetIKTask):
         self._reset_command_state()
         self._session_state = state
         self._session_epoch += 1
+        self._last_button_update_time = 0.0
         self._clear_hand_session_locked()
 
     def _clear_hand_session_locked(self) -> None:
@@ -289,7 +291,7 @@ class TeleopIKTask(PoseTargetIKTask):
                 return None
             targets: dict[str, PoseStamped] = {}
             extras: dict[str, float] = {}
-            update_times: list[float] = []
+            update_times = [self._last_button_update_time]
             for hand, binding in self._bindings.items():
                 hand_state = self._hands[hand]
                 current = hand_state.latest_pose

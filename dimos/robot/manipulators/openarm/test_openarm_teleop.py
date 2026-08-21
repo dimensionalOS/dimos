@@ -23,12 +23,14 @@ from pytest_mock import MockerFixture
 from dimos.control.tasks.pose_target_ik import PoseTargetIKTaskConfig
 from dimos.control.tasks.teleop_ik_task.teleop_ik_task import TeleopIKTask
 from dimos.control.tick_loop import TickLoop
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.hardware.whole_body.spec import WholeBodyAdapter
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.manipulators.openarm.blueprints.basic import openarm_planner_coordinator
 from dimos.robot.manipulators.openarm.blueprints.teleop import (
     OPENARM_QUEST_TASK_NAME,
     OpenArmTeleopCoordinator,
@@ -122,14 +124,23 @@ def test_openarm_quest_blueprint_has_one_bimanual_mock_task() -> None:
     assert "robots" not in manipulation_kwargs
     assert manipulation_kwargs["kinematics"] == task.params["pink"]
     assert manipulation_kwargs["visualization"] == {"backend": "viser"}
-    assert teleop_kwargs["task_names"] == {
-        "left": OPENARM_QUEST_TASK_NAME,
-        "right": OPENARM_QUEST_TASK_NAME,
-    }
+    assert teleop_kwargs == {}
     assert teleop_quest_openarm.remapping_map == {
         (ArmTeleopModule.name, "left_controller_output"): "left_cartesian_command",
         (ArmTeleopModule.name, "right_controller_output"): "right_cartesian_command",
     }
+
+
+def test_openarm_can_ports_are_blueprint_cli_options() -> None:
+    for blueprint in (teleop_quest_openarm, openarm_planner_coordinator):
+        parsed = BlueprintConfigParser(blueprint).parse(
+            ["--left-can-port", "can1", "--right-can-port", "can0"],
+            environ={},
+        )
+
+        coordinator = parsed.module_kwargs("ControlCoordinator")
+        assert coordinator["left_can_port"] == "can1"
+        assert coordinator["right_can_port"] == "can0"
 
 
 def test_openarm_quest_commands_both_arms_and_grippers_through_coordinator(
