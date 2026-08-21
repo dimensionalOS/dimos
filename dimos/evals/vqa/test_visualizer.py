@@ -29,6 +29,7 @@ class FakeSession:
     def __init__(self, output: Path) -> None:
         self.output = output
         self.started = False
+        self.preload_calls = 0
         self.updated: FrameDraft | None = None
 
     def start(self) -> FakeSession:
@@ -37,6 +38,10 @@ class FakeSession:
 
     def stop(self) -> None:
         self.started = False
+
+    def preload_generation_models(self) -> None:
+        assert self.started
+        self.preload_calls += 1
 
     def state(self) -> EditorState:
         return EditorState(
@@ -74,11 +79,18 @@ def test_editor_app_serves_page_and_session_routes(tmp_path: Path) -> None:
 
     with TestClient(app) as client:
         assert session.started
+        assert session.preload_calls == 1
         page = client.get("/")
         assert page.status_code == 200
-        assert "VQA Frame Editor" in page.text
+        assert "VQA Dataset Console" in page.text
         assert client.get("/api/session").json()["image_count"] == 3
-        assert client.get("/api/frames/1").json() == {"index": 1, "questions": []}
+        assert client.get("/api/frames/1").json() == {
+            "index": 1,
+            "questions": [],
+            "depth_attempt_count": 0,
+            "depth_answered_count": 0,
+            "depth_rejections": [],
+        }
         assert client.get("/api/frames/9").status_code == 404
         assert client.get("/api/frames/3/image").status_code == 404
         generated = client.post("/api/generate", json={"start": 0, "stop": 3, "stride": 2}).json()

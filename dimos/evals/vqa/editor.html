@@ -3,36 +3,37 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DimOS VQA Editor</title>
+  <title>DimOS VQA Dataset Console</title>
   <style>
     :root {
       color-scheme: dark;
-      --ink: #eef1e8;
-      --muted: #9ca79a;
-      --paper: #111612;
-      --panel: #192019;
-      --line: #364236;
-      --acid: #d8ff55;
-      --rust: #ff744d;
-      --sky: #7ed6ff;
+      --ink: #e5e9f0;
+      --muted: #8d98a8;
+      --paper: #0c1118;
+      --panel: #121923;
+      --line: #2a3544;
+      --accent: #6fa8e8;
+      --danger: #df7b7b;
+      --info: #86a9cc;
       font-family: "IBM Plex Mono", "Liberation Mono", monospace;
     }
     * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; color: var(--ink); background: var(--paper); }
+    html, body { height: 100%; }
+    body { margin: 0; overflow: hidden; color: var(--ink); background: var(--paper); }
     button, input, select, textarea { font: inherit; }
     button { color: var(--ink); background: transparent; border: 1px solid var(--line); cursor: pointer; }
-    button:hover:not(:disabled) { border-color: var(--acid); color: var(--acid); }
+    button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
     button:disabled { opacity: .42; cursor: wait; }
-    input, select, textarea { width: 100%; color: var(--ink); background: #0c100d; border: 1px solid var(--line); padding: .7rem; }
-    input:focus, select:focus, textarea:focus { outline: 1px solid var(--acid); border-color: var(--acid); }
-    .shell { display: grid; grid-template-rows: auto 1fr; min-height: 100vh; }
-    header { display: grid; grid-template-columns: 1fr auto; gap: 1rem; align-items: end; padding: 1.1rem 1.5rem; border-bottom: 1px solid var(--line); }
-    .eyebrow { color: var(--acid); font-size: .72rem; letter-spacing: .18em; text-transform: uppercase; }
-    h1 { font: 600 clamp(1.45rem, 3vw, 2.2rem)/1.1 Georgia, serif; margin: .25rem 0 0; }
+    input, select, textarea { width: 100%; color: var(--ink); background: #0a0f16; border: 1px solid var(--line); padding: .7rem; }
+    input:focus, select:focus, textarea:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+    .shell { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100dvh; overflow: hidden; }
+    header { display: grid; grid-template-columns: 1fr auto; gap: 1rem; align-items: end; padding: .9rem 1.5rem; border-bottom: 1px solid var(--line); background: #0e141d; }
+    .eyebrow { color: var(--accent); font-size: .68rem; letter-spacing: .14em; text-transform: uppercase; }
+    h1 { margin: .25rem 0 0; font-size: clamp(1.15rem, 2vw, 1.55rem); font-weight: 600; line-height: 1.2; letter-spacing: -.02em; }
     .meta { color: var(--muted); font-size: .72rem; text-align: right; max-width: 44vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    main { display: grid; grid-template-columns: minmax(0, 1.28fr) minmax(390px, .72fr); min-height: 0; }
-    .viewer { padding: 1rem 1.5rem 1.5rem; border-right: 1px solid var(--line); min-width: 0; }
-    .toolbar { display: flex; gap: .55rem; align-items: center; margin-bottom: .8rem; }
+    main { display: grid; grid-template-columns: minmax(0, 1.28fr) minmax(390px, .72fr); min-height: 0; overflow: hidden; }
+    .viewer { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: .8rem; min-width: 0; min-height: 0; overflow: hidden; padding: 1rem 1.5rem 1.2rem; border-right: 1px solid var(--line); }
+    .toolbar { display: flex; gap: .55rem; align-items: center; }
     .toolbar button { width: 2.7rem; height: 2.7rem; font-size: 1.2rem; }
     .toolbar .primary { width: auto; }
     .frame-input { display: flex; align-items: center; gap: .5rem; width: 13rem; }
@@ -40,25 +41,28 @@
     .frame-input span { color: var(--muted); white-space: nowrap; }
     .spacer { flex: 1; }
     .badge { border: 1px solid var(--line); padding: .35rem .55rem; font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; }
-    .badge.dirty { color: var(--rust); border-color: var(--rust); }
-    .image-stage { position: relative; display: grid; place-items: center; min-height: 55vh; overflow: hidden; background: #080b09; border: 1px solid var(--line); }
+    .badge.dirty { color: var(--danger); border-color: var(--danger); }
+    .image-stage { position: relative; display: grid; place-items: center; min-height: 0; overflow: hidden; background: #070b10; border: 1px solid var(--line); }
     .image-stage::after { content: "RAW RECORDING"; position: absolute; left: .7rem; bottom: .6rem; color: var(--muted); font-size: .65rem; letter-spacing: .16em; }
-    #frame-image { display: block; max-width: 100%; max-height: 67vh; object-fit: contain; }
-    .batch { margin-top: .8rem; padding: .85rem; border: 1px solid var(--line); background: var(--panel); }
+    #frame-image { display: block; width: 100%; height: 100%; object-fit: contain; }
+    .batch { padding: .85rem; border: 1px solid var(--line); background: var(--panel); }
     .batch-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: .65rem; }
     .batch-fields { display: grid; grid-template-columns: repeat(3, 1fr) auto; gap: .6rem; align-items: end; }
     label { display: block; color: var(--muted); font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; }
     label input { margin-top: .3rem; }
-    .primary { padding: .72rem 1rem; border-color: var(--acid); color: #111; background: var(--acid); font-weight: 700; }
-    .primary:hover:not(:disabled) { color: #111; filter: brightness(.9); }
-    .questions { min-height: 0; overflow-y: auto; padding: 1rem; }
+    .primary { padding: .72rem 1rem; border-color: #3976b8; color: #f2f6fb; background: #245b94; font-weight: 600; }
+    .primary:hover:not(:disabled) { border-color: var(--accent); color: white; background: #2b68a8; }
+    .questions { height: 100%; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 1rem; scrollbar-color: #445267 var(--paper); scrollbar-width: thin; }
     .questions-head { display: flex; justify-content: space-between; align-items: center; position: sticky; top: -1rem; z-index: 4; padding: 1rem 0 .75rem; background: var(--paper); }
-    .questions-head h2 { margin: 0; font: 600 1.2rem Georgia, serif; }
-    .question { position: relative; margin-bottom: .8rem; padding: 1rem; border: 1px solid var(--line); background: var(--panel); }
-    .question-number { margin-bottom: .65rem; color: var(--sky); font-size: .68rem; letter-spacing: .1em; }
+    .questions-head h2 { margin: 0; font-size: 1rem; font-weight: 600; }
+    .depth-summary { display: none; margin-bottom: .8rem; padding: .75rem; border: 1px solid #344b63; color: var(--info); background: #101923; font-size: .75rem; line-height: 1.55; }
+    .depth-summary.show { display: block; }
+    .question { position: relative; margin-bottom: .7rem; padding: .85rem; border: 1px solid var(--line); background: var(--panel); }
+    .question-number { margin-bottom: .65rem; color: var(--info); font-size: .68rem; letter-spacing: .1em; }
     .delete { position: absolute; top: .6rem; right: .6rem; border: 0; color: var(--muted); font-size: 1.1rem; }
-    textarea { min-height: 4.4rem; resize: vertical; }
-    .choices { display: grid; gap: .4rem; margin: .7rem 0; }
+    .question textarea, .question input, .question select { padding: .5rem .6rem; font-size: .8rem; }
+    textarea { min-height: 3.5rem; resize: vertical; }
+    .choices { display: grid; gap: .35rem; margin: .6rem 0; }
     .choice { display: grid; grid-template-columns: 1fr auto; gap: .35rem; }
     .choice button { width: 2.45rem; }
     .add-choice { width: 100%; padding: .5rem; border-style: dashed; }
@@ -66,27 +70,28 @@
     .empty { padding: 3rem 1rem; color: var(--muted); border: 1px dashed var(--line); text-align: center; line-height: 1.6; }
     .footer-actions { position: sticky; bottom: -1rem; display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; padding: .9rem 0 1rem; background: linear-gradient(transparent, var(--paper) 18%); }
     .footer-actions button { padding: .8rem; }
-    #toast { position: fixed; left: 50%; bottom: 1.2rem; z-index: 20; transform: translateX(-50%) translateY(5rem); padding: .75rem 1rem; color: #111; background: var(--acid); box-shadow: 0 6px 30px #0008; transition: transform .2s; }
+    #toast { position: fixed; left: 50%; bottom: 1.2rem; z-index: 20; transform: translateX(-50%) translateY(5rem); padding: .75rem 1rem; color: white; background: #245b94; box-shadow: 0 6px 24px #0008; transition: transform .2s; }
     #toast.show { transform: translateX(-50%) translateY(0); }
-    #toast.error { color: white; background: var(--rust); }
+    #toast.error { color: white; background: #9b4141; }
     @media (max-width: 850px) {
-      header { grid-template-columns: 1fr; }
+      header { grid-template-columns: 1fr; gap: .35rem; padding: .65rem .8rem; }
       .meta { max-width: 100%; text-align: left; }
-      main { display: block; }
-      .viewer { border-right: 0; border-bottom: 1px solid var(--line); padding: .8rem; }
-      .image-stage { min-height: 35vh; }
-      #frame-image { max-height: 52vh; }
+      main { grid-template-columns: 1fr; grid-template-rows: minmax(300px, 52%) minmax(0, 1fr); }
+      .viewer { gap: .55rem; padding: .65rem .8rem; border-right: 0; border-bottom: 1px solid var(--line); }
+      .toolbar { flex-wrap: wrap; }
+      .toolbar .spacer { display: none; }
+      .frame-input { flex: 1; width: auto; }
       .batch-fields { grid-template-columns: repeat(3, 1fr); }
       .batch-fields button { grid-column: 1 / -1; }
-      .questions { overflow: visible; padding: .8rem; }
-      .questions-head { top: 0; }
+      .questions { padding: .8rem; }
+      .questions-head { top: -.8rem; }
     }
   </style>
 </head>
 <body>
   <div class="shell">
     <header>
-      <div><div class="eyebrow">Dataset workshop</div><h1>VQA Frame Editor</h1></div>
+      <div><div class="eyebrow">DimOS / VQA dataset</div><h1>VQA Dataset Console</h1></div>
       <div class="meta"><div id="recording">Loading recording...</div><div id="output"></div></div>
     </header>
     <main>
@@ -112,6 +117,7 @@
       </section>
       <section class="questions">
         <div class="questions-head"><h2><span id="question-count">0</span> questions</h2><span id="dirty-count" class="badge">Saved</span></div>
+        <div id="depth-summary" class="depth-summary"></div>
         <div id="question-list"></div>
         <div class="footer-actions">
           <button id="add-question">+ Add question</button>
@@ -167,7 +173,11 @@
         choices: [...card.querySelectorAll(".choice input")].map(input => input.value.trim()),
         answer: card.querySelector("select").value
       }));
-      return {index: current, questions};
+      return {
+        ...draft,
+        index: current,
+        questions
+      };
     }
 
     async function saveDraft() {
@@ -191,6 +201,16 @@
       const list = $("question-list");
       list.innerHTML = "";
       $("question-count").textContent = draft.questions.length;
+      const depthSummary = $("depth-summary");
+      if (draft.depth_attempt_count) {
+        const rejected = draft.depth_attempt_count - draft.depth_answered_count;
+        const reasons = draft.depth_rejections.map(reason => `<div>&middot; ${escapeHtml(reason)}</div>`).join("");
+        depthSummary.innerHTML = `<strong>DEPTH</strong> ${draft.depth_answered_count}/${draft.depth_attempt_count} accepted, ${rejected} rejected${reasons}`;
+        depthSummary.className = "depth-summary show";
+      } else {
+        depthSummary.innerHTML = "";
+        depthSummary.className = "depth-summary";
+      }
       if (!draft.questions.length) {
         list.innerHTML = '<div class="empty">No questions for this frame.<br>Generate calibrated questions or add one manually.</div>';
       }
@@ -223,7 +243,9 @@
       row.className = "choice";
       row.innerHTML = `<input aria-label="Choice ${index + 1}" value="${escapeAttr(value)}"><button title="Remove choice" ${question.choices.length <= 2 ? "disabled" : ""}>&times;</button>`;
       row.querySelector("input").oninput = event => {
+        const previousChoice = question.choices[index];
         question.choices[index] = event.target.value;
+        if (question.answer === previousChoice) question.answer = event.target.value;
         markDirty(); syncAnswers(row.closest(".question"), question);
       };
       row.querySelector("button").onclick = () => {

@@ -66,6 +66,7 @@ def create_editor_app(session: VqaEditorSession) -> FastAPI:
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         session.start()
         try:
+            session.preload_generation_models()
             yield
         finally:
             session.stop()
