@@ -22,6 +22,7 @@ from typing import Any
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators._modeling import base_pose
 from dimos.utils.data import LfsPath
 
@@ -85,7 +86,10 @@ def openarm_model_config(side: str, name: str | None = None) -> RobotModelConfig
     local_joint_names = openarm_joints(side)
     return RobotModelConfig(
         name=resolved_name,
-        model_path=OPENARM_LEFT_MODEL if side == "left" else OPENARM_RIGHT_MODEL,
+        model=RobotModel.from_file(
+            OPENARM_LEFT_MODEL if side == "left" else OPENARM_RIGHT_MODEL,
+            package_paths=OPENARM_PACKAGE_PATHS,
+        ),
         base_pose=base_pose(),
         joint_names=local_joint_names,
         base_link="openarm_body_link0",
@@ -97,7 +101,6 @@ def openarm_model_config(side: str, name: str | None = None) -> RobotModelConfig
                 tip_link=f"openarm_{side}_link7",
             )
         ],
-        package_paths=OPENARM_PACKAGE_PATHS,
         collision_exclusion_pairs=OPENARM_COLLISION_EXCLUSIONS,
         auto_convert_meshes=True,
         max_velocity=0.5,
@@ -123,7 +126,10 @@ def openarm_single_model_config() -> RobotModelConfig:
     local_joint_names = openarm_joints("left")
     return RobotModelConfig(
         name="arm",
-        model_path=OPENARM_V10_FK_MODEL,
+        model=RobotModel.from_file(
+            OPENARM_V10_FK_MODEL,
+            package_paths=OPENARM_PACKAGE_PATHS,
+        ),
         base_pose=base_pose(),
         joint_names=local_joint_names,
         base_link="openarm_body_link0",
@@ -135,7 +141,6 @@ def openarm_single_model_config() -> RobotModelConfig:
                 tip_link="openarm_left_link7",
             )
         ],
-        package_paths=OPENARM_PACKAGE_PATHS,
         auto_convert_meshes=True,
         max_velocity=0.5,
         max_acceleration=1.0,
