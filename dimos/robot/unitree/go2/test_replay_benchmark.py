@@ -189,7 +189,6 @@ def test_go2_replay_realtime_load() -> None:
         with lock:
             if not any(counts.values()):
                 mark("first frame")
-                _heartbeat("first frame")
             counts[name] += 1
 
     # Same topics and backend the blueprint materializes for these
@@ -205,14 +204,9 @@ def test_go2_replay_realtime_load() -> None:
 
     def sample_peaks() -> None:
         nonlocal peak_anon, peak_tasks
-        ticks = 0
         while not stop_sampling.wait(0.1):
-            if METRICS_PATH:
-                peak_anon = max(peak_anon, _cgroup_anon_bytes())
-                peak_tasks = max(peak_tasks, _cgroup_tasks())
-            ticks += 1
-            if ticks % 150 == 0:
-                _heartbeat(f"counts={counts}")
+            peak_anon = max(peak_anon, _cgroup_anon_bytes())
+            peak_tasks = max(peak_tasks, _cgroup_tasks())
 
     sampler = threading.Thread(target=sample_peaks, daemon=True)
 
@@ -230,24 +224,23 @@ def test_go2_replay_realtime_load() -> None:
         "run",
         "unitree-go2",
     ]
-    _heartbeat("spawning dimos")
     mark("start")
-    sampler.start()
+    if METRICS_PATH:
+        sampler.start()
     proc = subprocess.Popen(cmd)
     try:
         try:
             returncode = proc.wait(timeout=RUN_TIMEOUT)
         except subprocess.TimeoutExpired:
-            _heartbeat(f"deadline hit: counts={counts}")
             pytest.fail(
                 f"dimos did not exit within {RUN_TIMEOUT:.0f}s: counts={counts}, "
                 f"expected~{expected}"
             )
         mark("end")
-        _heartbeat(f"dimos exited {returncode}: counts={counts}")
     finally:
         stop_sampling.set()
-        sampler.join(timeout=5)
+        if sampler.is_alive():
+            sampler.join(timeout=5)
         if proc.poll() is None:
             # SIGINT first: the CLI's ctrl-c path stops the modules cleanly.
             proc.send_signal(signal.SIGINT)
@@ -259,7 +252,7 @@ def test_go2_replay_realtime_load() -> None:
         for transport in transports:
             transport.stop()
 
-    assert returncode == 0, f"dimos exited with {returncode}"
+    assert returncode == 0, f"dimos exited with {returncode}: counts={counts}"
     low = {name: (counts[name], floors[name]) for name in floors if counts[name] < floors[name]}
     assert not low, f"floors not met (got, floor): {low}, expected~{expected}"
 
