@@ -54,14 +54,21 @@ dimos evals vqa edit /path/to/calibrated-recording.db /path/to/vqa-dataset
 The interface runs on `http://127.0.0.1:8765` by default; use `--port` to select another local port.
 Frame navigation displays raw recorded images. Generating a single frame or a `start`, `stop`,
 `stride` range applies the normal rectification and image/point-cloud question pipelines only to the
-selected frames.
+selected frames. Range generation advances the editor as each frame completes and reports progress
+without waiting for the full range to finish.
+
+Recordings with world-frame LiDAR and odometry also display a cached global top-down LiDAR map. The
+editor builds the map once at startup, then crops it around the selected frame's synchronized robot
+pose. The map panel remains available as an empty status panel when a frame has no synchronized
+odometry; incompatible or missing optional map streams do not prevent normal editing.
 
 Questions, choices, and ground-truth answers can be edited, added, or removed. Navigation retains
 drafts in the editor process but does not modify dataset files. A nonexistent output directory is
 created as a blank workspace; an empty directory is also accepted. **Submit dataset** creates or
 updates `cases.jsonl` and `labels.jsonl`, writes rectified assets for edited frames, and preserves all
 untouched cases and assets when editing an existing dataset. Partially initialized or nonempty
-non-dataset directories are rejected rather than overwritten.
+non-dataset directories are rejected rather than overwritten. An output directory can be open in
+only one editor process at a time, preventing concurrent submissions from overwriting each other.
 
 ## Question Families
 

@@ -18,15 +18,22 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
+import fcntl
+import hashlib
+from io import BytesIO
+from itertools import islice
 import json
+import math
 from pathlib import Path, PurePosixPath
 import re
 import shutil
 import tempfile
 from threading import RLock
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, BinaryIO
 
 import jsonlines
+import numpy as np
+from PIL import Image as PILImage, ImageDraw
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from dimos.evals.vqa.contracts import NonEmptyString
@@ -41,6 +48,7 @@ from dimos.evals.vqa.generate import (
 from dimos.evals.vqa.pointcloud_frame import (
     PointCloudFrameLoader,
     PointCloudFrameUnavailableError,
+    TopDownFrame,
 )
 
 if TYPE_CHECKING:
@@ -97,6 +105,8 @@ class EditorState(BaseModel):
     recording: str
     output: Path
     image_count: int
+    total_questions: int
+    has_topdown: bool
     existing_frames: tuple[int, ...]
     dirty_frames: tuple[int, ...]
 
@@ -133,6 +143,8 @@ class VqaEditorSession:
         self._dirty: set[int] = set()
         self._image_count: int | None = None
         self._models: tuple[Any, Any, Any, Any] | None = None
+        self._loaded_dataset_version: tuple[bytes | None, bytes | None] = (None, None)
+        self._dataset_lock: BinaryIO | None = None
         self._lock = RLock()
 
     def __enter__(self) -> VqaEditorSession:
@@ -144,21 +156,40 @@ class VqaEditorSession:
     def start(self) -> VqaEditorSession:
         """Open recording streams and initialize or load the target dataset."""
         with self._lock:
-            self._load_dataset()
-            self._preprocessor.start()
-            self._image_count = self._preprocessor.image_count
+            if self._image_count is not None:
+                return self
+            self._acquire_dataset_lock()
+            try:
+                self._load_dataset()
+                self._loaded_dataset_version = _dataset_version(self.output)
+                self._preprocessor.start()
+                self._image_count = self._preprocessor.image_count
+            except BaseException:
+                try:
+                    self._preprocessor.stop()
+                finally:
+                    self._image_count = None
+                    self._release_dataset_lock()
+                raise
         return self
 
     def stop(self) -> None:
         """Release recording and optional model resources."""
         with self._lock:
-            self._preprocessor.stop()
-            self._image_count = None
-            if self._models is not None:
-                author_model, detector_model, _, _ = self._models
-                author_model.stop()
-                detector_model.stop()
-                self._models = None
+            try:
+                self._preprocessor.stop()
+            finally:
+                self._image_count = None
+                models, self._models = self._models, None
+                try:
+                    if models is not None:
+                        author_model, detector_model, _, _ = models
+                        try:
+                            author_model.stop()
+                        finally:
+                            detector_model.stop()
+                finally:
+                    self._release_dataset_lock()
 
     def preload_generation_models(self) -> None:
         """Load the editor's local generation models before serving requests."""
@@ -169,10 +200,16 @@ class VqaEditorSession:
     def state(self) -> EditorState:
         """Return immutable metadata used to initialize the browser."""
         with self._lock:
+            dirty = set(self._dirty)
+            total_questions = sum(
+                _case_frame_index(case) not in dirty for case in self._cases
+            ) + sum(len(self._drafts[index].questions) for index in dirty)
             return EditorState(
                 recording=self.recording,
                 output=self.output,
                 image_count=self._require_image_count(),
+                total_questions=total_questions,
+                has_topdown=getattr(self._preprocessor, "topdown_available", False),
                 existing_frames=tuple(sorted(self._existing_frame_indices())),
                 dirty_frames=tuple(sorted(self._dirty)),
             )
@@ -182,6 +219,12 @@ class VqaEditorSession:
         with self._lock:
             self._validate_index(frame_index)
             return self._preprocessor.load_raw_image(frame_index)
+
+    def topdown_image(self, frame_index: int) -> bytes:
+        """Render synchronized world-frame LiDAR and robot pose as a PNG."""
+        with self._lock:
+            self._validate_index(frame_index)
+            return _render_topdown(self._preprocessor.load_topdown(frame_index))
 
     def draft(self, frame_index: int) -> FrameDraft:
         """Return a generated/edited draft or derive it from existing cases."""
@@ -211,11 +254,16 @@ class VqaEditorSession:
 
     def generate(self, indices: Iterable[int]) -> tuple[FrameDraft, ...]:
         """Generate and retain drafts for selected recording frame indices."""
-        selected = tuple(indices)
-        if not selected:
-            raise ValueError("generation selected no frames")
-        generated: list[FrameDraft] = []
+        staged: list[tuple[int, FrameDraft, GeneratedFrame]] = []
         with self._lock:
+            image_count = self._require_image_count()
+            if isinstance(indices, range) and len(indices) > image_count:
+                raise ValueError("generation selected more frames than the recording contains")
+            selected = tuple(islice(indices, image_count + 1))
+            if not selected:
+                raise ValueError("generation selected no frames")
+            if len(selected) > image_count:
+                raise ValueError("generation selected more frames than the recording contains")
             for index in selected:
                 self._validate_index(index)
             for index in selected:
@@ -227,17 +275,18 @@ class VqaEditorSession:
                     source = GenerationFrame(index, calibrated.image, calibrated)
                 frame = self._generate(source)
                 labels = {label.id: label.answer for label in frame.labels}
+                questions = tuple(
+                    EditableQuestion(
+                        id=case.id,
+                        question=case.question,
+                        choices=case.choices,
+                        answer=labels[case.id],
+                    )
+                    for case in frame.cases
+                )
                 draft = FrameDraft(
                     index=index,
-                    questions=tuple(
-                        EditableQuestion(
-                            id=case.id,
-                            question=case.question,
-                            choices=case.choices,
-                            answer=labels[case.id],
-                        )
-                        for case in frame.cases
-                    ),
+                    questions=questions or self.draft(index).questions,
                     depth_attempt_count=sum(_is_depth_audit_row(row) for row in frame.audit_rows),
                     depth_answered_count=sum(
                         _is_depth_audit_row(row) and row.get("status") == "answered"
@@ -251,11 +300,12 @@ class VqaEditorSession:
                         and "reason" in row
                     ),
                 )
+                staged.append((index, draft, frame))
+            for index, draft, frame in staged:
                 self._drafts[index] = draft
                 self._generated_frames[index] = frame
                 self._dirty.add(index)
-                generated.append(draft)
-        return tuple(generated)
+        return tuple(draft for _, draft, _ in staged)
 
     def submit(self) -> SubmitResult:
         """Merge dirty frame drafts into the target dataset with atomic file writes."""
@@ -263,6 +313,10 @@ class VqaEditorSession:
             dirty = set(self._dirty)
             if not dirty:
                 return SubmitResult(output=self.output, frame_count=0, question_count=0)
+            if _dataset_version(self.output) != self._loaded_dataset_version:
+                raise RuntimeError(
+                    "VQA dataset changed on disk; restart the editor before submitting"
+                )
 
             cases = [case for case in self._cases if _case_frame_index(case) not in dirty]
             labels = {case.id: self._labels[case.id] for case in cases}
@@ -339,8 +393,10 @@ class VqaEditorSession:
                     self.output / "cases.jsonl",
                     (case.model_dump(mode="json") for case in cases),
                 )
+                new_dataset_version = _dataset_version(self.output)
             self._cases = cases
             self._labels = labels
+            self._loaded_dataset_version = new_dataset_version
             for index in dirty:
                 self._generated_frames.pop(index, None)
             self._dirty.clear()
@@ -382,11 +438,44 @@ class VqaEditorSession:
             raise ValueError("VQA dataset contains duplicate question IDs")
         if set(labels) != {case.id for case in cases}:
             raise ValueError("VQA case and label IDs do not match")
+        for case in cases:
+            image_path = PurePosixPath(case.image)
+            if image_path.is_absolute() or ".." in image_path.parts:
+                raise ValueError(f"VQA case has unsafe image path: {case.image!r}")
+            EditableQuestion(
+                id=case.id,
+                question=case.question,
+                choices=case.choices,
+                answer=labels[case.id].answer,
+            )
         self._cases = cases
         self._labels = labels
 
     def _existing_frame_indices(self) -> set[int]:
         return {index for case in self._cases if (index := _case_frame_index(case)) is not None}
+
+    def _acquire_dataset_lock(self) -> None:
+        if self._dataset_lock is not None:
+            return
+        self.output.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = self.output.parent / f".{self.output.name}.editor.lock"
+        handle = lock_path.open("a+b")
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            handle.close()
+            raise RuntimeError(
+                f"VQA dataset is already open in another editor: {self.output}"
+            ) from exc
+        self._dataset_lock = handle
+
+    def _release_dataset_lock(self) -> None:
+        handle, self._dataset_lock = self._dataset_lock, None
+        if handle is not None:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_UN)
+            finally:
+                handle.close()
 
     def _validate_index(self, frame_index: int) -> None:
         image_count = self._require_image_count()
@@ -423,15 +512,16 @@ class VqaEditorSession:
             try:
                 detector_model.start()
                 segmenter = EdgeTAMImageSegmenter()
+                mask_estimator = EdgeTAMObjectMaskPipeline(detector_model, segmenter)
+                range_estimator = LidarRangeEstimator(mask_estimator)
             except Exception:
                 author_model.stop()
                 detector_model.stop()
                 raise
-            mask_estimator = EdgeTAMObjectMaskPipeline(detector_model, segmenter)
             self._models = (
                 author_model,
                 detector_model,
-                LidarRangeEstimator(mask_estimator),
+                range_estimator,
                 mask_estimator,
             )
         author_model, detector_model, range_estimator, mask_estimator = self._models
@@ -441,6 +531,89 @@ class VqaEditorSession:
             range_estimator,
             mask_estimator,
         )
+
+
+def _render_topdown(frame: TopDownFrame, width: int = 960, height: int = 480) -> bytes:
+    """Render a robot-centered crop from the cached global LiDAR map."""
+    robot_x, robot_y = frame.pose.x, frame.pose.y
+    half_width_m = 6.0
+    half_height_m = half_width_m * height / width
+    scale = width / (2 * half_width_m)
+    lidar_map = frame.lidar_map
+    crop_width = round(2 * half_width_m / lidar_map.resolution)
+    crop_height = round(2 * half_height_m / lidar_map.resolution)
+    center_x = (robot_x - lidar_map.origin_x) / lidar_map.resolution
+    center_y = (robot_y - lidar_map.origin_y) / lidar_map.resolution
+    source_x0 = round(center_x - crop_width / 2)
+    source_y0 = round(center_y - crop_height / 2)
+    source_x1 = source_x0 + crop_width
+    source_y1 = source_y0 + crop_height
+    map_height, map_width = lidar_map.hits.shape
+    clipped_x0, clipped_x1 = max(0, source_x0), min(map_width, source_x1)
+    clipped_y0, clipped_y1 = max(0, source_y0), min(map_height, source_y1)
+    cropped = np.zeros((crop_height, crop_width), dtype=lidar_map.hits.dtype)
+    if clipped_x1 > clipped_x0 and clipped_y1 > clipped_y0:
+        target_x0, target_y0 = clipped_x0 - source_x0, clipped_y0 - source_y0
+        cropped[
+            target_y0 : target_y0 + clipped_y1 - clipped_y0,
+            target_x0 : target_x0 + clipped_x1 - clipped_x0,
+        ] = lidar_map.hits[clipped_y0:clipped_y1, clipped_x0:clipped_x1]
+
+    pixels = np.full((crop_height, crop_width, 3), 21, dtype=np.uint8)
+    occupied = cropped > 0
+    intensity = np.clip(105 + np.log1p(cropped) * 24, 0, 193).astype(np.uint8)
+    pixels[occupied] = np.repeat(intensity[occupied][:, None], 3, axis=1)
+    image = PILImage.fromarray(np.flipud(pixels), mode="RGB").resize(
+        (width, height), PILImage.Resampling.NEAREST
+    )
+    draw = ImageDraw.Draw(image)
+
+    def pixel(x: float, y: float) -> tuple[int, int]:
+        return (
+            round(width / 2 + (x - robot_x) * scale),
+            round(height / 2 - (y - robot_y) * scale),
+        )
+
+    for world_x in range(math.floor(robot_x - half_width_m), math.ceil(robot_x + half_width_m)):
+        x, _ = pixel(float(world_x), robot_y)
+        draw.line((x, 0, x, height), fill="#2b2b2b")
+    for world_y in range(math.floor(robot_y - half_height_m), math.ceil(robot_y + half_height_m)):
+        _, y = pixel(robot_x, float(world_y))
+        draw.line((0, y, width, y), fill="#2b2b2b")
+
+    yaw = frame.pose.yaw
+    cosine, sine = math.cos(yaw), math.sin(yaw)
+    footprint = []
+    for local_x, local_y in ((0.35, 0.2), (0.35, -0.2), (-0.35, -0.2), (-0.35, 0.2)):
+        footprint.append(
+            pixel(
+                robot_x + local_x * cosine - local_y * sine,
+                robot_y + local_x * sine + local_y * cosine,
+            )
+        )
+    draw.polygon(footprint, fill="#404040", outline="#b0e1f0", width=3)
+    center = pixel(robot_x, robot_y)
+    heading = pixel(robot_x + cosine, robot_y + sine)
+    draw.line((*center, *heading), fill="#b0e1f0", width=4)
+    draw.ellipse(
+        (heading[0] - 5, heading[1] - 5, heading[0] + 5, heading[1] + 5),
+        fill="#b0e1f0",
+    )
+    draw.text((12, 10), "GLOBAL LIDAR MAP / 1M GRID", fill="#b0e1f0")
+    draw.text((12, height - 22), "12M x 6M / FULL RECORDING", fill="#c1c1c1")
+
+    output = BytesIO()
+    image.save(output, format="PNG")
+    return output.getvalue()
+
+
+def _dataset_version(root: Path) -> tuple[bytes | None, bytes | None]:
+    """Fingerprint the files rewritten by submission to detect another editor."""
+
+    def digest(path: Path) -> bytes | None:
+        return hashlib.sha256(path.read_bytes()).digest() if path.is_file() else None
+
+    return digest(root / "cases.jsonl"), digest(root / "labels.jsonl")
 
 
 def _case_frame_index(case: PublicCase) -> int | None:

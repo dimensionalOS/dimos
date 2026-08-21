@@ -25,6 +25,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from dimos.evals.vqa.editor import FrameDraft, SubmitResult, VqaEditorSession
+from dimos.evals.vqa.pointcloud_frame import PointCloudFrameUnavailableError
 from dimos.utils.logging_config import setup_logger
 
 DEFAULT_EDITOR_PORT = 8765
@@ -66,8 +67,8 @@ def create_editor_app(session: VqaEditorSession, *, ready_url: str | None = None
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        session.start()
         try:
+            session.start()
             session.preload_generation_models()
             logger.info(f"VQA editor ready: {ready_url}" if ready_url else "VQA editor ready")
             yield
@@ -98,6 +99,16 @@ def create_editor_app(session: VqaEditorSession, *, ready_url: str | None = None
         except (IndexError, LookupError, ValueError) as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return Response(data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/frames/{frame_index}/topdown")
+    def topdown(frame_index: int) -> Response:
+        try:
+            data = session.topdown_image(frame_index)
+        except PointCloudFrameUnavailableError:
+            return Response(status_code=204)
+        except (IndexError, LookupError, RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return Response(data, media_type="image/png", headers={"Cache-Control": "no-store"})
 
     @app.put("/api/frames/{frame_index}")
     def update_frame(frame_index: int, draft: FrameDraft) -> FrameDraft:

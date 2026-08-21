@@ -22,6 +22,7 @@ import numpy as np
 
 from dimos.evals.vqa import visualizer
 from dimos.evals.vqa.editor import EditorState, FrameDraft, SubmitResult
+from dimos.evals.vqa.pointcloud_frame import PointCloudFrameUnavailableError
 from dimos.evals.vqa.visualizer import create_editor_app
 from dimos.msgs.sensor_msgs.Image import Image
 
@@ -49,6 +50,8 @@ class FakeSession:
             recording="recording.db",
             output=self.output,
             image_count=3,
+            total_questions=2,
+            has_topdown=True,
             existing_frames=(1,),
             dirty_frames=(),
         )
@@ -62,6 +65,13 @@ class FakeSession:
         if frame_index >= 3:
             raise IndexError("out of range")
         return Image.from_numpy(np.zeros((2, 2, 3), dtype=np.uint8))
+
+    def topdown_image(self, frame_index: int) -> bytes:
+        if frame_index == 0:
+            raise PointCloudFrameUnavailableError("no synchronized odometry")
+        if frame_index >= 3:
+            raise IndexError("out of range")
+        return b"top-down-png"
 
     def replace_draft(self, draft: FrameDraft) -> FrameDraft:
         self.updated = draft
@@ -93,7 +103,8 @@ def test_editor_app_serves_page_and_session_routes(tmp_path: Path, monkeypatch: 
         page = client.get("/")
         assert page.status_code == 200
         assert "VQA Dataset Console" in page.text
-        assert client.get("/api/session").json()["image_count"] == 3
+        assert 'id="generation-status"' in page.text
+        assert client.get("/api/session").json()["total_questions"] == 2
         assert client.get("/api/frames/1").json() == {
             "index": 1,
             "questions": [],
@@ -103,6 +114,10 @@ def test_editor_app_serves_page_and_session_routes(tmp_path: Path, monkeypatch: 
         }
         assert client.get("/api/frames/9").status_code == 404
         assert client.get("/api/frames/3/image").status_code == 404
+        assert client.get("/api/frames/0/topdown").status_code == 204
+        topdown = client.get("/api/frames/1/topdown")
+        assert topdown.headers["content-type"] == "image/png"
+        assert topdown.content == b"top-down-png"
         generated = client.post("/api/generate", json={"start": 0, "stop": 3, "stride": 2}).json()
         assert [draft["index"] for draft in generated] == [0, 2]
         assert client.post("/api/submit").json()["question_count"] == 2
