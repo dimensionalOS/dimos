@@ -19,7 +19,7 @@ use crate::edges::{edges_to_segments, PlannerGraph};
 use crate::mls_planner::{Config, Planner, RegionBounds};
 use crate::voxel::surface_point_xyz;
 use dimos_module::{error_throttled, warn_throttled, Input, Module, Output, Tf};
-use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion};
+use lcm_msgs::geometry_msgs::{Point, PointStamped, Pose, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::Path;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
@@ -57,8 +57,8 @@ pub struct MlsPlanner {
     #[input(decode = PoseStamped::decode, handler = on_region_bounds)]
     region_bounds: Input<PoseStamped>,
 
-    #[input(decode = PoseStamped::decode, handler = on_goal_pose)]
-    goal_pose: Input<PoseStamped>,
+    #[input(decode = PointStamped::decode, handler = on_goal)]
+    goal: Input<PointStamped>,
 
     #[tf]
     tf: Tf,
@@ -144,8 +144,8 @@ impl MlsPlanner {
     }
 
     /// Set or cancel the active goal from a click, then wake the worker.
-    async fn on_goal_pose(&mut self, msg: PoseStamped) {
-        *self.active_goal.lock().expect("goal mutex") = goal_position(&msg.pose.position);
+    async fn on_goal(&mut self, msg: PointStamped) {
+        *self.active_goal.lock().expect("goal mutex") = goal_position(&msg.point);
         self.wake.notify_one();
     }
 }

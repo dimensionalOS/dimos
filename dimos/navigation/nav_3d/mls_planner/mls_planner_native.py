@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.nav_msgs.Path import Path
@@ -64,7 +65,7 @@ class MLSPlannerNative(NativeModule):
     global_map: In[PointCloud2]
     local_map: In[PointCloud2]
     region_bounds: In[PoseStamped]
-    goal_pose: In[PoseStamped]
+    goal: In[PointStamped]
     tf: In[TFMessage]
 
     path: Out[Path]

@@ -14,7 +14,6 @@
 
 from typing import Any
 
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -118,19 +117,5 @@ def test_lookup_retries_are_throttled_during_an_outage() -> None:
         module._on_tf(TFMessage())
         assert captured == []
         assert tf.gets == 1
-    finally:
-        module.stop()
-
-
-def test_goal_points_relay_as_poses() -> None:
-    module, _ = _relay(FakeTF())
-    goals: list[PoseStamped] = []
-    module.goal_pose.subscribe(goals.append)
-    try:
-        module._on_goal(PointStamped(1.0, 2.0, 3.0, ts=5.0, frame_id="odom"))
-        assert len(goals) == 1
-        assert abs(goals[0].position.x - 1.0) < 1e-9
-        assert abs(goals[0].position.z - 3.0) < 1e-9
-        assert goals[0].frame_id == "odom"
     finally:
         module.stop()

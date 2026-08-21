@@ -33,7 +33,6 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.basic_path_follower.module import BasicPathFollower
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.nav_3d.mls_planner.goal_relay import GoalRelay
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.nav_3d.mls_planner.viz import planner_visual_override
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
@@ -170,7 +169,6 @@ unitree_go2_nav_3d = autoconnect(
         step_penalty_weight=4.0,
         viz_publish_hz=planner_viz_hz,
     ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")]),
-    GoalRelay.blueprint(),
     BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6),
     MovementManager.blueprint(),
 ).global_config(n_workers=10, robot_model="unitree_go2", obstacle_avoidance=False)

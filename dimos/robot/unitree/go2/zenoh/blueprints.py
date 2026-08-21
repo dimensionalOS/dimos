@@ -21,7 +21,7 @@ so a failure can be bisected by dropping down a level:
 
 - ``go2-zenoh-basic`` — streams plus teleop; the bridge, tf and camera, no mapping.
 - ``go2-zenoh-raycaster`` — adds :class:`RayTracingVoxelMap`.
-- ``go2-zenoh-nav`` — the full stack: planner, goal relay and path follower.
+- ``go2-zenoh-nav`` — the full stack: planner and path follower.
 - ``go2-zenoh-nav-remote`` — ``go2-zenoh-nav`` with both natives dropped, for when
   a baked host on the robot publishes their outputs.
 - ``go2-zenoh-nav-baked`` — ``go2-zenoh-nav`` with both natives replaced by the one
@@ -211,7 +211,6 @@ go2_zenoh_raycaster = autoconnect(
 go2_zenoh_nav = autoconnect(
     go2_zenoh_raycaster,
     _mls_planner,
-    GoalRelay.blueprint(),
     BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6),
     MovementManager.blueprint(),
 ).global_config(transport="zenoh", n_workers=8, robot_model="unitree_go2")
@@ -222,7 +221,6 @@ go2_zenoh_nav = autoconnect(
 go2_zenoh_nav_remote = autoconnect(
     go2_zenoh_basic,
     _raytraced_vis,
-    GoalRelay.blueprint(),
     BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6),
     MovementManager.blueprint(),
 ).global_config(transport="zenoh", n_workers=6, robot_model="unitree_go2")
@@ -243,7 +241,6 @@ go2_zenoh_nav_baked = autoconnect(
         ray_tracing_config=ray_tracing_config,
         mls_planner_config=mls_planner_config,
     ),
-    GoalRelay.blueprint(),
     BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6),
     MovementManager.blueprint(),
 ).global_config(transport="zenoh", n_workers=7, robot_model="unitree_go2")
@@ -251,6 +248,7 @@ go2_zenoh_nav_baked = autoconnect(
 go2_zenoh_htc = autoconnect(
     go2_zenoh_raycaster,
     _mls_planner.remappings([(MLSPlannerNative, "path", "planner_path")]),
+    # Solely the tf-driven start_pose source for the dannav odom remaps below.
     GoalRelay.blueprint(),
     DanLocalPlanner.blueprint(resample_spacing_m=0.1).remappings(
         [(DanLocalPlanner, "odom", "start_pose")]
