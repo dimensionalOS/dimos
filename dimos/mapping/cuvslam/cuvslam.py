@@ -112,6 +112,10 @@ def driver_cuda_major() -> int:
     return 0
 
 
+DIMSLAM_REV = "62154c984843066aa23126a4d6be6dcecad2c07b"
+"""dimSLAM rev holding the Rust cuvslam_odometry this config is written against."""
+
+
 def sdk_variant() -> str:
     """Pick the dim-slam flake attr for this host.
 
@@ -151,10 +155,11 @@ def _driver_env() -> dict[str, str]:
     return {"LD_LIBRARY_PATH": ":".join(parts)}
 
 
-# cuvslam_odometry and odometry_fusion come out of one dimSLAM derivation, so they
-# share a pin. Off the v0.2.0 tag deliberately: that tag predates odometry_fusion, so
-# pinning it would leave OdometryFusion with no binary to build. Move back to a tag once
-# dimSLAM cuts one containing both.
+# cuvslam_odometry and odometry_fusion come out of one dimSLAM derivation, so they share
+# a pin, and it moves forward from the rev basic cuVSLAM builds: this is the first one
+# carrying odometry_fusion at all. Both modules reject a config naming a field they do not
+# declare, so a config change here travels with the pin. Move back to a tag once dimSLAM
+# cuts one containing both binaries.
 DIMSLAM_REV = "395dd26664ef914dc81e5c6f38a6317ccb2ce874"
 
 
@@ -197,14 +202,6 @@ class CuvslamConfig(NativeModuleConfig):
     # filter owns odom -> base_frame, and a second publisher on that edge races it.
     publish_tf: bool = True
 
-    # Pose graph and loop closure; without it map->odom is identity.
-    enable_slam: bool = True
-    # Runs Slam on its own thread. Its GetPose() carries no timestamp, so a thread running
-    # behind cannot be matched to the odometry pose it corrects.
-    slam_async: bool = False
-    # Poses in the pose graph, not a distance. 0 is unlimited.
-    slam_max_poses: int = 300
-    slam_throttling_ms: int = 0
     # The noise model arrives on the ``imu_info`` stream, published by the driver
     # the way ``camera_info`` is; the tracker waits for it before building the rig.
     enable_imu: bool = False
