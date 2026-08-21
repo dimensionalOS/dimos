@@ -54,7 +54,7 @@ class StartRelay(Module):
     def start(self) -> None:
         super().start()
         # Build the buffer first so it subscribes ahead of _on_tf.
-        _ = self.tfbuffer
+        self.tfbuffer  # noqa: B018
         self.register_disposable(Disposable(self.tf.subscribe(self._on_tf)))
 
     def _on_tf(self, msg: TFMessage) -> None:
