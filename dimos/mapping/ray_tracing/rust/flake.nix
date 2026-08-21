@@ -36,6 +36,11 @@
 
           cargoHash = "sha256-dHh6GjpdZ+/aaurgaZKoxEc8IVqd5ZkzeXc3jfVcmH8=";
 
+          # Only the binary; the python cdylib wants libpython at link time and
+          # fails on darwin, and nothing consumes it from this output.
+          buildNoDefaultFeatures = true;
+          cargoBuildFlags = [ "--bin" "voxel_ray_tracing" ];
+
           meta.mainProgram = "voxel_ray_tracing";
         };
       });
