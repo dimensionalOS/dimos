@@ -443,7 +443,8 @@ class Recorder(MemoryModule):
         assert subscriptions is not None
 
         def on_message(msg: Any) -> None:
-            pipeline.submit(name, (time.time(), msg))
+            with pipeline.callback():
+                pipeline.submit(name, (time.time(), msg))
 
         subscription = input_topic.pure_observable().subscribe(on_message)
         subscriptions.add(subscription)

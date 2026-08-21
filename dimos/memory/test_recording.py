@@ -20,6 +20,8 @@ from typing import Any
 
 import pytest
 from pytest_mock import MockerFixture
+from reactivex.disposable import CompositeDisposable
+from reactivex.subject import Subject
 
 from dimos.memory.module import Recorder, pose_setter_for
 from dimos.memory.recording import RecordingFailedError, RecordingPipeline
@@ -140,3 +142,71 @@ def test_recorder_worker_preserves_payload_and_async_pose_setter(
         pose=Pose(1.0, 2.0, 3.0),
         tags={"reception_ts": 20.0},
     )
+
+
+def test_recorder_stop_waits_for_in_flight_callback(tmp_path: Path, mocker: MockerFixture) -> None:
+    recorder = _PoseRecorder(db_path=tmp_path / "recording.db")
+    processor = mocker.Mock()
+    pipeline = RecordingPipeline({"camera": processor})
+    subscriptions = CompositeDisposable()
+    topic = mocker.Mock()
+    subject = Subject()
+    topic.pure_observable.return_value = subject
+    callback_started = threading.Event()
+    release_callback = threading.Event()
+    close_started = threading.Event()
+    close_finished = threading.Event()
+    stop_finished = threading.Event()
+    thread_errors: list[Exception] = []
+    message = _StampedMessage()
+
+    def reception_time() -> float:
+        callback_started.set()
+        if not release_callback.wait(timeout=1.0):
+            raise TimeoutError("test did not release callback")
+        return 20.0
+
+    original_close = pipeline.close
+
+    def tracked_close() -> None:
+        close_started.set()
+        original_close(timeout_s=1.0)
+        close_finished.set()
+
+    def publish() -> None:
+        try:
+            subject.on_next(message)
+        except Exception as error:
+            thread_errors.append(error)
+
+    def stop() -> None:
+        try:
+            recorder.stop()
+        except Exception as error:
+            thread_errors.append(error)
+        finally:
+            stop_finished.set()
+
+    recorder._recording_pipeline = pipeline
+    recorder._recording_subscriptions = subscriptions
+    recorder._subscribe_port("camera", topic)
+    pipeline.start()
+    mocker.patch("dimos.memory.module.time.time", side_effect=reception_time)
+    mocker.patch.object(pipeline, "close", side_effect=tracked_close)
+    publisher = threading.Thread(target=publish)
+    stopper = threading.Thread(target=stop)
+
+    try:
+        publisher.start()
+        assert callback_started.wait(timeout=1.0)
+        stopper.start()
+        assert close_started.wait(timeout=1.0)
+        assert not close_finished.is_set()
+    finally:
+        release_callback.set()
+        publisher.join(timeout=1.0)
+        stopper.join(timeout=1.0)
+
+    assert stop_finished.is_set()
+    assert thread_errors == []
+    processor.assert_called_once_with((20.0, message))

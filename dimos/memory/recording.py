@@ -16,7 +16,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 import threading
 import time
 from typing import Any
@@ -52,6 +53,8 @@ class RecordingPipeline:
         self._ingress = DropNew[tuple[str, Any]](queue_size)
         self._failure: Exception | None = None
         self._lock = threading.Lock()
+        self._callback_condition = threading.Condition(self._lock)
+        self._active_callbacks = 0
         self._started = threading.Event()
         self._closed = threading.Event()
         self._worker: threading.Thread | None = None
@@ -70,6 +73,22 @@ class RecordingPipeline:
             self._worker.start()
             self._started.set()
 
+    @contextmanager
+    def callback(self) -> Iterator[None]:
+        """Admit one transport callback and keep shutdown behind it."""
+        with self._callback_condition:
+            self._raise_if_unavailable()
+            self._active_callbacks += 1
+        try:
+            yield
+        except Exception as error:
+            self._fail(error)
+            raise
+        finally:
+            with self._callback_condition:
+                self._active_callbacks -= 1
+                self._callback_condition.notify_all()
+
     def submit(self, stream: str, value: Any) -> None:
         with self._lock:
             self._raise_if_unavailable()
@@ -83,18 +102,23 @@ class RecordingPipeline:
         raise error
 
     def close(self, timeout_s: float = _DEFAULT_DRAIN_TIMEOUT_S) -> None:
-        with self._lock:
+        deadline = time.monotonic() + timeout_s
+        with self._callback_condition:
             if not self._started.is_set():
                 self._closed.set()
                 self._raise_if_failed()
                 return
             if not self._closed.is_set():
+                while self._active_callbacks:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise RecordingFailedError("Recorder callbacks did not stop")
+                    self._callback_condition.wait(timeout=remaining)
                 self._closed.set()
                 self._ingress.close()
             worker = self._worker
 
         if worker is not None:
-            deadline = time.monotonic() + timeout_s
             worker.join(timeout=max(0.0, deadline - time.monotonic()))
             if worker.is_alive():
                 raise RecordingFailedError("Recorder worker did not stop")
