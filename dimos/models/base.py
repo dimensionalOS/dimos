@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from functools import cached_property
+import sys
 from typing import Annotated, Any
 
 import torch
@@ -114,6 +115,16 @@ class LocalModel(Resource, Configurable):
             torch._dynamo.reset()
         except (ImportError, AttributeError):
             pass
+
+        # torch.compile also spawns inductor compile-worker subprocesses whose
+        # reader thread outlives the model; shut them down (the next compile
+        # respawns them on demand).
+        if "torch._inductor.async_compile" in sys.modules:
+            # Imported lazily: importing async_compile itself spawns a worker
+            # pool, so only touch it when a compile already loaded it.
+            from torch._inductor.async_compile import shutdown_compile_workers
+
+            shutdown_compile_workers()
 
         gc.collect()
         if self.config.device.startswith("cuda") and torch.cuda.is_available():
