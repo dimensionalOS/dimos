@@ -52,8 +52,8 @@ if TYPE_CHECKING:
 TIMELINE = "ts"
 
 # Max stamp gap between a cloud and the transform used to register it (s),
-# matching the live module.
-TF_MATCH_TOLERANCE_S = 0.1
+# matching the live module: one 30 Hz odometry period.
+TF_MATCH_TOLERANCE_S = 1.0 / 30.0
 
 SENSOR_PATH_COLOR = [80, 160, 255]
 

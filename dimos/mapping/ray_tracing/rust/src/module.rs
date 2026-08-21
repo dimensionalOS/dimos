@@ -189,11 +189,12 @@ fn emit_due(frame_count: u32, every: u32) -> bool {
     every != 0 && frame_count.is_multiple_of(every)
 }
 
-/// Max stamp gap between a cloud and the transform used to register it (s).
-const TF_MATCH_TOLERANCE_S: f64 = 0.1;
+/// Max stamp gap between a cloud and the transform used to register it (s), one
+/// period of the 30 Hz odometry.
+const TF_MATCH_TOLERANCE_S: f64 = 1.0 / 30.0;
 
 /// How long to wait for a late transform before dropping a cloud.
-const TF_WAIT_TIMEOUT: Duration = Duration::from_millis(500);
+const TF_WAIT_TIMEOUT: Duration = Duration::from_millis(50);
 
 fn time_secs(t: &Time) -> f64 {
     t.sec as f64 + t.nsec as f64 * 1e-9

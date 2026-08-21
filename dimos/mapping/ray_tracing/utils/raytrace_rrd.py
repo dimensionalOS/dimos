@@ -38,8 +38,8 @@ from dimos.utils.data import resolve_named_path
 TIMELINE = "ts"
 
 # Max stamp gap between a cloud and the transform used to register it (s),
-# matching the live module.
-TF_MATCH_TOLERANCE_S = 0.1
+# matching the live module: one 30 Hz odometry period.
+TF_MATCH_TOLERANCE_S = 1.0 / 30.0
 
 COLORS = {
     "naive": [90, 200, 90],

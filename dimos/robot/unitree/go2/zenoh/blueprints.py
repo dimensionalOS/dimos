@@ -211,7 +211,7 @@ go2_zenoh_raycaster = autoconnect(
 go2_zenoh_nav = autoconnect(
     go2_zenoh_raycaster,
     _mls_planner,
-    BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6),
+    BasicPathFollower.blueprint(speed=0.5, heading_gain=1.5, max_angular=1.5),
     MovementManager.blueprint(),
 ).global_config(transport="zenoh", n_workers=8, robot_model="unitree_go2")
 
@@ -221,7 +221,7 @@ go2_zenoh_nav = autoconnect(
 go2_zenoh_nav_remote = autoconnect(
     go2_zenoh_basic,
     _raytraced_vis,
-    BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6),
+    BasicPathFollower.blueprint(speed=0.5, heading_gain=1.5, max_angular=1.5),
     MovementManager.blueprint(),
 ).global_config(transport="zenoh", n_workers=6, robot_model="unitree_go2")
 
@@ -241,7 +241,7 @@ go2_zenoh_nav_baked = autoconnect(
         ray_tracing_config=ray_tracing_config,
         mls_planner_config=mls_planner_config,
     ),
-    BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6),
+    BasicPathFollower.blueprint(speed=0.5, heading_gain=1.5, max_angular=1.5),
     MovementManager.blueprint(),
 ).global_config(transport="zenoh", n_workers=7, robot_model="unitree_go2")
 
