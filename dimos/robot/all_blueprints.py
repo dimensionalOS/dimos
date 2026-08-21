@@ -17,6 +17,7 @@
 
 all_blueprints = {
     "a1z-planner-coordinator": "dimos.robot.manipulators.a1z.blueprints.basic:a1z_planner_coordinator",
+    "alfred-mls-nav": "dimos.robot.diy.alfred.blueprints.alfred_mls_nav:alfred_mls_nav",
     "coordinator-a1z": "dimos.robot.manipulators.a1z.blueprints.basic:coordinator_a1z",
     "coordinator-basic": "dimos.control.blueprints.basic:coordinator_basic",
     "coordinator-cartesian-ik-mock": "dimos.robot.manipulators.piper.blueprints.teleop:coordinator_cartesian_ik_mock",
@@ -253,6 +254,7 @@ all_modules = {
     "object-tracker2-d": "dimos.perception.experimental.object_tracker_2d.ObjectTracker2D",
     "object-tracker3-d": "dimos.perception.experimental.object_tracker_3d.ObjectTracker3D",
     "object-tracking": "dimos.perception.experimental.object_tracker.ObjectTracking",
+    "odometry-fusion": "dimos.mapping.odometry_fusion.odometry_fusion.OdometryFusion",
     "odometry-hist": "dimos.mapping.odometry_hist.OdometryHist",
     "osm-skill": "dimos.agents.skills.osm.OsmSkill",
     "path-following-coordinator": "dimos.control.path_following_coordinator.PathFollowingCoordinator",
