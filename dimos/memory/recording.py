@@ -18,26 +18,22 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
 import threading
 import time
 from typing import Any
 
-from dimos.memory.backend import Backend, PreparedAppend
+from dimos.memory.backend import Backend, PreparedAppend, PreparedWrite
 from dimos.memory.buffer import ClosedError, DropNew
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 class RecordingFailedError(RuntimeError):
     """Raised when the pipeline cannot persist every accepted message."""
 
 
-@dataclass(frozen=True)
-class PreparedWrite:
-    backend: Backend[Any]
-    append: PreparedAppend[Any]
-
-
-Processor = Callable[[Any], Iterable[PreparedWrite]]
+Processor = Callable[[Any], Iterable[PreparedWrite[Any]]]
 
 
 class RecordingPipeline:
@@ -54,7 +50,7 @@ class RecordingPipeline:
     ) -> None:
         self._processors = processors
         self._ingress = DropNew[tuple[str, Any]](ingress_size)
-        self._writer = DropNew[PreparedWrite](writer_size)
+        self._writer = DropNew[PreparedWrite[Any]](writer_size)
         self._batch_rows = batch_rows
         self._batch_delay_s = batch_delay_s
         self._failure: BaseException | None = None
@@ -99,6 +95,7 @@ class RecordingPipeline:
         with self._lock:
             if self._failure is None:
                 self._failure = error
+                logger.error("Recording pipeline failed: %r", error, exc_info=error)
 
     def close(self, timeout_s: float = 10.0) -> None:
         if not self._started.is_set():
@@ -159,15 +156,14 @@ class RecordingPipeline:
                 return
 
     @staticmethod
-    def _persist(batch: list[PreparedWrite]) -> None:
-        grouped: dict[int, list[PreparedAppend[Any]]] = defaultdict(list)
-        backends: dict[int, Backend[Any]] = {}
+    def _persist(batch: list[PreparedWrite[Any]]) -> None:
+        grouped: dict[Backend[Any], list[PreparedAppend[Any]]] = defaultdict(list)
         for write in batch:
-            key = id(write.backend)
-            backends[key] = write.backend
-            grouped[key].append(write.append)
-        for key, appends in grouped.items():
-            backends[key].append_prepared(appends)
+            grouped[write.backend].append(write.append)
+        for backend, appends in grouped.items():
+            backend.persist_prepared(appends)
+        for write in batch:
+            write.backend.notify(write.append.observation)
 
     def _raise_if_unavailable(self) -> None:
         if not self._started.is_set():

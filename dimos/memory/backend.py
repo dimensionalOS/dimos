@@ -46,6 +46,14 @@ class PreparedAppend(Generic[T]):
     encoded: bytes | None
 
 
+@dataclass(frozen=True)
+class PreparedWrite(Generic[T]):
+    """One encoded observation paired with its typed backend."""
+
+    backend: Backend[T]
+    append: PreparedAppend[T]
+
+
 class Backend(CompositeResource, Generic[T]):
     """Orchestrates metadata, blob, vector, and live stores for one stream.
     (encode → insert → store blob → index vector → notify) lives here,
@@ -105,19 +113,28 @@ class Backend(CompositeResource, Generic[T]):
         self, prepared_appends: Sequence[PreparedAppend[T]]
     ) -> list[Observation[T]]:
         """Persist prepared observations in one transaction, then publish them."""
+        results = self.persist_prepared(prepared_appends)
+        for result in results:
+            self.notify(result)
+        return results
+
+    def persist_prepared(
+        self, prepared_appends: Sequence[PreparedAppend[T]]
+    ) -> list[Observation[T]]:
+        """Persist prepared observations in one transaction without publishing."""
         results: list[Observation[T]] = []
         try:
             for prepared in prepared_appends:
                 results.append(self._persist_prepared(prepared))
-            if hasattr(self.metadata_store, "commit"):
-                self.metadata_store.commit()
+            self.metadata_store.commit()
         except BaseException:
-            if hasattr(self.metadata_store, "rollback"):
-                self.metadata_store.rollback()
+            self.metadata_store.rollback()
             raise
-        for result in results:
-            self.notifier.notify(result)
         return results
+
+    def notify(self, observation: Observation[T]) -> None:
+        """Publish one committed observation to live consumers."""
+        self.notifier.notify(observation)
 
     def prepare_append(self, obs: Observation[T]) -> PreparedAppend[T]:
         """Validate and encode an observation without touching storage."""

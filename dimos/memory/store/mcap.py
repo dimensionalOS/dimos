@@ -130,6 +130,12 @@ class McapObservationStore(ObservationStore[Any]):
     def insert(self, obs: Observation[Any]) -> int:
         raise NotImplementedError("McapStore is read-only")
 
+    def commit(self) -> None:
+        """MCAP storage is read-only."""
+
+    def rollback(self) -> None:
+        """MCAP storage is read-only."""
+
 
 class McapStoreConfig(StoreConfig):
     path: str = ""

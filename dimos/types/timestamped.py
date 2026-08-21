@@ -13,7 +13,7 @@
 # limitations under the License.
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Generic, TypeVar, Union
+from typing import Generic, Protocol, TypeVar, Union, runtime_checkable
 
 from dimos_lcm.builtin_interfaces import Time as ROSTime
 from reactivex import create
@@ -39,6 +39,20 @@ logger = setup_logger()
 
 
 TimeLike = Union[int, float, datetime, ROSTime]
+
+
+@runtime_checkable
+class TimestampedMessage(Protocol):
+    """Payload capability exposing a source timestamp."""
+
+    ts: float
+
+
+@runtime_checkable
+class FramedMessage(Protocol):
+    """Payload capability exposing a coordinate frame."""
+
+    frame_id: str
 
 
 def to_timestamp(ts: TimeLike) -> float:

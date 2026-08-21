@@ -25,31 +25,32 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 from pydantic import Field, field_validator
 from reactivex.abc import DisposableBase
-from reactivex.disposable import Disposable
+from reactivex.disposable import CompositeDisposable, Disposable
 
 from dimos.agents.annotation import skill
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In
-from dimos.memory.backend import Backend
+from dimos.core.stream import ErrorReportingTransport, In
+from dimos.memory.backend import PreparedWrite
 from dimos.memory.embed import EmbedImages
-from dimos.memory.recording import PreparedWrite, Processor, RecordingFailedError, RecordingPipeline
+from dimos.memory.recording import Processor, RecordingFailedError, RecordingPipeline
 from dimos.memory.store.null import NullStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
 from dimos.memory.transform import QualityWindow
 from dimos.memory.type.observation import EmbeddedObservation, Observation
 from dimos.models.embedding.base import EmbeddingModel
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.types.timestamped import FramedMessage, TimestampedMessage
 from dimos.utils.data import backup_file
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.core.stream import Out
-    from dimos.msgs.geometry_msgs.Pose import Pose
 
 logger = setup_logger()
 
@@ -283,23 +284,6 @@ class RecorderConfig(MemoryModuleConfig):
 PoseSetter = Callable[[Any], "Awaitable[Pose | None]"]
 
 
-def pose_setter_for(*stream_names: str) -> Callable[[Any], Any]:
-    """Mark an ``async def`` method ``(self, msg) -> Pose | None`` as the pose
-    setter for the given recorded stream(s). Streams without a setter fall back
-    to the tf-based ``world <- frame_id`` lookup."""
-
-    def decorate(fn: Any) -> Any:
-        if not inspect.iscoroutinefunction(fn):
-            raise TypeError(
-                f"@pose_setter_for must decorate an `async def` method; "
-                f"{getattr(fn, '__qualname__', fn)} is not async"
-            )
-        fn._pose_setter_for = tuple(stream_names)
-        return fn
-
-    return decorate
-
-
 class Recorder(MemoryModule):
     """Records all ``In`` ports to a memory SQLite database, plus the live tf tree.
 
@@ -311,27 +295,31 @@ class Recorder(MemoryModule):
 
         blueprint.add(MyRecorder, db_path="session.db")
 
-    Each stream's pose defaults to a ``world <- frame_id`` tf lookup; decorate a
-    method with ``@pose_setter_for("stream")`` to source it elsewhere (e.g. from
-    an odometry stream). Setters run on the module's event loop and may be
-    ``async def``::
+    Each stream's pose defaults to a ``world <- frame_id`` tf lookup. Override
+    :meth:`pose_setters` to source poses elsewhere (e.g. from odometry). Setters
+    run on the module's event loop and are ``async def``::
 
-        @pose_setter_for("lidar")
         async def _lidar_pose(self, msg):
             return self._last_odom_pose
+
+        def pose_setters(self):
+            return {"lidar": self._lidar_pose}
     """
 
     config: RecorderConfig
 
     tf: In[TFMessage]
 
-    _pose_setters: dict[str, Any] = {}
-    _recording_subscriptions: list[DisposableBase]
+    _pose_setters: dict[str, PoseSetter] = {}
+    _recording_subscriptions: CompositeDisposable | None = None
     _recording_pipeline: RecordingPipeline | None = None
 
     @rpc
     def start(self) -> None:
         super().start()
+        self._recording_subscriptions = CompositeDisposable()
+        self.register_disposable(self._recording_subscriptions)
+        self._recording_pipeline = None
 
         if self.config.g.replay:
             logger.info(
@@ -339,9 +327,7 @@ class Recorder(MemoryModule):
             )
             return
 
-        self._pose_setters = self._collect_pose_setters()
-        self._recording_subscriptions = []
-        self._recording_pipeline = None
+        self._pose_setters = self.pose_setters()
 
         # TODO: store reset API/logic is not implemented yet. This module
         # shouldn't need to know about files (SqliteStore specific), and
@@ -363,7 +349,7 @@ class Recorder(MemoryModule):
             else:
                 raise FileExistsError(f"Recording already exists: {db_path}")
 
-        if getattr(self.tf, "_transport", None) is not None:
+        if self.tf.connected:
             self._tf = self.tfbuffer
 
         self._prepare_streams()
@@ -394,9 +380,7 @@ class Recorder(MemoryModule):
         for name, port in self._data_ports().items():
             self._subscribe_port(name, port)
         if "tf" in processors:
-            subscription = Disposable(self.tf.subscribe(lambda msg: pipeline.submit("tf", msg)))
-            self._recording_subscriptions.append(subscription)
-            self.register_disposable(subscription)
+            self._subscribe_port("tf", self.tf)
 
     def _data_ports(self) -> dict[str, In[Any]]:
         """The In ports to record generically — everything but the tf port."""
@@ -414,9 +398,7 @@ class Recorder(MemoryModule):
         callback and the serialized database writer.
         """
 
-        backend = cast("Backend[Any]", stream._source)  # type: ignore[attr-defined]
-
-        def process(stamped: tuple[float, Any]) -> tuple[PreparedWrite]:
+        def process(stamped: tuple[float, Any]) -> tuple[PreparedWrite[Any]]:
             recv_ts, msg = stamped
             ts = self._resolve_ts(name, msg)
             if name in self._pose_setters:
@@ -433,9 +415,9 @@ class Recorder(MemoryModule):
                     "[%s] No pose for time %s (msg ts: %s), storing without pose",
                     name,
                     ts,
-                    getattr(msg, "ts", None),
+                    msg.ts if isinstance(msg, TimestampedMessage) else None,
                 )
-            if hasattr(msg, "ts"):
+            if isinstance(msg, TimestampedMessage):
                 msg.ts = ts
             observation = Observation(
                 id=-1,
@@ -444,27 +426,25 @@ class Recorder(MemoryModule):
                 tags={"reception_ts": recv_ts},
                 _data=msg,
             )
-            return (PreparedWrite(backend, backend.prepare_append(observation)),)
+            return (stream.prepare_write(observation),)
 
         return process
 
     def _subscribe_port(self, name: str, input_topic: In[Any]) -> None:
         """Enqueue decoded messages directly from the transport callback."""
         pipeline = self._recording_pipeline
+        subscriptions = self._recording_subscriptions
         assert pipeline is not None
+        assert subscriptions is not None
 
         def on_message(msg: Any) -> None:
             pipeline.submit(name, (time.time(), msg))
 
         subscription = input_topic.pure_observable().subscribe(on_message)
-        self._recording_subscriptions.append(subscription)
-        self.register_disposable(subscription)
-        transport = getattr(input_topic, "_transport", None)
-        subscribe_errors = getattr(transport, "subscribe_errors", None)
-        if subscribe_errors is not None:
-            error_subscription = Disposable(subscribe_errors(pipeline.fail))
-            self._recording_subscriptions.append(error_subscription)
-            self.register_disposable(error_subscription)
+        subscriptions.add(subscription)
+        transport = input_topic.transport
+        if isinstance(transport, ErrorReportingTransport):
+            subscriptions.add(Disposable(transport.subscribe_errors(pipeline.fail)))
 
     def _prepare_streams(self) -> None:
         """On APPEND, drop the streams this recorder is about to (re)write — the
@@ -480,46 +460,43 @@ class Recorder(MemoryModule):
 
     def _resolve_ts(self, name: str, msg: Any) -> float:
         """Timestamp to record *msg* at. Override to re-base onto another clock."""
-        return getattr(msg, "ts", None) or time.time()
+        return msg.ts if isinstance(msg, TimestampedMessage) and msg.ts else time.time()
 
     async def _resolve_pose(self, name: str, msg: Any, ts: float) -> Pose | None:
-        """Pose to anchor *msg* with. Dispatches to the stream's (async)
-        ``@pose_setter_for`` if one is defined, else falls back to a
-        ``world <- frame_id`` tf lookup."""
+        """Pose to anchor *msg* with, using an explicit setter or tf lookup."""
         setter = self._pose_setters.get(name)
         if setter is not None:
-            return cast("Pose | None", await setter(msg))
+            return await setter(msg)
         return self._resolve_tf_pose(msg, ts)
 
     def _resolve_tf_pose(self, msg: Any, ts: float) -> Pose | None:
         """Resolve the ordinary TF pose directly from recorder queue threads."""
         if self._tf is None:
             return None
-        frame_id = getattr(msg, "frame_id", None) or self.config.default_frame_id
+        frame_id = (
+            msg.frame_id
+            if isinstance(msg, FramedMessage) and msg.frame_id
+            else self.config.default_frame_id
+        )
         transform = self._tf.get(
             self.config.root_frame, frame_id, time_point=ts, time_tolerance=self.config.tf_tolerance
         )
         return transform.to_pose() if transform is not None else None
 
-    def _collect_pose_setters(self) -> dict[str, PoseSetter]:
-        """Map stream name -> bound ``@pose_setter_for`` method."""
-        setters: dict[str, PoseSetter] = {}
-        for attr_name in dir(type(self)):
-            fn = getattr(type(self), attr_name, None)
-            for stream in getattr(fn, "_pose_setter_for", ()):
-                setters[stream] = getattr(self, attr_name)
-        return setters
+    def pose_setters(self) -> dict[str, PoseSetter]:
+        """Return explicit stream-to-pose-setter bindings for this Recorder."""
+        return {}
 
     def _tf_processor(self) -> Processor | None:
         """Build the preparation stage for tf, or return None when it is unwired."""
-        if getattr(self.tf, "_transport", None) is None:
+        if not self.tf.connected:
             logger.warning("Recorder: tf port has no transport — not recording tf")
             return None
         tf_stream = self.store.stream("tf", TFMessage)
-        backend = cast("Backend[Any]", tf_stream._source)  # type: ignore[attr-defined]
 
-        def process_tf(msg: TFMessage) -> list[PreparedWrite]:
-            writes: list[PreparedWrite] = []
+        def process_tf(stamped: tuple[float, TFMessage]) -> list[PreparedWrite[Any]]:
+            _recv_ts, msg = stamped
+            writes: list[PreparedWrite[Any]] = []
             for transform in msg.transforms:
                 observation = Observation(
                     id=-1,
@@ -527,7 +504,7 @@ class Recorder(MemoryModule):
                     pose=None,
                     _data=TFMessage(transform),
                 )
-                writes.append(PreparedWrite(backend, backend.prepare_append(observation)))
+                writes.append(tf_stream.prepare_write(observation))
             return writes
 
         return process_tf
@@ -536,17 +513,15 @@ class Recorder(MemoryModule):
     def stop(self) -> None:
         """Stop inputs, drain all accepted observations, then close storage."""
         pipeline = self._recording_pipeline
-        if pipeline is None:
-            super().stop()
-            return
-        for subscription in self._recording_subscriptions:
-            subscription.dispose()
-        try:
-            pipeline.close()
-        except BaseException as error:
-            failure: BaseException | None = error
-        else:
-            failure = None
+        subscriptions = self._recording_subscriptions
+        if subscriptions is not None:
+            subscriptions.dispose()
+        failure: BaseException | None = None
+        if pipeline is not None:
+            try:
+                pipeline.close()
+            except BaseException as error:
+                failure = error
         super().stop()
         if failure is not None:
             raise RecordingFailedError("Recorder failed while draining") from failure

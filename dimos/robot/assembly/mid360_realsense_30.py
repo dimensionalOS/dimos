@@ -99,7 +99,7 @@ class Mid360RealsenseStaticTf(StaticTfPublisher):
 class Mid360RealsenseRecorder(PointlioRecorder):
     """Records Point-LIO odom+lidar plus the RealSense streams into a memory db.
 
-    Trajectory is baked into ``pointlio_lidar`` via the inherited ``@pose_setter_for``.
+    Trajectory is baked into ``pointlio_lidar`` via the inherited pose setter.
     The raw Livox stream is NOT recorded here — enable the pcap recorder in the record
     blueprint to capture it. Companion streams are recorded as-is and anchored via the
     static mount frames published on tf.

@@ -20,6 +20,7 @@ import uuid
 
 import pytest
 
+from dimos.core.stream import ErrorReportingTransport, In
 from dimos.core.transport import (
     JpegLcmTransport,
     JpegShmTransport,
@@ -105,6 +106,20 @@ def test_make_pubsub_transport_plcm_uses_pLCMTransport() -> None:
 def test_make_pubsub_transport_pshm_uses_pSHMTransport() -> None:
     t = make_pubsub_transport("pshm:color_image")
     assert isinstance(t, pSHMTransport)
+
+
+def test_reliable_shm_exposes_error_reporting_capability() -> None:
+    assert isinstance(pSHMTransport("errors"), ErrorReportingTransport)
+    assert not isinstance(LCMTransport("/no-errors", int), ErrorReportingTransport)
+
+
+def test_input_exposes_transport_connection_state() -> None:
+    input_topic = In(int, "numbers")
+    assert not input_topic.connected
+
+    input_topic.transport = pSHMTransport("numbers")
+
+    assert input_topic.connected
 
 
 def test_reliable_shm_transport_uses_configured_ring() -> None:

@@ -21,7 +21,7 @@ from dimos.core.transport import LCMTransport
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.relocalization.module import RelocalizationModule
 from dimos.mapping.voxels.module import VoxelGridMapper
-from dimos.memory.module import Recorder, RecorderConfig, pose_setter_for
+from dimos.memory.module import PoseSetter, Recorder, RecorderConfig
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
@@ -61,17 +61,18 @@ class Go2Memory(Recorder):
 
     _last_odom_pose: Pose | None = None
 
-    @pose_setter_for("odom")
     async def _odom_pose(self, msg: PoseStamped) -> Pose | None:
         self._last_odom_pose = msg
         return self._last_odom_pose
 
-    @pose_setter_for("lidar")
     async def _lidar_pose(self, msg: PointCloud2) -> Pose | None:
         # Yes, it doesn't make sense to register lidar at the odom pose because the
         # go2 lidar is in the world frame, but map.py (for now) needs this.
         # TODO: fix map.py to use a transform frame
-        return getattr(self, "_last_odom_pose", None)
+        return self._last_odom_pose
+
+    def pose_setters(self) -> dict[str, PoseSetter]:
+        return {"odom": self._odom_pose, "lidar": self._lidar_pose}
 
 
 unitree_go2_markers = (

@@ -19,7 +19,9 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Generic,
+    Protocol,
     TypeVar,
+    runtime_checkable,
 )
 
 from pydantic import BaseModel
@@ -42,6 +44,13 @@ T = TypeVar("T")
 
 
 logger = setup_logger()
+
+
+@runtime_checkable
+class ErrorReportingTransport(Protocol):
+    """Transport capability that reports asynchronous delivery failures."""
+
+    def subscribe_errors(self, callback: Callable[[BaseException], None]) -> Callable[[], None]: ...
 
 
 class ObservableMixin(Generic[T]):
@@ -114,10 +123,12 @@ class Stream(Generic[T]):
         self.name = name
         self.owner = owner
         self.type = type
-        if transport:
-            self._transport = transport
-        if not hasattr(self, "_transport"):
-            self._transport = None
+        self._transport = transport
+
+    @property
+    def connected(self) -> bool:
+        """Whether this stream has a runtime transport."""
+        return self._transport is not None
 
     @property
     def type_name(self) -> str:
