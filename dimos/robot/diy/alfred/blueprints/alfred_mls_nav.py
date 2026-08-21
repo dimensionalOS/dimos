@@ -149,11 +149,9 @@ alfred_mls_nav = (
             # onto it and bias motion toward zero.
             emitter_enabled=False,
             enable_depth=True,
-            # The camera only assembles a pointcloud when colour is also streaming.
+            # Colour itself is unconsumed, but depth arrives aligned to the colour frame
+            # and the tracker's depth path is validated that way.
             enable_color=True,
-            enable_pointcloud=True,
-            # The default 5 Hz cap starves the mapper; the depth stream itself is the limit.
-            pointcloud_fps=30,
             # Goes to the fusion filter, not to cuVSLAM: see the DimSlam note.
             enable_imu=True,
             base_transform=D455_MOUNT,
@@ -196,11 +194,23 @@ alfred_mls_nav = (
             # Wheel odometry crosses the wifi link and can land seconds late; a message
             # older than the buffer is dropped instead of replayed into the filter.
             replay_buffer_seconds=2.0,
+            # The mapper ignores everything past its own max_range, so gate the cloud
+            # at the source and keep those points off the bus entirely.
+            depth_cloud_max_range=DEPTH_MAX_RANGE_METERS,
+            # A full-resolution cloud is ~400k points at 28 Hz and drowned the mapper
+            # (378% CPU for ~15 Hz consumed, the rest dropped at the input queue). At
+            # k=3 the sampling pitch is 3z/fx = 42 mm at the 6 m gate, still under the
+            # 50 mm voxel, for 9x fewer points.
+            depth_cloud_decimation=3,
         ).remappings([(DimSlam, "sources", "source_odometry")]),
         RayTracingVoxelMap.blueprint(
             voxel_size=VOXEL_SIZE_METERS,
             max_range=DEPTH_MAX_RANGE_METERS,
             world_frame="odom",
+        ).remappings(
+            # The tracker's range-gated depth cloud stands in for the lidar the mapper
+            # normally consumes; there is none on Alfred.
+            [(RayTracingVoxelMap, "lidar", "depth_cloud")]
         ),
         MLSPlannerNative.blueprint(
             # Nothing closes loops here, so map -> odom stays identity and odom is the
@@ -260,11 +270,8 @@ alfred_mls_nav = (
             (RealSenseCamera, "infrared_right", "image"),
             (RealSenseCamera, "infrared_left_camera_info", "camera_info"),
             (RealSenseCamera, "infrared_right_camera_info", "camera_info"),
-            # Colour is on only to unlock the pointcloud, so keep its info off the stream
-            # cuVSLAM reads its rig from.
+            # Keep the colour info off the stream cuVSLAM reads its rig from.
             (RealSenseCamera, "camera_info", "color_camera_info"),
-            # The depth pointcloud stands in for the lidar the mapper normally consumes.
-            (RealSenseCamera, "pointcloud", "lidar"),
             # Both odometry sources onto the one stream; the filter tells them apart by
             # frame_id, the same way the tracker tells the two imagers apart.
             (AlfredHighLevel, "wheel_odometry", "source_odometry"),
