@@ -20,15 +20,18 @@ from typing import TYPE_CHECKING
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.spec import mapping
 
 
 class RayTracingVoxelMapConfig(NativeModuleConfig):
     cwd: str | None = "rust"
     executable: str = "result/bin/voxel_ray_tracing"
-    build_command: str | None = "nix build -L path:."
+    # --no-write-lock-file: locking the relative dimos-repo input records a NAR
+    # hash of the checkout, and writing the lock dirties the tree so the very
+    # next build mismatches it.
+    build_command: str | None = "nix build -L --no-write-lock-file path:."
     stdin_config: bool = True
 
     voxel_size: float = 0.1
@@ -56,6 +59,9 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     global_emit_every: int = 1
     # Size the local region to this percentile of batch point distances.
     region_percentile: float = 95.0
+    # Frame the map accumulates and publishes in; clouds are placed into it
+    # through tf from their own frame_id.
+    world_frame: str = "odom"
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
@@ -64,7 +70,7 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
     config: RayTracingVoxelMapConfig
 
     lidar: In[PointCloud2]
-    odometry: In[Odometry]
+    tf: In[TFMessage]
     global_map: Out[PointCloud2]
     local_map: Out[PointCloud2]
     region_bounds: Out[PoseStamped]
