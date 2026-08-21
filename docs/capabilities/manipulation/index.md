@@ -236,8 +236,8 @@ tool, or CLI motion command yet.
 ### Cartesian control IK
 
 Cartesian, keyboard EEF-twist, and engagement-relative teleop IK tasks use the
-direct URDF/Xacro model from `RobotModelConfig`. The configuration supplies
-package paths, Xacro arguments, the named end-effector frame, and
+portable `RobotModel` from `RobotModelConfig`. The model owns source loading,
+package paths, and Xacro arguments; the configuration supplies the named end-effector frame and
 coordinator-to-model joint mapping. Invalid models, frames, or mappings fail at
 startup; teleop configuration does not use a separate model path or numeric
 end-effector joint ID.

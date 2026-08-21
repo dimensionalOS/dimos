@@ -22,6 +22,8 @@ from dimos.control.components import HardwareComponent, HardwareType, make_joint
 from dimos.core.global_config import global_config
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.manipulators._modeling import (
     base_pose,
     coordinator_joint_mapping,
@@ -36,11 +38,16 @@ PIPER_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("link6", "gripper_base"),
 ]
 
-PIPER_MODEL_PATH = LfsPath("piper_description") / "urdf/piper_description.xacro"
+PIPER_DESCRIPTION_REPO = "https://github.com/agilexrobotics/agx_arm_urdf"
+PIPER_DESCRIPTION_REF = "f6642ce0d7872c686f29c99e9e10cd23d1d49313"
+_PIPER_REPO = RobotDescriptionSource(url=PIPER_DESCRIPTION_REPO, ref=PIPER_DESCRIPTION_REF)
+PIPER_MODEL_PATH = _PIPER_REPO / "piper" / "urdf" / "piper_with_gripper_description.xacro"
 PIPER_PACKAGE_PATHS: dict[str, Path] = {
-    "piper_description": LfsPath("piper_description"),
-    "piper_gazebo": LfsPath("piper_description"),
+    # Upstream URIs are package://agx_arm_description/agx_arm_urdf/..., so the
+    # package root is the parent of the preserved agx_arm_urdf checkout folder.
+    "agx_arm_description": _PIPER_REPO.parent,
 }
+PIPER_FK_MODEL = _PIPER_REPO / "piper" / "urdf" / "piper_description.urdf"
 PIPER_SIM_PATH = LfsPath("piper/scene.xml")
 PIPER_HOME_JOINTS = [
     0.793,
@@ -137,7 +144,7 @@ def make_piper_model_config(
     model_home_joints = list(home_joints) if home_joints is not None else list(PIPER_HOME_JOINTS)
     return RobotModelConfig(
         name=name,
-        model_path=PIPER_MODEL_PATH,
+        model=RobotModel.from_file(PIPER_MODEL_PATH, package_paths=PIPER_PACKAGE_PATHS),
         base_pose=base_pose(),
         joint_names=local_joint_names,
         base_link="base_link",
@@ -149,7 +156,6 @@ def make_piper_model_config(
                 tip_link="gripper_base",
             )
         ],
-        package_paths=PIPER_PACKAGE_PATHS,
         auto_convert_meshes=True,
         collision_exclusion_pairs=PIPER_GRIPPER_COLLISION_EXCLUSIONS,
         joint_name_mapping=coordinator_joint_mapping(
