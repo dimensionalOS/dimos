@@ -38,6 +38,7 @@ from dimos.manipulation.manipulation_module import (
 )
 from dimos.manipulation.skill_errors import ManipulationSkillError
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.experimental.object import (
@@ -252,19 +253,32 @@ class PickAndPlaceModule(ManipulationModule):
 
     @staticmethod
     def _occlusion_offset(
-        center: Vector3, size: Vector3, inset: float = 0.02
+        center: Vector3,
+        size: Vector3,
+        inset: float = 0.02,
+        base_pose: PoseStamped | None = None,
     ) -> tuple[float, float]:
         """Offset a detected object center toward the robot to compensate for single-viewpoint occlusion.
 
         Returns adjusted (x, y) shifted toward the nearest visible surface + inset.
         """
-        xy_dist = (center.x**2 + center.y**2) ** 0.5
+        base_x = 0.0 if base_pose is None else base_pose.position.x
+        base_y = 0.0 if base_pose is None else base_pose.position.y
+        toward_base_x = base_x - center.x
+        toward_base_y = base_y - center.y
+        xy_dist = math.hypot(toward_base_x, toward_base_y)
         if xy_dist > 1e-3:
-            dx, dy = -center.x / xy_dist, -center.y / xy_dist
+            dx, dy = toward_base_x / xy_dist, toward_base_y / xy_dist
             half_depth = max(size.x, size.y) / 2.0
             offset = half_depth - inset
             return center.x + dx * offset, center.y + dy * offset
         return center.x, center.y
+
+    @staticmethod
+    def _xy_from_base(x: float, y: float, base_pose: PoseStamped) -> tuple[float, float, float]:
+        dx = x - base_pose.position.x
+        dy = y - base_pose.position.y
+        return dx, dy, math.hypot(dx, dy)
 
     @staticmethod
     def _grasp_orientation(gx: float, gy: float, xy_dist: float) -> Quaternion:
@@ -295,6 +309,7 @@ class PickAndPlaceModule(ManipulationModule):
         object_name: str,
         object_id: str | None = None,
         grasp_frame_to_tcp: Pose | None = None,
+        base_pose: PoseStamped | None = None,
     ) -> list[Pose] | None:
         """Generate a grasp pose for an object.
 
@@ -318,7 +333,8 @@ class PickAndPlaceModule(ManipulationModule):
             return None
 
         cx, cy, cz = det.center.x, det.center.y, det.center.z
-        xy_dist = (cx**2 + cy**2) ** 0.5
+        resolved_base = base_pose or PoseStamped()
+        _, _, xy_dist = self._xy_from_base(cx, cy, resolved_base)
 
         if self._is_mechanics_truth(det):
             gx, gy, gz = cx, cy, cz
@@ -327,13 +343,18 @@ class PickAndPlaceModule(ManipulationModule):
             # Perception estimates can represent the visible front surface instead of
             # the object center. These corrections apply only to perception data.
             inset = 0.01 if xy_dist < _FAR_OCCLUSION_XY_THRESHOLD else 0.05
-            gx, gy = self._occlusion_offset(det.center, det.size, inset=inset)
+            gx, gy = self._occlusion_offset(
+                det.center,
+                det.size,
+                inset=inset,
+                base_pose=resolved_base,
+            )
             obj_height = det.size.z
             gz = cz + obj_height * 0.2 if obj_height > _TALL_OBJECT_MIN_HEIGHT else cz
             source = f"perception heuristic, inset={inset:.2f}m"
 
-        grasp_dist = (gx**2 + gy**2) ** 0.5
-        orientation = self._grasp_orientation(gx, gy, grasp_dist)
+        grasp_dx, grasp_dy, grasp_dist = self._xy_from_base(gx, gy, resolved_base)
+        orientation = self._grasp_orientation(grasp_dx, grasp_dy, grasp_dist)
         grasp_pose = Pose(Vector3(gx, gy, gz), orientation)
         pose = grasp_pose
         if grasp_frame_to_tcp is not None:
@@ -562,6 +583,7 @@ then refreshes perception obstacles.
             object_name,
             object_id,
             config.grasp_frame_to_tcp,
+            config.base_pose,
         )
         if not grasp_poses:
             return SkillResult.fail(
@@ -584,7 +606,7 @@ then refreshes perception obstacles.
         for i, grasp_pose in enumerate(grasp_poses[:max_attempts]):
             # Reduce pre-grasp height for far objects (arm can't reach high + far)
             gp = grasp_pose.position
-            xy_dist = (gp.x**2 + gp.y**2) ** 0.5
+            _, _, xy_dist = self._xy_from_base(gp.x, gp.y, config.base_pose)
             offset = pre_grasp_offset if xy_dist < _FAR_REACH_XY_THRESHOLD else 0.05
             pre_grasp_pose = self._compute_pre_grasp_pose(
                 grasp_pose,
@@ -665,8 +687,12 @@ then refreshes perception obstacles.
             z: Target Z position in meters.
             robot_name: Robot to use (only needed for multi-arm setups).
         """
-        xy_dist = (x**2 + y**2) ** 0.5
-        orientation = self._grasp_orientation(x, y, xy_dist)
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
+        _, _, config = robot
+        dx, dy, xy_dist = self._xy_from_base(x, y, config.base_pose)
+        orientation = self._grasp_orientation(dx, dy, xy_dist)
         return self._place_with_orientation(x, y, z, orientation, robot_name)
 
     def _place_with_orientation(
@@ -685,7 +711,7 @@ then refreshes perception obstacles.
         pre_place_offset = config.pre_grasp_offset
 
         # Reduce pre-place height for far targets
-        xy_dist = (x**2 + y**2) ** 0.5
+        _, _, xy_dist = self._xy_from_base(x, y, config.base_pose)
         if xy_dist >= _FAR_REACH_XY_THRESHOLD:
             pre_place_offset = 0.05
 

@@ -155,6 +155,23 @@ class TestGraspHeuristics:
             and abs(q_near.w - q_far.w) < 0.01
         )
 
+    def test_grasp_heuristic_uses_configured_robot_base(self, module):
+        det = _make_det_object(
+            center=(-1.703, 1.947, 0.978),
+            identity_status="privileged_ground_truth",
+            identity_basis="pimsim_mechanics_diagnostic",
+        )
+        base_pose = PoseStamped(position=Vector3(-1.136, 2.237, 1.041))
+        module._detection_snapshot = [det]
+
+        grasps = module._generate_grasps_for_pick("cup", base_pose=base_pose)
+
+        assert grasps is not None
+        dx, dy, distance = module._xy_from_base(det.center.x, det.center.y, base_pose)
+        expected = module._grasp_orientation(dx, dy, distance)
+        assert distance == pytest.approx(0.637, abs=0.001)
+        assert tuple(grasps[0].orientation) == pytest.approx(tuple(expected))
+
     def test_mechanics_truth_grasp_uses_exact_center(self, module):
         det = _make_det_object(
             center=(0.5, 0.1, 0.3),
@@ -221,6 +238,7 @@ class TestGraspHeuristics:
                         pre_grasp_offset=0.05,
                         grasp_frame_to_tcp=Pose(),
                         pre_grasp_direction=Vector3(0.0, 0.0, -1.0),
+                        base_pose=PoseStamped(),
                     ),
                 ),
             ),
