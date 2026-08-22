@@ -385,7 +385,10 @@ class G1WholeBodyConnection(Module):
             return 1.0
         if self._soft_start_t0 is None:
             self._soft_start_t0 = now
-            logger.info(f"Soft-start: full damping now, stiffness ramping in over {duration:.1f}s")
+            logger.info(
+                "Soft-start: full damping now, stiffness ramping in",
+                duration_seconds=duration,
+            )
         scale = min(1.0, (now - self._soft_start_t0) / duration)
         if scale >= 1.0 and not self._soft_start_done:
             self._soft_start_done = True

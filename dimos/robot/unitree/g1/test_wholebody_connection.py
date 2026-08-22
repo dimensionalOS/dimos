@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from collections.abc import Iterator
 from types import SimpleNamespace
 
 from pydantic import ValidationError
@@ -29,8 +29,8 @@ from dimos.robot.unitree.g1.wholebody_connection import (
 )
 
 
-@contextmanager
-def _connection():
+@pytest.fixture
+def connection() -> Iterator[G1WholeBodyConnection]:
     connection = G1WholeBodyConnection()
     try:
         yield connection
@@ -77,54 +77,50 @@ def _command():
     )
 
 
-def test_soft_start_is_damping_first():
-    with _connection() as connection:
-        publisher = _wire(connection, soft_start_seconds=1000.0)
+def test_soft_start_is_damping_first(connection: G1WholeBodyConnection):
+    publisher = _wire(connection, soft_start_seconds=1000.0)
 
-        connection._on_motor_command(_command())
+    connection._on_motor_command(_command())
 
-        q, dq, kp, kd, tau = publisher.frames[0][0]
-        # First frame: target and damping pass through, stiffness and tau do not —
-        # this is what keeps taking control from slamming the robot.
-        assert q == 1.0
-        assert kd == 5.0
-        assert kp < 1.0
-        assert abs(tau) < 0.1
-
-
-def test_stiffness_ramps_to_full():
-    with _connection() as connection:
-        publisher = _wire(connection, soft_start_seconds=0.05)
-
-        connection._on_motor_command(_command())
-        # Rewind the clock instead of sleeping through the window.
-        connection._soft_start_t0 -= 1.0
-        connection._on_motor_command(_command())
-
-        _q, _dq, kp, kd, tau = publisher.frames[-1][0]
-        assert kp == 100.0
-        assert kd == 5.0
-        assert tau == 8.0
+    q, dq, kp, kd, tau = publisher.frames[0][0]
+    # First frame: target and damping pass through, stiffness and tau do not —
+    # this is what keeps taking control from slamming the robot.
+    assert q == 1.0
+    assert kd == 5.0
+    assert kp < 1.0
+    assert abs(tau) < 0.1
 
 
-def test_soft_start_disabled_passes_through():
-    with _connection() as connection:
-        publisher = _wire(connection, soft_start_seconds=0.0)
+def test_stiffness_ramps_to_full(connection: G1WholeBodyConnection):
+    publisher = _wire(connection, soft_start_seconds=0.05)
 
-        connection._on_motor_command(_command())
+    connection._on_motor_command(_command())
+    # Rewind the clock instead of sleeping through the window.
+    connection._soft_start_t0 -= 1.0
+    connection._on_motor_command(_command())
 
-        _q, _dq, kp, _kd, tau = publisher.frames[0][0]
-        assert kp == 100.0
-        assert tau == 8.0
+    _q, _dq, kp, kd, tau = publisher.frames[-1][0]
+    assert kp == 100.0
+    assert kd == 5.0
+    assert tau == 8.0
 
 
-def test_wrong_joint_count_is_dropped():
-    with _connection() as connection:
-        publisher = _wire(connection, soft_start_seconds=0.0)
+def test_soft_start_disabled_passes_through(connection: G1WholeBodyConnection):
+    publisher = _wire(connection, soft_start_seconds=0.0)
 
-        connection._on_motor_command(MotorCommandArray(q=[0.0] * 5))
+    connection._on_motor_command(_command())
 
-        assert publisher.frames == []
+    _q, _dq, kp, _kd, tau = publisher.frames[0][0]
+    assert kp == 100.0
+    assert tau == 8.0
+
+
+def test_wrong_joint_count_is_dropped(connection: G1WholeBodyConnection):
+    publisher = _wire(connection, soft_start_seconds=0.0)
+
+    connection._on_motor_command(MotorCommandArray(q=[0.0] * 5))
+
+    assert publisher.frames == []
 
 
 @pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])

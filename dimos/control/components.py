@@ -80,9 +80,6 @@ class HardwareComponent:
             uses its parent-native 0.85 endpoint.
         gripper_closed_position: Adapter-native closed endpoint; typically
             0.0 for Piper and XArm.
-        joint_velocity_limits: Optional physical velocity limits keyed by
-            coordinator joint name. Values use each joint's declared position
-            coordinate per second and override adapter-reported limits.
     """
 
     hardware_id: HardwareId
@@ -99,7 +96,6 @@ class HardwareComponent:
     # adapter-native command units, not a universal unit such as meters.
     gripper_open_position: float | None = None
     gripper_closed_position: float | None = None
-    joint_velocity_limits: dict[JointName, float] = field(default_factory=dict)
 
     @property
     def all_joints(self) -> list[JointName]:
