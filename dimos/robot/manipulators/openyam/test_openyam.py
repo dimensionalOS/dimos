@@ -94,20 +94,20 @@ def test_openyam_hardware_simulation_mode_returns_generic_whole_body_mock(
         keyboard_teleop_openyam_planner,
     ],
 )
-def test_openyam_blueprints_partition_arm_and_gripper_tasks(blueprint: Blueprint) -> None:
+def test_openyam_blueprints_use_one_trajectory_task_for_all_joints(blueprint: Blueprint) -> None:
     kwargs = _coordinator_kwargs(blueprint)
     claimed_joints = [task.joint_names for task in kwargs["tasks"]]
 
     assert kwargs["hardware"][0].joints == OPENYAM_JOINTS
-    assert OPENYAM_ARM_JOINTS in claimed_joints
-    assert all(joints in (OPENYAM_ARM_JOINTS, [OPENYAM_GRIPPER_JOINT]) for joints in claimed_joints)
+    assert OPENYAM_JOINTS in claimed_joints
+    assert all(joints in (OPENYAM_ARM_JOINTS, OPENYAM_JOINTS) for joints in claimed_joints)
 
 
-def test_keyboard_teleop_gripper_control_is_independent() -> None:
+def test_keyboard_teleop_trajectory_controls_arm_and_gripper() -> None:
     tasks = _coordinator_kwargs(keyboard_teleop_openyam)["tasks"]
-    gripper = next(task for task in tasks if task.name == "servo_gripper")
+    trajectory = next(task for task in tasks if task.type == "trajectory")
 
-    assert gripper.joint_names == [OPENYAM_GRIPPER_JOINT]
+    assert trajectory.joint_names == OPENYAM_JOINTS
 
 
 def test_keyboard_teleop_openyam_planner_trajectory_has_priority_over_eef_task() -> None:
@@ -115,14 +115,6 @@ def test_keyboard_teleop_openyam_planner_trajectory_has_priority_over_eef_task()
     trajectory = next(task for task in tasks if task.type == "trajectory")
     eef_twist = next(task for task in tasks if task.type == "eef_twist")
 
-    assert trajectory.joint_names == OPENYAM_ARM_JOINTS
+    assert trajectory.joint_names == OPENYAM_JOINTS
     assert trajectory.priority == 20
     assert eef_twist.priority == 10
-
-
-def test_keyboard_teleop_openyam_gripper_task_has_no_default_position() -> None:
-    tasks = _coordinator_kwargs(keyboard_teleop_openyam)["tasks"]
-    gripper = next(task for task in tasks if task.name == "servo_gripper")
-
-    assert gripper.joint_names == [OPENYAM_GRIPPER_JOINT]
-    assert "default_positions" not in gripper.params

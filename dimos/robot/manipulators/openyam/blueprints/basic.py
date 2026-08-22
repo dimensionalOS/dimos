@@ -21,14 +21,14 @@ from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.common.blueprints import coordinator, planner
 from dimos.robot.manipulators.openyam.config import (
-    OPENYAM_ARM_JOINTS,
+    OPENYAM_JOINTS,
     make_openyam_model_config,
     openyam_hardware,
 )
 
 
 def _trajectory_task() -> TaskConfig:
-    return joint_trajectory_task(OPENYAM_ARM_JOINTS)
+    return joint_trajectory_task(OPENYAM_JOINTS)
 
 
 _openyam_planner_hw = openyam_hardware()

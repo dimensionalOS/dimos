@@ -350,21 +350,22 @@ class TestPostPivotPattern:
             hardware=[_left(), _right()],
             tasks=[
                 TaskConfig(
-                    name="servo_left",
-                    type="servo",
+                    name="joint_trajectory",
+                    type="trajectory",
                     joint_names=LEFT_JOINTS,
-                    stream_bind={"joint_command": "left_arm_command"},
                 )
             ],
         )
-        commands = InTap(mocker, coordinator.left_arm_command)
+        commands = InTap(mocker, coordinator.joint_command)
         left = OutTap(coordinator.left_arm_joints)
         right = OutTap(coordinator.right_arm_joints)
         coordinator.start()
 
         commands.emit(JointState(name=LEFT_JOINTS, position=[0.4, 0.5]))
 
-        assert coordinator.get_task("servo_left")._target == [0.4, 0.5]
+        trajectory = coordinator.get_task("joint_trajectory")._trajectory
+        assert trajectory is not None
+        assert trajectory.points[-1].positions == [0.4, 0.5]
         wait_until(lambda: bool(left.count and right.count), timeout=5.0)
         assert list(left.latest().name) == LEFT_JOINTS
         assert list(right.latest().name) == RIGHT_JOINTS
