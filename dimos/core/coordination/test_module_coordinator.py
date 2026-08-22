@@ -47,6 +47,7 @@ from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.stream import IO, In, Out, Stream
 from dimos.core.transport import CloudflareTransport, PubSubTransport
+from dimos.core.transport_factory import transport_topic
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -471,8 +472,8 @@ def test_remapping() -> None:
             == target_instance.remapped_data.transport.topic
         )
 
-        # The topic should be /remapped_data since that's the remapped name
-        assert target_instance.remapped_data.transport.topic == "/remapped_data"
+        # The topic should be the remapped name, spelled for the active backend.
+        assert target_instance.remapped_data.transport.topic == transport_topic("/remapped_data")
 
     finally:
         coordinator.stop()

@@ -23,7 +23,7 @@ import pytest
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.core.transport import pLCMTransport
+from dimos.core.transport_factory import make_transport
 
 
 class BurstModule(Module):
@@ -49,7 +49,7 @@ def start_burst_module():
 
 @pytest.fixture
 def burst_a_transport():
-    tr = pLCMTransport("/a")
+    tr = make_transport("/a")
     tr.start()
     yield tr
     tr.stop()
@@ -57,7 +57,7 @@ def burst_a_transport():
 
 @pytest.fixture
 def burst_record_transport():
-    tr = pLCMTransport("/record")
+    tr = make_transport("/record")
     tr.start()
     yield tr
     tr.stop()
@@ -130,7 +130,7 @@ def start_interleave_module():
 
 @pytest.fixture
 def interleave_a_transport():
-    tr = pLCMTransport("/a")
+    tr = make_transport("/a")
     tr.start()
     yield tr
     tr.stop()
@@ -138,7 +138,7 @@ def interleave_a_transport():
 
 @pytest.fixture
 def interleave_record_transport():
-    tr = pLCMTransport("/record")
+    tr = make_transport("/record")
     tr.start()
     yield tr
     tr.stop()
@@ -180,7 +180,7 @@ class CleanupModule(Module):
 
 @pytest.fixture
 def cleanup_a_transport():
-    tr = pLCMTransport("/a")
+    tr = make_transport("/a")
     tr.start()
     yield tr
     tr.stop()
@@ -188,7 +188,7 @@ def cleanup_a_transport():
 
 @pytest.fixture
 def cleanup_started_transport():
-    tr = pLCMTransport("/started")
+    tr = make_transport("/started")
     tr.start()
     yield tr
     tr.stop()
