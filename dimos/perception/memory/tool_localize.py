@@ -20,8 +20,8 @@ Run: uv run python -m dimos.perception.memory.tool_localize [query ...] [out.rrd
 The recording's shape decides the rig: an xArm-style store lifts through
 aligned depth and tf, a mobile-robot store (Go2/G1 replay) lifts through
 registered lidar and stamped poses. Queries share one model load and one
-.rrd; with --multi they go to localize() as one list, sharing a single
-detection pass per frame.
+.rrd; with --multi they go to localize() as one list and share one
+detection pass over the union of the labels' candidate frames.
 Exit code 0 with a printed
 position per verified hit; exit code 1 when no query is verified, with
 "no verified detection of ..." per miss - the honest answer that the object
@@ -211,7 +211,7 @@ def main() -> int:
     parser.add_argument(
         "--multi",
         action="store_true",
-        help="pass all queries to localize() as one list (one shared detection pass per frame)",
+        help="pass all queries to localize() as one list sharing one detection pass",
     )
     args = parser.parse_args()
 
