@@ -100,29 +100,35 @@ def test_default_config_reports_an_unimportable_wrapper() -> None:
         default_config(missing_class)
 
 
-def test_emit_config_carries_a_complete_session() -> None:
+@pytest.fixture
+def no_robots(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A machine with no robot configured, so the environment cannot add endpoints."""
+    monkeypatch.setattr(global_config, "robot_ip", None)
+    monkeypatch.setattr(global_config, "robot_ips", None)
+    monkeypatch.setattr(global_config, "zenoh_connect", "")
+
+
+def test_emit_config_carries_a_complete_session(no_robots: None) -> None:
     """The host takes this one blob on stdin, so it has to join the network from it."""
     selected = select_modules(discover_modules(), ["ray_tracing", "mls_planner"])
     graph = build_graph("go2-nav", selected)
     session = emit_config(graph, selected, session_settings())["session"]
-    assert session == ZenohConfig().to_wire()
+    assert session == ZenohConfig(connect=[]).to_wire()
 
 
-def test_robot_ip_becomes_a_dialed_endpoint() -> None:
+def test_robot_ip_becomes_a_dialed_endpoint(no_robots: None) -> None:
     session = session_settings(robot_ip="192.168.1.5", listen=["tcp/0.0.0.0:7448"])
     assert session["connect"] == ["tcp/192.168.1.5:7447"]
     assert session["listen"] == ["tcp/0.0.0.0:7448"]
 
 
 def test_a_session_is_resolved_without_touching_the_global_config() -> None:
-    """Bake resolves one session for the host, it does not reconfigure this process."""
     before = global_config.model_dump()
     session_settings(robot_ip="192.168.1.5", connect=["tcp/10.0.0.1:7447"], interface="wlan0")
     assert global_config.model_dump() == before
 
 
 def test_a_router_session_listens_where_it_is_told() -> None:
-    """A router is per-session, so bake emits one even though no process runs as one."""
     session = session_settings(mode="router", listen=["tcp/0.0.0.0:7447"])
     assert session["mode"] == "router"
     assert session["listen"] == ["tcp/0.0.0.0:7447"]

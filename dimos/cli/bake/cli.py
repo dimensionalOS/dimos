@@ -63,8 +63,8 @@ def session_settings(
     from dimos.core.global_config import global_config
     from dimos.protocol.service.zenohservice import ZenohConfig, connect_endpoints
 
-    # The session block is zenoh's, so resolve the endpoints as zenoh regardless
-    # of the transport this machine defaults to.
+    # Endpoints are derived here, not by ZenohConfig, which yields none unless
+    # this machine itself runs zenoh.
     settings: dict[str, object] = {
         "connect": connect_endpoints(
             global_config.robot_ip if robot_ip is None else robot_ip,
