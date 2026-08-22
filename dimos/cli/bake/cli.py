@@ -22,6 +22,7 @@ import json
 from pathlib import Path
 from typing import get_type_hints
 
+import click
 import typer
 
 from dimos.cli.bake.build import BUILDERS, build_host, install
@@ -85,8 +86,10 @@ def bake(
     builder: str = typer.Option("cargo", "--builder", help=f"Build driver: {', '.join(BUILDERS)}."),
     debug: bool = typer.Option(False, "--debug", help="Build the dev profile instead of release."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the graph and stop."),
-    emit_config_to: Path = typer.Option(
-        None, "--emit-config", help="Also write a ready-to-pipe stdin JSON config here."
+    emit_config_to: str = typer.Option(
+        None,
+        "--emit-config",
+        help="Also write a ready-to-pipe stdin JSON config here. Default: <out>.json.",
     ),
     list_modules: bool = typer.Option(
         False, "--list", help="List registered native modules and exit."
@@ -103,6 +106,9 @@ def bake(
             raise BakeError("-o/--out is required: its filename names the host binary")
         host = out.name
         check_host_name(host)
+        config_path = None
+        if emit_config_to is not None:
+            config_path = Path(emit_config_to) if emit_config_to else Path(str(out) + ".json")
         selected = select_modules(registry, modules or [])
         graph = build_graph(
             host,
@@ -114,12 +120,12 @@ def bake(
         typer.echo(render(graph))
         typer.echo("")
 
-        if emit_config_to is not None:
-            emit_config_to.parent.mkdir(parents=True, exist_ok=True)
+        if config_path is not None:
+            config_path.parent.mkdir(parents=True, exist_ok=True)
             # The host reads its config with a single read_line, so the blob must
             # stay on one line.
-            emit_config_to.write_text(json.dumps(emit_config(graph, selected)) + "\n")
-            typer.echo(f"Wrote {emit_config_to}")
+            config_path.write_text(json.dumps(emit_config(graph, selected)) + "\n")
+            typer.echo(f"Wrote {config_path}")
 
         if dry_run:
             return
@@ -134,8 +140,23 @@ def bake(
         raise typer.Exit(1) from exc
 
 
-def main(argv: list[str] | None = None) -> None:
-    """Run the bake CLI on argv, or sys.argv when argv is None."""
+def build_command() -> click.Command:
+    """Build the bake command, with --emit-config taking an optional path."""
     app = typer.Typer(add_completion=False)
     app.command()(bake)
-    typer.main.get_command(app)(args=argv, prog_name="dimos bake")
+    command = typer.main.get_command(app)
+    for index, param in enumerate(command.params):
+        if param.name == "emit_config_to":
+            command.params[index] = click.Option(
+                ["--emit-config", "emit_config_to"],
+                is_flag=False,
+                flag_value="",
+                type=str,
+                help=param.help,
+            )
+    return command
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Run the bake CLI on argv, or sys.argv when argv is None."""
+    build_command()(args=argv, prog_name="dimos bake")
