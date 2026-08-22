@@ -190,6 +190,19 @@ class DimSlamConfig(NativeModuleConfig):
     depth_cloud_max_range: float = 0.0
     # One point per k x k depth block (median of in-gate depths). <= 1 emits every pixel.
     depth_cloud_decimation: int = 1
+    # rgbd only: densify the depth image with the depth2depth crate before the cloud is
+    # cut from it (Depth Anything V2 anchored to the trusted raw pixels). Both
+    # safetensors paths set turns it on; the binary must be built with the depth2depth
+    # cargo feature (depth2depth-cuda/-cudnn/-metal for a GPU backend).
+    depth2depth_dinov2_weights: str = ""
+    depth2depth_head_weights: str = ""
+    # Model input resolution scale, the quality/speed knob: 1.0 = 280x504, 0.5 is ~4x
+    # faster and coarser.
+    depth2depth_quality: float = 1.0
+    # Frame whose images on the image stream feed the model; empty uses the rig camera
+    # on the depth frame. Set to the color camera's frame when depth is aligned to a
+    # camera without color (D455: depth follows the left IR camera).
+    depth2depth_color_frame: str = ""
 
     map_frame: str = "map"
     odom_frame: str = "odom"
