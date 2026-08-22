@@ -51,32 +51,35 @@ def default_config(module: RegisteredModule) -> dict[str, object]:
 
 
 def session_settings(
-    robot_ip: str | None = None,
     mode: str | None = None,
     connect: list[str] | None = None,
     listen: list[str] | None = None,
-    interface: str | None = None,
 ) -> dict[str, object]:
-    """The `session` block: these flags over the settings `dimos run` would use."""
+    """The `session` block for the robot the host runs on, not the machine baking.
+
+    Every field is pinned so nothing leaks in from this machine's global config.
+    """
     from pydantic import ValidationError
 
-    from dimos.core.global_config import global_config
-    from dimos.protocol.service.zenohservice import ZenohConfig, connect_endpoints
+    from dimos.protocol.service.zenohservice import (
+        ALL_INTERFACES,
+        BAKED_HOST_PORT,
+        ROBOT_ZENOH_PORT,
+        ZenohConfig,
+    )
 
-    # Endpoints are derived here, not by ZenohConfig, which yields none unless
-    # this machine itself runs zenoh.
     settings: dict[str, object] = {
-        "connect": connect_endpoints(
-            global_config.robot_ip if robot_ip is None else robot_ip,
-            global_config.robot_ips,
-            global_config.zenoh_connect if connect is None else ",".join(connect),
-        ),
-        "listen": listen or [],
+        "mode": mode or "peer",
+        # Dial the bridge running beside the host, listen where the laptop dials in.
+        "connect": [f"tcp/127.0.0.1:{ROBOT_ZENOH_PORT}"] if connect is None else connect,
+        "listen": [f"tcp/0.0.0.0:{BAKED_HOST_PORT}"] if listen is None else listen,
+        # Everything is dialed explicitly, so scouting has nothing left to find.
+        "scouting": False,
+        "scouting_interface": ALL_INTERFACES,
+        "multicast": False,
+        "gossip": True,
+        "connect_timeout": 1.0,
     }
-    if mode is not None:
-        settings["mode"] = mode
-    if interface is not None:
-        settings["scouting_interface"] = interface
     try:
         return ZenohConfig(**settings).to_wire()
     except ValidationError as exc:
@@ -128,19 +131,17 @@ def bake(
         "--emit-config",
         help="Also write a ready-to-pipe stdin JSON config here. Default: <out>.json.",
     ),
-    robot_ip: str = typer.Option(
-        None, "--robot-ip", help="Robot the emitted session dials, as `dimos run` takes it."
-    ),
     zenoh_connect: list[str] = typer.Option(
-        None, "--zenoh-connect", help="Extra locator the session dials. Repeatable."
+        None,
+        "--zenoh-connect",
+        help="Locator the session dials instead of the robot's own bridge. Repeatable.",
     ),
     zenoh_listen: list[str] = typer.Option(
-        None, "--zenoh-listen", help="Locator the session listens on. Repeatable."
+        None,
+        "--zenoh-listen",
+        help="Locator the session listens on instead of tcp/0.0.0.0:7448. Repeatable.",
     ),
     zenoh_mode: str = typer.Option(None, "--zenoh-mode", help="peer, client or router."),
-    zenoh_interface: str = typer.Option(
-        None, "--zenoh-interface", help="Interface multicast scouting binds to, e.g. wlan0."
-    ),
     list_modules: bool = typer.Option(
         False, "--list", help="List registered native modules and exit."
     ),
@@ -173,11 +174,9 @@ def bake(
         if config_path is not None:
             config_path.parent.mkdir(parents=True, exist_ok=True)
             session = session_settings(
-                robot_ip=robot_ip,
                 mode=zenoh_mode,
                 connect=zenoh_connect or None,
-                listen=zenoh_listen,
-                interface=zenoh_interface,
+                listen=zenoh_listen or None,
             )
             # The host reads its config with a single read_line, so the blob must
             # stay on one line.
