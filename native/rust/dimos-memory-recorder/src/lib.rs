@@ -363,7 +363,7 @@ fn encode_jpeg(data: &[u8], reception_ts: f64, quality: i32) -> Result<(f64, Vec
         height: image.height as usize,
         format,
     };
-    let jpeg = turbojpeg::compress(source, quality, Subsamp::Sub2x2)
+    let jpeg = turbojpeg::compress(source, quality, Subsamp::Sub2x1)
         .context("TurboJPEG compression failed")?;
     image.encoding = "jpeg".to_string();
     image.is_bigendian = 0;
