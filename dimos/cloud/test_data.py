@@ -155,19 +155,27 @@ def test_resume_sends_only_missing_parts(tmp_path: Path, monkeypatch: pytest.Mon
 
 @pytest.mark.parametrize(
     "bad,why",
-    [
-        ("/x.db-shm", "sidecar"),
-        ("/live.db", "still recording"),
-        ("/missing.db", "missing.db"),
-    ],
+    [("x.db-shm", "sidecar"), ("live.bin", "still being written"), ("missing.db", "missing.db")],
 )
 def test_upload_guards(env: tuple[CloudData, FakeTransport, Path], bad: str, why: str) -> None:
     cloud, _, db = env
-    p = db.parent / bad.lstrip("/")
+    p = db.parent / bad
     if "missing" not in bad:
-        p.write_bytes(b"x")  # fresh mtime == "live"
+        p.write_bytes(b"x")  # fresh mtime == still being written
     with pytest.raises((RuntimeError, OSError), match=why):
         cloud.upload(p)
+
+
+def test_kind_inferred_from_file(env: tuple[CloudData, FakeTransport, Path]) -> None:
+    cloud, t, db = env
+    blob = db.parent / "flight.bin"
+    blob.write_bytes(os.urandom(1024))
+    os.utime(blob, (time.time() - 3600,) * 2)
+    cloud.upload(db)
+    cloud.upload(blob)
+    kinds = {u["filename"].split(".")[0]: u["kind"] for u in t.uploads.values()}
+    assert kinds == {"session_go2_1": "recording", "flight": "blob"}
+    assert set(cd.recordings()) == {db, blob}  # discovery is format-agnostic
 
 
 @pytest.mark.parametrize("evil", ["../escaped.db.lz4", "/tmp/evil.db.lz4", "...lz4"])
