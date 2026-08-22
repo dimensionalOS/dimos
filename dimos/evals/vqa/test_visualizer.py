@@ -23,7 +23,7 @@ import numpy as np
 from dimos.evals.vqa import visualizer
 from dimos.evals.vqa.editor import EditorState, FrameDraft, SubmitResult
 from dimos.evals.vqa.preprocessing import FrameGeometryUnavailableError
-from dimos.evals.vqa.visualizer import create_editor_app
+from dimos.evals.vqa.visualizer import VqaEditorWebInterface
 from dimos.msgs.sensor_msgs.Image import Image
 
 
@@ -37,6 +37,12 @@ class FakeSession:
     def start(self) -> FakeSession:
         self.started = True
         return self
+
+    def __enter__(self) -> FakeSession:
+        return self.start()
+
+    def __exit__(self, *_: Any) -> None:
+        self.stop()
 
     def stop(self) -> None:
         self.started = False
@@ -94,9 +100,13 @@ def test_editor_app_serves_page_and_session_routes(tmp_path: Path, monkeypatch: 
         ready_messages.append(message)
 
     monkeypatch.setattr(visualizer.logger, "info", capture_ready)
-    app = create_editor_app(session, ready_url="http://127.0.0.1:9876")  # type: ignore[arg-type]
+    server = VqaEditorWebInterface(session, port=9876)  # type: ignore[arg-type]
 
-    with TestClient(app) as client:
+    assert server.host == "127.0.0.1"
+    assert server.port == 9876
+    assert server.app.title == "DimOS VQA Editor"
+    assert not server.app.user_middleware
+    with TestClient(server.app) as client:
         assert session.started
         assert session.preload_calls == 1
         assert ready_messages == ["VQA editor ready: http://127.0.0.1:9876"]
@@ -121,16 +131,38 @@ def test_editor_app_serves_page_and_session_routes(tmp_path: Path, monkeypatch: 
         generated = client.post("/api/generate", json={"start": 0, "stop": 3, "stride": 2}).json()
         assert [draft["index"] for draft in generated] == [0, 2]
         assert client.post("/api/submit").json()["question_count"] == 2
+        assert client.get("/streams").status_code == 404
+        assert client.get("/unitree/status").status_code == 404
+        assert client.post("/submit_query").status_code == 404
 
     assert not session.started
 
 
 def test_editor_app_rejects_mismatched_draft_index(tmp_path: Path) -> None:
     session = FakeSession(tmp_path)
-    app = create_editor_app(session)  # type: ignore[arg-type]
+    server = VqaEditorWebInterface(session)  # type: ignore[arg-type]
 
-    with TestClient(app) as client:
+    with TestClient(server.app) as client:
         response = client.put("/api/frames/1", json={"index": 2, "questions": []})
 
     assert response.status_code == 400
     assert session.updated is None
+
+
+def test_run_editor_uses_shared_robot_web_interface(tmp_path: Path, monkeypatch: Any) -> None:
+    session = FakeSession(tmp_path)
+    seen: list[tuple[FakeSession, int]] = []
+
+    class FakeWebInterface:
+        def __init__(self, received_session: FakeSession, port: int) -> None:
+            seen.append((received_session, port))
+
+        def run(self) -> None:
+            seen.append((session, -1))
+
+    monkeypatch.setattr(visualizer, "VqaEditorSession", lambda *_: session)
+    monkeypatch.setattr(visualizer, "VqaEditorWebInterface", FakeWebInterface)
+
+    visualizer.run_editor("recording.db", tmp_path, 9876)
+
+    assert seen == [(session, 9876), (session, -1)]

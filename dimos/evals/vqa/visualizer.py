@@ -27,6 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from dimos.evals.vqa.editor import FrameDraft, SubmitResult, VqaEditorSession
 from dimos.evals.vqa.preprocessing import FrameGeometryUnavailableError
 from dimos.utils.logging_config import setup_logger
+from dimos.web.robot_web_interface import RobotWebInterface
 
 DEFAULT_EDITOR_PORT = 8765
 _INDEX = Path(__file__).with_name("editor.html")
@@ -62,84 +63,83 @@ class GenerationSelection(BaseModel):
         return range(self.start, self.stop, self.stride)
 
 
-def create_editor_app(session: VqaEditorSession, *, ready_url: str | None = None) -> FastAPI:
-    """Create a localhost-oriented editor application around one session."""
+class VqaEditorWebInterface(RobotWebInterface):
+    """Host one offline VQA editor session on the shared robot web server."""
+
+    def __init__(self, session: VqaEditorSession, port: int = DEFAULT_EDITOR_PORT) -> None:
+        self._session = session
+        super().__init__(host="127.0.0.1", port=port)
+        self.app.title = "DimOS VQA Editor"
+        self.app.user_middleware.clear()
+        self.app.router.lifespan_context = self._lifespan
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        try:
-            session.start()
-            session.preload_generation_models()
-            logger.info(f"VQA editor ready: {ready_url}" if ready_url else "VQA editor ready")
+    async def _lifespan(self, _: FastAPI) -> AsyncIterator[None]:
+        with self._session:
+            self._session.preload_generation_models()
+            logger.info(f"VQA editor ready: http://{self.host}:{self.port}")
             yield
-        finally:
-            session.stop()
 
-    app = FastAPI(title="DimOS VQA Editor", lifespan=lifespan)
+    def setup_routes(self) -> None:
+        """Register only VQA routes, excluding the robot dashboard endpoints."""
 
-    @app.get("/", include_in_schema=False)
-    def index() -> FileResponse:
-        return FileResponse(_INDEX, media_type="text/html")
+        @self.app.get("/", include_in_schema=False)
+        def index() -> FileResponse:
+            return FileResponse(_INDEX, media_type="text/html")
 
-    @app.get("/api/session")
-    def state() -> object:
-        return session.state()
+        @self.app.get("/api/session")
+        def state() -> object:
+            return self._session.state()
 
-    @app.get("/api/frames/{frame_index}")
-    def frame(frame_index: int) -> FrameDraft:
-        try:
-            return session.draft(frame_index)
-        except (IndexError, LookupError, ValueError) as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        @self.app.get("/api/frames/{frame_index}")
+        def frame(frame_index: int) -> FrameDraft:
+            try:
+                return self._session.draft(frame_index)
+            except (IndexError, LookupError, ValueError) as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    @app.get("/api/frames/{frame_index}/image")
-    def image(frame_index: int) -> Response:
-        try:
-            data = session.raw_image(frame_index).to_jpeg_bytes(quality=85)
-        except (IndexError, LookupError, ValueError) as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return Response(data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+        @self.app.get("/api/frames/{frame_index}/image")
+        def image(frame_index: int) -> Response:
+            try:
+                data = self._session.raw_image(frame_index).to_jpeg_bytes(quality=85)
+            except (IndexError, LookupError, ValueError) as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            return Response(data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
-    @app.get("/api/frames/{frame_index}/topdown")
-    def topdown(frame_index: int) -> Response:
-        try:
-            data = session.topdown_image(frame_index)
-        except FrameGeometryUnavailableError:
-            return Response(status_code=204)
-        except (IndexError, LookupError, RuntimeError, ValueError) as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return Response(data, media_type="image/png", headers={"Cache-Control": "no-store"})
+        @self.app.get("/api/frames/{frame_index}/topdown")
+        def topdown(frame_index: int) -> Response:
+            try:
+                data = self._session.topdown_image(frame_index)
+            except FrameGeometryUnavailableError:
+                return Response(status_code=204)
+            except (IndexError, LookupError, RuntimeError, ValueError) as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            return Response(data, media_type="image/png", headers={"Cache-Control": "no-store"})
 
-    @app.put("/api/frames/{frame_index}")
-    def update_frame(frame_index: int, draft: FrameDraft) -> FrameDraft:
-        if draft.index != frame_index:
-            raise HTTPException(status_code=400, detail="draft index does not match URL")
-        try:
-            return session.replace_draft(draft)
-        except (IndexError, ValueError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        @self.app.put("/api/frames/{frame_index}")
+        def update_frame(frame_index: int, draft: FrameDraft) -> FrameDraft:
+            if draft.index != frame_index:
+                raise HTTPException(status_code=400, detail="draft index does not match URL")
+            try:
+                return self._session.replace_draft(draft)
+            except (IndexError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @app.post("/api/generate")
-    def generate(selection: GenerationSelection) -> tuple[FrameDraft, ...]:
-        try:
-            return session.generate(selection.indices())
-        except (IndexError, ValueError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        @self.app.post("/api/generate")
+        def generate(selection: GenerationSelection) -> tuple[FrameDraft, ...]:
+            try:
+                return self._session.generate(selection.indices())
+            except (IndexError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @app.post("/api/submit")
-    def submit() -> SubmitResult:
-        try:
-            return session.submit()
-        except (OSError, RuntimeError, ValueError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return app
+        @self.app.post("/api/submit")
+        def submit() -> SubmitResult:
+            try:
+                return self._session.submit()
+            except (OSError, RuntimeError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def run_editor(recording: str, output: Path, port: int = DEFAULT_EDITOR_PORT) -> None:
     """Run the VQA editor on the local loopback interface."""
-    import uvicorn
-
-    session = VqaEditorSession(recording, output)
-    url = f"http://127.0.0.1:{port}"
-    uvicorn.run(create_editor_app(session, ready_url=url), host="127.0.0.1", port=port)
+    VqaEditorWebInterface(VqaEditorSession(recording, output), port).run()
