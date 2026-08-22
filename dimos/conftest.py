@@ -60,7 +60,7 @@ _run_id = os.environ[DIMOS_PYTEST_RUN_ID_ENV]
 if _worker:
     _BUCKET = _lcm_bucket(f"{_run_id}:{_worker}")
     os.environ["LCM_DEFAULT_URL"] = f"udpm://239.255.76.67:{7700 + _BUCKET}?ttl=0"
-    os.environ.setdefault("ZENOH_SCOUT_ADDR", f"224.0.0.224:{17700 + _BUCKET}")
+    os.environ["ZENOH_SCOUT_ADDR"] = f"224.0.0.224:{17700 + _BUCKET}"
     os.environ["MCP_PORT"] = str(20000 + _BUCKET)
     os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp(prefix=f"dimos-test-state-{_worker}-")
 else:
@@ -343,6 +343,12 @@ def monitor_threads(request):
         # https://github.com/huggingface/transformers/issues/29513
         "Thread-auto_conversion",
     ]
+    # Zenoh callback threads belong to a session in the process-wide pool, which
+    # outlives the test that first opened it on purpose -- sharing one session is
+    # the point of the pool, and closing it per test would cut module-scoped
+    # fixtures off from their transports mid-module. They go at interpreter exit.
+    # The name is "Thread-<n> (pyo3-closure)", so this cannot be a prefix match.
+    expected_persistent_thread_infix = "(pyo3-closure)"
 
     def live_new_threads():
         # Threads created during this test that are still running. A thread that
@@ -353,6 +359,8 @@ def monitor_threads(request):
             if t.ident is None or t.ident in before or t.name == "MainThread":
                 continue
             if any(t.name.startswith(prefix) for prefix in expected_persistent_thread_prefixes):
+                continue
+            if expected_persistent_thread_infix in t.name:
                 continue
             if t.is_alive():
                 result.append(t)

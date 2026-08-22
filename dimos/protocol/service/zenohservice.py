@@ -297,6 +297,23 @@ class ZenohService(Service):
         self._session_pool = session_pool or default_session_pool
         self._session: zenoh.Session | None = None
 
+    def __getstate__(self):  # type: ignore[no-untyped-def]
+        """Drop the live session, which pyo3 cannot pickle.
+
+        A module travels to its worker by pickle, so anything holding a session
+        has to shed it and re-acquire from the pool on the far side -- the same
+        move LCMService makes with its own runtime handles.
+        """
+        state = self.__dict__.copy()
+        state.pop("_session", None)
+        state.pop("_session_pool", None)
+        return state
+
+    def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
+        self.__dict__.update(state)
+        self._session_pool = default_session_pool
+        self._session = None
+
     def start(self) -> None:
         try:
             self._session = self._session_pool.acquire(self.config)

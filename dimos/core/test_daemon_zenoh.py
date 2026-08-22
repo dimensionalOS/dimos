@@ -20,8 +20,10 @@ inherit any zenoh state), and the client must be a genuinely separate process.
 This also keeps zenoh threads out of the pytest process.
 
 Assumption: the zenoh `Coordinator/*` RPC keys are host-global over loopback
-multicast (not namespaced per run). No other test serves or connects a zenoh
-Coordinator, and `--dist=loadfile` keeps this file on a single xdist worker.
+multicast (not namespaced per run). Since zenoh became the default, several
+other tests serve a Coordinator too; what keeps them from answering this one's
+probe is the per-worker scouting group conftest pins (`ZENOH_SCOUT_ADDR`),
+with `--dist=loadfile` keeping this file on a single xdist worker.
 """
 
 from __future__ import annotations
