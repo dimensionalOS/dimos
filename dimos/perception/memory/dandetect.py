@@ -141,7 +141,7 @@ class DanDetector(Resource):
         *,
         index: Stream[Any, Any],
         **kwargs: Any,
-    ) -> Localization | list[Localization | None] | None:
+    ) -> list[Localization] | list[list[Localization]]:
         """:func:`localize` on this resource's models."""
         return localize(
             store,
