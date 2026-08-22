@@ -78,7 +78,11 @@ class Instance:
 
 @dataclass
 class Localization:
-    """Latest unambiguous localization of a queried object."""
+    """One verified instance of a queried object.
+
+    ``point_cloud`` is the union of every viewpoint that saw the instance;
+    position and timestamps follow the latest sighting.
+    """
 
     instance_id: str
     semantic_score: float
@@ -95,7 +99,6 @@ class Localization:
     last_seen_timestamp: float
 
     point_cloud: PointCloud2 | None
-    cloud_mode: str
     coverage: float
     n_views: int
     reason: str | None = None
