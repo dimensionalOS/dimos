@@ -135,7 +135,7 @@ def test_whoami_displays_account(
     filestore.write_text("dimos_sk_w\n")
     seen: dict[str, str] = {}
 
-    def fake_urlopen(req: Any) -> io.BytesIO:
+    def fake_urlopen(req: Any, timeout: float | None = None) -> io.BytesIO:
         seen["auth"] = req.get_header("Authorization")
         return io.BytesIO(json.dumps({"email": "e@x", "scopes": "data"}).encode())
 
@@ -148,7 +148,7 @@ def test_whoami_displays_account(
 def test_whoami_revoked_key_exits(monkeypatch: pytest.MonkeyPatch, filestore: Path) -> None:
     filestore.write_text("dimos_sk_dead\n")
 
-    def fake_urlopen(req: Any) -> io.BytesIO:
+    def fake_urlopen(req: Any, timeout: float | None = None) -> io.BytesIO:
         raise urllib.error.HTTPError(req.full_url, 401, "unauthorized", {}, None)  # type: ignore[arg-type]
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
