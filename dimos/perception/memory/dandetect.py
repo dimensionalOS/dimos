@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from dimos.core.resource import Resource
 from dimos.memory.embed import EmbedImages
-from dimos.memory.transform import throttle
+from dimos.memory.transform import QualityWindow
 from dimos.perception.memory.inventory import DEFAULT_VOCABULARY, NamingVocabulary, inventory
 from dimos.perception.memory.localize import embed_index, localize
 from dimos.perception.memory.rig import Rig
@@ -124,7 +124,8 @@ class DanDetector(Resource):
         embedded: Stream[Any, Any] = store.stream("color_image_embedded", Image)
         pipeline = (
             rig.color.live()
-            .transform(throttle(1.0 / rig.embed_hz))
+            .filter(lambda obs: obs.data.brightness > 0.1)
+            .transform(QualityWindow(lambda img: img.sharpness, window=1.0 / rig.embed_hz))
             .map(lambda obs: obs.derive(data=obs.data, pose=rig.index_pose(obs)))
             .filter(lambda obs: obs.pose is not None)
             .transform(EmbedImages(self.siglip, batch_size=1))

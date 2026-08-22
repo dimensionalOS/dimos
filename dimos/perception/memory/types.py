@@ -115,10 +115,6 @@ class LocalizePolicy:
     accept_score: float = 0.40
     refusal_margin: float = 0.15
     min_views: int = 2  # a support seen from one pose only is unconfirmed
-    # Frames retrieved per query for the detection pass. Wrist-camera frames
-    # each cover most of the workspace; room-scale sweeps dilute the
-    # embedding signal across viewpoints and need a larger budget.
-    retrieval_frames: int = 12
 
     cluster_radius_m: float = 0.08  # observations within this are the same support
     min_depth_points: int = 60
@@ -128,7 +124,7 @@ class LocalizePolicy:
     # object: every real object rises above the plane, a surface patch does not.
     surface_patch_max_rise_m: float = 0.003
     surface_patch_min_drop_m: float = -0.02
-    # Cross-view verification looks for re-detections this far from a support.
+    # Images gathered around each semantic peak for the detection pass.
     verify_radius_m: float = 1.6
 
 
