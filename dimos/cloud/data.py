@@ -77,7 +77,7 @@ class MultipartBackend:
     def upload(
         self, path: Path, *, robot_id: str | None, kind: str, part_size: int | None
     ) -> dict[str, Any]:
-        manifest = _manifest(path) if kind == global_config.dimos_upload_kind else None
+        manifest = _manifest(path)
         with self._staging(path) as tmp:
             if self.codec.id and path.suffix != self.codec.suffix:
                 artifact = Path(tmp) / (path.name + self.codec.suffix)
@@ -177,21 +177,15 @@ class CloudData:
         path = path.expanduser()
         if not path.is_file():
             raise FileNotFoundError(path)
-        rec = global_config.dimos_recording_suffix
-        if path.suffix in (f"{rec}-shm", f"{rec}-wal"):
-            raise RuntimeError(
-                f"{path.suffix} is a SQLite sidecar, not the recording — upload the {rec}"
-            )
-        if (
-            path.suffix == rec
-            and time.time() - path.stat().st_mtime < global_config.dimos_recording_quiet_s
-        ):
-            raise RuntimeError("session still recording — skipped")
+        if _is_sidecar(path):
+            raise RuntimeError(f"{path.name} is a SQLite sidecar, not the data file")
+        if time.time() - path.stat().st_mtime < global_config.dimos_upload_quiet_s:
+            raise RuntimeError("file still being written — skipped")
         chunk_mb = chunk_mb if chunk_mb is not None else global_config.dimos_upload_chunk_mb
         return self.backend.upload(
             path,
             robot_id=robot_id,
-            kind=kind or global_config.dimos_upload_kind,
+            kind=kind or kind_of(path),
             part_size=chunk_mb * 2**20 if chunk_mb else None,
         )
 
@@ -209,17 +203,33 @@ class CloudData:
 
 
 def recordings(newer_than_s: float | None = None) -> list[Path]:
-    """Recordings by mtime, oldest first; tolerant of files vanishing mid-scan."""
+    """Files in RECORDINGS_DIR by mtime, oldest first, any format; sidecars excluded;
+    tolerant of files vanishing mid-scan."""
     cutoff = time.time() - newer_than_s if newer_than_s else None
     found = []
-    for p in RECORDINGS_DIR.glob(f"*{global_config.dimos_recording_suffix}"):
+    for p in RECORDINGS_DIR.iterdir():
         try:
+            if not p.is_file() or _is_sidecar(p):
+                continue
             mtime = p.stat().st_mtime
         except FileNotFoundError:
             continue
         if cutoff is None or mtime >= cutoff:
             found.append((mtime, p))
     return [p for _mtime, p in sorted(found)]
+
+
+def kind_of(path: Path) -> str:
+    """Server category inferred from the file: a dimos recording (mem2 sqlite with a
+    `_streams` table, or mcap) is `recording`; everything else is a generic `blob`.
+    `--kind` overrides for video/pointcloud/log."""
+    if path.suffix == ".mcap" or _manifest(path) is not None:
+        return "recording"
+    return "blob"
+
+
+def _is_sidecar(path: Path) -> bool:
+    return path.name.endswith(("-shm", "-wal", "-journal"))  # SQLite's own suffixes
 
 
 def _manifest(db: Path) -> dict[str, Any] | None:
