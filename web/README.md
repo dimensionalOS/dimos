@@ -133,8 +133,11 @@ Several choices are workarounds for upstream bugs, verified 2026-07-10..15 on De
    `u32-LE headerLen | u32-LE payloadLen | header JSON | payload`.
 3. **The relay never writes on robot-opened streams** and aborts its send half (RESET). aioquic
    parses server bytes on client-initiated bidi WT streams as H3 frames and kills the connection
-   (H3_FRAME_UNEXPECTED). Robot-leg control (hello/welcome/ping/pong) rides datagrams instead; the
-   robot retries hello until welcomed (datagrams are lossy).
+   (H3_FRAME_UNEXPECTED). Relay->robot control (welcome/error/pong/subs/teleop) rides datagrams;
+   since protocol v5 the robot's hello rides an `@control` data frame (payload = the datagram
+   encoding, capped at 64 KiB) on a fresh one-shot bidi stream, resent until the lossy welcome
+   datagram lands - which freed the manifest from the ~1100 B datagram budget. Channel ids beginning
+   with `@` are reserved for control frames and never forwarded to viewers.
 4. **aioquic must set `max_datagram_frame_size=65536`** or the session dies at SETTINGS time.
 5. **Relay installs an `unhandledrejection` guard** (deno#28406) or it dies ~30 s after a browser
    tab closes.

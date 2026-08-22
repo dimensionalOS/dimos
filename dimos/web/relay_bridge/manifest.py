@@ -44,6 +44,10 @@ MANIFEST_VERSION = 1
 # Bound for channel/panel ids, encodings, and panel kinds.
 MAX_MANIFEST_ID_LEN = 64
 
+# Channel ids with this prefix belong to protocol control (e.g. @control)
+# and can never be declared by a manifest.
+RESERVED_CHANNEL_PREFIX = "@"
+
 
 class ManifestError(ValueError):
     """`code` is the machine-readable reason, pinned by the golden vectors."""
@@ -195,6 +199,12 @@ def parse_manifest(data: Any) -> Manifest:
         if not _bounded_id(spec.ch):
             raise ManifestError(
                 "invalid_channel_id", f"channel id must be 1..{MAX_MANIFEST_ID_LEN} chars"
+            )
+        if spec.ch.startswith(RESERVED_CHANNEL_PREFIX):
+            raise ManifestError(
+                "reserved_channel_id",
+                f"channel ids beginning with {RESERVED_CHANNEL_PREFIX} are reserved "
+                "for protocol control",
             )
         if spec.ch in ch_ids:
             raise ManifestError("duplicate_channel_id", f"duplicate channel {spec.ch}")
