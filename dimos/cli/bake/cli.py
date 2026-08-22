@@ -50,8 +50,44 @@ def default_config(module: RegisteredModule) -> dict[str, object]:
     return dict(config_type().to_config_dict())
 
 
-def emit_config(graph: Graph, modules: Sequence[RegisteredModule]) -> dict[str, object]:
-    """The stdin blob for the host, bar the `session` block only the deployment knows."""
+def session_settings(
+    robot_ip: str | None = None,
+    mode: str | None = None,
+    connect: list[str] | None = None,
+    listen: list[str] | None = None,
+    interface: str | None = None,
+) -> dict[str, object]:
+    """The `session` block: these flags over the settings `dimos run` would use."""
+    from pydantic import ValidationError
+
+    from dimos.core.global_config import global_config
+    from dimos.protocol.service.zenohservice import ZenohConfig, connect_endpoints
+
+    # The session block is zenoh's, so resolve the endpoints as zenoh regardless
+    # of the transport this machine defaults to.
+    settings: dict[str, object] = {
+        "connect": connect_endpoints(
+            global_config.robot_ip if robot_ip is None else robot_ip,
+            global_config.robot_ips,
+            global_config.zenoh_connect if connect is None else ",".join(connect),
+        ),
+        "listen": listen or [],
+    }
+    if mode is not None:
+        settings["mode"] = mode
+    if interface is not None:
+        settings["scouting_interface"] = interface
+    try:
+        return ZenohConfig(**settings).to_wire()
+    except ValidationError as exc:
+        reasons = ". ".join(e["msg"].removeprefix("Value error, ") for e in exc.errors())
+        raise BakeError(f"session: {reasons}") from exc
+
+
+def emit_config(
+    graph: Graph, modules: Sequence[RegisteredModule], session: dict[str, object]
+) -> dict[str, object]:
+    """The stdin blob the host runs on, session included."""
     topics = graph.topics()
     return {
         "modules": {
@@ -64,6 +100,7 @@ def emit_config(graph: Graph, modules: Sequence[RegisteredModule]) -> dict[str, 
         "graph": graph.fingerprint(),
         "qos": graph.qos(),
         "suppress": list(graph.suppressed_topics()),
+        "session": session,
     }
 
 
@@ -90,6 +127,19 @@ def bake(
         None,
         "--emit-config",
         help="Also write a ready-to-pipe stdin JSON config here. Default: <out>.json.",
+    ),
+    robot_ip: str = typer.Option(
+        None, "--robot-ip", help="Robot the emitted session dials, as `dimos run` takes it."
+    ),
+    zenoh_connect: list[str] = typer.Option(
+        None, "--zenoh-connect", help="Extra locator the session dials. Repeatable."
+    ),
+    zenoh_listen: list[str] = typer.Option(
+        None, "--zenoh-listen", help="Locator the session listens on. Repeatable."
+    ),
+    zenoh_mode: str = typer.Option(None, "--zenoh-mode", help="peer, client or router."),
+    zenoh_interface: str = typer.Option(
+        None, "--zenoh-interface", help="Interface multicast scouting binds to, e.g. wlan0."
     ),
     list_modules: bool = typer.Option(
         False, "--list", help="List registered native modules and exit."
@@ -122,9 +172,16 @@ def bake(
 
         if config_path is not None:
             config_path.parent.mkdir(parents=True, exist_ok=True)
+            session = session_settings(
+                robot_ip=robot_ip,
+                mode=zenoh_mode,
+                connect=zenoh_connect or None,
+                listen=zenoh_listen,
+                interface=zenoh_interface,
+            )
             # The host reads its config with a single read_line, so the blob must
             # stay on one line.
-            config_path.write_text(json.dumps(emit_config(graph, selected)) + "\n")
+            config_path.write_text(json.dumps(emit_config(graph, selected, session)) + "\n")
             typer.echo(f"Wrote {config_path}")
 
         if dry_run:
