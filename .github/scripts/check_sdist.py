@@ -31,6 +31,7 @@ REQUIRED = (
     "web/deno.lock",
     "web/relay/main.ts",
     "web/sdk/deno.json",
+    "web/sdk/dist/sdk.js",
 )
 
 

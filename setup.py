@@ -75,6 +75,7 @@ RELAY_DIST_SOURCES = (
     "cockpit/dist",
     "sdk/deno.json",
     "sdk/package.json",
+    "sdk/dist",
 )
 RELAY_DIST_TARGET = os.path.join("dimos", "web", "relay_bridge", "_relay_dist")
 
@@ -98,23 +99,31 @@ class build_py(_build_py):
         src = Path(__file__).parent / "web"
         if not (src / "relay" / "main.ts").is_file():
             raise RuntimeError(f"relay sources missing at {src}; refusing to build the wheel")
-        if not (src / "cockpit" / "dist" / "index.html").is_file():
-            # Wheels must carry the Cockpit: there is no fallback debug page,
-            # so a dist-less wheel's relay serves no UI at all. Building a
-            # deliberate python-only wheel (e.g. where deno is unavailable)
-            # requires the explicit env-var opt-out.
+        missing = [
+            rel
+            for rel in ("cockpit/dist/index.html", "sdk/dist/sdk.js")
+            if not (src / rel).is_file()
+        ]
+        if missing:
+            # Wheels must carry the Cockpit and the SDK bundle: there is no
+            # fallback debug page, so a dist-less wheel's relay serves no UI
+            # (and /sdk.js only a build hint). Building a deliberate
+            # python-only wheel (e.g. where deno is unavailable) requires the
+            # explicit env-var opt-out, which covers both products.
             if os.environ.get("DIMOS_ALLOW_MISSING_COCKPIT") != "1":
                 raise RuntimeError(
-                    f"cockpit dist missing at {src / 'cockpit' / 'dist'}; run "
-                    "`deno task build` in web/cockpit (or `dimos run --local-relay` "
-                    "from a checkout builds it), or set DIMOS_ALLOW_MISSING_COCKPIT=1 "
-                    "to build a UI-less wheel anyway"
+                    f"web dist missing ({', '.join(missing)}); run `deno task build` "
+                    "in web/sdk and web/cockpit (or `dimos run --local-relay` from a "
+                    "checkout builds them), or set DIMOS_ALLOW_MISSING_COCKPIT=1 to "
+                    "build a UI-less wheel anyway"
                 )
-            self.warn("cockpit dist missing; this wheel's relay will have no UI")
+            self.warn(
+                f"web dist missing ({', '.join(missing)}); this wheel's relay will have no UI"
+            )
         dst = Path(self.build_lib) / RELAY_DIST_TARGET
         for name in RELAY_DIST_SOURCES:
             entry = src / name
-            if not entry.exists():  # only cockpit/dist may be absent (env-var opt-out above)
+            if not entry.exists():  # only the dists may be absent (env-var opt-out above)
                 continue
             for path in sorted(entry.rglob("*")) if entry.is_dir() else [entry]:
                 # Filter on the path below src: matching path.parts would also

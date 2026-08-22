@@ -119,10 +119,8 @@ class _Publisher:
 
 
 def _start_bridge() -> tuple[RelayBridgeModule, tuple[pLCMTransport, ...]]:
-    # cockpit_build=False: tests must never trigger the npm-downloading build.
-    module = RelayBridgeModule(
-        local_port=0, open_browser=False, cockpit_build=False, robot_id=ROBOT_ID
-    )
+    # web_build=False: tests must never trigger the npm-downloading build.
+    module = RelayBridgeModule(local_port=0, open_browser=False, web_build=False, robot_id=ROBOT_ID)
     transports = (
         pLCMTransport("/rb_e2e/odom"),
         pLCMTransport("/rb_e2e/color_image"),
@@ -187,7 +185,7 @@ def test_local_relay_port_collision_does_not_kill_listener() -> None:
         module = RelayBridgeModule(local_port=port, open_browser=False, robot_id="collision-test")
 
         with pytest.raises(RuntimeError, match=rf"port {port} is unavailable"):
-            module._spawn_relay(False)
+            module._spawn_relay(False, None)
 
         assert listener.poll() is None
     finally:
@@ -410,7 +408,7 @@ def _start_teleop_bridge() -> tuple[RelayBridgeModule, tuple[pLCMTransport, ...]
     module = RelayBridgeModule(
         local_port=0,
         open_browser=False,
-        cockpit_build=False,
+        web_build=False,
         robot_id=ROBOT_ID,
         manifest=manifest,
     )
@@ -501,7 +499,7 @@ def deadman_bridge() -> Iterator[tuple[RelayProcess, RelayBridgeModule]]:
     module = RelayBridgeModule(
         relay_url=ready.wt_url,
         open_browser=False,
-        cockpit_build=False,
+        web_build=False,
         robot_id=ROBOT_ID,
         manifest=manifest,
     )

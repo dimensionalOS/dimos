@@ -706,6 +706,122 @@ Deno.test({
   }
 });
 
+Deno.test({
+  name: "relay serves /sdk.js with local CORS and no-cache",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const sdkDir = fileURLToPath(new URL("./testdata/fake_sdk_dist", import.meta.url));
+  const relay = await startRelay({ port: 0, sdkDir });
+  const httpBase = `http://127.0.0.1:${relay.httpPort}`;
+  try {
+    const sdk = await fetch(`${httpBase}/sdk.js`);
+    assertEquals(sdk.status, 200);
+    assertEquals(sdk.headers.get("content-type"), "application/javascript");
+    assertEquals(sdk.headers.get("access-control-allow-origin"), "*");
+    assertEquals(sdk.headers.get("cache-control"), "no-cache");
+    assert((await sdk.text()).includes("fake sdk bundle"));
+    // The discovery endpoints carry the local wildcard too, so a page on
+    // another loopback origin (Vite dev server) can bootstrap.
+    for (const path of ["/api/info", "/api/stats"]) {
+      const res = await fetch(`${httpBase}${path}`);
+      assertEquals(res.headers.get("access-control-allow-origin"), "*", path);
+      await res.body?.cancel();
+    }
+  } finally {
+    await relay.shutdown();
+  }
+});
+
+Deno.test({
+  name: "missing sdk bundle yields a build hint, never cockpit HTML",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const cockpitDir = fileURLToPath(new URL("./testdata/fake_cockpit", import.meta.url));
+  const relay = await startRelay({ port: 0, cockpitDir });
+  const httpBase = `http://127.0.0.1:${relay.httpPort}`;
+  try {
+    const sdk = await fetch(`${httpBase}/sdk.js`);
+    assertEquals(sdk.status, 404);
+    assertEquals(sdk.headers.get("access-control-allow-origin"), "*");
+    const body = await sdk.text();
+    assert(body.includes("sdk bundle not built"));
+    // An HTML fallback imported as a module would be a baffling syntax error
+    // in the consumer page; the hint must win over the static root.
+    assert(!body.includes("fake cockpit index"));
+  } finally {
+    await relay.shutdown();
+  }
+});
+
+Deno.test({
+  name: "serve-dir replaces the cockpit root; api and sdk keep precedence",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const cockpitDir = fileURLToPath(new URL("./testdata/fake_cockpit", import.meta.url));
+  const sdkDir = fileURLToPath(new URL("./testdata/fake_sdk_dist", import.meta.url));
+  const serveDir = fileURLToPath(new URL("./testdata/fake_user_dir", import.meta.url));
+  const relay = await startRelay({ port: 0, cockpitDir, sdkDir, serveDir });
+  const httpBase = `http://127.0.0.1:${relay.httpPort}`;
+  try {
+    const index = await (await fetch(`${httpBase}/`)).text();
+    assert(index.includes("fake user index"));
+    assert(!index.includes("fake cockpit index"));
+    // JavaScript from the user root is module-importable: the strict module
+    // MIME type (also for .mjs) plus the local CORS wildcard, so a page on
+    // another local origin can import it by absolute URL.
+    for (const path of ["/page.js", "/module.mjs"]) {
+      const mod = await fetch(`${httpBase}${path}`);
+      assertEquals(mod.status, 200, path);
+      assertEquals(mod.headers.get("content-type"), "application/javascript", path);
+      assertEquals(mod.headers.get("access-control-allow-origin"), "*", path);
+      await mod.body?.cancel();
+    }
+    // Decoy files in the user dir must not shadow the relay's own routes.
+    const info = await (await fetch(`${httpBase}/api/info`)).json();
+    assert(typeof info.wtUrl === "string");
+    const sdk = await (await fetch(`${httpBase}/sdk.js`)).text();
+    assert(sdk.includes("fake sdk bundle"));
+    assert(!sdk.includes("decoy"));
+    // The traversal and symlink-escape guards apply to the user root too.
+    const traverse = await fetch(`${httpBase}//etc/passwd`);
+    await traverse.body?.cancel();
+    assertEquals(traverse.status, 400);
+    const escape = await fetch(`${httpBase}/escape.txt`);
+    await escape.body?.cancel();
+    assertEquals(escape.status, 400);
+  } finally {
+    await relay.shutdown();
+  }
+});
+
+Deno.test("startRelay refuses a non-loopback host without the unsafe override", async () => {
+  // Before binding anything: the local trust model (wildcard CORS, no auth,
+  // optional user files) must not silently reach a LAN address.
+  await assertRejects(
+    () => startRelay({ host: "0.0.0.0" }),
+    Error,
+    "host 0.0.0.0 is not loopback",
+  );
+});
+
+Deno.test({
+  name: "the unsafe override binds a non-loopback host explicitly",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const relay = await startRelay({ host: "0.0.0.0", port: 0, unsafeNonLoopback: true });
+  try {
+    const res = await fetch(`http://127.0.0.1:${relay.httpPort}/api/info`);
+    assertEquals(res.status, 200);
+    await res.body?.cancel();
+  } finally {
+    await relay.shutdown();
+  }
+});
+
 Deno.test("startRelay rejects a bad served dir with a labeled error", async () => {
   // Before binding anything, so nothing leaks: a typo'd path names the
   // offending option, and a file (realpath-able, would 404 everything) is
@@ -719,5 +835,20 @@ Deno.test("startRelay rejects a bad served dir with a labeled error", async () =
     () => startRelay({ cockpitDir: fileURLToPath(import.meta.url) }),
     Error,
     "cockpitDir is not a directory",
+  );
+  await assertRejects(
+    () => startRelay({ serveDir: "/no/such/dir" }),
+    Error,
+    "serveDir does not exist: /no/such/dir",
+  );
+  await assertRejects(
+    () => startRelay({ serveDir: fileURLToPath(import.meta.url) }),
+    Error,
+    "serveDir is not a directory",
+  );
+  await assertRejects(
+    () => startRelay({ sdkDir: "/no/such/dir" }),
+    Error,
+    "sdkDir does not exist: /no/such/dir",
   );
 });
