@@ -35,6 +35,7 @@ REQUIRED = (
     "relay/main.ts",
     "shared/protocol.ts",
     "cockpit/dist/index.html",
+    "sdk/deno.json",
 )
 
 # First start in a fresh container downloads Deno plus the relay's jsr deps.

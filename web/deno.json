@@ -2,6 +2,7 @@
   "workspace": [
     "./relay",
     "./shared",
+    "./sdk",
     "./cockpit"
   ],
   "unstable": [

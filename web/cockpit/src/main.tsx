@@ -1,6 +1,7 @@
 import { createRoot } from "react-dom/client";
+import { connect } from "@dimos/sdk";
 import { App } from "./App.tsx";
-import { startSession } from "./session/session.ts";
+import { cockpitDecoders, installAutoSubscriptions } from "./subscriptions.ts";
 import "./index.css";
 
 const root = createRoot(document.getElementById("root")!);
@@ -20,6 +21,7 @@ if (!globalThis.isSecureContext) {
     </p>,
   );
 } else {
-  const session = startSession();
+  const session = connect({ decoders: cockpitDecoders });
+  installAutoSubscriptions(session);
   root.render(<App session={session} />);
 }

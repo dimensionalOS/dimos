@@ -268,16 +268,50 @@ describe("ChannelStore", () => {
   });
 });
 
+describe("subscriber isolation", () => {
+  it("keeps notifying after one direct subscriber throws, on ingest and reset", () => {
+    const store = new ChannelStore(() => 0);
+    const seen: number[] = [];
+    const uiSeen: (number | null)[] = [];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      store.subscribe("odom", () => {
+        throw new Error("boom");
+      });
+      store.subscribe("odom", () => seen.push(store.get("odom")?.seq ?? -1));
+      store.subscribeUi("odom", () => {
+        throw new Error("boom");
+      });
+      store.subscribeUi("odom", () => uiSeen.push(store.get("odom")?.seq ?? null));
+
+      store.ingest("odom", header(1), { x: 1 }, true);
+      store.ingest("odom", header(2), { x: 2 }, true);
+      expect(seen).toEqual([1, 2]); // later frames still notify
+
+      store.publishUi();
+      expect(uiSeen).toEqual([2]);
+
+      store.reset(); // notifies both sets without an escaping throw
+      expect(seen).toEqual([1, 2, -1]);
+      expect(uiSeen).toEqual([2, null]);
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+});
+
 describe("StatusStore", () => {
   it("shallow-merges updates and notifies", () => {
     const store = new StatusStore();
     const cb = vi.fn();
     store.subscribe(cb);
     const before = store.get();
-    store.update({ lastError: "boom" });
+    const boom = { code: "relay_error", message: "boom" } as const;
+    store.update({ lastError: boom });
     expect(cb).toHaveBeenCalledTimes(1);
     expect(store.get()).not.toBe(before);
-    expect(store.get().lastError).toBe("boom");
+    expect(store.get().lastError).toBe(boom);
     expect(store.get().epoch).toBe(0);
     expect(store.get()).toBe(store.get());
   });
