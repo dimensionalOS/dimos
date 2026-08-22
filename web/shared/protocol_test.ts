@@ -86,6 +86,15 @@ Deno.test("the control_hello vector's payload is the hello datagram encoding", (
   assertEquals(decodeDatagram(fromB64(control.payload_b64)), hello.message as Msg);
 });
 
+Deno.test("the control_subs vector's payload is the subs datagram encoding", () => {
+  // The robot control carrier sends subs snapshots as @control frames with
+  // the same payload-reuses-datagram-encoding rule as control_hello.
+  const control = dataFixture.vectors.find((v) => v.name === "control_subs")!;
+  assertEquals(control.header.ch, CONTROL_CHANNEL);
+  const subs = datagramFixture.vectors.find((v) => v.name === "subs_snapshot")!;
+  assertEquals(decodeDatagram(fromB64(control.payload_b64)), subs.message as Msg);
+});
+
 Deno.test("data frames match golden vectors byte-exactly", () => {
   for (const v of dataFixture.vectors) {
     const frame = encodeDataFrame(v.header as FrameHeader, fromB64(v.payload_b64));
