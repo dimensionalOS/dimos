@@ -841,9 +841,7 @@ class TestJointTrajectoryTask:
                 velocity_limits={"arm/joint1": 1.0, "arm/joint2": 1.0},
             )
         )
-        state = JointStateSnapshot(
-            joint_positions={"arm/joint1": 0.0, "arm/joint2": 0.0}
-        )
+        state = JointStateSnapshot(joint_positions={"arm/joint1": 0.0, "arm/joint2": 0.0})
         first = JointTrajectory(
             joint_names=["arm/joint1"],
             points=[TrajectoryPoint(positions=[1.0])],
