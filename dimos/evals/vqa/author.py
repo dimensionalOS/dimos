@@ -16,13 +16,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 import json
 from typing import TYPE_CHECKING, Protocol
 
 from pydantic import ValidationError
 
-from dimos.evals.vqa.contracts import FamilySpec, QuestionProposal
+from dimos.evals.vqa.contracts import FamilyName, FamilySpec, QuestionProposal
 
 if TYPE_CHECKING:
     from dimos.models.vl.base import VlModel
@@ -58,8 +58,12 @@ class OpenAIQuestionAuthor:
         ]
         prompt = (
             "Generate useful questions about objects clearly visible in this image. "
-            "Use any applicable families and object names, preferring specific families when their "
-            "requirements are clearly satisfied. "
+            "Propose at least one entry for every available family whose visual requirements are "
+            "satisfied. For distance families, select visible object names but do not infer depth; "
+            "calibrated geometry will determine whether the proposal is answerable. If multiple "
+            "instances of a category are visible, use singular spatially specific references such "
+            "as 'left box' and 'right box' instead of an ambiguous category name. Do not call an "
+            "object 'closest'; calibrated geometry must determine that. "
             "Return only a JSON array of objects matching the available deterministic families. "
             "Populate exactly the required fields. Do not duplicate proposals, answer questions, "
             "or add fields. "
@@ -82,4 +86,29 @@ class OpenAIQuestionAuthor:
             except ValueError:
                 continue
             proposals.append(proposal)
+        _add_missing_pointcloud_proposals(proposals, available)
         return tuple(proposals)
+
+
+def _add_missing_pointcloud_proposals(
+    proposals: list[QuestionProposal], available: Mapping[FamilyName, FamilySpec]
+) -> None:
+    """Ensure calibrated families are attempted for already-authored visible objects."""
+    names: list[str] = []
+    seen: set[str] = set()
+    for proposal in proposals:
+        for name in proposal.object_names:
+            normalized = name.casefold()
+            if normalized not in seen:
+                seen.add(normalized)
+                names.append(name)
+
+    proposed_families = {proposal.family for proposal in proposals}
+    if names and "object_distance" in available and "object_distance" not in proposed_families:
+        proposals.append(QuestionProposal(family="object_distance", object_names=(names[0],)))
+    if (
+        len(names) >= 2
+        and "closest_object" in available
+        and "closest_object" not in proposed_families
+    ):
+        proposals.append(QuestionProposal(family="closest_object", object_names=tuple(names[:5])))
