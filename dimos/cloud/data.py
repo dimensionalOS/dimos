@@ -12,217 +12,214 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dimensional cloud data: upload / pull / ls / status / quota over /v1/data."""
+"""Dimensional cloud datasets: upload / pull / ls / status / quota.
 
-from collections.abc import Callable
+`CloudData` is a thin facade over a `DatasetBackend`. `MultipartBackend` (today)
+speaks the /v1/data blob API; a sync backend plugs in beside it without touching
+callers. Every knob lives on GlobalConfig; nothing here is hardcoded."""
+
+from __future__ import annotations
+
 import functools
 import hashlib
 import json
 from pathlib import Path
-import shutil
 import sqlite3
 import tempfile
 import time
-from typing import Any, cast
-import urllib.error
-import urllib.request
-
-import lz4.frame
-from pydantic import BaseModel
+from typing import Any, Protocol
 
 from dimos.cli.cloud import api_key
+from dimos.cloud.codecs import FileCodec, codec
+from dimos.cloud.http_transport import HttpTransport, Transport
 from dimos.constants import RECORDINGS_DIR
 from dimos.core.global_config import global_config
 
 
-class CloudDataConfig(BaseModel):
-    base_url: str | None = None
-    api_key: str | None = None
+class DatasetBackend(Protocol):
+    def upload(
+        self, path: Path, *, robot_id: str | None, kind: str, part_size: int | None
+    ) -> dict[str, Any]: ...
+    def pull(self, upload_id: str, dest: Path | None) -> Path: ...
+    def ls(self) -> list[dict[str, Any]]: ...
+    def status(self, upload_id: str) -> dict[str, Any]: ...
+    def quota(self) -> dict[str, Any]: ...
 
-    @property
-    def url(self) -> str:
-        return (self.base_url or global_config.dimos_cloud_url).rstrip("/")
 
-    @property
-    def key(self) -> str:
-        if k := self.api_key or api_key():
-            return k
-        raise RuntimeError("not logged in — run `dimos login`")
+class MultipartBackend:
+    """Blob artifacts via /v1/data: presigned multipart to S3, server-side part
+    listing as the only resume state, sha256-verified pulls."""
+
+    API = "/v1/data"
+
+    def __init__(
+        self, transport: Transport, file_codec: FileCodec, staging_dir: Path | None, retries: int
+    ) -> None:
+        self.t, self.codec, self.staging_dir, self.retries = (
+            transport,
+            file_codec,
+            staging_dir,
+            retries,
+        )
+
+    def _retry(self, fn: Any, what: str) -> Any:
+        for attempt in range(1, self.retries + 2):
+            try:
+                return fn()
+            except (OSError, RuntimeError) as e:
+                if attempt > self.retries:
+                    raise RuntimeError(f"{what} failed after {attempt} attempts: {e}") from e
+                time.sleep(attempt)
+
+    def _staging(self, beside: Path) -> tempfile.TemporaryDirectory[str]:
+        return tempfile.TemporaryDirectory(dir=self.staging_dir or beside.parent)
+
+    def upload(
+        self, path: Path, *, robot_id: str | None, kind: str, part_size: int | None
+    ) -> dict[str, Any]:
+        manifest = _manifest(path) if kind == global_config.dimos_upload_kind else None
+        with self._staging(path) as tmp:
+            if self.codec.id and path.suffix != self.codec.suffix:
+                artifact = Path(tmp) / (path.name + self.codec.suffix)
+                self.codec.encode(path, artifact)
+            else:
+                artifact = path
+            size = artifact.stat().st_size
+            create = self.t.request(
+                "POST",
+                f"{self.API}/uploads",
+                {
+                    "filename": artifact.name,
+                    "size": size,
+                    "sha256": _sha256(artifact),
+                    "kind": kind,
+                    "content_encoding": self.codec.id or None,
+                    "robot_id": robot_id,
+                    "manifest": manifest,
+                    "part_size": part_size,
+                },
+            )
+            if create["state"] == "complete":
+                return {**create, "skipped": True}
+            uid = create["upload_id"]
+            have = {p["part_number"] for p in self.status(uid)["parts"]}
+            with artifact.open("rb") as f:
+                for part in create["part_urls"]:
+                    if part["part_number"] in have:
+                        continue
+                    f.seek((part["part_number"] - 1) * create["part_size"])
+                    self._retry(
+                        functools.partial(self.t.put, part["url"], f.read(create["part_size"])),
+                        f"part {part['part_number']}",
+                    )
+            parts = sorted(self.status(uid)["parts"], key=lambda p: p["part_number"])
+            done = self.t.request("POST", f"{self.API}/uploads/{uid}/complete", {"parts": parts})
+            return {**done, "upload_id": uid, "skipped": False}
+
+    def pull(self, upload_id: str, dest: Path | None) -> Path:
+        d = self.t.request("GET", f"{self.API}/uploads/{upload_id}/download")
+        wire = codec(d.get("content_encoding") or "")
+        name = Path(d["filename"]).name
+        plain = name.removesuffix(wire.suffix) if wire.suffix else name
+        if not plain or plain in (".", ".."):
+            raise RuntimeError(f"server returned an invalid filename: {d['filename']!r}")
+        out = dest or RECORDINGS_DIR / plain
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with self._staging(out) as tmp:
+            raw = Path(tmp) / name
+            self._retry(functools.partial(self.t.download, d["url"], raw), "download")
+            if _sha256(raw) != d["sha256"]:
+                raise RuntimeError("sha256 mismatch — refusing to keep the file")
+            decoded = Path(tmp) / plain
+            wire.decode(raw, decoded)
+            decoded.replace(out)
+        return out
+
+    def ls(self) -> list[dict[str, Any]]:
+        return list(self.t.request("GET", f"{self.API}/uploads")["uploads"])
+
+    def status(self, upload_id: str) -> dict[str, Any]:
+        return self.t.request("GET", f"{self.API}/uploads/{upload_id}")
+
+    def quota(self) -> dict[str, Any]:
+        return self.t.request("GET", f"{self.API}/quota")
+
+
+BACKENDS: dict[str, Any] = {"multipart": MultipartBackend}
 
 
 class CloudData:
-    def __init__(self, config: CloudDataConfig | None = None) -> None:
-        self.config = config or CloudDataConfig()
+    """Facade: resolves auth + config once, delegates to the configured backend."""
 
-    def _req(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
-        req = urllib.request.Request(
-            f"{self.config.url}{path}",
-            data=json.dumps(body).encode() if body is not None else None,
-            method=method,
-            headers={
-                "Authorization": f"Bearer {self.config.key}",
-                "Content-Type": "application/json",
-            },
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=global_config.dimos_http_timeout) as r:
-                return cast("dict[str, Any]", json.load(r))
-        except urllib.error.HTTPError as e:
-            if e.code == 401:
-                raise RuntimeError("API key invalid or revoked — run `dimos login`") from e
-            raise RuntimeError(f"{method} {path}: {e.code} {e.read().decode()[:300]}") from e
-        except (urllib.error.URLError, TimeoutError) as e:
-            raise RuntimeError(f"{method} {path}: {e}") from e
-
-    def _retry(self, fn: Callable[[], Any], what: str) -> Any:
-        retries = global_config.dimos_upload_retries
-        last: Exception | None = None
-        for attempt in range(1, retries + 2):
-            try:
-                return fn()
-            except (urllib.error.URLError, TimeoutError, OSError) as e:
-                last = e
-                if attempt <= retries:
-                    time.sleep(attempt)
-        raise RuntimeError(f"{what} failed after {retries + 1} attempts: {last}")
+    def __init__(self, backend: DatasetBackend | None = None) -> None:
+        if backend is None:
+            key = global_config.dimos_api_key or api_key()
+            if not key:
+                raise RuntimeError("not logged in — run `dimos login`")
+            transport = HttpTransport(
+                global_config.dimos_cloud_url, key, global_config.dimos_http_timeout
+            )
+            backend = BACKENDS[global_config.dimos_cloud_backend](
+                transport,
+                codec(global_config.dimos_upload_codec),
+                global_config.dimos_staging_dir,
+                global_config.dimos_upload_retries,
+            )
+        self.backend = backend
 
     def upload(
         self,
         path: Path,
         robot_id: str | None = None,
-        kind: str = "recording",
-        compress: bool | None = None,
+        kind: str | None = None,
         chunk_mb: int | None = None,
     ) -> dict[str, Any]:
         path = path.expanduser()
         if not path.is_file():
             raise FileNotFoundError(path)
-        if path.suffix in (".db-shm", ".db-wal"):
+        rec = global_config.dimos_recording_suffix
+        if path.suffix in (f"{rec}-shm", f"{rec}-wal"):
             raise RuntimeError(
-                f"{path.suffix} is a SQLite sidecar, not the recording — upload the .db "
-                "(and its presence means the session may still be open)"
+                f"{path.suffix} is a SQLite sidecar, not the recording — upload the {rec}"
             )
-        if path.suffix == ".db" and time.time() - path.stat().st_mtime < 30:
+        if (
+            path.suffix == rec
+            and time.time() - path.stat().st_mtime < global_config.dimos_recording_quiet_s
+        ):
             raise RuntimeError("session still recording — skipped")
-        if compress is None:
-            compress = global_config.dimos_upload_compress
-        if chunk_mb is None:
-            chunk_mb = global_config.dimos_upload_chunk_mb
-
-        manifest = _manifest(path) if kind == "recording" else None
-        # Staged BESIDE the source, never the default temp dir: /tmp is RAM-backed
-        # tmpfs on robots, and a multi-GB artifact there is an OOM.
-        with tempfile.TemporaryDirectory(prefix=".dimos-upload-", dir=path.parent) as tmp:
-            if compress and path.suffix != ".lz4":
-                artifact = Path(tmp) / (path.name + ".lz4")
-                with path.open("rb") as i, lz4.frame.open(artifact, "wb") as o:
-                    shutil.copyfileobj(i, o)
-                encoding = "lz4"
-            else:
-                artifact, encoding = path, None
-            sha = _sha256(artifact)
-            size = artifact.stat().st_size
-
-            create = self._req(
-                "POST",
-                "/v1/data/uploads",
-                {
-                    "filename": artifact.name,
-                    "size": size,
-                    "sha256": sha,
-                    "kind": kind,
-                    "content_encoding": encoding,
-                    "robot_id": robot_id,
-                    "manifest": manifest,
-                    "part_size": chunk_mb * 2**20 if chunk_mb else None,
-                },
-            )
-            if create["state"] == "complete":
-                return {
-                    "upload_id": create["upload_id"],
-                    "state": "complete",
-                    "skipped": True,
-                    "quota": create["quota"],
-                }
-
-            uid = create["upload_id"]
-            have = {p["part_number"] for p in self._req("GET", f"/v1/data/uploads/{uid}")["parts"]}
-            part_size = create["part_size"]
-            with artifact.open("rb") as f:
-                for part in create["part_urls"]:
-                    n = part["part_number"]
-                    if n in have:
-                        continue
-                    f.seek((n - 1) * part_size)
-                    self._retry(
-                        functools.partial(_put, part["url"], f.read(part_size)), f"part {n}"
-                    )
-
-            parts = sorted(
-                self._req("GET", f"/v1/data/uploads/{uid}")["parts"], key=lambda p: p["part_number"]
-            )
-            done = self._req("POST", f"/v1/data/uploads/{uid}/complete", {"parts": parts})
-            return {
-                "upload_id": uid,
-                "state": done["state"],
-                "skipped": False,
-                "quota": done["quota"],
-            }
-
-    def ls(self) -> list[dict[str, Any]]:
-        return cast("list[dict[str, Any]]", self._req("GET", "/v1/data/uploads")["uploads"])
-
-    def status(self, upload_id: str) -> dict[str, Any]:
-        return self._req("GET", f"/v1/data/uploads/{upload_id}")
-
-    def quota(self) -> dict[str, Any]:
-        return self._req("GET", "/v1/data/quota")
+        chunk_mb = chunk_mb if chunk_mb is not None else global_config.dimos_upload_chunk_mb
+        return self.backend.upload(
+            path,
+            robot_id=robot_id,
+            kind=kind or global_config.dimos_upload_kind,
+            part_size=chunk_mb * 2**20 if chunk_mb else None,
+        )
 
     def pull(self, upload_id: str, dest: Path | None = None) -> Path:
-        d = self._req("GET", f"/v1/data/uploads/{upload_id}/download")
-        # The filename is server-supplied: confine it to a bare basename so a
-        # compromised endpoint cannot traverse out of the destination directory.
-        name = Path(d["filename"]).name
-        plain_name = name.removesuffix(".lz4")
-        if not plain_name or plain_name in (".", ".."):
-            raise RuntimeError(f"server returned an invalid filename: {d['filename']!r}")
-        out = dest or RECORDINGS_DIR / plain_name
-        out.parent.mkdir(parents=True, exist_ok=True)
-        # Staged beside the destination: same filesystem, so the final rename is
-        # atomic and can't hit EXDEV; also keeps multi-GB downloads off tmpfs.
-        with tempfile.TemporaryDirectory(prefix=".dimos-pull-", dir=out.parent) as tmp:
-            raw = Path(tmp) / name
-            self._retry(functools.partial(_download, d["url"], raw), "download")
-            if _sha256(raw) != d["sha256"]:
-                raise RuntimeError("sha256 mismatch — refusing to keep the file")
-            if d.get("content_encoding") == "lz4":
-                plain = Path(tmp) / "extracted"
-                with lz4.frame.open(raw, "rb") as i, plain.open("wb") as o:
-                    shutil.copyfileobj(i, o)
-                plain.replace(out)  # atomic: tmp is on out's filesystem
-            else:
-                raw.replace(out)
-        return out
+        return self.backend.pull(upload_id, dest)
+
+    def ls(self) -> list[dict[str, Any]]:
+        return self.backend.ls()
+
+    def status(self, upload_id: str) -> dict[str, Any]:
+        return self.backend.status(upload_id)
+
+    def quota(self) -> dict[str, Any]:
+        return self.backend.quota()
 
 
-def _recordings() -> list[tuple[float, Path]]:
+def recordings(newer_than_s: float | None = None) -> list[Path]:
+    """Recordings by mtime, oldest first; tolerant of files vanishing mid-scan."""
+    cutoff = time.time() - newer_than_s if newer_than_s else None
     found = []
-    for p in RECORDINGS_DIR.glob("*.db"):
+    for p in RECORDINGS_DIR.glob(f"*{global_config.dimos_recording_suffix}"):
         try:
-            found.append((p.stat().st_mtime, p))
+            mtime = p.stat().st_mtime
         except FileNotFoundError:
             continue
-    return sorted(found)
-
-
-def latest_recording() -> Path | None:
-    found = _recordings()
-    return found[-1][1] if found else None
-
-
-def recordings_since(seconds: float) -> list[Path]:
-    cutoff = time.time() - seconds
-    return [p for mtime, p in _recordings() if mtime >= cutoff]
+        if cutoff is None or mtime >= cutoff:
+            found.append((mtime, p))
+    return [p for _mtime, p in sorted(found)]
 
 
 def _manifest(db: Path) -> dict[str, Any] | None:
@@ -237,17 +234,3 @@ def _manifest(db: Path) -> dict[str, Any] | None:
 def _sha256(path: Path) -> str:
     with path.open("rb") as f:
         return hashlib.file_digest(f, "sha256").hexdigest()
-
-
-def _put(url: str, body: bytes) -> None:
-    req = urllib.request.Request(url, data=body, method="PUT")
-    with urllib.request.urlopen(req, timeout=global_config.dimos_http_timeout):
-        pass
-
-
-def _download(url: str, dst: Path) -> None:
-    with (
-        urllib.request.urlopen(url, timeout=global_config.dimos_http_timeout) as r,
-        dst.open("wb") as f,
-    ):
-        shutil.copyfileobj(r, f)
