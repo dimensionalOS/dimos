@@ -7,15 +7,13 @@
 
 import { type ReactNode, useState } from "react";
 import type { Manifest } from "@dimos/shared/manifest";
-import { getPanel, UnknownPanel } from "../panels/registry.tsx";
-import type { ChannelStore } from "../session/store.ts";
+import { getPanel, type PanelProps, UnknownPanel } from "../panels/registry.tsx";
 import styles from "./Tabs.module.css";
 
-export function Tabs({ manifest, store, children }: {
+export function Tabs({ manifest, children, ...panelProps }: {
   manifest: Manifest;
-  store: ChannelStore;
   children: ReactNode;
-}) {
+} & Omit<PanelProps, "spec">) {
   const [active, setActive] = useState(0);
   if (manifest.pages.length === 0) return <>{children}</>;
   const byId = new Map(manifest.panels.map((p) => [p.id, p]));
@@ -24,7 +22,7 @@ export function Tabs({ manifest, store, children }: {
     const spec = byId.get(manifest.pages[active - 1]);
     if (spec !== undefined) {
       const Component = getPanel(spec.kind) ?? UnknownPanel;
-      page = <Component spec={spec} store={store} />;
+      page = <Component spec={spec} {...panelProps} />;
     }
   }
   return (

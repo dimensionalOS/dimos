@@ -43,6 +43,30 @@ whole stack against the go2 replay dataset in both Playwright Chromium and Firef
 WebTransport stacks differ; see bug 11). The CI `web` job runs it; locally it needs
 `uv run playwright install chromium firefox` once.
 
+## Teleop safety chain
+
+Keyboard teleop (the `teleop` panel; WASD drive, Q/E strafe, Shift boost, Space e-stop, key
+semantics from `dimos/robot/unitree/keyboard_teleop.py`) sends `twist` datagrams cockpit -> relay ->
+bridge, which publishes on `tele_cmd_vel`. Driving needs the per-robot exclusive lease
+(`teleop_start` on the control stream, acked with `teleop_started`; a second viewer gets error
+`teleop_held`); the relay forwards twist/stop datagrams robot-ward only from the lease holder.
+Datagram loss is fine: commands repeat at the channel's `maxHz` and silence trips the bridge
+deadman. Each hop covers the failure of the previous one:
+
+1. The cockpit zeroes on every disarm trigger: last key release (zero + two repeats over 200 ms),
+   Esc, focus loss, window blur, hidden tab, unmount, disconnect. Armed only while the panel has
+   focus. Space is the e-stop: a `stop` burst on datagrams plus one on the control stream, which the
+   bridge publishes as an unconditional zero (it also cancels an autonomous nav goal).
+2. The relay releases the lease and sends `teleop_stop` robot-ward when the holder disconnects or
+   watches away. It stamps every robot-bound teleop message with the lease generation `gen` (bumped
+   per grant, announced with a robot-ward `teleop_start`).
+3. The bridge watchdog is authoritative: it publishes `Twist.zero()` on stop, `teleop_stop`, session
+   loss, or `watchdogMs` (default 300 ms) of twist silence - so a SIGKILLed relay stops the robot
+   without any goodbye reaching either end. Older generations are rejected permanently and the seq
+   high-water mark survives silence, so a released holder's delayed datagrams cannot restart motion
+   after a stop. Zeros are edge-gated (only after a nonzero twist): MovementManager cancels the nav
+   goal on every teleop message, so idle zeros must never repeat.
+
 ## Protocol shape, and why it is odd
 
 The framing is defined once in `shared/protocol.ts`, mirrored in Python, and pinned by golden

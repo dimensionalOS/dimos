@@ -139,6 +139,50 @@ class Map2D(Panel):
         return tuple(requests)
 
 
+@dataclass(frozen=True)
+class Teleop(Panel):
+    """Keyboard teleop: twist datagrams on one tx stream (WASD drive, Q/E
+    strafe, Shift boost, Space e-stop; click the panel to arm).
+
+    All params ride the tx channel in the manifest: the Cockpit machine
+    reads speeds and cadence from there, the bridge reads watchdog_ms (its
+    deadman window) and clamps incoming twists to max * boost.
+    """
+
+    kind: ClassVar[str] = "teleop"
+    stream: str = "tele_cmd_vel"
+    max_linear: float = field(default=0.8, kw_only=True)
+    max_angular: float = field(default=1.0, kw_only=True)
+    boost: float = field(default=2.0, kw_only=True)
+    publish_hz: float = field(default=15.0, kw_only=True)
+    watchdog_ms: float = field(default=300.0, kw_only=True)
+    title: str = field(default="", kw_only=True)
+
+    def __post_init__(self) -> None:
+        _check_stream("stream", self.stream)
+        _check_rate("max_linear", self.max_linear)
+        _check_rate("max_angular", self.max_angular)
+        _check_rate("boost", self.boost)
+        _check_rate("publish_hz", self.publish_hz)
+        _check_rate("watchdog_ms", self.watchdog_ms)
+
+    def _channel_requests(self) -> tuple[ChannelRequest, ...]:
+        return (
+            ChannelRequest(
+                self.stream,
+                "tx",
+                "twist.json.v1",
+                self.publish_hz,
+                {
+                    "maxLinear": self.max_linear,
+                    "maxAngular": self.max_angular,
+                    "boost": self.boost,
+                    "watchdogMs": self.watchdog_ms,
+                },
+            ),
+        )
+
+
 class _Split:
     """Base for Row/Col: children plus optional flex shares."""
 
@@ -173,8 +217,13 @@ class Col(_Split):
 
 
 def _default_preset() -> Row:
-    """The no-layout cockpit: video left (2/3), costmap+pose right (1/3)."""
-    return Row(Video("color_image"), Map2D(costmap="global_costmap", pose="odom"), shares=[2, 1])
+    """The no-layout cockpit: video left (2/3); costmap+pose over teleop
+    right (1/3)."""
+    return Row(
+        Video("color_image"),
+        Col(Map2D(costmap="global_costmap", pose="odom"), Teleop(), shares=[3, 1]),
+        shares=[2, 1],
+    )
 
 
 def build_manifest_data(
@@ -184,19 +233,21 @@ def build_manifest_data(
     registry: Mapping[str, tuple[str, str]],
     rx_streams: AbstractSet[str],
     tx_streams: AbstractSet[str],
+    tx_registry: Mapping[str, tuple[str, str]] | None = None,
     extra_channels: Sequence[ChannelRequest] = (),
 ) -> dict[str, Any]:
     """Compile a layout tree + pages into a plain manifest-v1 dict.
 
     Shared by cockpit() and the bridge's availability-driven default
-    manifest (default_manifest in relay_bridge_module.py). `registry` maps
-    stream name -> (encoding, delivery) in advertisement order (the bridge's
-    CHANNELS table); rx/tx_streams are the module's typed In/Out names.
-    Panel ids are p0..pN in tree order (layout depth-first, then pages).
-    Channels requested by several panels merge: max_hz takes the max, any
-    other disagreement raises. `extra_channels` are advertised channel-only
-    unless a panel already requested the stream.
+    manifest (default_manifest in relay_bridge_module.py). `registry` and
+    `tx_registry` map stream name -> (encoding, delivery) in advertisement
+    order (the bridge's CHANNELS/TX_CHANNELS tables); rx/tx_streams are the
+    module's typed In/Out names. Panel ids are p0..pN in tree order (layout
+    depth-first, then pages). Channels requested by several panels merge:
+    max_hz takes the max, any other disagreement raises. `extra_channels`
+    are advertised channel-only unless a panel already requested the stream.
     """
+    tx_registry = {} if tx_registry is None else tx_registry
     channels: dict[str, ChannelRequest] = {}
     panels_out: list[dict[str, Any]] = []
 
@@ -272,17 +323,30 @@ def build_manifest_data(
                     f"unknown tx stream {stream!r}; this robot bridge has no matching "
                     f"output stream (outputs: {sorted(tx_streams) or 'none'})"
                 )
-            # Guards the delivery gap below: tx channels need a delivery
-            # source once a bridge grows Out streams (teleop/chat tickets).
-            raise NotImplementedError("tx channels arrive with the teleop/chat tickets")
+            expected = tx_registry.get(stream)
+            if expected is None:
+                raise ValueError(
+                    f"tx stream {stream!r} has no channel-table entry; this bridge "
+                    f"sends: {sorted(tx_registry) or 'none'}"
+                )
+            if expected[0] != request.encoding:
+                raise ValueError(
+                    f"stream {stream!r} encodes {expected[0]}, not {request.encoding} "
+                    f"(wrong panel type for this stream?)"
+                )
 
     for request in extra_channels:
         if request.stream not in channels:
             channels[request.stream] = request
 
     # Registry order, not first-request order: the advertisement order is the
-    # bridge's channel-table order however panels were nested.
+    # bridge's channel-table order (rx table, then tx table) however panels
+    # were nested.
     ordered = [channels[stream] for stream in registry if stream in channels]
+    ordered += [channels[stream] for stream in tx_registry if stream in channels]
+    delivery = {
+        stream: pair[1] for table in (registry, tx_registry) for stream, pair in table.items()
+    }
     return {
         "version": MANIFEST_VERSION,
         "channels": [
@@ -290,7 +354,7 @@ def build_manifest_data(
                 "ch": request.stream,
                 "dir": request.dir,
                 "encoding": request.encoding,
-                "delivery": registry[request.stream][1],
+                "delivery": delivery[request.stream],
                 "maxHz": request.max_hz,
                 "params": dict(request.params),
             }
@@ -312,7 +376,11 @@ def cockpit(layout: Panel | Row | Col | None = None, pages: Sequence[Panel] = ()
     data" (no runtime stream probing).
     """
     try:
-        from dimos.web.relay_bridge.relay_bridge_module import CHANNELS, RelayBridgeModule
+        from dimos.web.relay_bridge.relay_bridge_module import (
+            CHANNELS,
+            TX_CHANNELS,
+            RelayBridgeModule,
+        )
     except ImportError as e:
         raise RuntimeError(
             "the cockpit blueprint needs the web extra: `uv sync --extra web --inexact`"
@@ -326,6 +394,7 @@ def cockpit(layout: Panel | Row | Col | None = None, pages: Sequence[Panel] = ()
         registry={cd.ch: (cd.encoding, cd.delivery) for cd in CHANNELS},
         rx_streams={s.name for s in atom.streams if s.direction == "in"},
         tx_streams={s.name for s in atom.streams if s.direction == "out"},
+        tx_registry={ch: (encoding, delivery) for ch, encoding, delivery in TX_CHANNELS},
     )
     # The domain parser is the authority; authoring bugs must fail at
     # blueprint definition time, not at robot start.

@@ -6,34 +6,35 @@
 // render.
 
 import type { LayoutNode, Manifest, PanelSpec } from "@dimos/shared/manifest";
-import { getPanel, UnknownPanel } from "../panels/registry.tsx";
-import type { ChannelStore } from "../session/store.ts";
+import { getPanel, type PanelProps, UnknownPanel } from "../panels/registry.tsx";
 import styles from "./LayoutTree.module.css";
 
-function Node({ node, byId, store }: {
+type PanelContext = Omit<PanelProps, "spec">;
+
+function Node({ node, byId, panelProps }: {
   node: LayoutNode;
   byId: Map<string, PanelSpec>;
-  store: ChannelStore;
+  panelProps: PanelContext;
 }) {
   if (typeof node === "string") {
     const spec = byId.get(node);
     if (spec === undefined) return null; // unreachable post-validation
     const Component = getPanel(spec.kind) ?? UnknownPanel;
-    return <Component spec={spec} store={store} />;
+    return <Component spec={spec} {...panelProps} />;
   }
   const children = "row" in node ? node.row : node.col;
   return (
     <div className={"row" in node ? styles.row : styles.col}>
       {children.map((child, i) => (
         <div key={i} className={styles.cell} style={{ flexGrow: node.shares?.[i] ?? 1 }}>
-          <Node node={child} byId={byId} store={store} />
+          <Node node={child} byId={byId} panelProps={panelProps} />
         </div>
       ))}
     </div>
   );
 }
 
-export function LayoutTree({ manifest, store }: { manifest: Manifest; store: ChannelStore }) {
+export function LayoutTree({ manifest, ...panelProps }: { manifest: Manifest } & PanelContext) {
   const byId = new Map(manifest.panels.map((p) => [p.id, p]));
   const pages = new Set(manifest.pages);
   const gridIds = manifest.panels.filter((p) => !pages.has(p.id)).map((p) => p.id);
@@ -41,7 +42,7 @@ export function LayoutTree({ manifest, store }: { manifest: Manifest; store: Cha
   if (node === null) return null;
   return (
     <div className={styles.root}>
-      <Node node={node} byId={byId} store={store} />
+      <Node node={node} byId={byId} panelProps={panelProps} />
     </div>
   );
 }

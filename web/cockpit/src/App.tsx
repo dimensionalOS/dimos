@@ -29,8 +29,8 @@ export function App({ session }: { session: SessionHandle }) {
     content = <p className={styles.notice}>Waiting for a robot to register...</p>;
   } else {
     content = (
-      <Tabs manifest={status.manifest} store={session.channels}>
-        <LayoutTree manifest={status.manifest} store={session.channels} />
+      <Tabs manifest={status.manifest} store={session.channels} teleop={session.teleop}>
+        <LayoutTree manifest={status.manifest} store={session.channels} teleop={session.teleop} />
         <ChannelList
           channels={status.manifest.channels}
           panels={status.manifest.panels}

@@ -535,7 +535,7 @@ Deno.test("stats project exact per-channel key sets with counters and rates", as
     }>;
     perViewer: { channels: Record<string, Record<string, unknown>> }[];
   };
-  assertEquals(Object.keys(stats.perRobot.r1).sort(), ["channels", "subs", "undeclared"]);
+  assertEquals(Object.keys(stats.perRobot.r1).sort(), ["channels", "subs", "teleop", "undeclared"]);
   const inKeys = Object.keys(stats.perRobot.r1.channels.color_image).sort();
   assertEquals(inKeys, ["bps", "bytesIn", "delivery", "fps", "framesIn"]);
   // Declared-only traffic leaves the aggregate bucket zeroed.
@@ -591,4 +591,196 @@ Deno.test("undeclared channel frames aggregate into one per-robot bucket", async
   stats = reg.stats() as typeof stats;
   assertEquals(stats.perRobot.r2.channels, {});
   assertEquals(stats.perRobot.r2.undeclared.framesIn, 1);
+});
+
+// --- Teleop lease ---
+
+const TWIST: Msg = { t: "twist", vx: 0.5, vy: 0.25, wz: -0.25, seq: 1, ts: 1.5 };
+
+function teleopMsgs(robot: FakeRobot): Msg[] {
+  return robot.msgs.filter((m) =>
+    m.t === "twist" || m.t === "stop" || m.t === "teleop_start" || m.t === "teleop_stop"
+  );
+}
+
+Deno.test("teleop_start grants the lease and acks; re-start by the holder is idempotent", () => {
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", SPECS);
+  reg.registerRobot(robot);
+  const viewer = attach(reg, "r1", []);
+  assert(send(reg, viewer, { t: "teleop_start" }));
+  assertEquals(viewer.replies.at(-1), { t: "teleop_started" });
+  assert(send(reg, viewer, { t: "teleop_start" }));
+  assertEquals(viewer.replies.at(-1), { t: "teleop_started" });
+  // The robot-bound announcement is resent with the SAME gen (no bump): a
+  // re-arm heals a lost start datagram without voiding the holder's twists.
+  assertEquals(teleopMsgs(robot), [
+    { t: "teleop_start", gen: 1 },
+    { t: "teleop_start", gen: 1 },
+  ]);
+});
+
+Deno.test("teleop_start while held replies teleop_held without closing", () => {
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", SPECS);
+  reg.registerRobot(robot);
+  const holder = attach(reg, "r1", []);
+  send(reg, holder, { t: "teleop_start" });
+  const second = attach(reg, "r1", []);
+  assert(send(reg, second, { t: "teleop_start" })); // non-fatal
+  const reply = second.replies.at(-1);
+  assert(reply !== undefined && reply.t === "error" && reply.code === "teleop_held");
+  // The holder keeps driving; the loser stays gated.
+  send(reg, holder, TWIST);
+  send(reg, second, TWIST);
+  assertEquals(teleopMsgs(robot), [{ t: "teleop_start", gen: 1 }, { ...TWIST, gen: 1 }]);
+});
+
+Deno.test("teleop_start needs a watch and a live robot", () => {
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", SPECS);
+  reg.registerRobot(robot);
+  const unwatched = new FakeViewer();
+  reg.addViewer(unwatched);
+  send(reg, unwatched, { t: "hello", v: PROTOCOL_VERSION, role: "viewer" });
+  assert(send(reg, unwatched, { t: "teleop_start" }));
+  let reply = unwatched.replies.at(-1);
+  assert(reply !== undefined && reply.t === "error" && reply.code === "no_watch");
+
+  const watcher = attach(reg, "r1", []);
+  reg.robotClosed(robot);
+  assert(send(reg, watcher, { t: "teleop_start" }));
+  reply = watcher.replies.at(-1);
+  assert(reply !== undefined && reply.t === "error" && reply.code === "unknown_robot");
+});
+
+Deno.test("twist and stop forward robot-ward only from the lease holder", () => {
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", SPECS);
+  reg.registerRobot(robot);
+  const bystander = attach(reg, "r1", []);
+  send(reg, bystander, TWIST); // no lease at all yet
+  const holder = attach(reg, "r1", []);
+  send(reg, holder, { t: "teleop_start" });
+  send(reg, holder, TWIST);
+  send(reg, holder, { t: "stop", seq: 2, ts: 2.5 });
+  send(reg, bystander, TWIST);
+  assertEquals(teleopMsgs(robot), [
+    { t: "teleop_start", gen: 1 },
+    { ...TWIST, gen: 1 },
+    { t: "stop", seq: 2, ts: 2.5, gen: 1 },
+  ]);
+  const stats = reg.stats() as { teleopForwarded: number; teleopDropped: number };
+  assertEquals(stats.teleopForwarded, 2);
+  assertEquals(stats.teleopDropped, 2);
+});
+
+Deno.test("teleop_stop from the holder releases and forwards teleop_stop robot-ward", () => {
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", SPECS);
+  reg.registerRobot(robot);
+  const holder = attach(reg, "r1", []);
+  send(reg, holder, { t: "teleop_start" });
+  send(reg, holder, { t: "teleop_stop" });
+  assertEquals(teleopMsgs(robot), [{ t: "teleop_start", gen: 1 }, { t: "teleop_stop", gen: 1 }]);
+  // Released: the ex-holder is gated again, and another viewer can take over.
+  send(reg, holder, TWIST);
+  assertEquals(teleopMsgs(robot), [{ t: "teleop_start", gen: 1 }, { t: "teleop_stop", gen: 1 }]);
+  const next = attach(reg, "r1", []);
+  send(reg, next, { t: "teleop_start" });
+  assertEquals(next.replies.at(-1), { t: "teleop_started" });
+});
+
+Deno.test("teleop_stop from a non-holder does not disturb the lease", () => {
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", SPECS);
+  reg.registerRobot(robot);
+  const holder = attach(reg, "r1", []);
+  send(reg, holder, { t: "teleop_start" });
+  const other = attach(reg, "r1", []);
+  send(reg, other, { t: "teleop_stop" });
+  assertEquals(teleopMsgs(robot), [{ t: "teleop_start", gen: 1 }]); // no stop sent
+  send(reg, holder, TWIST);
+  assertEquals(teleopMsgs(robot), [{ t: "teleop_start", gen: 1 }, { ...TWIST, gen: 1 }]);
+});
+
+Deno.test("holder disconnect releases the lease and sends teleop_stop robot-ward", () => {
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", SPECS);
+  reg.registerRobot(robot);
+  const holder = attach(reg, "r1", []);
+  send(reg, holder, { t: "teleop_start" });
+  reg.viewerClosed(holder);
+  assertEquals(teleopMsgs(robot), [{ t: "teleop_start", gen: 1 }, { t: "teleop_stop", gen: 1 }]);
+  const next = attach(reg, "r1", []);
+  send(reg, next, { t: "teleop_start" });
+  assertEquals(next.replies.at(-1), { t: "teleop_started" });
+});
+
+Deno.test("holder watch-switch releases the old robot's lease", () => {
+  const reg = new Registry();
+  const r1 = new FakeRobot("r1", SPECS);
+  const r2 = new FakeRobot("r2", SPECS);
+  reg.registerRobot(r1);
+  reg.registerRobot(r2);
+  const holder = attach(reg, "r1", []);
+  send(reg, holder, { t: "teleop_start" });
+  send(reg, holder, { t: "watch", robotId: "r2" });
+  assertEquals(teleopMsgs(r1), [{ t: "teleop_start", gen: 1 }, { t: "teleop_stop", gen: 1 }]);
+  // r2's lease was never granted: twists stay gated until teleop_start.
+  send(reg, holder, TWIST);
+  assertEquals(teleopMsgs(r2), []);
+});
+
+Deno.test("robot death drops the lease; a re-registered robot starts free", () => {
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", SPECS);
+  reg.registerRobot(robot);
+  const holder = attach(reg, "r1", []);
+  send(reg, holder, { t: "teleop_start" });
+  reg.robotClosed(robot);
+  const reborn = new FakeRobot("r1", SPECS);
+  reg.registerRobot(reborn);
+  // The ex-holder's twists are dropped until it re-arms.
+  send(reg, holder, TWIST);
+  assertEquals(teleopMsgs(reborn), []);
+  send(reg, holder, { t: "teleop_start" });
+  assertEquals(holder.replies.at(-1), { t: "teleop_started" });
+  send(reg, holder, TWIST);
+  // The reborn entry restarts at gen 1: safe, because the bridge's floor
+  // reset with its session.
+  assertEquals(teleopMsgs(reborn), [{ t: "teleop_start", gen: 1 }, { ...TWIST, gen: 1 }]);
+});
+
+Deno.test("lease generations increment per grant and stamp robot-bound teleop", () => {
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", SPECS);
+  reg.registerRobot(robot);
+  const first = attach(reg, "r1", []);
+  send(reg, first, { t: "teleop_start" });
+  // A viewer-supplied gen must lose to the relay's stamp.
+  send(reg, first, { ...TWIST, gen: 99 });
+  send(reg, first, { t: "teleop_stop" });
+  const second = attach(reg, "r1", []);
+  send(reg, second, { t: "teleop_start" });
+  send(reg, second, TWIST);
+  assertEquals(teleopMsgs(robot), [
+    { t: "teleop_start", gen: 1 },
+    { ...TWIST, gen: 1 },
+    { t: "teleop_stop", gen: 1 },
+    { t: "teleop_start", gen: 2 },
+    { ...TWIST, gen: 2 },
+  ]);
+});
+
+Deno.test("stats expose the lease holder", () => {
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", SPECS);
+  reg.registerRobot(robot);
+  const holder = attach(reg, "r1", []);
+  let stats = reg.stats() as { perRobot: Record<string, { teleop: number | null }> };
+  assertEquals(stats.perRobot.r1.teleop, null);
+  send(reg, holder, { t: "teleop_start" });
+  stats = reg.stats() as typeof stats;
+  assertEquals(stats.perRobot.r1.teleop, holder.id);
 });
