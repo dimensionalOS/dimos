@@ -6,6 +6,7 @@
 import type { ComponentType } from "react";
 import type { PanelSpec } from "@dimos/shared";
 import type { ChannelStore } from "../session/store.ts";
+import { MapPanel } from "./MapPanel.tsx";
 import { VideoPanel } from "./VideoPanel.tsx";
 
 export interface PanelProps {
@@ -24,3 +25,4 @@ export function getPanel(kind: string): ComponentType<PanelProps> | undefined {
 }
 
 registerPanel("video", VideoPanel);
+registerPanel("map2d", MapPanel);
