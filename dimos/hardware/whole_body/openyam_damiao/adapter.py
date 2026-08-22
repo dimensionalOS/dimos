@@ -16,12 +16,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import can_motor_control
 from can_motor_control import damiao
 
 from dimos.hardware.whole_body.damiao.adapter import DamiaoWholeBodyAdapter
+from dimos.robot.assets.model import RobotModel
 from dimos.utils.data import LfsPath
 
 
@@ -37,9 +36,9 @@ class OpenYamDamiaoAdapter(DamiaoWholeBodyAdapter):
     gravity_joint_names = tuple(f"yam_joint{index}" for index in range(1, 7))
 
     @property
-    def gravity_model_path(self) -> Path:
-        """Return the lazy gravity-compensation URDF path."""
-        return LfsPath("yam_description") / "urdf/yam_gripper_gravity.urdf"
+    def gravity_model(self) -> RobotModel:
+        """Return the lazy gravity-compensation model."""
+        return RobotModel.from_file(LfsPath("yam_description") / "urdf/yam_gripper_gravity.urdf")
 
     def _build_robot(self) -> can_motor_control.Robot:
         arm_motors = [

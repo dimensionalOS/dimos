@@ -19,13 +19,14 @@ use std::time::{Duration, Instant};
 
 use ::zenoh::pubsub::Publisher;
 use ::zenoh::qos::{CongestionControl, Reliability};
+use ::zenoh::sample::Locality;
 use ::zenoh::Session;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::transport::{Dispatch, Transport};
 
-const SESSION_KEY: &str = "session";
+pub(crate) const SESSION_KEY: &str = "session";
 
 /// Poll interval while waiting for the dialed endpoints to link.
 const CONNECT_POLL: Duration = Duration::from_millis(50);
@@ -114,6 +115,10 @@ impl SessionSettings {
 struct ChannelQos {
     reliability: Option<Reliability>,
     congestion_control: Option<CongestionControl>,
+    /// Where the publisher is allowed to deliver. `SessionLocal` keeps a topic
+    /// inside the process that publishes it, which is how a baked host hides
+    /// its internal hops without changing the modules.
+    locality: Option<Locality>,
 }
 
 /// Parse the coordinator's `qos` object (channel -> {reliability,
@@ -133,6 +138,12 @@ fn parse_channel_qos(value: &serde_json::Value) -> HashMap<String, ChannelQos> {
         match entry.get("congestion_control").and_then(|v| v.as_str()) {
             Some("drop") => qos.congestion_control = Some(CongestionControl::Drop),
             Some("block") => qos.congestion_control = Some(CongestionControl::Block),
+            _ => {}
+        }
+        match entry.get("locality").and_then(|v| v.as_str()) {
+            Some("session_local") => qos.locality = Some(Locality::SessionLocal),
+            Some("remote") => qos.locality = Some(Locality::Remote),
+            Some("any") => qos.locality = Some(Locality::Any),
             _ => {}
         }
         map.insert(channel.clone(), qos);
@@ -221,6 +232,13 @@ impl ZenohTransport {
     }
 
     async fn open(settings: &SessionSettings) -> io::Result<Self> {
+        if settings.mode == Mode::Client && settings.connect.len() > 1 {
+            tracing::warn!(
+                connect = ?settings.connect,
+                "zenoh client mode holds a single link, traffic flows only through \
+                 the first endpoint that connects"
+            );
+        }
         let session = ::zenoh::open(settings.zenoh_config()?)
             .await
             .map_err(to_io)?;
@@ -264,6 +282,9 @@ impl ZenohTransport {
         }
         if let Some(reliability) = qos.reliability {
             builder = builder.reliability(reliability);
+        }
+        if let Some(locality) = qos.locality {
+            builder = builder.allowed_destination(locality);
         }
         builder.await.map_err(to_io)
     }
@@ -653,6 +674,57 @@ mod tests {
         let unknown = &map["unknown_values"];
         assert_eq!(unknown.reliability, None);
         assert_eq!(unknown.congestion_control, None);
+    }
+
+    #[test]
+    fn parse_channel_qos_reads_locality() {
+        let value = serde_json::json!({
+            "suppressed": {"locality": "session_local"},
+            "explicit_any": {"locality": "any"},
+            "plain": {"reliability": "reliable"},
+        });
+        let map = parse_channel_qos(&value);
+        assert_eq!(map["suppressed"].locality, Some(Locality::SessionLocal));
+        assert_eq!(map["explicit_any"].locality, Some(Locality::Any));
+        assert_eq!(map["plain"].locality, None);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_session_local_publisher_still_reaches_its_own_session() {
+        // Siblings share the session, so a session-local publisher must still
+        // deliver in-process.
+        let transport = ZenohTransport::new().await.expect("open session");
+        transport.set_publisher_qos(&serde_json::json!({
+            "dimos_test/suppressed": {"locality": "session_local"},
+        }));
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(8);
+        let sink: Dispatch = Arc::new(move |bytes: &[u8]| {
+            let _ = tx.try_send(bytes.to_vec());
+        });
+        transport
+            .subscribe("dimos_test/suppressed", sink)
+            .await
+            .expect("subscribe");
+
+        let payload = b"internal hop";
+        let received = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                transport
+                    .publish("dimos_test/suppressed", payload.to_vec())
+                    .await
+                    .expect("publish");
+                if let Ok(Some(got)) =
+                    tokio::time::timeout(Duration::from_millis(100), rx.recv()).await
+                {
+                    break got;
+                }
+            }
+        })
+        .await
+        .expect("a session-local publisher must still deliver in-session");
+
+        assert_eq!(received, payload);
     }
 
     #[test]

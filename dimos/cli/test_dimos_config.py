@@ -17,27 +17,28 @@ from pathlib import Path
 import pytest
 import typer
 
-from dimos.cli import dimos as cli
+from dimos.cli.commands import lifecycle as cli
 
 
 @pytest.fixture
-def config_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    monkeypatch.setattr(cli, "CONFIG_DIR", tmp_path)
-    return tmp_path
+def config_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    config_dir = tmp_path / "dimos"
+    monkeypatch.setattr(cli, "CONFIG_DIR", config_dir)
+    return config_dir
 
 
 def test_legacy_flat_file_is_refused_with_instructions(
-    config_home: Path, capsys: pytest.CaptureFixture[str]
+    config_dir: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    (config_home / "dimos").write_text('{"viewer": "rerun"}')
+    config_dir.write_text('{"viewer": "rerun"}')
     with pytest.raises(typer.Exit):
         cli._reject_legacy_config()
     assert "mv " in capsys.readouterr().err
-    assert (config_home / "dimos").read_text() == '{"viewer": "rerun"}'
+    assert config_dir.read_text() == '{"viewer": "rerun"}'
 
 
-def test_no_legacy_file_passes(config_home: Path) -> None:
+def test_no_legacy_file_passes(config_dir: Path) -> None:
     cli._reject_legacy_config()  # nothing exists
 
-    (config_home / "dimos").mkdir()  # already a directory
+    config_dir.mkdir()  # already a directory
     cli._reject_legacy_config()
