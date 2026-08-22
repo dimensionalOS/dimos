@@ -264,6 +264,7 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
         Binding("q", "quit", "Quit", show=False),
         Binding("ctrl+c", "quit", "Quit"),
         Binding("ctrl+l", "clear", "Clear chat"),
+        Binding("escape", "stop_agent", "Stop agent"),
     ]
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
@@ -271,6 +272,7 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
         self._human_transport = make_transport("/human_input")
         self._agent_transport = make_transport("/agent")
         self._agent_idle = make_transport("/agent_idle")
+        self._agent_cancel = make_transport("/agent_cancel")
         self.chat_log: RichLog | None = None
         self.input_widget: Input | None = None
         self._subscription_thread: threading.Thread | None = None
@@ -286,6 +288,7 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
         # Tools that have stopped but whose box waits for the agent to catch up.
         self._pending_stops: set[str] = set()
         self._agent_is_idle = True
+        self._agent_cancel_requested = False
         self._running = False
 
     def compose(self) -> ComposeResult:
@@ -296,7 +299,7 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
 
         yield Container(id="tool-panels")
 
-        self.input_widget = Input(placeholder="Type a message...")
+        self.input_widget = Input(placeholder="Type a message...  Esc stops the current turn")
         yield self.input_widget
 
     def on_mount(self) -> None:
@@ -435,6 +438,7 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
         assert self._thinking is not None
         self._agent_is_idle = is_idle
         if is_idle:
+            self._agent_cancel_requested = False
             # "thinking..." is only shown for human-initiated turns (on submit),
             # so just hide here. Showing it on every busy signal would flash it
             # for each tool-stream update, which the agent also runs through the
@@ -634,6 +638,7 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
   /exit  - Exit the application
   /quit  - Exit the application
 
+Press Esc to stop the current agent turn.
 Tool calls are displayed in cyan with ▶ prefix"""
             self._add_system_message(help_text)
             return
@@ -649,6 +654,16 @@ Tool calls are displayed in cyan with ▶ prefix"""
         """Clear the chat log."""
         self._tool_call_anchors.clear()
         self.chat_log.clear()  # type: ignore[union-attr]
+
+    def action_stop_agent(self) -> None:
+        """Request cancellation of the active agent turn and return to input."""
+        if self._agent_is_idle or self._agent_cancel_requested:
+            return
+        self._agent_cancel_requested = True
+        self._agent_cancel.publish(True)
+        self._add_system_message("Cancelling agent turn. You can enter a new message.")
+        if self.input_widget is not None:
+            self.input_widget.focus()
 
     def action_quit(self) -> None:  # type: ignore[override]
         """Quit the application."""
