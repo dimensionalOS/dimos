@@ -168,7 +168,9 @@ class TestJointCommandRouting:
 
         taps["joint_command"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
 
-        assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)._trajectory.points[-1].positions == [
+        assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)._trajectory.points[
+            -1
+        ].positions == [
             0.1,
             0.2,
         ]
@@ -189,7 +191,9 @@ class TestJointCommandRouting:
             JointState(name=ARM_JOINTS, position=[0.1, 0.2], velocity=[0.5, 0.6])
         )
 
-        assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)._trajectory.points[-1].positions == [
+        assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)._trajectory.points[
+            -1
+        ].positions == [
             0.1,
             0.2,
         ]
