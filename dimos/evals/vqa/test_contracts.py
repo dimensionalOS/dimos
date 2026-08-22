@@ -163,10 +163,18 @@ class _FailsSecondDetector(_Detector):
 class _Rig:
     blind = False
 
+    def __init__(self, answer: str = "yes") -> None:
+        self.answer = answer
+
     def ask(self, context: object, question: str) -> str:
         assert context
         assert 'Choices: ["yes", "no"]' in question
-        return "ANSWER: yes"
+        return self.answer
+
+    def ask_structured(self, context: object, question: str, schema: type[object]) -> object:
+        assert context
+        assert 'Choices: ["yes", "no"]' in question
+        return schema(answer=self.answer)  # type: ignore[call-arg, return-value]
 
 
 def test_presence_proposal_matches_available_family() -> None:
@@ -435,7 +443,11 @@ def test_generate_and_evaluate_one_image(tmp_path: Path) -> None:
     evaluation = suite[0].evaluate(cast("EvalRig", _Rig()))
 
     assert evaluation.case_id == "frame-000004-chair-presence"
+    assert json.loads(evaluation.outputs) == {"answer": "yes"}
     assert evaluation.score == 1.0
+
+    invalid = suite[0].evaluate(cast("EvalRig", _Rig(answer="maybe")))
+    assert invalid.score == 0.0
 
 
 def test_generate_multiple_images_aggregates_frame_artifacts(tmp_path: Path) -> None:
