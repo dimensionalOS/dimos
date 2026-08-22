@@ -442,10 +442,35 @@ else:
 
 
 def _g1_groot_rerun_blueprint() -> Any:
+    import rerun.blueprint as rrb
+
+    return rrb.Blueprint(
+        _g1_groot_world_view(),
+        rrb.TimePanel(state="collapsed"),
+    )
+
+
+def _g1_groot_sim_rerun_blueprint() -> Any:
+    import rerun.blueprint as rrb
+
+    return rrb.Blueprint(
+        rrb.Horizontal(
+            _g1_groot_world_view(),
+            rrb.Vertical(
+                rrb.Spatial2DView(origin="world/color_image", name="Camera"),
+                rrb.Spatial2DView(origin="world/depth_image", name="Depth"),
+            ),
+            column_shares=[2, 1],
+        ),
+        rrb.TimePanel(state="collapsed"),
+    )
+
+
+def _g1_groot_world_view() -> Any:
     import rerun as rr
     import rerun.blueprint as rrb
 
-    world = rrb.Spatial3DView(
+    return rrb.Spatial3DView(
         origin="world",
         name="G1 GR00T WBC",
         background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
@@ -453,20 +478,13 @@ def _g1_groot_rerun_blueprint() -> Any:
             plane=rr.components.Plane3D.XY.with_distance(0.0),
         ),
     )
-    contents: Any = world
-    if _using_simulation_provider:
-        contents = rrb.Horizontal(
-            world,
-            rrb.Vertical(
-                rrb.Spatial2DView(origin="world/color_image", name="Camera"),
-                rrb.Spatial2DView(origin="world/depth_image", name="Depth"),
-            ),
-            column_shares=[2, 1],
-        )
-    return rrb.Blueprint(
-        contents,
-        rrb.TimePanel(state="collapsed"),
-    )
+
+
+def _g1_camera_info_to_pinholes(camera_info: Any) -> list[tuple[str, Any]]:
+    """Associate the shared RGB-D calibration with both image entities."""
+    color = camera_info.to_rerun(image_topic="world/color_image")
+    depth = camera_info.to_rerun(image_topic="world/depth_image")
+    return [*color, *depth]
 
 
 def _g1_nav_path(path: NavPath) -> Any:
@@ -533,8 +551,11 @@ if not _using_simulation_provider:
     _static_rerun_entities.update(scene_package_static_entities(global_config.scene_package))
 
 _rerun_config: dict[str, Any] = {
-    "blueprint": _g1_groot_rerun_blueprint,
+    "blueprint": (
+        _g1_groot_sim_rerun_blueprint if _using_simulation_provider else _g1_groot_rerun_blueprint
+    ),
     "visual_override": {
+        "world/camera_info": _g1_camera_info_to_pinholes,
         _G1_JOINTS_ENTITY: g1_urdf_joint_state(root_path=_G1_ROOT),
         "world/tf": g1_scene_transform_filter(),
         "world/global_costmap": g1_costmap,

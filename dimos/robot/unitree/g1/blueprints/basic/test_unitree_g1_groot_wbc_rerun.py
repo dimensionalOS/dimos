@@ -16,6 +16,11 @@ from dimos.robot.unitree.g1.blueprints.basic import unitree_g1_groot_wbc
 from dimos.visualization.rerun.urdf_robot import UrdfRobotTransformFilter
 
 
+class _CameraInfo:
+    def to_rerun(self, *, image_topic: str):
+        return [(image_topic, object())]
+
+
 def test_g1_rerun_live_streams_are_bounded() -> None:
     config = unitree_g1_groot_wbc._rerun_config
 
@@ -31,3 +36,27 @@ def test_g1_rerun_live_streams_are_bounded() -> None:
     assert "world/global_costmap" in config["latest_state"]
     assert "world/navigation_costmap" in config["latest_state"]
     assert isinstance(config["visual_override"]["world/tf"], UrdfRobotTransformFilter)
+
+
+def test_g1_rerun_associates_rgbd_calibration_with_both_images() -> None:
+    converter = unitree_g1_groot_wbc._rerun_config["visual_override"]["world/camera_info"]
+
+    entities = converter(_CameraInfo())
+
+    assert [path for path, _archetype in entities] == [
+        "world/color_image",
+        "world/depth_image",
+    ]
+
+
+def test_g1_sim_rerun_blueprint_has_rgb_and_depth_views() -> None:
+    blueprint = unitree_g1_groot_wbc._g1_groot_sim_rerun_blueprint()
+
+    world, camera_column = blueprint.root_container.contents
+
+    assert world.name == "G1 GR00T WBC"
+    assert [view.name for view in camera_column.contents] == ["Camera", "Depth"]
+    assert [view.origin for view in camera_column.contents] == [
+        "world/color_image",
+        "world/depth_image",
+    ]
