@@ -20,12 +20,14 @@ segmentation (EdgeTAM), projection to 3D through the rig's geometry - an
 aligned depth stream or a registered pointcloud stream. Two
 algorithm rules distinguish it from a best-crop search:
 
-* **Latest-pose semantics.** Among verified observations of the chosen
-  support, the greatest timestamp wins. The answer is "where is it now",
-  never "where did it match best".
+* **Latest-pose semantics.** Every verified instance is returned,
+  latest-seen first, and each instance's position follows its latest
+  sighting: "where is it now", never "where did it match best". The
+  instance's cloud is the union of every viewpoint that saw it.
 * **Calibrated refusal.** Every stage carries a score and the answer can be
-  ``None``: no accept-level detection, no multi-view confirmation, or an
-  ambiguity between coexisting candidates below the refusal margin.
+  empty: no accept-level detection, no multi-view confirmation. Coexisting
+  same-label instances below the refusal margin are flagged, never merged
+  or silently dropped.
 """
 
 from __future__ import annotations
@@ -102,7 +104,7 @@ class LocalizeTrace:
     detection_frames: list[Any] = field(default_factory=list)  # Observation[ImageDetections2D]
     matched: list[tuple[float, Detection3DPC]] = field(default_factory=list)
     verified: list[tuple[float, Detection3DPC]] = field(default_factory=list)
-    answer: Detection3DPC | None = None
+    answers: list[Detection3DPC] = field(default_factory=list)  # merged union per instance
     backdrop_ts: float | None = None
 
 
@@ -215,21 +217,22 @@ def localize(
     rig: Rig | None = None,
     require_pose: bool = True,
     policy: LocalizePolicy | None = None,
-    cloud_mode: str = "latest_visible",
     trace: LocalizeTrace | list[LocalizeTrace] | None = None,
-) -> Localization | list[Localization | None] | None:
-    """Latest unambiguous 3D localization of *query*, or ``None``.
+) -> list[Localization] | list[list[Localization]]:
+    """Every verified 3D instance of *query*, latest-seen first.
 
-    ``None`` is a first-class answer: nothing reached the accept score, no
-    support was confirmed from a second viewpoint, or the best candidate had
-    no valid depth and ``require_pose`` holds. An ambiguity between
-    coexisting candidates is returned with ``ambiguity_margin`` below
-    ``refusal_margin`` - a flagged hit, never a silent guess.
+    Each instance's ``point_cloud`` is the union of every viewpoint that saw
+    it, and its position follows the latest sighting. An empty list is a
+    first-class answer: nothing reached the accept score, no support was
+    confirmed from a second viewpoint, or the best candidate had no valid
+    depth and ``require_pose`` holds. Coexisting instances of one label are
+    all returned; each carries ``ambiguity_margin`` against its rivals and
+    is flagged below ``refusal_margin`` - never a silent guess.
 
     A list *query* shares one detection pass: every label's semantic peaks
     select frames, and each unique frame is scored against every label in a
-    single OWLv2 forward, segmented and lifted once. One result per label,
-    in input order. ``trace`` then takes a list of the same length.
+    single OWLv2 forward, segmented and lifted once. One instance list per
+    label, in input order. ``trace`` then takes a list of the same length.
 
     The index, the rig and the three models belong to the caller: nothing
     here is loaded or stopped, so one process can call this repeatedly on
@@ -277,8 +280,8 @@ def localize(
     logger.info(f"detection: {len(ordered)} candidate frames for {len(queries)} labels")
 
     if not ordered:
-        results: list[Localization | None] = [None] * len(queries)
-        return None if isinstance(query, str) else results
+        empty: list[list[Localization]] = [[] for _ in queries]
+        return [] if isinstance(query, str) else empty
 
     from dimos.perception.memory.support_plane import fit_support_plane
 
@@ -338,7 +341,6 @@ def localize(
             rig=rig,
             require_pose=require_pose,
             policy=policy,
-            cloud_mode=cloud_mode,
             trace=traces[j],
         )
         for j, q in enumerate(queries)
@@ -354,12 +356,11 @@ def _finalize(
     rig: Rig,
     require_pose: bool,
     policy: LocalizePolicy,
-    cloud_mode: str,
     trace: LocalizeTrace | None,
-) -> Localization | None:
+) -> list[Localization]:
     verified = [
-        members
-        for members in identity.groups
+        (merged, members)
+        for merged, members in zip(identity.merged, identity.groups, strict=True)
         if _max_score(members) >= policy.accept_score and _n_views(members) >= policy.min_views
     ]
     logger.info(
@@ -369,7 +370,7 @@ def _finalize(
         )
     )
     if trace is not None:
-        for members in verified:
+        for _merged, members in verified:
             for det3d in members:
                 trace.verified.append((det3d.ts, det3d))
 
@@ -377,88 +378,99 @@ def _finalize(
         if ungrounded_best is not None and ungrounded_best[0] >= policy.accept_score:
             if require_pose:
                 logger.info(f"{query!r}: best candidate has no valid depth and require_pose is set")
-                return None
+                return []
             score, ts = ungrounded_best
-            return Localization(
-                instance_id="query-0",
-                semantic_score=score,
-                identity_score=0.0,
-                ambiguity_margin=1.0,
-                position_world_xyz=None,
-                orientation_world_xyzw=None,
-                frame_id=rig.world_frame,
-                support=None,
-                pose_timestamp=ts,
-                geometry_timestamp=ts,
-                last_seen_timestamp=ts,
-                point_cloud=None,
-                cloud_mode=cloud_mode,
-                coverage=0.0,
-                n_views=1,
-                reason="no_valid_depth",
+            return [
+                Localization(
+                    instance_id="query-0",
+                    semantic_score=score,
+                    identity_score=0.0,
+                    ambiguity_margin=1.0,
+                    position_world_xyz=None,
+                    orientation_world_xyzw=None,
+                    frame_id=rig.world_frame,
+                    support=None,
+                    pose_timestamp=ts,
+                    geometry_timestamp=ts,
+                    last_seen_timestamp=ts,
+                    point_cloud=None,
+                    coverage=0.0,
+                    n_views=1,
+                    reason="no_valid_depth",
+                )
+            ]
+        return []
+
+    verified.sort(key=lambda pair: _latest(pair[1]).ts, reverse=True)
+    instances: list[Localization] = []
+    for k, (merged, members) in enumerate(verified):
+        m_lo, m_hi = _interval(members)
+        rival_scores = [
+            _max_score(others)
+            for _m, others in verified
+            if others is not members
+            and not (_interval(others)[1] < m_lo or _interval(others)[0] > m_hi)  # coexisting
+        ]
+        margin = _max_score(members) - max(rival_scores) if rival_scores else 1.0
+        reason = (
+            "ambiguous_between_coexisting_candidates" if margin < policy.refusal_margin else None
+        )
+
+        latest = _latest(members)
+        union = merged.pointcloud
+        points = np.asarray(union.pointcloud.points)
+        aabb_min, aabb_max = points.min(axis=0), points.max(axis=0)
+        try:
+            orientation = _quaternion_from_matrix(
+                np.asarray(latest.pointcloud.oriented_bounding_box.R)
             )
-        return None
+        except Exception:
+            orientation = (0.0, 0.0, 0.0, 1.0)
+        center = (aabb_min + aabb_max) / 2
+        extent = np.maximum(aabb_max - aabb_min, 0.005)
+        sigma = (
+            np.stack([_centroid(d) for d in members]).std(axis=0)
+            if len(members) > 1
+            else np.full(3, 0.01)
+        )
+        group_center = _group_center(members)
+        support = Support(
+            center_xyz=(float(center[0]), float(center[1]), float(center[2])),
+            extent_xyz_m=(float(extent[0]), float(extent[1]), float(extent[2])),
+            orientation_xyzw=(0.0, 0.0, 0.0, 1.0),
+            sigma_xyz_m=(float(sigma[0]), float(sigma[1]), float(sigma[2])),
+            coverage=_azimuth_coverage(members, group_center),
+            axes_observed=_axes_observed(members, group_center),
+            frame_id=rig.world_frame,
+        )
 
-    winner = max(verified, key=lambda g: _latest(g).ts)
-    w_lo, w_hi = _interval(winner)
-    rival_scores = [
-        _max_score(g)
-        for g in verified
-        if g is not winner
-        and not (_interval(g)[1] < w_lo or _interval(g)[0] > w_hi)  # coexisting in time
-    ]
-    margin = _max_score(winner) - max(rival_scores) if rival_scores else 1.0
-    reason = "ambiguous_between_coexisting_candidates" if margin < policy.refusal_margin else None
+        if trace is not None:
+            trace.answers.append(merged)
+            if k == 0:
+                trace.backdrop_ts = latest.ts
 
-    latest = _latest(winner)
-    points = np.asarray(latest.pointcloud.pointcloud.points)
-    aabb_min, aabb_max = points.min(axis=0), points.max(axis=0)
-    try:
-        orientation = _quaternion_from_matrix(np.asarray(latest.pointcloud.oriented_bounding_box.R))
-    except Exception:
-        orientation = (0.0, 0.0, 0.0, 1.0)
-    center = (aabb_min + aabb_max) / 2
-    extent = np.maximum(aabb_max - aabb_min, 0.005)
-    sigma = (
-        np.stack([_centroid(d) for d in winner]).std(axis=0)
-        if len(winner) > 1
-        else np.full(3, 0.01)
-    )
-    winner_center = _group_center(winner)
-    support = Support(
-        center_xyz=(float(center[0]), float(center[1]), float(center[2])),
-        extent_xyz_m=(float(extent[0]), float(extent[1]), float(extent[2])),
-        orientation_xyzw=(0.0, 0.0, 0.0, 1.0),
-        sigma_xyz_m=(float(sigma[0]), float(sigma[1]), float(sigma[2])),
-        coverage=_azimuth_coverage(winner, winner_center),
-        axes_observed=_axes_observed(winner, winner_center),
-        frame_id=rig.world_frame,
-    )
-
-    if trace is not None:
-        trace.answer = latest
-        trace.backdrop_ts = latest.ts
-
-    latest_centroid = _centroid(latest)
-    return Localization(
-        instance_id="query-0",
-        semantic_score=_max_score(winner),
-        identity_score=min(1.0, _n_views(winner) / 4.0),
-        ambiguity_margin=margin,
-        position_world_xyz=(
-            float(latest_centroid[0]),
-            float(latest_centroid[1]),
-            float(latest_centroid[2]),
-        ),
-        orientation_world_xyzw=orientation,
-        frame_id=rig.world_frame,
-        support=support,
-        pose_timestamp=latest.ts,
-        geometry_timestamp=latest.ts,
-        last_seen_timestamp=latest.ts,
-        point_cloud=latest.pointcloud,
-        cloud_mode=cloud_mode,
-        coverage=support.coverage,
-        n_views=_n_views(winner),
-        reason=reason,
-    )
+        latest_centroid = _centroid(latest)
+        instances.append(
+            Localization(
+                instance_id=f"query-{k}",
+                semantic_score=_max_score(members),
+                identity_score=min(1.0, _n_views(members) / 4.0),
+                ambiguity_margin=margin,
+                position_world_xyz=(
+                    float(latest_centroid[0]),
+                    float(latest_centroid[1]),
+                    float(latest_centroid[2]),
+                ),
+                orientation_world_xyzw=orientation,
+                frame_id=rig.world_frame,
+                support=support,
+                pose_timestamp=latest.ts,
+                geometry_timestamp=latest.ts,
+                last_seen_timestamp=latest.ts,
+                point_cloud=union,
+                coverage=support.coverage,
+                n_views=_n_views(members),
+                reason=reason,
+            )
+        )
+    return instances

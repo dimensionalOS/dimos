@@ -22,11 +22,13 @@ aligned depth and tf, a mobile-robot store (Go2/G1 replay) lifts through
 registered lidar and stamped poses. Queries share one model load and one
 .rrd; with --multi they go to localize() as one list and share one
 detection pass over the union of the labels' candidate frames.
-Exit code 0 with a printed
-position per verified hit; exit code 1 when no query is verified, with
-"no verified detection of ..." per miss - the honest answer that the object
-is not there. An ambiguous hit (identical twins in view) is printed with its
-ambiguity margin flagged.
+Every query prints one
+line per verified instance - all the coke bottles, not one winner - each
+with the union cloud of every viewpoint that saw it. Exit code 0 when any
+query verified; exit code 1 when none did, with "no verified detection
+of ..." per miss - the honest answer that the object is not there. An
+ambiguous instance (identical twins in view) is printed with its ambiguity
+margin flagged.
 """
 
 import argparse
@@ -51,8 +53,8 @@ def render(
 
     Entity contract (the acceptance color cheat sheet): ``map`` backdrop,
     then one subtree per query - ``detections/<query>/matched/*`` green,
-    ``detections/<query>/verified/*`` red, ``detections/<query>/answer``
-    always blue.
+    ``detections/<query>/verified/*`` red, ``detections/<query>/answer/<k>``
+    always blue, one per verified instance.
     """
     import rerun as rr
     import rerun.blueprint as rrb
@@ -149,39 +151,41 @@ def render(
                     det.pointcloud.to_rerun(voxel_size=point_size, colors=rgb),
                 )
 
-        # the answer: always blue, whatever the query
-        if trace.answer is not None:
-            at(trace.answer.ts)
+        # the answers: one blue union cloud per verified instance
+        for i, answer in enumerate(trace.answers):
+            at(answer.ts)
             rr.log(
-                f"{root}/answer",
-                trace.answer.pointcloud.to_rerun(voxel_size=point_size, colors=BLUE),
+                f"{root}/answer/{i}",
+                answer.pointcloud.to_rerun(voxel_size=point_size, colors=BLUE),
             )
 
 
-def report(query: str, hit: Localization | None, lo: float) -> bool:
-    """Print one query's outcome; True when it counts as a hit."""
-    if hit is None:
+def report(query: str, hits: list[Localization], lo: float) -> bool:
+    """Print one query's instances; True when any is verified."""
+    if not hits:
         print(f"no verified detection of {query!r}")
         return False
-    offset = hit.pose_timestamp - lo
-    if hit.position_world_xyz is None:
+    for hit in hits:
+        offset = hit.pose_timestamp - lo
+        if hit.position_world_xyz is None:
+            print(
+                f"hit {query!r} without pose: reason={hit.reason} "
+                f"score={hit.semantic_score:.2f} ts_offset={offset:.1f}s"
+            )
+            continue
+        x, y, z = hit.position_world_xyz
+        cloud_points = len(hit.point_cloud) if hit.point_cloud is not None else 0
         print(
-            f"hit {query!r} without pose: reason={hit.reason} "
-            f"score={hit.semantic_score:.2f} ts_offset={offset:.1f}s"
+            f"hit {query!r} [{hit.instance_id}]: position=({x:.3f}, {y:.3f}, {z:.3f}) "
+            f"frame={hit.frame_id} ts_offset={offset:.1f}s points={cloud_points} "
+            f"views={hit.n_views} score={hit.semantic_score:.2f} "
+            f"margin={hit.ambiguity_margin:.2f}"
         )
-        return True
-    x, y, z = hit.position_world_xyz
-    cloud_points = len(hit.point_cloud) if hit.point_cloud is not None else 0
-    print(
-        f"hit {query!r}: position=({x:.3f}, {y:.3f}, {z:.3f}) frame={hit.frame_id} "
-        f"ts_offset={offset:.1f}s points={cloud_points} views={hit.n_views} "
-        f"score={hit.semantic_score:.2f} margin={hit.ambiguity_margin:.2f}"
-    )
-    if hit.ambiguity_margin < REFUSAL_MARGIN:
-        print(
-            f"ambiguity: margin {hit.ambiguity_margin:.2f} below refusal threshold "
-            f"{REFUSAL_MARGIN:.2f} - multiple coexisting matches, this pick is flagged"
-        )
+        if hit.ambiguity_margin < REFUSAL_MARGIN:
+            print(
+                f"ambiguity: margin {hit.ambiguity_margin:.2f} below refusal threshold "
+                f"{REFUSAL_MARGIN:.2f} - coexisting matches, this instance is flagged"
+            )
     return True
 
 
