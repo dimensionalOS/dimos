@@ -613,6 +613,238 @@
       "error": "invalid_video_panel"
     },
     {
+      "name": "map2d_panel_full",
+      "data": {
+        "channels": [
+          {
+            "ch": "global_costmap",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "map",
+            "kind": "map2d",
+            "channels": [
+              "global_costmap",
+              "odom"
+            ]
+          }
+        ]
+      },
+      "manifest": {
+        "channels": [
+          {
+            "ch": "global_costmap",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "map",
+            "kind": "map2d",
+            "channels": [
+              "global_costmap",
+              "odom"
+            ]
+          }
+        ],
+        "layout": []
+      }
+    },
+    {
+      "name": "map2d_panel_no_pose",
+      "data": {
+        "channels": [
+          {
+            "ch": "global_costmap",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "map",
+            "kind": "map2d",
+            "channels": [
+              "global_costmap"
+            ]
+          }
+        ]
+      },
+      "manifest": {
+        "channels": [
+          {
+            "ch": "global_costmap",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "map",
+            "kind": "map2d",
+            "channels": [
+              "global_costmap"
+            ]
+          }
+        ],
+        "layout": []
+      }
+    },
+    {
+      "name": "map2d_panel_no_channel",
+      "data": {
+        "channels": [
+          {
+            "ch": "global_costmap",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "map",
+            "kind": "map2d",
+            "channels": []
+          }
+        ]
+      },
+      "error": "invalid_map2d_panel"
+    },
+    {
+      "name": "map2d_panel_three_channels",
+      "data": {
+        "channels": [
+          {
+            "ch": "global_costmap",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "color_image",
+            "encoding": "jpeg.v1",
+            "delivery": "latest",
+            "maxHz": 15.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "map",
+            "kind": "map2d",
+            "channels": [
+              "global_costmap",
+              "odom",
+              "color_image"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_map2d_panel"
+    },
+    {
+      "name": "map2d_panel_wrong_encoding",
+      "data": {
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "map",
+            "kind": "map2d",
+            "channels": [
+              "odom"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_map2d_panel"
+    },
+    {
+      "name": "map2d_panel_wrong_delivery",
+      "data": {
+        "channels": [
+          {
+            "ch": "global_costmap",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "reliable",
+            "maxHz": 5.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "map",
+            "kind": "map2d",
+            "channels": [
+              "global_costmap"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_map2d_panel"
+    },
+    {
+      "name": "map2d_panel_bad_pose",
+      "data": {
+        "channels": [
+          {
+            "ch": "global_costmap",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "color_image",
+            "encoding": "jpeg.v1",
+            "delivery": "latest",
+            "maxHz": 15.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "map",
+            "kind": "map2d",
+            "channels": [
+              "global_costmap",
+              "color_image"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_map2d_panel"
+    },
+    {
       "name": "layout_not_list",
       "data": {
         "channels": [

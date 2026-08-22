@@ -16,9 +16,12 @@
 
 Registers the robot (id + channel manifest) with a relay - spawned locally in
 --local-relay mode, or a remote one via relay_url - and forwards robot streams
-to it. Encoding is lazy: an input is subscribed, and frames are encoded, only
-while the relay reports at least one viewer subscribed to that channel, so a
-robot with no open cockpit does no encode work at all.
+to it. Encoding is lazy: an input is subscribed for encoding, and frames are
+encoded, only while the relay reports at least one viewer subscribed to that
+channel, so a robot with no open cockpit does no encode work. Channels with
+resend_on_subscribe additionally keep one always-on raw subscription (decode
+only, never encode) so the newest message can be replayed the moment a channel
+gains its first viewer, even when the producer went quiet before that.
 
 Threading: input callbacks fire on the transport (LCM) thread, which gates on
 maxHz and encodes there (RerunBridge precedent, ~3 ms per JPEG), then hands
@@ -39,13 +42,17 @@ import threading
 import time
 from typing import Any, TypeVar
 import webbrowser
+import zlib
 
+import numpy as np
 from pydantic import Field
+from reactivex.disposable import Disposable
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid, block_max_reduce
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
 from dimos.web.relay_bridge.locate import find_web_dir
@@ -67,7 +74,9 @@ logger = setup_logger()
 
 _T = TypeVar("_T")
 _FrameMeta = dict[str, Any] | None
-_Sender = Callable[[bytes, _FrameMeta], None]
+# (payload, meta, ts); ts is None for live frames (stamped at send) and the
+# source arrival time for replays, so a stale replay is honest about its age.
+_Sender = Callable[[bytes, _FrameMeta, float | None], None]
 
 _RECONNECT_PAUSE_S = 2.0
 
@@ -151,6 +160,8 @@ class RelayBridgeConfig(ModuleConfig):
     # frames into an every-other-frame pattern.
     image_max_hz: float = Field(default=30.0, gt=0.0)
     odom_max_hz: float = Field(default=20.0, gt=0.0)
+    costmap_max_hz: float = Field(default=5.0, gt=0.0)
+    """Full-grid zlib frames; the go2 mapper publishes at ~7.6 Hz."""
     available_channels: tuple[str, ...] | None = None
     """Composition-provided channel allowlist; None derives from bound inputs."""
 
@@ -176,16 +187,63 @@ def _encode_odom(
     return json.dumps(pose, separators=(",", ":")).encode(), None
 
 
+# The historical costmap encoder's choice (websocket_vis/optimized_costmap.py);
+# full grids compress to ~10-30 KB at <= 5 Hz, so speed over ratio is fine.
+_COSTMAP_ZLIB_LEVEL = 6
+# Render budget shared with the cockpit decoder (MAX_COSTMAP_DIM in
+# costmap.ts): larger grids are block-max downsampled before compression so
+# every frame stays within what consumers accept and render. 2048^2 raw is
+# 4 MiB, and zlib worst case adds ~0.01%, so the 8 MiB payload caps
+# (_wt_session._MAX_PAYLOAD_BYTES and the cockpit's) are unreachable.
+_COSTMAP_MAX_SIDE = 2048
+
+
+def _encode_costmap(
+    module: RelayBridgeModule, msg: OccupancyGrid
+) -> tuple[bytes, dict[str, Any] | None] | None:
+    grid = msg.grid
+    if grid.size == 0:
+        return None  # mapper still warming up; nothing to draw
+    res = msg.resolution
+    side = max(grid.shape)
+    if side > _COSTMAP_MAX_SIDE:
+        factor = -(-side // _COSTMAP_MAX_SIDE)
+        grid = block_max_reduce(grid, factor)
+        res *= factor
+    h, w = grid.shape
+    # Wire contract (costmap.zlib.v1): uint8 cells, ROS -1 unknown -> 255.
+    # int8 -1 is byte 0xff and 0..100 are byte-identical, so the raw buffer
+    # already is the wire payload - no mask/astype/tobytes copies.
+    cells = np.ascontiguousarray(grid)
+    origin = msg.origin
+    meta = {
+        "w": w,
+        "h": h,
+        "res": res,
+        "origin": [origin.position.x, origin.position.y, origin.yaw],
+    }
+    return zlib.compress(cells, _COSTMAP_ZLIB_LEVEL), meta
+
+
 @dataclass(frozen=True)
 class ChannelDef:
     ch: str
     encoding: str
     delivery: Delivery
     max_hz: Callable[[RelayBridgeConfig], float]
-    encode: Callable[[RelayBridgeModule, Any], tuple[bytes, _FrameMeta]]
+    # Returning None skips the frame (an empty grid before mapping starts).
+    encode: Callable[[RelayBridgeModule, Any], tuple[bytes, _FrameMeta] | None]
     # Cockpit panel-component kind rendered for this channel (None: raw row
     # only). One panel per channel until the T7 authoring API.
     panel_kind: str | None = None
+    # Extra channel ids appended to the panel binding when advertised (the
+    # map2d panel's pose overlay); silently dropped when not advertised.
+    panel_extra_channels: tuple[str, ...] = ()
+    # Keep an always-on raw-input cache (decode only, no encode) and replay
+    # the newest message when the channel goes from zero viewers to some
+    # viewer: a new session must not wait for the next publish (the producer
+    # may have gone quiet, possibly before the first viewer ever attached).
+    resend_on_subscribe: bool = False
 
 
 def _passes_rate_gate(
@@ -216,12 +274,23 @@ CHANNELS: tuple[ChannelDef, ...] = (
         "color_image", "jpeg.v1", "latest", lambda c: c.image_max_hz, _encode_image, "video"
     ),
     ChannelDef("odom", "pose.json.v1", "reliable", lambda c: c.odom_max_hz, _encode_odom),
+    ChannelDef(
+        "global_costmap",
+        "costmap.zlib.v1",
+        "latest",
+        lambda c: c.costmap_max_hz,
+        _encode_costmap,
+        "map2d",
+        panel_extra_channels=("odom",),
+        resend_on_subscribe=True,
+    ),
 )
 
 
 def build_manifest(config: RelayBridgeConfig, channels: tuple[ChannelDef, ...]) -> RobotManifest:
     # Routed through the domain parser so an invalid channel table (duplicate
     # ids, bad rates) fails module start instead of poisoning the relay.
+    live = {cd.ch for cd in channels}
     manifest = parse_manifest(
         {
             "channels": [
@@ -234,7 +303,11 @@ def build_manifest(config: RelayBridgeConfig, channels: tuple[ChannelDef, ...]) 
                 for cd in channels
             ],
             "panels": [
-                {"id": cd.ch, "kind": cd.panel_kind, "channels": [cd.ch]}
+                {
+                    "id": cd.ch,
+                    "kind": cd.panel_kind,
+                    "channels": [cd.ch, *(c for c in cd.panel_extra_channels if c in live)],
+                }
                 for cd in channels
                 if cd.panel_kind is not None
             ],
@@ -256,9 +329,11 @@ class RelayBridgeModule(Module):
     """Bridges robot streams to the relay; encodes only while viewers watch."""
 
     config: RelayBridgeConfig
-    # Exact producer types (GO2Connection outputs) so autoconnect matches.
+    # Exact producer types (GO2Connection/CostMapper outputs) so autoconnect
+    # matches.
     color_image: In[Image]
     odom: In[PoseStamped]
+    global_costmap: In[OccupancyGrid]
     # NEVER add handle_color_image/handle_odom methods here: _auto_bind_handlers
     # subscribes any handle_<input> eagerly at start(), defeating lazy encode.
 
@@ -273,6 +348,12 @@ class RelayBridgeModule(Module):
         self._channel_defs: tuple[ChannelDef, ...] = ()
         self._min_interval: dict[str, float] = {}
         self._last_input: dict[str, float] = {}
+        # Newest raw message (+ arrival wall time, the replay's frame ts) per
+        # resend_on_subscribe channel; written on the transport thread, read
+        # on the loop (GIL-atomic dict swap), and kept across sessions so a
+        # reconnect replays too. Pins the full grid (MBs, one per channel);
+        # encoding stays lazy.
+        self._last_msg: dict[str, tuple[Any, float]] = {}
         self.encoded: dict[str, int] = {cd.ch: 0 for cd in CHANNELS}
 
     async def main(self) -> AsyncIterator[None]:
@@ -291,6 +372,16 @@ class RelayBridgeModule(Module):
                 and self.inputs[cd.ch].transport is not None
             )
             self._min_interval = {cd.ch: 1.0 / cd.max_hz(self.config) for cd in self._channel_defs}
+            for cd in self._channel_defs:
+                if cd.resend_on_subscribe:
+                    # Always-on raw cache: grids published before the first
+                    # viewer, or while nobody watches, must still be
+                    # replayable on the next 0->1 subscribe.
+                    self.register_disposable(
+                        Disposable(
+                            self.inputs[cd.ch].subscribe(functools.partial(self._cache_input, cd))
+                        )
+                    )
             self._manifest = build_manifest(self.config, self._channel_defs)
             self._url = self.config.relay_url or self.config.g.relay_url
             if self._url is None:
@@ -389,9 +480,14 @@ class RelayBridgeModule(Module):
         return senders
 
     def _send_reliable(
-        self, client: RelayClient, ch: str, payload: bytes, meta: dict[str, Any] | None
+        self,
+        client: RelayClient,
+        ch: str,
+        payload: bytes,
+        meta: dict[str, Any] | None,
+        ts: float | None = None,
     ) -> None:
-        client.send_frame(ch, payload, delivery="reliable", meta=meta)
+        client.send_frame(ch, payload, delivery="reliable", meta=meta, ts=ts)
 
     async def _supervise(self, session: _Session) -> None:
         """Consume subs snapshots; on session loss, reconnect (and respawn a
@@ -476,6 +572,25 @@ class RelayBridgeModule(Module):
             active = cd.ch in session.unsubs
             should = cd.ch in want
             if should and not active:
+                cached = self._last_msg.get(cd.ch)
+                if cached is not None:
+                    # Replay precedes the subscribe: this offer runs
+                    # synchronously on the loop, so a live frame - possible
+                    # only once subscribed - always queues behind it and wins
+                    # the 1-slot mailbox. Fires on 0->1 transitions only: the
+                    # relay reports sub-set changes and stays cache-free, so
+                    # an extra viewer on an already-active channel waits for
+                    # the next publish (review issue 2, deferred).
+                    msg, recv_ts = cached
+                    try:
+                        encoded = cd.encode(self, msg)
+                    except Exception:
+                        logger.exception(f"relay bridge: replaying {cd.ch} failed")
+                        encoded = None
+                    if encoded is not None:
+                        # self.encoded counts live-path encodes only; the
+                        # arrival ts keeps a stale replay honest about its age.
+                        self._offer(session, session.senders[cd.ch], *encoded, recv_ts)
                 session.unsubs[cd.ch] = self.inputs[cd.ch].subscribe(
                     functools.partial(self._on_input, session, cd, session.senders[cd.ch])
                 )
@@ -497,20 +612,35 @@ class RelayBridgeModule(Module):
         if not _passes_rate_gate(self._last_input, cd.ch, now, self._min_interval[cd.ch]):
             return
         try:
-            payload, meta = cd.encode(self, msg)
+            encoded = cd.encode(self, msg)
         except Exception:
             logger.exception(f"relay bridge: encoding {cd.ch} failed")
             return
+        if encoded is None:
+            return
+        payload, meta = encoded
         self.encoded[cd.ch] += 1
         loop = self._loop
         if loop is not None and loop.is_running():
             loop.call_soon_threadsafe(self._offer, session, sender, payload, meta)
 
-    def _offer(self, session: _Session, sender: _Sender, payload: bytes, meta: _FrameMeta) -> None:
+    def _cache_input(self, cd: ChannelDef, msg: Any) -> None:
+        """Transport-thread callback: remember the newest raw message so a
+        0->1 subscribe can replay it (its arrival time becomes the frame ts)."""
+        self._last_msg[cd.ch] = (msg, time.time())
+
+    def _offer(
+        self,
+        session: _Session,
+        sender: _Sender,
+        payload: bytes,
+        meta: _FrameMeta,
+        ts: float | None = None,
+    ) -> None:
         if session.retired.is_set() or self._session is not session:
             return
         try:
-            sender(payload, meta)
+            sender(payload, meta, ts)
         except Exception:
             # Session mid-teardown (dead writer pump / closed connection): the
             # supervisor is already reconnecting and will rebuild the senders.

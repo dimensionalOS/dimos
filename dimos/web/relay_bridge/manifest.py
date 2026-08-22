@@ -18,7 +18,7 @@ Pinned by the golden vectors in web/shared/fixtures/manifests.json (tested
 from both pytest and deno test). The transport (protocol.py) checks only
 field shapes; this module owns the domain rules: bounded unique ids, positive
 rates, panel/layout references that resolve, and kind-specific panel rules
-(video). Panels and layout are minimal until T7 (the layout is a flat
+(video, map2d). Panels and layout are minimal until T7 (the layout is a flat
 panel-id order, not a tree).
 """
 
@@ -143,6 +143,24 @@ def parse_manifest(data: Any) -> Manifest:
             if bound.encoding != "jpeg.v1" or bound.delivery != "latest":
                 raise ManifestError(
                     "invalid_video_panel", f"video panel {panel.id} needs a jpeg.v1 latest channel"
+                )
+        if panel.kind == "map2d":
+            # channels[0] is the costmap; channels[1] (optional) the pose overlay.
+            if len(panel.channels) not in (1, 2):
+                raise ManifestError(
+                    "invalid_map2d_panel",
+                    f"map2d panel {panel.id} must bind one or two channels",
+                )
+            costmap = ch_ids[panel.channels[0]]
+            if costmap.encoding != "costmap.zlib.v1" or costmap.delivery != "latest":
+                raise ManifestError(
+                    "invalid_map2d_panel",
+                    f"map2d panel {panel.id} needs a costmap.zlib.v1 latest channel first",
+                )
+            if len(panel.channels) == 2 and ch_ids[panel.channels[1]].encoding != "pose.json.v1":
+                raise ManifestError(
+                    "invalid_map2d_panel",
+                    f"map2d panel {panel.id} pose channel must be pose.json.v1",
                 )
 
     for panel_id in manifest.layout:

@@ -33,7 +33,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid, block_max_reduce
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -92,7 +92,7 @@ class MapCompressModule(Module):
             if 0 < res < self.config.map_min_resolution:
                 factor = max(1, round(self.config.map_min_resolution / res))
                 if factor > 1:
-                    img_cells = self._block_max(cells, factor)
+                    img_cells = block_max_reduce(cells, factor)
                     res = res * factor
 
             ok, buf = cv2.imencode(".png", self._occupancy_to_bgra(img_cells))
@@ -142,24 +142,6 @@ class MapCompressModule(Module):
             logger.warning("odom encode/publish failed, dropping frame", exc_info=True)
             return
         self._last_odom_pub = now
-
-    @staticmethod
-    def _block_max(cells: Any, factor: int) -> Any:
-        """Block maximum (not mean) so coarsening never erases an obstacle."""
-        import numpy as np
-
-        h, w = cells.shape[:2]
-        new_h, new_w = h // factor, w // factor
-        if new_h == 0 or new_w == 0:
-            return cells
-        trimmed = cells[: new_h * factor, : new_w * factor]
-        blocks = trimmed.reshape(new_h, factor, new_w, factor)
-        # Sink unknown below every known value for the max, then map it back.
-        as_int = blocks.astype(np.int16)
-        known = np.where(as_int < 0, -1000, as_int)
-        reduced = known.max(axis=(1, 3))
-        reduced[reduced == -1000] = -1
-        return reduced.astype(np.int8)
 
     @staticmethod
     def _occupancy_to_bgra(cells: Any) -> Any:
