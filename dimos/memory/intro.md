@@ -8,6 +8,39 @@ from dimos.memory.store.sqlite import SqliteStore
 store = SqliteStore(path="/tmp/memory_readme.db")
 ```
 
+## Native stream recording
+
+Use `RustRecorder` when encoding or SQLite writes cannot keep up with sensor
+rates. Declare inputs as on the Python recorder; `encoding_threads` sizes the
+native encoder pool, while one writer preserves arrival order and commits in
+batches.
+
+```python skip
+from dimos.core.stream import In
+from dimos.memory.rust_recorder import RustRecorder, RustRecorderConfig
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+
+class SensorRecorder(RustRecorder):
+    color_image: In[Image]
+    lidar: In[PointCloud2]
+
+
+sensor_recorder = SensorRecorder.blueprint(
+    db_path="session.db",
+    encoding_threads=4,
+    stream_codecs={"lidar": "lz4+lcm"},
+)
+```
+
+The native path supports LCM-backed messages and the `lcm`, `jpeg`, and
+`lz4+lcm` codecs. It splits `tf` batches into the same per-transform records as
+the Python recorder and preserves source timestamps for common stamped sensor
+messages. Arbitrary pickle payloads, Python `pose_setter_for` hooks, and spatial
+pose attachment remain Python-recorder features; unsupported combinations fail
+during startup preflight.
+
 
 ```python session=memory ansi=false
 logs = store.stream("logs", str)
