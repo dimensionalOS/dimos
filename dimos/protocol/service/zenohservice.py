@@ -46,6 +46,11 @@ LOOPBACK_INTERFACE = "lo0" if platform.system() == "Darwin" else "lo"
 # Zenoh's own name for "every multicast-capable interface".
 ALL_INTERFACES = "auto"
 
+# Zenoh's own default listener binds every interface, so an unconfigured session
+# is reachable from the LAN. A session whose discovery never leaves loopback
+# listens here instead: loopback only, on a port the kernel picks.
+LOOPBACK_LISTEN = "tcp/127.0.0.1:0"
+
 
 def _locators(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
@@ -74,6 +79,10 @@ def _default_scouting_interface() -> str:
 
 def _default_multicast() -> bool:
     return global_config.zenoh_multicast
+
+
+def _default_scout_addr() -> str:
+    return global_config.zenoh_scout_addr.strip()
 
 
 def _default_gossip() -> bool | None:
@@ -119,6 +128,9 @@ class ZenohConfig(SessionConfig):
     scouting_interface: str = Field(default_factory=_default_scouting_interface)
     # Whether multicast scouting runs at all, as opposed to how far it reaches.
     multicast: bool = Field(default_factory=_default_multicast)
+    # Multicast group scouting joins. Empty takes zenoh's own. Sessions on
+    # different groups never discover each other, even on the same loopback.
+    scout_addr: str = Field(default_factory=_default_scout_addr)
     # Learn peers from the peers already linked, not only from the dialed ones.
     # None follows scouting.
     gossip: bool | None = Field(default_factory=_default_gossip)
@@ -141,6 +153,20 @@ class ZenohConfig(SessionConfig):
         return self.scouting_interface or (ALL_INTERFACES if self.scouting else LOOPBACK_INTERFACE)
 
     @property
+    def listen_endpoints(self) -> list[str]:
+        """Where this session accepts links, pinned to loopback while discovery is.
+
+        A session that only ever scouts loopback has no reason to be reachable
+        from the LAN, so it does not offer zenoh's all-interfaces default there.
+        Dialing out is unaffected: `connect` still reaches a robot either way.
+        """
+        if self.listen or self.mode == "client":
+            # A client dials its router and accepts no links, so it has no
+            # listener to pin in the first place.
+            return self.listen
+        return [LOOPBACK_LISTEN] if self.multicast_interface == LOOPBACK_INTERFACE else []
+
+    @property
     def gossip_enabled(self) -> bool:
         """Gossip discovery, on unless a caller turns it off.
 
@@ -154,8 +180,9 @@ class ZenohConfig(SessionConfig):
         """Every setting zenoh sees."""
         return (
             f"{self.mode}|{json.dumps(sorted(self.connect))}"
-            f"|{json.dumps(sorted(self.listen))}|{self.multicast_interface}"
-            f"|{self.multicast}|{self.gossip_enabled}|{self.connect_timeout}"
+            f"|{json.dumps(sorted(self.listen_endpoints))}|{self.multicast_interface}"
+            f"|{self.multicast}|{self.scout_addr}|{self.gossip_enabled}"
+            f"|{self.connect_timeout}"
         )
 
     def to_wire(self) -> dict[str, Any]:
@@ -163,8 +190,9 @@ class ZenohConfig(SessionConfig):
         return {
             "mode": self.mode,
             "connect": self.connect,
-            "listen": self.listen,
+            "listen": self.listen_endpoints,
             "multicast": self.multicast,
+            "scout_addr": self.scout_addr,
             "gossip": self.gossip_enabled,
             "interface": self.multicast_interface,
             "connect_timeout_ms": int(self.connect_timeout * 1000),
@@ -188,6 +216,7 @@ _ZENOH_KEYS = {
     "connect": "connect/endpoints",
     "listen": "listen/endpoints",
     "multicast": "scouting/multicast/enabled",
+    "scout_addr": "scouting/multicast/address",
     "interface": "scouting/multicast/interface",
     "gossip": "scouting/gossip/enabled",
     "connect_timeout_ms": "connect/timeout_ms",
@@ -195,7 +224,7 @@ _ZENOH_KEYS = {
 
 # Settings zenoh decides for itself when we send nothing. An empty listen list
 # means its own default port, and a zero timeout means its own retry policy.
-_ZENOH_DEFAULTED_WHEN_EMPTY = ("connect", "listen", "connect_timeout_ms")
+_ZENOH_DEFAULTED_WHEN_EMPTY = ("connect", "listen", "scout_addr", "connect_timeout_ms")
 
 
 def _zenoh_config(config: ZenohConfig) -> zenoh.Config:
@@ -235,7 +264,7 @@ class ZenohSessionPool:
                     "Zenoh session opened",
                     mode=config.mode,
                     connect=config.connect,
-                    listen=config.listen,
+                    listen=config.listen_endpoints,
                     multicast_interface=config.multicast_interface,
                     gossip=config.gossip_enabled,
                 )

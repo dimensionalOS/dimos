@@ -33,8 +33,8 @@ So: treat the API as uniform, but pick a backend whose semantics match the task.
 
 For most users, the important choice is between `lcm`, `zenoh`, and shared memory overrides:
 
-* `lcm`: current legacy default on most platforms. Fast and simple, but UDP multicast is best-effort.
-* `zenoh`: network transport with reliable delivery semantics and the same typed message model through `LCMEncoderMixin`.
+* `zenoh`: the default. Reliable delivery semantics and the same typed message model through `LCMEncoderMixin`.
+* `lcm`: the legacy path, opt-in. Fast and simple, but UDP multicast is best-effort.
 * shared memory (`pSHMTransport`, etc.): best for large local streams on a single machine.
 
 At the CLI level, you can select the stream transport globally with:
@@ -44,34 +44,43 @@ dimos --transport=lcm run unitree-go2
 dimos --transport=zenoh run unitree-go2
 ```
 
-On macOS, large replay workloads can be unreliable over LCM UDP, so dimOS defaults the global stream transport to `zenoh` there. Other platforms default to `lcm`.
+Zenoh is the default on every platform. Pass `--transport=lcm` for the legacy multicast path.
 
 ## Zenoh quickstart
 
 Zenoh ships with dimOS by default (`eclipse-zenoh` is a base dependency), so there is nothing extra to install.
 
-**Default global stream transport** (only applies when you do not pass `--transport` or set `DIMOS_TRANSPORT`):
+Zenoh is the **default global stream transport** on every platform, so nothing below is
+needed to turn it on -- only to turn it off.
 
-| Situation | Default |
-|-----------|---------|
-| macOS | `zenoh` |
-| Any other platform | `lcm` |
+### What the default talks to
+
+A stock zenoh session is pinned to localhost. It listens on `tcp/127.0.0.1:0` and
+scouts for peers over loopback only, so sibling dimOS processes on this machine
+find each other and nothing on the LAN can link to them.
+
+Reaching off the machine is opt-in, and each way is independent:
+
+| You want | Pass |
+|----------|------|
+| A robot, dialed directly | `--robot-ip 192.168.1.42` (outbound; the listener stays pinned) |
+| Any other peer or a router, dialed directly | `ZENOH_CONNECT=tcp/host:7447` |
+| Peers discovered across the LAN | `ZENOH_SCOUTING=1` (also unpins the listener) |
+| Scouting on one named interface | `ZENOH_INTERFACE=wlan0` (also unpins the listener) |
+
+Scouting the LAN and refusing links from it are contradictory, so turning
+discovery outward hands the listener back to zenoh's all-interfaces default.
+An explicit `listen=[...]` on a session always wins over both.
 
 **Two ways to override for one run or for your shell:**
 
 1. **CLI:** `dimos --transport=zenoh ...` or `dimos --transport=lcm ...` (see [CLI](/docs/usage/cli.md) for precedence with `.env` and blueprints).
 2. **Environment:** `DIMOS_TRANSPORT=zenoh` or `DIMOS_TRANSPORT=lcm`.
 
-Typical **replay on macOS** (default is already Zenoh, so no transport flag is required):
+Typical **replay** (Zenoh is already the default, so no transport flag is required):
 
 ```bash
 dimos --dtop --replay --replay-db=go2_bigoffice run unitree-go2
-```
-
-The same workload on **Linux** (default remains `lcm` until you opt in):
-
-```bash
-dimos --transport=zenoh --dtop --replay --replay-db=go2_bigoffice run unitree-go2
 ```
 
 Architecture notes (Rerun bridge, TF still on LCM) live under [Zenoh](#zenoh) in PubSub transports below.

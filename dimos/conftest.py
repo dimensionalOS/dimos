@@ -30,13 +30,18 @@ _worker = os.environ.get("PYTEST_XDIST_WORKER")
 if not _worker:
     os.environ[DIMOS_PYTEST_RUN_ID_ENV] = f"pytest-{uuid.uuid4().hex[:16]}"
 
-# Pin every pytest session to its own LCM bus *before* any dimos module is
-# imported (``LCMConfig`` captures ``LCM_DEFAULT_URL`` at import time), so
+# Pin every pytest session to its own LCM bus and its own zenoh scouting group
+# *before* any dimos module is imported (``LCMConfig`` captures
+# ``LCM_DEFAULT_URL`` at import time), so
 # messages from processes outside the session (a dev ``dimos`` daemon, a
 # leaked DimSim bridge, a concurrent pytest run) can't leak into
 # subscribe_all/pattern tests. It has to be an env var (not just a fixture)
 # because subprocesses spawned by tests (``ModuleCoordinator`` workers, the
 # DimSim Deno bridge) create their own LCM instances and inherit our env.
+#
+# Zenoh needs the same treatment for the same reason: its default discovery is
+# loopback multicast, which every worker and every concurrent session on this
+# machine shares. ``ZENOH_SCOUT_ADDR`` moves each onto its own group.
 #
 # Buckets are seeded with the session run id so concurrent sessions on one
 # machine can't collide. xdist workers mix in the worker name, and also get
@@ -44,7 +49,7 @@ if not _worker:
 # dir (``run_registry`` captures ``XDG_STATE_HOME``), which only collide
 # between parallel workers. Exporting ``LCM_DEFAULT_URL`` yourself opts a
 # single-worker session out of the isolation, deliberately joining it to an
-# external bus.
+# external bus; ``ZENOH_SCOUT_ADDR`` does the same for zenoh.
 
 
 def _lcm_bucket(seed: str) -> int:
@@ -55,10 +60,13 @@ _run_id = os.environ[DIMOS_PYTEST_RUN_ID_ENV]
 if _worker:
     _BUCKET = _lcm_bucket(f"{_run_id}:{_worker}")
     os.environ["LCM_DEFAULT_URL"] = f"udpm://239.255.76.67:{7700 + _BUCKET}?ttl=0"
+    os.environ.setdefault("ZENOH_SCOUT_ADDR", f"224.0.0.224:{17700 + _BUCKET}")
     os.environ["MCP_PORT"] = str(20000 + _BUCKET)
     os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp(prefix=f"dimos-test-state-{_worker}-")
-elif "LCM_DEFAULT_URL" not in os.environ:
-    os.environ["LCM_DEFAULT_URL"] = f"udpm://239.255.76.67:{7700 + _lcm_bucket(_run_id)}?ttl=0"
+else:
+    _BUCKET = _lcm_bucket(_run_id)
+    os.environ.setdefault("LCM_DEFAULT_URL", f"udpm://239.255.76.67:{7700 + _BUCKET}?ttl=0")
+    os.environ.setdefault("ZENOH_SCOUT_ADDR", f"224.0.0.224:{17700 + _BUCKET}")
 
 # Raise the open-file limit. Each LCM transport opens at least one
 # multicast socket; with pytest-xdist workers running many in parallel,

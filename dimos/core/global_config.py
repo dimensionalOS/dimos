@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import os
-import platform
 import re
 from typing import Literal, TypeAlias
 
@@ -39,12 +38,6 @@ ZenohProcessMode: TypeAlias = Literal["peer", "client"]
 
 def _get_all_numbers(s: str) -> list[float]:
     return [float(x) for x in re.findall(r"-?\d+\.?\d*", s)]
-
-
-def _default_transport() -> TransportBackend:
-    if platform.system() == "Darwin":
-        return "zenoh"
-    return "lcm"
 
 
 class GlobalConfig(BaseSettings):
@@ -78,6 +71,10 @@ class GlobalConfig(BaseSettings):
     zenoh_interface: str = ""
     # Whether multicast scouting runs at all. zenoh_scouting only sets its reach.
     zenoh_multicast: bool = True
+    # Multicast group scouting joins, e.g. 224.0.0.224:7446. Empty takes zenoh's
+    # own. Moving it walks a session onto a private discovery bus, which is how
+    # parallel sessions on one machine stay apart -- LCM_DEFAULT_URL's analog.
+    zenoh_scout_addr: str = ""
     # Whether peers propagate the peers they already know over established links.
     # Unlike multicast scouting this reaches nothing new on the LAN, and zenoh
     # needs it to resolve the key expressions a linked peer sends.
@@ -110,7 +107,7 @@ class GlobalConfig(BaseSettings):
     # (dimos, humancli, agentspy, dtop). The `transport` alias keeps the bare
     # env name and the `--transport` CLI flag (which sets the field by name) working.
     transport: TransportBackend = Field(
-        default_factory=_default_transport,
+        default="zenoh",
         validation_alias=AliasChoices("DIMOS_TRANSPORT", "transport"),
     )
     build_native: bool = DEFAULT_BUILD_NATIVE
