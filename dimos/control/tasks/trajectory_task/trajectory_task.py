@@ -210,7 +210,9 @@ class JointTrajectoryTask(BaseControlTask):
         else:
             if set(configured_limits) != self._joint_names:
                 raise ValueError("velocity_limits must name every configured trajectory joint")
-            if any(not math.isfinite(value) or value <= 0.0 for value in configured_limits.values()):
+            if any(
+                not math.isfinite(value) or value <= 0.0 for value in configured_limits.values()
+            ):
                 raise ValueError("velocity_limits must be finite and positive")
             self._velocity_limits = dict(configured_limits)
 
