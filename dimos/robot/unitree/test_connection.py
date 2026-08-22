@@ -15,10 +15,14 @@
 """Unit tests for UnitreeWebRTCConnection.
 
 Pure-Python test suite with no hardware or network. Covers connect() error propagation,
-aes_128_key forwarding, and the UNITREE_AES_128_KEY env var via GlobalConfig.
+aes_128_key forwarding, the UNITREE_AES_128_KEY env var via GlobalConfig, and the
+movement auto-stop watchdog ordering guarantees.
 """
 
+import asyncio
 import json
+import threading
+import time
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, call
 
@@ -31,6 +35,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.unitree import connection as conn_mod
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
+from dimos.utils.testing.waiting import wait_until
 
 
 def _stub_driver(connect_exc: Exception | None = None) -> MagicMock:
@@ -165,3 +170,113 @@ def test_global_config_reads_unitree_aes_128_key_env(monkeypatch: pytest.MonkeyP
     """The key enters via GlobalConfig, read from the UNITREE_AES_128_KEY env var."""
     monkeypatch.setenv("UNITREE_AES_128_KEY", "ee" * 16)
     assert GlobalConfig().unitree_aes_128_key == "ee" * 16
+
+
+def _forward_twist(x: float) -> Twist:
+    return Twist(linear=Vector3(x, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0))
+
+
+def _joystick_wire(x: float) -> dict[str, float]:
+    """WIRELESS_CONTROLLER payload for a pure-forward twist of magnitude x."""
+    return {"lx": 0, "ly": x, "rx": 0, "ry": 0}
+
+
+_ZERO_TWIST_WIRE = _joystick_wire(0)
+
+
+def _published_data(driver: MagicMock) -> list[dict[str, float]]:
+    """Every movement payload sent over the data channel, in publish order."""
+    return [
+        c.kwargs["data"] for c in driver.datachannel.pub_sub.publish_without_callback.call_args_list
+    ]
+
+
+def _watchdog_armed(conn: UnitreeWebRTCConnection) -> bool:
+    """Read the watchdog handle on the connection loop, where it is owned."""
+
+    async def read() -> bool:
+        return conn._watchdog_handle is not None
+
+    return asyncio.run_coroutine_threadsafe(read(), conn.loop).result(timeout=2.0)
+
+
+def test_watchdog_zeroes_movement_after_timeout(built_connection: Any) -> None:
+    """With no follow-up command, the watchdog halts the base after cmd_vel_timeout."""
+    conn, driver = built_connection
+    conn.cmd_vel_timeout = 0.05
+
+    assert conn.move(_forward_twist(1.0))
+
+    wait_until(lambda: len(_published_data(driver)) >= 2, timeout=2.0, interval=0.01)
+    assert _published_data(driver) == [_joystick_wire(1.0), _ZERO_TWIST_WIRE]
+
+
+def test_stale_watchdog_expiry_does_not_stop_newer_command(
+    built_connection: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test for #3046: a watchdog expiry that has already started when a
+    replacement command arrives must not zero out that command, and the replacement's
+    own watchdog must still be armed afterwards."""
+    conn, driver = built_connection
+    conn.cmd_vel_timeout = 0.01
+
+    expiry_started = threading.Event()
+    release_expiry = threading.Event()
+    real_expired = conn._watchdog_expired
+
+    def gated_expired() -> None:
+        expiry_started.set()
+        release_expiry.wait(timeout=2.0)
+        real_expired()
+
+    monkeypatch.setattr(conn, "_watchdog_expired", gated_expired)
+
+    assert conn.move(_forward_twist(1.0))
+    assert expiry_started.wait(timeout=2.0), "first watchdog never expired"
+
+    # The first expiry is past cancellation and holds the loop. Issue the
+    # replacement command while it is in flight; a long timeout keeps the
+    # replacement's own watchdog from firing during the assertions below.
+    conn.cmd_vel_timeout = 0.5
+    mover = threading.Thread(target=lambda: conn.move(_forward_twist(2.0)))
+    mover.start()
+    time.sleep(0.05)  # let the replacement enqueue behind the gated expiry
+    release_expiry.set()
+    mover.join(timeout=2.0)
+    assert not mover.is_alive()
+
+    # The stale zero landed before the replacement command, never after it.
+    data = _published_data(driver)
+    assert data[-1] == _joystick_wire(2.0)
+    assert data[-2] == _ZERO_TWIST_WIRE
+
+    # The replacement re-armed the watchdog, which then halts the base as usual.
+    wait_until(lambda: len(_published_data(driver)) == len(data) + 1, timeout=2.0, interval=0.01)
+    assert _published_data(driver)[-1] == _ZERO_TWIST_WIRE
+
+
+def test_stop_movement_disarms_watchdog(built_connection: Any) -> None:
+    """An explicit stop publishes one zero twist and cancels the pending deadline."""
+    conn, driver = built_connection
+    conn.cmd_vel_timeout = 5.0  # long enough that only stop_movement can publish zero
+
+    assert conn.move(_forward_twist(1.0))
+    conn.stop_movement()
+
+    assert _published_data(driver) == [_joystick_wire(1.0), _ZERO_TWIST_WIRE]
+    assert not _watchdog_armed(conn)
+
+
+def test_duration_move_is_not_zeroed_mid_stream(built_connection: Any) -> None:
+    """A duration move outliving cmd_vel_timeout keeps re-arming the watchdog:
+    the only zero twist is the final stop, never one injected mid-stream."""
+    conn, driver = built_connection
+    conn.cmd_vel_timeout = 0.1
+
+    assert conn.move(_forward_twist(1.0), duration=0.3)
+
+    data = _published_data(driver)
+    assert len(data) >= 3  # repeated move publishes plus the final stop
+    assert all(d == _joystick_wire(1.0) for d in data[:-1])
+    assert data[-1] == _ZERO_TWIST_WIRE
+    assert not _watchdog_armed(conn)
