@@ -39,9 +39,11 @@ from dimos.control.components import (
 import dimos.control.coordinator as coord_mod
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.registry import control_task_registry
-from dimos.control.tasks.servo_task.servo_task import JointServoTask, JointServoTaskConfig
-from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
-from dimos.control.teleop_coordinator import TeleopControlCoordinator
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JOINT_TRAJECTORY_TASK_NAME,
+    JointTrajectoryTask,
+    JointTrajectoryTaskConfig,
+)
 from dimos.core.stream import In
 from dimos.hardware.drive_trains.registry import twist_base_adapter_registry
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -147,7 +149,11 @@ def make_coordinator(
 def _streaming_coordinator(make_coordinator):
     coordinator, taps = make_coordinator(
         tasks=[
-            TaskConfig(name="servo1", type="servo", joint_names=ARM_JOINTS),
+            TaskConfig(
+                name=JOINT_TRAJECTORY_TASK_NAME,
+                type="trajectory",
+                joint_names=ARM_JOINTS,
+            ),
             TaskConfig(name="vel1", type="velocity", joint_names=ARM_JOINTS),
         ]
     )
@@ -156,12 +162,15 @@ def _streaming_coordinator(make_coordinator):
 
 
 class TestJointCommandRouting:
-    def test_position_only_updates_servo_task(self, make_coordinator):
+    def test_position_only_updates_trajectory_task(self, make_coordinator):
         coordinator, taps = _streaming_coordinator(make_coordinator)
 
         taps["joint_command"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
 
-        assert coordinator.get_task("servo1")._target == [0.1, 0.2]
+        assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)._trajectory.points[-1].positions == [
+            0.1,
+            0.2,
+        ]
         assert coordinator.get_task("vel1")._velocities is None
 
     def test_velocity_only_updates_velocity_task(self, make_coordinator):
@@ -170,7 +179,7 @@ class TestJointCommandRouting:
         taps["joint_command"].emit(JointState(name=ARM_JOINTS, velocity=[0.5, 0.6]))
 
         assert coordinator.get_task("vel1")._velocities == [0.5, 0.6]
-        assert coordinator.get_task("servo1")._target is None
+        assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)._trajectory is None
 
     def test_position_wins_when_both_present(self, make_coordinator):
         coordinator, taps = _streaming_coordinator(make_coordinator)
@@ -179,7 +188,10 @@ class TestJointCommandRouting:
             JointState(name=ARM_JOINTS, position=[0.1, 0.2], velocity=[0.5, 0.6])
         )
 
-        assert coordinator.get_task("servo1")._target == [0.1, 0.2]
+        assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)._trajectory.points[-1].positions == [
+            0.1,
+            0.2,
+        ]
         assert coordinator.get_task("vel1")._velocities is None
 
     def test_unclaimed_joints_route_to_nobody(self, make_coordinator):
@@ -187,7 +199,7 @@ class TestJointCommandRouting:
 
         taps["joint_command"].emit(JointState(name=["other/joint9"], position=[1.0]))
 
-        assert coordinator.get_task("servo1")._target is None
+        assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)._trajectory is None
         assert coordinator.get_task("vel1")._velocities is None
 
     def test_empty_message_routes_to_nobody(self, make_coordinator):
@@ -195,7 +207,7 @@ class TestJointCommandRouting:
 
         taps["joint_command"].emit(JointState(name=[], position=[]))
 
-        assert coordinator.get_task("servo1")._target is None
+        assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)._trajectory is None
         assert coordinator.get_task("vel1")._velocities is None
 
 
@@ -521,7 +533,7 @@ class TestTwistCardContract:
 
 
 class TestSubscriptionLifecycle:
-    def test_streams_without_consumers_are_not_subscribed(self, make_coordinator):
+    def test_trajectory_task_subscribes_only_joint_command(self, make_coordinator):
         coordinator, taps = make_coordinator(
             tasks=[
                 TaskConfig(
@@ -533,25 +545,36 @@ class TestSubscriptionLifecycle:
         )
         coordinator.start()
 
-        for stream in STREAMS:
+        assert taps["joint_command"].subscribed
+        for stream in set(STREAMS) - {"joint_command"}:
             assert not taps[stream].subscribed, stream
 
     def test_missing_transport_warns_and_start_completes(self, make_coordinator):
         coordinator, taps = make_coordinator(
             fail_streams=("joint_command",),
-            tasks=[TaskConfig(name="servo1", type="servo", joint_names=ARM_JOINTS)],
+            tasks=[
+                TaskConfig(
+                    name=JOINT_TRAJECTORY_TASK_NAME,
+                    type="trajectory",
+                    joint_names=ARM_JOINTS,
+                )
+            ],
         )
 
         coordinator.start()
 
-        assert coordinator.get_task("servo1") is not None
+        assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME) is not None
         assert not taps["joint_command"].subscribed
 
     def test_stop_unsubscribes_all_streams(self, make_coordinator):
         coordinator, taps = make_coordinator(
             hardware=[_base_component()],
             tasks=[
-                TaskConfig(name="servo1", type="servo", joint_names=ARM_JOINTS),
+                TaskConfig(
+                    name=JOINT_TRAJECTORY_TASK_NAME,
+                    type="trajectory",
+                    joint_names=ARM_JOINTS,
+                ),
                 TaskConfig(name="vel1", type="velocity", joint_names=ARM_JOINTS),
             ],
         )
@@ -636,18 +659,18 @@ class TestCardRoutingContract:
 
         taps["joint_command"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
 
-        assert coordinator.get_task("servo1")._target == [0.1, 0.2]
+        assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)._trajectory is not None
         assert bare.position_targets == []
 
     def test_remove_task_prunes_its_routes(self, make_coordinator):
         coordinator, taps = _streaming_coordinator(make_coordinator)
-        servo = coordinator.get_task("servo1")
-        assert coordinator.remove_task("servo1")
+        trajectory = coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)
+        assert coordinator.remove_task(JOINT_TRAJECTORY_TASK_NAME)
 
         taps["joint_command"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
         taps["joint_command"].emit(JointState(name=ARM_JOINTS, velocity=[0.5, 0.6]))
 
-        assert servo._target is None
+        assert trajectory._trajectory is None
         assert coordinator.get_task("vel1")._velocities == [0.5, 0.6]
 
     def test_runtime_add_task_with_type_activates_routing(self, make_coordinator):
@@ -655,12 +678,13 @@ class TestCardRoutingContract:
         coordinator.start()
         assert not taps["joint_command"].subscribed
 
-        task = JointServoTask("servo_rt", JointServoTaskConfig(joint_names=ARM_JOINTS))
-        assert coordinator.add_task(task, task_type="servo")
+        task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=ARM_JOINTS))
+        assert coordinator.add_task(task, task_type="trajectory")
 
         assert taps["joint_command"].subscribed
         taps["joint_command"].emit(JointState(name=ARM_JOINTS, position=[0.3, 0.4]))
-        assert task._target == [0.3, 0.4]
+        assert task._trajectory is not None
+        assert task._trajectory.points[-1].positions == [0.3, 0.4]
 
     def test_runtime_registered_card_routes_with_zero_coordinator_edits(
         self, make_coordinator, probe_card_type
@@ -713,14 +737,18 @@ class TestCardRoutingContract:
     def test_removing_last_consumer_unsubscribes_stream(self, make_coordinator):
         coordinator, taps = make_coordinator(
             tasks=[
-                TaskConfig(name="servo1", type="servo", joint_names=ARM_JOINTS),
+                TaskConfig(
+                    name=JOINT_TRAJECTORY_TASK_NAME,
+                    type="trajectory",
+                    joint_names=ARM_JOINTS,
+                ),
                 TaskConfig(name="vel1", type="velocity", joint_names=ARM_JOINTS),
             ]
         )
         coordinator.start()
         assert taps["joint_command"].subscribed
 
-        assert coordinator.remove_task("servo1")
+        assert coordinator.remove_task(JOINT_TRAJECTORY_TASK_NAME)
         taps["joint_command"].unsub.assert_not_called()  # vel1 still consumes
 
         assert coordinator.remove_task("vel1")
@@ -743,9 +771,7 @@ class TestCardRoutingContract:
         # The default path: routes are keyed by the card's own stream name.
         coordinator, _ = _streaming_coordinator(make_coordinator)
 
-        assert coordinator.describe_task("servo1")["streams"] == [
-            ("joint_command", "claim_overlap")
-        ]
+        assert coordinator.describe_task(JOINT_TRAJECTORY_TASK_NAME)["streams"] == []
 
     def test_cardless_known_type_does_not_warn(self, make_coordinator, mocker):
         warn = mocker.patch.object(coord_mod.logger, "warning")

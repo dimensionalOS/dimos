@@ -140,11 +140,7 @@ def test_task_cards_are_well_formed() -> None:
 
 
 def test_seeded_cards_load_into_registry() -> None:
-    servo = control_task_registry.bindings_for("servo")
-    assert servo.consumes == (
-        StreamBinding("joint_command", "on_joint_command", Routing.CLAIM_OVERLAP),
-    )
-    assert servo.exposes == frozenset({"start"})
+    assert "servo" not in control_task_registry.available()
     velocity = control_task_registry.bindings_for("velocity")
     assert velocity.consumes == (
         StreamBinding("joint_command", "on_joint_command", Routing.CLAIM_OVERLAP),

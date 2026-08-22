@@ -110,15 +110,10 @@ _xarm6_control_hw = make_xarm_hardware(
     gripper=True,
 )
 
-coordinator_servo_xarm6 = ControlCoordinator.blueprint(
+coordinator_trajectory_xarm6 = ControlCoordinator.blueprint(
     hardware=[_xarm6_control_hw],
     tasks=[
-        TaskConfig(
-            name="servo_arm",
-            type="servo",
-            joint_names=_xarm6_control_hw.joints,
-            priority=10,
-        ),
+        trajectory_task(_xarm6_control_hw),
     ],
 )
 
@@ -137,12 +132,7 @@ coordinator_velocity_xarm6 = ControlCoordinator.blueprint(
 coordinator_combined_xarm6 = ControlCoordinator.blueprint(
     hardware=[_xarm6_control_hw],
     tasks=[
-        TaskConfig(
-            name="servo_arm",
-            type="servo",
-            joint_names=_xarm6_control_hw.joints,
-            priority=10,
-        ),
+        trajectory_task(_xarm6_control_hw),
         TaskConfig(
             name="velocity_arm",
             type="velocity",
