@@ -42,7 +42,7 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
         "coordinator-mock-twist-base",
         "coordinator-openarm",
         "coordinator-piper",
-        "coordinator-servo-xarm6",
+        "coordinator-trajectory-xarm6",
         "coordinator-teleop-dual",
         "coordinator-teleop-piper",
         "coordinator-teleop-xarm6",
