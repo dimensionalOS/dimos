@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from pydantic import ValidationError
 
-from dimos.evals.vqa.families import FamilySpec, QuestionProposal
+from dimos.evals.vqa.contracts import FamilySpec, QuestionProposal
 
 if TYPE_CHECKING:
     from dimos.models.vl.base import VlModel
@@ -44,10 +44,14 @@ class OpenAIQuestionAuthor:
         self._model = model
 
     def propose(self, image: Image, families: Sequence[FamilySpec]) -> Sequence[QuestionProposal]:
+        available = {family.name: family for family in families}
         family_shapes = [
             {
                 "family": family.name,
-                "required_fields": family.required_fields,
+                "required_fields": ("object_names",),
+                "min_objects": family.min_objects,
+                "max_objects": family.max_objects,
+                "distinct_objects": family.distinct_objects,
                 "description": family.description,
             }
             for family in families
@@ -57,7 +61,8 @@ class OpenAIQuestionAuthor:
             "Use any applicable families and object names, preferring specific families when their "
             "requirements are clearly satisfied. "
             "Return only a JSON array of objects matching the available deterministic families. "
-            "Do not duplicate a family/object pair. Do not answer questions or add fields. "
+            "Populate exactly the required fields. Do not duplicate proposals, answer questions, "
+            "or add fields. "
             f"Available families: {json.dumps(family_shapes)}"
         )
         payload = self._model.query_json(image, prompt)
@@ -66,7 +71,15 @@ class OpenAIQuestionAuthor:
         proposals: list[QuestionProposal] = []
         for item in payload:
             try:
-                proposals.append(QuestionProposal.model_validate(item))
+                proposal = QuestionProposal.model_validate(item)
             except ValidationError:
                 continue
+            family = available.get(proposal.family)
+            if family is None:
+                continue
+            try:
+                family.validate(proposal)
+            except ValueError:
+                continue
+            proposals.append(proposal)
         return tuple(proposals)
