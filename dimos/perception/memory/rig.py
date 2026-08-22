@@ -100,7 +100,6 @@ _CLOUD_LIFT_FILTERS = [range_cluster(), statistical(nb_neighbors=12, std_ratio=2
 ROOM_LOCALIZE_POLICY = LocalizePolicy(
     candidate_floor=0.18,
     accept_score=0.32,
-    retrieval_frames=20,
     cluster_radius_m=0.30,
     min_depth_points=30,
     max_object_extent_m=2.0,
