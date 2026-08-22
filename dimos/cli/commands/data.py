@@ -34,34 +34,32 @@ def _parse_since(s: str) -> float:
 def upload(
     path: Path | None = typer.Argument(None, help="Recording or file; default: newest recording"),
     robot: str | None = typer.Option(None, "--robot", help="Robot id for attribution"),
-    kind: str = typer.Option("recording", "--kind"),
+    kind: str | None = typer.Option(None, "--kind"),
     since: str | None = typer.Option(
         None, "--since", help="Upload all recordings newer than e.g. 1h"
     ),
-    compress: bool | None = typer.Option(None, "--compress/--no-compress"),
     chunk: int | None = typer.Option(None, "--chunk", help="Upload part size in MB"),
 ) -> None:
     """Upload to Dimensional cloud. Resumable: re-run after any failure and only
     missing parts transfer."""
-    from dimos.cloud.data import CloudData, latest_recording, recordings_since
+    from dimos.cloud.data import CloudData, recordings
 
     cloud = CloudData()
     if since:
-        targets = recordings_since(_parse_since(since))
+        targets = recordings(_parse_since(since))
         if not targets:
             typer.echo(f"no recordings in the last {since}")
             raise typer.Exit(0)
     else:
-        target = path or latest_recording()
-        if target is None:
+        targets = [path] if path else recordings()[-1:]
+        if not targets:
             typer.echo("no recordings found — pass a path", err=True)
             raise typer.Exit(1)
-        targets = [target]
 
     failed = False
     for t in targets:
         try:
-            r = cloud.upload(t, robot_id=robot, kind=kind, compress=compress, chunk_mb=chunk)
+            r = cloud.upload(t, robot_id=robot, kind=kind, chunk_mb=chunk)
             note = "already uploaded" if r["skipped"] else r["state"]
             typer.echo(f"{t.name}: {note} ({r['upload_id'][:12]})")
             if r["quota"]["state"] != "ok":
