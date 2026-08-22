@@ -74,7 +74,8 @@ impl RayTracingVoxelMap {
     async fn on_lidar(&mut self, msg: PointCloud2) {
         // Register with the pose nearest the cloud stamp, never a stale one.
         let stamp = time_secs(&msg.header.stamp);
-        let Some((translation, rotation)) = nearest_pose(&self.poses, stamp) else {
+        let tolerance = self.config.pose_match_tolerance;
+        let Some((translation, rotation)) = nearest_pose(&self.poses, stamp, tolerance) else {
             // An empty buffer means no odometry is arriving at all; a large gap
             // means it is arriving but cannot be paired.
             let gap = self
@@ -207,9 +208,6 @@ fn emit_due(frame_count: u32, every: u32) -> bool {
 /// Odometry samples kept for cloud-stamp matching.
 const POSE_BUFFER_LEN: usize = 256;
 
-/// Max stamp gap between a cloud and the pose used to register it (s).
-const POSE_MATCH_TOLERANCE_S: f64 = 0.1;
-
 fn time_secs(t: &Time) -> f64 {
     t.sec as f64 + t.nsec as f64 * 1e-9
 }
@@ -229,6 +227,7 @@ fn push_pose(
 fn nearest_pose(
     poses: &VecDeque<(f64, Vector3<f32>, UnitQuaternion<f32>)>,
     stamp: f64,
+    tolerance: f64,
 ) -> Option<(Vector3<f32>, UnitQuaternion<f32>)> {
     let mut best_gap = f64::INFINITY;
     let mut best = None;
@@ -239,7 +238,7 @@ fn nearest_pose(
             best = Some((v, q));
         }
     }
-    if best_gap <= POSE_MATCH_TOLERANCE_S {
+    if best_gap <= tolerance {
         best
     } else {
         None
@@ -382,13 +381,29 @@ mod tests {
         for (t, x) in [(1.0, 1.0f32), (2.0, 2.0), (3.0, 3.0)] {
             poses.push_back((t, Vector3::new(x, 0.0, 0.0), UnitQuaternion::identity()));
         }
-        let (v, _) = nearest_pose(&poses, 2.04).expect("within tolerance");
+        let (v, _) = nearest_pose(&poses, 2.04, 0.1).expect("within tolerance");
         assert_eq!(v.x, 2.0, "nearest stamp wins, not the latest");
         assert!(
-            nearest_pose(&poses, 3.5).is_none(),
+            nearest_pose(&poses, 3.5, 0.1).is_none(),
             "stale poses must not register a cloud"
         );
-        assert!(nearest_pose(&VecDeque::new(), 1.0).is_none());
+        assert!(nearest_pose(&VecDeque::new(), 1.0, 0.1).is_none());
+    }
+
+    #[test]
+    fn a_cloud_past_the_newest_pose_registers_within_tolerance() {
+        let mut poses: VecDeque<(f64, Vector3<f32>, UnitQuaternion<f32>)> = VecDeque::new();
+        for (t, x) in [(1.0, 1.0f32), (1.1008, 2.0)] {
+            poses.push_back((t, Vector3::new(x, 0.0, 0.0), UnitQuaternion::identity()));
+        }
+        // Odometry stamped a frame behind the cloud it should register.
+        let stamp = 1.2016;
+        assert!(
+            nearest_pose(&poses, stamp, 0.1).is_none(),
+            "a tolerance of exactly one nominal period leaves no room for the real one"
+        );
+        let (v, _) = nearest_pose(&poses, stamp, 0.15).expect("one frame behind is registrable");
+        assert_eq!(v.x, 2.0, "the newest pose is the one nearest the cloud");
     }
 
     #[test]

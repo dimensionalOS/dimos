@@ -109,6 +109,8 @@ impl VoxelRayMapper {
             emit_every: 1,
             global_emit_every: 1,
             region_percentile: 95.0,
+            // This mapper is driven point by point, it never matches poses.
+            pose_match_tolerance: 0.0,
         };
         config
             .validate()

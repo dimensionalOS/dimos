@@ -56,6 +56,11 @@ pub struct Config {
     /// stray far hit cannot inflate it.
     #[validate(range(min = 0.0, max = 100.0))]
     pub region_percentile: f32,
+    /// Max stamp gap between a cloud and the pose it is registered with, in
+    /// seconds. Odometry derived from a cloud is stamped a frame behind the next
+    /// one, so this has to clear one sensor period with room to spare.
+    #[validate(range(min = 0.0))]
+    pub pose_match_tolerance: f64,
 }
 
 fn validate_health_range(cfg: &Config) -> Result<(), ValidationError> {
@@ -732,6 +737,7 @@ mod tests {
             emit_every: 1,
             global_emit_every: 1,
             region_percentile: 95.0,
+            pose_match_tolerance: 0.15,
         }
     }
 
@@ -939,6 +945,7 @@ mod tests {
             emit_every: 1,
             global_emit_every: 1,
             region_percentile: 95.0,
+            pose_match_tolerance: 0.15,
         };
         // Build the floor over a y band so it is a 2d plane, not a wire.
         let max_x = 25.0_f32;
@@ -1094,6 +1101,7 @@ mod tests {
             emit_every: 1,
             global_emit_every: 1,
             region_percentile: 95.0,
+            pose_match_tolerance: 0.15,
         };
 
         // Staircase
@@ -1168,6 +1176,7 @@ mod tests {
             emit_every: 1,
             global_emit_every: 1,
             region_percentile: 95.0,
+            pose_match_tolerance: 0.15,
         };
 
         // Flat floor from the sensor out to a vertical wall.
@@ -1230,6 +1239,7 @@ mod tests {
             emit_every: 1,
             global_emit_every: 1,
             region_percentile: 95.0,
+            pose_match_tolerance: 0.15,
         };
 
         // Staircase topped by a flat landing and a back wall.
@@ -1361,6 +1371,7 @@ mod tests {
             emit_every: 1,
             global_emit_every: 1,
             region_percentile: 95.0,
+            pose_match_tolerance: 0.15,
         };
         let (mut map, _) = build_surface(&floor, voxel_size, cfg.max_health);
         let row: Vec<VoxelKey> = map

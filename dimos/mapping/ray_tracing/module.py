@@ -56,6 +56,10 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     global_emit_every: int = 1
     # Size the local region to this percentile of batch point distances.
     region_percentile: float = 95.0
+    # Max stamp gap between a cloud and the pose it is registered with, in seconds.
+    # Odometry derived from a cloud is stamped a frame behind the next one, so this
+    # has to clear one sensor period with room to spare.
+    pose_match_tolerance: float = 0.15
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
