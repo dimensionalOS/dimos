@@ -30,8 +30,11 @@ from dimos.perception.detection.module2D import Detection2DModule
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
+from dimos.perception.detection.visualization import letterbox_image
 from dimos.types.timestamped import align_timestamped
 from dimos.utils.reactive import backpressure
+
+_VISUALIZATION_CROP_SIZE = (320, 320)
 
 
 class Detection3DModule(Detection2DModule):
@@ -44,6 +47,12 @@ class Detection3DModule(Detection2DModule):
     detected_pointcloud_0: Out[PointCloud2]
     detected_pointcloud_1: Out[PointCloud2]
     detected_pointcloud_2: Out[PointCloud2]
+
+    # Crops paired with the successful 3D results above. These are distinct from
+    # detected_image_*, which are ranked before failed 3D projections are removed.
+    detected_3d_image_0: Out[Image]
+    detected_3d_image_1: Out[Image]
+    detected_3d_image_2: Out[Image]
 
     # just for visualization, emits latest top 3 detections in a frame
     detected_image_0: Out[Image]
@@ -183,6 +192,14 @@ class Detection3DModule(Detection2DModule):
         if not detections:
             return
 
+        width, height = _VISUALIZATION_CROP_SIZE
         for index, detection in enumerate(detections[:3]):
+            # Publish the crop first so selecting the following pointcloud event
+            # sees both components on the shared Rerun entity.
+            image_topic = getattr(self, "detected_3d_image_" + str(index))
+            crop = letterbox_image(detection.cropped_image(), width, height)
+            crop.frame_id = ""  # UI-only: do not attach the crop to the 3D TF tree.
+            image_topic.publish(crop)
+
             pointcloud_topic = getattr(self, "detected_pointcloud_" + str(index))
             pointcloud_topic.publish(detection.pointcloud)
