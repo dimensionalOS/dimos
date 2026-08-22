@@ -18,6 +18,7 @@ command bodies (test_cli_startup budget)."""
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 
 import typer
 
@@ -26,9 +27,7 @@ app = typer.Typer(help="Run agent evals on recordings, sim, or a live robot.")
 
 @app.command("run")
 def run(
-    suite: str = typer.Argument(
-        help="Dotted suite module exporting SUITE, e.g. dimos.evals.suites.go2_smoke"
-    ),
+    suite: str = typer.Argument(help="Dotted suite module or generated VQA cases.json manifest"),
     tags: str = typer.Option("", help="Comma-separated tag filter"),
     model: str = typer.Option("", help="Override chat model"),
     blind: bool = typer.Option(False, help="Withhold observations (guessing ablation)"),
@@ -36,9 +35,14 @@ def run(
     limit: int = typer.Option(0, help="Run at most N cases"),
     live_db: str = typer.Option("recording.db", help="Live Recorder db (interactive cases)"),
 ) -> None:
+    from dimos.evals.generate import load_vqa_manifest
     from dimos.evals.runner import EvalRunner, summarize
 
-    cases = importlib.import_module(suite).SUITE
+    cases = (
+        load_vqa_manifest(suite)
+        if Path(suite).expanduser().suffix == ".json"
+        else importlib.import_module(suite).SUITE
+    )
     overrides: dict[str, object] = {"blind": blind, "attach": attach, "live_db": live_db}
     if model:
         overrides["model"] = model
@@ -66,3 +70,28 @@ def list_() -> None:
 
     for name in list_suites():
         typer.echo(name)
+
+
+@app.command("generate")
+def generate(
+    spec: Path = typer.Argument(
+        ..., exists=True, dir_okay=False, readable=True, help="VQA use-case YAML/JSON spec"
+    ),
+    source_python: str = typer.Option(
+        ..., "--source-python", help="Python interpreter from a prepared RoboCasa environment"
+    ),
+) -> None:
+    """Generate a simulator-grounded VQA manifest and Memory dataset."""
+    from dimos.evals.generate import generate_from_spec
+
+    output = generate_from_spec(spec, source_python=source_python)
+    typer.echo(f"Generated {output.accepted} VQA cases")
+    for family, count in output.accepted_by_family.items():
+        typer.echo(f"  {family}: {count}")
+    if output.rejected:
+        typer.echo("Rejected candidates:")
+        for reason, count in output.rejected.items():
+            typer.echo(f"  {reason}: {count}")
+    typer.echo(f"Manifest: {output.manifest}")
+    typer.echo(f"Dataset:  {output.dataset}")
+    typer.echo(f"Summary:  {output.summary}")
