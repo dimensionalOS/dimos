@@ -19,7 +19,7 @@ import pytest
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.core.transport import pLCMTransport
+from dimos.core.transport_factory import make_transport
 
 
 class DoubleModule(Module):
@@ -40,7 +40,7 @@ def start_double_module():
 
 @pytest.fixture
 def a_transport():
-    a_tr = pLCMTransport("/a")
+    a_tr = make_transport("/a")
     a_tr.start()
     yield a_tr
     a_tr.stop()
@@ -48,7 +48,7 @@ def a_transport():
 
 @pytest.fixture
 def double_a_transport():
-    double_a_tr = pLCMTransport("/double_a")
+    double_a_tr = make_transport("/double_a")
     double_a_tr.start()
     yield double_a_tr
     double_a_tr.stop()

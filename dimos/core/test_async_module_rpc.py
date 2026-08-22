@@ -23,7 +23,7 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.core.transport import pLCMTransport
+from dimos.core.transport_factory import make_transport
 from dimos.spec.utils import Spec
 
 
@@ -59,7 +59,7 @@ def start_cube_module():
 
 @pytest.fixture
 def a_transport():
-    a_tr = pLCMTransport("/a")
+    a_tr = make_transport("/a")
     a_tr.start()
     yield a_tr
     a_tr.stop()
@@ -67,7 +67,7 @@ def a_transport():
 
 @pytest.fixture
 def cube_a_transport():
-    cube_a_tr = pLCMTransport("/cube_a")
+    cube_a_tr = make_transport("/cube_a")
     cube_a_tr.start()
     yield cube_a_tr
     cube_a_tr.stop()

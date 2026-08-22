@@ -39,6 +39,7 @@ from dimos.core.module import Module
 from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
 from dimos.core.transport import LCMTransport, ZenohTransport
+from dimos.core.transport_factory import make_transport, transport_topic
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -256,7 +257,7 @@ def test_autoconnect(args_file: str) -> None:
         assert producer.cmd_vel.transport.topic == native.cmd_vel.transport.topic
 
         # Custom transport was applied
-        assert native.pointcloud.transport.topic.topic == "/my/custom/lidar"
+        assert native.pointcloud.transport.topic.topic == transport_topic("/my/custom/lidar")
 
         # Wait for the native subprocess to write the output file
         for _ in range(50):
@@ -267,9 +268,9 @@ def test_autoconnect(args_file: str) -> None:
         coordinator.stop()
 
     assert read_json_file(args_file) == {
-        "cmd_vel": "/cmd_vel#geometry_msgs.Twist",
-        "pointcloud": "/my/custom/lidar#sensor_msgs.PointCloud2",
-        "imu": "/imu#sensor_msgs.Imu",
+        "cmd_vel": make_transport("/cmd_vel", Twist).channel,
+        "pointcloud": make_transport("/my/custom/lidar", PointCloud2).channel,
+        "imu": make_transport("/imu", Imu).channel,
         "output_file": args_file,
         "some_param": "2.5",
     }

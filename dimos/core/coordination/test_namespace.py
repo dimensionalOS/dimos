@@ -24,6 +24,7 @@ from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.core.transport_factory import transport_topic
 
 
 class Cloud:
@@ -135,18 +136,18 @@ def test_fleet_blueprint(fleet_coordinator: ModuleCoordinator):
     assert (
         sensor0.local_status.transport.topic
         == mapper0.local_status.transport.topic
-        == "/robot0/local_status"
+        == transport_topic("/robot0/local_status")
     )
     assert (
         sensor1.local_status.transport.topic
         == mapper1.local_status.transport.topic
-        == "/robot1/local_status"
+        == transport_topic("/robot1/local_status")
     )
     assert (
         sensor0.pointcloud.transport.topic
         == sensor1.pointcloud.transport.topic
         == aggregator.pointcloud.transport.topic
-        == "/pointcloud"
+        == transport_topic("/pointcloud")
     )
 
     # Direct-class module refs resolve namespace-locally.
@@ -161,7 +162,11 @@ def test_fleet_blueprint(fleet_coordinator: ModuleCoordinator):
     assert sensor0.get_frame_id() == "robot0/Sensor"
 
     # Directed wiring: the shared commander drives only robot0.
-    assert commander.cmd.transport.topic == sensor0.cmd.transport.topic == "/robot0/cmd"
+    assert (
+        commander.cmd.transport.topic
+        == sensor0.cmd.transport.topic
+        == transport_topic("/robot0/cmd")
+    )
     assert sensor1.cmd.transport.topic != sensor0.cmd.transport.topic
 
 
