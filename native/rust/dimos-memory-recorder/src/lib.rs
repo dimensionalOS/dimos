@@ -429,7 +429,7 @@ fn writer_loop(config: RecorderConfig, receiver: Receiver<EncodedBatch>) -> Resu
     connection.pragma_update(None, "journal_mode", "WAL")?;
     connection.pragma_update(None, "synchronous", "NORMAL")?;
     for stream in &config.streams {
-        ensure_stream_tables(&connection, &stream.name)?;
+        ensure_stream_tables(&connection, stream)?;
     }
 
     let flush_interval = Duration::from_millis(config.flush_interval_ms);
@@ -490,7 +490,7 @@ fn write_ready(
                 for observation in observations {
                     insert_observation(
                         &transaction,
-                        &batch.stream.name,
+                        &batch.stream,
                         observation,
                         batch.reception_ts,
                     )?;
@@ -507,7 +507,8 @@ fn write_ready(
     Ok(())
 }
 
-fn ensure_stream_tables(connection: &Connection, name: &str) -> Result<()> {
+fn ensure_stream_tables(connection: &Connection, stream: &StreamConfig) -> Result<()> {
+    let name = &stream.name;
     validate_identifier(name)?;
     connection.execute_batch(&format!(
         r#"
@@ -517,7 +518,7 @@ fn ensure_stream_tables(connection: &Connection, name: &str) -> Result<()> {
             value NUMERIC,
             pose_x REAL, pose_y REAL, pose_z REAL,
             pose_qx REAL, pose_qy REAL, pose_qz REAL, pose_qw REAL,
-            tags BLOB DEFAULT '{{}}'
+            tags BLOB DEFAULT (jsonb('{{}}'))
         );
         CREATE TABLE IF NOT EXISTS "{name}_blob" (
             id INTEGER PRIMARY KEY,
@@ -528,20 +529,36 @@ fn ensure_stream_tables(connection: &Connection, name: &str) -> Result<()> {
         );
         "#
     ))?;
+    if stream.payload_kind != PayloadKind::Tf {
+        connection.execute(
+            &format!(
+                r#"CREATE INDEX IF NOT EXISTS "{name}_tag_reception_ts" ON "{name}"(json_extract(tags, '$.reception_ts'))"#
+            ),
+            [],
+        )?;
+    }
     Ok(())
 }
 
 fn insert_observation(
     connection: &Connection,
-    name: &str,
+    stream: &StreamConfig,
     observation: StoredObservation,
     reception_ts: f64,
 ) -> Result<()> {
-    let tags = serde_json::json!({"reception_ts": reception_ts}).to_string();
-    connection.execute(
-        &format!(r#"INSERT INTO "{name}" (ts, tags) VALUES (?1, ?2)"#),
-        params![observation.ts, tags],
-    )?;
+    let name = &stream.name;
+    if stream.payload_kind == PayloadKind::Tf {
+        connection.execute(
+            &format!(r#"INSERT INTO "{name}" (ts) VALUES (?1)"#),
+            params![observation.ts],
+        )?;
+    } else {
+        let tags = serde_json::json!({"reception_ts": reception_ts}).to_string();
+        connection.execute(
+            &format!(r#"INSERT INTO "{name}" (ts, tags) VALUES (?1, jsonb(?2))"#),
+            params![observation.ts, tags],
+        )?;
+    }
     let id = connection.last_insert_rowid();
     connection.execute(
         &format!(r#"INSERT INTO "{name}_blob" (id, data) VALUES (?1, ?2)"#),
@@ -706,15 +723,71 @@ mod tests {
         let connection = Connection::open(file.path()).unwrap();
         let values = connection
             .prepare(
-                "SELECT samples.ts, samples_blob.data FROM samples JOIN samples_blob USING (id) ORDER BY samples.id",
+                "SELECT samples.ts, samples_blob.data, typeof(samples.tags), json_extract(samples.tags, '$.reception_ts') FROM samples JOIN samples_blob USING (id) ORDER BY samples.id",
             )
             .unwrap()
-            .query_map([], |row| Ok((row.get::<_, f64>(0)?, row.get::<_, Vec<u8>>(1)?)))
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, f64>(0)?,
+                    row.get::<_, Vec<u8>>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, f64>(3)?,
+                ))
+            })
             .unwrap()
             .collect::<rusqlite::Result<Vec<_>>>()
             .unwrap();
-        assert_eq!(values, vec![(0.0, vec![0]), (1.0, vec![1]), (2.0, vec![2])]);
+        assert_eq!(
+            values,
+            vec![
+                (0.0, vec![0], "blob".to_string(), 0.0),
+                (1.0, vec![1], "blob".to_string(), 1.0),
+                (2.0, vec![2], "blob".to_string(), 2.0),
+            ]
+        );
+        let reception_index: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'samples_tag_reception_ts'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(reception_index, 1);
         assert_eq!(stats.written, 3);
+    }
+
+    #[test]
+    fn tf_observations_use_empty_jsonb_tags_without_a_reception_index() {
+        let file = NamedTempFile::new().unwrap();
+        let connection = Connection::open(file.path()).unwrap();
+        let tf = stream("tf", Codec::Lcm, PayloadKind::Tf);
+        ensure_stream_tables(&connection, &tf).unwrap();
+        insert_observation(
+            &connection,
+            &tf,
+            StoredObservation {
+                ts: 1.0,
+                data: vec![1, 2, 3],
+            },
+            100.0,
+        )
+        .unwrap();
+
+        let (tag_type, tags): (String, String) = connection
+            .query_row("SELECT typeof(tags), json(tags) FROM tf", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(tag_type, "blob");
+        assert_eq!(tags, "{}");
+        let reception_index: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'tf_tag_reception_ts'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(reception_index, 0);
     }
 
     #[test]
