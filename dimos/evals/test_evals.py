@@ -21,6 +21,7 @@ tests is a plain object satisfying the EvalRig protocol structurally.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 import json
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,11 @@ from dimos.evals.types import EvalCase, InteractiveEval, PassiveEval
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
+from dimos.simulation.episodes import (
+    EpisodeEvaluationResult,
+    EvaluationCase,
+    PreparedEpisode,
+)
 
 
 def _pose(x: float, y: float) -> PoseStamped:
@@ -75,9 +81,15 @@ class FakeRig:
     blind = False
     mcp_url = "http://localhost:9990/mcp"
 
-    def __init__(self, answer: str = "", series: list[tuple[float, float]] | None = None):
+    def __init__(
+        self,
+        answer: str = "",
+        series: list[tuple[float, float]] | None = None,
+        roles: Mapping[str, str] | None = None,
+    ):
         self.answer = answer
         self.series = series or []
+        self.roles = dict(roles or {})
         self.calls: list[str] = []
 
     def open_dataset(self, name: str) -> Any:
@@ -115,10 +127,43 @@ class FakeRig:
     def instruct(self, text: str) -> None:
         self.calls.append(f"instruct:{text}")
 
+    def run_action(self, action: Callable[..., str]) -> str:
+        self.calls.append("action")
+        return self.answer
+
+    def score_output(
+        self, score: Callable[[str, PreparedEpisode], float], output: str
+    ) -> tuple[float, str]:
+        episode = PreparedEpisode(
+            provider_name="fake",
+            episode_id="episode-1",
+            case_id="episode-case",
+            blueprint_name="robot-sim",
+            simulator="fake",
+            role_names=self.roles,
+            role_reset_positions={"object": (1.0, 2.0, 3.0)},
+        )
+        return score(output, episode), "expected roles and reset positions"
+
+    def episode_identity(self) -> tuple[str, str, str]:
+        return "fake", "episode-1", "episode-case"
+
     def sample(
         self, score: Callable[[Any], float], interval_s: float, timeout_s: float
     ) -> list[tuple[float, float]]:
         return self.series
+
+    def sample_episode(
+        self, interval_s: float, timeout_s: float
+    ) -> tuple[list[tuple[float, float]], EpisodeEvaluationResult]:
+        return self.series, EpisodeEvaluationResult(
+            provider_name="fake",
+            episode_id="episode-1",
+            case_id="episode-case",
+            passed=bool(self.series and self.series[-1][1] >= 1.0),
+            summary="private result",
+            metrics={"sim_time": 2.0},
+        )
 
 
 # -- scorers ------------------------------------------------------------------------
@@ -202,6 +247,62 @@ def test_interactive_dispatch() -> None:
 def test_interactive_no_samples_is_error() -> None:
     case = InteractiveEval(id="n", inputs="x", score=lambda s: 1.0, simulator="")
     assert "no samples" in case.evaluate(FakeRig()).error
+
+
+@dataclass(frozen=True)
+class _EpisodeRequest:
+    case_id: str
+
+
+def _episode_case() -> EvaluationCase:
+    return EvaluationCase(
+        episode_request=_EpisodeRequest("episode-case"),
+        blueprint_name="robot-sim",
+    )
+
+
+def test_interactive_episode_uses_private_goal() -> None:
+    case = InteractiveEval(
+        id="physical",
+        inputs="do it",
+        episode=_episode_case(),
+        episode_provider="fake",
+        action=lambda app, roles: "action result",
+    )
+    rig = FakeRig(answer="action result", series=[(0.0, 0.0), (1.0, 1.0)])
+
+    result = case.evaluate(rig)
+
+    assert result.score == 1.0
+    assert result.outputs == "action result"
+    assert result.provider == "fake"
+    assert result.episode_id == "episode-1"
+    assert result.episode_case_id == "episode-case"
+    assert result.oracle == "private result"
+    assert result.metrics == {"sim_time": 2.0}
+    assert rig.calls == ["setup_env", "action"]
+
+
+def test_interactive_episode_can_score_public_output_against_private_reset_truth() -> None:
+    case = InteractiveEval(
+        id="perception",
+        inputs="what do you see",
+        episode=_episode_case(),
+        episode_provider="fake",
+        action=lambda app, roles: "saw cup at 1.0, 2.0, 3.0",
+        output_score=lambda output, episode: float(
+            episode.role_names["object"] in output
+            and episode.role_reset_positions["object"] == (1.0, 2.0, 3.0)
+        ),
+    )
+    rig = FakeRig(answer="saw cup at 1.0, 2.0, 3.0", roles={"object": "cup"})
+
+    result = case.evaluate(rig)
+
+    assert result.score == 1.0
+    assert result.outputs == "saw cup at 1.0, 2.0, 3.0"
+    assert result.oracle == "expected roles and reset positions"
+    assert result.series == ((0.0, 1.0),)
 
 
 # -- preflight ----------------------------------------------------------------------

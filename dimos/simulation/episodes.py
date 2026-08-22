@@ -102,6 +102,7 @@ class PreparedEpisode:
     extra_env: Mapping[str, str] = field(default_factory=dict)
     required_modules: tuple[str, ...] = ()
     role_names: Mapping[str, str] = field(default_factory=dict)
+    role_reset_positions: Mapping[str, tuple[float, float, float]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for name in ("provider_name", "episode_id", "case_id", "blueprint_name"):
@@ -120,6 +121,17 @@ class PreparedEpisode:
             _unique_text(self.required_modules, "required module"),
         )
         object.__setattr__(self, "role_names", _text_mapping(self.role_names, "role name"))
+        positions = {
+            _required_text(str(role_id), "role reset position key"): tuple(
+                float(value) for value in position
+            )
+            for role_id, position in self.role_reset_positions.items()
+        }
+        if any(len(position) != 3 for position in positions.values()):
+            raise ValueError("role reset positions must contain three values")
+        if any(not math.isfinite(value) for position in positions.values() for value in position):
+            raise ValueError("role reset positions must be finite")
+        object.__setattr__(self, "role_reset_positions", MappingProxyType(positions))
 
 
 @dataclass(frozen=True)

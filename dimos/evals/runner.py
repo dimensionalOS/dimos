@@ -32,7 +32,14 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.constants import STATE_DIR
 from dimos.core.resource import CompositeResource
-from dimos.evals.types import EvalCase, EvalResult, InteractiveEval, Suite
+from dimos.evals.types import (
+    EvalCase,
+    EvalResult,
+    InteractiveAction,
+    InteractiveEval,
+    InteractiveOutputScore,
+    Suite,
+)
 from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.utils.logging_config import setup_logger
 
@@ -43,6 +50,12 @@ if TYPE_CHECKING:
     from dimos.e2e_tests.dimos_cli_call import DimosCliCall
     from dimos.memory.store.base import Store
     from dimos.memory.stream import Stream
+    from dimos.porcelain.dimos import Dimos
+    from dimos.simulation.episodes import (
+        EpisodeEvaluationResult,
+        EpisodeProvider,
+        PreparedEpisode,
+    )
 
 logger = setup_logger()
 
@@ -103,6 +116,9 @@ class EvalRunner(Configurable, CompositeResource):
         self._model: BaseChatModel | None = None
         self._proc: DimosCliCall | None = None
         self._sim: DimSimClient | None = None
+        self._app: Dimos | None = None
+        self._episode_provider: EpisodeProvider | None = None
+        self._episode: PreparedEpisode | None = None
         self._run_dir: Path | None = None
 
     # -- run lifecycle -----------------------------------------------------------
@@ -315,6 +331,12 @@ class EvalRunner(Configurable, CompositeResource):
     def setup_env(self, case: InteractiveEval) -> None:
         from dimos.evals.types import _no_setup
 
+        if case.episode is not None:
+            self._setup_episode_env(case)
+            if case.action is None and not self._wait_mcp(self.config.launch_timeout_s):
+                raise RuntimeError(f"MCP at {self.mcp_url} not ready — is dimos up?")
+            return
+
         if case.simulator and not self.config.attach:
             from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 
@@ -336,14 +358,33 @@ class EvalRunner(Configurable, CompositeResource):
 
     def teardown_env(self) -> None:
         """Per-case cleanup — the runner owns env lifecycle, cases just declare it."""
-        if self._sim is not None:
-            self._sim.stop()
-            self._sim = None
-        if self._proc is not None:
-            self._proc.stop()
-            self._proc = None
+        self._episode = None
+        resources = (
+            ("episode provider", "_episode_provider"),
+            ("DimOS connection", "_app"),
+            ("DimSim client", "_sim"),
+            ("DimOS process", "_proc"),
+        )
+        for label, attribute in resources:
+            resource = getattr(self, attribute)
+            setattr(self, attribute, None)
+            if resource is None:
+                continue
+            try:
+                resource.stop()
+            except Exception as error:
+                logger.warning("eval resource cleanup failed", resource=label, error=str(error))
 
     def check_env(self, case: InteractiveEval) -> None:
+        if case.episode is not None:
+            if self.config.attach:
+                raise RuntimeError(
+                    f"{case.id}: exact provider episodes own launch and reset; attach is unsupported"
+                )
+            from dimos.simulation.episodes import load_episode_provider
+
+            load_episode_provider(case.episode_provider).stop()
+            return
         if self.config.attach or not case.simulator:
             if not self.mcp_ready():
                 raise RuntimeError(
@@ -370,6 +411,37 @@ class EvalRunner(Configurable, CompositeResource):
         finally:
             transport.stop()
 
+    def run_action(self, action: InteractiveAction) -> str:
+        if self._app is None or self._episode is None:
+            raise RuntimeError("public action requires an active exact episode")
+        output = action(self._app, self._episode.role_names)
+        if not isinstance(output, str):
+            raise TypeError("interactive public action must return str")
+        return output
+
+    def score_output(self, score: InteractiveOutputScore, output: str) -> tuple[float, str]:
+        if self._episode is None:
+            raise RuntimeError("output scoring requires an active exact episode")
+        value = float(score(output, self._episode))
+        summary = json.dumps(
+            {
+                "kind": "prepared-episode-match",
+                "expected_roles": dict(self._episode.role_names),
+                "expected_reset_positions": dict(self._episode.role_reset_positions),
+            },
+            sort_keys=True,
+        )
+        return value, summary
+
+    def episode_identity(self) -> tuple[str, str, str]:
+        if self._episode is None:
+            raise RuntimeError("no exact episode is active")
+        return (
+            self._episode.provider_name,
+            self._episode.episode_id,
+            self._episode.case_id,
+        )
+
     def sample(
         self, score: Callable[[Store], float], interval_s: float, timeout_s: float
     ) -> list[tuple[float, float]]:
@@ -393,6 +465,82 @@ class EvalRunner(Configurable, CompositeResource):
         finally:
             store.stop()
         return series
+
+    def sample_episode(
+        self, interval_s: float, timeout_s: float
+    ) -> tuple[list[tuple[float, float]], EpisodeEvaluationResult]:
+        """Poll evaluator-only episode truth without publishing it to mem2."""
+        from dimos.e2e_tests.episode import evaluate_episode
+
+        if self._episode_provider is None or self._episode is None:
+            raise RuntimeError("private episode scoring requires an active exact episode")
+        deadline = time.monotonic() + timeout_s
+        t0 = time.monotonic()
+        series: list[tuple[float, float]] = []
+        result = evaluate_episode(self._episode_provider, self._episode)
+        while True:
+            series.append((time.monotonic() - t0, 1.0 if result.passed else 0.0))
+            if result.passed or time.monotonic() >= deadline:
+                return series, result
+            time.sleep(interval_s)
+            result = evaluate_episode(self._episode_provider, self._episode)
+
+    def _setup_episode_env(self, case: InteractiveEval) -> None:
+        from dimos.e2e_tests.dimos_cli_call import DimosCliCall
+        from dimos.e2e_tests.episode import prepare_episode, reset_episode
+        from dimos.simulation.episodes import load_episode_provider
+
+        assert case.episode is not None
+        provider = load_episode_provider(case.episode_provider)
+        self._episode_provider = provider
+        episode = prepare_episode(
+            provider,
+            case.episode,
+            self.run_dir / case.id / "episode",
+        )
+        self._episode = episode
+
+        proc = DimosCliCall()
+        proc.simulator = episode.simulator
+        proc.global_args = list(episode.global_args)
+        proc.extra_env = dict(episode.extra_env)
+        proc.demo_args = [episode.blueprint_name]
+        proc.start()
+        self._proc = proc
+
+        app = self._connect_dimos(episode.required_modules, self.config.launch_timeout_s)
+        self._app = app
+        provider.start(episode)
+        reset = reset_episode(provider, episode)
+        if not reset.initial_conditions_passed:
+            raise RuntimeError(
+                f"episode initial conditions failed: {list(reset.failed_conditions)}"
+            )
+
+    def _connect_dimos(self, required_modules: tuple[str, ...], timeout_s: float) -> Dimos:
+        from dimos.porcelain.dimos import Dimos
+
+        deadline = time.monotonic() + timeout_s
+        last_error: BaseException | None = None
+        while time.monotonic() < deadline:
+            if self._proc is not None:
+                process = self._proc.process
+                if process is not None and process.poll() is not None:
+                    raise RuntimeError(
+                        f"DimOS exited during startup with code {process.returncode}"
+                    )
+            app: Dimos | None = None
+            try:
+                app = Dimos.connect(timeout=2.0)
+                for module_name in required_modules:
+                    app.get_module(module_name)
+                return app
+            except Exception as error:
+                last_error = error
+                if app is not None:
+                    app.stop()
+                time.sleep(0.5)
+        raise TimeoutError(f"DimOS modules were not ready after {timeout_s:.0f}s: {last_error}")
 
     def _wait_live_store(self, deadline: float) -> Store:
         path = Path(self.config.live_db)

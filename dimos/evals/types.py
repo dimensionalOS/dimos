@@ -42,6 +42,12 @@ if TYPE_CHECKING:
     from dimos.e2e_tests.dim_sim_client import DimSimClient
     from dimos.memory.store.base import Store
     from dimos.memory.stream import Stream
+    from dimos.porcelain.dimos import Dimos
+    from dimos.simulation.episodes import (
+        EpisodeEvaluationResult,
+        EvaluationCase,
+        PreparedEpisode,
+    )
 
 T = TypeVar("T")
 
@@ -52,10 +58,19 @@ Select = Callable[["Store"], "Stream[Any, Any]"]
     lambda s: s.streams.odom.range_time(0, 600)
 """
 
+InteractiveAction = Callable[["Dimos", Mapping[str, str]], str]
+"""Public DimOS behavior run after an exact interactive episode is reset."""
+
+InteractiveOutputScore = Callable[[str, "PreparedEpisode"], float]
+"""Score public action output against evaluator-only prepared episode truth."""
+
 
 @dataclass(frozen=True, kw_only=True)
 class EvalResult:
     case_id: str
+    provider: str = ""
+    episode_id: str = ""
+    episode_case_id: str = ""
     outputs: str = ""
     score: float = 0.0
     passed: bool = False
@@ -63,6 +78,8 @@ class EvalResult:
     error: str = ""
     series: tuple[tuple[float, float], ...] = ()  # (t, score) — interactive only
     transcript: str = ""  # path within the run dir, when an agent loop ran
+    oracle: str = ""  # private provider result; never written to the public Store
+    metrics: dict[str, float] = field(default_factory=dict)
 
 
 class EvalRig(Protocol):
@@ -85,9 +102,15 @@ class EvalRig(Protocol):
     def setup_env(self, case: InteractiveEval) -> None: ...
     def check_env(self, case: InteractiveEval) -> None: ...
     def instruct(self, text: str) -> None: ...
+    def run_action(self, action: InteractiveAction) -> str: ...
+    def score_output(self, score: InteractiveOutputScore, output: str) -> tuple[float, str]: ...
+    def episode_identity(self) -> tuple[str, str, str]: ...
     def sample(
         self, score: Callable[[Store], float], interval_s: float, timeout_s: float
     ) -> list[tuple[float, float]]: ...
+    def sample_episode(
+        self, interval_s: float, timeout_s: float
+    ) -> tuple[list[tuple[float, float]], EpisodeEvaluationResult]: ...
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -167,28 +190,73 @@ class InteractiveEval(EvalCase):
     """Actions feed back into observations. The case names its environment so
     the eval is reproducible; the runner only decides attach-vs-launch."""
 
-    score: Callable[[Store], float]  # sampled every interval_s against live mem2
+    # Exactly one scoring path is selected:
+    # - score: sample normal public mem2 state;
+    # - output_score: compare one public action result with prepared episode truth;
+    # - neither, with episode set: poll the provider's private physical goal.
+    score: Callable[[Store], float] | None = None
+    output_score: InteractiveOutputScore | None = None
     aggregate: Callable[[Sequence[float]], float] = final
     interval_s: float = 1.0
     timeout_s: float = 300.0
+    episode: EvaluationCase | None = None
+    episode_provider: str = ""
+    action: InteractiveAction | None = None
     blueprint: str = "unitree-go2-agentic"
     simulator: str = "dimsim"  # "" = attach to a running dimos / real robot
     scene: str = "apartment"  # --dimsim-scene name (ScenePackage name later)
     setup: Callable[[DimSimClient], None] = _no_setup
 
+    def __post_init__(self) -> None:
+        if self.score is not None and self.output_score is not None:
+            raise ValueError("interactive eval cannot combine store and output scoring")
+        if self.episode is None and self.score is None:
+            raise ValueError("interactive eval without an episode requires a public Store score")
+        if self.episode is not None and not self.episode_provider.strip():
+            raise ValueError("interactive episode requires episode_provider")
+        if self.output_score is not None and self.episode is None:
+            raise ValueError("interactive output scoring requires an exact episode")
+        if self.action is not None and self.episode is None:
+            raise ValueError("public action callbacks require an exact episode")
+        if self.action is not None and self.skill:
+            raise ValueError("interactive eval cannot combine action and skill")
+
     def evaluate(self, rig: EvalRig) -> EvalResult:
         rig.setup_env(self)
-        if self.skill:
-            rig.call_skill(self.skill, self.skill_args)
+        provider, episode_id, episode_case_id = (
+            rig.episode_identity() if self.episode is not None else ("", "", "")
+        )
+        outputs = ""
+        if self.action is not None:
+            outputs = rig.run_action(self.action)
+        elif self.skill:
+            outputs = rig.call_skill(self.skill, self.skill_args)
         else:
             rig.instruct(self.inputs)
-        series = rig.sample(self.score, self.interval_s, self.timeout_s)
+
+        oracle = ""
+        metrics: dict[str, float] = {}
+        if self.output_score is not None:
+            value, oracle = rig.score_output(self.output_score, outputs)
+            series = [(0.0, value)]
+        elif self.score is not None:
+            series = rig.sample(self.score, self.interval_s, self.timeout_s)
+        else:
+            series, evaluation = rig.sample_episode(self.interval_s, self.timeout_s)
+            oracle = evaluation.summary
+            metrics = dict(evaluation.metrics)
         if not series:
             return EvalResult(case_id=self.id, error=f"{self.id}: no samples collected")
         return EvalResult(
             case_id=self.id,
+            provider=provider,
+            episode_id=episode_id,
+            episode_case_id=episode_case_id,
+            outputs=outputs,
             score=self.aggregate([s for _, s in series]),
             series=tuple(series),
+            oracle=oracle,
+            metrics=metrics,
         )
 
     def preflight(self, rig: EvalRig) -> None:
