@@ -30,7 +30,6 @@ from dimos.cli.bake.discovery import discover_modules, select_modules
 from dimos.cli.bake.errors import BakeError
 from dimos.cli.bake.graph import build_graph
 from dimos.core.global_config import global_config
-from dimos.protocol.service.zenohservice import ZenohConfig
 
 
 def test_list_prints_the_registry() -> None:
@@ -100,32 +99,40 @@ def test_default_config_reports_an_unimportable_wrapper() -> None:
         default_config(missing_class)
 
 
-@pytest.fixture
-def no_robots(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A machine with no robot configured, so the environment cannot add endpoints."""
-    monkeypatch.setattr(global_config, "robot_ip", None)
-    monkeypatch.setattr(global_config, "robot_ips", None)
-    monkeypatch.setattr(global_config, "zenoh_connect", "")
+# What a bare bake emits: a host that dials its robot's bridge, listens for the
+# laptop, and never scouts. Nothing here describes the machine that baked it.
+ROBOT_SESSION = {
+    "mode": "peer",
+    "connect": ["tcp/127.0.0.1:7447"],
+    "listen": ["tcp/0.0.0.0:7448"],
+    "multicast": False,
+    "gossip": True,
+    "interface": "auto",
+    "connect_timeout_ms": 1000,
+}
 
 
-def test_emit_config_carries_a_complete_session(no_robots: None) -> None:
+def test_emit_config_carries_a_complete_session() -> None:
     """The host takes this one blob on stdin, so it has to join the network from it."""
     selected = select_modules(discover_modules(), ["ray_tracing", "mls_planner"])
     graph = build_graph("go2-nav", selected)
-    session = emit_config(graph, selected, session_settings())["session"]
-    assert session == ZenohConfig(connect=[]).to_wire()
+    assert emit_config(graph, selected, session_settings())["session"] == ROBOT_SESSION
 
 
-def test_robot_ip_becomes_a_dialed_endpoint(no_robots: None) -> None:
-    session = session_settings(robot_ip="192.168.1.5", listen=["tcp/0.0.0.0:7448"])
-    assert session["connect"] == ["tcp/192.168.1.5:7447"]
-    assert session["listen"] == ["tcp/0.0.0.0:7448"]
+def test_the_default_session_ignores_this_machines_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The session describes the robot, so the baking laptop must not leak in."""
+    monkeypatch.setattr(global_config, "robot_ip", "192.0.2.10")
+    monkeypatch.setattr(global_config, "zenoh_connect", "tcp/192.0.2.99:7447")
+    monkeypatch.setattr(global_config, "zenoh_scouting", True)
+    assert session_settings() == ROBOT_SESSION
 
 
-def test_a_session_is_resolved_without_touching_the_global_config() -> None:
-    before = global_config.model_dump()
-    session_settings(robot_ip="192.168.1.5", connect=["tcp/10.0.0.1:7447"], interface="wlan0")
-    assert global_config.model_dump() == before
+def test_explicit_locators_replace_the_defaults() -> None:
+    session = session_settings(connect=["tcp/10.0.0.1:7447"], listen=["tcp/0.0.0.0:7500"])
+    assert session["connect"] == ["tcp/10.0.0.1:7447"]
+    assert session["listen"] == ["tcp/0.0.0.0:7500"]
 
 
 def test_a_router_session_listens_where_it_is_told() -> None:
@@ -136,7 +143,7 @@ def test_a_router_session_listens_where_it_is_told() -> None:
 
 def test_a_router_without_a_listen_endpoint_is_refused() -> None:
     with pytest.raises(BakeError, match="listen endpoint"):
-        session_settings(mode="router")
+        session_settings(mode="router", listen=[])
 
 
 def test_an_unknown_mode_is_refused() -> None:
