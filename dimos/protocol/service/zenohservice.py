@@ -51,17 +51,27 @@ def _locators(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def connect_endpoints(robot_ip: str | None, robot_ips: str | None, extra: str) -> list[str]:
+    """Locators for the robots given, ahead of the extra locators.
+
+    An IP carrying its own port is used as given.
+    """
+    ips = _locators(f"{robot_ip or ''},{robot_ips or ''}")
+    robots = [f"tcp/{ip}" if ":" in ip else f"tcp/{ip}:{ROBOT_ZENOH_PORT}" for ip in ips]
+    return list(dict.fromkeys(robots + _locators(extra)))
+
+
 def _default_connect_endpoints() -> list[str]:
     """Dial known robots directly instead of trusting multicast scouting.
 
     Many APs filter multicast between WiFi clients, so a robot reachable over
-    TCP never answers a scout. An IP carrying its own port is used as given.
+    TCP never answers a scout.
     """
     if global_config.transport != "zenoh":
         return []
-    ips = _locators(f"{global_config.robot_ip or ''},{global_config.robot_ips or ''}")
-    robots = [f"tcp/{ip}" if ":" in ip else f"tcp/{ip}:{ROBOT_ZENOH_PORT}" for ip in ips]
-    return list(dict.fromkeys(robots + _locators(global_config.zenoh_connect)))
+    return connect_endpoints(
+        global_config.robot_ip, global_config.robot_ips, global_config.zenoh_connect
+    )
 
 
 def _default_scouting() -> bool:
