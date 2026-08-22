@@ -85,6 +85,7 @@ class StreamTF(MultiTBuffer):
         time_tolerance: float | None = None,
         *,
         forward_tolerance: float = 0.0,
+        warn: bool = True,
     ) -> Transform | None:
         tp = time_point
         if tp is None:
@@ -102,6 +103,7 @@ class StreamTF(MultiTBuffer):
             time_point,
             time_tolerance,
             forward_tolerance=0.0,
+            warn=warn,
         )
 
 
