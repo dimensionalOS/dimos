@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+from pathlib import Path
 import platform
 import re
 from typing import Literal, TypeAlias
@@ -125,6 +126,13 @@ class GlobalConfig(BaseSettings):
     relay_url: str | None = None
     dimos_cloud_url: str = "https://login.dimensional.org"
     dimos_api_key: str | None = None
+    dimos_cloud_backend: str = "multipart"
+    dimos_upload_codec: str = "lz4"
+    dimos_upload_retries: int = 2
+    dimos_upload_chunk_mb: int | None = None
+    dimos_upload_quiet_s: float = 30.0  # skip files modified this recently (still being written)
+    dimos_http_timeout: float = 60.0
+    dimos_staging_dir: Path | None = None  # None: beside the file (tmpfs/EXDEV safe)
 
     model_config = SettingsConfigDict(
         env_file=".env",
