@@ -122,6 +122,10 @@ class GlobalConfig(BaseSettings):
     relay_url: str | None = None
     dimos_cloud_url: str = "https://api.dimensional.org"
     dimos_api_key: str | None = None
+    dimos_upload_retries: int = 2
+    dimos_upload_compress: bool = True
+    dimos_http_timeout: float = 60.0
+    dimos_upload_chunk_mb: int | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",
