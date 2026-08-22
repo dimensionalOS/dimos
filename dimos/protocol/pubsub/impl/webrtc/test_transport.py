@@ -319,6 +319,7 @@ def test_raw_transport_pins_still_work() -> None:
     style used across existing blueprints) must survive config parsing and
     materialize unchanged — only spec-declared transports opt into the
     override flow."""
+    from dimos.core.global_config import global_config
     from dimos.core.transport import LCMTransport
 
     raw = LCMTransport("/raw_topic", FakeLCMMsg)
@@ -334,7 +335,15 @@ def test_raw_transport_pins_still_work() -> None:
     )
     assert parsed.transport_overrides() == {"mock": {"name": "x"}}
 
-    materialized = _materialize_transports(bp, {})
+    # The lcm<->zenoh switch rebuilds a pin that disagrees with the active
+    # backend, which on Mac defaults to zenoh. Pin the backend so this stays a
+    # test about config parsing.
+    original = global_config.transport
+    try:
+        global_config.update(transport="lcm")
+        materialized = _materialize_transports(bp, {})
+    finally:
+        global_config.update(transport=original)
     assert materialized[("raw", FakeLCMMsg)] is raw
     assert isinstance(materialized[("speced", FakeLCMMsg)], MockTransport)
 

@@ -93,7 +93,7 @@ load_dotenv()
 
 def _has_ros() -> bool:
     try:
-        import rclpy  # noqa: F401
+        import rosless  # noqa: F401
 
         return True
     except ImportError:

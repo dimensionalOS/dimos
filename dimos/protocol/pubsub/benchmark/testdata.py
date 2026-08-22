@@ -359,6 +359,7 @@ from dimos.protocol.pubsub.impl.rospubsub import (
     DimosROS,
     RawROS,
     RawROSTopic,
+    ROSQoS,
     ROSTopic,
 )
 
@@ -366,41 +367,22 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 if ROS_AVAILABLE:
-    from rclpy.qos import (
-        QoSDurabilityPolicy,
-        QoSHistoryPolicy,
-        QoSProfile,
-        QoSReliabilityPolicy,
-    )
-    from sensor_msgs.msg import Image as ROSImage
 
     @contextmanager
     def ros_best_effort_pubsub_channel() -> Generator[RawROS, None, None]:
-        qos = QoSProfile(  # type: ignore[no-untyped-call]
-            reliability=QoSReliabilityPolicy.BEST_EFFORT,
-            history=QoSHistoryPolicy.KEEP_LAST,
-            durability=QoSDurabilityPolicy.VOLATILE,
-            depth=5000,
-        )
-        ros_pubsub = RawROS(node_name="benchmark_ros_best_effort", qos=qos)
+        ros_pubsub = RawROS(qos=ROSQoS(reliable=False))
         ros_pubsub.start()
         yield ros_pubsub
         ros_pubsub.stop()
 
     @contextmanager
     def ros_reliable_pubsub_channel() -> Generator[RawROS, None, None]:
-        qos = QoSProfile(  # type: ignore[no-untyped-call]
-            reliability=QoSReliabilityPolicy.RELIABLE,
-            history=QoSHistoryPolicy.KEEP_LAST,
-            durability=QoSDurabilityPolicy.VOLATILE,
-            depth=5000,
-        )
-        ros_pubsub = RawROS(node_name="benchmark_ros_reliable", qos=qos)
+        ros_pubsub = RawROS(qos=ROSQoS(reliable=True))
         ros_pubsub.start()
         yield ros_pubsub
         ros_pubsub.stop()
 
-    def ros_msggen(size: int) -> tuple[RawROSTopic, ROSImage]:
+    def ros_msggen(size: int) -> tuple[RawROSTopic, dict[str, Any]]:
         import numpy as np
 
         # Create image data
@@ -412,15 +394,17 @@ if ROS_AVAILABLE:
         width = pixels // height
         final_data: NDArray[np.uint8] = padded_data[: height * width * 3]
 
-        # Create ROS Image message
-        msg = ROSImage()
-        msg.height = height
-        msg.width = width
-        msg.encoding = "rgb8"
-        msg.step = width * 3
-        msg.data = bytes(final_data)
+        msg = {
+            "header": {"stamp": {"sec": 0, "nanosec": 0}, "frame_id": ""},
+            "height": height,
+            "width": width,
+            "encoding": "rgb8",
+            "is_bigendian": False,
+            "step": width * 3,
+            "data": bytes(final_data),
+        }
 
-        topic = RawROSTopic(topic="/benchmark/ros", ros_type=ROSImage)
+        topic = RawROSTopic(topic="/benchmark/ros", ros_type="sensor_msgs/msg/Image")
         return (topic, msg)
 
     testcases.append(
@@ -439,26 +423,14 @@ if ROS_AVAILABLE:
 
     @contextmanager
     def dimos_ros_best_effort_pubsub_channel() -> Generator[DimosROS, None, None]:
-        qos = QoSProfile(  # type: ignore[no-untyped-call]
-            reliability=QoSReliabilityPolicy.BEST_EFFORT,
-            history=QoSHistoryPolicy.KEEP_LAST,
-            durability=QoSDurabilityPolicy.VOLATILE,
-            depth=5000,
-        )
-        ros_pubsub = DimosROS(node_name="benchmark_dimos_ros_best_effort", qos=qos)
+        ros_pubsub = DimosROS(qos=ROSQoS(reliable=False))
         ros_pubsub.start()
         yield ros_pubsub
         ros_pubsub.stop()
 
     @contextmanager
     def dimos_ros_reliable_pubsub_channel() -> Generator[DimosROS, None, None]:
-        qos = QoSProfile(  # type: ignore[no-untyped-call]
-            reliability=QoSReliabilityPolicy.RELIABLE,
-            history=QoSHistoryPolicy.KEEP_LAST,
-            durability=QoSDurabilityPolicy.VOLATILE,
-            depth=5000,
-        )
-        ros_pubsub = DimosROS(node_name="benchmark_dimos_ros_reliable", qos=qos)
+        ros_pubsub = DimosROS(qos=ROSQoS(reliable=True))
         ros_pubsub.start()
         yield ros_pubsub
         ros_pubsub.stop()

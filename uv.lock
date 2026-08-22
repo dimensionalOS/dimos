@@ -29,7 +29,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer = "2026-08-15T11:38:51.310565Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -40,6 +40,7 @@ edgetam-dimos = false
 can-motor-control = false
 lcm-dimos-fork = false
 md-babel-py = false
+rosless = false
 roboplan = false
 
 [manifest]
@@ -1710,6 +1711,7 @@ dependencies = [
     { name = "qpsolvers", extra = ["proxqp"] },
     { name = "reactivex" },
     { name = "rerun-sdk" },
+    { name = "rosless" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.17.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "sortedcontainers" },
@@ -2315,6 +2317,7 @@ requires-dist = [
     { name = "rerun-sdk", specifier = "==0.32.0" },
     { name = "rerun-sdk", marker = "extra == 'visualization'", specifier = "==0.32.0" },
     { name = "roboplan", marker = "extra == 'manipulation'", specifier = ">=0.6.0,<0.7.0" },
+    { name = "rosless", specifier = ">=0.3.0" },
     { name = "scipy", specifier = ">=1.15.1" },
     { name = "sentencepiece", marker = "extra == 'perception'", specifier = ">=0.2.0" },
     { name = "sortedcontainers", specifier = "==2.4.0" },
@@ -8498,6 +8501,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/74/3a/85e60d154f26ecdc1d47a63ac58bd9f32a5a9f3f771f6672197f02a00ade/rope-1.14.0.tar.gz", hash = "sha256:8803e3b667315044f6270b0c69a10c0679f9f322ed8efe6245a93ceb7658da69", size = 296801, upload-time = "2025-07-12T17:46:07.786Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/75/35/130469d1901da2b3a5a377539b4ffcd8a5c983f1c9e3ba5ffdd8d71ae314/rope-1.14.0-py3-none-any.whl", hash = "sha256:00a7ea8c0c376fc0b053b2f2f8ef3bfb8b50fecf1ebf3eb80e4f8bd7f1941918", size = 207143, upload-time = "2025-07-12T17:46:05.928Z" },
+]
+
+[[package]]
+name = "rosless"
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/09/17/d1a656ed93e19ed93c9974c774aeec6f6441be95749f3762a21139279e4b/rosless-0.3.0.tar.gz", hash = "sha256:1b316fa30317afeedbb1bb8daccd44cfb157a20c0a37408954751283cd26839b", size = 94421, upload-time = "2026-08-22T11:30:10.854Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7f/3d/4110b3e1eb2e17d9029852915f819ecea984976693658153bef358c0c143/rosless-0.3.0-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:09a1231555485e1024e5cd806d71bc9c688cd77bc748592d9dcab12610217265", size = 1472160, upload-time = "2026-08-22T11:30:04.723Z" },
+    { url = "https://files.pythonhosted.org/packages/84/eb/73467a6fe8344f592c0695d72c133f6d61e2bef6dd30a6bc717df391fbf3/rosless-0.3.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:b7c6c77fa355b609385e10176578321da218c48e94a99b2aa2d262612798c2a1", size = 1427990, upload-time = "2026-08-22T11:30:06.239Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/7d/409f98c069318e8b1dd09d49260d9c0b5e6e0910805b677acc6bbf6b2682/rosless-0.3.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:c4b37af996c8779a2213c4d36181093c8309d7a0370ad825394e8e01f3a899d9", size = 1560512, upload-time = "2026-08-22T11:30:07.696Z" },
+    { url = "https://files.pythonhosted.org/packages/3c/5a/1be64a275daad537d95871dff0e5ff8dd68c39c9ea5480d13f711a3aa3a0/rosless-0.3.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a2cbbed44e45117ced42dd8ca93daf6d3d096082b9ab8813f56cb555a2bef615", size = 1654138, upload-time = "2026-08-22T11:30:09.757Z" },
 ]
 
 [[package]]
