@@ -31,7 +31,7 @@ class DoubleModule(Module):
 
 
 @pytest.fixture
-def start_double_module():
+def start_double_module(each_transport):
     blueprint = DoubleModule.blueprint()
     coordinator = ModuleCoordinator.build(blueprint)
     yield
@@ -39,7 +39,7 @@ def start_double_module():
 
 
 @pytest.fixture
-def a_transport():
+def a_transport(each_transport):
     a_tr = make_transport("/a")
     a_tr.start()
     yield a_tr
@@ -47,7 +47,7 @@ def a_transport():
 
 
 @pytest.fixture
-def double_a_transport():
+def double_a_transport(each_transport):
     double_a_tr = make_transport("/double_a")
     double_a_tr.start()
     yield double_a_tr

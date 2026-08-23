@@ -222,7 +222,7 @@ class MainAndHandlerModule(Module):
 
 
 @pytest.fixture
-def start_main_handler_module():
+def start_main_handler_module(each_transport):
     blueprint = MainAndHandlerModule.blueprint()
     coordinator = ModuleCoordinator.build(blueprint)
     yield
@@ -230,7 +230,7 @@ def start_main_handler_module():
 
 
 @pytest.fixture
-def a_transport():
+def a_transport(each_transport):
     a_tr = make_transport("/a")
     a_tr.start()
     yield a_tr
@@ -238,7 +238,7 @@ def a_transport():
 
 
 @pytest.fixture
-def out_transport():
+def out_transport(each_transport):
     out_tr = make_transport("/out")
     out_tr.start()
     yield out_tr

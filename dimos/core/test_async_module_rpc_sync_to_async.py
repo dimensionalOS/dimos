@@ -73,7 +73,7 @@ class StartModule(Module):
 
 
 @pytest.fixture
-def start_module():
+def start_module(each_transport):
     blueprint = autoconnect(
         StartModule.blueprint(),
         ModuleA.blueprint(),
@@ -86,7 +86,7 @@ def start_module():
 
 
 @pytest.fixture
-def in_transport():
+def in_transport(each_transport):
     ret = make_transport("/in_value")
     ret.start()
     yield ret
@@ -94,7 +94,7 @@ def in_transport():
 
 
 @pytest.fixture
-def out_transport():
+def out_transport(each_transport):
     ret = make_transport("/out_value")
     ret.start()
     yield ret

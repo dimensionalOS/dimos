@@ -40,7 +40,7 @@ class BurstModule(Module):
 
 
 @pytest.fixture
-def start_burst_module():
+def start_burst_module(each_transport):
     blueprint = BurstModule.blueprint()
     coordinator = ModuleCoordinator.build(blueprint)
     yield
@@ -48,7 +48,7 @@ def start_burst_module():
 
 
 @pytest.fixture
-def burst_a_transport():
+def burst_a_transport(each_transport):
     tr = make_transport("/a")
     tr.start()
     yield tr
@@ -56,7 +56,7 @@ def burst_a_transport():
 
 
 @pytest.fixture
-def burst_record_transport():
+def burst_record_transport(each_transport):
     tr = make_transport("/record")
     tr.start()
     yield tr
@@ -121,7 +121,7 @@ class InterleaveModule(Module):
 
 
 @pytest.fixture
-def start_interleave_module():
+def start_interleave_module(each_transport):
     blueprint = InterleaveModule.blueprint()
     coordinator = ModuleCoordinator.build(blueprint)
     yield
@@ -129,7 +129,7 @@ def start_interleave_module():
 
 
 @pytest.fixture
-def interleave_a_transport():
+def interleave_a_transport(each_transport):
     tr = make_transport("/a")
     tr.start()
     yield tr
@@ -137,7 +137,7 @@ def interleave_a_transport():
 
 
 @pytest.fixture
-def interleave_record_transport():
+def interleave_record_transport(each_transport):
     tr = make_transport("/record")
     tr.start()
     yield tr
@@ -179,7 +179,7 @@ class CleanupModule(Module):
 
 
 @pytest.fixture
-def cleanup_a_transport():
+def cleanup_a_transport(each_transport):
     tr = make_transport("/a")
     tr.start()
     yield tr
@@ -187,7 +187,7 @@ def cleanup_a_transport():
 
 
 @pytest.fixture
-def cleanup_started_transport():
+def cleanup_started_transport(each_transport):
     tr = make_transport("/started")
     tr.start()
     yield tr

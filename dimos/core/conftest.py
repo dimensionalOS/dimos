@@ -15,6 +15,14 @@
 import pytest
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.global_config import global_config
+
+
+@pytest.fixture(params=["lcm", "zenoh"])
+def each_transport(request, monkeypatch):
+    """Run the requesting test once per transport backend."""
+    monkeypatch.setattr(global_config, "transport", request.param)
+    return request.param
 
 
 @pytest.fixture

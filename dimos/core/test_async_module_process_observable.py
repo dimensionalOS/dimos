@@ -45,7 +45,7 @@ class StartModule(Module):
 
 
 @pytest.fixture
-def start_module():
+def start_module(each_transport):
     blueprint = StartModule.blueprint()
     coordinator = ModuleCoordinator.build(blueprint)
     yield
@@ -53,7 +53,7 @@ def start_module():
 
 
 @pytest.fixture
-def get_collected_letters():
+def get_collected_letters(each_transport):
     uppercase_transport = make_transport("/uppercase")
     uppercase_transport.start()
     queue = Queue()
