@@ -191,6 +191,23 @@ def test_invalid_json_does_not_crash(server: RerunWebSocketServer) -> None:
     asyncio.run(_send_bad())
 
 
+def test_restart_is_rejected_and_state_is_cleared() -> None:
+    """A stopped server rejects restart and drops its listener state."""
+    original_port = global_config.rerun_websocket_server_port
+    global_config.update(rerun_websocket_server_port=0)
+    try:
+        module = RerunWebSocketServer()
+        module.start()
+        assert module.bound_port > 0
+        module.stop()
+        with pytest.raises(AssertionError, match="server not started"):
+            module.bound_port  # noqa: B018
+        with pytest.raises(RuntimeError, match="cannot be restarted"):
+            module.start()
+    finally:
+        global_config.update(rerun_websocket_server_port=original_port)
+
+
 def test_mixed_message_sequence(
     server: RerunWebSocketServer, publisher: MockViewerPublisher
 ) -> None:

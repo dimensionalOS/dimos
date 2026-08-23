@@ -107,8 +107,10 @@ class RerunWebSocketServer(Module):
 
     @rpc
     def start(self) -> None:
+        if self._loop is None:
+            # A Module's loop dies with stop(); a stopped server cannot come back.
+            raise RuntimeError("RerunWebSocketServer cannot be restarted; construct a new one")
         super().start()
-        assert self._loop is not None
         self._serve_future = asyncio.run_coroutine_threadsafe(self._serve(), self._loop)
         deadline = time.monotonic() + self._STARTUP_TIMEOUT
         while not self._server_ready.wait(timeout=0.05):
@@ -141,6 +143,9 @@ class RerunWebSocketServer(Module):
             except Exception:
                 logger.warning("RerunWebSocketServer: serve task did not shut down cleanly")
         super().stop()
+        self._server_ready.clear()
+        self._bound_port = None
+        self.client_connected.clear()
 
     async def _serve(self) -> None:
         self._stop_event = asyncio.Event()
