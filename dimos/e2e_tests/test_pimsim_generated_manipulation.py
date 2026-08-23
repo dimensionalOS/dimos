@@ -23,7 +23,7 @@ import pytest
 
 from dimos.agents.skill_result import SkillResult
 from dimos.e2e_tests.episode import EpisodeRun
-from dimos.simulation.episodes import EvaluationCase, load_episode_provider
+from dimos.sim2.evaluation import EvaluationCase, load_episode_provider
 from pimsim import EpisodeRequest, TaskRequest, WorldRequest
 
 pytestmark = [pytest.mark.self_hosted_large, pytest.mark.mujoco]

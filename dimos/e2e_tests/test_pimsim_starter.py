@@ -22,7 +22,7 @@ import pytest
 from dimos.agents.skill_result import SkillResult
 from dimos.e2e_tests.episode import EpisodeRun
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.simulation.episodes import EvaluationCase
+from dimos.sim2.evaluation import EvaluationCase
 from pimsim import EpisodeRequest, TaskRequest, WorldRequest, installed_episode_catalog
 
 pytestmark = [pytest.mark.self_hosted_large, pytest.mark.mujoco]

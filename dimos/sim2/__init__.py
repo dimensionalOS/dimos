@@ -23,8 +23,30 @@ from dimos.sim2.episodes import (
     PublicEpisodeTarget,
     PublicEpisodeTargetKind,
 )
+from dimos.sim2.evaluation import (
+    EpisodeActivationResult,
+    EpisodeBoundary,
+    EpisodeBoundaryListener,
+    EpisodeEvaluationResult,
+    EpisodeProvider,
+    EpisodeRequestContract,
+    EpisodeUnavailableError,
+    EvaluationCase,
+    PreparedEpisode,
+    TrialIsolationMode,
+    load_episode_provider,
+)
 
 __all__ = [
+    "EpisodeActivationResult",
+    "EpisodeBoundary",
+    "EpisodeBoundaryListener",
+    "EpisodeEvaluationResult",
+    "EpisodeProvider",
+    "EpisodeRequestContract",
+    "EpisodeUnavailableError",
+    "EvaluationCase",
+    "PreparedEpisode",
     "PublicEpisodeContext",
     "PublicEpisodeDevice",
     "PublicEpisodeJoint",
@@ -32,4 +54,6 @@ __all__ = [
     "PublicEpisodeRole",
     "PublicEpisodeTarget",
     "PublicEpisodeTargetKind",
+    "TrialIsolationMode",
+    "load_episode_provider",
 ]

@@ -23,10 +23,10 @@ import pytest
 from dimos.core.transport import pLCMTransport
 from dimos.e2e_tests.conf_types import StartPersonTrack
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
-from dimos.e2e_tests.episode import EpisodeRun, prepare_episode, reset_episode
+from dimos.e2e_tests.episode import EpisodeRun, activate_episode, prepare_episode
 from dimos.e2e_tests.lcm_spy import LcmSpy
 from dimos.porcelain.dimos import Dimos
-from dimos.simulation.episodes import (
+from dimos.sim2.evaluation import (
     EpisodeProvider,
     EpisodeUnavailableError,
     EvaluationCase,
@@ -136,13 +136,20 @@ def evaluation_episode(
         )
         app = connect_dimos_modules(call, episode.required_modules)
         episode_provider.start(episode)
-        reset = reset_episode(episode_provider, episode)
-        if not reset.initial_conditions_passed:
-            pytest.fail(f"episode has invalid initial conditions: {list(reset.failed_conditions)}")
+        activation = activate_episode(
+            episode_provider,
+            episode,
+            episode.initial_sample_index,
+        )
+        if not activation.initial_conditions_passed:
+            pytest.fail(
+                "episode has invalid initial conditions: "
+                f"{list(activation.failed_conditions)}"
+            )
         yield EpisodeRun(
             case=case,
             episode=episode,
-            reset=reset,
+            activation=activation,
             app=app,
             provider=episode_provider,
         )

@@ -19,10 +19,10 @@ from pathlib import Path
 import time
 
 from dimos.porcelain.dimos import Dimos
-from dimos.simulation.episodes import (
+from dimos.sim2.evaluation import (
+    EpisodeActivationResult,
     EpisodeEvaluationResult,
     EpisodeProvider,
-    EpisodeResetResult,
     EvaluationCase,
     PreparedEpisode,
 )
@@ -59,11 +59,14 @@ def prepare_episode(
     return episode
 
 
-def reset_episode(
+def activate_episode(
     provider: EpisodeProvider,
     episode: PreparedEpisode,
-) -> EpisodeResetResult:
-    result = provider.reset(episode)
+    sample_index: int,
+) -> EpisodeActivationResult:
+    """Activate one exact provider-owned sample and verify its identity."""
+
+    result = provider.activate(episode, sample_index)
     _check_result_identity(episode, result.provider_name, result.episode_id, result.case_id)
     return result
 
@@ -95,7 +98,7 @@ class EpisodeRun:
 
     case: EvaluationCase
     episode: PreparedEpisode
-    reset: EpisodeResetResult
+    activation: EpisodeActivationResult
     app: Dimos
     provider: EpisodeProvider
 
@@ -116,7 +119,7 @@ class EpisodeRun:
 
 __all__ = [
     "EpisodeRun",
+    "activate_episode",
     "evaluate_episode",
     "prepare_episode",
-    "reset_episode",
 ]

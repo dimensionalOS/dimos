@@ -38,6 +38,7 @@ from dimos.evals.types import (
     InteractiveAction,
     InteractiveEval,
     InteractiveOutputScore,
+    InteractiveTrialResult,
     Suite,
 )
 from dimos.protocol.service.spec import BaseConfig, Configurable
@@ -51,7 +52,10 @@ if TYPE_CHECKING:
     from dimos.memory.store.base import Store
     from dimos.memory.stream import Stream
     from dimos.porcelain.dimos import Dimos
-    from dimos.simulation.episodes import (
+    from dimos.sim2.episodes import PublicEpisodeContext
+    from dimos.sim2.evaluation import (
+        EpisodeActivationResult,
+        EpisodeBoundary,
         EpisodeEvaluationResult,
         EpisodeProvider,
         PreparedEpisode,
@@ -119,6 +123,9 @@ class EvalRunner(Configurable, CompositeResource):
         self._app: Dimos | None = None
         self._episode_provider: EpisodeProvider | None = None
         self._episode: PreparedEpisode | None = None
+        self._episode_context: PublicEpisodeContext | None = None
+        self._episode_sample_index: int | None = None
+        self._episode_boundary_sequence = 0
         self._run_dir: Path | None = None
 
     # -- run lifecycle -----------------------------------------------------------
@@ -328,6 +335,34 @@ class EvalRunner(Configurable, CompositeResource):
 
     # -- EvalRig: interactive ----------------------------------------------------------
 
+    def run_interactive_trials(self, case: InteractiveEval) -> EvalResult:
+        """Run explicit samples and aggregate their physical outcomes."""
+
+        raise NotImplementedError
+
+    def _run_interactive_trial(
+        self,
+        case: InteractiveEval,
+        trial_index: int,
+    ) -> InteractiveTrialResult:
+        raise NotImplementedError
+
+    def _activate_episode_sample(
+        self,
+        case: InteractiveEval,
+        sample_index: int,
+    ) -> EpisodeActivationResult:
+        raise NotImplementedError
+
+    def _publish_episode_boundary(self, boundary: EpisodeBoundary) -> None:
+        raise NotImplementedError
+
+    def _prepare_isolated_trial(self, case: InteractiveEval, trial_index: int) -> None:
+        raise NotImplementedError
+
+    def _teardown_trial(self, case: InteractiveEval, trial_index: int) -> None:
+        raise NotImplementedError
+
     def setup_env(self, case: InteractiveEval) -> None:
         from dimos.evals.types import _no_setup
 
@@ -381,7 +416,7 @@ class EvalRunner(Configurable, CompositeResource):
                 raise RuntimeError(
                     f"{case.id}: exact provider episodes own launch and reset; attach is unsupported"
                 )
-            from dimos.simulation.episodes import load_episode_provider
+            from dimos.sim2.evaluation import load_episode_provider
 
             load_episode_provider(case.episode_provider).stop()
             return
@@ -412,14 +447,14 @@ class EvalRunner(Configurable, CompositeResource):
             transport.stop()
 
     def episode_instruction(self) -> str:
-        if self._episode is None:
+        if self._episode_context is None:
             raise RuntimeError("exact episode instruction requires an active episode")
-        return self._episode.context.instruction
+        return self._episode_context.instruction
 
     def run_action(self, action: InteractiveAction) -> str:
-        if self._app is None or self._episode is None:
+        if self._app is None or self._episode_context is None:
             raise RuntimeError("public action requires an active exact episode")
-        output = action(self._app, self._episode.context)
+        output = action(self._app, self._episode_context)
         if not isinstance(output, str):
             raise TypeError("interactive public action must return str")
         return output
@@ -496,36 +531,7 @@ class EvalRunner(Configurable, CompositeResource):
             result = evaluate_episode(self._episode_provider, self._episode)
 
     def _setup_episode_env(self, case: InteractiveEval) -> None:
-        from dimos.e2e_tests.dimos_cli_call import DimosCliCall
-        from dimos.e2e_tests.episode import prepare_episode, reset_episode
-        from dimos.simulation.episodes import load_episode_provider
-
-        assert case.episode is not None
-        provider = load_episode_provider(case.episode_provider)
-        self._episode_provider = provider
-        episode = prepare_episode(
-            provider,
-            case.episode,
-            self.run_dir / case.id / "episode",
-        )
-        self._episode = episode
-
-        proc = DimosCliCall()
-        proc.simulator = episode.simulator
-        proc.global_args = list(episode.global_args)
-        proc.extra_env = dict(episode.extra_env)
-        proc.demo_args = [episode.blueprint_name]
-        proc.start()
-        self._proc = proc
-
-        app = self._connect_dimos(episode.required_modules, self.config.launch_timeout_s)
-        self._app = app
-        provider.start(episode)
-        reset = reset_episode(provider, episode)
-        if not reset.initial_conditions_passed:
-            raise RuntimeError(
-                f"episode initial conditions failed: {list(reset.failed_conditions)}"
-            )
+        raise NotImplementedError
 
     def _connect_dimos(self, required_modules: tuple[str, ...], timeout_s: float) -> Dimos:
         from dimos.porcelain.dimos import Dimos

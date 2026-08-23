@@ -44,7 +44,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.sim2.episodes import PublicEpisodeContext, PublicEpisodeRole
-from dimos.simulation.episodes import (
+from dimos.sim2.evaluation import (
     EpisodeEvaluationResult,
     EvaluationCase,
     PreparedEpisode,

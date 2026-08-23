@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
 
 from dimos.evals.scorers import exact, final
+from dimos.sim2.evaluation import TrialIsolationMode
 
 if TYPE_CHECKING:
     from dimos.e2e_tests.dim_sim_client import DimSimClient
@@ -44,7 +45,7 @@ if TYPE_CHECKING:
     from dimos.memory.stream import Stream
     from dimos.porcelain.dimos import Dimos
     from dimos.sim2.episodes import PublicEpisodeContext
-    from dimos.simulation.episodes import (
+    from dimos.sim2.evaluation import (
         EpisodeEvaluationResult,
         EvaluationCase,
         PreparedEpisode,
@@ -78,9 +79,29 @@ class EvalResult:
     duration_s: float = 0.0
     error: str = ""
     series: tuple[tuple[float, float], ...] = ()  # (t, score) — interactive only
+    trials: tuple[InteractiveTrialResult, ...] = ()
     transcript: str = ""  # path within the run dir, when an agent loop ran
     oracle: str = ""  # private provider result; never written to the public Store
-    metrics: dict[str, float] = field(default_factory=dict)
+    metrics: Mapping[str, float] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, kw_only=True)
+class InteractiveTrialResult:
+    trial_index: int
+    sample_index: int
+    episode_id: str = ""
+    sample_digest: str = ""
+    outputs: str = ""
+    score: float = 0.0
+    error: str = ""
+    oracle: str = ""
+    metrics: Mapping[str, float] = field(default_factory=dict)
+    provenance: Mapping[str, str | int | float | bool] = field(default_factory=dict)
+    series: tuple[tuple[float, float], ...] = ()
+    transcript: str = ""  # path within the run dir, when an agent loop ran
+
+    def __post_init__(self) -> None:
+        raise NotImplementedError
 
 
 class EvalRig(Protocol):
@@ -113,6 +134,7 @@ class EvalRig(Protocol):
     def sample_episode(
         self, interval_s: float, timeout_s: float
     ) -> tuple[list[tuple[float, float]], EpisodeEvaluationResult]: ...
+    def run_interactive_trials(self, case: InteractiveEval) -> EvalResult: ...
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -205,74 +227,19 @@ class InteractiveEval(EvalCase):
     episode_provider: str = ""
     action: InteractiveAction | None = None
     instruction_override: str | None = None
+    trials: int = 1
+    trial_aggregate: Callable[[Sequence[float]], float] = final
+    trial_isolation: TrialIsolationMode = TrialIsolationMode.EPISODE_BOUNDARY
     blueprint: str = "unitree-go2-agentic"
     simulator: str = "dimsim"  # "" = attach to a running dimos / real robot
     scene: str = "apartment"  # --dimsim-scene name (ScenePackage name later)
     setup: Callable[[DimSimClient], None] = _no_setup
 
     def __post_init__(self) -> None:
-        if self.score is not None and self.output_score is not None:
-            raise ValueError("interactive eval cannot combine store and output scoring")
-        if self.episode is None and self.score is None:
-            raise ValueError("interactive eval without an episode requires a public Store score")
-        if self.episode is not None and not self.episode_provider.strip():
-            raise ValueError("interactive episode requires episode_provider")
-        if self.output_score is not None and self.episode is None:
-            raise ValueError("interactive output scoring requires an exact episode")
-        if self.action is not None and self.episode is None:
-            raise ValueError("public action callbacks require an exact episode")
-        if self.action is not None and self.skill:
-            raise ValueError("interactive eval cannot combine action and skill")
-        if self.instruction_override is not None:
-            override = self.instruction_override.strip()
-            if not override:
-                raise ValueError("interactive instruction_override must not be empty")
-            if self.episode is None:
-                raise ValueError("interactive instruction_override requires an exact episode")
-            object.__setattr__(self, "instruction_override", override)
+        raise NotImplementedError
 
     def evaluate(self, rig: EvalRig) -> EvalResult:
-        rig.setup_env(self)
-        provider, episode_id, episode_case_id = (
-            rig.episode_identity() if self.episode is not None else ("", "", "")
-        )
-        outputs = ""
-        if self.action is not None:
-            outputs = rig.run_action(self.action)
-        elif self.skill:
-            outputs = rig.call_skill(self.skill, self.skill_args)
-        else:
-            instruction = (
-                self.instruction_override or rig.episode_instruction()
-                if self.episode is not None
-                else self.inputs
-            )
-            rig.instruct(instruction)
-
-        oracle = ""
-        metrics: dict[str, float] = {}
-        if self.output_score is not None:
-            value, oracle = rig.score_output(self.output_score, outputs)
-            series = [(0.0, value)]
-        elif self.score is not None:
-            series = rig.sample(self.score, self.interval_s, self.timeout_s)
-        else:
-            series, evaluation = rig.sample_episode(self.interval_s, self.timeout_s)
-            oracle = evaluation.summary
-            metrics = dict(evaluation.metrics)
-        if not series:
-            return EvalResult(case_id=self.id, error=f"{self.id}: no samples collected")
-        return EvalResult(
-            case_id=self.id,
-            provider=provider,
-            episode_id=episode_id,
-            episode_case_id=episode_case_id,
-            outputs=outputs,
-            score=self.aggregate([s for _, s in series]),
-            series=tuple(series),
-            oracle=oracle,
-            metrics=metrics,
-        )
+        raise NotImplementedError
 
     def preflight(self, rig: EvalRig) -> None:
         rig.check_env(self)
