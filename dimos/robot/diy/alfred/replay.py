@@ -23,6 +23,7 @@ import time
 from typing import Any
 
 import reactivex as rx
+from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -40,6 +41,67 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 PROGRESS_INTERVAL_SECONDS = 10.0
+
+STEREO_PAIR_TOLERANCE = 0.001
+"""Both imagers in a frameset carry the same stamp; cuVSLAM rejects pairs past 1 ms."""
+
+
+def _stamp_matched_pairs(left: Any, right: Any) -> Any:
+    """Pair two image observables by timestamp instead of arrival order.
+
+    Replay drops late frames per stream, so the imagers can lose different
+    frames; an ordinal zip would then pair mismatched stamps forever. A frame
+    whose partner never arrives is discarded once a newer one turns up,
+    exactly as the tracker would reject it for skew.
+    """
+
+    def subscribe(observer: Any, scheduler: Any = None) -> Any:
+        lock = threading.Lock()
+        pending: dict[str, Any] = {"left": None, "right": None}
+        completed: set[str] = set()
+
+        def on_frame(side: str, other: str, frame: Any) -> None:
+            emit = None
+            with lock:
+                held = pending[other]
+                if held is not None and abs(held.ts - frame.ts) <= STEREO_PAIR_TOLERANCE:
+                    pending[other] = None
+                    emit = (held, frame) if side == "right" else (frame, held)
+                elif held is not None and held.ts > frame.ts:
+                    pass  # this frame's partner was dropped; the held one still waits
+                else:
+                    # Any held older frame lost its partner; keep only the newest.
+                    pending[other] = None
+                    pending[side] = frame
+            if emit is not None:
+                observer.on_next(emit)
+
+        def on_done(side: str) -> None:
+            with lock:
+                completed.add(side)
+                done = len(completed) == 2
+            if done:
+                observer.on_completed()
+
+        subscriptions = [
+            left.subscribe(
+                on_next=lambda f: on_frame("left", "right", f),
+                on_completed=lambda: on_done("left"),
+            ),
+            right.subscribe(
+                on_next=lambda f: on_frame("right", "left", f),
+                on_completed=lambda: on_done("right"),
+            ),
+        ]
+
+        def dispose() -> None:
+            for subscription in subscriptions:
+                subscription.dispose()
+
+        return Disposable(dispose)
+
+    return rx.create(subscribe)
+
 
 LIVE_PARENT_FRAMES = {"odom", "map", "visual_odom"}
 """Recorded tf edges under these parents (and any edge onto base_link) belong to the
@@ -68,10 +130,8 @@ class AlfredReplayConfig(ModuleConfig):
     # tracker needs, so it stays off unless a comparison wants it.
     publish_lidar: bool = False
     done_file: str = ""
-    """Touched once every stream has emitted its last message. Each stream is paced
-    against wall time on its own scheduler thread, so a consumer slower than the
-    recording makes the whole replay run long by an amount nothing can predict; a
-    harness waits for this instead of guessing a wall-clock duration."""
+    """Touched once every stream has emitted its last message; a harness waits for
+    this instead of guessing a wall-clock duration."""
 
 
 class AlfredReplay(Module):
@@ -143,10 +203,9 @@ class AlfredReplay(Module):
             trailer = min(latest, key=lambda name: latest[name])
             elapsed = time.time() - self._started_at
             covered = latest[leader] - self._first_ts
-            # Every stream is paced from one shared anchor but emits on its own
-            # thread, so a stream whose consumer cannot keep up falls behind the
-            # others rather than slowing them down. That spread is what makes the
-            # tracker reject images as older than its replay buffer.
+            # Streams drop late frames to hold the shared clock, so a growing
+            # spread means a stream stopped emitting entirely, not that it is
+            # running behind.
             logger.info(
                 "replay %.0fs of recording in %.0fs wall (%.2fx), spread %.2fs "
                 "(%s ahead of %s), %d streams running",
@@ -174,10 +233,10 @@ class AlfredReplay(Module):
             replay_kwargs["duration"] = self.config.duration
         replay = store.replay(**replay_kwargs)
 
-        # Scheduled independently the two imagers drift apart under decode load and
-        # the tracker rejects the pair for exceeding its 1 ms skew limit; zipping
-        # emits each stereo pair together, the way the live driver publishes it.
-        stereo = rx.zip(
+        # Paired by stamp, not arrival order: replay drops late frames per stream,
+        # so the imagers can lose different frames and an ordinal zip would pair
+        # mismatched stamps from then on.
+        stereo = _stamp_matched_pairs(
             replay.stream("infrared_left").observable(),
             replay.stream("infrared_right").observable(),
         )
