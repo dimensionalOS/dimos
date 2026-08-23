@@ -83,7 +83,7 @@ Typical **replay** (Zenoh is already the default, so no transport flag is requir
 dimos --dtop --replay --replay-db=go2_bigoffice run unitree-go2
 ```
 
-Architecture notes (Rerun bridge, TF still on LCM) live under [Zenoh](#zenoh) in PubSub transports below.
+Architecture notes (Rerun bridge) live under [Zenoh](#zenoh) in PubSub transports below.
 
 ## Benchmarks
 
@@ -362,7 +362,7 @@ At the stream level, the transport wrappers are `ZenohTransport` and `pZenohTran
 
 Performance note: zenoh's session-to-session path (modules in different processes, the common case) benchmarks faster than LCM for small messages and for >=2MiB ones. Delivery *within* one shared session (co-located modules in one worker) is its slow path for 256KiB-1MiB messages (a few GiB/s); pin shared memory transports for heavy co-located streams. The benchmark has both cases (`Zenoh` = shared session, `ZenohPeers` = separate sessions).
 
-The Rerun bridge also follows the global transport. When `transport=zenoh`, the bridge listens on Zenoh and on LCM for TF data.
+The Rerun bridge also follows the global transport: all channels including TF flow over the active backend, and the bridge listens only on it. To additionally bridge external LCM publishers while running Zenoh, pass an explicit `pubsubs=[Zenoh(), LCM()]`.
 
 #### Per-topic QoS
 
