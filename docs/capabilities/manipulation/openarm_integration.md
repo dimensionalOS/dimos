@@ -50,9 +50,13 @@ dimos hardware can setup can1
 dimos run openarm-planner-coordinator --left-can-port can1 --right-can-port can0
 ```
 
-Linux assigns `can0`/`can1` in USB enumeration order. If the arms come up
-swapped, exchange the two explicit CLI values. Supplying only one interface is
-rejected so physical operation can never depend on USB/CAN enumeration defaults.
+Linux assigns interface numbers across every CAN controller in enumeration
+order. Verify that the selected interfaces belong to the arm's USB CAN adapter
+instead of assuming they are `can0`/`can1`; for example,
+`readlink -f /sys/class/net/can0/device/driver` ends in `peak_usb` or `pcan`
+for a PEAK adapter. If the arms come up swapped, exchange the two explicit CLI
+values. Supplying only one interface is rejected so physical operation can
+never depend on USB/CAN enumeration defaults.
 
 ## Blueprints
 

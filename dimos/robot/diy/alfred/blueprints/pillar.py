@@ -32,6 +32,15 @@ PILLAR_SERVO_TASK_NAME = "servo_pillar"
 
 _pillar_hardware = pillar_hardware()
 
+PILLAR_MOTOR_TRANSPORTS = {
+    ("motor_command", MotorCommandArray): LCMTransport.spec(
+        f"/{PILLAR_HARDWARE_ID}/motor_command", MotorCommandArray
+    ),
+    ("motor_states", JointState): LCMTransport.spec(
+        f"/{PILLAR_HARDWARE_ID}/motor_states", JointState
+    ),
+}
+
 alfred_pillar = autoconnect(
     PillarConnection.blueprint(),
     ControlCoordinator.blueprint(
@@ -49,12 +58,7 @@ alfred_pillar = autoconnect(
     ),
 ).transports(
     {
-        ("motor_command", MotorCommandArray): LCMTransport.spec(
-            f"/{PILLAR_HARDWARE_ID}/motor_command", MotorCommandArray
-        ),
-        ("motor_states", JointState): LCMTransport.spec(
-            f"/{PILLAR_HARDWARE_ID}/motor_states", JointState
-        ),
+        **PILLAR_MOTOR_TRANSPORTS,
         ("joint_command", JointState): LCMTransport.spec(
             f"/{PILLAR_HARDWARE_ID}/joint_command", JointState
         ),

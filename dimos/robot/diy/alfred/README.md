@@ -1,5 +1,29 @@
 # Alfred
 
+## Full stack
+
+`alfred` runs the Flowbase, pillar, both OpenArms, browser-based Viser
+manipulation, and the remote DimOS/Rerun viewer under one coordinator.
+
+```bash
+dimos run alfred \
+  --left-can-port can2 \
+  --right-can-port can3 \
+  --device-path /dev/serial/by-id/usb-1a86_USB2.0-Serial-if00-port0 \
+  --rerun-host 10.0.0.155 \
+  --rerun-open none \
+  --visualization.host 10.0.0.155
+```
+
+Open Viser at `http://10.0.0.155:8095`. From the laptop, connect the DimOS
+viewer with:
+
+```bash
+uvx dimos-viewer \
+  --connect rerun+http://10.0.0.155:9877/proxy \
+  --ws-url ws://10.0.0.155:3030/ws
+```
+
 ## Pillar bring-up
 
 Install the small Alfred hardware extra rather than the platform-wide `all`
