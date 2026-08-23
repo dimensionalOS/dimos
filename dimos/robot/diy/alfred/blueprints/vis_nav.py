@@ -21,20 +21,14 @@ planner and holonomic tracking controller driving the result. ``alfred-mls-nav``
 composes this with the live ``RealSenseCamera`` and ``AlfredHighLevel`` drivers;
 ``alfred-replay`` composes the identical stack with a recording, so a replay
 exercises exactly the code a real run does.
-
-Depth2depth densification (the enhanced depth image) switches on when its weights are
-present under ``$DIMOS_DEPTH2DEPTH_DIR`` (default ``~/.cache/dimos/depth2depth``):
-``dinov2_vits14.safetensors`` and ``da2_head_vits.safetensors``.
 """
 
 from __future__ import annotations
 
 from functools import partial
-import os
 from pathlib import Path
 from typing import Any
 
-from dimos.constants import CACHE_DIR
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.mapping.dim_slam.dim_slam import DimSlam
@@ -110,19 +104,12 @@ def _alfred_urdf_static(rr: Any) -> list[tuple[str, Any]]:
 
 
 VOXEL_SIZE_METERS = 0.05
-DEPTH_MAX_RANGE_METERS = 6.0
-"""Beyond this the D455's stereo error grows past a voxel, so returns stop being
-evidence. Its quadratic error model puts ~5 cm at 6 m for the 95 mm baseline."""
+DEPTH_MAX_RANGE_METERS = 4.0
+"""DimSlam's default depth_cloud_max_range, repeated here for the mapper's own gate.
+4 m won the mapping grid against 6 m and against depth2depth-densified clouds
+(top-down F1 .570 / .506 / .411 vs a lidar-raycast reference)."""
 
 ALFRED_BODY_HEIGHT_METERS = 0.5
-
-DEPTH2DEPTH_DIR = Path(os.environ.get("DIMOS_DEPTH2DEPTH_DIR", str(CACHE_DIR / "depth2depth")))
-
-
-def _weights(filename: str) -> str:
-    path = DEPTH2DEPTH_DIR / filename
-    return str(path) if path.exists() else ""
-
 
 vis_nav = autoconnect(
     # cuVSLAM drops out whenever the IR pair loses texture and recovers by jumping;
@@ -167,25 +154,6 @@ vis_nav = autoconnect(
         # Wheel odometry crosses the wifi link and can land seconds late; a message
         # older than the buffer is dropped instead of replayed into the filter.
         replay_buffer_seconds=2.0,
-        # The mapper ignores everything past its own max_range, so gate the cloud
-        # at the source and keep those points off the bus entirely.
-        depth_cloud_max_range=DEPTH_MAX_RANGE_METERS,
-        # A full-resolution cloud is ~400k points at 28 Hz and drowned the mapper
-        # (378% CPU for ~15 Hz consumed, the rest dropped at the input queue). At
-        # k=3 the sampling pitch is 3z/fx = 42 mm at the 6 m gate, still under the
-        # 50 mm voxel, for 9x fewer points.
-        depth_cloud_decimation=3,
-        depth2depth_dinov2_weights=_weights("dinov2_vits14.safetensors"),
-        depth2depth_head_weights=_weights("da2_head_vits.safetensors"),
-        # Inference runs on the tracker's ingest thread, so at full resolution
-        # (~60 ms/frame on an M-series GPU) a 30 Hz depth stream saturates the
-        # module and starves the imu and image queues; vision then degrades from
-        # the dropped frames. Half resolution keeps the thread ahead of the
-        # sensor.
-        depth2depth_quality=0.5,
-        # Depth arrives aligned to the colour camera, which is not the rig camera;
-        # the model reads its colour frames off the image stream.
-        depth2depth_color_frame="camera_color_optical_frame",
     ).remappings([(DimSlam, "sources", "source_odometry")]),
     RayTracingVoxelMap.blueprint(
         voxel_size=VOXEL_SIZE_METERS,

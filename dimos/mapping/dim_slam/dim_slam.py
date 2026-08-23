@@ -23,9 +23,8 @@ from pathlib import Path
 import platform
 import sys
 from typing import Literal
-from uuid import uuid4
 
-from pydantic import Field, model_validator
+from pydantic import Field
 
 from dimos.constants import CACHE_DIR
 from dimos.core.native_module import NativeModule, NativeModuleConfig
@@ -43,11 +42,12 @@ logger = setup_logger()
 
 MODULE_DIR = Path(__file__).resolve().parent
 
-# The nix loader ignores ld.so.cache, so dlopen("libcuda.so.1") fails. Jetson needs the
-# whole directory: its libcuda.so.1 depends on its siblings.
+# The nix loader ignores ld.so.cache, so dlopen("libcuda.so.1") fails and cudart blames
+# the driver version instead. Jetson needs the whole directory: libcuda.so.1 there
+# depends on its siblings.
 _DRIVER_ONLY_LIB_DIRS = (
     Path("/run/opengl-driver/lib"),
-    # Jetson: which of these two names exists varies by release.
+    # Jetson / L4T. Which of the two names exists has varied across releases.
     Path("/usr/lib/aarch64-linux-gnu/nvidia"),
     Path("/usr/lib/aarch64-linux-gnu/tegra"),
 )
@@ -69,6 +69,7 @@ _DRIVER_LINK_DIR = CACHE_DIR / "nvidia-driver-libs"
 
 
 def driver_library_dir() -> Path | None:
+    """Directory to put on LD_LIBRARY_PATH for the NVIDIA driver."""
     dedicated = next(
         (d for d in _DRIVER_ONLY_LIB_DIRS if (d / "libcuda.so.1").exists()),
         None,
@@ -84,18 +85,18 @@ def driver_library_dir() -> Path | None:
         link = _DRIVER_LINK_DIR / name
         if not source.exists():
             continue
-        target = source.resolve()
-        if link.is_symlink() and link.readlink() == target:
-            continue
-        # Two callers can reach this at once, and symlink_to over an existing path raises.
-        staging = link.with_name(f"{name}.{uuid4().hex}.tmp")
-        staging.symlink_to(target)
-        os.replace(staging, link)
+        # Re-point after a driver upgrade; a stale link would dangle forever.
+        if link.is_symlink() and link.resolve() != source.resolve():
+            link.unlink()
+        if not link.is_symlink():
+            link.symlink_to(source.resolve())
     return _DRIVER_LINK_DIR
 
 
 def driver_cuda_major() -> int:
-    """0 if there is no driver."""
+    """The CUDA major the installed driver supports, or 0 if there is no driver."""
+    # By absolute path too: a nix-built python ignores ld.so.cache, where the bare
+    # name resolves everywhere else.
     candidates = ["libcuda.so.1"] + [
         str(directory / "libcuda.so.1")
         for directory in (*_DRIVER_ONLY_LIB_DIRS, *_HOST_LIB_DIRS)
@@ -113,8 +114,12 @@ def driver_cuda_major() -> int:
 
 
 def sdk_variant() -> str:
-    """Nix cannot see the installed driver (cuda12 vs cuda13) or /proc/device-tree
-    (orin vs thor), so the flake's default package cannot make this choice.
+    """Pick the dim-slam flake attr for this host.
+
+    Python picks instead of the flake's default package because nix evaluation is
+    hermetic: it can branch on arch/OS only, and cannot see the installed driver
+    (cuda12 vs cuda13 on x86) or /proc/device-tree (orin vs thor, both
+    aarch64-linux). Those need this host-side probe.
     """
     if sys.platform == "darwin":
         return "metal"
@@ -147,49 +152,79 @@ def _driver_env() -> dict[str, str]:
     return {"LD_LIBRARY_PATH": ":".join(parts)}
 
 
+# jeff/feat/dim_slam tip; tag on merge.
+DIMSLAM_REV = "8d08c61a874d45453857488d8c8d1aeac8e2d210"
+
+
+def dimslam_build_command() -> str:
+    """`nix build` line for the dimSLAM binary, resolved for this host.
+
+    It drops the `result` symlink in the module's cwd.
+    """
+    return f"nix build github:dimensionalOS/dimSLAM/{DIMSLAM_REV}#{sdk_variant()}"
+
+
 class DimSlamConfig(NativeModuleConfig):
-    cwd: str | None = str(MODULE_DIR / "rust")
+    cwd: str | None = str(MODULE_DIR)
     executable: str = "result/bin/dim_slam"
-    build_command: str | None = Field(
-        default_factory=lambda: f"nix build -L 'path:.#{sdk_variant()}'"
-    )
+    build_command: str | None = Field(default_factory=dimslam_build_command)
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
 
+    # "stereo" is two or more overlapping cameras; "mono" is accurate up to scale.
     camera_mode: Literal["stereo", "mono", "rgbd"] = "stereo"
-    # Empty: auto-discover from camera_info.
+    # Empty discovers a single camera or a single pair off camera_info.
     camera_frames: list[str] = Field(default_factory=list)
-    # Asserted, not performed.
+    # Asserts the images arrive rectified: no distortion, rows already aligned.
     rectified: bool = True
-    # Off runs the deterministic CPU path, which needs a libcuvslam built
-    # -DENFORCE_GPU=OFF. A build carrying only the other backend is used with a warning.
+    # Off runs the tracker on the CPU (deterministic, no CUDA). Needs a libcuvslam built
+    # with ENFORCE_GPU=OFF (the jeff-hykin/cuVSLAM fork); NVIDIA's stock SDK is GPU-only.
     use_gpu: bool = True
 
     # The tracker's own world frame, drifting freely; the filter fuses it as a
     # drifting source, so it must appear in source_frames.
     visual_odom_frame: str = "visual_odom"
-    # Frame the cuVSLAM rig is built in. Empty means base_frame.
+    # Frame the cuVSLAM rig is built in. Empty means base_frame. Pointing it at a camera's
+    # optical frame reproduces NVIDIA's examples, whose rig is the left camera; output stays
+    # on base_frame either way, the two differing by a fixed transform.
     rig_frame: str = ""
 
     # cuVSLAM's Inertial mode: the stereo pair plus one IMU. The noise model and frame
-    # come from the imu_info stream. Separate from use_imu, which feeds the fusion
-    # filter. Implemented only on the CUDA path.
+    # come from the imu_info stream, published by the driver the way camera_info is.
+    # Separate from use_imu, which feeds the fusion filter. Implemented only on the
+    # CUDA path.
     cuvslam_enable_imu: bool = False
-    # Translation std (m) above which the frame's motion is dropped and the path rebased;
-    # 0 disables.
+    # Rebase guard: a frame whose translation standard deviation (root of the largest
+    # translation term of cuVSLAM's covariance) exceeds this has its motion dropped and the
+    # path rebased onto the held pose, so the published odometry never carries a teleport
+    # from an unconstrained scene. Meters; 0 publishes the raw integrator untouched.
+    # Measured: well-constrained frames report 0.01-0.3 m, degenerate bursts (blank wall,
+    # repeated texture) 5-330 m or NaN, so 1.0 separates them by an order of magnitude.
     covariance_gate_translation_std: float = 1.0
-    # Frame-to-frame m/s and rad/s, catching teleports the covariance gate misses; 0 disables.
+    # Rebase guard on physically implausible frame-to-frame motion, in metres/second and
+    # radians/second against the previous tracked frame. Catches confident teleports the
+    # covariance gate misses (0.9 m in one 33 ms frame is 27 m/s) without trusting the
+    # tracker's self-report; VINS-Mono's failureDetection() gates the same way. Linear sits
+    # above any handheld or robot speed (jogging is ~4 m/s), angular deliberately high --
+    # a fast handheld pan peaks near 5 rad/s. 0 disables that limit.
     speed_gate_max_linear: float = 5.0
     speed_gate_max_angular: float = 12.0
-    # Raw depth units per metre; cuVSLAM assumes 1 and depth images are 16-bit millimetres.
+    # rgbd only: raw depth units per metre. cuVSLAM assumes 1, and depth images are
+    # 16-bit millimetres.
     depth_units_per_meter: float = 1000.0
     # Range gate on the published depth_cloud, metres. Stereo depth error grows as range
     # squared, so the far gate decides whether the cloud is worth mapping with; 0 leaves
-    # it open.
+    # it open. 4 m won the D455 mapping grid (top-down F1 .570 vs .506 for the 6 m gate,
+    # scored against a lidar-raycast reference on drive_2026-08-18_23-05-04.db).
     depth_cloud_min_range: float = 0.0
-    depth_cloud_max_range: float = 0.0
-    # One point per k x k depth block (median of in-gate depths). <= 1 emits every pixel.
-    depth_cloud_decimation: int = 1
+    depth_cloud_max_range: float = 4.0
+    # Emit one point per k x k depth block instead of every pixel: the median of the
+    # block's in-gate depths, deprojected at the block centre. The median (not mean)
+    # keeps a block on one surface at depth discontinuities instead of inventing a
+    # flying pixel, and blocks with under half their pixels valid are dropped as edge
+    # noise. <= 1 emits every pixel; 3 keeps a 30 Hz D455 cloud consumable in real time
+    # (a full-resolution cloud is ~400k points per frame and drowns the mapper).
+    depth_cloud_decimation: int = 3
     # rgbd only: densify the depth image with the depth2depth crate before the cloud is
     # cut from it (Depth Anything V2 anchored to the trusted raw pixels). Both
     # safetensors paths set turns it on; the binary must be built with the depth2depth
@@ -211,10 +246,11 @@ class DimSlamConfig(NativeModuleConfig):
 
     map_frame: str = "map"
     odom_frame: str = "odom"
+    # Poses are published relative to this.
     base_frame: str = "base_link"
     # map->odom can only be identity: this module carries no map correction yet.
     publish_map_to_odom: bool = True
-    # Off when something downstream owns odom -> base_frame.
+    # Off publishes odometry only, for when something downstream owns odom -> base_frame.
     publish_tf: bool = True
 
     # The filter itself steps at the IMU rate; this is only how often it emits.
@@ -223,23 +259,21 @@ class DimSlamConfig(NativeModuleConfig):
     # Standard deviations per measurement dimension before a reading is called an
     # outlier. 0 disables the gate.
     mahalanobis_gate: float = 5.0
-    # Caps the filter's own state rather than an incoming reading. 0 disables it.
-    max_position_m: float = 10000.0
 
-    # On, the filter propagates on IMU and needs all four noise figures below. Off, it is
-    # seeded level from the first source message and holds its pose between them.
-    use_imu: bool = False
+    # With this off the filter is seeded level from the first source message and coasts
+    # at constant world velocity between measurements instead of propagating on IMU.
+    use_imu: bool = True
 
-    # The IMU's datasheet noise figures, in the continuous-time units the filter wants:
-    # rad/s/sqrt(Hz), rad/s^2/sqrt(Hz), m/s^2/sqrt(Hz), m/s^3/sqrt(Hz). use_imu requires
-    # all four above zero.
-    imu_gyro_noise_density: float = 0.0
-    imu_gyro_random_walk: float = 0.0
-    imu_accel_noise_density: float = 0.0
-    imu_accel_random_walk: float = 0.0
+    # Bosch BMI055 figures for the D455's IMU, in the continuous-time units the filter
+    # wants: rad/s/sqrt(Hz), rad/s^2/sqrt(Hz), m/s^2/sqrt(Hz), m/s^3/sqrt(Hz).
+    imu_gyro_noise_density: float = 0.0018
+    imu_gyro_random_walk: float = 2e-5
+    imu_accel_noise_density: float = 0.02
+    imu_accel_random_walk: float = 3e-3
     gravity: float = 9.81
-    # Averaged while stationary to level the filter and take the gyro bias; leaving that
-    # bias in cost 19.8 m of final error against 1.6 m on a 517 s Alfred drive. At 200 Hz
+    # Averaged while stationary to level the filter and take the gyro bias. Offline on a
+    # 517 s Alfred drive, leaving that bias in cost 19.8 m of final error against 1.6 m
+    # with it removed, so this is the single most load-bearing number here. At 200 Hz
     # this is one second of standing still at startup.
     imu_init_samples: int = 200
 
@@ -250,7 +284,9 @@ class DimSlamConfig(NativeModuleConfig):
 
     # One entry per source, matched against each message's header.frame_id. A source
     # whose frame is odom_frame is fused absolutely; anything else is fused as
-    # filter-anchored deltas, since its own pose has drifted.
+    # filter-anchored deltas, since its own pose has drifted. The tracker feeds the
+    # filter under visual_odom_frame without a wire hop; external sources arrive on
+    # ``sources``.
     source_frames: list[str] = Field(default_factory=lambda: ["visual_odom"])
     # 6 per source, [x y z roll pitch yaw] then [vx vy vz wx wy wz]: below zero takes the
     # message covariance, zero drops the dimension, above zero is a fixed variance.
@@ -263,36 +299,25 @@ class DimSlamConfig(NativeModuleConfig):
     # zero with this variance; zero leaves it free.
     constraint_twist_variances: list[float] = Field(default_factory=lambda: [0.0] * 6)
 
-    @model_validator(mode="after")
-    def _imu_noise_is_set(self) -> DimSlamConfig:
-        missing = [
-            name
-            for name in (
-                "imu_gyro_noise_density",
-                "imu_gyro_random_walk",
-                "imu_accel_noise_density",
-                "imu_accel_random_walk",
-            )
-            if getattr(self, name) <= 0.0
-        ]
-        if self.use_imu and missing:
-            raise ValueError(f"use_imu needs the IMU's noise figures: {', '.join(missing)}")
-        return self
-
 
 class DimSlam(NativeModule):
-    """Every camera publishes onto the same ``image`` and ``camera_info`` streams and is
+    """cuVSLAM visual odometry feeding an error-state Kalman fusion filter in-process.
+
+    Every camera publishes onto the same ``image`` and ``camera_info`` streams and is
     told apart by ``frame_id``; ``camera_frames`` fixes which frames are on the rig and
-    in what order. Extrinsics come from tf against ``rig_frame``. ``depth_image`` feeds
-    ``depth_cloud`` in every mode, and is additionally tracked against in ``rgbd``,
-    reprojected onto the rig camera through ``depth_camera_info`` and tf when the depth
-    sensor differs.
+    in what order. Extrinsics come from tf against ``base_frame``, which is also the
+    rig frame. ``rgbd`` pairs one camera with ``depth_image``. Depth recorded against a
+    different sensor than the rig camera (a D455 aligns depth to the left IR camera, not
+    color) is reprojected onto the rig camera through ``depth_camera_info`` and tf.
 
     The tracker's pose stream never touches the wire: it enters the filter as a
     drifting source under ``visual_odom_frame``. Any number of external sources
     (wheel odometry, ...) publish onto ``sources`` and are told apart by
-    ``header.frame_id``. Late messages roll the filter back to their own slot and replay
-    everything after.
+    ``header.frame_id``, so adding one is a config change rather than a port change.
+    Late messages roll the filter back to their own slot and replay everything after.
+
+    ``odometry`` is the fused ``odom_frame`` -> ``base_frame`` pose; ``tf`` carries the
+    same edge and an identity ``map`` -> ``odom``.
     """
 
     config: DimSlamConfig
