@@ -15,6 +15,12 @@
       let
         pkgs = import nixpkgs { inherit system; };
 
+        # Re-copied out of the whole-repo input into their own content-addressed
+        # store paths, so the build only sees the crates it consumes: a commit
+        # elsewhere in the repo changes dimos-repo's hash but not these, and the
+        # previously built binary is reused instead of recompiled.
+        crate = name: builtins.path { inherit name; path = "${dimos-repo}/native/rust/${name}"; };
+
         src = pkgs.runCommand "voxel-ray-tracing-src" {} ''
           mkdir -p $out/dimos/mapping/ray_tracing/rust
           cp -r ${./src} $out/dimos/mapping/ray_tracing/rust/src
@@ -22,8 +28,8 @@
           cp ${./Cargo.lock} $out/dimos/mapping/ray_tracing/rust/Cargo.lock
 
           mkdir -p $out/native/rust
-          cp -r ${dimos-repo}/native/rust/dimos-module $out/native/rust/dimos-module
-          cp -r ${dimos-repo}/native/rust/dimos-module-macros $out/native/rust/dimos-module-macros
+          cp -r ${crate "dimos-module"} $out/native/rust/dimos-module
+          cp -r ${crate "dimos-module-macros"} $out/native/rust/dimos-module-macros
         '';
       in {
         packages.default = pkgs.rustPlatform.buildRustPackage {
