@@ -28,8 +28,6 @@ import websockets.asyncio.client as ws_client
 from dimos.core.global_config import global_config
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
-_TEST_PORT = 13031
-
 
 class MockViewerPublisher:
     """Simulates dimos-viewer sending JSON events over WebSocket."""
@@ -102,11 +100,12 @@ class MockViewerPublisher:
 @pytest.fixture()
 def server(wait_for_server: Any) -> RerunWebSocketServer:
     original_port = global_config.rerun_websocket_server_port
-    global_config.update(rerun_websocket_server_port=_TEST_PORT)
+    # Port 0: bind an ephemeral port so parallel test workers never collide.
+    global_config.update(rerun_websocket_server_port=0)
     try:
         module = RerunWebSocketServer()
         module.start()
-        wait_for_server(_TEST_PORT)
+        wait_for_server(module.bound_port)
         yield module  # type: ignore[misc]
         module.stop()
     finally:
@@ -115,7 +114,7 @@ def server(wait_for_server: Any) -> RerunWebSocketServer:
 
 @pytest.fixture()
 def publisher(server: RerunWebSocketServer) -> MockViewerPublisher:
-    with MockViewerPublisher(f"ws://127.0.0.1:{_TEST_PORT}/ws") as publisher:
+    with MockViewerPublisher(f"ws://127.0.0.1:{server.bound_port}/ws") as publisher:
         yield publisher  # type: ignore[misc]
 
 
@@ -183,7 +182,7 @@ def test_invalid_json_does_not_crash(server: RerunWebSocketServer) -> None:
     """Malformed JSON is silently dropped; server stays alive for the next message."""
 
     async def _send_bad() -> None:
-        async with ws_client.connect(f"ws://127.0.0.1:{_TEST_PORT}/ws") as ws:
+        async with ws_client.connect(f"ws://127.0.0.1:{server.bound_port}/ws") as ws:
             await ws.send("this is not json {{")
             await asyncio.sleep(0.1)
             await ws.send(json.dumps({"type": "heartbeat", "timestamp_ms": 0}))
