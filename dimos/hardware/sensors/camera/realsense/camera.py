@@ -561,9 +561,15 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         while self._running and self._pipeline is not None:
             try:
                 frames = self._pipeline.wait_for_frames(timeout_ms=1000)
-            except (RuntimeError, AttributeError):
-                # Pipeline stopped or None - exit loop
+            except AttributeError:
                 break
+            except RuntimeError as exc:
+                # wait_for_frames also raises RuntimeError on a frame timeout;
+                # only exit if the pipeline was actually stopped.
+                if not self._running or self._pipeline is None:
+                    break
+                logger.warning("realsense frame wait failed, retrying: %s", exc)
+                continue
 
             # Grab the infrared stereo pair from the raw frameset before align()
             # (align rebuilds the frameset around depth+color and drops IR).
