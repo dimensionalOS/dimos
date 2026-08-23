@@ -18,7 +18,10 @@
 subscribe across all streams pins a single ``(wall_t0, replay_t0)`` anchor;
 subsequent subscribers schedule emissions against the same anchor, so
 ``replay.streams.lidar.observable()`` and ``replay.streams.odom.observable()``
-advance together. Late subscribers skip past data already behind wall time.
+advance together. Frames whose slot on that clock has already passed are
+dropped — a live sensor stays on the wall clock and a loaded pipeline loses
+frames, so a slow consumer sees the same thing here instead of silently
+receiving an ever-older stream.
 """
 
 from __future__ import annotations
@@ -32,21 +35,24 @@ import reactivex as rx
 from reactivex.abc import DisposableBase, ObserverBase, SchedulerBase
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
-from reactivex.scheduler import TimeoutScheduler
 
 from dimos.memory.store.base import Store, StreamAccessor
 from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.utils.data import resolve_named_path
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     from dimos.memory.stream import Stream
 
+logger = setup_logger()
+
 T = TypeVar("T")
 
 _LOOP_GAP = 0.05  # min wall-time gap inserted between loop wraps (seconds)
-_LATE_TOLERANCE = 0.05  # don't skip frames within this many seconds of "now"
+_LATE_TOLERANCE = 0.05  # don't drop frames within this many wall seconds of "now"
+_DROP_LOG_INTERVAL = 5.0  # min wall seconds between dropped-frame log lines
 
 
 def resolve_db_path(dataset: str | Path) -> Path:
@@ -216,90 +222,119 @@ class ReplayStream(Generic[T]):
         """Timed Observable scheduled against the Replay's shared anchor.
 
         The first subscribe across the whole :class:`Replay` pins
-        ``(wall_t0, replay_t0)``. Late subscribers compute their entry from
-        the same anchor and skip past frames already behind wall time.
-        Adapted from the legacy ``timed_playback`` (which pinned a fresh
-        anchor per subscribe).
+        ``(wall_t0, replay_t0)``; every frame's emission slot follows from
+        that anchor alone. A frame whose slot has already passed is dropped
+        (and the drops logged): emitting it late instead would let a slow
+        consumer or decode pull this stream ever further behind the others,
+        which a live pipeline can never do. Late subscribers enter the same
+        way, skipping straight to the first frame still ahead of the clock.
         """
         replay = self._replay
         speed = replay.config.speed
         loop = replay.config.loop
         decode = self._decode
         base = self._base_stream
+        name = self._name
 
         def subscribe(
             observer: ObserverBase[T],
             scheduler: SchedulerBase | None = None,
         ) -> DisposableBase:
-            sched = scheduler or TimeoutScheduler()
             is_disposed = False
+            dropped = 0
+            last_drop_log = 0.0
+            wrap_offset = 0.0
+            prev_ts: float | None = None
 
-            def make_iterator() -> Iterator[tuple[float, T]]:
+            # Decode is deferred to emission so dropped frames cost a db
+            # fetch, not an image decode.
+            def make_iterator() -> Iterator[tuple[float, Any]]:
                 while True:
                     emitted = False
                     obs: Any
                     for obs in base():
                         emitted = True
-                        yield (obs.ts, decode(obs))
+                        yield (obs.ts, obs)
                     if not loop or not emitted:
                         break
 
             iterator = make_iterator()
 
             try:
-                first_ts, first_data = next(iterator)
+                first_ts, _ = candidate = next(iterator)
             except StopIteration:
                 observer.on_completed()
                 return Disposable()
 
             wall_t0, replay_t0 = replay._resolve_anchor(first_ts)
-            now_replay = replay_t0 + (time.time() - wall_t0) * speed
 
-            # Late-subscribe skip: drop frames behind the wall clock. Stop
-            # if the iterator wraps (ts < prev) — that means we've exhausted
-            # one full pass without finding a forward frame.
-            wrap_offset = 0.0
-            prev_skip = first_ts
-            while first_ts < now_replay - _LATE_TOLERANCE:
-                try:
-                    cand_ts, cand_data = next(iterator)
-                except StopIteration:
-                    observer.on_completed()
-                    return Disposable()
-                if cand_ts < prev_skip:
-                    wrap_offset += (prev_skip - cand_ts) + _LOOP_GAP
-                    first_ts, first_data = cand_ts, cand_data
-                    break
-                first_ts, first_data = cand_ts, cand_data
-                prev_skip = cand_ts
+            def target_of(ts: float) -> float:
+                """Wall time this frame is due, advancing the loop-wrap offset."""
+                nonlocal wrap_offset, prev_ts
+                if prev_ts is not None and ts < prev_ts:
+                    wrap_offset += (prev_ts - ts) + _LOOP_GAP
+                prev_ts = ts
+                return wall_t0 + ((ts + wrap_offset) - replay_t0) / speed
 
-            prev_ts = first_ts
-
-            def schedule(message: tuple[float, T], wrap_off: float, prev: float) -> None:
-                ts, data = message
-                if ts < prev:
-                    wrap_off += (prev - ts) + _LOOP_GAP
-                target = wall_t0 + ((ts + wrap_off) - replay_t0) / speed
-                delay = max(0.0, target - time.time())
-
-                def emit(_s: SchedulerBase, _state: object) -> DisposableBase | None:
-                    nonlocal wrap_offset, prev_ts
-                    if is_disposed:
-                        return None
-                    observer.on_next(data)
+            def next_due(candidate: tuple[float, Any]) -> tuple[float, Any, float] | None:
+                """First frame still ahead of the wall clock, dropping late ones."""
+                nonlocal dropped, last_drop_log
+                ts, raw = candidate
+                target = target_of(ts)
+                while target < time.time() - _LATE_TOLERANCE:
+                    dropped += 1
+                    if time.time() - last_drop_log > _DROP_LOG_INTERVAL:
+                        last_drop_log = time.time()
+                        logger.warning(
+                            "replay stream %s is behind schedule, dropping late frames"
+                            " (%d dropped so far)",
+                            name,
+                            dropped,
+                        )
                     try:
-                        nxt = next(iterator)
+                        ts, raw = next(iterator)
                     except StopIteration:
-                        observer.on_completed()
                         return None
-                    wrap_offset = wrap_off
-                    prev_ts = ts
-                    schedule(nxt, wrap_offset, prev_ts)
-                    return None
+                    target = target_of(ts)
+                return (ts, raw, target)
 
-                sched.schedule_relative(delay, emit)
+            def finish() -> None:
+                if dropped:
+                    logger.info("replay stream %s dropped %d late frames", name, dropped)
+                observer.on_completed()
 
-            schedule((first_ts, first_data), wrap_offset, prev_ts)
+            def run(due: tuple[float, Any, float]) -> None:
+                while not is_disposed:
+                    _, raw, target = due
+                    # Sleep in small chunks: macOS timer coalescing multiplies a
+                    # background process's sleeps severalfold, so one request for
+                    # the whole delay can overshoot by hundreds of milliseconds.
+                    while not is_disposed:
+                        remaining = target - time.time()
+                        if remaining <= 0:
+                            break
+                        time.sleep(min(max(remaining / 8, 0.0005), 0.5))
+                    if is_disposed:
+                        return
+                    observer.on_next(decode(raw))
+                    try:
+                        candidate = next(iterator)
+                    except StopIteration:
+                        finish()
+                        return
+                    nxt = next_due(candidate)
+                    if nxt is None:
+                        finish()
+                        return
+                    due = nxt
+
+            first_due = next_due(candidate)
+            if first_due is None:
+                finish()
+                return Disposable()
+            threading.Thread(
+                target=run, args=(first_due,), name=f"replay-{name}", daemon=True
+            ).start()
 
             def dispose() -> None:
                 nonlocal is_disposed
