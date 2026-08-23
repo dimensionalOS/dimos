@@ -152,8 +152,8 @@ def _driver_env() -> dict[str, str]:
     return {"LD_LIBRARY_PATH": ":".join(parts)}
 
 
-# jeff/feat/dim_slam tip; tag on merge.
-DIMSLAM_REV = "8d08c61a874d45453857488d8c8d1aeac8e2d210"
+# Odom-fusion work lands on this branch; tag on merge.
+DIMSLAM_REF = "jeff/feat/odom_fusion"
 
 
 def dimslam_build_command() -> str:
@@ -161,7 +161,7 @@ def dimslam_build_command() -> str:
 
     It drops the `result` symlink in the module's cwd.
     """
-    return f"nix build github:dimensionalOS/dimSLAM/{DIMSLAM_REV}#{sdk_variant()}"
+    return f"nix build 'github:dimensionalOS/dimSLAM?ref={DIMSLAM_REF}#{sdk_variant()}'"
 
 
 class DimSlamConfig(NativeModuleConfig):
