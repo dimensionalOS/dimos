@@ -203,6 +203,11 @@ class DimSlamConfig(NativeModuleConfig):
     # on the depth frame. Set to the color camera's frame when depth is aligned to a
     # camera without color (D455: depth follows the left IR camera).
     depth2depth_color_frame: str = ""
+    # Each depth image is fused with the recent color image closest in stamp; a
+    # stalled color stream would silently guide densification with another moment's
+    # scene. A depth frame with no color inside this stamp window gets a raw
+    # (undensified) cloud, and once fusion has begun, staying in that state is fatal.
+    depth2depth_max_color_skew_seconds: float = 0.5
 
     map_frame: str = "map"
     odom_frame: str = "odom"
