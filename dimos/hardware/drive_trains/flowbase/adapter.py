@@ -26,15 +26,28 @@ We negate vy and wz when sending to the hardware.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+import math
 import threading
+import time
+from typing import Any
 
 import numpy as np
 
+from dimos.core.transport import LCMTransport
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 DEFAULT_ADDRESS = "172.6.2.20:11323"
+DEFAULT_ODOMETRY_TOPIC = "/wheel_odometry"
+DEFAULT_ODOMETRY_FRAME = "wheel_odom"
+DEFAULT_BASE_FRAME = "base_link"
 
 
 class FlowBaseAdapter:
@@ -48,7 +61,18 @@ class FlowBaseAdapter:
         address: Portal RPC address as "host:port" (default: ``DEFAULT_ADDRESS``)
     """
 
-    def __init__(self, dof: int = 3, address: str | None = None, **_: object) -> None:
+    def __init__(
+        self,
+        dof: int = 3,
+        address: str | None = None,
+        odometry_topic: str = DEFAULT_ODOMETRY_TOPIC,
+        odometry_frame: str = DEFAULT_ODOMETRY_FRAME,
+        base_frame: str = DEFAULT_BASE_FRAME,
+        transport_cls: type = LCMTransport,
+        clock: Callable[[], float] = time.time,
+        monotonic_clock: Callable[[], float] = time.monotonic,
+        **_: object,
+    ) -> None:
         if dof != 3:
             raise ValueError(f"FlowBase only supports 3 DOF (holonomic), got {dof}")
 
@@ -56,38 +80,79 @@ class FlowBaseAdapter:
         self._client = None
         self._connected = False
         self._enabled = False
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._odometry_topic = odometry_topic
+        self._odometry_frame = odometry_frame
+        self._base_frame = base_frame
+        self._transport_cls = transport_cls
+        self._clock = clock
+        self._monotonic_clock = monotonic_clock
+        self._odometry_transport: Any = None
+        self._previous_odometry: tuple[float, float, float, float] | None = None
 
         # Last commanded velocities (in standard frame, before negation)
         self._last_velocities = [0.0, 0.0, 0.0]
 
     def connect(self) -> bool:
         """Connect to FlowBase controller via Portal RPC."""
+        client = None
+        odometry_transport = None
         try:
             import portal
 
-            self._client = portal.Client(self._address)
-            self._connected = True
+            client = portal.Client(self._address)
+            odometry_transport = self._transport_cls(self._odometry_topic, Odometry)
+            with self._lock:
+                self._client = client
+                self._odometry_transport = odometry_transport
+                self._previous_odometry = None
+                self._last_velocities = [0.0, 0.0, 0.0]
+                self._enabled = False
+                self._connected = True
             logger.info(f"Connected to FlowBase at {self._address}")
             return True
         except Exception as e:
             logger.error(f"Failed to connect to FlowBase at {self._address}: {e}")
-            self._connected = False
+            if client is not None:
+                try:
+                    client.close()
+                except Exception:
+                    pass
+            if odometry_transport is not None:
+                try:
+                    odometry_transport.stop()
+                except Exception:
+                    pass
+            with self._lock:
+                self._client = None
+                self._odometry_transport = None
+                self._connected = False
             return False
 
     def disconnect(self) -> None:
         """Disconnect and send zero velocity."""
-        if self._connected and self._client:
-            try:
+        with self._lock:
+            if self._connected and self._client:
                 self._send_velocity(0.0, 0.0, 0.0)
-            except Exception:
-                pass
+            client = self._client
+            odometry_transport = self._odometry_transport
+            self._connected = False
+            self._client = None
+            self._odometry_transport = None
+            self._previous_odometry = None
+            self._last_velocities = [0.0, 0.0, 0.0]
+            self._enabled = False
+
+        if client is not None:
             try:
-                self._client.close()
+                client.close()
             except Exception:
                 pass
-        self._connected = False
-        self._client = None
+        if odometry_transport is not None:
+            try:
+                odometry_transport.stop()
+            except Exception:
+                pass
 
     def is_connected(self) -> bool:
         """Check if connected to FlowBase."""
@@ -103,23 +168,38 @@ class FlowBaseAdapter:
             return self._last_velocities.copy()
 
     def read_odometry(self) -> list[float] | None:
-        """Read odometry from FlowBase as [x, y, theta]."""
+        """Publish wheel odometry and return coordinator virtual-joint values.
+
+        ``ConnectedTwistBase`` treats this list as the position of its virtual
+        ``vx/vy/wz`` joints. Keep those values as velocities; the integrated
+        pose is published separately as ``nav_msgs.Odometry``.
+        """
         if not self._connected or not self._client:
             return None
 
         try:
             with self._lock:
                 odom = self._client.get_odometry({}).result()
+                if odom is None:
+                    return self._last_velocities.copy()
 
-            if odom is None:
-                return None
-
-            translation = odom["translation"]  # [x, y]
-            rotation = odom["rotation"]  # theta in radians
-            return [float(translation[0]), float(translation[1]), float(rotation)]
+                translation = odom["translation"]
+                x = float(translation[0])
+                y = -float(translation[1])
+                yaw = -float(odom["rotation"])
+                message = self._make_odometry_message(
+                    self._clock(), self._monotonic_clock(), x, y, yaw
+                )
+                transport = self._odometry_transport
+                if transport is not None:
+                    try:
+                        transport.publish(message)
+                    except Exception as e:
+                        logger.error(f"Error publishing FlowBase wheel odometry: {e}")
+                return self._last_velocities.copy()
         except Exception as e:
             logger.error(f"Error reading FlowBase odometry: {e}")
-            return None
+            return self.read_velocities()
 
     def write_velocities(self, velocities: list[float]) -> bool:
         """Send velocity command to FlowBase.
@@ -171,3 +251,38 @@ class FlowBaseAdapter:
         except Exception as e:
             logger.error(f"Error sending FlowBase velocity: {e}")
             return False
+
+    def _make_odometry_message(
+        self,
+        ts: float,
+        monotonic_ts: float,
+        x: float,
+        y: float,
+        yaw: float,
+    ) -> Odometry:
+        twist = Twist()
+        if self._previous_odometry is not None:
+            last_ts, last_x, last_y, last_yaw = self._previous_odometry
+            dt = monotonic_ts - last_ts
+            if dt > 0.0:
+                dx = x - last_x
+                dy = y - last_y
+                forward = math.cos(yaw) * dx + math.sin(yaw) * dy
+                left = -math.sin(yaw) * dx + math.cos(yaw) * dy
+                turn = math.atan2(math.sin(yaw - last_yaw), math.cos(yaw - last_yaw))
+                twist = Twist(
+                    linear=Vector3(forward / dt, left / dt, 0.0),
+                    angular=Vector3(0.0, 0.0, turn / dt),
+                )
+        self._previous_odometry = (monotonic_ts, x, y, yaw)
+
+        return Odometry(
+            ts=ts,
+            frame_id=self._odometry_frame,
+            child_frame_id=self._base_frame,
+            pose=Pose(
+                position=Vector3(x, y, 0.0),
+                orientation=Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
+            ),
+            twist=twist,
+        )

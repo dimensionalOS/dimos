@@ -54,7 +54,17 @@ dimos run coordinator-flowbase-keyboard-teleop
 ```
 
 Both use the `flowbase` adapter against `172.6.2.20:11323` and
-publish/subscribe on LCM `/cmd_vel` + `/coordinator_joint_state`.
+publish/subscribe on LCM `/cmd_vel` + `/coordinator_joint_state`. The adapter
+also publishes the controller's integrated pose and derived body-frame twist as
+`nav_msgs.Odometry` on `/wheel_odometry`.
+
+The coordinator's `base/vx`, `base/vy`, and `base/wz` entries remain virtual
+velocity joints. Integrated pose is available only on `/wheel_odometry`; it is
+not inserted into those joint values.
+
+```bash
+dimos topic echo /wheel_odometry
+```
 
 ### Blueprint notes
 
@@ -69,5 +79,8 @@ publish/subscribe on LCM `/cmd_vel` + `/coordinator_joint_state`.
 - Frame convention: FlowBase uses inverted Y/yaw. The adapter negates
   `vy` and `wz` before sending — commands in / odometry out are standard
   ROS frame.
+- Wheel odometry uses `wheel_odom -> base_link` frame labels but does not
+  publish TF, so it can be fused without competing with a localization source
+  that already owns `odom -> base_link`.
 - Address override: edit `_flowbase_twist_base(address=...)` in
   [mobile.py](../../../control/blueprints/mobile.py).
