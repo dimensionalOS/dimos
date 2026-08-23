@@ -78,16 +78,12 @@ class AlfredHighLevel(Module):
         self._stop_task: asyncio.Task[None] | None = None
         self._odometry_task: asyncio.Task[None] | None = None
         self._last_velocities = [0.0, 0.0, 0.0]
-        # The controller multiplexes one connection; a velocity command issued
-        # while the odometry poll is mid-call would interleave on it.
         self._client_lock = asyncio.Lock()
 
     async def main(self) -> AsyncGenerator[None, None]:
-        # The controller multiplexes one connection; a velocity command issued
-        # while the odometry poll is mid-call would interleave on it. Created
-        # here rather than in __init__ so each run binds the lock to its own
-        # event loop — a module restart replaces self._loop, and an inherited
-        # lock raises "bound to a different event loop" and kills the client.
+        # The controller multiplexes one connection; the lock keeps a velocity
+        # command from interleaving with an in-flight odometry poll. Recreated
+        # each run so a restart binds it to the new event loop.
         self._client_lock = asyncio.Lock()
         client = portal.Client(self.config.address)
         self._client = client
@@ -189,19 +185,8 @@ class AlfredHighLevel(Module):
             return False
 
     async def _poll_wheel_odometry(self) -> None:
-        """Publish the controller's integrated wheel odometry as `wheel_odometry`.
-
-        The controller returns planar `[x, y]` and a heading, already integrated
-        on-board, in the same inverted-Y frame `move` sends into — so y and yaw
-        are negated back on the way out, and a ROS-frame consumer sees a pose
-        consistent with the velocities it commanded.
-
-        Twist is differenced from consecutive poses and rotated into the base
-        frame. The controller exposes no velocity of its own, and a wheel
-        source's velocity is the part worth having: its heading drifts without
-        bound, while the per-sample increment does not.
-        """
-        period = 1.0 / max(self.config.wheel_odometry_hz, 1e-3)
+        """Publish the controller's on-board integrated pose as `wheel_odometry`."""
+        period = 1.0 / self.config.wheel_odometry_hz
         previous: tuple[float, float, float, float] | None = None
         while True:
             start = asyncio.get_running_loop().time()
@@ -219,7 +204,11 @@ class AlfredHighLevel(Module):
                 await asyncio.sleep(period)
                 continue
 
+            # The controller integrates in the same inverted-Y frame move()
+            # sends into; negate back so consumers see the ROS convention.
             y, yaw = -y, -yaw
+            # The controller reports no velocity, so difference consecutive
+            # poses and rotate the world-frame displacement into the base frame.
             twist = Twist()
             if previous is not None:
                 last_ts, last_x, last_y, last_yaw = previous
