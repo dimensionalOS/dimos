@@ -35,10 +35,9 @@ import asyncio
 from collections.abc import AsyncGenerator
 import math
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import portal
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -51,6 +50,11 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.robot.diy.alfred.config import DEFAULT_ADDRESS
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    # An optional hardware dependency (the `misc` extra); imported lazily at
+    # connect time so merely importing this module doesn't require it.
+    import portal
 
 logger = setup_logger()
 
@@ -85,6 +89,8 @@ class AlfredHighLevel(Module):
         # command from interleaving with an in-flight odometry poll. Recreated
         # each run so a restart binds it to the new event loop.
         self._client_lock = asyncio.Lock()
+        import portal
+
         client = portal.Client(self.config.address)
         self._client = client
         logger.info(f"Connected to Alfred at {self.config.address}")
