@@ -190,6 +190,7 @@ print(f"With prefix: {sensor2.frame_id}")
 ```
 
 ```results
+00:33:00.665 [inf][otocol/service/zenohservice.py] Zenoh session opened connect=[] gossip=True listen=['tcp/127.0.0.1:0'] mode=peer multicast_interface=lo
 Default frame_id: sensor_link
 With prefix: robot1/sensor_link
 ```
@@ -449,7 +450,7 @@ print(tf)
 Latest transform: x=4.0
 Buffer has 1 transform pair(s)
 MultiTBuffer(1 buffers):
-  TBuffer(base_link -> camera_link, 5 msgs, 0.40s [2026-05-15 21:11:37 - 2026-05-15 21:11:37])
+  TBuffer(base_link -> camera_link, 5 msgs, 0.40s [2026-08-23 03:33:01 - 2026-08-23 03:33:01])
 ```
 
 This is essential for sensor fusion where you need to know where the camera was when an image was captured, not where it is now.

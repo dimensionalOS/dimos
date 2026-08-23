@@ -270,6 +270,11 @@ class ZenohSessionPool:
                 )
             return self._sessions[key]
 
+    def _close_at_exit(self) -> None:
+        """Close pooled sessions at interpreter exit, in the opening process only."""
+        if self._opened_in_pid == os.getpid():
+            self.close_all()
+
     def close_all(self) -> None:
         """Close every pooled session and empty the pool."""
         with self._lock:
@@ -285,6 +290,15 @@ class ZenohSessionPool:
 
 # Process-default pool used by production code. Constructing it opens no sessions.
 default_session_pool = ZenohSessionPool()
+
+# A session's callback threads are non-daemon, and interpreter shutdown joins
+# those before atexit callbacks run -- a bare script that touched zenoh would
+# hang past its last line. threading's own shutdown hook runs before the join,
+# so the pool close rides that instead of atexit. Only the default pool: an
+# explicitly constructed pool has an owner who closes it.
+threading._register_atexit(  # type: ignore[attr-defined]
+    default_session_pool._close_at_exit
+)
 
 
 class ZenohService(Service):
