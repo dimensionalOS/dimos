@@ -266,6 +266,20 @@ def test_gui_close_uses_bounded_operation_worker_stop(monkeypatch: pytest.Monkey
     assert stop_timeouts == [2.0]
 
 
+def test_clear_joint_sliders_tolerates_reentrant_handle_removal(mocker) -> None:
+    gui = make_gui()
+    first = mocker.Mock()
+    second = mocker.Mock()
+    first.remove.side_effect = lambda: gui._joint_sliders.pop(("arm", "j2"))
+    gui._joint_sliders = {("arm", "j1"): first, ("arm", "j2"): second}
+
+    gui._clear_joint_sliders()
+
+    first.remove.assert_called_once_with()
+    second.remove.assert_called_once_with()
+    assert gui._joint_sliders == {}
+
+
 def test_gui_only_preview_submits_timeout_override(monkeypatch: pytest.MonkeyPatch) -> None:
     submissions: list[dict[str, float]] = []
     gui = make_gui()

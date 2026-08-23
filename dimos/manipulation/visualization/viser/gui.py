@@ -698,7 +698,10 @@ class ViserPanelGui:
                 self._joint_sliders[key] = handle
 
     def _clear_joint_sliders(self) -> None:
-        for handle in self._joint_sliders.values():
+        # Removing a Viser handle can synchronously run an update callback that
+        # rebuilds this mapping. Iterate a snapshot so selection changes remain
+        # safe during that re-entrant cleanup.
+        for handle in tuple(self._joint_sliders.values()):
             try:
                 handle.remove()
             except AttributeError:
