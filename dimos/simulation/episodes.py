@@ -22,6 +22,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Protocol, runtime_checkable
 
+from dimos.sim2.episodes import PublicEpisodeContext
+
 ENTRY_POINT_GROUP = "dimos.simulation.episode_providers"
 
 
@@ -98,17 +100,23 @@ class PreparedEpisode:
     case_id: str
     blueprint_name: str
     simulator: str | None
+    context: PublicEpisodeContext
     global_args: tuple[str, ...] = ()
     extra_env: Mapping[str, str] = field(default_factory=dict)
     required_modules: tuple[str, ...] = ()
-    role_names: Mapping[str, str] = field(default_factory=dict)
-    role_reset_positions: Mapping[str, tuple[float, float, float]] = field(default_factory=dict)
+    private_role_reset_positions: Mapping[str, tuple[float, float, float]] = field(
+        default_factory=dict
+    )
 
     def __post_init__(self) -> None:
         for name in ("provider_name", "episode_id", "case_id", "blueprint_name"):
             object.__setattr__(self, name, _required_text(getattr(self, name), name))
         if self.simulator is not None:
             object.__setattr__(self, "simulator", _required_text(self.simulator, "simulator"))
+        if not isinstance(self.context, PublicEpisodeContext):
+            raise TypeError("prepared episode context must be PublicEpisodeContext")
+        if self.context.case_id != self.case_id:
+            raise ValueError("prepared episode context case_id must match the episode")
         object.__setattr__(
             self,
             "global_args",
@@ -120,18 +128,21 @@ class PreparedEpisode:
             "required_modules",
             _unique_text(self.required_modules, "required module"),
         )
-        object.__setattr__(self, "role_names", _text_mapping(self.role_names, "role name"))
         positions = {
-            _required_text(str(role_id), "role reset position key"): tuple(
+            _required_text(str(role_id), "private role reset position key"): tuple(
                 float(value) for value in position
             )
-            for role_id, position in self.role_reset_positions.items()
+            for role_id, position in self.private_role_reset_positions.items()
         }
         if any(len(position) != 3 for position in positions.values()):
-            raise ValueError("role reset positions must contain three values")
+            raise ValueError("private role reset positions must contain three values")
         if any(not math.isfinite(value) for position in positions.values() for value in position):
-            raise ValueError("role reset positions must be finite")
-        object.__setattr__(self, "role_reset_positions", MappingProxyType(positions))
+            raise ValueError("private role reset positions must be finite")
+        object.__setattr__(
+            self,
+            "private_role_reset_positions",
+            MappingProxyType(positions),
+        )
 
 
 @dataclass(frozen=True)

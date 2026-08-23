@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from dimos.memory.store.base import Store
     from dimos.memory.stream import Stream
     from dimos.porcelain.dimos import Dimos
+    from dimos.sim2.episodes import PublicEpisodeContext
     from dimos.simulation.episodes import (
         EpisodeEvaluationResult,
         EvaluationCase,
@@ -58,7 +59,7 @@ Select = Callable[["Store"], "Stream[Any, Any]"]
     lambda s: s.streams.odom.range_time(0, 600)
 """
 
-InteractiveAction = Callable[["Dimos", Mapping[str, str]], str]
+InteractiveAction = Callable[["Dimos", "PublicEpisodeContext"], str]
 """Public DimOS behavior run after an exact interactive episode is reset."""
 
 InteractiveOutputScore = Callable[[str, "PreparedEpisode"], float]
@@ -102,6 +103,7 @@ class EvalRig(Protocol):
     def setup_env(self, case: InteractiveEval) -> None: ...
     def check_env(self, case: InteractiveEval) -> None: ...
     def instruct(self, text: str) -> None: ...
+    def episode_instruction(self) -> str: ...
     def run_action(self, action: InteractiveAction) -> str: ...
     def score_output(self, score: InteractiveOutputScore, output: str) -> tuple[float, str]: ...
     def episode_identity(self) -> tuple[str, str, str]: ...
@@ -202,6 +204,7 @@ class InteractiveEval(EvalCase):
     episode: EvaluationCase | None = None
     episode_provider: str = ""
     action: InteractiveAction | None = None
+    instruction_override: str | None = None
     blueprint: str = "unitree-go2-agentic"
     simulator: str = "dimsim"  # "" = attach to a running dimos / real robot
     scene: str = "apartment"  # --dimsim-scene name (ScenePackage name later)
@@ -220,6 +223,13 @@ class InteractiveEval(EvalCase):
             raise ValueError("public action callbacks require an exact episode")
         if self.action is not None and self.skill:
             raise ValueError("interactive eval cannot combine action and skill")
+        if self.instruction_override is not None:
+            override = self.instruction_override.strip()
+            if not override:
+                raise ValueError("interactive instruction_override must not be empty")
+            if self.episode is None:
+                raise ValueError("interactive instruction_override requires an exact episode")
+            object.__setattr__(self, "instruction_override", override)
 
     def evaluate(self, rig: EvalRig) -> EvalResult:
         rig.setup_env(self)
@@ -232,7 +242,12 @@ class InteractiveEval(EvalCase):
         elif self.skill:
             outputs = rig.call_skill(self.skill, self.skill_args)
         else:
-            rig.instruct(self.inputs)
+            instruction = (
+                self.instruction_override or rig.episode_instruction()
+                if self.episode is not None
+                else self.inputs
+            )
+            rig.instruct(instruction)
 
         oracle = ""
         metrics: dict[str, float] = {}

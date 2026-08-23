@@ -411,10 +411,15 @@ class EvalRunner(Configurable, CompositeResource):
         finally:
             transport.stop()
 
+    def episode_instruction(self) -> str:
+        if self._episode is None:
+            raise RuntimeError("exact episode instruction requires an active episode")
+        return self._episode.context.instruction
+
     def run_action(self, action: InteractiveAction) -> str:
         if self._app is None or self._episode is None:
             raise RuntimeError("public action requires an active exact episode")
-        output = action(self._app, self._episode.role_names)
+        output = action(self._app, self._episode.context)
         if not isinstance(output, str):
             raise TypeError("interactive public action must return str")
         return output
@@ -426,8 +431,13 @@ class EvalRunner(Configurable, CompositeResource):
         summary = json.dumps(
             {
                 "kind": "prepared-episode-match",
-                "expected_roles": dict(self._episode.role_names),
-                "expected_reset_positions": dict(self._episode.role_reset_positions),
+                "expected_roles": {
+                    role_id: role.name for role_id, role in self._episode.context.roles.items()
+                },
+                "expected_reset_positions": {
+                    role_id: position
+                    for role_id, position in self._episode.private_role_reset_positions.items()
+                },
             },
             sort_keys=True,
         )

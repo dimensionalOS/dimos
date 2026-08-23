@@ -43,6 +43,7 @@ from dimos.evals.types import EvalCase, InteractiveEval, PassiveEval
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
+from dimos.sim2.episodes import PublicEpisodeContext, PublicEpisodeRole
 from dimos.simulation.episodes import (
     EpisodeEvaluationResult,
     EvaluationCase,
@@ -127,6 +128,9 @@ class FakeRig:
     def instruct(self, text: str) -> None:
         self.calls.append(f"instruct:{text}")
 
+    def episode_instruction(self) -> str:
+        return "exact episode instruction"
+
     def run_action(self, action: Callable[..., str]) -> str:
         self.calls.append("action")
         return self.answer
@@ -140,8 +144,19 @@ class FakeRig:
             case_id="episode-case",
             blueprint_name="robot-sim",
             simulator="fake",
-            role_names=self.roles,
-            role_reset_positions={"object": (1.0, 2.0, 3.0)},
+            context=PublicEpisodeContext(
+                case_id="episode-case",
+                instruction="Observe the cup.",
+                roles={
+                    role_id: PublicEpisodeRole(
+                        role_id=role_id,
+                        entity_id=f"{role_id}-entity",
+                        name=name,
+                    )
+                    for role_id, name in self.roles.items()
+                },
+            ),
+            private_role_reset_positions={"object": (1.0, 2.0, 3.0)},
         )
         return score(output, episode), "expected roles and reset positions"
 
@@ -267,7 +282,7 @@ def test_interactive_episode_uses_private_goal() -> None:
         inputs="do it",
         episode=_episode_case(),
         episode_provider="fake",
-        action=lambda app, roles: "action result",
+        action=lambda app, context: "action result",
     )
     rig = FakeRig(answer="action result", series=[(0.0, 0.0), (1.0, 1.0)])
 
@@ -289,10 +304,10 @@ def test_interactive_episode_can_score_public_output_against_private_reset_truth
         inputs="what do you see",
         episode=_episode_case(),
         episode_provider="fake",
-        action=lambda app, roles: "saw cup at 1.0, 2.0, 3.0",
+        action=lambda app, context: "saw cup at 1.0, 2.0, 3.0",
         output_score=lambda output, episode: float(
-            episode.role_names["object"] in output
-            and episode.role_reset_positions["object"] == (1.0, 2.0, 3.0)
+            episode.context.role("object").name in output
+            and episode.private_role_reset_positions["object"] == (1.0, 2.0, 3.0)
         ),
     )
     rig = FakeRig(answer="saw cup at 1.0, 2.0, 3.0", roles={"object": "cup"})
@@ -303,6 +318,30 @@ def test_interactive_episode_can_score_public_output_against_private_reset_truth
     assert result.outputs == "saw cup at 1.0, 2.0, 3.0"
     assert result.oracle == "expected roles and reset positions"
     assert result.series == ((0.0, 1.0),)
+
+
+def test_interactive_episode_uses_exact_instruction_unless_explicitly_overridden() -> None:
+    exact = InteractiveEval(
+        id="exact-instruction",
+        inputs="report label",
+        episode=_episode_case(),
+        episode_provider="fake",
+    )
+    overridden = InteractiveEval(
+        id="overridden-instruction",
+        inputs="report label",
+        episode=_episode_case(),
+        episode_provider="fake",
+        instruction_override="Use this intentional paraphrase.",
+    )
+    exact_rig = FakeRig(series=[(0.0, 1.0)])
+    override_rig = FakeRig(series=[(0.0, 1.0)])
+
+    exact.evaluate(exact_rig)
+    overridden.evaluate(override_rig)
+
+    assert "instruct:exact episode instruction" in exact_rig.calls
+    assert "instruct:Use this intentional paraphrase." in override_rig.calls
 
 
 # -- preflight ----------------------------------------------------------------------

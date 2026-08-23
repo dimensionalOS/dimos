@@ -53,7 +53,7 @@ def prepare_episode(
 ) -> PreparedEpisode:
     episode = provider.prepare(case, output_dir)
     _check_identity(case, episode, provider_name=provider.provider_name)
-    missing_roles = set(case.required_roles) - set(episode.role_names)
+    missing_roles = set(case.required_roles) - set(episode.context.roles)
     if missing_roles:
         raise ValueError(f"prepared episode is missing roles: {sorted(missing_roles)}")
     return episode
@@ -100,11 +100,7 @@ class EpisodeRun:
     provider: EpisodeProvider
 
     def role(self, role_id: str) -> str:
-        try:
-            return self.episode.role_names[role_id]
-        except KeyError as error:
-            available = ", ".join(sorted(self.episode.role_names))
-            raise KeyError(f"unknown role {role_id!r}; available: {available}") from error
+        return self.episode.context.role(role_id).name
 
     def evaluate_goal(self) -> EpisodeEvaluationResult:
         return evaluate_episode(self.provider, self.episode)

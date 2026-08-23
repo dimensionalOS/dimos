@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 
 from dimos.e2e_tests.episode import evaluate_episode, prepare_episode, reset_episode
+from dimos.sim2.episodes import PublicEpisodeContext, PublicEpisodeRole
 from dimos.simulation import episodes
 from dimos.simulation.episodes import (
     EpisodeEvaluationResult,
@@ -57,9 +58,16 @@ class _FakeProvider:
             case_id=case.case_id,
             blueprint_name=case.blueprint_name,
             simulator="fake-simulator",
+            context=PublicEpisodeContext(
+                case_id=case.case_id,
+                instruction="Put the cup in the tray.",
+                roles={
+                    "object": PublicEpisodeRole(role_id="object", entity_id="cup-1", name="cup"),
+                    "target": PublicEpisodeRole(role_id="target", entity_id="tray-1", name="tray"),
+                },
+            ),
             global_args=("--transport", "zenoh"),
             required_modules=(*case.required_modules, "PrivateEvaluator"),
-            role_names={"object": "cup", "target": "tray"},
         )
 
     def start(self, episode: PreparedEpisode) -> None:
@@ -154,7 +162,7 @@ def test_episode_flow_rejects_provider_identity_changes(tmp_path: Path) -> None:
                 case_id=prepared.case_id,
                 blueprint_name=prepared.blueprint_name,
                 simulator=prepared.simulator,
-                role_names=prepared.role_names,
+                context=prepared.context,
             )
 
     with pytest.raises(ValueError, match="prepared an episode for"):
