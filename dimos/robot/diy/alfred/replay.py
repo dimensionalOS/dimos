@@ -243,15 +243,15 @@ class AlfredReplay(Module):
             replay.stream("infrared_right").observable(),
         )
         self._started_at = time.time()
-        # Tracked on the left frame; zip emits the pair together so one stands for both.
-        self._track(
-            "infrared",
-            stereo,
-            lambda pair: [self.image.publish(frame) for frame in pair],
-            ts_of=lambda pair: pair[0].ts,
-        )
 
-        outputs = [
+        # Tracked on the left frame; zip emits the pair together so one stands for both.
+        def publish_stereo(pair: tuple[Image, Image]) -> None:
+            for frame in pair:
+                self.image.publish(frame)
+
+        self._track("infrared", stereo, publish_stereo, ts_of=lambda pair: pair[0].ts)
+
+        outputs: list[tuple[str, Out[Any]]] = [
             ("infrared_left_camera_info", self.camera_info),
             ("infrared_right_camera_info", self.camera_info),
             # The recorded camera_info stream is the colour intrinsics, published live
@@ -268,13 +268,14 @@ class AlfredReplay(Module):
             outputs.append(("lidar", self.lidar))
         for name, port in outputs:
             self._track(name, replay.stream(name).observable(), port.publish)
+
         # Onto image for the tracker's depth2depth path (told apart by frame_id), and
         # onto its own stream for the rerun colour view, matching the live driver.
-        self._track(
-            "color_image",
-            replay.stream("color_image").observable(),
-            lambda frame: (self.image.publish(frame), self.color_image.publish(frame)),
-        )
+        def publish_colour(frame: Image) -> None:
+            self.image.publish(frame)
+            self.color_image.publish(frame)
+
+        self._track("color_image", replay.stream("color_image").observable(), publish_colour)
         self._track(
             self.config.tf_stream,
             replay.stream(self.config.tf_stream).observable(),

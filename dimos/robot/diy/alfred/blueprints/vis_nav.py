@@ -32,6 +32,7 @@ from __future__ import annotations
 from functools import partial
 import os
 from pathlib import Path
+from typing import Any
 
 from dimos.constants import CACHE_DIR
 from dimos.core.coordination.blueprints import autoconnect
@@ -57,25 +58,25 @@ IR_ENTITY_BY_FRAME = {
 """Both imagers arrive on one topic, so the entity has to come from the message."""
 
 
-def _image_at(msg, entity_path):
+def _image_at(msg: Any, entity_path: str) -> list[tuple[str, Any]]:
     return [(entity_path, msg.to_rerun())]
 
 
-def _pinhole_at(msg, entity_path):
+def _pinhole_at(msg: Any, entity_path: str) -> Any:
     return msg.to_rerun(image_topic=entity_path, optical_frame=msg.frame_id)
 
 
-def _ir_image(msg):
+def _ir_image(msg: Any) -> list[tuple[str, Any]] | None:
     entity_path = IR_ENTITY_BY_FRAME.get(msg.frame_id)
     return _image_at(msg, entity_path) if entity_path else None
 
 
-def _ir_pinhole(msg):
+def _ir_pinhole(msg: Any) -> Any:
     entity_path = IR_ENTITY_BY_FRAME.get(msg.frame_id)
     return _pinhole_at(msg, entity_path) if entity_path else None
 
 
-def _rerun_blueprint():
+def _rerun_blueprint() -> Any:
     """The stock bridge blueprint is 3D only, so no image view exists to render into."""
     import rerun as rr
     import rerun.blueprint as rrb
@@ -99,7 +100,7 @@ def _rerun_blueprint():
     )
 
 
-def _alfred_urdf_static(rr):
+def _alfred_urdf_static(rr: Any) -> list[tuple[str, Any]]:
     """The URDF meshes, pinned to the live base_link frame so they follow odometry."""
     factory = UrdfRobotStaticRerunFactory(urdf_path=ALFRED_URDF, root_path=ALFRED_RERUN_ROOT)
     return [
