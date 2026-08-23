@@ -214,15 +214,17 @@ class DimSlamConfig(NativeModuleConfig):
     depth_units_per_meter: float = 1000.0
     # Range gate on the published depth_cloud, metres. Stereo depth error grows as range
     # squared, so the far gate decides whether the cloud is worth mapping with; 0 leaves
-    # it open.
+    # it open. 4 m won the D455 mapping grid (top-down F1 .570 vs .506 for the 6 m gate,
+    # scored against a lidar-raycast reference on drive_2026-08-18_23-05-04.db).
     depth_cloud_min_range: float = 0.0
-    depth_cloud_max_range: float = 0.0
+    depth_cloud_max_range: float = 4.0
     # Emit one point per k x k depth block instead of every pixel: the median of the
     # block's in-gate depths, deprojected at the block centre. The median (not mean)
     # keeps a block on one surface at depth discontinuities instead of inventing a
     # flying pixel, and blocks with under half their pixels valid are dropped as edge
-    # noise. <= 1 emits every pixel.
-    depth_cloud_decimation: int = 1
+    # noise. <= 1 emits every pixel; 3 keeps a 30 Hz D455 cloud consumable in real time
+    # (a full-resolution cloud is ~400k points per frame and drowns the mapper).
+    depth_cloud_decimation: int = 3
     # rgbd only: densify the depth image with the depth2depth crate before the cloud is
     # cut from it (Depth Anything V2 anchored to the trusted raw pixels). Both
     # safetensors paths set turns it on; the binary must be built with the depth2depth
