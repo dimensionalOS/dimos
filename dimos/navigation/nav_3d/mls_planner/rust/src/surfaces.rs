@@ -27,10 +27,6 @@ use crate::voxel::VoxelKey;
 const ON: Luma<u8> = Luma([255]);
 const OFF: Luma<u8> = Luma([0]);
 
-/// One byte per cell, and z slices close in parallel, so this is the per-slice cap.
-/// At an 0.08 m voxel it still covers a 1.3 km square.
-const MAX_SLICE_CELLS: u64 = 1 << 28;
-
 pub type ColumnIz = AHashMap<(i32, i32), Vec<i32>>;
 
 /// A cell is standable if it has at least the robot's height of clear space
@@ -235,21 +231,6 @@ fn close_at_z(
     let x0 = min_x - pad;
     let y0 = min_y - pad;
 
-    // A single point far from the rest stretches this image over the gap: coordinates
-    // beyond f32's i32 range saturate in voxelize, so one bad point asks for a
-    // ~2.1e9-wide allocation. Closing can only bridge `pad` cells, so a slice this
-    // sparse has nothing to gain from it; report the extent and pass the cells through.
-    if w as u64 * h as u64 > MAX_SLICE_CELLS {
-        tracing::error!(
-            iz,
-            width = w,
-            height = h,
-            cells = xys.len(),
-            "surface slice spans an implausible extent; skipping hole closing"
-        );
-        return xys.iter().map(|&(ix, iy)| (ix, iy, iz)).collect();
-    }
-
     let mut img = GrayImage::from_pixel(w, h, OFF);
     for &(ix, iy) in xys {
         img.put_pixel((ix - x0) as u32, (iy - y0) as u32, ON);
@@ -336,34 +317,6 @@ mod tests {
         assert!(
             s.contains(&(0, 0, 0)),
             "closing should fill the center hole"
-        );
-    }
-
-    #[test]
-    fn a_far_outlier_does_not_allocate_the_gap() {
-        let mut cells: Vec<VoxelKey> = [
-            (-1, -1),
-            (-1, 0),
-            (-1, 1),
-            (0, -1),
-            (0, 1),
-            (1, -1),
-            (1, 0),
-            (1, 1),
-        ]
-        .into_iter()
-        .map(|(dx, dy)| (dx, dy, 0))
-        .collect();
-        cells.push((i32::MAX / 2, 0, 0));
-
-        let s = run(&cells, 5, 3);
-        assert!(
-            s.contains(&(i32::MAX / 2, 0, 0)),
-            "the outlier itself still passes through"
-        );
-        assert!(
-            !s.contains(&(0, 0, 0)),
-            "the slice is skipped wholesale rather than allocating across the gap"
         );
     }
 
