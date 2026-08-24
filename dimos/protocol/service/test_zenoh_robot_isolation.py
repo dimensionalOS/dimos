@@ -38,7 +38,12 @@ import zenoh
 # The host is built from the session bake emits, not from a topology written out here, so
 # this fails if the shipped config ever drifts from the one under test.
 from dimos.cli.bake.cli import session_settings
-from dimos.protocol.service.zenohservice import ZenohService, ZenohSessionPool
+from dimos.protocol.service.zenohservice import (
+    ZenohConfig,
+    ZenohService,
+    ZenohSessionPool,
+    _zenoh_config,
+)
 
 # Not `dimos/`, so a stray run of this test cannot reach a real stack's topics.
 KEY_CMD_VEL = "dimos_test/isolation/cmd_vel"
@@ -97,16 +102,28 @@ def _baked_host(pool: ZenohSessionPool, listen: str, bridge: str) -> ZenohServic
     )
 
 
+def _stock_peer_session() -> zenoh.Session:
+    """A `dimos run` on stock settings, built by the config code a real run uses.
+
+    Peer mode with multicast scouting on loopback, and no endpoint naming any robot. The
+    one departure is the scouting address, which has to stay off zenoh's own or this test
+    would join whatever is live on the machine.
+    """
+    config = _zenoh_config(ZenohConfig())
+    config.insert_json5("scouting/multicast/address", json.dumps(SCOUT_ADDRESS))
+    return zenoh.open(config)
+
+
 def _collect(session: zenoh.Session, key: str) -> list[str]:
     received: list[str] = []
     session.declare_subscriber(key, lambda sample: received.append(sample.payload.to_string()))
     return received
 
 
-def _publish_until(session: zenoh.Session, key: str, payload: str, seen: list[str]) -> None:
-    """Republish until the subscriber declarations have propagated, then once more."""
+def _publish_until(session: zenoh.Session, key: str, payload: str, *seen: list[str]) -> None:
+    """Republish until every subscriber declaration has propagated, then once more."""
     deadline = time.monotonic() + DEADLINE
-    while not seen and time.monotonic() < deadline:
+    while not all(seen) and time.monotonic() < deadline:
         session.put(key, payload)
         time.sleep(0.05)
     session.put(key, payload)
@@ -167,6 +184,31 @@ def test_the_laptop_attaches_to_the_baked_host_router(
     laptop = _laptop(pool, alpha)
     routers = {str(zid) for zid in laptop.session.info.routers_zid()}
     assert routers == {str(alpha.host.session.info.zid())}
+
+
+def test_a_peer_drives_every_robot_on_the_network(robots: tuple[Robot, Robot]) -> None:
+    """Why the router topology is not optional. This is what stock settings do.
+
+    Peer mode names no robot and needs no flag: multicast scouting finds both bridges, and
+    one command drives both of them. `ZenohConfig()` here is the same object `dimos run`
+    opens with today.
+
+    Just to be clear, this test is demonstrating a known issue with the default settings (expected).
+    If the defaults change, this issue might be closed and then we can delete the test.
+    """
+    alpha, bravo = robots
+    laptop = _stock_peer_session()
+    try:
+        driven_alpha = _collect(alpha.bridge, KEY_CMD_VEL)
+        driven_bravo = _collect(bravo.bridge, KEY_CMD_VEL)
+        time.sleep(0.5)
+
+        _publish_until(laptop, KEY_CMD_VEL, "drive-one-robot", driven_alpha, driven_bravo)
+
+        assert driven_alpha, "the peer never reached the first robot, so this proves nothing"
+        assert driven_bravo, "peer mode is expected to reach every robot it can scout"
+    finally:
+        laptop.close()
 
 
 def test_a_command_reaches_only_the_robot_it_was_aimed_at(
