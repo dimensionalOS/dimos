@@ -59,6 +59,9 @@ logger = setup_logger()
 
 RPC_POLL_SECONDS = 0.002
 ODOMETRY_ERROR_LOG_INTERVAL_SECONDS = 10.0
+# Both together stay under DEFAULT_THREAD_JOIN_TIMEOUT so the teardown join outlasts them.
+STOP_COMMAND_TIMEOUT_SECONDS = DEFAULT_THREAD_JOIN_TIMEOUT / 2
+CONNECTION_CLOSE_TIMEOUT_SECONDS = DEFAULT_THREAD_JOIN_TIMEOUT / 4
 
 
 async def _rpc_result(future: portal.Future) -> Any:
@@ -75,17 +78,17 @@ def _stop_and_close(client: portal.Client) -> None:
     event loop is skipped outright once the loop shuts down, leaving the client open.
     """
     try:
-        # Half the budget, so the caller's join of the whole thing still covers the close.
         client.set_target_velocity({"target_velocity": np.zeros(3), "frame": "local"}).result(
-            timeout=DEFAULT_THREAD_JOIN_TIMEOUT / 2
+            timeout=STOP_COMMAND_TIMEOUT_SECONDS
         )
     except Exception as e:
-        logger.error(f"Error stopping Alfred: {e}")
+        logger.error(f"Error stopping Alfred: {e!r}")
     # Closing fails every request the connection still owes, so it goes after the stop.
     try:
-        client.close()
+        # Left unbounded, portal waits out a send queue that a dead peer never drains.
+        client.close(timeout=CONNECTION_CLOSE_TIMEOUT_SECONDS)
     except Exception as e:
-        logger.error(f"Error closing the Alfred connection: {e}")
+        logger.error(f"Error closing the Alfred connection: {e!r}")
 
 
 class AlfredHighLevelConfig(ModuleConfig):

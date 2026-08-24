@@ -69,7 +69,7 @@ class Client:
         self.sent.append(command)
         return Future(True)
 
-    def close(self) -> None:
+    def close(self, timeout: float | None = None) -> None:
         self.closed = True
 
 
@@ -171,6 +171,34 @@ def test_the_connection_closes_even_when_the_stop_command_fails():
     _stop_and_close(client)
 
     assert client.closed
+
+
+def test_a_controller_that_answers_nothing_still_closes_within_the_teardown_join():
+    class Unanswered(Future):
+        def done(self) -> bool:
+            return False
+
+        def result(self, timeout: float | None = None) -> Any:
+            assert timeout is not None, "an unbounded stop starves the close below it"
+            time.sleep(timeout)
+            raise TimeoutError
+
+    class Unreachable(Client):
+        def set_target_velocity(self, command: Any) -> Future:
+            return Unanswered()
+
+        def close(self, timeout: float | None = None) -> None:
+            # Portal joins its socket thread for the timeout, then kills it regardless.
+            assert timeout is not None, "portal waits out a send queue a dead peer never drains"
+            time.sleep(timeout)
+            self.closed = True
+
+    client = Unreachable()
+    started = time.monotonic()
+    _stop_and_close(client)
+
+    assert client.closed
+    assert time.monotonic() - started < effector_high_level.DEFAULT_THREAD_JOIN_TIMEOUT
 
 
 def test_a_pending_rpc_is_awaited_rather_than_blocking_the_loop():
