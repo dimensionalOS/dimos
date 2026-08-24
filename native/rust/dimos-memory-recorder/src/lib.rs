@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::io;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -21,9 +20,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context, Result};
 use crossbeam_channel::{bounded, Receiver, RecvTimeoutError, Sender};
-use dimos_module::transport::Dispatch;
-use dimos_module::{LcmTransport, Transport, ZenohTransport};
-use serde::Deserialize;
+use dimos_module::{Builder, Input, Module};
+use serde::{Deserialize, Serialize};
+use tokio::task::JoinSet;
 use tracing::{debug, info};
 
 use crate::encoding::StoredObservation;
@@ -38,7 +37,7 @@ const QUEUE_CAPACITY: usize = 256;
 const WRITE_BATCH_SIZE: usize = 128;
 const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Codec {
     Lcm,
@@ -47,7 +46,7 @@ pub enum Codec {
     Lz4Lcm,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct StreamConfig {
     pub port: String,
@@ -62,10 +61,11 @@ impl StreamConfig {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[dimos_module::native_config]
+#[derive(Clone)]
 pub struct RecorderConfig {
     pub store: store::RecordingStoreConfig,
+    #[validate(range(min = 1))]
     pub encoding_threads: usize,
     pub streams: Vec<StreamConfig>,
 }
@@ -95,6 +95,10 @@ pub struct RecorderHandle {
 
 impl RecorderHandle {
     pub fn record(&self, stream: Arc<StreamConfig>, data: &[u8]) {
+        self.record_owned(stream, data.to_vec());
+    }
+
+    fn record_owned(&self, stream: Arc<StreamConfig>, data: Vec<u8>) {
         if !self.accepting.load(Ordering::Acquire) {
             return;
         }
@@ -105,7 +109,7 @@ impl RecorderHandle {
             sequence: self.sequence.fetch_add(1, Ordering::Relaxed),
             stream,
             reception_ts: wall_time(),
-            data: data.to_vec(),
+            data,
         };
         if self.sender.send(EncodeMessage::Job(job)).is_err() {
             self.accepting.store(false, Ordering::Release);
@@ -262,79 +266,102 @@ fn wall_time() -> f64 {
         .as_secs_f64()
 }
 
-#[derive(Deserialize)]
-struct LaunchConfig {
-    topics: HashMap<String, String>,
-    config: RecorderConfig,
+struct RecorderInput {
+    stream: Arc<StreamConfig>,
+    input: Input<Vec<u8>>,
 }
 
-/// Run the stdin-configured native recorder until shutdown or pipeline failure.
-pub async fn run() -> Result<()> {
-    dimos_module::init_tracing();
-    let launch_value = dimos_module::read_launch_config().await?;
-    let launch =
-        serde_json::from_value(launch_value.clone()).context("invalid memory recorder config")?;
-    match std::env::var("DIMOS_TRANSPORT").as_deref() {
-        Ok("lcm") => run_with(LcmTransport::new().await?, launch).await,
-        Ok("zenoh") => run_with(ZenohTransport::from_launch(&launch_value).await?, launch).await,
-        other => Err(anyhow!(
-            "DIMOS_TRANSPORT must be 'lcm' or 'zenoh', got {other:?}"
-        )),
+/// Dynamically configured native recorder run by the standard DimOS module runtime.
+pub struct MemoryRecorder {
+    engine: Option<RecorderEngine>,
+    inputs: Vec<RecorderInput>,
+    forwarders: JoinSet<()>,
+}
+
+impl MemoryRecorder {
+    async fn stop(&mut self) -> Result<WriterStats> {
+        self.forwarders.abort_all();
+        while let Some(result) = self.forwarders.join_next().await {
+            if let Err(error) = result {
+                if !error.is_cancelled() {
+                    return Err(anyhow!("recorder input forwarder failed: {error}"));
+                }
+            }
+        }
+        let engine = self
+            .engine
+            .take()
+            .context("recorder engine was already stopped")?;
+        tokio::task::block_in_place(|| engine.shutdown())
     }
 }
 
-async fn run_with<T: Transport>(transport: T, launch: LaunchConfig) -> Result<()> {
-    launch.config.validate()?;
-    let engine = RecorderEngine::start(launch.config.clone())?;
-    let handle = engine.handle();
+impl Module for MemoryRecorder {
+    type Config = RecorderConfig;
 
-    for stream in &launch.config.streams {
-        let topic = launch
-            .topics
-            .get(&stream.port)
-            .with_context(|| format!("no topic supplied for recorder port {:?}", stream.port))?;
-        let stream = Arc::new(stream.clone());
-        let callback_stream = Arc::clone(&stream);
-        let callback_handle = handle.clone();
-        let callback: Dispatch =
-            Arc::new(move |data| callback_handle.record(Arc::clone(&callback_stream), data));
-        transport
-            .subscribe(topic, callback)
-            .await
-            .with_context(|| format!("failed to subscribe to {topic:?}"))?;
-        info!(port = %stream.port, topic = %topic, store_stream = %stream.name, codec = ?stream.codec, "recording stream");
-    }
-
-    let failure = engine.failure_receiver();
-    let pipeline_failed = tokio::task::spawn_blocking(move || failure.recv());
-    tokio::pin!(pipeline_failed);
-    tokio::select! {
-        result = shutdown_signal() => result.context("failed to listen for shutdown")?,
-        result = &mut pipeline_failed => {
-            let message = result
-                .context("pipeline failure monitor panicked")?
-                .context("pipeline failure monitor disconnected")?;
-            return engine.shutdown().and(Err(anyhow!(message)));
+    fn build(builder: &mut Builder, config: Self::Config) -> Self {
+        config
+            .validate()
+            .expect("invalid memory recorder configuration");
+        let engine = RecorderEngine::start(config.clone())
+            .expect("failed to start memory recorder pipeline");
+        let inputs = config
+            .streams
+            .into_iter()
+            .map(|stream| {
+                let input = builder.input(&stream.port, |data| Ok(data.to_vec()));
+                RecorderInput {
+                    stream: Arc::new(stream),
+                    input,
+                }
+            })
+            .collect();
+        Self {
+            engine: Some(engine),
+            inputs,
+            forwarders: JoinSet::new(),
         }
     }
-    engine.shutdown()?;
-    Ok(())
-}
 
-#[cfg(unix)]
-async fn shutdown_signal() -> io::Result<()> {
-    use tokio::signal::unix::{signal, SignalKind};
-
-    let mut terminate = signal(SignalKind::terminate())?;
-    tokio::select! {
-        result = tokio::signal::ctrl_c() => result,
-        _ = terminate.recv() => Ok(()),
+    async fn setup(&mut self) {
+        let handle = self
+            .engine
+            .as_ref()
+            .expect("recorder engine is running")
+            .handle();
+        for RecorderInput { stream, mut input } in self.inputs.drain(..) {
+            let handle = handle.clone();
+            self.forwarders.spawn(async move {
+                while let Some(data) = input.recv().await {
+                    let stream = Arc::clone(&stream);
+                    tokio::task::block_in_place(|| handle.record_owned(stream, data));
+                }
+            });
+        }
+        info!(streams = self.forwarders.len(), "memory recorder ready");
     }
-}
 
-#[cfg(not(unix))]
-async fn shutdown_signal() -> io::Result<()> {
-    tokio::signal::ctrl_c().await
+    async fn handle(&mut self) {
+        let failure = self
+            .engine
+            .as_ref()
+            .expect("recorder engine is running")
+            .failure_receiver();
+        let message = tokio::task::spawn_blocking(move || failure.recv())
+            .await
+            .expect("pipeline failure monitor panicked")
+            .expect("pipeline failure monitor disconnected");
+        let shutdown_error = self.stop().await.err();
+        panic!("memory recorder pipeline failed: {message}; shutdown error: {shutdown_error:?}");
+    }
+
+    async fn teardown(&mut self) {
+        if self.engine.is_some() {
+            self.stop()
+                .await
+                .expect("failed to finalize memory recording");
+        }
+    }
 }
 
 fn writer_loop(
