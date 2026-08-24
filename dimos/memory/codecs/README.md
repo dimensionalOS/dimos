@@ -51,28 +51,29 @@ depth = store.stream("depth_image", Image, codec="zstd+lcm")
 images in millimeters. It limits the error of every valid decoded sample to 5
 mm. Invalid float samples decode as `NaN`; invalid uint16 samples decode as
 zero. Shape, dtype, timestamp, frame ID, and the valid-pixel mask survive the
-round trip.
+round trip. Different invalid float sentinels, such as infinity, are therefore
+canonicalized rather than preserved bit-for-bit.
 
 The error bound is fixed because the SQLite stream registry stores codec IDs,
 not codec constructor parameters. Do not add an unpersisted quality option.
 See [Depth image compression](../../../docs/capabilities/memory/depth_compression.md)
 for the rationale and comparison tool.
 
-Run the manual benchmark against its default LFS recording:
-
-```bash
-uv run python -m dimos.memory.codecs.tool_depth_benchmark
-```
-
+The manual benchmark processes every frame in every detected depth stream.
 Pass any number of SQLite recordings, extracted depth-frame directories, or
-named LFS datasets:
+named LFS datasets, and choose a new or empty output directory:
 
 ```bash
 uv run python -m dimos.memory.codecs.tool_depth_benchmark \
-  recording.db g1_zed rgbd_frames
+  recording.db g1_zed rgbd_frames \
+  --output /tmp/depth-codecs
 ```
 
-For a quick check without LFS data:
+Repeat `--stream` to restrict SQLite recordings with several depth streams.
+The output directory receives `results.json` and `results.md` with total size,
+p50/p95 wall and process-CPU timing, and fidelity measurements.
+
+For a quick harness check without LFS data:
 
 ```bash
 uv run python -m dimos.memory.codecs.tool_depth_benchmark --synthetic uint16

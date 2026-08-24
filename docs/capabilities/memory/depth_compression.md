@@ -21,13 +21,13 @@ ROS 2's
 [`compressed_depth_image_transport`](https://github.com/ros-perception/image_transport_plugins/tree/rolling/compressed_depth_image_transport)
 uses PNG or RVL. Both preserve native `16UC1` values. For `32FC1`, the plugin
 first converts floating-point depth to quantized inverse depth, so its PNG path
-is not bit-exact. RVL is a useful fast `uint16` codec, but DimOS does not depend
+is not bit-exact. RVL is a useful fast `uint16` codec, but dimOS does not depend
 on its native implementation.
 
 The experimental ROS
 [`depthz` proposal](https://github.com/ros-perception/image_transport_plugins/pull/238)
 combines depth prediction, bounded quantization, and Zstd. It closely matches
-DimOS's requirements but remains an unmerged, unreviewed proposal.
+dimOS's requirements but remains an unmerged, unreviewed proposal.
 
 RealSense documents a
 [depth-colorization method](https://dev.realsenseai.com/docs/depth-image-compression-by-colorization-for-intel-realsense-depth-cameras/)
@@ -40,8 +40,8 @@ better suited to bandwidth-constrained visual streaming than metric recording.
 
 [Limited Error Raster Compression (LERC)](https://github.com/Esri/lerc) is an
 Apache-2.0 numeric-raster codec. It supports integer and floating-point arrays,
-validity masks, lossless operation, and an explicit maximum error per sample.
-DimOS already receives LERC through its `imagecodecs` dependency.
+validity masks, zero-error operation, and an explicit maximum error per sample.
+dimOS already receives LERC through its `imagecodecs` dependency.
 
 The `lerc` storage codec uses one contract:
 
@@ -51,7 +51,9 @@ The `lerc` storage codec uses one contract:
 | `DEPTH16/uint16` | millimeters | `5` mm | `0` |
 
 The codec also preserves shape, dtype, timestamp, frame ID, and the valid-pixel
-mask. It is opt-in; existing `lz4+lcm` recorder settings remain unchanged.
+mask. Invalid float sentinels are canonicalized to `NaN`, so even zero-error
+LERC is exact for valid samples rather than bit-exact for the whole array. It is
+opt-in; existing `lz4+lcm` recorder settings remain unchanged.
 
 ```python
 store.stream("depth_image", Image, codec="lerc")
@@ -74,33 +76,32 @@ and metadata decode byte-for-byte through the inner LCM codec.
 
 ## Compare codecs
 
-The benchmark samples recorded frames and compares raw LCM, LZ4, Zstd, PNG,
-lossless JPEG XL, reversible ZFP, and several LERC error bounds. Cells that do
-not support an input dtype are omitted. A source can be a SQLite recording, a
-directory containing `depth/*.png` or timestamped `depth/*.pickle` frames, or
-a named LFS dataset. PNG depth is interpreted as `uint16` millimeters; float32
-pickle arrays are interpreted as meters. Only load pickle data from trusted
-recordings.
+The benchmark processes complete depth streams and compares raw LCM, LZ4,
+Zstd, PNG, lossless JPEG XL, reversible ZFP, and several LERC error bounds.
+Unsupported input-dtype combinations are reported as `N/A`. A source can be a
+SQLite recording, a directory containing `depth/*.png` or timestamped
+`depth/*.pickle` frames, or a named LFS dataset. PNG depth is interpreted as
+`uint16` millimeters; float32 pickle arrays are interpreted as meters. Only
+load pickle data from trusted recordings. Frames are streamed instead of
+retained in memory.
 
 ```bash
-# Pull and sample the default RealSense LFS recording.
-uv run python -m dimos.memory.codecs.tool_depth_benchmark
-
-# Use another SQLite recording or select a stream explicitly.
+# Benchmark every frame in one SQLite depth stream.
 uv run python -m dimos.memory.codecs.tool_depth_benchmark recording.db \
-  --stream depth_image --frames 20 --repeats 3
+  --stream depth_image --output /tmp/depth-codecs
 
-# Compare several local or named LFS recordings in one run.
+# Auto-detect every depth stream across several local or named LFS recordings.
 uv run python -m dimos.memory.codecs.tool_depth_benchmark \
-  recording.db g1_zed rgbd_frames --frames 20 --repeats 3
+  recording.db g1_zed rgbd_frames --output /tmp/depth-codecs
 
-# Write machine-readable results.
-uv run python -m dimos.memory.codecs.tool_depth_benchmark recording.db \
-  --json /tmp/depth-codecs.json
+# Check the harness without downloading recordings.
+uv run python -m dimos.memory.codecs.tool_depth_benchmark --synthetic uint16
 ```
 
-The table reports bytes per frame, compression ratio, encode and decode wall
-time, encode and decode process-CPU time, maximum and root-mean-square depth
-error, and invalid-mask mismatches. Use maximum error and mask mismatches as
-hard fidelity checks; use size and timing to choose among candidates that pass
-those checks.
+Real-recording runs require `--output`; the directory must be new or empty.
+They write `results.json` and `results.md`. Ratios use total raw and encoded
+bytes across the stream. Timing includes p50, p95, total wall and process-CPU
+time, plus effective frames per second. Fidelity includes global maximum,
+mean, and root-mean-square depth error and invalid-mask mismatches. The command
+fails if a codec violates its fidelity contract or a stream changes format,
+dtype, or dimensions.
