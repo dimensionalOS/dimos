@@ -218,19 +218,20 @@
   font-size: 0.76rem;
 }
 
+/* Material lets a table shrink to its content, which strands a three-column
+ * table against the left edge of a wide page. Docs tables read better spanning
+ * the column they sit in. */
 .md-typeset table:not([class]) {
   border: 1px solid var(--dim-hairline);
   border-radius: var(--dim-radius);
   overflow: hidden;
   font-size: 0.72rem;
+  width: 100%;
 }
 
-/* Material lets a table shrink to its content. The readme's grids are laid
- * out as tables and are meant to span the column: on github the 245px spacer
- * gifs forced that, and those are dropped here. Keyed on cells declaring a
- * width, which is what makes a table a layout rather than data. */
+/* A table whose cells declare widths is a layout, not data: honour those
+ * widths rather than re-apportioning the columns by content. */
 .md-typeset table:not([class]):has(td[width]) {
-  width: 100%;
   table-layout: fixed;
 }
 
