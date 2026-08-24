@@ -78,14 +78,10 @@ class AlfredHighLevel(Module):
         self._stop_task: asyncio.Task[None] | None = None
         self._odometry_task: asyncio.Task[None] | None = None
         self._last_velocities = [0.0, 0.0, 0.0]
-        self._client_lock = asyncio.Lock()
         self._odometry_stop = asyncio.Event()
 
     async def main(self) -> AsyncGenerator[None, None]:
-        # The controller multiplexes one connection; the lock keeps a velocity
-        # command from interleaving with an in-flight odometry poll. Recreated
-        # each run so a restart binds it to the new event loop.
-        self._client_lock = asyncio.Lock()
+        # Recreated each run so a restart binds it to the new event loop.
         self._odometry_stop = asyncio.Event()
         client = portal.Client(self.config.address)
         self._client = client
@@ -94,15 +90,9 @@ class AlfredHighLevel(Module):
         try:
             yield
         finally:
-            # Cancelling the poll would not stop its in-flight Portal call: that
-            # runs on a worker thread and keeps the multiplexed connection the
-            # stop command and close() below need. Ask the loop to exit instead
-            # and let it finish the call it already started.
-            self._odometry_stop.set()
-            if self._odometry_task is not None:
-                done, _ = await asyncio.wait({self._odometry_task}, timeout=_TEARDOWN_TIMEOUT)
-                if not done:
-                    logger.warning("Alfred wheel odometry poll is still running; stopping anyway")
+            # Stop first, and before draining the poll: a wedged odometry call
+            # cannot delay it, because Portal matches replies by request number
+            # and carries both at once.
             if self._stop_task is not None and not self._stop_task.done():
                 self._stop_task.cancel()
             try:
@@ -111,6 +101,14 @@ class AlfredHighLevel(Module):
                 logger.error("Alfred did not take the stop command; it may still be moving")
             except Exception as e:
                 logger.error(f"Error stopping Alfred: {e}")
+            # Cancelling the poll would not stop an in-flight Portal call, which
+            # runs on a worker thread. Ask the loop to exit instead; close()
+            # below fails any request it is still waiting on.
+            self._odometry_stop.set()
+            if self._odometry_task is not None:
+                done, _ = await asyncio.wait({self._odometry_task}, timeout=_TEARDOWN_TIMEOUT)
+                if not done:
+                    logger.warning("Alfred wheel odometry poll is still running; stopping anyway")
             try:
                 client.close()
             except Exception:
@@ -186,9 +184,8 @@ class AlfredHighLevel(Module):
                 "target_velocity": np.array([vx, vy, wz]),
                 "frame": "local",
             }
-            async with self._client_lock:
-                future = self._client.set_target_velocity(command)
-                await asyncio.to_thread(future.result)
+            future = self._client.set_target_velocity(command)
+            await asyncio.to_thread(future.result)
             return True
         except Exception as e:
             logger.error(f"Error sending Alfred velocity: {e}")
@@ -201,9 +198,8 @@ class AlfredHighLevel(Module):
         while not self._odometry_stop.is_set():
             start = asyncio.get_running_loop().time()
             try:
-                async with self._client_lock:
-                    future = self._client.get_odometry({})  # type: ignore[union-attr]
-                    reading = await asyncio.to_thread(future.result)
+                future = self._client.get_odometry({})  # type: ignore[union-attr]
+                reading = await asyncio.to_thread(future.result)
                 ts = time.time()
                 x, y = (float(v) for v in reading["translation"])
                 yaw = float(reading["rotation"])
