@@ -14,10 +14,8 @@
 
 """Alfred high-level control via Portal RPC.
 
-Subscribes to ``cmd_vel`` and forwards each Twist to the Alfred controller
-as a holonomic target velocity. The controller performs the wheel-level
-kinematics on-board, so this module hands off ``(vx, vy, wz)`` rather than
-computing per-wheel speeds locally.
+The controller does the wheel-level kinematics on-board, so this hands off a
+holonomic ``(vx, vy, wz)`` rather than computing per-wheel speeds locally.
 
 Frame convention: Alfred uses an inverted Y-axis vs. ROS, so ``vy`` and
 ``wz`` are negated before being sent to the hardware.
@@ -35,9 +33,10 @@ import asyncio
 from collections.abc import AsyncGenerator
 import math
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import numpy as np
+import portal
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -51,14 +50,8 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.robot.diy.alfred.config import DEFAULT_ADDRESS
 from dimos.utils.logging_config import setup_logger
 
-if TYPE_CHECKING:
-    # An optional hardware dependency (the `misc` extra); imported lazily at
-    # connect time so merely importing this module doesn't require it.
-    import portal
-
 logger = setup_logger()
 
-# How long each teardown step waits on the shared connection before giving up.
 # A wedged Portal call blocks the poll, and the poll holds the client lock, so
 # an unbounded wait here would hang shutdown instead of just losing the stop.
 _TEARDOWN_TIMEOUT = 2.0
@@ -96,8 +89,6 @@ class AlfredHighLevel(Module):
         # each run so a restart binds it to the new event loop.
         self._client_lock = asyncio.Lock()
         self._odometry_stop = asyncio.Event()
-        import portal
-
         client = portal.Client(self.config.address)
         self._client = client
         logger.info(f"Connected to Alfred at {self.config.address}")
@@ -152,7 +143,6 @@ class AlfredHighLevel(Module):
         if self._stop_task is not None and not self._stop_task.done():
             self._stop_task.cancel()
 
-        # Negate vy and wz for Alfred's inverted Y-axis frame.
         # Send before scheduling the watchdog — otherwise it could fire first.
         if not await self._send_velocity(vx, -vy, -wz):
             return False
@@ -223,8 +213,7 @@ class AlfredHighLevel(Module):
                 # The controller integrates in the same inverted-Y frame move()
                 # sends into; negate back so consumers see the ROS convention.
                 y, yaw = -y, -yaw
-                # The controller reports no velocity, so difference consecutive
-                # poses and rotate the world-frame displacement into the base frame.
+                # The controller reports no velocity, so difference consecutive poses.
                 twist = Twist()
                 if previous is not None:
                     last_ts, last_x, last_y, last_yaw = previous
