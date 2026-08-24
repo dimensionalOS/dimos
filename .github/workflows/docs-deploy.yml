@@ -48,17 +48,30 @@ jobs:
       - name: Install docs dependencies
         run: uv sync --only-group docs
 
+      # Deploy keys are disabled org-wide, so write access to the pages repo
+      # comes from the dimos-docs-bot app: a token minted per run, scoped to
+      # that one repository, expiring with the job.
+      - name: Mint a token for the pages repo
+        uses: actions/create-github-app-token@v3
+        id: pages-token
+        with:
+          app-id: ${{ vars.DOCS_BOT_APP_ID }}
+          private-key: ${{ secrets.DOCS_BOT_APP_PRIVATE_KEY }}
+          owner: dimensionalOS
+          repositories: dimensionalOS.github.io
+
       - name: Check out the pages repo
         uses: actions/checkout@v7
         with:
           repository: dimensionalOS/dimensionalOS.github.io
           path: pages
-          ssh-key: ${{ secrets.PAGES_DEPLOY_KEY }}
+          token: ${{ steps.pages-token.outputs.token }}
 
       - name: Build, stage and commit
         run: |
-          git -C pages config user.name "dimos-docs-bot"
-          git -C pages config user.email "noreply@dimensionalos.com"
+          git -C pages config user.name "dimos-docs-bot[bot]"
+          git -C pages config user.email \
+            "${{ steps.pages-token.outputs.app-slug }}[bot]@users.noreply.github.com"
           bin/docs-deploy --pages-repo pages --target . --commit
 
       # docs-deploy exits without committing when the build is byte-identical,
