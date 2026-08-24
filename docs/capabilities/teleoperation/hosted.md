@@ -45,7 +45,7 @@ How low is the latency in practice? With the World Cup on, four Dimensional team
 
 Below are the latencies recorded:
 
-![Round-trip command latency to robots hosted in San Francisco: ~15 ms from San Francisco, ~114 ms from Bangalore, ~134 ms from Buenos Aires, ~160 ms from Shanghai — every route under the ~200 ms delay of a typical video call](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/teleoperation/assets/latency_four_continents.png)
+![Round-trip command latency to robots hosted in San Francisco: ~15 ms from San Francisco, ~114 ms from Bangalore, ~134 ms from Buenos Aires, ~160 ms from Shanghai — every route under the ~200 ms delay of a typical video call](assets/latency_four_continents.png)
 
 ## Quick Start
 

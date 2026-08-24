@@ -50,9 +50,11 @@ print(CameraModule.io())
 └┬─────────────┘
  ├─ color_image: Image
  ├─ camera_info: CameraInfo
+ ├─ tf: TFMessage
  │
  ├─ RPC build() -> None
  ├─ RPC get_skills() -> list
+ ├─ RPC peek_stream(stream_name: str, timeout: float) -> Any
  ├─ RPC set_module_ref(name: str, module_ref: RPCClient) -> None
  ├─ RPC set_transport(stream_name: str, transport: Transport) -> bool
  ├─ RPC start() -> None

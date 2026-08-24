@@ -57,7 +57,7 @@ echo "cwd: $(pwd)"
 ```
 
 ```results
-cwd: /home/lesh/coding/dimos
+cwd: /home/lesh/coding/dimos/docs
 ```
 
 ### Python

@@ -367,7 +367,7 @@ Transform tree:
 
 You can view these transforms in 3D using the Rerun viewer (see [Visualization](/docs/usage/visualization.md)).
 
-![transforms](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/usage/assets/transforms.png)
+![transforms](assets/transforms.png)
 
 Key points:
 
@@ -449,7 +449,7 @@ print(tf)
 Latest transform: x=4.0
 Buffer has 1 transform pair(s)
 MultiTBuffer(1 buffers):
-  TBuffer(base_link -> camera_link, 5 msgs, 0.40s [2026-05-15 21:11:37 - 2026-05-15 21:11:37])
+  TBuffer(base_link -> camera_link, 5 msgs, 0.40s [2026-08-24 15:36:04 - 2026-08-24 15:36:04])
 ```
 
 This is essential for sensor fusion where you need to know where the camera was when an image was captured, not where it is now.
