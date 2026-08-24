@@ -41,8 +41,6 @@ import sys
 import time
 from typing import Any
 
-import imagecodecs
-import lz4.frame  # type: ignore[import-untyped]
 import numpy as np
 from rich.progress import (
     BarColumn,
@@ -53,16 +51,16 @@ from rich.progress import (
     TimeRemainingColumn,
 )
 
+from dimos.memory.codecs.base import Codec, codec_id
+from dimos.memory.codecs.jpeg import JpegCodec
 from dimos.memory.codecs.lcm import LcmCodec
-from dimos.memory.codecs.lerc import MAX_ERROR_METERS
-from dimos.memory.codecs.zstd import ZstdCodec
+from dimos.memory.codecs.lerc import MAX_ERROR_METERS, LercCodec
+from dimos.memory.codecs.lz4 import Lz4Codec
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
-from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.utils.data import get_data
 
-_ZSTD_LCM = ZstdCodec(LcmCodec(Image))
 _SYNTHETIC_FRAME_COUNT = 5
 _FIDELITY_TOLERANCE_MM = 0.001
 
@@ -70,9 +68,7 @@ _FIDELITY_TOLERANCE_MM = 0.001
 @dataclass(frozen=True)
 class Candidate:
     name: str
-    supports: Callable[[Image], bool]
-    encode: Callable[[Image], bytes]
-    decode: Callable[[bytes], Image]
+    codec: Codec[Any]
     max_error_mm: float
     exact_array: bool = True
 
@@ -116,13 +112,6 @@ class BenchmarkRow:
 
 
 @dataclass(frozen=True)
-class SkippedRow:
-    codec: str
-    status: str
-    reason: str
-
-
-@dataclass(frozen=True)
 class DepthStreamSource:
     source: Path
     stream: str
@@ -138,169 +127,19 @@ class StreamBenchmark:
     shape: tuple[int, ...]
     dtype: str
     image_format: str
-    codecs: list[BenchmarkRow | SkippedRow]
-
-
-def _always(_: Image) -> bool:
-    return True
-
-
-def _uint16(image: Image) -> bool:
-    return image.format is ImageFormat.DEPTH16 and image.dtype == np.uint16
-
-
-def _float32(image: Image) -> bool:
-    return image.format is ImageFormat.DEPTH and image.dtype == np.float32
-
-
-def _wrap(image: Image, wire_format: str, blob: bytes) -> bytes:
-    return CompressedImage(
-        data=blob,
-        format=wire_format,
-        frame_id=image.frame_id,
-        ts=image.ts,
-    ).lcm_encode()
-
-
-def _unwrap(data: bytes, wire_format: str) -> CompressedImage:
-    wrapped = CompressedImage.lcm_decode(data)
-    if wrapped.format != wire_format:
-        raise ValueError(f"expected {wire_format!r}, got {wrapped.format!r}")
-    return wrapped
-
-
-def _image_from_array(array: np.ndarray[Any, Any], wrapped: CompressedImage) -> Image:
-    if array.dtype == np.float32:
-        image_format = ImageFormat.DEPTH
-    elif array.dtype == np.uint16:
-        image_format = ImageFormat.DEPTH16
-    else:
-        raise ValueError(f"unsupported decoded depth dtype {array.dtype}")
-    return Image(data=array, format=image_format, frame_id=wrapped.frame_id, ts=wrapped.ts)
-
-
-def _encode_lcm(image: Image) -> bytes:
-    return image.lcm_encode()
-
-
-def _decode_lcm(data: bytes) -> Image:
-    return Image.lcm_decode(data)
-
-
-def _encode_lz4(image: Image) -> bytes:
-    return bytes(lz4.frame.compress(image.lcm_encode()))
-
-
-def _decode_lz4(data: bytes) -> Image:
-    return Image.lcm_decode(lz4.frame.decompress(data))
-
-
-def _encode_zstd(image: Image) -> bytes:
-    return _ZSTD_LCM.encode(image)
-
-
-def _decode_zstd(data: bytes) -> Image:
-    decoded = _ZSTD_LCM.decode(data)
-    if not isinstance(decoded, Image):
-        raise TypeError(f"expected Image, got {type(decoded).__name__}")
-    return decoded
-
-
-def _encode_png(image: Image) -> bytes:
-    import cv2
-
-    ok, blob = cv2.imencode(".png", image.data, [cv2.IMWRITE_PNG_COMPRESSION, 3])
-    if not ok:
-        raise ValueError("PNG encoding failed")
-    return _wrap(image, "depth-png", blob.tobytes())
-
-
-def _decode_png(data: bytes) -> Image:
-    import cv2
-
-    wrapped = _unwrap(data, "depth-png")
-    pixels = cv2.imdecode(np.frombuffer(wrapped.data, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
-    if pixels is None:
-        raise ValueError("PNG decoding failed")
-    return _image_from_array(pixels, wrapped)
-
-
-def _encode_jpegxl(image: Image) -> bytes:
-    blob = bytes(imagecodecs.jpegxl_encode(image.data, lossless=True, effort=1))
-    return _wrap(image, "depth-jxl", blob)
-
-
-def _decode_jpegxl(data: bytes) -> Image:
-    wrapped = _unwrap(data, "depth-jxl")
-    return _image_from_array(imagecodecs.jpegxl_decode(wrapped.data), wrapped)
-
-
-def _encode_zfp(image: Image) -> bytes:
-    blob = bytes(imagecodecs.zfp_encode(image.data, mode="reversible"))
-    return _wrap(image, "depth-zfp", blob)
-
-
-def _decode_zfp(data: bytes) -> Image:
-    wrapped = _unwrap(data, "depth-zfp")
-    return _image_from_array(imagecodecs.zfp_decode(wrapped.data), wrapped)
-
-
-def _lerc_level(image: Image, max_error_m: float) -> float:
-    return max_error_m if image.format is ImageFormat.DEPTH else max_error_m * 1000.0
-
-
-def _lerc_candidate(max_error_m: float) -> Candidate:
-    label = "lerc-lossless" if max_error_m == 0 else f"lerc-{max_error_m * 1000:g}mm"
-    wire_format = f"bench-{label}"
-
-    def encode(image: Image) -> bytes:
-        valid = np.isfinite(image.data) & (image.data > 0)
-        pixels = np.ascontiguousarray(np.where(valid, image.data, 0))
-        blob = bytes(
-            imagecodecs.lerc_encode(
-                pixels,
-                level=_lerc_level(image, max_error_m),
-                masks=valid,
-            )
-        )
-        return _wrap(image, wire_format, blob)
-
-    def decode(data: bytes) -> Image:
-        wrapped = _unwrap(data, wire_format)
-        pixels, valid = imagecodecs.lerc_decode(wrapped.data, masks=True)
-        pixels = np.asarray(pixels)
-        if valid is None:
-            valid = np.ones(pixels.shape, dtype=np.bool_)
-        if pixels.dtype == np.float32:
-            pixels[~valid] = np.nan
-            pixels[valid & (pixels <= 0)] = np.nextafter(np.float32(0), np.float32(1))
-        else:
-            pixels[~valid] = 0
-            pixels[valid & (pixels == 0)] = 1
-        return _image_from_array(pixels, wrapped)
-
-    return Candidate(
-        label,
-        _always,
-        encode,
-        decode,
-        max_error_m * 1000.0,
-        exact_array=False,
-    )
+    codecs: list[BenchmarkRow]
 
 
 def candidates() -> list[Candidate]:
+    lcm = LcmCodec(Image)
+    lz4_lcm = Lz4Codec(LcmCodec(Image))
+    jpeg = JpegCodec()
+    lerc = LercCodec()
     return [
-        Candidate("raw-lcm", _always, _encode_lcm, _decode_lcm, 0.0),
-        Candidate("lz4+lcm", _always, _encode_lz4, _decode_lz4, 0.0),
-        Candidate("zstd3+lcm", _always, _encode_zstd, _decode_zstd, 0.0),
-        Candidate("png3", _uint16, _encode_png, _decode_png, 0.0),
-        Candidate("jpegxl-lossless", _always, _encode_jpegxl, _decode_jpegxl, 0.0),
-        Candidate("zfp-reversible", _float32, _encode_zfp, _decode_zfp, 0.0),
-        _lerc_candidate(0.0),
-        _lerc_candidate(0.001),
-        _lerc_candidate(MAX_ERROR_METERS),
-        _lerc_candidate(0.010),
+        Candidate(codec_id(lcm), lcm, 0.0),
+        Candidate(codec_id(lz4_lcm), lz4_lcm, 0.0),
+        Candidate(codec_id(jpeg), jpeg, 0.0),
+        Candidate(codec_id(lerc), lerc, MAX_ERROR_METERS * 1000.0, exact_array=False),
     ]
 
 
@@ -503,7 +342,7 @@ def benchmark(
     *,
     frame_count: int | None = None,
     progress_label: str | None = None,
-) -> list[BenchmarkRow | SkippedRow]:
+) -> list[BenchmarkRow]:
     iterator = iter(frames)
     try:
         first = next(iterator)
@@ -512,12 +351,14 @@ def benchmark(
     if first.format not in (ImageFormat.DEPTH, ImageFormat.DEPTH16):
         raise ValueError(f"expected a depth image, got {first.format}")
 
+    raw_codec = LcmCodec(Image)
     all_candidates = candidates()
-    supported = [candidate for candidate in all_candidates if candidate.supports(first)]
-    accumulators = {candidate.name: _MetricAccumulator(candidate) for candidate in supported}
-    for candidate in supported:
-        payload = candidate.encode(first)
-        decoded = candidate.decode(payload)
+    accumulators = {candidate.name: _MetricAccumulator(candidate) for candidate in all_candidates}
+    for candidate in all_candidates:
+        payload = candidate.codec.encode(first)
+        decoded = candidate.codec.decode(payload)
+        if not isinstance(decoded, Image):
+            raise TypeError(f"{candidate.name} decoded {type(decoded).__name__}, expected Image")
         _validate_decoded(candidate, first, decoded)
 
     total = frame_count
@@ -540,15 +381,17 @@ def benchmark(
     try:
         for index, frame in enumerate(chain((first,), iterator)):
             _validate_frame(frame, first, index)
-            raw_size = len(frame.lcm_encode())
-            for candidate in supported:
+            raw_size = len(raw_codec.encode(frame))
+            for candidate in all_candidates:
                 try:
                     payload, encode_wall_ms, encode_cpu_ms = _measure(
-                        partial(candidate.encode, frame)
+                        partial(candidate.codec.encode, frame)
                     )
                     decoded, decode_wall_ms, decode_cpu_ms = _measure(
-                        partial(candidate.decode, payload)
+                        partial(candidate.codec.decode, payload)
                     )
+                    if not isinstance(decoded, Image):
+                        raise TypeError(f"decoded {type(decoded).__name__}, expected Image")
                     _validate_decoded(candidate, frame, decoded)
                     accumulators[candidate.name].add(
                         frame,
@@ -574,20 +417,7 @@ def benchmark(
     if frame_count is not None and seen != frame_count:
         raise ValueError(f"expected {frame_count} frames, read {seen}")
 
-    rows: list[BenchmarkRow | SkippedRow] = []
-    for candidate in all_candidates:
-        accumulator = accumulators.get(candidate.name)
-        if accumulator is None:
-            rows.append(
-                SkippedRow(
-                    codec=candidate.name,
-                    status="unsupported",
-                    reason=f"unsupported for {first.format}/{first.dtype}",
-                )
-            )
-        else:
-            rows.append(accumulator.row())
-    return rows
+    return [accumulators[candidate.name].row() for candidate in all_candidates]
 
 
 def synthetic_frames(dtype: str, count: int) -> list[Image]:
@@ -749,7 +579,7 @@ def resolve_source(value: str) -> Path:
     return path if path.exists() else get_data(value)
 
 
-def print_table(rows: Sequence[BenchmarkRow | SkippedRow]) -> None:
+def print_table(rows: Sequence[BenchmarkRow]) -> None:
     header = (
         f"{'codec':<18} {'avg bytes':>10} {'ratio':>7} {'enc wall p50/p95':>20} "
         f"{'enc cpu p50/p95':>19} {'dec wall p50/p95':>20} {'dec cpu p50/p95':>19} "
@@ -758,9 +588,6 @@ def print_table(rows: Sequence[BenchmarkRow | SkippedRow]) -> None:
     print(header)
     print("-" * len(header))
     for row in rows:
-        if isinstance(row, SkippedRow):
-            print(f"{row.codec:<18} {'N/A':>10}  {row.reason}")
-            continue
         print(
             f"{row.codec:<18} {row.mean_bytes_per_frame:>10.0f} "
             f"{row.compression_ratio:>6.2f}x "
@@ -818,7 +645,6 @@ def _run_document(
                 "imagecodecs": _package_version("imagecodecs"),
                 "lz4": _package_version("lz4"),
                 "opencv-contrib-python": _package_version("opencv-contrib-python"),
-                "zstandard": _package_version("zstandard"),
             },
             "inputs": list(inputs),
             "timing": "one warmup per codec and stream; one timed call per frame",
@@ -856,12 +682,6 @@ def _markdown(document: dict[str, Any]) -> str:
             ]
         )
         for row in result["codecs"]:
-            if row.get("status") == "unsupported":
-                lines.append(
-                    f"| {row['codec']} | N/A | N/A | N/A | N/A | N/A | N/A | "
-                    f"N/A | N/A | {row['reason']} |"
-                )
-                continue
             lines.append(
                 f"| {row['codec']} | {row['mean_bytes_per_frame']:.0f} | "
                 f"{row['compression_ratio']:.2f}x | "

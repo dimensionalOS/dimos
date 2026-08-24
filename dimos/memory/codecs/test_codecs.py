@@ -22,6 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from dimos_lcm.sensor_msgs.Image import Image as LCMImage
 import numpy as np
 import pytest
 
@@ -29,8 +30,8 @@ from dimos.memory.codecs.base import Codec, codec_for
 from dimos.memory.codecs.jpeg import JpegCodec
 from dimos.memory.codecs.lcm import LcmCodec
 from dimos.memory.codecs.pickle import PickleCodec
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
 if TYPE_CHECKING:
@@ -242,10 +243,10 @@ def test_default_image_codec_uses_lossless_jpegxl_for_depth(
     codec = codec_for(Image)
 
     payload = codec.encode(source)
-    envelope = CompressedImage.lcm_decode(payload)
+    envelope = LCMImage.lcm_decode(payload)
     decoded = codec.decode(payload)
 
-    assert envelope.format == f"jxl;{image_format.value.lower()}"
+    assert envelope.encoding == f"jxl;{image_format.value.lower()}"
     assert decoded.format is image_format
     assert decoded.dtype == source.dtype
     assert decoded.frame_id == "depth"
@@ -266,11 +267,33 @@ def test_default_image_codec_keeps_jpeg_for_rgb() -> None:
     codec = codec_for(Image)
 
     payload = codec.encode(source)
-    envelope = CompressedImage.lcm_decode(payload)
+    envelope = LCMImage.lcm_decode(payload)
     decoded = codec.decode(payload)
 
-    assert envelope.format == "jpeg"
+    assert payload == source.lcm_jpeg_encode(quality=50)
+    assert envelope.encoding == "jpeg"
     assert decoded.format is ImageFormat.RGB
     assert decoded.frame_id == "camera"
     assert decoded.ts == 123.5
     assert np.mean(np.abs(decoded.data.astype(float) - pixels[..., None])) < 1.0
+
+
+def test_sqlite_reopen_restores_default_jpegxl_depth_codec(tmp_path) -> None:
+    database = str(tmp_path / "depth.db")
+    pixels = np.array([[0, 250, 1000, 65535]], dtype=np.uint16)
+    source = Image(
+        data=pixels,
+        format=ImageFormat.DEPTH16,
+        frame_id="depth",
+        ts=123.5,
+    )
+    with SqliteStore(path=database) as store:
+        store.stream("depth", Image).append(source, ts=source.ts)
+
+    with SqliteStore(path=database) as reopened:
+        decoded = reopened.stream("depth", Image).first().data
+
+    assert decoded.format is ImageFormat.DEPTH16
+    assert decoded.frame_id == source.frame_id
+    assert decoded.ts == source.ts
+    assert np.array_equal(decoded.data, source.data)

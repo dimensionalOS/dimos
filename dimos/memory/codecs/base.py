@@ -97,12 +97,6 @@ def _make_one(name: str, payload_module: str, inner: Codec[Any] | None = None) -
         if inner is None:
             raise ValueError("lz4 is a wrapper codec — must have an inner codec")
         return Lz4Codec(inner)
-    if name == "zstd":
-        from dimos.memory.codecs.zstd import ZstdCodec
-
-        if inner is None:
-            raise ValueError("zstd is a wrapper codec — must have an inner codec")
-        return ZstdCodec(inner)
     if name == "jpeg":
         from dimos.memory.codecs.jpeg import JpegCodec
 

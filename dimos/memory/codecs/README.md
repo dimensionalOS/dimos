@@ -18,7 +18,6 @@ class Codec(Protocol[T]):
 | `JpegCodec` | `Image` | Lossy JPEG for visual images; lossless JPEG XL for depth. Preserves metadata. |
 | `LercCodec` | Depth `Image` | Bounded-error compression for `float32` meters and `uint16` millimeters. Maximum error: 5 mm. |
 | `LcmCodec` | `DimosMsg` subclasses | Uses `lcm_encode()`/`lcm_decode()`. Zero-copy for LCM message types. |
-| `ZstdCodec` | Any codec output | Lossless level-3 Zstandard wrapper. Use `zstd+lcm` for typed messages. |
 
 ## Auto-selection
 
@@ -39,20 +38,30 @@ The default `Image` codec stores `DEPTH/float32` and `DEPTH16/uint16` images as
 lossless JPEG XL. Visual images continue to use ordinary lossy JPEG. Record a
 depth stream without a codec override to use this format-aware default:
 
-```python
-depth = store.stream("depth_image", Image)
+```python no-result
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.sensor_msgs.Image import Image
+
+with TemporaryDirectory() as directory:
+    with SqliteStore(path=str(Path(directory) / "recording.db")) as store:
+        store.stream("depth_image", Image)
 ```
 
 Use the `lerc` codec explicitly when a 5 mm error bound is acceptable:
 
-```python
-depth = store.stream("depth_image", Image, codec="lerc")
-```
+```python no-result
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
-Use `zstd+lcm` as a generic lossless alternative:
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.sensor_msgs.Image import Image
 
-```python
-depth = store.stream("depth_image", Image, codec="zstd+lcm")
+with TemporaryDirectory() as directory:
+    with SqliteStore(path=str(Path(directory) / "recording.db")) as store:
+        store.stream("depth_image", Image, codec="lerc")
 ```
 
 `LercCodec` accepts `DEPTH/float32` images in meters and `DEPTH16/uint16`
@@ -71,7 +80,7 @@ The manual benchmark processes every frame in every detected depth stream.
 Pass any number of SQLite recordings, extracted depth-frame directories, or
 named LFS datasets, and choose a new or empty output directory:
 
-```bash
+```sh skip
 uv run python -m dimos.memory.codecs.tool_depth_benchmark \
   recording.db g1_zed rgbd_frames \
   --output /tmp/depth-codecs
@@ -83,7 +92,7 @@ p50/p95 wall and process-CPU timing, and fidelity measurements.
 
 For a quick harness check without LFS data:
 
-```bash
+```sh
 uv run python -m dimos.memory.codecs.tool_depth_benchmark --synthetic uint16
 uv run python -m dimos.memory.codecs.tool_depth_benchmark --synthetic float32
 ```

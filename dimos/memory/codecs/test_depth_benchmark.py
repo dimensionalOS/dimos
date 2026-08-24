@@ -22,13 +22,14 @@ import cv2
 import numpy as np
 import pytest
 
+from dimos.memory.codecs.base import codec_id
 import dimos.memory.codecs.tool_depth_benchmark as depth_benchmark
 from dimos.memory.codecs.tool_depth_benchmark import (
     BenchmarkRow,
     Candidate,
-    SkippedRow,
     StreamBenchmark,
     benchmark,
+    candidates,
     discover_depth_streams,
     fidelity,
     synthetic_frames,
@@ -36,6 +37,21 @@ from dimos.memory.codecs.tool_depth_benchmark import (
 )
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+
+
+class _KnownErrorCodec:
+    def encode(self, image: Image) -> bytes:
+        return image.lcm_encode()
+
+    def decode(self, payload: bytes) -> Image:
+        image = Image.lcm_decode(payload)
+        error_m = 0.001 if image.ts == 1.0 else 0.003
+        return Image(
+            data=image.data + error_m,
+            format=image.format,
+            frame_id=image.frame_id,
+            ts=image.ts,
+        )
 
 
 def _depth(
@@ -75,8 +91,8 @@ def test_benchmark_checks_all_compatible_codecs(dtype: str) -> None:
     rows = benchmark(synthetic_frames(dtype, count=1))
     by_name = {row.codec: row for row in rows}
 
-    raw = by_name["raw-lcm"]
-    lerc = by_name["lerc-5mm"]
+    raw = by_name["lcm"]
+    lerc = by_name["lerc"]
     assert isinstance(raw, BenchmarkRow)
     assert isinstance(lerc, BenchmarkRow)
     assert raw.compression_ratio == 1.0
@@ -86,30 +102,12 @@ def test_benchmark_checks_all_compatible_codecs(dtype: str) -> None:
     assert lerc.encoded_bytes < lerc.raw_bytes
 
 
-def test_benchmark_reports_unsupported_codecs() -> None:
-    rows = benchmark(synthetic_frames("float32", count=1))
-    by_name = {row.codec: row for row in rows}
+def test_candidates_are_supported_storage_codecs() -> None:
+    configured = candidates()
 
-    assert isinstance(by_name["png3"], SkippedRow)
-    assert isinstance(by_name["jpegxl-lossless"], BenchmarkRow)
-    assert by_name["jpegxl-lossless"].max_error_mm == 0.0
-    assert isinstance(by_name["zfp-reversible"], BenchmarkRow)
-
-
-def test_lerc_lossless_canonicalizes_invalid_float_values() -> None:
-    frame = Image(
-        data=np.array([[1.25, np.inf, np.nan, 0.0]], dtype=np.float32),
-        format=ImageFormat.DEPTH,
-        frame_id="depth",
-        ts=1.0,
-    )
-
-    rows = benchmark([frame])
-
-    row = next(row for row in rows if row.codec == "lerc-lossless")
-    assert isinstance(row, BenchmarkRow)
-    assert row.max_error_mm == 0.0
-    assert row.invalid_mismatch_pct == 0.0
+    names = [candidate.name for candidate in configured]
+    assert names == ["lcm", "lz4+lcm", "jpeg", "lerc"]
+    assert [codec_id(candidate.codec) for candidate in configured] == names
 
 
 def test_benchmark_aggregates_fidelity_across_all_pixels(monkeypatch) -> None:
@@ -128,17 +126,7 @@ def test_benchmark_aggregates_fidelity_across_all_pixels(monkeypatch) -> None:
         ),
     ]
 
-    def decode(payload: bytes) -> Image:
-        image = Image.lcm_decode(payload)
-        error_m = 0.001 if image.ts == 1.0 else 0.003
-        return Image(
-            data=image.data + error_m,
-            format=image.format,
-            frame_id=image.frame_id,
-            ts=image.ts,
-        )
-
-    candidate = Candidate("known-error", lambda _: True, Image.lcm_encode, decode, 3.0)
+    candidate = Candidate("known-error", _KnownErrorCodec(), 3.0)
     monkeypatch.setattr(depth_benchmark, "candidates", lambda: [candidate])
 
     rows = benchmark(frames)

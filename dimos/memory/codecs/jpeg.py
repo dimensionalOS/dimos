@@ -31,36 +31,13 @@ class JpegCodec:
         self._quality = quality
 
     def encode(self, value: Image) -> bytes:
-        from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
         from dimos.msgs.sensor_msgs.Image import ImageFormat
 
         if value.format in (ImageFormat.DEPTH, ImageFormat.DEPTH16):
-            compressed = CompressedImage.from_image(value, format="jxl", effort=1)
-            compressed.format = f"jxl;{value.format.value.lower()}"
-        else:
-            compressed = CompressedImage.from_image(
-                value,
-                format="jpeg",
-                quality=self._quality,
-            )
-        return compressed.lcm_encode()
+            return value.lcm_jpegxl_encode(effort=1)
+        return value.lcm_jpeg_encode(quality=self._quality)
 
     def decode(self, data: bytes) -> Image:
-        from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
-        from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+        from dimos.msgs.sensor_msgs.Image import Image
 
-        compressed = CompressedImage.lcm_decode(data)
-        image = compressed.decode()
-        depth_formats = {
-            "jxl;depth": ImageFormat.DEPTH,
-            "jxl;depth16": ImageFormat.DEPTH16,
-        }
-        image_format = depth_formats.get(compressed.format)
-        if image_format is None:
-            return image
-        return Image(
-            data=image.data,
-            format=image_format,
-            frame_id=image.frame_id,
-            ts=image.ts,
-        )
+        return Image.lcm_decode(data)
