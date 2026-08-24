@@ -60,6 +60,9 @@ pub struct Config {
     /// Max stamp gap between a cloud and the tf sample used to place it.
     #[validate(range(min = 0.0))]
     pub tf_match_tolerance_s: f64,
+    /// How long a cloud waits for a transform that has not been received yet.
+    #[validate(range(min = 0.0))]
+    pub tf_wait_timeout_s: f64,
 }
 
 fn validate_health_range(cfg: &Config) -> Result<(), ValidationError> {
@@ -738,6 +741,7 @@ mod tests {
             region_percentile: 95.0,
             output_frame: "odom".into(),
             tf_match_tolerance_s: 0.1,
+            tf_wait_timeout_s: 0.1,
         }
     }
 
@@ -947,6 +951,7 @@ mod tests {
             region_percentile: 95.0,
             output_frame: "odom".into(),
             tf_match_tolerance_s: 0.1,
+            tf_wait_timeout_s: 0.1,
         };
         // Build the floor over a y band so it is a 2d plane, not a wire.
         let max_x = 25.0_f32;
@@ -1104,6 +1109,7 @@ mod tests {
             region_percentile: 95.0,
             output_frame: "odom".into(),
             tf_match_tolerance_s: 0.1,
+            tf_wait_timeout_s: 0.1,
         };
 
         // Staircase
@@ -1180,6 +1186,7 @@ mod tests {
             region_percentile: 95.0,
             output_frame: "odom".into(),
             tf_match_tolerance_s: 0.1,
+            tf_wait_timeout_s: 0.1,
         };
 
         // Flat floor from the sensor out to a vertical wall.
@@ -1244,6 +1251,7 @@ mod tests {
             region_percentile: 95.0,
             output_frame: "odom".into(),
             tf_match_tolerance_s: 0.1,
+            tf_wait_timeout_s: 0.1,
         };
 
         // Staircase topped by a flat landing and a back wall.
@@ -1377,6 +1385,7 @@ mod tests {
             region_percentile: 95.0,
             output_frame: "odom".into(),
             tf_match_tolerance_s: 0.1,
+            tf_wait_timeout_s: 0.1,
         };
         let (mut map, _) = build_surface(&floor, voxel_size, cfg.max_health);
         let row: Vec<VoxelKey> = map

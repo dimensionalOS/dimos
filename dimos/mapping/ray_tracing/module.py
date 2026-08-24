@@ -62,6 +62,8 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     output_frame: str = "odom"
     # Max stamp gap between a cloud and the tf sample used to place it.
     tf_match_tolerance_s: float = 0.1
+    # How long a cloud waits for a transform that has not been received yet.
+    tf_wait_timeout_s: float = 0.1
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):

@@ -112,6 +112,7 @@ impl VoxelRayMapper {
             // Points arrive already in world coordinates.
             output_frame: String::new(),
             tf_match_tolerance_s: 0.1,
+            tf_wait_timeout_s: 0.1,
         };
         config
             .validate()
