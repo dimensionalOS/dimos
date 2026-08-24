@@ -76,7 +76,10 @@ def _stop_and_close(client: portal.Client) -> None:
     loop is skipped outright once the loop shuts down, leaving the client open.
     """
     try:
-        client.set_target_velocity({"target_velocity": np.zeros(3), "frame": "local"}).result()
+        # Bounded so an unanswered stop cannot skip the close below.
+        client.set_target_velocity({"target_velocity": np.zeros(3), "frame": "local"}).result(
+            timeout=DEFAULT_THREAD_JOIN_TIMEOUT
+        )
     except Exception as e:
         logger.error(f"Error stopping Alfred: {e}")
     # Closing fails every request the connection still owes, so it goes after the stop.
