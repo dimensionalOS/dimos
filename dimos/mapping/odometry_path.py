@@ -18,6 +18,8 @@ from collections import deque
 import math
 from typing import Any
 
+from pydantic import Field
+
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -29,7 +31,7 @@ class OdometryPathConfig(ModuleConfig):
     # Empty follows the odometry's own frame_id.
     frame_id: str = ""
     min_step_meters: float = 0.02
-    max_poses: int = 20000
+    max_poses: int = Field(20000, ge=1)
     min_publish_interval_seconds: float = 0.1
 
 
