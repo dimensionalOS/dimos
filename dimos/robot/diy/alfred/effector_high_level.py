@@ -58,6 +58,7 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 RPC_POLL_SECONDS = 0.002
+ODOMETRY_ERROR_LOG_INTERVAL_SECONDS = 10.0
 
 
 async def _rpc_result(future: portal.Future) -> Any:
@@ -112,8 +113,7 @@ class AlfredHighLevel(Module):
     async def main(self) -> AsyncGenerator[None, None]:
         # Recreated each run so a restart binds it to the new event loop.
         self._odometry_stop = asyncio.Event()
-        # Deferred: portal is an optional dependency, and importing this module for its
-        # blueprint must work without it.
+        # portal is optional; importing this module for its blueprint must work without it.
         import portal
 
         client = portal.Client(self.config.address)
@@ -135,7 +135,8 @@ class AlfredHighLevel(Module):
                     {self._odometry_task}, timeout=DEFAULT_THREAD_JOIN_TIMEOUT
                 )
                 if not done:
-                    logger.warning("Alfred wheel odometry poll is still running; stopping anyway")
+                    logger.warning("Alfred wheel odometry poll is still running; cancelling it")
+                    self._odometry_task.cancel()
             await asyncio.to_thread(stopper.join, DEFAULT_THREAD_JOIN_TIMEOUT)
             if stopper.is_alive():
                 logger.error("Alfred has not taken the stop command yet; it may still be moving")
@@ -265,9 +266,11 @@ class AlfredHighLevel(Module):
                 return
             except Exception as error:
                 # A dead connection fails every poll, and the poll runs at wheel_odometry_hz.
-                error_log_interval = 10.0
                 now = asyncio.get_running_loop().time()
-                if last_error_log is None or now - last_error_log >= error_log_interval:
+                if (
+                    last_error_log is None
+                    or now - last_error_log >= ODOMETRY_ERROR_LOG_INTERVAL_SECONDS
+                ):
                     last_error_log = now
                     logger.error(f"Alfred wheel odometry poll failed: {error}")
                 await self._wait_or_stop(period)
