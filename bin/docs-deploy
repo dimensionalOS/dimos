@@ -26,8 +26,7 @@ Usage: bin/docs-deploy [options]
   --target DIR      Where within that repo to publish (default: ., the site root)
   --commit          Commit in the pages repo. Never pushes.
 
-Publishes to https://dimensionalos.github.io/<target>/, leaving sphinx/ and
-careers/ alone.
+Publishes to https://dimensionalos.github.io/<target>/, leaving careers/ alone.
 EOF
 }
 
@@ -78,10 +77,9 @@ uv run mkdocs build --strict --site-dir "$REPO_ROOT/site"
 # reader has no way to tell it is from the previous build. rsync --delete does
 # the replacing, since at the repo root an rm -rf would take .git with it.
 #
-# KEEP lists what lives beside the docs and is not ours to remove: the sphinx
-# build we are being compared against, and the careers page, which is linked
-# from job postings we do not control.
-KEEP=(--exclude=.git/ --exclude=sphinx/ --exclude=careers/ --exclude=.nojekyll --exclude=CNAME)
+# KEEP lists what lives beside the docs and is not ours to remove: the careers
+# page, which is linked from job postings we do not control.
+KEEP=(--exclude=.git/ --exclude=careers/ --exclude=.nojekyll --exclude=CNAME)
 
 echo "Replacing $DEST"
 mkdir -p "$DEST"
