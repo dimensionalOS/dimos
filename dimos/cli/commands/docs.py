@@ -48,10 +48,16 @@ def docs(
         )
         raise typer.Exit(1)
 
-    if shutil.which("uv"):
-        command = ["uv", "run", "mkdocs"]
+    # An installed mkdocs is preferred over `uv run`, which syncs the project
+    # and its default groups before running anything. The site needs none of
+    # that, and the sync is slower than the build it precedes.
+    venv_mkdocs = root / ".venv" / "bin" / "mkdocs"
+    if venv_mkdocs.is_file():
+        command = [str(venv_mkdocs)]
     elif shutil.which("mkdocs"):
         command = ["mkdocs"]
+    elif shutil.which("uv"):
+        command = ["uv", "run", "mkdocs"]
     else:
         typer.echo("mkdocs is not installed. Install it with: uv sync --group docs", err=True)
         raise typer.Exit(1)

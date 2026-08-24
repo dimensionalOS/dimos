@@ -68,10 +68,22 @@ fi
 
 DEST="$PAGES_REPO/$TARGET_DIR"
 
+# Deliberately not `uv run`: that syncs the project and its default groups
+# first, which builds pyaudio and wants portaudio headers. The site build
+# needs nothing from dimos, so use whichever mkdocs is already installed.
+if [[ -x .venv/bin/mkdocs ]]; then
+  MKDOCS=.venv/bin/mkdocs
+elif command -v mkdocs &>/dev/null; then
+  MKDOCS=mkdocs
+else
+  echo "mkdocs is not installed. Install it with: uv sync --group docs" >&2
+  exit 1
+fi
+
 echo "Building mkdocs site..."
 # See dimos/cli/commands/docs.py for what this silences.
 export NO_MKDOCS_2_WARNING=true
-uv run mkdocs build --strict --site-dir "$REPO_ROOT/site"
+"$MKDOCS" build --strict --site-dir "$REPO_ROOT/site"
 
 # Replace rather than merge: a stale page left behind still resolves, and a
 # reader has no way to tell it is from the previous build. rsync --delete does
