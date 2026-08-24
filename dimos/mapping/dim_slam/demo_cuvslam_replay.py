@@ -91,8 +91,8 @@ class CuvslamReplay(Module):
             SqliteStore(path=str(resolve_db_path(self.config.dataset)), must_exist=True)
         )
         store.start()
-        # One Replay for every stream so they share a wall-clock anchor; separate ones
-        # would drift and cuVSLAM would be handed mismatched left/right frames.
+        # One Replay shared by every stream so they run off a single wall-clock anchor;
+        # separate ones would drift and hand cuVSLAM mismatched left/right frames.
         replay = store.replay(
             speed=self.config.speed, seek=self.config.seek, duration=self.config.duration
         )

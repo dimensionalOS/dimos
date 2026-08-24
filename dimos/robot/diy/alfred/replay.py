@@ -235,7 +235,6 @@ class AlfredReplay(Module):
         )
         self._started_at = time.time()
 
-        # Tracked on the left frame; zip emits the pair together so one stands for both.
         def publish_stereo(pair: tuple[Image, Image]) -> None:
             for frame in pair:
                 self.image.publish(frame)
