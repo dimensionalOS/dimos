@@ -237,6 +237,13 @@
   overflow: hidden;
   font-size: 0.72rem;
   width: 100%;
+  /* Material sets display: inline-block here, which stops the element being a
+   * table box: the rows get an anonymous shrink-to-fit box instead, so the
+   * width above applied to the outer box while tbody stayed at its content
+   * width and percentage cells resolved against that. Material's own
+   * `.md-typeset__table table { display: table }` is meant to undo it but
+   * loses on specificity to the `:not([class])` rule that set it. */
+  display: table;
 }
 
 /* A table whose cells declare widths is a layout, not data: honour those
