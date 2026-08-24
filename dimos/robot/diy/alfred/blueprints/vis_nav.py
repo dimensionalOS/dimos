@@ -96,17 +96,14 @@ def _alfred_urdf_static(rr: Any) -> list[tuple[str, Any]]:
 
 VOXEL_SIZE_METERS = 0.05
 DEPTH_MAX_RANGE_METERS = 4.0
-"""Far gate on the D455's depth.
-
-Stereo error grows as range squared; 4 m won the mapping grid against 6 m and against
+"""Stereo error grows as range squared; 4 m won the mapping grid against 6 m and against
 depth2depth-densified clouds (top-down F1 .570 / .506 / .411 vs a lidar-raycast
 reference on drive_2026-08-18_23-05-04.db)."""
 
 ALFRED_BODY_HEIGHT_METERS = 0.5
 
 vis_nav = autoconnect(
-    # On drive_2026-08-18_23-05-04.db wheel alone ends 2.66 m from the lidar reference,
-    # wheel + gyro heading 1.33 m, against a 0.59 m floor.
+    # drive_2026-08-18_23-05-04.db vs lidar: wheel 2.66 m, wheel + gyro 1.33 m, floor 0.59 m.
     DimSlam.blueprint(
         # Alfred's computer has no GPU; the fork-built libcuvslam carries the CPU path.
         use_gpu=False,
@@ -115,26 +112,20 @@ vis_nav = autoconnect(
         # A full-resolution D455 cloud is ~400k points a frame at 30 Hz and drowns the mapper.
         depth_cloud_decimation=3,
         source_frames=["visual_odom", "wheel_odom"],
-        # Fixed variances, not the message covariances: both sources report accumulated
-        # drift, which says nothing about the delta being fused. Wheel yaw is dropped
-        # (biased random walk ~0.4 deg/s; trusting it over visual landed 8.8 m yaw-fit
-        # rmse against 1.3 m for raw cuVSLAM), and so is visual z, which the CPU tracker
-        # drifts metres per minute and the planar constraint below already pins.
+        # Fixed variances: the message covariances report accumulated drift, not the delta
+        # fused. Wheel yaw is dropped, and visual z, which the planar constraint below pins.
         source_pose_variances=[
             *(0.01, 0.01, 0.0, 0.05, 0.05, 0.05),
             *(0.05, 0.05, 0.0, 0.0, 0.0, 0.0),
         ],
         # The CPU tracker's reported translation std starts above 1.0 and grows past 9
-        # while driving normally, so no threshold separates good frames from bad. Off;
-        # the speed gate is the teleport backstop.
+        # while driving normally, so no threshold separates good frames from bad.
         covariance_gate_translation_std=0.0,
         # Only the wheels measure velocity; cuVSLAM's twist is differentiated pose.
         source_twist_variances=[*(0.0,) * 6, *(0.02, 0.02, 0.0, 0.0, 0.0, 0.05)],
-        # Alfred is holonomic in the plane, so only the out-of-plane directions are
-        # constrained: it cannot climb, roll or pitch.
+        # Alfred is holonomic in the plane; only out-of-plane directions are constrained.
         constraint_twist_variances=[0.0, 0.0, 0.01, 0.01, 0.01, 0.0],
-        # Wheel odometry crosses the wifi link and can land seconds late; a message
-        # older than the buffer is dropped instead of replayed into the filter.
+        # Wheel odometry crosses the wifi link and can land seconds late.
         replay_buffer_seconds=2.0,
         # Bosch BMI055 datasheet figures, the part in the D455.
         imu_gyro_noise_density=0.0018,
@@ -146,7 +137,7 @@ vis_nav = autoconnect(
         voxel_size=VOXEL_SIZE_METERS,
         max_range=DEPTH_MAX_RANGE_METERS,
     ).remappings(
-        # Alfred has no lidar; the tracker's depth cloud takes its place.
+        # Alfred has no lidar.
         [(RayTracingVoxelMap, "lidar", "depth_cloud")]
     ),
     MLSPlannerNative.blueprint(

@@ -16,8 +16,7 @@
 
     dimos run demo-cuvslam-replay --viewer rerun --dataset sf_office_stairs
 
-``--dataset`` takes an absolute .db path or a dataset name; a name is downloaded from
-LFS on first use. ``sf_office_stairs`` is the stereo recording this demo was built on.
+``sf_office_stairs`` is the stereo recording this demo was built on.
 
 The right camera_info carries the baseline in ``P[3]``, the only source of metric scale.
 """
@@ -42,7 +41,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.visualization.vis_module import vis_module
 
-# The widest stamp difference cuVSLAM will still accept as one stereo frame set.
+# cuVSLAM's stereo pairing window.
 _STEREO_TOLERANCE = 0.001
 
 
@@ -65,8 +64,7 @@ class CuvslamReplay(Module):
 
     image: Out[Image]
     camera_info: Out[CameraInfo]
-    # cuVSLAM places each camera on the rig by tf, so the recorded chain has to be
-    # replayed alongside the frames; without it no camera resolves and every image drops.
+    # cuVSLAM resolves the rig from tf; without the recorded chain every image drops.
     tf: Out[TFMessage]
 
     @rpc
@@ -78,12 +76,11 @@ class CuvslamReplay(Module):
             SqliteStore(path=str(resolve_db_path(self.config.dataset)), must_exist=True)
         )
         store.start()
-        # One Replay shared by every stream so they run off a single wall-clock anchor;
-        # separate ones would drift and hand cuVSLAM mismatched left/right frames.
+        # Separate Replays would drift and hand cuVSLAM mismatched left/right frames.
         replay = store.replay(
             speed=self.config.speed, seek=self.config.seek, duration=self.config.duration
         )
-        # Match the eyes by stamp: ordinal pairing desynchronizes permanently on a dropped frame.
+        # Ordinal pairing desynchronizes permanently on a dropped frame.
         self._pending = {"left": deque[Image](), "right": deque[Image]()}
         for side, stream_name in (
             ("left", self.config.left_stream),

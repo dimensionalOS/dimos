@@ -42,14 +42,11 @@ logger = setup_logger()
 PROGRESS_INTERVAL_SECONDS = 10.0
 
 STEREO_PAIR_TOLERANCE = 0.001
-"""Both imagers in a frameset carry the same stamp; cuVSLAM rejects pairs past 1 ms."""
+"""cuVSLAM rejects stereo pairs whose stamps differ."""
 
 
 def _stamp_matched_pairs(left: Any, right: Any) -> Any:
-    """Each stream skips past whatever is already behind the shared clock when it
-    subscribes, and the two imagers subscribe an instant apart, so they can enter on
-    different frames and an ordinal zip would pair mismatched stamps from then on.
-    """
+    """The imagers subscribe an instant apart, so an ordinal zip pairs mismatched stamps."""
 
     def subscribe(observer: Any, scheduler: Any = None) -> Any:
         lock = threading.Lock()
@@ -64,7 +61,7 @@ def _stamp_matched_pairs(left: Any, right: Any) -> Any:
                     pending[other] = None
                     emit = (held, frame) if side == "right" else (frame, held)
                 elif held is not None and held.ts > frame.ts:
-                    pass  # this frame's partner was dropped; the held one still waits
+                    pass  # partner dropped; the held frame still waits
                 else:
                     # Any held older frame lost its partner; keep only the newest.
                     pending[other] = None
@@ -108,23 +105,19 @@ both would give base_link two parents."""
 class AlfredReplayConfig(ModuleConfig):
     db_path: str = ""
     tf_stream: str = "tf"
-    # Faster than real time outruns the CPU cuVSLAM tracker, which then falls behind
-    # the other streams and fuses stale visual deltas: the trajectory changes.
+    # Faster than real time outruns the CPU tracker and changes the trajectory.
     speed: float = 1.0
     seek: float | None = None
     duration: float | None = None
     publish_wheel_odometry: bool = True
-    # The vision-only stack never consumes the lidar; it costs decode CPU that the
-    # tracker needs, so it stays off unless a comparison wants it.
+    # Lidar decode steals CPU the tracker needs; nothing vision-only consumes it.
     publish_lidar: bool = False
     done_file: str = ""
     """Touched once every stream has emitted its last message."""
 
 
 class AlfredReplay(Module):
-    """Both infrared imagers and the colour image go onto the one ``image`` stream and are
-    told apart downstream by ``frame_id``, exactly as the live camera driver does.
-    """
+    """The colour image also goes onto ``image``, as the live driver does."""
 
     config: AlfredReplayConfig
 

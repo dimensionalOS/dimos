@@ -213,8 +213,7 @@ class DimSlamConfig(NativeModuleConfig):
     # (1000 for the usual sixteen-bit millimetres), so it is set per robot.
     depth_units_per_meter: float = 1.0
     # Range gate on the published depth_cloud, metres; 0 leaves either end open. Where to
-    # cut is a property of the depth sensor, not of the tracker, so both ends are open
-    # here and set per robot.
+    # cut is a property of the depth sensor, not of the tracker.
     depth_cloud_min_range: float = 0.0
     depth_cloud_max_range: float = 0.0
     # Emit one point per k x k depth block instead of every pixel: the median of the
@@ -230,17 +229,13 @@ class DimSlamConfig(NativeModuleConfig):
     # cargo feature (depth2depth-cuda/-cudnn/-metal for a GPU backend).
     depth2depth_dinov2_weights: str = ""
     depth2depth_head_weights: str = ""
-    # Model input resolution scale, the quality/speed knob: 1.0 = 280x504, 0.5 is ~4x
-    # faster and coarser.
+    # 1.0 = 280x504; 0.5 is ~4x faster and coarser.
     depth2depth_quality: float = 1.0
     # Frame whose images on the image stream feed the model; empty uses the rig camera
     # on the depth frame. Set to the color camera's frame when depth is aligned to a
     # camera that has no color, such as an infrared imager.
     depth2depth_color_frame: str = ""
-    # Each depth image is fused with the recent color image closest in stamp; a
-    # stalled color stream would silently guide densification with another moment's
-    # scene. A depth frame with no color inside this stamp window gets a raw
-    # (undensified) cloud, and once fusion has begun, staying in that state is fatal.
+    # A depth frame with no color inside this window gets an undensified cloud.
     depth2depth_max_color_skew_seconds: float = 0.5
 
     odom_frame: str = "odom"
@@ -270,7 +265,7 @@ class DimSlamConfig(NativeModuleConfig):
     gravity: float = 9.81
     # Averaged while stationary to level the filter and take the gyro bias, which the
     # rest of the run cannot observe. The robot has to stand still for this many samples
-    # at startup, so it trades startup time against how well the bias is pinned.
+    # at startup.
     imu_init_samples: int = 200
 
     initial_position_std: float = 0.01

@@ -14,11 +14,7 @@
 
 """Alfred's vision-only navigation stack fed from a recording instead of the robot.
 
-    dimos run alfred-replay --alfredreplay.db-path ~/datasets/alfred/drive.db
-
-``AlfredReplay`` publishes the recorded camera, IMU and wheel odometry streams on the
-same names ``RealSenseCamera`` and ``AlfredHighLevel`` use live, so everything
-downstream is ``vis_nav`` unchanged.
+dimos run alfred-replay --alfredreplay.db-path ~/datasets/alfred/drive.db
 """
 
 from __future__ import annotations

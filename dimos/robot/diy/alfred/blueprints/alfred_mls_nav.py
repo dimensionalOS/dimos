@@ -51,7 +51,7 @@ alfred_mls_nav = (
     )
     .remappings(
         [
-            # Both imagers onto the one stream; the tracker tells them apart by frame_id.
+            # The tracker tells the imagers apart by frame_id.
             (RealSenseCamera, "infrared_left", "image"),
             (RealSenseCamera, "infrared_right", "image"),
             (RealSenseCamera, "infrared_left_camera_info", "camera_info"),

@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <!-- Alfred: an i2rt FLOW holonomic base carrying a Livox Mid-360 and a RealSense
-     D455 on the linear rail. Caster layout and wheel radius are the FLOW's own
-     kinematic constants; the two sensor mounts are measured from the robot. -->
+     D455. Caster layout is the FLOW's own kinematic constant; the two sensor
+     mounts are measured from the robot. -->
 <robot name="alfred">
 
   <material name="shell"><color rgba="0.85 0.85 0.83 1"/></material>
@@ -32,7 +32,7 @@
     <origin xyz="0 0 0" rpy="0 0 0"/>
   </joint>
 
-  <!-- Powered casters, at the FLOW's h_x/h_y kingpin positions. -->
+  <!-- Caster kingpin positions (FLOW h_x/h_y). -->
   <link name="caster_front_left_link">
     <visual>
       <origin xyz="0 0 0" rpy="1.5707963 0 0"/>
@@ -81,7 +81,6 @@
     <origin xyz="-0.2 -0.2 0.05" rpy="0 0 0"/>
   </joint>
 
-  <!-- Vertical extrusion carrying the linear rail. -->
   <link name="mast_link">
     <visual>
       <origin xyz="0 0 0.325" rpy="0 0 0"/>
@@ -113,9 +112,9 @@
     <origin xyz="0.2307 -0.1636 0.437" rpy="-0.0096 0.3933 -0.0219"/>
   </joint>
 
-  <!-- RealSense D455 on the rear corner bracket, facing backward and pitched up
-       22.9 deg (no roll). Calibrated 2026-08-17 off drive_2026-08-16_23-46-03.db;
-       height (z) is a photo estimate, unobservable from planar motion.
+  <!-- RealSense D455 on the rear corner bracket. Calibrated 2026-08-17 off
+       drive_2026-08-16_23-46-03.db; height (z) is a photo estimate,
+       unobservable from planar motion.
        camera_link sits at the depth (left infrared) imager, which is where the
        RealSense driver puts it, so the child offsets below are the factory
        extrinsics read back off the device. -->

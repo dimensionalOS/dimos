@@ -88,14 +88,13 @@ demo_cuvslam_realsense = (
     )
     .remappings(
         [
-            # Both imagers onto the one stream; the tracker tells them apart by frame_id.
+            # The tracker tells the imagers apart by frame_id.
             (RealSenseCamera, "infrared_left", "image"),
             (RealSenseCamera, "infrared_right", "image"),
             (RealSenseCamera, "infrared_left_camera_info", "camera_info"),
             (RealSenseCamera, "infrared_right_camera_info", "camera_info"),
         ]
     )
-    # DimSlam is a native module and speaks LCM only, so the blueprint pins it rather
-    # than inheriting whatever DIMOS_TRANSPORT the shell has (macOS defaults to zenoh).
+    # DimSlam is native and speaks LCM only; don't inherit DIMOS_TRANSPORT.
     .global_config(transport="lcm", n_workers=4)
 )
