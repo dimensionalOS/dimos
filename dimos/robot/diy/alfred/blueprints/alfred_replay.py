@@ -20,10 +20,10 @@ dimos run alfred-replay --alfredreplay.db-path ~/datasets/alfred/drive.db
 from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.diy.alfred.blueprints.vis_nav import vis_nav
+from dimos.robot.diy.alfred.blueprints.vis_nav import _vis_nav
 from dimos.robot.diy.alfred.replay import AlfredReplay
 
 alfred_replay = autoconnect(
     AlfredReplay.blueprint(),
-    vis_nav,
+    _vis_nav,
 ).global_config(n_workers=10, robot_model="alfred")

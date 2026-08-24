@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Alfred's vision-only navigation stack, from camera streams down to wheel commands."""
+"""Alfred's vision-only navigation fragment: odometry through to wheel commands.
+
+Carries no image or odometry source, so it is composed into a blueprint that supplies
+one rather than run on its own.
+"""
 
 from __future__ import annotations
 
@@ -102,7 +106,7 @@ reference on drive_2026-08-18_23-05-04.db)."""
 
 ALFRED_BODY_HEIGHT_METERS = 0.5
 
-vis_nav = autoconnect(
+_vis_nav = autoconnect(
     # drive_2026-08-18_23-05-04.db vs lidar: wheel alone ends 2.66 m out, wheel + gyro 1.33 m,
     # against the 0.59 m floor the same wheel steps reach on the reference's own heading.
     DimSlam.blueprint(
@@ -142,7 +146,6 @@ vis_nav = autoconnect(
         [(RayTracingVoxelMap, "lidar", "depth_cloud")]
     ),
     MLSPlannerNative.blueprint(
-        world_frame="odom",
         voxel_size=VOXEL_SIZE_METERS,
         robot_height=ALFRED_BODY_HEIGHT_METERS,
         wall_clearance_m=0.2,

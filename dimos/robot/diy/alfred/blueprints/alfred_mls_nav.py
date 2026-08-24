@@ -24,7 +24,7 @@ from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.robot.diy.alfred.blueprints.vis_nav import vis_nav
+from dimos.robot.diy.alfred.blueprints.vis_nav import _vis_nav
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
 
 D455_MOUNT = Transform(
@@ -47,7 +47,7 @@ alfred_mls_nav = (
             base_transform=D455_MOUNT,
         ),
         AlfredHighLevel.blueprint(),
-        vis_nav,
+        _vis_nav,
     )
     .remappings(
         [
