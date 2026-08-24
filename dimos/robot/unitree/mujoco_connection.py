@@ -74,8 +74,8 @@ class MujocoConnection:
             from mujoco_playground._src import mjx_env
         except ImportError as exc:
             raise ImportError(
-            "Simulation dependencies are not installed. "
-            "Run `uv sync --extra sim --inexact` to install them."
+                "Simulation dependencies are not installed. "
+                "Run `uv sync --extra sim --inexact` to install them."
             ) from exc
 
         # Pre-download the mujoco_sim data.
