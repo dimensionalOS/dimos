@@ -18,9 +18,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Annotated, Any, Literal, TypeAlias, cast
+from typing import Annotated, Any, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
@@ -38,8 +38,7 @@ logger = setup_logger()
 
 _RUST_WORKSPACE = DIMOS_PROJECT_ROOT / "native" / "rust"
 _EXECUTABLE = _RUST_WORKSPACE / "target" / "release" / "dimos-memory-recorder"
-_SUPPORTED_CODECS = {"lcm", "jpeg", "lz4+lcm"}
-CodecId: TypeAlias = Literal["lcm", "jpeg", "lz4+lcm"]
+_SUPPORTED_NATIVE_CODECS = {"lcm", "jpeg", "lz4+lcm"}
 
 
 class RustStreamSpec(BaseModel):
@@ -48,8 +47,7 @@ class RustStreamSpec(BaseModel):
     port: str
     name: str
     payload_type: str
-    codec: CodecId
-    payload_kind: Literal["raw", "image", "tf"]
+    codec: str
 
 
 class RustStoreConfig(BaseModel):
@@ -57,7 +55,8 @@ class RustStoreConfig(BaseModel):
 
     model_config = ConfigDict(validate_default=True)
 
-    path: str
+    kind: str
+    path: str = Field(description="Absolute path of the recording artifact.")
 
     @field_validator("path", mode="before")
     @classmethod
@@ -89,43 +88,64 @@ RustRecordingStoreConfig: TypeAlias = Annotated[
 
 
 class RustRecorderConfig(NativeModuleConfig):
-    """Configuration for :class:`RustRecorder`."""
+    """Compatibility-first configuration for :class:`RustRecorder`.
+
+    Python owns artifact lifecycle and stream registration. The native process
+    receives only ``store``, ``encoding_threads``, and the internally resolved
+    ``streams`` list over stdin.
+    """
 
     executable: str = str(_EXECUTABLE)
     build_command: str = "cargo build --release -p dimos-memory-recorder"
     cwd: str = str(_RUST_WORKSPACE)
     stdin_config: bool = True
 
-    store: RustRecordingStoreConfig = Field(default_factory=RustSqliteStoreConfig)
-    on_existing: OnExisting = OnExisting.BACKUP
-    backup_keep_last: int = Field(default=10, ge=0)
-    record_tf: bool = True
-    stream_remapping: dict[str, str] = Field(default_factory=dict)
-    stream_codecs: dict[str, str] = Field(default_factory=dict)
+    store: RustRecordingStoreConfig = Field(
+        default_factory=RustSqliteStoreConfig,
+        description="Record-only native storage backend and artifact path.",
+    )
+    on_existing: OnExisting = Field(
+        default=OnExisting.BACKUP,
+        exclude=True,
+        description="How Python prepares an artifact path that already exists.",
+    )
+    backup_keep_last: int = Field(
+        default=10,
+        ge=0,
+        exclude=True,
+        description="Maximum rotated artifacts retained when on_existing is backup.",
+    )
+    record_tf: bool = Field(
+        default=True,
+        exclude=True,
+        description="Record the connected TF input as the 'tf' stream.",
+    )
+    stream_remapping: dict[str, str] = Field(
+        default_factory=dict,
+        exclude=True,
+        description="Map input port names to artifact stream names.",
+    )
+    stream_codecs: dict[str, str] = Field(
+        default_factory=dict,
+        exclude=True,
+        description="Per-stream Python Memory codec IDs; MCAP stores wire bytes.",
+    )
+    encoding_threads: int = Field(
+        default=4,
+        ge=1,
+        description="CPU workers for SQLite codecs or MCAP Zstd compression.",
+    )
+    streams: list[RustStreamSpec] = Field(
+        default_factory=list,
+        init=False,
+        description="Resolved stream plan populated internally before native launch.",
+    )
 
-    encoding_threads: int = Field(default=4, ge=1)
-    queue_capacity: int = Field(default=256, ge=1)
-    write_batch_size: int = Field(default=128, ge=1)
-    flush_interval_ms: int = Field(default=100, ge=1)
-    jpeg_quality: int = Field(default=50, ge=0, le=100)
-
-    streams: list[RustStreamSpec] = Field(default_factory=list)
-
-    def to_config_dict(self) -> dict[str, Any]:
-        """Return only fields consumed by the strict native config."""
-        return {
-            "store": self.store.model_dump(),
-            "encoding_threads": self.encoding_threads,
-            "queue_capacity": self.queue_capacity,
-            "write_batch_size": self.write_batch_size,
-            "flush_interval_ms": self.flush_interval_ms,
-            "jpeg_quality": self.jpeg_quality,
-            "streams": [stream.model_dump() for stream in self.streams],
-        }
-
-    def to_cli_args(self) -> list[str]:
-        """The recorder consumes one stdin JSON config, not duplicate CLI flags."""
-        return []
+    @model_validator(mode="after")
+    def _stdin_only(self) -> RustRecorderConfig:
+        if self.extra_args:
+            raise ValueError("RustRecorder is stdin-only and does not accept extra_args")
+        return self
 
 
 class RustRecorder(NativeModule):
@@ -183,7 +203,6 @@ class RustRecorder(NativeModule):
                             name="tf",
                             payload_type=f"{TFMessage.__module__}.{TFMessage.__qualname__}",
                             codec="lcm",
-                            payload_kind="tf",
                         )
                     )
                 continue
@@ -199,17 +218,20 @@ class RustRecorder(NativeModule):
                     port=port_name,
                     name=stream_name,
                     payload_type=f"{port.type.__module__}.{port.type.__qualname__}",
-                    codec=cast("CodecId", codec),
-                    payload_kind="image" if issubclass(port.type, Image) else "raw",
+                    codec=codec,
                 )
             )
 
+        names = [spec.name for spec in specs]
+        duplicates = sorted({name for name in names if names.count(name) > 1})
+        if duplicates:
+            raise ValueError(f"Duplicate recorded stream names: {duplicates}")
         if not specs:
             logger.warning("Native recorder has no connected streams")
         return specs
 
     @staticmethod
-    def _default_codec(payload_type: type[Any]) -> CodecId:
+    def _default_codec(payload_type: type[Any]) -> str:
         if issubclass(payload_type, Image):
             return "jpeg"
         if hasattr(payload_type, "lcm_encode") and hasattr(payload_type, "lcm_decode"):
@@ -220,10 +242,10 @@ class RustRecorder(NativeModule):
 
     @staticmethod
     def _validate_codec(stream_name: str, payload_type: type[Any], codec: str) -> None:
-        if codec not in _SUPPORTED_CODECS:
+        if codec not in _SUPPORTED_NATIVE_CODECS:
             raise ValueError(
                 f"Unsupported native codec {codec!r} for stream {stream_name!r}; "
-                f"choose one of {sorted(_SUPPORTED_CODECS)}"
+                f"choose one of {sorted(_SUPPORTED_NATIVE_CODECS)}"
             )
         if codec == "jpeg" and not issubclass(payload_type, Image):
             raise TypeError(f"JPEG codec requires Image, got {payload_type.__qualname__}")
@@ -263,9 +285,12 @@ class RustRecorder(NativeModule):
 
             ports = self.inputs
             for spec in specs:
-                payload_type = TFMessage if spec.payload_kind == "tf" else ports[spec.port].type
+                tf_payload_type = f"{TFMessage.__module__}.{TFMessage.__qualname__}"
+                payload_type = (
+                    TFMessage if spec.payload_type == tf_payload_type else ports[spec.port].type
+                )
                 store.stream(spec.name, payload_type, codec=spec.codec)
 
     def _argv(self, _topics: dict[str, str]) -> list[str]:
-        """Launch the stdin-configured recorder without duplicate topic arguments."""
-        return [self.config.executable, *self.config.extra_args]
+        """Launch the stdin-only recorder without topic or configuration arguments."""
+        return [self.config.executable]

@@ -16,7 +16,7 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 
 use super::{Observation, RecordingStore};
-use crate::{PayloadKind, StreamConfig};
+use crate::StreamConfig;
 
 pub struct SqliteRecordingStore {
     connection: Connection,
@@ -74,7 +74,7 @@ fn ensure_stream_tables(connection: &Connection, stream: &StreamConfig) -> Resul
         );
         "#
     ))?;
-    if stream.payload_kind != PayloadKind::Tf {
+    if !stream.is_tf() {
         connection.execute(
             &format!(
                 r#"CREATE INDEX IF NOT EXISTS "{name}_tag_reception_ts" ON "{name}"(json_extract(tags, '$.reception_ts'))"#
@@ -87,7 +87,7 @@ fn ensure_stream_tables(connection: &Connection, stream: &StreamConfig) -> Resul
 
 fn insert_observation(connection: &Connection, observation: &Observation) -> Result<()> {
     let name = &observation.stream.name;
-    if observation.stream.payload_kind == PayloadKind::Tf {
+    if observation.stream.is_tf() {
         connection.execute(
             &format!(r#"INSERT INTO "{name}" (ts) VALUES (?1)"#),
             params![observation.source_ts],
