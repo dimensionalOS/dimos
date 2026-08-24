@@ -41,7 +41,9 @@ fn extract_tuples(arr: &Bound<'_, PyAny>, name: &str) -> PyResult<Vec<(f32, f32,
     // Contiguous input skips per-element bounds checks.
     if let Some(slice) = view.as_slice() {
         return Ok(slice
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .filter_map(|p| finite(p[0], p[1], p[2]))
             .collect());
     }

@@ -312,7 +312,7 @@ fn make_cloud(data: Vec<u8>, n: i32, frame_id: &str, stamp: Time) -> PointCloud2
 fn points_to_cloud(points: &[f32], frame_id: &str, stamp: Time) -> PointCloud2 {
     let mut data = Vec::with_capacity((points.len() / 3) * 16);
     let mut n: i32 = 0;
-    for p in points.chunks_exact(3) {
+    for p in points.as_chunks::<3>().0 {
         write_point(&mut data, &mut n, p[0], p[1], p[2]);
     }
     make_cloud(data, n, frame_id, stamp)

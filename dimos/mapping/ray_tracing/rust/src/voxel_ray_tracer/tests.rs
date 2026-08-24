@@ -823,7 +823,11 @@ fn sort_points(mut pts: Vec<(f32, f32, f32)>) -> Vec<(f32, f32, f32)> {
 
 /// Flat emitter output as (x, y, z) tuples for assertions.
 fn tuples(flat: Vec<f32>) -> Vec<(f32, f32, f32)> {
-    flat.chunks_exact(3).map(|p| (p[0], p[1], p[2])).collect()
+    flat.as_chunks::<3>()
+        .0
+        .iter()
+        .map(|p| (p[0], p[1], p[2]))
+        .collect()
 }
 
 /// The chunk-indexed `emit_points` must return exactly what the old whole-map
