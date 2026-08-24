@@ -60,6 +60,8 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     region_percentile: float = 95.0
     # Output frame of the maps; clouds are transformed into it from their own frame_id.
     output_frame: str = "odom"
+    # Max stamp gap between a cloud and the tf sample used to place it.
+    tf_match_tolerance_s: float = 0.1
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):

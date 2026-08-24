@@ -84,7 +84,7 @@ impl RayTracingVoxelMap {
             .tf
             .lookup(&self.config.output_frame, &msg.header.frame_id)
             .at(stamp)
-            .tolerance(TF_MATCH_TOLERANCE_S)
+            .tolerance(self.config.tf_match_tolerance_s)
             .get()
         else {
             return Some(msg);
@@ -208,8 +208,6 @@ impl RayTracingVoxelMap {
 fn emit_due(frame_count: u32, every: u32) -> bool {
     every != 0 && frame_count.is_multiple_of(every)
 }
-
-const TF_MATCH_TOLERANCE_S: f64 = 0.1;
 
 // Deep enough to cover a lidar frame or two of tf lag, shallow enough that a frame with
 // no tf at all cannot grow a backlog.

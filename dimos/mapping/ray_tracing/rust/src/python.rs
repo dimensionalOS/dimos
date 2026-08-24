@@ -111,6 +111,7 @@ impl VoxelRayMapper {
             region_percentile: 95.0,
             // Points arrive already in world coordinates.
             output_frame: String::new(),
+            tf_match_tolerance_s: 0.1,
         };
         config
             .validate()
