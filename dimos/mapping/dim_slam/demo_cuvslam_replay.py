@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from collections import deque
 from functools import partial
+import threading
 from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
@@ -43,6 +44,8 @@ from dimos.visualization.vis_module import vis_module
 
 # cuVSLAM's stereo pairing window.
 _STEREO_TOLERANCE = 0.001
+# Bounds the queue when one imager stalls; its partner would otherwise grow all replay.
+_STEREO_QUEUE_DEPTH = 64
 
 
 class CuvslamReplayConfig(ModuleConfig):
@@ -81,7 +84,11 @@ class CuvslamReplay(Module):
             speed=self.config.speed, seek=self.config.seek, duration=self.config.duration
         )
         # Ordinal pairing desynchronizes permanently on a dropped frame.
-        self._pending = {"left": deque[Image](), "right": deque[Image]()}
+        self._pending_lock = threading.Lock()
+        self._pending = {
+            "left": deque[Image](maxlen=_STEREO_QUEUE_DEPTH),
+            "right": deque[Image](maxlen=_STEREO_QUEUE_DEPTH),
+        }
         for side, stream_name in (
             ("left", self.config.left_stream),
             ("right", self.config.right_stream),
@@ -100,17 +107,20 @@ class CuvslamReplay(Module):
         )
 
     def _queue_stereo_frame(self, side: str, frame: Image) -> None:
-        self._pending[side].append(frame)
-        left, right = self._pending["left"], self._pending["right"]
-        while left and right:
-            skew = left[0].ts - right[0].ts
-            if abs(skew) <= _STEREO_TOLERANCE:
-                self.image.publish(left.popleft())
-                self.image.publish(right.popleft())
-            elif skew < 0:
-                left.popleft()
-            else:
-                right.popleft()
+        paired: list[Image] = []
+        with self._pending_lock:
+            self._pending[side].append(frame)
+            left, right = self._pending["left"], self._pending["right"]
+            while left and right:
+                skew = left[0].ts - right[0].ts
+                if abs(skew) <= _STEREO_TOLERANCE:
+                    paired += [left.popleft(), right.popleft()]
+                elif skew < 0:
+                    left.popleft()
+                else:
+                    right.popleft()
+        for image in paired:
+            self.image.publish(image)
 
 
 def _path_at_true_height(path: Any) -> Any:

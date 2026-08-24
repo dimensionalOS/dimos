@@ -142,6 +142,7 @@ class AlfredReplay(Module):
         self._started_at = 0.0
         self._first_ts = 0.0
         self._progress_timer: threading.Timer | None = None
+        self._stopped = False
 
     def _track(self, name: str, observable: Any, on_next: Any, ts_of: Any = None) -> None:
         self._running.add(name)
@@ -191,7 +192,11 @@ class AlfredReplay(Module):
                 trailer,
                 len(running),
             )
-        if schedule_next and running:
+        if not (schedule_next and running):
+            return
+        with self._lock:
+            if self._stopped:
+                return
             self._progress_timer = threading.Timer(PROGRESS_INTERVAL_SECONDS, self._report_progress)
             self._progress_timer.daemon = True
             self._progress_timer.start()
@@ -199,7 +204,8 @@ class AlfredReplay(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        store = SqliteStore(path=self.config.db_path, must_exist=True)
+        store = self.register_disposable(SqliteStore(path=self.config.db_path, must_exist=True))
+        store.start()
         replay_kwargs: dict[str, Any] = {"speed": self.config.speed}
         if self.config.seek is not None:
             replay_kwargs["seek"] = self.config.seek
@@ -257,13 +263,15 @@ class AlfredReplay(Module):
             and transform.child_frame_id != "base_link"
         ]
         if kept:
-            message.transforms = kept
-            self.tf.publish(message)
+            self.tf.publish(TFMessage(*kept))
 
     @rpc
     def stop(self) -> None:
-        if self._progress_timer is not None:
-            self._progress_timer.cancel()
+        with self._lock:
+            self._stopped = True
+            timer = self._progress_timer
+        if timer is not None:
+            timer.cancel()
         for subscription in self._subscriptions:
             subscription.dispose()
         super().stop()
