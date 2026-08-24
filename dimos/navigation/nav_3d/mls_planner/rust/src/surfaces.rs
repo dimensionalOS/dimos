@@ -302,11 +302,22 @@ mod tests {
         cells.iter().copied().collect()
     }
 
+    const DEFAULT_MAX_MAP_SPAN_M: f32 = 500.0;
+    const DEFAULT_VOXEL_SIZE_M: f32 = 0.08;
+    const MAX_SPAN_CELLS: u32 = (DEFAULT_MAX_MAP_SPAN_M / DEFAULT_VOXEL_SIZE_M) as u32;
+
     fn run(cells: &[VoxelKey], clearance: i32, closing: u32) -> Vec<VoxelKey> {
         let map = voxel_map(cells);
         let mut by_col = ColumnIz::new();
         let mut out = Vec::new();
-        extract_surfaces(&map, clearance, closing, 6250, &mut by_col, &mut out);
+        extract_surfaces(
+            &map,
+            clearance,
+            closing,
+            MAX_SPAN_CELLS,
+            &mut by_col,
+            &mut out,
+        );
         out
     }
 

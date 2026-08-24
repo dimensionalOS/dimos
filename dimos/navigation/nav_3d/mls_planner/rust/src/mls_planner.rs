@@ -48,8 +48,8 @@ pub struct Config {
     /// the extracted surface. Fills holes up to twice this wide.
     #[validate(range(min = 0.0))]
     pub surface_closing_radius: f32,
-    /// Widest ground span the map is expected to cover. Surface slices wider than
-    /// this are treated as corrupt rather than mapped.
+    /// Widest ground span the map is expected to cover. Wider slices are still
+    /// mapped, but skip hole closing.
     #[validate(range(exclusive_min = 0.0))]
     pub max_map_span_m: f32,
     #[validate(range(exclusive_min = 0.0))]
