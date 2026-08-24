@@ -69,3 +69,37 @@ _Avoid_: Generated URDF, copied URDF
 **Structural subtree selection**:
 A robot model view that retains an existing link and its descendants without reversing joints or changing their transforms.
 _Avoid_: Rerooting, kinematic rerooting
+
+# DimOS Memory
+
+DimOS Memory turns typed robot streams into durable observations that can be queried and replayed across processes and languages.
+
+## Language
+
+**Observation**:
+A payload at a source time, optionally enriched with pose, tags, and embeddings.
+_Avoid_: Record, row, sample
+
+**Recording Store**:
+A durable sink that turns ordered incoming stream messages into a recording artifact.
+_Avoid_: Recorder backend, database writer
+
+**Recording Artifact**:
+A self-contained persisted dataset produced by a recording store and later opened as a memory store.
+_Avoid_: Database when referring to multiple artifact formats
+
+**Source Time**:
+The time assigned by the message producer and used as the observation's replay time.
+_Avoid_: Publish time outside MCAP-specific discussions
+
+**Reception Time**:
+The time at which the recorder receives a message, retained separately from source time.
+_Avoid_: Arrival timestamp
+
+**Wire Payload**:
+The exact serialized message bytes delivered by a transport.
+_Avoid_: Raw data
+
+**Storage Codec**:
+A transformation that controls how a payload is represented inside a recording artifact; it is distinct from the transport's wire encoding.
+_Avoid_: Compression when the transformation also changes representation
