@@ -667,6 +667,10 @@ jobs:
         env:
           BUILD_WORKERS: "1"
         run: python3 bin/build-native-modules
+      - name: Verify Cachix holds the built paths
+        env:
+          CACHIX_CACHE_NAME: dimensionalos
+        run: python3 bin/build-native-modules --verify-published
       - name: Record the published inputs manifest
         # Forensics for the marker saved below: the manifest names every tree
         # hash behind the inputs-hash this publish ran for.
