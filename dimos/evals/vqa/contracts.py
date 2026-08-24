@@ -134,3 +134,7 @@ class ObjectRangeEstimator(Protocol):
     """Estimate object range from an explicit canonical frame."""
 
     def estimate(self, frame: CalibratedFrame, object_name: str) -> ObjectRangeEvidence: ...
+
+    def estimate_many(
+        self, frame: CalibratedFrame, object_names: tuple[str, ...]
+    ) -> tuple[ObjectRangeEvidence, ...]: ...

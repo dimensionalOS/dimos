@@ -360,13 +360,7 @@ def _answer_closest_object(
 ) -> FamilyAnswer:
     """Choose the closest named object when its range interval is unambiguous."""
     object_names = proposal.object_names
-    estimate_many = getattr(range_estimator, "estimate_many", None)
-    if estimate_many is None:
-        ranges = tuple(
-            range_estimator.estimate(calibrated_frame, object_name) for object_name in object_names
-        )
-    else:
-        ranges = estimate_many(calibrated_frame, object_names)
+    ranges = range_estimator.estimate_many(calibrated_frame, object_names)
     if len(ranges) != len(object_names):
         raise ValueError("range estimator returned the wrong number of object ranges")
     if tuple(evidence.object_name for evidence in ranges) != object_names:

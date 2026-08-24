@@ -343,24 +343,6 @@ class _ClosestRangeEstimator:
         )
 
 
-class _SingleOnlyClosestRangeEstimator:
-    def estimate(self, frame: CalibratedFrame, object_name: str) -> ObjectRangeEvidence:
-        closest = object_name == "left person"
-        quartiles = (1.0, 1.1, 1.2) if closest else (2.0, 2.1, 2.2)
-        box = (0.0, 0.0, 2.0, 2.0)
-        return ObjectRangeEvidence(
-            object_name=object_name,
-            camera_range_m=quartiles[1],
-            supporting_point_count=7,
-            prompt_bbox_xyxy=box,
-            mask_bbox_xyxy=box,
-            mask_area_px=4,
-            range_quartiles_m=quartiles,
-            synchronization_delta_s=0.02,
-            calibration_source="test",
-        )
-
-
 class _ReorderedClosestRangeEstimator(_ClosestRangeEstimator):
     def estimate_many(
         self, frame: CalibratedFrame, object_names: tuple[str, ...]
@@ -542,23 +524,6 @@ def test_closest_object_rejects_overlapping_range_intervals() -> None:
                 (3.0, 3.1, 3.2),
             ),
         )
-
-
-def test_closest_object_supports_single_object_range_estimators() -> None:
-    proposal = QuestionProposal(
-        family="closest_object",
-        object_names=("left person", "right person"),
-    )
-
-    answer = answer_question(
-        proposal,
-        Image.from_numpy(np.zeros((4, 10, 3), dtype=np.uint8)),
-        _Detector(present=True),
-        cast("CalibratedFrame", object()),
-        _SingleOnlyClosestRangeEstimator(),
-    )
-
-    assert answer.answer == "left person"
 
 
 def test_closest_object_rejects_reordered_range_results() -> None:
@@ -923,7 +888,7 @@ def test_suite_reports_empty_cases_before_duplicate_labels(tmp_path: Path) -> No
 
 
 def test_generate_and_evaluate_one_image(tmp_path: Path) -> None:
-    output = tmp_path / "vqa"
+    output = tmp_path / "nested" / "vqa"
     image = Image.from_numpy(np.arange(48, dtype=np.uint8).reshape(4, 4, 3), ts=12.5)
     request = GenerationRequest(dataset="recording.db", image_index=4, output=output)
 
@@ -951,6 +916,26 @@ def test_generate_and_evaluate_one_image(tmp_path: Path) -> None:
 
     invalid = suite[0].evaluate(cast("EvalRig", _Rig(answer="maybe")))
     assert invalid.score == 0.0
+
+
+def test_generation_rejects_nonempty_output_without_modifying_it(tmp_path: Path) -> None:
+    output = tmp_path / "vqa"
+    output.mkdir()
+    existing = output / "existing.txt"
+    existing.write_text("keep me")
+    request = GenerationRequest(dataset="recording.db", image_index=4, output=output)
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+
+    with pytest.raises(FileExistsError, match="output directory is not empty"):
+        generate_frames_dataset(
+            request,
+            (GenerationFrame(4, image),),
+            cast("QuestionAuthor", _Author()),
+            _Detector(present=True),
+        )
+
+    assert existing.read_text() == "keep me"
+    assert list(output.iterdir()) == [existing]
 
 
 def test_generate_distance_case_from_calibrated_frame(tmp_path: Path) -> None:

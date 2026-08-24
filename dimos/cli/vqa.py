@@ -30,7 +30,10 @@ def generate(
     start: int | None = typer.Option(None, min=0, help="First color_image index in range mode"),
     stop: int | None = typer.Option(None, min=1, help="Exclusive color_image stop index"),
     stride: int | None = typer.Option(None, min=1, help="Frame stride in range mode"),
-    output: Path | None = typer.Option(None, help="Override the generated dataset directory"),
+    output: Path | None = typer.Option(
+        None,
+        help="Destination directory; must be absent or empty",
+    ),
 ) -> None:
     """Generate questions for one image or an indexed image range."""
     # Keep generation's optional model stack out of global CLI startup.

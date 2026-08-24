@@ -46,6 +46,7 @@ def test_vqa_generate_cli_declares_single_image_input() -> None:
     assert "--stride" in output
     assert "--sync-tolerance" not in output
     assert "--output" in output
+    assert "absent or empty" in output
 
 
 def test_vqa_run_cli_declares_standalone_dataset_input() -> None:

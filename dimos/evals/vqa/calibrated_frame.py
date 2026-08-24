@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
@@ -53,12 +53,6 @@ class CalibratedFrame:
     @property
     def synchronization_delta_s(self) -> float:
         return abs(self.image_observation_timestamp - self.pointcloud_observation_timestamp)
-
-
-class CalibratedFrameLoader(Protocol):
-    """Prepare canonical frames without exposing recording details downstream."""
-
-    def load(self, frame_index: int) -> CalibratedFrame: ...
 
 
 class FrameGeometryUnavailableError(ValueError):

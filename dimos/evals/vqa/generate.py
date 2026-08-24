@@ -22,12 +22,16 @@ import json
 from pathlib import Path
 import re
 import tempfile
-from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from dimos.constants import STATE_DIR
 from dimos.evals.vqa.author import OpenAIQuestionAuthor, QuestionAuthor
+from dimos.evals.vqa.calibrated_frame import (
+    CalibratedFrame,
+    FrameGeometryUnavailableError,
+    RecordingFramePreprocessor,
+)
 from dimos.evals.vqa.contracts import (
     FamilyAnswer,
     FamilySpec,
@@ -42,14 +46,13 @@ from dimos.evals.vqa.families import (
     AVAILABLE_FAMILIES,
     answer_question,
 )
+from dimos.evals.vqa.primitives.edgetam import EdgeTamObjectMaskPipeline
+from dimos.evals.vqa.primitives.range import LidarRangeEstimator
 from dimos.msgs.sensor_msgs.Image import Image
 
 _UNORDERED_FAMILIES = frozenset(
     family.name for family in AVAILABLE_FAMILIES if not family.object_order_matters
 )
-
-if TYPE_CHECKING:
-    from dimos.evals.vqa.calibrated_frame import CalibratedFrame
 
 
 class GenerationRequest(BaseModel):
@@ -149,13 +152,6 @@ def generate_dataset(
     config: VqaGenerationConfig | None = None,
 ) -> GenerationResult:
     """Generate a standalone dataset from selected Memory images."""
-    from dimos.evals.vqa.calibrated_frame import (
-        FrameGeometryUnavailableError,
-        RecordingFramePreprocessor,
-    )
-    from dimos.evals.vqa.primitives.edgetam import EdgeTamObjectMaskPipeline
-    from dimos.evals.vqa.primitives.range import LidarRangeEstimator
-
     # Load optional model dependencies only when generation is requested.
     from dimos.models.vl.moondream import MoondreamVlModel
     from dimos.models.vl.openai import OpenAIVlModel
