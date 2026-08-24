@@ -22,6 +22,7 @@ from pathlib import Path
 import platform
 import sys
 from typing import Literal
+from uuid import uuid4
 
 from pydantic import Field
 
@@ -83,11 +84,15 @@ def driver_library_dir() -> Path | None:
         link = _DRIVER_LINK_DIR / name
         if not source.exists():
             continue
+        target = source.resolve()
         # Re-point after a driver upgrade; a stale link would dangle forever.
-        if link.is_symlink() and link.resolve() != source.resolve():
-            link.unlink()
-        if not link.is_symlink():
-            link.symlink_to(source.resolve())
+        if link.is_symlink() and link.readlink() == target:
+            continue
+        # Swapped in through a private name because two callers can reach this at
+        # once, and symlink_to after an existence check raises for the loser.
+        staging = link.with_name(f"{name}.{uuid4().hex}.tmp")
+        staging.symlink_to(target)
+        os.replace(staging, link)
     return _DRIVER_LINK_DIR
 
 
