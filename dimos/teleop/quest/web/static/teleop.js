@@ -29,20 +29,14 @@ let videoAspect = 1.0;   // cached at load time — see videoEl.onload
 let prevBlobUrl = null;  // revoked when the next-next blob arrives
 const videoModelMatrix = new Float32Array(16);
 const hudModelMatrix = new Float32Array(16);
-const identityMatrix = new Float32Array([
-    1, 0, 0, 0,
-    0, 1, 0, 0,
-    0, 0, 1, 0,
-    0, 0, 0, 1,
-]);
 
 const PANEL_POS_X = 0.0;
 const PANEL_POS_Y = 1.4;   // ~eye height
 const PANEL_POS_Z = -1.5;  // 1.5m in front of starting position
 const PANEL_HEIGHT = 0.9;
 
-// Collection HUD state. The texture is rendered in view space so it stays
-// fixed near the bottom of the operator's view while their head moves.
+// Collection HUD state. The panel is fixed in the local-floor scene instead
+// of following the operator's head.
 let episodeStatus = null;
 let episodeStatusReceivedAtMs = 0;
 let hudOffline = false;
@@ -56,7 +50,7 @@ const HUD_WIDTH_PX = 2048;
 const HUD_HEIGHT_PX = 256;
 const HUD_WIDTH_METERS = 1.08;
 const HUD_HEIGHT_METERS = HUD_WIDTH_METERS * HUD_HEIGHT_PX / HUD_WIDTH_PX;
-const HUD_CENTER_Y = -0.34;
+const HUD_CENTER_Y = 1.15;
 const HUD_CENTER_Z = -1.2;
 
 // UI elements
@@ -126,7 +120,7 @@ function initGL() {
     initCollectionHud();
 }
 
-// Compile one textured-quad pipeline for the world-locked video and head-locked HUD.
+// Compile one textured-quad pipeline for the world-locked video and HUD.
 function initVideoPanel() {
     const vsSrc = `
         attribute vec2 a_pos;
@@ -406,7 +400,13 @@ function renderCollectionHud(view, viewport) {
     if (!episodeStatus) return;
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    renderTexturedQuad(view, viewport, hudTexture, hudModelMatrix, identityMatrix);
+    renderTexturedQuad(
+        view,
+        viewport,
+        hudTexture,
+        hudModelMatrix,
+        view.transform.inverse.matrix,
+    );
     gl.disable(gl.BLEND);
 }
 
