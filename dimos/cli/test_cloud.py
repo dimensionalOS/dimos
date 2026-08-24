@@ -47,7 +47,8 @@ class FakeKeyring:
 def filestore(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     """Force the headless path: no keyring backend, credentials in a temp file."""
     monkeypatch.setattr(cloud, "_keyring", lambda: None)
-    cred = tmp_path / "dimos-credentials"
+    cred = tmp_path / "dimos" / "credentials"
+    cred.parent.mkdir()
     monkeypatch.setattr(cloud, "CREDENTIALS_PATH", cred)
     monkeypatch.setattr(global_config, "dimos_api_key", None)
     return cred

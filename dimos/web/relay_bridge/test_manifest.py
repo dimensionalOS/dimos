@@ -51,10 +51,35 @@ def test_huge_int_max_hz_rejected_like_ts():
     # exactly while JS JSON.parse yields Infinity; both sides must reject it
     # with the same code (manifest_test.ts pins the JS half).
     data = {
+        "version": 1,
         "channels": [
             {"ch": "odom", "encoding": "pose.json.v1", "delivery": "reliable", "maxHz": 10**400}
-        ]
+        ],
     }
     with pytest.raises(ManifestError) as exc_info:
         parse_manifest(data)
     assert exc_info.value.code == "invalid_max_hz"
+
+
+def test_huge_int_share_rejected_like_ts():
+    # Same non-golden reasoning, for the layout walker's share bound
+    # (manifest_test.ts pins the JS half with Infinity).
+    data = {
+        "version": 1,
+        "channels": [
+            {"ch": "odom", "encoding": "pose.json.v1", "delivery": "reliable", "maxHz": 20.5}
+        ],
+        "panels": [{"id": "pose", "kind": "readout", "channels": ["odom"]}],
+        "layout": {"row": ["pose"], "shares": [10**400]},
+    }
+    with pytest.raises(ManifestError) as exc_info:
+        parse_manifest(data)
+    assert exc_info.value.code == "invalid_layout"
+
+
+def test_integral_float_version_accepted_like_ts():
+    # Not a golden vector: 1.0 renders as "1" through JS JSON.stringify, so
+    # only the Python side can pin that a float 1.0 passes the version gate
+    # the way JS `1.0 === 1` does.
+    manifest = parse_manifest({"version": 1.0, "channels": []})
+    assert manifest.version == 1

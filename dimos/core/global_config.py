@@ -30,6 +30,11 @@ from dimos.visualization.rerun.constants import (
 )
 
 TransportBackend: TypeAlias = Literal["lcm", "zenoh"]
+# How one zenoh session joins the network.
+ZenohMode: TypeAlias = Literal["peer", "client", "router"]
+# How every session in every process joins it. A router binds a port only one
+# process can hold, so it is pinned on the one session that owns that port.
+ZenohProcessMode: TypeAlias = Literal["peer", "client"]
 
 
 def _get_all_numbers(s: str) -> list[float]:
@@ -51,19 +56,35 @@ class GlobalConfig(BaseSettings):
     xarm7_ip: str | None = None
     xarm6_ip: str | None = None
     can_port: str | None = None
+    left_can_port: str | None = None
+    right_can_port: str | None = None
     device_path: str | None = None  # device path for real robot (e.g. /dev/ttyUSB0)
     simulation: str = ""
     replay: bool = False
     replay_db: str = "go2_short"
     new_memory: bool = False
+    # How every zenoh session this process opens joins the network.
+    zenoh_mode: ZenohProcessMode = "peer"
+    # Extra locators every session dials, alongside those derived from --robot-ip.
+    # Comma-separated, e.g. tcp/127.0.0.1:7447. Names a router or any non-robot peer.
+    zenoh_connect: str = ""
     # Discover zenoh peers across the network.
     # Toggling off drops back to loopback-only discovery:
     # Sibling worker processes still find each other,
     # remote peers come solely from the connect endpoints derived from --robot-ip
     zenoh_scouting: bool = False
+    # Interface multicast scouting binds to, e.g. wlan0.
+    # Empty derives it from zenoh_scouting.
+    zenoh_interface: str = ""
+    # Whether multicast scouting runs at all. zenoh_scouting only sets its reach.
+    zenoh_multicast: bool = True
+    # Whether peers propagate the peers they already know over established links.
+    # Unlike multicast scouting this reaches nothing new on the LAN, and zenoh
+    # needs it to resolve the key expressions a linked peer sends.
+    zenoh_gossip: bool | None = True
     # Seconds ZenohService.start() blocks for the configured connect endpoints to
     # link before giving up and continuing. 0 disables the wait.
-    zenoh_connect_timeout: float = 1.0
+    zenoh_connect_timeout: float = Field(default=1.0, ge=0, le=86400)
     viewer: ViewerBackend = "rerun"
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
     rerun_web: bool = RERUN_ENABLE_WEB

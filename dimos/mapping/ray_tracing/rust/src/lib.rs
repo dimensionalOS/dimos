@@ -13,6 +13,8 @@
 // limitations under the License.
 
 pub mod mapper;
+pub mod module;
 pub mod voxel_ray_tracer;
 
+#[cfg(feature = "python")]
 mod python;

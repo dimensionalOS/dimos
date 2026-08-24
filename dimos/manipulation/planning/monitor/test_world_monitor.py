@@ -40,6 +40,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.robot.assets.model import RobotModel
 
 
 class _VectorLike(list[float]):
@@ -224,7 +225,7 @@ class FakeViz:
 def _robot_config() -> RobotModelConfig:
     return RobotModelConfig(
         name="arm",
-        model_path=Path("/tmp/arm.urdf"),
+        model=RobotModel.from_file(Path("/tmp/arm.urdf")),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion([0, 0, 0, 1])),
         joint_names=["j1", "j2"],
         base_link="base",
@@ -440,7 +441,7 @@ def test_current_global_joint_state_skips_stale_robots_and_preserves_state_order
     stale_id = monitor.add_robot(
         RobotModelConfig(
             name="arm2",
-            model_path=Path("/tmp/arm2.urdf"),
+            model=RobotModel.from_file(Path("/tmp/arm2.urdf")),
             joint_names=["a", "b"],
             planning_groups=[
                 PlanningGroupDefinition(
@@ -454,7 +455,7 @@ def test_current_global_joint_state_skips_stale_robots_and_preserves_state_order
     monitor.add_robot(
         RobotModelConfig(
             name="arm3",
-            model_path=Path("/tmp/arm3.urdf"),
+            model=RobotModel.from_file(Path("/tmp/arm3.urdf")),
             joint_names=["x"],
             planning_groups=[
                 PlanningGroupDefinition(

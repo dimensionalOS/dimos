@@ -1,0 +1,11 @@
+.canvas {
+  aspect-ratio: 4 / 3;
+  display: block;
+  max-height: 70vh;
+  width: 100%;
+}
+
+.waiting {
+  color: #8b949e;
+  position: absolute;
+}

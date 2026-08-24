@@ -1,4 +1,5 @@
-import { PanelGrid } from "./panels/PanelGrid.tsx";
+import { LayoutTree } from "./layout/LayoutTree.tsx";
+import { Tabs } from "./layout/Tabs.tsx";
 import { useStatus } from "./session/hooks.ts";
 import type { SessionHandle } from "./session/session.ts";
 import { ChannelList } from "./ui/ChannelList.tsx";
@@ -17,14 +18,25 @@ export function App({ session }: { session: SessionHandle }) {
         {status.robotCount} robots connected; the robot picker arrives in a later release.
       </p>
     );
-  } else if (status.channels.length === 0) {
+  } else if (status.manifestUnsupported) {
+    content = (
+      <p className={styles.notice}>
+        This robot's software is newer than this Cockpit build. Reload the page to pick up the
+        latest Cockpit.
+      </p>
+    );
+  } else if (status.manifest === null || status.manifest.channels.length === 0) {
     content = <p className={styles.notice}>Waiting for a robot to register...</p>;
   } else {
     content = (
-      <>
-        <PanelGrid panels={status.panels} store={session.channels} />
-        <ChannelList channels={status.channels} panels={status.panels} store={session.channels} />
-      </>
+      <Tabs manifest={status.manifest} store={session.channels}>
+        <LayoutTree manifest={status.manifest} store={session.channels} />
+        <ChannelList
+          channels={status.manifest.channels}
+          panels={status.manifest.panels}
+          store={session.channels}
+        />
+      </Tabs>
     );
   }
 
