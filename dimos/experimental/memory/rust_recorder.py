@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Native recorder for high-throughput LCM-backed memory streams."""
+"""Experimental native recorder for high-throughput LCM-backed memory streams."""
 
 from __future__ import annotations
 
@@ -149,7 +149,10 @@ class RustRecorderConfig(NativeModuleConfig):
 
 
 class RustRecorder(NativeModule):
-    """Record connected ``In`` ports to a native SQLite or MCAP store.
+    """Experimentally record connected ``In`` ports to native SQLite or MCAP.
+
+    This API is under active evaluation and may change without compatibility
+    aliases until it is promoted out of :mod:`dimos.experimental`.
 
     Subclass this recorder and declare the streams to capture, just like the
     Python :class:`dimos.memory.module.Recorder`::
