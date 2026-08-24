@@ -85,7 +85,6 @@ def driver_library_dir() -> Path | None:
         if not source.exists():
             continue
         target = source.resolve()
-        # Re-point after a driver upgrade.
         if link.is_symlink() and link.readlink() == target:
             continue
         # Two callers can reach this at once, and symlink_to over an existing path raises.
@@ -115,11 +114,10 @@ def driver_cuda_major() -> int:
 
 
 def sdk_variant() -> str:
-    """Pick the dim-slam flake attr for this host.
-
-    Python picks instead of the flake's default package because nix evaluation is
-    hermetic: it can branch on arch/OS only, and cannot see the installed driver
-    (cuda12 vs cuda13 on x86) or /proc/device-tree (orin vs thor, both aarch64-linux).
+    """Python picks the flake attr instead of the flake's default package because nix
+    evaluation is hermetic: it can branch on arch/OS only, and cannot see the installed
+    driver (cuda12 vs cuda13 on x86) or /proc/device-tree (orin vs thor, both
+    aarch64-linux).
     """
     if sys.platform == "darwin":
         return "metal"
