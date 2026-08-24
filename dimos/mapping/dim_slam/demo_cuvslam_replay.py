@@ -135,5 +135,4 @@ demo_cuvslam_replay = autoconnect(
         global_config.viewer,
         rerun_config={"visual_override": {"world/path": _path_at_true_height}},
     ),
-    # DimSlam is native and speaks LCM only; don't inherit DIMOS_TRANSPORT.
 ).global_config(transport="lcm", n_workers=4)
