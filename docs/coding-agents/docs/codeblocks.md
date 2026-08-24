@@ -40,8 +40,6 @@ Use `skip` when a block would pull in **CUDA / GPU-only** stacks (for example pe
 
 Execute code blocks in markdown files and insert the results.
 
-![Demo](assets/screencast.gif)
-
 **Use cases:**
 - Keep documentation examples up-to-date automatically
 - Validate code snippets in docs actually work

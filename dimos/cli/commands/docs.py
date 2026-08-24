@@ -1,0 +1,59 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Serve the documentation site locally."""
+
+from __future__ import annotations
+
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+import typer
+
+
+def _repo_root() -> Path | None:
+    """The checkout holding mkdocs.yml, or None when running from a wheel."""
+    for candidate in Path(__file__).resolve().parents:
+        if (candidate / "mkdocs.yml").is_file():
+            return candidate
+    return None
+
+
+def docs(
+    port: int = typer.Option(8000, "--port", "-p", help="Port to serve on."),
+    host: str = typer.Option("127.0.0.1", "--host", help="Address to bind."),
+    build: bool = typer.Option(False, "--build", help="Build into site/ instead of serving."),
+) -> None:
+    """Serve the docs at http://127.0.0.1:8000, live-reloading as you edit."""
+    root = _repo_root()
+    if root is None:
+        typer.echo(
+            "No mkdocs.yml found. The docs are built from a source checkout;\n"
+            "read them online at https://dimensionalos.github.io/mkdocs/",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    if shutil.which("uv"):
+        command = ["uv", "run", "mkdocs"]
+    elif shutil.which("mkdocs"):
+        command = ["mkdocs"]
+    else:
+        typer.echo("mkdocs is not installed. Install it with: uv sync --group docs", err=True)
+        raise typer.Exit(1)
+
+    command += ["build"] if build else ["serve", "-a", f"{host}:{port}"]
+    sys.exit(subprocess.call(command, cwd=root))
