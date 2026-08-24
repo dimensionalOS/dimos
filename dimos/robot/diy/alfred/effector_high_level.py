@@ -52,8 +52,7 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# A wedged Portal call blocks the poll, and the poll holds the client lock, so
-# an unbounded wait here would hang shutdown instead of just losing the stop.
+# An unreachable controller never answers, so teardown gives up rather than hang.
 _TEARDOWN_TIMEOUT = 2.0
 
 
