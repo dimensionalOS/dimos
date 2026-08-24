@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -56,4 +57,10 @@ def docs(
         raise typer.Exit(1)
 
     command += ["build"] if build else ["serve", "-a", f"{host}:{port}"]
-    sys.exit(subprocess.call(command, cwd=root))
+
+    # mkdocs-material prints a banner on every run about mkdocs 2.0 breaking
+    # plugins and theme overrides. It is a notice about an upstream dispute,
+    # not a diagnostic for this build, and our versions are pinned in uv.lock.
+    # Unset NO_MKDOCS_2_WARNING to read it again.
+    env = {**os.environ, "NO_MKDOCS_2_WARNING": "true"}
+    sys.exit(subprocess.call(command, cwd=root, env=env))

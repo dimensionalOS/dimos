@@ -1,79 +1,13 @@
-# Navigation for mkdocs-awesome-nav. Each directory may carry its own
-# .nav.yml; a bare "..." means "everything else here, in natural order".
+# Top-level order only. Each directory fills itself in (index page first,
+# then the rest in natural order), so adding a page is just adding the file.
+# A directory that wants its own order or title gets its own .nav.yml.
 nav:
-  - Getting Started:
-      - index.md
-      - quickstart.md
-      - Installation:
-          - installation/ubuntu.md
-          - installation/osx.md
-          - installation/nix.md
-      - requirements.md
-  - Build with dimOS:
-      - usage/index.md
-      - usage/modules.md
-      - Streams:
-          - usage/sensor_streams/index.md
-          - usage/sensor_streams/advanced_streams.md
-          - usage/sensor_streams/quality_filter.md
-          - usage/sensor_streams/reactivex.md
-          - usage/sensor_streams/storage_replay.md
-          - usage/sensor_streams/temporal_alignment.md
-      - usage/blueprints.md
-      - usage/configuration.md
-      - usage/cli.md
-      - usage/python-api.md
-  - Agents:
-      - capabilities/agents/index.md
-  - Capabilities:
-      - Spatial Memory:
-          - capabilities/memory/index.md
-          - capabilities/memory/algo_comparison.md
-          - capabilities/memory/plot.md
-      - Navigation:
-          - capabilities/navigation/index.md
-          - capabilities/navigation/deep_dive.md
-          - capabilities/navigation/relocalization.md
-      - Manipulation:
-          - capabilities/manipulation/index.md
-          - capabilities/manipulation/agentic.md
-          - capabilities/manipulation/planning_groups.md
-      - Perception:
-          - capabilities/perception/index.md
-      - Teleoperation:
-          - capabilities/teleoperation/hosted.md
-  - Platforms:
-      - Unitree Go2:
-          - Unitree Go2:
-              - platforms/quadruped/go2/index.md
-              - platforms/quadruped/go2/setup.md
-              - platforms/quadruped/go2/simulation.md
-          - Boston Dynamics Spot:
-              - platforms/quadruped/spot/index.md
-      - Humanoid:
-          - platforms/humanoid/g1/index.md
-      - Arms:
-          - capabilities/manipulation/adding_a_custom_arm.md
-          - capabilities/manipulation/openarm_integration.md
-          - capabilities/manipulation/piper_integration.md
-          - capabilities/manipulation/a750.md
-          - capabilities/manipulation/a1z.md
-  - Going deeper:
-      - Transports:
-          - usage/transports/index.md
-          - usage/transports/dds.md
-      - usage/transforms.md
-      - usage/visualization.md
-      - usage/native_modules.md
-      - usage/tool_streams.md
-      - usage/camera_calibration.md
-      - usage/lcm.md
-  - Contribute:
-      - development/conventions.md
-      - development/testing.md
-      - development/docker.md
-      - development/grid_testing.md
-      - development/large_file_management.md
-      - development/profiling_dimos.md
-      - development/releasing.md
-      - development/writing_docs.md
+  - index.md
+  - quickstart.md
+  - requirements.md
+  - installation
+  - usage
+  - capabilities
+  - platforms
+  - development
+  - coding-agents

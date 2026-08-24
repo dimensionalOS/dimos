@@ -2,7 +2,7 @@ site_name: Dimensional
 site_description: >-
   Official documentation for Dimensional (dimOS) — the modern operating system
   for generalist robotics: Python-first, agent-native, and hardware-agnostic.
-site_url: https://dimensionalos.github.io/mkdocs/
+site_url: https://dimensionalos.github.io/
 repo_url: https://github.com/dimensionalOS/dimos
 repo_name: dimensionalOS/dimos
 edit_uri: edit/main/docs/
@@ -21,6 +21,8 @@ exclude_docs: |
   .gitattributes
   logs/
   todo.md
+  # agent instructions, not pages
+  CLAUDE.md
   # artifacts the executable docs drop next to the page they belong to
   *.db
   *.rrd

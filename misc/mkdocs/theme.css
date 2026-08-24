@@ -215,6 +215,37 @@
   font-size: 0.72rem;
 }
 
+/* The readme lays its hardware and capability grids out as html tables with
+ * headings inside the cells. Material's heading and paragraph margins are
+ * sized for a page, and inside a cell they read as broken row spacing. */
+.md-typeset table:not([class]) :is(h1, h2, h3, h4, h5, h6) {
+  margin: 0 0 0.4em;
+  padding: 0;
+  border: none;
+  font-size: 0.85rem;
+  line-height: 1.3;
+}
+
+.md-typeset table:not([class]) :is(p, ul, ol) {
+  margin: 0.3em 0;
+}
+
+/* Material pads cells at .9375em/1.25em, sized for prose tables. The readme
+ * grids are five columns of short labels, where that padding plus the page
+ * line-height leaves rows mostly empty. */
+.md-typeset table:not([class]) :is(td, th) {
+  padding: 0.5em 0.8em;
+  line-height: 1.5;
+  vertical-align: top;
+}
+
+/* The readme sizes its grid columns with a 1px transparent spacer gif, which
+ * still occupies a line box of its own here. */
+.md-typeset table:not([class]) img[height="1"] {
+  display: block;
+  margin: 0;
+}
+
 .md-typeset table:not([class]) th {
   background-color: color-mix(in srgb, var(--md-default-fg-color) 5%, transparent);
   font-weight: 600;

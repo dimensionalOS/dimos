@@ -63,14 +63,28 @@ fi
 DEST="$PAGES_REPO/$TARGET_DIR"
 
 echo "Building mkdocs site..."
+# See dimos/cli/commands/docs.py for what this silences.
+export NO_MKDOCS_2_WARNING=true
 uv run mkdocs build --strict --site-dir "$REPO_ROOT/site"
 
 # Replace rather than merge: a stale page left behind still resolves, and a
-# reader has no way to tell it is from the previous build.
+# reader has no way to tell it is from the previous build. rsync --delete does
+# the replacing, since at the repo root an rm -rf would take .git with it.
+#
+# KEEP lists what lives beside the docs and is not ours to remove: the sphinx
+# build we are being compared against, and the careers page, which is linked
+# from job postings we do not control.
+KEEP=(--exclude=.git/ --exclude=sphinx/ --exclude=careers/ --exclude=.nojekyll --exclude=CNAME)
+
 echo "Replacing $DEST"
-rm -rf "$DEST"
 mkdir -p "$DEST"
-cp -r "$REPO_ROOT/site/." "$DEST/"
+if [[ -n "$(rsync -rnv --delete "${KEEP[@]}" "$REPO_ROOT/site/" "$DEST/" | grep '^deleting ' || true)" ]]; then
+  echo
+  echo "Removing from $TARGET_DIR:"
+  rsync -rnv --delete "${KEEP[@]}" "$REPO_ROOT/site/" "$DEST/" | grep '^deleting ' | sed 's/^deleting /  /'
+  echo
+fi
+rsync -r --delete "${KEEP[@]}" "$REPO_ROOT/site/" "$DEST/"
 
 cd "$PAGES_REPO"
 git add -A "$TARGET_DIR"
