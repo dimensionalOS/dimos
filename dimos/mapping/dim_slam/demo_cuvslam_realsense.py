@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""cuVSLAM on a RealSense stereo camera.
+"""cuVSLAM on a RealSense stereo camera and nothing else.
 
     dimos run demo-cuvslam-realsense --viewer rerun --rerun-host 0.0.0.0
 
-``world/path`` should retrace the route walked.
+``world/path`` should retrace the route walked; a world frame restart shows up as a
+straight jump across it.
 """
 
 from __future__ import annotations
@@ -33,18 +34,20 @@ from dimos.visualization.vis_module import vis_module
 
 
 def path_at_true_height(path: Path) -> Any:
-    """The default lift clears a costmap this demo has not got."""
+    """Draw the trail where it actually is; the default lift clears a costmap we have not got."""
     return path.to_rerun(z_offset=0.0, radii=0.02)
 
 
 def cuvslam_rerun_blueprint() -> Any:
-    """Rerun names entities after the topic, which both cameras share."""
+    """One view for all cameras: rerun names an entity after the topic, which they share."""
     import rerun as rr
     import rerun.blueprint as rrb
 
     return rrb.Blueprint(
         rrb.Horizontal(
-            rrb.Spatial2DView(origin="world/image", name="cameras"),
+            rrb.Vertical(
+                rrb.Spatial2DView(origin="world/image", name="cameras"),
+            ),
             rrb.Spatial3DView(
                 origin="world",
                 name="3D",
@@ -66,8 +69,9 @@ demo_cuvslam_realsense = (
             emitter_enabled=False,
             enable_color=False,
             enable_depth=False,
+            enable_pointcloud=False,
+            enable_imu=False,
         ),
-        # No IMU streaming here, so the filter seeds level off the first tracked pose.
         DimSlam.blueprint(use_imu=False),
         OdometryPath.blueprint(),
         vis_module(
@@ -80,6 +84,7 @@ demo_cuvslam_realsense = (
     )
     .remappings(
         [
+            # Both imagers onto the one stream; the tracker tells them apart by frame_id.
             (RealSenseCamera, "infrared_left", "image"),
             (RealSenseCamera, "infrared_right", "image"),
             (RealSenseCamera, "infrared_left_camera_info", "camera_info"),

@@ -24,7 +24,7 @@ import platform
 import sys
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from dimos.constants import CACHE_DIR
 from dimos.core.native_module import NativeModule, NativeModuleConfig
@@ -69,7 +69,6 @@ _DRIVER_LINK_DIR = CACHE_DIR / "nvidia-driver-libs"
 
 
 def driver_library_dir() -> Path | None:
-    """Directory to put on LD_LIBRARY_PATH for the NVIDIA driver."""
     dedicated = next(
         (d for d in _DRIVER_ONLY_LIB_DIRS if (d / "libcuda.so.1").exists()),
         None,
@@ -95,8 +94,7 @@ def driver_library_dir() -> Path | None:
 
 def driver_cuda_major() -> int:
     """The CUDA major the installed driver supports, or 0 if there is no driver."""
-    # By absolute path too: a nix-built python ignores ld.so.cache, where the bare
-    # name resolves everywhere else.
+    # By absolute path too, since ld.so.cache is not consulted here.
     candidates = ["libcuda.so.1"] + [
         str(directory / "libcuda.so.1")
         for directory in (*_DRIVER_ONLY_LIB_DIRS, *_HOST_LIB_DIRS)
@@ -187,19 +185,12 @@ class DimSlamConfig(NativeModuleConfig):
     # Separate from use_imu, which feeds the fusion filter. Implemented only on the
     # CUDA path.
     cuvslam_enable_imu: bool = False
-    # Rebase guard: a frame whose translation standard deviation (root of the largest
-    # translation term of cuVSLAM's covariance) exceeds this has its motion dropped and the
-    # path rebased onto the held pose, so the published odometry never carries a teleport
-    # from an unconstrained scene. Meters; 0 publishes the raw integrator untouched.
-    # Measured: well-constrained frames report 0.01-0.3 m, degenerate bursts (blank wall,
-    # repeated texture) 5-330 m or NaN, so 1.0 separates them by an order of magnitude.
+    # Translation std (m) above which the frame's motion is dropped and the path rebased.
+    # Well-constrained frames measure 0.01-0.3 m, degenerate bursts 5-330 m or NaN.
+    # 0 disables.
     covariance_gate_translation_std: float = 1.0
-    # Rebase guard on physically implausible frame-to-frame motion, in metres/second and
-    # radians/second against the previous tracked frame. Catches confident teleports the
-    # covariance gate misses (0.9 m in one 33 ms frame is 27 m/s) without trusting the
-    # tracker's self-report; VINS-Mono's failureDetection() gates the same way. Linear sits
-    # above any handheld or robot speed (jogging is ~4 m/s), angular deliberately high --
-    # a fast handheld pan peaks near 5 rad/s. 0 disables that limit.
+    # Frame-to-frame m/s and rad/s, catching confident teleports the covariance gate
+    # misses. 0 disables that limit.
     speed_gate_max_linear: float = 5.0
     speed_gate_max_angular: float = 12.0
     # rgbd only: raw depth units per metre. cuVSLAM assumes 1, and depth images are
@@ -210,16 +201,11 @@ class DimSlamConfig(NativeModuleConfig):
     # it open.
     depth_cloud_min_range: float = 0.0
     depth_cloud_max_range: float = 0.0
-    # Emit one point per k x k depth block instead of every pixel: the median of the
-    # block's in-gate depths, deprojected at the block centre. The median (not mean)
-    # keeps a block on one surface at depth discontinuities instead of inventing a
-    # flying pixel, and blocks with under half their pixels valid are dropped as edge
-    # noise. <= 1 emits every pixel.
+    # One point per k x k depth block (median of in-gate depths). <= 1 emits every pixel.
     depth_cloud_decimation: int = 1
 
     map_frame: str = "map"
     odom_frame: str = "odom"
-    # Poses are published relative to this.
     base_frame: str = "base_link"
     # map->odom can only be identity: this module carries no map correction yet.
     publish_map_to_odom: bool = True
@@ -237,12 +223,13 @@ class DimSlamConfig(NativeModuleConfig):
     # at constant world velocity between measurements instead of propagating on IMU.
     use_imu: bool = True
 
-    # Bosch BMI055 figures for the D455's IMU, in the continuous-time units the filter
-    # wants: rad/s/sqrt(Hz), rad/s^2/sqrt(Hz), m/s^2/sqrt(Hz), m/s^3/sqrt(Hz).
-    imu_gyro_noise_density: float = 0.0018
-    imu_gyro_random_walk: float = 2e-5
-    imu_accel_noise_density: float = 0.02
-    imu_accel_random_walk: float = 3e-3
+    # The IMU's datasheet noise figures, in the continuous-time units the filter wants:
+    # rad/s/sqrt(Hz), rad/s^2/sqrt(Hz), m/s^2/sqrt(Hz), m/s^3/sqrt(Hz). Properties of the
+    # part, so they are set per robot; use_imu requires all four above zero.
+    imu_gyro_noise_density: float = 0.0
+    imu_gyro_random_walk: float = 0.0
+    imu_accel_noise_density: float = 0.0
+    imu_accel_random_walk: float = 0.0
     gravity: float = 9.81
     # Averaged while stationary to level the filter and take the gyro bias. Offline on a
     # 517 s Alfred drive, leaving that bias in cost 19.8 m of final error against 1.6 m
@@ -272,11 +259,25 @@ class DimSlamConfig(NativeModuleConfig):
     # zero with this variance; zero leaves it free.
     constraint_twist_variances: list[float] = Field(default_factory=lambda: [0.0] * 6)
 
+    @model_validator(mode="after")
+    def _imu_noise_is_set(self) -> DimSlamConfig:
+        missing = [
+            name
+            for name in (
+                "imu_gyro_noise_density",
+                "imu_gyro_random_walk",
+                "imu_accel_noise_density",
+                "imu_accel_random_walk",
+            )
+            if getattr(self, name) <= 0.0
+        ]
+        if self.use_imu and missing:
+            raise ValueError(f"use_imu needs the IMU's noise figures: {', '.join(missing)}")
+        return self
+
 
 class DimSlam(NativeModule):
-    """cuVSLAM visual odometry feeding an error-state Kalman fusion filter in-process.
-
-    Every camera publishes onto the same ``image`` and ``camera_info`` streams and is
+    """Every camera publishes onto the same ``image`` and ``camera_info`` streams and is
     told apart by ``frame_id``; ``camera_frames`` fixes which frames are on the rig and
     in what order. Extrinsics come from tf against ``base_frame``, which is also the
     rig frame. ``rgbd`` pairs one camera with ``depth_image``. Depth recorded against a
