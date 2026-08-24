@@ -122,6 +122,8 @@ vis_nav = autoconnect(
         cuvslam_enable_imu=False,
         # Alfred's computer has no GPU; the fork-built libcuvslam carries the CPU path.
         use_gpu=False,
+        # The D455 publishes sixteen-bit millimetres.
+        depth_units_per_meter=1000.0,
         depth_cloud_max_range=DEPTH_MAX_RANGE_METERS,
         # One point per 3x3 depth block: a full-resolution D455 cloud is ~400k points a
         # frame at 30 Hz and drowns the mapper.

@@ -209,9 +209,9 @@ class DimSlamConfig(NativeModuleConfig):
     # a fast handheld pan peaks near 5 rad/s. 0 disables that limit.
     speed_gate_max_linear: float = 5.0
     speed_gate_max_angular: float = 12.0
-    # rgbd only: raw depth units per metre. cuVSLAM assumes 1, and depth images are
-    # 16-bit millimetres.
-    depth_units_per_meter: float = 1000.0
+    # Raw depth units per metre, a property of how the depth sensor encodes its image
+    # (1000 for the usual sixteen-bit millimetres), so it is set per robot.
+    depth_units_per_meter: float = 1.0
     # Range gate on the published depth_cloud, metres; 0 leaves either end open. Where to
     # cut is a property of the depth sensor, not of the tracker, so both ends are open
     # here and set per robot.
@@ -235,7 +235,7 @@ class DimSlamConfig(NativeModuleConfig):
     depth2depth_quality: float = 1.0
     # Frame whose images on the image stream feed the model; empty uses the rig camera
     # on the depth frame. Set to the color camera's frame when depth is aligned to a
-    # camera without color (D455: depth follows the left IR camera).
+    # camera that has no color, such as an infrared imager.
     depth2depth_color_frame: str = ""
     # Each depth image is fused with the recent color image closest in stamp; a
     # stalled color stream would silently guide densification with another moment's
@@ -268,10 +268,9 @@ class DimSlamConfig(NativeModuleConfig):
     imu_accel_noise_density: float | None = None
     imu_accel_random_walk: float | None = None
     gravity: float = 9.81
-    # Averaged while stationary to level the filter and take the gyro bias. Offline on a
-    # 517 s Alfred drive, leaving that bias in cost 19.8 m of final error against 1.6 m
-    # with it removed, so this is the single most load-bearing number here. At 200 Hz
-    # this is one second of standing still at startup.
+    # Averaged while stationary to level the filter and take the gyro bias, which the
+    # rest of the run cannot observe. The robot has to stand still for this many samples
+    # at startup, so it trades startup time against how well the bias is pinned.
     imu_init_samples: int = 200
 
     initial_position_std: float = 0.01
@@ -320,8 +319,8 @@ class DimSlam(NativeModule):
     told apart by ``frame_id``; ``camera_frames`` fixes which frames are on the rig and
     in what order. Extrinsics come from tf against ``base_frame``, which is also the
     rig frame. ``rgbd`` pairs one camera with ``depth_image``. Depth recorded against a
-    different sensor than the rig camera (a D455 aligns depth to the left IR camera, not
-    color) is reprojected onto the rig camera through ``depth_camera_info`` and tf.
+    different sensor than the rig camera is reprojected onto the rig camera through
+    ``depth_camera_info`` and tf.
 
     The tracker's pose stream never touches the wire: it enters the filter as a
     drifting source under ``visual_odom_frame``. Any number of external sources
