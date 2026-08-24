@@ -33,10 +33,13 @@ use lcm_msgs::sensor_msgs::{
 use lcm_msgs::tf2_msgs::TFMessage;
 use lcm_msgs::vision_msgs::{Detection2D, Detection2DArray, Detection3D, Detection3DArray};
 use lz4_flex::frame::FrameEncoder;
-use rusqlite::{params, Connection};
 use serde::Deserialize;
 use tracing::{error, info, warn};
 use turbojpeg::{PixelFormat, Subsamp};
+
+use crate::store::{Observation, RecordingStore};
+
+pub mod store;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -66,7 +69,7 @@ pub struct StreamConfig {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct RecorderConfig {
-    pub db_path: String,
+    pub store: store::RecordingStoreConfig,
     pub encoding_threads: usize,
     pub queue_capacity: usize,
     pub write_batch_size: usize,
@@ -146,6 +149,7 @@ impl RecorderEngine {
             .context("failed to start memory writer thread")?;
 
         let mut workers = Vec::with_capacity(config.encoding_threads);
+        let stores_wire_bytes = config.store.stores_wire_bytes();
         for index in 0..config.encoding_threads {
             let receiver = encode_rx.clone();
             let sender = write_tx.clone();
@@ -153,7 +157,7 @@ impl RecorderEngine {
             workers.push(
                 thread::Builder::new()
                     .name(format!("mem2-encoder-{index}"))
-                    .spawn(move || encode_loop(receiver, sender, quality))
+                    .spawn(move || encode_loop(receiver, sender, quality, stores_wire_bytes))
                     .context("failed to start encoding thread")?,
             );
         }
@@ -230,11 +234,17 @@ pub struct WriterStats {
     pub encode_errors: u64,
 }
 
-fn encode_loop(receiver: Receiver<EncodeMessage>, sender: Sender<EncodedBatch>, quality: i32) {
+fn encode_loop(
+    receiver: Receiver<EncodeMessage>,
+    sender: Sender<EncodedBatch>,
+    quality: i32,
+    stores_wire_bytes: bool,
+) {
     while let Ok(message) = receiver.recv() {
         match message {
             EncodeMessage::Job(job) => {
-                let encoded = encode_job(&job, quality).map_err(|error| format!("{error:#}"));
+                let encoded = encode_job(&job, quality, stores_wire_bytes)
+                    .map_err(|error| format!("{error:#}"));
                 let batch = EncodedBatch {
                     sequence: job.sequence,
                     stream: job.stream,
@@ -250,7 +260,17 @@ fn encode_loop(receiver: Receiver<EncodeMessage>, sender: Sender<EncodedBatch>, 
     }
 }
 
-fn encode_job(job: &EncodeJob, quality: i32) -> Result<Vec<StoredObservation>> {
+fn encode_job(
+    job: &EncodeJob,
+    quality: i32,
+    stores_wire_bytes: bool,
+) -> Result<Vec<StoredObservation>> {
+    if stores_wire_bytes {
+        return Ok(vec![StoredObservation {
+            ts: timestamp_for(job)?,
+            data: job.data.clone(),
+        }]);
+    }
     if job.stream.payload_kind == PayloadKind::Tf {
         return encode_tf(job);
     }
@@ -307,6 +327,13 @@ fn timestamp_for(job: &EncodeJob) -> Result<f64> {
             let message = CompressedVideo::decode(&job.data)
                 .context("invalid LCM foxglove_msgs.CompressedVideo")?;
             (message.timestamp.sec, message.timestamp.nanosec)
+        }
+        "dimos.msgs.tf2_msgs.TFMessage.TFMessage" => {
+            let message = TFMessage::decode(&job.data).context("invalid LCM TFMessage")?;
+            let Some(transform) = message.transforms.first() else {
+                return Ok(job.reception_ts);
+            };
+            (transform.header.stamp.sec, transform.header.stamp.nsec)
         }
         "dimos.msgs.geometry_msgs.Transform.Transform" => {
             let message = TFMessage::decode(&job.data).context("invalid LCM Transform")?;
@@ -424,13 +451,7 @@ fn wall_time() -> f64 {
 }
 
 fn writer_loop(config: RecorderConfig, receiver: Receiver<EncodedBatch>) -> Result<WriterStats> {
-    let mut connection = Connection::open(&config.db_path)
-        .with_context(|| format!("failed to open {}", config.db_path))?;
-    connection.pragma_update(None, "journal_mode", "WAL")?;
-    connection.pragma_update(None, "synchronous", "NORMAL")?;
-    for stream in &config.streams {
-        ensure_stream_tables(&connection, stream)?;
-    }
+    let mut store = store::open(&config.store, &config.streams, config.encoding_threads)?;
 
     let flush_interval = Duration::from_millis(config.flush_interval_ms);
     let mut pending = BTreeMap::new();
@@ -448,11 +469,11 @@ fn writer_loop(config: RecorderConfig, receiver: Receiver<EncodedBatch>) -> Resu
                     next_sequence += 1;
                 }
                 if ready.len() >= config.write_batch_size {
-                    write_ready(&mut connection, &mut ready, &mut stats)?;
+                    write_ready(store.as_mut(), &mut ready, &mut stats)?;
                 }
             }
             Err(RecvTimeoutError::Timeout) => {
-                write_ready(&mut connection, &mut ready, &mut stats)?;
+                write_ready(store.as_mut(), &mut ready, &mut stats)?;
             }
             Err(RecvTimeoutError::Disconnected) => {
                 while let Some(batch) = pending.remove(&next_sequence) {
@@ -462,7 +483,8 @@ fn writer_loop(config: RecorderConfig, receiver: Receiver<EncodedBatch>) -> Resu
                 if !pending.is_empty() {
                     return Err(anyhow!("encoder results ended with a sequence gap"));
                 }
-                write_ready(&mut connection, &mut ready, &mut stats)?;
+                write_ready(store.as_mut(), &mut ready, &mut stats)?;
+                store.finish()?;
                 info!(
                     received = stats.received,
                     written = stats.written,
@@ -476,25 +498,24 @@ fn writer_loop(config: RecorderConfig, receiver: Receiver<EncodedBatch>) -> Resu
 }
 
 fn write_ready(
-    connection: &mut Connection,
+    store: &mut dyn RecordingStore,
     ready: &mut Vec<EncodedBatch>,
     stats: &mut WriterStats,
 ) -> Result<()> {
     if ready.is_empty() {
         return Ok(());
     }
-    let transaction = connection.transaction()?;
+    let mut stored_observations = Vec::new();
     for batch in ready.drain(..) {
         match batch.observations {
             Ok(observations) => {
                 for observation in observations {
-                    insert_observation(
-                        &transaction,
-                        &batch.stream,
-                        observation,
-                        batch.reception_ts,
-                    )?;
-                    stats.written += 1;
+                    stored_observations.push(Observation {
+                        stream: Arc::clone(&batch.stream),
+                        source_ts: observation.ts,
+                        reception_ts: batch.reception_ts,
+                        data: observation.data,
+                    });
                 }
             }
             Err(message) => {
@@ -503,80 +524,8 @@ fn write_ready(
             }
         }
     }
-    transaction.commit()?;
-    Ok(())
-}
-
-fn ensure_stream_tables(connection: &Connection, stream: &StreamConfig) -> Result<()> {
-    let name = &stream.name;
-    validate_identifier(name)?;
-    connection.execute_batch(&format!(
-        r#"
-        CREATE TABLE IF NOT EXISTS "{name}" (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ts REAL NOT NULL,
-            value NUMERIC,
-            pose_x REAL, pose_y REAL, pose_z REAL,
-            pose_qx REAL, pose_qy REAL, pose_qz REAL, pose_qw REAL,
-            tags BLOB DEFAULT (jsonb('{{}}'))
-        );
-        CREATE TABLE IF NOT EXISTS "{name}_blob" (
-            id INTEGER PRIMARY KEY,
-            data BLOB NOT NULL
-        );
-        CREATE VIRTUAL TABLE IF NOT EXISTS "{name}_rtree" USING rtree(
-            id, x_min, x_max, y_min, y_max, z_min, z_max
-        );
-        "#
-    ))?;
-    if stream.payload_kind != PayloadKind::Tf {
-        connection.execute(
-            &format!(
-                r#"CREATE INDEX IF NOT EXISTS "{name}_tag_reception_ts" ON "{name}"(json_extract(tags, '$.reception_ts'))"#
-            ),
-            [],
-        )?;
-    }
-    Ok(())
-}
-
-fn insert_observation(
-    connection: &Connection,
-    stream: &StreamConfig,
-    observation: StoredObservation,
-    reception_ts: f64,
-) -> Result<()> {
-    let name = &stream.name;
-    if stream.payload_kind == PayloadKind::Tf {
-        connection.execute(
-            &format!(r#"INSERT INTO "{name}" (ts) VALUES (?1)"#),
-            params![observation.ts],
-        )?;
-    } else {
-        let tags = serde_json::json!({"reception_ts": reception_ts}).to_string();
-        connection.execute(
-            &format!(r#"INSERT INTO "{name}" (ts, tags) VALUES (?1, jsonb(?2))"#),
-            params![observation.ts, tags],
-        )?;
-    }
-    let id = connection.last_insert_rowid();
-    connection.execute(
-        &format!(r#"INSERT INTO "{name}_blob" (id, data) VALUES (?1, ?2)"#),
-        params![id, observation.data],
-    )?;
-    Ok(())
-}
-
-fn validate_identifier(name: &str) -> Result<()> {
-    let mut chars = name.chars();
-    let first = chars
-        .next()
-        .ok_or_else(|| anyhow!("stream name is empty"))?;
-    if !(first == '_' || first.is_ascii_alphabetic())
-        || !chars.all(|character| character == '_' || character.is_ascii_alphanumeric())
-    {
-        return Err(anyhow!("invalid stream name {name:?}"));
-    }
+    store.write_batch(&stored_observations)?;
+    stats.written += stored_observations.len() as u64;
     Ok(())
 }
 
@@ -586,6 +535,7 @@ mod tests {
 
     use lcm_msgs::std_msgs::{Header, Time};
     use lz4_flex::frame::FrameDecoder;
+    use rusqlite::Connection;
     use tempfile::NamedTempFile;
 
     use super::*;
@@ -654,7 +604,7 @@ mod tests {
             data: message.encode(),
         };
 
-        let observations = encode_job(&job, 50).unwrap();
+        let observations = encode_job(&job, 50, false).unwrap();
 
         assert_eq!(observations.len(), 2);
         assert_eq!(observations[0].ts, 10.000_000_005);
@@ -690,10 +640,31 @@ mod tests {
     }
 
     #[test]
+    fn wire_store_encoding_preserves_the_original_packet() {
+        let mut message = Imu::default();
+        message.header.stamp = Time { sec: 42, nsec: 25 };
+        let data = message.encode();
+        let job = EncodeJob {
+            sequence: 0,
+            stream: stream("imu", Codec::Jpeg, PayloadKind::Image),
+            reception_ts: 100.0,
+            data: data.clone(),
+        };
+
+        let observations = encode_job(&job, 1, true).unwrap();
+
+        assert_eq!(observations.len(), 1);
+        assert_eq!(observations[0].ts, 100.0);
+        assert_eq!(observations[0].data, data);
+    }
+
+    #[test]
     fn writer_restores_arrival_order_after_parallel_encoding() {
         let file = NamedTempFile::new().unwrap();
         let config = RecorderConfig {
-            db_path: file.path().to_string_lossy().into_owned(),
+            store: store::RecordingStoreConfig::Sqlite {
+                path: file.path().to_string_lossy().into_owned(),
+            },
             encoding_threads: 2,
             queue_capacity: 8,
             write_batch_size: 8,
@@ -761,17 +732,26 @@ mod tests {
         let file = NamedTempFile::new().unwrap();
         let connection = Connection::open(file.path()).unwrap();
         let tf = stream("tf", Codec::Lcm, PayloadKind::Tf);
-        ensure_stream_tables(&connection, &tf).unwrap();
-        insert_observation(
-            &connection,
-            &tf,
-            StoredObservation {
-                ts: 1.0,
-                data: vec![1, 2, 3],
+        drop(connection);
+        let mut recording_store = store::open(
+            &store::RecordingStoreConfig::Sqlite {
+                path: file.path().to_string_lossy().into_owned(),
             },
-            100.0,
+            &[(*tf).clone()],
+            1,
         )
         .unwrap();
+        recording_store
+            .write_batch(&[Observation {
+                stream: Arc::clone(&tf),
+                source_ts: 1.0,
+                reception_ts: 100.0,
+                data: vec![1, 2, 3],
+            }])
+            .unwrap();
+        recording_store.finish().unwrap();
+        drop(recording_store);
+        let connection = Connection::open(file.path()).unwrap();
 
         let (tag_type, tags): (String, String) = connection
             .query_row("SELECT typeof(tags), json(tags) FROM tf", [], |row| {
@@ -791,11 +771,59 @@ mod tests {
     }
 
     #[test]
+    fn mcap_store_writes_indexed_original_wire_messages() {
+        let file = NamedTempFile::new().unwrap();
+        let samples = stream("samples", Codec::Lcm, PayloadKind::Raw);
+        let mut recording_store = store::open(
+            &store::RecordingStoreConfig::Mcap {
+                path: file.path().to_string_lossy().into_owned(),
+            },
+            &[(*samples).clone()],
+            1,
+        )
+        .unwrap();
+        recording_store
+            .write_batch(&[Observation {
+                stream: Arc::clone(&samples),
+                source_ts: 12.5,
+                reception_ts: 13.0,
+                data: vec![1, 2, 3],
+            }])
+            .unwrap();
+        recording_store.finish().unwrap();
+        drop(recording_store);
+
+        let bytes = std::fs::read(file.path()).unwrap();
+        let summary = mcap::Summary::read(&bytes).unwrap().unwrap();
+        assert_eq!(summary.chunk_indexes.len(), 1);
+        assert_eq!(summary.chunk_indexes[0].compression, "zstd");
+        let indexes = summary
+            .read_message_indexes(&bytes, &summary.chunk_indexes[0])
+            .unwrap();
+        assert_eq!(indexes.values().map(Vec::len).sum::<usize>(), 1);
+
+        let messages = mcap::MessageStream::new(&bytes)
+            .unwrap()
+            .collect::<mcap::McapResult<Vec<_>>>()
+            .unwrap();
+        assert_eq!(messages.len(), 1);
+        let message = &messages[0];
+        assert_eq!(message.channel.topic, "samples");
+        assert_eq!(message.channel.message_encoding, "lcm");
+        assert_eq!(message.channel.metadata["dimos.payload_type"], "test.Raw");
+        assert_eq!(message.log_time, 13_000_000_000);
+        assert_eq!(message.publish_time, 12_500_000_000);
+        assert_eq!(message.data.as_ref(), &[1, 2, 3]);
+    }
+
+    #[test]
     fn engine_uses_the_configured_worker_count_and_flushes_on_shutdown() {
         let file = NamedTempFile::new().unwrap();
         let raw = stream("raw", Codec::Lcm, PayloadKind::Raw);
         let config = RecorderConfig {
-            db_path: file.path().to_string_lossy().into_owned(),
+            store: store::RecordingStoreConfig::Sqlite {
+                path: file.path().to_string_lossy().into_owned(),
+            },
             encoding_threads: 3,
             queue_capacity: 8,
             write_batch_size: 64,

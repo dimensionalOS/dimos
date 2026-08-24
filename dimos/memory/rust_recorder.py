@@ -18,9 +18,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Literal, TypeAlias, cast
+from typing import Annotated, Any, Literal, TypeAlias, cast
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
@@ -52,6 +52,42 @@ class RustStreamSpec(BaseModel):
     payload_kind: Literal["raw", "image", "tf"]
 
 
+class RustStoreConfig(BaseModel):
+    """Artifact path shared by native recording-store configurations."""
+
+    model_config = ConfigDict(validate_default=True)
+
+    path: str
+
+    @field_validator("path", mode="before")
+    @classmethod
+    def _resolve_path(cls, value: str | os.PathLike[str]) -> str:
+        path = Path(os.fspath(value))
+        if not path.is_absolute():
+            path = DIMOS_PROJECT_ROOT / path
+        return str(path)
+
+
+class RustSqliteStoreConfig(RustStoreConfig):
+    """Write a Python-compatible Mem2 SQLite artifact."""
+
+    kind: Literal["sqlite"] = "sqlite"
+    path: str = "recording.db"
+
+
+class RustMcapStoreConfig(RustStoreConfig):
+    """Write original transport packets to an indexed, compressed MCAP artifact."""
+
+    kind: Literal["mcap"] = "mcap"
+    path: str = "recording.mcap"
+
+
+RustRecordingStoreConfig: TypeAlias = Annotated[
+    RustSqliteStoreConfig | RustMcapStoreConfig,
+    Field(discriminator="kind"),
+]
+
+
 class RustRecorderConfig(NativeModuleConfig):
     """Configuration for :class:`RustRecorder`."""
 
@@ -59,24 +95,8 @@ class RustRecorderConfig(NativeModuleConfig):
     build_command: str = "cargo build --release -p dimos-memory-recorder"
     cwd: str = str(_RUST_WORKSPACE)
     stdin_config: bool = True
-    cli_exclude: frozenset[str] = frozenset(
-        {
-            "backup_keep_last",
-            "db_path",
-            "encoding_threads",
-            "flush_interval_ms",
-            "jpeg_quality",
-            "on_existing",
-            "queue_capacity",
-            "record_tf",
-            "stream_codecs",
-            "stream_remapping",
-            "streams",
-            "write_batch_size",
-        }
-    )
 
-    db_path: str = "recording.db"
+    store: RustRecordingStoreConfig = Field(default_factory=RustSqliteStoreConfig)
     on_existing: OnExisting = OnExisting.BACKUP
     backup_keep_last: int = Field(default=10, ge=0)
     record_tf: bool = True
@@ -91,18 +111,10 @@ class RustRecorderConfig(NativeModuleConfig):
 
     streams: list[RustStreamSpec] = Field(default_factory=list)
 
-    @field_validator("db_path", mode="before")
-    @classmethod
-    def _resolve_path(cls, value: str | os.PathLike[str]) -> str:
-        path = Path(os.fspath(value))
-        if not path.is_absolute():
-            path = DIMOS_PROJECT_ROOT / path
-        return str(path)
-
     def to_config_dict(self) -> dict[str, Any]:
         """Return only fields consumed by the strict native config."""
         return {
-            "db_path": self.db_path,
+            "store": self.store.model_dump(),
             "encoding_threads": self.encoding_threads,
             "queue_capacity": self.queue_capacity,
             "write_batch_size": self.write_batch_size,
@@ -111,9 +123,13 @@ class RustRecorderConfig(NativeModuleConfig):
             "streams": [stream.model_dump() for stream in self.streams],
         }
 
+    def to_cli_args(self) -> list[str]:
+        """The recorder consumes one stdin JSON config, not duplicate CLI flags."""
+        return []
+
 
 class RustRecorder(NativeModule):
-    """Record connected ``In`` ports with native encoding and SQLite writes.
+    """Record connected ``In`` ports to a native SQLite or MCAP store.
 
     Subclass this recorder and declare the streams to capture, just like the
     Python :class:`dimos.memory.module.Recorder`::
@@ -121,11 +137,12 @@ class RustRecorder(NativeModule):
         class CameraRecorder(RustRecorder):
             color_image: In[Image]
 
-    LCM-backed message types use their wire bytes directly. Images default to
-    JPEG; ``stream_codecs`` may select ``lcm`` or ``lz4+lcm`` instead. The
-    The native fast path preserves source timestamps for common stamped message
-    types. Other LCM messages use their reception timestamp. Spatial pose
-    attachment is not supported yet.
+    SQLite uses the Python Mem2 codec configuration: images default to JPEG,
+    and ``stream_codecs`` may select ``lcm`` or ``lz4+lcm``. MCAP stores the
+    original transport packets and uses indexed Zstd chunks. The native fast
+    path preserves source timestamps for common stamped message types. Other
+    LCM messages use their reception timestamp. Spatial pose attachment is not
+    supported yet.
     """
 
     config: RustRecorderConfig
@@ -137,7 +154,7 @@ class RustRecorder(NativeModule):
             Module.start(self)
             logger.info(
                 "Replay mode active; native recorder disabled",
-                db_path=self.config.db_path,
+                artifact_path=self.config.store.path,
             )
             return
 
@@ -151,6 +168,9 @@ class RustRecorder(NativeModule):
         super().start()
 
     def _stream_specs(self) -> list[RustStreamSpec]:
+        if self.config.store.kind == "mcap" and self.config.stream_codecs:
+            raise ValueError("MCAP stores original wire packets; stream_codecs is invalid")
+
         specs: list[RustStreamSpec] = []
         for port_name, port in self.inputs.items():
             if getattr(port, "_transport", None) is None:
@@ -169,7 +189,10 @@ class RustRecorder(NativeModule):
                 continue
 
             stream_name = self.config.stream_remapping.get(port_name, port_name)
-            codec = self.config.stream_codecs.get(stream_name, self._default_codec(port.type))
+            if self.config.store.kind == "mcap":
+                codec = "lcm"
+            else:
+                codec = self.config.stream_codecs.get(stream_name, self._default_codec(port.type))
             self._validate_codec(stream_name, port.type, codec)
             specs.append(
                 RustStreamSpec(
@@ -211,22 +234,27 @@ class RustRecorder(NativeModule):
             )
 
     def _prepare_store(self, specs: list[RustStreamSpec]) -> None:
-        path = Path(self.config.db_path)
+        path = Path(self.config.store.path)
+        if self.config.store.kind == "mcap" and self.config.on_existing is OnExisting.APPEND:
+            raise ValueError("MCAP append is unsupported; choose overwrite, backup, or error")
         if path.exists():
             if self.config.on_existing is OnExisting.OVERWRITE:
                 path.unlink()
-                logger.info("Deleted existing recording", db_path=str(path))
+                logger.info("Deleted existing recording", artifact_path=str(path))
             elif self.config.on_existing is OnExisting.BACKUP:
                 backup = backup_file(path, keep_last=self.config.backup_keep_last)
                 logger.info(
                     "Rotated existing recording",
-                    db_path=str(path),
+                    artifact_path=str(path),
                     backup_path=str(backup) if backup is not None else None,
                 )
             elif self.config.on_existing is OnExisting.ERROR:
                 raise FileExistsError(f"Recording already exists: {path}")
 
         path.parent.mkdir(parents=True, exist_ok=True)
+        if self.config.store.kind == "mcap":
+            return
+
         with SqliteStore(path=str(path)) as store:
             if self.config.on_existing is OnExisting.APPEND:
                 existing = set(store.list_streams())

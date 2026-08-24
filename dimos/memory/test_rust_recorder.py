@@ -22,7 +22,12 @@ import pytest
 
 from dimos.core.stream import In
 from dimos.memory.module import OnExisting
-from dimos.memory.rust_recorder import RustRecorder, RustRecorderConfig
+from dimos.memory.rust_recorder import (
+    RustMcapStoreConfig,
+    RustRecorder,
+    RustRecorderConfig,
+    RustSqliteStoreConfig,
+)
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
@@ -76,7 +81,7 @@ def test_specs_use_native_defaults_remapping_and_configured_workers(
 ) -> None:
     recorder = make_recorder(
         SampleRustRecorder,
-        db_path=tmp_path / "recording.db",
+        store=RustSqliteStoreConfig(path=tmp_path / "recording.db"),
         record_tf=False,
         encoding_threads=7,
         stream_remapping={"odometry": "pose"},
@@ -89,6 +94,10 @@ def test_specs_use_native_defaults_remapping_and_configured_workers(
     config = recorder.config.to_config_dict()
 
     assert config["encoding_threads"] == 7
+    assert config["store"] == {
+        "kind": "sqlite",
+        "path": str(tmp_path / "recording.db"),
+    }
     assert config["streams"] == [
         {
             "port": "color_image",
@@ -112,7 +121,11 @@ def test_store_preparation_creates_a_python_readable_registry(
     tmp_path: Path, make_recorder: Any
 ) -> None:
     path = tmp_path / "recording.db"
-    recorder = make_recorder(SampleRustRecorder, db_path=path, record_tf=False)
+    recorder = make_recorder(
+        SampleRustRecorder,
+        store=RustSqliteStoreConfig(path=path),
+        record_tf=False,
+    )
     connect(recorder, color_image="/camera", odometry="/odom")
     specs = recorder._stream_specs()
 
@@ -132,7 +145,7 @@ def test_append_replaces_only_the_recorded_streams(tmp_path: Path, make_recorder
 
     recorder = make_recorder(
         SampleRustRecorder,
-        db_path=path,
+        store=RustSqliteStoreConfig(path=path),
         record_tf=False,
         on_existing=OnExisting.APPEND,
     )
@@ -148,7 +161,9 @@ def test_unsupported_python_payload_fails_before_native_process_starts(
     tmp_path: Path, make_recorder: Any
 ) -> None:
     recorder = make_recorder(
-        UnsupportedRustRecorder, db_path=tmp_path / "recording.db", record_tf=False
+        UnsupportedRustRecorder,
+        store=RustSqliteStoreConfig(path=tmp_path / "recording.db"),
+        record_tf=False,
     )
     connect(recorder, values="/values")
 
@@ -162,10 +177,17 @@ def test_encoding_threads_must_be_positive(encoding_threads: int) -> None:
         RustRecorderConfig(encoding_threads=encoding_threads)
 
 
+def test_default_store_path_is_resolved_from_the_project_root() -> None:
+    config = RustRecorderConfig()
+
+    assert Path(config.store.path).is_absolute()
+    assert Path(config.store.path).name == "recording.db"
+
+
 def test_invalid_codec_fails_during_preflight(tmp_path: Path, make_recorder: Any) -> None:
     recorder = make_recorder(
         SampleRustRecorder,
-        db_path=tmp_path / "recording.db",
+        store=RustSqliteStoreConfig(path=tmp_path / "recording.db"),
         record_tf=False,
         stream_codecs={"odometry": "pickle"},
     )
@@ -179,9 +201,65 @@ def test_unconnected_recorder_does_not_spawn_or_touch_the_store(
     tmp_path: Path, make_recorder: Any
 ) -> None:
     path = tmp_path / "recording.db"
-    recorder = make_recorder(SampleRustRecorder, db_path=path)
+    recorder = make_recorder(SampleRustRecorder, store=RustSqliteStoreConfig(path=path))
 
     recorder.start()
 
     assert recorder._process is None
     assert not path.exists()
+
+
+def test_mcap_store_uses_wire_codecs_and_does_not_precreate_the_artifact(
+    tmp_path: Path, make_recorder: Any
+) -> None:
+    path = tmp_path / "recording.mcap"
+    recorder = make_recorder(
+        SampleRustRecorder,
+        store=RustMcapStoreConfig(path=path),
+        record_tf=False,
+    )
+    connect(recorder, color_image="/camera", odometry="/odom")
+
+    specs = recorder._stream_specs()
+    recorder._prepare_store(specs)
+
+    assert [spec.codec for spec in specs] == ["lcm", "lcm"]
+    assert not path.exists()
+    recorder.config.streams = specs
+    assert recorder.config.to_config_dict()["store"] == {
+        "kind": "mcap",
+        "path": str(path),
+    }
+
+
+def test_mcap_rejects_storage_codecs_and_append(tmp_path: Path, make_recorder: Any) -> None:
+    path = tmp_path / "recording.mcap"
+    recorder = make_recorder(
+        SampleRustRecorder,
+        store=RustMcapStoreConfig(path=path),
+        record_tf=False,
+        stream_codecs={"color_image": "jpeg"},
+    )
+    connect(recorder, color_image="/camera")
+
+    with pytest.raises(ValueError, match="original wire packets"):
+        recorder._stream_specs()
+
+    append_recorder = make_recorder(
+        SampleRustRecorder,
+        store=RustMcapStoreConfig(path=path),
+        record_tf=False,
+        on_existing=OnExisting.APPEND,
+    )
+    connect(append_recorder, odometry="/odom")
+    with pytest.raises(ValueError, match="MCAP append is unsupported"):
+        append_recorder._prepare_store(append_recorder._stream_specs())
+
+
+def test_recorder_config_generates_no_native_config_cli_args(tmp_path: Path) -> None:
+    config = RustRecorderConfig(
+        store=RustMcapStoreConfig(path=tmp_path / "recording.mcap"),
+        encoding_threads=7,
+    )
+
+    assert config.to_cli_args() == []

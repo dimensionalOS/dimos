@@ -11,6 +11,7 @@ crossbeam-channel = "0.5"
 dimos-module = { path = "../dimos-module" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 lz4_flex = "0.14.0"
+mcap = { version = "0.25.0", default-features = false, features = ["zstd"] }
 rusqlite = "0.40.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
