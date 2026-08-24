@@ -101,7 +101,6 @@ impl Config {
         (self.robot_height / self.voxel_size).ceil() as i32
     }
 
-    /// Widest a surface slice may be, in cells.
     pub fn max_span_cells(&self) -> u32 {
         (self.max_map_span_m / self.voxel_size).ceil() as u32
     }
