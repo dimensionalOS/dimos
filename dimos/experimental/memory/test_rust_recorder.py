@@ -20,13 +20,13 @@ from typing import Any, TypeVar
 import pytest
 
 from dimos.core.stream import In
-from dimos.memory.module import OnExisting
-from dimos.memory.rust_recorder import (
+from dimos.experimental.memory.rust_recorder import (
     RustMcapStoreConfig,
     RustRecorder,
     RustRecorderConfig,
     RustSqliteStoreConfig,
 )
+from dimos.memory.module import OnExisting
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image

@@ -29,7 +29,7 @@ import pytest
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.stream import In
 from dimos.core.transport import LCMTransport
-from dimos.memory.rust_recorder import (
+from dimos.experimental.memory.rust_recorder import (
     RustMcapStoreConfig,
     RustRecorder,
     RustRecordingStoreConfig,
