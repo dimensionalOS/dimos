@@ -8,63 +8,11 @@ from dimos.memory.store.sqlite import SqliteStore
 store = SqliteStore(path="/tmp/memory_readme.db")
 ```
 
-## Native stream recording
+## Experimental native recording
 
-Use `RustRecorder` when Python encoding or artifact writes cannot keep up with
-sensor rates. Declare inputs as on the Python recorder; `encoding_threads`
-sizes the native encoder pool, while one writer preserves arrival order and
-writes batches through the selected recording store.
-
-```python skip
-from dimos.core.stream import In
-from dimos.memory.rust_recorder import (
-    RustRecorder,
-    RustSqliteStoreConfig,
-)
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-
-
-class SensorRecorder(RustRecorder):
-    color_image: In[Image]
-    lidar: In[PointCloud2]
-
-
-sensor_recorder = SensorRecorder.blueprint(
-    store=RustSqliteStoreConfig(path="session.db"),
-    encoding_threads=4,
-    stream_codecs={"lidar": "lz4+lcm"},
-)
-```
-
-The SQLite store supports LCM-backed messages and the `lcm`, `jpeg`, and
-`lz4+lcm` storage codecs. It splits `tf` batches into the same per-transform
-observations as the Python recorder and produces an artifact that opens and
-replays through `SqliteStore`.
-
-Select MCAP when preserving the transport capture is more important than using
-Mem2 storage codecs:
-
-```python skip
-from dimos.memory.rust_recorder import RustMcapStoreConfig
-
-mcap_recorder = SensorRecorder.blueprint(
-    store=RustMcapStoreConfig(path="session.mcap"),
-    encoding_threads=4,
-)
-```
-
-MCAP stores each original LCM packet in indexed Zstd chunks. Source time is the
-MCAP publish time and recorder reception time is the log time. The generic
-`McapStore(path="session.mcap")` reads these self-describing channels from
-Python without a caller-supplied codec registry. `stream_codecs` and append mode
-are intentionally rejected for MCAP because they would change or splice the
-wire capture.
-
-Both stores preserve source timestamps for common stamped messages. Arbitrary
-pickle payloads, Python `pose_setter_for` hooks, and spatial pose attachment
-remain Python-recorder features; unsupported combinations fail during startup
-preflight.
+The Rust-backed SQLite and MCAP recorder is being evaluated under
+[`dimos.experimental.memory`](../experimental/memory/README.md). Its import path
+and configuration may change before promotion to the stable Memory API.
 
 
 ```python session=memory ansi=false
