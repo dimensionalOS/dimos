@@ -12,34 +12,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::BTreeMap;
-use std::io::Write;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::io;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context, Result};
 use crossbeam_channel::{bounded, Receiver, RecvTimeoutError, Sender};
-use lcm_msgs::foxglove_msgs::CompressedVideo;
-use lcm_msgs::geometry_msgs::{
-    PointStamped, PoseStamped, PoseWithCovarianceStamped, TwistStamped, TwistWithCovarianceStamped,
-    WrenchStamped,
-};
-use lcm_msgs::nav_msgs::{OccupancyGrid, Odometry, Path};
-use lcm_msgs::sensor_msgs::{
-    CameraInfo, CompressedImage, Image, Imu, JointState, Joy, PointCloud2,
-};
-use lcm_msgs::tf2_msgs::TFMessage;
-use lcm_msgs::vision_msgs::{Detection2D, Detection2DArray, Detection3D, Detection3DArray};
-use lz4_flex::frame::FrameEncoder;
+use dimos_module::transport::Dispatch;
+use dimos_module::{LcmTransport, Transport, ZenohTransport};
 use serde::Deserialize;
-use tracing::{error, info, warn};
-use turbojpeg::{PixelFormat, Subsamp};
+use tracing::{debug, info};
 
+use crate::encoding::StoredObservation;
 use crate::store::{Observation, RecordingStore};
 
+mod encoding;
 pub mod store;
+mod timestamp;
+
+const TF_PAYLOAD_TYPE: &str = "dimos.msgs.tf2_msgs.TFMessage.TFMessage";
+const QUEUE_CAPACITY: usize = 256;
+const WRITE_BATCH_SIZE: usize = 128;
+const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -50,31 +47,26 @@ pub enum Codec {
     Lz4Lcm,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum PayloadKind {
-    Raw,
-    Image,
-    Tf,
-}
-
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StreamConfig {
     pub port: String,
     pub name: String,
     pub payload_type: String,
     pub codec: Codec,
-    pub payload_kind: PayloadKind,
+}
+
+impl StreamConfig {
+    pub fn is_tf(&self) -> bool {
+        self.payload_type == TF_PAYLOAD_TYPE
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RecorderConfig {
     pub store: store::RecordingStoreConfig,
     pub encoding_threads: usize,
-    pub queue_capacity: usize,
-    pub write_batch_size: usize,
-    pub flush_interval_ms: u64,
-    pub jpeg_quality: i32,
     pub streams: Vec<StreamConfig>,
 }
 
@@ -83,17 +75,11 @@ impl RecorderConfig {
         if self.encoding_threads == 0 {
             return Err(anyhow!("encoding_threads must be at least 1"));
         }
-        if self.queue_capacity == 0 {
-            return Err(anyhow!("queue_capacity must be at least 1"));
-        }
-        if self.write_batch_size == 0 {
-            return Err(anyhow!("write_batch_size must be at least 1"));
-        }
-        if self.flush_interval_ms == 0 {
-            return Err(anyhow!("flush_interval_ms must be at least 1"));
-        }
-        if !(0..=100).contains(&self.jpeg_quality) {
-            return Err(anyhow!("jpeg_quality must be between 0 and 100"));
+        let mut names = HashSet::new();
+        for stream in &self.streams {
+            if !names.insert(&stream.name) {
+                return Err(anyhow!("duplicate recorded stream name {:?}", stream.name));
+            }
         }
         Ok(())
     }
@@ -102,14 +88,17 @@ impl RecorderConfig {
 #[derive(Clone)]
 pub struct RecorderHandle {
     sender: Sender<EncodeMessage>,
+    permits: Sender<()>,
     sequence: Arc<AtomicU64>,
-    accepting: Arc<Mutex<bool>>,
+    accepting: Arc<AtomicBool>,
 }
 
 impl RecorderHandle {
     pub fn record(&self, stream: Arc<StreamConfig>, data: &[u8]) {
-        let accepting = self.accepting.lock().expect("accepting lock poisoned");
-        if !*accepting {
+        if !self.accepting.load(Ordering::Acquire) {
+            return;
+        }
+        if self.permits.send(()).is_err() {
             return;
         }
         let job = EncodeJob {
@@ -119,7 +108,7 @@ impl RecorderHandle {
             data: data.to_vec(),
         };
         if self.sender.send(EncodeMessage::Job(job)).is_err() {
-            warn!("recorder queue closed; message dropped");
+            self.accepting.store(false, Ordering::Release);
         }
     }
 }
@@ -128,16 +117,20 @@ pub struct RecorderEngine {
     handle: RecorderHandle,
     workers: Vec<JoinHandle<()>>,
     writer: Option<JoinHandle<Result<WriterStats>>>,
+    failure: Receiver<String>,
 }
 
 impl RecorderEngine {
     pub fn start(config: RecorderConfig) -> Result<Self> {
         config.validate()?;
-        let (encode_tx, encode_rx) = bounded(config.queue_capacity);
-        let (write_tx, write_rx) = bounded(config.queue_capacity);
-        let accepting = Arc::new(Mutex::new(true));
+        let (encode_tx, encode_rx) = bounded(QUEUE_CAPACITY);
+        let (write_tx, write_rx) = bounded(QUEUE_CAPACITY);
+        let (permit_tx, permit_rx) = bounded(QUEUE_CAPACITY);
+        let (failure_tx, failure_rx) = bounded(1);
+        let accepting = Arc::new(AtomicBool::new(true));
         let handle = RecorderHandle {
             sender: encode_tx,
+            permits: permit_tx,
             sequence: Arc::new(AtomicU64::new(0)),
             accepting: Arc::clone(&accepting),
         };
@@ -145,19 +138,29 @@ impl RecorderEngine {
         let writer_config = config.clone();
         let writer = thread::Builder::new()
             .name("mem2-writer".to_string())
-            .spawn(move || writer_loop(writer_config, write_rx))
+            .spawn(move || {
+                let result = writer_loop(writer_config, write_rx, permit_rx);
+                if let Err(error) = &result {
+                    let _ = failure_tx.send(format!("{error:#}"));
+                }
+                result
+            })
             .context("failed to start memory writer thread")?;
 
-        let mut workers = Vec::with_capacity(config.encoding_threads);
         let stores_wire_bytes = config.store.stores_wire_bytes();
-        for index in 0..config.encoding_threads {
+        let worker_count = if stores_wire_bytes {
+            1
+        } else {
+            config.encoding_threads
+        };
+        let mut workers = Vec::with_capacity(worker_count);
+        for index in 0..worker_count {
             let receiver = encode_rx.clone();
             let sender = write_tx.clone();
-            let quality = config.jpeg_quality;
             workers.push(
                 thread::Builder::new()
                     .name(format!("mem2-encoder-{index}"))
-                    .spawn(move || encode_loop(receiver, sender, quality, stores_wire_bytes))
+                    .spawn(move || encode_loop(receiver, sender, stores_wire_bytes))
                     .context("failed to start encoding thread")?,
             );
         }
@@ -167,6 +170,7 @@ impl RecorderEngine {
             handle,
             workers,
             writer: Some(writer),
+            failure: failure_rx,
         })
     }
 
@@ -174,17 +178,14 @@ impl RecorderEngine {
         self.handle.clone()
     }
 
+    pub fn failure_receiver(&self) -> Receiver<String> {
+        self.failure.clone()
+    }
+
     pub fn shutdown(mut self) -> Result<WriterStats> {
-        *self
-            .handle
-            .accepting
-            .lock()
-            .expect("accepting lock poisoned") = false;
+        self.handle.accepting.store(false, Ordering::Release);
         for _ in &self.workers {
-            self.handle
-                .sender
-                .send(EncodeMessage::Shutdown)
-                .context("failed to stop encoding worker")?;
+            let _ = self.handle.sender.send(EncodeMessage::Shutdown);
         }
         for worker in self.workers.drain(..) {
             worker
@@ -214,12 +215,6 @@ struct EncodeJob {
 }
 
 #[derive(Debug)]
-struct StoredObservation {
-    ts: f64,
-    data: Vec<u8>,
-}
-
-#[derive(Debug)]
 struct EncodedBatch {
     sequence: u64,
     stream: Arc<StreamConfig>,
@@ -237,14 +232,14 @@ pub struct WriterStats {
 fn encode_loop(
     receiver: Receiver<EncodeMessage>,
     sender: Sender<EncodedBatch>,
-    quality: i32,
     stores_wire_bytes: bool,
 ) {
     while let Ok(message) = receiver.recv() {
         match message {
             EncodeMessage::Job(job) => {
-                let encoded = encode_job(&job, quality, stores_wire_bytes)
-                    .map_err(|error| format!("{error:#}"));
+                let encoded =
+                    encoding::encode(&job.stream, &job.data, job.reception_ts, stores_wire_bytes)
+                        .map_err(|error| format!("{error:#}"));
                 let batch = EncodedBatch {
                     sequence: job.sequence,
                     stream: job.stream,
@@ -260,191 +255,6 @@ fn encode_loop(
     }
 }
 
-fn encode_job(
-    job: &EncodeJob,
-    quality: i32,
-    stores_wire_bytes: bool,
-) -> Result<Vec<StoredObservation>> {
-    if stores_wire_bytes {
-        return Ok(vec![StoredObservation {
-            ts: timestamp_for(job)?,
-            data: job.data.clone(),
-        }]);
-    }
-    if job.stream.payload_kind == PayloadKind::Tf {
-        return encode_tf(job);
-    }
-
-    let (ts, data) = match job.stream.codec {
-        Codec::Lcm => (timestamp_for(job)?, job.data.clone()),
-        Codec::Lz4Lcm => (timestamp_for(job)?, lz4_frame(&job.data)?),
-        Codec::Jpeg => encode_jpeg(&job.data, job.reception_ts, quality)?,
-    };
-    Ok(vec![StoredObservation { ts, data }])
-}
-
-fn timestamp_for(job: &EncodeJob) -> Result<f64> {
-    macro_rules! stamped {
-        ($message_type:ty) => {{
-            let message = <$message_type>::decode(&job.data)
-                .with_context(|| format!("invalid LCM {}", job.stream.payload_type))?;
-            (message.header.stamp.sec, message.header.stamp.nsec)
-        }};
-    }
-
-    let (sec, nsec) = match job.stream.payload_type.as_str() {
-        "dimos.msgs.geometry_msgs.PointStamped.PointStamped" => stamped!(PointStamped),
-        "dimos.msgs.geometry_msgs.PoseStamped.PoseStamped" => stamped!(PoseStamped),
-        "dimos.msgs.geometry_msgs.PoseWithCovarianceStamped.PoseWithCovarianceStamped" => {
-            stamped!(PoseWithCovarianceStamped)
-        }
-        "dimos.msgs.geometry_msgs.TwistStamped.TwistStamped" => stamped!(TwistStamped),
-        "dimos.msgs.geometry_msgs.TwistWithCovarianceStamped.TwistWithCovarianceStamped" => {
-            stamped!(TwistWithCovarianceStamped)
-        }
-        "dimos.msgs.geometry_msgs.WrenchStamped.WrenchStamped" => stamped!(WrenchStamped),
-        "dimos.msgs.nav_msgs.LineSegments3D.LineSegments3D" | "dimos.msgs.nav_msgs.Path.Path" => {
-            stamped!(Path)
-        }
-        "dimos.msgs.nav_msgs.OccupancyGrid.OccupancyGrid" => stamped!(OccupancyGrid),
-        "dimos.msgs.nav_msgs.Odometry.Odometry" => stamped!(Odometry),
-        "dimos.msgs.sensor_msgs.CameraInfo.CameraInfo" => stamped!(CameraInfo),
-        "dimos.msgs.sensor_msgs.CompressedImage.CompressedImage" => stamped!(CompressedImage),
-        "dimos.msgs.sensor_msgs.Image.Image" => stamped!(Image),
-        "dimos.msgs.sensor_msgs.Imu.Imu" => stamped!(Imu),
-        "dimos.msgs.sensor_msgs.JointState.JointState" => stamped!(JointState),
-        "dimos.msgs.sensor_msgs.Joy.Joy" => stamped!(Joy),
-        "dimos.msgs.sensor_msgs.PointCloud2.PointCloud2" => stamped!(PointCloud2),
-        "dimos.msgs.vision_msgs.Detection2D.Detection2D" => stamped!(Detection2D),
-        "dimos.msgs.vision_msgs.Detection2DArray.Detection2DArray" => {
-            stamped!(Detection2DArray)
-        }
-        "dimos.msgs.vision_msgs.Detection3D.Detection3D" => stamped!(Detection3D),
-        "dimos.msgs.vision_msgs.Detection3DArray.Detection3DArray" => {
-            stamped!(Detection3DArray)
-        }
-        "dimos.msgs.foxglove_msgs.CompressedVideo.CompressedVideo" => {
-            let message = CompressedVideo::decode(&job.data)
-                .context("invalid LCM foxglove_msgs.CompressedVideo")?;
-            (message.timestamp.sec, message.timestamp.nanosec)
-        }
-        "dimos.msgs.tf2_msgs.TFMessage.TFMessage" => {
-            let message = TFMessage::decode(&job.data).context("invalid LCM TFMessage")?;
-            let Some(transform) = message.transforms.first() else {
-                return Ok(job.reception_ts);
-            };
-            (transform.header.stamp.sec, transform.header.stamp.nsec)
-        }
-        "dimos.msgs.geometry_msgs.Transform.Transform" => {
-            let message = TFMessage::decode(&job.data).context("invalid LCM Transform")?;
-            let Some(transform) = message.transforms.first() else {
-                return Ok(job.reception_ts);
-            };
-            (transform.header.stamp.sec, transform.header.stamp.nsec)
-        }
-        _ => return Ok(job.reception_ts),
-    };
-    Ok(header_timestamp(sec, nsec, job.reception_ts))
-}
-
-fn encode_tf(job: &EncodeJob) -> Result<Vec<StoredObservation>> {
-    if job.stream.codec != Codec::Lcm {
-        return Err(anyhow!("tf only supports the lcm codec"));
-    }
-    let message = TFMessage::decode(&job.data).context("invalid LCM TFMessage")?;
-    Ok(message
-        .transforms
-        .into_iter()
-        .map(|transform| StoredObservation {
-            ts: header_timestamp(
-                transform.header.stamp.sec,
-                transform.header.stamp.nsec,
-                job.reception_ts,
-            ),
-            data: TFMessage {
-                transforms: vec![transform],
-            }
-            .encode(),
-        })
-        .collect())
-}
-
-fn encode_jpeg(data: &[u8], reception_ts: f64, quality: i32) -> Result<(f64, Vec<u8>)> {
-    let mut image = Image::decode(data).context("invalid LCM Image")?;
-    let ts = header_timestamp(
-        image.header.stamp.sec,
-        image.header.stamp.nsec,
-        reception_ts,
-    );
-    if image.encoding == "jpeg" {
-        return Ok((ts, data.to_vec()));
-    }
-
-    let format = pixel_format(&image.encoding)?;
-    let pixels = normalize_pixels(&image)?;
-    let pitch = image.width as usize * format.size();
-    let source = turbojpeg::Image {
-        pixels: pixels.as_slice(),
-        width: image.width as usize,
-        pitch,
-        height: image.height as usize,
-        format,
-    };
-    let jpeg = turbojpeg::compress(source, quality, Subsamp::Sub2x1)
-        .context("TurboJPEG compression failed")?;
-    image.encoding = "jpeg".to_string();
-    image.is_bigendian = 0;
-    image.step = 0;
-    image.data = jpeg.to_vec();
-    Ok((ts, image.encode()))
-}
-
-fn pixel_format(encoding: &str) -> Result<PixelFormat> {
-    match encoding {
-        "rgb8" => Ok(PixelFormat::RGB),
-        "bgr8" => Ok(PixelFormat::BGR),
-        "rgba8" => Ok(PixelFormat::RGBA),
-        "bgra8" => Ok(PixelFormat::BGRA),
-        "mono8" | "mono16" | "16UC1" | "16SC1" => Ok(PixelFormat::GRAY),
-        other => Err(anyhow!(
-            "JPEG codec does not support image encoding {other:?}"
-        )),
-    }
-}
-
-fn normalize_pixels(image: &Image) -> Result<Vec<u8>> {
-    match image.encoding.as_str() {
-        "mono16" | "16UC1" | "16SC1" => {
-            if !image.data.len().is_multiple_of(2) {
-                return Err(anyhow!("16-bit image has an odd byte count"));
-            }
-            let high_byte = usize::from(image.is_bigendian == 0);
-            Ok(image
-                .data
-                .as_chunks::<2>()
-                .0
-                .iter()
-                .map(|pixel| pixel[high_byte])
-                .collect())
-        }
-        _ => Ok(image.data.clone()),
-    }
-}
-
-fn lz4_frame(data: &[u8]) -> Result<Vec<u8>> {
-    let mut encoder = FrameEncoder::new(Vec::new());
-    encoder.write_all(data).context("LZ4 compression failed")?;
-    encoder.finish().context("LZ4 frame finalization failed")
-}
-
-fn header_timestamp(sec: i32, nsec: i32, fallback: f64) -> f64 {
-    if sec > 0 {
-        f64::from(sec) + f64::from(nsec) / 1_000_000_000.0
-    } else {
-        fallback
-    }
-}
-
 fn wall_time() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -452,17 +262,95 @@ fn wall_time() -> f64 {
         .as_secs_f64()
 }
 
-fn writer_loop(config: RecorderConfig, receiver: Receiver<EncodedBatch>) -> Result<WriterStats> {
+#[derive(Deserialize)]
+struct LaunchConfig {
+    topics: HashMap<String, String>,
+    config: RecorderConfig,
+}
+
+/// Run the stdin-configured native recorder until shutdown or pipeline failure.
+pub async fn run() -> Result<()> {
+    dimos_module::init_tracing();
+    let launch_value = dimos_module::read_launch_config().await?;
+    let launch =
+        serde_json::from_value(launch_value.clone()).context("invalid memory recorder config")?;
+    match std::env::var("DIMOS_TRANSPORT").as_deref() {
+        Ok("lcm") => run_with(LcmTransport::new().await?, launch).await,
+        Ok("zenoh") => run_with(ZenohTransport::from_launch(&launch_value).await?, launch).await,
+        other => Err(anyhow!(
+            "DIMOS_TRANSPORT must be 'lcm' or 'zenoh', got {other:?}"
+        )),
+    }
+}
+
+async fn run_with<T: Transport>(transport: T, launch: LaunchConfig) -> Result<()> {
+    launch.config.validate()?;
+    let engine = RecorderEngine::start(launch.config.clone())?;
+    let handle = engine.handle();
+
+    for stream in &launch.config.streams {
+        let topic = launch
+            .topics
+            .get(&stream.port)
+            .with_context(|| format!("no topic supplied for recorder port {:?}", stream.port))?;
+        let stream = Arc::new(stream.clone());
+        let callback_stream = Arc::clone(&stream);
+        let callback_handle = handle.clone();
+        let callback: Dispatch =
+            Arc::new(move |data| callback_handle.record(Arc::clone(&callback_stream), data));
+        transport
+            .subscribe(topic, callback)
+            .await
+            .with_context(|| format!("failed to subscribe to {topic:?}"))?;
+        info!(port = %stream.port, topic = %topic, store_stream = %stream.name, codec = ?stream.codec, "recording stream");
+    }
+
+    let failure = engine.failure_receiver();
+    let pipeline_failed = tokio::task::spawn_blocking(move || failure.recv());
+    tokio::pin!(pipeline_failed);
+    tokio::select! {
+        result = shutdown_signal() => result.context("failed to listen for shutdown")?,
+        result = &mut pipeline_failed => {
+            let message = result
+                .context("pipeline failure monitor panicked")?
+                .context("pipeline failure monitor disconnected")?;
+            return engine.shutdown().and(Err(anyhow!(message)));
+        }
+    }
+    engine.shutdown()?;
+    Ok(())
+}
+
+#[cfg(unix)]
+async fn shutdown_signal() -> io::Result<()> {
+    use tokio::signal::unix::{signal, SignalKind};
+
+    let mut terminate = signal(SignalKind::terminate())?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result,
+        _ = terminate.recv() => Ok(()),
+    }
+}
+
+#[cfg(not(unix))]
+async fn shutdown_signal() -> io::Result<()> {
+    tokio::signal::ctrl_c().await
+}
+
+fn writer_loop(
+    config: RecorderConfig,
+    receiver: Receiver<EncodedBatch>,
+    permits: Receiver<()>,
+) -> Result<WriterStats> {
     let mut store = store::open(&config.store, &config.streams, config.encoding_threads)?;
 
-    let flush_interval = Duration::from_millis(config.flush_interval_ms);
     let mut pending = BTreeMap::new();
-    let mut ready = Vec::with_capacity(config.write_batch_size);
+    let mut ready = Vec::with_capacity(WRITE_BATCH_SIZE);
     let mut next_sequence = 0;
     let mut stats = WriterStats::default();
 
     loop {
-        match receiver.recv_timeout(flush_interval) {
+        match receiver.recv_timeout(FLUSH_INTERVAL) {
             Ok(batch) => {
                 stats.received += 1;
                 pending.insert(batch.sequence, batch);
@@ -470,12 +358,12 @@ fn writer_loop(config: RecorderConfig, receiver: Receiver<EncodedBatch>) -> Resu
                     ready.push(batch);
                     next_sequence += 1;
                 }
-                if ready.len() >= config.write_batch_size {
-                    write_ready(store.as_mut(), &mut ready, &mut stats)?;
+                if ready.len() >= WRITE_BATCH_SIZE {
+                    write_ready(store.as_mut(), &mut ready, &mut stats, &permits)?;
                 }
             }
             Err(RecvTimeoutError::Timeout) => {
-                write_ready(store.as_mut(), &mut ready, &mut stats)?;
+                write_ready(store.as_mut(), &mut ready, &mut stats, &permits)?;
             }
             Err(RecvTimeoutError::Disconnected) => {
                 while let Some(batch) = pending.remove(&next_sequence) {
@@ -485,7 +373,7 @@ fn writer_loop(config: RecorderConfig, receiver: Receiver<EncodedBatch>) -> Resu
                 if !pending.is_empty() {
                     return Err(anyhow!("encoder results ended with a sequence gap"));
                 }
-                write_ready(store.as_mut(), &mut ready, &mut stats)?;
+                write_ready(store.as_mut(), &mut ready, &mut stats, &permits)?;
                 store.finish()?;
                 info!(
                     received = stats.received,
@@ -503,10 +391,12 @@ fn write_ready(
     store: &mut dyn RecordingStore,
     ready: &mut Vec<EncodedBatch>,
     stats: &mut WriterStats,
+    permits: &Receiver<()>,
 ) -> Result<()> {
     if ready.is_empty() {
         return Ok(());
     }
+    let completed_jobs = ready.len();
     let mut stored_observations = Vec::new();
     for batch in ready.drain(..) {
         match batch.observations {
@@ -522,12 +412,26 @@ fn write_ready(
             }
             Err(message) => {
                 stats.encode_errors += 1;
-                error!(stream = %batch.stream.name, error = %message, "message encoding failed");
+                return Err(anyhow!(
+                    "stream {:?} sequence {} encoding failed: {message}",
+                    batch.stream.name,
+                    batch.sequence
+                ));
             }
         }
     }
     store.write_batch(&stored_observations)?;
     stats.written += stored_observations.len() as u64;
+    debug!(
+        jobs = completed_jobs,
+        observations = stored_observations.len(),
+        "memory recorder batch written"
+    );
+    for _ in 0..completed_jobs {
+        permits
+            .recv()
+            .context("recorder permit accounting disconnected")?;
+    }
     Ok(())
 }
 
@@ -535,26 +439,31 @@ fn write_ready(
 mod tests {
     use std::io::Read;
 
+    use lcm_msgs::sensor_msgs::{Image, Imu};
     use lcm_msgs::std_msgs::{Header, Time};
+    use lcm_msgs::tf2_msgs::TFMessage;
     use lz4_flex::frame::FrameDecoder;
     use rusqlite::Connection;
     use tempfile::NamedTempFile;
 
     use super::*;
 
-    fn stream(name: &str, codec: Codec, payload_kind: PayloadKind) -> Arc<StreamConfig> {
+    fn stream(name: &str, codec: Codec, is_tf: bool) -> Arc<StreamConfig> {
         Arc::new(StreamConfig {
             port: name.to_string(),
             name: name.to_string(),
-            payload_type: "test.Raw".to_string(),
+            payload_type: if is_tf {
+                TF_PAYLOAD_TYPE.to_string()
+            } else {
+                "test.Raw".to_string()
+            },
             codec,
-            payload_kind,
         })
     }
 
     #[test]
     fn lz4_codec_uses_the_frame_format_python_reads() {
-        let compressed = lz4_frame(b"a payload worth compressing").unwrap();
+        let compressed = encoding::lz4_frame(b"a payload worth compressing").unwrap();
         let mut decoded = Vec::new();
         FrameDecoder::new(compressed.as_slice())
             .read_to_end(&mut decoded)
@@ -578,7 +487,7 @@ mod tests {
             data: vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255],
         };
 
-        let (ts, encoded) = encode_jpeg(&image.encode(), 100.0, 50).unwrap();
+        let (ts, encoded) = encoding::encode_jpeg(&image.encode(), 100.0).unwrap();
         let decoded = Image::decode(&encoded).unwrap();
 
         assert_eq!(ts, 12.000_000_034);
@@ -601,12 +510,13 @@ mod tests {
         };
         let job = EncodeJob {
             sequence: 0,
-            stream: stream("tf", Codec::Lcm, PayloadKind::Tf),
+            stream: stream("tf", Codec::Lcm, true),
             reception_ts: 100.0,
             data: message.encode(),
         };
 
-        let observations = encode_job(&job, 50, false).unwrap();
+        let observations =
+            encoding::encode(&job.stream, &job.data, job.reception_ts, false).unwrap();
 
         assert_eq!(observations.len(), 2);
         assert_eq!(observations[0].ts, 10.000_000_005);
@@ -632,13 +542,16 @@ mod tests {
                 name: "imu".to_string(),
                 payload_type: "dimos.msgs.sensor_msgs.Imu.Imu".to_string(),
                 codec: Codec::Lcm,
-                payload_kind: PayloadKind::Raw,
             }),
             reception_ts: 100.0,
             data: message.encode(),
         };
 
-        assert_eq!(timestamp_for(&job).unwrap(), 42.000_000_025);
+        assert_eq!(
+            timestamp::timestamp_for(&job.stream.payload_type, &job.data, job.reception_ts)
+                .unwrap(),
+            42.000_000_025
+        );
     }
 
     #[test]
@@ -648,12 +561,13 @@ mod tests {
         let data = message.encode();
         let job = EncodeJob {
             sequence: 0,
-            stream: stream("imu", Codec::Jpeg, PayloadKind::Image),
+            stream: stream("imu", Codec::Jpeg, false),
             reception_ts: 100.0,
             data: data.clone(),
         };
 
-        let observations = encode_job(&job, 1, true).unwrap();
+        let observations =
+            encoding::encode(&job.stream, &job.data, job.reception_ts, true).unwrap();
 
         assert_eq!(observations.len(), 1);
         assert_eq!(observations[0].ts, 100.0);
@@ -668,20 +582,18 @@ mod tests {
                 path: file.path().to_string_lossy().into_owned(),
             },
             encoding_threads: 2,
-            queue_capacity: 8,
-            write_batch_size: 8,
-            flush_interval_ms: 10,
-            jpeg_quality: 50,
-            streams: vec![(*stream("samples", Codec::Lcm, PayloadKind::Raw)).clone()],
+            streams: vec![(*stream("samples", Codec::Lcm, false)).clone()],
         };
         let (sender, receiver) = bounded(8);
+        let (permit_sender, permit_receiver) = bounded(8);
         let writer_config = config.clone();
-        let writer = thread::spawn(move || writer_loop(writer_config, receiver));
+        let writer = thread::spawn(move || writer_loop(writer_config, receiver, permit_receiver));
         for sequence in [1, 0, 2] {
+            permit_sender.send(()).unwrap();
             sender
                 .send(EncodedBatch {
                     sequence,
-                    stream: stream("samples", Codec::Lcm, PayloadKind::Raw),
+                    stream: stream("samples", Codec::Lcm, false),
                     reception_ts: sequence as f64,
                     observations: Ok(vec![StoredObservation {
                         ts: sequence as f64,
@@ -733,7 +645,7 @@ mod tests {
     fn tf_observations_use_empty_jsonb_tags_without_a_reception_index() {
         let file = NamedTempFile::new().unwrap();
         let connection = Connection::open(file.path()).unwrap();
-        let tf = stream("tf", Codec::Lcm, PayloadKind::Tf);
+        let tf = stream("tf", Codec::Lcm, true);
         drop(connection);
         let mut recording_store = store::open(
             &store::RecordingStoreConfig::Sqlite {
@@ -775,7 +687,7 @@ mod tests {
     #[test]
     fn mcap_store_writes_indexed_original_wire_messages() {
         let file = NamedTempFile::new().unwrap();
-        let samples = stream("samples", Codec::Lcm, PayloadKind::Raw);
+        let samples = stream("samples", Codec::Lcm, false);
         let mut recording_store = store::open(
             &store::RecordingStoreConfig::Mcap {
                 path: file.path().to_string_lossy().into_owned(),
@@ -821,16 +733,12 @@ mod tests {
     #[test]
     fn engine_uses_the_configured_worker_count_and_flushes_on_shutdown() {
         let file = NamedTempFile::new().unwrap();
-        let raw = stream("raw", Codec::Lcm, PayloadKind::Raw);
+        let raw = stream("raw", Codec::Lcm, false);
         let config = RecorderConfig {
             store: store::RecordingStoreConfig::Sqlite {
                 path: file.path().to_string_lossy().into_owned(),
             },
             encoding_threads: 3,
-            queue_capacity: 8,
-            write_batch_size: 64,
-            flush_interval_ms: 10_000,
-            jpeg_quality: 50,
             streams: vec![(*raw).clone()],
         };
         let engine = RecorderEngine::start(config).unwrap();
@@ -841,5 +749,52 @@ mod tests {
         let stats = engine.shutdown().unwrap();
         assert_eq!(stats.written, 2);
         assert_eq!(stats.encode_errors, 0);
+    }
+
+    #[test]
+    fn encoding_failure_fails_the_recording_with_stream_and_sequence() {
+        let file = NamedTempFile::new().unwrap();
+        let image = stream("camera", Codec::Jpeg, false);
+        let config = RecorderConfig {
+            store: store::RecordingStoreConfig::Sqlite {
+                path: file.path().to_string_lossy().into_owned(),
+            },
+            encoding_threads: 1,
+            streams: vec![(*image).clone()],
+        };
+        let engine = RecorderEngine::start(config).unwrap();
+        engine.handle().record(image, b"not an lcm image");
+
+        let error = engine.shutdown().unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(message.contains("camera"));
+        assert!(message.contains("sequence 0"));
+        assert!(message.contains("invalid LCM Image"));
+    }
+
+    #[test]
+    fn duplicate_stream_names_fail_validation() {
+        let config = RecorderConfig {
+            store: store::RecordingStoreConfig::Sqlite {
+                path: "unused.db".to_string(),
+            },
+            encoding_threads: 1,
+            streams: vec![
+                (*stream("samples", Codec::Lcm, false)).clone(),
+                StreamConfig {
+                    port: "other".to_string(),
+                    name: "samples".to_string(),
+                    payload_type: "test.Raw".to_string(),
+                    codec: Codec::Lcm,
+                },
+            ],
+        };
+
+        assert!(config
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate recorded stream name"));
     }
 }
