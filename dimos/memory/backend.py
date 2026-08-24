@@ -207,13 +207,16 @@ class Backend(CompositeResource, Generic[T]):
         ranked: list[Observation[T]] = []
         for obs_id, sim in hits:
             match = obs_by_id.get(obs_id)
-            if match is not None:
-                ranked.append(
-                    match.derive(data=match.data, embedding=query.search_vec, similarity=sim)
-                )
+            if match is None:
+                continue
+            if not all(f.matches(match) for f in query.filters):
+                continue
+            ranked.append(
+                match.derive(data=match.data, embedding=query.search_vec, similarity=sim)
+            )
 
-        # Apply remaining query ops (skip vector search)
-        rest = replace(query, search_vec=None, search_k=None)
+        # Apply remaining query ops (filters already applied; skip vector search)
+        rest = replace(query, search_vec=None, search_k=None, filters=())
         yield from rest.apply(iter(ranked))
 
     def _iterate_live(
