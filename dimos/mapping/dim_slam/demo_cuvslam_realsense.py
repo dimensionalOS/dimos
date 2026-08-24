@@ -94,6 +94,5 @@ demo_cuvslam_realsense = (
             (RealSenseCamera, "infrared_right_camera_info", "camera_info"),
         ]
     )
-    # DimSlam is native and speaks LCM only; don't inherit DIMOS_TRANSPORT.
     .global_config(transport="lcm", n_workers=4)
 )
