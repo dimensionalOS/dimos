@@ -88,7 +88,9 @@ uv run python -m dimos.memory.codecs.tool_depth_benchmark \
 
 Repeat `--stream` to restrict SQLite recordings with several depth streams.
 The output directory receives `results.json` and `results.md` with total size,
-p50/p95 wall and process-CPU timing, and fidelity measurements.
+p50/p95 wall and process-CPU timing, and fidelity measurements. After all
+streams finish, the terminal prints a compact report with per-stream results
+and highlights; the artifact files retain the complete measurements.
 
 For a quick harness check without LFS data:
 

@@ -42,6 +42,8 @@ import time
 from typing import Any
 
 import numpy as np
+from rich import box
+from rich.console import Console
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
@@ -50,6 +52,8 @@ from rich.progress import (
     TimeElapsedColumn,
     TimeRemainingColumn,
 )
+from rich.table import Table
+from rich.text import Text
 
 from dimos.memory.codecs.base import Codec, codec_id
 from dimos.memory.codecs.jpeg import JpegCodec
@@ -579,25 +583,122 @@ def resolve_source(value: str) -> Path:
     return path if path.exists() else get_data(value)
 
 
-def print_table(rows: Sequence[BenchmarkRow]) -> None:
-    header = (
-        f"{'codec':<18} {'avg bytes':>10} {'ratio':>7} {'enc wall p50/p95':>20} "
-        f"{'enc cpu p50/p95':>19} {'dec wall p50/p95':>20} {'dec cpu p50/p95':>19} "
-        f"{'max err':>9} {'rmse':>8} {'mask':>7}"
-    )
-    print(header)
-    print("-" * len(header))
-    for row in rows:
-        print(
-            f"{row.codec:<18} {row.mean_bytes_per_frame:>10.0f} "
-            f"{row.compression_ratio:>6.2f}x "
-            f"{row.encode_wall_p50_ms:>8.2f}/{row.encode_wall_p95_ms:<7.2f}ms "
-            f"{row.encode_cpu_p50_ms:>7.2f}/{row.encode_cpu_p95_ms:<7.2f}ms "
-            f"{row.decode_wall_p50_ms:>8.2f}/{row.decode_wall_p95_ms:<7.2f}ms "
-            f"{row.decode_cpu_p50_ms:>7.2f}/{row.decode_cpu_p95_ms:<7.2f}ms "
-            f"{row.max_error_mm:>7.3f}mm {row.rmse_mm:>6.3f}mm "
-            f"{row.invalid_mismatch_pct:>6.3f}%"
+def _format_bytes(value: float) -> str:
+    size = value
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if size < 1024 or unit == "GiB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    raise AssertionError("unreachable")
+
+
+def _elapsed_seconds(run: dict[str, Any]) -> float:
+    started_at = datetime.fromisoformat(run["started_at"])
+    completed_at = datetime.fromisoformat(run["completed_at"])
+    return (completed_at - started_at).total_seconds()
+
+
+def _fidelity_summary(row: dict[str, Any]) -> str:
+    if row["codec"] == "lerc":
+        return f"≤5 mm\nRMSE {row['rmse_mm']:.3f} mm"
+    return "exact"
+
+
+def _highlight_lines(result: dict[str, Any]) -> list[Text]:
+    exact = [row for row in result["codecs"] if row["codec"] != "lerc"]
+    if not exact:
+        raise ValueError("benchmark report has no exact codecs")
+    best_compression = max(exact, key=lambda row: row["compression_ratio"])
+    fastest_encode = min(exact, key=lambda row: row["encode_wall_p50_ms"])
+    fastest_decode = min(exact, key=lambda row: row["decode_wall_p50_ms"])
+    lines = [
+        Text.assemble(
+            ("• Best exact compression: ", "bold"),
+            f"{best_compression['codec']} — {best_compression['compression_ratio']:.2f}x",
+        ),
+        Text.assemble(
+            ("• Fastest exact encode: ", "bold"),
+            f"{fastest_encode['codec']} — {fastest_encode['encode_wall_p50_ms']:.2f} ms p50",
+        ),
+        Text.assemble(
+            ("• Fastest exact decode: ", "bold"),
+            f"{fastest_decode['codec']} — {fastest_decode['decode_wall_p50_ms']:.2f} ms p50",
+        ),
+    ]
+    lerc = next((row for row in result["codecs"] if row["codec"] == "lerc"), None)
+    if lerc is not None:
+        lines.append(
+            Text.assemble(
+                ("• LERC (≤5 mm): ", "bold"),
+                f"{lerc['compression_ratio']:.2f}x — RMSE {lerc['rmse_mm']:.3f} mm",
+            )
         )
+    return lines
+
+
+def print_report(
+    document: dict[str, Any],
+    *,
+    output: Path | None = None,
+    console: Console | None = None,
+) -> None:
+    console = console or Console()
+    run = document["run"]
+    results = document["results"]
+    total_frames = sum(result["frames"] for result in results)
+
+    console.rule(Text("Depth codec benchmark", style="bold cyan"))
+    summary = [
+        ("Inputs", ", ".join(run["inputs"])),
+        ("Streams", str(len(results))),
+        ("Frames", str(total_frames)),
+        ("Elapsed", f"{_elapsed_seconds(run):.2f} s"),
+    ]
+    if output is not None:
+        summary.extend(
+            [
+                ("Output", str(output)),
+                ("Artifacts", "results.json, results.md"),
+            ]
+        )
+    for label, value in summary:
+        line = Text.assemble((f"{label:<10}", "bold"), value)
+        console.print(line, overflow="fold")
+
+    for result in results:
+        shape = "x".join(str(value) for value in result["shape"])
+        console.print()
+        console.rule(
+            Text.assemble(
+                (Path(result["source"]).name, "bold"),
+                " — ",
+                (result["stream"], "bold"),
+            ),
+            style="blue",
+        )
+        console.print(
+            f"{result['frames']} frames · {shape} · {result['dtype']} · {result['image_format']}"
+        )
+        table = Table(box=box.ROUNDED, header_style="bold", show_lines=False)
+        table.add_column("Codec", style="cyan", no_wrap=True, min_width=7)
+        table.add_column("Avg/frame", justify="right", no_wrap=True)
+        table.add_column("Ratio", justify="right", no_wrap=True)
+        table.add_column("Encode ms\np50 / p95", justify="right", no_wrap=True)
+        table.add_column("Decode ms\np50 / p95", justify="right", no_wrap=True)
+        table.add_column("Fidelity", no_wrap=True)
+        for row in result["codecs"]:
+            table.add_row(
+                row["codec"],
+                _format_bytes(row["mean_bytes_per_frame"]),
+                f"{row['compression_ratio']:.2f}x",
+                f"{row['encode_wall_p50_ms']:.2f} / {row['encode_wall_p95_ms']:.2f}",
+                f"{row['decode_wall_p50_ms']:.2f} / {row['decode_wall_p95_ms']:.2f}",
+                _fidelity_summary(row),
+            )
+        console.print(table)
+        console.print(Text("Highlights", style="bold green"))
+        for line in _highlight_lines(result):
+            console.print(line)
 
 
 def _benchmark_source(source: DepthStreamSource) -> StreamBenchmark:
@@ -701,13 +802,14 @@ def write_results(
     results: Sequence[StreamBenchmark],
     inputs: Sequence[str],
     started_at: datetime,
-) -> None:
+) -> dict[str, Any]:
     if output.exists() and any(output.iterdir()):
         raise ValueError(f"output directory is not empty: {output}")
     output.mkdir(parents=True, exist_ok=True)
     document = _run_document(results, inputs, started_at)
     (output / "results.json").write_text(json.dumps(document, indent=2) + "\n")
     (output / "results.md").write_text(_markdown(document) + "\n")
+    return document
 
 
 def main() -> None:
@@ -747,8 +849,6 @@ def main() -> None:
     if args.synthetic:
         frames = synthetic_frames(args.synthetic, _SYNTHETIC_FRAME_COUNT)
         rows = benchmark(frames)
-        print(f"\nsynthetic-{args.synthetic}")
-        print_table(rows)
         results = [
             StreamBenchmark(
                 source=f"synthetic-{args.synthetic}",
@@ -771,14 +871,14 @@ def main() -> None:
         ]
         results = []
         for source in sources:
-            print(f"\n{source.source}:{source.stream} ({source.frame_count} frames)")
             result = _benchmark_source(source)
-            print_table(result.codecs)
             results.append(result)
 
     if args.output is not None:
-        write_results(args.output, results, inputs, started_at)
-        print(f"\nWrote {args.output / 'results.json'} and {args.output / 'results.md'}")
+        document = write_results(args.output, results, inputs, started_at)
+    else:
+        document = _run_document(results, inputs, started_at)
+    print_report(document, output=args.output)
 
 
 if __name__ == "__main__":

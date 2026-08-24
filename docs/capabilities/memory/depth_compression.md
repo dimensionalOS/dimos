@@ -118,14 +118,29 @@ uv run python -m dimos.memory.codecs.tool_depth_benchmark --synthetic uint16
 ```
 
 ```results
+──────────────────────────── Depth codec benchmark ─────────────────────────────
+Inputs    synthetic-uint16
+Streams   1
+Frames    5
+Elapsed   0.04 s
 
-synthetic-uint16
-codec               avg bytes   ratio     enc wall p50/p95     enc cpu p50/p95     dec wall p50/p95     dec cpu p50/p95   max err     rmse    mask
---------------------------------------------------------------------------------------------------------------------------------------------------
-lcm                    153667   1.00x     0.01/0.02   ms    0.01/0.01   ms     0.01/0.02   ms    0.01/0.02   ms   0.000mm  0.000mm  0.000%
-lz4+lcm                137729   1.12x     0.18/0.19   ms    0.18/0.19   ms     0.05/0.05   ms    0.05/0.05   ms   0.000mm  0.000mm  0.000%
-jpeg                    38426   4.00x     0.42/0.43   ms    0.42/0.43   ms     0.58/0.58   ms    0.58/0.58   ms   0.000mm  0.000mm  0.000%
-lerc                    34234   4.49x     0.67/0.68   ms    0.67/0.67   ms     0.21/0.23   ms    0.21/0.22   ms   5.000mm  2.867mm  0.000%
+─────────────────────────── synthetic-uint16 — depth ───────────────────────────
+5 frames · 240x320 · uint16 · DEPTH16
+╭─────────┬───────────┬───────┬─────────────┬─────────────┬───────────────╮
+│         │           │       │   Encode ms │   Decode ms │               │
+│ Codec   │ Avg/frame │ Ratio │   p50 / p95 │   p50 / p95 │ Fidelity      │
+├─────────┼───────────┼───────┼─────────────┼─────────────┼───────────────┤
+│ lcm     │ 150.1 KiB │ 1.00x │ 0.01 / 0.02 │ 0.02 / 0.02 │ exact         │
+│ lz4+lcm │ 134.5 KiB │ 1.12x │ 0.19 / 0.20 │ 0.06 / 0.06 │ exact         │
+│ jpeg    │  37.5 KiB │ 4.00x │ 0.47 / 0.49 │ 0.62 / 0.65 │ exact         │
+│ lerc    │  33.4 KiB │ 4.49x │ 0.72 / 0.77 │ 0.24 / 0.26 │ ≤5 mm         │
+│         │           │       │             │             │ RMSE 2.867 mm │
+╰─────────┴───────────┴───────┴─────────────┴─────────────┴───────────────╯
+Highlights
+• Best exact compression: jpeg — 4.00x
+• Fastest exact encode: lcm — 0.01 ms p50
+• Fastest exact decode: lcm — 0.02 ms p50
+• LERC (≤5 mm): 4.49x — RMSE 2.867 mm
 ```
 
 Real-recording runs require `--output`; the directory must be new or empty.
@@ -134,4 +149,6 @@ bytes across the stream. Timing includes p50, p95, total wall and process-CPU
 time, plus effective frames per second. Fidelity includes global maximum,
 mean, and root-mean-square depth error and invalid-mask mismatches. The command
 fails if a codec violates its fidelity contract or a stream changes format,
-dtype, or dimensions.
+dtype, or dimensions. After every stream completes, the terminal prints one
+summary with the wall-time and fidelity figures most useful for choosing a
+codec; the artifact files retain the complete measurements.

@@ -15,12 +15,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from io import StringIO
 import json
 import pickle
 
 import cv2
 import numpy as np
 import pytest
+from rich.console import Console
 
 from dimos.memory.codecs.base import codec_id
 import dimos.memory.codecs.tool_depth_benchmark as depth_benchmark
@@ -32,6 +34,7 @@ from dimos.memory.codecs.tool_depth_benchmark import (
     candidates,
     discover_depth_streams,
     fidelity,
+    print_report,
     synthetic_frames,
     write_results,
 )
@@ -212,7 +215,7 @@ def test_write_results_creates_json_and_markdown_artifacts(tmp_path) -> None:
     )
     output = tmp_path / "results"
 
-    write_results(
+    written = write_results(
         output,
         [result],
         ["synthetic-uint16"],
@@ -226,6 +229,47 @@ def test_write_results_creates_json_and_markdown_artifacts(tmp_path) -> None:
     assert document["results"][0]["codecs"][0]["encode_wall_p95_ms"] >= 0
     assert "# Depth codec benchmark" in markdown
     assert "Encode wall" in markdown
+    assert json.loads(json.dumps(written)) == document
+
+
+def test_print_report_summarizes_results_without_cpu_details(tmp_path) -> None:
+    frames = synthetic_frames("uint16", count=1)
+    result = StreamBenchmark(
+        source="synthetic-uint16",
+        stream="depth",
+        frames=1,
+        shape=frames[0].shape,
+        dtype=str(frames[0].dtype),
+        image_format=frames[0].format.value,
+        codecs=benchmark(frames),
+    )
+    output = tmp_path / "results"
+    document = write_results(
+        output,
+        [result],
+        ["synthetic-uint16"],
+        datetime(2026, 8, 24, tzinfo=timezone.utc),
+    )
+    stream = StringIO()
+    console = Console(file=stream, color_system=None, force_terminal=False, width=80)
+
+    print_report(document, output=output, console=console)
+
+    rendered = stream.getvalue()
+    assert "Depth codec benchmark" in rendered
+    assert "Streams" in rendered
+    assert "Frames" in rendered
+    assert "results.json" in rendered
+    assert "results.md" in rendered
+    assert "Encode ms" in rendered
+    assert "Decode ms" in rendered
+    assert "Best exact compression" in rendered
+    assert "jpeg —" in rendered
+    assert "LERC (≤5 mm)" in rendered
+    assert "≤5 mm" in rendered
+    assert "RMSE" in rendered
+    assert "CPU" not in rendered
+    assert "…" not in rendered
 
 
 def test_write_results_refuses_nonempty_output_directory(tmp_path) -> None:
