@@ -16,14 +16,11 @@
 
     dimos run demo-cuvslam-replay --viewer rerun --dataset sf_office_stairs
 
-The right camera_info carries the baseline in ``P[3]``, the only source of metric scale.
+The recorded tf chain places the two imagers; that baseline is the only source of metric
+scale.
 """
 
 from __future__ import annotations
-
-from collections import deque
-from functools import partial
-import threading
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
@@ -31,6 +28,7 @@ from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.mapping.dim_slam.dim_slam import DimSlam
+from dimos.mapping.dim_slam.stereo_pairing import stamp_matched_pairs
 from dimos.mapping.odometry_path import OdometryPath, path_at_true_height
 from dimos.memory.replay import resolve_db_path
 from dimos.memory.store.sqlite import SqliteStore
@@ -38,11 +36,6 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.visualization.vis_module import vis_module
-
-# cuVSLAM's stereo pairing window.
-_STEREO_TOLERANCE = 0.001
-# Bounds the queue when one imager stalls; its partner would otherwise grow all replay.
-_STEREO_QUEUE_DEPTH = 64
 
 
 class CuvslamReplayConfig(ModuleConfig):
@@ -80,21 +73,12 @@ class CuvslamReplay(Module):
         replay = store.replay(
             speed=self.config.speed, seek=self.config.seek, duration=self.config.duration
         )
-        # Ordinal pairing desynchronizes permanently on a dropped frame.
-        self._pending_lock = threading.Lock()
-        self._pending = {
-            "left": deque[Image](maxlen=_STEREO_QUEUE_DEPTH),
-            "right": deque[Image](maxlen=_STEREO_QUEUE_DEPTH),
-        }
-        for side, stream_name in (
-            ("left", self.config.left_stream),
-            ("right", self.config.right_stream),
-        ):
-            self.register_disposable(
-                replay.stream(stream_name)
-                .observable()
-                .subscribe(on_next=partial(self._queue_stereo_frame, side))
-            )
+        self.register_disposable(
+            stamp_matched_pairs(
+                replay.stream(self.config.left_stream).observable(),
+                replay.stream(self.config.right_stream).observable(),
+            ).subscribe(on_next=self._publish_stereo_pair)
+        )
         for stream_name in (self.config.left_info_stream, self.config.right_info_stream):
             self.register_disposable(
                 replay.stream(stream_name).observable().subscribe(on_next=self.camera_info.publish)
@@ -103,26 +87,14 @@ class CuvslamReplay(Module):
             replay.stream(self.config.tf_stream).observable().subscribe(on_next=self.tf.publish)
         )
 
-    def _queue_stereo_frame(self, side: str, frame: Image) -> None:
-        paired: list[Image] = []
-        with self._pending_lock:
-            self._pending[side].append(frame)
-            left, right = self._pending["left"], self._pending["right"]
-            while left and right:
-                skew = left[0].ts - right[0].ts
-                if abs(skew) <= _STEREO_TOLERANCE:
-                    paired += [left.popleft(), right.popleft()]
-                elif skew < 0:
-                    left.popleft()
-                else:
-                    right.popleft()
-        for image in paired:
+    def _publish_stereo_pair(self, pair: tuple[Image, Image]) -> None:
+        for image in pair:
             self.image.publish(image)
 
 
 demo_cuvslam_replay = autoconnect(
     CuvslamReplay.blueprint(),
-    DimSlam.blueprint(use_imu=False),
+    DimSlam.blueprint(),
     OdometryPath.blueprint(),
     vis_module(
         global_config.viewer,

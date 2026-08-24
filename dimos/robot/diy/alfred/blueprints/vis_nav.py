@@ -118,7 +118,8 @@ _vis_nav = autoconnect(
         depth_cloud_decimation=3,
         source_frames=["visual_odom", "wheel_odom"],
         # Fixed variances: the message covariances report accumulated drift, not the delta
-        # fused. Wheel yaw is dropped, and visual z, which the planar constraint below pins.
+        # fused. The wheels contribute x/y only; visual z is dropped, which the planar
+        # constraint below pins.
         source_pose_variances=[
             *(0.01, 0.01, 0.0, 0.05, 0.05, 0.05),
             *(0.05, 0.05, 0.0, 0.0, 0.0, 0.0),
@@ -126,7 +127,7 @@ _vis_nav = autoconnect(
         # The CPU tracker's reported translation std starts above 1.0 and grows past 9
         # while driving normally, so no threshold separates good frames from bad.
         covariance_gate_translation_std=0.0,
-        # Only the wheels measure velocity; cuVSLAM's twist is differentiated pose.
+        # Only the wheels measure velocity; the tracker publishes no twist at all.
         source_twist_variances=[*(0.0,) * 6, *(0.02, 0.02, 0.0, 0.0, 0.0, 0.05)],
         # Alfred is holonomic in the plane; only out-of-plane directions are constrained.
         constraint_twist_variances=[0.0, 0.0, 0.01, 0.01, 0.01, 0.0],

@@ -31,11 +31,7 @@ D455_MOUNT = Transform(
     translation=Vector3(-0.2518, -0.2736, 0.42),
     rotation=Quaternion(0.078360, 0.006348, -0.996712, 0.019616),
 )
-"""base_link -> camera_link, fit against drive_2026-08-18_23-05-04.db.
-
-The camera module publishes this edge itself and never reads ``alfred.urdf``, so
-correcting the URDF would not reach this blueprint.
-"""
+"""base_link -> camera_link, mirroring the calibration recorded in alfred.urdf."""
 
 alfred_mls_nav = (
     autoconnect(

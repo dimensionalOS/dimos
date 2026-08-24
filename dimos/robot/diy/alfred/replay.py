@@ -21,12 +21,10 @@ import threading
 import time
 from typing import Any
 
-import reactivex as rx
-from reactivex.disposable import Disposable
-
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import IO, Out
+from dimos.mapping.dim_slam.stereo_pairing import stamp_matched_pairs
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -40,61 +38,6 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 PROGRESS_INTERVAL_SECONDS = 10.0
-
-STEREO_PAIR_TOLERANCE = 0.001
-"""cuVSLAM rejects stereo pairs whose stamps differ."""
-
-
-def _stamp_matched_pairs(left: Any, right: Any) -> Any:
-    """The imagers subscribe an instant apart, so an ordinal zip pairs mismatched stamps."""
-
-    def subscribe(observer: Any, scheduler: Any = None) -> Any:
-        lock = threading.Lock()
-        pending: dict[str, Any] = {"left": None, "right": None}
-        completed: set[str] = set()
-
-        def on_frame(side: str, other: str, frame: Any) -> None:
-            emit = None
-            with lock:
-                held = pending[other]
-                if held is not None and abs(held.ts - frame.ts) <= STEREO_PAIR_TOLERANCE:
-                    pending[other] = None
-                    emit = (held, frame) if side == "right" else (frame, held)
-                elif held is not None and held.ts > frame.ts:
-                    pass  # partner dropped; the held frame still waits
-                else:
-                    # Any held older frame lost its partner; keep only the newest.
-                    pending[other] = None
-                    pending[side] = frame
-            if emit is not None:
-                observer.on_next(emit)
-
-        def on_done(side: str) -> None:
-            with lock:
-                completed.add(side)
-                done = len(completed) == 2
-            if done:
-                observer.on_completed()
-
-        subscriptions = [
-            left.subscribe(
-                on_next=lambda f: on_frame("left", "right", f),
-                on_completed=lambda: on_done("left"),
-            ),
-            right.subscribe(
-                on_next=lambda f: on_frame("right", "left", f),
-                on_completed=lambda: on_done("right"),
-            ),
-        ]
-
-        def dispose() -> None:
-            for subscription in subscriptions:
-                subscription.dispose()
-
-        return Disposable(dispose)
-
-    return rx.create(subscribe)
-
 
 LIVE_PARENT_FRAMES = {"odom", "map", "visual_odom"}
 """Recorded tf edges under these parents (and any edge onto base_link) belong to the
@@ -213,7 +156,7 @@ class AlfredReplay(Module):
             replay_kwargs["duration"] = self.config.duration
         replay = store.replay(**replay_kwargs)
 
-        stereo = _stamp_matched_pairs(
+        stereo = stamp_matched_pairs(
             replay.stream("infrared_left").observable(),
             replay.stream("infrared_right").observable(),
         )
