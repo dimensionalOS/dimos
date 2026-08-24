@@ -109,7 +109,7 @@ impl VoxelRayMapper {
             emit_every: 1,
             global_emit_every: 1,
             region_percentile: 95.0,
-            // The offline tracer takes pre-transformed points; no frame to name.
+            // Points arrive already in world coordinates.
             world_frame: String::new(),
         };
         config

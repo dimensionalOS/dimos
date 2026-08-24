@@ -28,9 +28,8 @@ from dimos.spec import mapping
 class RayTracingVoxelMapConfig(NativeModuleConfig):
     cwd: str | None = "rust"
     executable: str = "result/bin/voxel_ray_tracing"
-    # --no-write-lock-file: locking the relative dimos-repo input records a NAR
-    # hash of the checkout, and writing the lock dirties the tree so the very
-    # next build mismatches it.
+    # Writing flake.lock dirties the tree, so the locked dimos-repo NAR hash never matches
+    # the next build.
     build_command: str | None = "nix build -L --no-write-lock-file path:."
     stdin_config: bool = True
 
@@ -59,7 +58,7 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     global_emit_every: int = 1
     # Size the local region to this percentile of batch point distances.
     region_percentile: float = 95.0
-    # Clouds are placed into this frame through tf from their own frame_id.
+    # Output frame of the maps; clouds are transformed into it from their own frame_id.
     world_frame: str = "odom"
 
 

@@ -189,7 +189,6 @@ fn emit_due(frame_count: u32, every: u32) -> bool {
     every != 0 && frame_count.is_multiple_of(every)
 }
 
-/// Max stamp gap between a cloud and the tf sample placing it.
 const TF_MATCH_TOLERANCE_S: f64 = 0.1;
 
 fn time_secs(t: &Time) -> f64 {
