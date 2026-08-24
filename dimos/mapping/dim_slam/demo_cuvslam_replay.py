@@ -24,7 +24,6 @@ from __future__ import annotations
 from collections import deque
 from functools import partial
 import threading
-from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
@@ -32,7 +31,7 @@ from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.mapping.dim_slam.dim_slam import DimSlam
-from dimos.mapping.odometry_path import OdometryPath
+from dimos.mapping.odometry_path import OdometryPath, path_at_true_height
 from dimos.memory.replay import resolve_db_path
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -121,16 +120,12 @@ class CuvslamReplay(Module):
             self.image.publish(image)
 
 
-def _path_at_true_height(path: Any) -> Any:
-    return path.to_rerun(z_offset=0.0, radii=0.02)
-
-
 demo_cuvslam_replay = autoconnect(
     CuvslamReplay.blueprint(),
     DimSlam.blueprint(use_imu=False),
     OdometryPath.blueprint(),
     vis_module(
         global_config.viewer,
-        rerun_config={"visual_override": {"world/path": _path_at_true_height}},
+        rerun_config={"visual_override": {"world/path": path_at_true_height}},
     ),
 ).global_config(n_workers=4)
