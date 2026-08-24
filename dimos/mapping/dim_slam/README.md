@@ -127,7 +127,7 @@ Everything else has a sane default. These do not:
 
 | Setting | Why it is per-robot |
 | --- | --- |
-| `use_gpu` | `False` runs the CPU path, which needs a libcuvslam built `-DENFORCE_GPU=OFF`; the SDKs the flake ships are GPU-only, and the module falls back to GPU with a warning |
+| `use_gpu` | `False` runs the CPU path, which needs a libcuvslam built `-DENFORCE_GPU=OFF`. The flake builds `orin` and `x86_64-cuda12` that way; the prebuilt `metal` and `thor` SDKs are GPU-only |
 | `depth_units_per_meter` | 1000 for the usual sixteen-bit millimetres |
 | `depth_cloud_max_range` | stereo error grows as range squared; a property of the sensor |
 | `depth_cloud_decimation` | a full-resolution D455 cloud is ~400k points a frame at 30 Hz |
