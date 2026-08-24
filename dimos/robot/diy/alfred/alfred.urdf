@@ -114,10 +114,8 @@
   </joint>
 
   <!-- RealSense D455 on the rear corner bracket, facing backward and pitched up
-       22.9 deg (no roll). Calibrated 2026-08-17: tilt from IMU gravity, yaw from
-       cuvslam straight-drive direction, lever from spin-in-place segments
-       (drive_2026-08-16_23-46-03.db). Height (z) is a photo estimate -
-       unobservable from planar motion.
+       22.9 deg (no roll). Calibrated 2026-08-17 off drive_2026-08-16_23-46-03.db;
+       height (z) is a photo estimate, unobservable from planar motion.
        camera_link sits at the depth (left infrared) imager, which is where the
        RealSense driver puts it, so the child offsets below are the factory
        extrinsics read back off the device. -->

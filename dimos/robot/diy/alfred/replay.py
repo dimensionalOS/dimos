@@ -46,9 +46,7 @@ STEREO_PAIR_TOLERANCE = 0.001
 
 
 def _stamp_matched_pairs(left: Any, right: Any) -> Any:
-    """Pair two image observables by timestamp instead of arrival order.
-
-    Each stream skips past whatever is already behind the shared clock when it
+    """Each stream skips past whatever is already behind the shared clock when it
     subscribes, and the two imagers subscribe an instant apart, so they can enter on
     different frames and an ordinal zip would pair mismatched stamps from then on.
     """
@@ -124,9 +122,7 @@ class AlfredReplayConfig(ModuleConfig):
 
 
 class AlfredReplay(Module):
-    """Publish a recording's sensor streams back onto live streams, in recorded order.
-
-    Both infrared imagers and the colour image go onto the one ``image`` stream and are
+    """Both infrared imagers and the colour image go onto the one ``image`` stream and are
     told apart downstream by ``frame_id``, exactly as the live camera driver does.
     """
 
@@ -155,7 +151,6 @@ class AlfredReplay(Module):
         self._progress_timer: threading.Timer | None = None
 
     def _track(self, name: str, observable: Any, on_next: Any, ts_of: Any = None) -> None:
-        """Subscribe while recording how far this stream has got, and when it ends."""
         self._running.add(name)
         read_ts = ts_of or (lambda value: getattr(value, "ts", None))
 

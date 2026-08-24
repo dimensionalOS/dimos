@@ -19,16 +19,7 @@
 ``--dataset`` takes an absolute .db path or a dataset name; a name is downloaded from
 LFS on first use. ``sf_office_stairs`` is the stereo recording this demo was built on.
 
-Same wiring as ``demo-cuvslam-realsense`` with the camera swapped for a replay of a
-memory recording. It is the only way to exercise the tracker on a machine with no
-camera attached (macOS has no realsense support), and the only way to get a repeatable
-trajectory out of it.
-
-The four recorded streams are the ones ``RealSenseCamera`` would have published: the
-rectified IR pair and both camera_infos. Both eyes go onto the one ``image`` stream, the
-way the live demo remaps them; cuVSLAM tells them apart by ``frame_id``. The right
-camera_info carries the baseline in ``P[3]`` and is the only per-unit source of metric
-scale, so a recording missing it produces a scale-free trajectory rather than an error.
+The right camera_info carries the baseline in ``P[3]``, the only source of metric scale.
 """
 
 from __future__ import annotations
@@ -56,8 +47,6 @@ _STEREO_TOLERANCE = 0.001
 
 
 class CuvslamReplayConfig(ModuleConfig):
-    # An absolute .db path, or a name resolve_named_path can find. No default: the
-    # recordings this replays are too big for LFS, so there is nothing to fall back to.
     dataset: str = ""
     speed: float = 1.0
     seek: float | None = None
@@ -70,8 +59,6 @@ class CuvslamReplayConfig(ModuleConfig):
 
 
 class CuvslamReplay(Module):
-    """Publishes a recorded stereo IR pair on the ports cuVSLAM subscribes to."""
-
     dedicated_worker = True
 
     config: CuvslamReplayConfig
@@ -96,10 +83,7 @@ class CuvslamReplay(Module):
         replay = store.replay(
             speed=self.config.speed, seek=self.config.seek, duration=self.config.duration
         )
-        # cuVSLAM assembles a frame set by arrival and rejects any whose stamps differ by
-        # more than a millisecond. Two independent subscriptions let the scheduler run one
-        # eye a frame ahead of the other, so match the eyes by stamp and publish each pair
-        # back to back. Ordinal pairing would desynchronize permanently on a dropped frame.
+        # Match the eyes by stamp: ordinal pairing desynchronizes permanently on a dropped frame.
         self._pending = {"left": deque[Image](), "right": deque[Image]()}
         for side, stream_name in (
             ("left", self.config.left_stream),
@@ -114,8 +98,6 @@ class CuvslamReplay(Module):
             self.register_disposable(
                 replay.stream(stream_name).observable().subscribe(on_next=self.camera_info.publish)
             )
-        # tf has to keep flowing: the tracker looks the rig up at each image's stamp, so
-        # stopping once the rig first resolves leaves every later frame unplaceable.
         self.register_disposable(
             replay.stream(self.config.tf_stream).observable().subscribe(on_next=self.tf.publish)
         )
@@ -140,13 +122,11 @@ def _path_at_true_height(path: Any) -> Any:
 
 demo_cuvslam_replay = autoconnect(
     CuvslamReplay.blueprint(),
-    # No IMU streaming here, so the filter seeds level off the first tracked pose.
     DimSlam.blueprint(use_imu=False),
     OdometryPath.blueprint(),
     vis_module(
         global_config.viewer,
         rerun_config={"visual_override": {"world/path": _path_at_true_height}},
     ),
-    # DimSlam is a native module and speaks LCM only, so the blueprint pins it rather
-    # than inheriting whatever DIMOS_TRANSPORT the shell has (macOS defaults to zenoh).
+    # DimSlam is native and speaks LCM only; don't inherit DIMOS_TRANSPORT.
 ).global_config(transport="lcm", n_workers=4)

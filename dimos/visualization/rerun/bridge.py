@@ -400,14 +400,9 @@ class RerunBridgeModule(Module):
 
         spawned = False
         if self.config.rerun_open in ("native", "both"):
-            # Spawned through Popen, not rerun_bindings.spawn: the bindings
-            # leak every inheritable fd into the viewer, and the viewer
-            # outlives the run. A leaked multiprocessing resource-tracker fd
-            # then keeps the tracker waiting for an EOF that never comes, and
-            # interpreter shutdown blocks in the tracker's waitpid. Popen
-            # closes fds above 2 by default. --connect makes the viewer join
-            # the bridge's gRPC server rather than starting its own (which
-            # would conflict).
+            # Popen, not rerun_bindings.spawn: the bindings leak inheritable fds into a
+            # viewer that outlives the run, and a leaked resource-tracker fd hangs
+            # interpreter shutdown.
             viewer_path = shutil.which("dimos-viewer")
             if viewer_path is not None:
                 try:
