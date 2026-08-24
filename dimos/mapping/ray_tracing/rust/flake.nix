@@ -15,10 +15,7 @@
       let
         pkgs = import nixpkgs { inherit system; };
 
-        # Re-copied out of the whole-repo input into their own content-addressed
-        # store paths, so the build only sees the crates it consumes: a commit
-        # elsewhere in the repo changes dimos-repo's hash but not these, and the
-        # previously built binary is reused instead of recompiled.
+        # Own store paths so an unrelated repo commit does not invalidate the build cache.
         crate = name: builtins.path { inherit name; path = "${dimos-repo}/native/rust/${name}"; };
 
         src = pkgs.runCommand "voxel-ray-tracing-src" {} ''

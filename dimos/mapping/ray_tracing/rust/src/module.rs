@@ -54,10 +54,7 @@ pub struct RayTracingVoxelMap {
 
 impl RayTracingVoxelMap {
     async fn on_lidar(&mut self, msg: PointCloud2) {
-        // The cloud arrives in its own sensor's frame; tf gives that sensor's
-        // pose in the world frame at the cloud stamp. Points register through
-        // it and clearing rays start at its origin, while the accumulated map
-        // stays in world coordinates. Looked up fresh every cloud, no caching.
+        // Rays clear from the sensor origin, so the map stays in world coordinates.
         let stamp = time_secs(&msg.header.stamp);
         let Some(transform) = self
             .tf
@@ -99,7 +96,6 @@ impl RayTracingVoxelMap {
 
         let rot = sensor_pose.rotation.to_rotation_matrix();
         let trans = sensor_pose.translation.vector;
-        // Rays start at the sensor origin.
         let origin = (trans.x, trans.y, trans.z);
         let points: Vec<(f32, f32, f32)> = points
             .iter()
