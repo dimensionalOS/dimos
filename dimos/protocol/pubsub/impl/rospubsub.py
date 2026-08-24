@@ -46,8 +46,6 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-ROS_AVAILABLE = True
-
 # Matches the rclpy implementation this replaced: reliable delivery with enough
 # history to absorb a burst without stalling the writer.
 DEFAULT_QUEUE_DEPTH = 5000
