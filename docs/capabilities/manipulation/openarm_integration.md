@@ -1,6 +1,4 @@
----
-title: "OpenArm Integration"
----
+# OpenArm Integration
 
 dimOS drives the [OpenArm](https://openarm.dev) bimanual platform (two 7-DOF
 arms + grippers, Damiao motors, one CAN bus per arm) as a single whole-body

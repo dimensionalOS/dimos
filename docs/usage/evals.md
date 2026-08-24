@@ -1,6 +1,4 @@
----
-title: "Evals"
----
+# Evals
 
 Evals measure what an agent (or a bare model, or a single skill) can do with
 the robot's memory. Two kinds:

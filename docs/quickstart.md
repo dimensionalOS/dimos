@@ -1,7 +1,4 @@
----
-title: "Quickstart"
-description: "Install dimOS and watch a recorded Unitree Go2 drive on your laptop. No robot or GPU required."
----
+# Quickstart
 
 This quickstart gets dimOS running on your laptop. You install it, then play back a recorded Unitree Go2 session and watch the robot map and navigate an office in a live visualization. You do not need a robot or a GPU for this.
 
@@ -11,7 +8,7 @@ When you are ready for more, the same install works with physics simulation, a r
 
 You need a machine running **Ubuntu 22.04 or newer** or **macOS 12.6 or newer**, with **Python 3.12**, about **10 GB of free disk**, and **16 GB of RAM**. A GPU is only required later for perception and AI features, so any reasonably modern laptop can run this quickstart.
 
-The full hardware matrix, including tested configurations and Jetson boards, is on the [system requirements](/requirements) page.
+The full hardware matrix, including tested configurations and Jetson boards, is on the [system requirements](/docs/requirements.md) page.
 
 If you use a coding agent such as Claude Code or OpenClaw, point it at the repository's [AGENTS.md](https://github.com/dimensionalOS/dimos/blob/main/AGENTS.md) so it understands the codebase conventions.
 
@@ -37,9 +34,9 @@ First install the system dependencies for your OS by following the matching guid
 
 | OS guide | Notes |
 | --- | --- |
-| <Icon icon="ubuntu" iconType="brands" size={18} /> [Ubuntu](/installation/ubuntu) | Primary tested path |
-| <Icon icon="apple" iconType="brands" size={18} /> [macOS](/installation/osx) | Homebrew-based, less mature than Linux |
-| <Icon icon="snowflake" iconType="solid" size={18} /> [Nix](/installation/nix) | Flakes and dev shell |
+| [Ubuntu](/docs/installation/ubuntu.md) | Primary tested path |
+| [macOS](/docs/installation/osx.md) | Homebrew-based, less mature than Linux |
+| [Nix](/docs/installation/nix.md) | Flakes and dev shell |
 
 Then create a Python 3.12 environment. The examples use [uv](https://docs.astral.sh/uv/), though plain `python -m venv` and `pip` work the same way:
 
@@ -66,9 +63,10 @@ dimos --replay run unitree-go2
 
 **What you should see:** a [Rerun](https://rerun.io) visualization window opens, and after a short wait it fills with the robot's camera feed, a LiDAR point cloud, and a map of an office being built up as the robot navigates through it, with its planned path drawn on top.
 
-<Note>
-On the first run, roughly **75 MB** of recorded session data is downloaded before anything appears, so the Rerun window may stay black for a minute or two. That is normal. If it stays black well beyond the download, check the terminal output for errors.
-</Note>
+!!! note
+
+    On the first run, roughly **75 MB** of recorded session data is downloaded before anything appears, so the Rerun window may stay black for a minute or two. That is normal. If it stays black well beyond the download, check the terminal output for errors.
+
 
 Congratulations, you have a full dimOS navigation stack running on recorded data. Everything below is optional and independent, so pick whichever branch matches your goal.
 
@@ -93,13 +91,14 @@ export ROBOT_IP=<YOUR_ROBOT_IP>
 dimos run unitree-go2
 ```
 
-<Warning>
-Before driving real hardware, read the [Unitree Go2 platform guide](/platforms/quadruped/go2/index). It covers network setup, latency, time sync, and the safety habits that keep you and the robot out of trouble. Do not skip it.
-</Warning>
+!!! warning
+
+    Before driving real hardware, read the [Unitree Go2 platform guide](/docs/platforms/quadruped/go2/index.md). It covers network setup, latency, time sync, and the safety habits that keep you and the robot out of trouble. Do not skip it.
+
 
 ### LLM agent
 
-The agentic blueprints add an LLM agent that controls the robot through natural language. The default agent uses OpenAI's `gpt-4o`, so you need an `OPENAI_API_KEY` in your environment before starting it. Other providers and local models are covered in the [agents guide](/capabilities/agents/index).
+The agentic blueprints add an LLM agent that controls the robot through natural language. The default agent uses OpenAI's `gpt-4o`, so you need an `OPENAI_API_KEY` in your environment before starting it. Other providers and local models are covered in the [agents guide](/docs/capabilities/agents/index.md).
 
 ```bash
 export OPENAI_API_KEY=<YOUR_KEY>
@@ -114,7 +113,7 @@ dimos mcp list-tools
 dimos mcp call relative_move --arg forward=0.5
 ```
 
-Manage the background run with `dimos status`, `dimos log -f`, and `dimos stop`. The full command reference is in the [CLI guide](/usage/cli).
+Manage the background run with `dimos status`, `dimos log -f`, and `dimos stop`. The full command reference is in the [CLI guide](/docs/usage/cli.md).
 
 ## More blueprints to try
 
@@ -130,21 +129,26 @@ Manage the background run with `dimos status`, `dimos log -f`, and `dimos stop`.
 | `dimos run keyboard-teleop-xarm7` | Keyboard teleop with a mock xArm7 (needs the `manipulation` extra) |
 | `dimos --simulation run unitree-go2-agentic-ollama` | Quadruped agent using a local LLM (needs Ollama running via `ollama serve`) |
 
-To learn how blueprints are composed, or to write your own, see the [blueprints guide](/usage/blueprints).
+To learn how blueprints are composed, or to write your own, see the [blueprints guide](/docs/usage/blueprints.md).
 
 ## What next?
 
-<CardGroup cols={2}>
-  <Card title="Add an LLM agent" icon="robot" href="/capabilities/agents/index">
+<div class="grid cards" markdown>
+
+-   [**Add an LLM agent**](/docs/capabilities/agents/index.md)
+
     Natural language control, agent configuration, and MCP-exposed skills.
-  </Card>
-  <Card title="Pick your platform" icon="microchip" href="/platforms/quadruped/go2/index">
+
+-   [**Pick your platform**](/docs/platforms/quadruped/go2/index.md)
+
     Hardware support and bring-up guides for the Go2 quadruped and G1 humanoid.
-  </Card>
-  <Card title="Core concepts" icon="diagram-project" href="/usage/index">
+
+-   [**Core concepts**](/docs/usage/index.md)
+
     Modules, streams, and blueprints, the building blocks behind every workflow.
-  </Card>
-  <Card title="Capabilities" icon="bolt" href="/capabilities/navigation/index">
+
+-   [**Capabilities**](/docs/capabilities/navigation/index.md)
+
     Navigation, perception, spatial memory, and manipulation in depth.
-  </Card>
-</CardGroup>
+
+</div>

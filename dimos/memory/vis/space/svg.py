@@ -308,8 +308,13 @@ def render(
     path: str | Path | None = None,
     width_px: float = 800,
     padding: float = 0.5,
+    background: str | None = None,
 ) -> str:
-    """Render a Space to an SVG string, optionally writing to *path*."""
+    """Render a Space to an SVG string, optionally writing to *path*.
+
+    The background is transparent unless *background* names a CSS color, so the
+    same file reads correctly on a light or a dark page.
+    """
     b = Bounds()
     fragments: list[str] = []
 
@@ -328,11 +333,11 @@ def render(
     aspect = b.height / b.width
     svg_h = width_px * aspect
 
+    style = f' style="background:{background}"' if background else ""
     parts: list[str] = [
         f'<svg xmlns="http://www.w3.org/2000/svg" '
         f'width="{width_px:.0f}" height="{svg_h:.0f}" '
-        f'viewBox="{b.xmin:.4f} {b.ymin:.4f} {b.width:.4f} {b.height:.4f}" '
-        f'style="background:#f8f8f8">',
+        f'viewBox="{b.xmin:.4f} {b.ymin:.4f} {b.width:.4f} {b.height:.4f}"{style}>',
     ]
     parts.extend(fragments)
     parts.append("</svg>")

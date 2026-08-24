@@ -1,6 +1,4 @@
----
-title: "Transports"
----
+# Transports
 
 Transports connect **module streams** across **process boundaries** and/or **networks**.
 
@@ -84,7 +82,7 @@ Quick view on performance of our pubsub backends:
 python -m pytest -sv -k "not bytes" dimos/protocol/pubsub/benchmark/tool_benchmark.py
 ```
 
-![Benchmark results](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/usage/assets/pubsub_benchmark.png)
+![Benchmark results](../assets/pubsub_benchmark.png)
 
 ## Abstraction layers
 
@@ -217,23 +215,23 @@ if __name__ == "__main__":
 ```
 
 ```results
-13:11:40.135 [inf][ation/worker_manager_python.py] Worker pool started. n_workers=2
-13:11:40.776 [inf][/coordination/python_worker.py] Deployed module. module=TickerCameraModule module_id=0 worker_id=0
-13:11:40.784 [inf][/coordination/python_worker.py] Deployed module. module=ImageListener module_id=1 worker_id=1
-13:11:42.805 [inf][dination/module_coordinator.py] Stopping module... module=ImageListener
-13:11:42.809 [inf][dination/module_coordinator.py] Module stopped. module=ImageListener
-13:11:42.809 [inf][dination/module_coordinator.py] Stopping module... module=TickerCameraModule
-13:11:42.860 [inf][dination/module_coordinator.py] Module stopped. module=TickerCameraModule
-13:11:42.861 [inf][ation/worker_manager_python.py] Shutting down all workers...
+12:36:05.648 [inf][ation/worker_manager_python.py] Worker pool started. n_workers=2
+12:36:06.053 [inf][/coordination/python_worker.py] Deployed module. module=TickerCameraModule module_id=0 worker_id=0
+12:36:06.159 [inf][/coordination/python_worker.py] Deployed module. module=ImageListener module_id=1 worker_id=1
+12:36:08.283 [inf][dination/module_coordinator.py] Stopping module... module=imagelistener
+12:36:08.284 [inf][dination/module_coordinator.py] Module stopped. module=imagelistener
+12:36:08.285 [inf][dination/module_coordinator.py] Stopping module... module=tickercameramodule
+12:36:08.334 [inf][dination/module_coordinator.py] Module stopped. module=tickercameramodule
+12:36:08.335 [inf][ation/worker_manager_python.py] Shutting down all workers...
 Received: (480, 640, 3)
 Received: (480, 640, 3)
 Received: (480, 640, 3)
 Received: (480, 640, 3)
-13:11:42.862 [inf][/coordination/python_worker.py] Worker stopping module... module=ImageListener module_id=1 worker_id=1
-13:11:42.862 [inf][/coordination/python_worker.py] Worker module stopped. module=ImageListener module_id=1 worker_id=1
-13:11:42.914 [inf][/coordination/python_worker.py] Worker stopping module... module=TickerCameraModule module_id=0 worker_id=0
-13:11:42.914 [inf][/coordination/python_worker.py] Worker module stopped. module=TickerCameraModule module_id=0 worker_id=0
-13:11:42.920 [inf][ation/worker_manager_python.py] All workers shut down
+12:36:08.336 [inf][/coordination/python_worker.py] Worker stopping module... module=ImageListener module_id=1 worker_id=1
+12:36:08.336 [inf][/coordination/python_worker.py] Worker module stopped. module=ImageListener module_id=1 worker_id=1
+12:36:08.388 [inf][/coordination/python_worker.py] Worker stopping module... module=TickerCameraModule module_id=0 worker_id=0
+12:36:08.388 [inf][/coordination/python_worker.py] Worker module stopped. module=TickerCameraModule module_id=0 worker_id=0
+12:36:08.394 [inf][ation/worker_manager_python.py] All workers shut down
 ```
 
 See [Modules](/docs/usage/modules.md) for more on module architecture.
@@ -250,7 +248,7 @@ dimos spy --transport zenoh   # filter to one transport (repeatable flag)
 dimos lcmspy                  # deprecated alias for: dimos spy --transport lcm
 ```
 
-![dimos spy](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/usage/assets/lcmspy.png)
+![dimos spy](../assets/lcmspy.png)
 
 `dimos topic echo /topic` listens on typed channels like `/topic#pkg.Msg` and decodes automatically:
 
@@ -304,7 +302,14 @@ print(inspect.getsource(PubSub.subscribe))
     def subscribe(
         self, topic: TopicT, callback: Callable[[MsgT, TopicT], None]
     ) -> Callable[[], None]:
-        """Subscribe to a topic with a callback. returns unsubscribe function"""
+        """Subscribe to a topic with a callback. returns unsubscribe function
+
+        The unsubscribe function must not block waiting for an in-flight
+        callback (callers may hold an event loop the backend needs for
+        progress), must be callable from within the callback itself, and once
+        it returns no further deliveries start (a callback already executing
+        may still complete).
+        """
         ...
 ```
 
@@ -528,7 +533,7 @@ Add your backend to benchmarks to compare in context:
 python -m pytest -sv -k "not bytes" dimos/protocol/pubsub/benchmark/tool_benchmark.py
 ```
 
-# Available transports
+## Available transports
 
 | Transport      | Use case                            | Cross-process | Network | Notes                                |
 |----------------|-------------------------------------|---------------|---------|--------------------------------------|

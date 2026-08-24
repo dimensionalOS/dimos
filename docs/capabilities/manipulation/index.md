@@ -1,6 +1,4 @@
----
-title: "Manipulation"
----
+# Manipulation
 
 Motion planning and teleoperation for robotic manipulators. RoboPlan provides
 the default world and native path planner.
