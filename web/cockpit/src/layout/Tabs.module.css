@@ -1,0 +1,27 @@
+.bar {
+  border-bottom: 1px solid #30363d;
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 1rem;
+}
+
+.tab,
+.tabActive {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #8b949e;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0.4rem 0.8rem;
+}
+
+.tabActive {
+  border-bottom-color: #d7dde3;
+  color: #d7dde3;
+}
+
+.page {
+  display: flex;
+  flex-direction: column;
+}
