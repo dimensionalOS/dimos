@@ -153,8 +153,18 @@
   opacity: 1;
 }
 
+/* A rule above each top-level section, so Platforms and Development read as
+ * separate parts of the map rather than one long list. */
 .md-nav--primary > .md-nav__list > .md-nav__item--section {
-  margin-top: 1.4em;
+  margin-top: 1.2em;
+  padding-top: 1.2em;
+  border-top: 1px solid var(--dim-hairline);
+}
+
+.md-nav--primary > .md-nav__list > .md-nav__item--section:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
 }
 
 .md-nav--primary .md-nav__item--section > .md-nav__container {
