@@ -15,6 +15,9 @@ on:
       - ".github/workflows/docs-deploy.yml"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: docs-deploy
   cancel-in-progress: true
