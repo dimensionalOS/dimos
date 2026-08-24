@@ -41,6 +41,7 @@ import portal
 from pydantic import Field, FiniteFloat
 
 from dimos.agents.annotation import skill
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -53,9 +54,6 @@ from dimos.robot.diy.alfred.config import DEFAULT_ADDRESS
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
-
-# An unreachable controller never answers, so teardown gives up rather than hang.
-_TEARDOWN_TIMEOUT = 2.0
 
 # A dead connection fails every poll, and the poll runs at wheel_odometry_hz.
 _ODOMETRY_ERROR_LOG_INTERVAL = 10.0
@@ -118,10 +116,12 @@ class AlfredHighLevel(Module):
             stopper.start()
             self._odometry_stop.set()
             if self._odometry_task is not None:
-                done, _ = await asyncio.wait({self._odometry_task}, timeout=_TEARDOWN_TIMEOUT)
+                done, _ = await asyncio.wait(
+                    {self._odometry_task}, timeout=DEFAULT_THREAD_JOIN_TIMEOUT
+                )
                 if not done:
                     logger.warning("Alfred wheel odometry poll is still running; stopping anyway")
-            await asyncio.to_thread(stopper.join, _TEARDOWN_TIMEOUT)
+            await asyncio.to_thread(stopper.join, DEFAULT_THREAD_JOIN_TIMEOUT)
             if stopper.is_alive():
                 logger.error("Alfred has not taken the stop command yet; it may still be moving")
             # A restart can overlap: this teardown must not null out a newer run's client.
