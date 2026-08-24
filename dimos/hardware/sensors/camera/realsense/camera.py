@@ -59,6 +59,8 @@ def ms_to_s(milliseconds: float) -> float:
 if TYPE_CHECKING:
     import pyrealsense2 as rs  # type: ignore[import-not-found,import-untyped]
 
+logger = setup_logger()
+
 
 def default_base_transform() -> Transform:
     """Default identity transform for camera mounting."""
@@ -561,9 +563,14 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         while self._running and self._pipeline is not None:
             try:
                 frames = self._pipeline.wait_for_frames(timeout_ms=1000)
-            except (RuntimeError, AttributeError):
-                # Pipeline stopped or None - exit loop
+            except AttributeError:
+                # Pipeline cleared by stop() - exit loop
                 break
+            except RuntimeError:
+                # Frame timeouts are transient, from warm-up or USB stalls. Keep waiting.
+                if self._running:
+                    logger.warning("RealSense: no frames within 1s - retrying")
+                continue
 
             # Grab the infrared stereo pair from the raw frameset before align()
             # (align rebuilds the frameset around depth+color and drops IR).
