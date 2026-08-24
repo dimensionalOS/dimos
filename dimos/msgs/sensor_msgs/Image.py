@@ -512,9 +512,10 @@ class Image(Timestamped):
     def lcm_decode(cls, data: bytes, **kwargs: Any) -> Image:
         msg = LCMImage.lcm_decode(data)
 
-        # JPEG-compressed images use a different decode path.
         if msg.encoding == "jpeg":
             return cls.lcm_jpeg_decode(data, **kwargs)
+        if msg.encoding in ("jxl;depth", "jxl;depth16"):
+            return cls.lcm_jpegxl_decode(data, **kwargs)
 
         fmt, dtype, channels = _parse_lcm_encoding(msg.encoding)
         arr: np.ndarray[Any, Any] = np.frombuffer(msg.data, dtype=dtype)
@@ -616,6 +617,71 @@ class Image(Timestamped):
                 and msg.header.stamp.sec > 0
                 else time.time()
             ),
+        )
+
+    def lcm_jpegxl_encode(self, effort: int = 1, frame_id: str | None = None) -> bytes:
+        """Encode a depth image losslessly as JPEG XL inside an LCM Image message."""
+        import imagecodecs
+
+        expected_dtype = {
+            ImageFormat.DEPTH: np.float32,
+            ImageFormat.DEPTH16: np.uint16,
+        }.get(self.format)
+        if expected_dtype is None or self.dtype != expected_dtype:
+            raise ValueError(
+                "JPEG XL depth encoding supports only DEPTH/float32 and "
+                f"DEPTH16/uint16; got {self.format.value}/{self.dtype}"
+            )
+
+        msg = LCMImage()
+        msg.header = Header()
+        msg.header.seq = 0
+        msg.header.frame_id = frame_id or self.frame_id
+        msg.header.stamp.sec = int(self.ts)
+        msg.header.stamp.nsec = int((self.ts - int(self.ts)) * 1e9)
+
+        blob = bytes(
+            imagecodecs.jpegxl_encode(
+                np.ascontiguousarray(self.data),
+                lossless=True,
+                effort=effort,
+            )
+        )
+        msg.height = self.height
+        msg.width = self.width
+        msg.encoding = f"jxl;{self.format.value.lower()}"
+        msg.is_bigendian = False
+        msg.step = 0
+        msg.data_length = len(blob)
+        msg.data = blob
+        return msg.lcm_encode()  # type: ignore[no-any-return]
+
+    @classmethod
+    def lcm_jpegxl_decode(cls, data: bytes, **kwargs: Any) -> Image:
+        """Decode lossless JPEG XL depth from an LCM Image message."""
+        import imagecodecs
+
+        msg = LCMImage.lcm_decode(data)
+        image_format = {
+            "jxl;depth": ImageFormat.DEPTH,
+            "jxl;depth16": ImageFormat.DEPTH16,
+        }.get(msg.encoding)
+        if image_format is None:
+            raise ValueError(f"Expected JPEG XL depth encoding, got {msg.encoding}")
+
+        pixels = np.asarray(imagecodecs.jpegxl_decode(msg.data))
+        expected_dtype = np.float32 if image_format is ImageFormat.DEPTH else np.uint16
+        if pixels.dtype != expected_dtype or pixels.shape != (msg.height, msg.width):
+            raise ValueError(
+                "JPEG XL depth payload does not match its LCM metadata: "
+                f"expected {(msg.height, msg.width)}/{expected_dtype}, "
+                f"got {pixels.shape}/{pixels.dtype}"
+            )
+        return cls(
+            data=pixels,
+            format=image_format,
+            frame_id=msg.header.frame_id,
+            ts=msg.header.stamp.sec + msg.header.stamp.nsec / 1e9,
         )
 
 

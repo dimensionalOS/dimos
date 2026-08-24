@@ -101,6 +101,12 @@ def _make_one(name: str, payload_module: str, inner: Codec[Any] | None = None) -
         from dimos.memory.codecs.jpeg import JpegCodec
 
         return JpegCodec()
+    if name == "lerc":
+        from dimos.memory.codecs.lerc import LercCodec
+
+        if inner is not None:
+            raise ValueError("lerc is a standalone codec — it cannot wrap another codec")
+        return LercCodec()
     if name == "lcm":
         from dimos.memory.codecs.lcm import LcmCodec
 

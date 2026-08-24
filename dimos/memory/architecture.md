@@ -17,7 +17,7 @@ Store → Stream → [filters / transforms / terminals] → Stream  → [filters
 Supporting Systems:
 
 - BlobStore — separates large payloads from metadata. FileBlobStore (files on disk) and SqliteBlobStore (blob table per stream). Supports lazy loading.
-- Codecs — codec_for() auto-selects: JpegCodec for images (TurboJPEG, ~10-20x compression), LcmCodec for DimOS messages, PickleCodec fallback.
+- Codecs — `codec_for()` auto-selects `JpegCodec` for images (lossy JPEG for visual images, lossless JPEG XL for depth), `LcmCodec` for dimOS messages, and `PickleCodec` as the fallback.
 - Transformers — Transformer[T,R] ABC wrapping iterator-to-iterator. EmbedImages/EmbedText enrich observations with embeddings. QualityWindow keeps best per time window.
 - Backpressure Buffers — KeepLast, Bounded, DropNew, Unbounded — bridge push/pull for live mode.
 

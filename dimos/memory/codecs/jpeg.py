@@ -21,19 +21,23 @@ if TYPE_CHECKING:
 
 
 class JpegCodec:
-    """Codec for Image types — JPEG-compressed inside an LCM Image envelope.
+    """Default storage codec for images.
 
-    Uses ``Image.lcm_jpeg_encode/decode`` which preserves ``ts``, ``frame_id``,
-    and all LCM header fields. Pixel data is lossy-compressed via TurboJPEG.
+    Visual images use lossy JPEG. Float32 and uint16 depth images use lossless
+    JPEG XL. Both paths preserve timestamps and frame IDs.
     """
 
     def __init__(self, quality: int = 50) -> None:
         self._quality = quality
 
     def encode(self, value: Image) -> bytes:
+        from dimos.msgs.sensor_msgs.Image import ImageFormat
+
+        if value.format in (ImageFormat.DEPTH, ImageFormat.DEPTH16):
+            return value.lcm_jpegxl_encode(effort=1)
         return value.lcm_jpeg_encode(quality=self._quality)
 
     def decode(self, data: bytes) -> Image:
         from dimos.msgs.sensor_msgs.Image import Image
 
-        return Image.lcm_jpeg_decode(data)
+        return Image.lcm_decode(data)

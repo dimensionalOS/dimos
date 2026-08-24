@@ -82,11 +82,6 @@ class WorldBeliefRecorder(Recorder):
         """Return the active recording path."""
         return str(self.config.db_path)
 
-    def _prepare_streams(self) -> None:
-        super()._prepare_streams()
-        depth = self.config.stream_remapping.get("depth_image", "depth_image")
-        self.store.stream(depth, Image, codec="lz4+lcm")
-
     @pose_setter_for("coordinator_joint_state")
     async def _proprio_pose(self, msg: Any) -> Any:
         """Use an identity pose for proprioceptive joint-state records."""
