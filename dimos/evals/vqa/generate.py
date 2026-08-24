@@ -184,12 +184,11 @@ def generate_dataset(
         author_model = OpenAIVlModel()
         detector_model = MoondreamVlModel()
         try:
-            detector = detector_model
             model_names = {
                 "author": author_model.config.model_name,
                 "detector": detector_model.config.model_name,
             }
-            mask_estimator = EdgeTAMObjectMaskPipeline(detector)
+            mask_estimator = EdgeTAMObjectMaskPipeline(detector_model)
 
             def pointcloud_frames() -> Iterable[GenerationFrame]:
                 for index in indices:
@@ -204,7 +203,7 @@ def generate_dataset(
                 request,
                 pointcloud_frames(),
                 OpenAIQuestionAuthor(author_model),
-                detector,
+                detector_model,
                 LidarRangeEstimator(mask_estimator),
                 mask_estimator,
                 config=config,
@@ -328,7 +327,6 @@ def generate_frame(
                     "answer": answer.model_dump(mode="json"),
                 }
             )
-    answers = tuple(answer for _, answer in answered)
     case_ids = _case_ids(image_index, tuple(proposal for proposal, _ in answered))
     cases = tuple(
         PublicCase(
@@ -341,7 +339,7 @@ def generate_frame(
     )
     labels = tuple(
         PrivateLabel(id=case.id, answer=answer.answer)
-        for case, answer in zip(cases, answers, strict=True)
+        for case, (_, answer) in zip(cases, answered, strict=True)
     )
     return GeneratedFrame(
         index=image_index,
@@ -349,7 +347,7 @@ def generate_frame(
         cases=cases,
         labels=labels,
         audit_rows=tuple(audit_rows),
-        families=tuple(families),
+        families=families,
     )
 
 

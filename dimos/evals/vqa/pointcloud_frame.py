@@ -285,7 +285,7 @@ class PointCloudFrameLoader:
         """Load LiDAR and odometry nearest to an indexed image."""
         if frame_index < 0:
             raise ValueError("frame_index must be non-negative")
-        if self._images is None or self._lidar is None:
+        if self._images is None:
             raise RuntimeError("frame preprocessor must be started before loading frames")
         if self._odom is None or self._global_lidar_map is None:
             raise PointCloudFrameUnavailableError("recording has no 'odom' stream")

@@ -331,13 +331,13 @@ def test_generate_uses_rectified_image_and_retains_generated_draft(tmp_path: Pat
         preprocessor=preprocessor,  # type: ignore[arg-type]
         frame_generator=generate,
     ).start()
-    generated = session.generate((2,))
+    generated = session.generate(2)
 
-    assert generated == (session.draft(2),)
-    assert generated[0].questions[0].answer == "yes"
-    assert generated[0].depth_attempt_count == 1
-    assert generated[0].depth_answered_count == 0
-    assert generated[0].depth_rejections == ("not enough projected points",)
+    assert generated == session.draft(2)
+    assert generated.questions[0].answer == "yes"
+    assert generated.depth_attempt_count == 1
+    assert generated.depth_answered_count == 0
+    assert generated.depth_rejections == ("not enough projected points",)
     assert seen[0].image.ts == 12.0
     assert session.state().dirty_frames == (2,)
     session.submit()
@@ -357,7 +357,7 @@ def test_generate_uses_rectified_image_and_retains_generated_draft(tmp_path: Pat
     session.stop()
 
 
-def test_generate_stages_range_and_preserves_questions_when_no_cases(tmp_path: Path) -> None:
+def test_generate_preserves_questions_and_keeps_prior_success_on_failure(tmp_path: Path) -> None:
     _write_dataset(tmp_path)
 
     def generate(source: GenerationFrame) -> GeneratedFrame:
@@ -379,14 +379,11 @@ def test_generate_stages_range_and_preserves_questions_when_no_cases(tmp_path: P
         frame_generator=generate,
     ).start()
 
-    generated = session.generate((1,))
-    assert generated[0].questions[0].id == "frame-000001-old"
-
-    session.submit()
-    assert session.state().total_questions == 3
+    generated = session.generate(1)
+    assert generated.questions[0].id == "frame-000001-old"
     with pytest.raises(RuntimeError, match="generation failed"):
-        session.generate((1, 2))
-    assert session.state().dirty_frames == ()
+        session.generate(2)
+    assert session.state().dirty_frames == (1,)
     session.stop()
 
 

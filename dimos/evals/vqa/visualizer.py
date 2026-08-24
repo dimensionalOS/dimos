@@ -22,7 +22,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from dimos.evals.vqa.editor import FrameDraft, SubmitResult, VqaEditorSession
 from dimos.evals.vqa.pointcloud_frame import PointCloudFrameUnavailableError
@@ -33,33 +33,12 @@ _INDEX = Path(__file__).with_name("editor.html")
 logger = setup_logger()
 
 
-class GenerationSelection(BaseModel):
-    """Single-frame or range generation request from the browser."""
+class GenerateFrameRequest(BaseModel):
+    """One recording frame selected for browser generation."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    image_index: int | None = Field(default=None, ge=0)
-    start: int | None = Field(default=None, ge=0)
-    stop: int | None = Field(default=None, gt=0)
-    stride: int = Field(default=1, ge=1)
-
-    @model_validator(mode="after")
-    def valid_selection(self) -> GenerationSelection:
-        if self.image_index is not None:
-            if self.start is not None or self.stop is not None:
-                raise ValueError("image_index cannot be combined with start or stop")
-            return self
-        if self.start is None or self.stop is None:
-            raise ValueError("provide image_index or both start and stop")
-        if self.stop <= self.start:
-            raise ValueError("stop must be greater than start")
-        return self
-
-    def indices(self) -> range:
-        if self.image_index is not None:
-            return range(self.image_index, self.image_index + 1)
-        assert self.start is not None and self.stop is not None
-        return range(self.start, self.stop, self.stride)
+    image_index: int = Field(ge=0)
 
 
 def create_editor_app(session: VqaEditorSession, *, ready_url: str | None = None) -> FastAPI:
@@ -67,13 +46,10 @@ def create_editor_app(session: VqaEditorSession, *, ready_url: str | None = None
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        try:
-            session.start()
+        with session:
             session.preload_generation_models()
             logger.info(f"VQA editor ready: {ready_url}" if ready_url else "VQA editor ready")
             yield
-        finally:
-            session.stop()
 
     app = FastAPI(title="DimOS VQA Editor", lifespan=lifespan)
 
@@ -89,14 +65,14 @@ def create_editor_app(session: VqaEditorSession, *, ready_url: str | None = None
     def frame(frame_index: int) -> FrameDraft:
         try:
             return session.draft(frame_index)
-        except (IndexError, LookupError, ValueError) as exc:
+        except (LookupError, ValueError) as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.get("/api/frames/{frame_index}/image")
     def image(frame_index: int) -> Response:
         try:
             data = session.raw_image(frame_index).to_jpeg_bytes(quality=85)
-        except (IndexError, LookupError, ValueError) as exc:
+        except (LookupError, ValueError) as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return Response(data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
@@ -106,7 +82,7 @@ def create_editor_app(session: VqaEditorSession, *, ready_url: str | None = None
             data = session.topdown_image(frame_index)
         except PointCloudFrameUnavailableError:
             return Response(status_code=204)
-        except (IndexError, LookupError, RuntimeError, ValueError) as exc:
+        except (LookupError, RuntimeError, ValueError) as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return Response(data, media_type="image/png", headers={"Cache-Control": "no-store"})
 
@@ -120,9 +96,9 @@ def create_editor_app(session: VqaEditorSession, *, ready_url: str | None = None
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/generate")
-    def generate(selection: GenerationSelection) -> tuple[FrameDraft, ...]:
+    def generate(request: GenerateFrameRequest) -> FrameDraft:
         try:
-            return session.generate(selection.indices())
+            return session.generate(request.image_index)
         except (IndexError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -140,6 +116,9 @@ def run_editor(recording: str, output: Path, port: int = DEFAULT_EDITOR_PORT) ->
     """Run the VQA editor on the local loopback interface."""
     import uvicorn
 
-    session = VqaEditorSession(recording, output)
     url = f"http://127.0.0.1:{port}"
-    uvicorn.run(create_editor_app(session, ready_url=url), host="127.0.0.1", port=port)
+    uvicorn.run(
+        create_editor_app(VqaEditorSession(recording, output), ready_url=url),
+        host="127.0.0.1",
+        port=port,
+    )

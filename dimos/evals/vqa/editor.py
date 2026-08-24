@@ -21,7 +21,6 @@ from contextlib import contextmanager
 import fcntl
 import hashlib
 from io import BytesIO
-from itertools import islice
 import json
 import math
 from pathlib import Path, PurePosixPath
@@ -252,67 +251,55 @@ class VqaEditorSession:
             self._dirty.add(draft.index)
             return draft
 
-    def generate(self, indices: Iterable[int]) -> tuple[FrameDraft, ...]:
-        """Generate and retain drafts for selected recording frame indices."""
-        staged: list[tuple[int, FrameDraft, GeneratedFrame]] = []
+    def generate(self, index: int) -> FrameDraft:
+        """Generate and retain a draft for one recording frame."""
         with self._lock:
-            image_count = self._require_image_count()
-            if isinstance(indices, range) and len(indices) > image_count:
-                raise ValueError("generation selected more frames than the recording contains")
-            selected = tuple(islice(indices, image_count + 1))
-            if not selected:
-                raise ValueError("generation selected no frames")
-            if len(selected) > image_count:
-                raise ValueError("generation selected more frames than the recording contains")
-            for index in selected:
-                self._validate_index(index)
-            for index in selected:
-                try:
-                    calibrated = self._preprocessor.load(index)
-                except PointCloudFrameUnavailableError:
-                    source = GenerationFrame(index, self._preprocessor.load_image(index))
-                else:
-                    source = GenerationFrame(index, calibrated.image, calibrated)
-                frame = self._generate(source)
-                labels = {label.id: label.answer for label in frame.labels}
-                questions = tuple(
-                    EditableQuestion(
-                        id=case.id,
-                        question=case.question,
-                        choices=case.choices,
-                        answer=labels[case.id],
-                    )
-                    for case in frame.cases
+            self._validate_index(index)
+            try:
+                calibrated = self._preprocessor.load(index)
+            except PointCloudFrameUnavailableError:
+                source = GenerationFrame(index, self._preprocessor.load_image(index))
+            else:
+                source = GenerationFrame(index, calibrated.image, calibrated)
+            frame = self._generate(source)
+            labels = {label.id: label.answer for label in frame.labels}
+            questions = tuple(
+                EditableQuestion(
+                    id=case.id,
+                    question=case.question,
+                    choices=case.choices,
+                    answer=labels[case.id],
                 )
-                draft = FrameDraft(
-                    index=index,
-                    questions=questions or self.draft(index).questions,
-                    depth_attempt_count=sum(_is_depth_audit_row(row) for row in frame.audit_rows),
-                    depth_answered_count=sum(
-                        _is_depth_audit_row(row) and row.get("status") == "answered"
-                        for row in frame.audit_rows
-                    ),
-                    depth_rejections=tuple(
-                        str(row["reason"])
-                        for row in frame.audit_rows
-                        if _is_depth_audit_row(row)
-                        and row.get("status") == "rejected"
-                        and "reason" in row
-                    ),
-                )
-                staged.append((index, draft, frame))
-            for index, draft, frame in staged:
-                self._drafts[index] = draft
-                self._generated_frames[index] = frame
-                self._dirty.add(index)
-        return tuple(draft for _, draft, _ in staged)
+                for case in frame.cases
+            )
+            draft = FrameDraft(
+                index=index,
+                questions=questions or self.draft(index).questions,
+                depth_attempt_count=sum(_is_depth_audit_row(row) for row in frame.audit_rows),
+                depth_answered_count=sum(
+                    _is_depth_audit_row(row) and row.get("status") == "answered"
+                    for row in frame.audit_rows
+                ),
+                depth_rejections=tuple(
+                    str(row["reason"])
+                    for row in frame.audit_rows
+                    if _is_depth_audit_row(row)
+                    and row.get("status") == "rejected"
+                    and "reason" in row
+                ),
+            )
+            self._drafts[index] = draft
+            self._generated_frames[index] = frame
+            self._dirty.add(index)
+            return draft
 
     def submit(self) -> SubmitResult:
         """Merge dirty frame drafts into the target dataset with atomic file writes."""
         with self._lock:
-            dirty = set(self._dirty)
-            if not dirty:
+            dirty_indices = tuple(sorted(self._dirty))
+            if not dirty_indices:
                 return SubmitResult(output=self.output, frame_count=0, question_count=0)
+            dirty = set(dirty_indices)
             if _dataset_version(self.output) != self._loaded_dataset_version:
                 raise RuntimeError(
                     "VQA dataset changed on disk; restart the editor before submitting"
@@ -321,7 +308,7 @@ class VqaEditorSession:
             cases = [case for case in self._cases if _case_frame_index(case) not in dirty]
             labels = {case.id: self._labels[case.id] for case in cases}
             new_cases: list[PublicCase] = []
-            for index in sorted(dirty):
+            for index in dirty_indices:
                 image_name = f"assets/frame-{index:06d}.png"
                 for question in self._drafts[index].questions:
                     case = PublicCase(
@@ -345,17 +332,17 @@ class VqaEditorSession:
                 self.output / "cases.jsonl",
                 self.output / "labels.jsonl",
                 self.output / "audit" / "run.json",
-                *(self.output / "audit" / f"frame-{index:06d}" for index in sorted(dirty)),
+                *(self.output / "audit" / f"frame-{index:06d}" for index in dirty_indices),
                 *(
                     self.output / "assets" / f"frame-{index:06d}.png"
-                    for index in sorted(dirty)
+                    for index in dirty_indices
                     if self._drafts[index].questions
                 ),
             ]
             with _rollback_paths(changed_paths):
                 assets = self.output / "assets"
                 assets.mkdir(parents=True, exist_ok=True)
-                for index in sorted(dirty):
+                for index in dirty_indices:
                     if not self._drafts[index].questions:
                         continue
                     generated_frame = self._generated_frames.get(index)
@@ -369,8 +356,12 @@ class VqaEditorSession:
                         raise RuntimeError(f"failed to write VQA image: {temporary_image}")
                     temporary_image.replace(assets / f"frame-{index:06d}.png")
 
-                for index in sorted(dirty):
-                    frame_cases = [case for case in cases if _case_frame_index(case) == index]
+                cases_by_frame: dict[int, list[PublicCase]] = {index: [] for index in dirty_indices}
+                for case in cases:
+                    case_index = _case_frame_index(case)
+                    if case_index in cases_by_frame:
+                        cases_by_frame[case_index].append(case)
+                for index, frame_cases in cases_by_frame.items():
                     _write_frame_audit(
                         self.output,
                         index,
@@ -402,7 +393,7 @@ class VqaEditorSession:
             self._dirty.clear()
             return SubmitResult(
                 output=self.output,
-                frame_count=len(dirty),
+                frame_count=len(dirty_indices),
                 question_count=len(new_cases),
             )
 
@@ -742,15 +733,14 @@ def _write_run_audit(
     frame_indices.discard(None)
     audit_directories = tuple(audit.glob("frame-*")) if audit.exists() else ()
     rejected_count = 0
+    attempted_families: set[str] = set()
+    answered_families: set[str] = set()
     for directory in audit_directories:
         rows = _read_json(directory / "ground_truth.json", [])
         if isinstance(rows, list):
             rejected_count += sum(
                 isinstance(row, dict) and row.get("status") == "rejected" for row in rows
             )
-    attempted_families: set[str] = set()
-    answered_families: set[str] = set()
-    for directory in audit_directories:
         frame = _read_json(directory / "frame.json", {})
         if isinstance(frame, dict):
             attempted_families.update(frame.get("attempted_families", []))

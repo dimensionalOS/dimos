@@ -77,8 +77,8 @@ class FakeSession:
         self.updated = draft
         return draft
 
-    def generate(self, indices: Any) -> tuple[FrameDraft, ...]:
-        return tuple(FrameDraft(index=index) for index in indices)
+    def generate(self, index: int) -> FrameDraft:
+        return FrameDraft(index=index)
 
     def submit(self) -> SubmitResult:
         return SubmitResult(output=self.output, frame_count=1, question_count=2)
@@ -96,6 +96,8 @@ def test_editor_app_serves_page_and_session_routes(tmp_path: Path, monkeypatch: 
     monkeypatch.setattr(visualizer.logger, "info", capture_ready)
     app = create_editor_app(session, ready_url="http://127.0.0.1:9876")  # type: ignore[arg-type]
 
+    assert app.title == "DimOS VQA Editor"
+    assert not app.user_middleware
     with TestClient(app) as client:
         assert session.started
         assert session.preload_calls == 1
@@ -118,8 +120,9 @@ def test_editor_app_serves_page_and_session_routes(tmp_path: Path, monkeypatch: 
         topdown = client.get("/api/frames/1/topdown")
         assert topdown.headers["content-type"] == "image/png"
         assert topdown.content == b"top-down-png"
-        generated = client.post("/api/generate", json={"start": 0, "stop": 3, "stride": 2}).json()
-        assert [draft["index"] for draft in generated] == [0, 2]
+        generated = client.post("/api/generate", json={"image_index": 2}).json()
+        assert generated["index"] == 2
+        assert client.post("/api/generate", json={"start": 0, "stop": 3}).status_code == 422
         assert client.post("/api/submit").json()["question_count"] == 2
 
     assert not session.started

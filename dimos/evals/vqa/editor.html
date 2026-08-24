@@ -117,7 +117,6 @@
       .meta { max-width: 100%; text-align: left; }
       main { grid-template-columns: 1fr; grid-template-rows: minmax(300px, 52%) minmax(0, 1fr); }
       .viewer { grid-column: 1; grid-row: 1; gap: .55rem; overflow-y: auto; padding: .65rem .8rem; border-right: 0; border-bottom: 1px solid var(--line); }
-      .viewer > * { width: 100%; }
       .toolbar { flex-wrap: wrap; }
       .toolbar .spacer { display: none; }
       .frame-input { flex: 1; width: auto; }
@@ -219,41 +218,44 @@
 
     function syncDisabledControls() {
       const locked = busy || navigating;
-      document.querySelector("main").inert = locked;
-      if (!locked) {
-        document.querySelectorAll(".question").forEach(card => {
-          const lockChoices = card.querySelectorAll(".choice").length <= 2;
-          card.querySelectorAll(".choice button").forEach(button => button.disabled = lockChoices);
-        });
-      }
-      document.querySelector("main").setAttribute("aria-busy", String(locked));
+      [".toolbar", ".timeline", ".batch-fields", ".questions"].forEach(selector => {
+        const region = document.querySelector(selector);
+        region.inert = locked;
+        region.setAttribute("aria-busy", String(locked));
+      });
     }
 
     function setBusy(value, label = "Working...") {
       busy = value;
       syncDisabledControls();
       if (value) toast(label);
-      else render();
     }
 
     function markDirty() {
       localDirty = true;
-      $("dirty-count").textContent = "Unsaved draft";
-      $("dirty-count").className = "badge dirty";
+      updateBadges();
     }
 
     function readDraft() {
-      const questions = [...document.querySelectorAll(".question")].map(card => ({
-        id: card.dataset.id,
-        question: card.querySelector("textarea").value.trim(),
-        choices: [...card.querySelectorAll(".choice input")].map(input => input.value.trim()),
-        answer: card.querySelector("select").value.trim()
-      }));
       return {
         ...draft,
         index: current,
-        questions
+        questions: draft.questions.map(question => ({
+          ...question,
+          question: question.question.trim(),
+          choices: question.choices.map(choice => choice.trim()),
+          answer: question.answer.trim()
+        }))
       };
+    }
+
+    function installDraft(nextDraft) {
+      draft = {
+        ...nextDraft,
+        questions: nextDraft.questions.map(question => ({...question, choices: [...question.choices]}))
+      };
+      loadedQuestionCount = draft.questions.length;
+      localDirty = false;
     }
 
     async function saveDraft() {
@@ -346,7 +348,7 @@
         const previousChoice = question.choices[index];
         question.choices[index] = event.target.value;
         if (question.answer === previousChoice) question.answer = event.target.value;
-        markDirty(); syncAnswers(row.closest(".question"), question);
+        markDirty(); populateAnswers(row.closest(".question"), question);
       };
       row.querySelector("button").onclick = () => {
         const card = row.closest(".question");
@@ -358,15 +360,11 @@
 
     function populateAnswers(card, question) {
       const select = card.querySelector("select");
-      const choices = [...card.querySelectorAll(".choice input")].map(input => input.value);
+      const choices = question.choices;
       select.innerHTML = choices.map(choice => `<option value="${escapeAttr(choice)}" ${choice === question.answer ? "selected" : ""}>${escapeHtml(choice || "(empty choice)")}</option>`).join("");
       if (!choices.includes(question.answer)) question.answer = choices[0] || "";
       select.value = question.answer;
       select.onchange = event => { question.answer = event.target.value; markDirty(); };
-    }
-
-    function syncAnswers(card, question) {
-      populateAnswers(card, question);
     }
 
     function escapeHtml(value) {
@@ -427,10 +425,8 @@
           frameEmpty.textContent = "Frame image unavailable";
         }
       );
-      const lidarStage = $("lidar-stage");
       const topdownImage = $("topdown-image");
       const mapEmpty = $("map-empty");
-      lidarStage.hidden = false;
       let mapReady = Promise.resolve();
       if (session.has_topdown) {
         if (topdownImage.hidden) {
@@ -464,7 +460,7 @@
     async function loadFrame(index) {
       if (busy || navigating || !session) return;
       navigating = true;
-      render();
+      syncDisabledControls();
       try {
         await saveDraft();
         if (String(index).trim() === "" || !Number.isInteger(Number(index))) {
@@ -475,10 +471,7 @@
           throw new Error(`Frame index must be within 0-${session.image_count - 1}`);
         }
         const nextDraft = await request(`/api/frames/${target}`);
-        nextDraft.questions = nextDraft.questions.map(question => ({...question, choices: [...question.choices]}));
-        draft = nextDraft;
-        loadedQuestionCount = draft.questions.length;
-        localDirty = false;
+        installDraft(nextDraft);
         const visualsReady = showFrameVisuals(target);
         await visualsReady;
       } catch (error) {
@@ -526,13 +519,10 @@
             method: "POST",
             body: JSON.stringify({image_index: index})
           });
-          draft = generated[0];
-          draft.questions = draft.questions.map(question => ({...question, choices: [...question.choices]}));
-          loadedQuestionCount = draft.questions.length;
-          localDirty = false;
+          installDraft(generated);
           completed += 1;
           session.dirty_frames = [...new Set([...session.dirty_frames, index])];
-          try { session = await request("/api/session"); }
+          try { session = await request("/api/session"); refreshFailed = false; }
           catch (_) { refreshFailed = true; }
           const visualsReady = showFrameVisuals(index);
           setGenerationStatus(`Generated ${completed} / ${indices.length} / frame ${index} / ${draft.questions.length} questions`);
@@ -546,7 +536,18 @@
         setGenerationStatus(`Stopped after ${completed} / ${indices.length}: ${error.message}`, true);
         toast(error.message, true);
       }
-      finally { setBusy(false); updateBadges(); }
+      finally {
+        if (refreshFailed) {
+          try {
+            session = await request("/api/session");
+            refreshFailed = false;
+            if (completed === indices.length) setGenerationStatus(`Complete / ${completed} frames`);
+          }
+          catch (_) {}
+        }
+        setBusy(false);
+        render();
+      }
     }
 
     $("previous").onclick = () => loadFrame(current - 1);
@@ -574,6 +575,7 @@
       try {
         await saveDraft();
         const result = await request("/api/submit", {method: "POST"});
+        session.dirty_frames = [];
         try {
           session = await request("/api/session");
           toast(`Submitted ${result.question_count} questions across ${result.frame_count} frames`);
@@ -581,10 +583,10 @@
           toast("Dataset submitted, but session status could not be refreshed", true);
         }
       } catch (error) { toast(error.message, true); }
-      finally { setBusy(false); updateBadges(); }
+      finally { setBusy(false); render(); }
     };
     window.addEventListener("beforeunload", event => {
-      if (!localDirty) return;
+      if (!localDirty && !session?.dirty_frames.length) return;
       event.preventDefault();
       event.returnValue = "";
     });
