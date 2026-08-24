@@ -36,6 +36,20 @@ can use common hardware codecs, but it reduces depth to about 1,529 hue levels
 and can create flying pixels, depth inversion, and color-boundary gaps. It is
 better suited to bandwidth-constrained visual streaming than metric recording.
 
+## Default: lossless JPEG XL
+
+The default `Image` storage codec uses lossless JPEG XL for `DEPTH/float32` and
+`DEPTH16/uint16`. It uses ordinary lossy JPEG for visual image formats. This
+runtime dispatch keeps depth metric while retaining the existing visual-image
+tradeoff:
+
+```python
+store.stream("depth_image", Image)
+```
+
+Use LERC when bounded error saves enough space to justify losing millimeter
+precision.
+
 ## Why LERC
 
 [Limited Error Raster Compression (LERC)](https://github.com/Esri/lerc) is an
@@ -52,8 +66,8 @@ The `lerc` storage codec uses one contract:
 
 The codec also preserves shape, dtype, timestamp, frame ID, and the valid-pixel
 mask. Invalid float sentinels are canonicalized to `NaN`, so even zero-error
-LERC is exact for valid samples rather than bit-exact for the whole array. It is
-opt-in; existing `lz4+lcm` recorder settings remain unchanged.
+LERC is exact for valid samples rather than bit-exact for the whole array. LERC
+remains opt-in.
 
 ```python
 store.stream("depth_image", Image, codec="lerc")

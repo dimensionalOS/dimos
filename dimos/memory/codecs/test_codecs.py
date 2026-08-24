@@ -22,6 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import pytest
 
 from dimos.memory.codecs.base import Codec, codec_for
@@ -29,6 +30,7 @@ from dimos.memory.codecs.jpeg import JpegCodec
 from dimos.memory.codecs.lcm import LcmCodec
 from dimos.memory.codecs.pickle import PickleCodec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
 if TYPE_CHECKING:
@@ -216,3 +218,59 @@ class TestCodecFor:
         from dimos.memory.codecs.jpeg import JpegCodec
 
         assert isinstance(codec_for(Image), JpegCodec)
+
+
+@pytest.mark.parametrize(
+    ("image_format", "pixels"),
+    [
+        pytest.param(
+            ImageFormat.DEPTH16,
+            np.array([[0, 1, 1000, 65535]], dtype=np.uint16),
+            id="uint16",
+        ),
+        pytest.param(
+            ImageFormat.DEPTH,
+            np.array([[0.0, 0.25, np.inf, np.nan]], dtype=np.float32),
+            id="float32",
+        ),
+    ],
+)
+def test_default_image_codec_uses_lossless_jpegxl_for_depth(
+    image_format: ImageFormat, pixels: np.ndarray[Any, Any]
+) -> None:
+    source = Image(data=pixels, format=image_format, frame_id="depth", ts=123.5)
+    codec = codec_for(Image)
+
+    payload = codec.encode(source)
+    envelope = CompressedImage.lcm_decode(payload)
+    decoded = codec.decode(payload)
+
+    assert envelope.format == f"jxl;{image_format.value.lower()}"
+    assert decoded.format is image_format
+    assert decoded.dtype == source.dtype
+    assert decoded.frame_id == "depth"
+    assert decoded.ts == 123.5
+    assert np.array_equal(decoded.data, pixels, equal_nan=True)
+
+
+def test_default_image_codec_keeps_jpeg_for_rgb() -> None:
+    if not _turbojpeg_available():
+        pytest.skip("TurboJPEG is unavailable")
+    pixels = np.broadcast_to(np.arange(64, dtype=np.uint8), (48, 64)).copy()
+    source = Image(
+        data=np.stack((pixels, pixels, pixels), axis=-1),
+        format=ImageFormat.RGB,
+        frame_id="camera",
+        ts=123.5,
+    )
+    codec = codec_for(Image)
+
+    payload = codec.encode(source)
+    envelope = CompressedImage.lcm_decode(payload)
+    decoded = codec.decode(payload)
+
+    assert envelope.format == "jpeg"
+    assert decoded.format is ImageFormat.RGB
+    assert decoded.frame_id == "camera"
+    assert decoded.ts == 123.5
+    assert np.mean(np.abs(decoded.data.astype(float) - pixels[..., None])) < 1.0

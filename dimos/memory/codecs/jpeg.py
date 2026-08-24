@@ -21,19 +21,46 @@ if TYPE_CHECKING:
 
 
 class JpegCodec:
-    """Codec for Image types — JPEG-compressed inside an LCM Image envelope.
+    """Default storage codec for images.
 
-    Uses ``Image.lcm_jpeg_encode/decode`` which preserves ``ts``, ``frame_id``,
-    and all LCM header fields. Pixel data is lossy-compressed via TurboJPEG.
+    Visual images use lossy JPEG. Float32 and uint16 depth images use lossless
+    JPEG XL. Both paths preserve timestamps and frame IDs.
     """
 
     def __init__(self, quality: int = 50) -> None:
         self._quality = quality
 
     def encode(self, value: Image) -> bytes:
-        return value.lcm_jpeg_encode(quality=self._quality)
+        from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
+        from dimos.msgs.sensor_msgs.Image import ImageFormat
+
+        if value.format in (ImageFormat.DEPTH, ImageFormat.DEPTH16):
+            compressed = CompressedImage.from_image(value, format="jxl", effort=1)
+            compressed.format = f"jxl;{value.format.value.lower()}"
+        else:
+            compressed = CompressedImage.from_image(
+                value,
+                format="jpeg",
+                quality=self._quality,
+            )
+        return compressed.lcm_encode()
 
     def decode(self, data: bytes) -> Image:
-        from dimos.msgs.sensor_msgs.Image import Image
+        from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
+        from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
-        return Image.lcm_jpeg_decode(data)
+        compressed = CompressedImage.lcm_decode(data)
+        image = compressed.decode()
+        depth_formats = {
+            "jxl;depth": ImageFormat.DEPTH,
+            "jxl;depth16": ImageFormat.DEPTH16,
+        }
+        image_format = depth_formats.get(compressed.format)
+        if image_format is None:
+            return image
+        return Image(
+            data=image.data,
+            format=image_format,
+            frame_id=image.frame_id,
+            ts=image.ts,
+        )

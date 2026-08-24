@@ -91,7 +91,8 @@ def test_benchmark_reports_unsupported_codecs() -> None:
     by_name = {row.codec: row for row in rows}
 
     assert isinstance(by_name["png3"], SkippedRow)
-    assert isinstance(by_name["jpegxl-lossless"], SkippedRow)
+    assert isinstance(by_name["jpegxl-lossless"], BenchmarkRow)
+    assert by_name["jpegxl-lossless"].max_error_mm == 0.0
     assert isinstance(by_name["zfp-reversible"], BenchmarkRow)
 
 

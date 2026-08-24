@@ -295,7 +295,7 @@ def candidates() -> list[Candidate]:
         Candidate("lz4+lcm", _always, _encode_lz4, _decode_lz4, 0.0),
         Candidate("zstd3+lcm", _always, _encode_zstd, _decode_zstd, 0.0),
         Candidate("png3", _uint16, _encode_png, _decode_png, 0.0),
-        Candidate("jpegxl-lossless", _uint16, _encode_jpegxl, _decode_jpegxl, 0.0),
+        Candidate("jpegxl-lossless", _always, _encode_jpegxl, _decode_jpegxl, 0.0),
         Candidate("zfp-reversible", _float32, _encode_zfp, _decode_zfp, 0.0),
         _lerc_candidate(0.0),
         _lerc_candidate(0.001),

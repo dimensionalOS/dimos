@@ -274,7 +274,7 @@ class RecorderConfig(MemoryModuleConfig):
     # read the active remappings from inside the module (AFAIK), so this config
     # arg does the per-stream rename directly.
     stream_remapping: dict[str, str] = Field(default_factory=dict)
-    # ex: {"depth_image_1": "lz4+lcm"} for lossless depth recording
+    # ex: {"grayscale_image_1": "lz4+lcm"} to override the default image codec
     stream_codecs: dict[str, str] = Field(default_factory=dict)
     # Port names that inherently have no pose to anchor (command streams, etc.).
     poseless_streams: list[str] = Field(default_factory=list)

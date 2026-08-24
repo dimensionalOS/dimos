@@ -15,7 +15,7 @@ class Codec(Protocol[T]):
 | Codec | Type | Notes |
 |-------|------|-------|
 | `PickleCodec` | Any Python object | Fallback. Uses `HIGHEST_PROTOCOL`. |
-| `JpegCodec` | `Image` | Lossy compression via TurboJPEG. ~10-20x smaller. Preserves `frame_id` in header. |
+| `JpegCodec` | `Image` | Lossy JPEG for visual images; lossless JPEG XL for depth. Preserves metadata. |
 | `LercCodec` | Depth `Image` | Bounded-error compression for `float32` meters and `uint16` millimeters. Maximum error: 5 mm. |
 | `LcmCodec` | `DimosMsg` subclasses | Uses `lcm_encode()`/`lcm_decode()`. Zero-copy for LCM message types. |
 | `ZstdCodec` | Any codec output | Lossless level-3 Zstandard wrapper. Use `zstd+lcm` for typed messages. |
@@ -27,7 +27,7 @@ class Codec(Protocol[T]):
 ```python
 from dimos.memory.codecs import codec_for
 
-codec_for(Image)        # → JpegCodec(quality=50)
+codec_for(Image)        # → JpegCodec: JPEG for visual images, JPEG XL for depth
 codec_for(SomeLcmMsg)   # → LcmCodec(SomeLcmMsg)   (if has lcm_encode/lcm_decode)
 codec_for(dict)         # → PickleCodec()            (fallback)
 codec_for(None)         # → PickleCodec()
@@ -35,13 +35,21 @@ codec_for(None)         # → PickleCodec()
 
 ## Depth images
 
-Use the `lerc` codec explicitly for recorded depth streams:
+The default `Image` codec stores `DEPTH/float32` and `DEPTH16/uint16` images as
+lossless JPEG XL. Visual images continue to use ordinary lossy JPEG. Record a
+depth stream without a codec override to use this format-aware default:
+
+```python
+depth = store.stream("depth_image", Image)
+```
+
+Use the `lerc` codec explicitly when a 5 mm error bound is acceptable:
 
 ```python
 depth = store.stream("depth_image", Image, codec="lerc")
 ```
 
-Use `zstd+lcm` when the recording must preserve every original depth value:
+Use `zstd+lcm` as a generic lossless alternative:
 
 ```python
 depth = store.stream("depth_image", Image, codec="zstd+lcm")

@@ -34,8 +34,7 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 
-# jpeg codec quantises depth it to ~25cm and adds block artifacts (horrible)
-LOSSLESS_CODEC = "lz4+lcm"
+GRAYSCALE_CODEC = "lz4+lcm"
 
 
 class SpotRecorderConfig(RecorderConfig):
@@ -48,9 +47,7 @@ class SpotRecorderConfig(RecorderConfig):
     root_frame: str = "odom"
     stream_codecs: dict[str, str] = Field(
         default_factory=lambda: {
-            f"{kind}_image_{suffix}": LOSSLESS_CODEC
-            for kind in ("grayscale", "depth")
-            for suffix in CAMERA_STREAM_SUFFIXES
+            f"grayscale_image_{suffix}": GRAYSCALE_CODEC for suffix in CAMERA_STREAM_SUFFIXES
         }
     )
 
