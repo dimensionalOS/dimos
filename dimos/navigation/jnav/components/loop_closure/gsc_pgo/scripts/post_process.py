@@ -44,7 +44,7 @@ from typing import Any
 from gtsam import Point3, Pose3, Rot3
 import numpy as np
 
-from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.artifacts import (
     raycast_accumulate,
     write_corrected_lidar,

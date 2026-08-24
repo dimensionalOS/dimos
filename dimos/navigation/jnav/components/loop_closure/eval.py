@@ -56,7 +56,7 @@ from typing import Any
 
 import numpy as np
 
-from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.db_fallback import resolve_db_path
 from dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.go2_legacy import (

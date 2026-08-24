@@ -38,7 +38,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2

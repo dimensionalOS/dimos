@@ -37,7 +37,6 @@ from pathlib import Path
 import time
 from typing import Any
 
-import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation
 
@@ -127,12 +126,16 @@ def cluster_medoid(cluster: list[Detection], rotation_weight_m_per_rad: float) -
 
 def tag_pixel_size(corners_pixels: np.ndarray) -> float:
     """Tag side length in pixels (sqrt of the quad's image area); small = unreliable."""
+    import cv2
+
     quad = corners_pixels.reshape(4, 2).astype(np.float32)
     return float(math.sqrt(abs(cv2.contourArea(quad))))
 
 
 def tag_sharpness(gray: np.ndarray, corners_pixels: np.ndarray) -> float:
     """Laplacian variance over the tag's bounding box — low under motion blur."""
+    import cv2
+
     quad = corners_pixels.reshape(4, 2)
     x_min, y_min = np.floor(quad.min(0)).astype(int)
     x_max, y_max = np.ceil(quad.max(0)).astype(int)
@@ -262,6 +265,8 @@ def detect_apriltags(
     far/oblique views, fast motion), cluster same-id detections by time, drop thin
     clusters, and (re)write the `april_tags` stream from one Huber-refined medoid
     representative per cluster. Returns that list of representatives."""
+    import cv2
+
     detector = create_aruco_detector(dictionary)
     raw_detections: list[Detection] = []
     images = store.stream(image_stream, Image).to_list()
@@ -446,6 +451,8 @@ def pure_get_tags(img: Any, camera_intrinsics: Any) -> list[TagInfo]:
     camera_intrinsics: dict with "intrinsics" (3x3 ndarray), and optionally
     "distortion", "marker_length", "dictionary".
     """
+    import cv2
+
     intrinsics = camera_intrinsics["intrinsics"]
     distortion = camera_intrinsics.get("distortion", np.zeros(5))
     marker_length = camera_intrinsics.get("marker_length", _DEFAULT_MARKER_LENGTH)
@@ -632,6 +639,8 @@ def detect_raw_detections(
     dictionary: str = "DICT_APRILTAG_36h11",
 ) -> tuple[list[Detection], bool, int]:
     """Every valid-PnP tag detection over `image_stream`, unfiltered, with gate diagnostics."""
+    import cv2
+
     detector = create_aruco_detector(dictionary)
     raw_detections: list[Detection] = []
     images = store.stream(image_stream, Image).to_list()

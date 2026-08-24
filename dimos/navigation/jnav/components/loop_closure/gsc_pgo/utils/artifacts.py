@@ -24,7 +24,6 @@ from typing import TYPE_CHECKING
 
 from gtsam import Pose3, Values
 import numpy as np
-import open3d as o3d
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -38,8 +37,8 @@ from dimos.navigation.jnav.msgs.Graph3D import Graph3D
 from dimos.navigation.jnav.utils.trajectory_metrics import nearest_index
 
 if TYPE_CHECKING:
-    from dimos.memory2.store.base import Store
-    from dimos.memory2.type.observation import Observation
+    from dimos.memory.store.base import Store
+    from dimos.memory.type.observation import Observation
     from dimos.navigation.jnav.utils.recording_tf import RecordingTF
 
 # aggregated .pc2.lcm
@@ -190,6 +189,8 @@ def voxel_downsample(
     points_chunks: list[np.ndarray], intensity_chunks: list[np.ndarray], voxel: float
 ) -> tuple[np.ndarray, np.ndarray | None]:
     """Merge chunks, voxel-downsample, carrying intensity through open3d's color channel."""
+    import open3d as o3d
+
     cloud = o3d.geometry.PointCloud()
     cloud.points = o3d.utility.Vector3dVector(np.concatenate(points_chunks).astype(np.float64))
     carry = bool(intensity_chunks)
@@ -300,6 +301,8 @@ def write_aggregated_lcm(
     world_frame: str,
 ) -> None:
     """Final unified voxel pass + statistical outlier removal into a single .pc2.lcm cloud."""
+    import open3d as o3d
+
     points, intensities = voxel_downsample(points_chunks, intensity_chunks, voxel)
     print(
         f"aggregating .pc2.lcm: {len(points):,} pts after voxel, removing outliers...", flush=True

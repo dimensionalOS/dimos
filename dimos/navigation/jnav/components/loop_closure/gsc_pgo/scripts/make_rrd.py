@@ -24,13 +24,10 @@ from pathlib import Path
 import sys
 from typing import Any
 
-import cv2
 from gtsam import Point3, Pose3, Rot3
 import numpy as np
-import rerun as rr
-import rerun.blueprint as rrb
 
-from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.recording_scans import (
     default_odom_edge,
@@ -66,6 +63,8 @@ TAG_CORNERS = np.array(
 
 def tag_image(marker_id: int) -> np.ndarray:
     """RGB bitmap of the actual AprilTag, for texturing its 3D placement."""
+    import cv2
+
     dictionary = cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, TAG_DICT))
     grayscale = cv2.aruco.generateImageMarker(dictionary, marker_id, TAG_IMAGE_PX)
     return np.repeat(grayscale[:, :, None], 3, axis=2)
@@ -149,6 +148,9 @@ def build(
     camera_stream: str = "color_image",
     camera_info_stream: str = "",
 ) -> Path:
+    import rerun as rr
+    import rerun.blueprint as rrb
+
     db_path = Path(db).expanduser()
     if db_path.is_dir():
         sys.exit(f"--db must be a .db file, not a directory: {db_path}")

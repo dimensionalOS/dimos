@@ -24,7 +24,7 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.robot.unitree.go2.connection import GO2Connection
 

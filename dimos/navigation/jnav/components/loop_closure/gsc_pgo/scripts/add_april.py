@@ -27,7 +27,7 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.navigation.jnav.components.loop_closure.utils import read_camera_info
 from dimos.navigation.jnav.utils.apriltags import (
     VISIT_GAP_S,
