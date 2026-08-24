@@ -88,6 +88,7 @@ fn find_misses_along_ray_hits_correct_voxels() {
         shadow_depth,
         0.0,
         0.5,
+        None,
         origin_voxel,
         endpoint,
     );
@@ -225,6 +226,45 @@ fn point_beyond_max_range_does_not_clear() {
     map.set_health((3, 0, 0), 1);
     update_map(&mut map, (0.0, 0.0, 0.0), &[(5.5, 0.5, 0.5)], &cfg);
     assert_eq!(map.health((3, 0, 0)), Some(1));
+}
+
+#[test]
+fn fine_gate_spares_ray_through_unobserved_cells() {
+    let cfg = Config {
+        fine_divisor: 2,
+        shadow_depth: 0.0,
+        ..basic_config()
+    };
+    let mut map = VoxelMap::default();
+    update_map(&mut map, (0.5, 0.75, 0.25), &[(5.5, 0.75, 0.25)], &cfg);
+    assert_eq!(map.health((5, 0, 0)), Some(1));
+
+    // The clearing ray crosses only the empty top cells of the voxel.
+    update_map(&mut map, (0.5, 0.75, 0.75), &[(9.5, 0.75, 0.75)], &cfg);
+    assert_eq!(
+        map.health((5, 0, 0)),
+        Some(1),
+        "a ray through unobserved cells must not decrement"
+    );
+}
+
+#[test]
+fn fine_gate_clears_when_ray_crosses_observed_cells() {
+    let cfg = Config {
+        fine_divisor: 2,
+        shadow_depth: 0.0,
+        ..basic_config()
+    };
+    let mut map = VoxelMap::default();
+    update_map(&mut map, (0.5, 0.75, 0.25), &[(5.5, 0.75, 0.25)], &cfg);
+    assert_eq!(map.health((5, 0, 0)), Some(1));
+
+    update_map(&mut map, (0.5, 0.75, 0.25), &[(9.5, 0.75, 0.25)], &cfg);
+    assert_eq!(
+        map.health((5, 0, 0)),
+        None,
+        "a ray through the observed cell still clears"
+    );
 }
 
 #[test]

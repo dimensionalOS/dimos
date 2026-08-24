@@ -873,6 +873,7 @@ pub fn update_map(
     let points = &filtered[..];
 
     let hits = live_voxels(points, cfg.voxel_size);
+    let fine = cfg.fine_layer().map(|(d, _)| d as i32);
 
     let origin_voxel = world_to_voxel(origin.0, origin.1, origin.2, inv);
     let step = cfg.ray_subsample as usize;
@@ -894,6 +895,7 @@ pub fn update_map(
                 cfg.shadow_depth,
                 cfg.grace_depth,
                 cfg.graze_cos,
+                fine,
                 origin_voxel,
                 endpoint,
             );
@@ -916,7 +918,6 @@ pub fn update_map(
         }
     }
 
-    let fine = cfg.fine_layer().map(|(d, _)| d as i32);
     let mut fine_live: AHashSet<VoxelKey> =
         AHashSet::with_capacity(if fine.is_some() { points.len() } else { 0 });
     for &p in points {
@@ -953,9 +954,70 @@ fn world_to_voxel(x: f32, y: f32, z: f32, inv: f32) -> VoxelKey {
     )
 }
 
+/// Fine cells of `key` crossed by the ray segment between `t0` and `t1`,
+/// as a bitmask of flat child indices.
+fn crossed_fine_cells(
+    origin: (f32, f32, f32),
+    delta: (f32, f32, f32),
+    t0: f32,
+    t1: f32,
+    key: VoxelKey,
+    divisor: i32,
+    voxel_size: f32,
+) -> u64 {
+    let fine_size = voxel_size / divisor as f32;
+    // The entry point sits on a voxel face, so clamp float error into range.
+    let local = |o: f32, d: f32, k: i32| {
+        ((((o + t0 * d) / fine_size).floor() as i32) - k * divisor).clamp(0, divisor - 1)
+    };
+    let mut lx = local(origin.0, delta.0, key.0);
+    let mut ly = local(origin.1, delta.1, key.1);
+    let mut lz = local(origin.2, delta.2, key.2);
+
+    let axis = |o: f32, d: f32, k: i32, l: i32| -> (i32, f32, f32) {
+        if d == 0.0 {
+            return (0, f32::INFINITY, f32::INFINITY);
+        }
+        let step = if d > 0.0 { 1 } else { -1 };
+        let boundary = (k * divisor + l + (step > 0) as i32) as f32 * fine_size;
+        (step, (boundary - o) / d, fine_size / d.abs())
+    };
+    let (step_x, mut tx, dt_x) = axis(origin.0, delta.0, key.0, lx);
+    let (step_y, mut ty, dt_y) = axis(origin.1, delta.1, key.1, ly);
+    let (step_z, mut tz, dt_z) = axis(origin.2, delta.2, key.2, lz);
+
+    let mut mask = 0u64;
+    loop {
+        mask |= 1 << ((lx * divisor + ly) * divisor + lz);
+        if tx.min(ty).min(tz) >= t1 {
+            return mask;
+        }
+        if tx <= ty && tx <= tz {
+            lx += step_x;
+            tx += dt_x;
+            if !(0..divisor).contains(&lx) {
+                return mask;
+            }
+        } else if ty <= tz {
+            ly += step_y;
+            ty += dt_y;
+            if !(0..divisor).contains(&ly) {
+                return mask;
+            }
+        } else {
+            lz += step_z;
+            tz += dt_z;
+            if !(0..divisor).contains(&lz) {
+                return mask;
+            }
+        }
+    }
+}
+
 /// Amanatides and Woo 3d DDA. Records in-map voxels along the ray between the
 /// origin and the end of the shadow region. Voxels within the grace region of
-/// the endpoint are spared from being marked as misses.
+/// the endpoint are spared from being marked as misses. With a fine divisor,
+/// a voxel is also spared when the ray misses all of its observed fine cells.
 #[allow(clippy::too_many_arguments)]
 fn find_misses_along_ray(
     misses: &mut AHashSet<VoxelKey>,
@@ -966,6 +1028,7 @@ fn find_misses_along_ray(
     shadow_depth: f32,
     grace_depth: f32,
     graze_cos: f32,
+    fine_divisor: Option<i32>,
     origin_voxel: VoxelKey,
     endpoint: VoxelKey,
 ) {
@@ -1079,9 +1142,27 @@ fn find_misses_along_ray(
         }
 
         if let Some(c) = map_voxels.get(&(x, y, z)) {
-            if !should_spare(c, ray_unit, graze_cos) {
-                misses.insert((x, y, z));
+            if should_spare(c, ray_unit, graze_cos) {
+                continue;
             }
+            // A ray through unobserved fine cells contradicts nothing.
+            if let Some(divisor) = fine_divisor {
+                if c.fine != 0 {
+                    let crossed = crossed_fine_cells(
+                        origin,
+                        (dx, dy, dz),
+                        t_enter,
+                        tx.min(ty).min(tz),
+                        (x, y, z),
+                        divisor,
+                        voxel_size,
+                    );
+                    if crossed & c.fine == 0 {
+                        continue;
+                    }
+                }
+            }
+            misses.insert((x, y, z));
         }
     }
 }
