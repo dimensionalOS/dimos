@@ -40,7 +40,7 @@ SUITE: Suite = [
         inputs="At the start of these observations, which furniture is most numerous? "
         "Answer with one of: chairs, sofas, beds, desks.",
         expected="chairs",
-        parse=choice,
+        parse=choice(["chairs", "sofas", "beds", "desks"]),
         score=exact,
         context=(lambda s: s.streams.color_image.range_time(0, 8),),
         dataset="go2_short",
@@ -72,7 +72,7 @@ SUITE: Suite = [
         inputs="Which of these did you NOT see anywhere in the observations? "
         "Answer with one of: a couch, store shelves, a swimming pool, an office chair.",
         expected="a swimming pool",
-        parse=choice,
+        parse=choice(["a couch", "store shelves", "a swimming pool", "an office chair"]),
         score=exact,
         context=(lambda s: s.streams.color_image,),
         dataset="go2_hongkong_office",

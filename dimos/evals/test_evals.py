@@ -147,7 +147,11 @@ def test_parsers() -> None:
     assert yes_no("no") == "no"
     with pytest.raises(ValueError):
         yes_no("maybe")
-    assert choice(" Chairs. ") == "chairs"
+    compass = choice(["north", "northeast", "east"])
+    assert compass(" Northeast. ") == "northeast"
+    assert compass("it drifts north, then finally east") == "east"  # last named wins
+    with pytest.raises(ValueError):
+        compass("no idea")
 
 
 # -- case dispatch ---------------------------------------------------------------------
@@ -306,9 +310,9 @@ def test_runner_encode_budget(dataset: str, tmp_path: Path) -> None:
 
 def test_suites_importable() -> None:
     """Suite modules construct without data or network (lambdas stay lazy)."""
-    from dimos.evals.suites import dimsim_house, examples, go2_smoke, go2_vqa
+    from dimos.evals.suites import dimsim_house, examples, go2_pointcloud, go2_smoke, go2_vqa
 
-    for module in (examples, go2_smoke, go2_vqa, dimsim_house):
+    for module in (examples, go2_smoke, go2_vqa, go2_pointcloud, dimsim_house):
         assert module.SUITE, module.__name__
 
 
