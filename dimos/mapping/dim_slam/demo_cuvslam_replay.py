@@ -43,7 +43,7 @@ from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.mapping.dim_slam.dim_slam import DimSlam
-from dimos.mapping.odometry_hist import OdometryHist
+from dimos.mapping.odometry_path import OdometryPath
 from dimos.memory.replay import resolve_db_path
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -142,10 +142,10 @@ demo_cuvslam_replay = autoconnect(
     CuvslamReplay.blueprint(),
     # No IMU streaming here, so the filter seeds level off the first tracked pose.
     DimSlam.blueprint(use_imu=False),
-    OdometryHist.blueprint(),
+    OdometryPath.blueprint(),
     vis_module(
         global_config.viewer,
-        rerun_config={"visual_override": {"world/odom_hist": _path_at_true_height}},
+        rerun_config={"visual_override": {"world/path": _path_at_true_height}},
     ),
     # DimSlam is a native module and speaks LCM only, so the blueprint pins it rather
     # than inheriting whatever DIMOS_TRANSPORT the shell has (macOS defaults to zenoh).
