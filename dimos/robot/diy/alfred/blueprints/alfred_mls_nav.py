@@ -16,11 +16,11 @@
 
     dimos run alfred-mls-nav
 
-``alfred_nav`` needs the lidar twice over: FastLIO2 for odometry and registered scans
-for the costmap. This drops it entirely. The whole processing stack — ``DimSlam``,
-``RayTracingVoxelMap``, MLS planning, Dan's local planner and controller — lives in
-``vis_nav``, shared verbatim with ``alfred-replay``; this blueprint only adds the
-live drivers: the D455 and the base.
+The lidar nav stack this replaces needed the Mid-360 twice over: FastLIO2 for odometry
+and registered scans for the costmap. This drops it entirely. The whole processing
+stack — ``DimSlam``, ``RayTracingVoxelMap``, MLS planning, Dan's local planner and
+controller — lives in ``vis_nav``, shared verbatim with ``alfred-replay``; this
+blueprint only adds the live drivers: the D455 and the base.
 
 The mapper is ``RayTracingVoxelMap`` rather than ``VoxelGridMapper`` on purpose. The
 latter carves whole (X, Y) columns on every insert, which is last-write-wins: measured
