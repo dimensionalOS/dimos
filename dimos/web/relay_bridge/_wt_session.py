@@ -213,8 +213,21 @@ class SessionProtocol(QuicConnectionProtocol):
             if waiter is not None and not waiter.done():
                 waiter.set_result(msg)
         else:
-            if isinstance(msg, Manifest):
-                self._encodings.update({c.ch: c.encoding for c in msg.channels})
+            if isinstance(msg, Manifest) and msg.manifest is not None:
+                # The nested manifest is an opaque raw record at this layer;
+                # pick the encodings out defensively (payload caps are a
+                # safety net, not a validator).
+                channels = msg.manifest.get("channels")
+                if isinstance(channels, list):
+                    self._encodings.update(
+                        {
+                            c["ch"]: c["encoding"]
+                            for c in channels
+                            if isinstance(c, dict)
+                            and isinstance(c.get("ch"), str)
+                            and isinstance(c.get("encoding"), str)
+                        }
+                    )
             # Session messages (subs snapshots, robots, manifest, ...) go to
             # the consumer queue; see RelayClient.control_messages().
             if self.control_msgs.full():

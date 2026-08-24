@@ -30,7 +30,6 @@ import pytest
 
 from dimos.web.relay_bridge.e2e_support import attach_viewer, collect_until, wait_subs
 from dimos.web.relay_bridge.protocol import (
-    ChannelSpec,
     DataFrame,
     FrameHeader,
     Hello,
@@ -132,12 +131,15 @@ async def test_previous_protocol_version_is_rejected(relay: RelayReadyInfo) -> N
 
 
 async def test_invalid_manifest_hello_is_rejected(relay: RelayReadyInfo) -> None:
-    duplicated = RobotManifest(
-        channels=[
-            ChannelSpec(ch="odom", encoding="pose.json.v1", delivery="reliable", maxHz=20.0),
-            ChannelSpec(ch="odom", encoding="jpeg.v1", delivery="latest", maxHz=15.0),
-        ]
-    )
+    # version: 1 on purpose, so this keeps pinning the duplicate-channel rule
+    # rather than the version gate.
+    duplicated: RobotManifest = {
+        "version": 1,
+        "channels": [
+            {"ch": "odom", "encoding": "pose.json.v1", "delivery": "reliable", "maxHz": 20.0},
+            {"ch": "odom", "encoding": "jpeg.v1", "delivery": "latest", "maxHz": 15.0},
+        ],
+    }
     async with await RelayClient.connect(relay.wt_url, "robot") as robot:
         with pytest.raises(RelayRejectedError) as exc_info:
             await robot.hello(robot=ROBOT, manifest=duplicated)

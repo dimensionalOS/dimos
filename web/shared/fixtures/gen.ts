@@ -35,12 +35,32 @@ const controlMsgs: Record<string, Msg> = {
     v: PROTOCOL_VERSION,
     role: "robot",
     robot: { id: "go2-lab", name: "Go2 Laborator β", model: "unitree-go2" },
+    // A fully explicit (normalized) manifest, as the bridge emits it.
     manifest: {
+      version: 1,
       channels: [
-        { ch: "color_image", encoding: "jpeg.v1", delivery: "latest", maxHz: 15.5 },
-        { ch: "odom", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20.5 },
+        {
+          ch: "color_image",
+          dir: "rx",
+          encoding: "jpeg.v1",
+          delivery: "latest",
+          maxHz: 15.5,
+          params: { quality: 75.5 },
+        },
+        {
+          ch: "odom",
+          dir: "rx",
+          encoding: "pose.json.v1",
+          delivery: "reliable",
+          maxHz: 20.5,
+          params: {},
+        },
       ],
-      panels: [{ id: "color_image", kind: "video", channels: ["color_image"] }],
+      panels: [
+        { id: "p0", kind: "video", title: "Camera β", channels: ["color_image"], params: {} },
+      ],
+      layout: { row: ["p0"] },
+      pages: [],
     },
   },
   hello_viewer: { t: "hello", v: PROTOCOL_VERSION, role: "viewer" },
@@ -61,12 +81,20 @@ const controlMsgs: Record<string, Msg> = {
   },
   robots_empty: { t: "robots", robots: [] },
   watch: { t: "watch", robotId: "go2-lab" },
+  // Deliberately partial (un-normalized) manifest: the relay forwards the
+  // robot's manifest verbatim, never normalizing it.
   manifest_reply: {
     t: "manifest",
     robotId: "go2-lab",
-    channels: [{ ch: "odom", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20.5 }],
-    panels: [{ id: "pose", kind: "readout", channels: ["odom"] }],
+    manifest: {
+      version: 1,
+      channels: [{ ch: "odom", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20.5 }],
+      panels: [{ id: "pose", kind: "readout", title: "Poziție", channels: ["odom"] }],
+      layout: "pose",
+    },
   },
+  // Watch reply for a robot that registered without a manifest.
+  manifest_reply_bare: { t: "manifest", robotId: "arm-01" },
   sub: { t: "sub", ch: "color_image" },
   unsub: { t: "unsub", ch: "color_image" },
   subs_snapshot: { t: "subs", chs: ["color_image", "odom"], n: 3 },
@@ -102,56 +130,102 @@ const dataFrames: Record<string, { header: FrameHeader; payload: Uint8Array }> =
 // Manifest vectors: valid cases pin normalization, invalid cases pin the
 // rejection code. Inputs are declared here (invalid ones cannot come from an
 // encoder); outputs come from parseManifest, and test_manifest.py pins the
-// Python mirror against them.
+// Python mirror against them. Most inputs leave dir/params/title absent to
+// pin the defaulting; chImageFull pins explicit-field round-trips.
 const chOdom = { ch: "odom", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20.5 };
 const chImage = { ch: "color_image", encoding: "jpeg.v1", delivery: "latest", maxHz: 15.5 };
+const chImageFull = {
+  ch: "color_image",
+  dir: "rx",
+  encoding: "jpeg.v1",
+  delivery: "latest",
+  maxHz: 15.5,
+  params: { quality: 75.5 },
+};
 const chCostmap = {
   ch: "global_costmap",
   encoding: "costmap.zlib.v1",
   delivery: "latest",
   maxHz: 5.5,
 };
+const pCamera = { id: "camera", kind: "video", channels: ["color_image"] };
+const pPose = { id: "pose", kind: "readout", channels: ["odom"] };
 const longId = "x".repeat(65);
 const manifestCases: Record<string, unknown> = {
-  channels_only: { channels: [chImage, chOdom] },
-  empty: { channels: [] },
+  channels_only: { version: 1, channels: [chImage, chOdom] },
+  empty: { version: 1, channels: [] },
   full: {
+    version: 1,
     channels: [chImage, chOdom],
     panels: [
-      { id: "camera", kind: "video", channels: ["color_image"] },
-      { id: "pose", kind: "readout", channels: ["odom"] },
+      { ...pCamera, title: "Cameră față" },
+      pPose,
       { id: "drive", kind: "teleop", channels: [] },
+      { id: "aux", kind: "readout", channels: ["odom"] },
     ],
-    layout: ["camera", "pose", "drive"],
+    layout: { row: [{ col: ["camera", "pose"], shares: [2.5, 1.5] }, "drive"] },
+    pages: ["aux"],
   },
   extra_keys_ignored: {
+    version: 1,
     channels: [{ ...chOdom, later: 1.5 }],
-    panels: [{ id: "pose", kind: "readout", channels: ["odom"], future: true }],
+    panels: [{ ...pPose, future: true }],
+    layout: { row: ["pose"], future: true },
     unknown_top_level: { x: 1 },
   },
   not_an_object: [1, 2],
-  missing_channels: {},
-  channel_bad_shape: { channels: [{ ch: "odom" }] },
-  bad_delivery: { channels: [{ ...chOdom, delivery: "sometimes" }] },
-  max_hz_string: { channels: [{ ...chOdom, maxHz: "20" }] },
-  max_hz_bool: { channels: [{ ...chOdom, maxHz: true }] },
-  empty_channel_id: { channels: [{ ...chOdom, ch: "" }] },
-  long_channel_id: { channels: [{ ...chOdom, ch: longId }] },
-  duplicate_channel_id: { channels: [chOdom, { ...chOdom, encoding: "jpeg.v1" }] },
-  empty_encoding: { channels: [{ ...chOdom, encoding: "" }] },
-  long_encoding: { channels: [{ ...chOdom, encoding: longId }] },
-  zero_max_hz: { channels: [{ ...chOdom, maxHz: 0 }] },
-  negative_max_hz: { channels: [{ ...chOdom, maxHz: -2.5 }] },
-  panels_not_list: { channels: [chOdom], panels: {} },
-  null_panels: { channels: [chOdom], panels: null },
-  panel_bad_shape: { channels: [chOdom], panels: [{ id: "a" }] },
+  version_missing: { channels: [] },
+  version_string: { version: "1", channels: [] },
+  version_bool: { version: true, channels: [] },
+  version_two: { version: 2, channels: [] },
+  version_float: { version: 1.5, channels: [] },
+  // The version gate runs before the channel shape check, so a future
+  // manifest whose channels no longer parse still reports its version.
+  version_before_channel_shape: { version: 2, channels: { alien: true } },
+  missing_channels: { version: 1 },
+  channel_bad_shape: { version: 1, channels: [{ ch: "odom" }] },
+  bad_delivery: { version: 1, channels: [{ ...chOdom, delivery: "sometimes" }] },
+  max_hz_string: { version: 1, channels: [{ ...chOdom, maxHz: "20" }] },
+  max_hz_bool: { version: 1, channels: [{ ...chOdom, maxHz: true }] },
+  empty_channel_id: { version: 1, channels: [{ ...chOdom, ch: "" }] },
+  long_channel_id: { version: 1, channels: [{ ...chOdom, ch: longId }] },
+  duplicate_channel_id: { version: 1, channels: [chOdom, { ...chOdom, encoding: "jpeg.v1" }] },
+  empty_encoding: { version: 1, channels: [{ ...chOdom, encoding: "" }] },
+  long_encoding: { version: 1, channels: [{ ...chOdom, encoding: longId }] },
+  zero_max_hz: { version: 1, channels: [{ ...chOdom, maxHz: 0 }] },
+  negative_max_hz: { version: 1, channels: [{ ...chOdom, maxHz: -2.5 }] },
+  dir_tx_channel: { version: 1, channels: [{ ...chOdom, dir: "tx" }] },
+  dir_invalid: { version: 1, channels: [{ ...chOdom, dir: "both" }] },
+  dir_null: { version: 1, channels: [{ ...chOdom, dir: null }] },
+  channel_params_roundtrip: { version: 1, channels: [chImageFull] },
+  channel_params_not_object: { version: 1, channels: [{ ...chOdom, params: 1.5 }] },
+  panels_not_list: { version: 1, channels: [chOdom], panels: {} },
+  null_panels: { version: 1, channels: [chOdom], panels: null },
+  panel_bad_shape: { version: 1, channels: [chOdom], panels: [{ id: "a" }] },
   panel_channels_not_strings: {
+    version: 1,
     channels: [chOdom],
     panels: [{ id: "a", kind: "readout", channels: [1.5] }],
   },
-  empty_panel_id: { channels: [chOdom], panels: [{ id: "", kind: "readout", channels: [] }] },
-  empty_panel_kind: { channels: [chOdom], panels: [{ id: "a", kind: "", channels: [] }] },
+  panel_title_roundtrip: {
+    version: 1,
+    channels: [chOdom],
+    panels: [{ ...pPose, title: "Poziție" }],
+  },
+  panel_title_not_string: { version: 1, channels: [chOdom], panels: [{ ...pPose, title: 1.5 }] },
+  panel_params_not_object: { version: 1, channels: [chOdom], panels: [{ ...pPose, params: [] }] },
+  empty_panel_id: {
+    version: 1,
+    channels: [chOdom],
+    panels: [{ id: "", kind: "readout", channels: [] }],
+  },
+  empty_panel_kind: {
+    version: 1,
+    channels: [chOdom],
+    panels: [{ id: "a", kind: "", channels: [] }],
+  },
   duplicate_panel_id: {
+    version: 1,
     channels: [chOdom],
     panels: [
       { id: "a", kind: "readout", channels: [] },
@@ -159,56 +233,216 @@ const manifestCases: Record<string, unknown> = {
     ],
   },
   panel_unknown_channel: {
+    version: 1,
     channels: [chOdom],
     panels: [{ id: "a", kind: "video", channels: ["lidar"] }],
   },
   video_panel_no_channel: {
+    version: 1,
     channels: [chImage],
     panels: [{ id: "cam", kind: "video", channels: [] }],
   },
   video_panel_two_channels: {
+    version: 1,
     channels: [chImage, chOdom],
     panels: [{ id: "cam", kind: "video", channels: ["color_image", "odom"] }],
   },
   video_panel_wrong_encoding: {
+    version: 1,
     channels: [chOdom],
     panels: [{ id: "cam", kind: "video", channels: ["odom"] }],
   },
   video_panel_wrong_delivery: {
+    version: 1,
     channels: [{ ...chImage, delivery: "reliable" }],
     panels: [{ id: "cam", kind: "video", channels: ["color_image"] }],
   },
+  video_panel_tx_channel: {
+    version: 1,
+    channels: [{ ...chImage, dir: "tx" }],
+    panels: [{ id: "cam", kind: "video", channels: ["color_image"] }],
+  },
   map2d_panel_full: {
+    version: 1,
     channels: [chCostmap, chOdom],
     panels: [{ id: "map", kind: "map2d", channels: ["global_costmap", "odom"] }],
   },
   map2d_panel_no_pose: {
+    version: 1,
     channels: [chCostmap],
     panels: [{ id: "map", kind: "map2d", channels: ["global_costmap"] }],
   },
   map2d_panel_no_channel: {
+    version: 1,
     channels: [chCostmap],
     panels: [{ id: "map", kind: "map2d", channels: [] }],
   },
   map2d_panel_three_channels: {
+    version: 1,
     channels: [chCostmap, chOdom, chImage],
     panels: [{ id: "map", kind: "map2d", channels: ["global_costmap", "odom", "color_image"] }],
   },
   map2d_panel_wrong_encoding: {
+    version: 1,
     channels: [chOdom],
     panels: [{ id: "map", kind: "map2d", channels: ["odom"] }],
   },
   map2d_panel_wrong_delivery: {
+    version: 1,
     channels: [{ ...chCostmap, delivery: "reliable" }],
     panels: [{ id: "map", kind: "map2d", channels: ["global_costmap"] }],
   },
   map2d_panel_bad_pose: {
+    version: 1,
     channels: [chCostmap, chImage],
     panels: [{ id: "map", kind: "map2d", channels: ["global_costmap", "color_image"] }],
   },
-  layout_not_list: { channels: [chOdom], layout: "row" },
-  layout_not_strings: { channels: [chOdom], layout: [1.5] },
-  layout_unknown_panel: { channels: [chOdom], layout: ["ghost"] },
+  map2d_panel_tx_costmap: {
+    version: 1,
+    channels: [{ ...chCostmap, dir: "tx" }],
+    panels: [{ id: "map", kind: "map2d", channels: ["global_costmap"] }],
+  },
+  map2d_panel_tx_pose: {
+    version: 1,
+    channels: [chCostmap, { ...chOdom, dir: "tx" }],
+    panels: [{ id: "map", kind: "map2d", channels: ["global_costmap", "odom"] }],
+  },
+  layout_single_panel: { version: 1, channels: [chOdom], panels: [pPose], layout: "pose" },
+  layout_row_shares: {
+    version: 1,
+    channels: [chImage, chOdom],
+    panels: [pCamera, pPose],
+    layout: { row: ["camera", "pose"], shares: [2.5, 1.5] },
+  },
+  // Outer col has no shares: pins that absent shares stay absent in the
+  // normalized tree (the equal-split default belongs to the renderer).
+  layout_nested_tree: {
+    version: 1,
+    channels: [chImage, chOdom],
+    panels: [pCamera, pPose, { id: "drive", kind: "teleop", channels: [] }],
+    layout: { col: [{ row: ["camera", "pose"], shares: [1.5, 2.5] }, "drive"] },
+  },
+  layout_null: { version: 1, channels: [chOdom], panels: [pPose], layout: null },
+  layout_bad_node_type: { version: 1, channels: [chOdom], panels: [pPose], layout: 1.5 },
+  layout_flat_list_rejected: {
+    version: 1,
+    channels: [chOdom],
+    panels: [pPose],
+    layout: ["pose"],
+  },
+  layout_row_and_col: {
+    version: 1,
+    channels: [chImage, chOdom],
+    panels: [pCamera, pPose],
+    layout: { row: ["camera"], col: ["pose"] },
+  },
+  layout_neither_row_nor_col: {
+    version: 1,
+    channels: [chOdom],
+    panels: [pPose],
+    layout: { shares: [1.5] },
+  },
+  layout_children_not_array: {
+    version: 1,
+    channels: [chOdom],
+    panels: [pPose],
+    layout: { row: "pose" },
+  },
+  layout_empty_children: { version: 1, channels: [chOdom], panels: [pPose], layout: { row: [] } },
+  layout_nested_bad_node: {
+    version: 1,
+    channels: [chOdom],
+    panels: [pPose],
+    layout: { row: [{ col: [2.5] }] },
+  },
+  layout_shares_not_array: {
+    version: 1,
+    channels: [chOdom],
+    panels: [pPose],
+    layout: { row: ["pose"], shares: "big" },
+  },
+  layout_shares_not_numbers: {
+    version: 1,
+    channels: [chOdom],
+    panels: [pPose],
+    layout: { row: ["pose"], shares: ["2"] },
+  },
+  layout_shares_bool: {
+    version: 1,
+    channels: [chOdom],
+    panels: [pPose],
+    layout: { row: ["pose"], shares: [true] },
+  },
+  layout_shares_length_mismatch: {
+    version: 1,
+    channels: [chImage, chOdom],
+    panels: [pCamera, pPose],
+    layout: { row: ["camera", "pose"], shares: [1.5] },
+  },
+  layout_share_zero: {
+    version: 1,
+    channels: [chOdom],
+    panels: [pPose],
+    layout: { row: ["pose"], shares: [0] },
+  },
+  layout_share_negative: {
+    version: 1,
+    channels: [chOdom],
+    panels: [pPose],
+    layout: { row: ["pose"], shares: [-1.5] },
+  },
+  layout_share_null: {
+    version: 1,
+    channels: [chOdom],
+    panels: [pPose],
+    layout: { row: ["pose"], shares: [null] },
+  },
+  layout_unknown_panel: { version: 1, channels: [chOdom], panels: [pPose], layout: "ghost" },
+  layout_deep_unknown_panel: {
+    version: 1,
+    channels: [chOdom],
+    panels: [pPose],
+    layout: { row: [{ col: ["ghost"] }] },
+  },
+  duplicate_layout_panel: {
+    version: 1,
+    channels: [chImage],
+    panels: [pCamera],
+    layout: { row: ["camera", "camera"] },
+  },
+  duplicate_panel_across_layout_and_pages: {
+    version: 1,
+    channels: [chImage],
+    panels: [pCamera],
+    layout: "camera",
+    pages: ["camera"],
+  },
+  duplicate_panel_within_pages: {
+    version: 1,
+    channels: [chImage],
+    panels: [pCamera],
+    pages: ["camera", "camera"],
+  },
+  pages_only: { version: 1, channels: [chOdom], panels: [pPose], pages: ["pose"] },
+  pages_and_layout: {
+    version: 1,
+    channels: [chImage, chOdom],
+    panels: [pCamera, pPose],
+    layout: "camera",
+    pages: ["pose"],
+  },
+  unknown_page_panel: { version: 1, channels: [chOdom], panels: [pPose], pages: ["ghost"] },
+  // Layout is validated before pages: the layout's unknown panel wins.
+  layout_error_before_pages: {
+    version: 1,
+    channels: [chOdom],
+    panels: [pPose],
+    layout: "ghost",
+    pages: ["phantom"],
+  },
+  pages_not_list: { version: 1, channels: [chOdom], panels: [pPose], pages: {} },
+  pages_not_strings: { version: 1, channels: [chOdom], panels: [pPose], pages: [1.5] },
+  pages_null: { version: 1, channels: [chOdom], panels: [pPose], pages: null },
 };
 
 const control = {
