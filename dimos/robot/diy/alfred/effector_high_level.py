@@ -58,8 +58,10 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-# How long teardown waits for the odometry poll to finish its current RPC.
-_POLL_DRAIN_TIMEOUT = 2.0
+# How long each teardown step waits on the shared connection before giving up.
+# A wedged Portal call blocks the poll, and the poll holds the client lock, so
+# an unbounded wait here would hang shutdown instead of just losing the stop.
+_TEARDOWN_TIMEOUT = 2.0
 
 
 class AlfredHighLevelConfig(ModuleConfig):
@@ -109,13 +111,15 @@ class AlfredHighLevel(Module):
             # and let it finish the call it already started.
             self._odometry_stop.set()
             if self._odometry_task is not None:
-                done, _ = await asyncio.wait({self._odometry_task}, timeout=_POLL_DRAIN_TIMEOUT)
+                done, _ = await asyncio.wait({self._odometry_task}, timeout=_TEARDOWN_TIMEOUT)
                 if not done:
                     logger.warning("Alfred wheel odometry poll is still running; stopping anyway")
             if self._stop_task is not None and not self._stop_task.done():
                 self._stop_task.cancel()
             try:
-                await self._send_velocity(0.0, 0.0, 0.0)
+                await asyncio.wait_for(self._send_velocity(0.0, 0.0, 0.0), _TEARDOWN_TIMEOUT)
+            except asyncio.TimeoutError:
+                logger.error("Alfred did not take the stop command; it may still be moving")
             except Exception as e:
                 logger.error(f"Error stopping Alfred: {e}")
             try:
