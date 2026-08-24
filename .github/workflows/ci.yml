@@ -90,9 +90,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           # The bake e2e's generated crate: caching it keeps its Cargo.lock, so
-          # dependency resolution stays pinned, and its target dir of built deps.
-          # It lives outside target/ because rust-cache prunes whatever it finds
-          # there, including the generated sources and lockfile.
+          # dependency resolution stays pinned to what the workspace already
+          # built. Its artifacts need no entry here, they go to the shared
+          # target dir. It sits outside target/ because rust-cache prunes
+          # whatever it finds there, including generated sources.
           cache-directories: build/dimos-bake
           key: bake-e2e
           # Only main writes the cache, so a PR run cannot evict main's entry

@@ -8,7 +8,6 @@ members = [
     "dimos/hardware/sensors/lidar/virtual_mid360",
     "examples/native-modules/rust",
 ]
-exclude = ["target"]
 
 [profile.release]
 lto = "thin"

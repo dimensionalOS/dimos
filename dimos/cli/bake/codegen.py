@@ -44,10 +44,19 @@ path = "src/main.rs"
 [dependencies]
 {dependencies}
 
+# These must stay identical to the workspace root's profiles. The host shares the
+# workspace target dir, and cargo fingerprints dependencies by profile, so any
+# difference here makes the two builds invalidate each other's artifacts. Strip is
+# scoped to the host package for that reason.
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+[profile.release.package.{host}]
 strip = "symbols"
+
+[profile.dev]
+debug = 0
 """
 
 _MAIN_TEMPLATE = """{header}
