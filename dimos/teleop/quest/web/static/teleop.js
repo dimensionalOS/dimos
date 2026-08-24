@@ -19,15 +19,22 @@ const GRIPPER_PINCH_DISTANCE_METERS = 0.04;
 // Video panel state
 const videoEl = document.getElementById('videoFeed');
 let videoTex = null;
-let videoProgram = null;
-let videoVbo = null;
-let videoAttribs = null;
-let videoUniforms = null;
+let quadProgram = null;
+let quadVbo = null;
+let quadAttribs = null;
+let quadUniforms = null;
 let videoReady = false;  // true after first frame loads
 let videoDirty = false;  // true when a new JPEG has finished decoding
 let videoAspect = 1.0;   // cached at load time — see videoEl.onload
 let prevBlobUrl = null;  // revoked when the next-next blob arrives
 const videoModelMatrix = new Float32Array(16);
+const hudModelMatrix = new Float32Array(16);
+const identityMatrix = new Float32Array([
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+]);
 
 const PANEL_POS_X = 0.0;
 const PANEL_POS_Y = 1.4;   // ~eye height
@@ -42,10 +49,6 @@ let hudOffline = false;
 let hudCanvas = null;
 let hudContext = null;
 let hudTexture = null;
-let hudProgram = null;
-let hudVbo = null;
-let hudAttribs = null;
-let hudUniforms = null;
 let hudDirty = false;
 let hudElapsedSecond = -1;
 
@@ -123,8 +126,7 @@ function initGL() {
     initCollectionHud();
 }
 
-// Compile + link a textured-quad pipeline that renders the camera
-// feed as a world-locked panel inside the WebXR scene.
+// Compile one textured-quad pipeline for the world-locked video and head-locked HUD.
 function initVideoPanel() {
     const vsSrc = `
         attribute vec2 a_pos;
@@ -157,12 +159,12 @@ function initVideoPanel() {
     };
     const vs = compile(gl.VERTEX_SHADER, vsSrc);
     const fs = compile(gl.FRAGMENT_SHADER, fsSrc);
-    videoProgram = gl.createProgram();
-    gl.attachShader(videoProgram, vs);
-    gl.attachShader(videoProgram, fs);
-    gl.linkProgram(videoProgram);
-    if (!gl.getProgramParameter(videoProgram, gl.LINK_STATUS)) {
-        throw new Error('Program link failed: ' + gl.getProgramInfoLog(videoProgram));
+    quadProgram = gl.createProgram();
+    gl.attachShader(quadProgram, vs);
+    gl.attachShader(quadProgram, fs);
+    gl.linkProgram(quadProgram);
+    if (!gl.getProgramParameter(quadProgram, gl.LINK_STATUS)) {
+        throw new Error('Program link failed: ' + gl.getProgramInfoLog(quadProgram));
     }
 
     // Quad as TRIANGLE_STRIP: x, y, u, v. v=0 at top of quad +
@@ -173,27 +175,22 @@ function initVideoPanel() {
         -1,  1, 0, 0,
          1,  1, 1, 0,
     ]);
-    videoVbo = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, videoVbo);
+    quadVbo = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadVbo);
     gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
 
-    videoAttribs = {
-        pos: gl.getAttribLocation(videoProgram, 'a_pos'),
-        uv:  gl.getAttribLocation(videoProgram, 'a_uv'),
+    quadAttribs = {
+        pos: gl.getAttribLocation(quadProgram, 'a_pos'),
+        uv:  gl.getAttribLocation(quadProgram, 'a_uv'),
     };
-    videoUniforms = {
-        proj:  gl.getUniformLocation(videoProgram, 'u_proj'),
-        view:  gl.getUniformLocation(videoProgram, 'u_view'),
-        model: gl.getUniformLocation(videoProgram, 'u_model'),
-        tex:   gl.getUniformLocation(videoProgram, 'u_tex'),
+    quadUniforms = {
+        proj:  gl.getUniformLocation(quadProgram, 'u_proj'),
+        view:  gl.getUniformLocation(quadProgram, 'u_view'),
+        model: gl.getUniformLocation(quadProgram, 'u_model'),
+        tex:   gl.getUniformLocation(quadProgram, 'u_tex'),
     };
 
-    videoTex = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, videoTex);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    videoTex = createTexture();
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
 
     // Cache aspect here — naturalWidth can transiently drop to 0
@@ -207,6 +204,16 @@ function initVideoPanel() {
     };
 }
 
+function createTexture() {
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    return texture;
+}
+
 function uploadVideoTexture() {
     gl.bindTexture(gl.TEXTURE_2D, videoTex);
     gl.texImage2D(
@@ -214,38 +221,58 @@ function uploadVideoTexture() {
     );
 }
 
-function updateModelMatrix() {
+function setModelMatrix(matrix, halfWidth, halfHeight, x, y, z) {
+    matrix.fill(0);
+    matrix[0] = halfWidth;
+    matrix[5] = halfHeight;
+    matrix[10] = 1;
+    matrix[12] = x;
+    matrix[13] = y;
+    matrix[14] = z;
+    matrix[15] = 1;
+}
+
+function updateVideoModelMatrix() {
     const halfH = PANEL_HEIGHT * 0.5;
-    const halfW = halfH * videoAspect;
-    videoModelMatrix.fill(0);
-    videoModelMatrix[0] = halfW;
-    videoModelMatrix[5] = halfH;
-    videoModelMatrix[10] = 1;
-    videoModelMatrix[12] = PANEL_POS_X;
-    videoModelMatrix[13] = PANEL_POS_Y;
-    videoModelMatrix[14] = PANEL_POS_Z;
-    videoModelMatrix[15] = 1;
+    setModelMatrix(
+        videoModelMatrix,
+        halfH * videoAspect,
+        halfH,
+        PANEL_POS_X,
+        PANEL_POS_Y,
+        PANEL_POS_Z,
+    );
+}
+
+function renderTexturedQuad(view, viewport, texture, modelMatrix, viewMatrix) {
+    gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
+    gl.useProgram(quadProgram);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadVbo);
+    gl.enableVertexAttribArray(quadAttribs.pos);
+    gl.vertexAttribPointer(quadAttribs.pos, 2, gl.FLOAT, false, 16, 0);
+    gl.enableVertexAttribArray(quadAttribs.uv);
+    gl.vertexAttribPointer(quadAttribs.uv,  2, gl.FLOAT, false, 16, 8);
+
+    gl.uniformMatrix4fv(quadUniforms.proj, false, view.projectionMatrix);
+    gl.uniformMatrix4fv(quadUniforms.view, false, viewMatrix);
+    gl.uniformMatrix4fv(quadUniforms.model, false, modelMatrix);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.uniform1i(quadUniforms.tex, 0);
+
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 }
 
 function renderVideoPanel(view, viewport) {
-    gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
-    gl.useProgram(videoProgram);
-
-    gl.bindBuffer(gl.ARRAY_BUFFER, videoVbo);
-    gl.enableVertexAttribArray(videoAttribs.pos);
-    gl.vertexAttribPointer(videoAttribs.pos, 2, gl.FLOAT, false, 16, 0);
-    gl.enableVertexAttribArray(videoAttribs.uv);
-    gl.vertexAttribPointer(videoAttribs.uv,  2, gl.FLOAT, false, 16, 8);
-
-    gl.uniformMatrix4fv(videoUniforms.proj,  false, view.projectionMatrix);
-    gl.uniformMatrix4fv(videoUniforms.view,  false, view.transform.inverse.matrix);
-    gl.uniformMatrix4fv(videoUniforms.model, false, videoModelMatrix);
-
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, videoTex);
-    gl.uniform1i(videoUniforms.tex, 0);
-
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    renderTexturedQuad(
+        view,
+        viewport,
+        videoTex,
+        videoModelMatrix,
+        view.transform.inverse.matrix,
+    );
 }
 
 function handleServerMessage(data) {
@@ -267,118 +294,15 @@ function initCollectionHud() {
     hudCanvas.height = HUD_HEIGHT_PX;
     hudContext = hudCanvas.getContext('2d');
 
-    const vsSrc = `
-        attribute vec2 a_pos;
-        attribute vec2 a_uv;
-        uniform mat4 u_proj;
-        varying vec2 v_uv;
-        void main() {
-            vec3 position = vec3(
-                a_pos.x * ${HUD_WIDTH_METERS * 0.5},
-                ${HUD_CENTER_Y} + a_pos.y * ${HUD_HEIGHT_METERS * 0.5},
-                ${HUD_CENTER_Z}
-            );
-            gl_Position = u_proj * vec4(position, 1.0);
-            v_uv = a_uv;
-        }`;
-    const fsSrc = `
-        precision mediump float;
-        varying vec2 v_uv;
-        uniform sampler2D u_tex;
-        void main() {
-            gl_FragColor = texture2D(u_tex, v_uv);
-        }`;
-
-    const compile = (type, source) => {
-        const shader = gl.createShader(type);
-        gl.shaderSource(shader, source);
-        gl.compileShader(shader);
-        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-            throw new Error(
-                'HUD shader compile failed: ' + gl.getShaderInfoLog(shader),
-            );
-        }
-        return shader;
-    };
-
-    hudProgram = gl.createProgram();
-    gl.attachShader(hudProgram, compile(gl.VERTEX_SHADER, vsSrc));
-    gl.attachShader(hudProgram, compile(gl.FRAGMENT_SHADER, fsSrc));
-    gl.linkProgram(hudProgram);
-    if (!gl.getProgramParameter(hudProgram, gl.LINK_STATUS)) {
-        throw new Error(
-            'HUD program link failed: ' + gl.getProgramInfoLog(hudProgram),
-        );
-    }
-
-    const verts = new Float32Array([
-        -1,
-        -1,
+    hudTexture = createTexture();
+    setModelMatrix(
+        hudModelMatrix,
+        HUD_WIDTH_METERS * 0.5,
+        HUD_HEIGHT_METERS * 0.5,
         0,
-        1,
-        1,
-        -1,
-        1,
-        1,
-        -1,
-        1,
-        0,
-        0,
-        1,
-        1,
-        1,
-        0,
-    ]);
-    hudVbo = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, hudVbo);
-    gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
-
-    hudAttribs = {
-        pos: gl.getAttribLocation(hudProgram, 'a_pos'),
-        uv: gl.getAttribLocation(hudProgram, 'a_uv'),
-    };
-    hudUniforms = {
-        proj: gl.getUniformLocation(hudProgram, 'u_proj'),
-        tex: gl.getUniformLocation(hudProgram, 'u_tex'),
-    };
-
-    hudTexture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, hudTexture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-}
-
-function roundedRect(context, x, y, width, height, radius) {
-    context.beginPath();
-    context.moveTo(x + radius, y);
-    context.lineTo(x + width - radius, y);
-    context.quadraticCurveTo(x + width, y, x + width, y + radius);
-    context.lineTo(x + width, y + height - radius);
-    context.quadraticCurveTo(
-        x + width,
-        y + height,
-        x + width - radius,
-        y + height,
+        HUD_CENTER_Y,
+        HUD_CENTER_Z,
     );
-    context.lineTo(x + radius, y + height);
-    context.quadraticCurveTo(x, y + height, x, y + height - radius);
-    context.lineTo(x, y + radius);
-    context.quadraticCurveTo(x, y, x + radius, y);
-    context.closePath();
-}
-
-function fitHudText(context, text, maxWidth) {
-    if (context.measureText(text).width <= maxWidth) return text;
-    let shortened = text;
-    while (
-        shortened.length > 1 &&
-        context.measureText(shortened + '...').width > maxWidth
-    ) {
-        shortened = shortened.slice(0, -1);
-    }
-    return shortened + '...';
 }
 
 function drawHudSection(
@@ -409,12 +333,13 @@ function drawHudSection(
         valueLeft += 34;
     }
     context.fillStyle = color;
-    context.font = '600 43px ui-monospace, SFMono-Regular, Menlo, monospace';
-    context.fillText(
-        fitHudText(context, value, x + width - valueLeft - 24),
-        valueLeft,
-        174,
-    );
+    const font = 'ui-monospace, SFMono-Regular, Menlo, monospace';
+    context.font = `600 43px ${font}`;
+    const availableWidth = x + width - valueLeft - 24;
+    const measuredWidth = context.measureText(value).width;
+    const fontSize = Math.min(43, 43 * availableWidth / measuredWidth);
+    context.font = `600 ${fontSize}px ${font}`;
+    context.fillText(value, valueLeft, 174);
 }
 
 function collectionElapsedSeconds() {
@@ -443,17 +368,17 @@ function updateHudTexture() {
     const stateColor = hudOffline ? '#f6b94d' : recording ? '#ff6b6b' : '#63d6a3';
     const lastEvent = episodeStatus.last_event === 'init' ? 'NONE' : episodeStatus.last_event.toUpperCase();
     const sections = [
-        [310, 'STATE', state, '#f4f7fb', stateColor],
-        [160, 'TAKE', String(saved + discarded + 1).padStart(3, '0'), '#f4f7fb'],
-        [210, 'ELAPSED', hudOffline ? '--:--' : formatElapsed(elapsed), '#f4f7fb'],
-        [230, 'COLLECTED', String(saved).padStart(3, '0'), '#8de2bd'],
-        [240, 'DISCARDED', String(discarded).padStart(3, '0'), '#f7c66d'],
-        [180, 'LAST', lastEvent, '#f4f7fb'],
-        [718, 'TASK', episodeStatus.task_label || 'UNASSIGNED', '#f4f7fb'],
+        [400, 'STATE', state, '#f4f7fb', stateColor],
+        [220, 'TAKE', String(saved + discarded + 1).padStart(3, '0'), '#f4f7fb'],
+        [280, 'ELAPSED', hudOffline ? '--:--' : formatElapsed(elapsed), '#f4f7fb'],
+        [260, 'SAVED', String(saved).padStart(3, '0'), '#8de2bd'],
+        [320, 'DISCARDED', String(discarded).padStart(3, '0'), '#f7c66d'],
+        [568, 'LAST ACTION', lastEvent, '#f4f7fb'],
     ];
 
     hudContext.clearRect(0, 0, HUD_WIDTH_PX, HUD_HEIGHT_PX);
-    roundedRect(hudContext, 8, 8, HUD_WIDTH_PX - 16, HUD_HEIGHT_PX - 16, 34);
+    hudContext.beginPath();
+    hudContext.roundRect(8, 8, HUD_WIDTH_PX - 16, HUD_HEIGHT_PX - 16, 34);
     hudContext.fillStyle = 'rgba(8, 16, 29, 0.76)';
     hudContext.fill();
     hudContext.strokeStyle = 'rgba(188, 210, 235, 0.35)';
@@ -479,20 +404,9 @@ function updateHudTexture() {
 
 function renderCollectionHud(view, viewport) {
     if (!episodeStatus) return;
-    gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
-    gl.useProgram(hudProgram);
-    gl.bindBuffer(gl.ARRAY_BUFFER, hudVbo);
-    gl.enableVertexAttribArray(hudAttribs.pos);
-    gl.vertexAttribPointer(hudAttribs.pos, 2, gl.FLOAT, false, 16, 0);
-    gl.enableVertexAttribArray(hudAttribs.uv);
-    gl.vertexAttribPointer(hudAttribs.uv, 2, gl.FLOAT, false, 16, 8);
-    gl.uniformMatrix4fv(hudUniforms.proj, false, view.projectionMatrix);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, hudTexture);
-    gl.uniform1i(hudUniforms.tex, 0);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    renderTexturedQuad(view, viewport, hudTexture, hudModelMatrix, identityMatrix);
     gl.disable(gl.BLEND);
 }
 
@@ -625,7 +539,7 @@ function onXRFrame(_time, frame) {
         uploadVideoTexture();
         videoDirty = false;
     }
-    if (videoReady) updateModelMatrix();
+    if (videoReady) updateVideoModelMatrix();
     updateHudTexture();
     const pose = frame.getViewerPose(xrRefSpace);
     if (pose) {
