@@ -61,10 +61,8 @@ class AlfredHighLevelConfig(ModuleConfig):
     address: str = DEFAULT_ADDRESS
     cmd_vel_timeout: float = 0.2
     wheel_odometry_hz: float = 50.0
-    # Not "odom": Point-LIO publishes odom->base_link, and a second publisher on
-    # that edge gives base_link two parents, which is a malformed tf tree rather
-    # than a redundant one. Wheel odometry gets its own root and stays a plain
-    # message stream for a consumer to fuse.
+    # Deliberately not "odom", and never published to tf: this is a plain message
+    # stream for a consumer to fuse, not a second publisher on odom->base_link.
     wheel_odom_frame_id: str = "wheel_odom"
     base_frame_id: str = "base_link"
 
