@@ -19,8 +19,8 @@ from typing import TYPE_CHECKING, cast
 import numpy as np
 import pytest
 
+from dimos.evals.vqa.calibrated_frame import CalibratedFrame
 from dimos.evals.vqa.contracts import InsufficientEvidenceError
-from dimos.evals.vqa.preprocessing import CalibratedFrame
 from dimos.evals.vqa.primitives.edgetam import EdgeTamObjectMaskPipeline
 from dimos.evals.vqa.primitives.range import LidarRangeEstimator
 from dimos.msgs.geometry_msgs.Transform import Transform

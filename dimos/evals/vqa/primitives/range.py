@@ -25,7 +25,7 @@ from dimos.evals.vqa.contracts import InsufficientEvidenceError, ObjectMaskEstim
 from dimos.perception.detection.type.detection3d.pointcloud import ProjectedPointCloud
 
 if TYPE_CHECKING:
-    from dimos.evals.vqa.preprocessing import CalibratedFrame
+    from dimos.evals.vqa.calibrated_frame import CalibratedFrame
 
 ObjectName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 

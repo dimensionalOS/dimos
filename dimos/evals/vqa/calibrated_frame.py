@@ -86,7 +86,7 @@ class RecordingFramePreprocessor:
         self._store: Store | None = None
         self._images: Stream[Image] | None = None
         self._lidar: Stream[PointCloud2] | None = None
-        self._recorded_camera_info: CameraInfo | None = None
+        self._recorded_camera_info: Stream[CameraInfo] | None = None
         self._recorded_tf: TFLookup | None = None
         self._rectifier = _ImageRectifier()
 
@@ -124,12 +124,12 @@ class RecordingFramePreprocessor:
 
             self._images = store.stream("color_image", Image).order_by("ts")
             self._lidar = store.stream(lidar_name, PointCloud2).order_by("ts")
+            recorded_camera_info = store.stream("camera_info", CameraInfo).order_by("ts")
             try:
-                self._recorded_camera_info = (
-                    store.stream("camera_info", CameraInfo).order_by("ts").first().data
-                )
+                recorded_camera_info.first()
             except LookupError as exc:
                 raise ValueError("recorded camera_info stream is empty") from exc
+            self._recorded_camera_info = recorded_camera_info
             self._recorded_tf = StreamTF.from_store(store)
             if self._recorded_tf is None:
                 raise ValueError("recorded tf stream is unavailable")
@@ -173,10 +173,11 @@ class RecordingFramePreprocessor:
         source_image = image_obs.data.copy()
         source_image.ts = image_obs.ts
 
-        source_camera_info = self._recorded_camera_info
+        recorded_camera_info = self._recorded_camera_info
         recorded_tf = self._recorded_tf
-        if source_camera_info is None or recorded_tf is None:
+        if recorded_camera_info is None or recorded_tf is None:
             raise RuntimeError("recorded calibration was not initialized")
+        source_camera_info = _camera_info_at(recorded_camera_info, image_obs.ts)
         image, camera_info = self._rectifier.rectify(source_image, source_camera_info)
         pointcloud_to_camera = _recorded_pointcloud_to_camera(
             image_obs,
@@ -206,9 +207,10 @@ class RecordingFramePreprocessor:
         observation = self._images.offset(frame_index).limit(1).first()
         image = observation.data.copy()
         image.ts = observation.ts
-        camera_info = self._recorded_camera_info
-        if camera_info is None:
+        recorded_camera_info = self._recorded_camera_info
+        if recorded_camera_info is None:
             raise RuntimeError("camera calibration was not initialized")
+        camera_info = _camera_info_at(recorded_camera_info, observation.ts)
         return self._rectifier.rectify(image, camera_info)[0]
 
 
@@ -269,6 +271,16 @@ def _align_one(
             "recording has no synchronized point cloud within tolerance"
         ) from exc
     return cast("Observation[Any]", pair[1])
+
+
+def _camera_info_at(stream: Stream[CameraInfo], timestamp: float) -> CameraInfo:
+    """Return the latest recorded calibration applicable to a frame timestamp."""
+    try:
+        return stream.time_range(float("-inf"), timestamp).order_by("ts", desc=True).first().data
+    except LookupError as exc:
+        raise FrameGeometryUnavailableError(
+            f"recording has no camera calibration at or before image timestamp {timestamp}"
+        ) from exc
 
 
 def _recorded_pointcloud_to_camera(

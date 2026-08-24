@@ -29,7 +29,7 @@ from pydantic import (
 )
 
 if TYPE_CHECKING:
-    from dimos.evals.vqa.preprocessing import CalibratedFrame
+    from dimos.evals.vqa.calibrated_frame import CalibratedFrame
     from dimos.evals.vqa.primitives.edgetam import ObjectMaskEvidence
     from dimos.evals.vqa.primitives.range import ObjectRangeEvidence
     from dimos.msgs.sensor_msgs.Image import Image

@@ -32,7 +32,7 @@ from dimos.evals.vqa.contracts import (
 )
 
 if TYPE_CHECKING:
-    from dimos.evals.vqa.preprocessing import CalibratedFrame
+    from dimos.evals.vqa.calibrated_frame import CalibratedFrame
     from dimos.msgs.sensor_msgs.Image import Image
 
 

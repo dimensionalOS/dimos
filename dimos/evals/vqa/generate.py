@@ -49,7 +49,7 @@ _UNORDERED_FAMILIES = frozenset(
 )
 
 if TYPE_CHECKING:
-    from dimos.evals.vqa.preprocessing import CalibratedFrame
+    from dimos.evals.vqa.calibrated_frame import CalibratedFrame
 
 
 class GenerationRequest(BaseModel):
@@ -149,7 +149,7 @@ def generate_dataset(
     config: VqaGenerationConfig | None = None,
 ) -> GenerationResult:
     """Generate a standalone dataset from selected Memory images."""
-    from dimos.evals.vqa.preprocessing import (
+    from dimos.evals.vqa.calibrated_frame import (
         FrameGeometryUnavailableError,
         RecordingFramePreprocessor,
     )

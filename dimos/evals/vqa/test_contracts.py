@@ -55,7 +55,7 @@ from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
 if TYPE_CHECKING:
-    from dimos.evals.vqa.preprocessing import CalibratedFrame
+    from dimos.evals.vqa.calibrated_frame import CalibratedFrame
     from dimos.models.vl.base import VlModel
 
 

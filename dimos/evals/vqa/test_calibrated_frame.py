@@ -18,7 +18,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from dimos.evals.vqa.preprocessing import (
+from dimos.evals.vqa.calibrated_frame import (
     RecordingFramePreprocessor,
     _align_one,
 )
@@ -121,3 +121,57 @@ def test_load_uses_recorded_camera_info_and_tf(
     assert frame.calibration_source == "recorded"
     assert frame.camera_info.ts == image.ts
     assert np.allclose(frame.pointcloud_to_camera.to_matrix(), (-world_from_camera).to_matrix())
+
+
+def test_load_selects_camera_info_for_each_image_timestamp(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    recording = tmp_path / "recording.db"
+    images = (
+        Image.from_numpy(np.zeros((2, 2, 3), dtype=np.uint8), ts=10.0),
+        Image.from_numpy(np.zeros((2, 2, 3), dtype=np.uint8), ts=20.0),
+    )
+    camera_infos = (
+        CameraInfo.from_intrinsics(10.0, 10.0, 0.0, 0.0, 2, 2, frame_id="camera_early"),
+        CameraInfo.from_intrinsics(100.0, 100.0, 0.0, 0.0, 2, 2, frame_id="camera_late"),
+    )
+    camera_transforms = (
+        Transform(frame_id="world", child_frame_id="camera_early", ts=10.0),
+        Transform(frame_id="world", child_frame_id="camera_late", ts=20.0),
+    )
+
+    with SqliteStore(path=recording) as store:
+        image_stream = store.stream("color_image", Image)
+        lidar_stream = store.stream("lidar", PointCloud2)
+        camera_info_stream = store.stream("camera_info", CameraInfo)
+        tf_stream = store.stream("tf", TFMessage)
+        for image, timestamp in zip(images, (10.0, 20.0), strict=True):
+            image_stream.append(image, ts=timestamp)
+            lidar_stream.append(
+                PointCloud2.from_numpy(
+                    np.array([[0.0, 0.0, 1.0]]),
+                    frame_id="world",
+                    timestamp=timestamp,
+                ),
+                ts=timestamp,
+            )
+        camera_info_stream.append(camera_infos[0], ts=9.0)
+        camera_info_stream.append(camera_infos[1], ts=19.0)
+        for transform in camera_transforms:
+            tf_stream.append(TFMessage(transform), ts=transform.ts)
+
+    preprocessor = RecordingFramePreprocessor(recording)
+    calibrations: list[CameraInfo] = []
+
+    def rectify(source: Image, calibration: CameraInfo) -> tuple[Image, CameraInfo]:
+        calibrations.append(calibration)
+        return source, calibration.with_ts(source.ts)
+
+    monkeypatch.setattr(preprocessor._rectifier, "rectify", rectify)
+    with preprocessor:
+        early = preprocessor.load(0)
+        late = preprocessor.load(1)
+
+    assert calibrations == list(camera_infos)
+    assert early.camera_info.frame_id == "camera_early"
+    assert late.camera_info.frame_id == "camera_late"

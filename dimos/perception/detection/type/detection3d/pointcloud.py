@@ -41,7 +41,11 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class ProjectedPointCloud:
-    """Point-cloud samples projected once into a calibrated image."""
+    """Reusable per-frame projection with aligned source, camera, and image points.
+
+    Keeping the projected arrays together lets multiple detections share one
+    point-cloud transform and projection.
+    """
 
     source_points: np.ndarray
     camera_points: np.ndarray
