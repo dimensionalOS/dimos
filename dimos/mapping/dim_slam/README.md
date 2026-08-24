@@ -112,7 +112,7 @@ dimos run <your-blueprint> --viewer rerun --rerun-host 0.0.0.0 --g.rerun-open no
 ```
 
 `demo-cuvslam-realsense` is the smallest working example (camera + `DimSlam` +
-`OdometryHist`); `alfred-mls-nav` is a full robot.
+`OdometryPath`); `alfred-mls-nav` is a full robot.
 
 ### 6. Verify
 
