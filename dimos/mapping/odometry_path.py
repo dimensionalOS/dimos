@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Accumulate an odometry stream into the path it has travelled."""
-
 from __future__ import annotations
 
 from collections import deque
