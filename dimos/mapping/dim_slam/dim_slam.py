@@ -167,7 +167,7 @@ class DimSlamConfig(NativeModuleConfig):
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
 
     camera_mode: Literal["stereo", "mono", "rgbd"] = "stereo"
-    # Empty discovers a single camera or a single pair off camera_info.
+    # Empty: auto-discover from camera_info.
     camera_frames: list[str] = Field(default_factory=list)
     # Asserted, not performed: unrectified input is not corrected.
     rectified: bool = True
@@ -186,15 +186,12 @@ class DimSlamConfig(NativeModuleConfig):
     # filter. Implemented only on the CUDA path.
     cuvslam_enable_imu: bool = False
     # Translation std (m) above which the frame's motion is dropped and the path rebased.
-    # Well-constrained frames measure 0.01-0.3 m, degenerate bursts 5-330 m or NaN.
-    # 0 disables.
+    # Well-constrained frames measure 0.01-0.3 m, degenerate bursts 5-330 m or NaN; 0 disables.
     covariance_gate_translation_std: float = 1.0
-    # Frame-to-frame m/s and rad/s, catching confident teleports the covariance gate
-    # misses. 0 disables that limit.
+    # Frame-to-frame m/s and rad/s, catching teleports the covariance gate misses; 0 disables.
     speed_gate_max_linear: float = 5.0
     speed_gate_max_angular: float = 12.0
-    # rgbd only: raw depth units per metre. cuVSLAM assumes 1, and depth images are
-    # 16-bit millimetres.
+    # Raw depth units per metre; cuVSLAM assumes 1 and depth images are 16-bit millimetres.
     depth_units_per_meter: float = 1000.0
     # Range gate on the published depth_cloud, metres. Stereo depth error grows as range
     # squared, so the far gate decides whether the cloud is worth mapping with; 0 leaves
