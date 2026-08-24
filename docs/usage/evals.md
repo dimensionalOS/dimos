@@ -29,6 +29,62 @@ dimos evals list
 Each run prints a per-case table and writes `results.jsonl`, `summary.json`,
 and per-case transcripts to `~/.local/state/dimos/evals/run-*/`.
 
+## Generate VQA cases with RoboCasa
+
+The VQA generator turns a concrete simulator use case into ordinary passive
+eval cases. RoboCasa stays in a separate environment because its MuJoCo and
+asset requirements differ from dimOS; generating VQA does not add it to the
+default dimOS install.
+
+Create a YAML specification:
+
+```yaml
+source: robocasa
+use_case: beverage_inventory
+task: BeverageOrganization
+episodes: 3
+seed: 100
+camera: robot0_agentview_center
+image_size: [128, 128]  # width, height
+question_families: [semantic_presence, spatial_left_right]
+targets: [can, liquor, bottled_water, milk, beer, pitcher]
+min_visible_pixels: 20
+min_horizontal_separation: 0.05
+max_bbox_overlap: 0.9
+output: generated/beverage_inventory
+```
+
+Point the command at a prepared RoboCasa Python interpreter, then run the
+generated manifest through the normal eval runner:
+
+```bash
+dimos evals generate use_case.yaml \
+  --source-python /path/to/robocasa-env/bin/python
+dimos evals run generated/beverage_inventory/cases.json
+```
+
+On macOS, pass the environment's normal `bin/python` for this headless
+exporter. `mjpython` is intended for an interactive viewer and can fail when
+GLFW creates its Cocoa window from the worker thread.
+
+The output directory contains `observations.db`, `cases.json`, and
+`generation_summary.json`. The database stores only RGB observations shown to
+the evaluated model. Simulator segmentation and object identities derive the
+reference answers but remain private audit metadata in the manifest.
+The summary also lists the categories observed during generation so a
+developer can choose valid targets for a larger run.
+
+`semantic_presence` emits balanced visible/not-visible questions for the
+configured target categories. `spatial_left_right` uses segmentation
+centroids and rejects small, overlapping, horizontally close, or
+label-ambiguous object pairs. Generation is deterministic for a fixed source
+version, specification, and seed, refuses to overwrite an existing output,
+and fails if any requested question family produces no usable cases.
+
+These are the two built-in question families in the initial release. Adding a
+new family is a code extension to the source-neutral generator, not an
+arbitrary prompt supplied in YAML.
+
 ## Your first eval, end to end
 
 Build a tiny recording (any memory store works — this is the same API the
