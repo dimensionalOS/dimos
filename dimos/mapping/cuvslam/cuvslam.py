@@ -91,8 +91,7 @@ def driver_library_dir() -> Path | None:
 
 
 def driver_cuda_major() -> int:
-    """CUDA major the installed driver supports; 0 if there is no driver."""
-    # Absolute paths too: a nix-built python ignores ld.so.cache.
+    """0 if there is no driver."""
     candidates = ["libcuda.so.1"] + [
         str(directory / "libcuda.so.1")
         for directory in (*_DRIVER_ONLY_LIB_DIRS, *_HOST_LIB_DIRS)
@@ -147,18 +146,17 @@ def _driver_env() -> dict[str, str]:
 class CuvslamConfig(NativeModuleConfig):
     cwd: str | None = str(MODULE_DIR)
     executable: str = "result/bin/cuvslam_odometry"
-    # `nix build` drops the `result` symlink in the cwd.
     build_command: str | None = Field(
         default_factory=lambda: f"nix build github:dimensionalOS/dimSLAM/v0.2.0#{sdk_variant()}"
     )
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
 
-    # "stereo" is two or more overlapping cameras; "mono" is accurate up to scale.
+    # "mono" is accurate up to scale.
     camera_mode: Literal["stereo", "mono", "rgbd"] = "stereo"
-    # Empty discovers a single camera or a single pair off camera_info.
+    # Empty: auto-discover from camera_info.
     camera_frames: list[str] = Field(default_factory=list)
-    # Asserts the images arrive rectified; it does not rectify them.
+    # Asserted, not performed.
     rectified: bool = True
     # Off needs a libcuvslam built with ENFORCE_GPU=OFF; the stock SDK is GPU-only.
     use_gpu: bool = True
@@ -166,7 +164,7 @@ class CuvslamConfig(NativeModuleConfig):
     map_frame: str = "map"
     odom_frame: str = "odom"
     base_frame: str = "base_link"
-    # Frame the rig is built in; empty means base_frame. Output stays on base_frame either way.
+    # Frame the cuVSLAM rig is built in. Empty means base_frame.
     rig_frame: str = ""
     # Only read when Slam is off, where map->odom can only be identity.
     publish_map_to_odom: bool = True
@@ -180,17 +178,13 @@ class CuvslamConfig(NativeModuleConfig):
     slam_throttling_ms: int = 0
     # On, the tracker waits for the noise model on ``imu_info`` before building the rig.
     enable_imu: bool = False
-    # Rebase guard: a frame whose translation std exceeds this has its motion dropped and
-    # the path rebased onto the held pose. Metres; 0 publishes the raw integrator.
-    # Well-constrained frames report 0.01-0.3 m, degenerate bursts 5-330 m.
+    # Translation std (m) above which the frame's motion is dropped and the path rebased;
+    # 0 disables. Well-constrained frames report 0.01-0.3 m, degenerate bursts 5-330 m.
     covariance_gate_translation_std: float = 1.0
-    # The same rebase for implausible motion against the previous tracked frame, catching
-    # confident teleports the covariance gate misses. Metres/second and radians/second;
-    # above jogging (~4 m/s) and a fast handheld pan (~5 rad/s). 0 disables that limit.
+    # Frame-to-frame m/s and rad/s, catching teleports the covariance gate misses; 0 disables.
     speed_gate_max_linear: float = 5.0
     speed_gate_max_angular: float = 12.0
-    # rgbd only: raw depth units per metre. cuVSLAM assumes 1, and depth images are
-    # 16-bit millimetres.
+    # rgbd only: raw depth units per metre; cuVSLAM assumes 1 and depth is 16-bit millimetres.
     depth_units_per_meter: float = 1000.0
 
 

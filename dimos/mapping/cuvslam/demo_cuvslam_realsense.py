@@ -38,7 +38,7 @@ def path_at_true_height(path: Path) -> Any:
 
 
 def cuvslam_rerun_blueprint() -> Any:
-    """One 2D view holds both cameras: rerun names the entity after their shared topic."""
+    """Rerun names entities after the topic, which both cameras share."""
     import rerun as rr
     import rerun.blueprint as rrb
 
@@ -79,7 +79,6 @@ demo_cuvslam_realsense = (
     )
     .remappings(
         [
-            # Both imagers on one stream; split by frame_id.
             (RealSenseCamera, "infrared_left", "image"),
             (RealSenseCamera, "infrared_right", "image"),
             (RealSenseCamera, "infrared_left_camera_info", "camera_info"),
