@@ -41,3 +41,23 @@ def test_each_trial_retains_compact_exact_replay_identity() -> None:
 
 def test_process_isolation_is_explicit_and_never_selected_implicitly() -> None:
     pytest.skip(_PHASE)
+
+
+def test_episode_boundary_preflights_every_sample_before_process_launch() -> None:
+    pytest.skip(_PHASE)
+
+
+def test_episode_boundary_rejects_cross_topology_sample_before_process_launch() -> None:
+    pytest.skip(_PHASE)
+
+
+def test_process_isolation_prepares_each_requested_sample_index() -> None:
+    pytest.skip(_PHASE)
+
+
+def test_runner_consumes_provider_start_activation_without_duplicate_activate() -> None:
+    pytest.skip(_PHASE)
+
+
+def test_runner_publishes_one_boundary_for_the_startup_activation() -> None:
+    pytest.skip(_PHASE)

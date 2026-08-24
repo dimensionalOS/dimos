@@ -406,9 +406,21 @@ class EpisodeProvider(Protocol):
     provider_name: str
     supported_family_ids: tuple[str, ...]
 
-    def prepare(self, case: EvaluationCase, output_dir: Path) -> PreparedEpisode: ...
+    def prepare(
+        self,
+        case: EvaluationCase,
+        output_dir: Path,
+        *,
+        sample_index: int | None = None,
+    ) -> PreparedEpisode: ...
 
-    def start(self, episode: PreparedEpisode) -> None: ...
+    def validate_activation(
+        self,
+        episode: PreparedEpisode,
+        sample_index: int,
+    ) -> None: ...
+
+    def start(self, episode: PreparedEpisode) -> EpisodeActivationResult: ...
 
     def activate(
         self,

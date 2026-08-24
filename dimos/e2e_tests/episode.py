@@ -50,13 +50,34 @@ def prepare_episode(
     provider: EpisodeProvider,
     case: EvaluationCase,
     output_dir: Path,
+    *,
+    sample_index: int | None = None,
 ) -> PreparedEpisode:
-    episode = provider.prepare(case, output_dir)
+    episode = provider.prepare(case, output_dir, sample_index=sample_index)
     _check_identity(case, episode, provider_name=provider.provider_name)
     missing_roles = set(case.required_roles) - set(episode.context.roles)
     if missing_roles:
         raise ValueError(f"prepared episode is missing roles: {sorted(missing_roles)}")
     return episode
+
+
+def validate_episode_activation(
+    provider: EpisodeProvider,
+    episode: PreparedEpisode,
+    sample_index: int,
+) -> None:
+    """Preflight one sample without mutating or launching provider state."""
+
+    raise NotImplementedError
+
+
+def start_episode(
+    provider: EpisodeProvider,
+    episode: PreparedEpisode,
+) -> EpisodeActivationResult:
+    """Start the provider and validate its sole initial activation."""
+
+    raise NotImplementedError
 
 
 def activate_episode(

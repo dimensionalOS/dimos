@@ -494,8 +494,7 @@ class EvalRunner(Configurable, CompositeResource):
             module.on_episode_boundary(boundary)
 
     def _prepare_isolated_trial(self, case: InteractiveEval, trial_index: int) -> None:
-        del trial_index
-        self.setup_env(case)
+        raise NotImplementedError
 
     def _teardown_trial(self, case: InteractiveEval, trial_index: int) -> None:
         del case, trial_index
@@ -672,32 +671,22 @@ class EvalRunner(Configurable, CompositeResource):
             time.sleep(interval_s)
             result = evaluate_episode(self._episode_provider, self._episode)
 
-    def _setup_episode_env(self, case: InteractiveEval) -> None:
-        from dimos.e2e_tests.dimos_cli_call import DimosCliCall
-        from dimos.e2e_tests.episode import prepare_episode
-        from dimos.sim2.evaluation import load_episode_provider
+    def _setup_episode_env(
+        self,
+        case: InteractiveEval,
+        *,
+        sample_index: int | None = None,
+    ) -> None:
+        raise NotImplementedError
 
-        assert case.episode is not None
-        provider = load_episode_provider(case.episode_provider)
-        self._episode_provider = provider
-        episode = prepare_episode(
-            provider,
-            case.episode,
-            self.run_dir / case.id / "episode",
-        )
-        self._episode = episode
+    def _preflight_episode_boundary(
+        self,
+        case: InteractiveEval,
+        episode: PreparedEpisode,
+    ) -> None:
+        """Reject cross-topology warm trials before launching DimOS."""
 
-        proc = DimosCliCall()
-        proc.simulator = episode.simulator
-        proc.global_args = list(episode.global_args)
-        proc.extra_env = dict(episode.extra_env)
-        proc.demo_args = [episode.blueprint_name]
-        proc.start()
-        self._proc = proc
-
-        self._app = self._connect_dimos(episode.required_modules, self.config.launch_timeout_s)
-        provider.start(episode)
-        self._activate_episode_sample(case, episode.initial_sample_index)
+        raise NotImplementedError
 
     def _connect_dimos(self, required_modules: tuple[str, ...], timeout_s: float) -> Dimos:
         from dimos.porcelain.dimos import Dimos
