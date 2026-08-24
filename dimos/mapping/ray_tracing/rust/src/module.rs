@@ -55,13 +55,24 @@ pub struct RayTracingVoxelMap {
 impl RayTracingVoxelMap {
     async fn on_lidar(&mut self, msg: PointCloud2) {
         let stamp = time_secs(&msg.header.stamp);
+        // Tf already past this stamp will never deliver a match, and this handler is
+        // the module's only dispatch loop, so waiting would just stall fresher clouds.
+        let tf_past_stamp = self
+            .tf
+            .get_latest(&self.config.output_frame, &msg.header.frame_id)
+            .is_some_and(|latest| latest.ts > stamp + self.config.tf_match_tolerance_s);
+        let wait = if tf_past_stamp {
+            Duration::ZERO
+        } else {
+            Duration::from_secs_f64(self.config.tf_wait_timeout_s)
+        };
         // The tf graph fills from the transport, not this loop, so this await cannot deadlock.
         let Some(transform) = self
             .tf
             .lookup(&self.config.output_frame, &msg.header.frame_id)
             .at(stamp)
             .tolerance(self.config.tf_match_tolerance_s)
-            .within(Duration::from_secs_f64(self.config.tf_wait_timeout_s))
+            .within(wait)
             .await
         else {
             warn_throttled!(
