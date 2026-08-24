@@ -77,8 +77,6 @@ class AlfredHighLevelConfig(ModuleConfig):
     address: str = DEFAULT_ADDRESS
     cmd_vel_timeout: float = 0.2
     wheel_odometry_hz: FiniteFloat = Field(50.0, gt=0.0)
-    # Seconds between the controller sampling its wheels and the reply landing here.
-    odometry_latency: FiniteFloat = Field(0.0, ge=0.0)
     # Never published to tf: a source to fuse, not a second odom->base_link publisher.
     wheel_odom_frame_id: str = "wheel_odom"
     base_frame_id: str = "base_link"
@@ -208,9 +206,7 @@ class AlfredHighLevel(Module):
             start = asyncio.get_running_loop().time()
             try:
                 # Stamped before the call so a slow reply cannot drag the stamp forward.
-                # The controller reports no time of its own, so there is nothing to sync
-                # against and the lag back to the wheels has to be configured.
-                ts = time.time() - self.config.odometry_latency
+                ts = time.time()
                 future = client.get_odometry({})
                 reading = await asyncio.to_thread(future.result)
                 x, y = (float(v) for v in reading["translation"])
