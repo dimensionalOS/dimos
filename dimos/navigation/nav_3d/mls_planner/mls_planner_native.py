@@ -30,8 +30,7 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     build_command: str | None = "cargo build --release"
     stdin_config: bool = True
 
-    # Stamped onto the outputs as-is, so it has to name the frame the input map
-    # already arrives in; there is no tf lookup here to convert into it.
+    # Stamped onto the outputs as-is, so it must name the frame the input map arrives in.
     output_frame: str = "odom"
     voxel_size: float = 0.08
     robot_height: float = 0.3
