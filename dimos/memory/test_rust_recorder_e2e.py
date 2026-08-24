@@ -146,7 +146,7 @@ def test_rust_artifact_is_readable_by_python_memory2(
         assert process.stdin is not None
         process.stdin.write(launch)
         process.stdin.close()
-        _wait_for_log(process, "recording stream")
+        _wait_for_log(process, "memory recorder ready")
 
         expected = Imu(
             ts=12.5,

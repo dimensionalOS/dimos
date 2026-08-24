@@ -14,8 +14,5 @@
 
 #[tokio::main]
 async fn main() {
-    if let Err(error) = dimos_memory_recorder::run().await {
-        tracing::error!(error = %format!("{error:#}"), "memory recorder failed");
-        std::process::exit(1);
-    }
+    dimos_module::run_with_transport::<dimos_memory_recorder::MemoryRecorder>().await;
 }
