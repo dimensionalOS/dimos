@@ -421,7 +421,9 @@ fn normalize_pixels(image: &Image) -> Result<Vec<u8>> {
             let high_byte = usize::from(image.is_bigendian == 0);
             Ok(image
                 .data
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|pixel| pixel[high_byte])
                 .collect())
         }
