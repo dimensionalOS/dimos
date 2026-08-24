@@ -22,7 +22,7 @@ from typing import Any
 
 import numpy as np
 
-from dimos.memory2.tf import StreamTF
+from dimos.memory.tf import StreamTF
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3

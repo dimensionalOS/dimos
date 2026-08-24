@@ -35,7 +35,6 @@ from gtsam import (
     noiseModel,
 )
 import numpy as np
-import open3d as o3d
 from scipy.spatial import cKDTree
 
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -45,8 +44,10 @@ from dimos.navigation.jnav.components.loop_closure.gsc_pgo.scripts.make_rrd impo
 from dimos.navigation.jnav.utils.trajectory_metrics import thin_pairs_by_path_section
 
 if TYPE_CHECKING:
-    from dimos.memory2.store.base import Store
-    from dimos.memory2.type.observation import Observation
+    import open3d as o3d
+
+    from dimos.memory.store.base import Store
+    from dimos.memory.type.observation import Observation
 
 # tag revisit report
 VISIT_GAP_S = 30.0
@@ -254,6 +255,8 @@ def build_submaps(
     tuning: Tuning = DEFAULT_TUNING,
 ) -> dict[int, o3d.geometry.PointCloud]:
     """Body-frame, voxel-downsampled, normal-estimated lidar submap per involved keyframe."""
+    import open3d as o3d
+
     chunks: dict[int, list[np.ndarray]] = {index: [] for index in keyframe_indices}
     scan_count = 0
     started = time.time()
@@ -294,6 +297,8 @@ def add_icp_closures(
     tuning: Tuning = DEFAULT_TUNING,
 ) -> int:
     """Stage 2: register spatially-close / temporally-distant submaps, add loop factors."""
+    import open3d as o3d
+
     num_keyframes = len(keyframe_poses)
     corrected_poses = [estimate.atPose3(index) for index in range(num_keyframes)]
     positions = np.array([np.asarray(pose.translation()) for pose in corrected_poses])

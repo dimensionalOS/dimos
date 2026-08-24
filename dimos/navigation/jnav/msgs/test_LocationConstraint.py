@@ -20,8 +20,8 @@ import struct
 
 import pytest
 
-from dimos.memory2.codecs.base import codec_for
-from dimos.memory2.codecs.lcm import LcmCodec
+from dimos.memory.codecs.base import codec_for
+from dimos.memory.codecs.lcm import LcmCodec
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.navigation.jnav.msgs.LocationConstraint import LocationConstraint
 
@@ -113,7 +113,7 @@ def test_wrong_covariance_length_rejected() -> None:
         LocationConstraint(to_id="x", covariance=[0.0] * 35)
 
 
-def test_uses_lcm_codec_in_memory2() -> None:
+def test_uses_lcm_codec_in_memory() -> None:
     codec = codec_for(LocationConstraint)
     assert isinstance(codec, LcmCodec)
     constraint = LocationConstraint(

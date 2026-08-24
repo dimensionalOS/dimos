@@ -30,7 +30,7 @@ from typing import Any
 
 import numpy as np
 
-from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.jnav.utils.apriltags import (
@@ -399,7 +399,7 @@ def write_topdown_png(
             if axis is axes[0] and closure_segments is not None and len(closure_segments):
                 axis.add_collection(
                     LineCollection(
-                        closure_segments[:, [0, 1, 3, 4]].reshape(-1, 2, 2),
+                        closure_segments[:, [0, 1, 3, 4]].reshape(-1, 2, 2).tolist(),
                         colors="#ff3b3b",
                         linewidth=1.0,
                         alpha=0.9,
@@ -518,7 +518,7 @@ def write_isometric_png(
     matplotlib.use("Agg")
     from matplotlib.colors import LinearSegmentedColormap, ListedColormap
     import matplotlib.pyplot as plt
-    from mpl_toolkits.mplot3d.art3d import Line3DCollection
+    from mpl_toolkits.mplot3d.art3d import Line3DCollection  # type: ignore[import-untyped]
 
     background = "#000004"
     text_color = "#e8eaed"

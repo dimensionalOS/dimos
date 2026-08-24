@@ -31,7 +31,7 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.jnav.utils.recording_tf import RecordingTF
 
 if TYPE_CHECKING:
-    from dimos.memory2.store.base import Store
+    from dimos.memory.store.base import Store
 
 TF_STREAM = "tf"
 # go2's stuff is in a fake world frame, so we correct that with a new db stream

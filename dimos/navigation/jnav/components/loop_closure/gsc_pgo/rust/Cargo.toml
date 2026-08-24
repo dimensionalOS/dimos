@@ -31,7 +31,7 @@ native = ["dep:dimos-module", "dep:lcm-msgs", "dep:tokio", "dep:serde", "dep:ser
 [dependencies]
 rayon = "1"
 dimos-module = { path = "../../../../../../../native/rust/dimos-module", optional = true }
-lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "3555e97704ec4c727d96a7ac0769d5735bb44feb", optional = true }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
