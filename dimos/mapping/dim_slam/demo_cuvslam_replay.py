@@ -33,9 +33,9 @@ scale, so a recording missing it produces a scale-free trajectory rather than an
 
 from __future__ import annotations
 
+from collections import deque
+from functools import partial
 from typing import Any
-
-import reactivex as rx
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
@@ -44,12 +44,15 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.mapping.dim_slam.dim_slam import DimSlam
 from dimos.mapping.odometry_hist import OdometryHist
-from dimos.memory2.replay import resolve_db_path
-from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory.replay import resolve_db_path
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.visualization.vis_module import vis_module
+
+# The widest stamp difference cuVSLAM will still accept as one stereo frame set.
+_STEREO_TOLERANCE = 0.001
 
 
 class CuvslamReplayConfig(ModuleConfig):
@@ -95,13 +98,18 @@ class CuvslamReplay(Module):
         )
         # cuVSLAM assembles a frame set by arrival and rejects any whose stamps differ by
         # more than a millisecond. Two independent subscriptions let the scheduler run one
-        # eye a frame ahead of the other, so zip them and publish each pair back to back.
-        self.register_disposable(
-            rx.zip(
-                replay.stream(self.config.left_stream).observable(),
-                replay.stream(self.config.right_stream).observable(),
-            ).subscribe(on_next=self._publish_stereo_pair)
-        )
+        # eye a frame ahead of the other, so match the eyes by stamp and publish each pair
+        # back to back. Ordinal pairing would desynchronize permanently on a dropped frame.
+        self._pending = {"left": deque[Image](), "right": deque[Image]()}
+        for side, stream_name in (
+            ("left", self.config.left_stream),
+            ("right", self.config.right_stream),
+        ):
+            self.register_disposable(
+                replay.stream(stream_name)
+                .observable()
+                .subscribe(on_next=partial(self._queue_stereo_frame, side))
+            )
         for stream_name in (self.config.left_info_stream, self.config.right_info_stream):
             self.register_disposable(
                 replay.stream(stream_name).observable().subscribe(on_next=self.camera_info.publish)
@@ -112,9 +120,18 @@ class CuvslamReplay(Module):
             replay.stream(self.config.tf_stream).observable().subscribe(on_next=self.tf.publish)
         )
 
-    def _publish_stereo_pair(self, pair: tuple[Image, Image]) -> None:
-        for frame in pair:
-            self.image.publish(frame)
+    def _queue_stereo_frame(self, side: str, frame: Image) -> None:
+        self._pending[side].append(frame)
+        left, right = self._pending["left"], self._pending["right"]
+        while left and right:
+            skew = left[0].ts - right[0].ts
+            if abs(skew) <= _STEREO_TOLERANCE:
+                self.image.publish(left.popleft())
+                self.image.publish(right.popleft())
+            elif skew < 0:
+                left.popleft()
+            else:
+                right.popleft()
 
 
 def _path_at_true_height(path: Any) -> Any:

@@ -24,7 +24,7 @@ live drivers: the D455 and the base.
 
 The mapper is ``RayTracingVoxelMap`` rather than ``VoxelGridMapper`` on purpose. The
 latter carves whole (X, Y) columns on every insert, which is last-write-wins: measured
-against a point-lio reference on drive_2026-08-18_23-05-04.db it kept 26% as many voxels
+against a lidar reference on drive_2026-08-18_23-05-04.db it kept 26% as many voxels
 as ray tracing and ate the walls MLS needs to plan around (IoU 0.076 vs 0.107, recall
 0.200 vs 0.292).
 """
@@ -51,8 +51,8 @@ It has to be set here: the camera module publishes this edge itself and never re
 ``alfred.urdf``, so correcting the URDF would not reach this blueprint.
 
 Fit against drive_2026-08-18_23-05-04.db, the first recording taken after the camera was
-re-angled. Scored against a point-lio reference it lands the floor at z=-0.40, matching
-the lidar map exactly, where the pre-remount angle misses it by 2.2 m.
+re-angled. Scored against the lidar map it lands the floor at z=-0.40, matching it
+exactly, where the pre-remount angle misses it by 2.2 m.
 """
 
 alfred_mls_nav = (

@@ -115,7 +115,7 @@ vis_nav = autoconnect(
     # cuVSLAM drops out whenever the IR pair loses texture and recovers by jumping;
     # wheel odometry never drops out but its heading drifts without bound; the IMU
     # has the heading rate and no position. Offline on drive_2026-08-18_23-05-04.db,
-    # wheel alone ends 2.66 m from the point-lio reference and wheel with a
+    # wheel alone ends 2.66 m from the lidar reference and wheel with a
     # bias-corrected gyro heading ends 1.33 m, against a 0.59 m ceiling set by
     # replaying the wheel steps along the reference's own heading.
     DimSlam.blueprint(
@@ -133,7 +133,7 @@ vis_nav = autoconnect(
         # Wheel yaw is dropped outright: the wheels' heading is a biased random walk
         # (~0.4 deg/s on drive_2026-08-18_23-05-04.db), and fusing it at any weight
         # drags the fused track toward that drift — replaying the drive with wheel
-        # yaw trusted over visual landed 8.8 m yaw-fit rmse vs point-lio where raw
+        # yaw trusted over visual landed 8.8 m yaw-fit rmse vs lidar where raw
         # cuVSLAM alone fits at 1.3 m. Heading is visual deltas with the gyro in
         # between. Visual z is dropped: the CPU tracker's z drifts metres per
         # minute on this rig, and the planar twist constraint below already pins z.

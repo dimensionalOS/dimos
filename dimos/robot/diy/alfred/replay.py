@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 import threading
 import time
@@ -28,7 +27,7 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import IO, Out
-from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
@@ -107,14 +106,6 @@ LIVE_PARENT_FRAMES = {"odom", "map", "visual_odom"}
 """Recorded tf edges under these parents (and any edge onto base_link) belong to the
 filter that ran at record time; the replayed stack publishes its own, and replaying
 both would give base_link two parents."""
-
-
-class _RecordingStore(SqliteStore):
-    """Reads recordings made before the memory -> memory2 rename."""
-
-    def _assemble_backend(self, name: str, stored: dict[str, Any]) -> Any:
-        stored = json.loads(json.dumps(stored).replace("dimos.memory.", "dimos.memory2."))
-        return super()._assemble_backend(name, stored)
 
 
 class AlfredReplayConfig(ModuleConfig):
@@ -227,7 +218,7 @@ class AlfredReplay(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        store = _RecordingStore(path=self.config.db_path, must_exist=True)
+        store = SqliteStore(path=self.config.db_path, must_exist=True)
         replay_kwargs: dict[str, Any] = {"speed": self.config.speed}
         if self.config.seek is not None:
             replay_kwargs["seek"] = self.config.seek
