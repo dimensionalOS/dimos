@@ -31,8 +31,6 @@ committed. Bump MARKER_SALT to invalidate every published marker when build
 semantics change outside the hashed inputs (e.g. docker/ros/install-nix.sh).
 """
 
-from __future__ import annotations
-
 import argparse
 import ast
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -44,7 +42,6 @@ import re
 import subprocess
 import sys
 import time
-from typing import NoReturn
 
 MARKER_SALT = 1
 
@@ -57,10 +54,6 @@ _T0 = time.monotonic()
 
 def _log(message: str) -> None:
     print(f"[{time.monotonic() - _T0:6.1f}s] {message}", flush=True)
-
-
-def _fail(message: str) -> NoReturn:
-    raise SystemExit(f"bin/build-native-modules: {message}")
 
 
 def _github_output(line: str) -> None:
@@ -108,7 +101,7 @@ def _literal_default(classdef: ast.ClassDef, field: str, source: str) -> str | N
             value.value is None or isinstance(value.value, str)
         ):
             return value.value
-        _fail(
+        raise SystemExit(
             f"{source}:{stmt.lineno}: {classdef.name}.{field} must default to a plain string"
             " literal (or None) so the CI inputs hash can read it without importing dimos"
         )
@@ -139,7 +132,7 @@ def discover() -> tuple[DiscoveredModule, ...]:
                 build_dir = os.path.normpath(path.parent / (cwd or "."))
                 build_rel = os.path.relpath(build_dir, REPO_ROOT)
                 if build_rel.startswith(".."):
-                    _fail(f"{source}: {node.name}.cwd escapes the repository: {cwd!r}")
+                    raise SystemExit(f"{source}: {node.name}.cwd escapes the repository: {cwd!r}")
                 found.append(
                     DiscoveredModule(
                         qualname=f"{source[: -len('.py')].replace('/', '.')}.{node.name}",
@@ -155,9 +148,13 @@ def _flake_ref_of(module: DiscoveredModule) -> str:
     """The flake ref a module's `nix build` operates on."""
     tokens = module.build_command.split()
     if "--impure" in tokens:
-        _fail(f"{module.source}: {module.qualname} builds --impure; its inputs can't be hashed")
+        raise SystemExit(
+            f"{module.source}: {module.qualname} builds --impure; its inputs can't be hashed"
+        )
     if "build" not in tokens:
-        _fail(f"{module.source}: expected a `nix build` command, got {module.build_command!r}")
+        raise SystemExit(
+            f"{module.source}: expected a `nix build` command, got {module.build_command!r}"
+        )
     for token in tokens[tokens.index("build") + 1 :]:
         if not token.startswith("-"):
             return token
@@ -170,7 +167,7 @@ def _is_local_flake(module: DiscoveredModule) -> bool:
         return False  # pinned remote flake; the ref string itself is the whole repo-side input
     if ref == "." or ref.startswith((".#", "./", "path:")):
         return True
-    _fail(f"{module.source}: unrecognised flake ref {ref!r} in {module.build_command!r}")
+    raise SystemExit(f"{module.source}: unrecognised flake ref {ref!r} in {module.build_command!r}")
 
 
 def _strip_nix_comments(text: str) -> str:
@@ -235,9 +232,11 @@ def _resolve_ref(flake: Path, token: str) -> str:
     rel = os.path.relpath(os.path.normpath(flake.parent / token.split("?", 1)[0]), REPO_ROOT)
     context = f"{flake.relative_to(REPO_ROOT).as_posix()}: reference {token!r}"
     if rel.startswith(".."):
-        _fail(f"{context} escapes the repository")
+        raise SystemExit(f"{context} escapes the repository")
     if not (REPO_ROOT / rel).exists():
-        _fail(f"{context} does not exist (fix the flake, or teach this parser the new form)")
+        raise SystemExit(
+            f"{context} does not exist (fix the flake, or teach this parser the new form)"
+        )
     return PurePosixPath(rel).as_posix()
 
 
@@ -248,7 +247,9 @@ def _collect_input_paths(module: DiscoveredModule) -> set[str]:
         return paths
     root = REPO_ROOT / module.build_dir / "flake.nix"
     if not root.is_file():
-        _fail(f"{module.source}: {module.qualname} builds a local flake but {root} is missing")
+        raise SystemExit(
+            f"{module.source}: {module.qualname} builds a local flake but {root} is missing"
+        )
     queue, seen = [root], set()
     while queue:
         flake = queue.pop()
@@ -263,20 +264,20 @@ def _collect_input_paths(module: DiscoveredModule) -> set[str]:
             if match.group("scheme") == "path:":
                 sub = REPO_ROOT / rel / "flake.nix"
                 if not sub.is_file():
-                    _fail(f"path: input {rel!r} of {flake} has no flake.nix")
+                    raise SystemExit(f"path: input {rel!r} of {flake} has no flake.nix")
                 queue.append(sub)  # a path: input is a flake — its refs count too
     return paths
 
 
 def _git_object_hash(rel: str) -> str:
     proc = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "rev-parse", f"HEAD:{rel}"],
+        ("git", "-C", str(REPO_ROOT), "rev-parse", f"HEAD:{rel}"),
         capture_output=True,
         text=True,
         check=False,
     )
     if proc.returncode != 0:
-        _fail(
+        raise SystemExit(
             f"cannot hash {rel!r}: {proc.stderr.strip()}"
             " (every native-module input must be tracked in git)"
         )

@@ -447,13 +447,12 @@ jobs:
 
   tests:
     # Native-module binaries come from Cachix, so when their inputs changed the
-    # publish job must finish before tests may fetch them. Both cachix jobs are
-    # skipped on fork PRs (and only there): tolerate skips, never failures.
+    # publish job must finish before tests may fetch them. A skipped
+    # cachix-build (fork PR, or nothing to publish) is fine; a failed one blocks.
     if: |
       !cancelled() &&
-      contains(fromJSON('["success", "skipped"]'), needs.cachix-build-check.result) &&
       contains(fromJSON('["success", "skipped"]'), needs.cachix-build.result)
-    needs: [cachix-build-check, cachix-build]
+    needs: [cachix-build]
     timeout-minutes: 20
     strategy:
       matrix:
@@ -565,21 +564,7 @@ jobs:
           version: "11.2.8"
 
   cachix-build-check:
-    # Decides whether `cachix-build` has anything to publish, without ever
-    # entering the `cachix` environment. Merely starting a job in that
-    # environment records a deployment against it, so letting the publishing job
-    # run unconditionally would log every CI run as a Cachix deployment and
-    # destroy the audit trail that says which run pushed a given binary.
-    #
-    # The decision is a content-addressed marker probe — no nix, no uv, a few
-    # seconds, because every test job waits on it. `--inputs-hash` hashes every
-    # committed tree that can reach a module's derivation (see
-    # bin/build-native-modules), and a successful cachix-build saves a marker
-    # under that key: marker present means those exact inputs were already
-    # published. A stale-but-plausible miss (marker evicted, comment-only edit
-    # inside a module dir) just reruns the publish job, which substitutes
-    # everything and pushes nothing. This job holds no secrets, but mirrors
-    # cachix-build's trusted-event guard so forks skip both.
+    # Mirror check in cachix-build to skip forks.
     if: |
       !cancelled() &&
       (github.event_name == 'push' || github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository)
@@ -595,7 +580,6 @@ jobs:
 
     steps:
       - name: Checkout
-        # Depth-1 is enough: the hash reads committed objects of HEAD only.
         uses: actions/checkout@v7
       - name: Compute native-module inputs hash
         id: hash
@@ -693,9 +677,6 @@ jobs:
           python3 bin/build-native-modules --inputs-hash \
             > .cachix-marker/inputs-hash.txt 2> .cachix-marker/manifest.txt
       - name: Save publish marker
-        # Only reached on success, so a marker always means these exact inputs
-        # were published. The key reuses the check job's hash — same commit,
-        # same result — so the probe and the save can never disagree.
         uses: actions/cache/save@v6
         with:
           path: .cachix-marker
@@ -708,9 +689,8 @@ jobs:
     if: |
       !cancelled() &&
       (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository) &&
-      needs.cachix-build-check.result == 'success' &&
       contains(fromJSON('["success", "skipped"]'), needs.cachix-build.result)
-    needs: [compute-ros-pin, cachix-build-check, cachix-build]
+    needs: [compute-ros-pin, cachix-build]
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -901,15 +881,11 @@ jobs:
 
   self-hosted-large-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
-    # Also waits for the Cachix gate like every other test job (skips are fine,
-    # failures are not); !cancelled() overrides the implicit success() that a
-    # skipped cachix-build would otherwise fail.
     if: |
       !cancelled() &&
       (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) &&
-      needs.cachix-build-check.result == 'success' &&
       contains(fromJSON('["success", "skipped"]'), needs.cachix-build.result)
-    needs: [cachix-build-check, cachix-build]
+    needs: [cachix-build]
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
