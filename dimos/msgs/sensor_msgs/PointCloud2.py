@@ -38,6 +38,28 @@ if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs.Image import Image
 
 
+def strip_row_padding(
+    raw_data: bytes, height: int, width: int, point_step: int, row_step: int
+) -> bytes:
+    """Drop the padding between rows so every point sits at a `point_step` stride.
+
+    PointCloud2 lays `data` out as `height` rows of `row_step` bytes, and `row_step`
+    is allowed to exceed `width * point_step`. Decoders that walk the buffer as one
+    flat point array read that padding as coordinates.
+    """
+    packed_row_length = width * point_step
+    if height <= 1 or row_step == packed_row_length:
+        return raw_data
+    if row_step < packed_row_length:
+        raise ValueError(
+            f"PointCloud2 row_step {row_step} is below width*point_step {packed_row_length}"
+        )
+    rows = np.frombuffer(raw_data, dtype=np.uint8, count=height * row_step).reshape(
+        height, row_step
+    )
+    return rows[:, :packed_row_length].tobytes()
+
+
 @functools.lru_cache(maxsize=16)
 def _get_matplotlib_cmap(name: str):  # type: ignore[no-untyped-def]
     """Get a matplotlib colormap by name (cached for performance)."""
@@ -705,8 +727,8 @@ class PointCloud2(Timestamped):
             raise ValueError("PointCloud2 message missing X, Y, or Z msgfields")
 
         num_points = msg.width * msg.height
-        raw_data = msg.data
         point_step = msg.point_step
+        raw_data = strip_row_padding(msg.data, msg.height, msg.width, point_step, msg.row_step)
 
         # Fast path for standard layout
         if x_offset == 0 and y_offset == 4 and z_offset == 8 and point_step >= 12:
