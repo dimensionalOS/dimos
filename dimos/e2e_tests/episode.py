@@ -68,7 +68,7 @@ def validate_episode_activation(
 ) -> None:
     """Preflight one sample without mutating or launching provider state."""
 
-    raise NotImplementedError
+    provider.validate_activation(episode, sample_index)
 
 
 def start_episode(
@@ -77,7 +77,24 @@ def start_episode(
 ) -> EpisodeActivationResult:
     """Start the provider and validate its sole initial activation."""
 
-    raise NotImplementedError
+    result = provider.start(episode)
+    _check_result_identity(episode, result.provider_name, result.episode_id, result.case_id)
+    if result.sample_index != episode.initial_sample_index:
+        raise ValueError(
+            f"provider started sample {result.sample_index}; "
+            f"expected {episode.initial_sample_index}"
+        )
+    if result.boundary.previous_sample_index is not None:
+        raise ValueError("provider startup activation must not have a previous sample")
+    if (
+        episode.initial_sample_digest is not None
+        and result.sample_digest != episode.initial_sample_digest
+    ):
+        raise ValueError(
+            f"provider started sample digest {result.sample_digest!r}; "
+            f"expected {episode.initial_sample_digest!r}"
+        )
+    return result
 
 
 def activate_episode(
@@ -89,6 +106,10 @@ def activate_episode(
 
     result = provider.activate(episode, sample_index)
     _check_result_identity(episode, result.provider_name, result.episode_id, result.case_id)
+    if result.sample_index != sample_index:
+        raise ValueError(
+            f"provider activated sample {result.sample_index}; expected {sample_index}"
+        )
     return result
 
 
@@ -143,4 +164,6 @@ __all__ = [
     "activate_episode",
     "evaluate_episode",
     "prepare_episode",
+    "start_episode",
+    "validate_episode_activation",
 ]

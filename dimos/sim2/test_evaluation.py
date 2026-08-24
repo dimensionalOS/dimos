@@ -14,27 +14,84 @@
 
 """Provider-neutral distribution lifecycle verification skeleton."""
 
-import pytest
+from pathlib import Path
+
+from dimos.e2e_tests.episode import activate_episode, start_episode
+from dimos.e2e_tests.test_episode_provider_lifecycle import (
+    _Provider,
+    _digest,
+    _evaluation_case,
+    _prepared_episode,
+)
+from dimos.sim2.evaluation import EpisodeBoundary, TrialIsolationMode
 
 
-_SKELETON = "Slice 75.8 Phase 1 skeleton"
+def test_prepared_episode_declares_bounded_distribution_identity(tmp_path: Path) -> None:
+    provider = _Provider()
 
+    episode = provider.prepare(_evaluation_case(), tmp_path, sample_index=3)
 
-def test_prepared_episode_declares_bounded_distribution_identity() -> None:
-    pytest.skip(_SKELETON)
+    assert episode.distribution_id == "bounded-distribution"
+    assert episode.distribution_revision == "1"
+    assert episode.distribution_seed == 20260824
+    assert episode.distribution_digest == "a" * 64
+    assert episode.initial_sample_index == 3
+    assert episode.initial_sample_digest == _digest(3)
+    assert episode.bounded_sample_count == 8
 
 
 def test_activate_is_the_only_provider_sample_transition() -> None:
-    pytest.skip(_SKELETON)
+    provider = _Provider()
+    episode = _prepared_episode()
+    start_episode(provider, episode)
+
+    result = activate_episode(provider, episode, 1)
+
+    assert result.sample_index == 1
+    assert provider.activate_calls == [1]
+    assert not hasattr(provider, "reset")
+    assert not hasattr(provider, "resample")
 
 
 def test_episode_boundary_round_trips_without_provider_private_state() -> None:
-    pytest.skip(_SKELETON)
+    boundary = EpisodeBoundary(
+        provider_name="fake",
+        episode_id="episode-1",
+        previous_sample_index=2,
+        sample_index=3,
+        sequence=4,
+    )
+
+    encoded = boundary.to_wire_dict()
+
+    assert EpisodeBoundary.from_wire_dict(encoded) == boundary
+    assert encoded == {
+        "provider_name": "fake",
+        "episode_id": "episode-1",
+        "previous_sample_index": 2,
+        "sample_index": 3,
+        "sequence": 4,
+    }
+    assert not ({"context", "oracle", "provenance", "randomization"} & encoded.keys())
 
 
 def test_activation_returns_a_new_public_context_for_each_sample() -> None:
-    pytest.skip(_SKELETON)
+    provider = _Provider()
+    episode = _prepared_episode()
+
+    first = start_episode(provider, episode)
+    second = activate_episode(provider, episode, 1)
+
+    assert first.context is not second.context
+    assert first.context.role("object").entity_id == "object-0"
+    assert second.context.role("object").entity_id == "object-1"
+    assert first.sample_digest != second.sample_digest
 
 
 def test_process_isolation_and_episode_boundary_isolation_are_explicit() -> None:
-    pytest.skip(_SKELETON)
+    assert tuple(TrialIsolationMode) == (
+        TrialIsolationMode.EPISODE_BOUNDARY,
+        TrialIsolationMode.PROCESS,
+    )
+    assert TrialIsolationMode("episode-boundary") is TrialIsolationMode.EPISODE_BOUNDARY
+    assert TrialIsolationMode("process") is TrialIsolationMode.PROCESS

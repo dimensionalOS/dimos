@@ -127,6 +127,7 @@ class EvalRunner(Configurable, CompositeResource):
         self._episode_sample_index: int | None = None
         self._episode_activation: EpisodeActivationResult | None = None
         self._episode_boundary_sequence = 0
+        self._process_trial_initial_sample_index: int | None = None
         self._run_dir: Path | None = None
 
     # -- run lifecycle -----------------------------------------------------------
@@ -347,12 +348,16 @@ class EvalRunner(Configurable, CompositeResource):
             for trial_index in range(case.trials):
                 trials.append(self._run_interactive_trial(case, trial_index))
         else:
-            for trial_index in range(case.trials):
-                try:
-                    self._prepare_isolated_trial(case, trial_index)
-                    trials.append(self._run_interactive_trial(case, trial_index))
-                finally:
-                    self._teardown_trial(case, trial_index)
+            self._process_trial_initial_sample_index = None
+            try:
+                for trial_index in range(case.trials):
+                    try:
+                        self._prepare_isolated_trial(case, trial_index)
+                        trials.append(self._run_interactive_trial(case, trial_index))
+                    finally:
+                        self._teardown_trial(case, trial_index)
+            finally:
+                self._process_trial_initial_sample_index = None
 
         scores = [trial.score for trial in trials]
         errors = [trial.error for trial in trials if trial.error]
@@ -396,13 +401,16 @@ class EvalRunner(Configurable, CompositeResource):
     ) -> InteractiveTrialResult:
         if self._episode is None:
             raise RuntimeError("interactive trial requires a prepared episode")
-        sample_index = self._episode.initial_sample_index + trial_index
+        sample_index = (
+            self._episode.initial_sample_index
+            if case.trial_isolation.value == "process"
+            else self._episode.initial_sample_index + trial_index
+        )
         activation: EpisodeActivationResult | None = None
         outputs = ""
         try:
             if (
-                trial_index == 0
-                and self._episode_activation is not None
+                self._episode_activation is not None
                 and self._episode_activation.sample_index == sample_index
             ):
                 activation = self._episode_activation
@@ -494,7 +502,17 @@ class EvalRunner(Configurable, CompositeResource):
             module.on_episode_boundary(boundary)
 
     def _prepare_isolated_trial(self, case: InteractiveEval, trial_index: int) -> None:
-        raise NotImplementedError
+        if trial_index == 0:
+            self._setup_episode_env(case)
+            assert self._episode is not None
+            self._process_trial_initial_sample_index = self._episode.initial_sample_index
+            return
+        if self._process_trial_initial_sample_index is None:
+            raise RuntimeError("process-isolated trials have no initial sample index")
+        self._setup_episode_env(
+            case,
+            sample_index=self._process_trial_initial_sample_index + trial_index,
+        )
 
     def _teardown_trial(self, case: InteractiveEval, trial_index: int) -> None:
         del case, trial_index
@@ -677,7 +695,46 @@ class EvalRunner(Configurable, CompositeResource):
         *,
         sample_index: int | None = None,
     ) -> None:
-        raise NotImplementedError
+        from dimos.e2e_tests.dimos_cli_call import DimosCliCall
+        from dimos.e2e_tests.episode import prepare_episode, start_episode
+        from dimos.sim2.evaluation import load_episode_provider
+
+        assert case.episode is not None
+        provider = load_episode_provider(case.episode_provider)
+        self._episode_provider = provider
+        episode_output = self.run_dir / case.id / "episode"
+        if sample_index is not None:
+            episode_output /= f"sample-{sample_index}"
+        episode = prepare_episode(
+            provider,
+            case.episode,
+            episode_output,
+            sample_index=sample_index,
+        )
+        self._episode = episode
+
+        if case.trial_isolation.value == "episode-boundary":
+            self._preflight_episode_boundary(case, episode)
+
+        proc = DimosCliCall()
+        proc.simulator = episode.simulator
+        proc.global_args = list(episode.global_args)
+        proc.extra_env = dict(episode.extra_env)
+        proc.demo_args = [episode.blueprint_name]
+        self._proc = proc
+        proc.start()
+
+        app = self._connect_dimos(episode.required_modules, self.config.launch_timeout_s)
+        self._app = app
+        activation = start_episode(provider, episode)
+        if not activation.initial_conditions_passed:
+            raise RuntimeError(
+                f"episode initial conditions failed: {list(activation.failed_conditions)}"
+            )
+        self._episode_context = activation.context
+        self._episode_sample_index = activation.sample_index
+        self._episode_activation = activation
+        self._publish_episode_boundary(activation.boundary)
 
     def _preflight_episode_boundary(
         self,
@@ -686,7 +743,16 @@ class EvalRunner(Configurable, CompositeResource):
     ) -> None:
         """Reject cross-topology warm trials before launching DimOS."""
 
-        raise NotImplementedError
+        from dimos.e2e_tests.episode import validate_episode_activation
+
+        if self._episode_provider is None:
+            raise RuntimeError("episode-boundary preflight requires a prepared provider")
+        for trial_index in range(case.trials):
+            validate_episode_activation(
+                self._episode_provider,
+                episode,
+                episode.initial_sample_index + trial_index,
+            )
 
     def _connect_dimos(self, required_modules: tuple[str, ...], timeout_s: float) -> Dimos:
         from dimos.porcelain.dimos import Dimos
