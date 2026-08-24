@@ -37,7 +37,7 @@
           cargoRoot = "dimos/mapping/ray_tracing/rust";
           buildAndTestSubdir = "dimos/mapping/ray_tracing/rust";
 
-          cargoHash = "sha256-dHh6GjpdZ+/aaurgaZKoxEc8IVqd5ZkzeXc3jfVcmH8=";
+          cargoHash = "sha256-ZeqoeD3QeuqtjNB6dO5eTDngVCY31oCjng9UVD86CIk=";
 
           # The python cdylib fails to link libpython on darwin.
           buildNoDefaultFeatures = true;
