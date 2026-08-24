@@ -56,6 +56,7 @@ pub struct Config {
     /// stray far hit cannot inflate it.
     #[validate(range(min = 0.0, max = 100.0))]
     pub region_percentile: f32,
+    /// Output frame of the maps; clouds are transformed into it from their own frame_id.
     pub output_frame: String,
     /// Max stamp gap between a cloud and the tf sample used to place it.
     #[validate(range(min = 0.0))]
