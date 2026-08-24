@@ -265,3 +265,7 @@ class RustRecorder(NativeModule):
             for spec in specs:
                 payload_type = TFMessage if spec.payload_kind == "tf" else ports[spec.port].type
                 store.stream(spec.name, payload_type, codec=spec.codec)
+
+    def _argv(self, _topics: dict[str, str]) -> list[str]:
+        """Launch the stdin-configured recorder without duplicate topic arguments."""
+        return [self.config.executable, *self.config.extra_args]

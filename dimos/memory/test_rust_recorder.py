@@ -263,3 +263,18 @@ def test_recorder_config_generates_no_native_config_cli_args(tmp_path: Path) -> 
     )
 
     assert config.to_cli_args() == []
+
+
+def test_recorder_launches_without_duplicate_topic_cli_args(
+    tmp_path: Path, make_recorder: Any
+) -> None:
+    recorder = make_recorder(
+        SampleRustRecorder,
+        store=RustSqliteStoreConfig(path=tmp_path / "recording.db"),
+        extra_args=["--diagnostic"],
+    )
+
+    assert recorder._argv({"odometry": "/odom"}) == [
+        recorder.config.executable,
+        "--diagnostic",
+    ]
