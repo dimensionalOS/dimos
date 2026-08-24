@@ -24,7 +24,7 @@ use lcm_msgs::std_msgs::{Header, Time};
 use nalgebra::{Isometry3, Translation3, Vector3};
 
 #[derive(Module)]
-#[module()]
+#[module(name = "ray_tracing")]
 pub struct RayTracingVoxelMap {
     #[input(decode = PointCloud2::decode, handler = on_lidar)]
     lidar: Input<PointCloud2>,
@@ -55,24 +55,14 @@ pub struct RayTracingVoxelMap {
 impl RayTracingVoxelMap {
     async fn on_lidar(&mut self, msg: PointCloud2) {
         let stamp = time_secs(&msg.header.stamp);
-        // Tf already past this stamp will never deliver a match, and this handler is
-        // the module's only dispatch loop, so waiting would just stall fresher clouds.
-        let tf_past_stamp = self
-            .tf
-            .get_latest(&self.config.output_frame, &msg.header.frame_id)
-            .is_some_and(|latest| latest.ts > stamp + self.config.tf_match_tolerance_s);
-        let wait = if tf_past_stamp {
-            Duration::ZERO
-        } else {
-            Duration::from_secs_f64(self.config.tf_wait_timeout_s)
-        };
-        // The tf graph fills from the transport, not this loop, so this await cannot deadlock.
+        // The tf graph fills from the transport, not this loop, so this await cannot
+        // deadlock, and it returns early once every tf edge has passed the stamp.
         let Some(transform) = self
             .tf
             .lookup(&self.config.output_frame, &msg.header.frame_id)
             .at(stamp)
             .tolerance(self.config.tf_match_tolerance_s)
-            .within(wait)
+            .within(Duration::from_secs_f64(self.config.tf_wait_timeout_s))
             .await
         else {
             warn_throttled!(
@@ -790,6 +780,33 @@ mod tests {
             bus.publish_count(GLOBAL_TOPIC),
             1,
             "the passed-over cloud has no transform within tolerance and must be dropped"
+        );
+    }
+
+    // Same drop rule, but the edges that pass the stamp land only after the wait
+    // has already begun: the give-up must fire from inside the wait, not just on
+    // entry.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_cloud_older_than_the_whole_tf_stream_does_not_delay_the_next_cloud() {
+        let bus = start(tf_test_config()).await;
+        bus.send(LIDAR_TOPIC, cloud_bytes(1000.0));
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        bus.send(
+            TF_TOPIC,
+            tf_bytes(&[("map", "odom", 1001.0), ("odom", "lidar", 1001.0)]),
+        );
+        bus.send(LIDAR_TOPIC, cloud_bytes(1001.0));
+        assert!(
+            poll_until(Duration::from_millis(500), || bus
+                .publish_count(GLOBAL_TOPIC)
+                >= 1)
+            .await,
+            "the placeable cloud must not wait out the first cloud's {WAIT_TIMEOUT_S}s timeout"
+        );
+        assert_eq!(
+            bus.publish_count(GLOBAL_TOPIC),
+            1,
+            "the pre-stream cloud can never match and must be dropped"
         );
     }
 }
