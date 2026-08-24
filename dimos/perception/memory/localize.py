@@ -285,7 +285,15 @@ def localize(
 
     from dimos.perception.memory.support_plane import fit_support_plane
 
-    plane = fit_support_plane(rig, ordered)
+    anchors = [peak.pose_tuple for label_peaks in peaks_per_label for peak in label_peaks]
+    mx = sum(t[0] for t in anchors) / len(anchors)
+    my = sum(t[1] for t in anchors) / len(anchors)
+    cell = (round(mx / 2.0), round(my / 2.0))
+    plane = rig._plane_cache.get(cell)
+    if plane is None:
+        plane = fit_support_plane(rig, ordered)
+        if plane is not None:
+            rig._plane_cache[cell] = plane
     identities = [Identity(is_same=spatial(policy.cluster_radius_m)) for _ in queries]
     ungrounded: list[tuple[float, float] | None] = [None] * len(queries)  # (score, ts)
 
