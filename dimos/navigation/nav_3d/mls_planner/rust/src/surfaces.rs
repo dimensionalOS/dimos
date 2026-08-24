@@ -54,6 +54,7 @@ pub fn extract_surfaces(
     voxel_map: &AHashSet<VoxelKey>,
     clearance_cells: i32,
     closing_passes: u32,
+    max_span_cells: u32,
     by_col: &mut ColumnIz,
     out: &mut Vec<VoxelKey>,
 ) {
@@ -83,7 +84,14 @@ pub fn extract_surfaces(
         .collect();
     drop(entries);
 
-    close_surface_holes(standable, by_col, closing_passes, clearance_cells, out);
+    close_surface_holes(
+        standable,
+        by_col,
+        closing_passes,
+        max_span_cells,
+        clearance_cells,
+        out,
+    );
 }
 
 /// Standable cells in one column: any cell with robot clearance above, plus
@@ -132,6 +140,7 @@ pub fn extract_surfaces_region(
     by_col: &ColumnIz,
     clearance_cells: i32,
     closing_passes: u32,
+    max_span_cells: u32,
     write: (i32, i32, i32, i32),
 ) -> Vec<VoxelKey> {
     let (wx0, wx1, wy0, wy1) = write;
@@ -155,6 +164,7 @@ pub fn extract_surfaces_region(
         standable,
         by_col,
         closing_passes,
+        max_span_cells,
         clearance_cells,
         &mut closed,
     );
@@ -169,6 +179,7 @@ fn close_surface_holes(
     standable: Vec<VoxelKey>,
     by_col: &ColumnIz,
     closing_passes: u32,
+    max_span_cells: u32,
     clearance_cells: i32,
     out: &mut Vec<VoxelKey>,
 ) {
@@ -183,11 +194,16 @@ fn close_surface_holes(
     }
 
     let slices: Vec<(i32, Vec<(i32, i32)>)> = by_z.into_iter().collect();
-    out.par_extend(
-        slices.par_iter().flat_map_iter(|(iz, xys)| {
-            close_at_z(xys, *iz, by_col, closing_passes, clearance_cells)
-        }),
-    );
+    out.par_extend(slices.par_iter().flat_map_iter(|(iz, xys)| {
+        close_at_z(
+            xys,
+            *iz,
+            by_col,
+            closing_passes,
+            max_span_cells,
+            clearance_cells,
+        )
+    }));
 }
 
 /// Whether an occupied voxel lies near this cell at a compatible height.
@@ -212,6 +228,7 @@ fn close_at_z(
     iz: i32,
     by_col: &ColumnIz,
     closing_passes: u32,
+    max_span_cells: u32,
     clearance_cells: i32,
 ) -> Vec<VoxelKey> {
     let pad = closing_passes as i32;
@@ -230,6 +247,20 @@ fn close_at_z(
     let h = (max_y - min_y + 1 + 2 * pad) as u32;
     let x0 = min_x - pad;
     let y0 = min_y - pad;
+
+    // voxelize saturates out-of-range coordinates to i32::MAX, so one corrupt point
+    // stretches this image over the whole gap. Closing only bridges `pad` cells anyway.
+    if w > max_span_cells || h > max_span_cells {
+        tracing::error!(
+            iz,
+            width = w,
+            height = h,
+            max_span_cells,
+            cells = xys.len(),
+            "surface slice is wider than the max map span; skipping hole closing"
+        );
+        return xys.iter().map(|&(ix, iy)| (ix, iy, iz)).collect();
+    }
 
     let mut img = GrayImage::from_pixel(w, h, OFF);
     for &(ix, iy) in xys {
@@ -275,7 +306,7 @@ mod tests {
         let map = voxel_map(cells);
         let mut by_col = ColumnIz::new();
         let mut out = Vec::new();
-        extract_surfaces(&map, clearance, closing, &mut by_col, &mut out);
+        extract_surfaces(&map, clearance, closing, 6250, &mut by_col, &mut out);
         out
     }
 
@@ -317,6 +348,34 @@ mod tests {
         assert!(
             s.contains(&(0, 0, 0)),
             "closing should fill the center hole"
+        );
+    }
+
+    #[test]
+    fn a_far_outlier_does_not_allocate_the_gap() {
+        let mut cells: Vec<VoxelKey> = [
+            (-1, -1),
+            (-1, 0),
+            (-1, 1),
+            (0, -1),
+            (0, 1),
+            (1, -1),
+            (1, 0),
+            (1, 1),
+        ]
+        .into_iter()
+        .map(|(dx, dy)| (dx, dy, 0))
+        .collect();
+        cells.push((i32::MAX / 2, 0, 0));
+
+        let s = run(&cells, 5, 3);
+        assert!(
+            s.contains(&(i32::MAX / 2, 0, 0)),
+            "the outlier itself still passes through"
+        );
+        assert!(
+            !s.contains(&(0, 0, 0)),
+            "the slice is skipped wholesale rather than allocating across the gap"
         );
     }
 
