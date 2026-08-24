@@ -24,6 +24,8 @@ OPTIONAL_ERROR_SUBSTRINGS = {
     "Unable to locate turbojpeg library automatically",
     "ZED SDK not installed",
     "Descriptors cannot be created directly",
+    # cockpit() blueprints without the [web] extra installed.
+    "needs the web extra",
 }
 
 # These need self-hosted dependencies or external robot assets.
