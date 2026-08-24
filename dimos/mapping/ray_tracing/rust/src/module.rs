@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::VecDeque;
 use std::time::Duration;
 
 use crate::voxel_ray_tracer::{
@@ -50,10 +51,34 @@ pub struct RayTracingVoxelMap {
     frame_count: u32,
     batch_points: Vec<(f32, f32, f32)>,
     batch_origins: Vec<(f32, f32, f32)>,
+    waiting_for_tf: VecDeque<PointCloud2>,
 }
 
 impl RayTracingVoxelMap {
     async fn on_lidar(&mut self, msg: PointCloud2) {
+        // Nothing orders tf against lidar, so a cloud can land before the transform that
+        // places it. Hold it for a few frames instead of punching a hole in the map.
+        self.waiting_for_tf.push_back(msg);
+        if self.waiting_for_tf.len() > MAX_CLOUDS_WAITING_FOR_TF {
+            self.waiting_for_tf.pop_front();
+            warn_throttled!(
+                Duration::from_secs(1),
+                output_frame = %self.config.output_frame,
+                "No tf ever arrived for the oldest waiting cloud, dropped it.",
+            );
+        }
+        for _ in 0..self.waiting_for_tf.len() {
+            let Some(cloud) = self.waiting_for_tf.pop_front() else {
+                break;
+            };
+            if let Some(unmatched) = self.map_cloud(cloud).await {
+                self.waiting_for_tf.push_back(unmatched);
+            }
+        }
+    }
+
+    /// Hands the cloud back when its tf has not arrived yet.
+    async fn map_cloud(&mut self, msg: PointCloud2) -> Option<PointCloud2> {
         let stamp = time_secs(&msg.header.stamp);
         let Some(transform) = self
             .tf
@@ -62,13 +87,7 @@ impl RayTracingVoxelMap {
             .tolerance(TF_MATCH_TOLERANCE_S)
             .get()
         else {
-            warn_throttled!(
-                Duration::from_secs(1),
-                output_frame = %self.config.output_frame,
-                cloud_frame = %msg.header.frame_id,
-                "No tf between the world frame and the cloud frame, dropped a cloud.",
-            );
-            return;
+            return Some(msg);
         };
         let sensor_pose: Isometry3<f32> = Isometry3::from_parts(
             Translation3::from(transform.translation()),
@@ -86,11 +105,11 @@ impl RayTracingVoxelMap {
                     error = %e,
                     "Failed to get lidar points, dropped a cloud.",
                 );
-                return;
+                return None;
             }
         };
         if points.is_empty() {
-            return;
+            return None;
         }
 
         let rot = sensor_pose.rotation.to_rotation_matrix();
@@ -181,6 +200,7 @@ impl RayTracingVoxelMap {
             let local = points_to_cloud(&points, &out_frame_id, stamp);
             publish_cloud(&self.local_map, &local).await;
         }
+        None
     }
 }
 
@@ -190,6 +210,10 @@ fn emit_due(frame_count: u32, every: u32) -> bool {
 }
 
 const TF_MATCH_TOLERANCE_S: f64 = 0.1;
+
+// Deep enough to cover a lidar frame or two of tf lag, shallow enough that a frame with
+// no tf at all cannot grow a backlog.
+const MAX_CLOUDS_WAITING_FOR_TF: usize = 10;
 
 fn time_secs(t: &Time) -> f64 {
     t.sec as f64 + t.nsec as f64 * 1e-9
