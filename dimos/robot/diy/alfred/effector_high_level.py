@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator
 import math
+import threading
 import time
 from typing import Any
 
@@ -60,7 +61,17 @@ _TEARDOWN_TIMEOUT = 2.0
 _ODOMETRY_ERROR_LOG_INTERVAL = 10.0
 
 
-def _close_quietly(client: portal.Client) -> None:
+def _stop_and_close(client: portal.Client) -> None:
+    """Stop the platform, then close, both off the event loop.
+
+    Portal answers on a worker thread, so a close chained to the stop through the
+    loop is skipped outright once the loop shuts down, leaving the client open.
+    """
+    try:
+        client.set_target_velocity({"target_velocity": np.zeros(3), "frame": "local"}).result()
+    except Exception as e:
+        logger.error(f"Error stopping Alfred: {e}")
+    # Closing fails every request the connection still owes, so it goes after the stop.
     try:
         client.close()
     except Exception as e:
@@ -99,27 +110,20 @@ class AlfredHighLevel(Module):
         try:
             yield
         finally:
-            # Portal matches replies by request number, so a wedged poll read cannot
-            # delay the stop below.
             if self._stop_task is not None and not self._stop_task.done():
                 self._stop_task.cancel()
-            stop = asyncio.ensure_future(self._send_velocity(0.0, 0.0, 0.0))
-            stopped, _ = await asyncio.wait({stop}, timeout=_TEARDOWN_TIMEOUT)
-            if not stopped:
-                logger.error("Alfred has not taken the stop command yet; it may still be moving")
-            # Cancelling would not stop an in-flight Portal call, which runs on a worker
-            # thread; close() below fails whatever request it is still waiting on.
+            # Started before the odometry drain so the platform stops first. Portal
+            # matches replies by request number, so a wedged poll cannot delay it.
+            stopper = threading.Thread(target=_stop_and_close, args=(client,), daemon=True)
+            stopper.start()
             self._odometry_stop.set()
             if self._odometry_task is not None:
                 done, _ = await asyncio.wait({self._odometry_task}, timeout=_TEARDOWN_TIMEOUT)
                 if not done:
                     logger.warning("Alfred wheel odometry poll is still running; stopping anyway")
-            # Closing fails every request the connection still owes, so a stop that has
-            # not come back yet waits for its worker rather than being cut off.
-            if stop.done():
-                _close_quietly(client)
-            else:
-                stop.add_done_callback(lambda _: _close_quietly(client))
+            await asyncio.to_thread(stopper.join, _TEARDOWN_TIMEOUT)
+            if stopper.is_alive():
+                logger.error("Alfred has not taken the stop command yet; it may still be moving")
             # A restart can overlap: this teardown must not null out a newer run's client.
             if self._client is client:
                 self._client = None
