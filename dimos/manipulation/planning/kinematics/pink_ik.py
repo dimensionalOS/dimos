@@ -19,7 +19,6 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import importlib
-from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
@@ -38,7 +37,6 @@ from dimos.manipulation.planning.spec.enums import IKStatus
 from dimos.manipulation.planning.spec.models import IKResult, RobotName, WorldRobotID
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
-from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
@@ -537,20 +535,8 @@ class PinkIK:
 
     def _build_robot_context(self, config: RobotModelConfig, frame_name: str) -> _PinkRobotContext:
         pinocchio = self._modules.pinocchio
-        model_path = Path(config.model_path).resolve()
-        if not model_path.exists():
-            raise FileNotFoundError(f"Robot model not found: {model_path}")
-
-        if model_path.suffix == ".xml":
-            model = pinocchio.buildModelFromMJCF(str(model_path))
-        else:
-            prepared_path = prepare_urdf_for_drake(
-                urdf_path=model_path,
-                package_paths=config.package_paths,
-                xacro_args=config.xacro_args,
-                convert_meshes=config.auto_convert_meshes,
-            )
-            model = pinocchio.buildModelFromUrdf(str(prepared_path))
+        description = config.model.load()
+        model = pinocchio.buildModelFromXML(description.xml)
 
         data = model.createData()
         _assert_base_link_is_model_root(model, config.base_link)
@@ -572,9 +558,7 @@ class PinkIK:
         upper_limits: NDArray[np.float64],
         attempt: int,
     ) -> NDArray[np.float64]:
-        pinocchio = self._modules.pinocchio
-        neutral = pinocchio.neutral(context.model)
-        q = np.array(neutral, dtype=np.float64)
+        q = self._neutral_q(context)
 
         if attempt == 0:
             positions = _seed_positions_for_mapping(seed, context.mapping)
@@ -590,8 +574,7 @@ class PinkIK:
         context: _PinkRobotContext,
         positions: NDArray[np.float64],
     ) -> NDArray[np.float64]:
-        pinocchio = self._modules.pinocchio
-        q = np.array(pinocchio.neutral(context.model), dtype=np.float64)
+        q = self._neutral_q(context)
         if len(positions) != len(context.mapping.idx_q):
             raise ValueError(
                 f"Seed has {len(positions)} positions for {len(context.mapping.idx_q)} joints"
@@ -599,6 +582,12 @@ class PinkIK:
         for value, idx_q in zip(positions, context.mapping.idx_q, strict=True):
             q[idx_q] = value
         return q
+
+    def _neutral_q(self, context: _PinkRobotContext) -> NDArray[np.float64]:
+        return np.asarray(
+            self._modules.pinocchio.neutral(context.model),
+            dtype=np.float64,
+        ).copy()
 
     def _q_to_dimos_positions(
         self, context: _PinkRobotContext, q: NDArray[np.float64]

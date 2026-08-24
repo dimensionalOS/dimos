@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Multicast and gossip are knobs. Gossip follows scouting unless set explicitly."""
+"""Multicast and gossip are knobs. Gossip is on unless a caller turns it off."""
 
 import json
 
@@ -28,16 +28,16 @@ def test_multicast_defaults_on(zenoh_defaults):
     assert ZenohConfig().multicast is True
 
 
-def test_gossip_follows_scouting(zenoh_defaults, monkeypatch):
-    assert ZenohConfig().gossip_enabled is False
-    monkeypatch.setattr(global_config, "zenoh_scouting", True)
+def test_gossip_does_not_follow_scouting(zenoh_defaults, monkeypatch):
+    """A peer that cannot gossip drops the data its links send it."""
+    assert ZenohConfig().gossip_enabled is True
+    monkeypatch.setattr(global_config, "zenoh_scouting", False)
     assert ZenohConfig().gossip_enabled is True
 
 
-def test_explicit_gossip_wins_over_scouting(zenoh_defaults, monkeypatch):
-    monkeypatch.setattr(global_config, "zenoh_gossip", True)
-    assert ZenohConfig().gossip_enabled is True
+def test_explicit_gossip_wins(zenoh_defaults, monkeypatch):
     monkeypatch.setattr(global_config, "zenoh_gossip", False)
+    assert ZenohConfig().gossip_enabled is False
     monkeypatch.setattr(global_config, "zenoh_scouting", True)
     assert ZenohConfig().gossip_enabled is False
 
@@ -64,7 +64,7 @@ def test_unset_env_keeps_the_defaults(monkeypatch):
     monkeypatch.delenv("ZENOH_GOSSIP", raising=False)
     config = GlobalConfig()
     assert config.zenoh_multicast is True
-    assert config.zenoh_gossip is None
+    assert config.zenoh_gossip is True
 
 
 def test_multicast_separates_pooled_sessions(zenoh_defaults):
@@ -76,7 +76,7 @@ def test_gossip_separates_pooled_sessions(zenoh_defaults):
 
 
 def test_unset_gossip_pools_with_its_resolved_value(zenoh_defaults):
-    assert ZenohConfig(gossip=None).session_key == ZenohConfig(gossip=False).session_key
+    assert ZenohConfig(gossip=None).session_key == ZenohConfig(gossip=True).session_key
 
 
 def test_zenoh_knows_every_key_we_write():

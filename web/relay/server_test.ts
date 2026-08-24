@@ -5,7 +5,6 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { fileURLToPath } from "node:url";
 import {
-  type ChannelSpec,
   ControlFrameReader,
   DataFrameStreamReader,
   decodeDatagram,
@@ -14,18 +13,24 @@ import {
   encodeDatagram,
   type FrameHeader,
   type Msg,
-  type PanelSpec,
   PROTOCOL_VERSION,
   type RobotInfo,
+  type RobotManifest,
 } from "@dimos/shared";
 import { startRelay } from "./server.ts";
 
 const ROBOT: RobotInfo = { id: "deno-bot", name: "Deno Bot", model: "test" };
-const CHANNELS: ChannelSpec[] = [
+// Raw (un-normalized) on purpose: the relay must forward it verbatim.
+const CHANNELS = [
   { ch: "color_image", encoding: "jpeg.v1", delivery: "latest", maxHz: 15.5 },
   { ch: "odom", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20.5 },
 ];
-const PANELS: PanelSpec[] = [{ id: "color_image", kind: "video", channels: ["color_image"] }];
+const MANIFEST: RobotManifest = {
+  version: 1,
+  channels: CHANNELS,
+  panels: [{ id: "color_image", kind: "video", channels: ["color_image"] }],
+  layout: "color_image",
+};
 
 function certOpts(hashB64: string): WebTransportOptions {
   return {
@@ -211,6 +216,7 @@ async function runBackpressureRound(round: RoundState): Promise<void> {
         role: "robot",
         robot: ROBOT,
         manifest: {
+          version: 1,
           channels: [{ ch: "color_image", encoding: "jpeg.v1", delivery: "latest", maxHz: 100 }],
         },
       }),
@@ -390,7 +396,7 @@ Deno.test({
         v: PROTOCOL_VERSION,
         role: "robot",
         robot: ROBOT,
-        manifest: { channels: CHANNELS, panels: PANELS },
+        manifest: MANIFEST,
       }),
     );
     // Registration and welcome are separate datagrams, so their relative
@@ -422,8 +428,7 @@ Deno.test({
     assertEquals(await within(nextControl(), "manifest"), {
       t: "manifest",
       robotId: ROBOT.id,
-      channels: CHANNELS,
-      panels: PANELS,
+      manifest: MANIFEST,
     });
     await controlWriter.write(encodeControlFrame({ t: "sub", ch: "odom" }));
     await controlWriter.write(encodeControlFrame({ t: "sub", ch: "color_image" }));
@@ -563,7 +568,7 @@ Deno.test({
       v: PROTOCOL_VERSION,
       role: "robot",
       robot: { id: "dup-bot", name: "Dup Bot", model: "test" },
-      manifest: { channels: [CHANNELS[0], CHANNELS[0]] },
+      manifest: { version: 1, channels: [CHANNELS[0], CHANNELS[0]] },
     }));
     const err = await within(dupDatagrams(), "invalid_manifest error");
     assertEquals(err.t, "error");
