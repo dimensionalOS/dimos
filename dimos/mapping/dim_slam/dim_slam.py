@@ -43,12 +43,11 @@ logger = setup_logger()
 
 MODULE_DIR = Path(__file__).resolve().parent
 
-# The nix loader ignores ld.so.cache, so dlopen("libcuda.so.1") fails and cudart blames
-# the driver version instead. Jetson needs the whole directory: libcuda.so.1 there
-# depends on its siblings.
+# The nix loader ignores ld.so.cache, so dlopen("libcuda.so.1") fails. Jetson needs the
+# whole directory: its libcuda.so.1 depends on its siblings.
 _DRIVER_ONLY_LIB_DIRS = (
     Path("/run/opengl-driver/lib"),
-    # Jetson / L4T. Which of the two names exists has varied across releases.
+    # Jetson: which of these two names exists varies by release.
     Path("/usr/lib/aarch64-linux-gnu/nvidia"),
     Path("/usr/lib/aarch64-linux-gnu/tegra"),
 )
@@ -89,8 +88,7 @@ def driver_library_dir() -> Path | None:
         # Re-point after a driver upgrade.
         if link.is_symlink() and link.readlink() == target:
             continue
-        # Swapped in through a private name because two callers can reach this at
-        # once, and symlink_to after an existence check raises for the loser.
+        # Two callers can reach this at once, and symlink_to over an existing path raises.
         staging = link.with_name(f"{name}.{uuid4().hex}.tmp")
         staging.symlink_to(target)
         os.replace(staging, link)
@@ -171,8 +169,8 @@ class DimSlamConfig(NativeModuleConfig):
     camera_frames: list[str] = Field(default_factory=list)
     # Asserted, not performed: unrectified input is not corrected.
     rectified: bool = True
-    # Off runs the tracker on the CPU (deterministic, no CUDA). Needs a libcuvslam built
-    # with ENFORCE_GPU=OFF (the jeff-hykin/cuVSLAM fork); NVIDIA's stock SDK is GPU-only.
+    # Off runs the deterministic CPU path, which needs a libcuvslam built
+    # -DENFORCE_GPU=OFF. A build carrying only the other backend is used with a warning.
     use_gpu: bool = True
 
     # The tracker's own world frame, drifting freely; the filter fuses it as a
@@ -185,8 +183,8 @@ class DimSlamConfig(NativeModuleConfig):
     # come from the imu_info stream. Separate from use_imu, which feeds the fusion
     # filter. Implemented only on the CUDA path.
     cuvslam_enable_imu: bool = False
-    # Translation std (m) above which the frame's motion is dropped and the path rebased.
-    # Well-constrained frames measure 0.01-0.3 m, degenerate bursts 5-330 m or NaN; 0 disables.
+    # Translation std (m) above which the frame's motion is dropped and the path rebased;
+    # 0 disables.
     covariance_gate_translation_std: float = 1.0
     # Frame-to-frame m/s and rad/s, catching teleports the covariance gate misses; 0 disables.
     speed_gate_max_linear: float = 5.0
@@ -274,10 +272,9 @@ class DimSlamConfig(NativeModuleConfig):
 class DimSlam(NativeModule):
     """Every camera publishes onto the same ``image`` and ``camera_info`` streams and is
     told apart by ``frame_id``; ``camera_frames`` fixes which frames are on the rig and
-    in what order. Extrinsics come from tf against ``base_frame``, which is also the
-    rig frame. ``rgbd`` pairs one camera with ``depth_image``. Depth recorded against a
-    different sensor than the rig camera (a D455 aligns depth to the left IR camera, not
-    color) is reprojected onto the rig camera through ``depth_camera_info`` and tf.
+    in what order. Extrinsics come from tf against ``rig_frame``. ``rgbd`` pairs one
+    camera with ``depth_image``, reprojected onto the rig camera through
+    ``depth_camera_info`` and tf when the depth sensor differs.
 
     The tracker's pose stream never touches the wire: it enters the filter as a
     drifting source under ``visual_odom_frame``. Any number of external sources
