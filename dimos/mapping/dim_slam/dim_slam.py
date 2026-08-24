@@ -282,11 +282,8 @@ class DimSlam(NativeModule):
     The tracker's pose stream never touches the wire: it enters the filter as a
     drifting source under ``visual_odom_frame``. Any number of external sources
     (wheel odometry, ...) publish onto ``sources`` and are told apart by
-    ``header.frame_id``, so adding one is a config change rather than a port change.
-    Late messages roll the filter back to their own slot and replay everything after.
-
-    ``odometry`` is the fused ``odom_frame`` -> ``base_frame`` pose; ``tf`` carries the
-    same edge and an identity ``map`` -> ``odom``.
+    ``header.frame_id``. Late messages roll the filter back to their own slot and replay
+    everything after.
     """
 
     config: DimSlamConfig
