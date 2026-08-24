@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import field
-import shutil
 import signal
 import socket
 import subprocess
@@ -400,28 +399,24 @@ class RerunBridgeModule(Module):
 
         spawned = False
         if self.config.rerun_open in ("native", "both"):
-            # Popen, not rerun_bindings.spawn: the bindings leak inheritable fds into a
-            # viewer that outlives the run, and a leaked resource-tracker fd hangs
-            # interpreter shutdown.
-            viewer_path = shutil.which("dimos-viewer")
-            if viewer_path is not None:
-                try:
-                    subprocess.Popen(
-                        [
-                            viewer_path,
-                            f"--memory-limit={self.config.memory_limit}",
-                            "--expect-data-soon",
-                            "--connect",
-                            server_uri,
-                        ],
-                        start_new_session=True,
-                    )
-                    spawned = True
-                except Exception:
-                    logger.warning(
-                        "dimos-viewer found but failed to spawn, falling back to stock rerun",
-                        exc_info=True,
-                    )
+            try:
+                import rerun_bindings
+
+                # Use --connect so the viewer connects to the bridge's gRPC
+                # server rather than starting its own (which would conflict).
+                rerun_bindings.spawn(
+                    executable_name="dimos-viewer",
+                    memory_limit=self.config.memory_limit,
+                    extra_args=["--connect", server_uri],
+                )
+                spawned = True
+            except ImportError:
+                pass  # dimos-viewer not installed
+            except Exception:
+                logger.warning(
+                    "dimos-viewer found but failed to spawn, falling back to stock rerun",
+                    exc_info=True,
+                )
 
             # fallback on normal (non-dimos-viewer) rerun
             if not spawned:
