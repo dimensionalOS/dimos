@@ -225,3 +225,30 @@ def test_not_logged_in(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(global_config, "dimos_api_key", None)
     with pytest.raises(RuntimeError, match="dimos login"):
         CloudData()
+
+
+def test_pull_with_cross_filesystem_staging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    t = FakeTransport()
+    monkeypatch.setattr(cd, "RECORDINGS_DIR", tmp_path)
+    staging = tmp_path / "otherfs"
+    staging.mkdir()
+    cloud = CloudData(MultipartBackend(t, codec("lz4"), staging, retries=0))
+    db = recording(tmp_path)
+    r = cloud.upload(db)
+
+    real = Path.replace
+
+    def exdev_from_staging(self: Path, target: Any) -> Any:
+        if staging in self.parents:
+            raise OSError(18, "Invalid cross-device link")
+        return real(self, target)
+
+    monkeypatch.setattr(Path, "replace", exdev_from_staging)
+    dest = tmp_path / "back.db"
+    dest.write_bytes(b"old")
+    out = cloud.pull(r["upload_id"], dest=dest)
+    assert (
+        hashlib.sha256(out.read_bytes()).hexdigest() == hashlib.sha256(db.read_bytes()).hexdigest()
+    )

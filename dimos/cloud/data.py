@@ -24,6 +24,7 @@ import functools
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import sqlite3
 import tempfile
 import time
@@ -132,7 +133,7 @@ class MultipartBackend:
                 raise RuntimeError("sha256 mismatch — refusing to keep the file")
             decoded = Path(tmp) / plain
             wire.decode(raw, decoded)
-            decoded.replace(out)
+            _move_into_place(decoded, out)
         return out
 
     def ls(self) -> list[dict[str, Any]]:
@@ -226,6 +227,17 @@ def kind_of(path: Path) -> str:
     if path.suffix == ".mcap" or _manifest(path) is not None:
         return "recording"
     return "blob"
+
+
+def _move_into_place(src: Path, out: Path) -> None:
+    """Atomic replace; a cross-filesystem staging dir falls back to copy-then-rename
+    so the destination is still never left truncated."""
+    try:
+        src.replace(out)
+    except OSError:
+        part = out.with_name(out.name + ".part")
+        shutil.move(str(src), part)
+        part.replace(out)
 
 
 def _is_sidecar(path: Path) -> bool:
