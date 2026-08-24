@@ -56,7 +56,6 @@ pub struct Config {
     /// stray far hit cannot inflate it.
     #[validate(range(min = 0.0, max = 100.0))]
     pub region_percentile: f32,
-    /// Frame the map accumulates and publishes in.
     pub world_frame: String,
 }
 

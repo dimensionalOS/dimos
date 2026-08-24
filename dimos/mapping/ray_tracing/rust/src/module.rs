@@ -54,7 +54,6 @@ pub struct RayTracingVoxelMap {
 
 impl RayTracingVoxelMap {
     async fn on_lidar(&mut self, msg: PointCloud2) {
-        // Rays clear from the sensor origin, so the map stays in world coordinates.
         let stamp = time_secs(&msg.header.stamp);
         let Some(transform) = self
             .tf
@@ -190,8 +189,8 @@ fn emit_due(frame_count: u32, every: u32) -> bool {
     every != 0 && frame_count.is_multiple_of(every)
 }
 
-/// Max age of a tf sample used to place a cloud (s).
-const TF_MATCH_TOLERANCE_S: f64 = 0.5;
+/// Max stamp gap between a cloud and the tf sample placing it.
+const TF_MATCH_TOLERANCE_S: f64 = 0.1;
 
 fn time_secs(t: &Time) -> f64 {
     t.sec as f64 + t.nsec as f64 * 1e-9

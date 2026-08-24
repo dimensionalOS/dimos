@@ -59,8 +59,7 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     global_emit_every: int = 1
     # Size the local region to this percentile of batch point distances.
     region_percentile: float = 95.0
-    # Frame the map accumulates and publishes in; clouds are placed into it
-    # through tf from their own frame_id.
+    # Clouds are placed into this frame through tf from their own frame_id.
     world_frame: str = "odom"
 
 
