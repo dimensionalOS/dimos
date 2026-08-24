@@ -65,6 +65,7 @@ if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
     from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+    from dimos.perception.memory.support_plane import SupportPlane
     from dimos.protocol.tf.tf import TFLookup
 
 logger = setup_logger()
@@ -257,6 +258,9 @@ class Rig:
     _cloud_memo: tuple[float, PointCloud2] | None = field(default=None, repr=False, init=False)
     _scan_cache: OrderedDict[float, np.ndarray | None] = field(
         default_factory=OrderedDict, repr=False, init=False
+    )
+    _plane_cache: dict[tuple[int, int], SupportPlane] = field(
+        default_factory=dict, repr=False, init=False
     )
     _quantum: float | None = field(default=None, repr=False, init=False)
     _quantum_known: bool = field(default=False, repr=False, init=False)
