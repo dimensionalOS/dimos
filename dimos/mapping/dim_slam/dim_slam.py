@@ -184,8 +184,8 @@ class DimSlamConfig(NativeModuleConfig):
     # come from the imu_info stream. Separate from use_imu, which feeds the fusion
     # filter. Implemented only on the CUDA path.
     cuvslam_enable_imu: bool = False
-    # Translation std (m) above which the frame's motion is dropped and the path rebased.
-    # Well-constrained frames measure 0.01-0.3 m, degenerate bursts 5-330 m or NaN; 0 disables.
+    # Translation std (m) above which the frame's motion is dropped and the path rebased;
+    # 0 disables.
     covariance_gate_translation_std: float = 1.0
     # Frame-to-frame m/s and rad/s, catching teleports the covariance gate misses; 0 disables.
     speed_gate_max_linear: float = 5.0
@@ -203,7 +203,7 @@ class DimSlamConfig(NativeModuleConfig):
     # feature (depth2depth-cuda/-cudnn/-metal for a GPU backend).
     depth2depth_dinov2_weights: str = ""
     depth2depth_head_weights: str = ""
-    # 1.0 = 280x504; 0.5 is ~4x faster and coarser.
+    # 1.0 = 280x504.
     depth2depth_quality: float = 1.0
     # Frame whose images on the image stream feed the model; empty uses the rig camera
     # on the depth frame. Set to the color camera's frame when depth is aligned to a
