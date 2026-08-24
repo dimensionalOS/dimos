@@ -55,6 +55,9 @@ logger = setup_logger()
 # An unreachable controller never answers, so teardown gives up rather than hang.
 _TEARDOWN_TIMEOUT = 2.0
 
+# A dead connection fails every poll, and the poll runs at wheel_odometry_hz.
+_ODOMETRY_ERROR_LOG_INTERVAL = 10.0
+
 
 class AlfredHighLevelConfig(ModuleConfig):
     address: str = DEFAULT_ADDRESS
@@ -85,7 +88,7 @@ class AlfredHighLevel(Module):
         client = portal.Client(self.config.address)
         self._client = client
         logger.info(f"Connected to Alfred at {self.config.address}")
-        self._odometry_task = asyncio.create_task(self._poll_wheel_odometry())
+        self._odometry_task = asyncio.create_task(self._poll_wheel_odometry(client))
         try:
             yield
         finally:
@@ -190,16 +193,18 @@ class AlfredHighLevel(Module):
             logger.error(f"Error sending Alfred velocity: {e}")
             return False
 
-    async def _poll_wheel_odometry(self) -> None:
+    async def _poll_wheel_odometry(self, client: portal.Client) -> None:
         """Publish the controller's on-board integrated pose as `wheel_odometry`."""
         period = 1.0 / self.config.wheel_odometry_hz
         previous: tuple[float, float, float, float] | None = None
+        last_error_log = 0.0
         while not self._odometry_stop.is_set():
             start = asyncio.get_running_loop().time()
             try:
-                future = self._client.get_odometry({})  # type: ignore[union-attr]
-                reading = await asyncio.to_thread(future.result)
+                # Stamped before the call so a slow reply cannot drag the stamp forward.
                 ts = time.time()
+                future = client.get_odometry({})
+                reading = await asyncio.to_thread(future.result)
                 x, y = (float(v) for v in reading["translation"])
                 yaw = float(reading["rotation"])
 
@@ -212,9 +217,12 @@ class AlfredHighLevel(Module):
                     last_ts, last_x, last_y, last_yaw = previous
                     dt = ts - last_ts
                     if dt > 0.0:
-                        forward = math.cos(yaw) * (x - last_x) + math.sin(yaw) * (y - last_y)
-                        left = -math.sin(yaw) * (x - last_x) + math.cos(yaw) * (y - last_y)
                         turn = math.atan2(math.sin(yaw - last_yaw), math.cos(yaw - last_yaw))
+                        # Either endpoint yaw biases the forward/left split while turning.
+                        heading = last_yaw + turn / 2.0
+                        dx, dy = x - last_x, y - last_y
+                        forward = math.cos(heading) * dx + math.sin(heading) * dy
+                        left = -math.sin(heading) * dx + math.cos(heading) * dy
                         twist = Twist(
                             linear=Vector3(forward / dt, left / dt, 0.0),
                             angular=Vector3(0.0, 0.0, turn / dt),
@@ -237,7 +245,10 @@ class AlfredHighLevel(Module):
                 return
             except Exception as error:
                 # One bad read or publish must not end odometry for the run.
-                logger.error(f"Alfred wheel odometry poll failed: {error}")
+                now = asyncio.get_running_loop().time()
+                if now - last_error_log >= _ODOMETRY_ERROR_LOG_INTERVAL:
+                    last_error_log = now
+                    logger.error(f"Alfred wheel odometry poll failed: {error}")
                 await self._wait_or_stop(period)
                 continue
 
