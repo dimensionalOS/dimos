@@ -154,22 +154,7 @@ def _get_lfs_dir() -> Path:
     return get_data_dir() / ".lfs"
 
 
-def _git_lfs_error_detail(error: subprocess.CalledProcessError) -> str:
-    output: list[str] = []
-    for stream in (error.stdout, error.stderr):
-        if isinstance(stream, bytes):
-            stream = stream.decode(errors="replace")
-        if stream:
-            output.append(stream.strip())
-    return "\n".join(output) or str(error)
-
-
-def _is_git_config_lock_error(error: subprocess.CalledProcessError) -> bool:
-    detail = _git_lfs_error_detail(error)
-    return "could not lock config file" in detail and "File exists" in detail
-
-
-def _initialize_git_lfs(repo_root: Path, *, retries: int = 2) -> None:
+def _initialize_git_lfs(repo_root: Path) -> None:
     missing: list[str] = []
 
     # Check if git is available
@@ -190,23 +175,13 @@ def _initialize_git_lfs(repo_root: Path, *, retries: int = 2) -> None:
             "Git LFS installation instructions: https://git-lfs.github.io/"
         )
 
-    for attempt in range(1, retries + 2):
-        try:
-            subprocess.run(
-                ["git", "lfs", "install", "--local", "--skip-repo"],
-                cwd=repo_root,
-                capture_output=True,
-                check=True,
-                text=True,
-            )
-            return
-        except subprocess.CalledProcessError as e:
-            if _is_git_config_lock_error(e) and attempt <= retries:
-                time.sleep(attempt)
-                continue
-
-            detail = _git_lfs_error_detail(e)
-            raise RuntimeError(f"Failed to initialize Git LFS: {detail}") from e
+    subprocess.run(
+        ["git", "lfs", "install", "--local", "--skip-repo"],
+        cwd=repo_root,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
 
 
 def _is_lfs_pointer_file(file_path: Path) -> bool:

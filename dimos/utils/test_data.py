@@ -44,70 +44,25 @@ def test_initialize_git_lfs_configures_only_repository(
             ["git", "lfs", "install", "--local", "--skip-repo"],
             cwd=tmp_path,
             capture_output=True,
-            check=True,
+            check=False,
             text=True,
         ),
     ]
 
 
-def test_initialize_git_lfs_reports_configuration_error(
+def test_initialize_git_lfs_ignores_configuration_error(
     mocker: MockerFixture, tmp_path: Path
 ) -> None:
-    install_error = subprocess.CalledProcessError(
-        1,
+    install_result = subprocess.CompletedProcess(
         ["git", "lfs", "install", "--local", "--skip-repo"],
+        2,
         stderr="unable to write repository config",
     )
-    run = mocker.patch.object(data.subprocess, "run", side_effect=[None, None, install_error])
-    sleep = mocker.patch.object(data.time, "sleep")
-
-    with pytest.raises(RuntimeError, match="unable to write repository config"):
-        data._initialize_git_lfs(tmp_path)
-
-    assert run.call_count == 3
-    sleep.assert_not_called()
-
-
-def test_initialize_git_lfs_retries_config_lock_contention(
-    mocker: MockerFixture, tmp_path: Path
-) -> None:
-    lock_error = subprocess.CalledProcessError(
-        2,
-        ["git", "lfs", "install", "--local", "--skip-repo"],
-        output=(
-            "error: could not lock config file .git/config: File exists\n"
-            "Run `git lfs install --force` to reset Git configuration."
-        ),
-    )
-    run = mocker.patch.object(data.subprocess, "run", side_effect=[None, None, lock_error, None])
-    sleep = mocker.patch.object(data.time, "sleep")
+    run = mocker.patch.object(data.subprocess, "run", side_effect=[None, None, install_result])
 
     data._initialize_git_lfs(tmp_path)
 
-    assert run.call_count == 4
-    sleep.assert_called_once_with(1)
-
-
-def test_initialize_git_lfs_reports_persistent_config_lock_contention(
-    mocker: MockerFixture, tmp_path: Path
-) -> None:
-    lock_error = subprocess.CalledProcessError(
-        2,
-        ["git", "lfs", "install", "--local", "--skip-repo"],
-        output="error: could not lock config file .git/config: File exists",
-    )
-    run = mocker.patch.object(
-        data.subprocess,
-        "run",
-        side_effect=[None, None, lock_error, lock_error, lock_error],
-    )
-    sleep = mocker.patch.object(data.time, "sleep")
-
-    with pytest.raises(RuntimeError, match="could not lock config file"):
-        data._initialize_git_lfs(tmp_path)
-
-    assert run.call_count == 5
-    assert sleep.call_args_list == [call(1), call(2)]
+    assert run.call_count == 3
 
 
 def test_pull_lfs_archive_initializes_lfs_before_pull(
