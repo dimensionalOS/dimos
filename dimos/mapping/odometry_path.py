@@ -47,28 +47,41 @@ class OdometryPath(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._poses: deque[PoseStamped] = deque(maxlen=self.config.max_poses)
-        self._last_publish_ts = 0.0
+        # None rather than 0.0: recordings stamped from zero would read as
+        # "just published" and suppress the very first path.
+        self._last_publish_ts: float | None = None
+        self._unpublished = False
 
     async def handle_odometry(self, msg: Odometry) -> None:
         position = msg.pose.position
         point = (position.x, position.y, position.z)
-        if self._poses:
-            previous = self._poses[-1]
-            if math.dist((previous.x, previous.y, previous.z), point) < self.config.min_step_meters:
-                return
-
-        orientation = msg.pose.orientation
         frame_id = self.config.frame_id or msg.frame_id
-        self._poses.append(
-            PoseStamped(
-                ts=msg.ts,
-                frame_id=frame_id,
-                position=list(point),
-                orientation=[orientation.x, orientation.y, orientation.z, orientation.w],
+        previous = self._poses[-1] if self._poses else None
+        if (
+            previous is None
+            or math.dist((previous.x, previous.y, previous.z), point) >= self.config.min_step_meters
+        ):
+            orientation = msg.pose.orientation
+            self._poses.append(
+                PoseStamped(
+                    ts=msg.ts,
+                    frame_id=frame_id,
+                    position=list(point),
+                    orientation=[orientation.x, orientation.y, orientation.z, orientation.w],
+                )
             )
-        )
-        if msg.ts - self._last_publish_ts < self.config.min_publish_interval_seconds:
+            self._unpublished = True
+
+        # Standing still republishes nothing, but a step taken during the
+        # interval still goes out once the interval expires.
+        if not self._unpublished:
+            return
+        if (
+            self._last_publish_ts is not None
+            and msg.ts - self._last_publish_ts < self.config.min_publish_interval_seconds
+        ):
             return
         self._last_publish_ts = msg.ts
+        self._unpublished = False
         # A copy: Path holds the list by reference.
         self.path.publish(Path(ts=msg.ts, frame_id=frame_id, poses=list(self._poses)))
