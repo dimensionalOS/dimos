@@ -14,6 +14,7 @@
 
 from typing import cast
 
+import pinocchio
 import pytest
 
 from dimos.control.components import HardwareType
@@ -71,6 +72,27 @@ def test_openarm_config_exposes_one_bimanual_robot() -> None:
         "openarm/left_manipulator",
         "openarm/right_manipulator",
     ]
+
+
+@pytest.mark.self_hosted
+def test_openarm_model_fixes_fingers_without_removing_grasp_frames() -> None:
+    loaded = OPENARM_BIMANUAL_MODEL.load()
+    finger_joint_names = {
+        f"openarm_{side}_finger_joint{index}" for side in OPENARM_SIDES for index in (1, 2)
+    }
+
+    assert {joint.name for joint in loaded.joints if joint.type == "fixed"}.issuperset(
+        finger_joint_names
+    )
+
+    model = pinocchio.buildModelFromXML(loaded.xml)
+
+    assert model.nq == model.nv == len(OPENARM_ARM_JOINTS)
+    assert tuple(str(name) for name in model.names[1:]) == tuple(
+        name for side in OPENARM_SIDES for name in openarm_urdf_joints(side)
+    )
+    frame_names = {str(frame.name) for frame in model.frames}
+    assert {f"openarm_{side}_grasp_frame" for side in OPENARM_SIDES} <= frame_names
 
 
 def test_openarm_hardware_defaults_to_mock_without_can_ports() -> None:

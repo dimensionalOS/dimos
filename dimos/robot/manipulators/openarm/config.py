@@ -49,6 +49,11 @@ OPENARM_BIMANUAL_MODEL = RobotModel.from_file(
         "robot_preset": "default_bimanual",
         "emit_grasp_frame": "true",
     },
+).with_fixed_joints(
+    "openarm_left_finger_joint1",
+    "openarm_left_finger_joint2",
+    "openarm_right_finger_joint1",
+    "openarm_right_finger_joint2",
 )
 
 OPENARM_DOF = 7

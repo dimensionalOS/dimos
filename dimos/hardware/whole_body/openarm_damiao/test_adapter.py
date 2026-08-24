@@ -77,13 +77,6 @@ def test_openarm_feedback_limits_match_urdf_joint_limits(
     openarm_adapter: OpenArmDamiaoAdapter,
 ) -> None:
     model = pinocchio.buildModelFromXML(openarm_adapter.kinematic_model.load().xml)
-    controlled_joints = set(openarm_adapter.kinematic_joint_names)
-    locked_joint_ids = [
-        joint_id
-        for joint_id, name in enumerate(model.names)
-        if joint_id != 0 and str(name) not in controlled_joints
-    ]
-    model = pinocchio.buildReducedModel(model, locked_joint_ids, pinocchio.neutral(model))
 
     assert tuple(str(name) for name in model.names[1:]) == openarm_adapter.kinematic_joint_names
     assert np.all(np.asarray(model.lowerPositionLimit) < np.asarray(model.upperPositionLimit))
