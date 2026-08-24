@@ -198,9 +198,9 @@ class DimSlamConfig(NativeModuleConfig):
     depth_cloud_max_range: float = 0.0
     # One point per k x k depth block (median of in-gate depths). <= 1 emits every pixel.
     depth_cloud_decimation: int = 1
-    # Densify the depth image before the cloud is cut from it. Both safetensors paths set
-    # turns it on; the binary must be built with the depth2depth cargo feature
-    # (depth2depth-cuda/-cudnn/-metal for a GPU backend).
+    # Densify the depth image before the cloud is cut from it. Setting both safetensors
+    # paths turns it on, and the binary has to be built with the depth2depth cargo
+    # feature (depth2depth-cuda/-cudnn/-metal for a GPU backend).
     depth2depth_dinov2_weights: str = ""
     depth2depth_head_weights: str = ""
     # 1.0 = 280x504; 0.5 is ~4x faster and coarser.
