@@ -32,4 +32,4 @@ from dimos.robot.diy.alfred.replay import AlfredReplay
 alfred_replay = autoconnect(
     AlfredReplay.blueprint(),
     vis_nav,
-).global_config(n_workers=10, robot_model="alfred", obstacle_avoidance=False)
+).global_config(n_workers=10, robot_model="alfred")

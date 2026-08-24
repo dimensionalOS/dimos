@@ -91,5 +91,5 @@ alfred_mls_nav = (
             (AlfredHighLevel, "wheel_odometry", "source_odometry"),
         ]
     )
-    .global_config(n_workers=10, robot_model="alfred", obstacle_avoidance=False)
+    .global_config(n_workers=10, robot_model="alfred")
 )
