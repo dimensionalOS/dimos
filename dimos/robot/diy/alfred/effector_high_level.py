@@ -70,10 +70,8 @@ async def _rpc_result(future: portal.Future) -> Any:
 
 
 def _stop_and_close(client: portal.Client) -> None:
-    """Stop the platform, then close, both off the event loop.
-
-    Portal answers on a worker thread, so a close chained to the stop through the
-    loop is skipped outright once the loop shuts down, leaving the client open.
+    """Portal answers on a worker thread, so a close chained to the stop through the
+    event loop is skipped outright once the loop shuts down, leaving the client open.
     """
     try:
         # Bounded so an unanswered stop cannot skip the close below.
