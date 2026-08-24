@@ -58,11 +58,9 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     global_emit_every: int = 1
     # Size the local region to this percentile of batch point distances.
     region_percentile: float = 95.0
-    # Output frame of the maps; clouds are transformed into it from their own frame_id.
+    # Clouds are transformed into this from their own frame_id.
     output_frame: str = "odom"
-    # Max stamp gap between a cloud and the tf sample used to place it.
     tf_match_tolerance_s: float = 0.1
-    # How long a cloud waits for a transform that has not been received yet.
     tf_wait_timeout_s: float = 0.1
 
 

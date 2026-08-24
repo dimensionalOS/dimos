@@ -56,12 +56,10 @@ pub struct Config {
     /// stray far hit cannot inflate it.
     #[validate(range(min = 0.0, max = 100.0))]
     pub region_percentile: f32,
-    /// Output frame of the maps; clouds are transformed into it from their own frame_id.
+    /// Clouds are transformed into this from their own frame_id.
     pub output_frame: String,
-    /// Max stamp gap between a cloud and the tf sample used to place it.
     #[validate(range(min = 0.0))]
     pub tf_match_tolerance_s: f64,
-    /// How long a cloud waits for a transform that has not been received yet.
     #[validate(range(min = 0.0))]
     pub tf_wait_timeout_s: f64,
 }

@@ -55,9 +55,7 @@ pub struct RayTracingVoxelMap {
 impl RayTracingVoxelMap {
     async fn on_lidar(&mut self, msg: PointCloud2) {
         let stamp = time_secs(&msg.header.stamp);
-        // Nothing orders tf against lidar, so a cloud can land before the transform that
-        // places it. The tf graph fills from the transport, not this loop, so the wait
-        // cannot deadlock.
+        // The tf graph fills from the transport, not this loop, so this await cannot deadlock.
         let Some(transform) = self
             .tf
             .lookup(&self.config.output_frame, &msg.header.frame_id)
