@@ -96,7 +96,6 @@ def driver_library_dir() -> Path | None:
 
 def driver_cuda_major() -> int:
     """0 if there is no driver."""
-    # By absolute path too, since ld.so.cache is not consulted here.
     candidates = ["libcuda.so.1"] + [
         str(directory / "libcuda.so.1")
         for directory in (*_DRIVER_ONLY_LIB_DIRS, *_HOST_LIB_DIRS)
@@ -165,7 +164,7 @@ class DimSlamConfig(NativeModuleConfig):
     camera_mode: Literal["stereo", "mono", "rgbd"] = "stereo"
     # Empty: auto-discover from camera_info.
     camera_frames: list[str] = Field(default_factory=list)
-    # Asserted, not performed: unrectified input is not corrected.
+    # Asserted, not performed.
     rectified: bool = True
     # Off runs the deterministic CPU path, which needs a libcuvslam built
     # -DENFORCE_GPU=OFF. A build carrying only the other backend is used with a warning.
@@ -202,7 +201,7 @@ class DimSlamConfig(NativeModuleConfig):
     base_frame: str = "base_link"
     # map->odom can only be identity: this module carries no map correction yet.
     publish_map_to_odom: bool = True
-    # Off publishes odometry only, for when something downstream owns odom -> base_frame.
+    # Off when something downstream owns odom -> base_frame.
     publish_tf: bool = True
 
     # The filter itself steps at the IMU rate; this is only how often it emits.
@@ -211,6 +210,8 @@ class DimSlamConfig(NativeModuleConfig):
     # Standard deviations per measurement dimension before a reading is called an
     # outlier. 0 disables the gate.
     mahalanobis_gate: float = 5.0
+    # Caps the filter's own state rather than an incoming reading. 0 disables it.
+    max_position_m: float = 10000.0
 
     # On, the filter propagates on IMU and needs all four noise figures below. Off, it is
     # seeded level from the first source message and holds its pose between them.
@@ -224,9 +225,8 @@ class DimSlamConfig(NativeModuleConfig):
     imu_accel_noise_density: float = 0.0
     imu_accel_random_walk: float = 0.0
     gravity: float = 9.81
-    # Averaged while stationary to level the filter and take the gyro bias. Offline on a
-    # 517 s Alfred drive, leaving that bias in cost 19.8 m of final error against 1.6 m
-    # with it removed, so this is the single most load-bearing number here. At 200 Hz
+    # Averaged while stationary to level the filter and take the gyro bias; leaving that
+    # bias in cost 19.8 m of final error against 1.6 m on a 517 s Alfred drive. At 200 Hz
     # this is one second of standing still at startup.
     imu_init_samples: int = 200
 
