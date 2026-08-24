@@ -200,10 +200,11 @@ class DimSlamConfig(NativeModuleConfig):
     depth_cloud_decimation: int = 1
     # Densify the depth image before the cloud is cut from it. Setting both safetensors
     # paths turns it on, and the binary has to be built with the depth2depth cargo
-    # feature (depth2depth-cuda/-cudnn/-metal for a GPU backend).
+    # feature (depth2depth-cuda/-cudnn/-metal for a GPU backend). The flake enables it
+    # on darwin only, so the linux SDKs still ship the stub.
     depth2depth_dinov2_weights: str = ""
     depth2depth_head_weights: str = ""
-    # 1.0 = 280x504.
+    # Model input resolution; 1.0 = 280x504.
     depth2depth_quality: float = 1.0
     # Frame whose images on the image stream feed the model; empty uses the rig camera
     # on the depth frame. Set to the color camera's frame when depth is aligned to a

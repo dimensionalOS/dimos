@@ -16,8 +16,6 @@
 
     dimos run demo-cuvslam-replay --viewer rerun --dataset sf_office_stairs
 
-``sf_office_stairs`` is the stereo recording this demo was built on.
-
 The right camera_info carries the baseline in ``P[3]``, the only source of metric scale.
 """
 
