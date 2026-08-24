@@ -16,11 +16,9 @@
 
     dimos run alfred-replay --alfredreplay.db-path ~/datasets/alfred/drive.db
 
-Everything downstream of the sensors is ``vis_nav``, the same blueprint object
-``alfred-mls-nav`` runs live — same modules, same config. The only substitution is
-the source: ``AlfredReplay`` publishes the recorded camera, IMU and wheel odometry
-streams in place of ``RealSenseCamera`` and ``AlfredHighLevel``, on the same stream
-names with the same pairing behaviour.
+``AlfredReplay`` publishes the recorded camera, IMU and wheel odometry streams on the
+same names ``RealSenseCamera`` and ``AlfredHighLevel`` use live, so everything
+downstream is ``vis_nav`` unchanged.
 """
 
 from __future__ import annotations

@@ -24,7 +24,7 @@ import platform
 import sys
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from dimos.constants import CACHE_DIR
 from dimos.core.native_module import NativeModule, NativeModuleConfig
@@ -243,12 +243,9 @@ class DimSlamConfig(NativeModuleConfig):
     # (undensified) cloud, and once fusion has begun, staying in that state is fatal.
     depth2depth_max_color_skew_seconds: float = 0.5
 
-    map_frame: str = "map"
     odom_frame: str = "odom"
     # Poses are published relative to this.
     base_frame: str = "base_link"
-    # map->odom can only be identity: this module carries no map correction yet.
-    publish_map_to_odom: bool = True
     # Off publishes odometry only, for when something downstream owns odom -> base_frame.
     publish_tf: bool = True
 
@@ -263,12 +260,13 @@ class DimSlamConfig(NativeModuleConfig):
     # at constant world velocity between measurements instead of propagating on IMU.
     use_imu: bool = True
 
-    # Bosch BMI055 figures for the D455's IMU, in the continuous-time units the filter
-    # wants: rad/s/sqrt(Hz), rad/s^2/sqrt(Hz), m/s^2/sqrt(Hz), m/s^3/sqrt(Hz).
-    imu_gyro_noise_density: float = 0.0018
-    imu_gyro_random_walk: float = 2e-5
-    imu_accel_noise_density: float = 0.02
-    imu_accel_random_walk: float = 3e-3
+    # The IMU's datasheet noise figures, in the continuous-time units the filter wants:
+    # rad/s/sqrt(Hz), rad/s^2/sqrt(Hz), m/s^2/sqrt(Hz), m/s^3/sqrt(Hz). Properties of the
+    # part, so they are set per robot; use_imu asserts all four are present.
+    imu_gyro_noise_density: float | None = None
+    imu_gyro_random_walk: float | None = None
+    imu_accel_noise_density: float | None = None
+    imu_accel_random_walk: float | None = None
     gravity: float = 9.81
     # Averaged while stationary to level the filter and take the gyro bias. Offline on a
     # 517 s Alfred drive, leaving that bias in cost 19.8 m of final error against 1.6 m
@@ -298,6 +296,22 @@ class DimSlamConfig(NativeModuleConfig):
     # zero with this variance; zero leaves it free.
     constraint_twist_variances: list[float] = Field(default_factory=lambda: [0.0] * 6)
 
+    @model_validator(mode="after")
+    def _imu_noise_is_set(self) -> DimSlamConfig:
+        missing = [
+            name
+            for name in (
+                "imu_gyro_noise_density",
+                "imu_gyro_random_walk",
+                "imu_accel_noise_density",
+                "imu_accel_random_walk",
+            )
+            if getattr(self, name) is None
+        ]
+        if self.use_imu and missing:
+            raise ValueError(f"use_imu needs the IMU's noise figures: {', '.join(missing)}")
+        return self
+
 
 class DimSlam(NativeModule):
     """cuVSLAM visual odometry feeding an error-state Kalman fusion filter in-process.
@@ -315,8 +329,8 @@ class DimSlam(NativeModule):
     ``header.frame_id``, so adding one is a config change rather than a port change.
     Late messages roll the filter back to their own slot and replay everything after.
 
-    ``odometry`` is the fused ``odom_frame`` -> ``base_frame`` pose; ``tf`` carries the
-    same edge and an identity ``map`` -> ``odom``.
+    ``odometry`` is the fused ``odom_frame`` -> ``base_frame`` pose, and ``tf`` carries
+    the same edge.
     """
 
     config: DimSlamConfig

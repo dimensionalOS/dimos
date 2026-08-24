@@ -14,13 +14,10 @@
 
 """Alfred's vision-only navigation stack, from camera streams down to wheel commands.
 
-Everything sensor-independent lives here: ``DimSlam`` tracking the infrared stereo
-pair and fusing with wheel odometry and the IMU, its range-gated decimated depth
-cloud feeding ``RayTracingVoxelMap``, MLS planning over that map, and Dan's local
-planner and holonomic tracking controller driving the result. ``alfred-mls-nav``
-composes this with the live ``RealSenseCamera`` and ``AlfredHighLevel`` drivers;
-``alfred-replay`` composes the identical stack with a recording, so a replay
-exercises exactly the code a real run does.
+``DimSlam`` on the infrared stereo pair fused with wheel odometry and the IMU, its
+depth cloud into ``RayTracingVoxelMap``, MLS planning over that map, then Dan's local
+planner and holonomic controller. ``alfred-mls-nav`` adds the live drivers and
+``alfred-replay`` a recording, so a replay runs exactly this code.
 """
 
 from __future__ import annotations
@@ -105,27 +102,23 @@ def _alfred_urdf_static(rr: Any) -> list[tuple[str, Any]]:
 
 VOXEL_SIZE_METERS = 0.05
 DEPTH_MAX_RANGE_METERS = 4.0
-"""Far gate on the D455's depth, for the cloud the tracker cuts and the mapper's insert.
+"""Far gate on the D455's depth, for the tracker's cloud and the mapper's insert alike.
 
-Stereo depth error grows as range squared, so where to cut is a property of this camera;
-4 m won the mapping grid against 6 m and against depth2depth-densified clouds (top-down
-F1 .570 / .506 / .411 vs a lidar-raycast reference on drive_2026-08-18_23-05-04.db)."""
+Stereo error grows as range squared; 4 m won the mapping grid against 6 m and against
+depth2depth-densified clouds (top-down F1 .570 / .506 / .411 vs a lidar-raycast
+reference on drive_2026-08-18_23-05-04.db)."""
 
 ALFRED_BODY_HEIGHT_METERS = 0.5
 
 vis_nav = autoconnect(
-    # cuVSLAM drops out whenever the IR pair loses texture and recovers by jumping;
-    # wheel odometry never drops out but its heading drifts without bound; the IMU
-    # has the heading rate and no position. Offline on drive_2026-08-18_23-05-04.db,
-    # wheel alone ends 2.66 m from the lidar reference and wheel with a
-    # bias-corrected gyro heading ends 1.33 m, against a 0.59 m ceiling set by
-    # replaying the wheel steps along the reference's own heading.
+    # Neither source stands alone: cuVSLAM drops out when the IR pair loses texture,
+    # and wheel heading drifts without bound. On drive_2026-08-18_23-05-04.db wheel
+    # alone ends 2.66 m from the lidar reference and wheel plus bias-corrected gyro
+    # heading 1.33 m, against a 0.59 m floor.
     DimSlam.blueprint(
-        # cuVSLAM's own inertial mode is implemented only on the CUDA path, so asking
-        # for it here aborts the tracker with "CUDA driver version is insufficient" on
-        # Alfred, which has no usable driver. The IMU goes to the fusion filter
-        # instead, which is also where it belongs: the filter carries a gyro bias
-        # state and cuVSLAM does not.
+        # cuVSLAM's inertial mode is CUDA-only and aborts on Alfred, which has no usable
+        # driver. The filter is the better home regardless: it carries a gyro bias state
+        # and cuVSLAM does not.
         cuvslam_enable_imu=False,
         # Alfred's computer has no GPU; the fork-built libcuvslam carries the CPU path.
         use_gpu=False,
@@ -134,23 +127,18 @@ vis_nav = autoconnect(
         # frame at 30 Hz and drowns the mapper.
         depth_cloud_decimation=3,
         source_frames=["visual_odom", "wheel_odom"],
-        # Fixed variances, not the message covariances: both sources report the drift
-        # they have accumulated, which says nothing about the delta being fused.
-        # Wheel yaw is dropped outright: the wheels' heading is a biased random walk
-        # (~0.4 deg/s on drive_2026-08-18_23-05-04.db), and fusing it at any weight
-        # drags the fused track toward that drift — replaying the drive with wheel
-        # yaw trusted over visual landed 8.8 m yaw-fit rmse vs lidar where raw
-        # cuVSLAM alone fits at 1.3 m. Heading is visual deltas with the gyro in
-        # between. Visual z is dropped: the CPU tracker's z drifts metres per
-        # minute on this rig, and the planar twist constraint below already pins z.
+        # Fixed variances, not the message covariances: both sources report accumulated
+        # drift, which says nothing about the delta being fused. Wheel yaw is dropped
+        # (biased random walk ~0.4 deg/s; trusting it over visual landed 8.8 m yaw-fit
+        # rmse against 1.3 m for raw cuVSLAM), and so is visual z, which the CPU tracker
+        # drifts metres per minute and the planar constraint below already pins.
         source_pose_variances=[
             *(0.01, 0.01, 0.0, 0.05, 0.05, 0.05),
             *(0.05, 0.05, 0.0, 0.0, 0.0, 0.0),
         ],
-        # The CPU-built tracker reports covariance as identity plus accumulated
-        # drift, so its translation std starts above 1.0 and grows past 9 during
-        # normal driving: any threshold either rejects everything or nothing.
-        # Off; the speed gate stays as the teleport backstop.
+        # The CPU tracker's reported translation std starts above 1.0 and grows past 9
+        # while driving normally, so no threshold separates good frames from bad. Off;
+        # the speed gate is the teleport backstop.
         covariance_gate_translation_std=0.0,
         # Only the wheels measure velocity; cuVSLAM's twist is differentiated pose.
         source_twist_variances=[*(0.0,) * 6, *(0.02, 0.02, 0.0, 0.0, 0.0, 0.05)],
@@ -160,19 +148,21 @@ vis_nav = autoconnect(
         # Wheel odometry crosses the wifi link and can land seconds late; a message
         # older than the buffer is dropped instead of replayed into the filter.
         replay_buffer_seconds=2.0,
+        # Bosch BMI055 datasheet figures, the part in the D455.
+        imu_gyro_noise_density=0.0018,
+        imu_gyro_random_walk=2e-5,
+        imu_accel_noise_density=0.02,
+        imu_accel_random_walk=3e-3,
     ).remappings([(DimSlam, "sources", "source_odometry")]),
     RayTracingVoxelMap.blueprint(
         voxel_size=VOXEL_SIZE_METERS,
         max_range=DEPTH_MAX_RANGE_METERS,
         world_frame="odom",
     ).remappings(
-        # The tracker's range-gated depth cloud stands in for the lidar the mapper
-        # normally consumes; there is none on Alfred.
+        # Alfred has no lidar; the tracker's depth cloud takes its place.
         [(RayTracingVoxelMap, "lidar", "depth_cloud")]
     ),
     MLSPlannerNative.blueprint(
-        # Nothing closes loops here, so map -> odom stays identity and odom is the
-        # only consistent frame the voxel map and the planner share.
         world_frame="odom",
         voxel_size=VOXEL_SIZE_METERS,
         robot_height=ALFRED_BODY_HEIGHT_METERS,
@@ -187,8 +177,8 @@ vis_nav = autoconnect(
             (MLSPlannerNative, "start_pose", "odom"),
         ]
     ),
-    # On Go2 the base pose comes off the robot connection. Alfred has no such module,
-    # so GoalRelay's odometry-to-pose conversion is what feeds every consumer of odom.
+    # On Go2 the base pose comes off the robot connection; Alfred has no such module, so
+    # GoalRelay's odometry-to-pose conversion feeds every consumer of odom.
     GoalRelay.blueprint().remappings([(GoalRelay, "start_pose", "odom")]),
     DanLocalPlanner.blueprint(resample_spacing_m=0.1),
     DanHolonomicTC.blueprint(run_profile="walk"),
@@ -198,9 +188,7 @@ vis_nav = autoconnect(
         rerun_config={
             "blueprint": _rerun_blueprint,
             "static": {ALFRED_RERUN_ROOT: _alfred_urdf_static},
-            # Each image has to sit on the same entity as its Pinhole or rerun has
-            # nothing to project it through, which is what made the camera read as
-            # rotated and left the image views empty.
+            # An image only renders if it shares an entity with its Pinhole.
             "visual_override": {
                 "world/color_image": partial(_image_at, entity_path=f"{CAMERA_RERUN_ROOT}/color"),
                 "world/color_camera_info": partial(

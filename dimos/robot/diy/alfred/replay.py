@@ -49,10 +49,8 @@ def _stamp_matched_pairs(left: Any, right: Any) -> Any:
     """Pair two image observables by timestamp instead of arrival order.
 
     Each stream skips past whatever is already behind the shared clock when it
-    subscribes, and the two imagers subscribe an instant apart, so they can enter
-    on different frames; an ordinal zip would pair mismatched stamps from then
-    on. A frame whose partner never arrives is discarded once a newer one turns
-    up, exactly as the tracker would reject it for skew.
+    subscribes, and the two imagers subscribe an instant apart, so they can enter on
+    different frames and an ordinal zip would pair mismatched stamps from then on.
     """
 
     def subscribe(observer: Any, scheduler: Any = None) -> Any:
@@ -122,17 +120,14 @@ class AlfredReplayConfig(ModuleConfig):
     # tracker needs, so it stays off unless a comparison wants it.
     publish_lidar: bool = False
     done_file: str = ""
-    """Touched once every stream has emitted its last message; a harness waits for
-    this instead of guessing a wall-clock duration."""
+    """Touched once every stream has emitted its last message."""
 
 
 class AlfredReplay(Module):
     """Publish a recording's sensor streams back onto live streams, in recorded order.
 
-    Both infrared imagers go onto the one ``image`` stream and are told apart
-    downstream by ``frame_id``, exactly as the live camera driver publishes them; the
-    colour image joins them there for the depth2depth path. Wheel odometry goes onto
-    ``source_odometry`` the way ``AlfredHighLevel`` publishes it live.
+    Both infrared imagers and the colour image go onto the one ``image`` stream and are
+    told apart downstream by ``frame_id``, exactly as the live camera driver does.
     """
 
     config: AlfredReplayConfig
@@ -197,8 +192,6 @@ class AlfredReplay(Module):
             trailer = min(latest, key=lambda name: latest[name])
             elapsed = time.time() - self._started_at
             covered = latest[leader] - self._first_ts
-            # Streams emit late rather than dropping, so a growing spread means one
-            # stream is falling behind the others, not that it stopped.
             logger.info(
                 "replay %.0fs of recording in %.0fs wall (%.2fx), spread %.2fs "
                 "(%s ahead of %s), %d streams running",
@@ -226,9 +219,6 @@ class AlfredReplay(Module):
             replay_kwargs["duration"] = self.config.duration
         replay = store.replay(**replay_kwargs)
 
-        # Paired by stamp, not arrival order: the imagers subscribe an instant apart
-        # and each skips past whatever is already behind the shared clock, so they can
-        # enter on different frames and an ordinal zip would pair mismatched stamps.
         stereo = _stamp_matched_pairs(
             replay.stream("infrared_left").observable(),
             replay.stream("infrared_right").observable(),
@@ -259,8 +249,6 @@ class AlfredReplay(Module):
         for name, port in outputs:
             self._track(name, replay.stream(name).observable(), port.publish)
 
-        # Onto image for the tracker's depth2depth path (told apart by frame_id), and
-        # onto its own stream for the rerun colour view, matching the live driver.
         def publish_colour(frame: Image) -> None:
             self.image.publish(frame)
             self.color_image.publish(frame)
