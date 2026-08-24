@@ -75,9 +75,9 @@ def _stop_and_close(client: portal.Client) -> None:
     event loop is skipped outright once the loop shuts down, leaving the client open.
     """
     try:
-        # Bounded so an unanswered stop cannot skip the close below.
+        # Half the budget, so the caller's join of the whole thing still covers the close.
         client.set_target_velocity({"target_velocity": np.zeros(3), "frame": "local"}).result(
-            timeout=DEFAULT_THREAD_JOIN_TIMEOUT
+            timeout=DEFAULT_THREAD_JOIN_TIMEOUT / 2
         )
     except Exception as e:
         logger.error(f"Error stopping Alfred: {e}")
@@ -125,8 +125,8 @@ class AlfredHighLevel(Module):
         finally:
             if self._stop_task is not None and not self._stop_task.done():
                 self._stop_task.cancel()
-            # Started before the odometry drain so the platform stops first. Portal
-            # matches replies by request number, so a wedged poll cannot delay it.
+            # Stop before draining: portal matches replies by request number, so a
+            # wedged poll cannot delay the stop.
             stopper = threading.Thread(target=_stop_and_close, args=(client,), daemon=True)
             stopper.start()
             self._odometry_stop.set()
@@ -229,8 +229,7 @@ class AlfredHighLevel(Module):
                 x, y = (float(v) for v in reading["translation"])
                 yaw = float(reading["rotation"])
 
-                # The controller integrates in the same inverted-Y frame move()
-                # sends into; negate back so consumers see the ROS convention.
+                # Odometry comes back in the inverted-Y frame move() sends into.
                 y, yaw = -y, -yaw
                 # The controller reports no velocity, so difference consecutive poses.
                 twist = Twist()
@@ -265,7 +264,6 @@ class AlfredHighLevel(Module):
             except asyncio.CancelledError:
                 return
             except Exception as error:
-                # A dead connection fails every poll, and the poll runs at wheel_odometry_hz.
                 now = asyncio.get_running_loop().time()
                 if (
                     last_error_log is None
