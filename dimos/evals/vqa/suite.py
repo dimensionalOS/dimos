@@ -23,11 +23,20 @@ from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
 import jsonlines
+from pydantic import BaseModel, ConfigDict, Field
 
 from dimos.evals.scorers import exact
 from dimos.evals.types import EvalCase, EvalResult, EvalRig, Suite
 from dimos.evals.vqa.generate import PrivateLabel, PublicCase
 from dimos.msgs.sensor_msgs.Image import Image
+
+
+class VqaResponse(BaseModel):
+    """Structured answer returned by the model under evaluation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    answer: str = Field(description="Exactly one of the choices provided in the question.")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -44,25 +53,14 @@ class VqaEvalCase(EvalCase):
         prompt = (
             f"{self.inputs}\nChoices: {json.dumps(self.choices)}\nAnswer with exactly one choice."
         )
-        outputs = rig.ask(context, prompt)
-        answer = _parse_choice(outputs, self.choices)
-        return EvalResult(case_id=self.id, outputs=outputs, score=exact(self.expected, answer))
+        response = rig.ask_structured(context, prompt, VqaResponse)
+        outputs = response.model_dump_json()
+        score = exact(self.expected, response.answer) if response.answer in self.choices else 0.0
+        return EvalResult(case_id=self.id, outputs=outputs, score=score)
 
     def preflight(self, rig: EvalRig) -> None:
         if not self.image_path.is_file():
             raise FileNotFoundError(f"VQA image does not exist: {self.image_path}")
-
-
-def _parse_choice(response: str, choices: tuple[str, ...]) -> str:
-    answer = response.strip().strip("`").strip().rstrip(".").strip()
-    if answer.casefold().startswith("answer:"):
-        answer = answer.split(":", 1)[1].strip()
-    answer = answer.strip("\"'")
-    matches = {choice.casefold(): choice for choice in choices}
-    try:
-        return matches[answer.casefold()]
-    except KeyError:
-        raise ValueError(f"response is not one of {choices}: {response[:80]!r}") from None
 
 
 def load_suite(dataset: Path) -> Suite:
