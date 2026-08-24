@@ -12,20 +12,22 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-PAGES_REPO="${DOCS_PAGES_REPO:-$HOME/coding/dimensional/dimensionalOS.github.io}"
-TARGET_DIR="mkdocs"
+# No default: where you keep the pages checkout is yours, not the repo's.
+PAGES_REPO="${DOCS_PAGES_REPO:-}"
+TARGET_DIR="."
 DO_COMMIT=0
 
 usage() {
   cat >&2 <<'EOF'
 Usage: bin/docs-deploy [options]
 
-  --pages-repo DIR  Checkout of dimensionalOS.github.io
-                    (default: $DOCS_PAGES_REPO, else ~/coding/dimensional/dimensionalOS.github.io)
-  --target DIR      Subdirectory within the pages repo (default: mkdocs)
+  --pages-repo DIR  Checkout of dimensionalOS.github.io. Required, or set
+                    DOCS_PAGES_REPO in your environment.
+  --target DIR      Where within that repo to publish (default: ., the site root)
   --commit          Commit in the pages repo. Never pushes.
 
-Serves at https://dimensionalos.github.io/<target>/
+Publishes to https://dimensionalos.github.io/<target>/, leaving sphinx/ and
+careers/ alone.
 EOF
 }
 
@@ -54,6 +56,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -z "$PAGES_REPO" ]]; then
+  echo "Where is the pages repo? Pass --pages-repo DIR or set DOCS_PAGES_REPO." >&2
+  exit 2
+fi
 
 if [[ ! -d "$PAGES_REPO/.git" ]]; then
   echo "Not a git checkout: $PAGES_REPO" >&2
