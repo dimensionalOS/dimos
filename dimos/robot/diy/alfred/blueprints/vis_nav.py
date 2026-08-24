@@ -21,7 +21,6 @@ one rather than run on its own.
 from __future__ import annotations
 
 from functools import partial
-from pathlib import Path
 from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
@@ -33,10 +32,10 @@ from dimos.navigation.dannav.local_planner.module import DanLocalPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_3d.mls_planner.goal_relay import GoalRelay
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
+from dimos.robot.diy.alfred.config import ALFRED_URDF
 from dimos.visualization.rerun.urdf_robot import UrdfRobotStaticRerunFactory
 from dimos.visualization.vis_module import vis_module
 
-ALFRED_URDF = Path(__file__).resolve().parent.parent / "alfred.urdf"
 ALFRED_RERUN_ROOT = "world/alfred"
 CAMERA_RERUN_ROOT = "world/camera"
 

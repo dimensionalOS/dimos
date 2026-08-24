@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -22,6 +23,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 DEFAULT_ADDRESS = "172.6.2.20:11323"
+ALFRED_URDF = Path(__file__).resolve().parent / "alfred.urdf"
 
 
 @dataclass(frozen=True)
