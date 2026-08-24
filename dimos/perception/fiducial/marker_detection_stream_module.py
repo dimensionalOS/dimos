@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Live marker detection as a memory2 StreamModule.
+"""Live marker detection as a memory StreamModule.
 
 The module keeps the same transform chain used by offline marker tooling:
 quality-gated images, optional motion gating, marker fan-out, then one
@@ -30,10 +30,10 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.memory2.module import StreamModule, stream_to_port
-from dimos.memory2.store.null import NullStore
-from dimos.memory2.stream import Stream
-from dimos.memory2.transform import QualityWindow, SpeedLimit
+from dimos.memory.module import StreamModule, stream_to_port
+from dimos.memory.store.null import NullStore
+from dimos.memory.stream import Stream
+from dimos.memory.transform import QualityWindow, SpeedLimit
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage

@@ -33,55 +33,98 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator
-from typing import Any
+import math
+import time
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import portal
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In
+from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.robot.diy.alfred.config import DEFAULT_ADDRESS
 from dimos.utils.logging_config import setup_logger
 
+if TYPE_CHECKING:
+    # An optional hardware dependency (the `misc` extra); imported lazily at
+    # connect time so merely importing this module doesn't require it.
+    import portal
+
 logger = setup_logger()
+
+# How long teardown waits for the odometry poll to finish its current RPC.
+_POLL_DRAIN_TIMEOUT = 2.0
 
 
 class AlfredHighLevelConfig(ModuleConfig):
     address: str = DEFAULT_ADDRESS
     cmd_vel_timeout: float = 0.2
+    wheel_odometry_hz: float = 50.0
+    # Not "odom": Point-LIO publishes odom->base_link, and a second publisher on
+    # that edge gives base_link two parents, which is a malformed tf tree rather
+    # than a redundant one. Wheel odometry gets its own root and stays a plain
+    # message stream for a consumer to fuse.
+    wheel_odom_frame_id: str = "wheel_odom"
+    base_frame_id: str = "base_link"
 
 
 class AlfredHighLevel(Module):
     cmd_vel: In[Twist]
+    wheel_odometry: Out[Odometry]
     config: AlfredHighLevelConfig
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._client: portal.Client | None = None
         self._stop_task: asyncio.Task[None] | None = None
+        self._odometry_task: asyncio.Task[None] | None = None
         self._last_velocities = [0.0, 0.0, 0.0]
+        self._client_lock = asyncio.Lock()
+        self._odometry_stop = asyncio.Event()
 
     async def main(self) -> AsyncGenerator[None, None]:
-        self._client = portal.Client(self.config.address)
+        # The controller multiplexes one connection; the lock keeps a velocity
+        # command from interleaving with an in-flight odometry poll. Recreated
+        # each run so a restart binds it to the new event loop.
+        self._client_lock = asyncio.Lock()
+        self._odometry_stop = asyncio.Event()
+        import portal
+
+        client = portal.Client(self.config.address)
+        self._client = client
         logger.info(f"Connected to Alfred at {self.config.address}")
+        self._odometry_task = asyncio.create_task(self._poll_wheel_odometry())
         try:
             yield
         finally:
+            # Cancelling the poll would not stop its in-flight Portal call: that
+            # runs on a worker thread and keeps the multiplexed connection the
+            # stop command and close() below need. Ask the loop to exit instead
+            # and let it finish the call it already started.
+            self._odometry_stop.set()
+            if self._odometry_task is not None:
+                done, _ = await asyncio.wait({self._odometry_task}, timeout=_POLL_DRAIN_TIMEOUT)
+                if not done:
+                    logger.warning("Alfred wheel odometry poll is still running; stopping anyway")
             if self._stop_task is not None and not self._stop_task.done():
                 self._stop_task.cancel()
             try:
                 await self._send_velocity(0.0, 0.0, 0.0)
             except Exception as e:
                 logger.error(f"Error stopping Alfred: {e}")
-            if self._client is not None:
-                try:
-                    self._client.close()
-                except Exception:
-                    pass
+            try:
+                client.close()
+            except Exception:
+                pass
+            # A restart can overlap: this run's teardown must not null out a
+            # newer run's client.
+            if self._client is client:
                 self._client = None
             logger.info("Alfred high-level connection stopped")
 
@@ -151,9 +194,72 @@ class AlfredHighLevel(Module):
                 "target_velocity": np.array([vx, vy, wz]),
                 "frame": "local",
             }
-            future = self._client.set_target_velocity(command)
-            await asyncio.to_thread(future.result)
+            async with self._client_lock:
+                future = self._client.set_target_velocity(command)
+                await asyncio.to_thread(future.result)
             return True
         except Exception as e:
             logger.error(f"Error sending Alfred velocity: {e}")
             return False
+
+    async def _poll_wheel_odometry(self) -> None:
+        """Publish the controller's on-board integrated pose as `wheel_odometry`."""
+        period = 1.0 / self.config.wheel_odometry_hz
+        previous: tuple[float, float, float, float] | None = None
+        while not self._odometry_stop.is_set():
+            start = asyncio.get_running_loop().time()
+            try:
+                async with self._client_lock:
+                    future = self._client.get_odometry({})  # type: ignore[union-attr]
+                    reading = await asyncio.to_thread(future.result)
+                ts = time.time()
+                x, y = (float(v) for v in reading["translation"])
+                yaw = float(reading["rotation"])
+
+                # The controller integrates in the same inverted-Y frame move()
+                # sends into; negate back so consumers see the ROS convention.
+                y, yaw = -y, -yaw
+                # The controller reports no velocity, so difference consecutive
+                # poses and rotate the world-frame displacement into the base frame.
+                twist = Twist()
+                if previous is not None:
+                    last_ts, last_x, last_y, last_yaw = previous
+                    dt = ts - last_ts
+                    if dt > 0.0:
+                        forward = math.cos(yaw) * (x - last_x) + math.sin(yaw) * (y - last_y)
+                        left = -math.sin(yaw) * (x - last_x) + math.cos(yaw) * (y - last_y)
+                        turn = math.atan2(math.sin(yaw - last_yaw), math.cos(yaw - last_yaw))
+                        twist = Twist(
+                            linear=Vector3(forward / dt, left / dt, 0.0),
+                            angular=Vector3(0.0, 0.0, turn / dt),
+                        )
+                previous = (ts, x, y, yaw)
+
+                self.wheel_odometry.publish(
+                    Odometry(
+                        ts=ts,
+                        frame_id=self.config.wheel_odom_frame_id,
+                        child_frame_id=self.config.base_frame_id,
+                        pose=Pose(
+                            position=Vector3(x, y, 0.0),
+                            orientation=Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
+                        ),
+                        twist=twist,
+                    )
+                )
+            except asyncio.CancelledError:
+                return
+            except Exception as error:
+                # One bad read or publish must not end odometry for the run.
+                logger.error(f"Alfred wheel odometry poll failed: {error}")
+                await self._wait_or_stop(period)
+                continue
+
+            await self._wait_or_stop(max(0.0, period - (asyncio.get_running_loop().time() - start)))
+
+    async def _wait_or_stop(self, seconds: float) -> None:
+        """Sleep, returning early once teardown has asked the poll to finish."""
+        try:
+            await asyncio.wait_for(self._odometry_stop.wait(), seconds)
+        except asyncio.TimeoutError:
+            pass

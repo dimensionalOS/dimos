@@ -42,26 +42,33 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 pytestmark = [pytest.mark.self_hosted_large]
 
 JOINT_STATE_TOPIC = "/coordinator_joint_state#sensor_msgs.JointState"
-BLUEPRINT = "openarm-mock-planner-coordinator"
+# OpenArm defaults to the in-memory whole-body adapter when --can-port is absent.
+BLUEPRINT = "openarm-planner-coordinator"
+LEFT_GROUP_ID = "openarm/left_manipulator"
+RIGHT_GROUP_ID = "openarm/right_manipulator"
 
 
 def _wait_for_groups(
     client: RPCClient,
-    count: int,
+    expected_ids: set[str],
     *,
     timeout: float = 120.0,
-) -> tuple[PlanningGroupInfo, ...]:
+) -> dict[str, PlanningGroupInfo]:
     deadline = time.time() + timeout
     last_error: BaseException | None = None
+    groups_by_id: dict[str, PlanningGroupInfo] = {}
     while time.time() < deadline:
         try:
-            groups = client.list_planning_groups()
-            if len(groups) == count:
-                return groups
+            groups_by_id = {group.id: group for group in client.list_planning_groups()}
+            if groups_by_id.keys() == expected_ids:
+                return groups_by_id
         except Exception as exc:
             last_error = exc
         time.sleep(0.5)
-    raise TimeoutError(f"Timed out waiting for {count} planning groups") from last_error
+    raise TimeoutError(
+        f"Timed out waiting for planning groups {sorted(expected_ids)}; "
+        f"last groups={sorted(groups_by_id)}"
+    ) from last_error
 
 
 def _wait_for_trajectory_completion(
@@ -155,8 +162,8 @@ def test_single_arm_plans_and_executes_through_control_coordinator(
     client = RPCClient(None, ManipulationModule)
     coordinator_client = RPCClient(None, ControlCoordinator)
     try:
-        [left] = _wait_for_groups(client, 1)
-        left_id = left.id
+        groups = _wait_for_groups(client, {LEFT_GROUP_ID, RIGHT_GROUP_ID})
+        left_id = groups[LEFT_GROUP_ID].id
 
         tasks = coordinator_client.list_tasks()
         assert tasks == [JOINT_TRAJECTORY_TASK_NAME]
@@ -186,8 +193,9 @@ def test_dual_arm_plans_and_dispatches_both_arms_through_control_coordinator(
     client = RPCClient(None, ManipulationModule)
     coordinator_client = RPCClient(None, ControlCoordinator)
     try:
-        groups = _wait_for_groups(client, 2)
-        left_id, right_id = (group.id for group in groups)
+        groups = _wait_for_groups(client, {LEFT_GROUP_ID, RIGHT_GROUP_ID})
+        left_id = groups[LEFT_GROUP_ID].id
+        right_id = groups[RIGHT_GROUP_ID].id
 
         tasks = coordinator_client.list_tasks()
         assert tasks == [JOINT_TRAJECTORY_TASK_NAME]
@@ -198,7 +206,7 @@ def test_dual_arm_plans_and_dispatches_both_arms_through_control_coordinator(
         planned = client.plan_to_joints(
             {
                 left_id: _offset_target(snapshot, left_id, 0.02),
-                right_id: _offset_target(snapshot, right_id, -0.02),
+                right_id: _offset_target(snapshot, right_id, 0.02),
             }
         )
         assert planned.succeeded, planned

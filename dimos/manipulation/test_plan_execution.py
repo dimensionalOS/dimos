@@ -35,6 +35,7 @@ from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
+from dimos.robot.assets.model import RobotModel
 
 
 def _plan() -> GeneratedPlan:
@@ -65,7 +66,7 @@ def module(module_factory) -> ManipulationModule:
     manipulation = module_factory(coordinator)
     config = RobotModelConfig(
         name="arm",
-        model_path=Path("/path/to/robot.urdf"),
+        model=RobotModel.from_file(Path("/path/to/robot.urdf")),
         joint_names=["j0"],
         base_link="base",
         planning_groups=[

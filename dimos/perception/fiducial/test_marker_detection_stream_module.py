@@ -19,8 +19,8 @@ from typing import Any
 import numpy as np
 import pytest
 
-from dimos.memory2.store.memory import MemoryStore
-from dimos.memory2.type.observation import Observation
+from dimos.memory.store.memory import MemoryStore
+from dimos.memory.type.observation import Observation
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3

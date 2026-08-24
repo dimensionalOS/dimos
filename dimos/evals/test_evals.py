@@ -55,7 +55,7 @@ def _pose(x: float, y: float) -> PoseStamped:
 @pytest.fixture
 def dataset(tmp_path: Path) -> str:
     """A tiny on-disk mem2 dataset: 5 odom poses walking 4m in +x over 4s."""
-    from dimos.memory2.store.sqlite import SqliteStore
+    from dimos.memory.store.sqlite import SqliteStore
 
     path = tmp_path / "tiny.db"
     try:
@@ -81,7 +81,7 @@ class FakeRig:
         self.calls: list[str] = []
 
     def open_dataset(self, name: str) -> Any:
-        from dimos.memory2.cli.dataset import open_dataset
+        from dimos.memory.cli.dataset import open_dataset
 
         return open_dataset(name)
 
