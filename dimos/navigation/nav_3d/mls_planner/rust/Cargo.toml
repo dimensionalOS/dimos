@@ -55,7 +55,3 @@ imageproc = { version = "0.25", default-features = false }
 rayon = "1"
 pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"], optional = true }
 numpy = { version = "0.25", optional = true }
-
-[profile.release]
-lto = "thin"
-codegen-units = 1

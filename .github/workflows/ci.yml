@@ -78,28 +78,13 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read  # For checkout
+    env:
+      # All builds are consolidated in a single target dir
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-      - name: Find Cargo workspace roots
-        id: find-crates
-        run: |
-          crates=$(find . -name Cargo.lock \
-            -not -path './target/*' \
-            -not -path './.venv/*' \
-            -not -path './node_modules/*' \
-            -not -path './.git/*' \
-            -printf '%h\n' \
-            | sed 's|^\./||' \
-            | sort)
-          echo "Found Rust workspace roots:"
-          echo "$crates"
-          {
-            echo "crates<<EOF"
-            echo "$crates"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -107,32 +92,19 @@ jobs:
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: ${{ steps.find-crates.outputs.crates }}
           # The bake e2e's generated crate: caching it keeps its Cargo.lock, so
           # dependency resolution stays pinned, and its target dir of built deps.
           cache-directories: target/dimos-bake
           key: bake-e2e
+          # Only main writes the cache, so a PR run cannot evict main's entry
+          # from the repo's 10GB budget. PR runs still restore from it.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: cargo fmt
-        env:
-          CRATES: ${{ steps.find-crates.outputs.crates }}
-        run: |
-          for crate in $CRATES; do
-            (cd "$crate" && cargo fmt --all -- --check)
-          done
+        run: cargo fmt --all -- --check
       - name: cargo clippy
-        env:
-          CRATES: ${{ steps.find-crates.outputs.crates }}
-        run: |
-          for crate in $CRATES; do
-            (cd "$crate" && cargo clippy --workspace --all-targets --all-features --locked -- -D warnings)
-          done
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: cargo test
-        env:
-          CRATES: ${{ steps.find-crates.outputs.crates }}
-        run: |
-          for crate in $CRATES; do
-            (cd "$crate" && cargo test --workspace --all-features --locked)
-          done
+        run: cargo test --workspace --all-features --locked
       - name: Install uv
         uses: astral-sh/setup-uv@v8.3.2
         with:
