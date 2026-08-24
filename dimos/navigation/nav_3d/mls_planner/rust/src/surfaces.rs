@@ -250,12 +250,18 @@ fn close_at_z(
     let w = span(min_x, max_x);
     let h = span(min_y, max_y);
     if w > i64::from(max_span_cells) || h > i64::from(max_span_cells) {
+        // The corners say which it is: a map placed far from the origin moves both,
+        // a single stray point moves one.
         tracing::error!(
             iz,
             width = w,
             height = h,
             max_span_cells,
             cells = xys.len(),
+            min_x,
+            max_x,
+            min_y,
+            max_y,
             "surface slice is wider than the max map span; skipping hole closing"
         );
         return xys.iter().map(|&(ix, iy)| (ix, iy, iz)).collect();
