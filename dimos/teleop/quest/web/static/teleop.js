@@ -29,14 +29,15 @@ let videoAspect = 1.0;   // cached at load time — see videoEl.onload
 let prevBlobUrl = null;  // revoked when the next-next blob arrives
 const videoModelMatrix = new Float32Array(16);
 const hudModelMatrix = new Float32Array(16);
+const hudLocalMatrix = new Float32Array(16);
 
 const PANEL_POS_X = 0.0;
 const PANEL_POS_Y = 1.4;   // ~eye height
 const PANEL_POS_Z = -1.5;  // 1.5m in front of starting position
 const PANEL_HEIGHT = 0.9;
 
-// Collection HUD state. The panel is fixed in the local-floor scene instead
-// of following the operator's head.
+// Collection HUD state. The panel is anchored below the initial headset pose
+// and remains fixed in the local-floor scene.
 let episodeStatus = null;
 let episodeStatusReceivedAtMs = 0;
 let hudOffline = false;
@@ -45,13 +46,14 @@ let hudContext = null;
 let hudTexture = null;
 let hudDirty = false;
 let hudElapsedSecond = -1;
+let hudPlaced = false;
 
 const HUD_WIDTH_PX = 2048;
 const HUD_HEIGHT_PX = 256;
 const HUD_WIDTH_METERS = 1.08;
 const HUD_HEIGHT_METERS = HUD_WIDTH_METERS * HUD_HEIGHT_PX / HUD_WIDTH_PX;
-const HUD_CENTER_Y = 1.15;
-const HUD_CENTER_Z = -1.2;
+const HUD_OFFSET_Y = -0.6;
+const HUD_OFFSET_Z = -1.2;
 
 // UI elements
 const statusEl = document.getElementById('status');
@@ -226,6 +228,18 @@ function setModelMatrix(matrix, halfWidth, halfHeight, x, y, z) {
     matrix[15] = 1;
 }
 
+function multiplyMatrices(out, left, right) {
+    for (let column = 0; column < 4; column++) {
+        for (let row = 0; row < 4; row++) {
+            let value = 0;
+            for (let index = 0; index < 4; index++) {
+                value += left[index * 4 + row] * right[column * 4 + index];
+            }
+            out[column * 4 + row] = value;
+        }
+    }
+}
+
 function updateVideoModelMatrix() {
     const halfH = PANEL_HEIGHT * 0.5;
     setModelMatrix(
@@ -290,13 +304,18 @@ function initCollectionHud() {
 
     hudTexture = createTexture();
     setModelMatrix(
-        hudModelMatrix,
+        hudLocalMatrix,
         HUD_WIDTH_METERS * 0.5,
         HUD_HEIGHT_METERS * 0.5,
         0,
-        HUD_CENTER_Y,
-        HUD_CENTER_Z,
+        HUD_OFFSET_Y,
+        HUD_OFFSET_Z,
     );
+}
+
+function placeCollectionHud(pose) {
+    multiplyMatrices(hudModelMatrix, pose.transform.matrix, hudLocalMatrix);
+    hudPlaced = true;
 }
 
 function drawHudSection(
@@ -314,8 +333,8 @@ function drawHudSection(
     }
 
     const left = x + 28;
-    context.fillStyle = '#93a7bf';
-    context.font = '600 27px sans-serif';
+    context.fillStyle = '#c0cfdf';
+    context.font = '700 27px sans-serif';
     context.fillText(label, left, 78);
 
     let valueLeft = left;
@@ -373,7 +392,7 @@ function updateHudTexture() {
     hudContext.clearRect(0, 0, HUD_WIDTH_PX, HUD_HEIGHT_PX);
     hudContext.beginPath();
     hudContext.roundRect(8, 8, HUD_WIDTH_PX - 16, HUD_HEIGHT_PX - 16, 34);
-    hudContext.fillStyle = 'rgba(8, 16, 29, 0.76)';
+    hudContext.fillStyle = 'rgba(4, 9, 17, 0.88)';
     hudContext.fill();
     hudContext.strokeStyle = 'rgba(188, 210, 235, 0.35)';
     hudContext.lineWidth = 3;
@@ -397,7 +416,7 @@ function updateHudTexture() {
 }
 
 function renderCollectionHud(view, viewport) {
-    if (!episodeStatus) return;
+    if (!episodeStatus || !hudPlaced) return;
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     renderTexturedQuad(
@@ -543,6 +562,7 @@ function onXRFrame(_time, frame) {
     updateHudTexture();
     const pose = frame.getViewerPose(xrRefSpace);
     if (pose) {
+        if (!hudPlaced) placeCollectionHud(pose);
         for (const view of pose.views) {
             const viewport = glLayer.getViewport(view);
             if (videoReady) renderVideoPanel(view, viewport);
@@ -576,6 +596,7 @@ async function startVR() {
         }
 
         xrSession = session;
+        hudPlaced = false;
 
         // Setup WebGL layer
         const glLayer = new XRWebGLLayer(session, gl);
@@ -592,6 +613,7 @@ async function startVR() {
         session.addEventListener('end', () => {
             setStatus('VR session ended');
             handSelectActive.clear();
+            hudPlaced = false;
             xrSession = null;
             window.disconnect();
         });
