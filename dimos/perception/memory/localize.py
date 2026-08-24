@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
     from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
     from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
+    from dimos.perception.memory.identity_store import IdentityStore
 
 logger = setup_logger()
 
@@ -220,6 +221,7 @@ def localize(
     require_pose: bool = True,
     policy: LocalizePolicy | None = None,
     trace: LocalizeTrace | list[LocalizeTrace] | None = None,
+    identity_store: IdentityStore | None = None,
 ) -> list[Localization] | list[list[Localization]]:
     """Every verified 3D instance of *query*, latest-seen first.
 
@@ -242,6 +244,12 @@ def localize(
     The window is the index's - build it with :func:`embed_index`. Without a
     ``rig`` the store's shape decides one, and without a ``policy`` the rig
     supplies scale-appropriate defaults.
+
+    An ``identity_store`` makes evidence cumulative: each label's groups
+    persist across calls, frames the store already ingested for a label are
+    skipped entirely, and an object stays answerable after it leaves the
+    window, its position still following the latest sighting. Without one,
+    every call verifies from scratch inside its window.
     """
     rig = rig or Rig.from_store(store)
     policy = policy or rig.default_localize_policy()
@@ -281,27 +289,42 @@ def localize(
     ordered = sorted(frames.values(), key=lambda obs: obs.ts)
     logger.info(f"detection: {len(ordered)} candidate frames for {len(queries)} labels")
 
-    if not ordered:
-        empty: list[list[Localization]] = [[] for _ in queries]
-        return [] if isinstance(query, str) else empty
+    if ordered:
+        from dimos.perception.memory.support_plane import fit_support_plane
 
-    from dimos.perception.memory.support_plane import fit_support_plane
+        anchors = [peak.pose_tuple for label_peaks in peaks_per_label for peak in label_peaks]
+        mx = sum(t[0] for t in anchors) / len(anchors)
+        my = sum(t[1] for t in anchors) / len(anchors)
+        cell = (round(mx / 2.0), round(my / 2.0))
+        plane = rig._plane_cache.get(cell)
+        if plane is None:
+            plane = fit_support_plane(rig, ordered)
+            if plane is not None:
+                rig._plane_cache[cell] = plane
 
-    anchors = [peak.pose_tuple for label_peaks in peaks_per_label for peak in label_peaks]
-    mx = sum(t[0] for t in anchors) / len(anchors)
-    my = sum(t[1] for t in anchors) / len(anchors)
-    cell = (round(mx / 2.0), round(my / 2.0))
-    plane = rig._plane_cache.get(cell)
-    if plane is None:
-        plane = fit_support_plane(rig, ordered)
-        if plane is not None:
-            rig._plane_cache[cell] = plane
-    identities = [Identity(is_same=spatial(policy.cluster_radius_m)) for _ in queries]
-    ungrounded: list[tuple[float, float] | None] = [None] * len(queries)  # (score, ts)
+    if identity_store is None:
+        entries = None
+        identities = [Identity(is_same=spatial(policy.cluster_radius_m)) for _ in queries]
+        ingested: list[set[float]] = [set() for _ in queries]
+        ungrounded: list[tuple[float, float] | None] = [None] * len(queries)  # (score, ts)
+    else:
+        entries = [
+            identity_store.get_or_create(q, spatial(policy.cluster_radius_m)) for q in queries
+        ]
+        identities = [entry.identity for entry in entries]
+        ingested = [entry.ingested for entry in entries]
+        ungrounded = [entry.ungrounded for entry in entries]
 
     floor = policy.candidate_floor
     cache = detector.score_cache
-    misses = [obs for obs in ordered if any((obs.ts, q, floor) not in cache for q in queries)]
+    misses = [
+        obs
+        for obs in ordered
+        if any(
+            obs.ts not in ingested[j] and (obs.ts, q, floor) not in cache
+            for j, q in enumerate(queries)
+        )
+    ]
     if misses:
         scored = detector.query_score_rows_batch(
             [obs.data for obs in misses], queries, threshold=floor
@@ -314,16 +337,20 @@ def localize(
                     cache.popitem(last=False)
 
     for obs in ordered:
-        rows_per_label: list[tuple[Any, Any]] = []
-        for q in queries:
-            key = (obs.ts, q, floor)
+        active = [j for j in range(len(queries)) if obs.ts not in ingested[j]]
+        if not active:
+            continue
+        rows_per_label: list[tuple[int, tuple[Any, Any]]] = []
+        for j in active:
+            key = (obs.ts, queries[j], floor)
             cache.move_to_end(key)
-            rows_per_label.append(cache[key])
-        if not any(len(scores) for _boxes, scores in rows_per_label):
+            rows_per_label.append((j, cache[key]))
+            ingested[j].add(obs.ts)
+        if not any(len(scores) for _j, (_boxes, scores) in rows_per_label):
             continue
         img = obs.data
         candidates: list[Detection2DBBox] = []
-        for j, (boxes, scores) in enumerate(rows_per_label):
+        for j, (boxes, scores) in rows_per_label:
             for box, score in zip(boxes, scores, strict=True):
                 det = Detection2DBBox(
                     bbox=(float(box[0]), float(box[1]), float(box[2]), float(box[3])),
@@ -360,6 +387,10 @@ def localize(
                 label_trace.detection_frames.append(
                     obs.derive(data=ImageDetections2D(image=obs.data, detections=label_dets))
                 )
+
+    if entries is not None:
+        for entry, best in zip(entries, ungrounded, strict=True):
+            entry.ungrounded = best
 
     results = [
         _finalize(
