@@ -72,8 +72,6 @@ def test_publishing_is_throttled_to_min_publish_interval(module):
 
 
 def test_a_backwards_stamp_publishes_instead_of_waiting_out_the_interval(module):
-    """A replay restart rewinds the stamp, so an elapsed-time check alone would hold the
-    path back until the recording caught up to where the previous run ended."""
     module.config.min_step_meters = 0.0
     module.config.min_publish_interval_seconds = 10.0
 
