@@ -72,7 +72,7 @@ demo_cuvslam_realsense = (
             enable_pointcloud=False,
             enable_imu=False,
         ),
-        DimSlam.blueprint(use_imu=False),
+        DimSlam.blueprint(),
         OdometryPath.blueprint(),
         vis_module(
             global_config.viewer,

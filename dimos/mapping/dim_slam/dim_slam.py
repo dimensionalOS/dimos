@@ -219,9 +219,9 @@ class DimSlamConfig(NativeModuleConfig):
     # outlier. 0 disables the gate.
     mahalanobis_gate: float = 5.0
 
-    # With this off the filter is seeded level from the first source message and coasts
-    # at constant world velocity between measurements instead of propagating on IMU.
-    use_imu: bool = True
+    # On, the filter propagates on IMU and needs all four noise figures below. Off, it is
+    # seeded level from the first source message and coasts at constant world velocity.
+    use_imu: bool = False
 
     # The IMU's datasheet noise figures, in the continuous-time units the filter wants:
     # rad/s/sqrt(Hz), rad/s^2/sqrt(Hz), m/s^2/sqrt(Hz), m/s^3/sqrt(Hz). use_imu requires
