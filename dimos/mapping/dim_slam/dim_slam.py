@@ -113,10 +113,8 @@ def driver_cuda_major() -> int:
 
 
 def sdk_variant() -> str:
-    """Python picks the flake attr instead of the flake's default package because nix
-    evaluation is hermetic: it can branch on arch/OS only, and cannot see the installed
-    driver (cuda12 vs cuda13 on x86) or /proc/device-tree (orin vs thor, both
-    aarch64-linux).
+    """Nix cannot see the installed driver (cuda12 vs cuda13) or /proc/device-tree
+    (orin vs thor), so the flake's default package cannot make this choice.
     """
     if sys.platform == "darwin":
         return "metal"
