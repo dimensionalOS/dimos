@@ -5,7 +5,9 @@ name: Deploy docs
 # it does locally; this workflow only supplies the checkout and the key.
 on:
   push:
-    branches: [main]
+    # The branch is here to prove the workflow end to end before it merges.
+    # It publishes to the live site like main does, so drop it once verified.
+    branches: [main, feat/ivan/mkdocs]
     paths:
       - "docs/**"
       - "mkdocs.yml"
