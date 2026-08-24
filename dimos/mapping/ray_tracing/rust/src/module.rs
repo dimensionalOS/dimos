@@ -335,6 +335,16 @@ mod tests {
     use super::*;
     use crate::voxel_ray_tracer::{Voxel, VoxelKey};
     use ahash::AHashSet;
+    use dimos_module::run;
+    use dimos_module::transport::{Dispatch, Transport};
+    use lcm_msgs::geometry_msgs::{
+        Transform as TfTransform, TransformStamped, Vector3 as TfVector3,
+    };
+    use lcm_msgs::tf2_msgs::TFMessage;
+    use std::collections::{HashMap, VecDeque};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    use tokio::sync::Notify;
 
     fn cloud_points(c: &PointCloud2) -> AHashSet<(u32, u32, u32)> {
         let mut out = AHashSet::new();
@@ -513,6 +523,273 @@ mod tests {
         assert!(
             pts.contains(&voxel_center(25, 0, 0)),
             "live voxel bypasses support_min"
+        );
+    }
+
+    const LIDAR_TOPIC: &str = "/lidar";
+    const TF_TOPIC: &str = "/tf";
+    const GLOBAL_TOPIC: &str = "/global_map";
+    const WAIT_TIMEOUT_S: f64 = 3.0;
+    const TOLERANCE_S: f64 = 0.1;
+
+    type Inbound = Arc<Mutex<VecDeque<(String, Vec<u8>)>>>;
+
+    #[derive(Clone)]
+    struct Bus {
+        inbound: Inbound,
+        arrived: Arc<Notify>,
+        subscriptions: Arc<Mutex<HashMap<String, Vec<Dispatch>>>>,
+        published: Arc<Mutex<Vec<String>>>,
+        delivering: Arc<AtomicBool>,
+    }
+
+    impl Bus {
+        fn new() -> Self {
+            Self {
+                inbound: Arc::new(Mutex::new(VecDeque::new())),
+                arrived: Arc::new(Notify::new()),
+                subscriptions: Arc::new(Mutex::new(HashMap::new())),
+                published: Arc::new(Mutex::new(Vec::new())),
+                delivering: Arc::new(AtomicBool::new(false)),
+            }
+        }
+
+        fn send(&self, channel: &str, data: Vec<u8>) {
+            self.inbound
+                .lock()
+                .unwrap()
+                .push_back((channel.to_string(), data));
+            self.arrived.notify_one();
+        }
+
+        fn publish_count(&self, channel: &str) -> usize {
+            self.published
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|c| c.as_str() == channel)
+                .count()
+        }
+
+        fn subscribed(&self, channel: &str) -> bool {
+            self.subscriptions.lock().unwrap().contains_key(channel)
+        }
+
+        fn spawn_delivery(&self) {
+            let inbound = Arc::clone(&self.inbound);
+            let arrived = Arc::clone(&self.arrived);
+            let subscriptions = Arc::clone(&self.subscriptions);
+            tokio::spawn(async move {
+                loop {
+                    let next = inbound.lock().unwrap().pop_front();
+                    let Some((channel, data)) = next else {
+                        arrived.notified().await;
+                        continue;
+                    };
+                    let callbacks = subscriptions.lock().unwrap().get(&channel).cloned();
+                    for callback in callbacks.iter().flatten() {
+                        callback(&data);
+                    }
+                }
+            });
+        }
+    }
+
+    impl Transport for Bus {
+        async fn publish(&self, channel: &str, _data: Vec<u8>) -> std::io::Result<()> {
+            self.published.lock().unwrap().push(channel.to_string());
+            Ok(())
+        }
+
+        async fn subscribe(&self, channel: &str, on_msg: Dispatch) -> std::io::Result<()> {
+            self.subscriptions
+                .lock()
+                .unwrap()
+                .entry(channel.to_string())
+                .or_default()
+                .push(on_msg);
+            if !self.delivering.swap(true, Ordering::SeqCst) {
+                self.spawn_delivery();
+            }
+            Ok(())
+        }
+    }
+
+    fn tf_test_config() -> Config {
+        Config {
+            voxel_size: 1.0,
+            max_range: 100.0,
+            ray_subsample: 1,
+            shadow_depth: 2.0,
+            grace_depth: 0.0,
+            min_health: 0,
+            max_health: 1,
+            graze_cos: 0.5,
+            support_min: 0,
+            emit_every: 0,
+            global_emit_every: 1,
+            region_percentile: 95.0,
+            output_frame: "map".into(),
+            tf_match_tolerance_s: TOLERANCE_S,
+            tf_wait_timeout_s: WAIT_TIMEOUT_S,
+        }
+    }
+
+    fn stamp_at(ts: f64) -> Time {
+        let sec = ts.floor();
+        Time {
+            sec: sec as i32,
+            nsec: ((ts - sec) * 1e9).round() as i32,
+        }
+    }
+
+    fn tf_bytes(edges: &[(&str, &str, f64)]) -> Vec<u8> {
+        let transforms = edges
+            .iter()
+            .map(|(parent, child, ts)| TransformStamped {
+                header: Header {
+                    seq: 0,
+                    stamp: stamp_at(*ts),
+                    frame_id: (*parent).into(),
+                },
+                child_frame_id: (*child).into(),
+                transform: TfTransform {
+                    translation: TfVector3 {
+                        x: 0.0,
+                        y: 0.0,
+                        z: 0.0,
+                    },
+                    rotation: Quaternion {
+                        x: 0.0,
+                        y: 0.0,
+                        z: 0.0,
+                        w: 1.0,
+                    },
+                },
+            })
+            .collect();
+        TFMessage { transforms }.encode()
+    }
+
+    fn cloud_bytes(ts: f64) -> Vec<u8> {
+        points_to_cloud(&[(1.0, 0.0, 0.0), (2.0, 0.0, 0.0)], "lidar", stamp_at(ts)).encode()
+    }
+
+    async fn start(config: Config) -> Bus {
+        let bus = Bus::new();
+        let launch = serde_json::json!({
+            "topics": {
+                "lidar": LIDAR_TOPIC,
+                "tf": TF_TOPIC,
+                "global_map": GLOBAL_TOPIC,
+                "local_map": "/local_map",
+                "region_bounds": "/region_bounds",
+            },
+            "config": serde_json::to_value(&config).expect("config serializes"),
+        });
+        let running = bus.clone();
+        tokio::spawn(async move { run::<RayTracingVoxelMap, Bus>(running, launch).await });
+        poll_until(Duration::from_secs(5), || {
+            bus.subscribed(LIDAR_TOPIC) && bus.subscribed(TF_TOPIC)
+        })
+        .await;
+        bus
+    }
+
+    async fn poll_until(within: Duration, mut done: impl FnMut() -> bool) -> bool {
+        let deadline = tokio::time::Instant::now() + within;
+        while tokio::time::Instant::now() < deadline {
+            if done() {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+        done()
+    }
+
+    // The wait exists for the normal case: the cloud beats its transform to the
+    // module. Removing it would drop every such cloud.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_cloud_ahead_of_the_tf_stream_waits_for_the_late_transform() {
+        let bus = start(tf_test_config()).await;
+        bus.send(
+            TF_TOPIC,
+            tf_bytes(&[("map", "odom", 1000.0), ("odom", "lidar", 1000.0)]),
+        );
+        bus.send(LIDAR_TOPIC, cloud_bytes(1000.4));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(
+            bus.publish_count(GLOBAL_TOPIC),
+            0,
+            "no transform within tolerance yet, so nothing may be placed"
+        );
+        bus.send(
+            TF_TOPIC,
+            tf_bytes(&[("map", "odom", 1000.4), ("odom", "lidar", 1000.4)]),
+        );
+        assert!(
+            poll_until(Duration::from_millis(500), || bus
+                .publish_count(GLOBAL_TOPIC)
+                >= 1)
+            .await,
+            "the late transform must still place the waiting cloud"
+        );
+    }
+
+    // A composed transform carries its stalest edge's stamp, so an edge that has
+    // not reached the cloud yet keeps the composed latest behind the cloud and
+    // the full wait alive. The zero wait cannot fire while any edge is in flight.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_edge_behind_the_cloud_holds_the_composed_latest_back() {
+        let bus = start(tf_test_config()).await;
+        bus.send(
+            TF_TOPIC,
+            tf_bytes(&[("map", "odom", 1000.5), ("map", "odom", 1001.0)]),
+        );
+        bus.send(TF_TOPIC, tf_bytes(&[("odom", "lidar", 999.0)]));
+        bus.send(LIDAR_TOPIC, cloud_bytes(1000.5));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(
+            bus.publish_count(GLOBAL_TOPIC),
+            0,
+            "the lidar edge has no sample near the cloud yet"
+        );
+        bus.send(TF_TOPIC, tf_bytes(&[("odom", "lidar", 1000.5)]));
+        assert!(
+            poll_until(Duration::from_millis(500), || bus
+                .publish_count(GLOBAL_TOPIC)
+                >= 1)
+            .await,
+            "a fresher sibling edge must not shorten the wait on the stale edge"
+        );
+    }
+
+    // Every edge past the stamp means no sample within tolerance can still
+    // arrive, so waiting only delays the clouds queued behind this one.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_stamp_every_edge_has_passed_is_dropped_without_delaying_the_next_cloud() {
+        let bus = start(tf_test_config()).await;
+        bus.send(
+            TF_TOPIC,
+            tf_bytes(&[("map", "odom", 1000.0), ("odom", "lidar", 1000.0)]),
+        );
+        bus.send(
+            TF_TOPIC,
+            tf_bytes(&[("map", "odom", 1001.0), ("odom", "lidar", 1001.0)]),
+        );
+        bus.send(LIDAR_TOPIC, cloud_bytes(1000.5));
+        bus.send(LIDAR_TOPIC, cloud_bytes(1001.0));
+        assert!(
+            poll_until(Duration::from_millis(500), || bus
+                .publish_count(GLOBAL_TOPIC)
+                >= 1)
+            .await,
+            "the placeable cloud must not sit behind a {WAIT_TIMEOUT_S}s wait it can never win"
+        );
+        assert_eq!(
+            bus.publish_count(GLOBAL_TOPIC),
+            1,
+            "the passed-over cloud has no transform within tolerance and must be dropped"
         );
     }
 }

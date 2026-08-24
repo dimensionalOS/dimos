@@ -50,6 +50,10 @@ numpy = { version = "0.25", optional = true }
 validator = { version = "0.20", features = ["derive"] }
 nalgebra = "0.35.0"
 
+[dev-dependencies]
+serde_json = "1"
+tokio = { version = "1", features = ["time", "sync"] }
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
