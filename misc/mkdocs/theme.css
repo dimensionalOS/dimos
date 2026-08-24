@@ -215,6 +215,15 @@
   font-size: 0.72rem;
 }
 
+/* Material lets a table shrink to its content. The readme's grids are laid
+ * out as tables and are meant to span the column: on github the 245px spacer
+ * gifs forced that, and those are dropped here. Keyed on cells declaring a
+ * width, which is what makes a table a layout rather than data. */
+.md-typeset table:not([class]):has(td[width]) {
+  width: 100%;
+  table-layout: fixed;
+}
+
 /* The readme lays its hardware and capability grids out as html tables with
  * headings inside the cells. Material's heading and paragraph margins are
  * sized for a page, and inside a cell they read as broken row spacing. */
