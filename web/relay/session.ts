@@ -18,10 +18,12 @@ import {
   type Msg,
   PROTOCOL_VERSION,
   type RobotInfo,
+  type RobotManifest,
 } from "@dimos/shared";
 import { parseManifest } from "@dimos/shared/manifest";
 import {
   type ChannelPolicy,
+  type FrameSend,
   type FrameWriter,
   readDataFrameBytes,
   readWebTransportPreamble,
@@ -38,6 +40,11 @@ import type { Registry, RobotPeer, ViewerPeer } from "./registry.ts";
 export const CONTROL_SEND_ORDER = 2;
 export const RELIABLE_SEND_ORDER = 1;
 
+// Application error code carried by latest-stream resets (mirrors the Python
+// robot leg's STALE_STREAM_ERROR_CODE). Receivers do not act on it; it only
+// labels the reset for debugging.
+export const STALE_STREAM_ERROR_CODE = 0x01;
+
 function closeAfterFlush(wt: WebTransport, reason: string): void {
   // Session close discards queued stream/datagram data, so give a just-sent
   // reply (e.g. the version_mismatch error) a moment to reach the wire.
@@ -52,7 +59,12 @@ function closeAfterFlush(wt: WebTransport, reason: string): void {
 
 export class RobotSession implements RobotPeer {
   info: RobotInfo | null = null;
+  /** Normalized channel specs (parseManifest output): feeds the delivery map
+   * and sub validation. */
   channels: ChannelSpec[] = [];
+  /** The manifest exactly as the robot sent it: forwarded verbatim to
+   * viewers, never normalized (the relay stays layout-blind). */
+  manifest: RobotManifest | null = null;
   /** Close reason; set before transport close so rejected hello resends
    * cannot register this session. */
   closed: string | null = null;
@@ -123,11 +135,12 @@ export class RobotSession implements RobotPeer {
         );
       }
       // Manifest-less hellos are legal (transport tests); a declared manifest
-      // must pass the domain rules or duplicate/bogus channels would be
-      // interpreted inconsistently downstream.
+      // must pass the domain rules (incl. the version gate) or duplicate/
+      // bogus channels would be interpreted inconsistently downstream.
+      let channels: ChannelSpec[] = [];
       if (msg.manifest !== undefined) {
         try {
-          parseManifest(msg.manifest);
+          channels = parseManifest(msg.manifest).channels;
         } catch (e) {
           return this.#reject("invalid_manifest", (e as Error).message, "invalid manifest");
         }
@@ -136,7 +149,8 @@ export class RobotSession implements RobotPeer {
       // must not mutate identity mid-session.
       if (this.info === null) {
         this.info = msg.robot;
-        this.channels = msg.manifest?.channels ?? [];
+        this.channels = channels;
+        this.manifest = msg.manifest ?? null;
       }
       if (!this.#registry.registerRobot(this)) {
         return this.#reject(
@@ -187,14 +201,65 @@ export class ViewerSession implements ViewerPeer {
     this.#registry = registry;
     let latestOrder = 1;
     this.sink = {
-      async sendFrame(bytes: Uint8Array): Promise<void> {
-        const stream = await wt.createUnidirectionalStream({
-          waitUntilAvailable: true,
-          sendOrder: -(latestOrder++),
+      sendFrame(bytes: Uint8Array): FrameSend {
+        let aborted = false;
+        let writeStarted = false;
+        let writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
+        let settle!: () => void;
+        let fail!: (e: unknown) => void;
+        const done = new Promise<void>((resolve, reject) => {
+          settle = resolve;
+          fail = reject;
         });
-        const writer = stream.getWriter();
-        await writer.write(bytes);
-        await writer.close();
+        const reset = () => {
+          writer?.abort(
+            new WebTransportError("stale frame superseded", {
+              source: "stream",
+              streamErrorCode: STALE_STREAM_ERROR_CODE,
+            }),
+          ).catch(() => {});
+        };
+        (async () => {
+          const stream = await wt.createUnidirectionalStream({
+            waitUntilAvailable: true,
+            sendOrder: -(latestOrder++),
+          });
+          // Keep the writer for the stream's whole life: aborts go through it
+          // (the stream itself stays locked).
+          writer = stream.getWriter();
+          if (aborted) {
+            // abort() raced the create (done already rejected); release the
+            // just-granted stream credit.
+            reset();
+            return;
+          }
+          // Latching writeStarted and starting the write in one synchronous
+          // step is what makes supersede race-free: the payload can no
+          // longer change once bytes may have reached the transport.
+          writeStarted = true;
+          await writer.write(bytes);
+          settle();
+          // No close(): a closed stream cannot be aborted, and every latest
+          // stream ends in a reset (reap, dispose, or session teardown).
+          // Receivers dispatch on byte count and treat the reset as EOF.
+        })().catch((e) => fail(e)); // no-op if done already settled
+        return {
+          done,
+          get aborted() {
+            return aborted;
+          },
+          abort() {
+            if (aborted) return;
+            aborted = true;
+            fail(new Error("frame send aborted"));
+            reset();
+          },
+          supersede(newBytes: Uint8Array): boolean {
+            if (writeStarted || aborted) return false;
+            bytes = newBytes; // the write reads `bytes` only after create resolves
+            return true;
+          },
+        };
       },
       async openStream(): Promise<FrameWriter> {
         // Persistent stream for a reliable channel.

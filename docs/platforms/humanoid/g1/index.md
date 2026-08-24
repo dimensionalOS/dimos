@@ -1,6 +1,6 @@
----
-title: "Unitree G1"
----
+# Unitree G1
+
+![output](assets/g1_rerun.webp)
 
 ## Requirements
 
@@ -82,7 +82,7 @@ In the ssh terminal `ssh -L 3030:localhost:3030 unitree@192.168.123.164`
 
 ```sh skip
 source .venv/bin/activate
-uv run dimos --rerun-host 0.0.0.0 run unitree-g1-nav-onboard
+uv run dimos --rerun-host 0.0.0.0 run unitree-g1-nav-simple
 # should print out something like:
 # ============================================================
 # Rerun gRPC server running (no viewer opened)
@@ -122,7 +122,7 @@ This usually means port `3030` wasn't forwarded. The `3030:localhost:3030` in th
 #### Viewer Crashing
 
 If the viewer keeps crashing for you, there are two options for now:
-1. On the G1 (ssh connection) change `vis_throttle=0.5` (inside `dimos/robot/unitree/g1/blueprints/navigation/unitree_g1_nav_onboard.py`) to a lower number, like 0.3 or 0.2
+1. On the G1 (ssh connection) change `_MAX_HZ` (inside `dimos/robot/unitree/g1/blueprints/primitive/unitree_g1_vis.py`) to a lower number, like 20 or 15
 2. Get more RAM
 
 

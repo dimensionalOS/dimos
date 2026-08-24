@@ -71,16 +71,18 @@ class MujocoConnection:
     def __init__(self, global_config: GlobalConfig) -> None:
         try:
             import mujoco  # noqa: F401
-        except ImportError:
-            raise ImportError("'mujoco' is not installed. Use `pip install -e .[sim]`")
+            from mujoco_playground._src import mjx_env
+        except ImportError as exc:
+            raise ImportError(
+                "Simulation dependencies are not installed. "
+                "Run `uv sync --extra sim --inexact` to install them."
+            ) from exc
 
         # Pre-download the mujoco_sim data.
         get_data("mujoco_sim")
 
         # Trigger the download of the mujoco_menagerie package. This is so it
         # doesn't trigger in the mujoco process where it can time out.
-        from mujoco_playground._src import mjx_env
-
         mjx_env.ensure_menagerie_exists()
 
         self.global_config = global_config
@@ -92,6 +94,7 @@ class MujocoConnection:
         self._stop_timer: threading.Timer | None = None
 
         self._stream_threads: list[threading.Thread] = []
+        self._output_thread: threading.Thread | None = None
         self._stop_events: list[threading.Event] = []
         self._is_cleaned_up = False
 
@@ -126,13 +129,25 @@ class MujocoConnection:
 
             self.process = subprocess.Popen(
                 [executable, str(LAUNCHER_PATH), config_pickle, shm_names_json],
-                stderr=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 env=env,
             )
 
         except Exception as e:
             self.shm_data.cleanup()
             raise RuntimeError(f"Failed to start MuJoCo subprocess: {e}") from e
+
+        # A captured pipe must always be drained. MuJoCo can emit a sustained
+        # stream of physics warnings; once an unread OS pipe fills, the child
+        # blocks in write(2) and silently stops updating every shared-memory
+        # sensor while this parent (and the relay) remain healthy.
+        self._output_thread = threading.Thread(
+            target=self._pump_subprocess_output,
+            name="mujoco-output-pump",
+            daemon=True,
+        )
+        self._output_thread.start()
 
         # Wait for process to be ready
         ready_timeout = 300.0
@@ -164,18 +179,36 @@ class MujocoConnection:
         self.stop()
         raise RuntimeError("MuJoCo process failed to start (timeout)")
 
+    def _pump_subprocess_output(self) -> None:
+        """Drain MuJoCo output into DimOS logs so the child cannot pipe-block."""
+        process = self.process
+        if process is None or process.stdout is None:
+            return
+        try:
+            for raw in process.stdout:
+                line = raw.decode(errors="replace").rstrip()
+                if not line:
+                    continue
+                lowered = line.lower()
+                if "warning" in lowered or "error" in lowered or "fatal" in lowered:
+                    logger.warning(f"[mujoco] {line}")
+                else:
+                    logger.info(f"[mujoco] {line}")
+
+            return_code = process.poll()
+            if return_code not in (None, 0) and not self._is_cleaned_up:
+                logger.error(f"[mujoco] subprocess exited unexpectedly with code {return_code}")
+        except (OSError, ValueError) as e:
+            # Teardown can race the final descriptor close; only an unexpected
+            # read failure while live is actionable.
+            if not self._is_cleaned_up:
+                logger.warning(f"MuJoCo output pump terminated: {e}")
+
     def stop(self) -> None:
         if self._is_cleaned_up:
             return
 
         self._is_cleaned_up = True
-
-        # clean up open file descriptors
-        if self.process:
-            if self.process.stderr:
-                self.process.stderr.close()
-            if self.process.stdout:
-                self.process.stdout.close()
 
         # Cancel any pending timers
         if self._stop_timer:
@@ -197,7 +230,9 @@ class MujocoConnection:
         if self.shm_data:
             self.shm_data.signal_stop()
 
-        # Wait for process to finish
+        # Stop the child before joining/closing its output. BufferedReader.close()
+        # can wait on a pump thread blocked in read(), so closing the pipe while
+        # the child is still alive can deadlock shutdown.
         if self.process:
             try:
                 self.process.terminate()
@@ -210,7 +245,22 @@ class MujocoConnection:
             except Exception as e:
                 logger.error(f"Error stopping MuJoCo process: {e}")
 
+            if self._output_thread is not None and self._output_thread.is_alive():
+                self._output_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+                if self._output_thread.is_alive():
+                    logger.warning("MuJoCo output thread did not stop gracefully")
+
+            # The exited child has closed its pipe end, so these closes cannot
+            # contend with a reader indefinitely.
+            if self.process.stderr:
+                self.process.stderr.close()
+            if self.process.stdout and not (
+                self._output_thread is not None and self._output_thread.is_alive()
+            ):
+                self.process.stdout.close()
+
             self.process = None
+        self._output_thread = None
 
         # Clean up shared memory
         if self.shm_data:
