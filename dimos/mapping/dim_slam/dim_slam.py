@@ -213,7 +213,7 @@ class DimSlamConfig(NativeModuleConfig):
     mahalanobis_gate: float = 5.0
 
     # On, the filter propagates on IMU and needs all four noise figures below. Off, it is
-    # seeded level from the first source message and coasts at constant world velocity.
+    # seeded level from the first source message and holds its pose between them.
     use_imu: bool = False
 
     # The IMU's datasheet noise figures, in the continuous-time units the filter wants:
@@ -270,9 +270,10 @@ class DimSlamConfig(NativeModuleConfig):
 class DimSlam(NativeModule):
     """Every camera publishes onto the same ``image`` and ``camera_info`` streams and is
     told apart by ``frame_id``; ``camera_frames`` fixes which frames are on the rig and
-    in what order. Extrinsics come from tf against ``rig_frame``. ``rgbd`` pairs one
-    camera with ``depth_image``, reprojected onto the rig camera through
-    ``depth_camera_info`` and tf when the depth sensor differs.
+    in what order. Extrinsics come from tf against ``rig_frame``. ``depth_image`` feeds
+    ``depth_cloud`` in every mode, and is additionally tracked against in ``rgbd``,
+    reprojected onto the rig camera through ``depth_camera_info`` and tf when the depth
+    sensor differs.
 
     The tracker's pose stream never touches the wire: it enters the filter as a
     drifting source under ``visual_odom_frame``. Any number of external sources
