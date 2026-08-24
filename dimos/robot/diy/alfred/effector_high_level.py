@@ -37,6 +37,7 @@ from typing import Any
 
 import numpy as np
 import portal
+from pydantic import Field, FiniteFloat
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -59,10 +60,17 @@ _TEARDOWN_TIMEOUT = 2.0
 _ODOMETRY_ERROR_LOG_INTERVAL = 10.0
 
 
+def _close_quietly(client: portal.Client) -> None:
+    try:
+        client.close()
+    except Exception as e:
+        logger.error(f"Error closing the Alfred connection: {e}")
+
+
 class AlfredHighLevelConfig(ModuleConfig):
     address: str = DEFAULT_ADDRESS
     cmd_vel_timeout: float = 0.2
-    wheel_odometry_hz: float = 50.0
+    wheel_odometry_hz: FiniteFloat = Field(50.0, gt=0.0)
     # Never published to tf: a source to fuse, not a second odom->base_link publisher.
     wheel_odom_frame_id: str = "wheel_odom"
     base_frame_id: str = "base_link"
@@ -95,12 +103,10 @@ class AlfredHighLevel(Module):
             # delay the stop below.
             if self._stop_task is not None and not self._stop_task.done():
                 self._stop_task.cancel()
-            try:
-                await asyncio.wait_for(self._send_velocity(0.0, 0.0, 0.0), _TEARDOWN_TIMEOUT)
-            except asyncio.TimeoutError:
-                logger.error("Alfred did not take the stop command; it may still be moving")
-            except Exception as e:
-                logger.error(f"Error stopping Alfred: {e}")
+            stop = asyncio.ensure_future(self._send_velocity(0.0, 0.0, 0.0))
+            stopped, _ = await asyncio.wait({stop}, timeout=_TEARDOWN_TIMEOUT)
+            if not stopped:
+                logger.error("Alfred has not taken the stop command yet; it may still be moving")
             # Cancelling would not stop an in-flight Portal call, which runs on a worker
             # thread; close() below fails whatever request it is still waiting on.
             self._odometry_stop.set()
@@ -108,10 +114,12 @@ class AlfredHighLevel(Module):
                 done, _ = await asyncio.wait({self._odometry_task}, timeout=_TEARDOWN_TIMEOUT)
                 if not done:
                     logger.warning("Alfred wheel odometry poll is still running; stopping anyway")
-            try:
-                client.close()
-            except Exception:
-                pass
+            # Closing fails every request the connection still owes, so a stop that has
+            # not come back yet waits for its worker rather than being cut off.
+            if stop.done():
+                _close_quietly(client)
+            else:
+                stop.add_done_callback(lambda _: _close_quietly(client))
             # A restart can overlap: this teardown must not null out a newer run's client.
             if self._client is client:
                 self._client = None
