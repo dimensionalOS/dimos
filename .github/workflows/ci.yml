@@ -300,7 +300,7 @@ jobs:
         run: ./bin/run-doc-codeblocks --ci --no-cache
 
   docs-validate:
-    timeout-minutes: 5
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     permissions:
       contents: read  # For checkout
@@ -309,24 +309,26 @@ jobs:
       - uses: actions/checkout@v7
         with:
           lfs: false
-          sparse-checkout: |
-            docs
 
-      - name: Pull docs LFS assets only
-        run: git lfs pull --include="docs/assets/**" --exclude=""
+      # By path: lfs: true would pull every object in the repo, most of it
+      # recorded sessions under data/, to render a few hundred MB of media.
+      - name: Pull the LFS media the site references
+        run: git lfs pull --include="docs/**,assets/readme/**" --exclude=""
 
-      - uses: actions/setup-node@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.3.2
         with:
-          node-version: '20'
+          enable-cache: true
 
       - name: Install docs dependencies
-        working-directory: docs
-        run: npm ci
+        run: uv sync --group docs
 
-      # Temporarily disabled — Mintlify validation blocking CI
-      # - name: Validate Mintlify docs
-      #   working-directory: docs
-      #   run: npm run validate
+      # --strict turns a broken link or a missing image into a failure, which
+      # is what stops a page from being published broken.
+      - name: Build the docs site
+        run: uv run mkdocs build --strict
+        env:
+          NO_MKDOCS_2_WARNING: "true"
 
   web:
     timeout-minutes: 30

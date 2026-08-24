@@ -14,10 +14,6 @@ site_dir: site
 # docs/ is a workspace as well as a page tree; keep the non-pages out.
 exclude_docs: |
   node_modules/
-  package.json
-  package-lock.json
-  docs.json
-  .mintignore
   .gitattributes
   logs/
   todo.md
