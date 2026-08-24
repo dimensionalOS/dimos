@@ -14,10 +14,8 @@
 
 """Alfred's vision-only navigation stack, from camera streams down to wheel commands.
 
-``DimSlam`` on the infrared stereo pair fused with wheel odometry and the IMU, its
-depth cloud into ``RayTracingVoxelMap``, MLS planning over that map, then Dan's local
-planner and holonomic controller. ``alfred-mls-nav`` adds the live drivers and
-``alfred-replay`` a recording, so a replay runs exactly this code.
+``alfred-mls-nav`` adds the live drivers and ``alfred-replay`` a recording, so a replay
+runs exactly this code.
 """
 
 from __future__ import annotations
@@ -92,7 +90,7 @@ def _rerun_blueprint() -> Any:
 
 
 def _alfred_urdf_static(rr: Any) -> list[tuple[str, Any]]:
-    """The URDF meshes, pinned to the live base_link frame so they follow odometry."""
+    """Pinned to the live base_link so the meshes follow odometry."""
     factory = UrdfRobotStaticRerunFactory(urdf_path=ALFRED_URDF, root_path=ALFRED_RERUN_ROOT)
     return [
         *factory(rr),
@@ -102,7 +100,7 @@ def _alfred_urdf_static(rr: Any) -> list[tuple[str, Any]]:
 
 VOXEL_SIZE_METERS = 0.05
 DEPTH_MAX_RANGE_METERS = 4.0
-"""Far gate on the D455's depth, for the tracker's cloud and the mapper's insert alike.
+"""Far gate on the D455's depth.
 
 Stereo error grows as range squared; 4 m won the mapping grid against 6 m and against
 depth2depth-densified clouds (top-down F1 .570 / .506 / .411 vs a lidar-raycast
@@ -116,10 +114,6 @@ vis_nav = autoconnect(
     # alone ends 2.66 m from the lidar reference and wheel plus bias-corrected gyro
     # heading 1.33 m, against a 0.59 m floor.
     DimSlam.blueprint(
-        # cuVSLAM's inertial mode is CUDA-only and aborts on Alfred, which has no usable
-        # driver. The filter is the better home regardless: it carries a gyro bias state
-        # and cuVSLAM does not.
-        cuvslam_enable_imu=False,
         # Alfred's computer has no GPU; the fork-built libcuvslam carries the CPU path.
         use_gpu=False,
         # The D455 publishes sixteen-bit millimetres.
@@ -159,7 +153,6 @@ vis_nav = autoconnect(
     RayTracingVoxelMap.blueprint(
         voxel_size=VOXEL_SIZE_METERS,
         max_range=DEPTH_MAX_RANGE_METERS,
-        world_frame="odom",
     ).remappings(
         # Alfred has no lidar; the tracker's depth cloud takes its place.
         [(RayTracingVoxelMap, "lidar", "depth_cloud")]
@@ -169,9 +162,6 @@ vis_nav = autoconnect(
         voxel_size=VOXEL_SIZE_METERS,
         robot_height=ALFRED_BODY_HEIGHT_METERS,
         wall_clearance_m=0.2,
-        wall_buffer_m=0.75,
-        wall_buffer_weight=100.0,
-        step_threshold_m=0.16,
         step_penalty_weight=1.0,
     ).remappings(
         [
@@ -179,11 +169,10 @@ vis_nav = autoconnect(
             (MLSPlannerNative, "start_pose", "odom"),
         ]
     ),
-    # On Go2 the base pose comes off the robot connection; Alfred has no such module, so
-    # GoalRelay's odometry-to-pose conversion feeds every consumer of odom.
+    # Nothing else converts odometry into the PoseStamped every odom consumer wants.
     GoalRelay.blueprint().remappings([(GoalRelay, "start_pose", "odom")]),
     DanLocalPlanner.blueprint(resample_spacing_m=0.1),
-    DanHolonomicTC.blueprint(run_profile="walk"),
+    DanHolonomicTC.blueprint(),
     MovementManager.blueprint(),
     vis_module(
         global_config.viewer,

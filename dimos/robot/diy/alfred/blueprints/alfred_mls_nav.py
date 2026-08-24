@@ -14,10 +14,7 @@
 
 """Alfred running MLS planning off the D455 alone, with no Mid-360.
 
-    dimos run alfred-mls-nav
-
-``vis_nav`` holds the processing stack, shared verbatim with ``alfred-replay``; this
-blueprint adds the live drivers, the D455 and the base.
+dimos run alfred-mls-nav
 """
 
 from __future__ import annotations
@@ -45,8 +42,6 @@ alfred_mls_nav = (
         RealSenseCamera.blueprint(
             fps=30,
             enable_infrared=True,
-            # The projector's dot pattern moves with the camera, so feature trackers latch
-            # onto it and bias motion toward zero.
             emitter_enabled=False,
             enable_imu=True,
             base_transform=D455_MOUNT,
