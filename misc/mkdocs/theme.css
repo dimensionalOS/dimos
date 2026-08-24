@@ -1,7 +1,8 @@
 /* Dimensional docs theme.
  *
- * Palette and dark-first appearance come from the mintlify config the site
- * used to run on (docs.json: primary #1682a3, appearance dark). The layout
+ * The palette comes from the mintlify config the site used to run on
+ * (docs.json: primary #1682a3, appearance dark), and dark is the only
+ * scheme, so there is no light variant to keep in step. The layout
  * work is all about the middle column: material caps content at 61rem, which
  * leaves a thin ribbon of text on a wide screen. */
 
@@ -19,7 +20,7 @@
   --dim-radius: 0.6rem;
   --dim-radius-sm: 0.35rem;
   --dim-hairline: color-mix(in srgb, var(--md-default-fg-color) 12%, transparent);
-  --dim-nav-title: #10161d;
+  --dim-nav-title: #ffffff;
 }
 
 [data-md-color-scheme="slate"] {
@@ -33,12 +34,6 @@
   --md-code-bg-color: #131923;
   --md-footer-bg-color: #0a0e14;
   --md-footer-bg-color--dark: #080b10;
-  --dim-nav-title: #ffffff;
-}
-
-[data-md-color-scheme="default"] {
-  --md-typeset-a-color: var(--dim-brand-deep);
-  --md-code-bg-color: #f5f7f9;
 }
 
 /* ---------------------------------------------------------------- layout */

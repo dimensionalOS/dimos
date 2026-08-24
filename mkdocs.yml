@@ -53,19 +53,11 @@ theme:
     - search.highlight
     - content.code.copy
     - content.action.edit
+  # Dark only: one palette entry means material renders no toggle.
   palette:
-    - scheme: slate
-      primary: custom
-      accent: custom
-      toggle:
-        icon: material/weather-night
-        name: Switch to light mode
-    - scheme: default
-      primary: custom
-      accent: custom
-      toggle:
-        icon: material/weather-sunny
-        name: Switch to dark mode
+    scheme: slate
+    primary: custom
+    accent: custom
 
 extra_css:
   - assets/mkdocs-theme.css
