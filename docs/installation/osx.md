@@ -1,7 +1,4 @@
----
-title: "macOS Install (12.6 or newer)"
-sidebarTitle: "macOS"
----
+# macOS Install (12.6 or newer)
 
 ```sh skip
 # install homebrew

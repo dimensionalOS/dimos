@@ -1,0 +1,329 @@
+/* Dimensional docs theme.
+ *
+ * The palette comes from the mintlify config the site used to run on
+ * (docs.json: primary #1682a3, appearance dark), and dark is the only
+ * scheme, so there is no light variant to keep in step. The layout
+ * work is all about the middle column: material caps content at 61rem, which
+ * leaves a thin ribbon of text on a wide screen. */
+
+:root {
+  --dim-brand: #1682a3;
+  --dim-brand-bright: #3ba3c4;
+  --dim-brand-deep: #0f6480;
+
+  --md-primary-fg-color: var(--dim-brand);
+  --md-primary-fg-color--light: var(--dim-brand-bright);
+  --md-primary-fg-color--dark: var(--dim-brand-deep);
+  --md-accent-fg-color: var(--dim-brand-bright);
+
+  /* Rounding and hairlines, applied consistently to every raised surface. */
+  --dim-radius: 0.6rem;
+  --dim-radius-sm: 0.35rem;
+  --dim-hairline: color-mix(in srgb, var(--md-default-fg-color) 12%, transparent);
+  --dim-nav-title: #ffffff;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: var(--dim-brand);
+  --md-accent-fg-color: var(--dim-brand-bright);
+  --md-typeset-a-color: var(--dim-brand-bright);
+
+  /* Cooler, deeper ground than material's default slate. */
+  --md-default-bg-color: #0d1117;
+  --md-default-bg-color--light: #11161f;
+  --md-code-bg-color: #131923;
+  --md-footer-bg-color: #0a0e14;
+  --md-footer-bg-color--dark: #080b10;
+}
+
+/* ---------------------------------------------------------------- layout */
+
+/* Let the page breathe on a wide screen, but stop short of a line length
+ * nobody can track back from. Sidebars are fixed, so the middle column takes
+ * every pixel this cap frees up. */
+.md-grid {
+  max-width: min(84rem, 100%);
+}
+
+/* Reading measure only applies to prose. Code, tables, and figures keep the
+ * full column, which is the point of widening it. */
+.md-typeset > p,
+.md-typeset > ul,
+.md-typeset > ol,
+.md-typeset > blockquote {
+  max-width: 52rem;
+}
+
+/* A little more room for the nav tree; deep paths like
+ * usage/sensor_streams/temporal_alignment stop wrapping. */
+@media screen and (min-width: 76.25em) {
+  .md-sidebar--primary {
+    width: 13.5rem;
+  }
+  .md-sidebar--secondary {
+    width: 12rem;
+  }
+}
+
+/* Below 1220px material drops the table of contents entirely; give the
+ * content the space that frees up rather than keeping the old gutters. */
+@media screen and (max-width: 76.1875em) {
+  .md-content {
+    margin-right: 0;
+  }
+}
+
+.md-sidebar__scrollwrap {
+  scrollbar-width: thin;
+}
+
+/* ----------------------------------------------------------- typography */
+
+.md-typeset {
+  font-size: 0.78rem;
+  line-height: 1.7;
+}
+
+.md-typeset h1 {
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--md-default-fg-color);
+}
+
+.md-typeset h2 {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin-top: 2.2em;
+  padding-top: 0.6em;
+  border-top: 1px solid var(--dim-hairline);
+}
+
+.md-typeset h3,
+.md-typeset h4 {
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+/* ---------------------------------------------------------------- chrome */
+
+.md-header {
+  border-bottom: 1px solid var(--dim-hairline);
+  box-shadow: none;
+  backdrop-filter: blur(8px);
+  background-color: color-mix(in srgb, var(--md-default-bg-color) 85%, transparent);
+  color: var(--md-default-fg-color);
+}
+
+.md-header__title {
+  font-weight: 600;
+}
+
+.md-tabs {
+  background-color: transparent;
+  border-bottom: 1px solid var(--dim-hairline);
+}
+
+.md-search__form {
+  border-radius: var(--dim-radius-sm);
+  background-color: color-mix(in srgb, var(--md-default-fg-color) 7%, transparent);
+}
+
+.md-search__form:hover {
+  background-color: color-mix(in srgb, var(--md-default-fg-color) 11%, transparent);
+}
+
+/* Section headings in the sidebar ("Getting Started", "Capabilities", ...).
+ * Material renders these at link size and link weight, which buries them in
+ * the list of pages underneath. They are the top level of the map: give them
+ * full-contrast colour and enough size to scan by. */
+.md-nav--primary .md-nav__item--section > .md-nav__link,
+.md-nav--primary .md-nav__item--section > label.md-nav__link,
+/* navigation.indexes folds a section's index page into the heading, which
+ * wraps the link in a container one level deeper. */
+.md-nav--primary .md-nav__item--section > .md-nav__container > .md-nav__link {
+  color: var(--dim-nav-title);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  opacity: 1;
+}
+
+/* A rule above each top-level section, so Platforms and Development read as
+ * separate parts of the map rather than one long list. */
+.md-nav--primary > .md-nav__list > .md-nav__item--section {
+  margin-top: 1.2em;
+  padding-top: 1.2em;
+  border-top: 1px solid var(--dim-hairline);
+}
+
+.md-nav--primary > .md-nav__list > .md-nav__item--section:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.md-nav--primary .md-nav__item--section > .md-nav__container {
+  align-items: baseline;
+}
+
+/* Nested groups (Installation, Streams, Unitree Go2) sit a step down. */
+.md-nav--primary .md-nav__item--nested > .md-nav__link {
+  color: var(--md-default-fg-color);
+  font-weight: 600;
+}
+
+.md-nav--primary .md-nav__title {
+  color: var(--dim-nav-title);
+  font-weight: 700;
+}
+
+.md-nav__link--active,
+.md-nav__link:focus,
+.md-nav__link:hover {
+  color: var(--md-accent-fg-color);
+}
+
+.md-nav__item .md-nav__link--active {
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------- raised surfaces */
+
+.md-typeset pre > code,
+.md-typeset .highlight,
+.md-typeset .highlighttable {
+  border-radius: var(--dim-radius);
+}
+
+.md-typeset .highlight {
+  border: 1px solid var(--dim-hairline);
+  overflow: hidden;
+}
+
+.md-typeset code {
+  border-radius: var(--dim-radius-sm);
+  font-size: 0.85em;
+}
+
+.md-typeset :is(.admonition, details) {
+  border: 1px solid var(--dim-hairline);
+  border-left-width: 3px;
+  border-radius: var(--dim-radius);
+  box-shadow: none;
+  font-size: 0.76rem;
+}
+
+/* Material's js wraps every table in .md-typeset__table for scrolling, and on
+ * screen that wrapper is inline-block: a shrink-to-fit box, so width: 100% on
+ * the table inside resolves against its content rather than the page. Making
+ * the wrapper a full-width block is what actually lets a table span. The
+ * scrollwrap around it keeps overflow-x, so wide tables still scroll. */
+.md-typeset__table {
+  display: block;
+  width: 100%;
+}
+
+/* Material lets a table shrink to its content, which strands a three-column
+ * table against the left edge of a wide page. Docs tables read better spanning
+ * the column they sit in. */
+.md-typeset table:not([class]) {
+  border: 1px solid var(--dim-hairline);
+  border-radius: var(--dim-radius);
+  overflow: hidden;
+  font-size: 0.72rem;
+  width: 100%;
+  /* Material sets display: inline-block here, which stops the element being a
+   * table box: the rows get an anonymous shrink-to-fit box instead, so the
+   * width above applied to the outer box while tbody stayed at its content
+   * width and percentage cells resolved against that. Material's own
+   * `.md-typeset__table table { display: table }` is meant to undo it but
+   * loses on specificity to the `:not([class])` rule that set it. */
+  display: table;
+}
+
+/* A table whose cells declare widths is a layout, not data: honour those
+ * widths rather than re-apportioning the columns by content. */
+.md-typeset table:not([class]):has(td[width]) {
+  table-layout: fixed;
+}
+
+/* The readme lays its hardware and capability grids out as html tables with
+ * headings inside the cells. Material's heading and paragraph margins are
+ * sized for a page, and inside a cell they read as broken row spacing. */
+.md-typeset table:not([class]) :is(h1, h2, h3, h4, h5, h6) {
+  margin: 0 0 0.4em;
+  padding: 0;
+  border: none;
+  font-size: 0.85rem;
+  line-height: 1.3;
+}
+
+.md-typeset table:not([class]) :is(p, ul, ol) {
+  margin: 0.3em 0;
+}
+
+/* Material pads cells at .9375em/1.25em, sized for prose tables. The readme
+ * grids are five columns of short labels, where that padding plus the page
+ * line-height leaves rows mostly empty. */
+.md-typeset table:not([class]) :is(td, th) {
+  padding: 0.5em 0.8em;
+  line-height: 1.5;
+  vertical-align: top;
+}
+
+/* The readme sizes its grid columns with a 1px transparent spacer gif, which
+ * still occupies a line box of its own here. */
+.md-typeset table:not([class]) img[height="1"] {
+  display: block;
+  margin: 0;
+}
+
+.md-typeset table:not([class]) th {
+  background-color: color-mix(in srgb, var(--md-default-fg-color) 5%, transparent);
+  font-weight: 600;
+}
+
+.md-typeset img,
+.md-typeset svg {
+  border-radius: var(--dim-radius-sm);
+  max-width: 100%;
+}
+
+/* Generated diagrams and plots are authored with a transparent ground so they
+ * sit on either scheme; keep it that way. */
+.md-typeset img[src$=".svg"] {
+  background: transparent;
+}
+
+/* md-babel writes program output into ```results blocks: same monospace, but
+ * clearly not source you should copy. */
+.md-typeset .language-results {
+  opacity: 0.9;
+}
+
+.md-typeset .language-results > code {
+  color: var(--md-default-fg-color--light);
+}
+
+/* --------------------------------------------------------------- cards */
+
+.md-typeset .grid.cards > ul > li,
+.md-typeset .grid > .card {
+  border: 1px solid var(--dim-hairline);
+  border-radius: var(--dim-radius);
+  box-shadow: none;
+  transition:
+    border-color 150ms,
+    transform 150ms;
+}
+
+.md-typeset .grid.cards > ul > li:hover {
+  border-color: var(--md-accent-fg-color);
+  transform: translateY(-2px);
+}
+
+/* --------------------------------------------------------------- footer */
+
+.md-footer {
+  border-top: 1px solid var(--dim-hairline);
+}

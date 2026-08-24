@@ -1,6 +1,5 @@
----
-title: "How to Integrate a New Manipulator Arm"
----
+# How to Integrate a New Manipulator Arm
+
 This guide walks through integrating a new robot arm with dimOS, from writing the hardware adapter to creating blueprints for planning and control.
 
 ## Architecture Overview
@@ -475,7 +474,11 @@ to your robot's own `blueprints.py`.
 
 ### 4a. Add your URDF
 
-Place your URDF/xacro files under LFS data so they can be resolved via `LfsPath`. `LfsPath` is a `Path` subclass that lazily downloads LFS data on first access — this avoids downloading at import time when the blueprint module is loaded.
+Prefer an upstream `RobotDescriptionSource` beside your robot adapter. Joining
+paths from the source is lazy: importing the catalog does not clone or update
+the repository, while the first concrete path access resolves it into the
+robot asset cache. Use `LfsPath` only when the description is intentionally
+vendored, locally modified, or has no suitable upstream source.
 
 If the planning blueprint selects the RoboPlan TOPP-RA trajectory
 parametrizer, dimOS currently pins RoboPlan to `0.5.1`. Every movable joint in
@@ -504,18 +507,22 @@ and identifies the affected joint. dimOS does not substitute
 this backend. Formal per-joint dimOS overrides will be added separately.
 
 ```python skip
-from dimos.utils.data import LfsPath
 from dimos.manipulation.manipulation_module import manipulation_module
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.manipulators._modeling import coordinator_joint_mapping
 
-# LfsPath defers download until the path is actually accessed
-_YOURARM_URDF_PATH = LfsPath("yourarm_description/urdf/yourarm.urdf")
-_YOURARM_PACKAGE_PATH = LfsPath("yourarm_description")
+_YOURARM_REPO = RobotDescriptionSource(
+    url="https://github.com/example/yourarm_description",
+    ref="main",
+)
+_YOURARM_URDF_PATH = _YOURARM_REPO / "urdf" / "yourarm.urdf.xacro"
+_YOURARM_PACKAGE_PATHS = {"yourarm_description": _YOURARM_REPO / "."}
 
 
 def _make_base_pose(x=0.0, y=0.0, z=0.0) -> PoseStamped:
@@ -544,7 +551,10 @@ def _make_yourarm_config(
 
     return RobotModelConfig(
         name=name,
-        model_path=_YOURARM_URDF_PATH,
+        model=RobotModel.from_file(
+            _YOURARM_URDF_PATH,
+            package_paths=_YOURARM_PACKAGE_PATHS,
+        ),
         joint_names=joint_names,
         planning_groups=[
             PlanningGroupDefinition(
@@ -556,8 +566,6 @@ def _make_yourarm_config(
         ],
         base_pose=_make_base_pose(y=y_offset),  # world -> base_link placement
         base_link="base_link",                 # Robot-scoped placement/weld/strip link
-        package_paths={"yourarm_description": _YOURARM_PACKAGE_PATH},
-        xacro_args={},                  # Xacro arguments if using .xacro files
         collision_exclusion_pairs=[],   # Pairs of links that can touch (e.g., gripper fingers)
         auto_convert_meshes=True,       # Convert DAE/STL meshes for Drake
         joint_name_mapping=coordinator_joint_mapping(name, 6),
@@ -607,11 +615,10 @@ yourarm_planner = manipulation_module(
 
 | Field | Description |
 |-------|-------------|
-| `model_path` | Path to `.urdf` or `.xacro` file |
+| `model` | Lazy `RobotModel` created from a `.urdf` or `.xacro` source |
 | `joint_names` | Ordered controllable local model joint set (must match URDF); not itself a planning group |
 | `planning_groups` / `srdf_path` | Explicit planning groups or SRDF source; direct `RobotModelConfig(...)` helpers should pass explicit groups, while shared config helpers can discover groups from SRDF/fallback |
 | `base_pose` / `base_link` | Optional robot placement: `base_pose` places `base_link` in the world for weld/strip behavior |
-| `package_paths` | Maps `package://` URIs to filesystem paths (for xacro) |
 | `collision_exclusion_pairs` | List of `(link_a, link_b)` tuples for links that may legitimately touch (e.g., gripper fingers) |
 | `joint_name_mapping` | Maps coordinator names such as `arm/joint1` to local URDF names such as `joint1` |
 
@@ -651,6 +658,7 @@ from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.robot.manipulators.common.blueprints import teleop_ik_task
 
 pink = PinkKinematicsConfig()
+robot_model = _make_yourarm_config()
 teleop_task = teleop_ik_task(
     hardware,
     name="teleop_arm",

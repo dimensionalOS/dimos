@@ -1,6 +1,4 @@
----
-title: "Manipulation"
----
+# Manipulation
 
 Motion planning and teleoperation for robotic manipulators. RoboPlan provides
 the default world and native path planner.
@@ -443,55 +441,12 @@ arbitrates the resulting joint command.
 
 ### Robot-specific Pink task stacks
 
-For robot-specific control feel, subclass `PinkIK` and override its protected
-`_create_tasks()` hook. Call `super()` so the mandatory `frame/<frame_name>`
-tasks remain present, then tune inherited task fields or add native Pink tasks
-under stable names. The backend keeps the mapping order, reuses its task
-objects across streaming ticks, and continues to own solving, integration, and
-joint-limit safety.
-
-```python skip
-from typing import Any
-
-import numpy as np
-import pink
-
-from dimos.manipulation.planning.kinematics.pink_ik import PinkIK
-
-
-class OpenArmPinkIK(PinkIK):
-    def _create_tasks(
-        self,
-        configuration: Any,
-        target_frames: tuple[str, ...],
-    ) -> dict[str, Any]:
-        tasks = super()._create_tasks(configuration, target_frames)
-
-        for frame_name in target_frames:
-            frame_task = tasks[f"frame/{frame_name}"]
-            frame_task.cost[:3] = np.array([8.0, 8.0, 6.0])
-
-        tasks["regularization/damping"] = pink.tasks.DampingTask(cost=1e-3)
-        return tasks
-```
-
-Construct a fresh backend for each stateful control-task instance and inject it
-through the existing `ik=` argument:
-
-```python skip
-teleop_task = TeleopIKTask(
-    "teleop_openarm",
-    openarm_quest_config,
-    ik=OpenArmPinkIK(openarm_quest_config.pink),
-)
-```
-
-If an auxiliary task needs per-step inputs or solver history, override
-`_before_solve(tasks, configuration, dt)` or
-`_after_solve(tasks, velocity, dt)`. These hooks receive a read-only mapping;
-mutate the contained task objects, not the mapping structure. Keep temporal
-state inside that backend instance and define its discontinuity behavior in
-the robot-specific subclass.
+For robot-specific control feel, subclass `PinkPoseTargetSolver`, override its
+task-construction hooks, and pass the class through `solver_type`. The
+coordinator constructs a fresh stateful solver for every control task. See
+[Pink IK Configuration and Tuning](/docs/capabilities/manipulation/pink_ik_tuning.md)
+for the supported hooks, objective tuning, command bounds, and hardware test
+order.
 
 Internally, planning code depends on `WorldSpec` for world, collision, and
 kinematics behavior. Meshcat preview and publishing are exposed separately

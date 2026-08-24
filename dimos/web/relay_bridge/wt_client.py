@@ -325,7 +325,9 @@ class LatestChannelWriter:
         self.dropped = 0
         self.sent = 0
         self.resets = 0
-        self._mailbox: asyncio.Queue[tuple[bytes, dict[str, Any] | None]] = asyncio.Queue(maxsize=1)
+        self._mailbox: asyncio.Queue[tuple[bytes, dict[str, Any] | None, float | None]] = (
+            asyncio.Queue(maxsize=1)
+        )
         self._task = asyncio.create_task(self._pump())
         self._task.add_done_callback(self._on_pump_done)
 
@@ -338,10 +340,14 @@ class LatestChannelWriter:
         if exc is not None:
             logger.error(f"latest-wins writer for {self.ch} died", exc_info=exc)
 
-    def offer(self, payload: bytes, meta: dict[str, Any] | None = None) -> None:
+    def offer(
+        self, payload: bytes, meta: dict[str, Any] | None = None, ts: float | None = None
+    ) -> None:
         """Queue the newest frame, dropping any not-yet-sent predecessor.
 
-        Event-loop only; producers on other threads must go through
+        `ts` overrides the frame-header timestamp (a replayed frame carries
+        its source time); None stamps send time. Event-loop only; producers
+        on other threads must go through
         `loop.call_soon_threadsafe(writer.offer, ...)`. Raises RuntimeError if
         the pump is no longer running (session closed, stopped, or died) so a
         dead channel is visible at the producer instead of silently dropping.
@@ -351,7 +357,7 @@ class LatestChannelWriter:
         if self._mailbox.full():
             self._mailbox.get_nowait()
             self.dropped += 1
-        self._mailbox.put_nowait((payload, meta))
+        self._mailbox.put_nowait((payload, meta, ts))
 
     def stop(self) -> None:
         self._task.cancel()
@@ -366,12 +372,14 @@ class LatestChannelWriter:
                     await asyncio.wait({get, closed}, return_when=asyncio.FIRST_COMPLETED)
                     if not get.done():
                         break  # session closed with an empty mailbox
-                    payload, meta = get.result()
+                    payload, meta, ts = get.result()
                 finally:
                     get.cancel()
                 if session.closed.is_set():
                     break
-                stream_id = self._client.send_frame(self.ch, payload, delivery="latest", meta=meta)
+                stream_id = self._client.send_frame(
+                    self.ch, payload, delivery="latest", meta=meta, ts=ts
+                )
                 self.sent += 1
                 started = time.monotonic()
                 while session.stream_in_flight(stream_id):

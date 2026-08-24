@@ -1,6 +1,4 @@
----
-title: "Galaxea A1Z"
----
+# Galaxea A1Z
 
 The A1Z integration uses the vendor's 250 Hz position-control loop, the G1Z
 gravity model, and the G1Z gripper. The SDK is not published on PyPI, so install
