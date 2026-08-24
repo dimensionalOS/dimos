@@ -190,7 +190,7 @@ class DimSlamConfig(NativeModuleConfig):
     # Frame-to-frame m/s and rad/s, catching teleports the covariance gate misses; 0 disables.
     speed_gate_max_linear: float = 5.0
     speed_gate_max_angular: float = 12.0
-    # Raw depth units per metre, 1000 for the usual sixteen-bit millimetres.
+    # 1000 for the usual sixteen-bit millimetres.
     depth_units_per_meter: float = 1.0
     # Range gate on the published depth_cloud, metres; 0 leaves either end open. Where to
     # cut is a property of the depth sensor, not of the tracker.

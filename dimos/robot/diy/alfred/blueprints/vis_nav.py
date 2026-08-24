@@ -129,7 +129,7 @@ _vis_nav = autoconnect(
         covariance_gate_translation_std=0.0,
         # Only the wheels measure velocity; the tracker publishes no twist at all.
         source_twist_variances=[*(0.0,) * 6, *(0.02, 0.02, 0.0, 0.0, 0.0, 0.05)],
-        # Alfred is holonomic in the plane; only out-of-plane directions are constrained.
+        # Alfred is holonomic in the plane.
         constraint_twist_variances=[0.0, 0.0, 0.01, 0.01, 0.01, 0.0],
         # Wheel odometry crosses the wifi link and can land seconds late.
         replay_buffer_seconds=2.0,

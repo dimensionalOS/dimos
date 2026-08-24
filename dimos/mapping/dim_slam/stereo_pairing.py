@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Pair the two imagers of a stereo stream by stamp."""
-
 from __future__ import annotations
 
 import threading
