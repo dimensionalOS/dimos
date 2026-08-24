@@ -88,14 +88,16 @@ class McapObservationStore(ObservationStore[Any]):
         topic: str,
         codec: StreamCodec,
         count: int,
-        uses_publish_time: bool,
+        observation_uses_publish_time: bool,
     ) -> None:
         super().__init__(name=name)
         self._path = path
         self._topic = topic
         self._codec = codec
         self._count = count
-        self._uses_publish_time = uses_publish_time
+        # Immutable channel metadata: this store never writes and each iterator
+        # owns its own file reader, so timestamp selection has no async state.
+        self._observation_uses_publish_time = observation_uses_publish_time
 
     @property
     def name(self) -> str:
@@ -109,7 +111,9 @@ class McapObservationStore(ObservationStore[Any]):
             msgs = make_reader(f).iter_messages(topics=[self._topic], reverse=reverse)
             for i, (_schema, _channel, message) in enumerate(msgs):
                 observation_time = (
-                    message.publish_time if self._uses_publish_time else message.log_time
+                    message.publish_time
+                    if self._observation_uses_publish_time
+                    else message.log_time
                 )
                 yield Observation(
                     id=(n - 1 - i) if reverse else i,
@@ -122,7 +126,9 @@ class McapObservationStore(ObservationStore[Any]):
         # MCAP is natively log-time ordered, so id ordering never needs a sort.
         # Native DimOS recordings expose publish_time as observation ts; source
         # time can differ from log/reception order and must use the generic sort.
-        if q.order_field == "id" or (q.order_field == "ts" and not self._uses_publish_time):
+        if q.order_field == "id" or (
+            q.order_field == "ts" and not self._observation_uses_publish_time
+        ):
             it = self._iter(reverse=q.order_desc)
             q = replace(q, order_field=None, order_desc=False)
             return q.apply(it)
@@ -176,7 +182,7 @@ class McapStore(Store):
             summary = make_reader(f).get_summary()
         self._stream_topic: dict[str, str] = {}  # stream name -> topic
         self._available: dict[str, int] = {}  # stream name -> message count
-        self._uses_publish_time: dict[str, bool] = {}
+        self._observation_uses_publish_time: dict[str, bool] = {}
         # Channels with no registered codec are still exposed, as Stream[bytes] via
         # _BYTES_CODEC — reachable but undecoded. _raw maps their stream name to the
         # source schema so summary() can flag them [raw bytes: <schema>].
@@ -196,7 +202,7 @@ class McapStore(Store):
                     )
                 self._stream_topic[name] = ch.topic
                 self._available[name] = count
-                self._uses_publish_time[name] = (
+                self._observation_uses_publish_time[name] = (
                     ch.metadata.get("dimos.observation_time") == "publish_time"
                 )
                 if ch.topic not in self._codecs:
@@ -231,7 +237,7 @@ class McapStore(Store):
             topic=topic,
             codec=codec,
             count=self._available[name],
-            uses_publish_time=self._uses_publish_time[name],
+            observation_uses_publish_time=self._observation_uses_publish_time[name],
         )
         return Backend(
             metadata_store=obs,
