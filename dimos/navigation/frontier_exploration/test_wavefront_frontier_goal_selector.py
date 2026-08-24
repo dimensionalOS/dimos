@@ -375,6 +375,27 @@ def test_min_perimeter_filters_small_clusters():
 # --- parity with the reference BFS -------------------------------------------
 
 
+def test_robot_between_two_components_keeps_chebyshev_semantics():
+    """Regression for the Greptile finding on this PR: the robot stands in
+    unknown space between two disconnected free regions. Region A is nearer in
+    Chebyshev (8-connected BFS layers, the old semantics), region B is nearer
+    in Euclidean. The start cell must fall in region A, as the BFS chose."""
+    grid = np.full((40, 40), CostValues.UNKNOWN, dtype=np.int8)
+    # wall splitting the map so the regions are disconnected
+    grid[:, 20] = 100
+    grid[10:14, 10:14] = CostValues.FREE  # region A: around (12, 12)
+    grid[18:22, 24:28] = CostValues.FREE  # region B: around (20, 26)
+    # robot at (19, 17): Chebyshev to A ~5 (via diagonal layers), Euclidean ~7.6;
+    # Chebyshev to B 7, Euclidean 7 -> Chebyshev picks A, Euclidean would pick B
+    robot = (17 * RESOLUTION, 19 * RESOLUTION)
+    assert_parity(grid, robot)
+    _, centroids, _ = new_detection(grid, robot)
+    assert centroids, "region A must produce a frontier"
+    assert all(c.x < 20 * RESOLUTION for c in centroids), (
+        "all frontiers must belong to region A (left of the wall), the Chebyshev-nearest component"
+    )
+
+
 def test_parity_on_the_room():
     assert_parity(room_grid(), (60 * RESOLUTION, 60 * RESOLUTION))
 
@@ -400,7 +421,11 @@ def test_parity_on_randomized_maps():
         ys, xs = np.nonzero(grid == CostValues.FREE)
         if len(xs) == 0:
             continue
-        robot = (float(xs[0]) * RESOLUTION, float(ys[0]) * RESOLUTION)
+        if rng.random() < 0.5:
+            robot = (float(xs[0]) * RESOLUTION, float(ys[0]) * RESOLUTION)
+        else:  # robot standing in unknown/occupied space, possibly between components
+            ry, rx = rng.integers(0, n, size=2)
+            robot = (float(rx) * RESOLUTION, float(ry) * RESOLUTION)
         count = assert_parity(grid, robot)
         checked_with_frontiers += bool(count)
     assert checked_with_frontiers >= 10  # the fuzz actually exercised frontiers

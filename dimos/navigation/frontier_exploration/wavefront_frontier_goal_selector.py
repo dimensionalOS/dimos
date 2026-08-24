@@ -240,7 +240,13 @@ class WavefrontFrontierExplorer(Module):
         start_x = int(np.clip(int(grid_pos.x), 0, width - 1))
         start_y = int(np.clip(int(grid_pos.y), 0, height - 1))
         if not free[start_y, start_x]:
-            _, nearest = ndimage.distance_transform_edt(~free, return_indices=True)
+            # Chessboard (Chebyshev) metric to match the 8-connected BFS layers of
+            # the previous implementation: with disconnected explorable regions the
+            # Euclidean-nearest free cell can lie in a different component than the
+            # Chebyshev-nearest one (caught by Greptile on this PR).
+            _, nearest = ndimage.distance_transform_cdt(
+                ~free, metric="chessboard", return_indices=True
+            )
             start_y, start_x = int(nearest[0][start_y, start_x]), int(nearest[1][start_y, start_x])
 
         # Reachable region: 8-connected component of FREE | UNKNOWN holding the start
