@@ -206,9 +206,8 @@ class DimSlamConfig(NativeModuleConfig):
     depth2depth_head_weights: str = ""
     # Model input resolution; 1.0 = 280x504.
     depth2depth_quality: float = 1.0
-    # Frame whose images on the image stream feed the model; empty uses the rig camera
-    # on the depth frame. Set to the color camera's frame when depth is aligned to a
-    # camera that has no color, such as an infrared imager.
+    # Frame whose images feed the model; empty uses the rig camera on the depth frame.
+    # Set to the color camera's frame when depth is aligned to a colorless imager.
     depth2depth_color_frame: str = ""
     # A depth frame with no color inside this window gets an undensified cloud.
     depth2depth_max_color_skew_seconds: float = 0.5
