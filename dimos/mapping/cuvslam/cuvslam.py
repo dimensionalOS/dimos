@@ -81,7 +81,6 @@ def driver_library_dir() -> Path | None:
         if not source.exists():
             continue
         target = source.resolve()
-        # Re-point after a driver upgrade; a stale link would dangle.
         if link.is_symlink() and link.readlink() == target:
             continue
         # Two callers can reach this at once, and symlink_to over an existing path raises.
@@ -92,7 +91,7 @@ def driver_library_dir() -> Path | None:
 
 
 def driver_cuda_major() -> int:
-    """The CUDA major the installed driver supports, or 0 if there is no driver."""
+    """CUDA major the installed driver supports; 0 if there is no driver."""
     # Absolute paths too: a nix-built python ignores ld.so.cache.
     candidates = ["libcuda.so.1"] + [
         str(directory / "libcuda.so.1")
@@ -161,20 +160,17 @@ class CuvslamConfig(NativeModuleConfig):
     camera_frames: list[str] = Field(default_factory=list)
     # Asserts the images arrive rectified; it does not rectify them.
     rectified: bool = True
-    # Off runs on the CPU, deterministic, and needs a libcuvslam built with
-    # ENFORCE_GPU=OFF (the jeff-hykin/cuVSLAM fork); the stock SDK is GPU-only.
+    # Off needs a libcuvslam built with ENFORCE_GPU=OFF; the stock SDK is GPU-only.
     use_gpu: bool = True
 
     map_frame: str = "map"
     odom_frame: str = "odom"
     base_frame: str = "base_link"
-    # Frame the cuVSLAM rig is built in. Empty means base_frame. Output stays on base_frame
-    # either way, the two differing by a fixed transform.
+    # Frame the rig is built in; empty means base_frame. Output stays on base_frame either way.
     rig_frame: str = ""
     # Only read when Slam is off, where map->odom can only be identity.
     publish_map_to_odom: bool = True
 
-    # Without it map->odom is identity.
     enable_slam: bool = True
     # Slam's GetPose() carries no timestamp, so a thread running behind cannot be matched
     # to the odometry pose it corrects.

@@ -28,7 +28,7 @@ from dimos.msgs.nav_msgs.Path import Path
 
 
 class OdometryPathConfig(ModuleConfig):
-    # Empty follows the odometry's own frame_id.
+    # Empty follows the odometry's frame_id.
     frame_id: str = ""
     min_step_meters: float = 0.02
     max_poses: int = Field(20000, ge=1)

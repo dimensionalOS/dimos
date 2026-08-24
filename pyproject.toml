@@ -250,6 +250,7 @@ web = [
     "ffmpeg-python",
     "soundfile",
     "aioquic>=1.2.0",  # WebTransport client for the cockpit relay bridge
+    "python-socketio>=5.16.1",  # websocket_vis_module imports it at module load
 ]
 
 perception = [

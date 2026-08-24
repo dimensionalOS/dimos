@@ -38,7 +38,7 @@ def path_at_true_height(path: Path) -> Any:
 
 
 def cuvslam_rerun_blueprint() -> Any:
-    """One 2D view holds both cameras: rerun names an entity after the topic, which they share."""
+    """One 2D view holds both cameras: rerun names the entity after their shared topic."""
     import rerun as rr
     import rerun.blueprint as rrb
 
