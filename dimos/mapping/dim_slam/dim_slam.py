@@ -23,6 +23,7 @@ from pathlib import Path
 import platform
 import sys
 from typing import Literal
+from uuid import uuid4
 
 from pydantic import Field, model_validator
 
@@ -84,16 +85,20 @@ def driver_library_dir() -> Path | None:
         link = _DRIVER_LINK_DIR / name
         if not source.exists():
             continue
-        # Re-point after a driver upgrade; a stale link would dangle forever.
-        if link.is_symlink() and link.resolve() != source.resolve():
-            link.unlink()
-        if not link.is_symlink():
-            link.symlink_to(source.resolve())
+        target = source.resolve()
+        # Re-point after a driver upgrade.
+        if link.is_symlink() and link.readlink() == target:
+            continue
+        # Swapped in through a private name because two callers can reach this at
+        # once, and symlink_to after an existence check raises for the loser.
+        staging = link.with_name(f"{name}.{uuid4().hex}.tmp")
+        staging.symlink_to(target)
+        os.replace(staging, link)
     return _DRIVER_LINK_DIR
 
 
 def driver_cuda_major() -> int:
-    """The CUDA major the installed driver supports, or 0 if there is no driver."""
+    """0 if there is no driver."""
     # By absolute path too, since ld.so.cache is not consulted here.
     candidates = ["libcuda.so.1"] + [
         str(directory / "libcuda.so.1")
@@ -116,8 +121,7 @@ def sdk_variant() -> str:
 
     Python picks instead of the flake's default package because nix evaluation is
     hermetic: it can branch on arch/OS only, and cannot see the installed driver
-    (cuda12 vs cuda13 on x86) or /proc/device-tree (orin vs thor, both
-    aarch64-linux). Those need this host-side probe.
+    (cuda12 vs cuda13 on x86) or /proc/device-tree (orin vs thor, both aarch64-linux).
     """
     if sys.platform == "darwin":
         return "metal"
@@ -153,7 +157,7 @@ def _driver_env() -> dict[str, str]:
 class DimSlamConfig(NativeModuleConfig):
     cwd: str | None = str(MODULE_DIR)
     executable: str = "result/bin/dim_slam"
-    # Drops the `result` symlink in cwd. Tag on merge.
+    # TODO: pin a tag once dimSLAM#fused_odom merges.
     build_command: str | None = Field(
         default_factory=lambda: (
             f"nix build 'github:dimensionalOS/dimSLAM?ref=fused_odom#{sdk_variant()}'"
@@ -162,11 +166,10 @@ class DimSlamConfig(NativeModuleConfig):
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
 
-    # "stereo" is two or more overlapping cameras; "mono" is accurate up to scale.
     camera_mode: Literal["stereo", "mono", "rgbd"] = "stereo"
     # Empty discovers a single camera or a single pair off camera_info.
     camera_frames: list[str] = Field(default_factory=list)
-    # Asserts the images arrive rectified: no distortion, rows already aligned.
+    # Asserted, not performed: unrectified input is not corrected.
     rectified: bool = True
     # Off runs the tracker on the CPU (deterministic, no CUDA). Needs a libcuvslam built
     # with ENFORCE_GPU=OFF (the jeff-hykin/cuVSLAM fork); NVIDIA's stock SDK is GPU-only.
@@ -175,15 +178,12 @@ class DimSlamConfig(NativeModuleConfig):
     # The tracker's own world frame, drifting freely; the filter fuses it as a
     # drifting source, so it must appear in source_frames.
     visual_odom_frame: str = "visual_odom"
-    # Frame the cuVSLAM rig is built in. Empty means base_frame. Pointing it at a camera's
-    # optical frame reproduces NVIDIA's examples, whose rig is the left camera; output stays
-    # on base_frame either way, the two differing by a fixed transform.
+    # Frame the cuVSLAM rig is built in. Empty means base_frame.
     rig_frame: str = ""
 
     # cuVSLAM's Inertial mode: the stereo pair plus one IMU. The noise model and frame
-    # come from the imu_info stream, published by the driver the way camera_info is.
-    # Separate from use_imu, which feeds the fusion filter. Implemented only on the
-    # CUDA path.
+    # come from the imu_info stream. Separate from use_imu, which feeds the fusion
+    # filter. Implemented only on the CUDA path.
     cuvslam_enable_imu: bool = False
     # Translation std (m) above which the frame's motion is dropped and the path rebased.
     # Well-constrained frames measure 0.01-0.3 m, degenerate bursts 5-330 m or NaN.
@@ -224,8 +224,8 @@ class DimSlamConfig(NativeModuleConfig):
     use_imu: bool = True
 
     # The IMU's datasheet noise figures, in the continuous-time units the filter wants:
-    # rad/s/sqrt(Hz), rad/s^2/sqrt(Hz), m/s^2/sqrt(Hz), m/s^3/sqrt(Hz). Properties of the
-    # part, so they are set per robot; use_imu requires all four above zero.
+    # rad/s/sqrt(Hz), rad/s^2/sqrt(Hz), m/s^2/sqrt(Hz), m/s^3/sqrt(Hz). use_imu requires
+    # all four above zero.
     imu_gyro_noise_density: float = 0.0
     imu_gyro_random_walk: float = 0.0
     imu_accel_noise_density: float = 0.0
@@ -244,9 +244,7 @@ class DimSlamConfig(NativeModuleConfig):
 
     # One entry per source, matched against each message's header.frame_id. A source
     # whose frame is odom_frame is fused absolutely; anything else is fused as
-    # filter-anchored deltas, since its own pose has drifted. The tracker feeds the
-    # filter under visual_odom_frame without a wire hop; external sources arrive on
-    # ``sources``.
+    # filter-anchored deltas, since its own pose has drifted.
     source_frames: list[str] = Field(default_factory=lambda: ["visual_odom"])
     # 6 per source, [x y z roll pitch yaw] then [vx vy vz wx wy wz]: below zero takes the
     # message covariance, zero drops the dimension, above zero is a fixed variance.

@@ -34,12 +34,12 @@ from dimos.visualization.vis_module import vis_module
 
 
 def path_at_true_height(path: Path) -> Any:
-    """Draw the trail where it actually is; the default lift clears a costmap we have not got."""
+    """The default z lift clears a costmap this demo has none of."""
     return path.to_rerun(z_offset=0.0, radii=0.02)
 
 
 def cuvslam_rerun_blueprint() -> Any:
-    """One view for all cameras: rerun names an entity after the topic, which they share."""
+    """Rerun names entities after the topic, which both cameras share."""
     import rerun as rr
     import rerun.blueprint as rrb
 
