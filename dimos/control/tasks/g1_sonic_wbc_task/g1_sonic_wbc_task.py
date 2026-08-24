@@ -549,11 +549,9 @@ class G1SonicWBCTask(BaseControlTask):
         elif cmd.start:
             self.arm(0.0)
         if cmd.delta_heading is not None:
-            logger.info(
-                "ZMQ delta_heading received (not yet applied)",
-                task=self._name,
-                delta_heading=cmd.delta_heading,
-            )
+            # C++ command-topic semantics: incremental yaw pulses folded into
+            # HeadingState.delta_heading (gamepad delta_left/right are +/-0.1).
+            self._pipeline.apply_heading_increment(float(cmd.delta_heading))
 
     def _on_wire_planner(self, upd: PlannerUpdate, t_now: float) -> None:
         self._pipeline.set_planner_command(

@@ -361,6 +361,66 @@ LOCOMOTION_MODES: dict[str, int] = {
 }
 STATIC_MODES = {0, 4, 5, 6, 7, 9}
 
+# Per-mode planner speed/height (gamepad_manager.hpp applySpeedAndHeight).
+# Kneel/squat/crawl NEED the height command - with the -1 default the
+# planner emits a floor-collapse descent instead of a supported kneel.
+MODE_PLANNER_PARAMS: dict[int, tuple[float, float]] = {
+    1: (0.4, -1.0),  # SLOW_WALK
+    3: (1.5, -1.0),  # RUN
+    4: (-1.0, 0.4),  # IDEL_SQUAT
+    5: (-1.0, 0.4),  # IDEL_KNEEL_TWO_LEGS
+    6: (-1.0, 0.4),  # IDEL_KNEEL
+    8: (0.7, 0.4),  # CRAWLING
+    9: (0.7, -1.0),  # IDEL_BOXING
+    10: (0.7, -1.0),  # WALK_BOXING
+    11: (0.7, -1.0),  # LEFT_PUNCH
+    12: (0.7, -1.0),  # RIGHT_PUNCH
+    13: (0.7, -1.0),  # RANDOM_PUNCH
+    14: (0.7, 0.3),  # ELBOW_CRAWLING
+    15: (0.7, -1.0),  # LEFT_HOOK
+    16: (0.7, -1.0),  # RIGHT_HOOK
+}
+
+# Floor-posture ladders (C++ gamepad_manager staging): every deep posture is
+# reached through KNEEL_TWO_LEGS, one rung per TRANSITION_DWELL_SEC.
+TRANSITION_DWELL_SEC = 2.0
+_KNEEL2, _KNEEL, _LYING, _CRAWL, _ELBOW = 5, 6, 7, 8, 14
+_FLOOR_CHAINS: dict[int, list[int]] = {
+    _KNEEL2: [_KNEEL2],
+    _KNEEL: [_KNEEL2, _KNEEL],
+    _LYING: [_KNEEL2, _KNEEL, _LYING],
+    _CRAWL: [_KNEEL2, _CRAWL],
+    _ELBOW: [_KNEEL2, _CRAWL, _ELBOW],
+}
+
+
+def _transition_stages(current: int | None, target: int | None) -> list[int | None]:
+    """Mode sequence from ``current`` to ``target`` (target included last).
+
+    Mirrors gamepad_manager.hpp: entering a floor posture descends the
+    ladder (stand -> kneel -> crawl -> elbow), leaving one ascends it, and
+    switching floor branches goes back through the shared rungs. Non-floor
+    to non-floor transitions are direct, exactly like the C++.
+    """
+    cur_chain = _FLOOR_CHAINS.get(current) if current is not None else None
+    tgt_chain = _FLOOR_CHAINS.get(target) if target is not None else None
+    if cur_chain is None and tgt_chain is None:
+        return [target]
+    if cur_chain is None:
+        return list(tgt_chain)
+    if tgt_chain is None:
+        up = list(reversed(cur_chain[:-1]))
+        return [*up, target]
+    common = 0
+    for a, b in zip(cur_chain, tgt_chain, strict=False):
+        if a != b:
+            break
+        common += 1
+    up = list(reversed(cur_chain[common:-1]))
+    down = tgt_chain[common:]
+    stages = [*up, *down]
+    return stages if stages else [target]
+
 
 # ---------------------------------------------------------------------------
 # Quaternion helpers ([w, x, y, z] convention throughout)
@@ -517,6 +577,8 @@ class SonicPipeline:
         self._yaw_rate = 0.0
         self._height_cmd = -1.0  # -1 = mode default
         self._mode_override: int | None = None
+        self._mode_queue: list[int | None] = []
+        self._mode_dwell = 0.0
         self._upper_targets_dds = DEFAULT_ANGLES_DDS[15:].copy()
 
         # Latest robot state fed by step() (for planner input building)
@@ -545,21 +607,40 @@ class SonicPipeline:
 
     # -- commands ---------------------------------------------------------
 
+    @property
+    def target_mode(self) -> int | None:
+        """Final mode after any pending staged transition."""
+        return self._mode_queue[-1] if self._mode_queue else self._mode_override
+
     def set_velocity(self, vx: float, vy: float, wz: float) -> None:
         if abs(vx - self._vx) > 0.05 or abs(vy - self._vy) > 0.05 or abs(wz - self._yaw_rate) > 0.1:
             self._needs_replan = True
         self._vx, self._vy, self._yaw_rate = vx, vy, wz
 
     def set_mode(self, mode: int | str | None) -> int | None:
-        """Force a LocomotionMode (int or name); None returns to speed-auto."""
+        """Force a LocomotionMode (int or name); None returns to speed-auto.
+
+        Floor postures are STAGED like the C++ gamepad manager
+        (gamepad_manager.hpp): entering crawling kneels first, elbow
+        crawling passes through crawling, and exits reverse the ladder -
+        each stage holding TRANSITION_DWELL_SEC before the next. Jumping
+        straight from a standing/walking context into a deep floor mode
+        makes the planner emit a violent drop that the policy tracks into
+        a crash. The staged target applies immediately; the remaining
+        stages advance from step()."""
         if isinstance(mode, str):
             mode = LOCOMOTION_MODES[mode.upper()]
         if mode is not None and not 0 <= int(mode) <= 26:
             raise ValueError(f"locomotion mode out of range: {mode}")
-        if mode != self._mode_override:
+        target = None if mode is None else int(mode)
+        stages = _transition_stages(self._mode_override, target)
+        self._mode_queue = stages[1:]
+        self._mode_dwell = 0.0
+        first = stages[0]
+        if first != self._mode_override:
             self._needs_replan = True
-        self._mode_override = None if mode is None else int(mode)
-        return self._mode_override
+        self._mode_override = first
+        return target
 
     def set_base_height(self, height: float) -> None:
         if abs(height - self._height_cmd) > 0.01:
@@ -721,6 +802,8 @@ class SonicPipeline:
         self._planner_future = None
         self._upper_targets_dds = DEFAULT_ANGLES_DDS[15:].copy()
         self._mode_override = None
+        self._mode_queue = []
+        self._mode_dwell = 0.0
         self._merger.reset()
         self._streamed = None
         self._streamed_frame = 0
@@ -895,7 +978,18 @@ class SonicPipeline:
         else:
             target_vel = -1.0
 
-        return self._planner_inputs_dict(mode, move_dir, face_dir, target_vel, self._height_cmd)
+        # Per-mode planner params (C++ applySpeedAndHeight): forced modes get
+        # their canonical speed/height; an explicit set_base_height wins.
+        params = MODE_PLANNER_PARAMS.get(mode) if self._mode_override is not None else None
+        height = self._height_cmd
+        if params is not None:
+            mode_speed, mode_height = params
+            if mode_speed > 0 and mode not in (1, 3):
+                target_vel = mode_speed
+            if mode_height > 0 and height < 0:
+                height = mode_height
+
+        return self._planner_inputs_dict(mode, move_dir, face_dir, target_vel, height)
 
     def _planner_inputs_dict(
         self,
@@ -1041,6 +1135,15 @@ class SonicPipeline:
         self._cur_q_dds = np.asarray(q_dds, dtype=np.float32)
 
         self._check_planner_result()
+
+        # Staged floor transitions: hold each ladder rung for the dwell,
+        # then advance (gamepad_manager.hpp transition timers).
+        if self._mode_queue:
+            self._mode_dwell += POLICY_DT
+            if self._mode_dwell >= TRANSITION_DWELL_SEC:
+                self._mode_override = self._mode_queue.pop(0)
+                self._mode_dwell = 0.0
+                self._needs_replan = True
 
         self._replan_timer += POLICY_DT
         speed = math.hypot(self._vx, self._vy)
@@ -1193,6 +1296,7 @@ class SonicPipeline:
         return {
             "mode": mode,
             "mode_override": self._mode_override,
+            "mode_queue": list(self._mode_queue),
             "speed": speed,
             "trajectory": self._trajectory is not None,
             "traj_frame": self._traj_frame,
