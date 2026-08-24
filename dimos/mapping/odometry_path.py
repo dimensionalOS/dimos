@@ -43,8 +43,7 @@ class OdometryPath(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._poses: deque[PoseStamped] = deque(maxlen=self.config.max_poses)
-        # None rather than 0.0: recordings stamped from zero would read as
-        # "just published" and suppress the very first path.
+        # None, not 0.0: a recording stamped from zero would suppress the first path.
         self._last_publish_ts: float | None = None
         self._unpublished = False
 
@@ -70,12 +69,11 @@ class OdometryPath(Module):
 
         if not self._unpublished:
             return
-        if (
-            self._last_publish_ts is not None
-            and msg.ts - self._last_publish_ts < self.config.min_publish_interval_seconds
-        ):
-            return
+        if self._last_publish_ts is not None:
+            elapsed = msg.ts - self._last_publish_ts
+            # A replay restart moves the stamp backwards; publish rather than wait it out.
+            if 0.0 <= elapsed < self.config.min_publish_interval_seconds:
+                return
         self._last_publish_ts = msg.ts
         self._unpublished = False
-        # A copy: Path holds the list by reference.
         self.path.publish(Path(ts=msg.ts, frame_id=frame_id, poses=list(self._poses)))
