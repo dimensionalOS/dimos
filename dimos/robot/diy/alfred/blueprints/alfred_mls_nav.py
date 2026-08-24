@@ -58,8 +58,7 @@ exactly, where the pre-remount angle misses it by 2.2 m.
 alfred_mls_nav = (
     autoconnect(
         RealSenseCamera.blueprint(
-            width=848,
-            height=480,
+            # Twice the config default; the tracker wants the frame rate.
             fps=30,
             # cuVSLAM tracks the IR pair; they arrive rectified and are not perturbed by
             # the colour sensor's auto-exposure.

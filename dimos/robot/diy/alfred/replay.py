@@ -48,10 +48,11 @@ STEREO_PAIR_TOLERANCE = 0.001
 def _stamp_matched_pairs(left: Any, right: Any) -> Any:
     """Pair two image observables by timestamp instead of arrival order.
 
-    Replay drops late frames per stream, so the imagers can lose different
-    frames; an ordinal zip would then pair mismatched stamps forever. A frame
-    whose partner never arrives is discarded once a newer one turns up,
-    exactly as the tracker would reject it for skew.
+    Each stream skips past whatever is already behind the shared clock when it
+    subscribes, and the two imagers subscribe an instant apart, so they can enter
+    on different frames; an ordinal zip would pair mismatched stamps from then
+    on. A frame whose partner never arrives is discarded once a newer one turns
+    up, exactly as the tracker would reject it for skew.
     """
 
     def subscribe(observer: Any, scheduler: Any = None) -> Any:
@@ -111,8 +112,8 @@ both would give base_link two parents."""
 class AlfredReplayConfig(ModuleConfig):
     db_path: str = ""
     tf_stream: str = "tf"
-    # Faster than real time outruns the CPU cuVSLAM tracker: it skips frames under
-    # load and the trajectory being replayed changes.
+    # Faster than real time outruns the CPU cuVSLAM tracker, which then falls behind
+    # the other streams and fuses stale visual deltas: the trajectory changes.
     speed: float = 1.0
     seek: float | None = None
     duration: float | None = None
@@ -196,9 +197,8 @@ class AlfredReplay(Module):
             trailer = min(latest, key=lambda name: latest[name])
             elapsed = time.time() - self._started_at
             covered = latest[leader] - self._first_ts
-            # Streams drop late frames to hold the shared clock, so a growing
-            # spread means a stream stopped emitting entirely, not that it is
-            # running behind.
+            # Streams emit late rather than dropping, so a growing spread means one
+            # stream is falling behind the others, not that it stopped.
             logger.info(
                 "replay %.0fs of recording in %.0fs wall (%.2fx), spread %.2fs "
                 "(%s ahead of %s), %d streams running",
@@ -226,9 +226,9 @@ class AlfredReplay(Module):
             replay_kwargs["duration"] = self.config.duration
         replay = store.replay(**replay_kwargs)
 
-        # Paired by stamp, not arrival order: replay drops late frames per stream,
-        # so the imagers can lose different frames and an ordinal zip would pair
-        # mismatched stamps from then on.
+        # Paired by stamp, not arrival order: the imagers subscribe an instant apart
+        # and each skips past whatever is already behind the shared clock, so they can
+        # enter on different frames and an ordinal zip would pair mismatched stamps.
         stereo = _stamp_matched_pairs(
             replay.stream("infrared_left").observable(),
             replay.stream("infrared_right").observable(),

@@ -119,34 +119,6 @@ def test_anchor_reset_forgets_pin(sqlite_store: SqliteStore) -> None:
     assert replay._anchor is None
 
 
-def test_slow_consumer_drops_frames_instead_of_drifting(sqlite_store: SqliteStore) -> None:
-    """A consumer slower than the recording loses frames but stays on the clock."""
-    import threading
-    import time
-
-    timestamps = [i * 0.02 for i in range(20)]  # 50 Hz for 0.4 s
-    _populate(sqlite_store, "camera", timestamps)
-    replay = sqlite_store.replay()
-
-    received: list[int] = []
-    done = threading.Event()
-
-    def slow_consumer(value: int) -> None:
-        received.append(value)
-        time.sleep(0.06)  # 3x slower than the frame interval
-
-    started = time.time()
-    replay.streams.camera.observable().subscribe(on_next=slow_consumer, on_completed=done.set)
-    assert done.wait(timeout=5.0)
-    elapsed = time.time() - started
-
-    # Drifting would emit all 20 frames over ~1.2 s; dropping stays within the
-    # recording's own 0.4 s span (plus the last frame's consumer sleep).
-    assert len(received) < len(timestamps)
-    assert elapsed < 0.9
-    assert received == sorted(received)
-
-
 def test_replay_anchor_thread_safe(sqlite_store: SqliteStore) -> None:
     """Concurrent _resolve_anchor calls return the same anchor — no torn state."""
     import threading

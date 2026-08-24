@@ -105,9 +105,11 @@ def _alfred_urdf_static(rr: Any) -> list[tuple[str, Any]]:
 
 VOXEL_SIZE_METERS = 0.05
 DEPTH_MAX_RANGE_METERS = 4.0
-"""DimSlam's default depth_cloud_max_range, repeated here for the mapper's own gate.
-4 m won the mapping grid against 6 m and against depth2depth-densified clouds
-(top-down F1 .570 / .506 / .411 vs a lidar-raycast reference)."""
+"""Far gate on the D455's depth, for the cloud the tracker cuts and the mapper's insert.
+
+Stereo depth error grows as range squared, so where to cut is a property of this camera;
+4 m won the mapping grid against 6 m and against depth2depth-densified clouds (top-down
+F1 .570 / .506 / .411 vs a lidar-raycast reference on drive_2026-08-18_23-05-04.db)."""
 
 ALFRED_BODY_HEIGHT_METERS = 0.5
 
@@ -127,6 +129,10 @@ vis_nav = autoconnect(
         cuvslam_enable_imu=False,
         # Alfred's computer has no GPU; the fork-built libcuvslam carries the CPU path.
         use_gpu=False,
+        depth_cloud_max_range=DEPTH_MAX_RANGE_METERS,
+        # One point per 3x3 depth block: a full-resolution D455 cloud is ~400k points a
+        # frame at 30 Hz and drowns the mapper.
+        depth_cloud_decimation=3,
         source_frames=["visual_odom", "wheel_odom"],
         # Fixed variances, not the message covariances: both sources report the drift
         # they have accumulated, which says nothing about the delta being fused.
