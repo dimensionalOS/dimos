@@ -68,7 +68,7 @@ def test_rewiring_a_topic_changes_the_graph_stamp() -> None:
 
 def test_generate_crate_writes_the_blobs_the_host_includes(tmp_path: Path) -> None:
     crate = generate_crate("go2-nav", [MAPPER, PLANNER], GRAPH, tmp_path)
-    assert crate == tmp_path / "target" / "dimos-bake" / "go2-nav"
+    assert crate == tmp_path / "build" / "dimos-bake" / "go2-nav"
 
     topics = json.loads((crate / "src" / "default_topics.json").read_text())
     assert topics["mapper"]["lidar"] == "dimos/lidar/sensor_msgs.PointCloud2"

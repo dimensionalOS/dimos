@@ -78,9 +78,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read  # For checkout
-    env:
-      # All builds are consolidated in a single target dir
-      CARGO_TARGET_DIR: ${{ github.workspace }}/target
 
     steps:
       - name: Checkout
@@ -94,7 +91,9 @@ jobs:
         with:
           # The bake e2e's generated crate: caching it keeps its Cargo.lock, so
           # dependency resolution stays pinned, and its target dir of built deps.
-          cache-directories: target/dimos-bake
+          # It lives outside target/ because rust-cache prunes whatever it finds
+          # there, including the generated sources and lockfile.
+          cache-directories: build/dimos-bake
           key: bake-e2e
           # Only main writes the cache, so a PR run cannot evict main's entry
           # from the repo's 10GB budget. PR runs still restore from it.

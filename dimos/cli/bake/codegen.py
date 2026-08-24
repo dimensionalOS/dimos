@@ -79,7 +79,7 @@ fn main() {{
 
 def crate_dir(host: str, root: Path | None = None) -> Path:
     """Where the generated crate for `host` lives."""
-    return (root or DIMOS_PROJECT_ROOT) / "target" / "dimos-bake" / host
+    return (root or DIMOS_PROJECT_ROOT) / "build" / "dimos-bake" / host
 
 
 def _dependencies(modules: Sequence[RegisteredModule], root: Path) -> str:
