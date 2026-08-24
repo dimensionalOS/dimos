@@ -30,13 +30,15 @@ from typing import Any
 from dimos.imitation.dataprep.core import (
     DataPrepConfig,
     Episode,
+    EpisodeExtractor,
     Sample,
     extract_episodes,
     get_inspector,
     get_writer,
+    inspect_episodes,
     iter_episode_samples,
 )
-from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -177,22 +179,51 @@ def run_dataprep(config: DataPrepConfig) -> Path:
         store.stop()
 
 
-def inspect_dataset(path: Path | str, fmt: str | None = None) -> dict[str, Any]:
-    """Summarize a built dataset: observation/action features (shape + dtype),
-    episode/frame counts, and whether shapes/lengths are uniform.
+def inspect_recording(path: Path | str, status_stream: str = "status") -> dict[str, Any]:
+    """Summarize a source recording, including an episode left open at EOF."""
+    p = Path(path)
+    store = SqliteStore(path=str(p), must_exist=True)
+    try:
+        stream_names = store.list_streams()
+        stream_counts = {name: store.stream(name).count() for name in stream_names}
+        if status_stream in stream_names:
+            report = inspect_episodes(store, EpisodeExtractor(status_stream=status_stream))
+        else:
+            report = None
+        episodes = report.episodes if report is not None else []
+        incomplete = report.incomplete if report is not None else []
+        return {
+            "format": "recording",
+            "path": str(p),
+            "streams": stream_counts,
+            "status_stream": status_stream if status_stream in stream_names else None,
+            "episodes": len(episodes),
+            "saved_episodes": sum(episode.success for episode in episodes),
+            "discarded_episodes": sum(not episode.success for episode in episodes),
+            "incomplete_episodes": [episode.model_dump() for episode in incomplete],
+        }
+    finally:
+        store.stop()
 
-    `fmt` is auto-detected when omitted: a `.hdf5`/`.h5` file → hdf5; a
-    directory containing `meta/info.json` → lerobot.
+
+def inspect_dataset(path: Path | str, fmt: str | None = None) -> dict[str, Any]:
+    """Summarize a source recording or built dataset.
+
+    Recordings report stream and episode counts plus any episode left open at
+    EOF. Built datasets report feature shapes/dtypes, frame counts, and shape
+    uniformity. ``fmt`` is auto-detected when omitted.
     """
     p = Path(path)
     if fmt is None:
+        if p.suffix == ".db":
+            return inspect_recording(p)
         if p.suffix in (".h5", ".hdf5"):
             fmt = "hdf5"
         elif (p / "meta" / "info.json").exists():
             fmt = "lerobot"
         else:
             raise ValueError(
-                f"Cannot detect dataset format at {p}: expected a .hdf5 file or a "
-                f"lerobot directory with meta/info.json. Pass --format explicitly."
+                f"Cannot detect data format at {p}: expected a recording .db, a .hdf5 file, "
+                f"or a lerobot directory with meta/info.json. Pass --format explicitly."
             )
     return get_inspector(fmt)(p)

@@ -5,10 +5,14 @@ import {
   encodeControlFrame,
   encodeDataFrame,
   type Msg,
+  type PanelSpec,
   PROTOCOL_VERSION,
   type RobotInfo,
 } from "@dimos/shared";
+import type { Manifest } from "@dimos/shared/manifest";
+import type { CostmapValue } from "./decoders/costmap.ts";
 import {
+  channelSubscribable,
   manifestsEqual,
   pickAutoWatch,
   type SessionHandle,
@@ -21,18 +25,46 @@ function spec(over: Partial<ChannelSpec> = {}): ChannelSpec {
   return { ch: "odom", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20, ...over };
 }
 
+function manifest(channels: ChannelSpec[], panels: PanelSpec[] = []): Manifest {
+  return { channels, panels, layout: [] };
+}
+
 describe("manifestsEqual", () => {
   it("ignores channel order", () => {
     const a = [spec(), spec({ ch: "color_image", encoding: "jpeg.v1", delivery: "latest" })];
-    expect(manifestsEqual(a, [...a].reverse())).toBe(true);
+    expect(manifestsEqual(manifest(a), manifest([...a].reverse()))).toBe(true);
   });
 
   it("detects field changes and extra channels", () => {
-    expect(manifestsEqual([spec()], [spec({ maxHz: 30 })])).toBe(false);
-    expect(manifestsEqual([spec()], [spec({ encoding: "pose.json.v2" })])).toBe(false);
-    expect(manifestsEqual([spec()], [spec({ delivery: "latest" })])).toBe(false);
-    expect(manifestsEqual([spec()], [spec(), spec({ ch: "extra" })])).toBe(false);
-    expect(manifestsEqual([], [])).toBe(true);
+    expect(manifestsEqual(manifest([spec()]), manifest([spec({ maxHz: 30 })]))).toBe(false);
+    expect(manifestsEqual(manifest([spec()]), manifest([spec({ encoding: "pose.json.v2" })])))
+      .toBe(false);
+    expect(manifestsEqual(manifest([spec()]), manifest([spec({ delivery: "latest" })]))).toBe(
+      false,
+    );
+    expect(manifestsEqual(manifest([spec()]), manifest([spec(), spec({ ch: "extra" })]))).toBe(
+      false,
+    );
+    expect(manifestsEqual(manifest([]), manifest([]))).toBe(true);
+  });
+
+  it("detects panel changes, including display order", () => {
+    const video: PanelSpec = { id: "cam", kind: "video", channels: ["odom"] };
+    const readout: PanelSpec = { id: "pose", kind: "readout", channels: ["odom"] };
+    expect(manifestsEqual(manifest([spec()], [video]), manifest([spec()], [video]))).toBe(true);
+    expect(manifestsEqual(manifest([spec()], [video]), manifest([spec()], []))).toBe(false);
+    expect(
+      manifestsEqual(
+        manifest([spec()], [video]),
+        manifest([spec()], [{ ...video, kind: "readout" }]),
+      ),
+    ).toBe(false);
+    expect(
+      manifestsEqual(
+        manifest([spec()], [video, readout]),
+        manifest([spec()], [readout, video]),
+      ),
+    ).toBe(false); // panel order is display order
   });
 });
 
@@ -47,11 +79,31 @@ describe("pickAutoWatch", () => {
 });
 
 describe("subscribableChannels", () => {
+  const odom = spec();
+  const jpeg = spec({ ch: "color_image", encoding: "jpeg.v1", delivery: "latest" });
+  const costmap = spec({ ch: "global_costmap", encoding: "costmap.zlib.v1", delivery: "latest" });
+  const future = spec({ ch: "voxels", encoding: "voxels.bin.v9", delivery: "latest" });
+  const videoPanel: PanelSpec = { id: "cam", kind: "video", channels: ["color_image"] };
+  const mapPanel: PanelSpec = { id: "map", kind: "map2d", channels: ["global_costmap", "odom"] };
+
   it("keeps only channels with a decoder (undecodable ones waste bandwidth)", () => {
-    const odom = spec();
-    const jpeg = spec({ ch: "color_image", encoding: "jpeg.v1", delivery: "latest" });
-    expect(subscribableChannels([odom, jpeg])).toEqual([odom]);
-    expect(subscribableChannels([jpeg])).toEqual([]);
+    expect(subscribableChannels([odom, jpeg, future], [videoPanel])).toEqual([odom, jpeg]);
+    expect(subscribableChannels([future], [])).toEqual([]);
+  });
+
+  it("gates panel-only encodings on a renderable panel binding them", () => {
+    expect(channelSubscribable(jpeg, [])).toBe(false);
+    expect(channelSubscribable(jpeg, [videoPanel])).toBe(true);
+    // A panel kind this build cannot render does not justify the bandwidth.
+    expect(channelSubscribable(jpeg, [{ ...videoPanel, kind: "hologram" }])).toBe(false);
+    // Cheap JSON channels are subscribed with or without a panel.
+    expect(channelSubscribable(odom, [])).toBe(true);
+  });
+
+  it("gates the costmap encoding like jpeg (grids nobody renders stay unencoded)", () => {
+    expect(channelSubscribable(costmap, [])).toBe(false);
+    expect(channelSubscribable(costmap, [mapPanel])).toBe(true);
+    expect(channelSubscribable(costmap, [{ ...mapPanel, kind: "hologram" }])).toBe(false);
   });
 });
 
@@ -73,6 +125,10 @@ const ROBOT_B: RobotInfo = { id: "b", name: "B", model: "go2" };
 
 class FakeRelayEnd {
   readonly sent: Msg[] = [];
+  /** Awaited per decoded viewer message: lets a test react at the exact
+   * moment a message is observed while holding the session's control writer
+   * (e.g. to land a data frame mid-sub-loop). */
+  onMsg: ((msg: Msg) => void | Promise<void>) | null = null;
   readonly wt: WebTransportLike;
   #control!: ReadableStreamDefaultController<Uint8Array>;
   #uni!: ReadableStreamDefaultController<ReadableStream<Uint8Array>>;
@@ -85,8 +141,11 @@ class FakeRelayEnd {
       },
     });
     const writable = new WritableStream<Uint8Array>({
-      write: (chunk) => {
-        this.sent.push(...inbound.push(chunk));
+      write: async (chunk) => {
+        for (const msg of inbound.push(chunk)) {
+          this.sent.push(msg);
+          await this.onMsg?.(msg);
+        }
       },
     });
     let closeWt = () => {};
@@ -112,8 +171,12 @@ class FakeRelayEnd {
 
   /** One data frame on its own uni stream, JSON payload like the bridge's. */
   pushFrame(seq: number, value: unknown, ch = "odom"): void {
-    const payload = new TextEncoder().encode(JSON.stringify(value));
-    const frame = encodeDataFrame({ ch, seq, ts: seq, delivery: "reliable" }, payload);
+    this.pushRaw(seq, new TextEncoder().encode(JSON.stringify(value)), ch);
+  }
+
+  /** One data frame on its own uni stream, arbitrary payload bytes. */
+  pushRaw(seq: number, payload: Uint8Array, ch: string, meta?: Record<string, unknown>): void {
+    const frame = encodeDataFrame({ ch, seq, ts: seq, delivery: "reliable", meta }, payload);
     this.#uni.enqueue(
       new ReadableStream<Uint8Array>({
         start: (c) => {
@@ -168,11 +231,12 @@ describe("Session over a fake WebTransport", () => {
     handle: SessionHandle,
     robot = ROBOT_A,
     channels = [spec()],
+    panels: PanelSpec[] = [],
   ): Promise<void> {
     relay.push({ t: "welcome", v: PROTOCOL_VERSION });
     relay.push({ t: "robots", robots: [robot] });
     await until(() => relay.watches(robot.id) === 1, "watch");
-    relay.push({ t: "manifest", robotId: robot.id, channels });
+    relay.push({ t: "manifest", robotId: robot.id, channels, panels });
     await until(() => handle.status.get().channels.length === channels.length, "manifest");
   }
 
@@ -190,10 +254,118 @@ describe("Session over a fake WebTransport", () => {
     await goLive(relay, handle, ROBOT_A, [
       spec(),
       spec({ ch: "color_image", encoding: "jpeg.v1", delivery: "latest" }),
+      spec({ ch: "voxels", encoding: "voxels.bin.v9", delivery: "latest" }),
     ]);
     expect(relay.watches("a")).toBe(1);
+    // No panel binds color_image, so the jpeg channel stays unsubscribed too.
     expect(relay.subs()).toEqual(["odom"]);
     expect(handle.status.get().robot).toEqual(ROBOT_A);
+  });
+
+  it("subs the jpeg channel when a video panel binds it", async () => {
+    const { relay, handle } = start();
+    await goLive(
+      relay,
+      handle,
+      ROBOT_A,
+      [spec(), spec({ ch: "color_image", encoding: "jpeg.v1", delivery: "latest" })],
+      [{ id: "cam", kind: "video", channels: ["color_image"] }],
+    );
+    expect(relay.subs()).toEqual(["odom", "color_image"]);
+  });
+
+  it("keeps the jpeg channel unsubscribed under an unrenderable panel kind", async () => {
+    const { relay, handle } = start();
+    await goLive(
+      relay,
+      handle,
+      ROBOT_A,
+      [spec(), spec({ ch: "color_image", encoding: "jpeg.v1", delivery: "latest" })],
+      [{ id: "holo", kind: "hologram", channels: ["color_image"] }],
+    );
+    expect(relay.subs()).toEqual(["odom"]);
+  });
+
+  it("subs the costmap channel when a map2d panel binds it", async () => {
+    const { relay, handle } = start();
+    await goLive(
+      relay,
+      handle,
+      ROBOT_A,
+      [spec(), spec({ ch: "global_costmap", encoding: "costmap.zlib.v1", delivery: "latest" })],
+      [{ id: "map", kind: "map2d", channels: ["global_costmap", "odom"] }],
+    );
+    expect(relay.subs()).toEqual(["odom", "global_costmap"]);
+  });
+
+  it("keeps the costmap channel unsubscribed under an unrenderable panel kind", async () => {
+    const { relay, handle } = start();
+    await goLive(
+      relay,
+      handle,
+      ROBOT_A,
+      [spec(), spec({ ch: "global_costmap", encoding: "costmap.zlib.v1", delivery: "latest" })],
+      [{ id: "holo", kind: "hologram", channels: ["global_costmap"] }],
+    );
+    expect(relay.subs()).toEqual(["odom"]);
+  });
+
+  it("stores a costmap frame that arrives while subs are still being sent", async () => {
+    // The bridge replays the cached grid the moment a sub lands, so the frame
+    // can beat the control loop's continuation. The hook injects it
+    // synchronously at the sub and then holds the control writer for one
+    // macrotask, letting the whole uni-stream ingest chain drain first: with
+    // adoption after the sub loop, #ingest would drop it as manifest-less.
+    const { relay, handle } = start();
+    relay.push({ t: "welcome", v: PROTOCOL_VERSION });
+    relay.push({ t: "robots", robots: [ROBOT_A] });
+    await until(() => relay.watches("a") === 1, "watch");
+
+    relay.onMsg = (msg) => {
+      if (msg.t !== "sub" || msg.ch !== "global_costmap") return;
+      relay.pushRaw(1, new Uint8Array([1, 2, 3]), "global_costmap", {
+        w: 2,
+        h: 2,
+        res: 0.5,
+        origin: [0, 0, 0],
+      });
+      return new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    relay.push({
+      t: "manifest",
+      robotId: "a",
+      channels: [
+        spec(),
+        spec({ ch: "global_costmap", encoding: "costmap.zlib.v1", delivery: "latest" }),
+      ],
+      panels: [{ id: "map", kind: "map2d", channels: ["global_costmap", "odom"] }],
+    });
+
+    await until(() => handle.channels.get("global_costmap") !== null, "stored costmap");
+    const slot = handle.channels.get("global_costmap")!;
+    expect((slot.value as CostmapValue).w).toBe(2);
+    expect(slot.seq).toBe(1);
+  });
+
+  it("counts a corrupt jpeg frame as a decode error instead of storing it", async () => {
+    const { relay, handle } = start();
+    await goLive(
+      relay,
+      handle,
+      ROBOT_A,
+      [spec({ ch: "color_image", encoding: "jpeg.v1", delivery: "latest" })],
+      [{ id: "cam", kind: "video", channels: ["color_image"] }],
+    );
+    // Garbage bytes with no JPEG SOI: the decoder must throw at ingest.
+    relay.pushRaw(1, new Uint8Array([1, 2, 3, 4, 5, 6]), "color_image");
+    await until(() => {
+      handle.channels.publishUi();
+      return handle.channels.getUiSnapshot("color_image").stats.frames === 1;
+    }, "corrupt frame counted");
+    expect(handle.channels.get("color_image")).toBeNull(); // never stored
+    const { stats } = handle.channels.getUiSnapshot("color_image");
+    expect(stats.decodeErrors).toBe(1);
+    expect(stats.decodeFailing).toBe(true);
   });
 
   it("retries the watch when the robot reappears after unknown_robot", async () => {

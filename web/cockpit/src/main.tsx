@@ -5,7 +5,7 @@ import "./index.css";
 
 const root = createRoot(document.getElementById("root")!);
 
-// Same capability checks as the debug page: WebTransport needs a secure
+// Capability checks before anything mounts: WebTransport needs a secure
 // context, and Safari has no WebTransport as of mid-2026.
 if (!globalThis.isSecureContext) {
   root.render(

@@ -1,4 +1,4 @@
-// Relay CLI. Run from web/:  deno task dev  (or --port/--host/--static-dir).
+// Relay CLI. Run from web/:  deno task dev  (or --port/--host/--cockpit-dir).
 // Prints a single JSON ready line on stdout for parent processes to parse;
 // everything else logs to stderr-adjacent console lines prefixed [relay].
 import { parseArgs } from "@std/cli";
@@ -6,7 +6,7 @@ import { PROTOCOL_VERSION } from "@dimos/shared";
 import { startRelay } from "./server.ts";
 
 const args = parseArgs(Deno.args, {
-  string: ["host", "static-dir", "cockpit-dir"],
+  string: ["host", "cockpit-dir"],
   default: { port: 7780, host: "127.0.0.1" },
 });
 
@@ -24,7 +24,6 @@ if (host !== "127.0.0.1" && host !== "localhost") {
 const relay = await startRelay({
   port: Number(args.port),
   host,
-  staticDir: args["static-dir"],
   cockpitDir: args["cockpit-dir"],
 });
 
@@ -38,8 +37,9 @@ console.log(JSON.stringify({
 const pageHost = host === "0.0.0.0" ? "127.0.0.1" : host;
 if (args["cockpit-dir"] !== undefined) {
   console.log(`[relay] cockpit: http://${pageHost}:${relay.httpPort}/`);
+} else {
+  console.log("[relay] no cockpit dist configured; serving /api only");
 }
-console.log(`[relay] debug page: http://${pageHost}:${relay.httpPort}/debug.html`);
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   try {

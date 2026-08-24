@@ -40,7 +40,7 @@
           cargoRoot = "dimos/mapping/ray_tracing/rust";
           buildAndTestSubdir = "dimos/mapping/ray_tracing/rust";
 
-          cargoHash = "sha256-gdkJBduI6gjK7TtO370aYRA01L65jK6KyUUYOfpiYiU=";
+          cargoHash = "sha256-uYCf2WCSlRk/wUTGrViD64zAkHl6D8VKaEO43fAeU2E=";
 
           # Only the binary; the python cdylib wants libpython at link time and
           # fails on darwin, and nothing consumes it from this output.

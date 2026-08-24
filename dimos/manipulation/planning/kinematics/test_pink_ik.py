@@ -45,6 +45,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.assets.model import RobotModel
 
 
 class _FakeJoint:
@@ -168,7 +169,7 @@ def _fake_modules(converge: bool = True) -> _PinkModules:
 def _robot_config() -> RobotModelConfig:
     return RobotModelConfig(
         name="arm",
-        model_path=Path("/tmp/fake.urdf"),
+        model=RobotModel.from_file(Path("/tmp/fake.urdf")),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
         joint_names=["joint_a", "joint_b", "joint_c"],
         base_link="base",
@@ -509,13 +510,17 @@ def test_solve_retries_after_joint_limit_failure(mocker: MockerFixture) -> None:
 
 def test_robot_context_cache_key_includes_tip_frame(mocker: MockerFixture, tmp_path: Path) -> None:
     modules = _fake_modules()
-    modules.pinocchio.buildModelFromUrdf = lambda path: _FakeModel()  # type: ignore[attr-defined]
+    mocker.patch.object(
+        modules.pinocchio,
+        "buildModelFromXML",
+        return_value=_FakeModel(),
+        create=True,
+    )
     mocker.patch.object(pink_ik, "_load_optional_dependencies", return_value=modules)
-    mocker.patch.object(pink_ik, "prepare_urdf_for_drake", return_value=tmp_path / "prepared.urdf")
     model_path = tmp_path / "fake.urdf"
     model_path.write_text("<robot/>")
     world = _FakeWorld()
-    world.config.model_path = model_path
+    world.config.model = RobotModel.from_file(model_path)
     ik = PinkIK(PinkIKConfig(max_iterations=1))
 
     first = ik._get_robot_context(cast("Any", world), "robot", "tool")
@@ -531,13 +536,17 @@ def test_build_robot_context_rejects_base_link_not_model_root(
     model = _FakeModel()
     model.frames[0] = _FakeFrame("base", parent_joint=1)
     modules = _fake_modules()
-    modules.pinocchio.buildModelFromUrdf = lambda path: model  # type: ignore[attr-defined]
+    mocker.patch.object(
+        modules.pinocchio,
+        "buildModelFromXML",
+        return_value=model,
+        create=True,
+    )
     mocker.patch.object(pink_ik, "_load_optional_dependencies", return_value=modules)
-    mocker.patch.object(pink_ik, "prepare_urdf_for_drake", return_value=tmp_path / "prepared.urdf")
     model_path = tmp_path / "fake.urdf"
     model_path.write_text("<robot/>")
     config = _robot_config()
-    config.model_path = model_path
+    config.model = RobotModel.from_file(model_path)
 
     with pytest.raises(ValueError, match="base_link 'base'.*model root"):
         PinkIK(PinkIKConfig(max_iterations=1))._build_robot_context(config, "tool")
