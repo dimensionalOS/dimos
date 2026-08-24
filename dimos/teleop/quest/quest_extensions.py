@@ -259,11 +259,21 @@ class Go2TeleopModule(QuestTeleopModule):
     color_image: In[Image]
     cmd_vel: Out[Twist]
 
+    def _publish_safe_command(self) -> None:
+        self.cmd_vel.publish(Twist.zero())
+
     def _deadzone(self, v: float) -> float:
         return 0.0 if abs(v) < self.config.deadzone else v
 
-    def _on_joy_bytes(self, data: bytes) -> None:
-        super()._on_joy_bytes(data)
+    def _on_joy_bytes(self, data: bytes) -> bool:
+        try:
+            valid = super()._on_joy_bytes(data)
+        except ValueError:
+            self._publish_safe_command()
+            raise
+        if not valid:
+            self._publish_safe_command()
+            return False
         with self._lock:
             left = self._controllers.get(Hand.LEFT)
             right = self._controllers.get(Hand.RIGHT)
@@ -276,15 +286,7 @@ class Go2TeleopModule(QuestTeleopModule):
         if right is not None:
             twist.angular.z = -self._deadzone(right.thumbstick.x) * self.config.angular_speed
         self.cmd_vel.publish(twist)
+        return True
 
     async def handle_color_image(self, msg: Image) -> None:
         _push_jpeg(self, msg, self.config.video_jpeg_quality)
-
-    @rpc
-    def stop(self) -> None:
-        # Send one zero Twist so the base halts if teleop dies mid-motion.
-        try:
-            self.cmd_vel.publish(Twist.zero())
-        except Exception:
-            logger.exception("Failed to publish stop Twist")
-        super().stop()

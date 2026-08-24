@@ -27,9 +27,12 @@ from dataclasses import replace
 import json
 from pathlib import Path
 import socket
+import subprocess
+import sys
 import threading
 import time
 from typing import Any
+import zlib
 
 import numpy as np
 from pydantic import ValidationError
@@ -38,7 +41,9 @@ import pytest
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.simulation.mujoco.constants import VIDEO_FPS
 from dimos.web.relay_bridge import relay_bridge_module
@@ -58,9 +63,15 @@ from dimos.web.relay_bridge.wt_client import RelayRejectedError
 class FakeWriter:
     def __init__(self) -> None:
         self.offers: list[tuple[bytes, dict[str, Any] | None]] = []
+        # ts kept apart so offer-list equality asserts ignore it (a replay
+        # carries its source arrival time, a live frame None).
+        self.tss: list[float | None] = []
 
-    def offer(self, payload: bytes, meta: dict[str, Any] | None = None) -> None:
+    def offer(
+        self, payload: bytes, meta: dict[str, Any] | None = None, ts: float | None = None
+    ) -> None:
         self.offers.append((payload, meta))
+        self.tss.append(ts)
 
 
 class FakeClient:
@@ -244,16 +255,25 @@ def odom_transport(module: RelayBridgeModule) -> FakeTransport:
     return transport
 
 
+def costmap_transport(module: RelayBridgeModule) -> FakeTransport:
+    transport = module.global_costmap.transport
+    assert isinstance(transport, FakeTransport)
+    return transport
+
+
 def test_manifest_and_robot_info_content() -> None:
     config = RelayBridgeConfig(robot_id="go2-lab", robot_name="Lab", image_max_hz=12.0)
     manifest = build_manifest(config, CHANNELS)
-    assert [c.ch for c in manifest.channels] == ["color_image", "odom"]
-    image, odom = manifest.channels
+    assert [c.ch for c in manifest.channels] == ["color_image", "odom", "global_costmap"]
+    image, odom, costmap = manifest.channels
     assert (image.encoding, image.delivery, image.maxHz) == ("jpeg.v1", "latest", 12.0)
     assert (odom.encoding, odom.delivery, odom.maxHz) == ("pose.json.v1", "reliable", 20.0)
-    # One video panel for the camera; odom stays a raw channel row.
+    assert (costmap.encoding, costmap.delivery, costmap.maxHz) == ("costmap.zlib.v1", "latest", 5.0)
+    # A video panel for the camera and a map2d panel binding costmap + pose;
+    # odom additionally stays a raw channel row.
     assert [(p.id, p.kind, p.channels) for p in manifest.panels] == [
-        ("color_image", "video", ["color_image"])
+        ("color_image", "video", ["color_image"]),
+        ("global_costmap", "map2d", ["global_costmap", "odom"]),
     ]
 
     info = resolve_robot_info(config)
@@ -271,6 +291,8 @@ def test_manifest_and_robot_info_content() -> None:
         ("image_max_hz", -1.0),
         ("odom_max_hz", 0.0),
         ("odom_max_hz", -1.0),
+        ("costmap_max_hz", 0.0),
+        ("costmap_max_hz", -1.0),
         ("jpeg_quality", -1),
         ("jpeg_quality", 101),
     ],
@@ -394,6 +416,208 @@ def test_no_jpeg_encode_while_unsubscribed(bridge, monkeypatch) -> None:
     assert wait_until(lambda: image_transport(module).subscribers)
     image_transport(module).publish(image)
     assert calls["n"] == 1
+
+
+# Covers every value class of the wire contract: -1 unknown -> 255, 0 free,
+# graded cost, 100 lethal.
+COSTMAP_GRID = OccupancyGrid(
+    grid=np.array([[-1, 0, 50], [100, 0, -1]], dtype=np.int8),
+    resolution=0.05,
+    origin=Pose(-1.25, 2.5, 0.0),
+    ts=42.5,
+)
+COSTMAP_CELLS = bytes([255, 0, 50, 100, 0, 255])
+
+
+@pytest.fixture
+def costmap_bridge(monkeypatch):
+    module, clients = _make_bridge(monkeypatch, wire=("color_image", "odom", "global_costmap"))
+    try:
+        yield module, clients
+    finally:
+        stop_module(module)
+
+
+def test_costmap_encode_roundtrip_and_meta(costmap_bridge) -> None:
+    module, clients = costmap_bridge
+    client = clients[0]
+    push(module, client, Subs(chs=["global_costmap"], n=1))
+    # 2 subscribers = the always-on raw cache + the viewer-driven encoder.
+    assert wait_until(lambda: len(costmap_transport(module).subscribers) == 2)
+
+    costmap_transport(module).publish(COSTMAP_GRID)
+    assert module.encoded["global_costmap"] == 1
+    assert wait_until(lambda: client.writers["global_costmap"].offers)
+    payload, meta = client.writers["global_costmap"].offers[0]
+    assert zlib.decompress(payload) == COSTMAP_CELLS
+    assert meta is not None
+    assert (meta["w"], meta["h"], meta["res"]) == (3, 2, 0.05)
+    assert meta["origin"][:2] == [-1.25, 2.5]
+    assert meta["origin"][2] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_costmap_empty_grid_is_skipped(costmap_bridge) -> None:
+    module, clients = costmap_bridge
+    push(module, clients[0], Subs(chs=["global_costmap"], n=1))
+    assert wait_until(lambda: len(costmap_transport(module).subscribers) == 2)
+
+    costmap_transport(module).publish(OccupancyGrid())
+    flush_loop(module)
+    assert module.encoded["global_costmap"] == 0
+    assert clients[0].writers["global_costmap"].offers == []
+
+
+def test_no_costmap_encode_while_unsubscribed(costmap_bridge, monkeypatch) -> None:
+    # The ticket-mandated spy, mirroring the jpeg one: compression must not
+    # happen without viewers, independent of the module.encoded bookkeeping.
+    module, clients = costmap_bridge
+    calls = {"n": 0}
+    real = zlib.compress
+
+    def spy(data: Any, level: int = -1) -> bytes:
+        calls["n"] += 1
+        return real(data, level)
+
+    monkeypatch.setattr(relay_bridge_module.zlib, "compress", spy)
+    costmap_transport(module).publish(COSTMAP_GRID)
+    costmap_transport(module).publish(COSTMAP_GRID)
+    flush_loop(module)
+    assert calls["n"] == 0
+    assert module.encoded["global_costmap"] == 0
+
+    push(module, clients[0], Subs(chs=["global_costmap"], n=1))
+    assert wait_until(lambda: len(costmap_transport(module).subscribers) == 2)
+    costmap_transport(module).publish(COSTMAP_GRID)
+    # Two compresses: the subscribe replayed the cached grid, then the live
+    # frame encoded.
+    assert calls["n"] == 2
+    assert module.encoded["global_costmap"] == 1
+
+
+def test_costmap_resent_on_resubscribe(costmap_bridge) -> None:
+    # A channel going 0 -> 1 viewers replays the cached frame: a fresh
+    # subscription must not wait for the next publish (the producer may have
+    # gone quiet).
+    module, clients = costmap_bridge
+    client = clients[0]
+    push(module, client, Subs(chs=["global_costmap"], n=1))
+    assert wait_until(lambda: len(costmap_transport(module).subscribers) == 2)
+    costmap_transport(module).publish(COSTMAP_GRID)
+    assert wait_until(lambda: len(client.writers["global_costmap"].offers) == 1)
+
+    push(module, client, Subs(chs=[], n=2))
+    assert wait_until(lambda: len(costmap_transport(module).subscribers) == 1)
+
+    push(module, client, Subs(chs=["global_costmap"], n=3))
+    assert wait_until(lambda: len(client.writers["global_costmap"].offers) == 2)
+    # Re-encoded from the raw cache; the counter tracks live encodes only.
+    assert module.encoded["global_costmap"] == 1
+    first, second = client.writers["global_costmap"].offers
+    assert first == second
+
+
+def test_costmap_cache_survives_reconnect(costmap_bridge) -> None:
+    module, clients = costmap_bridge
+    push(module, clients[0], Subs(chs=["global_costmap"], n=1))
+    assert wait_until(lambda: len(costmap_transport(module).subscribers) == 2)
+    costmap_transport(module).publish(COSTMAP_GRID)
+    assert wait_until(lambda: clients[0].writers["global_costmap"].offers)
+
+    kill_session(module, clients[0])
+    assert wait_until(lambda: len(clients) == 2)
+    push(module, clients[1], Subs(chs=["global_costmap"], n=1))
+    assert wait_until(lambda: clients[1].writers["global_costmap"].offers)
+    assert (
+        clients[1].writers["global_costmap"].offers == clients[0].writers["global_costmap"].offers
+    )
+    assert module.encoded["global_costmap"] == 1
+
+
+def test_costmap_cold_start_replay_on_first_subscribe(costmap_bridge) -> None:
+    # A grid published before any viewer exists must reach the first
+    # subscriber: the raw cache is always on, not tied to viewer state.
+    module, clients = costmap_bridge
+    client = clients[0]
+    t0 = time.time()
+    costmap_transport(module).publish(COSTMAP_GRID)
+    t1 = time.time()
+    assert module.encoded["global_costmap"] == 0
+
+    push(module, client, Subs(chs=["global_costmap"], n=1))
+    assert wait_until(lambda: client.writers["global_costmap"].offers)
+    payload, meta = client.writers["global_costmap"].offers[0]
+    assert zlib.decompress(payload) == COSTMAP_CELLS
+    assert meta is not None and (meta["w"], meta["h"]) == (3, 2)
+    assert module.encoded["global_costmap"] == 0  # a replay is not a live encode
+    ts = client.writers["global_costmap"].tss[0]
+    assert ts is not None and t0 <= ts <= t1  # arrival time, not replay time
+
+
+def test_costmap_replay_uses_message_published_while_unsubscribed(costmap_bridge) -> None:
+    # Cache map A with a viewer, drop to zero viewers, publish map B: the
+    # next subscriber must get B, not a stale A.
+    module, clients = costmap_bridge
+    client = clients[0]
+    push(module, client, Subs(chs=["global_costmap"], n=1))
+    assert wait_until(lambda: len(costmap_transport(module).subscribers) == 2)
+    costmap_transport(module).publish(COSTMAP_GRID)
+    assert wait_until(lambda: len(client.writers["global_costmap"].offers) == 1)
+
+    push(module, client, Subs(chs=[], n=2))
+    assert wait_until(lambda: len(costmap_transport(module).subscribers) == 1)
+    grid_b = OccupancyGrid(
+        grid=np.array([[100, 100, 100], [0, 0, 0]], dtype=np.int8),
+        resolution=0.05,
+        origin=Pose(-1.25, 2.5, 0.0),
+        ts=43.0,
+    )
+    costmap_transport(module).publish(grid_b)
+
+    push(module, client, Subs(chs=["global_costmap"], n=3))
+    assert wait_until(lambda: len(client.writers["global_costmap"].offers) == 2)
+    payload, _ = client.writers["global_costmap"].offers[1]
+    assert zlib.decompress(payload) == bytes([100, 100, 100, 0, 0, 0])
+    assert module.encoded["global_costmap"] == 1  # only A's live encode
+
+
+def test_costmap_empty_cached_grid_is_not_replayed(costmap_bridge) -> None:
+    module, clients = costmap_bridge
+    client = clients[0]
+    costmap_transport(module).publish(OccupancyGrid())
+    push(module, client, Subs(chs=["global_costmap"], n=1))
+    assert wait_until(lambda: len(costmap_transport(module).subscribers) == 2)
+    flush_loop(module)
+    assert client.writers["global_costmap"].offers == []
+
+
+def test_stop_disposes_costmap_cache_subscription(monkeypatch) -> None:
+    module, _clients = _make_bridge(monkeypatch, wire=("color_image", "odom", "global_costmap"))
+    transport = costmap_transport(module)
+    assert len(transport.subscribers) == 1  # the always-on raw cache
+    stop_module(module)
+    assert transport.unsubscribed == 1
+
+
+def test_bridge_import_does_not_pull_matplotlib() -> None:
+    # OccupancyGrid's visualization imports are lazy so the bridge does not
+    # cost every relay worker matplotlib's ~0.5 s / ~28 MiB (review issue 9).
+    code = (
+        "import sys; import dimos.web.relay_bridge.relay_bridge_module; "
+        "assert 'matplotlib' not in sys.modules"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_manifest_omits_pose_binding_when_odom_unwired(monkeypatch) -> None:
+    module, clients = _make_bridge(monkeypatch, wire=("color_image", "global_costmap"))
+    try:
+        _, manifest = clients[0].hello_args
+        assert isinstance(manifest, RobotManifest)
+        assert [c.ch for c in manifest.channels] == ["color_image", "global_costmap"]
+        map_panel = next(p for p in manifest.panels if p.kind == "map2d")
+        assert map_panel.channels == ["global_costmap"]
+    finally:
+        stop_module(module)
 
 
 def test_session_loss_stops_encoders_and_reconnects(bridge) -> None:
@@ -779,6 +1003,11 @@ class _ImageProducer(Module):
     color_image: Out[Image]
 
 
+class _CostmapProducer(Module):
+    config: _EmptyConfig
+    global_costmap: Out[OccupancyGrid]
+
+
 class _BareModule(Module):
     config: _EmptyConfig
 
@@ -789,6 +1018,15 @@ def test_composition_adds_relay_to_non_visual_blueprint() -> None:
 
     assert len(relay_atoms) == 1
     assert relay_atoms[0].kwargs["available_channels"] == ("color_image",)
+
+
+def test_composition_includes_costmap_producer() -> None:
+    blueprint = with_relay_bridge(
+        autoconnect(_ImageProducer.blueprint(), _CostmapProducer.blueprint())
+    )
+    relay_atom = next(atom for atom in blueprint.blueprints if atom.module is RelayBridgeModule)
+
+    assert relay_atom.kwargs["available_channels"] == ("color_image", "global_costmap")
 
 
 def test_composition_ignores_disabled_producers() -> None:

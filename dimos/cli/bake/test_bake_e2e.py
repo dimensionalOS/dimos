@@ -15,7 +15,7 @@
 """End-to-end: bake ray_tracing + mls_planner and run the binary for real.
 
 Excluded from the default run because it builds rust. Run it with
-``pytest -m self_hosted dimos/cli/bake/test_bake_e2e.py``.
+``pytest -m bake_e2e dimos/cli/bake/test_bake_e2e.py``.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
-pytestmark = pytest.mark.self_hosted
+pytestmark = pytest.mark.bake_e2e
 
 SUPPRESSED = ("global_map", "local_map", "region_bounds")
 # The sensor sits a meter above a flat patch of floor.
