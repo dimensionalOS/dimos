@@ -66,9 +66,16 @@ except (ConnectionError, ImportError):
     print("Redis not available")
 
 try:
+    import rosless
+
     from dimos.protocol.pubsub.impl.rospubsub import RawROS, RawROSTopic, ROSQoS
 
-    _test_qos = ROSQoS(reliable=True)
+    _test_qos = ROSQoS(
+        reliability="reliable",
+        durability="volatile",
+        history="keep_last",
+        depth=5000,
+    )
 
     @contextmanager
     def ros_context() -> Generator[RawROS, None, None]:
@@ -87,9 +94,9 @@ try:
                 topic="/test_ros_topic", ros_type="geometry_msgs/msg/Vector3", qos=_test_qos
             ),
             [
-                {"x": 1.0, "y": 2.0, "z": 3.0},
-                {"x": 4.0, "y": 5.0, "z": 6.0},
-                {"x": 7.0, "y": 8.0, "z": 9.0},
+                rosless.Message("geometry_msgs/msg/Vector3", x=1.0, y=2.0, z=3.0),
+                rosless.Message("geometry_msgs/msg/Vector3", x=4.0, y=5.0, z=6.0),
+                rosless.Message("geometry_msgs/msg/Vector3", x=7.0, y=8.0, z=9.0),
             ],
         )
     )

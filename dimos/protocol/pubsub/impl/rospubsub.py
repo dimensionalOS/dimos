@@ -15,19 +15,20 @@
 """ROS 2 pub/sub over rosless.
 
 ROS 2 is DDS plus a naming convention, and rosless speaks both without needing
-rclpy or a sourced workspace. Messages cross this boundary as plain field dicts,
-so a subscription never builds an rclpy object and image or point cloud payloads
-arrive as `bytes` pointing at one copy of the DDS buffer.
+rclpy or a sourced workspace. Messages cross this boundary as `rosless.Message`,
+whose fields are attributes, so a subscription never builds an rclpy object and
+image or point cloud payloads arrive as `bytes` pointing at one copy of the DDS
+buffer.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
 import os
 import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, cast
 
 import rosless
 
@@ -60,10 +61,17 @@ _MATCH_POLL_SECONDS = 0.02
 
 @dataclass(frozen=True)
 class ROSQoS:
-    """The QoS a ROS reader and writer have to agree on before they match."""
+    """The QoS policies of an rclpy `QoSProfile`, under the same names.
 
-    reliable: bool = True
-    transient_local: bool = False
+    `reliability` and `durability` decide whether a reader and a writer match at
+    all, and DDS refuses the pairing silently, so a mismatch shows up as a topic
+    that is simply never delivered. `history` and `depth` are local queueing and
+    can never be the reason a topic is quiet.
+    """
+
+    reliability: rosless.Reliability = "reliable"
+    durability: rosless.Durability = "volatile"
+    history: rosless.History = "keep_last"
     depth: int = DEFAULT_QUEUE_DEPTH
 
 
@@ -96,7 +104,7 @@ class _TopicReader:
         self,
         subscription: rosless.Subscription,
         topic: RawROSTopic,
-        callback: Callable[[Any, RawROSTopic], None],
+        callback: Callable[[rosless.Message, RawROSTopic], None],
     ) -> None:
         self.callback = callback
         self._subscription = subscription
@@ -118,7 +126,8 @@ class _TopicReader:
                 if message is None or self._stopped.is_set():
                     continue
                 try:
-                    self.callback(message, self._topic)
+                    # `subscribe` rejects uncatalogued types, so this is never raw CDR.
+                    self.callback(cast("rosless.Message", message), self._topic)
                 except Exception:
                     logger.exception(f"ROS callback on {self._topic.topic} raised")
 
@@ -129,8 +138,8 @@ class _TopicReader:
         self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
 
-class RawROS(PubSub[RawROSTopic, Any]):
-    """ROS 2 pubsub over rosless, exchanging messages as field dicts."""
+class RawROS(PubSub[RawROSTopic, rosless.Message]):
+    """ROS 2 pubsub over rosless, exchanging messages as `rosless.Message`."""
 
     def __init__(self, domain: int | None = None, qos: ROSQoS | None = None) -> None:
         """Initialize the ROS pubsub.
@@ -182,19 +191,20 @@ class RawROS(PubSub[RawROSTopic, Any]):
             publisher = self._node.advertise(
                 topic.topic,
                 topic.ros_type,
-                reliable=qos.reliable,
-                transient_local=qos.transient_local,
+                reliability=qos.reliability,
+                durability=qos.durability,
+                history=qos.history,
                 depth=qos.depth,
             )
             self._publishers[topic.topic] = publisher
             return publisher
 
-    def publish(self, topic: RawROSTopic, message: Any) -> None:
-        """Publish a field dict to a ROS topic.
+    def publish(self, topic: RawROSTopic, message: rosless.Message) -> None:
+        """Publish a message to a ROS topic.
 
         Args:
             topic: RawROSTopic descriptor with topic name and ROS type name
-            message: Field dict matching that ROS type
+            message: `rosless.Message` of that ROS type
         """
         if self._node is None:
             return
@@ -218,13 +228,13 @@ class RawROS(PubSub[RawROSTopic, Any]):
         return False
 
     def subscribe(
-        self, topic: RawROSTopic, callback: Callable[[Any, RawROSTopic], None]
+        self, topic: RawROSTopic, callback: Callable[[rosless.Message, RawROSTopic], None]
     ) -> Callable[[], None]:
         """Subscribe to a ROS topic with a callback.
 
         Args:
             topic: RawROSTopic descriptor with topic name and ROS type name
-            callback: Function called with (field_dict, topic) when a message arrives
+            callback: Function called with (message, topic) when a message arrives
 
         Returns:
             Unsubscribe function
@@ -232,12 +242,15 @@ class RawROS(PubSub[RawROSTopic, Any]):
         with self._lock:
             if self._node is None:
                 raise RuntimeError("ROS pubsub not started")
+            if rosless.lookup(topic.ros_type) is None:
+                raise ValueError(f"{topic.ros_type} is not in the rosless type catalogue")
             qos = self._qos_for(topic)
             subscription = self._node.subscribe(
                 topic.topic,
                 topic.ros_type,
-                reliable=qos.reliable,
-                transient_local=qos.transient_local,
+                reliability=qos.reliability,
+                durability=qos.durability,
+                history=qos.history,
                 depth=qos.depth,
             )
             reader = _TopicReader(subscription, topic, callback)
@@ -289,8 +302,8 @@ class DimosROS(PubSub[ROSTopic, "DimosMsg"]):
     ) -> Callable[[], None]:
         """Subscribe to a ROS topic, converting each message to `topic.msg_type`."""
 
-        def wrapped_callback(fields: Mapping[str, Any], _raw_topic: RawROSTopic) -> None:
-            callback(ros_to_dimos(fields, topic.msg_type), topic)
+        def wrapped_callback(ros_msg: rosless.Message, _raw_topic: RawROSTopic) -> None:
+            callback(ros_to_dimos(ros_msg, topic.msg_type), topic)
 
         return self._raw.subscribe(self._to_raw_topic(topic), wrapped_callback)
 

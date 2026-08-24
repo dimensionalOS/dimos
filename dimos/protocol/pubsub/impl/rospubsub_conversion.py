@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Conversion between dimos messages and the field dicts rosless exchanges.
+"""Conversion between dimos messages and the `rosless.Message` rosless exchanges.
 
-rosless hands a decoded ROS message over as a plain dict, and takes one back to
-encode. A dict of that shape is already a field-for-field match for the LCM
-message dimos types are built from, so the conversion is a copy driven by the
-ROS schema rather than a re-serialization.
+rosless hands a decoded ROS message over as a `rosless.Message`, whose fields are
+attributes, and takes one back to encode. That is already a field-for-field match
+for the LCM message dimos types are built from, so the conversion is a copy driven
+by the ROS schema rather than a re-serialization.
 
 Types whose dimos representation differs from their wire layout (point clouds,
 images) still go through an LCM roundtrip to reach that representation.
@@ -25,7 +25,7 @@ images) still go through an LCM roundtrip to reach that representation.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import array
 from dataclasses import dataclass
 import importlib
 from typing import TYPE_CHECKING, Any
@@ -46,9 +46,12 @@ COMPLEX_TYPES: set[str] = {
     "geometry_msgs.PoseStamped",
 }
 
-# dimos_lcm carries ROS 1 spellings for a few fields.
-_ROS_TO_LCM_FIELD_MAP: dict[str, str] = {
-    "nanosec": "nsec",
+# dimos_lcm carries ROS 1 field spellings for a few types. Keyed by type because
+# `std_msgs/msg/ColorRGBA.r` must not pick up `CameraInfo`'s `r` -> `R`.
+_ROS_TO_LCM_FIELD_MAP: dict[str, dict[str, str]] = {
+    "builtin_interfaces/msg/Time": {"nanosec": "nsec"},
+    "builtin_interfaces/msg/Duration": {"nanosec": "nsec"},
+    "sensor_msgs/msg/CameraInfo": {"d": "D", "k": "K", "r": "R", "p": "P"},
 }
 
 _lcm_type_cache: dict[str, type[Any]] = {}
@@ -114,10 +117,11 @@ def _plan_for(ros_type_name: str) -> tuple[_FieldPlan, ...]:
     schema = rosless.lookup(ros_type_name)
     if schema is None:
         raise ValueError(f"{ros_type_name} is not in the rosless type catalogue")
+    renames = _ROS_TO_LCM_FIELD_MAP.get(ros_type_name, {})
     plan = tuple(
         _FieldPlan(
             ros_name=field.name,
-            lcm_name=_ROS_TO_LCM_FIELD_MAP.get(field.name, field.name),
+            lcm_name=renames.get(field.name, field.name),
             nested_type=field.type_name if rosless.lookup(field.type_name) else None,
             is_array=field.multiplicity != "unit",
         )
@@ -127,7 +131,7 @@ def _plan_for(ros_type_name: str) -> tuple[_FieldPlan, ...]:
     return plan
 
 
-def _read_fields(source: Any, ros_type_name: str) -> dict[str, Any]:
+def _read_fields(source: Any, ros_type_name: str) -> rosless.Message:
     fields: dict[str, Any] = {}
     for field in _plan_for(ros_type_name):
         if not hasattr(source, field.lcm_name):
@@ -139,14 +143,14 @@ def _read_fields(source: Any, ros_type_name: str) -> dict[str, Any]:
             fields[field.ros_name] = [_read_fields(item, field.nested_type) for item in value]
         else:
             fields[field.ros_name] = _read_fields(value, field.nested_type)
-    return fields
+    return rosless.Message(ros_type_name, **fields)
 
 
-def _write_fields(target: Any, fields: Mapping[str, Any], ros_type_name: str) -> None:
+def _write_fields(target: Any, source: Any, ros_type_name: str) -> None:
     for field in _plan_for(ros_type_name):
-        if field.ros_name not in fields or not hasattr(target, field.lcm_name):
+        value = getattr(source, field.ros_name, None)
+        if value is None or not hasattr(target, field.lcm_name):
             continue
-        value = fields[field.ros_name]
 
         if field.nested_type is None:
             setattr(target, field.lcm_name, value)
@@ -163,12 +167,14 @@ def _write_fields(target: Any, fields: Mapping[str, Any], ros_type_name: str) ->
 
         length_field = f"{field.lcm_name}_length"
         stored = getattr(target, field.lcm_name)
-        if hasattr(target, length_field) and isinstance(stored, (list, tuple, bytes, bytearray)):
+        if hasattr(target, length_field) and isinstance(
+            stored, (list, tuple, bytes, bytearray, array.array)
+        ):
             setattr(target, length_field, len(stored))
 
 
-def dimos_to_ros(msg: DimosMsg, ros_type_name: str) -> dict[str, Any]:
-    """Flatten a dimos message into the field dict rosless encodes from."""
+def dimos_to_ros(msg: DimosMsg, ros_type_name: str) -> rosless.Message:
+    """Flatten a dimos message into the `rosless.Message` rosless encodes from."""
     if type(msg).msg_name in COMPLEX_TYPES:
         source: Any = derive_lcm_type(type(msg)).lcm_decode(msg.lcm_encode())
     else:
@@ -176,15 +182,15 @@ def dimos_to_ros(msg: DimosMsg, ros_type_name: str) -> dict[str, Any]:
     return _read_fields(source, ros_type_name)
 
 
-def ros_to_dimos(fields: Mapping[str, Any], dimos_type: type[DimosMsg]) -> DimosMsg:
-    """Build a dimos message from the field dict rosless decoded."""
+def ros_to_dimos(ros_msg: rosless.Message, dimos_type: type[DimosMsg]) -> DimosMsg:
+    """Build a dimos message from the `rosless.Message` rosless decoded."""
     ros_type_name = derive_ros_type_name(dimos_type)
 
     if dimos_type.msg_name in COMPLEX_TYPES:
         lcm_msg = derive_lcm_type(dimos_type)()
-        _write_fields(lcm_msg, fields, ros_type_name)
+        _write_fields(lcm_msg, ros_msg, ros_type_name)
         return dimos_type.lcm_decode(lcm_msg.lcm_encode())
 
     dimos_msg = dimos_type()
-    _write_fields(dimos_msg, fields, ros_type_name)
+    _write_fields(dimos_msg, ros_msg, ros_type_name)
     return dimos_msg

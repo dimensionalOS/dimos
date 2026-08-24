@@ -29,7 +29,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-08-15T11:38:51.310565Z"
+exclude-newer = "2026-08-17T14:48:56.098883Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -2317,7 +2317,7 @@ requires-dist = [
     { name = "rerun-sdk", specifier = "==0.32.0" },
     { name = "rerun-sdk", marker = "extra == 'visualization'", specifier = "==0.32.0" },
     { name = "roboplan", marker = "extra == 'manipulation'", specifier = ">=0.6.0,<0.7.0" },
-    { name = "rosless", specifier = ">=0.3.0" },
+    { name = "rosless", specifier = ">=0.4.0" },
     { name = "scipy", specifier = ">=1.15.1" },
     { name = "sentencepiece", marker = "extra == 'perception'", specifier = ">=0.2.0" },
     { name = "sortedcontainers", specifier = "==2.4.0" },
@@ -8505,14 +8505,14 @@ wheels = [
 
 [[package]]
 name = "rosless"
-version = "0.3.0"
+version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/09/17/d1a656ed93e19ed93c9974c774aeec6f6441be95749f3762a21139279e4b/rosless-0.3.0.tar.gz", hash = "sha256:1b316fa30317afeedbb1bb8daccd44cfb157a20c0a37408954751283cd26839b", size = 94421, upload-time = "2026-08-22T11:30:10.854Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1d/cf/3bcb99299fd1cac2402e5aa9dd847523b9a01daf68a47461609560b3c126/rosless-0.4.0.tar.gz", hash = "sha256:e5d2dab0cb1805a8dba9f9d1f1a7bb44243e10440f6714a9930161cdcaed7d82", size = 104310, upload-time = "2026-08-24T14:44:41.405Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7f/3d/4110b3e1eb2e17d9029852915f819ecea984976693658153bef358c0c143/rosless-0.3.0-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:09a1231555485e1024e5cd806d71bc9c688cd77bc748592d9dcab12610217265", size = 1472160, upload-time = "2026-08-22T11:30:04.723Z" },
-    { url = "https://files.pythonhosted.org/packages/84/eb/73467a6fe8344f592c0695d72c133f6d61e2bef6dd30a6bc717df391fbf3/rosless-0.3.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:b7c6c77fa355b609385e10176578321da218c48e94a99b2aa2d262612798c2a1", size = 1427990, upload-time = "2026-08-22T11:30:06.239Z" },
-    { url = "https://files.pythonhosted.org/packages/7c/7d/409f98c069318e8b1dd09d49260d9c0b5e6e0910805b677acc6bbf6b2682/rosless-0.3.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:c4b37af996c8779a2213c4d36181093c8309d7a0370ad825394e8e01f3a899d9", size = 1560512, upload-time = "2026-08-22T11:30:07.696Z" },
-    { url = "https://files.pythonhosted.org/packages/3c/5a/1be64a275daad537d95871dff0e5ff8dd68c39c9ea5480d13f711a3aa3a0/rosless-0.3.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a2cbbed44e45117ced42dd8ca93daf6d3d096082b9ab8813f56cb555a2bef615", size = 1654138, upload-time = "2026-08-22T11:30:09.757Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/9f/414b85f4eff0d7bb25bc796e0cb02b430e3e58f136a2437ec9d1565a9ef4/rosless-0.4.0-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:ff6a0047baacb457b67bc59b1c31648f60c0ca5bccba19f0c0697be2e01de492", size = 1496332, upload-time = "2026-08-24T14:44:32.219Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/2f/53fe0ec2933a091f01b23efdceeff0c75032b035478ea25840badd745c06/rosless-0.4.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:410d0a0506e27d2eb29f50ad13888f736ced31c116da71f668f17334102ee3bb", size = 1453171, upload-time = "2026-08-24T14:44:34.799Z" },
+    { url = "https://files.pythonhosted.org/packages/56/80/46659eb9a7f6374b4718eec04159436d3fe38a4ecd2ff863d618360da133/rosless-0.4.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:78a2df9dec8a93d13fbab7543229a8b43d18759a13f33941e9441a56fceb73f2", size = 1581885, upload-time = "2026-08-24T14:44:37.186Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/e6/0ac00bb52adcdd4793cf0056b327ea596e10753919b823bf81eea2a19ca6/rosless-0.4.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:e598c82aae8770387151951ef07825b9459bd6faa61483dcad98e39bcf5c561f", size = 1675360, upload-time = "2026-08-24T14:44:40.129Z" },
 ]
 
 [[package]]

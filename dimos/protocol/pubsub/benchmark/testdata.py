@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pytest
+import rosless
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.protocol.pubsub.benchmark.type import Case
@@ -370,19 +371,33 @@ if ROS_AVAILABLE:
 
     @contextmanager
     def ros_best_effort_pubsub_channel() -> Generator[RawROS, None, None]:
-        ros_pubsub = RawROS(qos=ROSQoS(reliable=False))
+        ros_pubsub = RawROS(
+            qos=ROSQoS(
+                reliability="best_effort",
+                durability="volatile",
+                history="keep_last",
+                depth=5000,
+            )
+        )
         ros_pubsub.start()
         yield ros_pubsub
         ros_pubsub.stop()
 
     @contextmanager
     def ros_reliable_pubsub_channel() -> Generator[RawROS, None, None]:
-        ros_pubsub = RawROS(qos=ROSQoS(reliable=True))
+        ros_pubsub = RawROS(
+            qos=ROSQoS(
+                reliability="reliable",
+                durability="volatile",
+                history="keep_last",
+                depth=5000,
+            )
+        )
         ros_pubsub.start()
         yield ros_pubsub
         ros_pubsub.stop()
 
-    def ros_msggen(size: int) -> tuple[RawROSTopic, dict[str, Any]]:
+    def ros_msggen(size: int) -> tuple[RawROSTopic, rosless.Message]:
         import numpy as np
 
         # Create image data
@@ -394,15 +409,20 @@ if ROS_AVAILABLE:
         width = pixels // height
         final_data: NDArray[np.uint8] = padded_data[: height * width * 3]
 
-        msg = {
-            "header": {"stamp": {"sec": 0, "nanosec": 0}, "frame_id": ""},
-            "height": height,
-            "width": width,
-            "encoding": "rgb8",
-            "is_bigendian": False,
-            "step": width * 3,
-            "data": bytes(final_data),
-        }
+        msg = rosless.Message(
+            "sensor_msgs/msg/Image",
+            header=rosless.Message(
+                "std_msgs/msg/Header",
+                stamp=rosless.Message("builtin_interfaces/msg/Time", sec=0, nanosec=0),
+                frame_id="",
+            ),
+            height=height,
+            width=width,
+            encoding="rgb8",
+            is_bigendian=False,
+            step=width * 3,
+            data=bytes(final_data),
+        )
 
         topic = RawROSTopic(topic="/benchmark/ros", ros_type="sensor_msgs/msg/Image")
         return (topic, msg)
@@ -423,14 +443,28 @@ if ROS_AVAILABLE:
 
     @contextmanager
     def dimos_ros_best_effort_pubsub_channel() -> Generator[DimosROS, None, None]:
-        ros_pubsub = DimosROS(qos=ROSQoS(reliable=False))
+        ros_pubsub = DimosROS(
+            qos=ROSQoS(
+                reliability="best_effort",
+                durability="volatile",
+                history="keep_last",
+                depth=5000,
+            )
+        )
         ros_pubsub.start()
         yield ros_pubsub
         ros_pubsub.stop()
 
     @contextmanager
     def dimos_ros_reliable_pubsub_channel() -> Generator[DimosROS, None, None]:
-        ros_pubsub = DimosROS(qos=ROSQoS(reliable=True))
+        ros_pubsub = DimosROS(
+            qos=ROSQoS(
+                reliability="reliable",
+                durability="volatile",
+                history="keep_last",
+                depth=5000,
+            )
+        )
         ros_pubsub.start()
         yield ros_pubsub
         ros_pubsub.stop()
