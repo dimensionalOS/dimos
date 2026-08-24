@@ -124,9 +124,14 @@ class RecordingFramePreprocessor:
             except LookupError as exc:
                 raise ValueError("recorded camera_info stream is empty") from exc
             self._recorded_camera_info = recorded_camera_info
-            self._recorded_tf = StreamTF.from_store(store)
-            if self._recorded_tf is None:
+            recorded_tf = StreamTF.from_store(store)
+            if recorded_tf is None:
                 raise ValueError("recorded tf stream is unavailable")
+            try:
+                recorded_tf.stream.first()
+            except LookupError as exc:
+                raise ValueError("recorded tf stream is empty") from exc
+            self._recorded_tf = recorded_tf
             self._store = store
         except BaseException:
             store.stop()

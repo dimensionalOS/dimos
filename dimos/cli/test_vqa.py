@@ -22,7 +22,12 @@ from dimos.cli.dimos import main as app
 from dimos.evals import runner as runner_module
 from dimos.evals.types import EvalResult
 from dimos.evals.vqa import generate as generate_module, suite as suite_module
-from dimos.evals.vqa.generate import GenerationRequest, GenerationResult, PublicCase
+from dimos.evals.vqa.generate import (
+    GenerationRequest,
+    GenerationResult,
+    PublicCase,
+    VqaGenerationConfig,
+)
 
 
 def test_vqa_cli_exposes_generate_and_run() -> None:
@@ -44,7 +49,7 @@ def test_vqa_generate_cli_declares_single_image_input() -> None:
     assert "--start" in output
     assert "--stop" in output
     assert "--stride" in output
-    assert "--sync-tolerance" not in output
+    assert "--sync-tolerance" in output
     assert "--output" in output
     assert "absent or empty" in output
 
@@ -59,10 +64,10 @@ def test_vqa_run_cli_declares_standalone_dataset_input() -> None:
 
 
 def test_vqa_generate_cli_runs_generation(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    seen: list[GenerationRequest] = []
+    seen: list[tuple[GenerationRequest, VqaGenerationConfig]] = []
 
-    def fake_generate(request: GenerationRequest) -> GenerationResult:
-        seen.append(request)
+    def fake_generate(request: GenerationRequest, config: VqaGenerationConfig) -> GenerationResult:
+        seen.append((request, config))
         return GenerationResult(
             output=request.output_directory(),
             cases=(
@@ -88,21 +93,28 @@ def test_vqa_generate_cli_runs_generation(monkeypatch: pytest.MonkeyPatch, tmp_p
             "3",
             "--output",
             str(tmp_path),
+            "--sync-tolerance",
+            "0.25",
         ],
     )
 
     assert result.exit_code == 0
-    assert seen == [GenerationRequest(dataset="recording.db", image_index=3, output=tmp_path)]
+    assert seen == [
+        (
+            GenerationRequest(dataset="recording.db", image_index=3, output=tmp_path),
+            VqaGenerationConfig(synchronization_tolerance_s=0.25),
+        )
+    ]
     assert "Generated 1 VQA case" in result.stdout
 
 
 def test_vqa_generate_cli_accepts_frame_range(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    seen: list[GenerationRequest] = []
+    seen: list[tuple[GenerationRequest, VqaGenerationConfig]] = []
 
-    def fake_generate(request: GenerationRequest) -> GenerationResult:
-        seen.append(request)
+    def fake_generate(request: GenerationRequest, config: VqaGenerationConfig) -> GenerationResult:
+        seen.append((request, config))
         return GenerationResult(output=request.output_directory(), cases=())
 
     monkeypatch.setattr(generate_module, "generate_dataset", fake_generate)
@@ -127,12 +139,15 @@ def test_vqa_generate_cli_accepts_frame_range(
 
     assert result.exit_code == 0
     assert seen == [
-        GenerationRequest(
-            dataset="recording.db",
-            start=2,
-            stop=9,
-            stride=3,
-            output=tmp_path,
+        (
+            GenerationRequest(
+                dataset="recording.db",
+                start=2,
+                stop=9,
+                stride=3,
+                output=tmp_path,
+            ),
+            VqaGenerationConfig(),
         )
     ]
 

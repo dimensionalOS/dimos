@@ -77,6 +77,10 @@ class FamilyAnswer(BaseModel):
         return self
 
 
+class InvalidQuestionProposalError(ValueError):
+    """A proposal does not satisfy its selected question family contract."""
+
+
 @dataclass(frozen=True)
 class FamilySpec:
     """The proposal shape exposed to the image-only question author."""
@@ -93,7 +97,7 @@ class FamilySpec:
     def validate(self, proposal: QuestionProposal) -> None:
         """Validate a structurally parsed proposal against this family contract."""
         if proposal.family != self.name:
-            raise ValueError(
+            raise InvalidQuestionProposalError(
                 f"proposal family {proposal.family!r} does not match specification {self.name!r}"
             )
         count = len(proposal.object_names)
@@ -102,12 +106,12 @@ class FamilySpec:
                 requirement = f"exactly {self.min_objects} object name"
             else:
                 requirement = f"{self.min_objects} to {self.max_objects} object names"
-            raise ValueError(f"{self.name} requires {requirement}")
+            raise InvalidQuestionProposalError(f"{self.name} requires {requirement}")
         if (
             self.distinct_objects
             and len({name.casefold() for name in proposal.object_names}) != count
         ):
-            raise ValueError(f"{self.name} requires distinct object names")
+            raise InvalidQuestionProposalError(f"{self.name} requires distinct object names")
 
 
 class InsufficientEvidenceError(ValueError):

@@ -123,6 +123,29 @@ class _Segmenter:
         return ImageDetections2D(detections.image, segmented)
 
 
+class _SamResultSegmenter:
+    def __init__(self, mask: np.ndarray) -> None:
+        self._mask = mask
+
+    def segment(
+        self, detections: ImageDetections2D[Detection2DBBox]
+    ) -> ImageDetections2D[Detection2DSeg]:
+        return ImageDetections2D(
+            detections.image,
+            [
+                Detection2DSeg.from_sam2_result(
+                    self._mask,
+                    detection.track_id,
+                    detections.image,
+                    class_id=detection.class_id,
+                    name=detection.name,
+                    confidence=detection.confidence,
+                )
+                for detection in detections
+            ],
+        )
+
+
 def _frame(
     pointcloud: _PointCloud,
     *,
@@ -190,6 +213,31 @@ def test_mask_estimator_batches_and_caches_without_pointcloud() -> None:
     estimator.estimate(image, "left person")
 
     assert segmenter.call_count == 2
+
+
+@pytest.mark.parametrize(
+    ("foreground", "expected_bbox"),
+    (
+        ((slice(2, 8), 5), (5.0, 2.0, 6.0, 8.0)),
+        ((5, slice(2, 8)), (2.0, 5.0, 8.0, 6.0)),
+    ),
+)
+def test_accepts_one_pixel_thin_sam_masks(
+    foreground: tuple[slice | int, slice | int],
+    expected_bbox: BBox,
+) -> None:
+    image = Image(data=np.zeros((10, 10, 3), dtype=np.uint8), ts=10.0)
+    mask = np.zeros((image.height, image.width), dtype=np.uint8)
+    mask[foreground] = 1
+    estimator = EdgeTamObjectMaskPipeline(
+        _Detector([(0.0, 0.0, 10.0, 10.0)]),
+        _SamResultSegmenter(mask),
+    )
+
+    evidence = estimator.estimate(image, "pole")
+
+    assert evidence.mask_bbox_xyxy == expected_bbox
+    assert evidence.mask_area_px == 6
 
 
 def test_projects_transformed_points_and_rejects_invalid_projections() -> None:
@@ -274,6 +322,22 @@ def test_rejects_invalid_camera_intrinsics_before_projection() -> None:
 
     with pytest.raises(ValueError, match="positive focal lengths"):
         estimator.estimate(frame, "bottle")
+
+
+def test_rejects_dimension_mismatch_before_mask_inference() -> None:
+    frame = _frame(_PointCloud(np.array([[0.0, 0.0, 1.0]])))
+    frame.camera_info.width = 9
+    segmenter = _Segmenter(_full_mask())
+    estimator = _range_estimator(
+        _Detector([(0.0, 0.0, 10.0, 10.0)]),
+        segmenter,
+        min_supporting_points=1,
+    )
+
+    with pytest.raises(ValueError, match="dimensions do not match"):
+        estimator.estimate(frame, "bottle")
+
+    assert segmenter.call_count == 0
 
 
 def test_rejects_segmentation_mask_with_wrong_dimensions() -> None:

@@ -66,16 +66,16 @@ class LidarRangeEstimator:
         self, frame: CalibratedFrame, object_names: tuple[str, ...]
     ) -> tuple[ObjectRangeEvidence, ...]:
         """Estimate several ranges with cached masks and one projected cloud."""
-        masks = self._masks.estimate_many(frame.image, object_names)
-        if frame is not self._cached_frame:
-            self._cached_frame = frame
-            self._cached_projection = None
-            self._cached_evidence.clear()
         if (frame.camera_info.height, frame.camera_info.width) != (
             frame.image.height,
             frame.image.width,
         ):
             raise ValueError("camera calibration dimensions do not match the rectified image")
+        masks = self._masks.estimate_many(frame.image, object_names)
+        if frame is not self._cached_frame:
+            self._cached_frame = frame
+            self._cached_projection = None
+            self._cached_evidence.clear()
 
         pending = [mask for mask in masks if mask.object_name not in self._cached_evidence]
         if pending:

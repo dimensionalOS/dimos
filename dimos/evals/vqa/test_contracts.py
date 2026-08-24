@@ -72,6 +72,14 @@ class _MixedAuthor:
         )
 
 
+class _InvalidThenValidAuthor:
+    def propose(self, image: Image, families: Sequence[FamilySpec]) -> Sequence[QuestionProposal]:
+        return (
+            QuestionProposal(family="presence", object_names=("chair", "table")),
+            QuestionProposal(family="presence", object_names=("chair",)),
+        )
+
+
 class _DistanceAuthor:
     def propose(self, image: Image, families: Sequence[FamilySpec]) -> Sequence[QuestionProposal]:
         return (QuestionProposal(family="object_distance", object_names=("chair",)),)
@@ -936,6 +944,24 @@ def test_generation_rejects_nonempty_output_without_modifying_it(tmp_path: Path)
 
     assert existing.read_text() == "keep me"
     assert list(output.iterdir()) == [existing]
+
+
+def test_generation_audits_invalid_family_proposals_and_continues(tmp_path: Path) -> None:
+    output = tmp_path / "vqa"
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    request = GenerationRequest(dataset="recording.db", image_index=4, output=output)
+
+    result = generate_frames_dataset(
+        request,
+        (GenerationFrame(4, image),),
+        cast("QuestionAuthor", _InvalidThenValidAuthor()),
+        _Detector(present=True),
+    )
+
+    assert len(result.cases) == 1
+    ground_truth = json.loads((output / "audit" / "frame-000004" / "ground_truth.json").read_text())
+    assert [row["status"] for row in ground_truth] == ["rejected", "answered"]
+    assert ground_truth[0]["reason"] == "presence requires exactly 1 object name"
 
 
 def test_generate_distance_case_from_calibrated_frame(tmp_path: Path) -> None:

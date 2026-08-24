@@ -34,10 +34,19 @@ def generate(
         None,
         help="Destination directory; must be absent or empty",
     ),
+    sync_tolerance: float = typer.Option(
+        0.1,
+        min=0.0,
+        help="Maximum image/LiDAR timestamp delta in seconds",
+    ),
 ) -> None:
     """Generate questions for one image or an indexed image range."""
     # Keep generation's optional model stack out of global CLI startup.
-    from dimos.evals.vqa.generate import GenerationRequest, generate_dataset
+    from dimos.evals.vqa.generate import (
+        GenerationRequest,
+        VqaGenerationConfig,
+        generate_dataset,
+    )
 
     request = GenerationRequest(
         dataset=dataset,
@@ -47,7 +56,10 @@ def generate(
         stop=stop,
         stride=stride,
     )
-    result = generate_dataset(request)
+    result = generate_dataset(
+        request,
+        config=VqaGenerationConfig(synchronization_tolerance_s=sync_tolerance),
+    )
     typer.echo(f"Generated {len(result.cases)} VQA case(s) in {result.output}")
 
 

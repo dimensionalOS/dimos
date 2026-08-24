@@ -72,6 +72,20 @@ def test_rejects_incomplete_recorded_calibration(
         preprocessor.start()
 
 
+def test_rejects_empty_recorded_tf_stream(tmp_path: Path) -> None:
+    recording = tmp_path / "recording.db"
+    camera_info = CameraInfo.from_intrinsics(1.0, 1.0, 0.0, 0.0, 2, 2)
+    with SqliteStore(path=recording) as store:
+        store.stream("color_image", Image)
+        store.stream("lidar", PointCloud2)
+        store.stream("camera_info", CameraInfo).append(camera_info, ts=0.0)
+        store.stream("tf", TFMessage)
+
+    preprocessor = RecordingFramePreprocessor(recording)
+    with pytest.raises(ValueError, match="tf stream is empty"):
+        preprocessor.start()
+
+
 def test_load_uses_recorded_camera_info_and_tf(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

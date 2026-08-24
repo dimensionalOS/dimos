@@ -36,6 +36,7 @@ from dimos.evals.vqa.contracts import (
     FamilyAnswer,
     FamilySpec,
     InsufficientEvidenceError,
+    InvalidQuestionProposalError,
     NonEmptyString,
     ObjectDetector,
     ObjectMaskEstimator,
@@ -296,7 +297,7 @@ def _generate_frame(
                 range_estimator,
                 mask_estimator,
             )
-        except InsufficientEvidenceError as exc:
+        except (InsufficientEvidenceError, InvalidQuestionProposalError) as exc:
             audit_rows.append(
                 {
                     "proposal": proposal.model_dump(mode="json", exclude_none=True),

@@ -26,10 +26,11 @@ Generated datasets default to:
 ~/.local/state/dimos/datasets/vqa/<recording-stem>-frames
 ```
 
-Use `--output <directory>` to override that location. The destination must be empty. Recordings
-without complete camera calibration and TF streams are rejected. Point-cloud evidence is available
-when image and LiDAR observations are within `0.1` seconds by default; unmatched frames retain only
-image-based question families.
+Use `--output <directory>` to override that location. The destination must be empty. Missing or empty
+camera calibration and TF streams are rejected. Point-cloud evidence is available when image and
+LiDAR observations are within `0.1` seconds by default; use `--sync-tolerance <seconds>` to adjust
+that limit. Frames with unmatched LiDAR observations or unresolvable TF retain only image-based
+question families.
 
 ## Question Families
 
