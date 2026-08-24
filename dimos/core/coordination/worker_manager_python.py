@@ -15,9 +15,6 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from multiprocessing import forkserver, util
-import os
-import signal
 from typing import TYPE_CHECKING, Any
 
 from dimos.core.coordination.python_worker import PythonWorker
@@ -216,25 +213,6 @@ class WorkerManagerPython:
                 logger.error(f"Error shutting down worker: {e}", exc_info=True)
 
         self._workers.clear()
-
-        # The forkserver and the resource tracker each hold a copy of the other's
-        # keep-alive fd, and ResourceTracker.__del__ blocks in waitpid during
-        # interpreter finalization until every copy of its fd closes: a deadlock
-        # that hangs shutdown after stop() returns. forkserver._stop() is not
-        # enough — it waits for the alive-fd EOF that the resource tracker's copy
-        # prevents — so the forkserver is terminated outright. It restarts on
-        # demand if another worker is ever spawned.
-        fs = forkserver._forkserver
-        with fs._lock:  # type: ignore[attr-defined]
-            if fs._forkserver_pid is not None:  # type: ignore[attr-defined]
-                os.close(fs._forkserver_alive_fd)  # type: ignore[attr-defined]
-                fs._forkserver_alive_fd = None  # type: ignore[attr-defined]
-                os.kill(fs._forkserver_pid, signal.SIGTERM)  # type: ignore[attr-defined]
-                os.waitpid(fs._forkserver_pid, 0)  # type: ignore[attr-defined]
-                fs._forkserver_pid = None  # type: ignore[attr-defined]
-                if not util.is_abstract_socket_namespace(fs._forkserver_address):  # type: ignore[attr-defined]
-                    os.unlink(fs._forkserver_address)  # type: ignore[attr-defined]
-                fs._forkserver_address = None  # type: ignore[attr-defined]
 
         logger.info("All workers shut down")
 
