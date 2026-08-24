@@ -103,7 +103,8 @@ reference on drive_2026-08-18_23-05-04.db)."""
 ALFRED_BODY_HEIGHT_METERS = 0.5
 
 vis_nav = autoconnect(
-    # drive_2026-08-18_23-05-04.db vs lidar: wheel 2.66 m, wheel + gyro 1.33 m, floor 0.59 m.
+    # drive_2026-08-18_23-05-04.db vs lidar: wheel alone ends 2.66 m out, wheel + gyro 1.33 m,
+    # against the 0.59 m floor the same wheel steps reach on the reference's own heading.
     DimSlam.blueprint(
         # Alfred's computer has no GPU; the fork-built libcuvslam carries the CPU path.
         use_gpu=False,
