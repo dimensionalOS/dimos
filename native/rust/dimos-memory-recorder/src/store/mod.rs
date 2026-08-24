@@ -18,12 +18,12 @@ mod sqlite;
 use std::sync::Arc;
 
 use anyhow::Result;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::StreamConfig;
 
 /// Durable artifact configuration for the recorder's writer thread.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum RecordingStoreConfig {
     Sqlite { path: String },
