@@ -25,7 +25,6 @@ glass defeats. The verdicts, rejections included, are in
 ``go2_glass_labels.json`` beside this file and cannot be regenerated.
 ``open`` gates are ones the robot drove through.
 
-Rows are sliced train / holdout / spare by :mod:`dimos.evals.temp.split`.
 
 Regenerate (needs both recordings)::
 
@@ -42,13 +41,12 @@ from typing import NamedTuple
 import numpy as np
 
 from dimos.evals import generate
-from dimos.evals.temp import split
 from dimos.evals.types import Suite
 
 _JSON = Path(__file__).parent / "go2_pointcloud_glass_vqa.json"
 
 SUITE: Suite = generate.cases(
-    split.assign(json.loads(_JSON.read_text())), tags=frozenset({"pointcloud"})
+    json.loads(_JSON.read_text()), tags=frozenset({"pointcloud"})
 )
 
 

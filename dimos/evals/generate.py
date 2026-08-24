@@ -52,9 +52,8 @@ if TYPE_CHECKING:
 Row = dict[str, object]
 
 VETOES = Path(__file__).parent / "suites" / "go2_pointcloud_vetoes.json"
-"""Row ids a reviewer struck out, with a reason: ``{"<id>": "<why>"}``. Written
-by ``dimos.evals.temp.tool_eval_qa``; a vetoed row never becomes a case, in
-any slice. Hashed by the static gate like every other suite file."""
+"""Row ids a reviewer struck out, with a reason: ``{"<id>": "<why>"}``.
+A vetoed row never becomes a case, in any slice."""
 
 
 def vetoes() -> dict[str, str]:
@@ -492,7 +491,7 @@ def cases(rows: Sequence[Row], *, tags: frozenset[str] = frozenset()) -> list[Pa
             for entry in cast("list[list[Any]]", row["context"])
         )
         case_tags = tags | {str(row["family"]), str(row["type"])}
-        if "split" in row:  # slice tag from dimos.evals.temp.split
+        if "split" in row:  # optional per-row slice tag
             case_tags |= {str(row["split"])}
         if row["type"] == "coords":
             out.append(

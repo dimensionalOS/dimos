@@ -49,8 +49,7 @@ _JSON = Path(__file__).parent / "go2_pointcloud_doorway_vqa.json"
 
 # Holdout, never train: the autoresearch loop is scored on generated geometry
 # families and never sees a number from these hand-authored rows. They test
-# whether a model can find the answer in a good rendering on its own. See
-# dimos/evals/temp/round3.md.
+# whether a model can find the answer in a good rendering on its own.
 SUITE: Suite = generate.cases(
     json.loads(_JSON.read_text()), tags=frozenset({"pointcloud", "holdout"})
 )

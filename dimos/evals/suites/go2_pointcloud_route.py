@@ -33,7 +33,6 @@ answers were ``reachable`` / ``unknown`` / ``blocked`` — words that ask the
 encoder to be a planner. The frames and goals are unchanged; the truth is
 now the sensing definition above, and 10 of 36 answers moved with it.
 
-Rows are sliced train / holdout / spare by :mod:`dimos.evals.temp.split`.
 
 Regenerate (needs both recordings)::
 
@@ -50,13 +49,12 @@ import numpy as np
 from scipy import ndimage
 
 from dimos.evals import generate
-from dimos.evals.temp import split
 from dimos.evals.types import Suite
 
 _JSON = Path(__file__).parent / "go2_pointcloud_route_vqa.json"
 
 SUITE: Suite = generate.cases(
-    split.assign(json.loads(_JSON.read_text())), tags=frozenset({"pointcloud"})
+    json.loads(_JSON.read_text()), tags=frozenset({"pointcloud"})
 )
 
 _SHORT_TS = [3.0 + i * 2.0 for i in range(29)]

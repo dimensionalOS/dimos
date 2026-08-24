@@ -26,7 +26,6 @@ around the robot, so silence really does mean empty. Unmeasured space is a
 real question, but it needs a goal far enough out to reach it — that belongs
 to :mod:`dimos.evals.suites.go2_pointcloud_route`.
 
-Rows are sliced train / holdout / spare by :mod:`dimos.evals.temp.split`.
 
 Regenerate (needs both recordings)::
 
@@ -42,13 +41,12 @@ from pathlib import Path
 import numpy as np
 
 from dimos.evals import generate
-from dimos.evals.temp import split
 from dimos.evals.types import Suite
 
 _JSON = Path(__file__).parent / "go2_pointcloud_clearance_vqa.json"
 
 SUITE: Suite = generate.cases(
-    split.assign(json.loads(_JSON.read_text())), tags=frozenset({"pointcloud"})
+    json.loads(_JSON.read_text()), tags=frozenset({"pointcloud"})
 )
 
 _SHORT_TS = [5.0, 12.0, 20.0, 28.0, 36.0, 44.0, 52.0, 58.0]
