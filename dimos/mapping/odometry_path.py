@@ -36,8 +36,6 @@ class OdometryPathConfig(ModuleConfig):
 
 
 class OdometryPath(Module):
-    """``odometry`` in, the trail it has drawn out, as a ``nav_msgs/Path``."""
-
     config: OdometryPathConfig
 
     odometry: In[Odometry]
@@ -72,8 +70,6 @@ class OdometryPath(Module):
             )
             self._unpublished = True
 
-        # Standing still republishes nothing, but a step taken during the
-        # interval still goes out once the interval expires.
         if not self._unpublished:
             return
         if (
