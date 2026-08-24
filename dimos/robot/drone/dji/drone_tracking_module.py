@@ -32,7 +32,7 @@ from dimos.models.qwen.video_query import get_bbox_from_qwen_frame
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.robot.drone.drone_visual_servoing_controller import (
+from dimos.robot.drone.dji.drone_visual_servoing_controller import (
     DroneVisualServoingController,
     PIDParams,
 )

@@ -26,8 +26,8 @@ from dimos.agents.skills.google_maps_skill_container import GoogleMapsSkillConta
 from dimos.agents.skills.osm import OsmSkill
 from dimos.agents.web_human_input import WebInput
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.drone.blueprints.basic.drone_basic import drone_basic
-from dimos.robot.drone.drone_tracking_module import DroneTrackingModule
+from dimos.robot.drone.dji.blueprints.basic.drone_basic import drone_basic
+from dimos.robot.drone.dji.drone_tracking_module import DroneTrackingModule
 
 DRONE_SYSTEM_PROMPT = """\
 You are controlling a DJI drone with MAVLink interface.
