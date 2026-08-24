@@ -124,6 +124,11 @@ def _readme_as_home() -> str:
     text = re.sub(r"^!\[.*img\.shields\.io.*$", "", text, flags=re.M)
     text = re.sub(r"^<a href=\"https://trendshift\.io.*$", "", text, flags=re.M)
 
+    # A 1px transparent gif forcing a minimum column width is a github table
+    # hack. Here the cells already carry width="20%", and the spacer only adds
+    # a line box, plus a lightbox anchor around a blank image.
+    text = re.sub(r"\s*<img[^>]*spacer\.png[^>]*>", "", text)
+
     # <big> is deprecated, and being an inline tag it re-blocks markdown even
     # inside a div that asked for it. Material sizes the banner text anyway.
     text = text.replace("<big>", "").replace("</big>", "")
@@ -138,6 +143,13 @@ def _readme_as_home() -> str:
     text = re.sub(
         r'(href=")docs/([^"]+\.md)"', lambda m: f'{m.group(1)}{_page_url(m.group(2))}"', text
     )
+    # Raw html links to source, which have no page on the site at all.
+    text = re.sub(
+        r'(href=")((?:' + "|".join(SOURCE_ROOTS) + r')/[^"]*)"',
+        lambda m: f'{m.group(1)}{GITHUB_BLOB}/{m.group(2)}"',
+        text,
+    )
+
     # docs/usage/modules.md -> usage/modules.md, since the site root is docs/.
     text = re.sub(r"\]\(docs/", "](", text)
     # Anything else in the repo is source, and lives on github.
