@@ -295,7 +295,7 @@ impl Worker {
 
     fn build_graph_messages(&self, planner: &Planner) -> (PointCloud2, PointCloud2, Path) {
         let voxel_size = self.config.voxel_size;
-        let frame = &self.config.world_frame;
+        let frame = &self.config.output_frame;
         let graph = planner.graph();
 
         let surface_points: Vec<Xyzi> = planner
@@ -338,7 +338,7 @@ impl Worker {
             tokio::task::block_in_place(|| planner.plan_or_truncate(start, goal, &self.config));
         if waypoints.is_empty() {
             // No full path and nothing safe ahead on the cached path, so stop.
-            publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
+            publish_path(&self.path, &empty_path(&self.config.output_frame, now())).await;
             return;
         }
         let plan_ms = plan_start.elapsed().as_secs_f64() * 1e3;
@@ -347,7 +347,7 @@ impl Worker {
         *last_path_at = Some(produced);
 
         let stamp = now();
-        let path_msg = build_path_from_waypoints(&waypoints, &self.config.world_frame, stamp);
+        let path_msg = build_path_from_waypoints(&waypoints, &self.config.output_frame, stamp);
         debug!(
             waypoints = waypoints.len(),
             plan_ms, since_last_ms, "path planned"

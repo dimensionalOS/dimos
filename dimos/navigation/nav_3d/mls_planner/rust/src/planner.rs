@@ -898,7 +898,7 @@ mod tests {
         goal: (f32, f32, f32),
     ) -> Option<Vec<(f32, f32, f32)>> {
         let config = Config {
-            world_frame: "world".into(),
+            output_frame: "world".into(),
             voxel_size: VOXEL,
             robot_height: Z_TOL,
             start_z_offset_m: 0.0,
@@ -925,7 +925,7 @@ mod tests {
 
     fn truncate_config() -> Config {
         Config {
-            world_frame: "world".into(),
+            output_frame: "world".into(),
             voxel_size: VOXEL,
             robot_height: Z_TOL,
             start_z_offset_m: 0.0,

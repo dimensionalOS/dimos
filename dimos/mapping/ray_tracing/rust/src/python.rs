@@ -110,7 +110,7 @@ impl VoxelRayMapper {
             global_emit_every: 1,
             region_percentile: 95.0,
             // Points arrive already in world coordinates.
-            world_frame: String::new(),
+            output_frame: String::new(),
         };
         config
             .validate()

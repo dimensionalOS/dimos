@@ -79,7 +79,7 @@ unitree_go2_mls_htc = autoconnect(
         emit_every=1,
     ),
     MLSPlannerNative.blueprint(
-        world_frame="world",
+        output_frame="world",
         voxel_size=voxel_size,
         robot_height=go2_lidar_height,
         # The start pose is raw go2 odometry, so the planner ground-projects it.

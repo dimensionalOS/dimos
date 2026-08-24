@@ -57,14 +57,14 @@ impl RayTracingVoxelMap {
         let stamp = time_secs(&msg.header.stamp);
         let Some(transform) = self
             .tf
-            .lookup(&self.config.world_frame, &msg.header.frame_id)
+            .lookup(&self.config.output_frame, &msg.header.frame_id)
             .at(stamp)
             .tolerance(TF_MATCH_TOLERANCE_S)
             .get()
         else {
             warn_throttled!(
                 Duration::from_secs(1),
-                world_frame = %self.config.world_frame,
+                output_frame = %self.config.output_frame,
                 cloud_frame = %msg.header.frame_id,
                 "No tf between the world frame and the cloud frame, dropped a cloud.",
             );
@@ -104,7 +104,7 @@ impl RayTracingVoxelMap {
             })
             .collect();
 
-        let out_frame_id = self.config.world_frame.clone();
+        let out_frame_id = self.config.output_frame.clone();
 
         let live = update_map(&mut self.map, origin, &points, &self.config);
 

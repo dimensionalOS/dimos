@@ -59,7 +59,7 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     # Size the local region to this percentile of batch point distances.
     region_percentile: float = 95.0
     # Output frame of the maps; clouds are transformed into it from their own frame_id.
-    world_frame: str = "odom"
+    output_frame: str = "odom"
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):

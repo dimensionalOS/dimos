@@ -153,7 +153,6 @@ unitree_go2_nav_3d = autoconnect(
     # global_map is remapped off so the planner runs purely on the
     # incremental local_map + region_bounds pair.
     MLSPlannerNative.blueprint(
-        world_frame="odom",
         voxel_size=voxel_size,
         robot_height=ROBOT_HEIGHT,
         surface_closing_radius=0.3,

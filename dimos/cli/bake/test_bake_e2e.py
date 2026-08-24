@@ -158,7 +158,7 @@ def test_the_host_publishes_its_outputs_and_hides_the_suppressed_hop(baked, zeno
         lidar.start()
         tf.start()
 
-        world_frame = config["modules"]["ray_tracing"]["config"]["world_frame"]
+        output_frame = config["modules"]["ray_tracing"]["config"]["output_frame"]
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline and "surface_map" not in seen:
             # Same stamp on both: the mapper drops a cloud it has no transform for.
@@ -168,7 +168,7 @@ def test_the_host_publishes_its_outputs_and_hides_the_suppressed_hop(baked, zeno
                 TFMessage(
                     Transform(
                         translation=Vector3(0.0, 0.0, SENSOR_Z),
-                        frame_id=world_frame,
+                        frame_id=output_frame,
                         child_frame_id="lidar",
                         ts=ts,
                     )

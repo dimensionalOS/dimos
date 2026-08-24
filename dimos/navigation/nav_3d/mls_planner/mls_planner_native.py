@@ -30,7 +30,9 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     build_command: str | None = "cargo build --release"
     stdin_config: bool = True
 
-    world_frame: str = "map"
+    # Stamped onto the outputs as-is, so it has to name the frame the input map
+    # already arrives in; there is no tf lookup here to convert into it.
+    output_frame: str = "odom"
     voxel_size: float = 0.08
     robot_height: float = 0.3
     # Subtracted from the start pose z before snapping to a surface. Leave 0
