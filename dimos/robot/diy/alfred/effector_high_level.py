@@ -34,10 +34,9 @@ from collections.abc import AsyncGenerator
 import math
 import threading
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import portal
 from pydantic import Field, FiniteFloat
 
 from dimos.agents.annotation import skill
@@ -53,7 +52,21 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.robot.diy.alfred.config import DEFAULT_ADDRESS
 from dimos.utils.logging_config import setup_logger
 
+if TYPE_CHECKING:
+    import portal
+
 logger = setup_logger()
+
+RPC_POLL_SECONDS = 0.002
+
+
+async def _rpc_result(future: portal.Future) -> Any:
+    """Poll instead of blocking a thread: ``asyncio.run`` joins the default executor on
+    the way out, so a single wedged RPC would keep the process alive forever.
+    """
+    while not future.done():
+        await asyncio.sleep(RPC_POLL_SECONDS)
+    return future.result()
 
 
 def _stop_and_close(client: portal.Client) -> None:
@@ -98,6 +111,10 @@ class AlfredHighLevel(Module):
     async def main(self) -> AsyncGenerator[None, None]:
         # Recreated each run so a restart binds it to the new event loop.
         self._odometry_stop = asyncio.Event()
+        # Deferred: portal is an optional dependency, and importing this module for its
+        # blueprint must work without it.
+        import portal
+
         client = portal.Client(self.config.address)
         self._client = client
         logger.info(f"Connected to Alfred at {self.config.address}")
@@ -191,8 +208,7 @@ class AlfredHighLevel(Module):
                 "target_velocity": np.array([vx, vy, wz]),
                 "frame": "local",
             }
-            future = self._client.set_target_velocity(command)
-            await asyncio.to_thread(future.result)
+            await _rpc_result(self._client.set_target_velocity(command))
             return True
         except Exception as e:
             logger.error(f"Error sending Alfred velocity: {e}")
@@ -201,14 +217,13 @@ class AlfredHighLevel(Module):
     async def _poll_wheel_odometry(self, client: portal.Client) -> None:
         period = 1.0 / self.config.wheel_odometry_hz
         previous: tuple[float, float, float, float] | None = None
-        last_error_log = 0.0
+        last_error_log: float | None = None
         while not self._odometry_stop.is_set():
             start = asyncio.get_running_loop().time()
             try:
                 # Stamped before the call so a slow reply cannot drag the stamp forward.
                 ts = time.time()
-                future = client.get_odometry({})
-                reading = await asyncio.to_thread(future.result)
+                reading = await _rpc_result(client.get_odometry({}))
                 x, y = (float(v) for v in reading["translation"])
                 yaw = float(reading["rotation"])
 
@@ -251,7 +266,7 @@ class AlfredHighLevel(Module):
                 # A dead connection fails every poll, and the poll runs at wheel_odometry_hz.
                 error_log_interval = 10.0
                 now = asyncio.get_running_loop().time()
-                if now - last_error_log >= error_log_interval:
+                if last_error_log is None or now - last_error_log >= error_log_interval:
                     last_error_log = now
                     logger.error(f"Alfred wheel odometry poll failed: {error}")
                 await self._wait_or_stop(period)
