@@ -63,8 +63,7 @@ class AlfredHighLevelConfig(ModuleConfig):
     address: str = DEFAULT_ADDRESS
     cmd_vel_timeout: float = 0.2
     wheel_odometry_hz: float = 50.0
-    # Deliberately not "odom", and never published to tf: this is a plain message
-    # stream for a consumer to fuse, not a second publisher on odom->base_link.
+    # Never published to tf: a source to fuse, not a second odom->base_link publisher.
     wheel_odom_frame_id: str = "wheel_odom"
     base_frame_id: str = "base_link"
 
@@ -92,9 +91,8 @@ class AlfredHighLevel(Module):
         try:
             yield
         finally:
-            # Stop first, and before draining the poll: a wedged odometry call
-            # cannot delay it, because Portal matches replies by request number
-            # and carries both at once.
+            # Portal matches replies by request number, so a wedged poll read cannot
+            # delay the stop below.
             if self._stop_task is not None and not self._stop_task.done():
                 self._stop_task.cancel()
             try:
@@ -103,9 +101,8 @@ class AlfredHighLevel(Module):
                 logger.error("Alfred did not take the stop command; it may still be moving")
             except Exception as e:
                 logger.error(f"Error stopping Alfred: {e}")
-            # Cancelling the poll would not stop an in-flight Portal call, which
-            # runs on a worker thread. Ask the loop to exit instead; close()
-            # below fails any request it is still waiting on.
+            # Cancelling would not stop an in-flight Portal call, which runs on a worker
+            # thread; close() below fails whatever request it is still waiting on.
             self._odometry_stop.set()
             if self._odometry_task is not None:
                 done, _ = await asyncio.wait({self._odometry_task}, timeout=_TEARDOWN_TIMEOUT)
@@ -115,8 +112,7 @@ class AlfredHighLevel(Module):
                 client.close()
             except Exception:
                 pass
-            # A restart can overlap: this run's teardown must not null out a
-            # newer run's client.
+            # A restart can overlap: this teardown must not null out a newer run's client.
             if self._client is client:
                 self._client = None
             logger.info("Alfred high-level connection stopped")
@@ -194,7 +190,6 @@ class AlfredHighLevel(Module):
             return False
 
     async def _poll_wheel_odometry(self, client: portal.Client) -> None:
-        """Publish the controller's on-board integrated pose as `wheel_odometry`."""
         period = 1.0 / self.config.wheel_odometry_hz
         previous: tuple[float, float, float, float] | None = None
         last_error_log = 0.0
@@ -244,7 +239,6 @@ class AlfredHighLevel(Module):
             except asyncio.CancelledError:
                 return
             except Exception as error:
-                # One bad read or publish must not end odometry for the run.
                 now = asyncio.get_running_loop().time()
                 if now - last_error_log >= _ODOMETRY_ERROR_LOG_INTERVAL:
                     last_error_log = now
@@ -255,7 +249,6 @@ class AlfredHighLevel(Module):
             await self._wait_or_stop(max(0.0, period - (asyncio.get_running_loop().time() - start)))
 
     async def _wait_or_stop(self, seconds: float) -> None:
-        """Sleep, returning early once teardown has asked the poll to finish."""
         try:
             await asyncio.wait_for(self._odometry_stop.wait(), seconds)
         except asyncio.TimeoutError:
