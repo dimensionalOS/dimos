@@ -155,11 +155,10 @@ def _driver_env() -> dict[str, str]:
 class DimSlamConfig(NativeModuleConfig):
     cwd: str | None = str(MODULE_DIR)
     executable: str = "result/bin/dim_slam"
-    # Drops the `result` symlink in cwd. Odom-fusion work lands on this branch;
-    # tag on merge.
+    # Drops the `result` symlink in cwd. Tag on merge.
     build_command: str | None = Field(
         default_factory=lambda: (
-            f"nix build 'github:dimensionalOS/dimSLAM?ref=jeff/feat/odom_fusion#{sdk_variant()}'"
+            f"nix build 'github:dimensionalOS/dimSLAM?ref=fused_odom#{sdk_variant()}'"
         )
     )
     stdin_config: bool = True
