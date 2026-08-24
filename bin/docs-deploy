@@ -94,6 +94,11 @@ echo
 echo "Staged $(git diff --cached --numstat -- "$TARGET_DIR" | wc -l) files in $PAGES_REPO/$TARGET_DIR"
 echo "Built from dimos $SOURCE_REV"
 
+if git diff --cached --quiet; then
+  echo "Site is unchanged; nothing to commit."
+  exit 0
+fi
+
 if [[ "$DO_COMMIT" -eq 1 ]]; then
   git commit -q -m "docs: deploy mkdocs build from dimos $SOURCE_REV"
   echo "Committed. Push it yourself when you are happy with it."
