@@ -56,6 +56,8 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
+_SCORE_CACHE_MAX = 8192
+
 
 # A support candidate is an identity group: the member sightings of one
 # object. Everything a group reports is a plain function over its members.
@@ -297,29 +299,47 @@ def localize(
     identities = [Identity(is_same=spatial(policy.cluster_radius_m)) for _ in queries]
     ungrounded: list[tuple[float, float] | None] = [None] * len(queries)  # (score, ts)
 
+    floor = policy.candidate_floor
+    cache = detector.score_cache
+    misses = [obs for obs in ordered if any((obs.ts, q, floor) not in cache for q in queries)]
+    if misses:
+        scored = detector.query_score_rows_batch(
+            [obs.data for obs in misses], queries, threshold=floor
+        )
+        for obs, (boxes, rows) in zip(misses, scored, strict=True):
+            for j, q in enumerate(queries):
+                keep = rows[:, j] >= floor
+                cache[(obs.ts, q, floor)] = (boxes[keep], rows[keep, j])
+                if len(cache) > _SCORE_CACHE_MAX:
+                    cache.popitem(last=False)
+
     for obs in ordered:
-        boxes, rows = detector.query_score_rows(obs.data, queries, threshold=policy.candidate_floor)
+        rows_per_label: list[tuple[Any, Any]] = []
+        for q in queries:
+            key = (obs.ts, q, floor)
+            cache.move_to_end(key)
+            rows_per_label.append(cache[key])
+        if not any(len(scores) for _boxes, scores in rows_per_label):
+            continue
+        img = obs.data
         candidates: list[Detection2DBBox] = []
-        for box, row in zip(boxes, rows, strict=True):
-            bbox = (float(box[0]), float(box[1]), float(box[2]), float(box[3]))
-            for j, score in enumerate(row):
-                if score < policy.candidate_floor:
-                    continue
+        for j, (boxes, scores) in enumerate(rows_per_label):
+            for box, score in zip(boxes, scores, strict=True):
                 det = Detection2DBBox(
-                    bbox=bbox,
+                    bbox=(float(box[0]), float(box[1]), float(box[2]), float(box[3])),
                     track_id=len(candidates),
                     class_id=j,
                     confidence=float(score),
                     name=queries[j],
-                    ts=obs.data.ts,
-                    image=obs.data,
+                    ts=img.ts,
+                    image=img,
                 )
                 if det.is_valid() and det.bbox_2d_volume() > 3000:
                     candidates.append(det)
         if not candidates:
             continue
 
-        frame = segmenter.segment(ImageDetections2D(image=obs.data, detections=candidates))
+        frame = segmenter.segment(ImageDetections2D(image=img, detections=candidates))
         lifted = _lift(frame, rig, policy, plane)
         grounded = {det3d.track_id for det3d in lifted}
         for det2d in frame:
