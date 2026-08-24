@@ -243,14 +243,13 @@ fn close_at_z(
         max_y = max_y.max(iy);
     }
 
-    let w = (max_x - min_x + 1 + 2 * pad) as u32;
-    let h = (max_y - min_y + 1 + 2 * pad) as u32;
-    let x0 = min_x - pad;
-    let y0 = min_y - pad;
-
     // voxelize saturates out-of-range coordinates to i32::MAX, so one corrupt point
-    // stretches this image over the whole gap. Closing only bridges `pad` cells anyway.
-    if w > max_span_cells || h > max_span_cells {
+    // stretches this image over the whole gap, and the span itself past i32. Closing
+    // only bridges `pad` cells anyway.
+    let span = |lo: i32, hi: i32| i64::from(hi) - i64::from(lo) + 1 + 2 * i64::from(pad);
+    let w = span(min_x, max_x);
+    let h = span(min_y, max_y);
+    if w > i64::from(max_span_cells) || h > i64::from(max_span_cells) {
         tracing::error!(
             iz,
             width = w,
@@ -261,6 +260,10 @@ fn close_at_z(
         );
         return xys.iter().map(|&(ix, iy)| (ix, iy, iz)).collect();
     }
+    let w = w as u32;
+    let h = h as u32;
+    let x0 = min_x - pad;
+    let y0 = min_y - pad;
 
     let mut img = GrayImage::from_pixel(w, h, OFF);
     for &(ix, iy) in xys {
@@ -377,12 +380,13 @@ mod tests {
         .into_iter()
         .map(|(dx, dy)| (dx, dy, 0))
         .collect();
-        cells.push((i32::MAX / 2, 0, 0));
+        cells.push((i32::MAX, 0, 0));
+        cells.push((i32::MIN, 0, 0));
 
         let s = run(&cells, 5, 3);
         assert!(
-            s.contains(&(i32::MAX / 2, 0, 0)),
-            "the outlier itself still passes through"
+            s.contains(&(i32::MAX, 0, 0)) && s.contains(&(i32::MIN, 0, 0)),
+            "the outliers themselves still pass through"
         );
         assert!(
             !s.contains(&(0, 0, 0)),
