@@ -218,6 +218,16 @@
   font-size: 0.76rem;
 }
 
+/* Material's js wraps every table in .md-typeset__table for scrolling, and on
+ * screen that wrapper is inline-block: a shrink-to-fit box, so width: 100% on
+ * the table inside resolves against its content rather than the page. Making
+ * the wrapper a full-width block is what actually lets a table span. The
+ * scrollwrap around it keeps overflow-x, so wide tables still scroll. */
+.md-typeset__table {
+  display: block;
+  width: 100%;
+}
+
 /* Material lets a table shrink to its content, which strands a three-column
  * table against the left edge of a wide page. Docs tables read better spanning
  * the column they sit in. */

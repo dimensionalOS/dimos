@@ -79,6 +79,41 @@ def _normalize_fences(markdown: str) -> str:
     return "\n".join(out)
 
 
+# Github renders `> [!IMPORTANT]` blockquotes as coloured callouts. Material
+# has the same thing under a different syntax, so translate rather than ask
+# anyone to write one form for the repo and another for the site.
+_ALERT_TYPES = {
+    "NOTE": "note",
+    "TIP": "tip",
+    "IMPORTANT": "info",
+    "WARNING": "warning",
+    "CAUTION": "danger",
+}
+_ALERT = re.compile(
+    r"^(?P<indent>[ \t]*)> \[!(?P<kind>[A-Z]+)\][ \t]*\n"
+    r"(?P<body>(?:(?P=indent)>[^\n]*\n?)*)",
+    re.M,
+)
+
+
+def _github_alerts(markdown: str) -> str:
+    def convert(match: re.Match[str]) -> str:
+        kind = _ALERT_TYPES.get(match.group("kind"))
+        if kind is None:
+            return match.group(0)
+        indent = match.group("indent")
+        lines = []
+        for line in match.group("body").rstrip("\n").split("\n"):
+            text = re.sub(r"^[ \t]*> ?", "", line)
+            lines.append(f"{indent}    {text}" if text else "")
+        # Material has no "important" type, and its default titles differ from
+        # github's labels, so carry the label over explicitly.
+        label = match.group("kind").capitalize()
+        return f'{indent}!!! {kind} "{label}"\n\n' + "\n".join(lines) + "\n"
+
+    return _ALERT.sub(convert, markdown)
+
+
 def _rewrite_link(match: re.Match[str], src_uri: str) -> str:
     target = match.group("target")
     title = match.group("title") or ""
@@ -181,5 +216,6 @@ def on_files(files, config):
 
 
 def on_page_markdown(markdown, page, config, files):
+    markdown = _github_alerts(markdown)
     markdown = _normalize_fences(markdown)
     return _LINK.sub(lambda m: _rewrite_link(m, page.file.src_uri), markdown)
