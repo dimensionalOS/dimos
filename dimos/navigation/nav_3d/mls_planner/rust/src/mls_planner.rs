@@ -48,10 +48,6 @@ pub struct Config {
     /// the extracted surface. Fills holes up to twice this wide.
     #[validate(range(min = 0.0))]
     pub surface_closing_radius: f32,
-    /// Widest ground span the map is expected to cover. Surface slices wider than
-    /// this are treated as corrupt rather than mapped.
-    #[validate(range(exclusive_min = 0.0))]
-    pub max_map_span_m: f32,
     #[validate(range(exclusive_min = 0.0))]
     pub node_spacing_m: f32,
     /// Hard clearance. Cells closer than this to a wall or edge are impassable.
@@ -99,11 +95,6 @@ impl Config {
     /// Robot-height headroom in cells, the clear space a cell needs to be standable.
     pub fn headroom_cells(&self) -> i32 {
         (self.robot_height / self.voxel_size).ceil() as i32
-    }
-
-    /// Widest a surface slice may be, in cells.
-    pub fn max_span_cells(&self) -> u32 {
-        (self.max_map_span_m / self.voxel_size).ceil() as u32
     }
 
     /// Max traversable vertical step in cells.
@@ -189,7 +180,6 @@ impl Planner {
             &self.voxel_map,
             clearance,
             config.closing_passes(),
-            config.max_span_cells(),
             &mut self.by_col,
             &mut surface,
         );
@@ -219,13 +209,8 @@ impl Planner {
 
         // A changed column shifts surfaces only within pad of it.
         let write = (bx0 - pad, bx1 + pad, by0 - pad, by1 + pad);
-        let new_cells = extract_surfaces_region(
-            &self.by_col,
-            clearance,
-            config.closing_passes(),
-            config.max_span_cells(),
-            write,
-        );
+        let new_cells =
+            extract_surfaces_region(&self.by_col, clearance, config.closing_passes(), write);
         let (added, removed) = self.replace_surface_region(write, &new_cells);
 
         self.rebuild_region_graph(added, removed, config);
@@ -594,7 +579,6 @@ mod region_tests {
             start_z_offset_m: 0.0,
             max_overhead_m: 2.0,
             surface_closing_radius: 0.3,
-            max_map_span_m: 500.0,
             node_spacing_m: 1.0,
             wall_clearance_m: 0.0,
             wall_buffer_m: 0.3,
