@@ -1,6 +1,4 @@
----
-title: "Transforms"
----
+# Transforms
 
 ## The Problem: Everything Measures from Its Own Perspective
 
@@ -411,7 +409,7 @@ text "CameraModule" italic at ((CL.x + CO.x)/2, CL.s.y - 0.25in)
 
 ![output](assets/transforms_modules.svg)
 
-# Internals
+## Internals
 
 ## Transform Buffer
 

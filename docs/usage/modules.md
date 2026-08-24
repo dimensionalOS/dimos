@@ -1,6 +1,4 @@
----
-title: "dimOS Modules"
----
+# dimOS Modules
 
 Modules are subsystems on a robot that operate autonomously and communicate with other subsystems using standardized messages.
 

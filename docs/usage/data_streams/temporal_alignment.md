@@ -1,6 +1,4 @@
----
-title: "Temporal Message Alignment"
----
+# Temporal Message Alignment
 
 Robots have multiple sensors emitting data at different rates and latencies. A camera might run at 30fps, while lidar scans at 10Hz, and each has different processing delays. For perception tasks like projecting 2D detections into 3D pointclouds, we need to match data from these streams by timestamp.
 

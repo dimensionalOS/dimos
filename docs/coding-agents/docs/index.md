@@ -1,6 +1,4 @@
----
-title: "Code Blocks"
----
+# Code Blocks
 
 **All code blocks must be executable.**
 Never write illustrative/pseudo code blocks.
@@ -11,7 +9,7 @@ After writing a code block in your markdown file, you can run it by executing
 
 more information on this tool is in [codeblocks](/docs/coding-agents/docs/codeblocks.md)
 
-# Code or Docs Links
+## Code or Docs Links
 
 After adding a link to a doc run
 
@@ -50,7 +48,7 @@ See [Configuration](/docs/usage/configuration.md) for more details.
 
 More information on this in [doclinks](/docs/coding-agents/docs/doclinks.md)
 
-# Pikchr
+## Pikchr
 
 [Pikchr](https://pikchr.org/) is a diagram language from SQLite. Use it for flowcharts and architecture diagrams.
 

@@ -1,8 +1,4 @@
----
-title: "Go2 Navigation Overview"
-sidebarTitle: "Overview"
-description: "Live column-carving navigation and premap relocalization for the Unitree Go2."
----
+# Go2 Navigation Overview
 
 The Go2 navigation stack uses a simple **column-carving voxel map** strategy: each new LiDAR frame replaces the corresponding region of the global map entirely, ensuring the map always reflects the latest observations. Map live as you drive, or return to a known space using a saved premap and relocalization.
 

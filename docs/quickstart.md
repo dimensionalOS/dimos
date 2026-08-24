@@ -1,7 +1,4 @@
----
-title: "Quickstart"
-description: "Install dimOS and watch a recorded Unitree Go2 drive on your laptop. No robot or GPU required."
----
+# Quickstart
 
 This quickstart gets dimOS running on your laptop. You install it, then play back a recorded Unitree Go2 session and watch the robot map and navigate an office in a live visualization. You do not need a robot or a GPU for this.
 

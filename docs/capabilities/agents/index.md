@@ -1,7 +1,5 @@
----
-title: "Agents"
-sidebarTitle: "Overview"
----
+# Agents
+
 LLM agents run as native dimOS modules. They subscribe to camera, LiDAR, odometry, and spatial memory streams and they control the robot through skills.
 
 ## Architecture

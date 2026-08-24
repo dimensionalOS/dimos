@@ -1,7 +1,4 @@
----
-title: "Premap & Relocalization"
-description: "Record a Go2 run, export a loop-closed premap with dimos map, and relocalize on replay or live hardware."
----
+# Premap & Relocalization
 
 Relocalization lets a Go2 navigate on a previously built map instead of only on what it sees right now. At runtime, `RelocalizationModule` aligns live LiDAR to a saved premap and publishes a `world → map` transform, so the costmap and planner operate on the live scan and premap together.
 

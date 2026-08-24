@@ -1,6 +1,4 @@
----
-title: "Configuration"
----
+# Configuration
 
 Dimos provides a `Configurable` base class. See [`service/spec.py`](/dimos/protocol/service/spec.py#L22).
 
@@ -44,7 +42,7 @@ something
 https://errors.pydantic.dev/2.12/v/extra_forbidden
 ```
 
-# Configurable Modules
+## Configurable Modules
 
 [Modules](/docs/usage/modules.md) inherit from `Configurable`, so all of the above applies. Module configs should inherit from `ModuleConfig` ([`core/module.py`](/dimos/core/module.py#L40)), which includes shared configuration for all modules like transport protocols, frame IDs, etc.
 

@@ -1,6 +1,4 @@
----
-title: "Native Modules"
----
+# Native Modules
 
 Prerequisite for this is to understand dimos [Modules](/docs/usage/modules.md) and [Blueprints](/docs/usage/blueprints.md).
 

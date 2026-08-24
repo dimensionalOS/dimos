@@ -1,6 +1,4 @@
----
-title: "Agentic xArm Simulation"
----
+# Agentic xArm Simulation
 
 `xarm-perception-sim-agent` runs the xArm perception, planning, MuJoCo
 simulation, MCP server, and built-in agent together. It is **simulation-only**; This guide uses this blueprint to provide a walk-through of dimos's agentic manipulation stack.

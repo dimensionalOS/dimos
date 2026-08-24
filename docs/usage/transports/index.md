@@ -1,6 +1,4 @@
----
-title: "Transports"
----
+# Transports
 
 Transports connect **module streams** across **process boundaries** and/or **networks**.
 
@@ -535,7 +533,7 @@ Add your backend to benchmarks to compare in context:
 python -m pytest -sv -k "not bytes" dimos/protocol/pubsub/benchmark/tool_benchmark.py
 ```
 
-# Available transports
+## Available transports
 
 | Transport      | Use case                            | Cross-process | Network | Notes                                |
 |----------------|-------------------------------------|---------------|---------|--------------------------------------|

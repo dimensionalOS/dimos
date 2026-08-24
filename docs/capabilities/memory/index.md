@@ -1,7 +1,4 @@
----
-title: "Spatial Memory"
-sidebarTitle: "Overview"
----
+# Spatial Memory
 
 <details>
 <summary>Python</summary>

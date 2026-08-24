@@ -1,8 +1,4 @@
----
-title: "Remote Teleop"
-sidebarTitle: "dimTELE Remote Teleop"
-description: "Drive robots from anywhere in the world, with low latency, from a browser, phone, or VR headset."
----
+# Remote Teleop
 
 **dimTELE** is hosted teleoperation for dimOS robots: operate them remotely
 from any browser or Quest headset over WebRTC.
