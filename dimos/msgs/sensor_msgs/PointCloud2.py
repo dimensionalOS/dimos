@@ -320,19 +320,36 @@ class PointCloud2(Timestamped):
     cap is derived from this, so a full frame fits in one readout."""
 
     AGENT_ENCODE_LEGEND = (
+        "World-frame meters throughout: +x is east and +y is north. For numeric "
+        "full-cloud geometry, use window_m rather than raster or body-height boxes: "
+        "horizontal extent is max(xmax-xmin, ymax-ymin), and vertical span is "
+        "zmax-zmin. centroid_xy_m is the full-cloud horizontal center. Across a "
+        "sequence, read overall motion or gained-coverage direction from dx,dy = "
+        "last centroid_xy_m minus first centroid_xy_m; range edges are too noisy for "
+        "direction. For the eight compass directions, if |dx| > 2.41*|dy| use east "
+        "when dx>0 or west when dx<0; if |dy| > 2.41*|dx| use north when dy>0 or "
+        "south when dy<0; otherwise use the diagonal determined by the signs of dx "
+        "and dy (northeast, northwest, southeast, or southwest). "
+        "floor_footprint_m2 is this frame's own measured footprint: the count of "
+        "0.2 m cells with any stored return times 0.04 m2. Compare each frame's own "
+        "value for an area trend; it can decrease as well as increase, so do not "
+        "accumulate it across frames or substitute bounding-box area. "
+        "boxes are exact x-y extents of stored returns within z_m, in world meters, "
+        "as xmin:xmax@ymin:ymax (a lone value is zero width). Horizontal clearance "
+        "from a point qx,qy is the minimum over boxes of hypot(dx,dy), where "
+        "dx=max(0,xmin-qx,qx-xmax) and dy=max(0,ymin-qy,qy-ymax). Each term is zero "
+        "only when the point lies inside that coordinate extent. "
         "raster.rows: one row per cell_m of y, north to south, prefixed with its y; "
         "two characters per cell, west to east from origin_xy_m. First character is "
         "the lowest return in the cell, second the highest, as "
         "round((z - z_min_m) / z_step_m) in the alphabet 0-9A-U, clamped. "
-        ".. is a cell with no returns. Lidar z is 0.05 m voxels, so the first "
-        "character wavers by one level across flat ground. "
-        "window_m is the extent the sensor covered this frame. "
-        "boxes: exact x-y extents of returns within z_m, world meters, as "
-        "xmin:xmax@ymin:ymax (a lone value is zero width). "
-        "floor_footprint_m2: 0.2 m cells with any return x 0.04."
+        ".. is a cell with no stored return; point absence carries no visibility provenance. "
+        "Lidar z is 0.05 m voxels, so the first character wavers by one level "
+        "across flat ground. window_m is the min/max coordinate bound of stored "
+        "returns in frame_id."
     )
-    """The whole vocabulary of agent_encode(). Frozen: the prose gate hashes it,
-    and every key it names is present on every frame."""
+    """The whole vocabulary of agent_encode(). The prose gate audits it, and
+    every key it names is present on every frame."""
 
     _RASTER_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTU"
     _RASTER_Z_MIN = -0.5
@@ -343,8 +360,8 @@ class PointCloud2(Timestamped):
     def agent_encode(self) -> dict[str, object]:
         """What the lidar measured, laid out for a language model.
 
-        World-frame meters throughout. Scalars, the sensing window, a min/max
-        height raster and exact x-y extents of returns in one z band. The
+        World-frame meters throughout. Scalars, stored-point coordinate bounds,
+        a min/max height raster and exact x-y extents of returns in one z band. The
         format is described once, in AGENT_ENCODE_LEGEND; every key is present
         on every frame, empty when there is nothing to fill it.
         """

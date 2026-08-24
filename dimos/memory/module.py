@@ -379,6 +379,11 @@ class Recorder(MemoryModule):
         if self.config.record_tf:
             self._record_tf()
 
+    @rpc
+    def recording_path(self) -> str:
+        """Absolute path of the db this recorder is writing."""
+        return str(Path(self.config.db_path).resolve())
+
     def _data_ports(self) -> dict[str, In[Any]]:
         """The In ports to record generically — everything but the tf port."""
         return {name: port for name, port in self.inputs.items() if port is not self.tf}
