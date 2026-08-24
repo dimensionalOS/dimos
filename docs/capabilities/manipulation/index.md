@@ -15,7 +15,7 @@ dimos run keyboard-teleop-a750
 
 ### Keyboard Teleop (single command)
 
-Each blueprint launches the full stack — keyboard UI, mock controller, IK solver, and Drake visualization:
+Each blueprint launches the full stack - keyboard UI, mock controller, IK solver, and Drake visualization:
 
 ```bash
 dimos run keyboard-teleop-a750    # A-750 6-DOF
@@ -422,9 +422,9 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
                           JointState ────────────→ (visualization)
 ```
 
-- **KeyboardTeleopModule** — Pygame UI publishing routed spatial EEF twist intent
-- **ControlCoordinator** — 100Hz control loop with mock or real hardware adapters
-- **ManipulationModule** — world backend, optional visualization, RRT motion planning, obstacle management
+- **KeyboardTeleopModule** - Pygame UI publishing routed spatial EEF twist intent
+- **ControlCoordinator** - 100Hz control loop with mock or real hardware adapters
+- **ManipulationModule** - world backend, optional visualization, RRT motion planning, obstacle management
 
 Internally, planning code depends on `WorldSpec` for world, collision, and
 kinematics behavior. Meshcat preview and publishing are exposed separately
@@ -461,10 +461,10 @@ planner is locked for its whole native call.
 
 | Robot | DOF | Teleop | Planning | Perception |
 |-------|-----|--------|----------|------------|
-| [A-750](/docs/capabilities/manipulation/a750.md) | 6 | Y | Y | — |
-| [Galaxea A1Z](/docs/capabilities/manipulation/a1z.md) | 6 | Y | Y | — |
-| Piper | 6 | Y | Y | — |
-| XArm6 | 6 | Y | Y | — |
+| [A-750](/docs/capabilities/manipulation/a750.md) | 6 | Y | Y |  |
+| [Galaxea A1Z](/docs/capabilities/manipulation/a1z.md) | 6 | Y | Y |  |
+| Piper | 6 | Y | Y |  |
+| XArm6 | 6 | Y | Y |  |
 | XArm7 | 7 | Y | Y | Y |
 
 ## Adding a Custom Arm
