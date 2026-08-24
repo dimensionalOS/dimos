@@ -112,10 +112,7 @@ dimos run <your-blueprint> --viewer rerun --rerun-host 0.0.0.0 --g.rerun-open no
 ```
 
 `demo-cuvslam-realsense` is the smallest working example (camera + `DimSlam` +
-`OdometryPath`); `alfred-mls-nav` is a full robot.
-
-dimSLAM is native and speaks LCM only, so a blueprint that does not otherwise set it
-needs `.global_config(transport="lcm")`.
+`OdometryHist`); `alfred-mls-nav` is a full robot.
 
 ### 6. Verify
 
