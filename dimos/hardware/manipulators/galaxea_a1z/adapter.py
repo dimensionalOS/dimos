@@ -51,11 +51,11 @@ from a1z.robots.get_robot import get_a1z_robot
 from a1z.robots.kinematics import Kinematics
 import numpy as np
 
+from dimos.hardware.joint_limits import JointLimits
 from dimos.hardware.manipulators.galaxea_a1z.config import A1ZConfig
 from dimos.hardware.manipulators.galaxea_a1z.gs_usb_bus import gs_usb_can_bus
 from dimos.hardware.manipulators.spec import (
     ControlMode,
-    JointLimits,
     ManipulatorInfo,
 )
 

@@ -24,7 +24,8 @@ from dimos.control.tasks.gripper_task.gripper_task import (
     GripperControlTaskConfig,
     create_task,
 )
-from dimos.hardware.manipulators.spec import JointLimits, ManipulatorAdapter
+from dimos.hardware.joint_limits import JointLimits
+from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.msgs.std_msgs.Float32 import Float32
 
 
@@ -92,7 +93,7 @@ def test_stream_input_rejects_invalid_normalized_opening(opening: float) -> None
 
 def _hardware(mocker: MockerFixture, limit_len: int = 7) -> dict[str, ConnectedHardware]:
     component = HardwareComponent(
-        hardware_id="arm",
+        hardware_id="robot",
         hardware_type=HardwareType.MANIPULATOR,
         joints=[*make_joints("arm", 6), "arm/tool_joint"],
     )
@@ -102,7 +103,7 @@ def _hardware(mocker: MockerFixture, limit_len: int = 7) -> dict[str, ConnectedH
         position_upper=[*([3.14] * 6), 0.08][:limit_len],
         velocity_max=[1.0] * limit_len,
     )
-    return {"arm": ConnectedHardware(adapter, component)}
+    return {"robot": ConnectedHardware(adapter, component)}
 
 
 def _cfg(joints: list[str]) -> TaskConfig:
@@ -115,6 +116,34 @@ def test_limits_resolve_by_joint_name_in_adapter_order(mocker: MockerFixture) ->
     output = task.compute(_state())
     assert output is not None
     assert output.positions == pytest.approx([1.57, 0.04])
+
+
+def test_limit_resolution_rejects_ambiguous_joint_ownership(mocker: MockerFixture) -> None:
+    hardware = _hardware(mocker)
+    hardware["duplicate"] = hardware["robot"]
+
+    with pytest.raises(ValueError, match="owned by multiple hardware components"):
+        create_task(_cfg(["arm/tool_joint"]), hardware)
+
+
+def test_limit_resolution_requires_selected_position_limits(mocker: MockerFixture) -> None:
+    hardware = _hardware(mocker)
+    hardware["robot"].adapter.get_limits.return_value = JointLimits(
+        position_lower=[0.0] * 7,
+        position_upper=[*([3.14] * 6), None],
+        velocity_max=[1.0] * 7,
+    )
+
+    with pytest.raises(ValueError, match="has no declared position limits"):
+        create_task(_cfg(["arm/tool_joint"]), hardware)
+
+
+def test_limit_resolution_requires_adapter_limits(mocker: MockerFixture) -> None:
+    hardware = _hardware(mocker)
+    hardware["robot"].adapter.get_limits.return_value = None
+
+    with pytest.raises(ValueError, match="does not declare joint limits"):
+        create_task(_cfg(["arm/tool_joint"]), hardware)
 
 
 def test_limit_resolution_requires_full_adapter_arrays(mocker: MockerFixture) -> None:

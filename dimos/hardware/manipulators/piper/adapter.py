@@ -27,9 +27,9 @@ from typing import Any
 
 from piper_sdk import C_PiperInterface_V2
 
+from dimos.hardware.joint_limits import JointLimits
 from dimos.hardware.manipulators.spec import (
     ControlMode,
-    JointLimits,
     ManipulatorAdapter,
     ManipulatorInfo,
 )

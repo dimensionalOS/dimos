@@ -21,7 +21,6 @@ import math
 import threading
 from typing import TYPE_CHECKING, Any
 
-from dimos.control.components import split_joint_name
 from dimos.control.task import (
     BaseControlTask,
     ControlMode,
@@ -253,27 +252,36 @@ def _resolve_limits(cfg: Any, hardware: Any) -> list[tuple[float, float]]:
         raise ValueError(f"{where}: joint_names must not contain duplicates")
     resolved: list[tuple[float, float]] = []
     for joint_name in joint_names:
-        hardware_id, _ = split_joint_name(joint_name)
-        connected = (hardware or {}).get(hardware_id)
-        if connected is None:
+        owners = [
+            connected
+            for connected in (hardware or {}).values()
+            if joint_name in connected.component.joints
+        ]
+        if not owners:
+            raise ValueError(f"{where}: joint {joint_name!r} is not owned by coordinator hardware")
+        if len(owners) > 1:
             raise ValueError(
-                f"{where}: no hardware {hardware_id!r} registered with the coordinator"
+                f"{where}: joint {joint_name!r} is owned by multiple hardware components"
             )
+        connected = owners[0]
         component = connected.component
-        try:
-            index = component.joints.index(joint_name)
-        except ValueError as exc:
-            raise ValueError(
-                f"{where}: joint {joint_name!r} is not owned by hardware {hardware_id!r}"
-            ) from exc
+        index = component.joints.index(joint_name)
         limits = connected.adapter.get_limits()
+        if limits is None:
+            raise ValueError(
+                f"{where}: adapter {component.adapter_type!r} does not declare joint limits"
+            )
         arrays = (limits.position_lower, limits.position_upper, limits.velocity_max)
         if any(len(array) != len(component.joints) for array in arrays):
             raise ValueError(
                 f"{where}: adapter {component.adapter_type!r} limits must contain "
                 f"{len(component.joints)} entries"
             )
-        resolved.append((float(limits.position_lower[index]), float(limits.position_upper[index])))
+        lower = limits.position_lower[index]
+        upper = limits.position_upper[index]
+        if lower is None or upper is None:
+            raise ValueError(f"{where}: joint {joint_name!r} has no declared position limits")
+        resolved.append((float(lower), float(upper)))
     return resolved
 
 

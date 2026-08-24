@@ -25,9 +25,9 @@ from __future__ import annotations
 
 import math
 
+from dimos.hardware.joint_limits import JointLimits
 from dimos.hardware.manipulators.spec import (
     ControlMode,
-    JointLimits,
     ManipulatorInfo,
 )
 

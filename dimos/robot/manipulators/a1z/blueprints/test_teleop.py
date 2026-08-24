@@ -19,6 +19,7 @@ import pytest
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
+from dimos.robot.manipulators.a1z.blueprints.basic import a1z_planner_coordinator
 from dimos.robot.manipulators.a1z.blueprints.teleop import (
     coordinator_teleop_a1z,
     keyboard_teleop_a1z,
@@ -35,7 +36,10 @@ def _coordinator_kwargs(blueprint: Blueprint) -> dict[str, Any]:
     )
 
 
-@pytest.mark.parametrize("blueprint", [keyboard_teleop_a1z, coordinator_teleop_a1z])
+@pytest.mark.parametrize(
+    "blueprint",
+    [keyboard_teleop_a1z, coordinator_teleop_a1z, a1z_planner_coordinator],
+)
 def test_trajectory_accepts_gripper_and_gripper_has_dedicated_task(
     blueprint: Blueprint,
 ) -> None:

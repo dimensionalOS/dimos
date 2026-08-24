@@ -21,6 +21,7 @@ from dimos.manipulation.manipulation_module import (
     ManipulationModuleConfig,
 )
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
+from dimos.robot.manipulators.xarm.blueprints.basic import xarm7_planner_coordinator
 from dimos.robot.manipulators.xarm.blueprints.perception import xarm_perception
 from dimos.robot.manipulators.xarm.blueprints.simulation import xarm_perception_sim
 from dimos.robot.manipulators.xarm.blueprints.teleop import (
@@ -35,6 +36,8 @@ _GRIPPER_BLUEPRINTS = [
     keyboard_teleop_xarm7,
     coordinator_teleop_xarm6,
     coordinator_teleop_xarm7,
+    xarm7_planner_coordinator,
+    xarm_perception_sim,
 ]
 
 

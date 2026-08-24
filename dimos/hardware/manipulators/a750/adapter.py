@@ -19,9 +19,9 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from dimos.hardware.joint_limits import JointLimits
 from dimos.hardware.manipulators.spec import (
     ControlMode,
-    JointLimits,
     ManipulatorInfo,
 )
 from dimos.utils.logging_config import setup_logger

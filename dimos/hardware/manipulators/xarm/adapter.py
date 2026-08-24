@@ -24,9 +24,9 @@ import math
 
 from xarm.wrapper import XArmAPI
 
+from dimos.hardware.joint_limits import JointLimits
 from dimos.hardware.manipulators.spec import (
     ControlMode,
-    JointLimits,
     ManipulatorAdapter,
     ManipulatorInfo,
 )

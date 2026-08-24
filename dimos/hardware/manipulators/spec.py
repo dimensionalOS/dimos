@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol, runtime_checkable
 
+from dimos.hardware.joint_limits import JointLimits as _JointLimits
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -64,15 +65,6 @@ class ManipulatorInfo:
     serial_number: str | None = None
 
 
-@dataclass
-class JointLimits:
-    """Limits in the adapter's complete joint-array order."""
-
-    position_lower: list[float]
-    position_upper: list[float]
-    velocity_max: list[float]
-
-
 def default_base_transform() -> Transform:
     """Default identity transform for arm mounting."""
     return Transform(
@@ -85,8 +77,9 @@ def default_base_transform() -> Transform:
 class ManipulatorAdapter(Protocol):
     """Protocol for hardware-specific IO.
 
-    Rotational joints use radians and linear joints use metres where the SDK
-    exposes physical units. Vendor-native scales are declared by JointLimits.
+    Each joint uses the adapter's declared local coordinate. Rotational joints
+    commonly use radians and linear joints commonly use metres, but hardware
+    such as grippers may use a device-specific coordinate.
     """
 
     def connect(self) -> bool:
@@ -117,7 +110,7 @@ class ManipulatorAdapter(Protocol):
         """Get the total number of joints owned by this adapter."""
         ...
 
-    def get_limits(self) -> JointLimits:
+    def get_limits(self) -> _JointLimits:
         """Limits for every joint this adapter owns, in adapter order."""
         ...
 
