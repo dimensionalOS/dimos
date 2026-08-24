@@ -58,6 +58,9 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
+# How long teardown waits for the odometry poll to finish its current RPC.
+_POLL_DRAIN_TIMEOUT = 2.0
+
 
 class AlfredHighLevelConfig(ModuleConfig):
     address: str = DEFAULT_ADDRESS
@@ -83,12 +86,14 @@ class AlfredHighLevel(Module):
         self._odometry_task: asyncio.Task[None] | None = None
         self._last_velocities = [0.0, 0.0, 0.0]
         self._client_lock = asyncio.Lock()
+        self._odometry_stop = asyncio.Event()
 
     async def main(self) -> AsyncGenerator[None, None]:
         # The controller multiplexes one connection; the lock keeps a velocity
         # command from interleaving with an in-flight odometry poll. Recreated
         # each run so a restart binds it to the new event loop.
         self._client_lock = asyncio.Lock()
+        self._odometry_stop = asyncio.Event()
         import portal
 
         client = portal.Client(self.config.address)
@@ -98,8 +103,15 @@ class AlfredHighLevel(Module):
         try:
             yield
         finally:
-            if self._odometry_task is not None and not self._odometry_task.done():
-                self._odometry_task.cancel()
+            # Cancelling the poll would not stop its in-flight Portal call: that
+            # runs on a worker thread and keeps the multiplexed connection the
+            # stop command and close() below need. Ask the loop to exit instead
+            # and let it finish the call it already started.
+            self._odometry_stop.set()
+            if self._odometry_task is not None:
+                done, _ = await asyncio.wait({self._odometry_task}, timeout=_POLL_DRAIN_TIMEOUT)
+                if not done:
+                    logger.warning("Alfred wheel odometry poll is still running; stopping anyway")
             if self._stop_task is not None and not self._stop_task.done():
                 self._stop_task.cancel()
             try:
@@ -194,7 +206,7 @@ class AlfredHighLevel(Module):
         """Publish the controller's on-board integrated pose as `wheel_odometry`."""
         period = 1.0 / self.config.wheel_odometry_hz
         previous: tuple[float, float, float, float] | None = None
-        while True:
+        while not self._odometry_stop.is_set():
             start = asyncio.get_running_loop().time()
             try:
                 async with self._client_lock:
@@ -203,42 +215,51 @@ class AlfredHighLevel(Module):
                 ts = time.time()
                 x, y = (float(v) for v in reading["translation"])
                 yaw = float(reading["rotation"])
+
+                # The controller integrates in the same inverted-Y frame move()
+                # sends into; negate back so consumers see the ROS convention.
+                y, yaw = -y, -yaw
+                # The controller reports no velocity, so difference consecutive
+                # poses and rotate the world-frame displacement into the base frame.
+                twist = Twist()
+                if previous is not None:
+                    last_ts, last_x, last_y, last_yaw = previous
+                    dt = ts - last_ts
+                    if dt > 0.0:
+                        forward = math.cos(yaw) * (x - last_x) + math.sin(yaw) * (y - last_y)
+                        left = -math.sin(yaw) * (x - last_x) + math.cos(yaw) * (y - last_y)
+                        turn = math.atan2(math.sin(yaw - last_yaw), math.cos(yaw - last_yaw))
+                        twist = Twist(
+                            linear=Vector3(forward / dt, left / dt, 0.0),
+                            angular=Vector3(0.0, 0.0, turn / dt),
+                        )
+                previous = (ts, x, y, yaw)
+
+                self.wheel_odometry.publish(
+                    Odometry(
+                        ts=ts,
+                        frame_id=self.config.wheel_odom_frame_id,
+                        child_frame_id=self.config.base_frame_id,
+                        pose=Pose(
+                            position=Vector3(x, y, 0.0),
+                            orientation=Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
+                        ),
+                        twist=twist,
+                    )
+                )
             except asyncio.CancelledError:
                 return
             except Exception as error:
-                logger.error(f"Alfred wheel odometry read failed: {error}")
-                await asyncio.sleep(period)
+                # One bad read or publish must not end odometry for the run.
+                logger.error(f"Alfred wheel odometry poll failed: {error}")
+                await self._wait_or_stop(period)
                 continue
 
-            # The controller integrates in the same inverted-Y frame move()
-            # sends into; negate back so consumers see the ROS convention.
-            y, yaw = -y, -yaw
-            # The controller reports no velocity, so difference consecutive
-            # poses and rotate the world-frame displacement into the base frame.
-            twist = Twist()
-            if previous is not None:
-                last_ts, last_x, last_y, last_yaw = previous
-                dt = ts - last_ts
-                if dt > 0.0:
-                    forward = math.cos(yaw) * (x - last_x) + math.sin(yaw) * (y - last_y)
-                    left = -math.sin(yaw) * (x - last_x) + math.cos(yaw) * (y - last_y)
-                    turn = math.atan2(math.sin(yaw - last_yaw), math.cos(yaw - last_yaw))
-                    twist = Twist(
-                        linear=Vector3(forward / dt, left / dt, 0.0),
-                        angular=Vector3(0.0, 0.0, turn / dt),
-                    )
-            previous = (ts, x, y, yaw)
+            await self._wait_or_stop(max(0.0, period - (asyncio.get_running_loop().time() - start)))
 
-            self.wheel_odometry.publish(
-                Odometry(
-                    ts=ts,
-                    frame_id=self.config.wheel_odom_frame_id,
-                    child_frame_id=self.config.base_frame_id,
-                    pose=Pose(
-                        position=Vector3(x, y, 0.0),
-                        orientation=Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
-                    ),
-                    twist=twist,
-                )
-            )
-            await asyncio.sleep(max(0.0, period - (asyncio.get_running_loop().time() - start)))
+    async def _wait_or_stop(self, seconds: float) -> None:
+        """Sleep, returning early once teardown has asked the poll to finish."""
+        try:
+            await asyncio.wait_for(self._odometry_stop.wait(), seconds)
+        except asyncio.TimeoutError:
+            pass

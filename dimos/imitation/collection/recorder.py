@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""CollectionRecorder — captures teleop collection streams to a memory2 DB.
+"""CollectionRecorder — captures teleop collection streams to a memory DB.
 
-A `Recorder` (memory2) subscribes each declared `In` port and appends every
+A `Recorder` (memory) subscribes each declared `In` port and appends every
 message to a SQLite store, flushing durably on stop(). Only *connected*
 streams are recorded, so the same recorder works for any arm whose
 coordinator publishes `coordinator_joint_state`.
@@ -27,13 +27,14 @@ from __future__ import annotations
 
 from dimos.core.stream import In
 from dimos.imitation.collection.episode_monitor import EpisodeStatus
-from dimos.memory2.module import Recorder, RecorderConfig
+from dimos.memory.module import Recorder, RecorderConfig
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 
 class CollectionRecorderConfig(RecorderConfig):
-    pass
+    record_tf: bool = False
 
 
 class CollectionRecorder(Recorder):
@@ -44,3 +45,8 @@ class CollectionRecorder(Recorder):
     color_image: In[Image]  # observation (camera)
     coordinator_joint_state: In[JointState]  # observation + action (measured/next state)
     status: In[EpisodeStatus]  # episode start/save/discard segmentation
+
+    async def _resolve_pose(self, name: str, msg: object, ts: float) -> Pose | None:
+        if name in self.config.poseless_streams:
+            return None
+        return await super()._resolve_pose(name, msg, ts)

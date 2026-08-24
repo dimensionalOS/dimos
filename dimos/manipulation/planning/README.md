@@ -60,13 +60,13 @@ execute()               # Execute via coordinator
 ## Using ManipulationModule
 
 ```python skip
-from pathlib import Path
 from dimos.manipulation import ManipulationModule
 from dimos.manipulation.planning.spec import RobotModelConfig
+from dimos.robot.assets.model import RobotModel
 
 config = RobotModelConfig(
     name="xarm7",
-    model_path=Path("/path/to/xarm7.urdf"),
+    model=RobotModel.from_file("/path/to/xarm7.urdf"),
     base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
     joint_names=["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"],
     end_effector_link="link7",
@@ -188,7 +188,7 @@ globally named per-joint overrides are future work.
 | Field | Description |
 |-------|-------------|
 | `name` | Robot identifier |
-| `model_path` | Path to URDF/XACRO file |
+| `model` | Lazy portable robot model |
 | `base_pose` | PoseStamped for robot base in world frame |
 | `joint_names` | Joint names in URDF |
 | `end_effector_link` | EE link name |
@@ -196,8 +196,6 @@ globally named per-joint overrides are future work.
 | `max_velocity` | Max joint velocity (rad/s) |
 | `max_acceleration` | Max acceleration (rad/s²) |
 | `joint_name_mapping` | Coordinator → URDF name mapping |
-| `package_paths` | ROS package paths for meshes |
-| `xacro_args` | Xacro arguments (e.g., `{"dof": "7"}`) |
 
 ## Components
 
