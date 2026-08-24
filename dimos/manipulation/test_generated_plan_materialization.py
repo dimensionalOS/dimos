@@ -39,6 +39,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.robot.assets.model import RobotModel
 
 
 class RecordingGenerator:
@@ -73,7 +74,7 @@ class RecordingGenerator:
 def _robot(name: str, joints: list[str], velocity: float, acceleration: float) -> RobotModelConfig:
     return RobotModelConfig(
         name=name,
-        model_path=Path("/robot.urdf"),
+        model=RobotModel.from_file(Path("/robot.urdf")),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=joints,
         base_link="base",

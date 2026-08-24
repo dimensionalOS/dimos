@@ -2,7 +2,7 @@
 title: "Boston Dynamics Spot"
 ---
 
-Boston Dynamics Spot control for DimOS: velocity teleop plus fisheye/depth camera and
+Boston Dynamics Spot control for dimOS: velocity teleop plus fisheye/depth camera and
 odometry streaming.
 
 ## Install

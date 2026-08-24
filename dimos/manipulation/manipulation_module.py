@@ -192,6 +192,7 @@ class ManipulationModule(Module):
         self._lock = threading.Lock()
         self._error_message = ""
         self._planning_epoch = 0
+        self._started = False
 
         # Planning components (initialized in start())
         self._world_monitor: WorldMonitor | None = None
@@ -221,17 +222,25 @@ class ManipulationModule(Module):
     @rpc
     def start(self) -> None:
         """Start the manipulation module."""
-        super().start()
+        if self._started:
+            logger.warning("ManipulationModule already running")
+            return
+        self._started = True
+        try:
+            super().start()
 
-        # Execution state must exist before planning starts observers such as visualization.
-        self._initialize_execution()
-        self._initialize_planning()
+            # Execution state must exist before planning starts observers such as visualization.
+            self._initialize_execution()
+            self._initialize_planning()
 
-        # Subscribe to joint state via port
-        if self.coordinator_joint_state is not None:
-            self.coordinator_joint_state.subscribe(self._on_joint_state)
-            logger.info("Subscribed to coordinator_joint_state port")
-        logger.info("ManipulationModule started")
+            # Subscribe to joint state via port
+            if self.coordinator_joint_state is not None:
+                self.coordinator_joint_state.subscribe(self._on_joint_state)
+                logger.info("Subscribed to coordinator_joint_state port")
+            logger.info("ManipulationModule started")
+        except BaseException:
+            self._started = False
+            raise
 
     def _initialize_planning(self) -> None:
         """Initialize world, planner, and trajectory generator."""

@@ -38,6 +38,7 @@ from dimos.control.tasks.teleop_task.teleop_task import (
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.robot.assets.model import RobotModel
 from dimos.teleop.quest.quest_types import Buttons
 
 
@@ -73,7 +74,7 @@ class _FakePinkIK:
 def _robot(path: Path) -> RobotModelConfig:
     return RobotModelConfig(
         name="arm",
-        model_path=path,
+        model=RobotModel.from_file(path),
         base_pose=PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]),
         joint_names=["joint1", "joint2"],
         planning_groups=[

@@ -20,12 +20,8 @@ from typing import Any
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.robot.unitree.g1.config import G1_LOCAL_PLANNER_PRECOMPUTED_PATHS
 
 DEFAULT_ADDRESS = "172.6.2.20:11323"
-
-# just as a starting point. May re-compute these later. In principle robot-specific
-LOCAL_PLANNER_PRECOMPUTED_PATHS = G1_LOCAL_PLANNER_PRECOMPUTED_PATHS
 
 
 @dataclass(frozen=True)

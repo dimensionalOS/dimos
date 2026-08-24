@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import pytest
@@ -128,6 +129,16 @@ def test_two_services_share_session(session_pool) -> None:
     svc1.start()
     svc2.start()
     assert svc1.session is svc2.session
+
+
+def test_acquire_after_fork_raises(session_pool, mocker) -> None:
+    mocker.patch("dimos.protocol.service.zenohservice.zenoh.open", return_value=mocker.MagicMock())
+    config = ZenohConfig()
+    session_pool.acquire(config)
+
+    mocker.patch("os.getpid", return_value=os.getpid() + 1)
+    with pytest.raises(RuntimeError, match="does not survive fork"):
+        session_pool.acquire(config)
 
 
 def test_stop_does_not_close_shared_session(session_pool) -> None:

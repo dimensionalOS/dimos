@@ -59,7 +59,6 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.navigation.cmu_nav.frames import FRAME_ODOM
 from dimos.spec import perception
 
 # Human-readable enums; the C++ binary (main.cpp) maps these strings to
@@ -82,7 +81,7 @@ class PointLioConfig(NativeModuleConfig):
 
     # Odometry is published as frame_id (fixed) -> sensor_frame_id (moving sensor),
     # and also broadcast on TF. The point cloud is stamped with sensor_frame_id
-    frame_id: str = FRAME_ODOM
+    frame_id: str = "odom"
     sensor_frame_id: str = "mid360_link"
 
     # Point-LIO internal processing rates (Hz)

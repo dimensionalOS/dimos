@@ -37,10 +37,8 @@ from urllib.parse import urlparse
 import numpy as np
 
 from dimos.web.relay_bridge.protocol import (
-    ChannelSpec,
     DataFrame,
     Manifest,
-    PanelSpec,
     RobotInfo,
     RobotManifest,
     Sub,
@@ -53,14 +51,16 @@ from dimos.web.relay_bridge.wt_client import RelayClient
 WIDTH, HEIGHT = 640, 480
 
 ROBOT = RobotInfo(id="smoke", name="Smoke Demo", model="synthetic")
-MANIFEST = RobotManifest(
-    channels=[
-        ChannelSpec(ch="color_image", encoding="jpeg.v1", delivery="latest", maxHz=60.0),
-        ChannelSpec(ch="odom", encoding="pose.json.v1", delivery="reliable", maxHz=20.0),
+MANIFEST: RobotManifest = {
+    "version": 1,
+    "channels": [
+        {"ch": "color_image", "encoding": "jpeg.v1", "delivery": "latest", "maxHz": 60.0},
+        {"ch": "odom", "encoding": "pose.json.v1", "delivery": "reliable", "maxHz": 20.0},
     ],
     # The Cockpit only subscribes jpeg.v1 when a video panel binds it.
-    panels=[PanelSpec(id="color_image", kind="video", channels=["color_image"])],
-)
+    "panels": [{"id": "p0", "kind": "video", "channels": ["color_image"]}],
+    "layout": "p0",
+}
 
 
 def make_jpeg(seq: int) -> bytes:
@@ -138,11 +138,11 @@ async def _wait_subscribed(robot: RelayClient, viewer: RelayClient, timeout: flo
     never be healed. Polls the raw control queue - wait_for around the
     control_messages() generator would close it permanently on timeout.
     """
-    wanted = {spec.ch for spec in MANIFEST.channels}
+    wanted = {spec["ch"] for spec in MANIFEST["channels"]}
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        for spec in MANIFEST.channels:
-            viewer.send_control(Sub(ch=spec.ch))
+        for spec in MANIFEST["channels"]:
+            viewer.send_control(Sub(ch=spec["ch"]))
         window = min(time.monotonic() + 0.5, deadline)
         while time.monotonic() < window:
             if robot.is_closed:

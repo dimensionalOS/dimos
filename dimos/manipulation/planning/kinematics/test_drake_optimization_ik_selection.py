@@ -27,6 +27,7 @@ from dimos.manipulation.planning.spec.enums import IKStatus
 from dimos.manipulation.planning.spec.models import IKResult
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.assets.model import RobotModel
 
 
 class FakeWorld:
@@ -34,7 +35,7 @@ class FakeWorld:
         self.robot_id = "robot-instance"
         self.config = RobotModelConfig(
             name="arm",
-            model_path=Path("/tmp/fake.urdf"),
+            model=RobotModel.from_file(Path("/tmp/fake.urdf")),
             joint_names=["base", "shoulder", "elbow", "wrist"],
         )
         self.current_state = JointState(

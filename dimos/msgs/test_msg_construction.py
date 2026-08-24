@@ -46,7 +46,6 @@ from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.geometry_msgs.TwistWithCovariance import TwistWithCovariance
 from dimos.msgs.geometry_msgs.TwistWithCovarianceStamped import TwistWithCovarianceStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.GraphNodes3D import GraphNodes3D
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -632,7 +631,6 @@ STAMPED_TYPES = [
     JointState,
     Joy,
     Path,
-    GraphNodes3D,
     PointStamped,
     Transform,
     Odometry,

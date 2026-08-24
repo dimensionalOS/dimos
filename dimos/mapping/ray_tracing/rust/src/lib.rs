@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+pub mod module;
 pub mod voxel_ray_tracer;
 
+#[cfg(feature = "python")]
 mod python;

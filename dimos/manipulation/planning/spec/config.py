@@ -27,6 +27,7 @@ from dimos.manipulation.planning.groups.identifiers import (
 )
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.robot.assets.model import RobotModel
 
 
 class RobotModelConfig(ModuleConfig):
@@ -34,7 +35,7 @@ class RobotModelConfig(ModuleConfig):
 
     Attributes:
         name: Human-readable robot name
-        model_path: Path to robot model file (.urdf, .xacro, or .xml/MJCF)
+        model: Portable robot model loaded by backend adapters
         srdf_path: Optional path to SRDF file containing planning group definitions
         base_pose: Placement transform. This is the canonical world placement for
             robot instances.
@@ -42,12 +43,10 @@ class RobotModelConfig(ModuleConfig):
             namespace. This is not a planning group.
         base_link: Robot-scoped link that base_pose places in the world and
             current backends use for weld/placement.
-        package_paths: Dict mapping package names to filesystem Paths
         joint_limits_lower: Lower joint limits (radians)
         joint_limits_upper: Upper joint limits (radians)
         velocity_limits: Joint velocity limits (rad/s)
         auto_convert_meshes: Auto-convert DAE/STL meshes to OBJ for Drake
-        xacro_args: Arguments to pass to xacro processor (for .xacro files)
         collision_exclusion_pairs: List of (link1, link2) pairs to exclude from collision.
             Useful for parallel linkage mechanisms like grippers where non-adjacent
             links may legitimately overlap (e.g., mimic joints).
@@ -59,18 +58,16 @@ class RobotModelConfig(ModuleConfig):
     """
 
     name: str
-    model_path: Path
+    model: RobotModel
     srdf_path: Path | None = None
     base_pose: PoseStamped = Field(default_factory=PoseStamped)
     joint_names: list[str]
     base_link: str = "base_link"
     planning_groups: list[PlanningGroupDefinition] = Field(default_factory=list)
-    package_paths: dict[str, Path] = Field(default_factory=dict)
     joint_limits_lower: list[float] | None = None
     joint_limits_upper: list[float] | None = None
     velocity_limits: list[float] | None = None
     auto_convert_meshes: bool = False
-    xacro_args: dict[str, str] = Field(default_factory=dict)
     collision_exclusion_pairs: list[tuple[str, str]] = Field(default_factory=list)
     # Motion constraints for trajectory generation
     max_velocity: float = 1.0
@@ -86,7 +83,7 @@ class RobotModelConfig(ModuleConfig):
     pre_grasp_offset: float = 0.10
 
     def model_post_init(self, __context: object) -> None:
-        """Validate delimiter-based naming constraints."""
+        """Validate robot naming and description format constraints."""
         assert_valid_robot_name(self.name)
         assert_local_joint_names(self.joint_names)
 

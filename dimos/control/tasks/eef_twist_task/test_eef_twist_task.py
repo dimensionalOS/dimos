@@ -32,6 +32,7 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.std_msgs.Bool import Bool
+from dimos.robot.assets.model import RobotModel
 
 
 @dataclass
@@ -82,7 +83,7 @@ def _fake_robot_model() -> RobotModelConfig:
     local_joints = ["joint1", "joint2", "joint3"]
     return RobotModelConfig(
         name="fake",
-        model_path="fake.urdf",
+        model=RobotModel.from_file("fake.urdf"),
         base_pose=PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]),
         joint_names=local_joints,
         planning_groups=[

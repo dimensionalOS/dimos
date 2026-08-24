@@ -64,13 +64,23 @@ _LATEST_WINS_TYPES = ("sensor_msgs.Image", "sensor_msgs.PointCloud2")
 _NEVER_DROP_CHANNELS = ("human_input", "agent", "agent_idle", "command")
 
 
-def default_zenoh_qos(name: str, msg_type: type | None = None) -> ZenohQoS | None:
-    """Default publisher QoS for a logical channel; None = zenoh defaults."""
-    if getattr(msg_type, "msg_name", None) in _LATEST_WINS_TYPES:
+def zenoh_key_expr(name: str, msg_name: str) -> str:
+    """The zenoh key expression a typed channel lands on."""
+    return f"dimos/{name.lstrip('/')}/{msg_name}"
+
+
+def default_zenoh_qos_for(name: str, msg_name: str) -> ZenohQoS | None:
+    """Default publisher QoS from a channel name and message type name."""
+    if msg_name in _LATEST_WINS_TYPES:
         return QOS_LATEST_WINS
     if name.lstrip("/") in _NEVER_DROP_CHANNELS:
         return QOS_NEVER_DROP
     return None
+
+
+def default_zenoh_qos(name: str, msg_type: type | None = None) -> ZenohQoS | None:
+    """Default publisher QoS for a logical channel; None = zenoh defaults."""
+    return default_zenoh_qos_for(name, getattr(msg_type, "msg_name", ""))
 
 
 def make_transport(

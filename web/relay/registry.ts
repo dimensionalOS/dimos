@@ -14,9 +14,9 @@ import {
   type Delivery,
   encodeDatagram,
   type Msg,
-  type PanelSpec,
   PROTOCOL_VERSION,
   type RobotInfo,
+  type RobotManifest,
 } from "@dimos/shared";
 
 import {
@@ -37,8 +37,11 @@ const DATAGRAM_BUDGET_BYTES = 1200;
 export interface RobotPeer {
   /** Set by the session once a valid robot hello arrived. */
   readonly info: RobotInfo | null;
+  /** Normalized channel specs (feeds the delivery map / sub validation). */
   readonly channels: ChannelSpec[];
-  readonly panels: PanelSpec[];
+  /** Raw manifest as received; forwarded verbatim in watch replies (the
+   * relay never normalizes it and stays layout-blind). */
+  readonly manifest: RobotManifest | null;
   /** Close reason once closed; a closed session must never (re)register. */
   readonly closed: string | null;
   /** Control message upstream to the bridge (datagram: lossy, never blocks). */
@@ -202,8 +205,8 @@ export class Registry {
         reply({
           t: "manifest",
           robotId: msg.robotId,
-          channels: entry.peer.channels,
-          panels: entry.peer.panels,
+          // undefined for a manifest-less robot; JSON.stringify omits it.
+          manifest: entry.peer.manifest ?? undefined,
         });
         break;
       }

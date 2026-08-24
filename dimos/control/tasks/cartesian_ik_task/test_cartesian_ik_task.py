@@ -36,12 +36,13 @@ from dimos.control.tasks.registry import control_task_registry
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.robot.assets.model import RobotModel
 
 
 def _robot(path: Path) -> RobotModelConfig:
     return RobotModelConfig(
         name="tiny",
-        model_path=path,
+        model=RobotModel.from_file(path),
         base_pose=PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]),
         joint_names=["joint1"],
         planning_groups=[

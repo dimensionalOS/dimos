@@ -8,9 +8,9 @@ import {
   type FrameHeader,
   type ManifestMsg,
   type Msg,
-  type PanelSpec,
   PROTOCOL_VERSION,
   type RobotInfo,
+  type RobotManifest,
   type SubsMsg,
 } from "@dimos/shared";
 import {
@@ -85,14 +85,14 @@ class FakeSink implements ViewerSink {
 class FakeRobot implements RobotPeer {
   info: RobotInfo | null;
   channels: ChannelSpec[];
-  panels: PanelSpec[];
+  manifest: RobotManifest | null;
   msgs: Msg[] = [];
   closed: string | null = null;
 
-  constructor(id: string, channels: ChannelSpec[] = [], panels: PanelSpec[] = []) {
+  constructor(id: string, channels: ChannelSpec[] = [], manifest: RobotManifest | null = null) {
     this.info = { id, name: id, model: "test" };
     this.channels = channels;
-    this.panels = panels;
+    this.manifest = manifest;
   }
 
   sendMsg(msg: Msg): void {
@@ -150,8 +150,8 @@ function tick(): Promise<void> {
 }
 
 const SPECS: ChannelSpec[] = [
-  { ch: "color_image", encoding: "jpeg.v1", delivery: "latest", maxHz: 15 },
-  { ch: "odom", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20 },
+  { ch: "color_image", dir: "rx", encoding: "jpeg.v1", delivery: "latest", maxHz: 15, params: {} },
+  { ch: "odom", dir: "rx", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20, params: {} },
 ];
 
 Deno.test("snapshots fire on 0->1 and ->0, not on redundant subs", () => {
@@ -202,16 +202,22 @@ Deno.test("watch switch moves subscriptions between robots", () => {
 
 Deno.test("re-watching the same robot keeps subscriptions", () => {
   const reg = new Registry();
-  const panels: PanelSpec[] = [{ id: "color_image", kind: "video", channels: ["color_image"] }];
-  const robot = new FakeRobot("r1", SPECS, panels);
+  // Deliberately not normalized: the reply must carry the robot's manifest
+  // verbatim, not a re-serialized subset.
+  const raw: RobotManifest = {
+    version: 1,
+    channels: [{ ch: "odom", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20 }],
+    panels: [{ id: "color_image", kind: "video", channels: ["color_image"] }],
+    layout: "color_image",
+  };
+  const robot = new FakeRobot("r1", SPECS, raw);
   reg.registerRobot(robot);
   const viewer = attach(reg, "r1", ["odom"]);
   send(reg, viewer, { t: "watch", robotId: "r1" });
   assertEquals(viewer.subs, new Set(["odom"]));
   const manifests = viewer.replies.filter((m): m is ManifestMsg => m.t === "manifest");
   assertEquals(manifests.length, 2);
-  assertEquals(manifests[1].channels, SPECS);
-  assertEquals(manifests[1].panels, panels); // the manifest reply carries the panels
+  assertEquals(manifests[1].manifest, raw); // forwarded verbatim
 });
 
 Deno.test("duplicate live robot id is rejected; reconnect works after close", () => {
@@ -452,7 +458,7 @@ Deno.test("reconnect-stale sub is filtered from snapshots, frames fall back to h
   const reg = new Registry();
   const withMystery: ChannelSpec[] = [
     ...SPECS,
-    { ch: "mystery", encoding: "x", delivery: "latest", maxHz: 1 },
+    { ch: "mystery", dir: "rx", encoding: "x", delivery: "latest", maxHz: 1, params: {} },
   ];
   const first = new FakeRobot("r1", withMystery);
   reg.registerRobot(first);

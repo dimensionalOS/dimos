@@ -196,7 +196,7 @@ class CartesianIKTask(BaseControlTask):
         logger.info(
             "Cartesian IK task initialized",
             task=name,
-            model_path=str(config.control_ik.robot_model.model_path),
+            urdf_path=str(config.control_ik.robot_model.model.source_path),
             joints=config.joint_names,
         )
 

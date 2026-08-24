@@ -223,7 +223,7 @@ Every `GlobalConfig` field is a CLI flag: `--robot-ip`, `--simulation/--no-simul
 | `dimos restart [--force]` | Stop + re-exec with original args |
 | `dimos list` | List all non-demo blueprints |
 | `dimos show-config` | Print resolved GlobalConfig values |
-| `dimos cache clean [--yes]` | Remove regenerable DimOS caches after confirmation |
+| `dimos cache clean [--yes] [--force]` | Remove DimOS caches; preserve robot Git work unless forced |
 | `dimos log [-f] [-n N] [--json] [-r <run-id>]` | View per-run logs |
 | `dimos mcp list-tools / call / status / modules` | MCP tools (requires McpServer in blueprint) |
 | `dimos agent-send "<text>"` | Send text to the running agent via LCM |

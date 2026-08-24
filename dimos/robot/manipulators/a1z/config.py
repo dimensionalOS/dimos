@@ -27,12 +27,13 @@ from dimos.hardware.manipulators.galaxea_a1z.config import (
 )
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.manipulators._modeling import (
     base_pose,
     coordinator_joint_mapping,
     joint_names,
 )
-from dimos.utils.data import LfsPath
 
 A1Z_DOF = 6
 
@@ -41,12 +42,20 @@ A1Z_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("arm_link4", "arm_link6"),
 ]
 
-A1Z_G1Z_MODEL_PATH = LfsPath("a1z_description") / "A1Z_G1Z/urdf/A1Z_G1Z.urdf"
-A1Z_FLANGE_MODEL_PATH = LfsPath("a1z_description") / "A1Z_Flange/urdf/A1Z_Flange.urdf"
+A1Z_DESCRIPTION_REPO = "https://github.com/userguide-galaxea/URDF"
+A1Z_DESCRIPTION_REF = "2e5d31e1784481a34d178006c0d0e18e0a84a82a"
+_A1Z_REPO = RobotDescriptionSource(
+    url=A1Z_DESCRIPTION_REPO,
+    ref=A1Z_DESCRIPTION_REF,
+)
+A1Z_G1Z_PACKAGE = _A1Z_REPO / "A1Z" / "A1Z_G1Z"
+A1Z_FLANGE_PACKAGE = _A1Z_REPO / "A1Z" / "A1Z_Flange"
+A1Z_G1Z_MODEL_PATH = A1Z_G1Z_PACKAGE / "urdf" / "A1Z_G1Z.urdf"
+A1Z_FLANGE_MODEL_PATH = A1Z_FLANGE_PACKAGE / "urdf" / "A1Z_Flange.urdf"
 A1Z_FK_MODEL = A1Z_FLANGE_MODEL_PATH
 A1Z_PACKAGE_PATHS: dict[str, Path] = {
-    "A1Z_G1Z": LfsPath("a1z_description") / "A1Z_G1Z",
-    "A1Z_Flange": LfsPath("a1z_description") / "A1Z_Flange",
+    "A1Z_G1Z": A1Z_G1Z_PACKAGE,
+    "A1Z_Flange": A1Z_FLANGE_PACKAGE,
 }
 
 
@@ -97,9 +106,19 @@ def make_a1z_model_config(
     home_joints: list[float] | None = None,
 ) -> RobotModelConfig:
     local_joint_names = joint_names(A1Z_DOF, prefix="arm_joint")
+    model = RobotModel.from_file(
+        A1Z_G1Z_MODEL_PATH if has_gripper else A1Z_FLANGE_MODEL_PATH,
+        package_paths=A1Z_PACKAGE_PATHS,
+    )
+    if has_gripper:
+        model = model.with_fixed_frame(
+            "gripper_eef_link",
+            "arm_link6",
+            xyz=(0.0727, 0.0, 0.0),
+        )
     return RobotModelConfig(
         name=name,
-        model_path=A1Z_G1Z_MODEL_PATH if has_gripper else A1Z_FLANGE_MODEL_PATH,
+        model=model,
         base_pose=base_pose(),
         joint_names=local_joint_names,
         base_link="base_link",
@@ -108,10 +127,9 @@ def make_a1z_model_config(
                 name="manipulator",
                 joint_names=tuple(local_joint_names),
                 base_link="base_link",
-                tip_link=("gripper_eef_link" if has_gripper else "arm_link6"),
+                tip_link="gripper_eef_link" if has_gripper else "arm_link6",
             )
         ],
-        package_paths=A1Z_PACKAGE_PATHS,
         auto_convert_meshes=True,
         collision_exclusion_pairs=A1Z_COLLISION_EXCLUSIONS,
         joint_name_mapping=coordinator_joint_mapping(

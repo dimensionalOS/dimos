@@ -111,6 +111,51 @@ def test_lcm_no_intensity_round_trip() -> None:
     np.testing.assert_allclose(decoded_pts.astype(np.float32), points, atol=1e-6)
 
 
+def test_lcm_per_point_timing_round_trip() -> None:
+    """offset_time/tag/line survive an lcm_encode → lcm_decode round trip."""
+    points = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]], dtype=np.float32)
+    intensities = np.array([10.0, 20.0, 30.0], dtype=np.float32)
+    # First point offset 0 is meaningful and must survive (no nonzero filtering).
+    offset_times = np.array([0, 41_666, 83_332], dtype=np.uint32)
+    tags = np.array([0, 16, 32], dtype=np.uint8)
+    lines = np.array([0, 1, 3], dtype=np.uint8)
+
+    original = PointCloud2.from_numpy(
+        points,
+        frame_id="mid360_link",
+        timestamp=100.5,
+        intensities=intensities,
+        offset_times=offset_times,
+        tags=tags,
+        lines=lines,
+    )
+
+    got_offsets = original.offset_times_u32()
+    assert got_offsets is not None
+    np.testing.assert_array_equal(got_offsets, offset_times)
+
+    decoded = PointCloud2.lcm_decode(original.lcm_encode())
+
+    decoded_pts, _ = decoded.as_numpy()
+    np.testing.assert_allclose(decoded_pts.astype(np.float32), points, atol=1e-6)
+    decoded_intensities = decoded.intensities_f32()
+    assert decoded_intensities is not None
+    np.testing.assert_allclose(decoded_intensities, intensities, atol=1e-6)
+
+    decoded_offsets = decoded.offset_times_u32()
+    assert decoded_offsets is not None, "offset_time lost after lcm_decode"
+    assert decoded_offsets.dtype == np.uint32
+    np.testing.assert_array_equal(decoded_offsets, offset_times)
+
+    decoded_tags = decoded.tags_u8()
+    assert decoded_tags is not None, "tag lost after lcm_decode"
+    np.testing.assert_array_equal(decoded_tags, tags)
+
+    decoded_lines = decoded.lines_u8()
+    assert decoded_lines is not None, "line lost after lcm_decode"
+    np.testing.assert_array_equal(decoded_lines, lines)
+
+
 def test_bounding_box_intersects() -> None:
     """Test bounding_box_intersects method with various scenarios."""
     # Test 1: Overlapping boxes

@@ -40,6 +40,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.robot.assets.model import RobotModel
 
 
 def _robot(
@@ -51,7 +52,7 @@ def _robot(
 ) -> RobotModelConfig:
     return RobotModelConfig(
         name=name,
-        model_path=Path("/robot.urdf"),
+        model=RobotModel.from_file(Path("/robot.urdf")),
         joint_names=["j0"],
         base_link="base",
         home_joints=home,

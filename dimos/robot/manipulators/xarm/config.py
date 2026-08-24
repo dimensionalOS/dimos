@@ -28,6 +28,8 @@ from dimos.control.components import (
 from dimos.core.global_config import global_config
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.manipulators._modeling import (
     base_pose,
     coordinator_joint_mapping,
@@ -54,8 +56,11 @@ XARM_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("link6", "right_outer_knuckle"),
 ]
 
-XARM_MODEL_PATH = LfsPath("xarm_description") / "urdf/xarm_device.urdf.xacro"
-XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": LfsPath("xarm_description")}
+XARM_ROS2_REPO = "https://github.com/xArm-Developer/xarm_ros2"
+XARM_ROS2_REF = "5bb832f72ca665f1236a9d8ed1c3a82f308db489"
+_XARM_REPO = RobotDescriptionSource(url=XARM_ROS2_REPO, ref=XARM_ROS2_REF)
+XARM_MODEL_PATH = _XARM_REPO / "xarm_description" / "urdf" / "xarm_device.urdf.xacro"
+XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": _XARM_REPO / "xarm_description"}
 XARM6_SIM_PATH = LfsPath("xarm6/scene.xml")
 XARM7_SIM_PATH = LfsPath("xarm7/scene.xml")
 XARM_GRIPPER_PARAMS = {
@@ -245,7 +250,11 @@ def make_xarm_model_config(
     tip_link = "link_tcp" if add_gripper else f"link{dof}"
     return RobotModelConfig(
         name=name,
-        model_path=XARM_MODEL_PATH,
+        model=RobotModel.from_file(
+            XARM_MODEL_PATH,
+            package_paths=XARM_PACKAGE_PATHS,
+            xacro_args=xacro_args,
+        ),
         base_pose=base_pose(x_offset, y_offset, z_offset, pitch),
         joint_names=local_joint_names,
         base_link="link_base",
@@ -257,8 +266,6 @@ def make_xarm_model_config(
                 tip_link=tip_link,
             )
         ],
-        package_paths=XARM_PACKAGE_PATHS,
-        xacro_args=xacro_args,
         auto_convert_meshes=True,
         collision_exclusion_pairs=(XARM_GRIPPER_COLLISION_EXCLUSIONS if add_gripper else []),
         joint_name_mapping=coordinator_joint_mapping(

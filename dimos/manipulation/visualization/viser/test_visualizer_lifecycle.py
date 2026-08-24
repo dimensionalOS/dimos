@@ -40,6 +40,7 @@ from dimos.manipulation.visualization.viser.visualizer import ViserManipulationV
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
 class FakeDependency:
@@ -84,7 +85,7 @@ class FakeRuntimeServer(FakeServer):
 def fake_robot_config(name: str) -> RobotModelConfig:
     return RobotModelConfig(
         name=name,
-        model_path=Path(f"{name}.urdf"),
+        model=RobotModel.from_file(Path(f"{name}.urdf")),
         base_pose=PoseStamped(),
         joint_names=[],
         planning_groups=[
@@ -515,21 +516,28 @@ def test_scene_prepares_urdf_applies_base_pose_and_rejects_wrong_root(
     config = fake_robot_config("arm")
     config.base_pose.position.x = 1.0
 
-    def prepare(path: Path, **kwargs: object) -> Path:
-        prepared.append(kwargs)
-        return fixed_world_root if path.name == "arm.urdf" else non_fixed_world_root
+    def load(model: RobotModel) -> LoadedRobotModel:
+        source_path = Path(model.source_path)
+        source = fixed_world_root if source_path.name == "arm.urdf" else non_fixed_world_root
+        return LoadedRobotModel(source.read_text(), source, {})
+
+    monkeypatch.setattr(
+        RobotModel,
+        "load",
+        load,
+    )
+
+    def prepare(
+        description: LoadedRobotModel,
+        *,
+        convert_meshes: bool,
+    ) -> LoadedRobotModel:
+        prepared.append({"convert_meshes": convert_meshes})
+        return description
 
     monkeypatch.setattr(
         "dimos.manipulation.visualization.viser.scene.prepare_urdf_for_drake",
         prepare,
-    )
-
-    def parse_prepared_model(path: Path) -> SimpleNamespace:
-        content = path.read_text()
-        return SimpleNamespace(root_link="world" if 'name="world"' in content else "base_link")
-
-    monkeypatch.setattr(
-        "dimos.manipulation.visualization.viser.scene.parse_model", parse_prepared_model
     )
     scene = ViserManipulationScene(Server(), Urdf)
     monkeypatch.setattr(scene, "_model_has_collision_geometry", lambda _model: True)
@@ -541,12 +549,12 @@ def test_scene_prepares_urdf_applies_base_pose_and_rejects_wrong_root(
         "/targets/robot-1/target/base_pose/urdf",
         "/previews/robot-1/ghost/base_pose/urdf",
     ]
-    assert prepared == [{"package_paths": {}, "xacro_args": {}, "convert_meshes": False}]
+    assert prepared == [{"convert_meshes": False}]
     assert all(path == fixed_world_root for path, _ in created)
     assert all(frame["position"] == (1.0, 0.0, 0.0) for frame in frames)
     wrong_root_config = fake_robot_config("wrong")
     with pytest.raises(ValueError, match="prepared URDF root 'world'"):
-        scene.prepared_urdf_path(wrong_root_config)
+        scene.loaded_robot_description(wrong_root_config)
 
 
 @pytest.mark.parametrize("mode", ["collision", "both"])
@@ -555,7 +563,15 @@ def test_selected_display_mode_survives_primary_recreation_and_joint_updates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     scene = ViserManipulationScene(FakeServer(), FakeSceneUrdf)
-    scene.prepared_urdf_path = lambda _config: Path("prepared.urdf")
+    monkeypatch.setattr(
+        scene,
+        "loaded_robot_description",
+        lambda _config: LoadedRobotModel(
+            "<robot name='r'><link name='base_link'/></robot>",
+            Path("prepared.urdf"),
+            {},
+        ),
+    )
     monkeypatch.setattr(
         scene_module.URDF,
         "load",

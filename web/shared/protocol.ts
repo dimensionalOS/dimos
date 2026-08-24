@@ -16,23 +16,18 @@
 // must never kill a session. Framing-level corruption (absurd length
 // prefixes) throws and kills only the affected stream.
 
-import {
-  type ChannelSpec,
-  type Delivery,
-  isChannelSpec,
-  isPanelSpec,
-  MAX_MANIFEST_ID_LEN,
-  type PanelSpec,
-} from "./manifest.ts";
+import { type Delivery, MAX_MANIFEST_ID_LEN } from "./manifest.ts";
 
 // Channel/manifest domain types live in manifest.ts; re-exported so protocol
 // consumers keep a single import surface.
-export type { ChannelSpec, Delivery, PanelSpec } from "./manifest.ts";
+export type { ChannelSpec, Delivery, Dir, PanelSpec } from "./manifest.ts";
 
-// v2: a reliable channel packs all its frames onto one persistent stream (v1
-// carried one frame per stream), which a v1 receiver would misread as a
-// single frame. Bump on any change an old peer would silently misparse.
-export const PROTOCOL_VERSION = 2;
+// v3: the manifest travels as one opaque record nested in hello/manifest
+// messages (v2 carried flat channels/panels fields, which a v2 peer would
+// silently misread in both directions). v2: a reliable channel packs all its
+// frames onto one persistent stream. Bump on any change an old peer would
+// silently misparse.
+export const PROTOCOL_VERSION = 3;
 
 // Reject absurd header lengths before allocating.
 export const MAX_HEADER_LEN = 65536;
@@ -49,10 +44,13 @@ export interface RobotInfo {
   model: string;
 }
 
-export interface RobotManifest {
-  channels: ChannelSpec[];
-  panels?: PanelSpec[];
-}
+// The manifest rides the wire as one opaque record: the transport checks
+// only record-ness, and parseManifest (manifest.ts) is the single owner of
+// its structure. Additive manifest changes therefore never touch the
+// protocol or the relay, and a structurally-alien future manifest still
+// reaches the domain parser (which reports unsupported_version) instead of
+// being silently dropped here.
+export type RobotManifest = Record<string, unknown>;
 
 export interface HelloMsg {
   t: "hello";
@@ -101,8 +99,8 @@ export interface WatchMsg {
 export interface ManifestMsg {
   t: "manifest";
   robotId: string;
-  channels: ChannelSpec[];
-  panels?: PanelSpec[];
+  // Absent = the robot registered without a manifest.
+  manifest?: RobotManifest;
 }
 
 export interface SubMsg {
@@ -202,23 +200,16 @@ function isRobotInfo(value: unknown): value is RobotInfo {
 }
 
 // Structural checks for nested fields, run after the flat MSG_FIELDS pass.
-// Optional fields (hello.robot/manifest) accept absent but reject null: JSON
-// encoders on both sides omit absent fields and never emit null.
-function isPanelList(value: unknown): boolean {
-  return value === undefined || (Array.isArray(value) && value.every(isPanelSpec));
-}
-
+// Optional fields (hello.robot, hello/manifest.manifest) accept absent but
+// reject null: JSON encoders on both sides omit absent fields and never emit
+// null. The manifest is only checked for record-ness here -- its structure
+// belongs to parseManifest (see RobotManifest above).
 const MSG_VALIDATORS: Record<string, (value: Record<string, unknown>) => boolean> = {
   hello: (v) =>
     (v.robot === undefined || isRobotInfo(v.robot)) &&
-    (v.manifest === undefined ||
-      (isRecord(v.manifest) &&
-        Array.isArray(v.manifest.channels) &&
-        v.manifest.channels.every(isChannelSpec) &&
-        isPanelList(v.manifest.panels))),
+    (v.manifest === undefined || isRecord(v.manifest)),
   robots: (v) => Array.isArray(v.robots) && v.robots.every(isRobotInfo),
-  manifest: (v) =>
-    Array.isArray(v.channels) && v.channels.every(isChannelSpec) && isPanelList(v.panels),
+  manifest: (v) => v.manifest === undefined || isRecord(v.manifest),
   subs: (v) => Array.isArray(v.chs) && v.chs.every((c) => typeof c === "string"),
 };
 

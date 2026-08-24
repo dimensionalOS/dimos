@@ -15,6 +15,32 @@ crate-type = ["cdylib", "rlib"]
 name = "mls_planner"
 path = "src/main.rs"
 
+# Bake registry entry, cross-checked at compile time by the module macro.
+# threads = 2 so the handle loop keeps dispatching while the planning worker
+# runs block_in_place.
+[package.metadata.dimos.module.mls_planner]
+path = "dimos_mls_planner::module::MlsPlanner"
+python = "dimos.navigation.nav_3d.mls_planner.mls_planner_native:MLSPlannerNative"
+threads = 2
+
+[package.metadata.dimos.module.mls_planner.inputs]
+global_map = "sensor_msgs.PointCloud2"
+local_map = "sensor_msgs.PointCloud2"
+region_bounds = "geometry_msgs.PoseStamped"
+start_pose = "geometry_msgs.PoseStamped"
+goal_pose = "geometry_msgs.PoseStamped"
+
+[package.metadata.dimos.module.mls_planner.outputs]
+surface_map = "sensor_msgs.PointCloud2"
+nodes = "sensor_msgs.PointCloud2"
+node_edges = "nav_msgs.LineSegments3D"
+path = "nav_msgs.Path"
+
+[features]
+# Baked host binaries build with default-features off to keep libpython out of a static link.
+default = ["python"]
+python = ["dep:pyo3", "dep:numpy"]
+
 [dependencies]
 dimos-module = { path = "../../../../../native/rust/dimos-module" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
@@ -27,8 +53,8 @@ validator = { version = "0.20", features = ["derive"] }
 image = { version = "0.25", default-features = false }
 imageproc = { version = "0.25", default-features = false }
 rayon = "1"
-pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"] }
-numpy = "0.25"
+pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"], optional = true }
+numpy = { version = "0.25", optional = true }
 
 [profile.release]
 lto = "thin"

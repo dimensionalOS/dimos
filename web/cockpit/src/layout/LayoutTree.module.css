@@ -1,0 +1,29 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 1rem;
+}
+
+.row {
+  display: flex;
+  gap: 1rem;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+}
+
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+}
+
+.cell {
+  display: flex;
+  flex-basis: 0;
+  min-height: 0;
+  min-width: 0;
+}

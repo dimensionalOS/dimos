@@ -66,10 +66,12 @@ _FRAME_QUEUE_MAX_BYTES = 128 * 1024 * 1024
 # Realistic payload caps for channels whose encoding is known from the
 # watched robot's manifest (frames themselves carry no encoding);
 # MAX_DATA_FRAME_BYTES stays the outer bound for everything else. Generous:
-# a 4K quality-90 JPEG is ~4 MiB, a pose JSON object ~100 B.
+# a 4K quality-90 JPEG is ~4 MiB, a pose JSON object ~100 B, a compressed
+# long-run costmap ~10-30 KB (the cap leaves room for pathological grids).
 _MAX_PAYLOAD_BYTES = {
     "jpeg.v1": 8 * 1024 * 1024,
     "pose.json.v1": 64 * 1024,
+    "costmap.zlib.v1": 8 * 1024 * 1024,
 }
 
 # Relay-pushed control messages (subs snapshots, robots, manifest) waiting for
@@ -211,8 +213,21 @@ class SessionProtocol(QuicConnectionProtocol):
             if waiter is not None and not waiter.done():
                 waiter.set_result(msg)
         else:
-            if isinstance(msg, Manifest):
-                self._encodings.update({c.ch: c.encoding for c in msg.channels})
+            if isinstance(msg, Manifest) and msg.manifest is not None:
+                # The nested manifest is an opaque raw record at this layer;
+                # pick the encodings out defensively (payload caps are a
+                # safety net, not a validator).
+                channels = msg.manifest.get("channels")
+                if isinstance(channels, list):
+                    self._encodings.update(
+                        {
+                            c["ch"]: c["encoding"]
+                            for c in channels
+                            if isinstance(c, dict)
+                            and isinstance(c.get("ch"), str)
+                            and isinstance(c.get("encoding"), str)
+                        }
+                    )
             # Session messages (subs snapshots, robots, manifest, ...) go to
             # the consumer queue; see RelayClient.control_messages().
             if self.control_msgs.full():

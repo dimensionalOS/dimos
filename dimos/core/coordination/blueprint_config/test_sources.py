@@ -18,6 +18,7 @@ import pytest
 
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.blueprint_config.sources import read_config_file
 from dimos.core.global_config import global_config as process_global_config
 from dimos.core.module import Module, ModuleConfig
 
@@ -80,3 +81,7 @@ def test_config_file_errors_are_clear_but_missing_file_is_optional(tmp_path: Pat
     not_an_object.write_text("[]")
     with pytest.raises(BlueprintConfigError, match="must contain a JSON object"):
         parser.parse(config_path=not_an_object, environ={})
+
+
+def test_config_path_that_is_a_directory_reads_as_absent(tmp_path: Path) -> None:
+    assert read_config_file(tmp_path) == {}

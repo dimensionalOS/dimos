@@ -1,22 +1,5 @@
 {
   "nodes": {
-    "dimos-repo": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1784689481,
-        "narHash": "sha256-mA+EF/WT3g3roVDoaTZxpvOoL9vZHep+oNED2evYvxQ=",
-        "ref": "main",
-        "rev": "cdd577bfc0a7775d125462ad51ee956f65cb943c",
-        "revCount": 962,
-        "type": "git",
-        "url": "file:../../../.."
-      },
-      "original": {
-        "ref": "main",
-        "type": "git",
-        "url": "file:../../../.."
-      }
-    },
     "flake-utils": {
       "inputs": {
         "systems": "systems"
@@ -53,7 +36,6 @@
     },
     "root": {
       "inputs": {
-        "dimos-repo": "dimos-repo",
         "flake-utils": "flake-utils",
         "nixpkgs": "nixpkgs"
       }
