@@ -152,22 +152,16 @@ def _driver_env() -> dict[str, str]:
     return {"LD_LIBRARY_PATH": ":".join(parts)}
 
 
-# Odom-fusion work lands on this branch; tag on merge.
-DIMSLAM_REF = "jeff/feat/odom_fusion"
-
-
-def dimslam_build_command() -> str:
-    """`nix build` line for the dimSLAM binary, resolved for this host.
-
-    It drops the `result` symlink in the module's cwd.
-    """
-    return f"nix build 'github:dimensionalOS/dimSLAM?ref={DIMSLAM_REF}#{sdk_variant()}'"
-
-
 class DimSlamConfig(NativeModuleConfig):
     cwd: str | None = str(MODULE_DIR)
     executable: str = "result/bin/dim_slam"
-    build_command: str | None = Field(default_factory=dimslam_build_command)
+    # Drops the `result` symlink in cwd. Odom-fusion work lands on this branch;
+    # tag on merge.
+    build_command: str | None = Field(
+        default_factory=lambda: (
+            f"nix build 'github:dimensionalOS/dimSLAM?ref=jeff/feat/odom_fusion#{sdk_variant()}'"
+        )
+    )
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
 
