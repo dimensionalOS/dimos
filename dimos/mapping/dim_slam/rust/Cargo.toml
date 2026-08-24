@@ -1,0 +1,25 @@
+[package]
+name = "dim-slam-module"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[[bin]]
+name = "dim_slam"
+path = "src/main.rs"
+
+[dependencies]
+dim_slam = { git = "https://github.com/dimensionalOS/dimSLAM", rev = "14322423913382fa2bdfae66b74357c890440b1d" }
+# Unused directly, but cargo hands DEP_CUVSLAM_LIB_DIR only to immediate dependents
+# and build.rs needs it for the rpath.
+cu_vslam_rs = "0.1.1"
+dimos-module = { path = "../../../../native/rust/dimos-module" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1"
+# native_config expands to ::serde and ::validator derives, so both must be direct deps.
+serde = { version = "1", features = ["derive"] }
+validator = { version = "0.20", features = ["derive"] }
+
+[profile.release]
+lto = true

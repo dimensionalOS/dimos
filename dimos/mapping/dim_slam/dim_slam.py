@@ -148,13 +148,10 @@ def _driver_env() -> dict[str, str]:
 
 
 class DimSlamConfig(NativeModuleConfig):
-    cwd: str | None = str(MODULE_DIR)
+    cwd: str | None = str(MODULE_DIR / "rust")
     executable: str = "result/bin/dim_slam"
-    # TODO: pin a tag once dimSLAM#fused_odom merges.
     build_command: str | None = Field(
-        default_factory=lambda: (
-            f"nix build 'github:dimensionalOS/dimSLAM?ref=fused_odom#{sdk_variant()}'"
-        )
+        default_factory=lambda: f"nix build -L 'path:.#{sdk_variant()}'"
     )
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
