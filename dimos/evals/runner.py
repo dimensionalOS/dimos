@@ -125,6 +125,7 @@ class EvalRunner(Configurable, CompositeResource):
         self._episode: PreparedEpisode | None = None
         self._episode_context: PublicEpisodeContext | None = None
         self._episode_sample_index: int | None = None
+        self._episode_activation: EpisodeActivationResult | None = None
         self._episode_boundary_sequence = 0
         self._run_dir: Path | None = None
 
@@ -338,30 +339,167 @@ class EvalRunner(Configurable, CompositeResource):
     def run_interactive_trials(self, case: InteractiveEval) -> EvalResult:
         """Run explicit samples and aggregate their physical outcomes."""
 
-        raise NotImplementedError
+        if case.episode is None:
+            raise ValueError("repeated interactive trials require an episode provider")
+        trials: list[InteractiveTrialResult] = []
+        if case.trial_isolation.value == "episode-boundary":
+            self.setup_env(case)
+            for trial_index in range(case.trials):
+                trials.append(self._run_interactive_trial(case, trial_index))
+        else:
+            for trial_index in range(case.trials):
+                try:
+                    self._prepare_isolated_trial(case, trial_index)
+                    trials.append(self._run_interactive_trial(case, trial_index))
+                finally:
+                    self._teardown_trial(case, trial_index)
+
+        scores = [trial.score for trial in trials]
+        errors = [trial.error for trial in trials if trial.error]
+        metric_names = sorted({name for trial in trials for name in trial.metrics})
+        metrics = {
+            name: sum(trial.metrics[name] for trial in trials if name in trial.metrics)
+            / sum(name in trial.metrics for trial in trials)
+            for name in metric_names
+        }
+        oracle = json.dumps(
+            [
+                {
+                    "trial_index": trial.trial_index,
+                    "sample_index": trial.sample_index,
+                    "sample_digest": trial.sample_digest,
+                    "oracle": trial.oracle,
+                    "error": trial.error,
+                }
+                for trial in trials
+            ],
+            sort_keys=True,
+        )
+        first = trials[0]
+        return EvalResult(
+            case_id=case.id,
+            provider=case.episode_provider,
+            episode_id=first.episode_id,
+            episode_case_id=case.episode.case_id,
+            outputs=trials[-1].outputs,
+            score=case.trial_aggregate(scores),
+            error="; ".join(errors),
+            trials=tuple(trials),
+            oracle=oracle,
+            metrics=metrics,
+        )
 
     def _run_interactive_trial(
         self,
         case: InteractiveEval,
         trial_index: int,
     ) -> InteractiveTrialResult:
-        raise NotImplementedError
+        if self._episode is None:
+            raise RuntimeError("interactive trial requires a prepared episode")
+        sample_index = self._episode.initial_sample_index + trial_index
+        activation: EpisodeActivationResult | None = None
+        outputs = ""
+        try:
+            if (
+                trial_index == 0
+                and self._episode_activation is not None
+                and self._episode_activation.sample_index == sample_index
+            ):
+                activation = self._episode_activation
+            else:
+                activation = self._activate_episode_sample(case, sample_index)
+
+            if case.action is not None:
+                outputs = self.run_action(case.action)
+            elif case.skill:
+                outputs = self.call_skill(case.skill, case.skill_args)
+            else:
+                instruction = case.instruction_override or self.episode_instruction()
+                self.instruct(instruction)
+
+            oracle = ""
+            metrics: Mapping[str, float] = {}
+            if case.output_score is not None:
+                value, oracle = self.score_output(case.output_score, outputs)
+                series = [(0.0, value)]
+            elif case.score is not None:
+                series = self.sample(case.score, case.interval_s, case.timeout_s)
+            else:
+                series, evaluation = self.sample_episode(case.interval_s, case.timeout_s)
+                oracle = evaluation.summary
+                metrics = evaluation.metrics
+            if not series:
+                raise RuntimeError(f"{case.id} trial {trial_index}: no samples collected")
+            return InteractiveTrialResult(
+                trial_index=trial_index,
+                sample_index=sample_index,
+                episode_id=self._episode.episode_id,
+                sample_digest=activation.sample_digest or "",
+                outputs=outputs,
+                score=case.aggregate([value for _elapsed, value in series]),
+                oracle=oracle,
+                metrics=metrics,
+                provenance=activation.provenance,
+                series=tuple(series),
+            )
+        except Exception as error:
+            return InteractiveTrialResult(
+                trial_index=trial_index,
+                sample_index=sample_index,
+                episode_id="" if self._episode is None else self._episode.episode_id,
+                sample_digest=(
+                    "" if activation is None or activation.sample_digest is None
+                    else activation.sample_digest
+                ),
+                outputs=outputs,
+                score=0.0,
+                error=repr(error),
+                provenance={} if activation is None else activation.provenance,
+            )
 
     def _activate_episode_sample(
         self,
         case: InteractiveEval,
         sample_index: int,
     ) -> EpisodeActivationResult:
-        raise NotImplementedError
+        from dimos.e2e_tests.episode import activate_episode
+
+        if self._episode_provider is None or self._episode is None:
+            raise RuntimeError("episode sample activation requires a running provider")
+        activation = activate_episode(self._episode_provider, self._episode, sample_index)
+        if not activation.initial_conditions_passed:
+            raise RuntimeError(
+                f"episode initial conditions failed: {list(activation.failed_conditions)}"
+            )
+        self._episode_context = activation.context
+        self._episode_sample_index = activation.sample_index
+        self._episode_activation = activation
+        self._publish_episode_boundary(activation.boundary)
+        return activation
 
     def _publish_episode_boundary(self, boundary: EpisodeBoundary) -> None:
-        raise NotImplementedError
+        expected = self._episode_boundary_sequence + 1
+        if boundary.sequence != expected:
+            raise ValueError(
+                f"episode boundary sequence is {boundary.sequence}; expected {expected}"
+            )
+        self._episode_boundary_sequence = boundary.sequence
+        if self._app is None:
+            return
+        listeners = [rpc for rpc in self._app.list_rpcs() if rpc.name == "on_episode_boundary"]
+        for listener in listeners:
+            if listener.module_name is None:
+                continue
+            module = self._app.get_module(listener.module_name)
+            module.on_episode_boundary(boundary)
 
     def _prepare_isolated_trial(self, case: InteractiveEval, trial_index: int) -> None:
-        raise NotImplementedError
+        del trial_index
+        self.setup_env(case)
 
     def _teardown_trial(self, case: InteractiveEval, trial_index: int) -> None:
-        raise NotImplementedError
+        del case, trial_index
+        self.teardown_env()
 
     def setup_env(self, case: InteractiveEval) -> None:
         from dimos.evals.types import _no_setup
@@ -394,6 +532,10 @@ class EvalRunner(Configurable, CompositeResource):
     def teardown_env(self) -> None:
         """Per-case cleanup — the runner owns env lifecycle, cases just declare it."""
         self._episode = None
+        self._episode_context = None
+        self._episode_sample_index = None
+        self._episode_activation = None
+        self._episode_boundary_sequence = 0
         resources = (
             ("episode provider", "_episode_provider"),
             ("DimOS connection", "_app"),
@@ -531,7 +673,31 @@ class EvalRunner(Configurable, CompositeResource):
             result = evaluate_episode(self._episode_provider, self._episode)
 
     def _setup_episode_env(self, case: InteractiveEval) -> None:
-        raise NotImplementedError
+        from dimos.e2e_tests.dimos_cli_call import DimosCliCall
+        from dimos.e2e_tests.episode import prepare_episode
+        from dimos.sim2.evaluation import load_episode_provider
+
+        assert case.episode is not None
+        provider = load_episode_provider(case.episode_provider)
+        self._episode_provider = provider
+        episode = prepare_episode(
+            provider,
+            case.episode,
+            self.run_dir / case.id / "episode",
+        )
+        self._episode = episode
+
+        proc = DimosCliCall()
+        proc.simulator = episode.simulator
+        proc.global_args = list(episode.global_args)
+        proc.extra_env = dict(episode.extra_env)
+        proc.demo_args = [episode.blueprint_name]
+        proc.start()
+        self._proc = proc
+
+        self._app = self._connect_dimos(episode.required_modules, self.config.launch_timeout_s)
+        provider.start(episode)
+        self._activate_episode_sample(case, episode.initial_sample_index)
 
     def _connect_dimos(self, required_modules: tuple[str, ...], timeout_s: float) -> Dimos:
         from dimos.porcelain.dimos import Dimos

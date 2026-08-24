@@ -34,6 +34,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+import math
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
 
 from dimos.evals.scorers import exact, final
@@ -101,7 +103,43 @@ class InteractiveTrialResult:
     transcript: str = ""  # path within the run dir, when an agent loop ran
 
     def __post_init__(self) -> None:
-        raise NotImplementedError
+        for field_name in ("trial_index", "sample_index"):
+            value = getattr(self, field_name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"interactive trial {field_name} must be non-negative")
+        if not math.isfinite(self.score):
+            raise ValueError("interactive trial score must be finite")
+        if self.sample_digest and (
+            len(self.sample_digest) != 64
+            or any(character not in "0123456789abcdef" for character in self.sample_digest)
+        ):
+            raise ValueError("interactive trial sample digest must be lowercase SHA-256")
+        metrics = {str(name): float(value) for name, value in self.metrics.items()}
+        if any(not name.strip() for name in metrics) or any(
+            not math.isfinite(value) for value in metrics.values()
+        ):
+            raise ValueError("interactive trial metrics require names and finite values")
+        provenance: dict[str, str | int | float | bool] = {}
+        for raw_name, value in self.provenance.items():
+            name = str(raw_name).strip()
+            if not name:
+                raise ValueError("interactive trial provenance keys must not be empty")
+            if not isinstance(value, str | int | float | bool):
+                raise TypeError("interactive trial provenance values must be scalar")
+            if isinstance(value, float) and not math.isfinite(value):
+                raise ValueError("interactive trial provenance floats must be finite")
+            provenance[name] = value
+        series = tuple((float(elapsed), float(value)) for elapsed, value in self.series)
+        if any(
+            not math.isfinite(elapsed)
+            or elapsed < 0.0
+            or not math.isfinite(value)
+            for elapsed, value in series
+        ):
+            raise ValueError("interactive trial series values must be finite and time-positive")
+        object.__setattr__(self, "metrics", MappingProxyType(metrics))
+        object.__setattr__(self, "provenance", MappingProxyType(provenance))
+        object.__setattr__(self, "series", series)
 
 
 class EvalRig(Protocol):
@@ -236,10 +274,80 @@ class InteractiveEval(EvalCase):
     setup: Callable[[DimSimClient], None] = _no_setup
 
     def __post_init__(self) -> None:
-        raise NotImplementedError
+        if self.score is not None and self.output_score is not None:
+            raise ValueError("interactive eval cannot combine store and output scoring")
+        if self.episode is None and self.score is None:
+            raise ValueError("interactive eval without an episode requires a public Store score")
+        if self.episode is not None and not self.episode_provider.strip():
+            raise ValueError("interactive episode requires episode_provider")
+        if self.episode is None and self.episode_provider:
+            raise ValueError("episode_provider requires an exact episode request")
+        if self.output_score is not None and self.episode is None:
+            raise ValueError("interactive output scoring requires an exact episode")
+        if self.output_score is not None and self.action is None and not self.skill:
+            raise ValueError("interactive output scoring requires an action or skill result")
+        if self.action is not None and self.episode is None:
+            raise ValueError("public action callbacks require an exact episode")
+        if self.action is not None and self.skill:
+            raise ValueError("interactive eval cannot combine action and skill")
+        if isinstance(self.trials, bool) or not isinstance(self.trials, int) or self.trials < 1:
+            raise ValueError("interactive eval trials must be a positive integer")
+        if self.trials > 1 and self.episode is None:
+            raise ValueError("repeated interactive trials require an episode provider")
+        object.__setattr__(self, "trial_isolation", TrialIsolationMode(self.trial_isolation))
+        if self.instruction_override is not None:
+            override = self.instruction_override.strip()
+            if not override:
+                raise ValueError("interactive instruction_override must not be empty")
+            if self.episode is None:
+                raise ValueError("interactive instruction_override requires an exact episode")
+            object.__setattr__(self, "instruction_override", override)
 
     def evaluate(self, rig: EvalRig) -> EvalResult:
-        raise NotImplementedError
+        if self.trials > 1:
+            return rig.run_interactive_trials(self)
+
+        rig.setup_env(self)
+        provider, episode_id, episode_case_id = (
+            rig.episode_identity() if self.episode is not None else ("", "", "")
+        )
+        outputs = ""
+        if self.action is not None:
+            outputs = rig.run_action(self.action)
+        elif self.skill:
+            outputs = rig.call_skill(self.skill, self.skill_args)
+        else:
+            instruction = (
+                self.instruction_override or rig.episode_instruction()
+                if self.episode is not None
+                else self.inputs
+            )
+            rig.instruct(instruction)
+
+        oracle = ""
+        metrics: Mapping[str, float] = {}
+        if self.output_score is not None:
+            value, oracle = rig.score_output(self.output_score, outputs)
+            series = [(0.0, value)]
+        elif self.score is not None:
+            series = rig.sample(self.score, self.interval_s, self.timeout_s)
+        else:
+            series, evaluation = rig.sample_episode(self.interval_s, self.timeout_s)
+            oracle = evaluation.summary
+            metrics = evaluation.metrics
+        if not series:
+            return EvalResult(case_id=self.id, error=f"{self.id}: no samples collected")
+        return EvalResult(
+            case_id=self.id,
+            provider=provider,
+            episode_id=episode_id,
+            episode_case_id=episode_case_id,
+            outputs=outputs,
+            score=self.aggregate([value for _elapsed, value in series]),
+            series=tuple(series),
+            oracle=oracle,
+            metrics=metrics,
+        )
 
     def preflight(self, rig: EvalRig) -> None:
         rig.check_env(self)
