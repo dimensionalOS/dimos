@@ -61,6 +61,8 @@ pub struct Config {
     /// Factor of the fine grain voxels against the coarse grain voxels.
     #[validate(range(min = 0, max = 4))]
     pub fine_divisor: u32,
+    /// Publish the local fine map alongside the local map. Needs a fine divisor.
+    pub emit_fine: bool,
     #[validate(range(min = 0.0))]
     pub max_range: f32,
     #[validate(range(min = 1))]
@@ -101,6 +103,9 @@ fn validate_config(cfg: &Config) -> Result<(), ValidationError> {
     }
     if cfg.fine_divisor == 1 {
         return Err(ValidationError::new("fine_divisor_min_2"));
+    }
+    if cfg.emit_fine && cfg.fine_divisor == 0 {
+        return Err(ValidationError::new("emit_fine_requires_fine_divisor"));
     }
     Ok(())
 }
