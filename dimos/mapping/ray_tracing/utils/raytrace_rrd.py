@@ -43,7 +43,7 @@ from dimos.utils.data import resolve_named_path
 TIMELINE = "ts"
 
 # --voxel-size default, and the render size --render-voxel scales from when unset.
-DEFAULT_VOXEL_SIZE = 0.1
+DEFAULT_VOXEL_SIZE = 0.08
 
 COLORS = {
     "naive": [90, 200, 90],
