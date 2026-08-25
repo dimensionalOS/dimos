@@ -172,7 +172,7 @@ def _lattice_quantum(points: np.ndarray) -> float | None:
     quantum = float(diffs.min())
     if quantum < 1e-4:
         return None
-    scaled = sample / quantum
+    scaled = (sample - sample[0]) / quantum
     if float(np.abs(scaled - np.round(scaled)).max()) > 0.01:
         return None
     return quantum
@@ -620,7 +620,7 @@ class Rig:
                 # A grid-quantized source repeats the same cell in every
                 # snapshot it persists through; accumulation must not count
                 # one voxel once per snapshot. Cell keys dedup in one pass.
-                cells = np.round(stacked / quantum).astype(np.int64) + _CELL_OFFSET
+                cells = np.round((stacked - stacked[0]) / quantum).astype(np.int64) + _CELL_OFFSET
                 keys = (cells[:, 0] << 42) | (cells[:, 1] << 21) | cells[:, 2]
                 _, index = np.unique(keys, return_index=True)
                 points = stacked[index]
