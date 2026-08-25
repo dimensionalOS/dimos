@@ -52,7 +52,7 @@ uv run dimos cameracalibrate --source webcam --device-index 0 --cols 8 --rows 6 
 uv run dimos cameracalibrate --source folder --images ./capture/ --cols 8 --rows 6 --square-size-m 0.02485 --out ./camera_info.yaml ./camera_info.preview.png
 ```
 
-**Topic (live pubsub stream).** Subscribe to a camera that is already publishing over the dimos pubsub bus — for example a robot blueprint that's currently running — instead of opening a local webcam device. The same interactive UX applies: press **Space** to accept a frame, **q** to quit early, stop after `--target-count` (default 20). The publisher must emit `sensor_msgs.Image`; the calibration script normalizes to BGR via `Image.to_opencv()`.
+**Topic (live pubsub stream).** Subscribe to a camera that is already publishing over the dimos pubsub bus (for example a robot blueprint that's currently running) instead of opening a local webcam device. The same interactive UX applies: press **Space** to accept a frame, **q** to quit early, stop after `--target-count` (default 20). The publisher must emit `sensor_msgs.Image`; the calibration script normalizes to BGR via `Image.to_opencv()`.
 
 ```bash
 uv run dimos cameracalibrate --source topic --topic "jpeg_lcm:/color_image" --cols 8 --rows 6 --square-size-m 0.02485 --out ./camera_info.yaml ./camera_info.preview.png
@@ -60,9 +60,9 @@ uv run dimos cameracalibrate --source topic --topic "jpeg_lcm:/color_image" --co
 
 `--topic` is a single URI `<proto>:<channel>` from the pubsub registry (`dimos.protocol.pubsub.registry`). Pick the proto that matches how the publisher transports the image:
 
-- `lcm:/color_image` — standard typed LCM stream.
-- `jpeg_lcm:/color_image` — Go2 `smart` blueprint and other JPEG-LCM publishers.
-- `pshm:color_image` — Go2 `basic` blueprint (pickled shared memory).
+- `lcm:/color_image`: standard typed LCM stream.
+- `jpeg_lcm:/color_image`: Go2 `smart` blueprint and other JPEG-LCM publishers.
+- `pshm:color_image`: Go2 `basic` blueprint (pickled shared memory).
 - `shm` / `jpeg_shm` / `plcm` are also accepted for niche cases.
 
 The optional `#<msg_type>` URI suffix forwards a fully-qualified message name to the registry (e.g. `lcm:/color_image#sensor_msgs.Image`); when omitted, the calibration CLI passes `sensor_msgs.Image` for typed protos. Pickled / self-describing protos (`plcm`, `pshm`, ...) ignore the type.
@@ -73,10 +73,10 @@ If the topic stays silent, `--topic-timeout-sec` (default 60) aborts the run ins
 
 `--distortion-model` selects the lens model the solver uses. Default is `plumb_bob`; pass `--distortion-model fisheye` for genuine wide-angle / fisheye lenses (e.g. the Go2 front camera).
 
-- `plumb_bob` — `cv2.calibrateCamera` with the 5-coefficient radial-tangential model. Right for near-pinhole lenses (typical webcams, narrow-FOV USB cameras). YAML emits `distortion_model: plumb_bob`.
-- `fisheye` — `cv2.fisheye.calibrate` with the 4-coefficient Kannala-Brandt model. YAML emits `distortion_model: equidistant` (the ROS-canonical name). Use this whenever the lens has noticeable barrel distortion or HFOV beyond roughly 100°.
+- `plumb_bob`: `cv2.calibrateCamera` with the 5-coefficient radial-tangential model. Right for near-pinhole lenses (typical webcams, narrow-FOV USB cameras). YAML emits `distortion_model: plumb_bob`.
+- `fisheye`: `cv2.fisheye.calibrate` with the 4-coefficient Kannala-Brandt model. YAML emits `distortion_model: equidistant` (the ROS-canonical name). Use this whenever the lens has noticeable barrel distortion or HFOV beyond roughly 100°.
 
-How to tell you picked the wrong model: solver "succeeds" but the recovered `K` and `D` are nonsense. Plumb-bob fit to a fisheye lens typically produces inflated focal lengths and `k` coefficients far outside the usual `[-0.5, 0.5]` range (you'll see numbers like `k1 ≈ -1.6, k2 ≈ 4.7`). Fisheye fit to a near-pinhole lens just over-parametrises and behaves similarly. When in doubt, look at the printed focal length vs the lens's nominal FOV — `fx ≈ width / (2 · tan(HFOV/2))` is a useful sanity check.
+How to tell you picked the wrong model: solver "succeeds" but the recovered `K` and `D` are nonsense. Plumb-bob fit to a fisheye lens typically produces inflated focal lengths and `k` coefficients far outside the usual `[-0.5, 0.5]` range (you'll see numbers like `k1 ≈ -1.6, k2 ≈ 4.7`). Fisheye fit to a near-pinhole lens just over-parametrises and behaves similarly. When in doubt, look at the printed focal length vs the lens's nominal FOV. `fx ≈ width / (2 · tan(HFOV/2))` is a useful sanity check.
 
 ```bash
 uv run dimos cameracalibrate --source topic --topic "lcm:/color_image" \

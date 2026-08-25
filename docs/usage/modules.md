@@ -240,7 +240,7 @@ class Watchdog(Module):
             self._notifier.notify(f"value={msg.data}")
 ```
 
-The Spec must match the target module's `@rpc` signatures (sync/async are interchangeable — see [Async modules](#async-modules-lock-free-state)).
+The Spec must match the target module's `@rpc` signatures. Sync and async are interchangeable (see [Async modules](#async-modules-lock-free-state)).
 
 To deploy `Watchdog`, add `Watchdog.blueprint()` to an existing blueprint's `autoconnect(...)` chain. The coordinator matches `Out[T]` to `In[T]` by name across the union of modules, and resolves `_notifier: NotifierSpec` to whichever module in the blueprint implements `notify`. No manual wiring required.
 
@@ -321,7 +321,7 @@ class MovementManager(Module):
         self.cmd_vel.publish(msg)
 ```
 
-Each handler runs in a per-handler dispatcher task on `self._loop`. Handlers are serialized: only one invocation of `handle_x` runs at a time. If messages arrive faster than the handler can process them, intermediate messages are dropped — only the most recent unprocessed message is kept (LATEST policy). The handler is guaranteed to eventually run with the most recently published value.
+Each handler runs in a per-handler dispatcher task on `self._loop`. Handlers are serialized: only one invocation of `handle_x` runs at a time. If messages arrive faster than the handler can process them, intermediate messages are dropped. Only the most recent unprocessed message is kept (LATEST policy). The handler is guaranteed to eventually run with the most recently published value.
 
 ### Async `@rpc` methods
 
