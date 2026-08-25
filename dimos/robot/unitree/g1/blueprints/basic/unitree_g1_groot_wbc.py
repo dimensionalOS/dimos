@@ -76,6 +76,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.unitree.g1.config import G1
 from dimos.robot.unitree.g1.g1_rerun import (
     G1_RERUN_ROOT,
@@ -396,7 +397,7 @@ _G1_ARM_JOINT_NAME_MAPPING = {
 }
 _G1_TELEOP_MODEL = RobotModelConfig(
     name="g1_arms",
-    model_path=_G1_URDF_PATH,
+    model=RobotModel.from_file(_G1_URDF_PATH),
     joint_names=list(_G1_ARM_JOINT_NAME_MAPPING.values()),
     base_link="pelvis",
     joint_name_mapping=_G1_ARM_JOINT_NAME_MAPPING,

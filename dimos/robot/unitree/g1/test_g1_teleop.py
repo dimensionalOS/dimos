@@ -14,7 +14,7 @@
 
 """Construction and objective tests for shared G1 Quest teleoperation."""
 
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -22,6 +22,7 @@ import pytest
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import g1_arms
 from dimos.control.tasks.pose_target_ik import PoseTargetIKTaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -50,7 +51,10 @@ def _teleop_task() -> TaskConfig:
         for atom in unitree_g1_groot_wbc.blueprints
         if issubclass(atom.module, TeleopControlCoordinator)
     )
-    return next(task for task in coordinator.kwargs["tasks"] if task.type == "teleop_ik")
+    return cast(
+        "TaskConfig",
+        next(task for task in coordinator.kwargs["tasks"] if task.type == "teleop_ik"),
+    )
 
 
 def test_g1_blueprint_uses_shared_bimanual_teleop_task() -> None:
@@ -70,7 +74,7 @@ def test_g1_blueprint_uses_shared_bimanual_teleop_task() -> None:
     assert task.params["max_joint_velocity_rad_s"] == pytest.approx(np.deg2rad(120.0))
 
 
-def test_g1_blueprint_has_no_static_arm_holder() -> None:
+def test_g1_blueprint_keeps_bounded_trajectory_path_below_teleop() -> None:
     coordinator = next(
         atom
         for atom in unitree_g1_groot_wbc.blueprints
@@ -81,7 +85,10 @@ def test_g1_blueprint_has_no_static_arm_holder() -> None:
         task for task in coordinator.kwargs["tasks"] if set(task.joint_names) & set(g1_arms)
     ]
 
-    assert [(task.name, task.type) for task in arm_tasks] == [(G1_TELEOP_TASK_NAME, "teleop_ik")]
+    assert [(task.name, task.type, task.priority) for task in arm_tasks] == [
+        (JOINT_TRAJECTORY_TASK_NAME, "trajectory", 10),
+        (G1_TELEOP_TASK_NAME, "teleop_ik", 20),
+    ]
 
 
 def test_g1_teleop_wires_arm_velocity_and_recording_streams() -> None:
