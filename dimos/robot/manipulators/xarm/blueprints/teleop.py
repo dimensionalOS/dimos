@@ -58,6 +58,7 @@ keyboard_teleop_xarm6 = autoconnect(
             eef_twist_task(
                 _xarm6_hw,
                 robot_model=_xarm6_control_model,
+                target_frame="link6",
                 timeout=0.0,
             ),
             TaskConfig(
@@ -86,6 +87,7 @@ keyboard_teleop_xarm7 = autoconnect(
             eef_twist_task(
                 _xarm7_hw,
                 robot_model=_xarm7_control_model,
+                target_frame="link7",
                 timeout=0.0,
             ),
             TaskConfig(
@@ -190,6 +192,7 @@ coordinator_teleop_xarm7 = autoconnect(
             eef_twist_task(
                 _xarm7_teleop_hw,
                 robot_model=_xarm7_control_model,
+                target_frame="link7",
                 priority=10,
                 timeout=0.0,
             ),
@@ -229,6 +232,7 @@ coordinator_teleop_xarm6 = autoconnect(
             eef_twist_task(
                 _xarm6_teleop_hw,
                 robot_model=_xarm6_control_model,
+                target_frame="link6",
                 priority=10,
                 timeout=0.0,
             ),

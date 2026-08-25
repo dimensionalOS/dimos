@@ -47,6 +47,7 @@ keyboard_teleop_a750 = autoconnect(
             eef_twist_task(
                 _a750_hw,
                 robot_model=_a750_model,
+                target_frame="gripper_base",
             ),
             trajectory_task(_a750_hw),
             TaskConfig(

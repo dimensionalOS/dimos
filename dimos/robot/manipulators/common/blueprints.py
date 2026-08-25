@@ -86,7 +86,7 @@ def eef_twist_task(
     hardware: HardwareComponent,
     *,
     robot_model: RobotModelConfig,
-    target_frame: str | None = None,
+    target_frame: str,
     name: str = EEF_TWIST_TASK_NAME,
     priority: int = 10,
     timeout: float = 0.3,
@@ -100,8 +100,7 @@ def eef_twist_task(
         "max_joint_velocity_rad_s": max_joint_velocity_rad_s,
         "max_command_tracking_error_deg": max_command_tracking_error_deg,
     }
-    if target_frame is not None:
-        task_params["target_frame"] = target_frame
+    task_params["target_frame"] = target_frame
     if pink is not None:
         task_params["pink"] = pink
     return TaskConfig(

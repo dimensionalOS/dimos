@@ -57,7 +57,11 @@ keyboard_teleop_piper = autoconnect(
         joint_state_frame_id="coordinator",
         hardware=[_piper_keyboard_hw],
         tasks=[
-            eef_twist_task(_piper_keyboard_hw, robot_model=_piper_model),
+            eef_twist_task(
+                _piper_keyboard_hw,
+                robot_model=_piper_model,
+                target_frame="gripper_base",
+            ),
             TaskConfig(
                 name="arm_gripper",
                 type="gripper",

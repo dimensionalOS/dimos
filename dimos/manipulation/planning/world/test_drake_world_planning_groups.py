@@ -146,7 +146,7 @@ def test_drake_loads_canonical_slash_names_natively(tmp_path: Path) -> None:
         name="robot",
         model=RobotModel.from_file(urdf),
         joint_names=["left/j1"],
-        base_link="world",
+        base_link="left/base",
         planning_groups=[
             PlanningGroupDefinition(
                 name="left_arm",
