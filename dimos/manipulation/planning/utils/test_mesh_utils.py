@@ -137,11 +137,13 @@ def _cube_points(scale: float) -> np.ndarray:
     )
 
 
-def _hull_for_scale(scale: float) -> str | None:
+def _hull_for_scale(scale: float) -> str:
     # Separate frame so the array is freed on return and CPython reuses its
     # address, the aliasing the old id(points) name turned into shared files.
     points = _cube_points(scale)
-    return mesh_utils.pointcloud_to_convex_hull_obj(points)
+    hull = mesh_utils.pointcloud_to_convex_hull_obj(points)
+    assert hull is not None
+    return hull.path
 
 
 def test_convex_hull_default_path_is_unique_per_call(
@@ -152,7 +154,6 @@ def test_convex_hull_default_path_is_unique_per_call(
 
     paths = [_hull_for_scale(0.1 * (i + 1)) for i in range(4)]
 
-    assert all(path is not None for path in paths)
     assert len(set(paths)) == len(paths)
     assert len({Path(path).read_text() for path in paths}) == len(paths)
 
@@ -165,11 +166,12 @@ def test_convex_hull_cache_key_reuses_one_file(
 
     first = mesh_utils.pointcloud_to_convex_hull_obj(_cube_points(0.1), cache_key="object_a")
     assert first is not None
-    before = Path(first).read_text()
+    before = Path(first.path).read_text()
 
     second = mesh_utils.pointcloud_to_convex_hull_obj(_cube_points(0.4), cache_key="object_a")
-    assert second == first
-    assert Path(first).read_text() != before
+    assert second is not None
+    assert second.path == first.path
+    assert Path(first.path).read_text() != before
 
     hull_dir = tmp_path / "derived" / "drake_meshes" / "convex_hulls"
     assert len(list(hull_dir.glob("*.obj"))) == 1
@@ -186,5 +188,32 @@ def test_convex_hull_cache_keys_that_sanitize_alike_stay_distinct(
 
     assert first is not None
     assert second is not None
-    assert first != second
-    assert Path(first).read_text() != Path(second).read_text()
+    assert first.path != second.path
+    assert Path(first.path).read_text() != Path(second.path).read_text()
+
+
+def _obj_vertices(path: Path) -> np.ndarray:
+    lines = path.read_text().splitlines()
+    return np.array([[float(v) for v in ln.split()[1:4]] for ln in lines if ln.startswith("v ")])
+
+
+def test_convex_hull_returns_the_centroid_it_centered_on(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mesh_utils, "_CACHE_DIR", tmp_path / "derived" / "drake_meshes")
+
+    # Lopsided and far from the origin, so the mean is neither zero nor the
+    # bounding-box center.
+    offset = np.array([1.0, 2.0, 3.0])
+    points = np.vstack([_cube_points(0.2), np.zeros((8, 3))]) + offset
+    hull = mesh_utils.pointcloud_to_convex_hull_obj(points)
+
+    assert hull is not None
+    np.testing.assert_allclose(hull.centroid, points.mean(axis=0))
+
+    # The OBJ holds local-frame vertices, so adding the centroid back reproduces
+    # the cloud's world-frame extent. That is the contract the caller places on.
+    verts = _obj_vertices(Path(hull.path))
+    np.testing.assert_allclose(verts.min(axis=0) + hull.centroid, points.min(axis=0), atol=1e-5)
+    np.testing.assert_allclose(verts.max(axis=0) + hull.centroid, points.max(axis=0), atol=1e-5)
