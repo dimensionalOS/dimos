@@ -1,0 +1,97 @@
+site_name: Dimensional
+site_description: >-
+  Official documentation for Dimensional (dimOS) — the modern operating system
+  for generalist robotics: Python-first, agent-native, and hardware-agnostic.
+site_url: https://dimensionalos.github.io/
+repo_url: https://github.com/dimensionalOS/dimos
+repo_name: dimensionalOS/dimos
+edit_uri: edit/main/docs/
+copyright: Dimensional Inc.
+
+docs_dir: docs
+site_dir: site
+
+# docs/ is a workspace as well as a page tree; keep the non-pages out.
+exclude_docs: |
+  node_modules/
+  .gitattributes
+  logs/
+  todo.md
+  # agent instructions, not pages
+  CLAUDE.md
+  # artifacts the executable docs drop next to the page they belong to
+  *.db
+  *.rrd
+  *.mcap
+  bla*
+  None
+
+# Repo-root links and md-babel fence params are translated at build time,
+# so every page under docs/ stays exactly as it is on github.
+hooks:
+  - misc/mkdocs/hooks.py
+
+# mkdocs serve watches docs/ and the config; the theme lives outside both.
+watch:
+  - misc/mkdocs
+
+theme:
+  name: material
+  favicon: assets/favicon.png
+  logo: assets/dimensional-logo-master-transparent.png
+  font:
+    text: Inter
+    code: JetBrains Mono
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+  # Dark only: one palette entry means material renders no toggle.
+  palette:
+    scheme: slate
+    primary: custom
+    accent: custom
+
+extra_css:
+  - assets/mkdocs-theme.css
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+plugins:
+  - search
+  # nav lives in docs/.nav.yml (and per-directory .nav.yml files)
+  - awesome-nav
+  # click a diagram or screenshot to open it full size
+  - glightbox:
+      auto_caption: false
+      skip_classes: [no-lightbox]
+  - minify:
+      minify_html: true

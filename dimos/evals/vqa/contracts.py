@@ -33,7 +33,6 @@ if TYPE_CHECKING:
     from dimos.evals.vqa.primitives.edgetam import ObjectMaskEvidence
     from dimos.evals.vqa.primitives.range import ObjectRangeEvidence
     from dimos.msgs.sensor_msgs.Image import Image
-    from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 FamilyName = Literal[
@@ -70,7 +69,8 @@ class FamilyAnswer(BaseModel):
     def answer_is_a_choice(self) -> FamilyAnswer:
         if len(self.choices) < 2:
             raise ValueError("a VQA question requires at least two choices")
-        if len(set(self.choices)) != len(self.choices):
+        unique_choices = {choice.casefold() for choice in self.choices}
+        if len(unique_choices) != len(self.choices):
             raise ValueError("VQA choices must be unique")
         if self.answer not in self.choices:
             raise ValueError("the answer must be one of the choices")
@@ -116,12 +116,6 @@ class FamilySpec:
 
 class InsufficientEvidenceError(ValueError):
     """A family cannot derive an answer from the available primitive evidence."""
-
-
-class ObjectDetector(Protocol):
-    """Object evidence required by visual question families."""
-
-    def query_detections(self, image: Image, query: str) -> ImageDetections2D: ...
 
 
 class ObjectMaskEstimator(Protocol):

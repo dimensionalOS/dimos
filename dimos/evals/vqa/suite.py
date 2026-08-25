@@ -99,8 +99,6 @@ def load_suite(dataset: Path) -> Suite:
     for row in _read_jsonl(root / "cases.jsonl"):
         case = PublicCase.model_validate(row)
         label = label_by_id.pop(case.id)
-        if len(case.choices) < 2 or len(set(case.choices)) != len(case.choices):
-            raise ValueError(f"VQA case {case.id!r} requires at least two unique choices")
         if label.answer not in case.choices:
             raise ValueError(f"VQA label for {case.id!r} is not one of its choices")
         suite.append(

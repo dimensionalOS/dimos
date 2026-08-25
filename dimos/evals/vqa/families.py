@@ -25,7 +25,6 @@ from dimos.evals.vqa.contracts import (
     FamilyName,
     FamilySpec,
     InsufficientEvidenceError,
-    ObjectDetector,
     ObjectMaskEstimator,
     ObjectRangeEstimator,
     QuestionProposal,
@@ -33,6 +32,7 @@ from dimos.evals.vqa.contracts import (
 
 if TYPE_CHECKING:
     from dimos.evals.vqa.calibrated_frame import CalibratedFrame
+    from dimos.models.vl.base import VlModel
     from dimos.msgs.sensor_msgs.Image import Image
 
 
@@ -106,7 +106,7 @@ def _family_spec(name: FamilyName) -> FamilySpec:
 def answer_question(
     proposal: QuestionProposal,
     image: Image,
-    detector: ObjectDetector,
+    detector: VlModel,
     calibrated_frame: CalibratedFrame | None = None,
     range_estimator: ObjectRangeEstimator | None = None,
     mask_estimator: ObjectMaskEstimator | None = None,
@@ -144,9 +144,7 @@ def answer_question(
     raise ValueError(f"unsupported VQA family: {proposal.family}")
 
 
-def _answer_presence(
-    proposal: QuestionProposal, image: Image, detector: ObjectDetector
-) -> FamilyAnswer:
+def _answer_presence(proposal: QuestionProposal, image: Image, detector: VlModel) -> FamilyAnswer:
     object_name = proposal.object_names[0]
     detections = detector.query_detections(image, object_name)
     if not detections.detections:
@@ -166,7 +164,7 @@ def _answer_presence(
 
 
 def _answer_horizontal_direction(
-    proposal: QuestionProposal, image: Image, detector: ObjectDetector
+    proposal: QuestionProposal, image: Image, detector: VlModel
 ) -> FamilyAnswer:
     object_name = proposal.object_names[0]
     detections = detector.query_detections(image, object_name)
@@ -201,7 +199,7 @@ def _answer_horizontal_direction(
 
 
 def _answer_object_count(
-    proposal: QuestionProposal, image: Image, detector: ObjectDetector
+    proposal: QuestionProposal, image: Image, detector: VlModel
 ) -> FamilyAnswer:
     object_name = proposal.object_names[0]
     detections = detector.query_detections(image, object_name)

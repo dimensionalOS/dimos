@@ -1,6 +1,4 @@
----
-title: "System Requirements"
----
+# System Requirements
 
 ## Hardware
 

@@ -1,6 +1,4 @@
----
-title: "CLI Reference"
----
+# CLI Reference
 
 The `dimos` CLI manages the full lifecycle of a dimOS robot stack — start, stop, inspect, and interact.
 

@@ -22,6 +22,7 @@ import json
 from pathlib import Path
 import re
 import tempfile
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -38,7 +39,6 @@ from dimos.evals.vqa.contracts import (
     InsufficientEvidenceError,
     InvalidQuestionProposalError,
     NonEmptyString,
-    ObjectDetector,
     ObjectMaskEstimator,
     ObjectRangeEstimator,
     QuestionProposal,
@@ -50,6 +50,9 @@ from dimos.evals.vqa.families import (
 from dimos.evals.vqa.primitives.edgetam import EdgeTamObjectMaskPipeline
 from dimos.evals.vqa.primitives.range import LidarRangeEstimator
 from dimos.msgs.sensor_msgs.Image import Image
+
+if TYPE_CHECKING:
+    from dimos.models.vl.base import VlModel
 
 _UNORDERED_FAMILIES = frozenset(
     family.name for family in AVAILABLE_FAMILIES if not family.object_order_matters
@@ -109,6 +112,13 @@ class PublicCase(BaseModel):
     image: NonEmptyString
     question: NonEmptyString
     choices: tuple[NonEmptyString, ...]
+
+    @model_validator(mode="after")
+    def choices_are_distinct(self) -> PublicCase:
+        unique_choices = {choice.casefold() for choice in self.choices}
+        if len(self.choices) < 2 or len(unique_choices) != len(self.choices):
+            raise ValueError("a VQA case requires at least two unique choices")
+        return self
 
 
 class PrivateLabel(BaseModel):
@@ -207,7 +217,7 @@ def generate_frames_dataset(
     request: GenerationRequest,
     frames: Iterable[GenerationFrame],
     author: QuestionAuthor,
-    detector: ObjectDetector,
+    detector: VlModel,
     range_estimator: ObjectRangeEstimator | None = None,
     mask_estimator: ObjectMaskEstimator | None = None,
     *,
@@ -270,7 +280,7 @@ def generate_frames_dataset(
 def _generate_frame(
     source: GenerationFrame,
     author: QuestionAuthor,
-    detector: ObjectDetector,
+    detector: VlModel,
     range_estimator: ObjectRangeEstimator | None,
     mask_estimator: ObjectMaskEstimator | None,
 ) -> _GeneratedFrame:

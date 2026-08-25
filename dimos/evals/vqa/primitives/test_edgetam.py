@@ -23,6 +23,7 @@ from dimos.evals.vqa.calibrated_frame import CalibratedFrame
 from dimos.evals.vqa.contracts import InsufficientEvidenceError
 from dimos.evals.vqa.primitives.edgetam import EdgeTamObjectMaskPipeline
 from dimos.evals.vqa.primitives.range import LidarRangeEstimator
+from dimos.models.vl.base import VlModel
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -49,11 +50,24 @@ class _PointCloud:
         return self._points, None
 
 
-class _Detector:
+class _TestVlModel(VlModel):
+    def __init__(self) -> None:
+        pass
+
+    def query(self, image: Image, query: str, **kwargs: object) -> str:
+        raise NotImplementedError
+
+    def stop(self) -> None:
+        pass
+
+
+class _Detector(_TestVlModel):
     def __init__(self, boxes: list[BBox]) -> None:
         self._boxes = boxes
 
-    def query_detections(self, image: Image, query: str) -> ImageDetections2D[Detection2DBBox]:
+    def query_detections(
+        self, image: Image, query: str, **kwargs: object
+    ) -> ImageDetections2D[Detection2DBBox]:
         detections = [
             Detection2DBBox(
                 bbox=box,
@@ -69,11 +83,13 @@ class _Detector:
         return ImageDetections2D(image, detections)
 
 
-class _NamedDetector:
+class _NamedDetector(_TestVlModel):
     def __init__(self, boxes: dict[str, BBox]) -> None:
         self._boxes = boxes
 
-    def query_detections(self, image: Image, query: str) -> ImageDetections2D[Detection2DBBox]:
+    def query_detections(
+        self, image: Image, query: str, **kwargs: object
+    ) -> ImageDetections2D[Detection2DBBox]:
         box = self._boxes[query]
         return ImageDetections2D(
             image,

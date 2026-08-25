@@ -50,13 +50,24 @@ from dimos.evals.vqa.generate import (
 from dimos.evals.vqa.primitives.edgetam import ObjectMaskEvidence
 from dimos.evals.vqa.primitives.range import ObjectRangeEvidence
 from dimos.evals.vqa.suite import load_suite
+from dimos.models.vl.base import VlModel
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
 if TYPE_CHECKING:
     from dimos.evals.vqa.calibrated_frame import CalibratedFrame
-    from dimos.models.vl.base import VlModel
+
+
+class _TestVlModel(VlModel):
+    def __init__(self) -> None:
+        pass
+
+    def query(self, image: Image, query: str, **kwargs: object) -> str:
+        raise NotImplementedError
+
+    def stop(self) -> None:
+        pass
 
 
 class _Author:
@@ -153,11 +164,13 @@ class _CollidingAuthor:
         )
 
 
-class _Detector:
+class _Detector(_TestVlModel):
     def __init__(self, present: bool) -> None:
         self._present = present
 
-    def query_detections(self, image: Image, query: str) -> ImageDetections2D:
+    def query_detections(
+        self, image: Image, query: str, **kwargs: object
+    ) -> ImageDetections2D[Detection2DBBox]:
         detections = []
         if self._present:
             detections.append(
@@ -174,11 +187,13 @@ class _Detector:
         return ImageDetections2D(image, detections)
 
 
-class _BoxesDetector:
+class _BoxesDetector(_TestVlModel):
     def __init__(self, boxes: tuple[tuple[float, float, float, float], ...]) -> None:
         self._boxes = boxes
 
-    def query_detections(self, image: Image, query: str) -> ImageDetections2D:
+    def query_detections(
+        self, image: Image, query: str, **kwargs: object
+    ) -> ImageDetections2D[Detection2DBBox]:
         return ImageDetections2D(
             image,
             [
@@ -238,8 +253,10 @@ class _UnavailableFamilyQuestionModel:
         return [{"family": "object_distance", "object_names": ["chair"]}]
 
 
-class _BrokenDetector:
-    def query_detections(self, image: Image, query: str) -> ImageDetections2D:
+class _BrokenDetector(_TestVlModel):
+    def query_detections(
+        self, image: Image, query: str, **kwargs: object
+    ) -> ImageDetections2D[Detection2DBBox]:
         raise ValueError("detector broke")
 
 
@@ -248,11 +265,13 @@ class _FailsSecondDetector(_Detector):
         super().__init__(present=True)
         self._calls = 0
 
-    def query_detections(self, image: Image, query: str) -> ImageDetections2D:
+    def query_detections(
+        self, image: Image, query: str, **kwargs: object
+    ) -> ImageDetections2D[Detection2DBBox]:
         self._calls += 1
         if self._calls == 2:
             raise ValueError("detector broke")
-        return super().query_detections(image, query)
+        return super().query_detections(image, query, **kwargs)
 
 
 class _RangeEstimator:
@@ -417,10 +436,12 @@ def test_closest_object_proposal_requires_two_to_five_distinct_references() -> N
             )
         )
     with pytest.raises(ValidationError):
-        QuestionProposal(
-            family="closest_object",
-            object_name="chair",
-            object_names=("chair", "table"),
+        QuestionProposal.model_validate(
+            {
+                "family": "closest_object",
+                "object_name": "chair",
+                "object_names": ["chair", "table"],
+            }
         )
     with pytest.raises(ValueError, match="exactly 1 object name"):
         PRESENCE_FAMILY.validate(
@@ -563,6 +584,15 @@ def test_family_answer_requires_an_allowed_choice() -> None:
             question="Is there a chair in the image?",
             choices=("yes", "no"),
             answer="unknown",
+        )
+
+
+def test_family_answer_requires_case_insensitive_unique_choices() -> None:
+    with pytest.raises(ValidationError, match="choices must be unique"):
+        FamilyAnswer(
+            question="Is there a chair in the image?",
+            choices=("yes", "YES"),
+            answer="yes",
         )
 
 
@@ -835,6 +865,19 @@ def test_standalone_rows_match_public_private_contract() -> None:
     }
 
 
+@pytest.mark.parametrize("choices", (("yes",), ("yes", "YES")))
+def test_public_case_requires_multiple_case_insensitive_unique_choices(
+    choices: tuple[str, ...],
+) -> None:
+    with pytest.raises(ValidationError, match="at least two unique choices"):
+        PublicCase(
+            id="q",
+            image="frame.png",
+            question="Is there a chair?",
+            choices=choices,
+        )
+
+
 def test_suite_loads_jsonl_without_reading_whole_files(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -869,6 +912,20 @@ def test_suite_rejects_malformed_jsonl(tmp_path: Path) -> None:
     (tmp_path / "cases.jsonl").write_text("{not-json}\n")
 
     with pytest.raises(ValueError, match="invalid VQA dataset file"):
+        load_suite(tmp_path)
+
+
+def test_suite_rejects_case_insensitive_duplicate_choices(tmp_path: Path) -> None:
+    case = {
+        "id": "q",
+        "image": "missing.png",
+        "question": "Is there a chair?",
+        "choices": ["yes", "YES"],
+    }
+    (tmp_path / "cases.jsonl").write_text(json.dumps(case) + "\n")
+    (tmp_path / "labels.jsonl").write_text(json.dumps({"id": "q", "answer": "yes"}) + "\n")
+
+    with pytest.raises(ValueError, match="at least two unique choices"):
         load_suite(tmp_path)
 
 
