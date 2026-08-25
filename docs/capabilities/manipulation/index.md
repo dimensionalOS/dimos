@@ -424,6 +424,30 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
 - **ControlCoordinator** — 100Hz control loop with mock or real hardware adapters
 - **ManipulationModule** — world backend, optional visualization, RRT motion planning, obstacle management
 
+### Streaming pose-target control
+
+`CartesianIKTask` and `TeleopIKTask` are sibling leaves over the shared
+`PoseTargetIKTask` control core. Their configuration uses a `RobotModelConfig`,
+explicit controlled `joint_names`, and named target frames. The common core
+warm-starts one bounded Pink update from live coordinator joint state on each
+tick; it does not require a planning world or expose planning groups to the
+coordinator.
+
+Cartesian IK accepts one absolute robot-frame target. Quest IK accepts one or
+two controller-to-frame bindings and owns engagement, reference capture,
+relative target mapping, and optional per-hand gripper commands. The
+coordinator only routes the distinct left/right pose streams by task name and
+arbitrates the resulting joint command.
+
+### Robot-specific Pink task stacks
+
+For robot-specific control feel, subclass `PinkPoseTargetSolver`, override its
+task-construction hooks, and pass the class through `solver_type`. The
+coordinator constructs a fresh stateful solver for every control task. See
+[Pink IK Configuration and Tuning](/docs/capabilities/manipulation/pink_ik_tuning.md)
+for the supported hooks, objective tuning, command bounds, and hardware test
+order.
+
 Internally, planning code depends on `WorldSpec` for world, collision, and
 kinematics behavior. Meshcat preview and publishing are exposed separately
 through `VisualizationSpec`, so non-visual planning paths do not require a
