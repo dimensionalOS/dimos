@@ -231,7 +231,7 @@ No other code changes are needed.
 
 ### Gain tuning (MIT kp/kd)
 
-Defaults live in [adapter.py](/dimos/hardware/manipulators/openarm/adapter.py). Gains are per-joint because the shoulder motors (DM8006, 40 Nm) tolerate higher kp than the wrist motors (DM4310, 10 Nm):
+Defaults live in [adapter.py](/dimos/hardware/whole_body/openarm_damiao/adapter.py). Gains are per-joint because the shoulder motors (DM8006, 40 Nm) tolerate higher kp than the wrist motors (DM4310, 10 Nm):
 
 ```python
 _DEFAULT_KP = [100.0, 100.0, 80.0, 80.0, 60.0, 60.0, 60.0]

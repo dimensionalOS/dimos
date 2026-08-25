@@ -41,13 +41,14 @@ def test_dual_xarm6_is_one_prepared_model_with_canonical_groups() -> None:
 
     assert model.root_link == "world"
     assert [joint.name for joint in model.joints if joint.type != "fixed"] == config.joint_names
-    assert [group.name for group in config.planning_groups] == [
-        "left_arm",
-        "right_arm",
-        "both_arms",
+    assert [
+        (group.name, group.joint_names, group.base_link, group.tip_link)
+        for group in config.planning_groups
+    ] == [
+        ("left_arm", tuple(config.joint_names[:6]), "left/link_base", "left/link6"),
+        ("right_arm", tuple(config.joint_names[6:]), "right/link_base", "right/link6"),
+        ("both_arms", tuple(config.joint_names), "world", None),
     ]
-    assert config.planning_groups[0].joint_names == tuple(config.joint_names[:6])
-    assert config.planning_groups[1].joint_names == tuple(config.joint_names[6:])
 
 
 def test_prefixed_xarm_model_uses_coordinator_facing_names_in_asset() -> None:

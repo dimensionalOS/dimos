@@ -1622,7 +1622,7 @@ def test_native_selected_planner_uses_explicit_start_after_live_state_advances(
     assert observed_scene_start[:2] == pytest.approx(start.position)
 
 
-def test_native_selected_planner_rejects_multi_group_selection(
+def test_native_selected_planner_supports_non_overlapping_multi_group_selection(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
     config = robot_config.model_copy(
@@ -1643,8 +1643,9 @@ def test_native_selected_planner_rejects_multi_group_selection(
         JointState(name=list(selection.joint_names), position=[0.1, 0.1]),
     )
 
-    assert result.status == PlanningStatus.UNSUPPORTED
-    assert "no generated group" in result.message
+    assert result.status == PlanningStatus.SUCCESS
+    assert result.path[-1].name == ["joint1", "joint2"]
+    assert result.path[-1].position == pytest.approx([0.1, 0.1])
 
 
 def test_cartesian_planner_returns_timed_global_joint_states_and_options(

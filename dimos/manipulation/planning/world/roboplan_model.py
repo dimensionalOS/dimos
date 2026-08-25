@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+import itertools
 from pathlib import Path
 from typing import Any, Protocol
 import xml.etree.ElementTree as ET
@@ -304,6 +305,13 @@ def _groups(
     for group in configured:
         layout = _group_layout((group,), maps)
         groups[frozenset(layout.group_ids)] = layout
+    for size in range(2, len(configured) + 1):
+        for selected in itertools.combinations(configured, size):
+            joint_names = tuple(name for group in selected for name in group.joint_names)
+            if len(joint_names) != len(set(joint_names)):
+                continue
+            layout = _group_layout(selected, maps)
+            groups[frozenset(layout.group_ids)] = layout
     all_id = "__dimos_all_configured__"
     config = robot.config
     all_group = RoboPlanGroup(

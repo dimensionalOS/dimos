@@ -56,7 +56,6 @@ XARM_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
 
 XARM_MODEL_PATH = LfsPath("xarm_description") / "urdf/xarm_device.urdf.xacro"
 XARM_DUAL_MODEL_PATH = LfsPath("xarm_description") / "urdf/dual_xarm_device.urdf.xacro"
-XARM_DUAL_SRDF_PATH = Path(__file__).with_name("dual_xarm6.srdf")
 XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": LfsPath("xarm_description")}
 XARM6_SIM_PATH = LfsPath("xarm6/scene.xml")
 XARM7_SIM_PATH = LfsPath("xarm7/scene.xml")
@@ -90,7 +89,6 @@ def make_dual_xarm6_model_config() -> RobotModelConfig:
                 "limited": "true",
             },
         ),
-        srdf_path=XARM_DUAL_SRDF_PATH,
         joint_names=canonical_joints,
         base_link="world",
         planning_groups=[
