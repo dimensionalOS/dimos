@@ -107,7 +107,7 @@ class LocalizeTrace:
     detection_frames: list[Any] = field(default_factory=list)  # Observation[ImageDetections2D]
     matched: list[tuple[float, Detection3DPC]] = field(default_factory=list)
     verified: list[tuple[float, Detection3DPC]] = field(default_factory=list)
-    answers: list[Detection3DPC] = field(default_factory=list)  # merged union per instance
+    answers: list[list[Detection3DPC]] = field(default_factory=list)  # sightings per instance
     backdrop_ts: float | None = None
 
 
@@ -510,7 +510,7 @@ def _finalize(
         )
 
         if trace is not None:
-            trace.answers.append(merged)
+            trace.answers.append(members)
             if k == 0:
                 trace.backdrop_ts = latest.ts
 

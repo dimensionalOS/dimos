@@ -35,6 +35,7 @@ import argparse
 import json
 from pathlib import Path
 import sys
+from typing import Any
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.transform import throttle
@@ -51,14 +52,19 @@ def render(
 ) -> None:
     """Write the .rrd - rerun stays an inline import.
 
-    Entity contract (the acceptance color cheat sheet): ``map`` backdrop,
-    then one subtree per query - ``detections/<query>/matched/*`` green,
-    ``detections/<query>/verified/*`` red, ``detections/<query>/answer/<k>``
-    always blue, one per verified instance.
+    Entity contract: the ``map`` backdrop is what was NOT detected - its
+    cells are carved free of every answer's cells - and each
+    ``detections/<query>/answer/<k>`` is one verified instance textured
+    with each sighting's own image, wrapped in a labeled wireframe box.
+    Mobile rigs show the robot as a translucent box carrying the live
+    frustum; stationary rigs keep a frozen frustum per detection frame.
     """
+    import numpy as np
     import rerun as rr
     import rerun.blueprint as rrb
 
+    from dimos.memory.vis.color import Color
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, _get_colormap_lut
     from dimos.visualization.rerun.init import rerun_init
 
     rerun_init("memory-localize")
@@ -73,46 +79,98 @@ def render(
         )
     )
 
-    GREEN, RED, BLUE = [46, 204, 113], [231, 76, 60], [52, 120, 246]
-    point_size = 0.005 if rig.depth is not None else 0.015
+    answer_parts = [
+        det.pointcloud.points_f32()
+        for _, trace in traces
+        for members in trace.answers
+        for det in members
+    ]
 
     def at(ts: float) -> None:
         rr.set_time("ts", timestamp=ts)
 
-    # scene backdrop: for depth rigs the answer frame's RGBD cloud, for
-    # pointcloud rigs the window's scans merged into one map
-    if rig.depth is not None:
+    def carve(points: np.ndarray, spacing: float) -> np.ndarray:
+        """Drop map cells claimed by a detected object, plus one cell of halo."""
+        if not answer_parts:
+            return points
+
+        def keys(cells: np.ndarray) -> np.ndarray:
+            return (cells[:, 0] << 42) | (cells[:, 1] << 21) | cells[:, 2]
+
+        offset = 1 << 20
+        claimed = np.floor(np.vstack(answer_parts) / spacing).astype(np.int64) + offset
+        claimed = np.unique(claimed, axis=0)
+        steps = np.array([-1, 0, 1])
+        neighbors = np.stack(np.meshgrid(steps, steps, steps), -1).reshape(-1, 3)
+        dilated = (claimed[:, None, :] + neighbors[None, :, :]).reshape(-1, 3)
+        cells = np.floor(points / spacing).astype(np.int64) + offset
+        return points[~np.isin(keys(cells), np.unique(keys(dilated)))]
+
+    def height_points(points: np.ndarray, radius: float, blend: float, scale: float) -> Any:
+        """Height colormap, grayed by ``blend`` and dimmed by ``scale`` so
+        textured detections pop."""
+        z = points[:, 2]
+        t = (z - z.min()) / (z.max() - z.min() + 1e-8)
+        turbo = _get_colormap_lut("turbo")[(t * 255).astype(np.uint8)]
+        colors = ((turbo * (1 - blend) + blend * 205) * scale).astype(np.uint8)
+        return rr.Points3D(positions=points, colors=colors, radii=radius)
+
+    def image_colors(det: Any) -> np.ndarray:
+        """Sample the sighting's own image at each cloud point's reprojection."""
+        points = det.pointcloud.points_f32()
+        matrix = det.transform.to_matrix()
+        cam = points @ matrix[:3, :3].T + matrix[:3, 3]
+        K = rig.camera_info.K
+        cols = np.round(cam[:, 0] / cam[:, 2] * K[0] + K[2]).astype(int)
+        rows = np.round(cam[:, 1] / cam[:, 2] * K[4] + K[5]).astype(int)
+        rgb = det.image.to_rgb().data
+        height, width = rgb.shape[:2]
+        return rgb[np.clip(rows, 0, height - 1), np.clip(cols, 0, width - 1)]
+
+    # scene backdrop: stationary depth rigs get the answer frame's RGBD
+    # cloud, mobile depth rigs the window's frames merged, pointcloud rigs
+    # the window's scans merged; point size follows the source's spacing
+    point_size = 0.005 if rig.depth is not None else 0.015
+    if rig.depth is not None and rig.mobile:
+        parts = []
+        for obs in rig.color.after(t0).before(t1).transform(throttle(1.0)):
+            cloud = rig.backdrop(obs.ts, depth_trunc=4.0)
+            if cloud is not None:
+                parts.append(cloud.voxel_downsample(0.03).points_f32())
+        if parts:
+            merged = PointCloud2.from_numpy(np.vstack(parts), frame_id=rig.world_frame)
+            carved = carve(merged.voxel_downsample(0.03).points_f32(), 0.03)
+            rr.log("map", height_points(carved, 0.013, 0.7, 0.5), static=True)
+    elif rig.depth is not None:
         backdrop_ts = next((t.backdrop_ts for _, t in traces if t.backdrop_ts is not None), None)
         if backdrop_ts is None:
             backdrop_ts = next((t.matched[0][0] for _, t in traces if t.matched), None)
         if backdrop_ts is not None:
             backdrop = rig.backdrop(backdrop_ts)
             if backdrop is not None:
-                rr.log(
-                    "map",
-                    backdrop.voxel_downsample(0.01).to_rerun(voxel_size=point_size),
-                    static=True,
-                )
+                carved = carve(backdrop.voxel_downsample(0.01).points_f32(), 0.01)
+                rr.log("map", height_points(carved, point_size / 2, 0.0, 1.0), static=True)
     else:
-        import numpy as np
-
-        from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-
         scans = [
             points
             for obs in rig.cloud.after(t0).before(t1).transform(throttle(2.0))
             if (points := rig.registered_scan(obs)) is not None
         ]
         if scans:
+            point_size = rig._cloud_quantum(scans[0]) or point_size
             merged = PointCloud2.from_numpy(np.vstack(scans), frame_id=rig.world_frame)
-            rr.log(
-                "map",
-                merged.voxel_downsample(0.05).to_rerun(voxel_size=0.01),
-                static=True,
-            )
+            carved = carve(merged.voxel_downsample(0.05).points_f32(), 0.05)
+            rr.log("map", height_points(carved, 0.022, 0.7, 0.5), static=True)
 
-    # live camera feed + frustum tracking the capture pose along the timeline
+    # live camera feed + frustum tracking the capture pose along the
+    # timeline; on mobile rigs a translucent box marks the robot
     rr.log("camera", rig.camera_info.to_rerun(), static=True)
+    if rig.mobile:
+        rr.log(
+            "robot",
+            rr.Boxes3D(half_sizes=[[0.2, 0.2, 0.2]], colors=[[120, 120, 120, 70]]),
+            static=True,
+        )
     feed_throttle = 0.1 if (t1 - t0) <= 160 else 0.4
     feed = rig.color.after(t0).before(t1).transform(throttle(feed_throttle))
     for obs in feed:
@@ -122,11 +180,21 @@ def render(
         at(obs.ts)
         rr.log("camera/image", obs.data.to_rerun())
         rr.log("camera", pose.to_rerun())
+        if rig.mobile:
+            rr.log("robot", pose.to_rerun())
+
+    n_instances = sum(len(trace.answers) for _, trace in traces)
+    box_colors = [
+        list(Color.from_cmap("turbo", k / max(n_instances - 1, 1)).rgb_u8())
+        for k in range(n_instances)
+    ]
+    box_index = 0
 
     for query, trace in traces:
         root = f"detections/{query.replace(' ', '_')}"
 
-        # marked frames: into the live feed, plus a frozen frustum at the capture pose
+        # marked frames into the live feed; only stationary rigs also drop
+        # a frozen frustum at the capture pose
         for i, obs in enumerate(trace.detection_frames):
             pose = rig.camera_pose(obs.ts)
             if pose is None:
@@ -134,30 +202,37 @@ def render(
             at(obs.ts)
             annotated = obs.data.annotated_image()
             rr.log("camera/image", annotated.to_rerun())
+            if rig.mobile:
+                continue
             frame = f"{root}/frames/{i}"
             rr.log(frame, pose.to_rerun())
             rr.log(frame, rig.camera_info.to_rerun())
             rr.log(f"{frame}/image", annotated.to_rerun())
 
-        # 3d detections: green = matched candidates, red = cross-view re-detections
-        for tag, entries, rgb in [
-            ("matched", trace.matched, GREEN),
-            ("verified", trace.verified, RED),
-        ]:
-            for i, (ts, det) in enumerate(entries):
-                at(ts)
-                rr.log(
-                    f"{root}/{tag}/{i}_{det.name.replace(' ', '_')}",
-                    det.pointcloud.to_rerun(voxel_size=point_size, colors=rgb),
-                )
-
-        # the answers: one blue union cloud per verified instance
-        for i, answer in enumerate(trace.answers):
-            at(answer.ts)
+        # the answers: per verified instance, every sighting's cloud colored
+        # by its own image, wrapped in a static labeled wireframe box
+        for i, members in enumerate(trace.answers):
+            at(max(det.ts for det in members))
+            positions = np.vstack([det.pointcloud.points_f32() for det in members])
+            colors = np.vstack([image_colors(det) for det in members])
             rr.log(
                 f"{root}/answer/{i}",
-                answer.pointcloud.to_rerun(voxel_size=point_size, colors=BLUE),
+                rr.Points3D(positions=positions, colors=colors, radii=point_size / 2),
             )
+            aabb_min, aabb_max = positions.min(axis=0), positions.max(axis=0)
+            score = max(det.confidence for det in members)
+            rr.log(
+                f"{root}/answer/{i}/box",
+                rr.Boxes3D(
+                    centers=[(aabb_min + aabb_max) / 2],
+                    half_sizes=[(aabb_max - aabb_min) / 2],
+                    colors=[box_colors[box_index]],
+                    labels=[f"{query} {score:.2f}"],
+                    fill_mode=rr.components.FillMode.MajorWireframe,
+                ),
+                static=True,
+            )
+            box_index += 1
 
 
 def report(query: str, hits: list[Localization], lo: float) -> bool:
