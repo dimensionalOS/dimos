@@ -215,7 +215,7 @@ fn rebuild_node_adj(edges: &[NodeEdge], out_adj: &mut AHashMap<NodeId, Vec<NodeE
 pub fn build_node_edges_region(
     cells: &SurfaceCells,
     nodes: &[NodeData],
-    window: &AHashSet<CellId>,
+    window: &[CellId],
     state: &mut DijkstraState,
     out_edges: &mut Vec<NodeEdge>,
     out_adj: &mut AHashMap<NodeId, Vec<NodeEdgeIdx>>,
@@ -253,8 +253,7 @@ pub fn build_node_edges_region(
         merged.insert((e.a, e.b), e);
     }
 
-    let win_cells: Vec<CellId> = window.iter().copied().collect();
-    let mut new_edges = boundary_edge_map(cells, state, &win_cells);
+    let mut new_edges = boundary_edge_map(cells, state, window);
     new_edges.retain(|_, e| live_node.contains(&e.a) && live_node.contains(&e.b));
     for ((a, b), mut e) in new_edges {
         match merged.entry((a, b)) {
@@ -571,7 +570,7 @@ mod tests {
     }
 
     fn rebuild_region_all(pg: &mut PlannerGraph) {
-        let window: AHashSet<CellId> = pg.cells.ids().collect();
+        let window: Vec<CellId> = pg.cells.ids().collect();
         let PlannerGraph {
             cells,
             nodes,

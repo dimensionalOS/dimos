@@ -462,7 +462,7 @@ impl Planner {
     /// Live cells within the node-graph margin of the changed cells, walked
     /// as a BFS ball over cell adjacency from roots covering everything a
     /// change can directly touch.
-    fn node_window(&self, changed: &[VoxelKey], config: &Config) -> AHashSet<CellId> {
+    fn node_window(&mut self, changed: &[VoxelKey], config: &Config) -> Vec<CellId> {
         // Wall distances only matter out to the penalty band, so the ball
         // covers the buffer reach of the changed cells plus slack.
         const SLACK_CELLS: i32 = 2;
@@ -472,10 +472,20 @@ impl Planner {
         let steps = buffer_cells + SLACK_CELLS;
         let step_dz = config.step_cells();
 
-        let lookup = &self.graph.surface_lookup;
-        let cells = &self.graph.cells;
-        let mut ball: AHashSet<CellId> = AHashSet::new();
+        let graph = &mut self.graph;
+        let lookup = &graph.surface_lookup;
+        let cells = &graph.cells;
+        graph.node_scratch.ensure_capacity(cells.slot_capacity());
+        let seen = &mut graph.node_scratch.seen;
+        let mut ball: Vec<CellId> = Vec::new();
         let mut frontier: Vec<CellId> = Vec::new();
+        let mut insert = |id: CellId, ball: &mut Vec<CellId>, frontier: &mut Vec<CellId>| {
+            if !seen[id as usize] {
+                seen[id as usize] = true;
+                ball.push(id);
+                frontier.push(id);
+            }
+        };
 
         // Roots: the changed cells themselves, plus the live column neighbors
         // that carry the change when the cell itself was removed.
@@ -489,9 +499,7 @@ impl Planner {
                         continue;
                     }
                     if let Some(id) = cells.id((ix + dx, iy + dy, nz)) {
-                        if ball.insert(id) {
-                            frontier.push(id);
-                        }
+                        insert(id, &mut ball, &mut frontier);
                     }
                 }
             }
@@ -515,9 +523,7 @@ impl Planner {
                             continue;
                         }
                         if let Some(id) = cells.id((col.0, col.1, nz)) {
-                            if ball.insert(id) {
-                                frontier.push(id);
-                            }
+                            insert(id, &mut ball, &mut frontier);
                         }
                     }
                     break;
@@ -532,12 +538,18 @@ impl Planner {
             let mut next: Vec<CellId> = Vec::new();
             for &u in &frontier {
                 for e in cells.neighbors(u) {
-                    if ball.insert(e.dest) {
+                    let i = e.dest as usize;
+                    if !seen[i] {
+                        seen[i] = true;
+                        ball.push(e.dest);
                         next.push(e.dest);
                     }
                 }
             }
             frontier = next;
+        }
+        for &id in &ball {
+            seen[id as usize] = false;
         }
         ball
     }

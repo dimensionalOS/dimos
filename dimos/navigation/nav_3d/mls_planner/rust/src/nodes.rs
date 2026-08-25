@@ -18,7 +18,7 @@
 
 use std::cmp::Ordering;
 
-use ahash::{AHashMap, AHashSet};
+use ahash::AHashMap;
 use rayon::prelude::*;
 
 use crate::adjacency::{CellId, Edge, SurfaceCells, SurfaceLookup, NO_CELL};
@@ -270,7 +270,7 @@ pub fn place_nodes_region(
     by_col: &ColumnIz,
     params: &PlacementParams,
     added: &[CellId],
-    window: &AHashSet<CellId>,
+    window: &[CellId],
     wall_state: &mut DijkstraState,
     scratch: &mut NodeScratch,
     nodes: &mut Vec<NodeData>,
@@ -290,11 +290,19 @@ pub fn place_nodes_region(
     // Drop only nodes whose cell died (marked NO_CELL by relocation) or whose
     // fresh wall distance marks the cell impassable. The distance field is
     // stale outside the window, so only in-window nodes are judged by it.
+    scratch.ensure_capacity(cells.slot_capacity());
+    for &w in window {
+        scratch.seen[w as usize] = true;
+    }
+    let in_window = &scratch.seen;
     nodes.retain(|n| {
         n.cell_id != NO_CELL
             && cells.is_live(n.cell_id)
-            && !(window.contains(&n.cell_id) && wall_state.dist[n.cell_id as usize] < node_floor)
+            && !(in_window[n.cell_id as usize] && wall_state.dist[n.cell_id as usize] < node_floor)
     });
+    for &w in window {
+        scratch.seen[w as usize] = false;
+    }
     let kept: Vec<CellId> = nodes.iter().map(|n| n.cell_id).collect();
 
     // New nodes only in comfortably open freshly-seen space: transient fringe
@@ -347,11 +355,10 @@ fn collect_wall_adjacent_in_window(
     by_col: &ColumnIz,
     clearance_cells: i32,
     step_cells: i32,
-    window: &AHashSet<CellId>,
+    window: &[CellId],
     out: &mut Vec<CellId>,
 ) {
-    let win: Vec<CellId> = window.iter().copied().collect();
-    *out = win
+    *out = window
         .par_iter()
         .filter(|&&id| {
             cells.is_live(id) && real_wall_adjacent(cells, by_col, id, clearance_cells, step_cells)
@@ -437,7 +444,7 @@ fn apply_wall_safe_penalty_region(
     buffer_m: f32,
     buffer_weight: f32,
     step_weight: f32,
-    window: &AHashSet<CellId>,
+    window: &[CellId],
     scratch: &mut NodeScratch,
 ) {
     // The window and its boundary, deduped via the dense seen mask.
@@ -723,11 +730,11 @@ pub struct NodeScratch {
     served: Vec<bool>,
     best: Vec<CellId>,
     size: Vec<u32>,
-    seen: Vec<bool>,
+    pub(crate) seen: Vec<bool>,
 }
 
 impl NodeScratch {
-    fn ensure_capacity(&mut self, n: usize) {
+    pub(crate) fn ensure_capacity(&mut self, n: usize) {
         self.uf.ensure_capacity(n);
         if self.node_flag.len() < n {
             self.node_flag.resize(n, false);
@@ -944,7 +951,7 @@ mod tests {
             cell_id: corner,
             pos: surface_point_xyz(0, 0, 0, VOXEL),
         }];
-        let window: AHashSet<CellId> = sc.ids().collect();
+        let window: Vec<CellId> = sc.ids().collect();
         let near_wall = sc.id((1, 5, 0)).unwrap();
         let open = sc.id((5, 5, 0)).unwrap();
         let p = PlacementParams {

@@ -28,9 +28,25 @@ pub struct DijkstraState {
     pub dist: Vec<f32>,
     pub pred: Vec<CellId>,
     pub source: Vec<u32>,
-    // Window membership for the regional search, left all-false between calls.
+    // Window and frontier membership for the regional search, left all-false
+    // between calls.
     in_window: Vec<bool>,
-    heap: BinaryHeap<Scored<(VoxelKey, CellId)>>,
+    in_frontier: Vec<bool>,
+    frontier: Vec<CellId>,
+    heap: BinaryHeap<Scored<u128>>,
+}
+
+/// Heap tie-breaker for the ordering. This is totally swappable, this is
+/// just very fast.
+#[inline]
+fn heap_key(c: VoxelKey, id: CellId) -> u128 {
+    let f = |v: i32| (v as u32 ^ 0x8000_0000) as u128;
+    f(c.0) << 96 | f(c.1) << 64 | f(c.2) << 32 | id as u128
+}
+
+#[inline]
+fn heap_id(key: u128) -> CellId {
+    key as u32
 }
 
 impl DijkstraState {
@@ -44,6 +60,8 @@ impl DijkstraState {
         self.source.resize(n, 0);
         self.in_window.clear();
         self.in_window.resize(n, false);
+        self.in_frontier.clear();
+        self.in_frontier.resize(n, false);
         self.heap.clear();
     }
 
@@ -57,6 +75,7 @@ impl DijkstraState {
         }
         if self.in_window.len() < n {
             self.in_window.resize(n, false);
+            self.in_frontier.resize(n, false);
         }
     }
 }
@@ -95,10 +114,11 @@ pub fn dijkstra(
         }
         state.dist[s as usize] = 0.0;
         state.source[s as usize] = s;
-        state.heap.push(Scored(0.0, (cells.coord(s), s)));
+        state.heap.push(Scored(0.0, heap_key(cells.coord(s), s)));
     }
 
-    while let Some(Scored(d, (_, u))) = state.heap.pop() {
+    while let Some(Scored(d, key)) = state.heap.pop() {
+        let u = heap_id(key);
         let cur = state.dist[u as usize];
         if d > cur {
             continue;
@@ -113,7 +133,7 @@ pub fn dijkstra(
                 state.source[v] = su;
                 state
                     .heap
-                    .push(Scored(nd, (cells.coord(edge.dest), edge.dest)));
+                    .push(Scored(nd, heap_key(cells.coord(edge.dest), edge.dest)));
             }
         }
     }
@@ -125,7 +145,7 @@ pub fn dijkstra(
 pub fn dijkstra_region(
     cells: &SurfaceCells,
     sources: &[CellId],
-    window: &AHashSet<CellId>,
+    window: &[CellId],
     state: &mut DijkstraState,
     weight: Weight,
 ) {
@@ -148,25 +168,32 @@ pub fn dijkstra_region(
         }
         state.dist[s as usize] = 0.0;
         state.source[s as usize] = s;
-        state.heap.push(Scored(0.0, (cells.coord(s), s)));
+        state.heap.push(Scored(0.0, heap_key(cells.coord(s), s)));
     }
 
-    let mut frontier: AHashSet<CellId> = AHashSet::new();
+    state.frontier.clear();
     for &w in window {
         for edge in cells.neighbors(w) {
             let n = edge.dest;
-            if !state.in_window[n as usize] && state.dist[n as usize].is_finite() {
-                frontier.insert(n);
+            if !state.in_window[n as usize]
+                && !state.in_frontier[n as usize]
+                && state.dist[n as usize].is_finite()
+            {
+                state.in_frontier[n as usize] = true;
+                state.frontier.push(n);
             }
         }
     }
-    for &n in &frontier {
+    for i in 0..state.frontier.len() {
+        let n = state.frontier[i];
+        state.in_frontier[n as usize] = false;
         state
             .heap
-            .push(Scored(state.dist[n as usize], (cells.coord(n), n)));
+            .push(Scored(state.dist[n as usize], heap_key(cells.coord(n), n)));
     }
 
-    while let Some(Scored(d, (_, u))) = state.heap.pop() {
+    while let Some(Scored(d, key)) = state.heap.pop() {
+        let u = heap_id(key);
         if d > state.dist[u as usize] {
             continue;
         }
@@ -181,7 +208,7 @@ pub fn dijkstra_region(
                 state.dist[v as usize] = nd;
                 state.pred[v as usize] = u;
                 state.source[v as usize] = su;
-                state.heap.push(Scored(nd, (cells.coord(v), v)));
+                state.heap.push(Scored(nd, heap_key(cells.coord(v), v)));
             }
         }
     }
@@ -276,7 +303,7 @@ mod tests {
         let mut full = DijkstraState::default();
         dijkstra(&sc, &sources, &mut full, Weight::Penalized);
 
-        let window: AHashSet<CellId> = sc.ids().collect();
+        let window: Vec<CellId> = sc.ids().collect();
         let mut region = DijkstraState::default();
         dijkstra_region(&sc, &sources, &window, &mut region, Weight::Penalized);
 
@@ -308,7 +335,7 @@ mod tests {
             ..Default::default()
         };
 
-        let window: AHashSet<CellId> = sc
+        let window: Vec<CellId> = sc
             .ids()
             .filter(|&id| {
                 let (x, y, _) = sc.coord(id);
