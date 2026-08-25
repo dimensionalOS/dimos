@@ -25,12 +25,79 @@ use lcm_msgs::sensor_msgs::{
 use lcm_msgs::tf2_msgs::TFMessage;
 use lcm_msgs::vision_msgs::{Detection2D, Detection2DArray, Detection3D, Detection3DArray};
 
-/// Extract source time for message types supported by the native fast path.
+use crate::{StreamConfig, IMAGE_PAYLOAD_TYPE};
+
+/// Transport-decoded payload consumed by storage codecs.
+#[derive(Debug)]
+pub(crate) enum DecodedPayload {
+    /// An LCM payload whose storage codecs operate on its canonical wire form.
+    Lcm(Vec<u8>),
+    /// Images stay typed so JPEG encoding reuses the transport decode.
+    Image(Image),
+}
+
+/// One decoded and timestamped observation before storage encoding.
+#[derive(Debug)]
+pub(crate) struct DecodedObservation {
+    pub(crate) ts: f64,
+    pub(crate) payload: DecodedPayload,
+}
+
+/// Decode a transport packet once and normalize it into storage observations.
+pub(crate) fn decode(
+    stream: &StreamConfig,
+    data: &[u8],
+    reception_ts: f64,
+) -> Result<Vec<DecodedObservation>> {
+    if stream.is_tf() {
+        return decode_tf(data, reception_ts);
+    }
+    if stream.payload_type == IMAGE_PAYLOAD_TYPE {
+        let image = Image::decode(data).context("invalid LCM Image")?;
+        let ts = header_timestamp(
+            image.header.stamp.sec,
+            image.header.stamp.nsec,
+            reception_ts,
+        );
+        return Ok(vec![DecodedObservation {
+            ts,
+            payload: DecodedPayload::Image(image),
+        }]);
+    }
+
+    let ts = source_timestamp(&stream.payload_type, data, reception_ts)?;
+    Ok(vec![DecodedObservation {
+        ts,
+        payload: DecodedPayload::Lcm(data.to_vec()),
+    }])
+}
+
+fn decode_tf(data: &[u8], reception_ts: f64) -> Result<Vec<DecodedObservation>> {
+    let message = TFMessage::decode(data).context("invalid LCM TFMessage")?;
+    Ok(message
+        .transforms
+        .into_iter()
+        .map(|transform| DecodedObservation {
+            ts: header_timestamp(
+                transform.header.stamp.sec,
+                transform.header.stamp.nsec,
+                reception_ts,
+            ),
+            payload: DecodedPayload::Lcm(
+                TFMessage {
+                    transforms: vec![transform],
+                }
+                .encode(),
+            ),
+        })
+        .collect())
+}
+
+/// Read source time while transport-decoding common stamped LCM payloads.
 ///
-/// The Python recorder also falls back to reception time when a payload does
-/// not expose a recognized source timestamp. Keep that behavior until message
-/// generation provides a shared Rust timestamp trait.
-pub(crate) fn timestamp_for(payload_type: &str, data: &[u8], reception_ts: f64) -> Result<f64> {
+/// Unknown LCM payloads remain opaque and use reception time, matching the
+/// Python recorder's fallback for messages without a ``ts`` attribute.
+fn source_timestamp(payload_type: &str, data: &[u8], reception_ts: f64) -> Result<f64> {
     macro_rules! stamped {
         ($message_type:ty) => {{
             let message = <$message_type>::decode(data)
@@ -57,7 +124,6 @@ pub(crate) fn timestamp_for(payload_type: &str, data: &[u8], reception_ts: f64) 
         "dimos.msgs.nav_msgs.Odometry.Odometry" => stamped!(Odometry),
         "dimos.msgs.sensor_msgs.CameraInfo.CameraInfo" => stamped!(CameraInfo),
         "dimos.msgs.sensor_msgs.CompressedImage.CompressedImage" => stamped!(CompressedImage),
-        "dimos.msgs.sensor_msgs.Image.Image" => stamped!(Image),
         "dimos.msgs.sensor_msgs.Imu.Imu" => stamped!(Imu),
         "dimos.msgs.sensor_msgs.JointState.JointState" => stamped!(JointState),
         "dimos.msgs.sensor_msgs.Joy.Joy" => stamped!(Joy),
@@ -75,8 +141,7 @@ pub(crate) fn timestamp_for(payload_type: &str, data: &[u8], reception_ts: f64) 
                 .context("invalid LCM foxglove_msgs.CompressedVideo")?;
             (message.timestamp.sec, message.timestamp.nanosec)
         }
-        "dimos.msgs.tf2_msgs.TFMessage.TFMessage"
-        | "dimos.msgs.geometry_msgs.Transform.Transform" => {
+        "dimos.msgs.geometry_msgs.Transform.Transform" => {
             let message = TFMessage::decode(data).context("invalid LCM TFMessage")?;
             let Some(transform) = message.transforms.first() else {
                 return Ok(reception_ts);

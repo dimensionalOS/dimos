@@ -36,10 +36,6 @@ impl RecordingStoreConfig {
             Self::Sqlite { path } | Self::Mcap { path } => path,
         }
     }
-
-    pub fn stores_wire_bytes(&self) -> bool {
-        matches!(self, Self::Mcap { .. })
-    }
 }
 
 /// One ordered observation ready for durable storage.

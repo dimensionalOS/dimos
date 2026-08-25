@@ -39,8 +39,8 @@ replays through the stable Python `SqliteStore` API.
 
 ## MCAP
 
-Select MCAP to preserve original transport packets instead of applying Memory2
-storage codecs:
+Select MCAP to write the same Memory2 storage encodings into an indexed,
+portable container:
 
 ```python
 from dimos.experimental.memory.rust_recorder import RustMcapStoreConfig
@@ -48,14 +48,15 @@ from dimos.experimental.memory.rust_recorder import RustMcapStoreConfig
 mcap_recorder = SensorRecorder.blueprint(
     store=RustMcapStoreConfig(path="session.mcap"),
     encoding_threads=4,
+    stream_codecs={"lidar": "lz4+lcm"},
 )
 ```
 
-MCAP stores original LCM packets in indexed Zstd chunks. Source time is the
-MCAP publish time and recorder reception time is the log time. The stable
-`McapStore(path="session.mcap")` reader discovers and decodes these channels
-without a caller-supplied codec registry. Storage-codec overrides and append
-mode are intentionally unsupported for MCAP.
+MCAP stores each stream's selected `lcm`, `jpeg`, or `lz4+lcm` representation
+in indexed Zstd chunks. Source time is the MCAP publish time and recorder
+reception time is the log time. Codec and payload metadata let the stable
+`McapStore(path="session.mcap")` reader discover and decode the channels without
+a caller-supplied codec registry. Append mode remains unsupported for MCAP.
 
 Both backends preserve source timestamps for common stamped messages. Arbitrary
 pickle payloads, Python `pose_setter_for` hooks, and spatial pose attachment

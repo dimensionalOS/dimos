@@ -53,7 +53,7 @@ impl McapRecordingStore {
                     "publish_time".to_string(),
                 ),
             ]);
-            let channel = writer.add_channel(0, &stream.name, "lcm", &metadata)?;
+            let channel = writer.add_channel(0, &stream.name, stream.codec.id(), &metadata)?;
             channels.insert(stream.name.clone(), channel);
         }
         Ok(Self {

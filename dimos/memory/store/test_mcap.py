@@ -16,10 +16,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 
+from dimos.memory.codecs.jpeg import JpegCodec
+from dimos.memory.codecs.lcm import LcmCodec
+from dimos.memory.codecs.lz4 import Lz4Codec
 from dimos.memory.store.mcap import McapStore
+from dimos.memory.type.observation import Observation
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.Imu import Imu
 
 mcap_writer = pytest.importorskip("mcap.writer", reason="mcap not installed")
@@ -60,10 +66,83 @@ def test_self_describing_lcm_channel_decodes_without_a_codec_registry(tmp_path: 
 
     with McapStore(path=str(path)) as store:
         assert store.list_streams() == ["imu"]
-        observation = store.stream("imu").order_by("ts").first()
+        observation: Observation[Imu] = store.stream("imu").order_by("ts").first()
         assert observation.ts == 11.5
         assert observation.data.frame_id == "earlier"
 
-        observation = store.stream("imu").order_by("ts", desc=True).first()
+        latest_observation: Observation[Imu] = store.stream("imu").order_by("ts", desc=True).first()
+        assert latest_observation.ts == 12.5
+        assert latest_observation.data.lcm_encode() == expected.lcm_encode()
+
+
+def test_self_describing_wrapped_codec_decodes_without_a_codec_registry(tmp_path: Path) -> None:
+    path = tmp_path / "recording.mcap"
+    expected = Imu(
+        ts=12.5,
+        frame_id="imu_link",
+        angular_velocity=Vector3(1.0, 2.0, 3.0),
+    )
+    codec = Lz4Codec(LcmCodec(Imu))
+    with path.open("wb") as output:
+        writer = mcap_writer.Writer(output)
+        writer.start(profile="dimos", library="test")
+        channel_id = writer.register_channel(
+            topic="imu",
+            message_encoding="lz4+lcm",
+            schema_id=0,
+            metadata={
+                "dimos.payload_type": "dimos.msgs.sensor_msgs.Imu.Imu",
+                "dimos.observation_time": "publish_time",
+            },
+        )
+        writer.add_message(
+            channel_id=channel_id,
+            log_time=13_000_000_000,
+            publish_time=12_500_000_000,
+            data=codec.encode(expected),
+        )
+        writer.finish()
+
+    with McapStore(path=str(path)) as store:
+        observation: Observation[Imu] = store.stream("imu").first()
         assert observation.ts == 12.5
         assert observation.data.lcm_encode() == expected.lcm_encode()
+
+
+def test_self_describing_jpeg_channel_decodes_without_a_codec_registry(tmp_path: Path) -> None:
+    path = tmp_path / "recording.mcap"
+    expected = Image(
+        data=np.full((8, 8, 3), [20, 80, 140], dtype=np.uint8),
+        format=ImageFormat.RGB,
+        frame_id="camera",
+        ts=12.5,
+    )
+    codec = JpegCodec()
+    with path.open("wb") as output:
+        writer = mcap_writer.Writer(output)
+        writer.start(profile="dimos", library="test")
+        channel_id = writer.register_channel(
+            topic="color_image",
+            message_encoding="jpeg",
+            schema_id=0,
+            metadata={
+                "dimos.payload_type": "dimos.msgs.sensor_msgs.Image.Image",
+                "dimos.observation_time": "publish_time",
+            },
+        )
+        writer.add_message(
+            channel_id=channel_id,
+            log_time=13_000_000_000,
+            publish_time=12_500_000_000,
+            data=codec.encode(expected),
+        )
+        writer.finish()
+
+    with McapStore(path=str(path)) as store:
+        observation: Observation[Image] = store.stream("color_image").first()
+        decoded = observation.data
+        assert observation.ts == 12.5
+        assert decoded.frame_id == "camera"
+        assert decoded.format is ImageFormat.RGB
+        assert decoded.data.shape == expected.data.shape
+        assert np.mean(np.abs(decoded.data.astype(float) - expected.data.astype(float))) < 5

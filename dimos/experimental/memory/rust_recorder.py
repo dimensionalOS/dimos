@@ -75,7 +75,7 @@ class RustSqliteStoreConfig(RustStoreConfig):
 
 
 class RustMcapStoreConfig(RustStoreConfig):
-    """Write original transport packets to an indexed, compressed MCAP artifact."""
+    """Write storage-encoded observations to an indexed, compressed MCAP artifact."""
 
     kind: Literal["mcap"] = "mcap"
     path: str = "recording.mcap"
@@ -128,12 +128,12 @@ class RustRecorderConfig(NativeModuleConfig):
     stream_codecs: dict[str, str] = Field(
         default_factory=dict,
         exclude=True,
-        description="Per-stream Python Memory codec IDs; MCAP stores wire bytes.",
+        description="Per-stream Python Memory codec IDs.",
     )
     encoding_threads: int = Field(
         default=4,
         ge=1,
-        description="CPU workers for SQLite codecs or MCAP Zstd compression.",
+        description="CPU workers for transport decoding and storage encoding.",
     )
     streams: list[RustStreamSpec] = Field(
         default_factory=list,
@@ -160,9 +160,9 @@ class RustRecorder(NativeModule):
         class CameraRecorder(RustRecorder):
             color_image: In[Image]
 
-    SQLite uses the Python Mem2 codec configuration: images default to JPEG,
-    and ``stream_codecs`` may select ``lcm`` or ``lz4+lcm``. MCAP stores the
-    original transport packets and uses indexed Zstd chunks. The native fast
+    Both stores use the Python Mem2 codec configuration: images default to
+    JPEG, and ``stream_codecs`` may select ``lcm`` or ``lz4+lcm``. MCAP uses
+    indexed Zstd chunks around those storage-encoded observations. The native
     path preserves source timestamps for common stamped message types. Other
     LCM messages use their reception timestamp. Spatial pose attachment is not
     supported yet.
@@ -191,9 +191,6 @@ class RustRecorder(NativeModule):
         super().start()
 
     def _stream_specs(self) -> list[RustStreamSpec]:
-        if self.config.store.kind == "mcap" and self.config.stream_codecs:
-            raise ValueError("MCAP stores original wire packets; stream_codecs is invalid")
-
         specs: list[RustStreamSpec] = []
         for port_name, port in self.inputs.items():
             if getattr(port, "_transport", None) is None:
@@ -211,10 +208,7 @@ class RustRecorder(NativeModule):
                 continue
 
             stream_name = self.config.stream_remapping.get(port_name, port_name)
-            if self.config.store.kind == "mcap":
-                codec = "lcm"
-            else:
-                codec = self.config.stream_codecs.get(stream_name, self._default_codec(port.type))
+            codec = self.config.stream_codecs.get(stream_name, self._default_codec(port.type))
             self._validate_codec(stream_name, port.type, codec)
             specs.append(
                 RustStreamSpec(

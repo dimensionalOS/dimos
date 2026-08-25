@@ -28,11 +28,12 @@ use tracing::{debug, info};
 use crate::encoding::StoredObservation;
 use crate::store::{Observation, RecordingStore};
 
+mod decoding;
 mod encoding;
 pub mod store;
-mod timestamp;
 
 const TF_PAYLOAD_TYPE: &str = "dimos.msgs.tf2_msgs.TFMessage.TFMessage";
+const IMAGE_PAYLOAD_TYPE: &str = "dimos.msgs.sensor_msgs.Image.Image";
 const QUEUE_CAPACITY: usize = 256;
 const WRITE_BATCH_SIZE: usize = 128;
 const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
@@ -44,6 +45,16 @@ pub enum Codec {
     Jpeg,
     #[serde(rename = "lz4+lcm")]
     Lz4Lcm,
+}
+
+impl Codec {
+    pub(crate) fn id(self) -> &'static str {
+        match self {
+            Self::Lcm => "lcm",
+            Self::Jpeg => "jpeg",
+            Self::Lz4Lcm => "lz4+lcm",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -79,6 +90,15 @@ impl RecorderConfig {
         for stream in &self.streams {
             if !names.insert(&stream.name) {
                 return Err(anyhow!("duplicate recorded stream name {:?}", stream.name));
+            }
+            if stream.codec == Codec::Jpeg && stream.payload_type != IMAGE_PAYLOAD_TYPE {
+                return Err(anyhow!(
+                    "JPEG codec requires Image, got {:?}",
+                    stream.payload_type
+                ));
+            }
+            if stream.is_tf() && stream.codec != Codec::Lcm {
+                return Err(anyhow!("tf only supports the lcm codec"));
             }
         }
         Ok(())
@@ -151,12 +171,7 @@ impl RecorderEngine {
             })
             .context("failed to start memory writer thread")?;
 
-        let stores_wire_bytes = config.store.stores_wire_bytes();
-        let worker_count = if stores_wire_bytes {
-            1
-        } else {
-            config.encoding_threads
-        };
+        let worker_count = config.encoding_threads;
         let mut workers = Vec::with_capacity(worker_count);
         for index in 0..worker_count {
             let receiver = encode_rx.clone();
@@ -164,7 +179,7 @@ impl RecorderEngine {
             workers.push(
                 thread::Builder::new()
                     .name(format!("mem2-encoder-{index}"))
-                    .spawn(move || encode_loop(receiver, sender, stores_wire_bytes))
+                    .spawn(move || encode_loop(receiver, sender))
                     .context("failed to start encoding thread")?,
             );
         }
@@ -233,17 +248,12 @@ pub struct WriterStats {
     pub encode_errors: u64,
 }
 
-fn encode_loop(
-    receiver: Receiver<EncodeMessage>,
-    sender: Sender<EncodedBatch>,
-    stores_wire_bytes: bool,
-) {
+fn encode_loop(receiver: Receiver<EncodeMessage>, sender: Sender<EncodedBatch>) {
     while let Ok(message) = receiver.recv() {
         match message {
             EncodeMessage::Job(job) => {
-                let encoded =
-                    encoding::encode(&job.stream, &job.data, job.reception_ts, stores_wire_bytes)
-                        .map_err(|error| format!("{error:#}"));
+                let encoded = process(&job.stream, &job.data, job.reception_ts)
+                    .map_err(|error| format!("{error:#}"));
                 let batch = EncodedBatch {
                     sequence: job.sequence,
                     stream: job.stream,
@@ -257,6 +267,17 @@ fn encode_loop(
             EncodeMessage::Shutdown => return,
         }
     }
+}
+
+fn process(
+    stream: &StreamConfig,
+    data: &[u8],
+    reception_ts: f64,
+) -> Result<Vec<StoredObservation>> {
+    decoding::decode(stream, data, reception_ts)?
+        .into_iter()
+        .map(|observation| encoding::encode(stream, observation))
+        .collect()
 }
 
 fn wall_time() -> f64 {
@@ -488,6 +509,15 @@ mod tests {
         })
     }
 
+    fn typed_stream(name: &str, payload_type: &str, codec: Codec) -> Arc<StreamConfig> {
+        Arc::new(StreamConfig {
+            port: name.to_string(),
+            name: name.to_string(),
+            payload_type: payload_type.to_string(),
+            codec,
+        })
+    }
+
     #[test]
     fn lz4_codec_uses_the_frame_format_python_reads() {
         let compressed = encoding::lz4_frame(b"a payload worth compressing").unwrap();
@@ -514,10 +544,11 @@ mod tests {
             data: vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255],
         };
 
-        let (ts, encoded) = encoding::encode_jpeg(&image.encode(), 100.0).unwrap();
-        let decoded = Image::decode(&encoded).unwrap();
+        let stream = typed_stream("camera", IMAGE_PAYLOAD_TYPE, Codec::Jpeg);
+        let observations = process(&stream, &image.encode(), 100.0).unwrap();
+        let decoded = Image::decode(&observations[0].data).unwrap();
 
-        assert_eq!(ts, 12.000_000_034);
+        assert_eq!(observations[0].ts, 12.000_000_034);
         assert_eq!(decoded.header, image.header);
         assert_eq!(decoded.encoding, "jpeg");
         assert_eq!(decoded.step, 0);
@@ -542,8 +573,7 @@ mod tests {
             data: message.encode(),
         };
 
-        let observations =
-            encoding::encode(&job.stream, &job.data, job.reception_ts, false).unwrap();
+        let observations = process(&job.stream, &job.data, job.reception_ts).unwrap();
 
         assert_eq!(observations.len(), 2);
         assert_eq!(observations[0].ts, 10.000_000_005);
@@ -574,31 +604,31 @@ mod tests {
             data: message.encode(),
         };
 
-        assert_eq!(
-            timestamp::timestamp_for(&job.stream.payload_type, &job.data, job.reception_ts)
-                .unwrap(),
-            42.000_000_025
-        );
+        let observations = decoding::decode(&job.stream, &job.data, job.reception_ts).unwrap();
+        assert_eq!(observations[0].ts, 42.000_000_025);
     }
 
     #[test]
-    fn wire_store_encoding_preserves_the_original_packet() {
-        let mut message = Imu::default();
-        message.header.stamp = Time { sec: 42, nsec: 25 };
-        let data = message.encode();
-        let job = EncodeJob {
-            sequence: 0,
-            stream: stream("imu", Codec::Jpeg, false),
-            reception_ts: 100.0,
-            data: data.clone(),
+    fn lcm_storage_encoding_consumes_the_decoded_image() {
+        let image = Image {
+            header: Header {
+                stamp: Time { sec: 42, nsec: 25 },
+                ..Header::default()
+            },
+            height: 1,
+            width: 1,
+            encoding: "rgb8".to_string(),
+            step: 3,
+            data: vec![1, 2, 3],
+            ..Image::default()
         };
+        let stream = typed_stream("camera", IMAGE_PAYLOAD_TYPE, Codec::Lcm);
 
-        let observations =
-            encoding::encode(&job.stream, &job.data, job.reception_ts, true).unwrap();
+        let observations = process(&stream, &image.encode(), 100.0).unwrap();
 
         assert_eq!(observations.len(), 1);
-        assert_eq!(observations[0].ts, 100.0);
-        assert_eq!(observations[0].data, data);
+        assert_eq!(observations[0].ts, 42.000_000_025);
+        assert_eq!(Image::decode(&observations[0].data).unwrap(), image);
     }
 
     #[test]
@@ -712,9 +742,9 @@ mod tests {
     }
 
     #[test]
-    fn mcap_store_writes_indexed_original_wire_messages() {
+    fn mcap_store_writes_indexed_storage_encoded_messages() {
         let file = NamedTempFile::new().unwrap();
-        let samples = stream("samples", Codec::Lcm, false);
+        let samples = stream("samples", Codec::Lz4Lcm, false);
         let mut recording_store = store::open(
             &store::RecordingStoreConfig::Mcap {
                 path: file.path().to_string_lossy().into_owned(),
@@ -723,12 +753,13 @@ mod tests {
             1,
         )
         .unwrap();
+        let encoded = encoding::lz4_frame(&[1, 2, 3]).unwrap();
         recording_store
             .write_batch(&[Observation {
                 stream: Arc::clone(&samples),
                 source_ts: 12.5,
                 reception_ts: 13.0,
-                data: vec![1, 2, 3],
+                data: encoded.clone(),
             }])
             .unwrap();
         recording_store.finish().unwrap();
@@ -750,11 +781,11 @@ mod tests {
         assert_eq!(messages.len(), 1);
         let message = &messages[0];
         assert_eq!(message.channel.topic, "samples");
-        assert_eq!(message.channel.message_encoding, "lcm");
+        assert_eq!(message.channel.message_encoding, "lz4+lcm");
         assert_eq!(message.channel.metadata["dimos.payload_type"], "test.Raw");
         assert_eq!(message.log_time, 13_000_000_000);
         assert_eq!(message.publish_time, 12_500_000_000);
-        assert_eq!(message.data.as_ref(), &[1, 2, 3]);
+        assert_eq!(message.data.as_ref(), encoded);
     }
 
     #[test]
@@ -781,7 +812,7 @@ mod tests {
     #[test]
     fn encoding_failure_fails_the_recording_with_stream_and_sequence() {
         let file = NamedTempFile::new().unwrap();
-        let image = stream("camera", Codec::Jpeg, false);
+        let image = typed_stream("camera", IMAGE_PAYLOAD_TYPE, Codec::Jpeg);
         let config = RecorderConfig {
             store: store::RecordingStoreConfig::Sqlite {
                 path: file.path().to_string_lossy().into_owned(),
