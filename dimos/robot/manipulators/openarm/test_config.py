@@ -14,11 +14,11 @@
 
 from typing import cast
 
+import pinocchio
 import pytest
 
 from dimos.control.components import HardwareType
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.core.global_config import global_config
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.robot.manipulators.openarm.blueprints.basic import openarm_planner_coordinator
@@ -74,12 +74,28 @@ def test_openarm_config_exposes_one_bimanual_robot() -> None:
     ]
 
 
-def test_openarm_hardware_defaults_to_mock_without_can_ports(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(global_config, "left_can_port", None)
-    monkeypatch.setattr(global_config, "right_can_port", None)
+@pytest.mark.self_hosted
+def test_openarm_model_fixes_fingers_without_removing_grasp_frames() -> None:
+    loaded = OPENARM_BIMANUAL_MODEL.load()
+    finger_joint_names = {
+        f"openarm_{side}_finger_joint{index}" for side in OPENARM_SIDES for index in (1, 2)
+    }
 
+    assert {joint.name for joint in loaded.joints if joint.type == "fixed"}.issuperset(
+        finger_joint_names
+    )
+
+    model = pinocchio.buildModelFromXML(loaded.xml)
+
+    assert model.nq == model.nv == len(OPENARM_ARM_JOINTS)
+    assert tuple(str(name) for name in model.names[1:]) == tuple(
+        name for side in OPENARM_SIDES for name in openarm_urdf_joints(side)
+    )
+    frame_names = {str(frame.name) for frame in model.frames}
+    assert {f"openarm_{side}_grasp_frame" for side in OPENARM_SIDES} <= frame_names
+
+
+def test_openarm_hardware_defaults_to_mock_without_can_ports() -> None:
     hardware = openarm_hardware()
 
     assert (hardware.hardware_id, hardware.hardware_type, hardware.adapter_type) == (
@@ -90,13 +106,8 @@ def test_openarm_hardware_defaults_to_mock_without_can_ports(
     assert hardware.adapter_kwargs == {}
 
 
-def test_openarm_hardware_uses_physical_adapter_with_explicit_can_ports(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(global_config, "left_can_port", "can1")
-    monkeypatch.setattr(global_config, "right_can_port", "can0")
-
-    hardware = openarm_hardware()
+def test_openarm_hardware_uses_physical_adapter_with_explicit_can_ports() -> None:
+    hardware = openarm_hardware(left_can_port="can1", right_can_port="can0")
 
     assert hardware.adapter_type == "openarm_damiao"
     runtime_config = hardware.adapter_kwargs["runtime_config"]
@@ -109,15 +120,14 @@ def test_openarm_hardware_uses_physical_adapter_with_explicit_can_ports(
     [("can1", None), (None, "can0")],
 )
 def test_openarm_hardware_rejects_partial_can_configuration(
-    monkeypatch: pytest.MonkeyPatch,
     left_can_port: str | None,
     right_can_port: str | None,
 ) -> None:
-    monkeypatch.setattr(global_config, "left_can_port", left_can_port)
-    monkeypatch.setattr(global_config, "right_can_port", right_can_port)
-
     with pytest.raises(ValueError, match="requires both left and right CAN ports"):
-        openarm_hardware()
+        openarm_hardware(
+            left_can_port=left_can_port,
+            right_can_port=right_can_port,
+        )
 
 
 def test_openarm_can_ports_are_blueprint_cli_options() -> None:
@@ -126,6 +136,6 @@ def test_openarm_can_ports_are_blueprint_cli_options() -> None:
         environ={},
     )
 
-    config = parsed.global_config_values()
-    assert config["left_can_port"] == "can1"
-    assert config["right_can_port"] == "can0"
+    coordinator = parsed.module_kwargs("ControlCoordinator")
+    assert coordinator["left_can_port"] == "can1"
+    assert coordinator["right_can_port"] == "can0"

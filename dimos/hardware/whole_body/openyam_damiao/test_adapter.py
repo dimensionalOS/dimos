@@ -19,6 +19,7 @@ import can_motor_control
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.hardware.whole_body.damiao.adapter import DamiaoWholeBodyAdapter
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.openyam_damiao import adapter as adapter_module
 from dimos.hardware.whole_body.openyam_damiao.adapter import OpenYamDamiaoAdapter
@@ -45,6 +46,7 @@ def test_import_lazy_gravity_model_does_not_resolve_lfs(mocker: MockerFixture) -
 
 def test_openyam_topology_connects_arm_and_gripper(
     openyam_adapter: OpenYamDamiaoAdapter,
+    mocker: MockerFixture,
 ) -> None:
     robot = openyam_adapter._build_robot()
 
@@ -52,4 +54,5 @@ def test_openyam_topology_connects_arm_and_gripper(
     assert isinstance(robot["arm"], can_motor_control.Arm)
     assert len(robot["arm"]) == OPENYAM_DOF
     assert isinstance(robot["gripper"], can_motor_control.Gripper)
+    mocker.patch.object(DamiaoWholeBodyAdapter, "_load_kinematic_model")
     assert openyam_adapter.connect()
