@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Coupled Quest teleoperation for the complete Dual OpenYAM entity."""
+"""Coupled WebXR teleoperation for the complete Dual OpenYAM entity."""
 
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
@@ -32,11 +32,11 @@ from dimos.robot.manipulators.dual_openyam.config import (
 from dimos.robot.manipulators.dual_openyam.teleop_ik import (
     DualOpenYamPinkPoseTargetSolver,
 )
-from dimos.teleop.quest.quest_extensions import ArmTeleopModule
+from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 DUAL_OPENYAM_QUEST_TASK_NAME = "teleop_dual_openyam"
 
-_dual_openyam_quest_pink = PinkKinematicsConfig(
+_dual_openyam_webxr_pink = PinkKinematicsConfig(
     dt=0.01,
     position_cost=8.0,
     orientation_cost=2.0,
@@ -45,11 +45,11 @@ _dual_openyam_quest_pink = PinkKinematicsConfig(
     lm_damping=0.01,
     gain=1.0,
 )
-_dual_openyam_quest_hardware = dual_openyam_hardware()
-_dual_openyam_quest_model = dual_openyam_model_config()
-_dual_openyam_quest_task = teleop_ik_task(
-    _dual_openyam_quest_hardware,
-    robot_model=_dual_openyam_quest_model,
+_dual_openyam_webxr_hardware = dual_openyam_hardware()
+_dual_openyam_webxr_model = dual_openyam_model_config()
+_dual_openyam_webxr_task = teleop_ik_task(
+    _dual_openyam_webxr_hardware,
+    robot_model=_dual_openyam_webxr_model,
     name=DUAL_OPENYAM_QUEST_TASK_NAME,
     joint_names=DUAL_OPENYAM_ARM_JOINTS,
     priority=10,
@@ -65,7 +65,7 @@ _dual_openyam_quest_task = teleop_ik_task(
         },
     ],
     params={
-        "pink": _dual_openyam_quest_pink,
+        "pink": _dual_openyam_webxr_pink,
         "timeout": 0.5,
         "max_command_tracking_error_deg": 10.0,
         "max_joint_velocity_rad_s": 2.0,
@@ -73,12 +73,12 @@ _dual_openyam_quest_task = teleop_ik_task(
     },
 )
 
-teleop_quest_dual_openyam = autoconnect(
+teleop_webxr_dual_openyam = autoconnect(
     ArmTeleopModule.blueprint(),
     DualOpenYamCoordinator.blueprint(
         instance_name="ControlCoordinator",
         tasks=[
-            _dual_openyam_quest_task,
+            _dual_openyam_webxr_task,
             TaskConfig(
                 name="left_arm_gripper",
                 type="gripper",
@@ -97,8 +97,8 @@ teleop_quest_dual_openyam = autoconnect(
         ],
     ),
     ManipulationModule.blueprint(
-        model=_dual_openyam_quest_model,
-        kinematics=_dual_openyam_quest_pink,
+        model=_dual_openyam_webxr_model,
+        kinematics=_dual_openyam_webxr_pink,
         visualization={"backend": "viser"},
     ),
 ).remappings(

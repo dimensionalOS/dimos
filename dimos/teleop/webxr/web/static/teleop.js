@@ -533,7 +533,7 @@ function processTracking(frame) {
             // [5] = Y/B button
             // [6] = menu (if exposed)
             // Pad to at least 7 entries: the Python side
-            // (QuestControllerState.from_joy) requires the full layout,
+            // (WebXRControllerState.from_joy) requires the full layout,
             // but browsers only report the buttons the controller has
             // (e.g. 6 when no menu/thumbrest is exposed).
             const buttons = [];

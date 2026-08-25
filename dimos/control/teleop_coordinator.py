@@ -18,7 +18,7 @@ from dimos.control.coordinator import ControlCoordinator
 from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.teleop.quest.quest_types import Buttons
+from dimos.teleop.webxr.controller_types import Buttons
 
 
 class TeleopControlCoordinator(ControlCoordinator):

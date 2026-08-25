@@ -65,7 +65,7 @@ from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
     _unitree_g1_groot_wbc_core,
 )
 from dimos.robot.unitree.g1.manip_config import g1_manipulation_model_config
-from dimos.teleop.quest.quest_extensions import VideoArmTeleopModule
+from dimos.teleop.webxr.extensions import VideoArmTeleopModule
 
 
 class G1CollectionRecorder(CollectionRecorder):
