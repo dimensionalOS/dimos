@@ -16,9 +16,12 @@ from collections.abc import Iterator
 import runpy
 
 import can_motor_control
+import numpy as np
+import pinocchio
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.hardware.whole_body.damiao.adapter import DamiaoWholeBodyAdapter
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.openarm_damiao import adapter as adapter_module
 from dimos.hardware.whole_body.openarm_damiao.adapter import OpenArmDamiaoAdapter
@@ -45,6 +48,7 @@ def test_import_lazy_gravity_model_does_not_resolve_asset(mocker: MockerFixture)
 
 def test_openarm_topology_connects_arms_and_grippers(
     openarm_adapter: OpenArmDamiaoAdapter,
+    mocker: MockerFixture,
 ) -> None:
     robot = openarm_adapter._build_robot()
 
@@ -56,6 +60,7 @@ def test_openarm_topology_connects_arms_and_grippers(
     assert len(robot["right_arm"]) == OPENARM_DOF
     assert isinstance(robot["left_gripper"], can_motor_control.Gripper)
     assert isinstance(robot["right_gripper"], can_motor_control.Gripper)
+    mocker.patch.object(DamiaoWholeBodyAdapter, "_load_kinematic_model")
     assert openarm_adapter.connect()
 
 
@@ -65,3 +70,13 @@ def test_openarm_joint_order_matches_hardware_component(
     """Commands are routed positionally: the config joint list must equal the
     adapter's declared order or motors silently receive each other's targets."""
     assert list(openarm_adapter.joint_names) == OPENARM_JOINTS
+
+
+@pytest.mark.self_hosted
+def test_openarm_feedback_limits_match_urdf_joint_limits(
+    openarm_adapter: OpenArmDamiaoAdapter,
+) -> None:
+    model = pinocchio.buildModelFromXML(openarm_adapter.kinematic_model.load().xml)
+
+    assert tuple(str(name) for name in model.names[1:]) == openarm_adapter.kinematic_joint_names
+    assert np.all(np.asarray(model.lowerPositionLimit) < np.asarray(model.upperPositionLimit))

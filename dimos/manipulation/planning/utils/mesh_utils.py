@@ -26,6 +26,7 @@ from pathlib import Path
 import re
 import shutil
 from typing import TYPE_CHECKING
+import uuid
 
 from dimos.robot.assets.git_cache import DEFAULT_ROBOT_ASSET_CACHE_ROOT
 from dimos.robot.assets.model import LoadedRobotModel
@@ -149,6 +150,7 @@ def pointcloud_to_convex_hull_obj(
     points: NDArray[np.float64],
     output_path: Path | str | None = None,
     *,
+    cache_key: str | None = None,
     voxel_size: float = 0.005,
     min_points: int = 4,
 ) -> str | None:
@@ -159,7 +161,10 @@ def pointcloud_to_convex_hull_obj(
 
     Args:
         points: Nx3 numpy array of 3D points (world frame)
-        output_path: Where to save OBJ. If None, uses a temp file.
+        output_path: Where to save OBJ. If None, saves into the hull cache.
+        cache_key: Stable identity used when output_path is None. The same key
+            reuses one file, so a caller rescanning an object overwrites in
+            place; without a key each call gets its own unique file.
         voxel_size: Downsample voxel size in meters (0 to skip)
         min_points: Minimum points required for convex hull
 
@@ -198,9 +203,15 @@ def pointcloud_to_convex_hull_obj(
         return None
 
     if output_path is None:
-        hull_dir = _CACHE_DIR / "convex_hulls"
-        hull_dir.mkdir(parents=True, exist_ok=True)
-        output_path = hull_dir / f"hull_{id(points):x}.obj"
+        if cache_key is None:
+            # Not id(points): CPython recycles a freed address, so sequential
+            # callers silently overwrote each other's hulls.
+            stem = uuid.uuid4().hex
+        else:
+            # Digest so two keys that sanitize alike still get their own file.
+            safe = re.sub(r"[^A-Za-z0-9_.-]", "_", cache_key)[:64]
+            stem = f"{safe}_{hashlib.sha256(cache_key.encode()).hexdigest()[:12]}"
+        output_path = _CACHE_DIR / "convex_hulls" / f"hull_{stem}.obj"
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)

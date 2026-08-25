@@ -36,6 +36,8 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
 
+from pydantic import BaseModel
+
 from dimos.evals.scorers import exact, final
 
 if TYPE_CHECKING:
@@ -44,6 +46,7 @@ if TYPE_CHECKING:
     from dimos.memory.stream import Stream
 
 T = TypeVar("T")
+ResponseT = TypeVar("ResponseT", bound=BaseModel)
 
 Select = Callable[["Store"], "Stream[Any, Any]"]
 """Context selector — hands the model real mem2 streams, whole or windowed::
@@ -79,6 +82,12 @@ class EvalRig(Protocol):
     def live_store(self) -> Store: ...
     def encode(self, stream: Stream[Any, Any]) -> list[dict[str, Any]]: ...
     def ask(self, context: Sequence[dict[str, Any]], question: str) -> str: ...
+    def ask_structured(
+        self,
+        context: Sequence[dict[str, Any]],
+        question: str,
+        schema: type[ResponseT],
+    ) -> ResponseT: ...
     def call_skill(self, name: str, args: Mapping[str, object]) -> str: ...
     def agent_loop(self, case: EvalCase) -> str: ...
     def mcp_ready(self) -> bool: ...
