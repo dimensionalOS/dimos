@@ -89,7 +89,6 @@ def _rerun_blueprint() -> Any:
 
 
 def _alfred_urdf_static(rr: Any) -> list[tuple[str, Any]]:
-    """Pinned to the live base_link so the meshes follow odometry."""
     factory = UrdfRobotStaticRerunFactory(urdf_path=ALFRED_URDF, root_path=ALFRED_RERUN_ROOT)
     return [
         *factory(rr),
@@ -99,17 +98,14 @@ def _alfred_urdf_static(rr: Any) -> list[tuple[str, Any]]:
 
 VOXEL_SIZE_METERS = 0.05
 DEPTH_MAX_RANGE_METERS = 4.0
-"""Stereo error grows as range squared; 4 m won the mapping grid against 6 m and against
-depth2depth-densified clouds (top-down F1 .570 / .506 / .411 vs a lidar-raycast
-reference on drive_2026-08-18_23-05-04.db)."""
+"""4 m won the mapping grid against 6 m (top-down F1 .570 vs .506 against a
+lidar-raycast reference on drive_2026-08-18_23-05-04.db)."""
 
 ALFRED_BODY_HEIGHT_METERS = 0.5
 
 _vis_nav = autoconnect(
-    # drive_2026-08-18_23-05-04.db vs lidar: wheel alone ends 2.66 m out, wheel + gyro 1.33 m,
-    # against the 0.59 m floor the same wheel steps reach on the reference's own heading.
     DimSlam.blueprint(
-        # Alfred's computer has no GPU; the fork-built libcuvslam carries the CPU path.
+        # Alfred's computer has no GPU, so libcuvslam is built -DENFORCE_GPU=OFF.
         use_gpu=False,
         depth_units_per_meter=1000.0,
         depth_cloud_max_range=DEPTH_MAX_RANGE_METERS,
@@ -132,6 +128,9 @@ _vis_nav = autoconnect(
         constraint_twist_variances=[0.0, 0.0, 0.01, 0.01, 0.01, 0.0],
         # Wheel odometry crosses the wifi link and can land seconds late.
         replay_buffer_seconds=2.0,
+        # Halves final drift on drive_2026-08-18_23-05-04.db: wheel alone ends 2.66 m out,
+        # wheel + gyro 1.33 m, against a 0.59 m floor on the lidar reference's own heading.
+        use_imu=True,
         # Bosch BMI055 datasheet figures, the part in the D455.
         imu_gyro_noise_density=0.0018,
         imu_gyro_random_walk=2e-5,
@@ -141,10 +140,7 @@ _vis_nav = autoconnect(
     RayTracingVoxelMap.blueprint(
         voxel_size=VOXEL_SIZE_METERS,
         max_range=DEPTH_MAX_RANGE_METERS,
-    ).remappings(
-        # Alfred has no lidar.
-        [(RayTracingVoxelMap, "lidar", "depth_cloud")]
-    ),
+    ).remappings([(RayTracingVoxelMap, "lidar", "depth_cloud")]),
     MLSPlannerNative.blueprint(
         voxel_size=VOXEL_SIZE_METERS,
         robot_height=ALFRED_BODY_HEIGHT_METERS,
@@ -156,7 +152,6 @@ _vis_nav = autoconnect(
             (MLSPlannerNative, "start_pose", "odom"),
         ]
     ),
-    # Nothing else converts odometry into the PoseStamped every odom consumer wants.
     GoalRelay.blueprint().remappings([(GoalRelay, "start_pose", "odom")]),
     DanLocalPlanner.blueprint(resample_spacing_m=0.1),
     DanHolonomicTC.blueprint(),

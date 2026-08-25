@@ -85,7 +85,6 @@ def driver_library_dir() -> Path | None:
         if not source.exists():
             continue
         target = source.resolve()
-        # Re-point after a driver upgrade.
         if link.is_symlink() and link.readlink() == target:
             continue
         # Two callers can reach this at once, and symlink_to over an existing path raises.
@@ -97,7 +96,6 @@ def driver_library_dir() -> Path | None:
 
 def driver_cuda_major() -> int:
     """0 if there is no driver."""
-    # By absolute path too, since ld.so.cache is not consulted here.
     candidates = ["libcuda.so.1"] + [
         str(directory / "libcuda.so.1")
         for directory in (*_DRIVER_ONLY_LIB_DIRS, *_HOST_LIB_DIRS)
@@ -115,11 +113,8 @@ def driver_cuda_major() -> int:
 
 
 def sdk_variant() -> str:
-    """Pick the dim-slam flake attr for this host.
-
-    Python picks instead of the flake's default package because nix evaluation is
-    hermetic: it can branch on arch/OS only, and cannot see the installed driver
-    (cuda12 vs cuda13 on x86) or /proc/device-tree (orin vs thor, both aarch64-linux).
+    """Nix cannot see the installed driver (cuda12 vs cuda13) or /proc/device-tree
+    (orin vs thor), so the flake's default package cannot make this choice.
     """
     if sys.platform == "darwin":
         return "metal"
@@ -153,14 +148,10 @@ def _driver_env() -> dict[str, str]:
 
 
 class DimSlamConfig(NativeModuleConfig):
-    cwd: str | None = str(MODULE_DIR)
+    cwd: str | None = str(MODULE_DIR / "rust")
     executable: str = "result/bin/dim_slam"
-    # TODO: pin a tag once dimSLAM#depth2depth merges. It carries fused_odom plus the
-    # depth2depth_* settings below, which fused_odom alone will not deserialize.
     build_command: str | None = Field(
-        default_factory=lambda: (
-            f"nix build 'github:dimensionalOS/dimSLAM?ref=depth2depth#{sdk_variant()}'"
-        )
+        default_factory=lambda: f"nix build -L 'path:.#{sdk_variant()}'"
     )
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
@@ -168,10 +159,10 @@ class DimSlamConfig(NativeModuleConfig):
     camera_mode: Literal["stereo", "mono", "rgbd"] = "stereo"
     # Empty: auto-discover from camera_info.
     camera_frames: list[str] = Field(default_factory=list)
-    # Asserted, not performed: unrectified input is not corrected.
+    # Asserted, not performed.
     rectified: bool = True
-    # Off runs on the CPU, deterministic, and needs a libcuvslam built with
-    # ENFORCE_GPU=OFF (the jeff-hykin/cuVSLAM fork); the stock SDK is GPU-only.
+    # Off runs the deterministic CPU path, which needs a libcuvslam built
+    # -DENFORCE_GPU=OFF. A build carrying only the other backend is used with a warning.
     use_gpu: bool = True
 
     # The tracker's own world frame, drifting freely; the filter fuses it as a
@@ -198,19 +189,6 @@ class DimSlamConfig(NativeModuleConfig):
     depth_cloud_max_range: float = 0.0
     # One point per k x k depth block (median of in-gate depths). <= 1 emits every pixel.
     depth_cloud_decimation: int = 1
-    # Densify the depth image before the cloud is cut from it. Setting both safetensors
-    # paths turns it on, and the binary has to be built with the depth2depth cargo
-    # feature (depth2depth-cuda/-cudnn/-metal for a GPU backend). The flake enables it
-    # on darwin only, so the linux SDKs still ship the stub.
-    depth2depth_dinov2_weights: str = ""
-    depth2depth_head_weights: str = ""
-    # Model input resolution; 1.0 = 280x504.
-    depth2depth_quality: float = 1.0
-    # Frame whose images feed the model; empty uses the rig camera on the depth frame.
-    # Set to the color camera's frame when depth is aligned to a colorless imager.
-    depth2depth_color_frame: str = ""
-    # A depth frame with no color inside this window gets an undensified cloud.
-    depth2depth_max_color_skew_seconds: float = 0.5
 
     odom_frame: str = "odom"
     base_frame: str = "base_link"
@@ -223,9 +201,11 @@ class DimSlamConfig(NativeModuleConfig):
     # Standard deviations per measurement dimension before a reading is called an
     # outlier. 0 disables the gate.
     mahalanobis_gate: float = 5.0
+    # Caps the filter's own state rather than an incoming reading. 0 disables it.
+    max_position_m: float = 10000.0
 
     # On, the filter propagates on IMU and needs all four noise figures below. Off, it is
-    # seeded level from the first source message and coasts at constant world velocity.
+    # seeded level from the first source message and holds its pose between them.
     use_imu: bool = False
 
     # The IMU's datasheet noise figures, in the continuous-time units the filter wants:
@@ -280,18 +260,16 @@ class DimSlamConfig(NativeModuleConfig):
 class DimSlam(NativeModule):
     """Every camera publishes onto the same ``image`` and ``camera_info`` streams and is
     told apart by ``frame_id``; ``camera_frames`` fixes which frames are on the rig and
-    in what order. Extrinsics come from tf against ``rig_frame``. ``rgbd`` pairs one
-    camera with ``depth_image``, reprojected onto the rig camera through
-    ``depth_camera_info`` and tf when the depth sensor differs.
+    in what order. Extrinsics come from tf against ``rig_frame``. ``depth_image`` feeds
+    ``depth_cloud`` in every mode, and is additionally tracked against in ``rgbd``,
+    reprojected onto the rig camera through ``depth_camera_info`` and tf when the depth
+    sensor differs.
 
     The tracker's pose stream never touches the wire: it enters the filter as a
     drifting source under ``visual_odom_frame``. Any number of external sources
     (wheel odometry, ...) publish onto ``sources`` and are told apart by
-    ``header.frame_id``, so adding one is a config change rather than a port change.
-    Late messages roll the filter back to their own slot and replay everything after.
-
-    ``odometry`` is the fused ``odom_frame`` -> ``base_frame`` pose, and ``tf`` carries
-    the same edge.
+    ``header.frame_id``. Late messages roll the filter back to their own slot and replay
+    everything after.
     """
 
     config: DimSlamConfig
