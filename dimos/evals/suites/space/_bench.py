@@ -532,7 +532,7 @@ class SpaceNav(EvalCase):
 
             observation = decode_obs(call(cmd="reset")["obs"])
             stop_issued = False
-            for _ in range(250):  # upstream evaluate_egonav default
+            for _ in range(config.nav_ego_max_steps):
                 transcript.append(_text_block(_EGO_OBSERVATION_PROMPT))
                 transcript += _image_blocks(observation[..., ::-1])  # habitat renders RGB
                 action, reply = self._act(

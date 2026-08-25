@@ -36,6 +36,11 @@ def _env_path(variable: str, default: Path) -> Path:
     return Path(value) if value else default
 
 
+def _env_int(variable: str, default: int) -> int:
+    value = os.environ.get(variable)
+    return int(value) if value else default
+
+
 class SpaceConfig(BaseModel):
     """Where SPACE lives and how its episodes run.
 
@@ -58,6 +63,12 @@ class SpaceConfig(BaseModel):
     frame_stride: int = 1
     nav_local_context: int = 5
     nav_max_steps: int = 100
+    # Upstream evaluate_egonav defaults to 250 steps. An episode resends its
+    # transcript every step, so DIMOS_SPACE_EGO_MAX_STEPS caps the cost of a
+    # wandering model without editing the suite.
+    nav_ego_max_steps: int = Field(
+        default_factory=lambda: _env_int("DIMOS_SPACE_EGO_MAX_STEPS", 250)
+    )
     # habitat-sim ships Python 3.9 conda builds only, so egocentric episodes run
     # the environment under a separate interpreter (see _ego_env.py). Point this
     # at that env's python, e.g. ~/micromamba/envs/habitat/bin/python.
