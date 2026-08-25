@@ -9,6 +9,7 @@ import {
   DataFrameStreamError,
   DataFrameStreamReader,
   encodeControlFrame,
+  encodeDatagram,
   type Msg,
   type PanelSpec,
   PROTOCOL_VERSION,
@@ -16,6 +17,7 @@ import {
 } from "@dimos/shared";
 import { type Manifest, ManifestError, parseManifest } from "@dimos/shared/manifest";
 import { getPanel } from "../panels/registry.tsx";
+import type { TeleopHooks } from "../panels/teleopMachine.ts";
 import { getDecoder } from "./decoders/index.ts";
 import { ChannelStore, StatusStore } from "./store.ts";
 import { ReconnectingTransport, type TransportDeps, type WebTransportLike } from "./transport.ts";
@@ -25,6 +27,7 @@ const UI_TICK_MS = 500;
 export interface SessionHandle {
   status: StatusStore;
   channels: ChannelStore;
+  teleop: TeleopHooks;
   stop(): void;
 }
 
@@ -147,6 +150,22 @@ class Session {
   #manifest: Manifest | null = null;
   #ticker: ReturnType<typeof setInterval>;
 
+  // Per-connection teleop senders, swapped in #runSession. Fire-and-forget:
+  // a send racing a reconnect lands on the dead connection and is dropped
+  // (the machine repeats at publishHz and the bridge deadman covers loss).
+  #teleopControl: ((msg: Msg) => void) | null = null;
+  #teleopDatagram: ((msg: Msg) => void) | null = null;
+  #teleopCbs = new Set<(msg: Msg) => void>();
+  readonly teleop: TeleopHooks = {
+    control: (msg) => this.#teleopControl?.(msg),
+    datagram: (msg) => this.#teleopDatagram?.(msg),
+    onMsg: (cb) => {
+      this.#teleopCbs.add(cb);
+      return () => this.#teleopCbs.delete(cb);
+    },
+    status: this.status,
+  };
+
   constructor(transportDeps: TransportDeps = {}) {
     this.transport = new ReconnectingTransport(
       {
@@ -169,6 +188,13 @@ class Session {
     const writer = control.writable.getWriter();
     const send = async (msg: Msg) => {
       await writer.write(encodeControlFrame(msg));
+    };
+    const datagrams = wt.datagrams.writable.getWriter();
+    this.#teleopControl = (msg) => {
+      if (runId === this.#runId) void send(msg).catch(() => {});
+    };
+    this.#teleopDatagram = (msg) => {
+      if (runId === this.#runId) void datagrams.write(encodeDatagram(msg)).catch(() => {});
     };
     await send({ t: "hello", v: PROTOCOL_VERSION, role: "viewer" });
     void this.#readUniStreams(wt, runId);
@@ -239,9 +265,16 @@ class Session {
               }
               break;
             }
+            case "teleop_started":
+              for (const cb of this.#teleopCbs) cb(msg);
+              break;
             case "error": {
               if (msg.code === "version_mismatch") {
                 this.transport.fail(msg.message);
+              } else if (msg.code === "teleop_held") {
+                // A refused lease is the teleop panel's state, not a
+                // session-level error banner.
+                for (const cb of this.#teleopCbs) cb(msg);
               } else {
                 this.status.update({ lastError: `${msg.code}: ${msg.message}` });
               }
@@ -359,6 +392,7 @@ export function startSession(transportDeps: TransportDeps = {}): SessionHandle {
   return {
     status: session.status,
     channels: session.channels,
+    teleop: session.teleop,
     stop: () => session.stop(),
   };
 }
