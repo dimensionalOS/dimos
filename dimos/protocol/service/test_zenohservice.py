@@ -117,6 +117,40 @@ def test_different_modes_produce_different_keys() -> None:
     assert peer.session_key != client.session_key
 
 
+def test_pickle_round_trip_sheds_the_session(session_pool) -> None:
+    """A module travels to its worker by pickle and re-acquires on the far side."""
+    import pickle
+
+    svc = ZenohService(session_pool=session_pool)
+    svc.start()
+    clone = pickle.loads(pickle.dumps(svc))
+
+    assert clone._session is None
+    assert clone._session_pool is zenohservice.default_session_pool
+    assert clone.config.session_key == svc.config.session_key
+
+    clone.start()
+    assert clone.session is not None
+    clone.stop()
+
+
+def test_pickled_pubsub_and_rpc_rebuild_their_runtime(session_pool) -> None:
+    import pickle
+
+    from dimos.protocol.pubsub.impl.zenohpubsub import ZenohPubSubBase
+    from dimos.protocol.rpc.zenohrpc import ZenohRPC
+
+    pubsub = pickle.loads(pickle.dumps(ZenohPubSubBase(session_pool=session_pool)))
+    assert pubsub._publishers == {}
+    assert pubsub._subscribers == []
+    assert pubsub._drain_stops == []
+
+    rpc = pickle.loads(pickle.dumps(ZenohRPC(session_pool=session_pool)))
+    assert rpc._pending == {}
+    assert rpc._queryables == []
+    assert rpc._call_thread_pool is None
+
+
 def test_start_creates_session(session_pool) -> None:
     svc = ZenohService(session_pool=session_pool)
     svc.start()
