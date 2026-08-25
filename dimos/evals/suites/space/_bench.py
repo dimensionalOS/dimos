@@ -368,6 +368,35 @@ class SpaceNav(EvalCase):
             if not path.exists():
                 raise FileNotFoundError(f"{self.id}: missing {path.name} — {SETUP_HINT}")
 
+    def _tracer(self, rig: EvalRig) -> Any:
+        """Persist each step (observation, reply, action) under the run dir.
+
+        The runner already promotes ``<case_id>.jsonl`` in its run dir to
+        ``EvalResult.transcript`` — the same convention ``agent_loop`` uses —
+        so writing the file is all it takes. Silently disabled for rigs
+        without a run dir (tests' FakeRig).
+        """
+        run_dir = getattr(rig, "run_dir", None)
+        if run_dir is None:
+            return None
+        import cv2
+
+        log = (Path(run_dir) / f"{self.id}.jsonl").open("w")
+
+        def record(step: int, observation_rgb: Any, action: str, reply: str) -> None:
+            image = Path(run_dir) / f"{self.id}_step{step:03d}.jpg"
+            cv2.imwrite(str(image), observation_rgb[..., ::-1])
+            log.write(
+                json.dumps(
+                    {"step": step, "action": action, "reply": reply, "image": image.name},
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+            log.flush()
+
+        return record
+
     # -- episode drivers ----------------------------------------------------------
 
     def _header(
@@ -448,7 +477,8 @@ class SpaceNav(EvalCase):
         observation = env.reset()
         pred_path = [list(env.current_location)]
         stop_issued = False
-        for _ in range(config.nav_max_steps):
+        trace = self._tracer(rig)
+        for step in range(config.nav_max_steps):
             transcript.append(_text_block(_DM_OBSERVATION_PROMPT))
             transcript += _image_blocks(observation[..., ::-1])  # env renders RGB
             action, reply = self._act(
@@ -458,6 +488,8 @@ class SpaceNav(EvalCase):
                 ("up", "down", "left", "right", "stop"),
                 "up",
             )
+            if trace is not None:
+                trace(step, observation, action, reply)
             transcript.append(_text_block(f"You responded:\n{reply}"))
             if action == "stop":
                 stop_issued = True
@@ -546,7 +578,8 @@ class SpaceNav(EvalCase):
 
             observation = decode_obs(call(cmd="reset")["obs"])
             stop_issued = False
-            for _ in range(config.nav_ego_max_steps):
+            trace = self._tracer(rig)
+            for step in range(config.nav_ego_max_steps):
                 transcript.append(_text_block(_EGO_OBSERVATION_PROMPT))
                 transcript += _image_blocks(observation[..., ::-1])  # habitat renders RGB
                 action, reply = self._act(
@@ -556,6 +589,8 @@ class SpaceNav(EvalCase):
                     ("move_forward", "turn_left", "turn_right", "stop"),
                     "turn_left",
                 )
+                if trace is not None:
+                    trace(step, observation, action, reply)
                 transcript.append(_text_block(f"You responded:\n{reply}"))
                 if action == "stop":
                     stop_issued = True
