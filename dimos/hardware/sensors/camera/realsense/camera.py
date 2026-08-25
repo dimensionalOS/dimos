@@ -313,10 +313,16 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._imu_pipeline = rs.pipeline()
         imu_profile = self._imu_pipeline.start(imu_config, self._on_motion_frame)
 
-        # librealsense's global-time regression polls the device over USB, and once the
-        # video streams saturate the bus the fit degrades into a rate error that walks the
-        # IMU stamps seconds away from the host clock. The raw hardware clock is stable, so
-        # take it instead and re-anchor it in _to_host_time.
+        # librealsense's global-time regression polls the device over USB, and once the video
+        # streams saturate the bus the late replies skew the least-squares fit into a rate
+        # error that walks the IMU stamps seconds away from the host clock. Disabling it is
+        # Intel's own standing advice, and the fix for the fit is unreleased:
+        # https://github.com/IntelRealSense/librealsense/pull/15360
+        # https://github.com/IntelRealSense/librealsense/issues/9131
+        # The raw hardware clock is stable, so take it and re-anchor it in _to_host_time.
+        #
+        # The option only reaches the sensor object owned by the pipeline that opened it, so
+        # this has to go through imu_profile rather than any other device handle.
         for sensor in imu_profile.get_device().query_sensors():
             if sensor.get_info(rs.camera_info.name) == MOTION_MODULE_NAME:
                 sensor.set_option(rs.option.global_time_enabled, 0.0)
