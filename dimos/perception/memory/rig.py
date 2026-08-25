@@ -645,7 +645,7 @@ class Rig:
             detections, cloud, self.camera_info, transform, _CLOUD_LIFT_FILTERS
         )
 
-    def backdrop(self, ts: float) -> PointCloud2 | None:
+    def backdrop(self, ts: float, depth_trunc: float = 1.5) -> PointCloud2 | None:
         """World-frame scene cloud around ts, for plane fits and rendering."""
         if self.depth is None:
             return self.cloud_at(ts)
@@ -660,7 +660,7 @@ class Rig:
         except LookupError:
             return None
         return PointCloud2.from_rgbd(
-            color, depth, self.camera_info, depth_scale=0.001, depth_trunc=1.5
+            color, depth, self.camera_info, depth_scale=0.001, depth_trunc=depth_trunc
         ).transform(-transform)
 
     # predicates
