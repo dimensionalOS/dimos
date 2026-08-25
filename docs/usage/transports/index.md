@@ -57,6 +57,10 @@ A stock zenoh session is pinned to localhost. It listens on `tcp/127.0.0.1:0` an
 scouts for peers over loopback only, so sibling dimOS processes on this machine
 find each other and nothing on the LAN can link to them.
 
+Peers on this machine carry their data through shared memory, not the socket.
+Zenoh negotiates it per link at handshake, so it only ever applies where both
+ends map the same segment -- a remote peer keeps getting the payload over TCP.
+
 Reaching off the machine is opt-in, and each way is independent:
 
 | You want | Pass |

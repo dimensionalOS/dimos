@@ -111,6 +111,17 @@ def test_close_all_empties_the_pool_even_when_a_session_will_not_close(
     assert len(opens) == 2
 
 
+def test_shared_memory_stays_on() -> None:
+    """Local peers get zenoh's shared-memory path, which nothing here turns off.
+
+    Zenoh enables it by default; a wheel built without the feature drops the key.
+    """
+    import json
+
+    config = json.loads(str(zenohservice._zenoh_config(ZenohConfig())))
+    assert config["transport"]["shared_memory"]["enabled"] is True
+
+
 def test_different_modes_produce_different_keys() -> None:
     peer = ZenohConfig(mode="peer")
     client = ZenohConfig(mode="client")
