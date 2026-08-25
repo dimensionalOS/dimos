@@ -61,14 +61,18 @@ Reaching off the machine is opt-in, and each way is independent:
 
 | You want | Pass |
 |----------|------|
-| A robot, dialed directly | `--robot-ip 192.168.1.42` (outbound; the listener stays pinned) |
+| A robot, dialed directly | `--robot-ip 192.168.1.42` |
 | Any other peer or a router, dialed directly | `ZENOH_CONNECT=tcp/host:7447` |
-| Peers discovered across the LAN | `ZENOH_SCOUTING=1` (also unpins the listener) |
-| Scouting on one named interface | `ZENOH_INTERFACE=wlan0` (also unpins the listener) |
+| Peers discovered across the LAN | `ZENOH_SCOUTING=1` |
+| Scouting on one named interface | `ZENOH_INTERFACE=wlan0` |
 
-Scouting the LAN and refusing links from it are contradictory, so turning
-discovery outward hands the listener back to zenoh's all-interfaces default.
-An explicit `listen=[...]` on a session always wins over both.
+Every one of these unpins the listener back to zenoh's all-interfaces default.
+For scouting, discovering the LAN and refusing links from it are contradictory.
+For dialing, gossip advertises this session's locator to the peers behind the
+dialed endpoint -- two machines dialing the same hub or robot router mesh by
+linking each other directly (a router never forwards between peers), which a
+loopback locator would silently break. An explicit `listen=[...]` on a session
+always wins.
 
 **Two ways to override for one run or for your shell:**
 

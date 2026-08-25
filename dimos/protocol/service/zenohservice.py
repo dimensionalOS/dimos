@@ -158,13 +158,17 @@ class ZenohConfig(SessionConfig):
 
         A session that only ever scouts loopback has no reason to be reachable
         from the LAN, so it does not offer zenoh's all-interfaces default there.
-        Dialing out is unaffected: `connect` still reaches a robot either way.
+        Dialing out unpins: gossip advertises this session's locator to the
+        peers behind the dialed endpoint, and a loopback locator would leave
+        them unable to link back -- a router never forwards between peers.
         """
         if self.listen or self.mode == "client":
             # A client dials its router and accepts no links, so it has no
             # listener to pin in the first place.
             return self.listen
-        return [LOOPBACK_LISTEN] if self.multicast_interface == LOOPBACK_INTERFACE else []
+        if self.connect or self.multicast_interface != LOOPBACK_INTERFACE:
+            return []
+        return [LOOPBACK_LISTEN]
 
     @property
     def gossip_enabled(self) -> bool:

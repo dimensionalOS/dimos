@@ -96,14 +96,22 @@ def test_loopback_pin_reaches_the_wire(zenoh_defaults: None) -> None:
     assert ZenohConfig().to_wire()["listen"] == [LOOPBACK_LISTEN]
 
 
-def test_the_pin_does_not_stop_dialing_out(
+def test_dialing_a_robot_restores_the_default_listener(
     zenoh_defaults: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Pinning the listener is inbound-only; a robot is still reachable."""
+    """Peers behind the robot's router learn this locator via gossip and dial it."""
     monkeypatch.setattr(global_config, "robot_ip", "192.0.2.10")
     config = ZenohConfig()
     assert config.connect == ["tcp/192.0.2.10:7447"]
-    assert config.listen_endpoints == [LOOPBACK_LISTEN]
+    assert config.listen_endpoints == []
+
+
+def test_dialing_a_hub_restores_the_default_listener(
+    zenoh_defaults: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two peers on one hub mesh via gossip, which needs a reachable listener."""
+    monkeypatch.setattr(global_config, "zenoh_connect", "tcp/hub.example:7447")
+    assert ZenohConfig().listen_endpoints == []
 
 
 def test_pinned_and_unpinned_sessions_are_pooled_apart(
