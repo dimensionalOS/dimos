@@ -76,7 +76,7 @@ class Detection2DSeg(Detection2DBBox):
         y_indices, x_indices = np.where(mask > 0)
         if len(x_indices) > 0:
             x1_val, y1_val = float(np.min(x_indices)), float(np.min(y_indices))
-            x2_val, y2_val = float(np.max(x_indices) + 1), float(np.max(y_indices) + 1)
+            x2_val, y2_val = float(np.max(x_indices)), float(np.max(y_indices))
         else:
             x1_val = y1_val = x2_val = y2_val = 0.0
 

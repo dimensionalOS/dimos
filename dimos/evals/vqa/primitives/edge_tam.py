@@ -137,5 +137,5 @@ class EdgeTAMObjectMaskPipeline:
         if self._segmenter is None:
             from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
 
-            self._segmenter = EdgeTAMImageSegmenter()
+            self._segmenter = cast("EdgeTAMImageSegmenterCompatible", EdgeTAMImageSegmenter())
         return self._segmenter
