@@ -119,6 +119,3 @@ class RunPythonSkill(Module):
         if len(text) <= limit:
             return text
         return text[:limit] + f"\n... [truncated, {len(text)} chars total]"
-
-
-run_python_skill = RunPythonSkill.blueprint

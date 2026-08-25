@@ -281,9 +281,9 @@ class MySkillContainer(Module):
             duration: How long to move in seconds.
         """
         return f"Moving at {x} m/s for {duration}s"
-
-my_skill_container = MySkillContainer.blueprint
 ```
+
+Include the class directly in a blueprint with `MySkillContainer.blueprint()`.
 
 ### System Prompts
 
@@ -327,7 +327,7 @@ If multiple modules match the spec, use `.remappings()` to resolve. Source: `dim
 3. If it needs another module's RPC, use the Spec pattern.
 4. Return a descriptive `str`, or a `SkillResult`.
 5. Update the system prompt if the skill needs usage guidance — `dimos/agents/system_prompt.py`, or the robot-specific prompt.
-6. Expose as `my_container = MySkillContainer.blueprint` and include in the agentic blueprint.
+6. Include `MySkillContainer.blueprint()` directly in the agentic blueprint.
 
 ---
 
