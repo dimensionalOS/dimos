@@ -120,6 +120,7 @@ class LocalizePolicy:
     min_views: int = 2  # a support seen from one pose only is unconfirmed
 
     cluster_radius_m: float = 0.08  # observations within this are the same support
+    fuse_voxel_m: float = 0.01  # union-cloud voxel at the identity merge; 0 concatenates
     min_depth_points: int = 60
     max_object_extent_m: float = 0.60
     min_camera_range_m: float = 0.28

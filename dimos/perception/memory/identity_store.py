@@ -46,10 +46,13 @@ class IdentityStore:
     labels: dict[str, LabelIdentity] = field(default_factory=dict)
 
     def get_or_create(
-        self, label: str, is_same: Callable[[Detection3DPC, Detection3DPC], bool]
+        self,
+        label: str,
+        is_same: Callable[[Detection3DPC, Detection3DPC], bool],
+        merge: Callable[[Detection3DPC, Detection3DPC], Detection3DPC],
     ) -> LabelIdentity:
         entry = self.labels.get(label)
         if entry is None:
-            entry = LabelIdentity(identity=Identity(is_same=is_same))
+            entry = LabelIdentity(identity=Identity(is_same=is_same, merge=merge))
             self.labels[label] = entry
         return entry

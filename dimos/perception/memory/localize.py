@@ -40,7 +40,7 @@ import numpy as np
 
 from dimos.memory.embed import EmbedImages
 from dimos.memory.transform import QualityWindow, peaks
-from dimos.perception.detection.identity import Identity, spatial
+from dimos.perception.detection.identity import Identity, fused, spatial
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.memory.rig import Rig
@@ -304,12 +304,18 @@ def localize(
 
     if identity_store is None:
         entries = None
-        identities = [Identity(is_same=spatial(policy.cluster_radius_m)) for _ in queries]
+        identities = [
+            Identity(is_same=spatial(policy.cluster_radius_m), merge=fused(policy.fuse_voxel_m))
+            for _ in queries
+        ]
         ingested: list[set[float]] = [set() for _ in queries]
         ungrounded: list[tuple[float, float] | None] = [None] * len(queries)  # (score, ts)
     else:
         entries = [
-            identity_store.get_or_create(q, spatial(policy.cluster_radius_m)) for q in queries
+            identity_store.get_or_create(
+                q, spatial(policy.cluster_radius_m), fused(policy.fuse_voxel_m)
+            )
+            for q in queries
         ]
         identities = [entry.identity for entry in entries]
         ingested = [entry.ingested for entry in entries]
