@@ -258,6 +258,8 @@ class JointTrajectoryTask(BaseControlTask):
                     self._commanded_positions[joint_name] = measured
 
         if not self._motions:
+            if not self._config.hold_position_when_idle:
+                return None
             held_names = [
                 name for name in self._joint_names_list if name in self._commanded_positions
             ]
