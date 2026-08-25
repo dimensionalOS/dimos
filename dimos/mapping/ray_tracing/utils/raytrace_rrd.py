@@ -28,9 +28,9 @@ import numpy as np
 import typer
 
 from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
-from dimos.memory2.store.sqlite import SqliteStore
-from dimos.memory2.transform import FnTransformer
-from dimos.memory2.type.observation import Observation
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.transform import FnTransformer
+from dimos.memory.type.observation import Observation
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import resolve_named_path

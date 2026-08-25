@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper, local_bounds
-from dimos.memory2.transform import Transformer
+from dimos.memory.transform import Transformer
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-    from dimos.memory2.type.observation import Observation
+    from dimos.memory.type.observation import Observation
 
 logger = setup_logger()
 
