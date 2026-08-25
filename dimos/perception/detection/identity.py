@@ -36,7 +36,11 @@ from __future__ import annotations
 import operator
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
 from dimos.memory.transform import Transformer
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.perception.detection.type.imageDetections import ImageDetections
 
@@ -53,6 +57,47 @@ def spatial(radius: float = 0.1) -> Callable[[Detection3DPC, Detection3DPC], boo
         return float((a.center - b.center).magnitude()) <= radius
 
     return is_same
+
+
+def fused(voxel: float) -> Callable[[Detection3DPC, Detection3DPC], Detection3DPC]:
+    """Merges two detections by combining their point clouds. For each grid cell of size *voxel* meters,
+    it keeps the mean position of all points grouped in that cell. 
+    The weight of each fused point is the number of raw points that contributed to it.
+    """
+    weights: dict[int, np.ndarray[Any, Any]] = {}
+
+    def merge(a: Detection3DPC, b: Detection3DPC) -> Detection3DPC:
+        union = a + b
+        wa = weights.pop(id(a), None)
+        na = float(wa.sum()) if wa is not None else float(len(a.pointcloud))
+        nb = float(len(b.pointcloud))
+        union.center = Vector3(
+            (na * a.center.x + nb * b.center.x) / (na + nb),
+            (na * a.center.y + nb * b.center.y) / (na + nb),
+            (na * a.center.z + nb * b.center.z) / (na + nb),
+        )
+        if voxel <= 0:
+            return union
+        pts = np.asarray(union.pointcloud.pointcloud.points)
+        w = np.ones(len(pts))
+        if wa is not None:
+            w[: len(wa)] = wa
+        cells, inverse = np.unique(
+            np.floor(pts / voxel).astype(np.int64), axis=0, return_inverse=True
+        )
+        wsum = np.zeros(len(cells))
+        np.add.at(wsum, inverse, w)
+        psum = np.zeros((len(cells), 3))
+        np.add.at(psum, inverse, pts * w[:, None])
+        union.pointcloud = PointCloud2.from_numpy(
+            psum / wsum[:, None],
+            frame_id=union.pointcloud.frame_id,
+            timestamp=union.pointcloud.ts,
+        )
+        weights[id(union)] = wsum
+        return union
+
+    return merge
 
 
 class Identity(Transformer[Any, Detection3DPC]):
