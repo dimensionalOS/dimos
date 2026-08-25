@@ -40,7 +40,7 @@ def test_dual_xarm6_is_one_prepared_model_with_canonical_groups() -> None:
     model = validate_robot_model_config(config)
 
     assert model.root_link == "world"
-    assert model.actuated_joint_names == config.joint_names
+    assert [joint.name for joint in model.joints if joint.type != "fixed"] == config.joint_names
     assert [group.name for group in config.planning_groups] == [
         "left_arm",
         "right_arm",

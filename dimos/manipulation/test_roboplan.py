@@ -519,7 +519,7 @@ def test_roboplan_loads_canonical_slash_names_natively(
     )
     config = RobotModelConfig(
         name="robot",
-        model_path=model_path,
+        model=RobotModel.from_file(model_path),
         joint_names=["left/j1"],
         base_link="world",
         planning_groups=[
@@ -1794,25 +1794,8 @@ def test_overlapping_group_selection_rejected_before_planning(
     config = robot_config.model_copy(
         update={
             "planning_groups": [
-                PlanningGroupDefinition("left", ("joint1", "joint2"), "base", "left_tip"),
-                PlanningGroupDefinition("right", ("joint2",), "base", "right_tip"),
-            ]
-        }
-    )
-    _make_world(fake_roboplan, config)
-
-    with pytest.raises(ValueError, match="overlap"):
-        _selection((config,), "arm/left", "arm/right")
-
-
-def test_overlapping_group_selection_rejected_before_planning(
-    fake_roboplan: None, robot_config: RobotModelConfig
-) -> None:
-    config = robot_config.model_copy(
-        update={
-            "planning_groups": [
-                PlanningGroupDefinition("left", ("joint1", "joint2"), "base", "left_tip"),
-                PlanningGroupDefinition("right", ("joint2",), "base", "right_tip"),
+                PlanningGroupDefinition("left", ("joint1", "joint2"), "base", "tcp"),
+                PlanningGroupDefinition("right", ("joint2",), "base", "tcp"),
             ]
         }
     )

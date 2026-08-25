@@ -144,7 +144,7 @@ def test_drake_loads_canonical_slash_names_natively(tmp_path: Path) -> None:
     _write_canonical_urdf(urdf)
     config = RobotModelConfig(
         name="robot",
-        model_path=urdf,
+        model=RobotModel.from_file(urdf),
         joint_names=["left/j1"],
         base_link="world",
         planning_groups=[
@@ -398,15 +398,16 @@ def test_drake_legacy_wrappers_fail_at_call_time_for_no_or_ambiguous_pose(tmp_pa
 
 
 @requires_drake
-def test_drake_group_jacobian_rejects_non_controllable_group_joints(tmp_path: Path) -> None:
+def test_drake_rejects_non_controllable_group_joints_before_world_mutation(
+    tmp_path: Path,
+) -> None:
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
     world = DrakeWorld()
-    world.add_robot(_config(urdf, [_arm_group("joint1", "joint2")], joints=["joint1"]))
-    world.finalize()
+    with pytest.raises(ValueError, match="outside the controllable model set"):
+        world.add_robot(_config(urdf, [_arm_group("joint1", "joint2")], joints=["joint1"]))
 
-    with pytest.raises(ValueError, match="non-controllable"):
-        world.get_group_jacobian(world.get_live_context(), "arm/arm")
+    assert world.get_robot_ids() == []
 
 
 @requires_drake
