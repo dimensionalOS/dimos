@@ -14,7 +14,7 @@
 
 """Go2 agent stack with a live recording available through Python."""
 
-from dimos.agents.skills.python_repl import PythonReplSkill
+from dimos.agents.skills.run_python import RunPythonSkill
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic import unitree_go2_agentic
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import Go2Memory
@@ -22,5 +22,5 @@ from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import Go2Memory
 unitree_go2_agentic_memory = autoconnect(
     unitree_go2_agentic,
     Go2Memory.blueprint(),
-    PythonReplSkill.blueprint(),
+    RunPythonSkill.blueprint(),
 ).global_config(n_workers=12, robot_model="unitree_go2")

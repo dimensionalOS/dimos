@@ -18,16 +18,16 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from typing import ClassVar, Protocol
+from typing import Annotated, ClassVar
 
 from pydantic import Field
 
 from dimos.agents.annotation import skill
-from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.spec.utils import Spec
+from dimos.memory.module import Recorder
 
 DEFAULT_MAX_OUTPUT_CHARS = 12_000
+MAX_TIMEOUT_SECONDS = 100.0
 
 _PYTHON_BOOTSTRAP = """
 import sys
@@ -46,25 +46,24 @@ finally:
 """
 
 
-class RecordingPathSpec(Spec, Protocol):
-    @rpc
-    def recording_path(self) -> str: ...
-
-
-class PythonReplSkillConfig(ModuleConfig):
+class RunPythonSkillConfig(ModuleConfig):
     max_output_chars: int = Field(default=DEFAULT_MAX_OUTPUT_CHARS, gt=0)
 
 
-class PythonReplSkill(Module):
+class RunPythonSkill(Module):
     """Give an agent a fresh Python process for each tool call."""
 
     dedicated_worker: ClassVar[bool] = True
 
-    config: PythonReplSkillConfig
-    _recorder: RecordingPathSpec
+    config: RunPythonSkillConfig
+    _recorder: Recorder
 
     @skill
-    def run_python(self, code: str) -> str:
+    def run_python(
+        self,
+        code: str,
+        timeout: Annotated[float, Field(gt=0.0, le=MAX_TIMEOUT_SECONDS)] = MAX_TIMEOUT_SECONDS,
+    ) -> str:
         """Run Python for calculations and analysis, with live robot memory available.
 
         Use this for computation or to inspect any data recorded by the robot,
@@ -89,14 +88,22 @@ class PythonReplSkill(Module):
 
         Args:
             code: Complete Python source for this call. Print what you want returned.
+            timeout: Maximum execution time in seconds, up to 100 seconds.
         """
-        result = subprocess.run(
-            [sys.executable, "-c", _PYTHON_BOOTSTRAP, self._recorder.recording_path()],
-            input=code,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        if not 0.0 < timeout <= MAX_TIMEOUT_SECONDS:
+            raise ValueError(f"timeout must be greater than 0 and at most {MAX_TIMEOUT_SECONDS:g}")
+
+        try:
+            result = subprocess.run(
+                [sys.executable, "-c", _PYTHON_BOOTSTRAP, self._recorder.recording_path()],
+                input=code,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return f"(execution timed out after {timeout:g} seconds)"
         output = result.stdout
         if result.stderr:
             if output and not output.endswith("\n"):
@@ -114,4 +121,4 @@ class PythonReplSkill(Module):
         return text[:limit] + f"\n... [truncated, {len(text)} chars total]"
 
 
-python_repl_skill = PythonReplSkill.blueprint
+run_python_skill = RunPythonSkill.blueprint
