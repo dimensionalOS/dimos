@@ -558,9 +558,7 @@ class TestJointTrajectoryTask:
                 hold_position_when_idle=True,
             )
         )
-        state = JointStateSnapshot(
-            joint_positions={"arm/joint1": 0.25, "arm/joint2": -0.5}
-        )
+        state = JointStateSnapshot(joint_positions={"arm/joint1": 0.25, "arm/joint2": -0.5})
 
         output = task.compute(CoordinatorState(joints=state, t_now=1.0, dt=0.1))
 
@@ -588,9 +586,7 @@ class TestJointTrajectoryTask:
                 )
             ],
         )
-        state = JointStateSnapshot(
-            joint_positions={"arm/joint1": 0.0, "arm/joint2": -0.5}
-        )
+        state = JointStateSnapshot(joint_positions={"arm/joint1": 0.0, "arm/joint2": -0.5})
         assert (
             task.execute(trajectory, {"arm/joint1": 0.0}).status
             is TrajectoryExecutionStatus.ACCEPTED
