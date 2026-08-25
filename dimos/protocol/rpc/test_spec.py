@@ -25,7 +25,7 @@ from typing import Any
 
 import pytest
 
-from dimos.protocol.rpc.pubsubrpc import LCMRPC, ShmRPC
+from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.protocol.rpc.rpc_utils import RemoteError
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, RPCSpec
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
@@ -62,25 +62,6 @@ def lcm_rpc_context():
 
 
 testdata.append((lcm_rpc_context, "lcm"))
-
-
-@contextmanager
-def shm_rpc_context():
-    """Context manager for Shared Memory RPC implementation."""
-    # Create two separate instances that communicate through shared memory segments
-    server = ShmRPC(rpc_timeouts={}, default_rpc_timeout=DEFAULT_RPC_TIMEOUT, prefer="cpu")
-    client = ShmRPC(rpc_timeouts={}, default_rpc_timeout=DEFAULT_RPC_TIMEOUT, prefer="cpu")
-    server.start()
-    client.start()
-
-    try:
-        yield server, client
-    finally:
-        server.stop()
-        client.stop()
-
-
-testdata.append((shm_rpc_context, "shm"))
 
 
 @contextmanager

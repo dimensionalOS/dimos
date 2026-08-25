@@ -689,7 +689,7 @@ def _coerce_transport_to_backend(transport: Transport[Any]) -> Transport[Any]:
     Blueprints pin specific channels in their `transport_map` with e.g. `LCMTransport.spec(
     "/cmd_vel", Twist)`. So the global transport switch reaches those too, rebuild the plain
     LCM<->Zenoh pair via the factory when it doesn't match `global_config.transport`. Deliberate
-    non-default choices (`JpegLcmTransport`, SHM, ROS, DDS, WebRTC, ...) are exact-type-checked
+    non-default choices (`JpegLcmTransport`, ROS, DDS, WebRTC, ...) are exact-type-checked
     out and left untouched.
     """
     want = global_config.transport

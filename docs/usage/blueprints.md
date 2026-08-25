@@ -181,12 +181,15 @@ If you don't like the name you can always override it like in the next section.
 
 ## Which transport is used?
 
-By default `LCMTransport` is used if the object supports `lcm_encode`. If it doesn't `pLCMTransport` is used (meaning "pickled LCM").
+By default, streams use the transport selected by `GlobalConfig`. Zenoh is the
+standard backend and chooses typed or pickled encoding from the stream's message
+type.
 
 You can override transports with the `transports` method. It returns a new blueprint in which the override is set.
 
 ```python session=blueprint-ex1
-from dimos.core.transport import pSHMTransport, pLCMTransport
+from dimos.core.transport import pZenohTransport
+from dimos.protocol.pubsub.impl.zenohpubsub import Topic
 
 base_blueprint = autoconnect(
     module1(arg1=1),
@@ -198,10 +201,7 @@ expanded_blueprint = autoconnect(
     module5(),
 )
 base_blueprint = base_blueprint.transports({
-    ("image", Image): pSHMTransport(
-        "/go2/color_image", default_capacity=1920 * 1080 * 3,  # 1920x1080 frame x 3 (RGB) x uint8
-    ),
-    ("start_explore", bool): pLCMTransport("/start_explore"),
+    ("start_explore", bool): pZenohTransport(Topic("dimos/start_explore")),
 })
 ```
 

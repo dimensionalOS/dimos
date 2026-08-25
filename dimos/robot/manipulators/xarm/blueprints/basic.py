@@ -17,8 +17,10 @@
 from __future__ import annotations
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.port_coordinator import PortControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.global_config import global_config
 from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.xarm.config import (
@@ -48,12 +50,19 @@ dual_xarm6_planner_coordinator = autoconnect(
     ),
 )
 
-_xarm7_hw = xarm7_hardware("arm", gripper=True, mock_without_address=True)
+_xarm7_hw = (
+    make_xarm_hardware("arm", 7, adapter_type="module", gripper=True)
+    if global_config.simulation
+    else xarm7_hardware("arm", gripper=True, mock_without_address=True)
+)
 _xarm7_model = make_xarm7_model_config(name="arm", add_gripper=True)
+_single_arm_coordinator = PortControlCoordinator if global_config.simulation else ControlCoordinator
 
 xarm7_planner_coordinator = autoconnect(
     planner(robots=[_xarm7_model]),
     coordinator(
+        cls=_single_arm_coordinator,
+        instance_name="ControlCoordinator" if global_config.simulation else None,
         hardware=[_xarm7_hw],
         tasks=[
             trajectory_task(_xarm7_hw),
@@ -65,22 +74,35 @@ xarm7_planner_coordinator = autoconnect(
             ),
         ],
     ),
+    *mujoco_if_sim(XARM7_SIM_PATH, 7),
 )
 
-_coordinator_xarm7_hw = xarm7_hardware("arm")
+_coordinator_xarm7_hw = (
+    make_xarm_hardware("arm", 7, adapter_type="module", gripper=True)
+    if global_config.simulation
+    else xarm7_hardware("arm", gripper=True)
+)
 
 coordinator_xarm7 = autoconnect(
     coordinator(
+        cls=_single_arm_coordinator,
+        instance_name="ControlCoordinator" if global_config.simulation else None,
         hardware=[_coordinator_xarm7_hw],
         tasks=[trajectory_task(_coordinator_xarm7_hw)],
     ),
     *mujoco_if_sim(XARM7_SIM_PATH, 7),
 )
 
-_coordinator_xarm6_hw = xarm6_hardware("arm", gripper=True)
+_coordinator_xarm6_hw = (
+    make_xarm_hardware("arm", 6, adapter_type="module", gripper=True)
+    if global_config.simulation
+    else xarm6_hardware("arm", gripper=True)
+)
 
 coordinator_xarm6 = autoconnect(
     coordinator(
+        cls=_single_arm_coordinator,
+        instance_name="ControlCoordinator" if global_config.simulation else None,
         hardware=[_coordinator_xarm6_hw],
         tasks=[trajectory_task(_coordinator_xarm6_hw)],
     ),

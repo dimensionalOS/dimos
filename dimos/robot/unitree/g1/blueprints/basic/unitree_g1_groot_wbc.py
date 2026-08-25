@@ -17,8 +17,8 @@
 One blueprint, ``--simulation`` flag picks the backend:
 
 Real hardware (default):
-    G1WholeBodyConnection (DDS rt/lowstate <-> rt/lowcmd) + transport_lcm
-    whole-body adapter. 500 Hz tick. Safety profile: unarmed + dry-run on
+    G1WholeBodyConnection (DDS rt/lowstate <-> rt/lowcmd) connected to the
+    coordinator through typed ports. 100 Hz tick. Safety profile: unarmed + dry-run on
     start; activate explicitly through ControlCoordinator RPC after
     verifying commands. The policy ramps from the current pose to its
     bent-knee default over 10 s before taking torque control. The 14 arm
@@ -26,7 +26,7 @@ Real hardware (default):
     servo task.
 
 Sim (``--simulation``):
-    MujocoSimModule (in-process MuJoCo + SHM) + sim_mujoco_g1 adapter.
+    MujocoSimModule connected through the same typed ports and coordinator.
     50 Hz tick (matches the rate the policy was trained at). No arming
     ramp and no dry-run. The 14 arm joints are still held with the same
     lower-priority servo task as hardware so headless and viewer runs do not
@@ -61,9 +61,10 @@ from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
 )
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.core.stream import Out
+from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
-from dimos.hardware.whole_body.spec import WholeBodyConfig
+from dimos.hardware.whole_body.port_adapter import PortWholeBodyAdapter
+from dimos.hardware.whole_body.spec import WholeBodyAdapter, WholeBodyConfig
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.pointclouds.occupancy import HeightCostConfig
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -93,7 +94,6 @@ _MJCF_PATH = LfsPath("mujoco_sim/g1_gear_wbc.xml")
 _ROBOT_ONLY_MJCF_PATH = Path(__file__).resolve().parents[2] / "assets" / "g1_29dof.xml"
 _ROBOT_MESHDIR = LfsPath("g1_urdf/meshes")
 
-_adapter_address: str | Path
 _cmd_vel_topic = "/cmd_vel" if global_config.simulation else "/g1/cmd_vel"
 _MUJOCO_LIDAR_CAMERAS = (
     "lidar_front_camera",
@@ -133,7 +133,18 @@ _G1_NAV_SAFE_RADIUS_MARGIN = 0.6
 
 
 class _G1GrootCoordinator(ControlCoordinator):
+    motor_states: In[JointState]
+    imu: In[Imu]
+    motor_command: Out[MotorCommandArray]
     g1_joints: Out[JointState]
+
+    def _create_whole_body_adapter(self, component: HardwareComponent) -> WholeBodyAdapter:
+        return PortWholeBodyAdapter(
+            dof=len(component.joints),
+            motor_states=self.motor_states,
+            imu=self.imu,
+            motor_command=self.motor_command,
+        )
 
 
 # Per-robot joint stream. Namespaced like the rest of the g1 wire topics, which
@@ -196,59 +207,50 @@ if global_config.simulation == "mujoco":
             robot_sim_spec=_g1_sim_spec,
         )
 
-    def _scene_mujoco_backend() -> tuple[Any, str | Path]:
+    def _scene_mujoco_backend() -> Any:
         if global_config.scene_package is None:
-            return _legacy_mujoco_backend(), _MJCF_PATH
+            return _legacy_mujoco_backend()
 
         scene_path = Path(str(global_config.scene_package)).expanduser()
         if scene_path.suffix.lower() == ".mjb":
             if not scene_path.exists():
                 raise FileNotFoundError(f"MuJoCo binary scene not found: {scene_path}")
-            return (
-                MujocoSimModule.blueprint(
-                    address=scene_path,
-                    headless=True,
-                    dof=_G1_NUM_MOTORS,
-                    **_mujoco_lidar_kwargs(_MUJOCO_LIDAR_CAMERA, _MUJOCO_LIDAR_CAMERAS),
-                    robot_sim_spec=_g1_sim_spec,
-                ),
-                scene_path,
+            return MujocoSimModule.blueprint(
+                address=scene_path,
+                headless=True,
+                dof=_G1_NUM_MOTORS,
+                **_mujoco_lidar_kwargs(_MUJOCO_LIDAR_CAMERA, _MUJOCO_LIDAR_CAMERAS),
+                robot_sim_spec=_g1_sim_spec,
             )
 
         from dimos.simulation.scenes.catalog import resolve_scene_package
 
         package = resolve_scene_package(global_config.scene_package)
         if package is None:
-            return _legacy_mujoco_backend(), _MJCF_PATH
+            return _legacy_mujoco_backend()
         if package.mujoco_scene_path is None:
             raise ValueError(f"scene package has no MuJoCo scene artifact: {package.metadata_path}")
 
         composed_scene = _precomposed_g1_scene(package)
         if composed_scene is not None:
-            return (
-                MujocoSimModule.blueprint(
-                    address=composed_scene,
-                    headless=True,
-                    dof=_G1_NUM_MOTORS,
-                    **_mujoco_lidar_kwargs(_MUJOCO_LIDAR_CAMERA, _MUJOCO_LIDAR_CAMERAS),
-                    robot_sim_spec=_g1_sim_spec,
-                ),
-                composed_scene,
-            )
-
-        return (
-            MujocoSimModule.blueprint(
-                scene_xml=package.mujoco_scene_path,
-                robot_mjcf=_ROBOT_ONLY_MJCF_PATH,
-                robot_meshdir=_ROBOT_MESHDIR,
-                robot_id="",
-                scene_entities=package.entities,
+            return MujocoSimModule.blueprint(
+                address=composed_scene,
                 headless=True,
                 dof=_G1_NUM_MOTORS,
                 **_mujoco_lidar_kwargs(_MUJOCO_LIDAR_CAMERA, _MUJOCO_LIDAR_CAMERAS),
                 robot_sim_spec=_g1_sim_spec,
-            ),
-            _ROBOT_ONLY_MJCF_PATH,
+            )
+
+        return MujocoSimModule.blueprint(
+            scene_xml=package.mujoco_scene_path,
+            robot_mjcf=_ROBOT_ONLY_MJCF_PATH,
+            robot_meshdir=_ROBOT_MESHDIR,
+            robot_id="",
+            scene_entities=package.entities,
+            headless=True,
+            dof=_G1_NUM_MOTORS,
+            **_mujoco_lidar_kwargs(_MUJOCO_LIDAR_CAMERA, _MUJOCO_LIDAR_CAMERAS),
+            robot_sim_spec=_g1_sim_spec,
         )
 
     def _precomposed_g1_scene(package: ScenePackage) -> Path | None:
@@ -265,13 +267,11 @@ if global_config.simulation == "mujoco":
             )
         return candidate
 
-    # Sim backend: MuJoCo engine via SHM.
-    _backend, _adapter_address = _scene_mujoco_backend()
+    _backend = _scene_mujoco_backend()
     # MujocoSimModule's ``odom`` Out is the sole producer of ``/odom``
     # now - the coordinator no longer polls the whole-body adapter for
     # base pose (read_odom was dropped from the Protocol). autoconnect
     # maps ``(odom, PoseStamped)`` to ``/odom`` by default; no override.
-    _adapter_type = "sim_mujoco_g1"
     _tick_rate = 50.0
     _auto_arm = True
     _auto_dry_run = False
@@ -312,10 +312,7 @@ else:
     from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
     from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
 
-    # Real-hw backend: DDS connection module + transport_lcm adapter.
     _backend = G1WholeBodyConnection.blueprint(release_sport_mode=True)
-    _adapter_type = "transport_lcm"
-    _adapter_address = ""
     # The onboard Jetson can't sustain a 500 Hz tick; it collapses to ~90 Hz
     # and starves the policy, so balance decays.
     _tick_rate = 100.0
@@ -497,8 +494,7 @@ _coordinator = _G1GrootCoordinator.blueprint(
             hardware_id="g1",
             hardware_type=HardwareType.WHOLE_BODY,
             joints=g1_joints,
-            adapter_type=_adapter_type,
-            address=_adapter_address,
+            adapter_type="module",
             wb_config=WholeBodyConfig(kp=tuple(G1_GROOT_KP), kd=tuple(G1_GROOT_KD)),
         ),
     ],
@@ -522,16 +518,9 @@ _coordinator = _G1GrootCoordinator.blueprint(
     ],
 ).transports(
     {
-        ("joint_command", JointState): LCMTransport("/g1/joint_command", JointState),
-        ("g1_joints", JointState): LCMTransport(_G1_JOINTS_TOPIC, JointState),
-        ("cmd_vel", Twist): LCMTransport(_cmd_vel_topic, Twist),
-        # Real-hw only: the transport_lcm adapter speaks to
-        # G1WholeBodyConnection over these topics. autoconnect already
-        # matches by (name, type) so sim doesn't need them -- they're
-        # harmless when the sim engine doesn't expose those ports.
-        ("motor_states", JointState): LCMTransport("/g1/motor_states", JointState),
-        ("imu", Imu): LCMTransport("/g1/imu", Imu),
-        ("motor_command", MotorCommandArray): LCMTransport("/g1/motor_command", MotorCommandArray),
+        ("joint_command", JointState): LCMTransport.spec("/g1/joint_command", JointState),
+        ("g1_joints", JointState): LCMTransport.spec(_G1_JOINTS_TOPIC, JointState),
+        ("cmd_vel", Twist): LCMTransport.spec(_cmd_vel_topic, Twist),
     }
 )
 

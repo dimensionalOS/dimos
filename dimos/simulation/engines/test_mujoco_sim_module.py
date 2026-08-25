@@ -24,8 +24,15 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
+from dimos.hardware.whole_body.spec import POS_STOP, VEL_STOP
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
-from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
+from dimos.simulation.engines.mujoco_sim_module import (
+    MujocoSimModule,
+    MujocoSimModuleConfig,
+    _WholeBodySimHooks,
+)
 
 
 class _FakeData:
@@ -43,6 +50,7 @@ class _FakeRespawnEngine:
         self.ground_z = ground_z
         self.reset_requested = False
         self.reset_to_kwargs: dict[str, Any] | None = None
+        self.held_position = False
 
     def request_reset(self, *, wait: bool) -> bool:
         self.reset_requested = wait
@@ -72,6 +80,9 @@ class _FakeRespawnEngine:
     def disconnect(self) -> None:
         pass
 
+    def hold_current_position(self) -> None:
+        self.held_position = True
+
 
 class _FakeSimHooks:
     def __init__(self) -> None:
@@ -81,11 +92,10 @@ class _FakeSimHooks:
         self.cleared = True
 
 
-def test_ready_signal_happens_after_joint_state_and_imu_write() -> None:
+def test_post_step_publishes_motor_state_before_imu() -> None:
     events: list[str] = []
     module = MujocoSimModule()
     module.config = MujocoSimModuleConfig(dof=2)
-    module._shm_ready_signaled = False
     module._root_base_qpos_adr = 0
     module._imu_quat_slice = None
     module._imu_base_qpos_slice = slice(3, 7)
@@ -99,19 +109,7 @@ def test_ready_signal_happens_after_joint_state_and_imu_write() -> None:
             assert engine is _FakeEngine
             events.append("joint_state")
 
-    class _FakeShm:
-        def write_imu(self, **_: Any) -> None:
-            events.append("imu")
-
-        def signal_ready(self, *, num_joints: int, arm_joints: int) -> None:
-            assert num_joints == 2
-            assert arm_joints == 2
-            events.append("ready")
-
-        def signal_stop(self) -> None:
-            pass
-
-        def cleanup(self) -> None:
+        def clear_latched_commands(self) -> None:
             pass
 
     try:
@@ -120,13 +118,87 @@ def test_ready_signal_happens_after_joint_state_and_imu_write() -> None:
         module._imu_gyro_slice = slice(0, 3)
         module._imu_accel_slice = slice(3, 6)
         module._sim_hooks = _FakeHooks()
-        module._shm = _FakeShm()
+        module.imu.publish.side_effect = lambda _: events.append("imu")
 
-        module._publish_shm_and_lcm(_FakeEngine)
+        module._publish_robot_state(_FakeEngine)
 
-        assert events == ["joint_state", "imu", "ready"]
+        assert events == ["joint_state", "imu"]
     finally:
         module.stop()
+
+
+class _FakeControlEngine:
+    joint_names = ["joint_a", "joint_b"]
+    joint_positions = [1.0, 2.0]
+    joint_velocities = [0.5, -0.5]
+    joint_efforts = [3.0, 4.0]
+
+    def __init__(self) -> None:
+        self.commands: list[JointState] = []
+
+    def write_joint_command(self, command: JointState) -> None:
+        self.commands.append(command)
+
+
+def test_motor_command_is_sampled_and_held_across_physics_steps() -> None:
+    published: list[JointState] = []
+    engine = _FakeControlEngine()
+    hooks = _WholeBodySimHooks(dof=2, publish_state=published.append)
+    command = MotorCommandArray(
+        q=[2.0, 4.0],
+        dq=[0.0, 1.0],
+        kp=[10.0, 20.0],
+        kd=[2.0, 4.0],
+        tau=[1.0, 2.0],
+    )
+
+    assert hooks.hold(command)
+    hooks.pre_step(engine)
+    hooks.pre_step(engine)
+    hooks.post_step(engine)
+
+    assert [message.effort for message in engine.commands] == [
+        [10.0, 48.0],
+        [10.0, 48.0],
+    ]
+    assert published[0].name == ["joint_a", "joint_b"]
+    assert published[0].position == [1.0, 2.0]
+    assert published[0].velocity == [0.5, -0.5]
+    assert published[0].effort == [3.0, 4.0]
+
+
+def test_direct_position_and_velocity_commands_use_stop_sentinels() -> None:
+    engine = _FakeControlEngine()
+    hooks = _WholeBodySimHooks(dof=2, publish_state=lambda _: None)
+
+    assert hooks.hold(
+        MotorCommandArray(
+            q=[0.25, 0.5],
+            dq=[VEL_STOP, VEL_STOP],
+        )
+    )
+    hooks.pre_step(engine)
+    assert hooks.hold(
+        MotorCommandArray(
+            q=[POS_STOP, POS_STOP],
+            dq=[1.0, -1.0],
+        )
+    )
+    hooks.pre_step(engine)
+
+    assert engine.commands[0].position == [0.25, 0.5]
+    assert engine.commands[1].velocity == [1.0, -1.0]
+
+
+def test_malformed_motor_command_does_not_replace_held_command() -> None:
+    engine = _FakeControlEngine()
+    hooks = _WholeBodySimHooks(dof=2, publish_state=lambda _: None)
+    assert hooks.hold(MotorCommandArray(q=[0.25, 0.5]))
+
+    assert not hooks.hold(MotorCommandArray(q=[9.0]))
+    hooks.pre_step(engine)
+
+    assert engine.commands[-1].position == [0.25, 0.5]
 
 
 def test_camera_tf_is_published_relative_to_configured_base_frame() -> None:
@@ -182,6 +254,7 @@ def test_reset_requests_engine_reset_and_clears_latched_commands() -> None:
 
         assert engine.reset_requested is True
         assert hooks.cleared is True
+        assert engine.held_position is True
     finally:
         module.stop()
 
@@ -204,6 +277,7 @@ def test_respawn_at_uses_ground_height_plus_initial_root_clearance() -> None:
             "wait": True,
         }
         assert hooks.cleared is True
+        assert engine.held_position is True
     finally:
         module.stop()
 

@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import functools
 import threading
 import time
 from typing import (
@@ -26,7 +25,7 @@ from typing import (
 
 import numpy as np
 
-from dimos.core.stream import In, Stream, Transport
+from dimos.core.stream import Stream, Transport
 from dimos.msgs.protocol import DimosMsg
 from dimos.utils import colors
 
@@ -39,7 +38,6 @@ except ImportError:
 
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, PickleLCM, Topic as LCMTopic
 from dimos.protocol.pubsub.impl.rospubsub import DimosROS, ROSTopic
-from dimos.protocol.pubsub.impl.shmpubsub import BytesSharedMemory, PickleSharedMemory
 from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import AudioProvider, ProviderConfig
 from dimos.protocol.pubsub.impl.webrtc.webrtcpubsub import WebRTCPubSub
@@ -190,107 +188,6 @@ class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
 
     def stop(self) -> None:
         self.lcm.stop()
-        self._started = False
-
-
-class pSHMTransport(PubSubTransport[T]):
-    _started: bool = False
-
-    def __init__(self, topic: str, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        super().__init__(topic)
-        self.shm = PickleSharedMemory(**kwargs)
-
-    def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (
-            functools.partial(pSHMTransport, default_capacity=self.shm.config.default_capacity),
-            (self.topic,),
-        )
-
-    def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
-        if not self._started:
-            self.start()
-
-        self.shm.publish(self.topic, msg)
-
-    def subscribe(self, callback: Callable[[T], None], selfstream: In[T] = None) -> None:  # type: ignore[assignment, override]
-        if not self._started:
-            self.start()
-        return self.shm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[return-value]
-
-    def start(self) -> None:
-        self.shm.start()
-        self._started = True
-
-    def stop(self) -> None:
-        self.shm.stop()
-        self._started = False
-
-
-class SHMTransport(PubSubTransport[T]):
-    _started: bool = False
-
-    def __init__(self, topic: str, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        super().__init__(topic)
-        self.shm = BytesSharedMemory(**kwargs)
-
-    def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (
-            functools.partial(SHMTransport, default_capacity=self.shm.config.default_capacity),
-            (self.topic,),
-        )
-
-    def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
-        if not self._started:
-            self.start()
-
-        self.shm.publish(self.topic, msg)
-
-    def subscribe(self, callback: Callable[[T], None], selfstream: In[T] | None = None) -> None:  # type: ignore[override]
-        if not self._started:
-            self.start()
-        return self.shm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[arg-type, return-value]
-
-    def start(self) -> None:
-        self.shm.start()
-        self._started = True
-
-    def stop(self) -> None:
-        self.shm.stop()
-        self._started = False
-
-
-class JpegShmTransport(PubSubTransport[T]):
-    _started: bool = False
-
-    def __init__(self, topic: str, quality: int = 75, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        super().__init__(topic)
-        from dimos.protocol.pubsub.impl.jpeg_shm import (
-            JpegSharedMemory,
-        )  # deferred to avoid pulling in Image/cv2/rerun
-
-        self.shm = JpegSharedMemory(quality=quality, **kwargs)
-        self.quality = quality
-
-    def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (JpegShmTransport, (self.topic, self.quality))
-
-    def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
-        if not self._started:
-            self.start()
-
-        self.shm.publish(self.topic, msg)
-
-    def subscribe(self, callback: Callable[[T], None], selfstream: In[T] | None = None) -> None:  # type: ignore[override]
-        if not self._started:
-            self.start()
-        return self.shm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[arg-type, return-value]
-
-    def start(self) -> None:
-        self.shm.start()
-        self._started = True
-
-    def stop(self) -> None:
-        self.shm.stop()
         self._started = False
 
 

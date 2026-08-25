@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 # Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,22 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""In-process MuJoCo backend for Unitree connection modules.
 
-import atexit
-import base64
+The owning ``GO2Connection`` or ``G1SimConnection`` module exposes all process
+boundaries as typed streams. This backend only owns physics state and a small,
+thread-safe latest-value handoff to that module; it creates no transport,
+subprocess, or shared-memory channel.
+"""
+
 from collections.abc import Callable
 import functools
-import json
-import os
-from pathlib import Path
-import pickle
-import subprocess
-import sys
-import sysconfig
 import threading
-import time
 from typing import Any, TypeVar
-import weakref
 
 import numpy as np
 from numpy.typing import NDArray
@@ -47,18 +41,17 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.type.odometry import Odometry
 from dimos.simulation.mujoco.constants import (
-    LAUNCHER_PATH,
     LIDAR_FPS,
     VIDEO_CAMERA_FOV,
     VIDEO_FPS,
     VIDEO_HEIGHT,
     VIDEO_WIDTH,
 )
-from dimos.simulation.mujoco.shared_memory import ShmWriter
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 
 ODOM_FREQUENCY = 50
+_START_TIMEOUT = 300.0
 
 logger = setup_logger()
 
@@ -66,7 +59,15 @@ T = TypeVar("T")
 
 
 class MujocoConnection:
-    """MuJoCo simulator connection that runs in a separate subprocess."""
+    """Policy-controlled MuJoCo backend owned by a normal connection module."""
+
+    camera_info_static: CameraInfo = CameraInfo.from_fov(
+        fov_deg=VIDEO_CAMERA_FOV,
+        width=VIDEO_WIDTH,
+        height=VIDEO_HEIGHT,
+        axis="vertical",
+        frame_id="camera_optical",
+    )
 
     def __init__(self, global_config: GlobalConfig) -> None:
         try:
@@ -78,273 +79,169 @@ class MujocoConnection:
                 "Run `uv sync --extra sim --inexact` to install them."
             ) from exc
 
-        # Pre-download the mujoco_sim data.
         get_data("mujoco_sim")
-
-        # Trigger the download of the mujoco_menagerie package. This is so it
-        # doesn't trigger in the mujoco process where it can time out.
         mjx_env.ensure_menagerie_exists()
 
         self.global_config = global_config
-        self.process: subprocess.Popen[bytes] | None = None
-        self.shm_data: ShmWriter | None = None
+        self._lock = threading.Lock()
+        self._command = np.zeros(3, dtype=np.float32)
+        self._latest_video: tuple[NDArray[np.uint8], int] | None = None
+        self._latest_odom: tuple[NDArray[Any], NDArray[Any], float, int] | None = None
+        self._latest_lidar: tuple[PointCloud2, int] | None = None
+        self._video_seq = 0
+        self._odom_seq = 0
+        self._lidar_seq = 0
         self._last_video_seq = 0
         self._last_odom_seq = 0
         self._last_lidar_seq = 0
-        self._stop_timer: threading.Timer | None = None
 
+        self._ready_event = threading.Event()
+        self._simulation_stop_event = threading.Event()
+        self._simulation_thread: threading.Thread | None = None
+        self._simulation_error: BaseException | None = None
+        self._stop_timer: threading.Timer | None = None
         self._stream_threads: list[threading.Thread] = []
-        self._output_thread: threading.Thread | None = None
-        self._stop_events: list[threading.Event] = []
+        self._stream_stop_events: list[threading.Event] = []
         self._is_cleaned_up = False
 
-    camera_info_static: CameraInfo = CameraInfo.from_fov(
-        fov_deg=VIDEO_CAMERA_FOV,
-        width=VIDEO_WIDTH,
-        height=VIDEO_HEIGHT,
-        axis="vertical",
-        frame_id="camera_optical",
-    )
-
     def start(self) -> None:
-        self.shm_data = ShmWriter()
+        if self._simulation_thread is not None and self._simulation_thread.is_alive():
+            return
 
-        config_pickle = base64.b64encode(pickle.dumps(self.global_config)).decode("ascii")
-        shm_names_json = json.dumps(self.shm_data.shm.to_names())
+        self._is_cleaned_up = False
+        self._simulation_error = None
+        self._ready_event.clear()
+        self._simulation_stop_event.clear()
 
-        # Launch the subprocess
-        try:
-            # mjpython must be used on macOS (because of launch_passive inside mujoco_process.py).
-            # It needs libpython on the dylib search path; uv-installed Pythons
-            # use @rpath which doesn't always resolve inside venvs, so we
-            # point DYLD_LIBRARY_PATH at the real libpython directory.
-            executable = sys.executable if sys.platform != "darwin" else "mjpython"
-            env = os.environ.copy()
-            if sys.platform == "darwin":
-                # on some systems mujoco looks in the wrong place for shared libraries. So we force it look in the right place
-                libdir = Path(sysconfig.get_config_var("LIBDIR") or "")
-                if libdir.is_dir():
-                    existing = env.get("DYLD_LIBRARY_PATH", "")
-                    env["DYLD_LIBRARY_PATH"] = f"{libdir}:{existing}" if existing else str(libdir)
+        def run() -> None:
+            try:
+                from dimos.simulation.mujoco.locomotion_sim import run_locomotion_sim
 
-            self.process = subprocess.Popen(
-                [executable, str(LAUNCHER_PATH), config_pickle, shm_names_json],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                env=env,
-            )
+                run_locomotion_sim(self.global_config, self)
+            except BaseException as exc:
+                self._simulation_error = exc
+                logger.exception("MuJoCo simulation failed")
+            finally:
+                self._ready_event.set()
 
-        except Exception as e:
-            self.shm_data.cleanup()
-            raise RuntimeError(f"Failed to start MuJoCo subprocess: {e}") from e
-
-        # A captured pipe must always be drained. MuJoCo can emit a sustained
-        # stream of physics warnings; once an unread OS pipe fills, the child
-        # blocks in write(2) and silently stops updating every shared-memory
-        # sensor while this parent (and the relay) remain healthy.
-        self._output_thread = threading.Thread(
-            target=self._pump_subprocess_output,
-            name="mujoco-output-pump",
+        self._simulation_thread = threading.Thread(
+            target=run,
+            name="UnitreeMujocoSim",
             daemon=True,
         )
-        self._output_thread.start()
+        self._simulation_thread.start()
 
-        # Wait for process to be ready
-        ready_timeout = 300.0
-        start_time = time.time()
-        assert self.process is not None
-        while time.time() - start_time < ready_timeout:
-            if self.process.poll() is not None:
-                exit_code = self.process.returncode
-                self.stop()
-                raise RuntimeError(f"MuJoCo process failed to start (exit code {exit_code})")
-            if self.shm_data.is_ready():
-                logger.info("MuJoCo process started successfully")
-                # Register atexit handler to ensure subprocess is cleaned up
-                # Use weakref to avoid preventing garbage collection
-                weak_self = weakref.ref(self)
-
-                def cleanup_on_exit(
-                    weak_self: "weakref.ReferenceType[MujocoConnection]" = weak_self,
-                ) -> None:
-                    instance = weak_self()
-                    if instance is not None:
-                        instance.stop()
-
-                atexit.register(cleanup_on_exit)
-                return
-            time.sleep(0.1)
-
-        # Timeout
-        self.stop()
-        raise RuntimeError("MuJoCo process failed to start (timeout)")
-
-    def _pump_subprocess_output(self) -> None:
-        """Drain MuJoCo output into DimOS logs so the child cannot pipe-block."""
-        process = self.process
-        if process is None or process.stdout is None:
-            return
-        try:
-            for raw in process.stdout:
-                line = raw.decode(errors="replace").rstrip()
-                if not line:
-                    continue
-                lowered = line.lower()
-                if "warning" in lowered or "error" in lowered or "fatal" in lowered:
-                    logger.warning(f"[mujoco] {line}")
-                else:
-                    logger.info(f"[mujoco] {line}")
-
-            return_code = process.poll()
-            if return_code not in (None, 0) and not self._is_cleaned_up:
-                logger.error(f"[mujoco] subprocess exited unexpectedly with code {return_code}")
-        except (OSError, ValueError) as e:
-            # Teardown can race the final descriptor close; only an unexpected
-            # read failure while live is actionable.
-            if not self._is_cleaned_up:
-                logger.warning(f"MuJoCo output pump terminated: {e}")
+        if not self._ready_event.wait(timeout=_START_TIMEOUT):
+            self.stop()
+            raise RuntimeError("MuJoCo simulation failed to start (timeout)")
+        if self._simulation_error is not None:
+            error = self._simulation_error
+            self.stop()
+            raise RuntimeError("MuJoCo simulation failed to start") from error
+        logger.info("MuJoCo simulation started")
 
     def stop(self) -> None:
         if self._is_cleaned_up:
             return
-
         self._is_cleaned_up = True
 
-        # Cancel any pending timers
-        if self._stop_timer:
+        if self._stop_timer is not None:
             self._stop_timer.cancel()
             self._stop_timer = None
 
-        # Stop all stream threads
-        for stop_event in self._stop_events:
+        for stop_event in self._stream_stop_events:
             stop_event.set()
+        self._simulation_stop_event.set()
 
-        # Wait for threads to finish
         for thread in self._stream_threads:
             if thread.is_alive():
                 thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
                 if thread.is_alive():
                     logger.warning(f"Stream thread {thread.name} did not stop gracefully")
 
-        # Signal subprocess to stop
-        if self.shm_data:
-            self.shm_data.signal_stop()
+        simulation_thread = self._simulation_thread
+        if simulation_thread is not None and simulation_thread.is_alive():
+            simulation_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            if simulation_thread.is_alive():
+                logger.warning("MuJoCo simulation thread did not stop gracefully")
+        self._simulation_thread = None
 
-        # Stop the child before joining/closing its output. BufferedReader.close()
-        # can wait on a pump thread blocked in read(), so closing the pipe while
-        # the child is still alive can deadlock shutdown.
-        if self.process:
-            try:
-                self.process.terminate()
-                try:
-                    self.process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    logger.warning("MuJoCo process did not stop gracefully, killing")
-                    self.process.kill()
-                    self.process.wait(timeout=2)
-            except Exception as e:
-                logger.error(f"Error stopping MuJoCo process: {e}")
-
-            if self._output_thread is not None and self._output_thread.is_alive():
-                self._output_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-                if self._output_thread.is_alive():
-                    logger.warning("MuJoCo output thread did not stop gracefully")
-
-            # The exited child has closed its pipe end, so these closes cannot
-            # contend with a reader indefinitely.
-            if self.process.stderr:
-                self.process.stderr.close()
-            if self.process.stdout and not (
-                self._output_thread is not None and self._output_thread.is_alive()
-            ):
-                self.process.stdout.close()
-
-            self.process = None
-        self._output_thread = None
-
-        # Clean up shared memory
-        if self.shm_data:
-            self.shm_data.cleanup()
-            self.shm_data = None
-
-        # Clear references
         self._stream_threads.clear()
-        self._stop_events.clear()
-
+        self._stream_stop_events.clear()
         self.lidar_stream.cache_clear()
         self.odom_stream.cache_clear()
         self.video_stream.cache_clear()
 
-    def standup(self) -> bool:
-        return True
+    def signal_ready(self) -> None:
+        self._ready_event.set()
 
-    def liedown(self) -> bool:
-        return True
+    def should_stop(self) -> bool:
+        return self._simulation_stop_event.is_set()
 
-    def balance_stand(self) -> bool:
-        return True
+    def get_command(self) -> NDArray[Any]:
+        """Return the latest held ``[forward, lateral, yaw]`` command."""
+        with self._lock:
+            return self._command.copy()
 
-    def sport_command(self, api_id: int) -> bool:
-        return True
+    def publish_video(self, frame: NDArray[np.uint8]) -> None:
+        with self._lock:
+            self._video_seq += 1
+            self._latest_video = (frame.copy(), self._video_seq)
 
-    def stop_movement(self) -> None:
-        # No webrtc deadman timer in sim; the cmd_vel timeout covers it.
-        pass
-
-    def set_obstacle_avoidance(self, enabled: bool = True) -> bool:
-        return True
-
-    def set_rage_mode(self, enable: bool) -> bool:
-        return True
-
-    def set_light(self, level: int) -> bool:
-        return True
-
-    def switch_joystick(self, enable: bool = True) -> bool:
-        return True
-
-    def get_video_frame(self) -> NDArray[Any] | None:
-        if self.shm_data is None:
-            return None
-
-        frame, seq = self.shm_data.read_video()
-        if seq > self._last_video_seq:
-            self._last_video_seq = seq
-            return frame
-
-        return None
-
-    def get_odom_message(self) -> Odometry | None:
-        if self.shm_data is None:
-            return None
-
-        odom_data, seq = self.shm_data.read_odom()
-        if seq > self._last_odom_seq and odom_data is not None:
-            self._last_odom_seq = seq
-            pos, quat_wxyz, timestamp = odom_data
-
-            # Convert quaternion from (w,x,y,z) to (x,y,z,w) for ROS/Dimos
-            orientation = Quaternion(quat_wxyz[1], quat_wxyz[2], quat_wxyz[3], quat_wxyz[0])
-
-            return Odometry(
-                position=Vector3(pos[0], pos[1], pos[2]),
-                orientation=orientation,
-                ts=timestamp,
-                frame_id="world",
+    def publish_odom(
+        self,
+        position: NDArray[np.float64],
+        quaternion_wxyz: NDArray[np.float64],
+        timestamp: float,
+    ) -> None:
+        with self._lock:
+            self._odom_seq += 1
+            self._latest_odom = (
+                position.copy(),
+                quaternion_wxyz.copy(),
+                timestamp,
+                self._odom_seq,
             )
 
-        return None
+    def publish_lidar(self, message: PointCloud2) -> None:
+        with self._lock:
+            self._lidar_seq += 1
+            self._latest_lidar = (message, self._lidar_seq)
+
+    def get_video_frame(self) -> NDArray[np.uint8] | None:
+        with self._lock:
+            latest = self._latest_video
+            if latest is None or latest[1] <= self._last_video_seq:
+                return None
+            frame, self._last_video_seq = latest
+            return frame.copy()
+
+    def get_odom_message(self) -> Odometry | None:
+        with self._lock:
+            latest = self._latest_odom
+            if latest is None or latest[3] <= self._last_odom_seq:
+                return None
+            position, quaternion, timestamp, self._last_odom_seq = latest
+
+        return Odometry(
+            position=Vector3(float(position[0]), float(position[1]), float(position[2])),
+            orientation=Quaternion(
+                float(quaternion[1]),
+                float(quaternion[2]),
+                float(quaternion[3]),
+                float(quaternion[0]),
+            ),
+            ts=timestamp,
+            frame_id="world",
+        )
 
     def get_lidar_message(self) -> PointCloud2 | None:
-        if self.shm_data is None:
-            return None
-
-        lidar_msg, seq = self.shm_data.read_lidar()
-        if seq > self._last_lidar_seq and lidar_msg is not None:
-            self._last_lidar_seq = seq
-            return lidar_msg
-
-        return None
+        with self._lock:
+            latest = self._latest_lidar
+            if latest is None or latest[1] <= self._last_lidar_seq:
+                return None
+            message, self._last_lidar_seq = latest
+            return message
 
     def _create_stream(
         self,
@@ -355,10 +252,10 @@ class MujocoConnection:
         def on_subscribe(observer: ObserverBase[T], _scheduler: SchedulerBase | None) -> Disposable:
             if self._is_cleaned_up:
                 observer.on_completed()
-                return Disposable(lambda: None)
+                return Disposable()
 
             stop_event = threading.Event()
-            self._stop_events.append(stop_event)
+            self._stream_stop_events.append(stop_event)
 
             def run() -> None:
                 try:
@@ -366,20 +263,21 @@ class MujocoConnection:
                         data = getter()
                         if data is not None:
                             observer.on_next(data)
-                        time.sleep(1 / frequency)
-                except Exception as e:
-                    logger.error(f"{stream_name} stream error: {e}")
-                finally:
+                        stop_event.wait(1.0 / frequency)
+                except Exception as exc:
+                    logger.error(f"{stream_name} stream error: {exc}")
+                    observer.on_error(exc)
+                else:
                     observer.on_completed()
 
-            thread = threading.Thread(target=run, daemon=True)
+            thread = threading.Thread(
+                target=run,
+                name=f"Mujoco{stream_name}Stream",
+                daemon=True,
+            )
             self._stream_threads.append(thread)
             thread.start()
-
-            def dispose() -> None:
-                stop_event.set()
-
-            return Disposable(dispose)
+            return Disposable(stop_event.set)
 
         return Observable(on_subscribe)
 
@@ -395,40 +293,63 @@ class MujocoConnection:
     def video_stream(self) -> Observable[Image]:
         def get_video_as_image() -> Image | None:
             frame = self.get_video_frame()
-            # MuJoCo renderer returns RGB uint8 frames; Image.from_numpy defaults to BGR.
             return Image.from_numpy(frame, format=ImageFormat.RGB) if frame is not None else None
 
         return self._create_stream(get_video_as_image, VIDEO_FPS, "Video")
 
     @functools.cache
     def lowstate_stream(self) -> Observable[Any]:
-        # Sim has no low-level state (battery/IMU) stream — emit nothing.
         return empty()
 
-    def move(self, twist: Twist, duration: float = 0.0) -> bool:
-        if self._is_cleaned_up or self.shm_data is None:
-            return True
+    def _hold_command(self, forward: float, lateral: float, yaw: float) -> None:
+        with self._lock:
+            self._command[:] = (forward, lateral, yaw)
 
-        linear = np.array([twist.linear.x, twist.linear.y, twist.linear.z], dtype=np.float32)
-        angular = np.array([twist.angular.x, twist.angular.y, twist.angular.z], dtype=np.float32)
-        self.shm_data.write_command(linear, angular)
+    def move(self, twist: Twist, duration: float = 0.0) -> bool:
+        if self._is_cleaned_up:
+            return True
+        self._hold_command(twist.linear.x, twist.linear.y, twist.angular.z)
 
         if duration > 0:
-            if self._stop_timer:
+            if self._stop_timer is not None:
                 self._stop_timer.cancel()
 
-            def stop_movement() -> None:
-                if self.shm_data:
-                    self.shm_data.write_command(
-                        np.zeros(3, dtype=np.float32), np.zeros(3, dtype=np.float32)
-                    )
+            def stop_later() -> None:
+                self.stop_movement()
                 self._stop_timer = None
 
-            self._stop_timer = threading.Timer(duration, stop_movement)
+            self._stop_timer = threading.Timer(duration, stop_later)
             self._stop_timer.daemon = True
             self._stop_timer.start()
         return True
 
+    def stop_movement(self) -> None:
+        self._hold_command(0.0, 0.0, 0.0)
+
+    def standup(self) -> bool:
+        return True
+
+    def liedown(self) -> bool:
+        return True
+
+    def balance_stand(self) -> bool:
+        return True
+
+    def sport_command(self, api_id: int) -> bool:
+        return True
+
+    def set_obstacle_avoidance(self, enabled: bool = True) -> bool:
+        return True
+
+    def set_rage_mode(self, enable: bool) -> bool:
+        return True
+
+    def set_light(self, level: int) -> bool:
+        return True
+
+    def switch_joystick(self, enable: bool = True) -> bool:
+        return True
+
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
-        print(f"publishing request, topic={topic}, data={data}")
+        logger.info("Ignoring simulator publish request", topic=topic, data=data)
         return {}

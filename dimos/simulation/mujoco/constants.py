@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
-
 # Video/Camera constants
 VIDEO_WIDTH = 640
 VIDEO_HEIGHT = 360
@@ -31,5 +29,3 @@ LIDAR_RESOLUTION = 0.05
 # Simulation timing constants
 VIDEO_FPS = 20
 LIDAR_FPS = 2
-
-LAUNCHER_PATH = Path(__file__).parent / "mujoco_process.py"

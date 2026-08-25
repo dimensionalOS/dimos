@@ -36,11 +36,6 @@ except ImportError:
     DDS_AVAILABLE = False
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, LCMPubSubBase, Topic as LCMTopic
 from dimos.protocol.pubsub.impl.memory import Memory
-from dimos.protocol.pubsub.impl.shmpubsub import (
-    BytesSharedMemory,
-    LCMSharedMemory,
-    PickleSharedMemory,
-)
 
 
 def make_data_bytes(size: int) -> bytes:
@@ -126,66 +121,6 @@ def memory_msggen(size: int) -> tuple[str, Any]:
 #     )
 # )
 
-
-@contextmanager
-def shm_pickle_pubsub_channel() -> Generator[PickleSharedMemory, None, None]:
-    # 12MB capacity to handle benchmark sizes up to 10MB
-    shm_pubsub = PickleSharedMemory(prefer="cpu", default_capacity=12 * 1024 * 1024)
-    shm_pubsub.start()
-    yield shm_pubsub
-    shm_pubsub.stop()
-
-
-def shm_msggen(size: int) -> tuple[str, Any]:
-    """Generate message for SharedMemory pubsub benchmark."""
-    return ("benchmark/shm", make_data_image(size))
-
-
-testcases.append(
-    Case(
-        pubsub_context=shm_pickle_pubsub_channel,
-        msg_gen=shm_msggen,
-    )
-)
-
-
-@contextmanager
-def shm_bytes_pubsub_channel() -> Generator[BytesSharedMemory, None, None]:
-    """SharedMemory with raw bytes - no pickle overhead."""
-    shm_pubsub = BytesSharedMemory(prefer="cpu", default_capacity=12 * 1024 * 1024)
-    shm_pubsub.start()
-    yield shm_pubsub
-    shm_pubsub.stop()
-
-
-def shm_bytes_msggen(size: int) -> tuple[str, bytes]:
-    """Generate raw bytes for SharedMemory transport benchmark."""
-    return ("benchmark/shm_bytes", make_data_bytes(size))
-
-
-testcases.append(
-    Case(
-        pubsub_context=shm_bytes_pubsub_channel,
-        msg_gen=shm_bytes_msggen,
-    )
-)
-
-
-@contextmanager
-def shm_lcm_pubsub_channel() -> Generator[LCMSharedMemory, None, None]:
-    """SharedMemory with LCM binary encoding - no pickle overhead."""
-    shm_pubsub = LCMSharedMemory(prefer="cpu", default_capacity=12 * 1024 * 1024)
-    shm_pubsub.start()
-    yield shm_pubsub
-    shm_pubsub.stop()
-
-
-testcases.append(
-    Case(
-        pubsub_context=shm_lcm_pubsub_channel,
-        msg_gen=lcm_msggen,  # Reuse the LCM message generator
-    )
-)
 
 if DDS_AVAILABLE:
     from cyclonedds.idl import IdlStruct

@@ -421,7 +421,7 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
 ```
 
 - **KeyboardTeleopModule** — Pygame UI publishing routed spatial EEF twist intent
-- **ControlCoordinator** — 100Hz control loop with mock or real hardware adapters
+- **ControlCoordinator** — 100Hz control loop with mock, real, or MuJoCo connection modules
 - **ManipulationModule** — world backend, optional visualization, RRT motion planning, obstacle management
 
 ### Streaming pose-target control
@@ -470,8 +470,8 @@ planner is locked for its whole native call.
 | `keyboard-teleop-a750` | A750 6-DOF keyboard teleop with Drake viz |
 | `keyboard-teleop-a1z` | Galaxea A1Z keyboard teleop, planning, and hardware control |
 | `keyboard-teleop-piper` | Piper 6-DOF keyboard teleop with Drake viz |
-| `keyboard-teleop-xarm6` | XArm6 6-DOF keyboard teleop with Drake viz |
-| `keyboard-teleop-xarm7` | XArm7 7-DOF keyboard teleop with Drake viz |
+| `keyboard-teleop-xarm6` | XArm6 6-DOF keyboard teleop with real, mock, or MuJoCo control |
+| `keyboard-teleop-xarm7` | XArm7 7-DOF keyboard teleop with real, mock, or MuJoCo control |
 | `xarm7-planner-coordinator` | XArm7 planner with coordinator integration |
 | `dual-xarm6-planner-coordinator` | Dual XArm6 planning with mock coordinator hardware |
 | `xarm-perception` | XArm7 + RealSense camera for perception |

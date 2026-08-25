@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from dimos.control.coordinator import TaskConfig
+from dimos.control.port_coordinator import PortControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
@@ -31,7 +32,7 @@ from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 _xarm7_sim_model = make_xarm7_sim_robot_config()
-_xarm7_sim_hw = make_xarm7_sim_hardware(XARM7_SIM_PATH)
+_xarm7_sim_hw = make_xarm7_sim_hardware()
 
 xarm_perception_sim = autoconnect(
     PickAndPlaceModule.blueprint(
@@ -42,6 +43,8 @@ xarm_perception_sim = autoconnect(
     MujocoSimModule.blueprint(**make_xarm7_sim_module_kwargs(XARM7_SIM_PATH)),
     ObjectSceneRegistrationModule.blueprint(target_frame="world"),
     coordinator(
+        cls=PortControlCoordinator,
+        instance_name="ControlCoordinator",
         hardware=[_xarm7_sim_hw],
         tasks=[
             trajectory_task(_xarm7_sim_hw),

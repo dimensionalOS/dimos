@@ -94,6 +94,12 @@ def make_piper_hardware(
             position_upper=[*([math.pi] * 6), *([0.08] * len(gripper_joints))],
             velocity_max=[*([math.pi] * 6), *([0.0] * len(gripper_joints))],
         )
+    elif adapter_type == "module":
+        kwargs["limits"] = JointLimits(
+            position_lower=[*([-math.pi] * 6), *([0.0] * len(gripper_joints))],
+            position_upper=[*([math.pi] * 6), *([0.035] * len(gripper_joints))],
+            velocity_max=[*([math.pi] * 6), *([0.0] * len(gripper_joints))],
+        )
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.MANIPULATOR,
@@ -112,14 +118,6 @@ def piper_hardware(
     mock_without_address: bool = True,
     home_joints: list[float] | None = None,
 ) -> HardwareComponent:
-    if global_config.simulation:
-        return make_piper_hardware(
-            hw_id,
-            adapter_type="sim_mujoco",
-            address=str(PIPER_SIM_PATH),
-            gripper=gripper,
-            home_joints=home_joints,
-        )
     address = global_config.can_port or "can0"
     if mock_without_address and not global_config.can_port:
         return make_piper_hardware(

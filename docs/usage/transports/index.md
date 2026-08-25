@@ -29,11 +29,11 @@ So: treat the API as uniform, but pick a backend whose semantics match the task.
 
 ## Choosing a backend
 
-For most users, the important choice is between `lcm`, `zenoh`, and shared memory overrides:
+For most users, the important choice is between `zenoh` and legacy `lcm`:
 
-* `lcm`: current legacy default on most platforms. Fast and simple, but UDP multicast is best-effort.
-* `zenoh`: network transport with reliable delivery semantics and the same typed message model through `LCMEncoderMixin`.
-* shared memory (`pSHMTransport`, etc.): best for large local streams on a single machine.
+* `zenoh`: the default transport. It provides reliable network delivery and uses
+  Zenoh's shared-memory optimization when peers are on the same machine.
+* `lcm`: legacy UDP multicast transport; fast and simple, but best-effort.
 
 At the CLI level, you can select the stream transport globally with:
 
@@ -42,7 +42,7 @@ dimos --transport=lcm run unitree-go2
 dimos --transport=zenoh run unitree-go2
 ```
 
-On macOS, large replay workloads can be unreliable over LCM UDP, so dimOS defaults the global stream transport to `zenoh` there. Other platforms default to `lcm`.
+Use `--transport=lcm` only when interoperating with a legacy LCM deployment.
 
 ## Zenoh quickstart
 
@@ -108,7 +108,7 @@ P: box "PubSub" rad 5px
 # Descriptions below
 text "robot configs" at B.s + (0.1, -0.2in)
 text "camera, nav" at M.s + (0, -0.2in)
-text "LCM, SHM, ROS" at T.s + (0, -0.2in)
+text "Zenoh, LCM, ROS" at T.s + (0, -0.2in)
 text "pub/sub API" at P.s + (0, -0.2in)
 ```
 
@@ -267,7 +267,7 @@ At the stream layer, a transport is implemented by subclassing `Transport` (see 
 Your `Transport.__init__` args can be anything meaningful for your backend:
 
 * `(ip, port)`
-* a shared-memory segment name
+* a Zenoh key expression
 * a filesystem path
 * a Redis channel
 
@@ -356,7 +356,10 @@ Use Zenoh when:
 
 At the stream level, the transport wrappers are `ZenohTransport` and `pZenohTransport`. Install, defaults, and CLI versus environment overrides are in the [Zenoh quickstart](#zenoh-quickstart) above.
 
-Performance note: zenoh's session-to-session path (modules in different processes, the common case) benchmarks faster than LCM for small messages and for >=2MiB ones. Delivery *within* one shared session (co-located modules in one worker) is its slow path for 256KiB-1MiB messages (a few GiB/s); pin shared memory transports for heavy co-located streams. The benchmark has both cases (`Zenoh` = shared session, `ZenohPeers` = separate sessions).
+Performance note: Zenoh's session-to-session path (modules in different
+processes, the common case) benchmarks faster than LCM for small messages and
+for messages at least 2 MiB. Zenoh can use shared memory internally for local
+peers without changing the module or blueprint contract.
 
 The Rerun bridge also follows the global transport. When `transport=zenoh`, the bridge listens on Zenoh and on LCM for TF data.
 
@@ -383,28 +386,11 @@ The publisher for a key is declared with the first publish's QoS. LCM has no per
 
 ### Shared memory (IPC)
 
-Shared memory is highest performance, but only works on the **same machine**.
-
-```python
-from dimos.protocol.pubsub.impl.shmpubsub import PickleSharedMemory
-
-shm = PickleSharedMemory(prefer="cpu")
-shm.start()
-
-received = []
-shm.subscribe("test/topic", lambda msg, topic: received.append(msg))
-shm.publish("test/topic", {"data": [1, 2, 3]})
-
-import time
-time.sleep(0.1)
-
-print(f"Received: {received}")
-shm.stop()
-```
-
-```results
-Received: [{'data': [1, 2, 3]}]
-```
+No application-specific shared-memory transport is required. Modules use the
+same Zenoh streams for local and remote peers. For sufficiently large local
+payloads, Zenoh can opportunistically promote ordinary payloads into its
+shared-memory transport and transparently fall back to a regular copy when a
+peer cannot use shared memory.
 
 ### DDS Transport
 
@@ -538,9 +524,8 @@ python -m pytest -sv -k "not bytes" dimos/protocol/pubsub/benchmark/tool_benchma
 | Transport      | Use case                            | Cross-process | Network | Notes                                |
 |----------------|-------------------------------------|---------------|---------|--------------------------------------|
 | `Memory`       | Testing only, single process        | No            | No      | Minimal reference impl               |
-| `SharedMemory` | Multi-process on same machine       | Yes           | No      | Highest throughput (IPC)             |
 | `LCM`          | Robot LAN broadcast (UDP multicast) | Yes           | Yes     | Best-effort; can drop packets on LAN |
-| `Zenoh`        | Reliable network stream transport   | Yes           | Yes     | Recommended on macOS for heavy replay |
+| `Zenoh`        | Default local and network transport | Yes           | Yes     | Reliable; opportunistic local SHM    |
 | `Redis`        | Network pubsub via Redis server     | Yes           | Yes     | Central broker; adds hop             |
 | `ROS`          | ROS 2 topic communication           | Yes           | Yes     | Integrates with RViz/ROS tools       |
 | `DDS`          | Cyclone DDS without ROS (WIP)       | Yes           | Yes     | WIP                                  |

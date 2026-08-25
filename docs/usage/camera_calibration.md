@@ -62,10 +62,9 @@ uv run dimos cameracalibrate --source topic --topic "jpeg_lcm:/color_image" --co
 
 - `lcm:/color_image` — standard typed LCM stream.
 - `jpeg_lcm:/color_image` — Go2 `smart` blueprint and other JPEG-LCM publishers.
-- `pshm:color_image` — Go2 `basic` blueprint (pickled shared memory).
-- `shm` / `jpeg_shm` / `plcm` are also accepted for niche cases.
+- `plcm:/color_image` — a pickled legacy LCM stream.
 
-The optional `#<msg_type>` URI suffix forwards a fully-qualified message name to the registry (e.g. `lcm:/color_image#sensor_msgs.Image`); when omitted, the calibration CLI passes `sensor_msgs.Image` for typed protos. Pickled / self-describing protos (`plcm`, `pshm`, ...) ignore the type.
+The optional `#<msg_type>` URI suffix forwards a fully-qualified message name to the registry (e.g. `lcm:/color_image#sensor_msgs.Image`); when omitted, the calibration CLI passes `sensor_msgs.Image` for typed protos. The pickled/self-describing `plcm` proto ignores the type.
 
 If the topic stays silent, `--topic-timeout-sec` (default 60) aborts the run instead of hanging the terminal. Increase it if your publisher is slow to start.
 
