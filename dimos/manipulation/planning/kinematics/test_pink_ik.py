@@ -25,7 +25,7 @@ from types import MappingProxyType, ModuleType, SimpleNamespace
 from typing import Any, cast
 
 import numpy as np
-from pink.exceptions import NoSolutionFound, PinkError
+from pink.exceptions import NoSolutionFound
 import pytest
 from pytest_mock import MockerFixture
 
@@ -1479,17 +1479,14 @@ def _solved_joint_state() -> JointState:
     return JointState({"name": ["joint_a", "joint_b", "joint_c"], "position": [0.1, 0.2, 0.3]})
 
 
-def _qp_infeasible() -> Exception:
-    """Stand-in for pink's ``NoSolutionFound``, which is not a ``ValueError``."""
-    return Exception("QP solver did not find a solution")
+def _qp_infeasible() -> NoSolutionFound:
+    return NoSolutionFound(
+        problem=cast("Any", SimpleNamespace()),
+        results=cast("Any", SimpleNamespace()),
+    )
 
 
-def test_pink_no_solution_found_is_not_a_value_error() -> None:
-    assert issubclass(NoSolutionFound, PinkError)
-    assert not issubclass(NoSolutionFound, ValueError)
-
-
-def test_solve_retries_after_solver_exception(mocker: MockerFixture) -> None:
+def test_solve_retries_after_no_solution_found(mocker: MockerFixture) -> None:
     ik = _pink_ik(mocker, converge=True)
     ik._robot_contexts = {("robot", "tool"): _context()}
     outcomes: list[object] = [
@@ -1527,13 +1524,14 @@ def test_solve_retries_after_solver_exception(mocker: MockerFixture) -> None:
     assert result.joint_state is not None
 
 
-def test_solve_reports_first_solver_exception_after_all_attempts(mocker: MockerFixture) -> None:
+def test_solve_reports_first_no_solution_found_after_all_attempts(
+    mocker: MockerFixture,
+) -> None:
     ik = _pink_ik(mocker, converge=True)
     ik._robot_contexts = {("robot", "tool"): _context()}
-    messages = ["first failure", "second failure", "third failure"]
 
     def fake_solve_targets(**_: object) -> IKResult:
-        raise Exception(messages[solve_targets.call_count - 1])
+        raise _qp_infeasible()
 
     solve_targets = mocker.patch.object(ik, "_solve_targets", side_effect=fake_solve_targets)
 
@@ -1550,9 +1548,30 @@ def test_solve_reports_first_solver_exception_after_all_attempts(mocker: MockerF
 
     assert solve_targets.call_count == 3
     assert result.status == IKStatus.NO_SOLUTION
-    assert "first failure" in result.message
-    assert "second failure" not in result.message
-    assert "third failure" not in result.message
+    assert "QP solver did not find a solution" in result.message
+
+
+def test_solve_does_not_retry_unexpected_exception(mocker: MockerFixture) -> None:
+    ik = _pink_ik(mocker, converge=True)
+    ik._robot_contexts = {("robot", "tool"): _context()}
+    solve_targets = mocker.patch.object(
+        ik, "_solve_targets", side_effect=RuntimeError("unexpected solver failure")
+    )
+
+    result = ik.solve(
+        world=cast("Any", _FakeWorld(collision_free=True)),
+        robot_id="robot",
+        target_pose=PoseStamped(
+            position=Vector3(0.1, 0.0, 0.0),
+            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        ),
+        check_collision=True,
+        max_attempts=3,
+    )
+
+    assert solve_targets.call_count == 1
+    assert result.status == IKStatus.NO_SOLUTION
+    assert result.message == "Pink IK solver failed: unexpected solver failure"
 
 
 def test_solve_mapping_value_error_fails_without_retrying(mocker: MockerFixture) -> None:
@@ -1584,7 +1603,7 @@ def _pose_targets_seed() -> JointState:
     )
 
 
-def test_solve_pose_targets_retries_after_solver_exception(mocker: MockerFixture) -> None:
+def test_solve_pose_targets_retries_after_no_solution_found(mocker: MockerFixture) -> None:
     ik = _pink_ik(mocker, converge=True)
     mocker.patch.object(ik, "_get_robot_context", return_value=_context())
     world = _FakeWorld()
@@ -1622,16 +1641,15 @@ def test_solve_pose_targets_retries_after_solver_exception(mocker: MockerFixture
     assert result.joint_state is not None
 
 
-def test_solve_pose_targets_reports_first_solver_exception_after_all_attempts(
+def test_solve_pose_targets_reports_first_no_solution_found_after_all_attempts(
     mocker: MockerFixture,
 ) -> None:
     ik = _pink_ik(mocker, converge=True)
     mocker.patch.object(ik, "_get_robot_context", return_value=_context())
     world = _FakeWorld()
-    messages = ["first failure", "second failure", "third failure"]
 
     def fake_solve_targets(**_: object) -> IKResult:
-        raise Exception(messages[solve_targets.call_count - 1])
+        raise _qp_infeasible()
 
     solve_targets = mocker.patch.object(ik, "_solve_targets", side_effect=fake_solve_targets)
 
@@ -1648,9 +1666,33 @@ def test_solve_pose_targets_reports_first_solver_exception_after_all_attempts(
 
     assert solve_targets.call_count == 3
     assert result.status == IKStatus.NO_SOLUTION
-    assert "first failure" in result.message
-    assert "second failure" not in result.message
-    assert "third failure" not in result.message
+    assert "QP solver did not find a solution" in result.message
+
+
+def test_solve_pose_targets_does_not_retry_unexpected_exception(
+    mocker: MockerFixture,
+) -> None:
+    ik = _pink_ik(mocker, converge=True)
+    mocker.patch.object(ik, "_get_robot_context", return_value=_context())
+    world = _FakeWorld()
+    solve_targets = mocker.patch.object(
+        ik, "_solve_targets", side_effect=RuntimeError("unexpected solver failure")
+    )
+
+    result = ik.solve_pose_targets(
+        world=cast("Any", world),
+        pose_targets={
+            world.groups["arm/manipulator"]: PoseStamped(
+                position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+            )
+        },
+        seed=_pose_targets_seed(),
+        max_attempts=3,
+    )
+
+    assert solve_targets.call_count == 1
+    assert result.status == IKStatus.NO_SOLUTION
+    assert result.message == "Pink IK solver failed: unexpected solver failure"
 
 
 def test_solve_pose_targets_mapping_value_error_fails_without_retrying(
