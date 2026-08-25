@@ -1,0 +1,10 @@
+﻿git : fatal: unable to access 'https://github.com/jac9191/dimos_jac.git/': Fail
+ed to connect to github.com port 443 after 21122 ms: Could not connect to serve
+r
+所在位置 行:1 字符: 5
++ & { git -c http.proxy= -c https.proxy= push -u origin main 2>&1 | Out ...
++     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (fatal: unable t...nnect to server 
+   :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
