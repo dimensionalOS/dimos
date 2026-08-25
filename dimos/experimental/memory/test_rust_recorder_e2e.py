@@ -24,6 +24,7 @@ import time
 from typing import cast
 import uuid
 
+import numpy as np
 import pytest
 
 from dimos.constants import DIMOS_PROJECT_ROOT
@@ -39,6 +40,7 @@ from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.observation import Observation
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.Imu import Imu
 
 pytestmark = pytest.mark.self_hosted_large
@@ -49,6 +51,7 @@ _MCAP_AVAILABLE = importlib.util.find_spec("mcap") is not None
 
 
 class InteropRustRecorder(RustRecorder):
+    color_image: In[Image]
     imu: In[Imu]
 
 
@@ -119,19 +122,26 @@ def test_rust_artifact_is_readable_by_python_memory2(
         encoding_threads=2,
     )
     # LCM appends the payload type to the channel and caps the combined name.
-    channel = f"/rr_{uuid.uuid4().hex[:8]}"
+    channel_suffix = uuid.uuid4().hex[:8]
     # The pure-Rust LCM transport currently uses the standard LCM bus directly.
     publisher: LCMTransport[Imu] = LCMTransport(
-        channel,
+        f"/rr_imu_{channel_suffix}",
         Imu,
         url="udpm://239.255.76.67:7667?ttl=0",
     )
-    topic = str(publisher.topic)
-    recorder.imu.transport = FakeTransport(topic)  # type: ignore[assignment]
+    image_publisher: LCMTransport[Image] = LCMTransport(
+        f"/rr_image_{channel_suffix}",
+        Image,
+        url="udpm://239.255.76.67:7667?ttl=0",
+    )
+    imu_topic = str(publisher.topic)
+    image_topic = str(image_publisher.topic)
+    recorder.imu.transport = FakeTransport(imu_topic)  # type: ignore[assignment]
+    recorder.color_image.transport = FakeTransport(image_topic)  # type: ignore[assignment]
     specs = recorder._stream_specs()
     recorder._prepare_store(specs)
     recorder.config.streams = specs
-    launch = recorder._stdin_blob({"imu": topic})
+    launch = recorder._stdin_blob({"imu": imu_topic, "color_image": image_topic})
 
     env = {**os.environ, "DIMOS_TRANSPORT": "lcm", "RUST_LOG": "debug"}
     process = subprocess.Popen(
@@ -153,13 +163,21 @@ def test_rust_artifact_is_readable_by_python_memory2(
             frame_id="imu_link",
             angular_velocity=Vector3(1.0, 2.0, 3.0),
         )
+        expected_image = Image(
+            data=np.full((16, 16, 3), [20, 80, 140], dtype=np.uint8),
+            format=ImageFormat.RGB,
+            frame_id="camera",
+            ts=12.75,
+        )
         publisher.broadcast(None, expected)
+        image_publisher.broadcast(None, expected_image)
         _wait_for_log(process, "memory recorder batch written")
 
         process.send_signal(signal.SIGTERM)
         assert process.wait(timeout=10.0) == 0
     finally:
         publisher.stop()
+        image_publisher.stop()
         if process.poll() is None:
             process.kill()
             process.wait(timeout=10.0)
@@ -170,3 +188,13 @@ def test_rust_artifact_is_readable_by_python_memory2(
         observation = cast("Observation[Imu]", memory.stream("imu").first())
         assert observation.ts == 12.5
         assert observation.data.lcm_encode() == expected.lcm_encode()
+        image_observation = cast("Observation[Image]", memory.stream("color_image").first())
+        decoded_image = image_observation.data
+        assert image_observation.ts == 12.75
+        assert decoded_image.frame_id == "camera"
+        assert decoded_image.format is ImageFormat.RGB
+        assert decoded_image.data.shape == expected_image.data.shape
+        assert (
+            np.mean(np.abs(decoded_image.data.astype(float) - expected_image.data.astype(float)))
+            < 5
+        )

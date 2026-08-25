@@ -60,6 +60,7 @@ class _BytesCodec:
 
 
 _BYTES_CODEC = _BytesCodec()
+_SELF_DESCRIBING_CODEC_IDS = {"jpeg", "lcm", "lz4+lcm"}
 
 
 def _slug(topic: str) -> str:
@@ -194,11 +195,11 @@ class McapStore(Store):
                 payload_module = ch.metadata.get("dimos.payload_type")
                 if (
                     ch.topic not in self._codecs
-                    and ch.message_encoding == "lcm"
+                    and ch.message_encoding in _SELF_DESCRIBING_CODEC_IDS
                     and payload_module is not None
                 ):
                     self._codecs[ch.topic] = cast(
-                        "StreamCodec", codec_from_id("lcm", payload_module)
+                        "StreamCodec", codec_from_id(ch.message_encoding, payload_module)
                     )
                 self._stream_topic[name] = ch.topic
                 self._available[name] = count

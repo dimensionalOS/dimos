@@ -208,7 +208,7 @@ def test_unconnected_recorder_does_not_spawn_or_touch_the_store(
     assert not path.exists()
 
 
-def test_mcap_store_uses_wire_codecs_and_does_not_precreate_the_artifact(
+def test_mcap_store_uses_python_codec_defaults_and_does_not_precreate_the_artifact(
     tmp_path: Path, make_recorder: Any
 ) -> None:
     path = tmp_path / "recording.mcap"
@@ -222,7 +222,7 @@ def test_mcap_store_uses_wire_codecs_and_does_not_precreate_the_artifact(
     specs = recorder._stream_specs()
     recorder._prepare_store(specs)
 
-    assert [spec.codec for spec in specs] == ["lcm", "lcm"]
+    assert [spec.codec for spec in specs] == ["jpeg", "lcm"]
     assert not path.exists()
     recorder.config.streams = specs
     assert recorder.config.to_config_dict()["store"] == {
@@ -231,7 +231,7 @@ def test_mcap_store_uses_wire_codecs_and_does_not_precreate_the_artifact(
     }
 
 
-def test_mcap_rejects_storage_codecs_and_append(tmp_path: Path, make_recorder: Any) -> None:
+def test_mcap_accepts_storage_codecs_and_rejects_append(tmp_path: Path, make_recorder: Any) -> None:
     path = tmp_path / "recording.mcap"
     recorder = make_recorder(
         SampleRustRecorder,
@@ -241,8 +241,7 @@ def test_mcap_rejects_storage_codecs_and_append(tmp_path: Path, make_recorder: A
     )
     connect(recorder, color_image="/camera")
 
-    with pytest.raises(ValueError, match="original wire packets"):
-        recorder._stream_specs()
+    assert [spec.codec for spec in recorder._stream_specs()] == ["jpeg"]
 
     append_recorder = make_recorder(
         SampleRustRecorder,
