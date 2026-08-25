@@ -472,6 +472,8 @@ struct Cache {
     points: Option<(u64, Arc<Vec<[f32; 3]>>)>,
     /// Keyed by the (path, cloud) pair it was measured from.
     room: Option<((u64, u64), Room)>,
+    /// Edge trigger for the hinted track running without its map.
+    blind: Gate,
 }
 
 type Room = Arc<Vec<f64>>;
@@ -659,9 +661,24 @@ impl Worker {
             // stamped into the path's own timestamps. The hinted law reads
             // clearance and nothing else, so the ceilings are bent back
             // through the encoder's inverse rather than the law being changed.
-            let ceilings = stamps::decode_ceilings(ts, states, &dialect_band())?;
-            return Some(Arc::new(stamps::ceilings_to_clearance(&ceilings)));
+            //
+            // This is the hinted track running blind in all but name, and the
+            // twist it commands looks healthy either way -- so it is said out
+            // loud, once per outage. `stamped=false` is the worse case: the
+            // plan carries no decodable precision, so the law gets no room at
+            // all and drives on the governor's floor.
+            let ceilings = stamps::decode_ceilings(ts, states, &dialect_band());
+            if cache.blind.enter() {
+                tracing::warn!(
+                    stamped = ceilings.is_some(),
+                    "no local_map on the hinted track: driving on the path's stamped precision"
+                );
+            }
+            return Some(Arc::new(stamps::ceilings_to_clearance(&ceilings?)));
         };
+        if cache.blind.recover() {
+            info!("local_map is back, the room hint is measured again");
+        }
         let key = (snap.path_seq, snap.cloud_seq);
         if let Some((cached, room)) = &cache.room {
             if *cached == key {

@@ -181,3 +181,46 @@ def test_a_new_path_in_the_freed_one_s_memory_gets_its_own_hint():
     close = float(follower._clearance_for(_straight_path(0.9), pose)[-1])
     assert abs(short - (0.5 - hw)) < 1e-6
     assert abs(close - (0.1 - hw)) < 1e-6
+
+
+class _Heard(list):
+    """The module logger does not propagate, so caplog cannot see it."""
+
+    def warning(self, msg, **kw):
+        self.append(msg)
+
+    def info(self, msg, **kw):
+        pass
+
+
+@pytest.fixture
+def heard(monkeypatch):
+    said = _Heard()
+    monkeypatch.setattr("dimos.navigation.motion.adapter.follower.logger", said)
+    return said
+
+
+def test_the_lost_room_hint_warns_once_per_outage(heard):
+    # hinted without its map drives on the path's stamps and looks healthy
+    # doing it, so the warning is the only sign -- but at control_frequency it
+    # has to be the edge, not every tick.
+    follower = _room_follower()
+    pose, path = _base_at(0.01), _straight_path()
+    for _ in range(10):
+        follower._clearance_for(path, pose)
+    assert len([m for m in heard if "no local_map" in m]) == 1
+
+    # and it re-arms, so a second outage is heard too
+    heard.clear()
+    follower._on_local_map(_room_with_a_post(-0.28))
+    follower._clearance_for(path, pose)
+    follower._cloud = None
+    follower._clearance_for(path, pose)
+    assert len([m for m in heard if "no local_map" in m]) == 1
+
+
+def test_the_blind_track_never_warns_about_the_map_it_does_not_read(heard):
+    follower = _room_follower(track="blind")
+    for _ in range(10):
+        follower._clearance_for(_straight_path(), _base_at(0.01))
+    assert not [m for m in heard if "no local_map" in m]

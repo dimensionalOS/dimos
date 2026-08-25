@@ -190,6 +190,8 @@ class TrajectoryFollower(Module):
         self._stop_event = Event()
         self._thread: Thread | None = None
         self._stall = StallReporter("TrajectoryFollower", self.config.stall_report_s)
+        # Edge trigger for the hinted track running without its map (follower.rs::Gate).
+        self._blind = False
 
     @rpc
     def start(self) -> None:
@@ -299,9 +301,22 @@ class TrajectoryFollower(Module):
             cloud = self._cloud
         if cloud is None:
             # no local map: fall back to the precision the planner stamped
-            # into the path's own timestamps (control/profile.py dialect)
+            # into the path's own timestamps (control/profile.py dialect).
+            # That is the hinted track running blind in all but name, and the
+            # twist it commands looks healthy either way, so it is said out
+            # loud once per outage. No ceilings is the worse case: the law gets
+            # no room at all and drives on the governor's floor.
             ceilings = decode_ceilings(path)
+            if not self._blind:
+                self._blind = True
+                logger.warning(
+                    "no local_map on the hinted track: driving on the path's stamped precision",
+                    stamped=ceilings is not None,
+                )
             return ceilings_to_clearance(ceilings) if ceilings is not None else None
+        if self._blind:
+            self._blind = False
+            logger.info("local_map is back, the room hint is measured again")
         if path is not self._clearance_path or cloud is not self._clearance_cloud:
             wp = np.array([[p.position.x, p.position.y] for p in path.poses]).reshape(-1, 2)
             # Re-referenced per (path, map) pair like the hint itself: the
