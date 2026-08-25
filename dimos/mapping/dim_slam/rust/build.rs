@@ -17,6 +17,8 @@
 use std::env;
 
 fn main() {
-    let lib_dir = env::var("DEP_CUVSLAM_LIB_DIR").expect("cu_vslam_rs exports lib_dir");
-    println!("cargo:rustc-link-arg=-Wl,-rpath,{lib_dir}");
+    // Absent when cu_vslam_rs is its SDK-less stub, which links nothing.
+    if let Ok(lib_dir) = env::var("DEP_CUVSLAM_LIB_DIR") {
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{lib_dir}");
+    }
 }

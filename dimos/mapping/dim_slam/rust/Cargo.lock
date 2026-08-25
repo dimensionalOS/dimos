@@ -413,9 +413,9 @@ dependencies = [
 
 [[package]]
 name = "cu_vslam_rs"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6c2d4e30f876f55f242c8dee0f221a8e3290a57da26907da73fa3514b116ece"
+checksum = "4dc114705c95783caf6a638391345ccb9fe20af553b2590f933a54e7a3c2ff88"
 dependencies = [
  "cc",
 ]
@@ -542,7 +542,7 @@ dependencies = [
 [[package]]
 name = "dim_slam"
 version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimSLAM?rev=14322423913382fa2bdfae66b74357c890440b1d#14322423913382fa2bdfae66b74357c890440b1d"
+source = "git+https://github.com/dimensionalOS/dimSLAM?rev=4f6c46c22185381b54a520e62bc2dd7fef21faa6#4f6c46c22185381b54a520e62bc2dd7fef21faa6"
 dependencies = [
  "cu_vslam_rs",
  "nalgebra",
