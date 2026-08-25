@@ -94,3 +94,4 @@ yolo11n*.pt
 # Generic ignore patterns
 *.ignore
 *.ignore.*
+/experimental/docs/hosted/host_architecture.pdf
