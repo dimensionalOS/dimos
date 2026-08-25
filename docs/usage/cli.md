@@ -144,8 +144,9 @@ publishing details.
 
 ### `dimos graph`
 
-Render a Blueprint's active stream connections as a Graphviz SVG without starting
-the Blueprint or opening its runtime transports:
+Render a Blueprint's stream flow and RPC relationships as a Graphviz SVG without
+starting the Blueprint or opening its runtime transports. Stream channels use solid
+edges; RPC contracts and their declared Spec methods use dashed edges.
 
 ```bash
 dimos graph unitree-go2-agentic

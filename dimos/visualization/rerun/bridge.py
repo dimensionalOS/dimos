@@ -124,6 +124,22 @@ def _hex_to_rgba(hex_color: str) -> int:
     return int(h[:8], 16)
 
 
+def _graphviz_plain_lines(output: str) -> list[str]:
+    """Join physical lines that Graphviz wraps with a trailing backslash."""
+    lines: list[str] = []
+    pending = ""
+    for physical_line in output.splitlines():
+        pending += physical_line
+        if pending.endswith("\\"):
+            pending = pending[:-1]
+            continue
+        lines.append(pending)
+        pending = ""
+    if pending:
+        lines.append(pending)
+    return lines
+
+
 def _with_graph_tab(bp: Blueprint) -> Blueprint:
     """Add a Graph tab alongside the existing viewer layout without changing it."""
     import rerun.blueprint as rrb
@@ -558,7 +574,7 @@ class RerunBridgeModule(Module):
         edges: list[tuple[str, str]] = []
         module_set = set(module_names)
 
-        for line in result.stdout.splitlines():
+        for line in _graphviz_plain_lines(result.stdout):
             if line.startswith("node "):
                 parts = line.split()
                 node_id = parts[1].strip('"')

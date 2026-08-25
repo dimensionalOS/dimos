@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Render Blueprint stream connections as a Graphviz SVG."""
+"""Render Blueprint stream and RPC relationships as a Graphviz SVG."""
 
 import os
 from pathlib import Path
@@ -61,7 +61,7 @@ def graph(
         help="SVG output path. Defaults to <blueprint>.svg.",
     ),
 ) -> None:
-    """Render a Blueprint's active stream connections as a Graphviz SVG."""
+    """Render a Blueprint's stream and RPC relationships as a Graphviz SVG."""
     output_path = (output or Path(f"{blueprint}.svg")).expanduser().resolve()
     if output_path.suffix.lower() != ".svg":
         raise typer.BadParameter("output path must end in .svg", param_hint="--output")
