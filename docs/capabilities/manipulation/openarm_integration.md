@@ -69,9 +69,9 @@ both `--left-can-port` and `--right-can-port` selects the physical adapter.
 
 The Quest blueprint drives both arms through one bimanual IK task. Hold both
 controllers' primary buttons to engage it. Releasing either button stops arm
-and gripper output and clears both controller references. Each trigger operates
-the gripper on the same side. Planned trajectories run at a higher priority and
-preempt streaming teleoperation.
+output and clears both controller references. Each trigger publishes normalized
+opening to a dedicated gripper task on the same side. Planned trajectories run
+at a higher priority and preempt streaming teleoperation.
 
 The Damiao adapter derives angular joint limits from the official robot model.
 It clamps encoder feedback up to `0.05 rad` beyond a limit; larger excursions

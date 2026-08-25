@@ -27,6 +27,7 @@ from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.robot.manipulators.openarm.config import (
     OPENARM_ARM_JOINTS,
     OPENARM_GRIPPER_JOINTS,
+    OPENARM_JOINTS,
     openarm_arm_joints,
     openarm_bimanual_model_config,
     openarm_hardware,
@@ -52,7 +53,7 @@ def _trajectory_task(*, priority: int = 10) -> TaskConfig:
     return TaskConfig(
         name=JOINT_TRAJECTORY_TASK_NAME,
         type="trajectory",
-        joint_names=list(OPENARM_ARM_JOINTS),
+        joint_names=list(OPENARM_JOINTS),
         priority=priority,
         params={"start_position_tolerance": 0.05},
     )
@@ -118,16 +119,10 @@ _openarm_quest_task = TaskConfig(
             {
                 "hand": "left",
                 "target_frame": "openarm_left_grasp_frame",
-                "gripper_joint": OPENARM_GRIPPER_JOINTS[0],
-                "gripper_open_position": 1.0,
-                "gripper_closed_position": 0.0,
             },
             {
                 "hand": "right",
                 "target_frame": "openarm_right_grasp_frame",
-                "gripper_joint": OPENARM_GRIPPER_JOINTS[1],
-                "gripper_open_position": 1.0,
-                "gripper_closed_position": 0.0,
             },
         ],
         "solver_type": OpenArmPinkPoseTargetSolver,
@@ -148,6 +143,20 @@ teleop_quest_openarm = autoconnect(
         instance_name="ControlCoordinator",
         tasks=[
             _openarm_quest_task,
+            TaskConfig(
+                name="left_arm_gripper",
+                type="gripper",
+                joint_names=[OPENARM_GRIPPER_JOINTS[0]],
+                priority=20,
+                stream_bind={"gripper_command": "left_gripper_command"},
+            ),
+            TaskConfig(
+                name="right_arm_gripper",
+                type="gripper",
+                joint_names=[OPENARM_GRIPPER_JOINTS[1]],
+                priority=20,
+                stream_bind={"gripper_command": "right_gripper_command"},
+            ),
             _trajectory_task(priority=20),
         ],
     ),
@@ -158,6 +167,8 @@ teleop_quest_openarm = autoconnect(
 ).remappings(
     [
         (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
+        (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
         (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
+        (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
     ]
 )

@@ -12,12 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-TASK_FACTORIES = {
-    "eef_twist": "dimos.control.tasks.eef_twist_task.eef_twist_task:create_task",
-}
+"""Types shared by hardware adapter specifications."""
 
-TASK_CONSUMES = {
-    "eef_twist": {
-        "ee_twist_command": ("on_ee_twist_command", "direct"),
-    },
-}
+from collections.abc import Sequence
+from dataclasses import dataclass
+
+
+@dataclass
+class JointLimits:
+    """Limits in adapter joint order and each joint's local coordinate.
+
+    ``None`` represents a limit the adapter does not know. Arrays still contain
+    one entry per adapter joint so values can be resolved by joint index.
+    """
+
+    position_lower: Sequence[float | None]
+    position_upper: Sequence[float | None]
+    velocity_max: Sequence[float | None]

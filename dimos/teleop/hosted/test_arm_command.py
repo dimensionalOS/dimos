@@ -220,13 +220,13 @@ def test_stale_twist_warning_rate_limited(module: ArmCommandModule) -> None:
 # ─── Gripper toggle (state_reliable JSON) ──────────────────────────────
 
 
-def test_gripper_toggle_publishes_bool(module: ArmCommandModule) -> None:
+def test_gripper_toggle_publishes_normalized_opening(module: ArmCommandModule) -> None:
     module._on_state_json(b'{"type": "gripper", "closed": true}')
     module.gripper_command.publish.assert_called_once()
-    assert module.gripper_command.publish.call_args.args[0].data is True
+    assert module.gripper_command.publish.call_args.args[0].data == pytest.approx(0.0)
 
     module._on_state_json(b'{"type": "gripper", "closed": false}')
-    assert module.gripper_command.publish.call_args.args[0].data is False
+    assert module.gripper_command.publish.call_args.args[0].data == pytest.approx(1.0)
 
 
 def test_gripper_dropped_while_estopped(module: ArmCommandModule) -> None:

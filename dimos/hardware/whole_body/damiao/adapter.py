@@ -25,6 +25,7 @@ import can_motor_control
 import numpy as np
 import pinocchio
 
+from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
 from dimos.robot.assets.model import RobotModel
@@ -284,6 +285,10 @@ class DamiaoWholeBodyAdapter(ABC):
 
     def read_imu(self) -> IMUState:
         return IMUState()
+
+    def get_limits(self) -> JointLimits | None:
+        """Return limits when the concrete robot declares them."""
+        return None
 
     def write_motor_commands(self, commands: list[MotorCommand]) -> bool:
         if not self._connected or not self._active or len(commands) != len(self.joint_names):

@@ -367,6 +367,25 @@ def test_arm_teleop_publishes_absolute_controller_pose() -> None:
         module.stop()
 
 
+def test_arm_teleop_publishes_normalized_gripper_opening_for_engaged_hand(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    module = ArmTeleopModule()
+    try:
+        left_publish = mocker.patch.object(module.left_gripper_command, "publish")
+        right_publish = mocker.patch.object(module.right_gripper_command, "publish")
+        left = QuestControllerState(is_left=True, trigger=0.25)
+        right = QuestControllerState(is_left=False, trigger=0.75)
+        module._is_engaged[Hand.LEFT] = True
+
+        module._publish_button_state(left, right)
+
+        assert left_publish.call_args.args[0].data == pytest.approx(0.75)
+        right_publish.assert_not_called()
+    finally:
+        module.stop()
+
+
 def test_hand_teleop_pinch_toggles_engagement(mocker: pytest_mock.MockerFixture) -> None:
     module = HandTeleopModule()
     try:

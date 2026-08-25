@@ -21,6 +21,7 @@ from pathlib import Path
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
 from dimos.core.global_config import global_config
+from dimos.hardware.spec import JointLimits
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
@@ -75,16 +76,23 @@ def make_a750_hardware(
     auto_enable: bool = True,
     home_joints: list[float] | None = None,
 ) -> HardwareComponent:
-    joints = make_joints(hw_id, 6)
+    gripper_joints = [f"{hw_id}/finger"] if gripper else []
+    initial_positions = [*(home_joints or A750_HOME_JOINTS), *([0.0] * len(gripper_joints))]
+    adapter_kwargs: dict[str, object] = {"initial_positions": initial_positions}
+    if adapter_type == "mock":
+        adapter_kwargs["limits"] = JointLimits(
+            position_lower=[*([-math.pi] * 6), *([0.0] * len(gripper_joints))],
+            position_upper=[*([math.pi] * 6), *([0.06] * len(gripper_joints))],
+            velocity_max=[*([math.pi] * 6), *([0.0] * len(gripper_joints))],
+        )
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.MANIPULATOR,
-        joints=joints,
+        joints=[*make_joints(hw_id, 6), *gripper_joints],
         adapter_type=adapter_type,
         address=address,
         auto_enable=auto_enable,
-        gripper_joints=[f"{hw_id}/finger"] if gripper else [],
-        adapter_kwargs={"initial_positions": home_joints or A750_HOME_JOINTS},
+        adapter_kwargs=adapter_kwargs,
     )
 
 

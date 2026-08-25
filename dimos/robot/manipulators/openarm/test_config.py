@@ -30,6 +30,7 @@ from dimos.robot.manipulators.openarm.config import (
     OPENARM_DESCRIPTION_SOURCE,
     OPENARM_DESCRIPTION_URL,
     OPENARM_HARDWARE_ID,
+    OPENARM_JOINTS,
     OPENARM_SIDES,
     openarm_bimanual_model_config,
     openarm_hardware,
@@ -103,7 +104,10 @@ def test_openarm_hardware_defaults_to_mock_without_can_ports() -> None:
         HardwareType.WHOLE_BODY,
         "mock_whole_body",
     )
-    assert hardware.adapter_kwargs == {}
+    limits = hardware.adapter_kwargs["limits"]
+    assert limits.position_lower == [*([None] * len(OPENARM_ARM_JOINTS)), 0.0, 0.0]
+    assert limits.position_upper == [*([None] * len(OPENARM_ARM_JOINTS)), 1.0, 1.0]
+    assert limits.velocity_max == [None] * len(OPENARM_JOINTS)
 
 
 def test_openarm_hardware_uses_physical_adapter_with_explicit_can_ports() -> None:

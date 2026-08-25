@@ -13,11 +13,22 @@
 # limitations under the License.
 
 TASK_FACTORIES = {
-    "eef_twist": "dimos.control.tasks.eef_twist_task.eef_twist_task:create_task",
+    "gripper": "dimos.control.tasks.gripper_task.gripper_task:create_task",
 }
 
-TASK_CONSUMES = {
-    "eef_twist": {
-        "ee_twist_command": ("on_ee_twist_command", "direct"),
+# The stream carries normalized opening; native and per-joint targets arrive
+# through TASK_EXPOSES via task_invoke.
+TASK_CONSUMES: dict[str, dict[str, tuple[str, str]]] = {
+    "gripper": {
+        "gripper_command": ("on_gripper_command", "broadcast"),
     },
+}
+
+TASK_EXPOSES: dict[str, list[str]] = {
+    "gripper": [
+        "set_position",
+        "set_normalized",
+        "get_position",
+        "get_normalized",
+    ],
 }

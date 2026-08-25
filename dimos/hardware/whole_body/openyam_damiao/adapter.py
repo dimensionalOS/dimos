@@ -19,6 +19,7 @@ from __future__ import annotations
 import can_motor_control
 from can_motor_control import damiao
 
+from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.damiao.adapter import DamiaoWholeBodyAdapter
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.data import LfsPath
@@ -34,6 +35,15 @@ class OpenYamDamiaoAdapter(DamiaoWholeBodyAdapter):
     gripper_joints = {"gripper": "arm/gripper"}
     bus_defaults = {bus_name: "can0"}
     kinematic_joint_names = tuple(f"yam_joint{index}" for index in range(1, 7))
+
+    def get_limits(self) -> JointLimits:
+        """Declare the calibrated gripper opening in its local 0-1 coordinate."""
+        unknown = [None] * len(self.kinematic_joint_names)
+        return JointLimits(
+            position_lower=[*unknown, 0.0],
+            position_upper=[*unknown, 1.0],
+            velocity_max=[None] * len(self.joint_names),
+        )
 
     @property
     def kinematic_model(self) -> RobotModel:

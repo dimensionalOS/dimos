@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.a750.config import (
@@ -48,6 +49,12 @@ keyboard_teleop_a750 = autoconnect(
                 robot_model=_a750_model,
             ),
             trajectory_task(_a750_hw),
+            TaskConfig(
+                name="arm_gripper",
+                type="gripper",
+                joint_names=["arm/finger"],
+                priority=20,
+            ),
         ],
     ),
     ManipulationModule.blueprint(

@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import ControlCoordinator
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.global_config import global_config
@@ -74,12 +74,26 @@ coordinator_teleop_dual = TeleopControlCoordinator.blueprint(
             bindings=[{"hand": "left", "target_frame": "link_tcp"}],
             priority=10,
         ),
+        TaskConfig(
+            name="xarm_arm_gripper",
+            type="gripper",
+            joint_names=["xarm_arm/gripper"],
+            priority=20,
+            stream_bind={"gripper_command": "left_gripper_command"},
+        ),
         teleop_ik_task(
             _piper_teleop_hw,
             name="teleop_piper",
             robot_model=make_piper_model_config("piper_arm"),
             bindings=[{"hand": "right", "target_frame": "gripper_base"}],
             priority=10,
+        ),
+        TaskConfig(
+            name="piper_arm_gripper",
+            type="gripper",
+            joint_names=["piper_arm/gripper"],
+            priority=20,
+            stream_bind={"gripper_command": "right_gripper_command"},
         ),
     ],
 )

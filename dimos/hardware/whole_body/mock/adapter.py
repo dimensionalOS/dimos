@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
 
 
@@ -27,12 +28,14 @@ class MockWholeBodyAdapter:
         *,
         dof: int,
         initial_positions: list[float] | None = None,
+        limits: JointLimits | None = None,
         **_: object,
     ) -> None:
         positions = initial_positions or [0.0] * dof
         if len(positions) != dof:
             raise ValueError(f"expected {dof} initial positions, got {len(positions)}")
         self._states = [MotorState(q=position) for position in positions]
+        self._limits = limits
         self._connected = False
 
     def connect(self) -> bool:
@@ -59,6 +62,9 @@ class MockWholeBodyAdapter:
 
     def read_imu(self) -> IMUState:
         return IMUState()
+
+    def get_limits(self) -> JointLimits | None:
+        return self._limits
 
     def write_motor_commands(self, commands: list[MotorCommand]) -> bool:
         if not self._connected or len(commands) != len(self._states):

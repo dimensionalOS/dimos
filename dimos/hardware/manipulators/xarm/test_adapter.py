@@ -23,6 +23,10 @@ from typing import Any, ClassVar
 
 import pytest
 
+from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.control.hardware_interface import ConnectedHardware
+from dimos.hardware.manipulators.spec import ControlMode
+
 
 class _FakeXArmSdk:
     instances: ClassVar[list[_FakeXArmSdk]] = []
@@ -37,6 +41,7 @@ class _FakeXArmSdk:
         self.mode = 0
         self.actions: list[Any] = []
         self.servo_joint_commands: list[list[float]] = []
+        self.gripper_commands: list[float] = []
 
     def connect(self) -> None:
         self.connected = True
@@ -82,6 +87,21 @@ class _FakeXArmSdk:
         self.actions.append(("set_servo_angle_j", list(angles), speed, mvacc))
         return 0
 
+    def get_servo_angle(self) -> tuple[int, list[float]]:
+        return 0, [0.0] * 7
+
+    def get_gripper_position(self) -> tuple[int, float]:
+        return 0, 0.0
+
+    def set_gripper_enable(self, enabled: bool) -> int:
+        self.actions.append(("set_gripper_enable", enabled))
+        return 0
+
+    def set_gripper_position(self, position: float, *, wait: bool) -> int:
+        self.gripper_commands.append(position)
+        self.actions.append(("set_gripper_position", position, wait))
+        return 0
+
 
 @pytest.fixture
 def xarm_adapter_module(monkeypatch: pytest.MonkeyPatch) -> Iterator[ModuleType]:
@@ -123,10 +143,35 @@ def test_activate_prepares_xarm_for_safe_commanded_motion(
 def test_joint_position_commands_use_degrees_for_xarm_sdk(
     xarm_adapter_module: ModuleType,
 ) -> None:
-    adapter = xarm_adapter_module.XArmAdapter(address="192.0.2.10", dof=3)
+    adapter = xarm_adapter_module.XArmAdapter(address="192.0.2.10", dof=6)
     assert adapter.connect()
 
-    assert adapter.write_joint_positions([math.pi / 2, -math.pi / 4, math.pi])
+    assert adapter.write_joint_positions([math.pi / 2, -math.pi / 4, math.pi, 0.0, 0.0, 0.0])
 
     arm = _FakeXArmSdk.instances[-1]
-    assert arm.servo_joint_commands[-1] == pytest.approx([90.0, -45.0, 180.0])
+    assert arm.servo_joint_commands[-1] == pytest.approx([90.0, -45.0, 180.0, 0.0, 0.0, 0.0])
+
+
+def test_gripper_command_reaches_sdk_once_in_native_units(
+    xarm_adapter_module: ModuleType,
+) -> None:
+    adapter = xarm_adapter_module.XArmAdapter(
+        address="192.0.2.10",
+        dof=8,
+        arm_dof=7,
+    )
+    assert adapter.connect()
+    hardware = ConnectedHardware(
+        adapter,
+        HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=[*make_joints("arm", 7), "arm/gripper"],
+        ),
+    )
+
+    assert hardware.write_command({"arm/gripper": 850.0}, ControlMode.SERVO_POSITION)
+
+    sdk = _FakeXArmSdk.instances[-1]
+    assert sdk.servo_joint_commands == [[0.0] * 7]
+    assert sdk.gripper_commands == [850.0]

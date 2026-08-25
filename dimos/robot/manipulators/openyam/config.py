@@ -20,6 +20,7 @@ from pathlib import Path
 
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.core.global_config import global_config
+from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
@@ -47,7 +48,13 @@ def openyam_hardware() -> HardwareComponent:
     """Select the physical or in-memory whole-body adapter for OpenYAM."""
     adapter_type = "mock_whole_body" if global_config.simulation else "openyam_damiao"
     adapter_kwargs: dict[str, object] = {}
-    if not global_config.simulation:
+    if global_config.simulation:
+        adapter_kwargs["limits"] = JointLimits(
+            position_lower=[*([None] * OPENYAM_DOF), 0.0],
+            position_upper=[*([None] * OPENYAM_DOF), 1.0],
+            velocity_max=[None] * len(OPENYAM_JOINTS),
+        )
+    else:
         adapter_kwargs["runtime_config"] = DamiaoRuntimeConfig(
             bus_addresses={"openyam": global_config.can_port or "can0"},
             gravity_comp=True,
@@ -99,5 +106,6 @@ def make_openyam_model_config(
             joint_prefix=joint_prefix,
             urdf_joint_prefix="",
         ),
+        gripper_hardware_id=OPENYAM_HARDWARE_ID,
         home_joints=home_joints or [0.0] * OPENYAM_DOF,
     )

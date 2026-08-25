@@ -60,13 +60,10 @@ def _binding_tuple_converter(
 
 @attrs.frozen(slots=False)
 class TeleopHandBinding:
-    """Bind one operator hand to one robot frame and optional gripper."""
+    """Bind one operator hand to one robot frame."""
 
     hand: OperatorHand = attrs.field(converter=OperatorHand)
     target_frame: str
-    gripper_joint: str | None = None
-    gripper_open_position: float = 0.0
-    gripper_closed_position: float = 0.0
 
 
 @attrs.frozen(slots=False)
@@ -91,15 +88,10 @@ class TeleopIKTaskConfig:
             raise ValueError("TeleopIKTask requires exactly one or two hand bindings")
         hands = [binding.hand for binding in self.bindings]
         frames = [binding.target_frame for binding in self.bindings]
-        grippers = [
-            binding.gripper_joint for binding in self.bindings if binding.gripper_joint is not None
-        ]
         if len(set(hands)) != len(hands):
             raise ValueError("TeleopIKTask requires unique operator hands")
         if any(not frame for frame in frames) or len(set(frames)) != len(frames):
             raise ValueError("TeleopIKTask requires unique target frames")
-        if len(set(grippers)) != len(grippers):
-            raise ValueError("TeleopIKTask requires unique gripper joints")
 
 
 @dataclass
@@ -108,7 +100,6 @@ class _HandState:
     last_update_time: float = 0.0
     controller_reference: PoseStamped | None = None
     robot_reference: PoseStamped | None = None
-    gripper_target: float = 0.0
 
 
 class _SessionState(Enum):
@@ -131,18 +122,10 @@ class TeleopIKTask(PoseTargetIKTask):
         self._teleop_config = config
         self._bindings = {binding.hand: binding for binding in config.bindings}
         self._lock = threading.Lock()
-        self._hands = {
-            binding.hand: _HandState(gripper_target=binding.gripper_open_position)
-            for binding in config.bindings
-        }
+        self._hands = {binding.hand: _HandState() for binding in config.bindings}
         self._session_state = _SessionState.DISENGAGED
         self._session_epoch = 0
         self._last_button_update_time = 0.0
-        gripper_joints = tuple(
-            binding.gripper_joint
-            for binding in config.bindings
-            if binding.gripper_joint is not None
-        )
         super().__init__(
             name,
             PoseTargetIKTaskConfig(
@@ -159,7 +142,6 @@ class TeleopIKTask(PoseTargetIKTask):
                 feedback_limit_tolerance=config.feedback_limit_tolerance,
                 command_limit_margin=config.command_limit_margin,
             ),
-            additional_claimed_joints=gripper_joints,
             solver=solver,
             solver_type=solver_type,
         )
@@ -206,26 +188,13 @@ class TeleopIKTask(PoseTargetIKTask):
         return True
 
     def on_teleop_buttons(self, msg: Buttons, t_now: float) -> bool:
-        """Update the all-bound-hands deadman condition and gripper targets."""
+        """Update the all-bound-hands deadman condition."""
         primary_by_hand = {
             OperatorHand.LEFT: msg.left_primary,
             OperatorHand.RIGHT: msg.right_primary,
         }
-        trigger_by_hand = {
-            OperatorHand.LEFT: msg.left_trigger_analog,
-            OperatorHand.RIGHT: msg.right_trigger_analog,
-        }
         with self._lock:
             self._last_button_update_time = t_now
-            for hand, binding in self._bindings.items():
-                if binding.gripper_joint is None:
-                    continue
-                trigger = max(0.0, min(1.0, trigger_by_hand[hand]))
-                self._hands[hand].gripper_target = (
-                    binding.gripper_open_position
-                    + (binding.gripper_closed_position - binding.gripper_open_position) * trigger
-                )
-
             condition = all(primary_by_hand[hand] for hand in self._bindings)
             if self._session_state is _SessionState.ESTOPPED:
                 return True
@@ -290,7 +259,6 @@ class TeleopIKTask(PoseTargetIKTask):
             ):
                 return None
             targets: dict[str, PoseStamped] = {}
-            extras: dict[str, float] = {}
             update_times = [self._last_button_update_time]
             for hand, binding in self._bindings.items():
                 hand_state = self._hands[hand]
@@ -306,12 +274,9 @@ class TeleopIKTask(PoseTargetIKTask):
                     orientation=delta.orientation * robot_reference.orientation,
                 )
                 update_times.append(hand_state.last_update_time)
-                if binding.gripper_joint is not None:
-                    extras[binding.gripper_joint] = hand_state.gripper_target
             return FrameTargetSnapshot(
                 targets=targets,
                 last_update_time=min(update_times),
-                extra_joint_positions=extras,
             )
 
     def _on_target_timeout(self) -> None:
@@ -335,9 +300,6 @@ class TeleopHandBindingParams(BaseConfig):
 
     hand: OperatorHand
     target_frame: str
-    gripper_joint: str | None = None
-    gripper_open_position: float = 0.0
-    gripper_closed_position: float = 0.0
 
 
 class TeleopIKTaskParams(PoseTargetIKTaskParams):
@@ -357,22 +319,10 @@ def create_task(
         TeleopHandBinding(
             hand=binding.hand,
             target_frame=binding.target_frame,
-            gripper_joint=binding.gripper_joint,
-            gripper_open_position=binding.gripper_open_position,
-            gripper_closed_position=binding.gripper_closed_position,
         )
         for binding in params.bindings
     )
-    available_joints = {
-        joint_name for connected in hardware.values() for joint_name in connected.joint_names
-    }
-    unknown_grippers = {
-        binding.gripper_joint
-        for binding in bindings
-        if binding.gripper_joint is not None and binding.gripper_joint not in available_joints
-    }
-    if unknown_grippers:
-        raise ValueError(f"Teleop task references unknown gripper joints: {unknown_grippers}")
+    del hardware
     task_config = TeleopIKTaskConfig(
         joint_names=tuple(cfg.joint_names),
         robot_model=params.robot_model,
