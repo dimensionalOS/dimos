@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from dimos.control.coordinator import TaskConfig
+from dimos.control.port_coordinator import PortTeleopControlCoordinator
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
@@ -90,11 +91,18 @@ coordinator_cartesian_ik_mock = ArmPoseCoordinator.blueprint(
     ],
 )
 
-_piper_teleop_hw = piper_hardware("arm")
+_piper_teleop_hw = (
+    make_piper_hardware("arm", adapter_type="module")
+    if global_config.simulation
+    else piper_hardware("arm")
+)
+_teleop_coordinator = (
+    PortTeleopControlCoordinator if global_config.simulation else TeleopControlCoordinator
+)
 
 
 coordinator_teleop_piper = autoconnect(
-    TeleopControlCoordinator.blueprint(
+    _teleop_coordinator.blueprint(
         instance_name="ControlCoordinator",
         hardware=[_piper_teleop_hw],
         tasks=[
@@ -123,7 +131,7 @@ coordinator_teleop_piper = autoconnect(
         robots=[_piper_model],
         visualization={"backend": "viser"},
     ),
-    *mujoco_if_sim(PIPER_SIM_PATH, len(_piper_teleop_hw.joints)),
+    *mujoco_if_sim(PIPER_SIM_PATH, 6),
 )
 
 _piper_cartesian_hw = make_piper_hardware(

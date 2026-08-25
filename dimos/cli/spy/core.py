@@ -352,7 +352,7 @@ SOURCE_FACTORIES: dict[str, Callable[[], SpySource]] = {
 }
 """Known transports by name; each factory constructs its source only when called.
 
-v1: lcm + zenoh. SHM/ROS/DDS/Redis are future sources.
+v1: lcm + zenoh. ROS/DDS/Redis are future sources.
 """
 
 

@@ -77,12 +77,11 @@ def make_xarm7_sim_robot_config() -> RobotModelConfig:
     )
 
 
-def make_xarm7_sim_hardware(address: str | Path) -> HardwareComponent:
+def make_xarm7_sim_hardware() -> HardwareComponent:
     return make_xarm_hardware(
         "arm",
         7,
-        adapter_type="sim_mujoco",
-        address=address,
+        adapter_type="module",
         gripper=True,
         home_joints=XARM7_SIM_HOME,
     )
@@ -131,6 +130,12 @@ def make_xarm_hardware(
             position_upper=[*([2 * math.pi] * dof), *([850.0] * len(gripper_joints))],
             velocity_max=[*([math.pi] * dof), *([0.0] * len(gripper_joints))],
         )
+    elif adapter_type == "module":
+        kwargs["limits"] = JointLimits(
+            position_lower=[*([-math.pi] * dof), *([0.0] * len(gripper_joints))],
+            position_upper=[*([math.pi] * dof), *([0.85] * len(gripper_joints))],
+            velocity_max=[*([math.pi] * dof), *([0.0] * len(gripper_joints))],
+        )
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.MANIPULATOR,
@@ -149,15 +154,6 @@ def xarm7_hardware(
     mock_without_address: bool = False,
     home_joints: list[float] | None = None,
 ) -> HardwareComponent:
-    if global_config.simulation:
-        return make_xarm_hardware(
-            hw_id,
-            7,
-            adapter_type="sim_mujoco",
-            address=str(XARM7_SIM_PATH),
-            gripper=gripper,
-            home_joints=home_joints,
-        )
     address = global_config.xarm7_ip
     if mock_without_address and not address:
         return make_xarm_hardware(
@@ -183,15 +179,6 @@ def xarm6_hardware(
     mock_without_address: bool = False,
     home_joints: list[float] | None = None,
 ) -> HardwareComponent:
-    if global_config.simulation:
-        return make_xarm_hardware(
-            hw_id,
-            6,
-            adapter_type="sim_mujoco",
-            address=str(XARM6_SIM_PATH),
-            gripper=gripper,
-            home_joints=home_joints,
-        )
     address = global_config.xarm6_ip
     if mock_without_address and not address:
         return make_xarm_hardware(

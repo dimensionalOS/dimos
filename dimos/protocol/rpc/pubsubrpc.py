@@ -29,8 +29,6 @@ from typing import (
 
 from dimos.constants import LCM_MAX_CHANNEL_NAME_LENGTH
 from dimos.protocol.pubsub.impl.lcmpubsub import PickleLCM, Topic
-from dimos.protocol.pubsub.impl.shmpubsub import PickleSharedMemory
-from dimos.protocol.pubsub.shm.ipc_factory import CpuShmQueue
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.rpc.rpc_utils import deserialize_exception, serialize_exception
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, Args, RPCSpec
@@ -320,39 +318,3 @@ class LCMRPC(PubSubRPCMixin[Topic, Any], PickleLCM):
         if len(topic) > LCM_MAX_CHANNEL_NAME_LENGTH:
             topic = f"/rpc/{short_id(name)}/{suffix}"
         return Topic(topic=topic)
-
-
-# RPC messages are small control-plane payloads (pickled dicts), so the ring uses
-# a modest per-slot capacity and a deep slot count to absorb concurrent bursts.
-# Segment bytes = slots * (capacity + 20) ~= 16 MiB here; inheriting the 3.6 MB
-# streaming frame would make each segment ~900 MiB.
-_SHM_RPC_CAPACITY = 64 * 1024
-_SHM_RPC_SLOTS = 256
-
-
-class ShmRPC(PubSubRPCMixin[str, Any], PickleSharedMemory):
-    _channel_class = CpuShmQueue
-    _channel_kwargs = {"slots": _SHM_RPC_SLOTS}
-
-    def __init__(
-        self,
-        rpc_timeouts: dict[str, float] | None = None,
-        default_rpc_timeout: float = DEFAULT_RPC_TIMEOUT,
-        prefer: str = "cpu",
-        **kwargs: Any,
-    ) -> None:
-        if rpc_timeouts is None:
-            rpc_timeouts = dict(DEFAULT_RPC_TIMEOUTS)
-        # Only the pubsub base consumes default_capacity; pop it so it doesn't
-        # also flow into PubSubRPCMixin.__init__ via **kwargs.
-        default_capacity = kwargs.pop("default_capacity", _SHM_RPC_CAPACITY)
-        PickleSharedMemory.__init__(
-            self, prefer=prefer, default_capacity=default_capacity, **kwargs
-        )
-        PubSubRPCMixin.__init__(
-            self, rpc_timeouts=rpc_timeouts, default_rpc_timeout=default_rpc_timeout, **kwargs
-        )
-
-    def topicgen(self, name: str, req_or_res: bool) -> str:
-        suffix = "res" if req_or_res else "req"
-        return f"/rpc/{name}/{suffix}"

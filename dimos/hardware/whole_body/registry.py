@@ -15,20 +15,17 @@
 """WholeBodyAdapter registry with lazy manifest discovery.
 
 Adapter packages declare factories in ``_registry.py`` manifests
-(see ``dimos.hardware.adapter_registry``). Two roots are scanned:
+(see ``dimos.hardware.adapter_registry``). The hardware root is scanned:
 
-* ``dimos/hardware/whole_body/`` — real-hardware adapters (Unitree DDS,
-  transport-LCM bridge). Subpackages are either flat ``<kind>/`` or
+* ``dimos/hardware/whole_body/`` — direct hardware and protocol adapters.
+  Subpackages are either flat ``<kind>/`` or
   nested ``<vendor>/<robot>/``.
-* ``dimos/simulation/adapters/whole_body/`` — sim adapters (``g1.py``,
-  etc.), declared in a single root-level manifest. Sim engines live
-  under ``dimos/simulation/`` so their adapter glue lives there too.
 
 Usage:
     from dimos.hardware.whole_body.registry import whole_body_adapter_registry
 
-    adapter = whole_body_adapter_registry.create("sim_mujoco_g1")
-    print(whole_body_adapter_registry.available())  # ["sim_mujoco_g1", ...]
+    adapter = whole_body_adapter_registry.create("openarm_damiao")
+    print(whole_body_adapter_registry.available())
 """
 
 from __future__ import annotations
@@ -41,10 +38,7 @@ class WholeBodyAdapterRegistry(LazyAdapterRegistry[WholeBodyAdapter]):
     """Registry for whole-body motor adapters."""
 
     kind = "whole-body adapter"
-    manifest_roots = (
-        ("dimos.hardware.whole_body", 2),
-        ("dimos.simulation.adapters.whole_body", 1),
-    )
+    manifest_roots = (("dimos.hardware.whole_body", 2),)
 
 
 whole_body_adapter_registry = WholeBodyAdapterRegistry()

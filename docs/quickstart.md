@@ -126,7 +126,8 @@ Manage the background run with `dimos status`, `dimos log -f`, and `dimos stop`.
 | `dimos --replay run drone-basic` | Drone video and telemetry replay |
 | `dimos --replay run drone-agentic` | Drone with an LLM agent and flight skills, replayed |
 | `dimos run demo-camera` | Webcam demo, no robot needed |
-| `dimos run keyboard-teleop-xarm7` | Keyboard teleop with a mock xArm7 (needs the `manipulation` extra) |
+| `dimos run keyboard-teleop-xarm7` | Keyboard teleop with a mock/real xArm7 (needs the `manipulation` extra) |
+| `dimos --simulation mujoco run keyboard-teleop-xarm7` | Keyboard teleop with the bundled xArm7 MuJoCo model |
 | `dimos --simulation run unitree-go2-agentic-ollama` | Quadruped agent using a local LLM (needs Ollama running via `ollama serve`) |
 
 To learn how blueprints are composed, or to write your own, see the [blueprints guide](/docs/usage/blueprints.md).

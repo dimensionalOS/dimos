@@ -22,15 +22,14 @@ URI grammar::
 
     <proto>:<topic>[#<msg_type>]
 
-- ``<proto>``: registry key, e.g. ``lcm``, ``jpeg_lcm``, ``plcm``, ``pshm``,
-  ``shm``, ``jpeg_shm``.
+- ``<proto>``: registry key, e.g. ``lcm``, ``jpeg_lcm``, ``plcm``.
 - ``<topic>``: channel/key, passed verbatim to the transport constructor.
 - ``<msg_type>``: optional ``module.ClassName`` resolved via
   ``dimos.msgs.helpers.resolve_msg_type`` (e.g. ``sensor_msgs.Image``).
 
 Typed protos (``lcm``, ``jpeg_lcm``) require a message type — either from the
 ``#``-suffix or the ``msg_type`` kwarg. Pickled / self-describing protos
-(``plcm``, ``pshm``, ``shm``, ``jpeg_shm``) don't.
+(``plcm``) don't.
 """
 
 from __future__ import annotations
@@ -68,34 +67,10 @@ def _make_plcm(topic: str, msg_type: type | None) -> Any:
     return pLCMTransport(topic)
 
 
-def _make_pshm(topic: str, msg_type: type | None) -> Any:
-    # pickled shared memory: same shape as plcm but over /dev/shm.
-    from dimos.core.transport import pSHMTransport
-
-    return pSHMTransport(topic)
-
-
-def _make_shm(topic: str, msg_type: type | None) -> Any:
-    # raw-bytes shared memory: subscribers receive bytes; caller decodes.
-    from dimos.core.transport import SHMTransport
-
-    return SHMTransport(topic)
-
-
-def _make_jpeg_shm(topic: str, msg_type: type | None) -> Any:
-    # JPEG-encoded shared memory: subscribers receive decoded Image objects.
-    from dimos.core.transport import JpegShmTransport
-
-    return JpegShmTransport(topic)
-
-
 _REGISTRY: dict[str, Callable[[str, type | None], Any]] = {
     "lcm": _make_lcm,
     "jpeg_lcm": _make_jpeg_lcm,
     "plcm": _make_plcm,
-    "pshm": _make_pshm,
-    "shm": _make_shm,
-    "jpeg_shm": _make_jpeg_shm,
 }
 
 

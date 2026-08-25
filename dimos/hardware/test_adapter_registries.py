@@ -56,7 +56,6 @@ EXPECTED_NAMES = {
         "galaxea_a1z",
         "mock",
         "piper",
-        "sim_mujoco",
         "xarm",
     },
     "drive_trains": {
@@ -70,7 +69,6 @@ EXPECTED_NAMES = {
         "mock_whole_body",
         "openarm_damiao",
         "openyam_damiao",
-        "sim_mujoco_g1",
         "transport_lcm",
         "transport_ros",
     },
@@ -128,25 +126,6 @@ def test_every_adapter_dir_has_a_manifest(registry, family) -> None:
             assert not missing, f"{manifest} declares {missing} missing from available()"
             checked += 1
     assert checked > 0
-
-
-def test_every_sim_whole_body_module_is_declared() -> None:
-    """Sim whole-body adapters are flat modules; each must appear in the root manifest."""
-    pkg = importlib.import_module("dimos.simulation.adapters.whole_body")
-    manifest = importlib.import_module("dimos.simulation.adapters.whole_body._registry")
-    names = set(manifest.ADAPTER_FACTORIES)
-    assert "sim_mujoco_g1" in names
-    assert names <= set(whole_body_adapter_registry.available())
-    declared_modules = {path.split(":", 1)[0] for path in manifest.ADAPTER_FACTORIES.values()}
-    for root in pkg.__path__:
-        for mod_file in sorted(Path(root).glob("*.py")):
-            if mod_file.name.startswith(("_", ".")):
-                continue
-            mod_name = f"dimos.simulation.adapters.whole_body.{mod_file.stem}"
-            assert mod_name in declared_modules, (
-                f"{mod_file} is not referenced by _registry.py; "
-                f"its adapter would silently vanish from the registry"
-            )
 
 
 @pytest.mark.parametrize(("registry", "family"), FAMILIES)

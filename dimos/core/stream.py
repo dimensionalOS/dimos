@@ -83,7 +83,7 @@ class State(enum.Enum):
 class Transport(Resource, ObservableMixin[T]):
     # Transports that expose a pydantic config override surface set this to the
     # config class; the blueprint config flow picks them up automatically. None
-    # means "no overridable config" (LCM/SHM transports).
+    # means "no overridable config" (for example LCM transports).
     _config_cls: type[BaseModel] | None = None
 
     # used by any local publishing stream (Out/IO); selfstream is None when

@@ -98,6 +98,16 @@ class ConnectedHardware:
         """Disconnect the underlying adapter."""
         self._adapter.disconnect()
 
+    def is_ready(self) -> bool:
+        """Whether the adapter has a real observation available.
+
+        Direct hardware adapters are ready after ``connect``. Port-backed
+        adapters expose ``has_joint_state`` so startup can remain asynchronous
+        without inventing a zero-valued observation.
+        """
+        has_joint_state = getattr(self._adapter, "has_joint_state", None)
+        return bool(has_joint_state()) if callable(has_joint_state) else True
+
     def read_state(self) -> dict[JointName, JointState]:
         """Read state as {joint_name: JointState}.
 
@@ -348,6 +358,10 @@ class ConnectedWholeBody(ConnectedHardware):
     def disconnect(self) -> None:
         """Disconnect the underlying adapter."""
         self._wb_adapter.disconnect()
+
+    def is_ready(self) -> bool:
+        """Whether the adapter has received its first complete motor state."""
+        return self._wb_adapter.has_motor_states()
 
     def read_state(self) -> dict[JointName, JointState]:
         """Read motor states as {joint_name: JointState}."""

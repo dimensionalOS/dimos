@@ -15,17 +15,16 @@
 """Unified MuJoCo simulation Module.
 
 Owns a single ``MujocoEngine`` and publishes:
-- camera streams (Out ports), replacing ``MujocoCamera``
-- joint state via shared memory, consumed by ``ShmMujocoAdapter`` inside
-  ``ControlCoordinator``
+- camera and robot observations through typed output ports
+- held motor commands received through a typed input port
 
-This avoids the prior pattern of sharing engines via a global in-process
-registry, which was fragile when ``WorkerManager`` places the adapter and
-the camera in different worker processes.
+The module owns physics and actuator state. Process placement and transport
+selection remain blueprint concerns.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import math
 from pathlib import Path
 import threading
@@ -37,12 +36,14 @@ import numpy as np
 from numpy.typing import NDArray
 from pydantic import Field
 import reactivex as rx
+from reactivex.disposable import Disposable
 from scipy.spatial.transform import Rotation as R
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import Out
+from dimos.core.stream import In, Out
 from dimos.hardware.sensors.camera.spec import DepthCameraConfig, DepthCameraHardware
+from dimos.hardware.whole_body.spec import POS_STOP, VEL_STOP
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -51,6 +52,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.simulation.engines.mujoco_engine import (
@@ -58,11 +60,6 @@ from dimos.simulation.engines.mujoco_engine import (
     CameraFrame,
     MujocoEngine,
     RaycastLidarConfig,
-)
-from dimos.simulation.engines.mujoco_shm import (
-    CMD_MODE_PD_TAU,
-    ManipShmWriter,
-    shm_key_from_path,
 )
 from dimos.simulation.engines.robot_sim_binding import RobotSimSpec
 from dimos.simulation.mujoco.constants import LIDAR_RESOLUTION, MAX_HEIGHT, MAX_RANGE, MIN_RANGE
@@ -136,100 +133,96 @@ def _imu_from_mujoco_wxyz(
 
 
 class _WholeBodySimHooks:
-    """Per-step bridge between MuJoCo actuators and whole-body SHM."""
+    """Apply a held motor command and publish the latest physics state."""
 
     def __init__(
         self,
-        shm: ManipShmWriter,
         dof: int,
         *,
+        publish_state: Callable[[JointState], None],
         gripper_idx: int | None = None,
         gripper_ctrl_range: tuple[float, float] = (0.0, 1.0),
         gripper_joint_range: tuple[float, float] = (0.0, 1.0),
     ) -> None:
-        self._shm = shm
         self._dof = dof
+        self._publish_state = publish_state
         self._gripper_idx = gripper_idx
         self._gripper_ctrl_range = gripper_ctrl_range
         self._gripper_joint_range = gripper_joint_range
-        self._latest_pd_pos_target: NDArray[np.float64] | None = None
-        self._latest_pd_kp: NDArray[np.float64] | None = None
-        self._latest_pd_kd: NDArray[np.float64] | None = None
-        self._latest_pd_tau: NDArray[np.float64] | None = None
+        self._lock = threading.Lock()
+        self._latest_command: MotorCommandArray | None = None
+
+    def hold(self, command: MotorCommandArray) -> bool:
+        arrays = (command.q, command.dq, command.kp, command.kd, command.tau)
+        if command.num_joints != self._dof or any(len(values) != self._dof for values in arrays):
+            return False
+        if not all(math.isfinite(value) for values in arrays for value in values):
+            return False
+        with self._lock:
+            self._latest_command = MotorCommandArray(
+                q=command.q,
+                dq=command.dq,
+                kp=command.kp,
+                kd=command.kd,
+                tau=command.tau,
+                timestamp=command.timestamp,
+            )
+        return True
 
     def pre_step(self, engine: MujocoEngine) -> None:
-        shm = self._shm
-        dof = self._dof
+        with self._lock:
+            command = self._latest_command
+        if command is None:
+            return
 
-        pos_cmd = shm.read_position_command(dof)
-        if pos_cmd is not None:
-            if shm.read_command_mode() == CMD_MODE_PD_TAU:
-                self._latest_pd_pos_target = pos_cmd
-            else:
-                engine.write_joint_command(JointState(position=pos_cmd.tolist()))
-
-        vel_cmd = shm.read_velocity_command(dof)
-        if vel_cmd is not None:
-            engine.write_joint_command(JointState(velocity=vel_cmd.tolist()))
-
-        kp_cmd = shm.read_kp_command(dof)
-        if kp_cmd is not None:
-            self._latest_pd_kp = kp_cmd
-        kd_cmd = shm.read_kd_command(dof)
-        if kd_cmd is not None:
-            self._latest_pd_kd = kd_cmd
-        tau_cmd = shm.read_tau_command(dof)
-        if tau_cmd is not None:
-            self._latest_pd_tau = tau_cmd
-
-        if (
-            self._latest_pd_pos_target is not None
-            and self._latest_pd_kp is not None
-            and self._latest_pd_kd is not None
-        ):
-            q = np.asarray(engine.joint_positions[:dof], dtype=np.float64)
-            dq = np.asarray(engine.joint_velocities[:dof], dtype=np.float64)
-            tau_ff = self._latest_pd_tau if self._latest_pd_tau is not None else np.zeros(dof)
-            tau = (
-                self._latest_pd_kp * (self._latest_pd_pos_target - q)
-                + self._latest_pd_kd * (-dq)
-                + tau_ff
+        if any(value != 0.0 for value in (*command.kp, *command.kd)):
+            q = np.asarray(engine.joint_positions[: self._dof], dtype=np.float64)
+            dq = np.asarray(engine.joint_velocities[: self._dof], dtype=np.float64)
+            q_target = np.asarray(command.q, dtype=np.float64)
+            dq_target = np.asarray(
+                [0.0 if value == VEL_STOP else value for value in command.dq],
+                dtype=np.float64,
             )
+            kp = np.asarray(command.kp, dtype=np.float64)
+            kd = np.asarray(command.kd, dtype=np.float64)
+            tau_ff = np.asarray(command.tau, dtype=np.float64)
+            tau = kp * (q_target - q) + kd * (dq_target - dq) + tau_ff
             engine.write_joint_command(JointState(effort=tau.tolist()))
+            return
 
-        if self._gripper_idx is not None:
-            gripper_cmd = shm.read_gripper_command()
-            if gripper_cmd is not None:
-                engine.set_position_target(
-                    self._gripper_idx, self._gripper_joint_to_ctrl(gripper_cmd)
-                )
+        if any(value != POS_STOP for value in command.q):
+            targets = list(command.q)
+            if self._gripper_idx is not None:
+                targets[self._gripper_idx] = self._gripper_joint_to_ctrl(targets[self._gripper_idx])
+            engine.write_joint_command(JointState(position=targets))
+            return
+        if any(value != VEL_STOP for value in command.dq):
+            engine.write_joint_command(JointState(velocity=command.dq))
+            return
+        engine.write_joint_command(JointState(effort=command.tau))
 
     def post_step(self, engine: MujocoEngine) -> None:
-        shm = self._shm
-        shm.write_joint_state(
-            positions=engine.joint_positions,
-            velocities=engine.joint_velocities,
-            efforts=engine.joint_efforts,
+        self._publish_state(
+            JointState(
+                name=engine.joint_names[: self._dof],
+                position=engine.joint_positions[: self._dof],
+                velocity=engine.joint_velocities[: self._dof],
+                effort=engine.joint_efforts[: self._dof],
+            )
         )
-        if self._gripper_idx is not None:
-            positions = engine.joint_positions
-            if self._gripper_idx < len(positions):
-                shm.write_gripper_state(positions[self._gripper_idx])
 
     def clear_latched_commands(self) -> None:
-        self._latest_pd_pos_target = None
-        self._latest_pd_kp = None
-        self._latest_pd_kd = None
-        self._latest_pd_tau = None
+        with self._lock:
+            self._latest_command = None
 
     def _gripper_joint_to_ctrl(self, joint_position: float) -> float:
-        jlo, jhi = self._gripper_joint_range
-        clo, chi = self._gripper_ctrl_range
-        clamped = max(jlo, min(jhi, joint_position))
-        if jhi == jlo:
-            return clo
-        t = (clamped - jlo) / (jhi - jlo)
-        return chi - t * (chi - clo)
+        joint_low, joint_high = self._gripper_joint_range
+        ctrl_low, ctrl_high = self._gripper_ctrl_range
+        clamped = max(joint_low, min(joint_high, joint_position))
+        if joint_high == joint_low:
+            return ctrl_low
+        fraction = (clamped - joint_low) / (joint_high - joint_low)
+        return ctrl_high - fraction * (ctrl_high - ctrl_low)
 
 
 class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
@@ -313,13 +306,7 @@ class MujocoSimModule(
     Module,
     perception.DepthCamera,
 ):
-    """Single Module that owns a MujocoEngine, publishes camera streams, and
-    exposes joint state/commands to a ``ShmMujocoAdapter`` via shared memory.
-
-    The adapter attaches to the same SHM buffers using the MJCF path as the
-    discovery key - no RPC, no globals. From ControlCoordinator's perspective
-    the adapter is an ordinary ``ManipulatorAdapter``; SHM is its transport.
-    """
+    """Connection module that owns MuJoCo physics and exposes typed streams."""
 
     config: MujocoSimModuleConfig
     color_image: Out[Image]
@@ -327,6 +314,8 @@ class MujocoSimModule(
     pointcloud: Out[PointCloud2]
     camera_info: Out[CameraInfo]
     depth_camera_info: Out[CameraInfo]
+    motor_command: In[MotorCommandArray]
+    motor_states: Out[JointState]
     imu: Out[Imu]
     # Floating-base pose for robots whose MJCF has a free joint at the
     # root. Published every step; consumers like the viser viewer use
@@ -337,7 +326,6 @@ class MujocoSimModule(
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._engine: MujocoEngine | None = None
-        self._shm: ManipShmWriter | None = None
         self._sim_hooks: _WholeBodySimHooks | None = None
         self._gripper_idx: int | None = None
         self._gripper_ctrl_range: tuple[float, float] = (0.0, 1.0)
@@ -345,7 +333,7 @@ class MujocoSimModule(
         self._stop_event = threading.Event()
         self._publish_thread: threading.Thread | None = None
         self._camera_info_base: CameraInfo | None = None
-        self._shm_ready_signaled = False
+        self._last_invalid_command_log = 0.0
 
         # IMU sensor slices into MjData.sensordata, resolved once at start.
         # None if the MJCF has no recognized IMU sensors (e.g. arm-only sims).
@@ -402,13 +390,9 @@ class MujocoSimModule(
                 "or config.robot_mjcf (composed scene path) is required"
             )
 
-        # SHM key - adapters derive the same key from the robot/control MJCF path.
-        shm_key_source = self.config.robot_mjcf or self.config.address
-        shm_key = shm_key_from_path(shm_key_source)
-        self._shm = ManipShmWriter(shm_key)
-        self._shm_ready_signaled = False
+        super().start()
 
-        # Build engine with SHM hooks installed.
+        # Build the engine before installing the typed command/state hooks.
         engine_assets: dict[str, bytes] | None = None
         if self.config.inject_legacy_assets:
             # Lazy import: get_assets pulls in mujoco_playground (heavy,
@@ -496,6 +480,11 @@ class MujocoSimModule(
         # Detect gripper (extra joint beyond dof).
         dof = self.config.dof
         joint_names = list(self._engine.joint_names)
+        if len(joint_names) < dof or len(joint_names) > dof + 1:
+            raise ValueError(
+                f"MujocoSimModule controls {dof} arm joints and at most one gripper; "
+                f"model exposes {len(joint_names)} joints"
+            )
         if len(joint_names) > dof:
             ctrl_range = self._engine.get_actuator_ctrl_range(dof)
             joint_range = self._engine.get_joint_range(dof)
@@ -504,7 +493,6 @@ class MujocoSimModule(
             self._gripper_idx = dof
             self._gripper_ctrl_range = ctrl_range
             self._gripper_joint_range = joint_range
-            self._shm.write_gripper_range(*joint_range)
             logger.info(
                 "MujocoSimModule: gripper detected",
                 idx=dof,
@@ -539,17 +527,18 @@ class MujocoSimModule(
             self._imu_base_qpos_slice = None
         self._root_spawn_clearance_z = self._compute_root_spawn_clearance_z()
 
-        # Wire SHM bridge hooks.
+        controlled_dof = len(joint_names)
         self._sim_hooks = _WholeBodySimHooks(
-            self._shm,
-            dof=dof,
+            dof=controlled_dof,
+            publish_state=self.motor_states.publish,
             gripper_idx=self._gripper_idx,
             gripper_ctrl_range=self._gripper_ctrl_range,
             gripper_joint_range=self._gripper_joint_range,
         )
+        self.register_disposable(Disposable(self.motor_command.subscribe(self._on_motor_command)))
         self._engine.set_step_hooks(
             before=self._sim_hooks.pre_step,
-            after=self._publish_shm_and_lcm,
+            after=self._publish_robot_state,
         )
 
         # Start physics (sim thread spawned inside engine.connect()).
@@ -593,9 +582,8 @@ class MujocoSimModule(
             address=self.config.address,
             robot_mjcf=self.config.robot_mjcf,
             scene_xml=self.config.scene_xml,
-            dof=dof,
+            dof=controlled_dof,
             camera=self.config.camera_name,
-            shm_key=shm_key,
         )
 
     def _compose_model(self) -> mujoco.MjModel:
@@ -663,6 +651,8 @@ class MujocoSimModule(
         self._publish_thread = None
 
         errors: list[tuple[str, BaseException]] = []
+        if self._sim_hooks is not None:
+            self._sim_hooks.clear_latched_commands()
         if self._engine is not None:
             try:
                 self._engine.disconnect()
@@ -670,14 +660,6 @@ class MujocoSimModule(
             except Exception as exc:
                 logger.error("engine.disconnect() failed", error=str(exc))
                 errors.append(("engine.disconnect", exc))
-        if self._shm is not None:
-            try:
-                self._shm.signal_stop()
-                self._shm.cleanup()
-                self._shm = None
-            except Exception as exc:
-                logger.error("SHM cleanup failed", error=str(exc))
-                errors.append(("shm.cleanup", exc))
 
         self._sim_hooks = None
         self._camera_info_base = None
@@ -696,6 +678,8 @@ class MujocoSimModule(
         if self._sim_hooks is not None:
             self._sim_hooks.clear_latched_commands()
         applied = engine.request_reset(wait=True)
+        if applied:
+            engine.hold_current_position()
         logger.info("MujocoSimModule: reset requested", applied=applied)
         return applied
 
@@ -726,6 +710,8 @@ class MujocoSimModule(
             spawn_yaw=None if yaw is None else float(yaw),
             wait=True,
         )
+        if applied:
+            engine.hold_current_position()
         logger.info(
             "MujocoSimModule: respawn_at requested",
             x=x,
@@ -756,17 +742,10 @@ class MujocoSimModule(
             return root_z - float(self.config.spawn_z)
         return root_z
 
-    def _publish_shm_and_lcm(self, engine: MujocoEngine) -> None:
-        """Post-step hook: SHM writes + LCM publishes.
-
-        This stays in the module so odom/IMU continue to flow through normal
-        typed ports while the whole-body adapter consumes joint state via SHM.
-        """
+    def _publish_robot_state(self, engine: MujocoEngine) -> None:
+        """Publish the complete motor, base, and IMU observation for one step."""
         if self._sim_hooks is not None:
             self._sim_hooks.post_step(engine)
-        shm = self._shm
-        if shm is None:
-            return
 
         # Odom - when the MJCF has a free-joint root, publish base pose
         # every step.  Without this, downstream consumers (viser viewer,
@@ -799,9 +778,6 @@ class MujocoSimModule(
             and self._imu_accel_slice is None
             and self._imu_base_qpos_slice is None
         ):
-            if not self._shm_ready_signaled:
-                shm.signal_ready(num_joints=len(engine.joint_names), arm_joints=self.config.dof)
-                self._shm_ready_signaled = True
             return
 
         if self._imu_quat_slice is not None:
@@ -822,16 +798,22 @@ class MujocoSimModule(
             accel = (float(a[0]), float(a[1]), float(a[2]))
         else:
             accel = (0.0, 0.0, 0.0)
-        shm.write_imu(quaternion=quat, gyroscope=gyro, accelerometer=accel)
-        # Also publish on the stream port for downstream consumers.
         # MuJoCo reports quaternions as (w,x,y,z); Imu/Quaternion stores (x,y,z,w).
         self.imu.publish(
             _imu_from_mujoco_wxyz(quat, gyro, accel, frame_id="pelvis", ts=time.time())
         )
 
-        if not self._shm_ready_signaled:
-            shm.signal_ready(num_joints=len(engine.joint_names), arm_joints=self.config.dof)
-            self._shm_ready_signaled = True
+    def _on_motor_command(self, command: MotorCommandArray) -> None:
+        hooks = self._sim_hooks
+        if hooks is None or hooks.hold(command):
+            return
+        now = time.monotonic()
+        if now - self._last_invalid_command_log >= 1.0:
+            logger.warning(
+                "MujocoSimModule rejected malformed motor command",
+                num_joints=command.num_joints,
+            )
+            self._last_invalid_command_log = now
 
     def _build_camera_info(self) -> None:
         if self._engine is None:

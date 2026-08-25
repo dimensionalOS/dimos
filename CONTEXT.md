@@ -43,3 +43,21 @@ _Avoid_: Teleoperation behavior, solver implementation
 **IK control context**:
 The persistent inverse-kinematics state owned by one control-task instance for one robot model, controlled-joint selection, and target-frame selection, including its Pink task stack. Stateful Pink tasks are never shared between control-task instances.
 _Avoid_: Planning group, teleoperation session
+
+## Robot connections
+
+**Connection module**:
+The boundary that owns access to a real or simulated robot and presents the same command and observation contract to the rest of DimOS.
+_Avoid_: Simulator adapter, SHM adapter, transport-specific connection
+
+**Held motor command**:
+The latest complete `MotorCommandArray`, atomically replaced when a command arrives and applied by the connection module on every control or physics step until superseded. The held command is ordinary module state, not an IPC mechanism.
+_Avoid_: One-shot command, SHM command slot
+
+**Latest motor observation**:
+The most recent complete `JointState` published by a connection module. Producers publish at their native control or physics rate, consumers atomically replace their local snapshot, and slow consumers do not backpressure or accumulate observations.
+_Avoid_: Motor-state queue, lossless state history
+
+**Port-backed whole-body adapter**:
+A transport-agnostic adapter constructed by a `ControlCoordinator` subclass from that module's typed command and observation ports. It preserves the coordinator's synchronous `WholeBodyAdapter` interface while leaving stream wiring and transport selection to the blueprint.
+_Avoid_: Zenoh adapter, LCM adapter, topic-owning adapter
