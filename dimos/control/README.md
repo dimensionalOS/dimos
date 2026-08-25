@@ -232,6 +232,10 @@ deployments give each instance its own port via `stream_bind`.
 `cartesian_command`, `ee_twist_command` — are deployment I/O: a deployment
 subclasses the coordinator and annotates one port per consuming task instance:
 
+`gripper_command` carries a normalized `Float32` opening: `0.0` is fully
+closed and `1.0` is fully open. Input devices translate buttons and triggers
+to this scale before publishing.
+
 ```python
 class _Go2Coordinator(PathFollowingCoordinator):
     go2_joints: Out[JointState]

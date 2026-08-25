@@ -164,6 +164,9 @@ def test_seeded_cards_load_into_registry() -> None:
     eef_twist = control_task_registry.bindings_for("eef_twist")
     assert eef_twist.consumes == (
         StreamBinding("ee_twist_command", "on_ee_twist_command", Routing.DIRECT),
+    )
+    gripper = control_task_registry.bindings_for("gripper")
+    assert gripper.consumes == (
         StreamBinding("gripper_command", "on_gripper_command", Routing.BROADCAST),
     )
     trajectory = control_task_registry.bindings_for("trajectory")

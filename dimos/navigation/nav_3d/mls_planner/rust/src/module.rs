@@ -15,9 +15,8 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::edges::{edges_to_segments, PlannerGraph};
 use crate::mls_planner::{Config, Planner, RegionBounds};
-use crate::voxel::surface_point_xyz;
+use crate::voxel::{surface_point_xyz, VoxelKey};
 use dimos_module::{error_throttled, warn_throttled, Input, Module, Output};
 use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::Path;
@@ -190,7 +189,7 @@ struct Worker {
 
 impl Worker {
     async fn run(self) {
-        let mut planner = Planner::default();
+        let mut planner = Planner::new(self.config.worker_threads);
         let mut last_path_at: Option<Instant> = None;
         let mut last_viz_at: Option<Instant> = None;
         loop {
@@ -311,7 +310,7 @@ impl Worker {
         let node_points: Vec<Xyz> = graph.nodes.iter().map(|n| n.pos).collect();
         let node_cloud = build_pc2_xyz(&node_points, frame, now());
 
-        let edges = build_segments_path(graph, voxel_size, frame, now());
+        let edges = build_segments_path(planner.edge_segments(), voxel_size, frame, now());
         (surface, node_cloud, edges)
     }
 
@@ -448,8 +447,12 @@ fn build_path_from_waypoints(waypoints: &[(f32, f32, f32)], frame_id: &str, stam
 
 /// Emit edges as alternating PoseStamped pairs with orientation.w carrying
 /// the per-edge cost.
-fn build_segments_path(plg: &PlannerGraph, voxel_size: f32, frame_id: &str, stamp: Time) -> Path {
-    let segments = edges_to_segments(&plg.cells, &plg.cell_state, &plg.node_edges);
+fn build_segments_path(
+    segments: Vec<(VoxelKey, VoxelKey, f32)>,
+    voxel_size: f32,
+    frame_id: &str,
+    stamp: Time,
+) -> Path {
     let mut poses: Vec<PoseStamped> = Vec::with_capacity(segments.len() * 2);
     for (a, b, cost) in segments {
         let pa = surface_point_xyz(a.0, a.1, a.2, voxel_size);

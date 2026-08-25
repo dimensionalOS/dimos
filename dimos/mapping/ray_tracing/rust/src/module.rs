@@ -15,18 +15,16 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use crate::voxel_ray_tracer::{
-    batch_local_bounds, emit_points, update_map, Config, LocalBounds, VoxelMap,
-};
+use crate::mapper::{Mapper, Pose};
+use crate::voxel_ray_tracer::Config;
 use dimos_module::{error_throttled, warn_throttled, Input, Module, Output};
-use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion};
+use lcm_msgs::geometry_msgs::{Point, Pose as PoseMsg, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
-use nalgebra::{UnitQuaternion, Vector3};
 
 #[derive(Module)]
-#[module(name = "ray_tracing")]
+#[module(name = "ray_tracing", setup = init_mapper)]
 pub struct RayTracingVoxelMap {
     #[input(decode = PointCloud2::decode, handler = on_lidar)]
     lidar: Input<PointCloud2>,
@@ -40,6 +38,9 @@ pub struct RayTracingVoxelMap {
     #[output(encode = PointCloud2::encode)]
     local_map: Output<PointCloud2>,
 
+    #[output(encode = PointCloud2::encode)]
+    local_map_fine: Output<PointCloud2>,
+
     // Cylinder bounds of the local map. Position is the center, orientation holds
     // radius, z_min, z_max. Stamped like local_map so consumers pair them.
     #[output(encode = PoseStamped::encode)]
@@ -48,14 +49,16 @@ pub struct RayTracingVoxelMap {
     #[config]
     config: Config,
 
-    map: VoxelMap,
-    poses: VecDeque<(f64, Vector3<f32>, UnitQuaternion<f32>)>,
-    frame_count: u32,
-    batch_points: Vec<(f32, f32, f32)>,
-    batch_origins: Vec<(f32, f32, f32)>,
+    // Built once at startup by init_mapper. All mapping state lives inside.
+    mapper: Option<Mapper>,
+    poses: VecDeque<(f64, Pose)>,
 }
 
 impl RayTracingVoxelMap {
+    async fn init_mapper(&mut self) {
+        self.mapper = Some(Mapper::new(self.config.clone()));
+    }
+
     async fn on_odometry(&mut self, msg: Odometry) {
         let p = &msg.pose.pose.position;
         let q = &msg.pose.pose.orientation;
@@ -63,10 +66,10 @@ impl RayTracingVoxelMap {
             &mut self.poses,
             (
                 time_secs(&msg.header.stamp),
-                Vector3::new(p.x as f32, p.y as f32, p.z as f32),
-                UnitQuaternion::from_quaternion(nalgebra::Quaternion::new(
-                    q.w as f32, q.x as f32, q.y as f32, q.z as f32,
-                )),
+                Pose {
+                    position: (p.x as f32, p.y as f32, p.z as f32),
+                    orientation: (q.x as f32, q.y as f32, q.z as f32, q.w as f32),
+                },
             ),
         );
     }
@@ -74,7 +77,7 @@ impl RayTracingVoxelMap {
     async fn on_lidar(&mut self, msg: PointCloud2) {
         // Register with the pose nearest the cloud stamp, never a stale one.
         let stamp = time_secs(&msg.header.stamp);
-        let Some((translation, rotation)) = nearest_pose(&self.poses, stamp) else {
+        let Some(pose) = nearest_pose(&self.poses, stamp) else {
             // An empty buffer means no odometry is arriving at all; a large gap
             // means it is arriving but cannot be paired.
             let gap = self
@@ -90,9 +93,6 @@ impl RayTracingVoxelMap {
             );
             return;
         };
-        let origin = (translation.x, translation.y, translation.z);
-
-        let voxel_size = self.config.voxel_size;
 
         let points = match extract_xyz(&msg) {
             Ok(p) => p,
@@ -109,57 +109,37 @@ impl RayTracingVoxelMap {
             return;
         }
 
-        // Transform sensor-frame points into the world by the odom pose.
-        let rot = rotation.to_rotation_matrix();
-        let points: Vec<(f32, f32, f32)> = points
-            .iter()
-            .map(|&(x, y, z)| {
-                let p = rot * Vector3::new(x, y, z) + translation;
-                (p.x, p.y, p.z)
-            })
-            .collect();
+        let mapper = self.mapper.as_mut().expect("built in setup");
+        mapper.add_frame(points, pose);
+
+        let region = mapper.local_due().then(|| mapper.take_local_bounds());
+        let cylinder = region.map(|c| c.bounds());
+
+        let global_points = mapper.global_due().then(|| mapper.global_points());
+        let local_points = cylinder.as_ref().map(|cyl| mapper.local_points(cyl));
+        let fine_points = cylinder.as_ref().and_then(|cyl| mapper.fine_points(cyl));
 
         let out_frame_id = "world";
+        let stamp = msg.header.stamp;
 
-        let live = update_map(&mut self.map, origin, &points, &self.config);
-
-        // The batch only feeds the local region bounds, so skip it when the local
-        // map is disabled.
-        if self.config.emit_every > 0 {
-            self.batch_points.extend_from_slice(&points);
-            self.batch_origins.push(origin);
-        }
-
-        self.frame_count += 1;
-        let local_due = emit_due(self.frame_count, self.config.emit_every);
-
-        let cylinder = if local_due {
-            let margin = self.config.shadow_depth + voxel_size;
-            let (cx, cy, radius, z_min, z_max) = batch_local_bounds(
-                &self.batch_points,
-                &self.batch_origins,
-                self.config.region_percentile,
-                margin,
-            );
-            self.batch_points.clear();
-            self.batch_origins.clear();
-
+        // Bounds pair with local_map by stamp, so publish them on its cadence.
+        if let Some(c) = region {
             let bounds_msg = PoseStamped {
                 header: Header {
                     seq: 0,
-                    stamp: msg.header.stamp.clone(),
+                    stamp: stamp.clone(),
                     frame_id: out_frame_id.to_string(),
                 },
-                pose: Pose {
+                pose: PoseMsg {
                     position: Point {
-                        x: cx as f64,
-                        y: cy as f64,
+                        x: c.cx as f64,
+                        y: c.cy as f64,
                         z: 0.0,
                     },
                     orientation: Quaternion {
-                        x: radius as f64,
-                        y: z_min as f64,
-                        z: z_max as f64,
+                        x: c.radius as f64,
+                        y: c.z_min as f64,
+                        z: c.z_max as f64,
                         w: 0.0,
                     },
                 },
@@ -171,37 +151,21 @@ impl RayTracingVoxelMap {
                     "Region bounds failed to publish",
                 );
             }
-            Some(LocalBounds {
-                origin_x: cx,
-                origin_y: cy,
-                r_xy_max_sq: radius * radius,
-                z_min,
-                z_max,
-            })
-        } else {
-            None
-        };
+        }
 
-        let global_due = emit_due(self.frame_count, self.config.global_emit_every);
-
-        let stamp = msg.header.stamp;
-        let support_min = self.config.support_min;
-        if global_due {
-            let points = emit_points(&self.map, voxel_size, None, 0, &live);
+        if let Some(points) = global_points {
             let global = points_to_cloud(&points, out_frame_id, stamp.clone());
             publish_cloud(&self.global_map, &global).await;
         }
-        if let Some(cyl) = &cylinder {
-            let points = emit_points(&self.map, voxel_size, Some(cyl), support_min, &live);
-            let local = points_to_cloud(&points, out_frame_id, stamp);
+        if let Some(points) = local_points {
+            let local = points_to_cloud(&points, out_frame_id, stamp.clone());
             publish_cloud(&self.local_map, &local).await;
         }
+        if let Some(points) = fine_points {
+            let fine = points_to_cloud(&points, out_frame_id, stamp);
+            publish_cloud(&self.local_map_fine, &fine).await;
+        }
     }
-}
-
-/// Whether the Nth-frame output fires this frame. Zero disables it.
-fn emit_due(frame_count: u32, every: u32) -> bool {
-    every != 0 && frame_count.is_multiple_of(every)
 }
 
 /// Odometry samples kept for cloud-stamp matching.
@@ -215,10 +179,7 @@ fn time_secs(t: &Time) -> f64 {
 }
 
 /// Append a pose sample, evicting the oldest to keep the buffer bounded.
-fn push_pose(
-    poses: &mut VecDeque<(f64, Vector3<f32>, UnitQuaternion<f32>)>,
-    sample: (f64, Vector3<f32>, UnitQuaternion<f32>),
-) {
+fn push_pose(poses: &mut VecDeque<(f64, Pose)>, sample: (f64, Pose)) {
     poses.push_back(sample);
     if poses.len() > POSE_BUFFER_LEN {
         poses.pop_front();
@@ -226,17 +187,14 @@ fn push_pose(
 }
 
 /// The buffered pose with the stamp nearest the cloud stamp, within tolerance.
-fn nearest_pose(
-    poses: &VecDeque<(f64, Vector3<f32>, UnitQuaternion<f32>)>,
-    stamp: f64,
-) -> Option<(Vector3<f32>, UnitQuaternion<f32>)> {
+fn nearest_pose(poses: &VecDeque<(f64, Pose)>, stamp: f64) -> Option<Pose> {
     let mut best_gap = f64::INFINITY;
     let mut best = None;
-    for &(t, v, q) in poses {
+    for &(t, pose) in poses {
         let gap = (t - stamp).abs();
         if gap < best_gap {
             best_gap = gap;
-            best = Some((v, q));
+            best = Some(pose);
         }
     }
     if best_gap <= POSE_MATCH_TOLERANCE_S {
@@ -349,12 +307,12 @@ fn make_cloud(data: Vec<u8>, n: i32, frame_id: &str, stamp: Time) -> PointCloud2
     }
 }
 
-/// Pack selected points into an LCM cloud message.
-fn points_to_cloud(points: &[(f32, f32, f32)], frame_id: &str, stamp: Time) -> PointCloud2 {
-    let mut data = Vec::with_capacity(points.len() * 16);
+/// Pack flat (x, y, z) triples into an LCM cloud message.
+fn points_to_cloud(points: &[f32], frame_id: &str, stamp: Time) -> PointCloud2 {
+    let mut data = Vec::with_capacity((points.len() / 3) * 16);
     let mut n: i32 = 0;
-    for &(x, y, z) in points {
-        write_point(&mut data, &mut n, x, y, z);
+    for p in points.as_chunks::<3>().0 {
+        write_point(&mut data, &mut n, p[0], p[1], p[2]);
     }
     make_cloud(data, n, frame_id, stamp)
 }
@@ -373,17 +331,51 @@ async fn publish_cloud(out: &Output<PointCloud2>, cloud: &PointCloud2) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::voxel_ray_tracer::{Voxel, VoxelKey};
+    use crate::voxel_ray_tracer::{emit_points, update_map, LocalBounds, VoxelKey, VoxelMap};
     use ahash::AHashSet;
+
+    /// Build a map whose listed voxels are healthy, through the public API.
+    fn map_with_healthy(keys: &[VoxelKey]) -> VoxelMap {
+        let cfg = Config {
+            voxel_size: 1.0,
+            fine_divisor: 0,
+            max_range: 1000.0,
+            ray_subsample: 1,
+            shadow_depth: 0.0,
+            grace_depth: 0.0,
+            min_health: 0,
+            max_health: 1,
+            graze_cos: 0.5,
+            support_min: 0,
+            emit_every: 1,
+            global_emit_every: 1,
+            region_percentile: 95.0,
+            worker_threads: 4,
+        };
+        let mut map = VoxelMap::default();
+        let pts: Vec<(f32, f32, f32)> = keys
+            .iter()
+            .map(|&(x, y, z)| (x as f32 + 0.5, y as f32 + 0.5, z as f32 + 0.5))
+            .collect();
+        update_map(&mut map, (0.25, 0.25, 0.25), &pts, &cfg);
+        map
+    }
+
+    fn pose_at(x: f32) -> Pose {
+        Pose {
+            position: (x, 0.0, 0.0),
+            orientation: (0.0, 0.0, 0.0, 1.0),
+        }
+    }
 
     #[test]
     fn nearest_pose_picks_by_stamp_and_gates_on_tolerance() {
-        let mut poses: VecDeque<(f64, Vector3<f32>, UnitQuaternion<f32>)> = VecDeque::new();
+        let mut poses: VecDeque<(f64, Pose)> = VecDeque::new();
         for (t, x) in [(1.0, 1.0f32), (2.0, 2.0), (3.0, 3.0)] {
-            poses.push_back((t, Vector3::new(x, 0.0, 0.0), UnitQuaternion::identity()));
+            poses.push_back((t, pose_at(x)));
         }
-        let (v, _) = nearest_pose(&poses, 2.04).expect("within tolerance");
-        assert_eq!(v.x, 2.0, "nearest stamp wins, not the latest");
+        let pose = nearest_pose(&poses, 2.04).expect("within tolerance");
+        assert_eq!(pose.position.0, 2.0, "nearest stamp wins, not the latest");
         assert!(
             nearest_pose(&poses, 3.5).is_none(),
             "stale poses must not register a cloud"
@@ -393,12 +385,9 @@ mod tests {
 
     #[test]
     fn push_pose_evicts_oldest_beyond_capacity() {
-        let mut poses: VecDeque<(f64, Vector3<f32>, UnitQuaternion<f32>)> = VecDeque::new();
+        let mut poses: VecDeque<(f64, Pose)> = VecDeque::new();
         for i in 0..(POSE_BUFFER_LEN + 10) {
-            push_pose(
-                &mut poses,
-                (i as f64, Vector3::zeros(), UnitQuaternion::identity()),
-            );
+            push_pose(&mut poses, (i as f64, pose_at(0.0)));
         }
         assert_eq!(
             poses.len(),
@@ -431,22 +420,8 @@ mod tests {
     }
 
     #[test]
-    fn emit_due_fires_every_nth_frame_and_zero_disables() {
-        assert!(emit_due(1, 1));
-        assert!(emit_due(2, 1));
-        assert!(!emit_due(1, 2));
-        assert!(emit_due(2, 2));
-        assert!(!emit_due(5, 3));
-        assert!(emit_due(6, 3));
-        for n in 1..10 {
-            assert!(!emit_due(n, 0));
-        }
-    }
-
-    #[test]
     fn local_map_includes_voxel_inside_cylinder() {
-        let mut map = VoxelMap::default();
-        map.voxels.insert((0, 0, 0), Voxel::with_health(1));
+        let map = map_with_healthy(&[(0, 0, 0)]);
         let live: AHashSet<VoxelKey> = AHashSet::new();
         let cylinder = LocalBounds {
             origin_x: 0.0,
@@ -471,8 +446,7 @@ mod tests {
 
     #[test]
     fn local_map_excludes_voxel_outside_radius() {
-        let mut map = VoxelMap::default();
-        map.voxels.insert((5, 0, 0), Voxel::with_health(1));
+        let map = map_with_healthy(&[(5, 0, 0)]);
         let live: AHashSet<VoxelKey> = AHashSet::new();
         let cylinder = LocalBounds {
             origin_x: 0.0,
@@ -498,8 +472,7 @@ mod tests {
 
     #[test]
     fn local_map_excludes_voxel_outside_z_range() {
-        let mut map = VoxelMap::default();
-        map.voxels.insert((0, 0, 5), Voxel::with_health(1));
+        let map = map_with_healthy(&[(0, 0, 5)]);
         let live: AHashSet<VoxelKey> = AHashSet::new();
         let cylinder = LocalBounds {
             origin_x: 0.0,
@@ -556,13 +529,14 @@ mod tests {
     fn local_map_applies_support_min() {
         // The live local cloud must honor support_min, so an isolated healthy
         // voxel is dropped while a dense patch survives. Live voxels bypass it.
-        let mut map = VoxelMap::default();
+        let mut keys: Vec<VoxelKey> = Vec::new();
         for x in 0..3 {
             for y in 0..3 {
-                map.voxels.insert((x, y, 0), Voxel::with_health(1));
+                keys.push((x, y, 0));
             }
         }
-        map.voxels.insert((20, 0, 0), Voxel::with_health(1));
+        keys.push((20, 0, 0));
+        let map = map_with_healthy(&keys);
         let mut live: AHashSet<VoxelKey> = AHashSet::new();
         live.insert((25, 0, 0));
         let cylinder = LocalBounds {

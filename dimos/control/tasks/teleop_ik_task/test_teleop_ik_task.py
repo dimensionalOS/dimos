@@ -15,7 +15,6 @@
 """Behavior tests for unified single- and two-hand Quest teleoperation."""
 
 from pathlib import Path
-from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -55,14 +54,10 @@ def _robot_model() -> RobotModelConfig:
 def _binding(
     hand: str,
     frame: str,
-    gripper_joint: str | None = None,
 ) -> TeleopHandBinding:
     return TeleopHandBinding(
         hand=cast("OperatorHand", hand),
         target_frame=frame,
-        gripper_joint=gripper_joint,
-        gripper_open_position=1.0,
-        gripper_closed_position=0.0,
     )
 
 
@@ -105,13 +100,10 @@ def _buttons(
     *,
     left: bool = False,
     right: bool = False,
-    left_trigger: float = 0.0,
-    right_trigger: float = 0.0,
 ) -> Buttons:
     buttons = Buttons()
     buttons.left_primary = left
     buttons.right_primary = right
-    buttons.pack_analog_triggers(left_trigger, right_trigger)
     return buttons
 
 
@@ -149,13 +141,6 @@ class _CustomPoseTargetSolver(PinkPoseTargetSolver):
         (
             (_binding("left", "tool"), _binding("right", "tool")),
             "unique target frames",
-        ),
-        (
-            (
-                _binding("left", "left_tool", "robot/gripper"),
-                _binding("right", "right_tool", "robot/gripper"),
-            ),
-            "unique gripper joints",
         ),
     ],
 )
@@ -348,7 +333,7 @@ def test_fresh_deadman_keeps_pose_stream_active(mocker: MockerFixture) -> None:
     assert task.is_active()
 
 
-def test_bimanual_step_contains_both_targets_and_grippers(
+def test_bimanual_step_contains_both_targets(
     mocker: MockerFixture,
 ) -> None:
     solver = _solver(mocker)
@@ -356,16 +341,13 @@ def test_bimanual_step_contains_both_targets_and_grippers(
         "quest",
         _config(
             (
-                _binding("left", "left_tool", "robot/left_gripper"),
-                _binding("right", "right_tool", "robot/right_gripper"),
+                _binding("left", "left_tool"),
+                _binding("right", "right_tool"),
             )
         ),
         solver=solver,
     )
-    task.on_teleop_buttons(
-        _buttons(left=True, right=True, left_trigger=0.25, right_trigger=0.75),
-        1.0,
-    )
+    task.on_teleop_buttons(_buttons(left=True, right=True), 1.0)
     task.on_left_cartesian_command(_pose(0.1), 1.0)
     task.on_right_cartesian_command(_pose(-0.1), 1.0)
 
@@ -376,38 +358,7 @@ def test_bimanual_step_contains_both_targets_and_grippers(
         "left_tool",
         "right_tool",
     }
-    assert output.joint_names == [
-        "robot/left",
-        "robot/right",
-        "robot/left_gripper",
-        "robot/right_gripper",
-    ]
-    assert output.positions is not None
-    assert output.positions[2:] == pytest.approx([0.75, 0.25], abs=0.01)
-
-
-def test_factory_rejects_gripper_missing_from_hardware() -> None:
-    cfg = TaskConfig(
-        name="quest",
-        type="teleop_ik",
-        joint_names=["robot/left", "robot/right"],
-        params={
-            "robot_model": _robot_model(),
-            "bindings": [
-                {
-                    "hand": "left",
-                    "target_frame": "left_tool",
-                    "gripper_joint": "robot/missing_gripper",
-                }
-            ],
-        },
-    )
-
-    with pytest.raises(ValueError, match="unknown gripper"):
-        create_task(
-            cfg,
-            hardware={"robot": SimpleNamespace(joint_names=["robot/left", "robot/right"])},
-        )
+    assert output.joint_names == ["robot/left", "robot/right"]
 
 
 def test_factory_constructs_plain_pose_target_solver_by_default(

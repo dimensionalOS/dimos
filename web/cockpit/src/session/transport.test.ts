@@ -36,6 +36,7 @@ function makeFakeWt({ readyFails = false, readyHangs = false } = {}): FakeWt {
     close: vi.fn(),
     createBidirectionalStream: () => Promise.reject(new Error("not used in transport tests")),
     incomingUnidirectionalStreams: new ReadableStream(),
+    datagrams: { writable: new WritableStream() },
     resolveClosed,
     rejectClosed,
   };

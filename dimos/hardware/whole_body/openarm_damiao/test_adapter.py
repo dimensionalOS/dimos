@@ -72,6 +72,17 @@ def test_openarm_joint_order_matches_hardware_component(
     assert list(openarm_adapter.joint_names) == OPENARM_JOINTS
 
 
+def test_openarm_declares_local_normalized_gripper_limits(
+    openarm_adapter: OpenArmDamiaoAdapter,
+) -> None:
+    limits = openarm_adapter.get_limits()
+
+    arm_count = OPENARM_DOF * 2
+    assert limits.position_lower == [*([None] * arm_count), 0.0, 0.0]
+    assert limits.position_upper == [*([None] * arm_count), 1.0, 1.0]
+    assert limits.velocity_max == [None] * len(OPENARM_JOINTS)
+
+
 @pytest.mark.self_hosted
 def test_openarm_feedback_limits_match_urdf_joint_limits(
     openarm_adapter: OpenArmDamiaoAdapter,

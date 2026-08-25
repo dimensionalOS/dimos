@@ -56,3 +56,13 @@ def test_openyam_topology_connects_arm_and_gripper(
     assert isinstance(robot["gripper"], can_motor_control.Gripper)
     mocker.patch.object(DamiaoWholeBodyAdapter, "_load_kinematic_model")
     assert openyam_adapter.connect()
+
+
+def test_openyam_declares_only_its_local_gripper_position_limits(
+    openyam_adapter: OpenYamDamiaoAdapter,
+) -> None:
+    limits = openyam_adapter.get_limits()
+
+    assert limits.position_lower == [*([None] * OPENYAM_DOF), 0.0]
+    assert limits.position_upper == [*([None] * OPENYAM_DOF), 1.0]
+    assert limits.velocity_max == [None] * (OPENYAM_DOF + 1)

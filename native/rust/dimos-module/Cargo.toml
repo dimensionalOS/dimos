@@ -17,6 +17,7 @@ approx = "0.5"
 bytemuck = { version = "1", features = ["extern_crate_alloc"] }
 num-rational = { version = "0.4", default-features = false, features = ["num-bigint-std", "std"] }
 num-traits = { version = "0.2", features = ["libm"] }
+rayon = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "io-std", "io-util"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

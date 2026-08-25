@@ -592,6 +592,7 @@ dependencies = [
  "nalgebra 0.35.0",
  "num-rational",
  "num-traits",
+ "rayon",
  "serde",
  "serde_json",
  "tokio",
@@ -644,7 +645,6 @@ dependencies = [
 name = "dimos-voxel-ray-tracing-py"
 version = "0.1.0"
 dependencies = [
- "ahash",
  "dimos-voxel-ray-tracing",
  "numpy",
  "pyo3",

@@ -48,11 +48,10 @@ keyboard_teleop_a1z = autoconnect(
                 robot_model=_a1z_model,
             ),
             TaskConfig(
-                name="servo_gripper",
-                type="servo",
+                name="arm_gripper",
+                type="gripper",
                 joint_names=["arm/gripper"],
                 priority=20,
-                params={"timeout": 0.0, "default_positions": [0.0]},
             ),
             trajectory_task(_a1z_keyboard_hw, priority=20),
         ],
@@ -69,6 +68,7 @@ _a1z_quest_model = make_a1z_model_config()
 
 coordinator_teleop_a1z = autoconnect(
     TeleopControlCoordinator.blueprint(
+        instance_name="ControlCoordinator",
         hardware=[_a1z_quest_hw],
         tasks=[
             teleop_ik_task(
@@ -79,13 +79,17 @@ coordinator_teleop_a1z = autoconnect(
                     {
                         "hand": "left",
                         "target_frame": _a1z_quest_model.end_effector_link,
-                        "gripper_joint": _a1z_quest_hw.gripper_joints[0],
-                        "gripper_open_position": 1.0,
-                        "gripper_closed_position": 0.0,
                     }
                 ],
                 priority=20,
                 params={"max_joint_velocity_rad_s": 2.0},
+            ),
+            TaskConfig(
+                name="arm_gripper",
+                type="gripper",
+                joint_names=["arm/gripper"],
+                priority=20,
+                stream_bind={"gripper_command": "left_gripper_command"},
             ),
             trajectory_task(_a1z_quest_hw),
         ],

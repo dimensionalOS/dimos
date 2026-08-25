@@ -38,6 +38,10 @@ def _quest_tasks(blueprint: Blueprint) -> list[TaskConfig]:
     return [task for task in _coordinator_tasks(blueprint) if task.type == "teleop_ik"]
 
 
+def _gripper_tasks(blueprint: Blueprint) -> list[TaskConfig]:
+    return [task for task in _coordinator_tasks(blueprint) if task.type == "gripper"]
+
+
 def _binding(task: TaskConfig) -> TeleopBinding:
     bindings = task.params["bindings"]
     assert len(bindings) == 1
@@ -52,9 +56,15 @@ def test_single_arm_blueprint_uses_one_frame_binding_and_right_stream() -> None:
     assert binding["hand"] == "right"
     assert binding["target_frame"] == "link_tcp"
     assert tasks[0].params["robot_model"].name == "arm"
+    gripper = _gripper_tasks(teleop_quest_xarm7)[0]
+    assert gripper.stream_bind == {"gripper_command": "right_gripper_command"}
     assert (
         teleop_quest_xarm7.remapping_map[(ArmTeleopModule.name, "right_controller_output")]
         == "right_cartesian_command"
+    )
+    assert (
+        teleop_quest_xarm7.remapping_map[(ArmTeleopModule.name, "right_gripper_command")]
+        == "right_gripper_command"
     )
 
 
@@ -80,6 +90,9 @@ def test_mixed_arm_blueprint_keeps_two_independent_one_binding_tasks() -> None:
         "target_frame": "gripper_base",
     }
     assert by_name["teleop_piper"].params["robot_model"].name == "piper_arm"
+    grippers = {task.name: task for task in _gripper_tasks(teleop_quest_dual)}
+    assert grippers["xarm_arm_gripper"].stream_bind == {"gripper_command": "left_gripper_command"}
+    assert grippers["piper_arm_gripper"].stream_bind == {"gripper_command": "right_gripper_command"}
     assert (
         teleop_quest_dual.remapping_map[(ArmTeleopModule.name, "left_controller_output")]
         == "left_cartesian_command"

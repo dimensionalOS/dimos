@@ -94,7 +94,7 @@
           },
           {
             "id": "drive",
-            "kind": "teleop",
+            "kind": "joystick",
             "channels": []
           },
           {
@@ -165,7 +165,7 @@
           },
           {
             "id": "drive",
-            "kind": "teleop",
+            "kind": "joystick",
             "title": "",
             "channels": [],
             "params": {}
@@ -1319,6 +1319,221 @@
       "error": "invalid_map2d_panel"
     },
     {
+      "name": "teleop_panel_valid",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "tele_cmd_vel",
+            "dir": "tx",
+            "encoding": "twist.json.v1",
+            "delivery": "latest",
+            "maxHz": 15.5,
+            "params": {
+              "maxLinear": 0.85,
+              "maxAngular": 1.5,
+              "boost": 2.5,
+              "watchdogMs": 300.5
+            }
+          }
+        ],
+        "panels": [
+          {
+            "id": "drive",
+            "kind": "teleop",
+            "channels": [
+              "tele_cmd_vel"
+            ]
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "tele_cmd_vel",
+            "dir": "tx",
+            "encoding": "twist.json.v1",
+            "delivery": "latest",
+            "maxHz": 15.5,
+            "params": {
+              "maxLinear": 0.85,
+              "maxAngular": 1.5,
+              "boost": 2.5,
+              "watchdogMs": 300.5
+            }
+          }
+        ],
+        "panels": [
+          {
+            "id": "drive",
+            "kind": "teleop",
+            "title": "",
+            "channels": [
+              "tele_cmd_vel"
+            ],
+            "params": {}
+          }
+        ],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
+      "name": "teleop_panel_no_channel",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "tele_cmd_vel",
+            "dir": "tx",
+            "encoding": "twist.json.v1",
+            "delivery": "latest",
+            "maxHz": 15.5,
+            "params": {
+              "maxLinear": 0.85,
+              "maxAngular": 1.5,
+              "boost": 2.5,
+              "watchdogMs": 300.5
+            }
+          }
+        ],
+        "panels": [
+          {
+            "id": "drive",
+            "kind": "teleop",
+            "channels": []
+          }
+        ]
+      },
+      "error": "invalid_teleop_panel"
+    },
+    {
+      "name": "teleop_panel_two_channels",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "tele_cmd_vel",
+            "dir": "tx",
+            "encoding": "twist.json.v1",
+            "delivery": "latest",
+            "maxHz": 15.5,
+            "params": {
+              "maxLinear": 0.85,
+              "maxAngular": 1.5,
+              "boost": 2.5,
+              "watchdogMs": 300.5
+            }
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "drive",
+            "kind": "teleop",
+            "channels": [
+              "tele_cmd_vel",
+              "odom"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_teleop_panel"
+    },
+    {
+      "name": "teleop_panel_rx_channel",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "tele_cmd_vel",
+            "dir": "rx",
+            "encoding": "twist.json.v1",
+            "delivery": "latest",
+            "maxHz": 15.5,
+            "params": {
+              "maxLinear": 0.85,
+              "maxAngular": 1.5,
+              "boost": 2.5,
+              "watchdogMs": 300.5
+            }
+          }
+        ],
+        "panels": [
+          {
+            "id": "drive",
+            "kind": "teleop",
+            "channels": [
+              "tele_cmd_vel"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_teleop_panel"
+    },
+    {
+      "name": "teleop_panel_wrong_encoding",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "dir": "tx"
+          }
+        ],
+        "panels": [
+          {
+            "id": "drive",
+            "kind": "teleop",
+            "channels": [
+              "odom"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_teleop_panel"
+    },
+    {
+      "name": "teleop_panel_wrong_delivery",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "tele_cmd_vel",
+            "dir": "tx",
+            "encoding": "twist.json.v1",
+            "delivery": "reliable",
+            "maxHz": 15.5,
+            "params": {
+              "maxLinear": 0.85,
+              "maxAngular": 1.5,
+              "boost": 2.5,
+              "watchdogMs": 300.5
+            }
+          }
+        ],
+        "panels": [
+          {
+            "id": "drive",
+            "kind": "teleop",
+            "channels": [
+              "tele_cmd_vel"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_teleop_panel"
+    },
+    {
       "name": "layout_single_panel",
       "data": {
         "version": 1,
@@ -1501,7 +1716,7 @@
           },
           {
             "id": "drive",
-            "kind": "teleop",
+            "kind": "joystick",
             "channels": []
           }
         ],
@@ -1562,7 +1777,7 @@
           },
           {
             "id": "drive",
-            "kind": "teleop",
+            "kind": "joystick",
             "title": "",
             "channels": [],
             "params": {}

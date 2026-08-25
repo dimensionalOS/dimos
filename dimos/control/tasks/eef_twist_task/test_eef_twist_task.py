@@ -28,7 +28,6 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.Bool import Bool
 from dimos.robot.assets.model import RobotModel
 
 
@@ -56,7 +55,6 @@ def _solver(mocker: MockerFixture) -> PinkPoseTargetSolver:
 def _config(
     *,
     target_frames: tuple[str, ...] = ("tool",),
-    gripper: bool = False,
 ) -> EEFTwistTaskConfig:
     return EEFTwistTaskConfig(
         joint_names=("arm/joint1", "arm/joint2"),
@@ -64,19 +62,14 @@ def _config(
         target_frames=target_frames,
         timeout=0.0,
         command_timeout=0.3,
-        gripper_joint="arm/gripper" if gripper else None,
-        gripper_open_pos=0.8,
-        gripper_closed_pos=0.1,
     )
 
 
-def _task(
-    mocker: MockerFixture, *, gripper: bool = False
-) -> tuple[EEFTwistTask, PinkPoseTargetSolver]:
+def _task(mocker: MockerFixture) -> tuple[EEFTwistTask, PinkPoseTargetSolver]:
     solver = _solver(mocker)
     task = EEFTwistTask(
         "eef",
-        _config(gripper=gripper),
+        _config(),
         solver=solver,
     )
     return task, solver
@@ -143,18 +136,6 @@ def test_stale_twist_stops_motion_without_dropping_hold(mocker: MockerFixture) -
     assert output is not None
     target = solver.step.call_args.args[0]["tool"]
     assert target.position.x == pytest.approx(0.001)
-
-
-def test_gripper_is_claimed_and_appended_to_joint_output(mocker: MockerFixture) -> None:
-    task, _ = _task(mocker, gripper=True)
-    task.on_gripper_command(Bool(True), t_now=1.0)
-
-    output = task.compute(_state())
-
-    assert output is not None
-    assert task.claim().joints == frozenset({"arm/joint1", "arm/joint2", "arm/gripper"})
-    assert output.joint_names == ["arm/joint1", "arm/joint2", "arm/gripper"]
-    assert output.positions[-1] == pytest.approx(0.1)
 
 
 def test_estop_rejects_input_and_reanchors_after_clear(mocker: MockerFixture) -> None:

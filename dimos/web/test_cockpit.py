@@ -20,7 +20,7 @@ import sys
 
 import pytest
 
-from dimos.web.cockpit import ChannelRequest, Col, Map2D, Panel, Row, Video, cockpit
+from dimos.web.cockpit import ChannelRequest, Col, Map2D, Panel, Row, Teleop, Video, cockpit
 from dimos.web.relay_bridge.manifest import parse_manifest
 from dimos.web.relay_bridge.protocol import PROTOCOL_VERSION, Hello, RobotInfo, encode_datagram
 from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeModule
@@ -31,7 +31,7 @@ from dimos.web.relay_bridge.wt_client import _HELLO_DATAGRAM_MAX_BYTES
 # and need the TS side reviewed too.
 GO2_LAYOUT = Row(
     Video("color_image"),
-    Col(Map2D(costmap="global_costmap", pose="odom")),
+    Col(Map2D(costmap="global_costmap", pose="odom"), Teleop(), shares=[3, 1]),
     shares=[2, 1],
 )
 
@@ -62,6 +62,14 @@ GO2_MANIFEST = {
             "maxHz": 5.0,
             "params": {},
         },
+        {
+            "ch": "tele_cmd_vel",
+            "dir": "tx",
+            "encoding": "twist.json.v1",
+            "delivery": "latest",
+            "maxHz": 15.0,
+            "params": {"maxLinear": 0.8, "maxAngular": 1.0, "boost": 2.0, "watchdogMs": 300.0},
+        },
     ],
     "panels": [
         {"id": "p0", "kind": "video", "title": "", "channels": ["color_image"], "params": {}},
@@ -72,8 +80,9 @@ GO2_MANIFEST = {
             "channels": ["global_costmap", "odom"],
             "params": {},
         },
+        {"id": "p2", "kind": "teleop", "title": "", "channels": ["tele_cmd_vel"], "params": {}},
     ],
-    "layout": {"row": ["p0", {"col": ["p1"]}], "shares": [2, 1]},
+    "layout": {"row": ["p0", {"col": ["p1", "p2"], "shares": [3, 1]}], "shares": [2, 1]},
     "pages": [],
 }
 
@@ -92,12 +101,10 @@ def test_go2_example_manifest_golden() -> None:
 
 
 def test_default_preset() -> None:
-    # cockpit() with no layout: video left (2/3), costmap+pose right (1/3).
+    # cockpit() with no layout: video left (2/3); costmap+pose over teleop
+    # right (1/3). Same shape as the go2 example.
     manifest = manifest_of(cockpit())
-    assert manifest["channels"] == GO2_MANIFEST["channels"]
-    assert manifest["panels"] == GO2_MANIFEST["panels"]
-    assert manifest["layout"] == {"row": ["p0", "p1"], "shares": [2, 1]}
-    assert manifest["pages"] == []
+    assert manifest == GO2_MANIFEST
 
 
 def test_blueprint_pickles() -> None:
@@ -136,14 +143,19 @@ def test_wrong_encoding_for_stream_raises() -> None:
 
 
 def test_unknown_tx_stream_raises() -> None:
+    with pytest.raises(ValueError, match="unknown tx stream 'cmd_vel'"):
+        cockpit(layout=Teleop(stream="cmd_vel"))
+
+
+def test_wrong_tx_encoding_raises() -> None:
     class Sender(Panel):
         kind = "sender"
         title = ""
 
         def _channel_requests(self) -> tuple[ChannelRequest, ...]:
-            return (ChannelRequest("cmd_vel", "tx", "twist.json.v1", 15.0),)
+            return (ChannelRequest("tele_cmd_vel", "tx", "chat.json.v1", 15.0),)
 
-    with pytest.raises(ValueError, match="unknown tx stream 'cmd_vel'"):
+    with pytest.raises(ValueError, match="'tele_cmd_vel' encodes twist.json.v1, not chat.json.v1"):
         cockpit(layout=Sender())
 
 
@@ -170,6 +182,11 @@ def test_pages_get_ids_after_the_grid() -> None:
         lambda: Video("color_image", quality=True),
         lambda: Map2D(costmap=""),
         lambda: Map2D(costmap_hz=-5.0),
+        lambda: Teleop(stream=""),
+        lambda: Teleop(max_linear=0),
+        lambda: Teleop(boost=-2.0),
+        lambda: Teleop(publish_hz=True),
+        lambda: Teleop(watchdog_ms=0),
     ],
     ids=[
         "row_empty",
@@ -185,6 +202,11 @@ def test_pages_get_ids_after_the_grid() -> None:
         "video_quality_bool",
         "map2d_empty_costmap",
         "map2d_negative_rate",
+        "teleop_empty_stream",
+        "teleop_zero_linear",
+        "teleop_negative_boost",
+        "teleop_bool_rate",
+        "teleop_zero_watchdog",
     ],
 )
 def test_authoring_validation_errors(build) -> None:
@@ -201,7 +223,9 @@ def test_go2_hello_fits_the_datagram_budget() -> None:
     # The whole manifest rides one hello datagram (wt_client caps it at
     # _HELLO_DATAGRAM_MAX_BYTES and raises loudly beyond). Pin the go2
     # example under 1000 B so >= 100 B of headroom remains for longer
-    # hostnames before authors ever see that error.
+    # hostnames before authors ever see that error. The teleop channel
+    # brought this to 999 B: the next channel (chat, T8) cannot fit and
+    # must rethink the budget (trim params, or move hello off datagrams).
     hello = Hello(
         v=PROTOCOL_VERSION,
         role="robot",

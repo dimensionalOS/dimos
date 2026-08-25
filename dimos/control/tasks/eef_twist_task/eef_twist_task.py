@@ -41,7 +41,6 @@ if TYPE_CHECKING:
     from dimos.control.coordinator import TaskConfig
     from dimos.control.hardware_interface import ConnectedHardware, ConnectedWholeBody
     from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-    from dimos.msgs.std_msgs.Bool import Bool
 
 logger = setup_logger()
 
@@ -56,9 +55,6 @@ class EEFTwistTaskConfig(PoseTargetIKTaskConfig):
         validator=[attrs.validators.min_len(1), attrs.validators.max_len(1)],
     )
     command_timeout: float = attrs.field(default=0.3, converter=float)
-    gripper_joint: str | None = None
-    gripper_open_pos: float = attrs.field(default=0.0, converter=float)
-    gripper_closed_pos: float = attrs.field(default=0.0, converter=float)
 
 
 class EEFTwistTask(PoseTargetIKTask):
@@ -78,13 +74,7 @@ class EEFTwistTask(PoseTargetIKTask):
         self._last_twist_time = 0.0
         self._target_pose: PoseStamped | None = None
         self._estopped = False
-        self._gripper_target = config.gripper_open_pos
-        super().__init__(
-            name,
-            config,
-            additional_claimed_joints=(config.gripper_joint,) if config.gripper_joint else (),
-            solver=solver,
-        )
+        super().__init__(name, config, solver=solver)
 
     def is_active(self) -> bool:
         with self._input_lock:
@@ -108,17 +98,6 @@ class EEFTwistTask(PoseTargetIKTask):
                 return False
             self._latest_twist = None if np.allclose(values, 0.0) else twist
             self._last_twist_time = t_now
-        return True
-
-    def on_gripper_command(self, msg: Bool, t_now: float) -> bool:
-        if self._config.gripper_joint is None:
-            return False
-        with self._input_lock:
-            if self._estopped:
-                return False
-            self._gripper_target = (
-                self._config.gripper_closed_pos if msg.data else self._config.gripper_open_pos
-            )
         return True
 
     def set_estop(self, estopped: bool) -> None:
@@ -153,7 +132,6 @@ class EEFTwistTask(PoseTargetIKTask):
                 self._latest_twist = None
             twist = self._latest_twist
             target = self._target_pose
-            gripper_target = self._gripper_target
 
         if target is None:
             poses = self.current_frame_poses(state, self._config.target_frames)
@@ -169,15 +147,9 @@ class EEFTwistTask(PoseTargetIKTask):
                 return None
             self._target_pose = target
 
-        extra_positions = (
-            {self._config.gripper_joint: gripper_target}
-            if self._config.gripper_joint is not None
-            else {}
-        )
         return FrameTargetSnapshot(
             targets={self._config.target_frames[0]: target},
             last_update_time=state.t_now,
-            extra_joint_positions=extra_positions,
         )
 
     def _on_target_timeout(self) -> None:
@@ -192,9 +164,6 @@ class EEFTwistTask(PoseTargetIKTask):
 class EEFTwistTaskParams(PoseTargetIKTaskParams):
     target_frame: str | None = None
     timeout: float = 0.3
-    gripper_joint: str | None = None
-    gripper_open_pos: float = 0.0
-    gripper_closed_pos: float = 0.0
 
 
 def create_task(
@@ -219,9 +188,6 @@ def create_task(
             max_command_tracking_error_deg=params.max_command_tracking_error_deg,
             feedback_limit_tolerance=params.feedback_limit_tolerance,
             command_limit_margin=params.command_limit_margin,
-            gripper_joint=params.gripper_joint,
-            gripper_open_pos=params.gripper_open_pos,
-            gripper_closed_pos=params.gripper_closed_pos,
         ),
     )
 
