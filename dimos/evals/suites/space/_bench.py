@@ -312,9 +312,15 @@ _EGO_ACTION_QUESTION = (
     "changes in your viewpoints. Be patient and persist with your actions over a longer "
     "time horizon."
 )
-# space/evaluate_egonav.py:30-33 — configuration values, not logic.
+# space/evaluate_egonav.py:30-36 — configuration values, not logic. Passed through
+# verbatim: the action prompt promises 30-degree turns, and load_sim's default is
+# 10 degrees, so dropping a key here silently breaks the sim/prompt contract.
 _EGO_IMAGE_DOWNSCALING = 4
-_EGO_HABITAT_RESOLUTION = [512 * _EGO_IMAGE_DOWNSCALING, 512 * _EGO_IMAGE_DOWNSCALING]
+_EGO_HABITAT_CONFIG = {
+    "resolution": [512 * _EGO_IMAGE_DOWNSCALING, 512 * _EGO_IMAGE_DOWNSCALING],
+    "forward_amount": 0.25,
+    "turn_amount": 30,
+}
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -556,7 +562,7 @@ class SpaceNav(EvalCase):
                 cmd="init",
                 scene=str(scene),
                 repo=str(config.repo_dir),
-                resolution=_EGO_HABITAT_RESOLUTION,
+                habitat=_EGO_HABITAT_CONFIG,
                 image_downscaling=_EGO_IMAGE_DOWNSCALING,
             )["task_info"]
             frames = video_frame_blocks(scene / f"{self.walkthrough_key}.mp4")

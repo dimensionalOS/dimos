@@ -24,7 +24,7 @@ This file is executed by path (never imported), uses only the stdlib, numpy
 and the SPACE checkout, and stays Python-3.9 compatible.
 
 Protocol, one JSON object per line:
-    {"cmd": "init", "scene": ..., "repo": ..., "resolution": [...],
+    {"cmd": "init", "scene": ..., "repo": ..., "habitat": {...},
      "image_downscaling": ...}                    -> {"task_info": {...}}
     {"cmd": "reset"}                              -> {"obs": <b64 png>}
     {"cmd": "step", "action": "move_forward"}     -> {"obs": <b64 png>}
@@ -76,7 +76,7 @@ def main() -> None:
 
             env = NavEgoEnv(
                 request["scene"],
-                habitat_kwargs={"resolution": request["resolution"]},
+                habitat_kwargs=request["habitat"],
                 image_downscaling=request["image_downscaling"],
             )
             task_info = env.get_task_info()
