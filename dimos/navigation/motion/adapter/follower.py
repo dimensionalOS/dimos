@@ -172,7 +172,13 @@ class TrajectoryFollower(Module):
         self._path: Path | None = None
         self._cloud: PointCloud2 | None = None
         self._clearance: np.ndarray | None = None
-        self._clearance_key: tuple[int, int] | None = None
+        # The very (path, cloud) the hint was measured from, held rather than
+        # keyed by id(): CPython recycles addresses, so a cache that remembers
+        # only an id compares equal to a NEW path that landed in the freed one's
+        # slot and serves the previous plan's room. Holding the refs pins them,
+        # which makes `is` exact and costs one extra cloud alive.
+        self._clearance_path: Path | None = None
+        self._clearance_cloud: PointCloud2 | None = None
         self._latch = GoalLatch(self.config.goal_tolerance)
         self._track = TRACKS[self.config.track]
         # The same dilation the planner used, or the governor prices a body
@@ -296,8 +302,7 @@ class TrajectoryFollower(Module):
             # into the path's own timestamps (control/profile.py dialect)
             ceilings = decode_ceilings(path)
             return ceilings_to_clearance(ceilings) if ceilings is not None else None
-        key = (id(path), id(cloud))
-        if key != self._clearance_key:
+        if path is not self._clearance_path or cloud is not self._clearance_cloud:
             wp = np.array([[p.position.x, p.position.y] for p in path.poses]).reshape(-1, 2)
             # Re-referenced per (path, map) pair like the hint itself: the
             # surface under the robot moves far slower than the pair it is
@@ -305,5 +310,5 @@ class TrajectoryFollower(Module):
             ground_z = pose.position.z - self._emb.base_height
             pts = hard_points(self._model, cloud.points_f32(), ground_z)
             self._clearance = path_clearance(wp, pts, self._half_width)
-            self._clearance_key = key
+            self._clearance_path, self._clearance_cloud = path, cloud
         return self._clearance

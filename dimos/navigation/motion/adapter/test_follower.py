@@ -108,13 +108,13 @@ def _base_at(z: float) -> PoseStamped:
     return PoseStamped(ts=0.0, frame_id="odom", position=Vector3(0.0, 0.0, z))
 
 
-def _straight_path() -> Path:
+def _straight_path(end_x: float = 0.5) -> Path:
     return Path(
         ts=0.0,
         frame_id="odom",
         poses=[
             PoseStamped(ts=0.0, frame_id="odom", position=Vector3(0.0, 0.0, 0.0)),
-            PoseStamped(ts=0.0, frame_id="odom", position=Vector3(0.5, 0.0, 0.0)),
+            PoseStamped(ts=0.0, frame_id="odom", position=Vector3(end_x, 0.0, 0.0)),
         ],
     )
 
@@ -166,3 +166,18 @@ def test_a_room_hint_on_a_ground_already_at_zero_matches_the_raw_band():
         follower._clearance_for(_straight_path(), _base_at(0.29)),
         raw._clearance_for(_straight_path(), _base_at(0.29)),
     )
+
+
+def test_a_new_path_in_the_freed_one_s_memory_gets_its_own_hint():
+    # A plan that filled the cache is dropped on the next replan, and CPython
+    # hands its address straight to the plan that replaces it -- so a cache
+    # keyed on id() compares equal and prices the PREVIOUS plan's room.
+    follower = _room_follower()
+    follower._on_local_map(_room_with_a_post(-0.28))
+    hw = follower._half_width
+    pose = _base_at(0.01)
+    # the post is at x=1, so the two plans stop with different room left
+    short = float(follower._clearance_for(_straight_path(0.5), pose)[-1])
+    close = float(follower._clearance_for(_straight_path(0.9), pose)[-1])
+    assert abs(short - (0.5 - hw)) < 1e-6
+    assert abs(close - (0.1 - hw)) < 1e-6
