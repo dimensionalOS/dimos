@@ -299,6 +299,9 @@ pub trait Module: Sized + Send + 'static {
 
     fn handle(&mut self) -> impl std::future::Future<Output = ()> + Send;
 
+    /// Stop what `setup` started. Outputs still publish here — the transport
+    /// and the publish workers outlive this call (see `drain_publishes`), so a
+    /// module that must leave a topic in a known state does it from here.
     fn teardown(&mut self) -> impl std::future::Future<Output = ()> + Send {
         async {}
     }
@@ -475,6 +478,30 @@ pub(crate) fn spawn_publish_tasks<T: Transport>(
     tasks
 }
 
+/// How long a teardown's last publishes get to reach the transport.
+const PUBLISH_DRAIN_GRACE: Duration = Duration::from_millis(500);
+
+/// Let whatever `teardown` published actually reach the wire.
+///
+/// `Output::publish` only queues; the publish workers do the sending, and
+/// dropping their `JoinSet` aborts them mid-flight. Dropping the module closes
+/// the queues, which is what makes the workers finish and return. Bounded: a
+/// module that leaked an output sender into a task nothing stops must not hold
+/// the shutdown open.
+async fn drain_publishes<M>(module: M, mut pub_tasks: tokio::task::JoinSet<()>) {
+    drop(module);
+    let drained = tokio::time::timeout(PUBLISH_DRAIN_GRACE, async {
+        while pub_tasks.join_next().await.is_some() {}
+    })
+    .await;
+    if drained.is_err() {
+        warn!(
+            grace_s = PUBLISH_DRAIN_GRACE.as_secs_f32(),
+            "publish queues did not drain before shutdown"
+        );
+    }
+}
+
 pub(crate) fn propagate_task_failure(name: &str, res: Result<(), tokio::task::JoinError>) {
     match res {
         Ok(()) => error!(task = name, "task exited unexpectedly"),
@@ -527,7 +554,7 @@ where
     builder.enforce_topics_match_ports()?;
 
     subscribe_routes(transport.as_ref(), builder.routes).await?;
-    // Kept alive until teardown so the subscriptions stay live.
+    // Kept alive past teardown so a last publish still goes out.
     let mut pub_tasks = spawn_publish_tasks(Arc::clone(&transport), builder.outputs);
 
     module.setup().await;
@@ -540,6 +567,7 @@ where
     };
 
     module.teardown().await;
+    drain_publishes(module, pub_tasks).await;
 
     // if the result was an error, handle it here
     if let Some((name, res)) = failure {
@@ -1282,6 +1310,77 @@ mod tests {
             let (topic, rx) = &mut builder.outputs[0];
             assert_eq!(topic, "/robot/cmd");
             assert_eq!(rx.recv().await.expect("handler reply"), b"pong");
+        }
+    }
+
+    /// A module whose only job is to say something on the way out, run through
+    /// the real `run_module_core` lifecycle.
+    mod teardown_publish {
+        use super::*;
+
+        type PublishLog = Arc<Mutex<Vec<(String, Vec<u8>)>>>;
+
+        #[allow(clippy::ptr_arg)] // the encode hook's signature is fn(&T)
+        fn encode(msg: &Vec<u8>) -> Vec<u8> {
+            msg.clone()
+        }
+
+        #[derive(crate::Module)]
+        #[module(teardown = say_goodbye)]
+        struct Farewell {
+            #[output(encode = encode)]
+            out: Output<Vec<u8>>,
+        }
+
+        impl Farewell {
+            async fn say_goodbye(&mut self) {
+                self.out.publish(&b"bye".to_vec()).await.expect("publish");
+            }
+        }
+
+        struct RecordingMock {
+            published: PublishLog,
+        }
+
+        impl crate::transport::Transport for RecordingMock {
+            async fn publish(&self, channel: &str, data: Vec<u8>) -> io::Result<()> {
+                // Slow enough that an aborted publish worker never gets here:
+                // the assert is about the drain, not about winning a race.
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                self.published
+                    .lock()
+                    .unwrap()
+                    .push((channel.to_string(), data));
+                Ok(())
+            }
+
+            async fn subscribe(&self, _channel: &str, _on_msg: Dispatch) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn a_teardown_publish_reaches_the_transport() {
+            let published = Arc::new(Mutex::new(Vec::new()));
+            let transport = Arc::new(RecordingMock {
+                published: Arc::clone(&published),
+            });
+            let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+            let run = tokio::spawn(run_module_core::<Farewell, _>(
+                transport,
+                topics(&[("out", "/out")]),
+                NoConfig,
+                shutdown_rx,
+            ));
+            shutdown_tx.send(true).expect("shutdown");
+            run.await.expect("module task").expect("module run");
+
+            assert_eq!(
+                published.lock().unwrap().as_slice(),
+                [("/out".to_string(), b"bye".to_vec())],
+                "a zero-twist-style last word must survive the publish workers"
+            );
         }
     }
 }
