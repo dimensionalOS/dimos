@@ -68,10 +68,17 @@ impl CmdVelMux {
         self.watchdog = Some(tokio::spawn(watchdog.run()));
     }
 
+    /// Stop the watchdog and leave `cmd_vel` at zero. A dead mux must no more
+    /// leave a twist standing on the robot than a dead nav does — waiting for
+    /// the bridge's own timeout means walking away from a stopped stack.
+    ///
+    /// Abort first so the watchdog cannot land a twist after ours; the handlers
+    /// are already done by teardown, so nothing else can publish here.
     async fn stop_watchdog(&mut self) {
         if let Some(handle) = self.watchdog.take() {
             handle.abort();
         }
+        publish_twist(&self.cmd_vel, &Twist::default()).await;
     }
 
     /// Nav is forwarded unmodified, or dropped while teleop holds the cooldown.
