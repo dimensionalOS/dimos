@@ -561,12 +561,21 @@ dependencies = [
  "image",
  "imageproc",
  "lcm-msgs",
- "numpy",
- "pyo3",
  "rayon",
  "serde",
  "tokio",
  "tracing",
+ "tracing-subscriber",
+ "validator",
+]
+
+[[package]]
+name = "dimos-mls-planner-py"
+version = "0.1.0"
+dependencies = [
+ "dimos-mls-planner",
+ "numpy",
+ "pyo3",
  "tracing-subscriber",
  "validator",
 ]
@@ -620,12 +629,21 @@ dependencies = [
  "dimos-module",
  "lcm-msgs",
  "nalgebra 0.35.0",
- "numpy",
- "pyo3",
  "rayon",
  "serde",
  "tokio",
  "tracing",
+ "validator",
+]
+
+[[package]]
+name = "dimos-voxel-ray-tracing-py"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "dimos-voxel-ray-tracing",
+ "numpy",
+ "pyo3",
  "validator",
 ]
 

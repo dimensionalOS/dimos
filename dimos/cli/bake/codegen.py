@@ -96,8 +96,7 @@ def _dependencies(modules: Sequence[RegisteredModule], root: Path) -> str:
     # Keyed by crate: one crate can register several module ids, and a repeated
     # crate name is a duplicate key cargo refuses to parse.
     for crate_name, crate_path in dict.fromkeys((m.crate_name, m.crate_dir) for m in modules):
-        # default-features off drops pyo3, whose libpython symbols break a static link.
-        lines.append(f'{crate_name} = {{ path = "{crate_path}", default-features = false }}')
+        lines.append(f'{crate_name} = {{ path = "{crate_path}" }}')
     return "\n".join(lines)
 
 

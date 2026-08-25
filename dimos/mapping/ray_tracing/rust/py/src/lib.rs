@@ -20,7 +20,7 @@ use validator::Validate;
 
 use ahash::AHashSet;
 
-use crate::voxel_ray_tracer::{
+use dimos_voxel_ray_tracing::voxel_ray_tracer::{
     batch_local_bounds, emit_points, iter_global_normals, update_map, Config, LocalBounds,
     VoxelKey, VoxelMap,
 };
@@ -248,8 +248,8 @@ impl VoxelRayMapper {
     }
 }
 
-#[pymodule]
-fn dimos_voxel_ray_tracing(m: &Bound<'_, PyModule>) -> PyResult<()> {
+#[pymodule(name = "dimos_voxel_ray_tracing")]
+fn dimos_voxel_ray_tracing_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<VoxelRayMapper>()?;
     m.add_function(wrap_pyfunction!(local_bounds, m)?)?;
     Ok(())
