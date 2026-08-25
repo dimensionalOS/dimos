@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from dimos.control.components import HardwareComponent, HardwareType
+from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
@@ -109,6 +110,12 @@ def openarm_hardware(
         adapter_kwargs["runtime_config"] = DamiaoRuntimeConfig(
             bus_addresses={"left": left_can_port, "right": right_can_port},
             gravity_comp=True,
+        )
+    else:
+        adapter_kwargs["limits"] = JointLimits(
+            position_lower=[*([None] * len(OPENARM_ARM_JOINTS)), 0.0, 0.0],
+            position_upper=[*([None] * len(OPENARM_ARM_JOINTS)), 1.0, 1.0],
+            velocity_max=[None] * len(OPENARM_JOINTS),
         )
     return HardwareComponent(
         hardware_id=OPENARM_HARDWARE_ID,

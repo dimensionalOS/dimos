@@ -30,6 +30,7 @@ from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.robot.manipulators.openarm.blueprints.basic import openarm_planner_coordinator
 from dimos.robot.manipulators.openarm.blueprints.teleop import (
     OPENARM_QUEST_TASK_NAME,
@@ -39,6 +40,7 @@ from dimos.robot.manipulators.openarm.blueprints.teleop import (
 )
 from dimos.robot.manipulators.openarm.config import (
     OPENARM_ARM_JOINTS,
+    OPENARM_GRIPPER_JOINTS,
     OPENARM_HOME_JOINTS,
     OPENARM_JOINTS,
     openarm_bimanual_model_config,
@@ -81,10 +83,11 @@ def test_openarm_quest_blueprint_has_one_bimanual_mock_task() -> None:
     assert "hardware" not in coordinator_kwargs
     assert "left_can_port" not in coordinator_kwargs
     assert "right_can_port" not in coordinator_kwargs
-    assert len(tasks) == 2
+    assert len(tasks) == 4
 
     task = next(task for task in tasks if task.type == "teleop_ik")
     trajectory = next(task for task in tasks if task.type == "trajectory")
+    grippers = [task for task in tasks if task.type == "gripper"]
     bindings = task.params["bindings"]
     assert task.name == OPENARM_QUEST_TASK_NAME
     assert task.type == "teleop_ik"
@@ -94,9 +97,13 @@ def test_openarm_quest_blueprint_has_one_bimanual_mock_task() -> None:
         "openarm_left_grasp_frame",
         "openarm_right_grasp_frame",
     }
-    assert set(task.joint_names) | {binding["gripper_joint"] for binding in bindings} == set(
-        OPENARM_JOINTS
+    assert {joint for gripper in grippers for joint in gripper.joint_names} == set(
+        OPENARM_GRIPPER_JOINTS
     )
+    assert {gripper.stream_bind["gripper_command"] for gripper in grippers} == {
+        "left_gripper_command",
+        "right_gripper_command",
+    }
     assert isinstance(task.params["pink"], PinkKinematicsConfig)
     assert "robot_model" not in task.params
     assert task.params["solver_type"] is OpenArmPinkPoseTargetSolver
@@ -119,7 +126,7 @@ def test_openarm_quest_blueprint_has_one_bimanual_mock_task() -> None:
     assert task.params["joint_velocity_limits_rad_s"] == expected_velocity_limits
     assert task.params["joint_command_filter_cutoff_hz"] == 5.0
     assert task.priority == 10
-    assert trajectory.joint_names == OPENARM_ARM_JOINTS
+    assert trajectory.joint_names == OPENARM_JOINTS
     assert trajectory.priority == 20
     assert "robots" not in manipulation_kwargs
     assert manipulation_kwargs["kinematics"] == task.params["pink"]
@@ -127,7 +134,9 @@ def test_openarm_quest_blueprint_has_one_bimanual_mock_task() -> None:
     assert teleop_kwargs == {}
     assert teleop_quest_openarm.remapping_map == {
         (ArmTeleopModule.name, "left_controller_output"): "left_cartesian_command",
+        (ArmTeleopModule.name, "left_gripper_command"): "left_gripper_command",
         (ArmTeleopModule.name, "right_controller_output"): "right_cartesian_command",
+        (ArmTeleopModule.name, "right_gripper_command"): "right_gripper_command",
     }
 
 
@@ -187,6 +196,8 @@ def test_openarm_quest_commands_both_arms_and_grippers_through_coordinator(
         buttons.right_primary = True
         buttons.pack_analog_triggers(left=0.25, right=0.75)
         coordinator._dispatch("teleop_buttons", buttons)
+        coordinator._dispatch("left_gripper_command", Float32(data=0.75))
+        coordinator._dispatch("right_gripper_command", Float32(data=0.25))
         coordinator._dispatch(
             "left_cartesian_command",
             PoseStamped(frame_id=OPENARM_QUEST_TASK_NAME, position=[1.0, 0.0, 0.0]),
@@ -205,8 +216,8 @@ def test_openarm_quest_commands_both_arms_and_grippers_through_coordinator(
             OPENARM_ARM_JOINTS
         )
         assert [state.q for state in states[-2:]] == [
-            1.0 - buttons.left_trigger_analog,
-            1.0 - buttons.right_trigger_analog,
+            0.75,
+            0.25,
         ]
         frame_poses.assert_called_once()
         step.assert_called_once()

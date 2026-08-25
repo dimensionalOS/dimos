@@ -66,9 +66,9 @@ task through normal arbitration and clears the teleoperation engagement state.
 
 Arm teleoperation uses one `TeleopIKTask` configured with one or two hand
 bindings. Each binding names the controller (`left` or `right`), a frame in the
-task's `RobotModelConfig`, and optionally a gripper joint plus its open/closed
-positions. The task's top-level `joint_names` explicitly select the joints Pink
-may update.
+task's `RobotModelConfig`. The task's top-level `joint_names` explicitly select
+the joints Pink may update. Gripper triggers publish normalized per-hand streams
+to dedicated gripper tasks; gripper joints are not owned by the IK task.
 
 Single-arm and mixed-arm setups use one binding per task. A bimanual robot such
 as OpenArm uses one task, two bindings, and one bimanual model, so Pink solves

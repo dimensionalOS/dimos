@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, NotRequired, TypedDict
+from typing import Any, TypedDict
 
 from dimos.control.components import HardwareComponent
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
@@ -34,22 +34,11 @@ from dimos.robot.manipulators.common.topics import (
 )
 
 
-class GripperTaskOverrides(TypedDict, total=False):
-    """Optional gripper fields shared by teleop and EEF-twist tasks."""
-
-    gripper_joint: str
-    gripper_open_pos: float
-    gripper_closed_pos: float
-
-
 class TeleopBinding(TypedDict):
     """Declarative mapping from an operator hand to one robot target."""
 
     hand: str
     target_frame: str
-    gripper_joint: NotRequired[str]
-    gripper_open_position: NotRequired[float]
-    gripper_closed_position: NotRequired[float]
 
 
 def trajectory_task(
@@ -66,6 +55,16 @@ def trajectory_task(
     )
 
 
+def _model_joint_names(
+    hardware: HardwareComponent,
+    robot_model: RobotModelConfig,
+) -> list[str]:
+    joint_names = robot_model.get_coordinator_joint_names()
+    if not set(joint_names) <= set(hardware.joints):
+        raise ValueError("hardware joints must contain RobotModelConfig coordinator joints")
+    return joint_names
+
+
 def cartesian_ik_task(
     hardware: HardwareComponent,
     *,
@@ -77,7 +76,7 @@ def cartesian_ik_task(
     return TaskConfig(
         name=name,
         type="cartesian_ik",
-        joint_names=hardware.joints,
+        joint_names=_model_joint_names(hardware, robot_model),
         priority=priority,
         params={"robot_model": robot_model, "target_frame": target_frame},
     )
@@ -94,7 +93,6 @@ def eef_twist_task(
     max_joint_velocity_rad_s: float = 5.0,
     max_command_tracking_error_deg: float = 10.0,
     pink: PinkKinematicsConfig | None = None,
-    params: GripperTaskOverrides | None = None,
 ) -> TaskConfig:
     task_params: dict[str, Any] = {
         "robot_model": robot_model,
@@ -106,12 +104,10 @@ def eef_twist_task(
         task_params["target_frame"] = target_frame
     if pink is not None:
         task_params["pink"] = pink
-    if params:
-        task_params.update(params)
     return TaskConfig(
         name=name,
         type="eef_twist",
-        joint_names=hardware.joints,
+        joint_names=_model_joint_names(hardware, robot_model),
         priority=priority,
         params=task_params,
     )
@@ -138,7 +134,11 @@ def teleop_ik_task(
     return TaskConfig(
         name=name,
         type="teleop_ik",
-        joint_names=list(joint_names) if joint_names is not None else hardware.joints,
+        joint_names=(
+            list(joint_names)
+            if joint_names is not None
+            else _model_joint_names(hardware, robot_model)
+        ),
         priority=priority,
         params=task_params,
     )

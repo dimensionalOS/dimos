@@ -14,29 +14,32 @@
 
 from typing import Any, cast
 
+import pytest
+
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.robot.manipulators.a750.blueprints.teleop import keyboard_teleop_a750
+from dimos.robot.manipulators.piper.blueprints.teleop import (
+    coordinator_teleop_piper,
+    keyboard_teleop_piper,
+)
 
 
 def _coordinator_tasks(blueprint: Blueprint) -> list[TaskConfig]:
-    kwargs: dict[str, Any] = next(
-        atom.kwargs
+    kwargs = next(
+        cast("dict[str, Any]", atom.kwargs)
         for atom in blueprint.blueprints
         if isinstance(atom.module, type) and issubclass(atom.module, ControlCoordinator)
     )
     return cast("list[TaskConfig]", kwargs["tasks"])
 
 
-def test_keyboard_teleop_a750_wires_joint_trajectory_execution() -> None:
-    tasks = _coordinator_tasks(keyboard_teleop_a750)
-
-    trajectory = next(task for task in tasks if task.name == "joint_trajectory")
+@pytest.mark.parametrize("blueprint", [keyboard_teleop_piper, coordinator_teleop_piper])
+def test_trajectory_accepts_gripper_and_gripper_has_dedicated_task(
+    blueprint: Blueprint,
+) -> None:
+    tasks = _coordinator_tasks(blueprint)
+    trajectory = next(task for task in tasks if task.type == "trajectory")
     gripper = next(task for task in tasks if task.type == "gripper")
 
-    assert trajectory.type == "trajectory"
-    assert trajectory.joint_names == [
-        *(f"arm/joint{i}" for i in range(1, 7)),
-        "arm/finger",
-    ]
-    assert (gripper.name, gripper.joint_names) == ("arm_gripper", ["arm/finger"])
+    assert "arm/gripper" in trajectory.joint_names
+    assert (gripper.name, gripper.joint_names) == ("arm_gripper", ["arm/gripper"])

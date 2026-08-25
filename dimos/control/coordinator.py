@@ -66,7 +66,7 @@ from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.hardware.whole_body.spec import WholeBodyAdapter
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.Bool import Bool
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.utils.logging_config import setup_logger
 
@@ -157,8 +157,8 @@ class ControlCoordinator(Module):
     # Input: Streaming twist commands for velocity-commanded platforms
     twist_command: In[Twist]
 
-    # Input: Gripper toggle (True = closed) routed to eef_twist tasks' gripper.
-    gripper_command: In[Bool]
+    # Input: Normalized gripper opening (0.0 closed, 1.0 open).
+    gripper_command: In[Float32]
 
     # Arming and dry-run are one-shot RPCs, not streams.
 
@@ -863,39 +863,6 @@ class ControlCoordinator(Module):
                 if entry_task is task
             )
             return {"task": task_name, "commands": commands, "streams": streams}
-
-    @rpc
-    def set_gripper_position(self, hardware_id: str, position: float) -> bool:
-        """Set gripper position on a specific hardware device.
-
-        Args:
-            hardware_id: ID of the hardware with the gripper
-            position: Gripper position in meters
-        """
-        with self._hardware_lock:
-            hw = self._hardware.get(hardware_id)
-            if hw is None:
-                logger.warning(f"Hardware '{hardware_id}' not found for gripper command")
-                return False
-            if isinstance(hw, ConnectedTwistBase):
-                logger.warning(f"Hardware '{hardware_id}' is a twist base, no gripper support")
-                return False
-            return hw.adapter.write_gripper_position(position)
-
-    @rpc
-    def get_gripper_position(self, hardware_id: str) -> float | None:
-        """Get gripper position from a specific hardware device.
-
-        Args:
-            hardware_id: ID of the hardware with the gripper
-        """
-        with self._hardware_lock:
-            hw = self._hardware.get(hardware_id)
-            if hw is None:
-                return None
-            if isinstance(hw, ConnectedTwistBase):
-                return None
-            return hw.adapter.read_gripper_position()
 
     @rpc
     def start(self) -> None:

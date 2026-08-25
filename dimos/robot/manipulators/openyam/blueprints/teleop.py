@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from dimos.control.coordinator import TaskConfig
-from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.common.blueprints import (
@@ -33,6 +33,8 @@ from dimos.robot.manipulators.common.topics import (
 from dimos.robot.manipulators.openyam.config import (
     OPENYAM_ARM_JOINTS,
     OPENYAM_GRIPPER_JOINT,
+    OPENYAM_HARDWARE_ID,
+    OPENYAM_JOINTS,
     make_openyam_model_config,
     openyam_hardware,
 )
@@ -53,22 +55,15 @@ def _eef_twist_task(*, priority: int = 10) -> TaskConfig:
 
 
 def _trajectory_task(*, priority: int = 10) -> TaskConfig:
-    return TaskConfig(
-        name=JOINT_TRAJECTORY_TASK_NAME,
-        type="trajectory",
-        joint_names=list(OPENYAM_ARM_JOINTS),
-        priority=priority,
-        params={"start_position_tolerance": 0.05},
-    )
+    return joint_trajectory_task(OPENYAM_JOINTS, priority=priority)
 
 
 def _gripper_task() -> TaskConfig:
     return TaskConfig(
-        name="servo_gripper",
-        type="servo",
+        name=f"{OPENYAM_HARDWARE_ID}_gripper",
+        type="gripper",
         joint_names=[OPENYAM_GRIPPER_JOINT],
         priority=20,
-        params={"timeout": 0.0},
     )
 
 

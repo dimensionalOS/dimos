@@ -34,6 +34,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.teleop.quest.quest_teleop_module import QuestTeleopConfig, QuestTeleopModule
 from dimos.teleop.quest.quest_types import Buttons, Hand, QuestControllerState
 from dimos.utils.logging_config import setup_logger
@@ -139,8 +140,13 @@ class ArmTeleopModule(QuestTeleopModule):
     Outputs:
         - left_controller_output: PoseStamped (inherited)
         - right_controller_output: PoseStamped (inherited)
-        - buttons: Buttons (inherited)
+        - teleop_buttons: Buttons (inherited)
+        - left_gripper_command: Float32 normalized opening
+        - right_gripper_command: Float32 normalized opening
     """
+
+    left_gripper_command: Out[Float32]
+    right_gripper_command: Out[Float32]
 
     @rpc
     def start(self) -> None:
@@ -166,6 +172,23 @@ class ArmTeleopModule(QuestTeleopModule):
             right=right.trigger if right is not None else 0.0,
         )
         self.teleop_buttons.publish(buttons)
+        self._publish_gripper_commands(left, right)
+
+    def _publish_gripper_commands(
+        self,
+        left: QuestControllerState | None,
+        right: QuestControllerState | None,
+    ) -> None:
+        """Publish normalized opening for each currently engaged hand."""
+        controllers = {Hand.LEFT: left, Hand.RIGHT: right}
+        outputs = {
+            Hand.LEFT: self.left_gripper_command,
+            Hand.RIGHT: self.right_gripper_command,
+        }
+        for hand, controller in controllers.items():
+            if controller is None or not self._is_engaged[hand]:
+                continue
+            outputs[hand].publish(Float32(data=1.0 - float(controller.trigger)))
 
 
 class HandTeleopModule(ArmTeleopModule):
@@ -206,6 +229,7 @@ class HandTeleopModule(ArmTeleopModule):
         buttons.left_primary = self._is_engaged[Hand.LEFT]
         buttons.right_primary = self._is_engaged[Hand.RIGHT]
         self.teleop_buttons.publish(buttons)
+        self._publish_gripper_commands(left, right)
 
 
 class VideoArmTeleopConfig(QuestTeleopConfig):
