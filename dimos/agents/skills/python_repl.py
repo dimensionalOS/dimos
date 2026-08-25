@@ -104,7 +104,7 @@ class PythonReplSkill(Module):
             output += result.stderr
 
         if not output.strip():
-            return "(no output — end your code with print())"
+            return "(no output - did you forget to print()?)"
         return self._cap(output)
 
     def _cap(self, text: str) -> str:
