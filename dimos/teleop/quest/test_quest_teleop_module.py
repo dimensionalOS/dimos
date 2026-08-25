@@ -14,15 +14,17 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable, Iterator
+import json
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import pytest_mock
 
+from dimos.imitation.collection.episode_monitor import EpisodeStatus
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.teleop.quest.quest_extensions import Go2TeleopModule, HandTeleopModule
-from dimos.teleop.quest.quest_teleop_module import QuestTeleopModule
+from dimos.teleop.quest.quest_teleop_module import QuestTeleopModule, _ws_send_text
 from dimos.teleop.quest.quest_types import (
     Buttons,
     Hand,
@@ -56,6 +58,17 @@ def test_quest_web_server_is_initialized_during_start(
     start_control_loop.assert_called_once_with()
 
 
+def test_build_subscribes_to_episode_status(
+    module: QuestTeleopModule, mocker: pytest_mock.MockerFixture
+) -> None:
+    module.status._transport = mocker.MagicMock()
+    subscribe = mocker.patch.object(module.status, "subscribe", return_value=mocker.MagicMock())
+
+    module.build()
+
+    subscribe.assert_called_once_with(module._on_episode_status)
+
+
 def test_unknown_joy_controller_identity_is_rejected(
     module: QuestTeleopModule, mocker: pytest_mock.MockerFixture
 ) -> None:
@@ -66,6 +79,79 @@ def test_unknown_joy_controller_identity_is_rejected(
 
     with pytest.raises(ValueError, match="Unexpected frame_id"):
         module._on_joy_bytes(b"data")
+
+
+def test_websocket_text_message_is_sent(
+    module: QuestTeleopModule, mocker: pytest_mock.MockerFixture
+) -> None:
+    ws = mocker.MagicMock()
+    ws.send_text = mocker.AsyncMock()
+
+    assert module._loop is not None
+    asyncio.run_coroutine_threadsafe(_ws_send_text(ws, '{"type":"status"}'), module._loop).result(
+        timeout=5
+    )
+
+    ws.send_text.assert_awaited_once_with('{"type":"status"}')
+
+
+def _episode_status() -> EpisodeStatus:
+    return EpisodeStatus(
+        ts=123.0,
+        state="recording",
+        episodes_saved=12,
+        episodes_discarded=1,
+        last_event="start",
+        task_label="Pick up red mug",
+    )
+
+
+def test_episode_status_is_cached_and_broadcast(
+    module: QuestTeleopModule,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    broadcast = mocker.patch.object(module, "_broadcast_text")
+    mocker.patch("dimos.teleop.quest.quest_teleop_module.time.time", return_value=165.5)
+
+    module._on_episode_status(_episode_status())
+
+    assert module._latest_episode_status == _episode_status()
+    payload = json.loads(broadcast.call_args.args[0])
+    assert payload == {
+        "type": "episode_status",
+        "elapsed_s": 42.5,
+        "ts": 123.0,
+        "state": "recording",
+        "episodes_saved": 12,
+        "episodes_discarded": 1,
+        "last_event": "start",
+        "task_label": "Pick up red mug",
+    }
+
+
+def test_connected_client_receives_latest_episode_status(
+    module: QuestTeleopModule,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    module._latest_episode_status = _episode_status()
+    broadcast = mocker.patch.object(module, "_broadcast_text")
+
+    assert module._client_connected(mocker.MagicMock()) is True
+
+    payload = json.loads(broadcast.call_args.args[0])
+    assert payload["type"] == "episode_status"
+    assert payload["episodes_saved"] == 12
+
+
+def test_connected_client_without_episode_status_does_not_show_collection_hud(
+    module: QuestTeleopModule,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    broadcast = mocker.patch.object(module, "_broadcast_text")
+
+    assert module._client_connected(mocker.MagicMock()) is True
+
+    broadcast.assert_not_called()
 
 
 def test_control_client_disconnect_clears_state(

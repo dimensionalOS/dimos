@@ -1,7 +1,4 @@
----
-title: "Piper Integration"
-description: "Connect and run a Piper arm with dimOS manipulation and teleoperation blueprints."
----
+# Piper Integration
 
 ## Optional SLCAN setup
 

@@ -299,35 +299,6 @@ jobs:
       - name: Execute documentation code blocks
         run: ./bin/run-doc-codeblocks --ci --no-cache
 
-  docs-validate:
-    timeout-minutes: 5
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read  # For checkout
-
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          lfs: false
-          sparse-checkout: |
-            docs
-
-      - name: Pull docs LFS assets only
-        run: git lfs pull --include="docs/assets/**" --exclude=""
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '20'
-
-      - name: Install docs dependencies
-        working-directory: docs
-        run: npm ci
-
-      # Temporarily disabled — Mintlify validation blocking CI
-      # - name: Validate Mintlify docs
-      #   working-directory: docs
-      #   run: npm run validate
-
   web:
     timeout-minutes: 30
     runs-on: ubuntu-latest
@@ -835,7 +806,6 @@ jobs:
     - rust
     - cpp
     - md-babel
-    - docs-validate
     - web
     - tests
     - self-hosted-tests
