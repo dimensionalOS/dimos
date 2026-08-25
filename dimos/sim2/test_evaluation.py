@@ -18,10 +18,10 @@ from pathlib import Path
 
 from dimos.e2e_tests.episode import activate_episode, start_episode
 from dimos.e2e_tests.test_episode_provider_lifecycle import (
-    _Provider,
     _digest,
     _evaluation_case,
     _prepared_episode,
+    _Provider,
 )
 from dimos.sim2.evaluation import EpisodeBoundary, TrialIsolationMode
 

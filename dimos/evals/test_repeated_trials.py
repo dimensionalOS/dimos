@@ -22,16 +22,16 @@ from typing import Any, cast
 import pytest
 
 import dimos.e2e_tests.dimos_cli_call as cli_call_module
-import dimos.sim2.evaluation as evaluation_module
 from dimos.e2e_tests.episode import start_episode
 from dimos.e2e_tests.test_episode_provider_lifecycle import (
-    _Provider,
     _digest,
     _evaluation_case,
     _prepared_episode,
+    _Provider,
 )
 from dimos.evals.runner import EvalRunner
 from dimos.evals.types import InteractiveEval
+import dimos.sim2.evaluation as evaluation_module
 from dimos.sim2.evaluation import EpisodeBoundary, TrialIsolationMode
 
 
@@ -113,7 +113,7 @@ class _TrialRunner(EvalRunner):
         if self._episode_context is None:
             raise RuntimeError("test runner has no public episode context")
         self.context_names.append(self._episode_context.role("object").name)
-        return action(cast(Any, None), self._episode_context)
+        return action(cast("Any", None), self._episode_context)
 
     def sample_episode(self, _interval: float, _timeout: float) -> tuple[Any, Any]:
         if self._episode is None:
@@ -137,11 +137,7 @@ def _case(
         inputs="Lift the selected object",
         episode=_evaluation_case(),
         episode_provider="fake",
-        action=(
-            (lambda _app, context: context.role("object").name)
-            if action is None
-            else action
-        ),
+        action=((lambda _app, context: context.role("object").name) if action is None else action),
         interval_s=0.0,
         timeout_s=0.0,
         trials=trials,
@@ -161,7 +157,7 @@ def _production_runner(
     runner = EvalRunner(out_dir=tmp_path)
     runner._run_dir = tmp_path
     app = _App()
-    runner._connect_dimos = lambda _modules, _timeout: cast(Any, app)
+    runner._connect_dimos = lambda _modules, _timeout: cast("Any", app)
     return runner, _Process.instances
 
 
@@ -243,9 +239,7 @@ def test_process_isolation_is_explicit_and_never_selected_implicitly() -> None:
     process_runner = _TrialRunner(_Provider())
 
     warm_runner.run_interactive_trials(_case())
-    process_runner.run_interactive_trials(
-        _case(isolation=TrialIsolationMode.PROCESS)
-    )
+    process_runner.run_interactive_trials(_case(isolation=TrialIsolationMode.PROCESS))
 
     assert warm_runner.setup_calls == [None]
     assert warm_runner.teardown_calls == []
@@ -284,9 +278,7 @@ def test_process_isolation_prepares_each_requested_sample_index() -> None:
     provider = _Provider()
     runner = _TrialRunner(provider)
 
-    result = runner.run_interactive_trials(
-        _case(isolation=TrialIsolationMode.PROCESS)
-    )
+    result = runner.run_interactive_trials(_case(isolation=TrialIsolationMode.PROCESS))
 
     assert provider.prepare_calls == [None, 1, 2]
     assert provider.start_calls == 3

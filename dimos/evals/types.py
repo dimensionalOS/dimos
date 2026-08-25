@@ -86,6 +86,26 @@ class EvalResult:
     oracle: str = ""  # private provider result; never written to the public Store
     metrics: Mapping[str, float] = field(default_factory=dict)
 
+    def to_json_dict(self) -> dict[str, Any]:
+        """Return the stable JSON representation written by the eval runner."""
+
+        return {
+            "case_id": self.case_id,
+            "provider": self.provider,
+            "episode_id": self.episode_id,
+            "episode_case_id": self.episode_case_id,
+            "outputs": self.outputs,
+            "score": self.score,
+            "passed": self.passed,
+            "duration_s": self.duration_s,
+            "error": self.error,
+            "series": list(self.series),
+            "trials": [trial.to_json_dict() for trial in self.trials],
+            "transcript": self.transcript,
+            "oracle": self.oracle,
+            "metrics": dict(self.metrics),
+        }
+
 
 @dataclass(frozen=True, kw_only=True)
 class InteractiveTrialResult:
@@ -131,15 +151,31 @@ class InteractiveTrialResult:
             provenance[name] = value
         series = tuple((float(elapsed), float(value)) for elapsed, value in self.series)
         if any(
-            not math.isfinite(elapsed)
-            or elapsed < 0.0
-            or not math.isfinite(value)
+            not math.isfinite(elapsed) or elapsed < 0.0 or not math.isfinite(value)
             for elapsed, value in series
         ):
             raise ValueError("interactive trial series values must be finite and time-positive")
         object.__setattr__(self, "metrics", MappingProxyType(metrics))
         object.__setattr__(self, "provenance", MappingProxyType(provenance))
         object.__setattr__(self, "series", series)
+
+    def to_json_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe trial record without weakening runtime immutability."""
+
+        return {
+            "trial_index": self.trial_index,
+            "sample_index": self.sample_index,
+            "episode_id": self.episode_id,
+            "sample_digest": self.sample_digest,
+            "outputs": self.outputs,
+            "score": self.score,
+            "error": self.error,
+            "oracle": self.oracle,
+            "metrics": dict(self.metrics),
+            "provenance": dict(self.provenance),
+            "series": list(self.series),
+            "transcript": self.transcript,
+        }
 
 
 class EvalRig(Protocol):

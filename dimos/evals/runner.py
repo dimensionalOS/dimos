@@ -28,7 +28,7 @@ import json
 from pathlib import Path
 import subprocess
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from dimos.constants import STATE_DIR
 from dimos.core.resource import CompositeResource
@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from dimos.sim2.evaluation import (
         EpisodeActivationResult,
         EpisodeBoundary,
+        EpisodeBoundaryListener,
         EpisodeEvaluationResult,
         EpisodeProvider,
         PreparedEpisode,
@@ -197,7 +198,7 @@ class EvalRunner(Configurable, CompositeResource):
         return run_dir
 
     def _write_artifacts(self, results: list[EvalResult]) -> None:
-        lines = [json.dumps(asdict(r)) for r in results]
+        lines = [json.dumps(result.to_json_dict()) for result in results]
         (self.run_dir / "results.jsonl").write_text("\n".join(lines) + "\n")
         summary: dict[str, Any] = asdict(summarize(results))
         summary |= {"model": self.config.model, "blind": self.config.blind, "git": _git_sha()}
@@ -456,7 +457,8 @@ class EvalRunner(Configurable, CompositeResource):
                 sample_index=sample_index,
                 episode_id="" if self._episode is None else self._episode.episode_id,
                 sample_digest=(
-                    "" if activation is None or activation.sample_digest is None
+                    ""
+                    if activation is None or activation.sample_digest is None
                     else activation.sample_digest
                 ),
                 outputs=outputs,
@@ -499,7 +501,7 @@ class EvalRunner(Configurable, CompositeResource):
             if listener.module_name is None:
                 continue
             module = self._app.get_module(listener.module_name)
-            module.on_episode_boundary(boundary)
+            cast("EpisodeBoundaryListener", module).on_episode_boundary(boundary)
 
     def _prepare_isolated_trial(self, case: InteractiveEval, trial_index: int) -> None:
         if trial_index == 0:

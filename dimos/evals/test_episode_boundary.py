@@ -19,9 +19,9 @@ from typing import Any, cast
 
 from dimos.e2e_tests.episode import start_episode
 from dimos.e2e_tests.test_episode_provider_lifecycle import (
-    _Provider,
     _evaluation_case,
     _prepared_episode,
+    _Provider,
 )
 from dimos.evals.runner import EvalRunner
 from dimos.evals.types import InteractiveEval
@@ -77,7 +77,7 @@ def test_runner_publishes_boundary_after_activation_before_action() -> None:
 
     def run_action(action: Any) -> str:
         events.append("action")
-        return action(cast(Any, None), runner._episode_context)
+        return action(cast("Any", None), runner._episode_context)
 
     runner.run_action = run_action
     runner.sample_episode = lambda _interval, _timeout: (
@@ -119,7 +119,7 @@ def test_registered_stateful_modules_receive_each_boundary_once() -> None:
         get_module=modules.__getitem__,
     )
     runner = EvalRunner()
-    runner._app = cast(Any, app)
+    runner._app = cast("Any", app)
     boundaries = (
         EpisodeBoundary(
             provider_name="fake",
