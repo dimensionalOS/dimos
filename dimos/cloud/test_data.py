@@ -252,3 +252,15 @@ def test_pull_with_cross_filesystem_staging(
     assert (
         hashlib.sha256(out.read_bytes()).hexdigest() == hashlib.sha256(db.read_bytes()).hexdigest()
     )
+
+
+@pytest.mark.parametrize("algo", ["lz4", "gzip", "xz"])
+def test_codecs_interchangeable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, algo: str) -> None:
+    t = FakeTransport()
+    monkeypatch.setattr(cd, "RECORDINGS_DIR", tmp_path)
+    cloud = CloudData(MultipartBackend(t, codec(algo), None, retries=0))
+    db = recording(tmp_path)
+    r = cloud.upload(db)
+    assert t.uploads[r["upload_id"]]["content_encoding"] == algo
+    out = cloud.pull(r["upload_id"], dest=tmp_path / f"back-{algo}.db")
+    assert out.read_bytes() == db.read_bytes()
