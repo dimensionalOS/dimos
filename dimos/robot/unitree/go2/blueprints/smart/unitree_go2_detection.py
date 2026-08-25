@@ -14,6 +14,7 @@
 # limitations under the License.
 
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -22,7 +23,7 @@ from dimos.perception.detection.module3D import Detection3DModule
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
 from dimos.robot.unitree.go2.connection import GO2Connection
-from dimos.visualization.rerun.bridge import RerunBridgeModule
+from dimos.visualization.vis_module import vis_module
 
 
 def _topic_path(topic: object) -> str:
@@ -54,9 +55,12 @@ detection_rerun_config = {
 unitree_go2_detection = (
     autoconnect(
         unitree_go2,
-        # Replaces the RerunBridgeModule already present in unitree_go2 while
-        # leaving its single vis_module bundle and websocket modules intact.
-        RerunBridgeModule.blueprint(**detection_rerun_config),
+        # Replace the inherited viewer bundle so its Rerun bridge uses the
+        # detection-specific topic mapping while preserving viewer="none".
+        vis_module(
+            viewer_backend=global_config.viewer,
+            rerun_config=detection_rerun_config,
+        ),
         Detection3DModule.blueprint(
             camera_info=GO2Connection.camera_info_static,
             publish_detection_images=False,
