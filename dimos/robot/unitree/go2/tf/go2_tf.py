@@ -32,6 +32,7 @@ from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.robot.unitree.go2.constants import CAMERA_XYZ, MID360_MOUNT_PRESETS, MID360_XYZ
 
 
 class Go2TfConfig(NativeModuleConfig):
@@ -44,14 +45,16 @@ class Go2TfConfig(NativeModuleConfig):
     # them must: a native config has no rust-side defaults, so a field added
     # there and not here fails startup with `missing [...]`.
     #
-    # The geometry is the rig GO2Zenoh measures (zenohconnection.CAMERA_XYZ /
-    # MID360_XYZ / GO2ZenohConfig.mid360_mount); test_go2_tf.py pins these equal
-    # to it so the two cannot drift apart silently. The mount below is the
-    # ATHENS preset -- a stack on another rig must set BOTH halves to its own.
+    # The geometry is the rig GO2Zenoh measures, read from the same constants it
+    # does so the two cannot drift apart. Lists, not Vector3/tuple: every field
+    # here crosses to rust as JSON. The mount is the ATHENS preset -- a stack on
+    # another rig must set BOTH halves to its own.
     publish_hz: float = 5.0
-    camera_xyz: list[float] = Field(default_factory=lambda: [0.32715, -0.00003, 0.04297])
-    mid360_xyz: list[float] = Field(default_factory=lambda: [-0.032, 0.0, 0.12])
-    mid360_mount_rpy_deg: list[float] = Field(default_factory=lambda: [-60.0, 0.0, -90.0])
+    camera_xyz: list[float] = Field(default_factory=lambda: [*CAMERA_XYZ])
+    mid360_xyz: list[float] = Field(default_factory=lambda: [*MID360_XYZ])
+    mid360_mount_rpy_deg: list[float] = Field(
+        default_factory=lambda: [*MID360_MOUNT_PRESETS["ATHENS"]]
+    )
 
 
 class Go2Tf(NativeModule):

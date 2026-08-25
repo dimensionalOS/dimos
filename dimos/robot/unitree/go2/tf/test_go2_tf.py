@@ -38,13 +38,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.protocol.tf.tf import MultiTBuffer
 from dimos.robot.unitree.go2.tf.go2_tf import Go2TfConfig
-from dimos.robot.unitree.go2.zenoh.zenohconnection import (
-    CAMERA_XYZ,
-    MID360_MOUNT_PRESETS,
-    MID360_XYZ,
-    GO2Zenoh,
-    GO2ZenohConfig,
-)
+from dimos.robot.unitree.go2.zenoh.zenohconnection import GO2Zenoh, GO2ZenohConfig
 
 FIXTURE = Path(__file__).parent / "tf_parity.json"
 TOLERANCE = 1e-12
@@ -179,16 +173,9 @@ def test_the_fixture_still_matches_the_python():
         _assert_same(_resolve(odom, "camera_optical"), stored_case["camera_optical"], name)
 
 
-def test_the_geometry_defaults_are_the_rig_go2zenoh_measures():
-    """A drift here is a body 0.30 m from where the robot is, with nothing failing."""
-    config = Go2TfConfig()
-    assert config.camera_xyz == [CAMERA_XYZ.x, CAMERA_XYZ.y, CAMERA_XYZ.z]
-    assert config.mid360_xyz == [MID360_XYZ.x, MID360_XYZ.y, MID360_XYZ.z]
-    # The mount is per-RIG, so this pins the default to a preset rather than to
-    # GO2ZenohConfig's default: whichever preset a stack runs, both halves have to
-    # be told the same one, and _config() above is what proves the math agrees.
-    assert tuple(config.mid360_mount_rpy_deg) == MID360_MOUNT_PRESETS["ATHENS"]
-    assert config.publish_hz == GO2ZenohConfig().publish_hz
+def test_both_halves_publish_the_tree_at_the_same_rate():
+    """The xyz/mount geometry is now shared (go2.constants); the rate still is not."""
+    assert Go2TfConfig().publish_hz == GO2ZenohConfig().publish_hz
 
 
 def test_the_tree_leaves_the_lidar_a_single_parent():

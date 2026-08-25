@@ -206,8 +206,9 @@ _mls_planner = MLSPlannerNative.blueprint(
 # Consumes GO2Zenoh's lidar + odometry directly: the bridge stamps them exactly as
 # PointLio does locally (frames odom / mid360_link, xyz+intensity at point_step 16).
 # Re-declared with the pointlio map muted: the raytraced maps replace it wherever
-# ray tracing runs, and autoconnect keeps the newest duplicate, so this vis module
-# wins over basic's.
+# ray tracing runs. autoconnect dedupes by instance name and keeps the LAST one
+# declared (`_eliminate_duplicates`, core/coordination/blueprints.py), so this vis
+# module wins over basic's -- as long as it stays to the right of it in the call.
 _raytraced_vis = vis_module(
     viewer_backend=global_config.viewer,
     rerun_config=_rerun_config({"world/pointlio_map": None, "world/lidar": None}),
@@ -285,8 +286,8 @@ go2_zenoh_htc = autoconnect(
 # The rig the motion stacks run on. It has to equal `go2_tf`'s
 # `mid360_mount_rpy_deg` (robot/unitree/go2/tf/go2_tf.py) on any robot that runs
 # the baked host, because the two publish the SAME tf edges: disagree and
-# base_link jumps between two mounts at their combined publish rate. `MID360_MOUNT`
-# above stays whatever the nav/htc stacks want.
+# base_link jumps between two mounts at their combined publish rate (test_blueprints.py
+# asserts the pair). `MID360_MOUNT` above stays whatever the nav/htc stacks want.
 MOTION_MID360_MOUNT = "ATHENS"
 
 # Its own MLS tuning: the local planner + follower are the precision layer (embodiment
@@ -327,7 +328,8 @@ _mls_planner_motion = MLSPlannerNative.blueprint(
 # blueprint -- it has no follower and would plan without ever moving.
 _go2_zenoh_motion_base = autoconnect(
     go2_zenoh_raycaster,
-    # Re-declared on the motion rig; autoconnect keeps the newest duplicate.
+    # Re-declared on the motion rig: autoconnect keeps the LAST duplicate, so this
+    # overrides basic's SF mount. Order-dependent, hence pinned in test_blueprints.py.
     GO2Zenoh.blueprint(mid360_mount=MOTION_MID360_MOUNT),
     GoalRelay.blueprint(lidar_height=ROBOT_HEIGHT),
     _mls_planner_motion.remappings([(MLSPlannerNative, "path", "planner_path")]),
