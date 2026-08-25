@@ -102,6 +102,7 @@ ROOM_LOCALIZE_POLICY = LocalizePolicy(
     candidate_floor=0.18,
     accept_score=0.32,
     cluster_radius_m=0.30,
+    fuse_voxel_m=0.03,
     min_depth_points=30,
     max_object_extent_m=2.0,
     min_camera_range_m=0.5,
