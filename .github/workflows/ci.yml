@@ -378,7 +378,7 @@ jobs:
     strategy:
       matrix:
         pyver: ['3.10', '3.11', '3.12', '3.13', '3.14']
-        os: ["ubuntu-latest"]
+        os: ["macos-latest", "ubuntu-latest"]
         experimental: [false]
         include:
           - os: "ubuntu-latest"
