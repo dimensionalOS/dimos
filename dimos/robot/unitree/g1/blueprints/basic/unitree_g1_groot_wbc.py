@@ -281,6 +281,7 @@ if global_config.simulation == "mujoco":
         g1_arms,
         priority=10,
         velocity_limits={name: 1.0 for name in g1_arms},
+        hold_position_when_idle=True,
     )
     _mapper = VoxelGridMapper.blueprint(emit_every=1)
     _nav_stack = autoconnect(
@@ -327,6 +328,7 @@ else:
         g1_arms,
         priority=10,
         velocity_limits={name: 1.0 for name in g1_arms},
+        hold_position_when_idle=True,
     )
     # Same nav middle as unitree-g1-nav-simple, fed by Point-LIO from the
     # MID-360, executed through the coordinator's twist_command.
