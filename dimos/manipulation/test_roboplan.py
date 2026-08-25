@@ -49,6 +49,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.assets.model import RobotModel
 from dimos.utils.transform_utils import pose_to_matrix
 
 
@@ -163,6 +164,8 @@ class FakeScene:
     joint_group_joint_names: ClassVar[list[str] | None] = None
     position_limits_lower: ClassVar[list[float]] = [-1.0, -2.0]
     position_limits_upper: ClassVar[list[float]] = [1.0, 2.0]
+    full_position_limits_lower: ClassVar[list[float]] = [-1.0, -2.0, -3.0]
+    full_position_limits_upper: ClassVar[list[float]] = [1.0, 2.0, 3.0]
     valid_frames: ClassVar[set[str]] = {"dimos_world"}
 
     def __init__(
@@ -218,6 +221,12 @@ class FakeScene:
     def getPositionLimitVectors(
         self, group_name: str = "", collapsed: bool = False
     ) -> tuple[np.ndarray, np.ndarray]:
+        if not group_name:
+            robot_count = len(self.native_joint_names) // len(self.full_position_limits_lower)
+            return (
+                np.tile(self.full_position_limits_lower, robot_count),
+                np.tile(self.full_position_limits_upper, robot_count),
+            )
         return np.asarray(self.position_limits_lower), np.asarray(self.position_limits_upper)
 
     def getJointGroupInfo(self, name: str) -> FakeJointGroupInfo:
@@ -447,7 +456,7 @@ def robot_config(tmp_path: Path) -> RobotModelConfig:
     )
     return RobotModelConfig(
         name="arm",
-        model_path=model_path,
+        model=RobotModel.from_file(model_path),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
         joint_names=["joint1", "joint2"],
         base_link="base",
@@ -652,6 +661,35 @@ def test_context_cloning_and_joint_state_round_trip(
 
     live_round_trip = world.get_joint_state(world.get_live_context(), robot_id)
     assert live_round_trip.position == [0.1, 0.2]
+
+
+def test_full_scene_state_preserves_backend_default_for_unconfigured_joint(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_q: np.ndarray | None = None
+
+    def capture_jacobian_q(
+        scene: FakeScene,
+        q: np.ndarray,
+        frame_name: str,
+        local: bool = True,
+    ) -> np.ndarray:
+        nonlocal captured_q
+        captured_q = q.copy()
+        return np.ones((6, len(scene.native_joint_names)))
+
+    monkeypatch.setattr(FakeScene, "computeFrameJacobian", capture_jacobian_q)
+    world, _ = _make_world(fake_roboplan, robot_config)
+
+    world.get_group_jacobian(
+        world.get_live_context(),
+        "arm/manipulator",
+    )
+
+    assert captured_q is not None
+    np.testing.assert_allclose(captured_q, [0.0, 0.0, 0.0])
 
 
 def test_joint_name_mapping_is_applied_to_input_states(
@@ -1682,7 +1720,7 @@ def test_native_selected_planner_uses_explicit_start_after_live_state_advances(
     assert observed_scene_start[:2] == pytest.approx(start.position)
 
 
-def test_native_selected_planner_rejects_multi_group_selection(
+def test_native_selected_planner_preserves_disjoint_group_selection_order(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
     config = robot_config.model_copy(
@@ -1694,17 +1732,52 @@ def test_native_selected_planner_rejects_multi_group_selection(
         }
     )
     world, _ = _make_world(fake_roboplan, config)
-    selection = _selection((config,), "arm/left", "arm/right")
+    selection = _selection((config,), "arm/right", "arm/left")
 
     result = _planner_for(world).plan_selected_joint_path(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
-        JointState(name=list(selection.joint_names), position=[0.1, 0.1]),
+        JointState(name=list(selection.joint_names), position=[0.1, 0.2]),
     )
 
-    assert result.status == PlanningStatus.UNSUPPORTED
-    assert "no generated group" in result.message
+    assert result.status == PlanningStatus.SUCCESS
+    assert [state.name for state in result.path] == [list(selection.joint_names)] * 3
+    assert result.path[-1].position == [0.1, 0.2]
+
+
+def test_overlapping_group_selection_rejected_before_planning(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    config = robot_config.model_copy(
+        update={
+            "planning_groups": [
+                PlanningGroupDefinition("left", ("joint1", "joint2"), "base", "left_tip"),
+                PlanningGroupDefinition("right", ("joint2",), "base", "right_tip"),
+            ]
+        }
+    )
+    _make_world(fake_roboplan, config)
+
+    with pytest.raises(ValueError, match="overlap"):
+        _selection((config,), "arm/left", "arm/right")
+
+
+def test_overlapping_group_selection_rejected_before_planning(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    config = robot_config.model_copy(
+        update={
+            "planning_groups": [
+                PlanningGroupDefinition("left", ("joint1", "joint2"), "base", "left_tip"),
+                PlanningGroupDefinition("right", ("joint2",), "base", "right_tip"),
+            ]
+        }
+    )
+    _make_world(fake_roboplan, config)
+
+    with pytest.raises(ValueError, match="overlap"):
+        _selection((config,), "arm/left", "arm/right")
 
 
 def test_native_planner_coordinates_groups_across_two_robots(
@@ -1725,13 +1798,8 @@ def test_native_planner_coordinates_groups_across_two_robots(
     )
 
     assert result.status == PlanningStatus.SUCCESS
-    assert result.path[-1].name == [
-        "arm/joint1",
-        "arm/joint2",
-        "right/joint1",
-        "right/joint2",
-    ]
-    assert result.path[-1].position == [0.1, 0.3, 0.4, 0.2]
+    assert result.path[-1].name == list(selection.joint_names)
+    assert result.path[-1].position == [0.4, 0.2, 0.1, 0.3]
 
 
 def test_cartesian_planner_returns_timed_global_joint_states(
@@ -2228,11 +2296,12 @@ def test_scene_receives_generated_model_contents_inline(
 def test_composed_model_fills_only_missing_acceleration_limits(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
-    tree = ET.parse(robot_config.model_path)
+    source_path = Path(robot_config.model.source_path)
+    tree = ET.parse(source_path)
     authored = tree.find("./joint[@name='joint1']/limit")
     assert authored is not None
     authored.set("acceleration", "3.5")
-    tree.write(robot_config.model_path)
+    tree.write(source_path)
 
     world, _ = _make_world(fake_roboplan, robot_config)
 

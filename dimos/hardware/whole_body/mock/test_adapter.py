@@ -14,6 +14,7 @@
 
 import pytest
 
+from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.mock.adapter import MockWholeBodyAdapter
 from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
 
@@ -71,3 +72,14 @@ def test_connection_lifecycle_controls_availability_and_activation() -> None:
 
     assert not adapter.is_connected()
     assert not adapter.has_motor_states()
+
+
+def test_joint_limits_are_optional_adapter_metadata() -> None:
+    limits = JointLimits(
+        position_lower=[None, 0.0],
+        position_upper=[None, 1.0],
+        velocity_max=[None, None],
+    )
+
+    assert MockWholeBodyAdapter(dof=2).get_limits() is None
+    assert MockWholeBodyAdapter(dof=2, limits=limits).get_limits() == limits

@@ -1,10 +1,21 @@
 import { describe, expect, it } from "vitest";
 import type { FrameHeader } from "@dimos/shared";
+import costmapFrames from "../../../../shared/fixtures/costmap_frames.json";
+import {
+  type CostmapValue,
+  inflateCostmap,
+  MAX_COSTMAP_DIM,
+  MAX_COSTMAP_PAYLOAD_BYTES,
+} from "./costmap.ts";
 import { getDecoder, registerDecoder } from "./index.ts";
 import { MAX_JPEG_DIM, MAX_JPEG_PAYLOAD_BYTES } from "./jpeg.ts";
 import { JSON_PREVIEW_MAX_CHARS, MAX_JSON_PAYLOAD_BYTES } from "./json.ts";
 
 const HEADER: FrameHeader = { ch: "x", seq: 1, ts: 0, delivery: "latest" };
+
+function b64ToBytes(b64: string): Uint8Array {
+  return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+}
 
 /** Minimal scannable JPEG: SOI + SOF0 declaring w x h (no scan data). */
 function jpegBytes(w: number, h: number): Uint8Array {
@@ -28,7 +39,6 @@ describe("decoder registry", () => {
   });
 
   it("returns undefined for unknown encodings (unsupported, not an error)", () => {
-    expect(getDecoder("costmap.zlib.v1")).toBeUndefined();
     expect(getDecoder("h264.v1")).toBeUndefined();
     expect(getDecoder(undefined)).toBeUndefined();
   });
@@ -108,5 +118,76 @@ describe("decoder registry", () => {
     expect(value).toEqual({ data: "x".repeat(10_000) });
     expect(preview).toContain("truncated");
     expect(preview!.length).toBeLessThan(JSON_PREVIEW_MAX_CHARS + 50);
+  });
+});
+
+describe("costmap decoder", () => {
+  const decode = getDecoder("costmap.zlib.v1")!;
+  const header = (meta: Record<string, unknown>): FrameHeader => ({ ...HEADER, meta });
+  const META = { w: 3, h: 2, res: 0.05, origin: [-1.25, 2.5, 0.25] };
+
+  async function deflate(bytes: Uint8Array): Promise<Uint8Array> {
+    const stream = new Blob([bytes as BlobPart]).stream()
+      .pipeThrough(new CompressionStream("deflate"));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+
+  it("decodes and inflates every golden vector byte-exactly", async () => {
+    // The pytest mirror (test_costmap_encoding.py) re-encodes these same
+    // vectors; together they pin the Python-zlib -> DecompressionStream pair.
+    for (const vec of costmapFrames.vectors) {
+      const payload = b64ToBytes(vec.payload_b64);
+      const decoded = decode(payload, header(vec.meta));
+      const value = decoded.value as CostmapValue;
+      expect(decoded.preview).toBe(
+        `(costmap ${vec.meta.w}x${vec.meta.h}, ${payload.byteLength} B)`,
+      );
+      expect(value.bytes).toBe(payload); // the bytes stay deflated, no copy
+      expect({ w: value.w, h: value.h, res: value.res, origin: value.origin }).toEqual(vec.meta);
+      expect(await inflateCostmap(value)).toEqual(b64ToBytes(vec.grid_b64));
+    }
+  });
+
+  it("rejects missing or malformed meta", () => {
+    const payload = new Uint8Array([1, 2, 3]);
+    expect(() => decode(payload, HEADER)).toThrow(/no meta/);
+    expect(() => decode(payload, header({ ...META, w: 2.5 }))).toThrow(/positive integers/);
+    expect(() => decode(payload, header({ ...META, h: 0 }))).toThrow(/positive integers/);
+    expect(() => decode(payload, header({ ...META, res: -0.5 }))).toThrow(/positive/);
+    expect(() => decode(payload, header({ ...META, res: "0.05" }))).toThrow(/finite/);
+    expect(() => decode(payload, header({ ...META, origin: [1.5, 2.5] }))).toThrow(/origin/);
+    expect(() => decode(payload, header({ ...META, origin: [1.5, 2.5, Infinity] }))).toThrow(
+      /origin/,
+    );
+  });
+
+  it("rejects out-of-bounds dimensions and oversized payloads", () => {
+    const payload = new Uint8Array(8);
+    expect(() => decode(payload, header({ ...META, w: MAX_COSTMAP_DIM + 1, h: 1 }))).toThrow(
+      /out of bounds/,
+    );
+    expect(() => decode(payload, header({ ...META, w: 1, h: MAX_COSTMAP_DIM + 1 }))).toThrow(
+      /out of bounds/,
+    );
+    expect(() => decode(new Uint8Array(MAX_COSTMAP_PAYLOAD_BYTES + 1), header(META))).toThrow(
+      /oversized/,
+    );
+  });
+
+  it("rejects an inflate length mismatch in either direction", async () => {
+    const deflated = await deflate(new Uint8Array(24).fill(7));
+    // Declared 3x2=6 cells but the stream inflates to 24: the bomb guard
+    // fires mid-stream instead of allocating past the declaration.
+    const bomb = decode(deflated, header({ ...META, w: 3, h: 2 })).value as CostmapValue;
+    await expect(inflateCostmap(bomb)).rejects.toThrow(/beyond/);
+    const short = decode(deflated, header({ ...META, w: 5, h: 5 })).value as CostmapValue;
+    await expect(inflateCostmap(short)).rejects.toThrow(/expected/);
+  });
+
+  it("rejects a truncated deflate stream", async () => {
+    const vec = costmapFrames.vectors[0];
+    const payload = b64ToBytes(vec.payload_b64).slice(0, 6);
+    const value = decode(payload, header(vec.meta)).value as CostmapValue;
+    await expect(inflateCostmap(value)).rejects.toThrow();
   });
 });

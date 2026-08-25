@@ -104,6 +104,7 @@ dependencies = [
     "eclipse-zenoh>=1.9.0,<2.0",
     "PyTurboJPEG==1.8.2",
     "imagecodecs>=2024.6.1", # JPEG-XL for CompressedImage
+    "jsonlines>=4,<5",
     # Core
     "numpy>=1.26.4",
     "scipy>=1.15.1",
@@ -116,11 +117,12 @@ dependencies = [
     "pydantic",
     "python-dotenv",
     "packaging>=24.0",
-    "filelock>=3.16,<4",
+    "filelock>=3.20,<4",
     "annotation-protocol>=1.4.0",
     "lazy_loader",
     "typing_extensions>=4.7; python_version < '3.13'",
     "plum-dispatch==2.5.7",
+    "GitPython>=3.1.45",
     # Logging
     "structlog>=25.5.0,<26",
     # Core Msgs
@@ -326,7 +328,7 @@ sim = [
 ]
 
 mapping = [
-    # PGO for reloc premap + cmu_nav experiments
+    # PGO for reloc premap
     # Jeff's https://github.com/jeff-hykin/gtsam-extended
     "gtsam-extended>=4.3a1.post1",
 ]
@@ -509,6 +511,13 @@ tests-self-hosted = [
     "mcap>=1.2.0",
     # Needed to compile the in-tree extensions.
     "pybind11>=2.12",
+]
+docs = [
+    "mkdocs-awesome-nav>=3.3.0",
+    "mkdocs-glightbox>=0.5.2",
+    "mkdocs-material>=9.7.7",
+    "mkdocs-minify-plugin>=0.8.0",
+    "mkdocs-redirects>=1.2.3",
 ]
 
 [tool.uv]
@@ -715,7 +724,7 @@ env = [
   "GOOGLE_MAPS_API_KEY=AIzafake_google_key",
   "PYTHONWARNINGS=ignore:cupyx.jit.rawkernel is experimental:FutureWarning",
 ]
-addopts = "--dist=loadfile --durations=10 --timeout=600 --timeout-method=thread -v -ra --showlocals --cov-report=xml -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (self_hosted or mujoco or self_hosted_large or web_browser)'"
+addopts = "--dist=loadfile --durations=10 --timeout=600 --timeout-method=thread -v -ra --showlocals --cov-report=xml -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e)'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 

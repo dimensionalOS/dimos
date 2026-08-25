@@ -45,6 +45,7 @@ from dimos.manipulation.visualization.viser.config import ViserVisualizationConf
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.robot.assets.model import RobotModel
 
 
 class FakeVisualization:
@@ -94,7 +95,7 @@ class FakeWorld:
     def get_robot_config(self, robot_id: WorldRobotID) -> RobotModelConfig:
         return RobotModelConfig(
             name="fake",
-            model_path=Path("fake.urdf"),
+            model=RobotModel.from_file(Path("fake.urdf")),
             base_pose=PoseStamped(),
             joint_names=[],
             planning_groups=[

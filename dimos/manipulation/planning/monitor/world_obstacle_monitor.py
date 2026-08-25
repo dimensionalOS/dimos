@@ -644,7 +644,9 @@ class WorldObstacleMonitor:
 
                 points, _ = obj.pointcloud.as_numpy()
                 if points is not None and points.shape[0] >= 4:
-                    mesh_path = pointcloud_to_convex_hull_obj(points)
+                    # Keyed on the object's stable unique id: rescans overwrite
+                    # in place, and no two objects share a file.
+                    mesh_path = pointcloud_to_convex_hull_obj(points, cache_key=name)
                     if mesh_path is not None:
                         return Obstacle(
                             name=name,

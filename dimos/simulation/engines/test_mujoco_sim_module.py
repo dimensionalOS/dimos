@@ -84,6 +84,7 @@ class _FakeSimHooks:
 def test_ready_signal_happens_after_joint_state_and_imu_write() -> None:
     events: list[str] = []
     module = MujocoSimModule()
+    module.config = MujocoSimModuleConfig(dof=2)
     module._shm_ready_signaled = False
     module._root_base_qpos_adr = 0
     module._imu_quat_slice = None
@@ -102,8 +103,9 @@ def test_ready_signal_happens_after_joint_state_and_imu_write() -> None:
         def write_imu(self, **_: Any) -> None:
             events.append("imu")
 
-        def signal_ready(self, *, num_joints: int) -> None:
+        def signal_ready(self, *, num_joints: int, arm_joints: int) -> None:
             assert num_joints == 2
+            assert arm_joints == 2
             events.append("ready")
 
         def signal_stop(self) -> None:

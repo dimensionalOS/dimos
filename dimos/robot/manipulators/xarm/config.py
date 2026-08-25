@@ -16,18 +16,21 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
 from dimos.control.components import (
     HardwareComponent,
     HardwareType,
-    make_gripper_joints,
     make_joints,
 )
 from dimos.core.global_config import global_config
+from dimos.hardware.spec import JointLimits
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.manipulators._modeling import (
     base_pose,
     coordinator_joint_mapping,
@@ -54,15 +57,13 @@ XARM_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("link6", "right_outer_knuckle"),
 ]
 
-XARM_MODEL_PATH = LfsPath("xarm_description") / "urdf/xarm_device.urdf.xacro"
-XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": LfsPath("xarm_description")}
+XARM_ROS2_REPO = "https://github.com/xArm-Developer/xarm_ros2"
+XARM_ROS2_REF = "5bb832f72ca665f1236a9d8ed1c3a82f308db489"
+_XARM_REPO = RobotDescriptionSource(url=XARM_ROS2_REPO, ref=XARM_ROS2_REF)
+XARM_MODEL_PATH = _XARM_REPO / "xarm_description" / "urdf" / "xarm_device.urdf.xacro"
+XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": _XARM_REPO / "xarm_description"}
 XARM6_SIM_PATH = LfsPath("xarm6/scene.xml")
 XARM7_SIM_PATH = LfsPath("xarm7/scene.xml")
-XARM_GRIPPER_PARAMS = {
-    "gripper_joint": make_gripper_joints("arm")[0],
-    "gripper_open_pos": 0.85,
-    "gripper_closed_pos": 0.0,
-}
 XARM7_SIM_HOME = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
 
 
@@ -111,25 +112,32 @@ def make_xarm_hardware(
     adapter_type: str = "mock",
     address: str | Path | None = None,
     gripper: bool = False,
-    gripper_open_position: float | None = None,
-    gripper_closed_position: float | None = None,
     auto_enable: bool = True,
     adapter_kwargs: dict[str, object] | None = None,
     home_joints: list[float] | None = None,
 ) -> HardwareComponent:
     kwargs = _adapter_kwargs(home_joints)
+    if adapter_type == "xarm":
+        kwargs["arm_dof"] = dof
     if adapter_kwargs:
         kwargs.update(adapter_kwargs)
+    gripper_joints = [f"{hw_id}/gripper"] if gripper else []
+    initial_positions = kwargs.get("initial_positions")
+    if gripper and isinstance(initial_positions, list):
+        kwargs["initial_positions"] = [*initial_positions, 0.0]
+    if adapter_type == "mock":
+        kwargs["limits"] = JointLimits(
+            position_lower=[*([-2 * math.pi] * dof), *([0.0] * len(gripper_joints))],
+            position_upper=[*([2 * math.pi] * dof), *([850.0] * len(gripper_joints))],
+            velocity_max=[*([math.pi] * dof), *([0.0] * len(gripper_joints))],
+        )
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.MANIPULATOR,
-        joints=make_joints(hw_id, dof),
+        joints=[*make_joints(hw_id, dof), *gripper_joints],
         adapter_type=adapter_type,
         address=address,
         auto_enable=auto_enable,
-        gripper_joints=[f"{hw_id}/gripper"] if gripper else [],
-        gripper_open_position=gripper_open_position,
-        gripper_closed_position=gripper_closed_position,
         adapter_kwargs=kwargs,
     )
 
@@ -138,8 +146,6 @@ def xarm7_hardware(
     hw_id: str = "arm",
     *,
     gripper: bool = False,
-    gripper_open_position: float | None = None,
-    gripper_closed_position: float | None = None,
     mock_without_address: bool = False,
     home_joints: list[float] | None = None,
 ) -> HardwareComponent:
@@ -150,8 +156,6 @@ def xarm7_hardware(
             adapter_type="sim_mujoco",
             address=str(XARM7_SIM_PATH),
             gripper=gripper,
-            gripper_open_position=gripper_open_position,
-            gripper_closed_position=gripper_closed_position,
             home_joints=home_joints,
         )
     address = global_config.xarm7_ip
@@ -160,8 +164,6 @@ def xarm7_hardware(
             hw_id,
             7,
             gripper=gripper,
-            gripper_open_position=gripper_open_position,
-            gripper_closed_position=gripper_closed_position,
             home_joints=home_joints,
         )
     return make_xarm_hardware(
@@ -170,8 +172,6 @@ def xarm7_hardware(
         adapter_type="xarm",
         address=address,
         gripper=gripper,
-        gripper_open_position=gripper_open_position,
-        gripper_closed_position=gripper_closed_position,
         home_joints=home_joints,
     )
 
@@ -180,8 +180,6 @@ def xarm6_hardware(
     hw_id: str = "arm",
     *,
     gripper: bool = False,
-    gripper_open_position: float | None = None,
-    gripper_closed_position: float | None = None,
     mock_without_address: bool = False,
     home_joints: list[float] | None = None,
 ) -> HardwareComponent:
@@ -192,8 +190,6 @@ def xarm6_hardware(
             adapter_type="sim_mujoco",
             address=str(XARM6_SIM_PATH),
             gripper=gripper,
-            gripper_open_position=gripper_open_position,
-            gripper_closed_position=gripper_closed_position,
             home_joints=home_joints,
         )
     address = global_config.xarm6_ip
@@ -202,8 +198,6 @@ def xarm6_hardware(
             hw_id,
             6,
             gripper=gripper,
-            gripper_open_position=gripper_open_position,
-            gripper_closed_position=gripper_closed_position,
             home_joints=home_joints,
         )
     return make_xarm_hardware(
@@ -212,8 +206,6 @@ def xarm6_hardware(
         adapter_type="xarm",
         address=address,
         gripper=gripper,
-        gripper_open_position=gripper_open_position,
-        gripper_closed_position=gripper_closed_position,
         home_joints=home_joints,
     )
 
@@ -245,7 +237,11 @@ def make_xarm_model_config(
     tip_link = "link_tcp" if add_gripper else f"link{dof}"
     return RobotModelConfig(
         name=name,
-        model_path=XARM_MODEL_PATH,
+        model=RobotModel.from_file(
+            XARM_MODEL_PATH,
+            package_paths=XARM_PACKAGE_PATHS,
+            xacro_args=xacro_args,
+        ),
         base_pose=base_pose(x_offset, y_offset, z_offset, pitch),
         joint_names=local_joint_names,
         base_link="link_base",
@@ -257,8 +253,6 @@ def make_xarm_model_config(
                 tip_link=tip_link,
             )
         ],
-        package_paths=XARM_PACKAGE_PATHS,
-        xacro_args=xacro_args,
         auto_convert_meshes=True,
         collision_exclusion_pairs=(XARM_GRIPPER_COLLISION_EXCLUSIONS if add_gripper else []),
         joint_name_mapping=coordinator_joint_mapping(

@@ -192,6 +192,7 @@ class ManipulationModule(Module):
         self._lock = threading.Lock()
         self._error_message = ""
         self._planning_epoch = 0
+        self._started = False
 
         # Planning components (initialized in start())
         self._world_monitor: WorldMonitor | None = None
@@ -221,17 +222,25 @@ class ManipulationModule(Module):
     @rpc
     def start(self) -> None:
         """Start the manipulation module."""
-        super().start()
+        if self._started:
+            logger.warning("ManipulationModule already running")
+            return
+        self._started = True
+        try:
+            super().start()
 
-        # Execution state must exist before planning starts observers such as visualization.
-        self._initialize_execution()
-        self._initialize_planning()
+            # Execution state must exist before planning starts observers such as visualization.
+            self._initialize_execution()
+            self._initialize_planning()
 
-        # Subscribe to joint state via port
-        if self.coordinator_joint_state is not None:
-            self.coordinator_joint_state.subscribe(self._on_joint_state)
-            logger.info("Subscribed to coordinator_joint_state port")
-        logger.info("ManipulationModule started")
+            # Subscribe to joint state via port
+            if self.coordinator_joint_state is not None:
+                self.coordinator_joint_state.subscribe(self._on_joint_state)
+                logger.info("Subscribed to coordinator_joint_state port")
+            logger.info("ManipulationModule started")
+        except BaseException:
+            self._started = False
+            raise
 
     def _initialize_planning(self) -> None:
         """Initialize world, planner, and trajectory generator."""
@@ -1230,8 +1239,10 @@ class ManipulationModule(Module):
         config = self._group_robot_config(group)
         if config.gripper_hardware_id is None:
             return None
-        value = self._control_coordinator.get_gripper_position(config.gripper_hardware_id)
-        return float(value) if value is not None else None
+        values = self._control_coordinator.task_invoke(
+            f"{config.gripper_hardware_id}_gripper", "get_normalized", {}
+        )
+        return float(values[0]) if values else None
 
     def get_current_joint_state(self, robot_name: RobotName) -> JointState | None:
         """Return the named robot's current local joint state with names."""
@@ -1595,55 +1606,30 @@ class ManipulationModule(Module):
             return False
         return self._world_monitor.remove_obstacle(obstacle_id)
 
-    def _get_gripper_hardware_id(self, robot_name: RobotName | None = None) -> str | None:
-        """Get gripper hardware ID for a robot."""
-        robot = self._get_robot(robot_name)
-        if robot is None:
-            return None
-        _, _, config = robot
-        if not config.gripper_hardware_id:
-            logger.warning(f"No gripper_hardware_id configured for '{config.name}'")
-            return None
-        return str(config.gripper_hardware_id)
-
-    def _set_gripper_position(self, position: float, robot_name: RobotName | None = None) -> bool:
-        """Internal: set gripper position in meters."""
-        hw_id = self._get_gripper_hardware_id(robot_name)
-        if hw_id is None:
-            return False
-        return self._control_coordinator.set_gripper_position(hw_id, position)
-
-    def get_gripper(self, robot_name: RobotName | None = None) -> float | None:
-        """Get gripper position in meters.
-
-        Args:
-            robot_name: Robot to query (required if multiple robots configured)
-        """
-        hw_id = self._get_gripper_hardware_id(robot_name)
-        if hw_id is None:
-            return None
-        result = self._control_coordinator.get_gripper_position(hw_id)
-        return float(result) if result is not None else None
-
     @rpc
     def set_gripper_position(
         self,
         position: float,
         planning_group: PlanningGroupID | None = None,
     ) -> CommandResult:
-        """Set the gripper associated with one planning group."""
+        """Set normalized gripper opening for one planning group."""
 
-        if not math.isfinite(position):
-            return CommandResult(CommandStatus.REJECTED, "position must be finite")
+        if not math.isfinite(position) or not 0.0 <= position <= 1.0:
+            return CommandResult(
+                CommandStatus.REJECTED,
+                "position must be finite and between 0.0 (closed) and 1.0 (open)",
+            )
         group = self._resolve_gripper_group(planning_group)
         if isinstance(group, CommandResult):
             return group
         config = self._group_robot_config(group)
         assert config.gripper_hardware_id is not None
-        if self._control_coordinator.set_gripper_position(
-            config.gripper_hardware_id, float(position)
+        if self._control_coordinator.task_invoke(
+            f"{config.gripper_hardware_id}_gripper",
+            "set_normalized",
+            {"values": [float(position)]},
         ):
-            return CommandResult(CommandStatus.SUCCEEDED, f"Gripper set to {position:.3f}m")
+            return CommandResult(CommandStatus.SUCCEEDED, f"Gripper set to {position:.0%} open")
         return CommandResult(CommandStatus.FAILED, "Failed to set gripper position")
 
     def _resolve_pose_group(

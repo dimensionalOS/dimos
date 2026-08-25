@@ -15,6 +15,7 @@
 *.mp4 filter=lfs diff=lfs merge=lfs -text binary
 *.mov filter=lfs diff=lfs merge=lfs -text binary
 *.gif filter=lfs diff=lfs merge=lfs -text binary
+*.webp filter=lfs diff=lfs merge=lfs -text binary
 *.foxe filter=lfs diff=lfs merge=lfs -text binary
 docs/capabilities/memory/assets/** filter=lfs diff=lfs merge=lfs -text
 docs/capabilities/memory/assets/.gitattributes -filter -diff -merge text

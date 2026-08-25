@@ -1,6 +1,4 @@
----
-title: "Viewer Backends"
----
+# Viewer Backends
 
 Dimos uses Rerun for visualizations. It can be disabled by using
 `dimos --viewer none ...`.

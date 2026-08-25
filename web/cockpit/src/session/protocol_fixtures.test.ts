@@ -96,11 +96,18 @@ describe("manifest/session message validation", () => {
   const manifest = {
     t: "manifest",
     robotId: "go2",
-    channels: [{ ch: "odom", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20 }],
+    manifest: {
+      version: 1,
+      channels: [{ ch: "odom", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20 }],
+    },
   };
 
   it("accepts well-formed messages", () => {
     expect(msgFromUnknown(manifest)).toEqual(manifest);
+    // Bare = manifest-less robot; the nested manifest is opaque here
+    // (structure belongs to parseManifest).
+    expect(msgFromUnknown({ t: "manifest", robotId: "go2" })).not.toBeNull();
+    expect(msgFromUnknown({ ...manifest, manifest: { alien: true } })).not.toBeNull();
     expect(msgFromUnknown({ t: "robots", robots: [{ id: "a", name: "A", model: "go2" }] }))
       .not.toBeNull();
   });
@@ -108,13 +115,9 @@ describe("manifest/session message validation", () => {
   it("rejects malformed or unknown messages", () => {
     expect(msgFromUnknown({ t: "nope" })).toBeNull();
     expect(msgFromUnknown({ t: "toString" })).toBeNull();
-    expect(msgFromUnknown({ t: "manifest", robotId: "go2" })).toBeNull();
-    expect(
-      msgFromUnknown({
-        ...manifest,
-        channels: [{ ch: "odom", encoding: "pose.json.v1", delivery: "sometimes", maxHz: 20 }],
-      }),
-    ).toBeNull();
+    expect(msgFromUnknown({ t: "manifest", robotId: "go2", manifest: null })).toBeNull();
+    expect(msgFromUnknown({ t: "manifest", robotId: "go2", manifest: 7 })).toBeNull();
+    expect(msgFromUnknown({ t: "manifest", manifest: { version: 1 } })).toBeNull();
     expect(msgFromUnknown({ t: "watch" })).toBeNull();
   });
 });

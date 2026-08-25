@@ -34,6 +34,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.teleop.quest.quest_teleop_module import QuestTeleopConfig, QuestTeleopModule
 from dimos.teleop.quest.quest_types import Buttons, Hand, QuestControllerState
 from dimos.utils.logging_config import setup_logger
@@ -132,11 +133,20 @@ class ArmTeleopModule(QuestTeleopModule):
     output port is wired to its consuming task's coordinator port in
     the blueprint; no addressing happens in the message.
 
+    Unlike the base module, this publishes absolute controller poses. The
+    control task owns controller-to-robot reference capture so one task can
+    establish a coherent reference for both arms.
+
     Outputs:
         - left_controller_output: PoseStamped (inherited)
         - right_controller_output: PoseStamped (inherited)
-        - buttons: Buttons (inherited)
+        - teleop_buttons: Buttons (inherited)
+        - left_gripper_command: Float32 normalized opening
+        - right_gripper_command: Float32 normalized opening
     """
+
+    left_gripper_command: Out[Float32]
+    right_gripper_command: Out[Float32]
 
     @rpc
     def start(self) -> None:
@@ -145,6 +155,10 @@ class ArmTeleopModule(QuestTeleopModule):
     @rpc
     def stop(self) -> None:
         super().stop()
+
+    def _get_output_pose(self, hand: Hand) -> PoseStamped | None:
+        """Return the current absolute controller pose."""
+        return self._current_poses.get(hand)
 
     def _publish_button_state(
         self,
@@ -158,6 +172,23 @@ class ArmTeleopModule(QuestTeleopModule):
             right=right.trigger if right is not None else 0.0,
         )
         self.teleop_buttons.publish(buttons)
+        self._publish_gripper_commands(left, right)
+
+    def _publish_gripper_commands(
+        self,
+        left: QuestControllerState | None,
+        right: QuestControllerState | None,
+    ) -> None:
+        """Publish normalized opening for each currently engaged hand."""
+        controllers = {Hand.LEFT: left, Hand.RIGHT: right}
+        outputs = {
+            Hand.LEFT: self.left_gripper_command,
+            Hand.RIGHT: self.right_gripper_command,
+        }
+        for hand, controller in controllers.items():
+            if controller is None or not self._is_engaged[hand]:
+                continue
+            outputs[hand].publish(Float32(data=1.0 - float(controller.trigger)))
 
 
 class HandTeleopModule(ArmTeleopModule):
@@ -198,6 +229,7 @@ class HandTeleopModule(ArmTeleopModule):
         buttons.left_primary = self._is_engaged[Hand.LEFT]
         buttons.right_primary = self._is_engaged[Hand.RIGHT]
         self.teleop_buttons.publish(buttons)
+        self._publish_gripper_commands(left, right)
 
 
 class VideoArmTeleopConfig(QuestTeleopConfig):
@@ -259,11 +291,21 @@ class Go2TeleopModule(QuestTeleopModule):
     color_image: In[Image]
     cmd_vel: Out[Twist]
 
+    def _publish_safe_command(self) -> None:
+        self.cmd_vel.publish(Twist.zero())
+
     def _deadzone(self, v: float) -> float:
         return 0.0 if abs(v) < self.config.deadzone else v
 
-    def _on_joy_bytes(self, data: bytes) -> None:
-        super()._on_joy_bytes(data)
+    def _on_joy_bytes(self, data: bytes) -> bool:
+        try:
+            valid = super()._on_joy_bytes(data)
+        except ValueError:
+            self._publish_safe_command()
+            raise
+        if not valid:
+            self._publish_safe_command()
+            return False
         with self._lock:
             left = self._controllers.get(Hand.LEFT)
             right = self._controllers.get(Hand.RIGHT)
@@ -276,15 +318,7 @@ class Go2TeleopModule(QuestTeleopModule):
         if right is not None:
             twist.angular.z = -self._deadzone(right.thumbstick.x) * self.config.angular_speed
         self.cmd_vel.publish(twist)
+        return True
 
     async def handle_color_image(self, msg: Image) -> None:
         _push_jpeg(self, msg, self.config.video_jpeg_quality)
-
-    @rpc
-    def stop(self) -> None:
-        # Send one zero Twist so the base halts if teleop dies mid-motion.
-        try:
-            self.cmd_vel.publish(Twist.zero())
-        except Exception:
-            logger.exception("Failed to publish stop Twist")
-        super().stop()

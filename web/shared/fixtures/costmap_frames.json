@@ -1,0 +1,49 @@
+{
+  "vectors": [
+    {
+      "name": "small_map",
+      "meta": {
+        "w": 5,
+        "h": 4,
+        "res": 0.05,
+        "origin": [
+          -1.25,
+          2.5,
+          0.0
+        ]
+      },
+      "grid_b64": "//8AAAD/AAEyAAAAY2QAAP//AGQ=",
+      "payload_b64": "eJz7/5+BgeE/A6MRkEpOATL/M6QAAEV0Blo="
+    },
+    {
+      "name": "with_yaw",
+      "meta": {
+        "w": 3,
+        "h": 3,
+        "res": 0.1,
+        "origin": [
+          1.5,
+          -0.75,
+          0.25
+        ]
+      },
+      "grid_b64": "AGT/ADIA/wAZ",
+      "payload_b64": "eJxjSPnPYMTwn0ESAA4yAq4="
+    },
+    {
+      "name": "single_row",
+      "meta": {
+        "w": 6,
+        "h": 1,
+        "res": 0.25,
+        "origin": [
+          -0.5,
+          0.125,
+          0.0
+        ]
+      },
+      "grid_b64": "AP8BY2QA",
+      "payload_b64": "eJxj+M+YnMIAAAb2Acg="
+    }
+  ]
+}

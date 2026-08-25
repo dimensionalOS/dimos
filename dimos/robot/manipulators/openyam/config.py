@@ -20,10 +20,12 @@ from pathlib import Path
 
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.core.global_config import global_config
+from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators._modeling import (
     base_pose,
     coordinator_joint_mapping,
@@ -46,7 +48,13 @@ def openyam_hardware() -> HardwareComponent:
     """Select the physical or in-memory whole-body adapter for OpenYAM."""
     adapter_type = "mock_whole_body" if global_config.simulation else "openyam_damiao"
     adapter_kwargs: dict[str, object] = {}
-    if not global_config.simulation:
+    if global_config.simulation:
+        adapter_kwargs["limits"] = JointLimits(
+            position_lower=[*([None] * OPENYAM_DOF), 0.0],
+            position_upper=[*([None] * OPENYAM_DOF), 1.0],
+            velocity_max=[None] * len(OPENYAM_JOINTS),
+        )
+    else:
         adapter_kwargs["runtime_config"] = DamiaoRuntimeConfig(
             bus_addresses={"openyam": global_config.can_port or "can0"},
             gravity_comp=True,
@@ -75,7 +83,10 @@ def make_openyam_model_config(
     local_joint_names = joint_names(OPENYAM_DOF)
     return RobotModelConfig(
         name=name,
-        model_path=OPENYAM_MODEL_PATH,
+        model=RobotModel.from_file(
+            OPENYAM_MODEL_PATH,
+            package_paths=OPENYAM_PACKAGE_PATHS,
+        ),
         base_pose=base_pose(),
         joint_names=local_joint_names,
         base_link="base",
@@ -87,7 +98,6 @@ def make_openyam_model_config(
                 tip_link="gripper_tip",
             )
         ],
-        package_paths=OPENYAM_PACKAGE_PATHS,
         auto_convert_meshes=True,
         collision_exclusion_pairs=[],
         joint_name_mapping=coordinator_joint_mapping(
@@ -96,5 +106,6 @@ def make_openyam_model_config(
             joint_prefix=joint_prefix,
             urdf_joint_prefix="",
         ),
+        gripper_hardware_id=OPENYAM_HARDWARE_ID,
         home_joints=home_joints or [0.0] * OPENYAM_DOF,
     )
