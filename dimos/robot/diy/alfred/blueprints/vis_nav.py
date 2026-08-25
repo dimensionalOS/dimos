@@ -43,7 +43,8 @@ IR_ENTITY_BY_FRAME = {
     "camera_infra1_optical_frame": f"{CAMERA_RERUN_ROOT}/infra1",
     "camera_infra2_optical_frame": f"{CAMERA_RERUN_ROOT}/infra2",
 }
-"""Both imagers arrive on one topic, so the entity has to come from the message."""
+"""The IR pair, left first. Both imagers arrive on one topic, so the entity has to come
+from the message, and cuVSLAM's rig has to be told the order."""
 
 
 def _image_at(msg: Any, entity_path: str) -> list[tuple[str, Any]]:
@@ -107,6 +108,9 @@ _vis_nav = autoconnect(
     DimSlam.blueprint(
         # Alfred's computer has no GPU, so libcuvslam is built -DENFORCE_GPU=OFF.
         use_gpu=False,
+        # Both imagers share one camera_info topic. Left undeclared, cuVSLAM orders its rig
+        # by sorting the frame names it saw, which is left-then-right only by luck of naming.
+        camera_frames=list(IR_ENTITY_BY_FRAME),
         depth_units_per_meter=1000.0,
         depth_cloud_max_range=DEPTH_MAX_RANGE_METERS,
         # A full-resolution D455 cloud is ~400k points a frame at 30 Hz and drowns the mapper.
