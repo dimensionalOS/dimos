@@ -351,14 +351,18 @@ class SpaceNav(EvalCase):
             ]
         else:
             needed = [config.data_dir / "3D_scenes" / self.env_name / f"{self.walkthrough_key}.mp4"]
-            try:
-                import habitat_sim  # noqa: F401
-            except ImportError as e:
+            python = config.habitat_python
+            if python is None or not python.exists():
+                # habitat-sim has Python 3.9 conda builds only, so it can never
+                # import into this interpreter; episodes drive it in a sidecar
+                # process instead (_ego_env.py).
                 raise RuntimeError(
                     f"{self.id}: egocentric navigation renders observations online and "
-                    "needs habitat-sim (x86_64 Linux: mamba install habitat-sim=0.3.0 "
-                    "headless -c conda-forge -c aihabitat); see docs/usage/evaluation/space.md"
-                ) from e
+                    "needs a habitat-sim interpreter (x86_64 Linux: micromamba create "
+                    "-n habitat -c conda-forge -c aihabitat python=3.9 habitat-sim=0.3.0 "
+                    "headless; then set DIMOS_SPACE_HABITAT_PYTHON to that env's "
+                    "python). See docs/usage/evaluation/space.md"
+                )
         for path in needed:
             if not path.exists():
                 raise FileNotFoundError(f"{self.id}: missing {path.name} — {SETUP_HINT}")
@@ -460,26 +464,56 @@ class SpaceNav(EvalCase):
         )
 
     def _ego_episode(self, rig: EvalRig) -> dict[str, Any]:
+        """Drive the habitat environment in its own interpreter (see _ego_env.py).
+
+        The env and the benchmark's metric classes run under the habitat
+        Python; prompts, the model loop and action parsing stay here.
+        """
+        import base64
+        import io
+        import subprocess
+
+        import numpy as np
+
         _repo_on_path()
         from space.agents.egonav_agent import (
             TASK_PROMPT_NOVEL_SHORTCUTS,
             TASK_PROMPT_ROUTE_FOLLOWING,
         )
-        from space.envs.nav_ego import NavEgoEnv
-        from space.utils.habitat import SPL, DistanceToGoal, Success
 
         scene = config.data_dir / "3D_scenes" / self.env_name
-        env = NavEgoEnv(
-            str(scene),
-            habitat_kwargs={"resolution": _EGO_HABITAT_RESOLUTION},
-            image_downscaling=_EGO_IMAGE_DOWNSCALING,
+        server = subprocess.Popen(
+            [str(config.habitat_python), str(Path(__file__).parent / "_ego_env.py")],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
         )
+
+        def call(**request: Any) -> dict[str, Any]:
+            assert server.stdin is not None and server.stdout is not None
+            server.stdin.write(json.dumps(request) + "\n")
+            server.stdin.flush()
+            line = server.stdout.readline()
+            if not line:
+                stderr = server.stderr.read() if server.stderr is not None else ""
+                raise RuntimeError(
+                    f"{self.id}: habitat env server died on {request['cmd']}: {stderr[-800:]}"
+                )
+            return cast("dict[str, Any]", json.loads(line))
+
+        def decode_obs(payload: str) -> Any:
+            return np.load(io.BytesIO(base64.b64decode(payload)), allow_pickle=False)
+
         try:
+            task_info = call(
+                cmd="init",
+                scene=str(scene),
+                repo=str(config.repo_dir),
+                resolution=_EGO_HABITAT_RESOLUTION,
+                image_downscaling=_EGO_IMAGE_DOWNSCALING,
+            )["task_info"]
             frames = video_frame_blocks(scene / f"{self.walkthrough_key}.mp4")
-            task_info = env.get_task_info()
-            d2g = DistanceToGoal(env.sim, task_info["goal_position"])
-            success = Success(env.sim, task_info["goal_position"])
-            spl = SPL(env.sim, task_info["start_position"], task_info["goal_position"])
             task_prompt = (
                 TASK_PROMPT_ROUTE_FOLLOWING
                 if self.walkthrough_key == "shortestpath"
@@ -496,8 +530,7 @@ class SpaceNav(EvalCase):
             )
             transcript += frames[-1:]  # upstream shows the last walkthrough frame as the goal
 
-            observation = env.reset()
-            positions = [env.get_sim_state()[0]]
+            observation = decode_obs(call(cmd="reset")["obs"])
             stop_issued = False
             for _ in range(250):  # upstream evaluate_egonav default
                 transcript.append(_text_block(_EGO_OBSERVATION_PROMPT))
@@ -513,16 +546,17 @@ class SpaceNav(EvalCase):
                 if action == "stop":
                     stop_issued = True
                     break
-                observation = env.step(action)
-                positions.append(env.get_sim_state()[0])
+                observation = decode_obs(call(cmd="step", action=action)["obs"])
 
-            return {
-                "distance_to_goal": d2g(positions),
-                "success": success(stop_issued, positions),
-                "spl": spl(stop_issued, positions),
-            }
+            metrics = call(cmd="finish", stop_issued=stop_issued)["metrics"]
+            if server.stdin is not None:  # close has no reply; fire and forget
+                server.stdin.write(json.dumps({"cmd": "close"}) + "\n")
+                server.stdin.flush()
+            return cast("dict[str, Any]", metrics)
         finally:
-            env.close()
+            if server.stdin is not None:
+                server.stdin.close()
+            server.wait(timeout=30)
 
 
 def nav_suite(walkthrough_key: str, slug: str) -> list[EvalCase]:

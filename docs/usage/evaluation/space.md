@@ -52,14 +52,18 @@ instructions and ask the model to think step by step, which the default
 paper's own ablation. A QA case that still passes blind is guessable; chance on
 the four-way items is 25%.
 
-### Egocentric navigation needs habitat-sim
+### Egocentric navigation needs a habitat-sim interpreter
 
 The `ego` cases of the two navigation suites render observations online, which
 requires [habitat-sim](https://github.com/facebookresearch/habitat-sim) — a
-native simulator with x86_64 Linux conda packages only (no GPU required):
+native simulator with x86_64 Linux conda packages only (no GPU required). Its
+builds exist for Python 3.9 alone, while dimOS requires 3.10+, so the
+environment runs in a sidecar interpreter (`suites/space/_ego_env.py`) that the
+episode drives over stdio; the model loop stays in dimOS:
 
 ```bash
-mamba install habitat-sim=0.3.0 headless -c conda-forge -c aihabitat
+micromamba create -n habitat -c conda-forge -c aihabitat     python=3.9 habitat-sim=0.3.0 headless
+export DIMOS_SPACE_HABITAT_PYTHON=~/micromamba/envs/habitat/bin/python
 ```
 
 On machines without it those cases fail preflight with this pointer; everything

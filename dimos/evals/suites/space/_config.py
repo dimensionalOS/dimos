@@ -58,6 +58,14 @@ class SpaceConfig(BaseModel):
     frame_stride: int = 1
     nav_local_context: int = 5
     nav_max_steps: int = 100
+    # habitat-sim ships Python 3.9 conda builds only, so egocentric episodes run
+    # the environment under a separate interpreter (see _ego_env.py). Point this
+    # at that env's python, e.g. ~/micromamba/envs/habitat/bin/python.
+    habitat_python: Path | None = Field(
+        default_factory=lambda: (
+            Path(p) if (p := os.environ.get("DIMOS_SPACE_HABITAT_PYTHON")) else None
+        )
+    )
 
 
 config = SpaceConfig()

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import collections
 import itertools
+import pathlib
 import sys
 from types import ModuleType
 from typing import Any
@@ -331,6 +332,96 @@ def test_nav_episode_scores_with_the_official_spl() -> None:
     assert case.evaluate(ScriptedRig(perfect)).score == pytest.approx(1.0)
     lazy = case.evaluate(ScriptedRig(["stop"] * 2))
     assert lazy.score == 0.0
+
+
+def test_ego_bridge_end_to_end(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    """The sidecar protocol, both sides, against a stub habitat environment.
+
+    habitat-sim only ships Python 3.9 builds, so the real thing can never run in
+    this interpreter; the bridge is exactly the part that must not rot silently.
+    """
+    import numpy as np
+
+    stub = tmp_path / "repo"
+    (stub / "space" / "envs").mkdir(parents=True)
+    (stub / "space" / "utils").mkdir(parents=True)
+    (stub / "space" / "agents").mkdir(parents=True)
+    (stub / "space" / "envs" / "nav_ego.py").write_text(
+        "import numpy as np\n"
+        "class NavEgoEnv:\n"
+        "    def __init__(self, scene, habitat_kwargs, image_downscaling):\n"
+        "        self.sim = object()\n"
+        "    def get_task_info(self):\n"
+        "        return {'goal_desc': 'the bed', 'goal_position': [0, 0, 0],\n"
+        "                'start_position': [0, 0, 0]}\n"
+        "    def reset(self):\n"
+        "        return np.zeros((4, 4, 3), dtype=np.uint8)\n"
+        "    def step(self, action):\n"
+        "        return np.full((4, 4, 3), 7, dtype=np.uint8)\n"
+        "    def get_sim_state(self):\n"
+        "        return [0.0, 0.0, 0.0], None\n"
+        "    def close(self):\n"
+        "        pass\n"
+    )
+    (stub / "space" / "utils" / "habitat.py").write_text(
+        "class DistanceToGoal:\n"
+        "    def __init__(self, sim, goal): pass\n"
+        "    def __call__(self, positions): return 0.5\n"
+        "class Success:\n"
+        "    def __init__(self, sim, goal): pass\n"
+        "    def __call__(self, stop, positions): return 1.0\n"
+        "class SPL:\n"
+        "    def __init__(self, sim, start, goal): pass\n"
+        "    def __call__(self, stop, positions): return 0.75\n"
+    )
+    (stub / "space" / "agents" / "egonav_agent.py").write_text(
+        "TASK_PROMPT_ROUTE_FOLLOWING = 'route task'\n"
+        "TASK_PROMPT_NOVEL_SHORTCUTS = 'shortcut task'\n"
+    )
+    (stub / "space" / "agents" / "dmnav_agent.py").write_text(
+        "import re\n"
+        "class Base_DiscreteMap_Nav:\n"
+        "    def convert_response_to_action(self, text):\n"
+        '        found = re.search(r\'{\\s+"action":\\s*"(.*)"\\s+}\', text)\n'
+        "        return found.groups()[0] if found else None\n"
+    )
+
+    scene = tmp_path / "data" / "3D_scenes" / "Env_00000"
+    scene.mkdir(parents=True)
+    import cv2
+
+    writer = cv2.VideoWriter(
+        str(scene / "shortestpath.mp4"), cv2.VideoWriter_fourcc(*"mp4v"), 3, (8, 8)
+    )
+    for _ in range(2):
+        writer.write(np.zeros((8, 8, 3), dtype=np.uint8))
+    writer.release()
+
+    monkeypatch.setattr(config, "habitat_python", pathlib.Path(sys.executable))
+    monkeypatch.setattr(config, "repo_dir", stub)
+    monkeypatch.setattr(config, "data_dir", tmp_path / "data")
+
+    class ScriptedRig(FakeRig):
+        def ask(self, context: Any, question: str) -> str:
+            return '{\n  "action": "stop"\n}'
+
+    case = SpaceNav(
+        id="ego_bridge",
+        inputs="nav",
+        env_name="Env_00000",
+        walkthrough_key="shortestpath",
+        presentation="ego",
+    )
+    try:
+        case.preflight(FakeRig())
+        result = case.evaluate(ScriptedRig())
+    finally:
+        sys.path[:] = [entry for entry in sys.path if entry != str(stub)]
+        for name in [m for m in list(sys.modules) if m == "space" or m.startswith("space.")]:
+            del sys.modules[name]
+    assert result.error == ""
+    assert result.score == 0.75, result.outputs  # the stub SPL, straight through
+    assert '"success": 1.0' in result.outputs
 
 
 # -- fidelity: needs the real benchmark package ---------------------------------
