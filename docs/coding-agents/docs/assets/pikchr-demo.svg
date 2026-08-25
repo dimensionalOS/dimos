@@ -1,0 +1,33 @@
+<svg xmlns='http://www.w3.org/2000/svg' style='font-size:initial;' class="pikchr" viewBox="0 0 741.715 149.76" data-pikchr-date="20260403102956">
+<path d="M2.16,111.6L123.235,111.6L123.235,59.76L101.635,38.16L2.16,38.16Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M101.635,38.16L101.635,59.76L123.235,59.76"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="62.6976" y="74.88" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">README.md</text>
+<polygon points="180.835,74.88 169.315,79.2 169.315,70.56" style="fill:rgb(255,255,255)"/>
+<path d="M123.235,74.88L175.075,74.88"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M188.335,90L232.087,90A7.5 7.5 0 0 0 239.587 82.5L239.587,67.26A7.5 7.5 0 0 0 232.087 59.76L188.335,59.76A7.5 7.5 0 0 0 180.835 67.26L180.835,82.5A7.5 7.5 0 0 0 188.335 90Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="210.211" y="74.88" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Parse</text>
+<polygon points="297.187,74.88 285.667,79.2 285.667,70.56" style="fill:rgb(255,255,255)"/>
+<path d="M239.587,74.88L291.427,74.88"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M304.687,90L368.714,90A7.5 7.5 0 0 0 376.214 82.5L376.214,67.26A7.5 7.5 0 0 0 368.714 59.76L304.687,59.76A7.5 7.5 0 0 0 297.187 67.26L297.187,82.5A7.5 7.5 0 0 0 304.687 90Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="336.701" y="74.88" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Execute</text>
+<polygon points="462.614,17.28 451.094,21.6 451.094,12.96" style="fill:rgb(255,255,255)"/>
+<path d="M376.214,74.88L419.414,74.88L419.414,17.28L456.854,17.28"  style="fill:none;stroke-width:2.16;stroke-linejoin:round;stroke:rgb(255,255,255);" />
+<path d="M477.734,32.4L501.408,32.4A15.12 15.12 0 0 0 516.528 17.28A15.12 15.12 0 0 0 501.408 2.16L477.734,2.16A15.12 15.12 0 0 0 462.614 17.28A15.12 15.12 0 0 0 477.734 32.4Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="489.571" y="17.28" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Shell</text>
+<polygon points="462.614,74.88 451.094,79.2 451.094,70.56" style="fill:rgb(255,255,255)"/>
+<path d="M376.214,74.88L419.414,74.88L456.854,74.88"  style="fill:none;stroke-width:2.16;stroke-linejoin:round;stroke:rgb(255,255,255);" />
+<path d="M477.734,90L503.712,90A15.12 15.12 0 0 0 518.832 74.88A15.12 15.12 0 0 0 503.712 59.76L477.734,59.76A15.12 15.12 0 0 0 462.614 74.88A15.12 15.12 0 0 0 477.734 90Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="490.723" y="74.88" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Node</text>
+<polygon points="462.614,132.48 451.094,136.8 451.094,128.16" style="fill:rgb(255,255,255)"/>
+<path d="M376.214,74.88L419.414,74.88L419.414,132.48L456.854,132.48"  style="fill:none;stroke-width:2.16;stroke-linejoin:round;stroke:rgb(255,255,255);" />
+<path d="M477.734,147.6L516.96,147.6A15.12 15.12 0 0 0 532.08 132.48A15.12 15.12 0 0 0 516.96 117.36L477.734,117.36A15.12 15.12 0 0 0 462.614 132.48A15.12 15.12 0 0 0 477.734 147.6Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="497.347" y="132.48" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Python</text>
+<path d="M516.528,17.28L575.28,17.28L575.28,74.88"  style="fill:none;stroke-width:2.16;stroke-linejoin:round;stroke:rgb(255,255,255);" />
+<path d="M518.832,74.88L575.28,74.88"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M532.08,132.48L575.28,132.48L575.28,74.88"  style="fill:none;stroke-width:2.16;stroke-linejoin:round;stroke:rgb(255,255,255);" />
+<path d="M618.48,111.6L739.555,111.6L739.555,59.76L717.955,38.16L618.48,38.16Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M717.955,38.16L717.955,59.76L739.555,59.76"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="679.018" y="74.88" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">README.md</text>
+<polygon points="618.48,74.88 606.96,79.2 606.96,70.56" style="fill:rgb(255,255,255)"/>
+<path d="M575.28,74.88L612.72,74.88"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+</svg>

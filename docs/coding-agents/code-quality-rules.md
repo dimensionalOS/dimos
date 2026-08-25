@@ -1,6 +1,4 @@
----
-title: "Code Quality Rules"
----
+# Code Quality Rules
 
 Rules dimos code is expected to follow. They address recurring issues found in code review. The automated scan/fix prompts in `misc/auto-fixes/` are built from this file, but it's meant to be reused by any prompt that needs the project's code-quality criteria.
 

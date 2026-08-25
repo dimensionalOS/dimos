@@ -1,4 +1,4 @@
-<svg xmlns='http://www.w3.org/2000/svg' style='font-size:initial;' class="pikchr" viewBox="0 0 896.636 190.8">
+<svg xmlns='http://www.w3.org/2000/svg' style='font-size:initial;' class="pikchr" viewBox="0 0 896.636 190.8" data-pikchr-date="20260403102956">
 <path d="M9.66,87.84L126.069,87.84A7.5 7.5 0 0 0 133.569 80.34L133.569,9.66A7.5 7.5 0 0 0 126.069 2.16L9.66,2.16A7.5 7.5 0 0 0 2.16 9.66L2.16,80.34A7.5 7.5 0 0 0 9.66 87.84Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
 <text x="67.8643" y="34.92" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Camera</text>
 <text x="67.8643" y="55.08" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">30 fps</text>

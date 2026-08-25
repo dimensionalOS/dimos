@@ -52,6 +52,9 @@ repos:
         exclude: ^misc/DimSim/public/sims/  # LFS-tracked
       - id: check-toml
       - id: check-yaml
+        # mkdocs-material configures extensions with !!python/name: tags,
+        # which pyyaml's safe loader refuses to construct.
+        exclude: ^mkdocs\.yml$
       - id: pretty-format-json
         name: format json
         args: [ --autofix, --no-sort-keys ]

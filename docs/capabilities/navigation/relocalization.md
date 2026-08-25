@@ -1,11 +1,8 @@
----
-title: "Premap & Relocalization"
-description: "Record a Go2 run, export a loop-closed premap with dimos map, and relocalize on replay or live hardware."
----
+# Premap & Relocalization
 
 Relocalization lets a Go2 navigate on a previously built map instead of only on what it sees right now. At runtime, `RelocalizationModule` aligns live LiDAR to a saved premap and publishes a `world → map` transform, so the costmap and planner operate on the live scan and premap together.
 
-![relocalize on the live go2 and nav_to a point in the premap](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/reloc_and_nav_to.webp)
+![relocalize on the live go2 and nav_to a point in the premap](assets/reloc_and_nav_to.webp)
 
 > **Note:** Requires dimOS v0.0.13 or newer for PGO loop closure and `dimos map` export.
 
