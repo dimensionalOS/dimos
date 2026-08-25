@@ -43,7 +43,7 @@ def docs(
     if root is None:
         typer.echo(
             "No mkdocs.yml found. The docs are built from a source checkout;\n"
-            "read them online at https://dimensionalos.github.io/mkdocs/",
+            "read them online at https://docs.dimensional.org/",
             err=True,
         )
         raise typer.Exit(1)
