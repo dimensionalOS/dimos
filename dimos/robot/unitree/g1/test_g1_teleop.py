@@ -94,10 +94,7 @@ def test_g1_blueprint_keeps_bounded_trajectory_path_below_teleop() -> None:
 def test_g1_teleop_wires_arm_velocity_and_recording_streams() -> None:
     teleop_kwargs = _module_kwargs(unitree_g1_teleop, MobileVideoArmTeleopModule)
 
-    assert teleop_kwargs["task_names"] == {
-        "left": G1_TELEOP_TASK_NAME,
-        "right": G1_TELEOP_TASK_NAME,
-    }
+    assert "task_names" not in teleop_kwargs
     assert (
         unitree_g1_teleop.remapping_map[(MobileVideoArmTeleopModule.name, "left_controller_output")]
         == "left_cartesian_command"

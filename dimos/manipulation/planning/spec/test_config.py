@@ -54,5 +54,6 @@ def test_robot_model_survives_blueprint_config_round_trip(tmp_path: Path) -> Non
     parsed = BlueprintConfigParser(blueprint).parse(environ={})
 
     kwargs = parsed.module_kwargs(blueprint.blueprints[0].name)
-    assert kwargs["robots"][0]["model"]["_source_path"] == urdf
-    assert "_loaded" not in kwargs["robots"][0]["model"]
+    model = kwargs["robots"][0]["model"]
+    assert isinstance(model, RobotModel)
+    assert model.source_path == urdf

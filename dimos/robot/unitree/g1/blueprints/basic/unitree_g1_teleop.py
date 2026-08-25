@@ -60,7 +60,6 @@ from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
-    G1_TELEOP_TASK_NAME,
     unitree_g1_groot_wbc,
 )
 from dimos.teleop.quest.quest_extensions import MobileVideoArmTeleopModule
@@ -107,9 +106,7 @@ def _camera_if_real() -> tuple[Blueprint, ...]:
 unitree_g1_teleop = (
     autoconnect(
         unitree_g1_groot_wbc,
-        MobileVideoArmTeleopModule.blueprint(
-            task_names={"left": G1_TELEOP_TASK_NAME, "right": G1_TELEOP_TASK_NAME}
-        ),
+        MobileVideoArmTeleopModule.blueprint(),
         *_camera_if_real(),
         EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
         G1CollectionRecorder.blueprint(
