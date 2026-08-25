@@ -287,12 +287,14 @@ class MobileVideoArmTeleopModule(VideoArmTeleopModule):
         self._cmd_vel_moving = False
         self._right_stick_pressed = False
 
-    def _on_joy_bytes(self, data: bytes) -> None:
-        super()._on_joy_bytes(data)
+    def _on_joy_bytes(self, data: bytes) -> bool:
+        if not super()._on_joy_bytes(data):
+            return False
         with self._lock:
             left = self._controllers.get(Hand.LEFT)
             right = self._controllers.get(Hand.RIGHT)
         self._publish_cmd_vel(left, right)
+        return True
 
     def _publish_cmd_vel(
         self,
