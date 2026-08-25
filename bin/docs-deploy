@@ -21,12 +21,12 @@ usage() {
   cat >&2 <<'EOF'
 Usage: bin/docs-deploy [options]
 
-  --pages-repo DIR  Checkout of dimensionalOS.github.io. Required, or set
+  --pages-repo DIR  Checkout of dimensionalOS/docs. Required, or set
                     DOCS_PAGES_REPO in your environment.
   --target DIR      Where within that repo to publish (default: ., the site root)
   --commit          Commit in the pages repo. Never pushes.
 
-Publishes to https://dimensionalos.github.io/<target>/, leaving careers/ alone.
+Publishes to https://docs.dimensional.org/<target>/, leaving careers/ alone.
 EOF
 }
 
