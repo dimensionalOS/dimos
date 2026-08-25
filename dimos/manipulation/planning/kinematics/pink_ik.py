@@ -154,9 +154,17 @@ class PinkIK(_PinkSolverCore):
                     orientation_tolerance=orientation_tolerance,
                 )
             except ValueError as exc:
+                # Mapping failures are seed-independent: the target or seed cannot be
+                # expressed in the model frame at all, so perturbed retries cannot help.
                 return _failure(IKStatus.NO_SOLUTION, f"Pink IK mapping failed: {exc}")
             except Exception as exc:
-                return _failure(IKStatus.NO_SOLUTION, f"Pink IK solver failed: {exc}")
+                # Solver failures (notably pink's NoSolutionFound on QP infeasibility) are
+                # frequently seed-specific, so retry from the next perturbed seed.
+                if fallback_result is None:
+                    fallback_result = _failure(
+                        IKStatus.NO_SOLUTION, f"Pink IK solver failed: {exc}"
+                    )
+                continue
 
             if not result.is_success() or result.joint_state is None:
                 if fallback_result is None:
@@ -271,9 +279,15 @@ class PinkIK(_PinkSolverCore):
                         locked_joint_positions=locked_positions,
                     )
                 except ValueError as exc:
+                    # Seed-independent, as in _solve: mapping cannot succeed on a retry.
                     return _failure(IKStatus.NO_SOLUTION, f"Pink IK mapping failed: {exc}")
                 except Exception as exc:
-                    return _failure(IKStatus.NO_SOLUTION, f"Pink IK solver failed: {exc}")
+                    # Seed-specific solver failure; retry from the next perturbed seed.
+                    if fallback_result is None:
+                        fallback_result = _failure(
+                            IKStatus.NO_SOLUTION, f"Pink IK solver failed: {exc}"
+                        )
+                    continue
 
                 if not result.is_success() or result.joint_state is None:
                     if fallback_result is None:
