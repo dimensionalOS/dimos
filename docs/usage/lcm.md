@@ -1,6 +1,4 @@
----
-title: "LCM Messages"
----
+# LCM Messages
 
 dimOS uses [LCM (Lightweight Communications and Marshalling)](https://github.com/lcm-proj/lcm) for inter-process communication on a local machine (similar to how ROS uses DDS). LCM is a simple [UDP multicast](https://lcm-proj.github.io/lcm/content/udp-multicast-protocol.html#lcm-udp-multicast-protocol-description) pubsub protocol with a straightforward [message definition language](https://lcm-proj.github.io/lcm/content/lcm-type-ref.html#lcm-type-specification-language).
 
@@ -119,7 +117,7 @@ print(f"Decoded: {len(pc2)} points")
 
 ```results
 PointCloud: 100 points, frame=camera
-Center: → Vector Vector([0.5448107  0.47434279 0.54832664])
+Center: ↘ Vector Vector([0.53349355 0.53453599 0.50321151])
 Open3D type: PointCloud
 LCM encoded: 1725 bytes
 Decoded: 100 points

@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from dimos.control.components import HardwareComponent, HardwareType
-from dimos.core.global_config import global_config
+from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
@@ -50,6 +50,11 @@ OPENARM_BIMANUAL_MODEL = RobotModel.from_file(
         "robot_preset": "default_bimanual",
         "emit_grasp_frame": "true",
     },
+).with_fixed_joints(
+    "openarm_left_finger_joint1",
+    "openarm_left_finger_joint2",
+    "openarm_right_finger_joint1",
+    "openarm_right_finger_joint2",
 )
 
 OPENARM_DOF = 7
@@ -62,6 +67,7 @@ OPENARM_RIGHT_ARM_JOINTS = [f"right_arm/joint{i}" for i in range(1, OPENARM_DOF 
 OPENARM_ARM_JOINTS = [*OPENARM_LEFT_ARM_JOINTS, *OPENARM_RIGHT_ARM_JOINTS]
 OPENARM_GRIPPER_JOINTS = ["left_arm/gripper", "right_arm/gripper"]
 OPENARM_JOINTS = [*OPENARM_ARM_JOINTS, *OPENARM_GRIPPER_JOINTS]
+OPENARM_HOME_JOINTS = [0.0] * len(OPENARM_ARM_JOINTS)
 OPENARM_GRIPPER_COLLISION_EXCLUSIONS = [
     (f"openarm_{side}_ee_link1", f"openarm_{side}_ee_link2") for side in OPENARM_SIDES
 ]
@@ -89,10 +95,12 @@ def openarm_urdf_joints(side: str) -> list[str]:
     return [f"openarm_{side}_joint{i}" for i in range(1, OPENARM_DOF + 1)]
 
 
-def openarm_hardware() -> HardwareComponent:
+def openarm_hardware(
+    *,
+    left_can_port: str | None = None,
+    right_can_port: str | None = None,
+) -> HardwareComponent:
     """Use mock hardware unless both physical CAN interfaces are explicit."""
-    left_can_port = global_config.left_can_port
-    right_can_port = global_config.right_can_port
     if (left_can_port is None) != (right_can_port is None):
         raise ValueError("OpenArm hardware requires both left and right CAN ports")
 
@@ -102,6 +110,12 @@ def openarm_hardware() -> HardwareComponent:
         adapter_kwargs["runtime_config"] = DamiaoRuntimeConfig(
             bus_addresses={"left": left_can_port, "right": right_can_port},
             gravity_comp=True,
+        )
+    else:
+        adapter_kwargs["limits"] = JointLimits(
+            position_lower=[*([None] * len(OPENARM_ARM_JOINTS)), 0.0, 0.0],
+            position_upper=[*([None] * len(OPENARM_ARM_JOINTS)), 1.0, 1.0],
+            velocity_max=[None] * len(OPENARM_JOINTS),
         )
     return HardwareComponent(
         hardware_id=OPENARM_HARDWARE_ID,
@@ -154,5 +168,5 @@ def openarm_bimanual_model_config(name: str = OPENARM_HARDWARE_ID) -> RobotModel
                 openarm_arm_joints(side), openarm_urdf_joints(side), strict=True
             )
         },
-        home_joints=[0.0] * (2 * OPENARM_DOF),
+        home_joints=list(OPENARM_HOME_JOINTS),
     )

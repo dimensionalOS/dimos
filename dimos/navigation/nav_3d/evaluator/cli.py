@@ -62,8 +62,13 @@ def _apply_overrides(cfg: EvalConfig, overrides: list[str]) -> EvalConfig:
         name, value = spec.split("=", 1)
         if name.startswith("planner."):
             # Planner constructor arguments are validated by the planner, which
-            # owns their names and defaults.
-            cfg.planner[name.removeprefix("planner.")] = float(value)
+            # owns their names and defaults. Integer params reject floats, so
+            # keep int-looking values int.
+            try:
+                parsed: float | int = int(value)
+            except ValueError:
+                parsed = float(value)
+            cfg.planner[name.removeprefix("planner.")] = parsed
             continue
         if name not in fields:
             raise typer.BadParameter(f"unknown config field {name!r}")

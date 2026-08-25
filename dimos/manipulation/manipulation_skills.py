@@ -202,7 +202,7 @@ class ManipulationSkills(Module):
             planning_group: Opaque planning-group ID. Omit when only one group exists.
         """
 
-        self.manipulation.set_gripper_position(0.85, planning_group)
+        self.manipulation.set_gripper_position(1.0, planning_group)
         return self._move_to_preset("home", planning_group)
 
     @skill
@@ -223,10 +223,10 @@ class ManipulationSkills(Module):
         position: float,
         planning_group: PlanningGroupID | None = None,
     ) -> SkillResult[ManipulationSkillError]:
-        """Set the gripper opening in metres.
+        """Set the gripper opening as a fraction of its travel.
 
         Args:
-            position: Gripper opening in metres.
+            position: 0.0 = fully closed, 1.0 = fully open.
             planning_group: Opaque planning-group ID. Omit when only one gripper exists.
         """
 
@@ -244,7 +244,7 @@ class ManipulationSkills(Module):
             planning_group: Opaque planning-group ID. Omit when only one gripper exists.
         """
 
-        return self._command_result(self.manipulation.set_gripper_position(0.85, planning_group))
+        return self._command_result(self.manipulation.set_gripper_position(1.0, planning_group))
 
     @skill
     def close_gripper(

@@ -1,6 +1,4 @@
----
-title: "Planning Groups"
----
+# Planning Groups
 
 Planning groups are named, selectable kinematic chains used by manipulation
 planning. They let APIs target a specific part of a robot, such as an arm or

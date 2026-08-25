@@ -537,6 +537,7 @@ def test_module_ref_direct_accepts_a_subclass_provider() -> None:
         assert mod1 is not None
         assert mod1.calc is not None
         assert mod1.calc.compute1(2, 3) == 5
+        assert mod1.calc.compute2(1.5, 2.5) == 4.0
     finally:
         coordinator.stop()
 

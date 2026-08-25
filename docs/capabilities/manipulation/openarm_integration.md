@@ -1,6 +1,4 @@
----
-title: "OpenArm Integration"
----
+# OpenArm Integration
 
 dimOS drives the [OpenArm](https://openarm.dev) bimanual platform (two 7-DOF
 arms + grippers, Damiao motors, one CAN bus per arm) as a single whole-body
@@ -44,10 +42,12 @@ robots.
 
 ```bash
 dimos run openarm-planner-coordinator # mock hardware
+dimos run teleop-quest-openarm         # mock Quest teleoperation
 
 dimos hardware can setup can0
 dimos hardware can setup can1
 dimos run openarm-planner-coordinator --left-can-port can1 --right-can-port can0
+dimos run teleop-quest-openarm --left-can-port can1 --right-can-port can0
 ```
 
 Linux assigns `can0`/`can1` in USB enumeration order. If the arms come up
@@ -60,9 +60,23 @@ rejected so physical operation can never depend on USB/CAN enumeration defaults.
 |---|---|
 | `coordinator-openarm` | coordinator + trajectory task over both arms |
 | `openarm-planner-coordinator` | planner (bimanual model) + coordinator |
+| `teleop-quest-openarm` | bimanual Quest teleoperation + planner + Viser |
 
-Both blueprints use the in-memory whole-body adapter by default. Passing
+All OpenArm blueprints use the in-memory whole-body adapter by default. Passing
 both `--left-can-port` and `--right-can-port` selects the physical adapter.
+
+## Quest controls and safety
+
+The Quest blueprint drives both arms through one bimanual IK task. Hold both
+controllers' primary buttons to engage it. Releasing either button stops arm
+output and clears both controller references. Each trigger publishes normalized
+opening to a dedicated gripper task on the same side. Planned trajectories run
+at a higher priority and preempt streaming teleoperation.
+
+The Damiao adapter derives angular joint limits from the official robot model.
+It clamps encoder feedback up to `0.05 rad` beyond a limit; larger excursions
+latch a fault, disable the motors, and prevent reactivation until the adapter is
+reconnected.
 
 ## Files
 

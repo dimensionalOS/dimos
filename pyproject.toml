@@ -104,6 +104,7 @@ dependencies = [
     "eclipse-zenoh>=1.9.0,<2.0",
     "PyTurboJPEG==1.8.2",
     "imagecodecs>=2024.6.1", # JPEG-XL for CompressedImage
+    "jsonlines>=4,<5",
     # Core
     "numpy>=1.26.4",
     "scipy>=1.15.1",
@@ -510,6 +511,13 @@ tests-self-hosted = [
     "mcap>=1.2.0",
     # Needed to compile the in-tree extensions.
     "pybind11>=2.12",
+]
+docs = [
+    "mkdocs-awesome-nav>=3.3.0",
+    "mkdocs-glightbox>=0.5.2",
+    "mkdocs-material>=9.7.7",
+    "mkdocs-minify-plugin>=0.8.0",
+    "mkdocs-redirects>=1.2.3",
 ]
 
 [tool.uv]
