@@ -22,6 +22,7 @@ import json
 from pathlib import Path
 import re
 import tempfile
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -32,12 +33,14 @@ from dimos.evals.vqa.families import (
     FamilyAnswer,
     InsufficientEvidenceError,
     NonEmptyString,
-    ObjectDetector,
     QuestionProposal,
     answer_question,
 )
 from dimos.memory.cli.dataset import open_dataset
 from dimos.msgs.sensor_msgs.Image import Image
+
+if TYPE_CHECKING:
+    from dimos.models.vl.base import VlModel
 
 
 class GenerationRequest(BaseModel):
@@ -85,6 +88,13 @@ class PublicCase(BaseModel):
     image: NonEmptyString
     question: NonEmptyString
     choices: tuple[NonEmptyString, ...]
+
+    @model_validator(mode="after")
+    def choices_are_distinct(self) -> PublicCase:
+        unique_choices = {choice.casefold() for choice in self.choices}
+        if len(self.choices) < 2 or len(unique_choices) != len(self.choices):
+            raise ValueError("a VQA case requires at least two unique choices")
+        return self
 
 
 class PrivateLabel(BaseModel):
@@ -165,7 +175,7 @@ def generate_frames_dataset(
     request: GenerationRequest,
     frames: Iterable[tuple[int, Image]],
     author: QuestionAuthor,
-    detector: ObjectDetector,
+    detector: VlModel,
     *,
     model_names: dict[str, str] | None = None,
 ) -> GenerationResult:
@@ -220,7 +230,7 @@ def _generate_frame(
     image_index: int,
     image: Image,
     author: QuestionAuthor,
-    detector: ObjectDetector,
+    detector: VlModel,
 ) -> _GeneratedFrame:
     proposals = _deduplicate_proposals(author.propose(image, AVAILABLE_FAMILIES))
     answered: list[tuple[QuestionProposal, FamilyAnswer]] = []

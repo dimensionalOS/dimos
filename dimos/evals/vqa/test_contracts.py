@@ -82,7 +82,7 @@ class _Detector:
     def __init__(self, present: bool) -> None:
         self._present = present
 
-    def query_detections(self, image: Image, query: str) -> ImageDetections2D:
+    def query_detections(self, image: Image, query: str) -> ImageDetections2D[Detection2DBBox]:
         detections = []
         if self._present:
             detections.append(
@@ -103,7 +103,7 @@ class _BoxesDetector:
     def __init__(self, boxes: tuple[tuple[float, float, float, float], ...]) -> None:
         self._boxes = boxes
 
-    def query_detections(self, image: Image, query: str) -> ImageDetections2D:
+    def query_detections(self, image: Image, query: str) -> ImageDetections2D[Detection2DBBox]:
         return ImageDetections2D(
             image,
             [
@@ -144,7 +144,7 @@ class _PartlyInvalidQuestionModel:
 
 
 class _BrokenDetector:
-    def query_detections(self, image: Image, query: str) -> ImageDetections2D:
+    def query_detections(self, image: Image, query: str) -> ImageDetections2D[Detection2DBBox]:
         raise ValueError("detector broke")
 
 
@@ -153,7 +153,7 @@ class _FailsSecondDetector(_Detector):
         super().__init__(present=True)
         self._calls = 0
 
-    def query_detections(self, image: Image, query: str) -> ImageDetections2D:
+    def query_detections(self, image: Image, query: str) -> ImageDetections2D[Detection2DBBox]:
         self._calls += 1
         if self._calls == 2:
             raise ValueError("detector broke")
@@ -200,18 +200,27 @@ def test_family_answer_requires_an_allowed_choice() -> None:
         )
 
 
+def test_family_answer_requires_case_insensitive_unique_choices() -> None:
+    with pytest.raises(ValidationError, match="choices must be unique"):
+        FamilyAnswer(
+            question="Is there a chair in the image?",
+            choices=("yes", "YES"),
+            answer="yes",
+        )
+
+
 def test_presence_family_derives_answer_from_detector_evidence() -> None:
     image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
     proposal = QuestionProposal(family="presence", object_name="chair")
 
-    present = answer_question(proposal, image, _Detector(present=True))
+    present = answer_question(proposal, image, cast("VlModel", _Detector(present=True)))
 
     assert present.answer == "yes"
     assert present.question == "Does the image contain any chair?"
     assert present.choices == ("yes", "no")
     assert present.evidence["detection_count"] == 1
     with pytest.raises(ValueError, match="did not confirm"):
-        answer_question(proposal, image, _Detector(present=False))
+        answer_question(proposal, image, cast("VlModel", _Detector(present=False)))
 
 
 @pytest.mark.parametrize(
@@ -230,7 +239,7 @@ def test_horizontal_direction_uses_detection_center(
     image = Image.from_numpy(np.zeros((60, 90, 3), dtype=np.uint8))
     proposal = QuestionProposal(family="horizontal_direction", object_name="robot")
 
-    answer = answer_question(proposal, image, _BoxesDetector((box,)))
+    answer = answer_question(proposal, image, cast("VlModel", _BoxesDetector((box,))))
 
     assert answer.answer == expected
     assert answer.choices == ("left", "center", "right")
@@ -240,11 +249,14 @@ def test_horizontal_direction_uses_detection_center(
 def test_horizontal_direction_rejects_ambiguous_instances() -> None:
     image = Image.from_numpy(np.zeros((60, 90, 3), dtype=np.uint8))
     proposal = QuestionProposal(family="horizontal_direction", object_name="chair")
-    detector = _BoxesDetector(
-        (
-            (0.0, 0.0, 20.0, 20.0),
-            (70.0, 0.0, 90.0, 20.0),
-        )
+    detector = cast(
+        "VlModel",
+        _BoxesDetector(
+            (
+                (0.0, 0.0, 20.0, 20.0),
+                (70.0, 0.0, 90.0, 20.0),
+            )
+        ),
     )
 
     with pytest.raises(ValueError, match="exactly one"):
@@ -260,7 +272,7 @@ def test_object_count_buckets_detected_instances(count: int, expected: str) -> N
     proposal = QuestionProposal(family="object_count", object_name="box")
     boxes = tuple((float(index), 0.0, float(index + 1), 1.0) for index in range(count))
 
-    answer = answer_question(proposal, image, _BoxesDetector(boxes))
+    answer = answer_question(proposal, image, cast("VlModel", _BoxesDetector(boxes)))
 
     assert answer.answer == expected
     assert answer.question == "How many instances of box are visible in the image?"
@@ -273,7 +285,7 @@ def test_object_count_requires_at_least_one_detection() -> None:
     proposal = QuestionProposal(family="object_count", object_name="box")
 
     with pytest.raises(InsufficientEvidenceError, match="to count"):
-        answer_question(proposal, image, _BoxesDetector(()))
+        answer_question(proposal, image, cast("VlModel", _BoxesDetector(())))
 
 
 def test_openai_author_parses_constrained_proposals() -> None:
@@ -359,6 +371,19 @@ def test_standalone_rows_match_public_private_contract() -> None:
     }
 
 
+@pytest.mark.parametrize("choices", (("yes",), ("yes", "YES")))
+def test_public_case_requires_multiple_case_insensitive_unique_choices(
+    choices: tuple[str, ...],
+) -> None:
+    with pytest.raises(ValidationError, match="at least two unique choices"):
+        PublicCase(
+            id="q",
+            image="frame.png",
+            question="Is there a chair?",
+            choices=choices,
+        )
+
+
 def test_suite_loads_jsonl_without_reading_whole_files(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -396,6 +421,20 @@ def test_suite_rejects_malformed_jsonl(tmp_path: Path) -> None:
         load_suite(tmp_path)
 
 
+def test_suite_rejects_case_insensitive_duplicate_choices(tmp_path: Path) -> None:
+    case = {
+        "id": "q",
+        "image": "missing.png",
+        "question": "Is there a chair?",
+        "choices": ["yes", "YES"],
+    }
+    (tmp_path / "cases.jsonl").write_text(json.dumps(case) + "\n")
+    (tmp_path / "labels.jsonl").write_text(json.dumps({"id": "q", "answer": "yes"}) + "\n")
+
+    with pytest.raises(ValueError, match="at least two unique choices"):
+        load_suite(tmp_path)
+
+
 def test_suite_validates_all_case_ids_before_images(tmp_path: Path) -> None:
     case = {
         "id": "duplicate",
@@ -428,7 +467,7 @@ def test_generate_and_evaluate_one_image(tmp_path: Path) -> None:
         request,
         ((4, image),),
         cast("QuestionAuthor", _Author()),
-        _Detector(present=True),
+        cast("VlModel", _Detector(present=True)),
     )
 
     assert result.cases[0].id == "frame-000004-chair-presence"
@@ -468,7 +507,7 @@ def test_generate_multiple_images_aggregates_frame_artifacts(tmp_path: Path) -> 
         request,
         frames,
         cast("QuestionAuthor", _Author()),
-        _Detector(present=True),
+        cast("VlModel", _Detector(present=True)),
         model_names={"author": "gpt-4o-mini", "detector": "vikhyatk/moondream2"},
     )
 
@@ -504,7 +543,7 @@ def test_empty_frame_does_not_count_as_rejected_question(tmp_path: Path) -> None
         request,
         frames,
         cast("QuestionAuthor", _EmptyThenAuthor()),
-        _Detector(present=True),
+        cast("VlModel", _Detector(present=True)),
     )
 
     run = json.loads((output / "audit" / "run.json").read_text())
@@ -517,11 +556,14 @@ def test_generation_keeps_answered_questions_and_audits_rejections(tmp_path: Pat
     output = tmp_path / "vqa"
     image = Image.from_numpy(np.zeros((60, 90, 3), dtype=np.uint8), ts=12.5)
     request = GenerationRequest(dataset="recording.db", image_index=4, output=output)
-    detector = _BoxesDetector(
-        (
-            (0.0, 0.0, 20.0, 20.0),
-            (70.0, 0.0, 90.0, 20.0),
-        )
+    detector = cast(
+        "VlModel",
+        _BoxesDetector(
+            (
+                (0.0, 0.0, 20.0, 20.0),
+                (70.0, 0.0, 90.0, 20.0),
+            )
+        ),
     )
 
     result = generate_frames_dataset(
@@ -547,7 +589,7 @@ def test_generation_propagates_detector_failures(tmp_path: Path) -> None:
             request,
             ((4, image),),
             cast("QuestionAuthor", _Author()),
-            _BrokenDetector(),
+            cast("VlModel", _BrokenDetector()),
         )
 
     assert not output.exists()
@@ -566,7 +608,7 @@ def test_later_frame_failure_does_not_publish_partial_dataset(tmp_path: Path) ->
             request,
             frames,
             cast("QuestionAuthor", _Author()),
-            _FailsSecondDetector(),
+            cast("VlModel", _FailsSecondDetector()),
         )
 
     assert not output.exists()
@@ -581,7 +623,7 @@ def test_generation_deduplicates_proposals_and_suffixes_id_collisions(tmp_path: 
         request,
         ((4, image),),
         cast("QuestionAuthor", _CollidingAuthor()),
-        _Detector(present=True),
+        cast("VlModel", _Detector(present=True)),
     )
 
     assert [case.id for case in result.cases] == [

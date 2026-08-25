@@ -17,13 +17,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Annotated, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints, model_validator
 
 if TYPE_CHECKING:
+    from dimos.models.vl.base import VlModel
     from dimos.msgs.sensor_msgs.Image import Image
-    from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
@@ -51,7 +51,8 @@ class FamilyAnswer(BaseModel):
     def answer_is_a_choice(self) -> FamilyAnswer:
         if len(self.choices) < 2:
             raise ValueError("a VQA question requires at least two choices")
-        if len(set(self.choices)) != len(self.choices):
+        unique_choices = {choice.casefold() for choice in self.choices}
+        if len(unique_choices) != len(self.choices):
             raise ValueError("VQA choices must be unique")
         if self.answer not in self.choices:
             raise ValueError("the answer must be one of the choices")
@@ -89,15 +90,7 @@ class InsufficientEvidenceError(ValueError):
     """A family cannot derive an answer from the available primitive evidence."""
 
 
-class ObjectDetector(Protocol):
-    """Object evidence required by visual question families."""
-
-    def query_detections(self, image: Image, query: str) -> ImageDetections2D: ...
-
-
-def answer_question(
-    proposal: QuestionProposal, image: Image, detector: ObjectDetector
-) -> FamilyAnswer:
+def answer_question(proposal: QuestionProposal, image: Image, detector: VlModel) -> FamilyAnswer:
     """Dispatch one constrained proposal to its deterministic family."""
     if proposal.family == "presence":
         return _answer_presence(proposal, image, detector)
@@ -108,9 +101,7 @@ def answer_question(
     raise ValueError(f"unsupported VQA family: {proposal.family}")
 
 
-def _answer_presence(
-    proposal: QuestionProposal, image: Image, detector: ObjectDetector
-) -> FamilyAnswer:
+def _answer_presence(proposal: QuestionProposal, image: Image, detector: VlModel) -> FamilyAnswer:
     detections = detector.query_detections(image, proposal.object_name)
     if not detections.detections:
         raise InsufficientEvidenceError(
@@ -131,7 +122,7 @@ def _answer_presence(
 
 
 def _answer_horizontal_direction(
-    proposal: QuestionProposal, image: Image, detector: ObjectDetector
+    proposal: QuestionProposal, image: Image, detector: VlModel
 ) -> FamilyAnswer:
     detections = detector.query_detections(image, proposal.object_name)
     if len(detections) != 1:
@@ -165,7 +156,7 @@ def _answer_horizontal_direction(
 
 
 def _answer_object_count(
-    proposal: QuestionProposal, image: Image, detector: ObjectDetector
+    proposal: QuestionProposal, image: Image, detector: VlModel
 ) -> FamilyAnswer:
     detections = detector.query_detections(image, proposal.object_name)
     count = len(detections)

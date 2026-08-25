@@ -1,6 +1,4 @@
----
-title: "Visual Question Answering"
----
+# Visual Question Answering
 
 The VQA tools generate deterministic questions from recorded images and evaluate them through the
 shared dimOS evaluation runner.
