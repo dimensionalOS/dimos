@@ -551,6 +551,59 @@ class TestJointTrajectoryTask:
         assert not trajectory_task.is_active()
         assert trajectory_task.get_state() == TrajectoryState.IDLE
 
+    def test_idle_hold_latches_measured_positions(self):
+        task = JointTrajectoryTask(
+            JointTrajectoryTaskConfig(
+                joint_names=["arm/joint1", "arm/joint2"],
+                hold_position_when_idle=True,
+            )
+        )
+        state = JointStateSnapshot(
+            joint_positions={"arm/joint1": 0.25, "arm/joint2": -0.5}
+        )
+
+        output = task.compute(CoordinatorState(joints=state, t_now=1.0, dt=0.1))
+
+        assert task.is_active()
+        assert output is not None
+        assert output.joint_names == ["arm/joint1", "arm/joint2"]
+        assert output.positions == [0.25, -0.5]
+
+    def test_idle_hold_retains_final_target_after_trajectory(self):
+        task = JointTrajectoryTask(
+            JointTrajectoryTaskConfig(
+                joint_names=["arm/joint1", "arm/joint2"],
+                start_position_tolerance=2.0,
+                velocity_limits={"arm/joint1": 10.0, "arm/joint2": 10.0},
+                hold_position_when_idle=True,
+            )
+        )
+        trajectory = JointTrajectory(
+            joint_names=["arm/joint1"],
+            points=[
+                TrajectoryPoint(
+                    positions=[1.0],
+                    velocities=[0.0],
+                    time_from_start=0.0,
+                )
+            ],
+        )
+        state = JointStateSnapshot(
+            joint_positions={"arm/joint1": 0.0, "arm/joint2": -0.5}
+        )
+        assert (
+            task.execute(trajectory, {"arm/joint1": 0.0}).status
+            is TrajectoryExecutionStatus.ACCEPTED
+        )
+
+        completed = task.compute(CoordinatorState(joints=state, t_now=1.0, dt=0.1))
+        held = task.compute(CoordinatorState(joints=state, t_now=1.1, dt=0.1))
+
+        assert completed is not None
+        assert completed.positions == [1.0, -0.5]
+        assert held is not None
+        assert held.positions == [1.0, -0.5]
+
     def test_claim(self, trajectory_task):
         claim = trajectory_task.claim()
         assert claim.priority == 10
