@@ -22,22 +22,18 @@ import importlib
 from pathlib import Path
 import shutil
 
-_ALGOS = {
-    "lz4": ("lz4.frame", ".lz4"),
-    "gzip": ("gzip", ".gz"),
-    "bz2": ("bz2", ".bz2"),
-    "xz": ("lzma", ".xz"),
-}
+from dimos.core.global_config import global_config
 
 
 def _lib(codec_id: str):  # type: ignore[no-untyped-def]
-    if codec_id not in _ALGOS:
-        raise ValueError(f"unknown codec {codec_id!r}; known: {sorted(_ALGOS)}")
-    return importlib.import_module(_ALGOS[codec_id][0])
+    libs = global_config.dimos_codec_libs
+    if codec_id not in libs:
+        raise ValueError(f"unknown codec {codec_id!r}; known: {sorted(libs)}")
+    return importlib.import_module(libs[codec_id][0])
 
 
 def suffix(codec_id: str) -> str:
-    return _ALGOS[codec_id][1] if codec_id else ""
+    return global_config.dimos_codec_libs[codec_id][1] if codec_id else ""
 
 
 def compress(codec_id: str, src: Path, dst: Path) -> None:
