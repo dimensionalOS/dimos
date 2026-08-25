@@ -144,7 +144,7 @@
   <link name="camera_color_frame"/>
   <joint name="camera_color_joint" type="fixed">
     <parent link="camera_link"/><child link="camera_color_frame"/>
-    <origin xyz="-0.0004 0.0149 -0.0002" rpy="0 0 0"/>
+    <origin xyz="-0.0004 -0.0592 0.0001" rpy="0 0 0"/>
   </joint>
   <link name="camera_color_optical_frame"/>
   <joint name="camera_color_optical_joint" type="fixed">
@@ -166,7 +166,7 @@
   <link name="camera_infra2_frame"/>
   <joint name="camera_infra2_joint" type="fixed">
     <parent link="camera_link"/><child link="camera_infra2_frame"/>
-    <origin xyz="0 -0.0499 0" rpy="0 0 0"/>
+    <origin xyz="0 -0.0949 0" rpy="0 0 0"/>
   </joint>
   <link name="camera_infra2_optical_frame"/>
   <joint name="camera_infra2_optical_joint" type="fixed">
@@ -177,7 +177,7 @@
   <link name="camera_accel_frame"/>
   <joint name="camera_accel_joint" type="fixed">
     <parent link="camera_link"/><child link="camera_accel_frame"/>
-    <origin xyz="-0.0117 -0.0055 0.0051" rpy="0 0 0"/>
+    <origin xyz="-0.016 -0.0302 0.0074" rpy="0 0 0"/>
   </joint>
   <link name="camera_accel_optical_frame"/>
   <joint name="camera_accel_optical_joint" type="fixed">
