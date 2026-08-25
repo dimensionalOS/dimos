@@ -112,9 +112,9 @@
     <origin xyz="0.2307 -0.1636 0.437" rpy="-0.0096 0.3933 -0.0219"/>
   </joint>
 
-  <!-- RealSense D455 on the rear corner bracket. Calibrated 2026-08-17 off
-       drive_2026-08-16_23-46-03.db; height (z) is a photo estimate,
-       unobservable from planar motion.
+  <!-- RealSense D455 on the rear corner bracket. Roll, pitch and height come from
+       the 2026-08-25 spin recording against the Mid-360; yaw, x and y stay as
+       measured by hand, since a spin in place leaves them flat.
        camera_link sits at the depth (left infrared) imager, which is where the
        RealSense driver puts it, so the child offsets below are the factory
        extrinsics read back off the device. -->
@@ -127,7 +127,7 @@
   </link>
   <joint name="camera_joint" type="fixed">
     <parent link="base_link"/><child link="camera_link"/>
-    <origin xyz="-0.2518 -0.2736 0.42" rpy="-0.0097 0.1571 -3.1030"/>
+    <origin xyz="-0.2518 -0.2736 0.4292" rpy="0.0512 0.1592 -3.1030"/>
   </joint>
 
   <link name="camera_depth_frame"/>

@@ -28,8 +28,8 @@ from dimos.robot.diy.alfred.blueprints.vis_nav import _vis_nav
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
 
 D455_MOUNT = Transform(
-    translation=Vector3(-0.2518, -0.2736, 0.42),
-    rotation=Quaternion(0.078360, 0.006348, -0.996712, 0.019616),
+    translation=Vector3(-0.2518, -0.2736, 0.4292),
+    rotation=Quaternion(0.079967, -0.023978, -0.996361, 0.017193),
 )
 """base_link -> camera_link, mirroring the calibration recorded in alfred.urdf."""
 
