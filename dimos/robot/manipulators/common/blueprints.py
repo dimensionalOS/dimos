@@ -49,7 +49,7 @@ def trajectory_task(
 ) -> TaskConfig:
     hardware_components = (hardware, *additional_hardware)
     return joint_trajectory_task(
-        [joint_name for component in hardware_components for joint_name in component.all_joints],
+        [joint_name for component in hardware_components for joint_name in component.joints],
         priority=priority,
         start_position_tolerance=start_position_tolerance,
     )
