@@ -32,6 +32,9 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     stdin_config: bool = True
 
     voxel_size: float = 0.1
+    # Fine cells per voxel edge for the local_map_fine output: fine cell size is
+    # voxel_size / fine_divisor. Zero disables the fine layer.
+    fine_divisor: int = 0
     # Maximum range for ray tracing
     max_range: float = 30.0
     # Proportion of points that are ray traced
@@ -50,12 +53,15 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     # Occupied neighbors a surface voxel needs to appear in the local map. Zero
     # emits all. Higher drops isolated returns. The global map is unfiltered.
     support_min: int = 4
-    # Publish the accumulated local map and region bounds every Nth frame. Zero disables them.
+    # Publish the accumulated local maps and region bounds every Nth frame.
+    # Zero disables them.
     emit_every: int = 1
     # Publish the global map every Nth frame. Zero disables it.
     global_emit_every: int = 1
     # Size the local region to this percentile of batch point distances.
     region_percentile: float = 95.0
+    # Worker threads for parallel map work.
+    worker_threads: int = 4
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
@@ -67,6 +73,7 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
     odometry: In[Odometry]
     global_map: Out[PointCloud2]
     local_map: Out[PointCloud2]
+    local_map_fine: Out[PointCloud2]
     region_bounds: Out[PoseStamped]
 
 
