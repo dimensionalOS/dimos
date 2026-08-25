@@ -48,6 +48,7 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import random
+import re
 import sys
 from typing import Any, cast
 
@@ -392,11 +393,24 @@ class SpaceNav(EvalCase):
         _repo_on_path()
         from space.agents.dmnav_agent import Base_DiscreteMap_Nav
 
-        # The regex is shared by both upstream agents; the fallback for an
-        # unparseable or invalid reply matches upstream's loops.
+        # Upstream's regex first, for fidelity — but it demands whitespace after
+        # the brace, so the compact ```json {"action":"turn_right"}``` modern
+        # models emit parses to None, and the fallback then walks the episode in
+        # circles while the replies reason correctly. Action extraction is
+        # agent-side plumbing (upstream keeps it in its agent classes too), so a
+        # tolerant pass runs before the fallback; scoring is untouched.
         action = Base_DiscreteMap_Nav.convert_response_to_action(None, reply)
         if action not in valid:
-            action = fallback
+            for candidate in re.findall(r"\{[^{}]*\}", reply):
+                try:
+                    parsed = json.loads(candidate)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, dict) and parsed.get("action") in valid:
+                    action = str(parsed["action"])
+                    break
+            else:
+                action = fallback  # upstream's own default for an unusable reply
         return action, reply
 
     def _discrete_map_episode(self, rig: EvalRig) -> dict[str, Any]:
@@ -566,7 +580,13 @@ def nav_suite(walkthrough_key: str, slug: str) -> list[EvalCase]:
         root = config.data_dir / scenes_dir
         if not root.is_dir():
             continue
-        for scene in sorted(p.name for p in root.iterdir() if p.is_dir()):
+        scenes = sorted(
+            (p.name for p in root.iterdir() if p.is_dir()),
+            # Instances of one base env share a layout; interleaving them keeps
+            # a --limit prefix layout-diverse instead of N copies of one map.
+            key=lambda name: (name.rsplit("_", 1)[-1], name),
+        )
+        for scene in scenes:
             cases.append(
                 SpaceNav(
                     id=f"space_{slug}_{presentation}_{scene}",

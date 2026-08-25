@@ -270,8 +270,11 @@ def test_nav_ego_preflight_names_habitat(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(config, "habitat_python", None)
     scene = sorted(p.name for p in scenes.iterdir() if p.is_dir())[0]
     case = SpaceNav(
-        id="nav", inputs="nav", env_name=scene,
-        walkthrough_key="shortestpath", presentation="ego",
+        id="nav",
+        inputs="nav",
+        env_name=scene,
+        walkthrough_key="shortestpath",
+        presentation="ego",
     )
     with pytest.raises(RuntimeError, match="DIMOS_SPACE_HABITAT_PYTHON"):
         case.preflight(FakeRig())
@@ -416,6 +419,40 @@ def test_ego_bridge_end_to_end(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -
     assert result.error == ""
     assert result.score == 0.75, result.outputs  # the stub SPL, straight through
     assert '"success": 1.0' in result.outputs
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected_action"),
+    [
+        ('{\n  "action": "up"\n}', "up"),  # upstream's own pretty shape
+        ('```json\n{"action":"down"}\n```', "down"),  # compact + fenced: modern models
+        ('reasoning first. {"action": "left"}', "left"),
+        ('{"action": "fly"}', "stop"),  # invalid action -> upstream default
+        ("no json at all", "stop"),
+    ],
+)
+def test_nav_action_parse(reply: str, expected_action: str) -> None:
+    """Upstream's regex only matches whitespace-padded JSON; compact replies must
+    still steer instead of silently spinning on the fallback action."""
+    try:
+        space_parse("probe")  # puts the checkout on sys.path for the upstream regex
+    except ImportError as e:
+        pytest.skip(str(e))
+
+    case = SpaceNav(
+        id="p",
+        inputs="p",
+        env_name="e",
+        walkthrough_key="shortestpath",
+        presentation="bevimage",
+    )
+
+    class OneReplyRig(FakeRig):
+        def ask(self, context: Any, question: str) -> str:
+            return reply
+
+    action, _ = case._act(OneReplyRig(), [], "q", ("up", "down", "left", "right", "stop"), "stop")
+    assert action == expected_action
 
 
 # -- fidelity: needs the real benchmark package ---------------------------------
