@@ -25,6 +25,7 @@ from pytest_mock import MockerFixture
 from dimos.manipulation.planning import factory as planning_factory
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.monitor import world_monitor as world_monitor_module
+from dimos.manipulation.planning.monitor.world_obstacle_monitor import WorldObstacleMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import (
@@ -35,11 +36,15 @@ from dimos.manipulation.planning.spec.models import (
     VisualizationStateFrame,
 )
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
+from dimos.manipulation.planning.utils import mesh_utils
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.perception.experimental.object import Object
 from dimos.robot.assets.model import RobotModel
 
 
@@ -873,3 +878,87 @@ def test_world_obstacle_monitor_detection_add_update_and_stale_cleanup(
     update.assert_called_once_with("first-id", mocker.ANY)
     remove.assert_called_once_with("first-id")
     assert obstacle_monitor.get_obstacle_count() == 0
+
+
+def _tilted_box_cloud() -> np.ndarray:
+    """Single-view cloud of a 20x8x8 cm box tilted 30 degrees off the world axes."""
+    rng = np.random.default_rng(0)
+    length, width, height = 0.20, 0.08, 0.08
+    u = rng.uniform(-0.5, 0.5, 4000)
+    v = rng.uniform(-0.5, 0.5, 4000)
+    # Two visible faces only, so the cloud mean sits off the box center.
+    front = np.column_stack([u * length, np.full(u.size, -width / 2), v * height])
+    top = np.column_stack([u * length, v * width, np.full(u.size, height / 2)])
+    angle = np.deg2rad(30.0)
+    rotation = np.array(
+        [
+            [np.cos(angle), -np.sin(angle), 0.0],
+            [np.sin(angle), np.cos(angle), 0.0],
+            [0.0, 0.0, 1.0],
+        ]
+    )
+    return np.vstack([front, top]) @ rotation.T + np.array([1.0, 0.5, 0.9])
+
+
+def test_mesh_obstacle_is_placed_at_the_hull_centroid_without_the_bbox_rotation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+) -> None:
+    monkeypatch.setattr(mesh_utils, "_CACHE_DIR", tmp_path / "derived" / "drake_meshes")
+    parent = world_monitor_module.WorldMonitor(world=FakeWorld())  # type: ignore[arg-type]
+    add_obstacle = mocker.patch.object(parent, "add_obstacle", return_value="parent-id")
+
+    points = _tilted_box_cloud()
+    cloud = PointCloud2.from_numpy(points, frame_id="world")
+    # Mirrors Object.from_detections with use_aabb=False: pose carries the
+    # oriented-box center and rotation.
+    obb = cloud.pointcloud.get_oriented_bounding_box()
+    obj = Object(
+        object_id="tilted-box",
+        name="box",
+        center=Vector3(obb.center),
+        size=Vector3(obb.extent),
+        pose=PoseStamped(
+            frame_id="world",
+            position=Vector3(obb.center),
+            orientation=Quaternion.from_rotation_matrix(np.asarray(obb.R)),
+        ),
+        pointcloud=cloud,
+        bbox=(0.0, 0.0, 1.0, 1.0),
+        track_id=0,
+        class_id=0,
+        confidence=1.0,
+        ts=0.0,
+        image=Image(),
+    )
+
+    monitor = WorldObstacleMonitor(parent=parent, use_mesh_obstacles=True)
+    monitor.start()
+    monitor.on_objects([obj])
+    monitor.refresh_obstacles()
+
+    obstacle = add_obstacle.call_args.args[0]
+    centroid = points.mean(axis=0)
+    assert obstacle.obstacle_type == ObstacleType.MESH
+    np.testing.assert_allclose(
+        [obstacle.pose.position.x, obstacle.pose.position.y, obstacle.pose.position.z],
+        centroid,
+        atol=1e-3,
+    )
+    np.testing.assert_allclose(
+        [
+            obstacle.pose.orientation.x,
+            obstacle.pose.orientation.y,
+            obstacle.pose.orientation.z,
+            obstacle.pose.orientation.w,
+        ],
+        [0.0, 0.0, 0.0, 1.0],
+        atol=1e-9,
+    )
+    assert obstacle.pose.frame_id == "world"
+
+    # Teeth: the pose the old code used is a genuinely different placement, so
+    # this cannot pass on the bug.
+    assert np.linalg.norm(np.asarray(obb.center) - centroid) > 3e-3
+    assert abs(Quaternion.from_rotation_matrix(np.asarray(obb.R)).w) < 0.999
