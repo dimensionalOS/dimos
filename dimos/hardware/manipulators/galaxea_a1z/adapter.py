@@ -51,13 +51,13 @@ from a1z.robots.get_robot import get_a1z_robot
 from a1z.robots.kinematics import Kinematics
 import numpy as np
 
-from dimos.hardware.joint_limits import JointLimits
 from dimos.hardware.manipulators.galaxea_a1z.config import A1ZConfig
 from dimos.hardware.manipulators.galaxea_a1z.gs_usb_bus import gs_usb_can_bus
 from dimos.hardware.manipulators.spec import (
     ControlMode,
     ManipulatorInfo,
 )
+from dimos.hardware.spec import JointLimits
 
 # Joint limits from a1z/robots/get_robot.py (_JOINT_LIMITS)
 _POSITION_LOWER = [-2.094, 0.0, -3.142, -1.484, -1.484, -2.007]

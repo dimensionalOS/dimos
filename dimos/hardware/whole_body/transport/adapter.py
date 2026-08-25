@@ -24,7 +24,7 @@ import threading
 from typing import Any
 
 from dimos.core.transport import LCMTransport
-from dimos.hardware.joint_limits import JointLimits
+from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState

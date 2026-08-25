@@ -25,7 +25,7 @@ from dimos.control.components import (
     make_joints,
 )
 from dimos.core.global_config import global_config
-from dimos.hardware.joint_limits import JointLimits
+from dimos.hardware.spec import JointLimits
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel

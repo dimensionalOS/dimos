@@ -22,11 +22,11 @@ import math
 import time
 from typing import Any
 
-from dimos.hardware.joint_limits import JointLimits
 from dimos.hardware.manipulators.spec import (
     ControlMode,
     ManipulatorInfo,
 )
+from dimos.hardware.spec import JointLimits
 from dimos.simulation.engines.mujoco_shm import (
     ManipShmReader,
     shm_key_from_path,

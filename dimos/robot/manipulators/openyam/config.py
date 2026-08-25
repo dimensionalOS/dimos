@@ -20,7 +20,7 @@ from pathlib import Path
 
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.core.global_config import global_config
-from dimos.hardware.joint_limits import JointLimits
+from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition

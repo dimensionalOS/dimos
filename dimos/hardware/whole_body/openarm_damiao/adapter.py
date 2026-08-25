@@ -19,7 +19,7 @@ from __future__ import annotations
 import can_motor_control
 from can_motor_control import damiao
 
-from dimos.hardware.joint_limits import JointLimits
+from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.damiao.adapter import DamiaoWholeBodyAdapter
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.openarm.config import OPENARM_BIMANUAL_MODEL

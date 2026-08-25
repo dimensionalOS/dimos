@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from dimos.hardware.joint_limits import JointLimits
+from dimos.hardware.spec import JointLimits
 
 # Unitree SDK sentinels meaning "no command" for that DOF.
 POS_STOP: float = 2.146e9

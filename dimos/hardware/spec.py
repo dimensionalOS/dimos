@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Joint limits shared by hardware adapter families."""
+"""Types shared by hardware adapter specifications."""
 
 from collections.abc import Sequence
 from dataclasses import dataclass

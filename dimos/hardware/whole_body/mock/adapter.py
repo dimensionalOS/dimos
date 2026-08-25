@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from dimos.hardware.joint_limits import JointLimits
+from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
 
 

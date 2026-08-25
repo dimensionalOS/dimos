@@ -16,8 +16,8 @@ import math
 
 import pytest
 
-from dimos.hardware.joint_limits import JointLimits
 from dimos.hardware.manipulators.mock.adapter import MockAdapter
+from dimos.hardware.spec import JointLimits
 
 
 @pytest.mark.parametrize("dof", [6, 7])

@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol, runtime_checkable
 
-from dimos.hardware.joint_limits import JointLimits as _JointLimits
+from dimos.hardware.spec import JointLimits as _JointLimits
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3

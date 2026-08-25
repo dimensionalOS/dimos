@@ -24,12 +24,12 @@ import math
 
 from xarm.wrapper import XArmAPI
 
-from dimos.hardware.joint_limits import JointLimits
 from dimos.hardware.manipulators.spec import (
     ControlMode,
     ManipulatorAdapter,
     ManipulatorInfo,
 )
+from dimos.hardware.spec import JointLimits
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

@@ -24,8 +24,8 @@ from dimos.control.tasks.gripper_task.gripper_task import (
     GripperControlTaskConfig,
     create_task,
 )
-from dimos.hardware.joint_limits import JointLimits
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
+from dimos.hardware.spec import JointLimits
 from dimos.msgs.std_msgs.Float32 import Float32
 
 

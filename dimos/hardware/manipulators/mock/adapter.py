@@ -25,11 +25,11 @@ from __future__ import annotations
 
 import math
 
-from dimos.hardware.joint_limits import JointLimits
 from dimos.hardware.manipulators.spec import (
     ControlMode,
     ManipulatorInfo,
 )
+from dimos.hardware.spec import JointLimits
 
 
 class MockAdapter:
