@@ -31,7 +31,7 @@ from dimos.evals.vqa.contracts import (
 )
 
 if TYPE_CHECKING:
-    from dimos.evals.vqa.calibrated_frame import CalibratedFrame
+    from dimos.evals.vqa.pointcloud_frame import PointCloudFrame
     from dimos.models.vl.base import VlModel
     from dimos.msgs.sensor_msgs.Image import Image
 
@@ -107,7 +107,7 @@ def answer_question(
     proposal: QuestionProposal,
     image: Image,
     detector: VlModel,
-    calibrated_frame: CalibratedFrame | None = None,
+    pointcloud_frame: PointCloudFrame | None = None,
     range_estimator: ObjectRangeEstimator | None = None,
     mask_estimator: ObjectMaskEstimator | None = None,
 ) -> FamilyAnswer:
@@ -130,17 +130,17 @@ def answer_question(
             )
         return _answer_largest_visible_area(proposal, image, mask_estimator)
     if proposal.family == "object_distance":
-        if calibrated_frame is None or range_estimator is None:
+        if pointcloud_frame is None or range_estimator is None:
             raise InsufficientEvidenceError(
-                "object distance requires calibrated point-cloud evidence"
+                "object distance requires image-aligned point-cloud evidence"
             )
-        return _answer_object_distance(proposal, calibrated_frame, range_estimator)
+        return _answer_object_distance(proposal, pointcloud_frame, range_estimator)
     if proposal.family == "closest_object":
-        if calibrated_frame is None or range_estimator is None:
+        if pointcloud_frame is None or range_estimator is None:
             raise InsufficientEvidenceError(
-                "closest object requires calibrated point-cloud evidence"
+                "closest object requires image-aligned point-cloud evidence"
             )
-        return _answer_closest_object(proposal, calibrated_frame, range_estimator)
+        return _answer_closest_object(proposal, pointcloud_frame, range_estimator)
     raise ValueError(f"unsupported VQA family: {proposal.family}")
 
 
@@ -227,12 +227,12 @@ def _answer_object_count(
 
 def _answer_object_distance(
     proposal: QuestionProposal,
-    calibrated_frame: CalibratedFrame,
+    pointcloud_frame: PointCloudFrame,
     range_estimator: ObjectRangeEstimator,
 ) -> FamilyAnswer:
     """Answer an object-distance proposal from EdgeTAM and point-cloud evidence."""
     object_name = proposal.object_names[0]
-    evidence = range_estimator.estimate(calibrated_frame, object_name)
+    evidence = range_estimator.estimate(pointcloud_frame, object_name)
     choices = (
         "under 1 meter",
         "1 to under 2 meters",
@@ -250,7 +250,7 @@ def _answer_object_distance(
         choices=choices,
         answer=answer,
         evidence={
-            "primitive": "edgetam_lidar_range",
+            "primitive": "edge_tam_lidar_range",
             **evidence.model_dump(mode="json"),
         },
     )
@@ -296,7 +296,7 @@ def _answer_image_coverage(
         choices=choices,
         answer=choices[answer_index],
         evidence={
-            "primitive": "edgetam_mask_area",
+            "primitive": "edge_tam_mask_area",
             "object_name": object_name,
             "mask_area_px": evidence.mask_area_px,
             "image_area_px": image_area,
@@ -332,7 +332,7 @@ def _answer_largest_visible_area(
         choices=object_names,
         answer=object_names[winner_index],
         evidence={
-            "primitive": "edgetam_mask_area",
+            "primitive": "edge_tam_mask_area",
             "comparison_rule": "winner_at_least_20_percent_larger",
             "objects": cast(
                 "JsonValue",
@@ -353,12 +353,12 @@ def _answer_largest_visible_area(
 
 def _answer_closest_object(
     proposal: QuestionProposal,
-    calibrated_frame: CalibratedFrame,
+    pointcloud_frame: PointCloudFrame,
     range_estimator: ObjectRangeEstimator,
 ) -> FamilyAnswer:
     """Choose the closest named object when its range interval is unambiguous."""
     object_names = proposal.object_names
-    ranges = range_estimator.estimate_many(calibrated_frame, object_names)
+    ranges = range_estimator.estimate_many(pointcloud_frame, object_names)
     if len(ranges) != len(object_names):
         raise ValueError("range estimator returned the wrong number of object ranges")
     if tuple(evidence.object_name for evidence in ranges) != object_names:
@@ -381,7 +381,7 @@ def _answer_closest_object(
         choices=object_names,
         answer=object_names[winner_index],
         evidence={
-            "primitive": "edgetam_lidar_closest_range",
+            "primitive": "edge_tam_lidar_closest_range",
             "comparison_rule": "closest_non_overlapping_interquartile_range",
             "objects": cast(
                 "JsonValue",

@@ -19,9 +19,9 @@ from typing import TYPE_CHECKING, cast
 import numpy as np
 import pytest
 
-from dimos.evals.vqa.calibrated_frame import CalibratedFrame
 from dimos.evals.vqa.contracts import InsufficientEvidenceError
-from dimos.evals.vqa.primitives.edgetam import EdgeTamObjectMaskPipeline
+from dimos.evals.vqa.pointcloud_frame import PointCloudFrame
+from dimos.evals.vqa.primitives.edge_tam import EdgeTAMObjectMaskPipeline
 from dimos.evals.vqa.primitives.range import LidarRangeEstimator
 from dimos.models.vl.base import VlModel
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -139,7 +139,7 @@ class _Segmenter:
         return ImageDetections2D(detections.image, segmented)
 
 
-class _SamResultSegmenter:
+class _SAMResultSegmenter:
     def __init__(self, mask: np.ndarray) -> None:
         self._mask = mask
 
@@ -171,9 +171,9 @@ def _frame(
     fy: float = 2.0,
     cx: float = 5.0,
     cy: float = 5.0,
-) -> CalibratedFrame:
+) -> PointCloudFrame:
     image = Image(data=np.zeros((10, 10, 3), dtype=np.uint8), ts=10.0)
-    return CalibratedFrame(
+    return PointCloudFrame(
         index=index,
         image=image,
         pointcloud=cast("PointCloud2", pointcloud),
@@ -195,7 +195,7 @@ def _range_estimator(
     min_supporting_points: int = 5,
 ) -> LidarRangeEstimator:
     return LidarRangeEstimator(
-        EdgeTamObjectMaskPipeline(detector, segmenter),
+        EdgeTAMObjectMaskPipeline(detector, segmenter),
         min_supporting_points,
     )
 
@@ -207,7 +207,7 @@ def test_mask_estimator_batches_and_caches_without_pointcloud() -> None:
     left_mask[:, :4] = 1
     right_mask[:, 5:] = 1
     segmenter = _Segmenter([left_mask, right_mask])
-    estimator = EdgeTamObjectMaskPipeline(
+    estimator = EdgeTAMObjectMaskPipeline(
         _NamedDetector(
             {
                 "left person": (0.0, 0.0, 4.0, 9.0),
@@ -225,8 +225,8 @@ def test_mask_estimator_batches_and_caches_without_pointcloud() -> None:
     assert cached is left
     assert segmenter.call_count == 1
 
-    image.ts = 11.0
-    estimator.estimate(image, "left person")
+    next_image = Image(data=np.zeros((10, 10, 3), dtype=np.uint8), ts=11.0)
+    estimator.estimate(next_image, "left person")
 
     assert segmenter.call_count == 2
 
@@ -245,9 +245,9 @@ def test_accepts_one_pixel_thin_sam_masks(
     image = Image(data=np.zeros((10, 10, 3), dtype=np.uint8), ts=10.0)
     mask = np.zeros((image.height, image.width), dtype=np.uint8)
     mask[foreground] = 1
-    estimator = EdgeTamObjectMaskPipeline(
+    estimator = EdgeTAMObjectMaskPipeline(
         _Detector([(0.0, 0.0, 10.0, 10.0)]),
-        _SamResultSegmenter(mask),
+        _SAMResultSegmenter(mask),
     )
 
     evidence = estimator.estimate(image, "pole")
@@ -324,36 +324,6 @@ def test_rejects_too_few_mask_supporting_points() -> None:
 
     with pytest.raises(InsufficientEvidenceError, match="at least 5 supporting points.*got 4"):
         estimator.estimate(_frame(pointcloud), "bottle")
-
-
-def test_rejects_invalid_camera_intrinsics_before_projection() -> None:
-    frame = _frame(_PointCloud(np.array([[0.0, 0.0, 1.0]])))
-    frame.camera_info.K[0] = 0.0
-
-    estimator = _range_estimator(
-        _Detector([(0.0, 0.0, 10.0, 10.0)]),
-        _Segmenter(_full_mask()),
-        min_supporting_points=1,
-    )
-
-    with pytest.raises(ValueError, match="positive focal lengths"):
-        estimator.estimate(frame, "bottle")
-
-
-def test_rejects_dimension_mismatch_before_mask_inference() -> None:
-    frame = _frame(_PointCloud(np.array([[0.0, 0.0, 1.0]])))
-    frame.camera_info.width = 9
-    segmenter = _Segmenter(_full_mask())
-    estimator = _range_estimator(
-        _Detector([(0.0, 0.0, 10.0, 10.0)]),
-        segmenter,
-        min_supporting_points=1,
-    )
-
-    with pytest.raises(ValueError, match="dimensions do not match"):
-        estimator.estimate(frame, "bottle")
-
-    assert segmenter.call_count == 0
 
 
 def test_rejects_segmentation_mask_with_wrong_dimensions() -> None:

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""EdgeTAM-segmented LiDAR range evidence for VQA object questions."""
+"""EdgeTAM-backed object-mask evidence for VQA questions."""
 
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ class EdgeTAMImageSegmenterCompatible(Protocol):
     ) -> ImageDetections2D[Detection2DSeg]: ...
 
 
-class EdgeTamObjectMaskPipeline:
+class EdgeTAMObjectMaskPipeline:
     """Detect and batch-segment named objects, caching evidence per image."""
 
     def __init__(
@@ -67,7 +67,7 @@ class EdgeTamObjectMaskPipeline:
     ) -> None:
         self._detector = detector
         self._segmenter = segmenter
-        self._cached_image_key: tuple[int, int, float] | None = None
+        self._cached_image: Image | None = None
         self._cached_evidence: dict[str, ObjectMaskEvidence] = {}
 
     def estimate(self, image: Image, object_name: str) -> ObjectMaskEvidence:
@@ -80,21 +80,12 @@ class EdgeTamObjectMaskPipeline:
         object_names: tuple[str, ...],
     ) -> tuple[ObjectMaskEvidence, ...]:
         """Return several object masks from one EdgeTAM segmentation pass."""
-        if not object_names:
-            raise ValueError("object_names must not be empty")
-        normalized_names = tuple(name.strip() for name in object_names)
-        if any(not name for name in normalized_names):
-            raise ValueError("object names must not be blank")
-        if len({name.casefold() for name in normalized_names}) != len(normalized_names):
-            raise ValueError("object names must be distinct")
-
-        image_key = (id(image), id(image.data), image.ts)
-        if image_key != self._cached_image_key:
-            self._cached_image_key = image_key
+        if image is not self._cached_image:
+            self._cached_image = image
             self._cached_evidence.clear()
 
         pending: list[tuple[str, Detection2DBBox]] = []
-        for object_name in normalized_names:
+        for object_name in object_names:
             if object_name in self._cached_evidence:
                 continue
             detected = self._detector.query_detections(image, object_name)
@@ -140,7 +131,7 @@ class EdgeTamObjectMaskPipeline:
                     detection=candidate,
                     mask=mask,
                 )
-        return tuple(self._cached_evidence[name] for name in normalized_names)
+        return tuple(self._cached_evidence[name] for name in object_names)
 
     def _get_segmenter(self) -> EdgeTAMImageSegmenterCompatible:
         if self._segmenter is None:

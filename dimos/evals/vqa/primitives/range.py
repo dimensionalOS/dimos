@@ -16,18 +16,69 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field
 
-from dimos.evals.vqa.contracts import InsufficientEvidenceError, ObjectMaskEstimator
-from dimos.perception.detection.type.detection3d.pointcloud import ProjectedPointCloud
+from dimos.evals.vqa.contracts import InsufficientEvidenceError, NonEmptyString
 
 if TYPE_CHECKING:
-    from dimos.evals.vqa.calibrated_frame import CalibratedFrame
+    from dimos.evals.vqa.contracts import ObjectMaskEstimator
+    from dimos.evals.vqa.pointcloud_frame import PointCloudFrame
 
-ObjectName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+@dataclass(frozen=True)
+class _FrameProjection:
+    """Reusable VQA projection with one camera point per image pixel."""
+
+    camera_points: np.ndarray
+    pixels: np.ndarray
+
+    @classmethod
+    def from_frame(cls, frame: PointCloudFrame) -> _FrameProjection:
+        """Transform and project valid points into image coordinates."""
+        camera_info = frame.camera_info
+        intrinsics = np.asarray(camera_info.K, dtype=np.float64).reshape(3, 3)
+
+        raw_points, _ = frame.pointcloud.as_numpy()
+        points = np.asarray(raw_points, dtype=np.float64)
+        points = points[np.all(np.isfinite(points), axis=1)]
+
+        transform = np.asarray(frame.pointcloud_to_camera.to_matrix(), dtype=np.float64)
+        homogeneous = np.column_stack((points, np.ones(len(points), dtype=np.float64)))
+        camera_points = (transform @ homogeneous.T).T[:, :3]
+        in_front = np.all(np.isfinite(camera_points), axis=1) & (camera_points[:, 2] > 0)
+        camera_points = camera_points[in_front]
+
+        projected = (intrinsics @ camera_points.T).T
+        image_points = projected[:, :2] / projected[:, 2, np.newaxis]
+        in_image = (
+            np.all(np.isfinite(image_points), axis=1)
+            & (image_points[:, 0] >= 0)
+            & (image_points[:, 0] < camera_info.width)
+            & (image_points[:, 1] >= 0)
+            & (image_points[:, 1] < camera_info.height)
+        )
+        camera_points = camera_points[in_image]
+        pixels = image_points[in_image].astype(np.intp)
+        if len(pixels):
+            linear_pixels = pixels[:, 1] * camera_info.width + pixels[:, 0]
+            order = np.lexsort((camera_points[:, 2], linear_pixels))
+            sorted_linear = linear_pixels[order]
+            first_per_pixel = np.empty(len(order), dtype=bool)
+            first_per_pixel[0] = True
+            first_per_pixel[1:] = sorted_linear[1:] != sorted_linear[:-1]
+            nearest = order[first_per_pixel]
+            camera_points = camera_points[nearest]
+            pixels = pixels[nearest]
+        return cls(camera_points, pixels)
+
+    def camera_points_in_mask(self, mask: np.ndarray) -> np.ndarray:
+        """Return camera-frame points inside one segmentation mask."""
+        selected = mask[self.pixels[:, 1], self.pixels[:, 0]] > 0
+        return np.asarray(self.camera_points[selected])
 
 
 class ObjectRangeEvidence(BaseModel):
@@ -35,7 +86,7 @@ class ObjectRangeEvidence(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
-    object_name: ObjectName
+    object_name: NonEmptyString
     camera_range_m: float = Field(ge=0)
     supporting_point_count: int = Field(ge=1)
     prompt_bbox_xyxy: tuple[float, float, float, float]
@@ -54,63 +105,47 @@ class LidarRangeEstimator:
             raise ValueError("min_supporting_points must be at least 1")
         self._masks = masks
         self._min_supporting_points = min_supporting_points
-        self._cached_frame: CalibratedFrame | None = None
-        self._cached_projection: ProjectedPointCloud | None = None
-        self._cached_evidence: dict[str, ObjectRangeEvidence] = {}
+        self._cached_projection: tuple[PointCloudFrame, _FrameProjection] | None = None
 
-    def estimate(self, frame: CalibratedFrame, object_name: str) -> ObjectRangeEvidence:
+    def estimate(self, frame: PointCloudFrame, object_name: str) -> ObjectRangeEvidence:
         """Estimate robust camera-origin range to one detected object."""
         return self.estimate_many(frame, (object_name,))[0]
 
     def estimate_many(
-        self, frame: CalibratedFrame, object_names: tuple[str, ...]
+        self, frame: PointCloudFrame, object_names: tuple[str, ...]
     ) -> tuple[ObjectRangeEvidence, ...]:
         """Estimate several ranges with cached masks and one projected cloud."""
-        if (frame.camera_info.height, frame.camera_info.width) != (
-            frame.image.height,
-            frame.image.width,
-        ):
-            raise ValueError("camera calibration dimensions do not match the rectified image")
         masks = self._masks.estimate_many(frame.image, object_names)
-        if frame is not self._cached_frame:
-            self._cached_frame = frame
-            self._cached_projection = None
-            self._cached_evidence.clear()
+        cached = self._cached_projection
+        if cached is None or cached[0] is not frame:
+            projection = _FrameProjection.from_frame(frame)
+            self._cached_projection = (frame, projection)
+        else:
+            projection = cached[1]
 
-        pending = [mask for mask in masks if mask.object_name not in self._cached_evidence]
-        if pending:
-            projection = self._cached_projection
-            if projection is None:
-                projection = ProjectedPointCloud.from_pointcloud(
-                    frame.pointcloud,
-                    frame.camera_info,
-                    frame.pointcloud_to_camera,
+        evidence = []
+        for mask in masks:
+            points = projection.camera_points_in_mask(mask.mask)
+            if len(points) < self._min_supporting_points:
+                raise InsufficientEvidenceError(
+                    f"object range requires at least {self._min_supporting_points} supporting "
+                    f"points for {mask.object_name!r}, got {len(points)}"
                 )
-                self._cached_projection = projection
-            for mask in pending:
-                _, points = projection.points_in_detection(
-                    mask.detection,
-                    nearest_per_pixel=True,
-                )
-                if len(points) < self._min_supporting_points:
-                    raise InsufficientEvidenceError(
-                        f"object range requires at least {self._min_supporting_points} supporting "
-                        f"points for {mask.object_name!r}, got {len(points)}"
-                    )
-                quartiles = np.quantile(np.linalg.norm(points, axis=1), (0.25, 0.5, 0.75))
-                self._cached_evidence[mask.object_name] = ObjectRangeEvidence(
+            lower, median, upper = map(
+                float,
+                np.quantile(np.linalg.norm(points, axis=1), (0.25, 0.5, 0.75)),
+            )
+            evidence.append(
+                ObjectRangeEvidence(
                     object_name=mask.object_name,
-                    camera_range_m=float(quartiles[1]),
+                    camera_range_m=median,
                     supporting_point_count=len(points),
                     prompt_bbox_xyxy=mask.prompt_bbox_xyxy,
                     mask_bbox_xyxy=mask.mask_bbox_xyxy,
                     mask_area_px=mask.mask_area_px,
-                    range_quartiles_m=(
-                        float(quartiles[0]),
-                        float(quartiles[1]),
-                        float(quartiles[2]),
-                    ),
+                    range_quartiles_m=(lower, median, upper),
                     synchronization_delta_s=float(frame.synchronization_delta_s),
                     calibration_source=frame.calibration_source,
                 )
-        return tuple(self._cached_evidence[mask.object_name] for mask in masks)
+            )
+        return tuple(evidence)

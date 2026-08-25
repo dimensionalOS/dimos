@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Canonical calibrated-frame boundary for point-cloud VQA generation."""
+"""Prepare image-aligned point-cloud frames from recorded VQA datasets."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class CalibratedFrame:
+class PointCloudFrame:
     """One rectified image and synchronized point cloud ready for VQA primitives."""
 
     index: int
@@ -55,27 +55,27 @@ class CalibratedFrame:
         return abs(self.image_observation_timestamp - self.pointcloud_observation_timestamp)
 
 
-class FrameGeometryUnavailableError(ValueError):
+class PointCloudFrameUnavailableError(ValueError):
     """A selected image lacks the recorded evidence needed for metric geometry."""
 
 
-class SynchronizedPointCloudNotFoundError(FrameGeometryUnavailableError):
+class SynchronizedPointCloudNotFoundError(PointCloudFrameUnavailableError):
     """No point cloud is close enough to the selected image observation."""
 
 
-class RecordingFramePreprocessor:
-    """Load synchronized, rectified frames from one open Memory recording."""
+class PointCloudFrameLoader:
+    """Load image-aligned point-cloud frames from one Memory dataset."""
 
     def __init__(
         self,
-        recording: str | Path,
+        dataset: str | Path,
         tolerance_s: float = 0.1,
     ) -> None:
-        if not recording:
-            raise ValueError("recording must be set")
+        if not dataset:
+            raise ValueError("dataset must be set")
         if tolerance_s <= 0:
             raise ValueError("tolerance_s must be positive")
-        self._recording = recording
+        self._dataset = dataset
         self._tolerance_s = tolerance_s
         self._store: Store | None = None
         self._images: Stream[Image] | None = None
@@ -84,7 +84,7 @@ class RecordingFramePreprocessor:
         self._recorded_tf: TFLookup | None = None
         self._rectifier = _ImageRectifier()
 
-    def __enter__(self) -> RecordingFramePreprocessor:
+    def __enter__(self) -> PointCloudFrameLoader:
         return self.start()
 
     def __exit__(
@@ -95,43 +95,56 @@ class RecordingFramePreprocessor:
     ) -> None:
         self.stop()
 
-    def start(self) -> RecordingFramePreprocessor:
-        """Open the recording and cache all stream and calibration handles."""
+    def start(self) -> PointCloudFrameLoader:
+        """Open the dataset and cache all stream and calibration handles."""
         if self._store is not None:
             return self
 
-        store = open_dataset(self._recording)
+        store = open_dataset(self._dataset)
         store.start()
         try:
             streams = set(store.list_streams())
-            if "color_image" not in streams:
-                raise ValueError("recording has no 'color_image' stream")
-            missing_calibration = {"camera_info", "tf"} - streams
-            if missing_calibration:
-                listing = ", ".join(sorted(missing_calibration))
-                raise ValueError(f"recording is missing required calibration stream(s): {listing}")
-            lidar_name = next(
-                (name for name in ("pointlio_lidar", "lidar") if name in streams), None
-            )
-            if lidar_name is None:
-                raise ValueError("recording has no 'pointlio_lidar' or 'lidar' stream")
+            missing = {"color_image", "camera_info", "tf"} - streams
+            if missing:
+                listing = ", ".join(sorted(missing))
+                raise ValueError(f"dataset is missing required stream(s): {listing}")
+            lidar_names = [name for name in ("pointlio_lidar", "lidar") if name in streams]
+            if not lidar_names:
+                raise ValueError("dataset has no 'pointlio_lidar' or 'lidar' stream")
 
-            self._images = store.stream("color_image", Image).order_by("ts")
-            self._lidar = store.stream(lidar_name, PointCloud2).order_by("ts")
+            images = store.stream("color_image", Image).order_by("ts")
+            try:
+                images.first()
+            except LookupError as exc:
+                raise ValueError("required color_image stream is empty") from exc
+            self._images = images
+
             recorded_camera_info = store.stream("camera_info", CameraInfo).order_by("ts")
             try:
                 recorded_camera_info.first()
             except LookupError as exc:
-                raise ValueError("recorded camera_info stream is empty") from exc
+                raise ValueError("required camera_info stream is empty") from exc
             self._recorded_camera_info = recorded_camera_info
+
             recorded_tf = StreamTF.from_store(store)
             if recorded_tf is None:
-                raise ValueError("recorded tf stream is unavailable")
+                raise ValueError("required tf stream is unavailable")
             try:
                 recorded_tf.stream.first()
             except LookupError as exc:
-                raise ValueError("recorded tf stream is empty") from exc
+                raise ValueError("required tf stream is empty") from exc
             self._recorded_tf = recorded_tf
+
+            for lidar_name in lidar_names:
+                lidar = store.stream(lidar_name, PointCloud2).order_by("ts")
+                try:
+                    lidar.first()
+                except LookupError:
+                    continue
+                self._lidar = lidar
+                break
+            if self._lidar is None:
+                raise ValueError("required pointlio_lidar/lidar stream is empty")
             self._store = store
         except BaseException:
             store.stop()
@@ -140,7 +153,7 @@ class RecordingFramePreprocessor:
         return self
 
     def stop(self) -> None:
-        """Close the recording and release cached stream handles."""
+        """Close the dataset and release cached stream handles."""
         store = self._store
         self._clear_state()
         if store is not None:
@@ -149,7 +162,9 @@ class RecordingFramePreprocessor:
     @property
     def image_count(self) -> int:
         if self._images is None:
-            raise RuntimeError("frame preprocessor must be started before reading image_count")
+            raise RuntimeError(
+                "point-cloud frame loader must be started before reading image_count"
+            )
         return self._images.count()
 
     def _clear_state(self) -> None:
@@ -159,12 +174,12 @@ class RecordingFramePreprocessor:
         self._recorded_camera_info = None
         self._recorded_tf = None
 
-    def load(self, frame_index: int) -> CalibratedFrame:
-        """Load the indexed image and its nearest calibrated point cloud."""
+    def load(self, frame_index: int) -> PointCloudFrame:
+        """Load the indexed image and its nearest image-aligned point cloud."""
         if frame_index < 0:
             raise ValueError("frame_index must be non-negative")
         if self._images is None or self._lidar is None:
-            raise RuntimeError("frame preprocessor must be started before loading frames")
+            raise RuntimeError("point-cloud frame loader must be started before loading frames")
 
         image_query = self._images.offset(frame_index).limit(1)
         image_obs = image_query.first()
@@ -185,8 +200,12 @@ class RecordingFramePreprocessor:
             recorded_tf,
             self._tolerance_s,
         )
+        if not np.all(np.isfinite(pointcloud_to_camera.to_matrix())):
+            raise PointCloudFrameUnavailableError(
+                "recorded point-cloud-to-camera transform must be finite"
+            )
 
-        return CalibratedFrame(
+        return PointCloudFrame(
             index=frame_index,
             image=image,
             pointcloud=lidar_obs.data,
@@ -202,7 +221,7 @@ class RecordingFramePreprocessor:
         if frame_index < 0:
             raise ValueError("frame_index must be non-negative")
         if self._images is None:
-            raise RuntimeError("frame preprocessor must be started before loading frames")
+            raise RuntimeError("point-cloud frame loader must be started before loading frames")
         observation = self._images.offset(frame_index).limit(1).first()
         image = observation.data.copy()
         image.ts = observation.ts
@@ -223,6 +242,8 @@ class _ImageRectifier:
         # OpenCV is intentionally lazy because importing it loads a large native library.
         import cv2
 
+        if image.width <= 0 or image.height <= 0:
+            raise ValueError("image dimensions must be positive")
         if (source.width, source.height) != (image.width, image.height):
             raise ValueError(
                 "camera calibration dimensions "
@@ -267,7 +288,7 @@ def _align_one(
         pair = primary.align(secondary, tolerance=tolerance_s).first().data
     except LookupError as exc:
         raise SynchronizedPointCloudNotFoundError(
-            "recording has no synchronized point cloud within tolerance"
+            "dataset has no synchronized point cloud within tolerance"
         ) from exc
     return cast("Observation[Any]", pair[1])
 
@@ -277,8 +298,8 @@ def _camera_info_at(stream: Stream[CameraInfo], timestamp: float) -> CameraInfo:
     try:
         return stream.time_range(float("-inf"), timestamp).order_by("ts", desc=True).first().data
     except LookupError as exc:
-        raise FrameGeometryUnavailableError(
-            f"recording has no camera calibration at or before image timestamp {timestamp}"
+        raise ValueError(
+            f"dataset has no camera calibration at or before image timestamp {timestamp}"
         ) from exc
 
 
@@ -291,7 +312,7 @@ def _recorded_pointcloud_to_camera(
 ) -> Transform:
     cloud_frame = lidar_obs.data.frame_id
     if not cloud_frame:
-        raise FrameGeometryUnavailableError("recorded point cloud requires a frame_id")
+        raise PointCloudFrameUnavailableError("recorded point cloud requires a frame_id")
     camera_from_world = tf.get(
         camera_frame,
         "world",
@@ -299,7 +320,7 @@ def _recorded_pointcloud_to_camera(
         time_tolerance=tolerance_s,
     )
     if camera_from_world is None:
-        raise FrameGeometryUnavailableError(
+        raise PointCloudFrameUnavailableError(
             f"recorded tf cannot resolve {camera_frame!r} <- 'world' "
             f"at image timestamp {image_obs.ts}"
         )
@@ -312,7 +333,7 @@ def _recorded_pointcloud_to_camera(
         time_tolerance=tolerance_s,
     )
     if world_from_cloud is None:
-        raise FrameGeometryUnavailableError(
+        raise PointCloudFrameUnavailableError(
             f"recorded tf cannot resolve 'world' <- {cloud_frame!r} "
             f"at point-cloud timestamp {lidar_obs.ts}"
         )
@@ -325,7 +346,12 @@ def _rectification_maps(
     # OpenCV is intentionally lazy because importing it loads a large native library.
     import cv2
 
-    matrix = np.asarray(source.K, dtype=np.float64).reshape(3, 3)
+    intrinsics = np.asarray(source.K, dtype=np.float64)
+    if intrinsics.size != 9:
+        raise ValueError("camera intrinsics must contain nine values")
+    matrix = intrinsics.reshape(3, 3)
+    if not np.all(np.isfinite(matrix)) or matrix[0, 0] <= 0 or matrix[1, 1] <= 0:
+        raise ValueError("camera intrinsics must be finite with positive focal lengths")
     distortion = np.asarray(source.D, dtype=np.float64)
     rectification = np.asarray(source.R, dtype=np.float64).reshape(3, 3)
     projection = np.asarray(source.P, dtype=np.float64).reshape(3, 4)[:, :3]

@@ -47,7 +47,7 @@ from dimos.evals.vqa.generate import (
     VqaGenerationConfig,
     generate_frames_dataset,
 )
-from dimos.evals.vqa.primitives.edgetam import ObjectMaskEvidence
+from dimos.evals.vqa.primitives.edge_tam import ObjectMaskEvidence
 from dimos.evals.vqa.primitives.range import ObjectRangeEvidence
 from dimos.evals.vqa.suite import load_suite
 from dimos.models.vl.base import VlModel
@@ -56,7 +56,7 @@ from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
 if TYPE_CHECKING:
-    from dimos.evals.vqa.calibrated_frame import CalibratedFrame
+    from dimos.evals.vqa.pointcloud_frame import PointCloudFrame
 
 
 class _TestVlModel(VlModel):
@@ -279,7 +279,7 @@ class _RangeEstimator:
         self._range_m = range_m
         self._quartiles = quartiles or (range_m, range_m, range_m)
 
-    def estimate(self, frame: CalibratedFrame, object_name: str) -> ObjectRangeEvidence:
+    def estimate(self, frame: PointCloudFrame, object_name: str) -> ObjectRangeEvidence:
         return ObjectRangeEvidence(
             object_name=object_name,
             camera_range_m=self._range_m,
@@ -293,7 +293,7 @@ class _RangeEstimator:
         )
 
     def estimate_many(
-        self, frame: CalibratedFrame, object_names: tuple[str, ...]
+        self, frame: PointCloudFrame, object_names: tuple[str, ...]
     ) -> tuple[ObjectRangeEvidence, ...]:
         return tuple(self.estimate(frame, object_name) for object_name in object_names)
 
@@ -332,7 +332,7 @@ class _ClosestRangeEstimator:
     def __init__(self, *quartiles: tuple[float, float, float]) -> None:
         self._quartiles = quartiles
 
-    def estimate(self, frame: CalibratedFrame, object_name: str) -> ObjectRangeEvidence:
+    def estimate(self, frame: PointCloudFrame, object_name: str) -> ObjectRangeEvidence:
         quartiles = self._quartiles[0]
         box = (0.0, 0.0, 2.0, 2.0)
         return ObjectRangeEvidence(
@@ -348,7 +348,7 @@ class _ClosestRangeEstimator:
         )
 
     def estimate_many(
-        self, frame: CalibratedFrame, object_names: tuple[str, ...]
+        self, frame: PointCloudFrame, object_names: tuple[str, ...]
     ) -> tuple[ObjectRangeEvidence, ...]:
         return tuple(
             ObjectRangeEvidence(
@@ -372,7 +372,7 @@ class _ClosestRangeEstimator:
 
 class _ReorderedClosestRangeEstimator(_ClosestRangeEstimator):
     def estimate_many(
-        self, frame: CalibratedFrame, object_names: tuple[str, ...]
+        self, frame: PointCloudFrame, object_names: tuple[str, ...]
     ) -> tuple[ObjectRangeEvidence, ...]:
         return tuple(reversed(super().estimate_many(frame, object_names)))
 
@@ -453,7 +453,7 @@ def test_object_distance_requires_range_evidence() -> None:
     image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
     proposal = QuestionProposal(family="object_distance", object_names=("chair",))
 
-    with pytest.raises(InsufficientEvidenceError, match="calibrated point-cloud"):
+    with pytest.raises(InsufficientEvidenceError, match="image-aligned point-cloud"):
         answer_question(proposal, image, _Detector(present=True))
 
 
@@ -474,7 +474,7 @@ def test_object_distance_buckets_range_evidence(range_m: float, expected: str) -
         proposal,
         image,
         _Detector(present=True),
-        cast("CalibratedFrame", object()),
+        cast("PointCloudFrame", object()),
         _RangeEstimator(range_m),
     )
 
@@ -492,7 +492,7 @@ def test_object_distance_rejects_evidence_crossing_bucket_boundary() -> None:
             proposal,
             image,
             _Detector(present=True),
-            cast("CalibratedFrame", object()),
+            cast("PointCloudFrame", object()),
             _RangeEstimator(2.01, (1.8, 2.01, 2.2)),
         )
 
@@ -524,7 +524,7 @@ def test_closest_object_compares_multiple_named_references(
         proposal,
         image,
         _Detector(present=True),
-        cast("CalibratedFrame", object()),
+        cast("PointCloudFrame", object()),
         _ClosestRangeEstimator(*quartiles),
     )
 
@@ -546,7 +546,7 @@ def test_closest_object_rejects_overlapping_range_intervals() -> None:
             proposal,
             image,
             _Detector(present=True),
-            cast("CalibratedFrame", object()),
+            cast("PointCloudFrame", object()),
             _ClosestRangeEstimator(
                 (1.0, 1.1, 1.2),
                 (1.1, 1.3, 1.5),
@@ -566,7 +566,7 @@ def test_closest_object_rejects_reordered_range_results() -> None:
             proposal,
             Image.from_numpy(np.zeros((4, 10, 3), dtype=np.uint8)),
             _Detector(present=True),
-            cast("CalibratedFrame", object()),
+            cast("PointCloudFrame", object()),
             _ReorderedClosestRangeEstimator((1.0, 1.1, 1.2), (2.0, 2.1, 2.2)),
         )
 
@@ -1021,14 +1021,14 @@ def test_generation_audits_invalid_family_proposals_and_continues(tmp_path: Path
     assert ground_truth[0]["reason"] == "presence requires exactly 1 object name"
 
 
-def test_generate_distance_case_from_calibrated_frame(tmp_path: Path) -> None:
+def test_generate_distance_case_from_pointcloud_frame(tmp_path: Path) -> None:
     output = tmp_path / "vqa"
     image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=12.5)
     request = GenerationRequest(dataset="recording.db", image_index=4, output=output)
 
     result = generate_frames_dataset(
         request,
-        (GenerationFrame(4, image, cast("CalibratedFrame", object())),),
+        (GenerationFrame(4, image, cast("PointCloudFrame", object())),),
         cast("QuestionAuthor", _DistanceAuthor()),
         _Detector(present=True),
         _RangeEstimator(1.5),
@@ -1045,14 +1045,14 @@ def test_generate_distance_case_from_calibrated_frame(tmp_path: Path) -> None:
     assert labels == [{"id": "frame-000004-chair-object_distance", "answer": "1 to under 2 meters"}]
 
 
-def test_generate_closest_object_case_from_calibrated_frame(tmp_path: Path) -> None:
+def test_generate_closest_object_case_from_pointcloud_frame(tmp_path: Path) -> None:
     output = tmp_path / "vqa"
     image = Image.from_numpy(np.zeros((4, 10, 3), dtype=np.uint8), ts=12.5)
     request = GenerationRequest(dataset="recording.db", image_index=4, output=output)
 
     result = generate_frames_dataset(
         request,
-        (GenerationFrame(4, image, cast("CalibratedFrame", object())),),
+        (GenerationFrame(4, image, cast("PointCloudFrame", object())),),
         cast("QuestionAuthor", _ClosestObjectAuthor()),
         _Detector(present=True),
         _ClosestRangeEstimator(
@@ -1098,7 +1098,7 @@ def test_generation_deduplicates_reordered_closest_object_references(tmp_path: P
             GenerationFrame(
                 4,
                 Image.from_numpy(np.zeros((4, 10, 3), dtype=np.uint8)),
-                cast("CalibratedFrame", object()),
+                cast("PointCloudFrame", object()),
             ),
         ),
         cast("QuestionAuthor", _DuplicateClosestObjectAuthor()),
@@ -1129,7 +1129,7 @@ def test_generation_deduplicates_reordered_largest_area_references(tmp_path: Pat
     assert result.cases[0].id == "frame-000004-box-vs-chair-vs-table-largest_visible_area"
 
 
-def test_uncalibrated_frame_does_not_expose_distance_family(tmp_path: Path) -> None:
+def test_frame_without_pointcloud_does_not_expose_distance_family(tmp_path: Path) -> None:
     output = tmp_path / "vqa"
     image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=12.5)
     request = GenerationRequest(dataset="recording.db", image_index=4, output=output)
@@ -1148,7 +1148,7 @@ def test_uncalibrated_frame_does_not_expose_distance_family(tmp_path: Path) -> N
     assert run["families"] == ["presence", "horizontal_direction", "object_count"]
 
 
-def test_uncalibrated_frame_exposes_mask_families_when_masks_are_available(
+def test_frame_without_pointcloud_exposes_mask_families_when_masks_are_available(
     tmp_path: Path,
 ) -> None:
     output = tmp_path / "vqa"

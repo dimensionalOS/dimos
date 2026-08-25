@@ -29,8 +29,8 @@ from pydantic import (
 )
 
 if TYPE_CHECKING:
-    from dimos.evals.vqa.calibrated_frame import CalibratedFrame
-    from dimos.evals.vqa.primitives.edgetam import ObjectMaskEvidence
+    from dimos.evals.vqa.pointcloud_frame import PointCloudFrame
+    from dimos.evals.vqa.primitives.edge_tam import ObjectMaskEvidence
     from dimos.evals.vqa.primitives.range import ObjectRangeEvidence
     from dimos.msgs.sensor_msgs.Image import Image
 
@@ -119,7 +119,7 @@ class InsufficientEvidenceError(ValueError):
 
 
 class ObjectMaskEstimator(Protocol):
-    """Estimate object masks from an image."""
+    """Return validated image-sized masks in requested object order."""
 
     def estimate(self, image: Image, object_name: str) -> ObjectMaskEvidence: ...
 
@@ -129,10 +129,10 @@ class ObjectMaskEstimator(Protocol):
 
 
 class ObjectRangeEstimator(Protocol):
-    """Estimate object range from an explicit canonical frame."""
+    """Return object ranges in requested order from an explicit point-cloud frame."""
 
-    def estimate(self, frame: CalibratedFrame, object_name: str) -> ObjectRangeEvidence: ...
+    def estimate(self, frame: PointCloudFrame, object_name: str) -> ObjectRangeEvidence: ...
 
     def estimate_many(
-        self, frame: CalibratedFrame, object_names: tuple[str, ...]
+        self, frame: PointCloudFrame, object_names: tuple[str, ...]
     ) -> tuple[ObjectRangeEvidence, ...]: ...

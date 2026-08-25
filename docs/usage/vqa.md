@@ -24,11 +24,25 @@ Generated datasets default to:
 ~/.local/state/dimos/datasets/vqa/<recording-stem>-frames
 ```
 
-Use `--output <directory>` to override that location. The destination must be empty. Missing or empty
-camera calibration and TF streams are rejected. Point-cloud evidence is available when image and
-LiDAR observations are within `0.1` seconds by default; use `--sync-tolerance <seconds>` to adjust
-that limit. Frames with unmatched LiDAR observations or unresolvable TF retain only image-based
-question families.
+Use `--output <directory>` to override that location. The destination must be empty. Generation
+requires non-empty `color_image`, `camera_info`, `tf`, and either `pointlio_lidar` or `lidar` streams;
+incomplete datasets are rejected at startup. For a valid dataset, point-cloud evidence is available
+when image and LiDAR observations are within `0.1` seconds by default; use
+`--sync-tolerance <seconds>` to adjust that limit. Individual frames with unmatched LiDAR
+observations or unresolvable TF retain only image-based question families.
+
+### Point-cloud frame preparation
+
+Point-cloud question families use an explicit image-aligned frame boundary. After validating the
+required dataset streams, the loader in `dimos/evals/vqa/pointcloud_frame.py` reads the selected image
+and nearest point cloud, rectifies the image and camera intrinsics, resolves the
+point-cloud-to-camera transform from recorded TF, and packages the synchronized observations as a
+`PointCloudFrame`.
+
+The range primitive in `dimos/evals/vqa/primitives/range.py` consumes that prepared frame. It
+projects valid points into the image, keeps the nearest camera-depth point per pixel, selects points
+inside each object mask, and derives robust range statistics. Keeping dataset access and calibration
+preparation outside the primitive lets range estimation operate only on explicit geometry.
 
 ## Question Families
 

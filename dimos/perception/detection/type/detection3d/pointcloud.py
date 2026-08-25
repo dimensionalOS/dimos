@@ -39,112 +39,6 @@ if TYPE_CHECKING:
     from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 
 
-@dataclass(frozen=True)
-class ProjectedPointCloud:
-    """Reusable per-frame projection with aligned source, camera, and image points.
-
-    Keeping the projected arrays together lets multiple detections share one
-    point-cloud transform and projection.
-    """
-
-    source_points: np.ndarray
-    camera_points: np.ndarray
-    image_points: np.ndarray
-    image_width: int
-    image_height: int
-
-    @classmethod
-    def from_pointcloud(
-        cls,
-        pointcloud: PointCloud2,
-        camera_info: CameraInfo,
-        pointcloud_to_camera: Transform,
-    ) -> ProjectedPointCloud:
-        """Transform and project valid points into image coordinates."""
-        intrinsics = np.asarray(camera_info.K, dtype=np.float64)
-        if intrinsics.size != 9:
-            raise ValueError("camera intrinsics must contain nine values")
-        intrinsics = intrinsics.reshape(3, 3)
-        if not np.all(np.isfinite(intrinsics)) or intrinsics[0, 0] <= 0 or intrinsics[1, 1] <= 0:
-            raise ValueError("camera intrinsics must be finite with positive focal lengths")
-        if camera_info.width <= 0 or camera_info.height <= 0:
-            raise ValueError("camera calibration dimensions must be positive")
-
-        raw_points, _ = pointcloud.as_numpy()
-        source_points = np.asarray(raw_points, dtype=np.float64)
-        if source_points.ndim != 2 or source_points.shape[1] != 3:
-            raise ValueError("point cloud positions must have shape (N, 3)")
-        source_points = source_points[np.all(np.isfinite(source_points), axis=1)]
-
-        transform = np.asarray(pointcloud_to_camera.to_matrix(), dtype=np.float64)
-        if transform.shape != (4, 4) or not np.all(np.isfinite(transform)):
-            raise ValueError("pointcloud_to_camera must be a finite 4x4 transform")
-        homogeneous = np.column_stack(
-            (source_points, np.ones(len(source_points), dtype=np.float64))
-        )
-        camera_points = (transform @ homogeneous.T).T[:, :3]
-        in_front = np.all(np.isfinite(camera_points), axis=1) & (camera_points[:, 2] > 0)
-        source_points = source_points[in_front]
-        camera_points = camera_points[in_front]
-
-        projected = (intrinsics @ camera_points.T).T
-        image_points = projected[:, :2] / projected[:, 2, np.newaxis]
-        in_image = (
-            np.all(np.isfinite(image_points), axis=1)
-            & (image_points[:, 0] >= 0)
-            & (image_points[:, 0] < camera_info.width)
-            & (image_points[:, 1] >= 0)
-            & (image_points[:, 1] < camera_info.height)
-        )
-        return cls(
-            source_points=source_points[in_image],
-            camera_points=camera_points[in_image],
-            image_points=image_points[in_image],
-            image_width=camera_info.width,
-            image_height=camera_info.height,
-        )
-
-    def points_in_detection(
-        self,
-        detection: Detection2DBBox,
-        *,
-        nearest_per_pixel: bool = False,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Return source- and camera-frame points inside one mask or box."""
-        mask = getattr(detection, "mask", None)
-        if mask is not None:
-            mask = np.asarray(mask)
-            if mask.ndim != 2 or mask.shape != (self.image_height, self.image_width):
-                raise ValueError("segmentation mask dimensions must match the calibrated image")
-            pixels = self.image_points.astype(np.intp)
-            selected = mask[pixels[:, 1], pixels[:, 0]] > 0
-        else:
-            x_min, y_min, x_max, y_max = detection.bbox
-            margin = 5
-            selected = (
-                (self.image_points[:, 0] >= x_min - margin)
-                & (self.image_points[:, 0] <= x_max + margin)
-                & (self.image_points[:, 1] >= y_min - margin)
-                & (self.image_points[:, 1] <= y_max + margin)
-            )
-
-        source_points = self.source_points[selected]
-        camera_points = self.camera_points[selected]
-        image_points = self.image_points[selected]
-        if nearest_per_pixel and len(image_points):
-            pixels = image_points.astype(np.intp)
-            linear_pixels = pixels[:, 1] * self.image_width + pixels[:, 0]
-            order = np.lexsort((camera_points[:, 2], linear_pixels))
-            sorted_linear = linear_pixels[order]
-            first_per_pixel = np.empty(len(order), dtype=bool)
-            first_per_pixel[0] = True
-            first_per_pixel[1:] = sorted_linear[1:] != sorted_linear[:-1]
-            keep = order[first_per_pixel]
-            source_points = source_points[keep]
-            camera_points = camera_points[keep]
-        return source_points, camera_points
-
-
 @dataclass
 class Detection3DPC(Detection3D):
     pointcloud: PointCloud2 = field(default_factory=PointCloud2)
@@ -341,10 +235,65 @@ class Detection3DPC(Detection3D):
                 statistical(),
             ]
 
-        projected = ProjectedPointCloud.from_pointcloud(
-            world_pointcloud, camera_info, world_to_optical_transform
+        # Extract camera parameters
+        fx, fy = camera_info.K[0], camera_info.K[4]
+        cx, cy = camera_info.K[2], camera_info.K[5]
+        image_width = camera_info.width
+        image_height = camera_info.height
+
+        camera_matrix = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
+
+        # Convert pointcloud to numpy array
+        world_points, _ = world_pointcloud.as_numpy()
+
+        # Project points to camera frame
+        points_homogeneous = np.hstack([world_points, np.ones((world_points.shape[0], 1))])
+        extrinsics_matrix = world_to_optical_transform.to_matrix()
+        points_camera = (extrinsics_matrix @ points_homogeneous.T).T
+
+        # Filter out points behind the camera
+        valid_mask = points_camera[:, 2] > 0
+        points_camera = points_camera[valid_mask]
+        world_points = world_points[valid_mask]
+
+        if len(world_points) == 0:
+            return None
+
+        # Project to 2D
+        points_2d_homogeneous = (camera_matrix @ points_camera[:, :3].T).T
+        points_2d = points_2d_homogeneous[:, :2] / points_2d_homogeneous[:, 2:3]
+
+        # Filter points within image bounds
+        in_image_mask = (
+            (points_2d[:, 0] >= 0)
+            & (points_2d[:, 0] < image_width)
+            & (points_2d[:, 1] >= 0)
+            & (points_2d[:, 1] < image_height)
         )
-        detection_points, _ = projected.points_in_detection(det)
+        points_2d = points_2d[in_image_mask]
+        world_points = world_points[in_image_mask]
+
+        if len(world_points) == 0:
+            return None
+
+        # Find points within this detection — segmentation mask if present
+        # (Detection2DSeg), else bbox with a small margin
+        seg_mask = getattr(det, "mask", None)
+        if seg_mask is not None:
+            cols = np.minimum(points_2d[:, 0].astype(int), seg_mask.shape[1] - 1)
+            rows = np.minimum(points_2d[:, 1].astype(int), seg_mask.shape[0] - 1)
+            in_det_mask = seg_mask[rows, cols] > 0
+        else:
+            x_min, y_min, x_max, y_max = det.bbox
+            margin = 5  # pixels
+            in_det_mask = (
+                (points_2d[:, 0] >= x_min - margin)
+                & (points_2d[:, 0] <= x_max + margin)
+                & (points_2d[:, 1] >= y_min - margin)
+                & (points_2d[:, 1] <= y_max + margin)
+            )
+
+        detection_points = world_points[in_det_mask]
 
         if detection_points.shape[0] == 0:
             # print(f"No points found in detection bbox after projection. {det.name}")

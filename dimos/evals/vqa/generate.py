@@ -28,11 +28,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from dimos.constants import STATE_DIR
 from dimos.evals.vqa.author import OpenAIQuestionAuthor, QuestionAuthor
-from dimos.evals.vqa.calibrated_frame import (
-    CalibratedFrame,
-    FrameGeometryUnavailableError,
-    RecordingFramePreprocessor,
-)
 from dimos.evals.vqa.contracts import (
     FamilyAnswer,
     FamilySpec,
@@ -47,7 +42,12 @@ from dimos.evals.vqa.families import (
     AVAILABLE_FAMILIES,
     answer_question,
 )
-from dimos.evals.vqa.primitives.edgetam import EdgeTamObjectMaskPipeline
+from dimos.evals.vqa.pointcloud_frame import (
+    PointCloudFrame,
+    PointCloudFrameLoader,
+    PointCloudFrameUnavailableError,
+)
+from dimos.evals.vqa.primitives.edge_tam import EdgeTAMObjectMaskPipeline
 from dimos.evals.vqa.primitives.range import LidarRangeEstimator
 from dimos.msgs.sensor_msgs.Image import Image
 
@@ -141,11 +141,11 @@ class GenerationResult(BaseModel):
 
 @dataclass(frozen=True)
 class GenerationFrame:
-    """One indexed image with optional calibrated point-cloud evidence."""
+    """One indexed image with optional image-aligned point-cloud evidence."""
 
     index: int
     image: Image
-    calibrated: CalibratedFrame | None = None
+    pointcloud_frame: PointCloudFrame | None = None
 
 
 @dataclass(frozen=True)
@@ -169,11 +169,11 @@ def generate_dataset(
 
     config = config or VqaGenerationConfig()
     indices = request.frame_indices()
-    with RecordingFramePreprocessor(
+    with PointCloudFrameLoader(
         request.dataset,
         tolerance_s=config.synchronization_tolerance_s,
-    ) as preprocessor:
-        image_count = preprocessor.image_count
+    ) as loader:
+        image_count = loader.image_count
         if indices[-1] >= image_count:
             raise IndexError(
                 f"color_image index {indices[-1]} is out of range for {image_count} images"
@@ -187,20 +187,20 @@ def generate_dataset(
                 "author": author_model.config.model_name,
                 "detector": detector_model.config.model_name,
             }
-            mask_estimator = EdgeTamObjectMaskPipeline(detector)
+            mask_estimator = EdgeTAMObjectMaskPipeline(detector)
 
-            def calibrated_frames() -> Iterable[GenerationFrame]:
+            def pointcloud_frames() -> Iterable[GenerationFrame]:
                 for index in indices:
                     try:
-                        calibrated = preprocessor.load(index)
-                    except FrameGeometryUnavailableError:
-                        yield GenerationFrame(index, preprocessor.load_image(index))
+                        pointcloud_frame = loader.load(index)
+                    except PointCloudFrameUnavailableError:
+                        yield GenerationFrame(index, loader.load_image(index))
                     else:
-                        yield GenerationFrame(index, calibrated.image, calibrated)
+                        yield GenerationFrame(index, pointcloud_frame.image, pointcloud_frame)
 
             return generate_frames_dataset(
                 request,
-                calibrated_frames(),
+                pointcloud_frames(),
                 OpenAIQuestionAuthor(author_model),
                 detector,
                 LidarRangeEstimator(mask_estimator),
@@ -291,7 +291,8 @@ def _generate_frame(
         for family in AVAILABLE_FAMILIES
         if not (family.requires_masks and mask_estimator is None)
         and not (
-            family.requires_pointcloud and (source.calibrated is None or range_estimator is None)
+            family.requires_pointcloud
+            and (source.pointcloud_frame is None or range_estimator is None)
         )
     )
     proposals = _deduplicate_proposals(author.propose(image, families))
@@ -303,7 +304,7 @@ def _generate_frame(
                 proposal,
                 image,
                 detector,
-                source.calibrated,
+                source.pointcloud_frame,
                 range_estimator,
                 mask_estimator,
             )

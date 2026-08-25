@@ -152,6 +152,22 @@ def test_vqa_generate_cli_accepts_frame_range(
     ]
 
 
+def test_vqa_generate_cli_formats_expected_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_generate(request: GenerationRequest, config: VqaGenerationConfig) -> GenerationResult:
+        raise ValueError("dataset has no 'tf' stream")
+
+    monkeypatch.setattr(generate_module, "generate_dataset", fake_generate)
+
+    result = CliRunner().invoke(
+        app,
+        ["evals", "vqa", "generate", "recording.db", "--image-index", "0"],
+    )
+
+    assert result.exit_code != 0
+    assert "dataset has no 'tf' stream" in result.output
+    assert "Traceback" not in result.output
+
+
 def test_vqa_run_cli_runs_shared_evaluator(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     class FakeRunner:
         def __init__(self, **kwargs: object) -> None:

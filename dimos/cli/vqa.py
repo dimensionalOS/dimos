@@ -25,7 +25,9 @@ app = typer.Typer(help="Generate and evaluate standalone visual question-answeri
 
 @app.command("generate")
 def generate(
-    dataset: str = typer.Argument(help="Memory dataset name or .db/.mcap path"),
+    dataset: str = typer.Argument(
+        help="Memory dataset with color_image, camera_info, tf, and pointlio_lidar/lidar streams"
+    ),
     image_index: int | None = typer.Option(None, min=0, help="Process one color_image index"),
     start: int | None = typer.Option(None, min=0, help="First color_image index in range mode"),
     stop: int | None = typer.Option(None, min=1, help="Exclusive color_image stop index"),
@@ -48,18 +50,21 @@ def generate(
         generate_dataset,
     )
 
-    request = GenerationRequest(
-        dataset=dataset,
-        output=output,
-        image_index=image_index,
-        start=start,
-        stop=stop,
-        stride=stride,
-    )
-    result = generate_dataset(
-        request,
-        config=VqaGenerationConfig(synchronization_tolerance_s=sync_tolerance),
-    )
+    try:
+        request = GenerationRequest(
+            dataset=dataset,
+            output=output,
+            image_index=image_index,
+            start=start,
+            stop=stop,
+            stride=stride,
+        )
+        result = generate_dataset(
+            request,
+            config=VqaGenerationConfig(synchronization_tolerance_s=sync_tolerance),
+        )
+    except (ValueError, IndexError, OSError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
     typer.echo(f"Generated {len(result.cases)} VQA case(s) in {result.output}")
 
 
