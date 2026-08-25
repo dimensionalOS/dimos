@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 import select
 import signal
+import socket
 import subprocess
 import time
 from typing import cast
@@ -28,8 +29,9 @@ import numpy as np
 import pytest
 
 from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.core.global_config import global_config
 from dimos.core.stream import In
-from dimos.core.transport import LCMTransport
+from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.experimental.memory.rust_recorder import (
     RustMcapStoreConfig,
     RustRecorder,
@@ -39,9 +41,13 @@ from dimos.experimental.memory.rust_recorder import (
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.observation import Observation
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
+from dimos.protocol.service.zenohservice import ZenohConfig, ZenohSessionPool
 
 pytestmark = pytest.mark.self_hosted_large
 
@@ -91,6 +97,12 @@ def _wait_for_log(process: subprocess.Popen[bytes], message: str) -> None:
     pytest.fail(
         f"Rust recorder did not log {message!r}; exit={process.poll()}, stderr={''.join(output)!r}"
     )
+
+
+def _free_port() -> int:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        return int(listener.getsockname()[1])
 
 
 @pytest.mark.parametrize(
@@ -199,3 +211,94 @@ def test_rust_artifact_is_readable_by_python_memory2(
             np.mean(np.abs(decoded_image.data.astype(float) - expected_image.data.astype(float)))
             < 5
         )
+
+
+def test_tf_records_over_zenoh_and_replays_through_python(
+    tmp_path: Path,
+    rust_recorder_executable: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact = tmp_path / "tf.db"
+    endpoint = f"tcp/127.0.0.1:{_free_port()}"
+    monkeypatch.setattr(global_config, "transport", "zenoh")
+    recorder = RustRecorder(
+        executable=str(rust_recorder_executable),
+        store=RustSqliteStoreConfig(path=str(artifact)),
+        record_tf=True,
+        encoding_threads=2,
+        session=ZenohConfig(
+            mode="peer",
+            connect=[],
+            listen=[endpoint],
+            multicast=False,
+            gossip=False,
+            connect_timeout=0,
+        ),
+    )
+    session_pool = ZenohSessionPool()
+    topic = ZenohTopic(f"dimos/rr_tf_{uuid.uuid4().hex[:8]}", TFMessage)
+    publisher = ZenohTransport(
+        topic,
+        session_pool=session_pool,
+        mode="client",
+        connect=[endpoint],
+        multicast=False,
+        gossip=False,
+        connect_timeout=5,
+    )
+    recorder.tf.transport = FakeTransport(publisher.channel)  # type: ignore[assignment]
+    specs = recorder._stream_specs()
+    recorder._prepare_store(specs)
+    recorder.config.streams = specs
+    launch = recorder._stdin_blob({"tf": publisher.channel})
+
+    env = {**os.environ, "DIMOS_TRANSPORT": "zenoh", "RUST_LOG": "debug"}
+    process = subprocess.Popen(
+        [str(rust_recorder_executable)],
+        cwd=_RUST_WORKSPACE,
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    expected = TFMessage(
+        Transform(
+            translation=Vector3(1.0, 2.0, 3.0),
+            frame_id="world",
+            child_frame_id="base_link",
+            ts=10.25,
+        ),
+        Transform(
+            translation=Vector3(4.0, 5.0, 6.0),
+            frame_id="base_link",
+            child_frame_id="camera",
+            ts=11.5,
+        ),
+    )
+    try:
+        assert process.stdin is not None
+        process.stdin.write(launch)
+        process.stdin.close()
+        _wait_for_log(process, "memory recorder ready")
+
+        publisher.broadcast(None, expected)
+        _wait_for_log(process, "memory recorder batch written")
+
+        process.send_signal(signal.SIGTERM)
+        assert process.wait(timeout=10.0) == 0
+    finally:
+        publisher.stop()
+        session_pool.close_all()
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=10.0)
+        recorder.stop()
+
+    with SqliteStore(path=str(artifact)) as memory:
+        observations: list[Observation[TFMessage]] = memory.stream("tf").order_by("ts").to_list()
+        assert [observation.ts for observation in observations] == [10.25, 11.5]
+        assert [len(observation.data.transforms) for observation in observations] == [1, 1]
+        assert [observation.data.transforms[0].child_frame_id for observation in observations] == [
+            "base_link",
+            "camera",
+        ]
