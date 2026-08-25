@@ -306,6 +306,21 @@ export function parseManifest(value: unknown): Manifest {
         }
       }
     }
+    if (panel.kind === "teleop") {
+      if (panel.channels.length !== 1) {
+        throw new ManifestError(
+          "invalid_teleop_panel",
+          `teleop panel ${panel.id} must bind exactly one channel`,
+        );
+      }
+      const cmd = chIds.get(panel.channels[0])!;
+      if (cmd.encoding !== "twist.json.v1" || cmd.delivery !== "latest" || dirOf(cmd) !== "tx") {
+        throw new ManifestError(
+          "invalid_teleop_panel",
+          `teleop panel ${panel.id} needs a twist.json.v1 latest tx channel`,
+        );
+      }
+    }
   }
 
   const seen = new Set<string>();

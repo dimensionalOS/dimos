@@ -262,6 +262,14 @@ Deno.test("msgFromUnknown validates nested session-message shapes", () => {
   assertEquals(msgFromUnknown({ t: "subs", chs: ["a", "b"], n: 1 }) !== null, true);
   assertEquals(msgFromUnknown({ t: "subs", chs: ["a", 5], n: 1 }), null);
   assertEquals(msgFromUnknown({ t: "subs", chs: ["a"] }), null);
+  // Teleop gen mirrors hello.robot: absent ok, null/non-number rejected.
+  const twist = { t: "twist", vx: 0.5, vy: 0, wz: 0, seq: 1, ts: 2.5 };
+  assertEquals(msgFromUnknown(twist) !== null, true);
+  assertEquals(msgFromUnknown({ ...twist, gen: 3 }) !== null, true);
+  assertEquals(msgFromUnknown({ ...twist, gen: null }), null);
+  assertEquals(msgFromUnknown({ ...twist, gen: "1" }), null);
+  assertEquals(msgFromUnknown({ t: "teleop_start", gen: 3 }) !== null, true);
+  assertEquals(msgFromUnknown({ t: "teleop_stop", gen: null }), null);
 });
 
 Deno.test("frameHeaderFromUnknown validates the header shape", () => {
