@@ -104,6 +104,7 @@ dependencies = [
     "eclipse-zenoh>=1.9.0,<2.0",
     "PyTurboJPEG==1.8.2",
     "imagecodecs>=2024.6.1", # JPEG-XL for CompressedImage
+    "jsonlines>=4,<5",
     # Core
     "numpy>=1.26.4",
     "scipy>=1.15.1",
