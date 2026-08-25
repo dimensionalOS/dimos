@@ -51,6 +51,9 @@ from dimos.utils.reactive import backpressure
 
 logger = setup_logger()
 
+MOTION_MODULE_NAME = "Motion Module"
+IMU_CLOCK_WINDOW_SECONDS = 30
+
 
 def ms_to_s(milliseconds: float) -> float:
     return milliseconds / 1000.0
@@ -175,6 +178,8 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._imu_pipeline: rs.pipeline | None = None
         self._accel_history: deque[tuple[float, tuple[float, float, float]]] = deque(maxlen=2)
         self._pending_gyro: deque[tuple[float, tuple[float, float, float]]] = deque(maxlen=16)
+        self._imu_offsets: deque[tuple[int, float]] = deque()
+        self._imu_offset: float = 0.0
         self._align: rs.align | None = None
         self._mount_edges: list[tuple[str, str, Vector3, Quaternion]] = []
         self._running = False
@@ -306,7 +311,15 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         imu_config.enable_stream(rs.stream.gyro, rs.format.motion_xyz32f, self.config.imu_hz)
 
         self._imu_pipeline = rs.pipeline()
-        self._imu_pipeline.start(imu_config, self._on_motion_frame)
+        imu_profile = self._imu_pipeline.start(imu_config, self._on_motion_frame)
+
+        # librealsense's global-time regression polls the device over USB, and once the
+        # video streams saturate the bus the fit degrades into a rate error that walks the
+        # IMU stamps seconds away from the host clock. The raw hardware clock is stable, so
+        # take it instead and re-anchor it in _to_host_time.
+        for sensor in imu_profile.get_device().query_sensors():
+            if sensor.get_info(rs.camera_info.name) == MOTION_MODULE_NAME:
+                sensor.set_option(rs.option.global_time_enabled, 0.0)
 
     def _stream_rates(self, stream_type: rs.stream) -> list[int]:
         """Every rate the device offers for a stream."""
@@ -330,6 +343,8 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         if self._profile is None:
             return
         for sensor in self._profile.get_device().query_sensors():
+            if sensor.get_info(rs.camera_info.name) == MOTION_MODULE_NAME:
+                continue  # _start_imu deliberately keeps it on the hardware clock
             if not sensor.supports(rs.option.global_time_enabled):
                 logger.warning(
                     "RealSense %s has no global timestamps, so its stream is on the "
@@ -346,14 +361,32 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         if not motion:
             return
         data = motion.get_motion_data()
-        # Hardware capture time, not host time.
-        ts = ms_to_s(motion.get_timestamp())
+        ts = self._to_host_time(ms_to_s(motion.get_timestamp()))
         stream = motion.get_profile().stream_type()
         if stream == rs.stream.accel:
             self._accel_history.append((ts, (data.x, data.y, data.z)))
         elif stream == rs.stream.gyro:
             self._pending_gyro.append((ts, (data.x, data.y, data.z)))
         self._publish_paired_imu()
+
+    def _to_host_time(self, device_ts: float) -> float:
+        """Map a motion-module hardware stamp onto the host clock.
+
+        Delivery latency only ever pushes an arrival later, so the smallest offset seen
+        recently is the closest estimate of the true one. Keeping one minimum per second
+        lets the estimate follow the device's slow drift without rescanning every sample.
+        """
+        now = time.time()
+        offset = now - device_ts
+        current_second = int(now)
+        if self._imu_offsets and self._imu_offsets[-1][0] == current_second:
+            self._imu_offsets[-1] = (current_second, min(self._imu_offsets[-1][1], offset))
+        else:
+            self._imu_offsets.append((current_second, offset))
+            while self._imu_offsets[0][0] < current_second - IMU_CLOCK_WINDOW_SECONDS:
+                self._imu_offsets.popleft()
+            self._imu_offset = min(seen for _, seen in self._imu_offsets)
+        return device_ts + self._imu_offset
 
     def _publish_paired_imu(self) -> None:
         """Emit one Imu per gyro sample, with the accelerometer read at that instant.
