@@ -195,6 +195,11 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
     def start(self) -> None:
         import pyrealsense2 as rs
 
+        # The motion module refuses to open ("No device connected") once the
+        # video pipeline holds the device, so the IMU pipeline must start first.
+        if self.config.enable_imu:
+            self._start_imu()
+
         self._pipeline = rs.pipeline()
         config = rs.config()
 
@@ -264,9 +269,6 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._thread.start()
 
-        if self.config.enable_imu:
-            self._start_imu()
-
         if self.config.enable_pointcloud and self.config.enable_depth:
             interval_sec = 1.0 / self.config.pointcloud_fps
             self.register_disposable(
@@ -306,11 +308,14 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
 
     def _stream_rates(self, stream_type: rs.stream) -> list[int]:
         """Every rate the device offers for a stream."""
-        if self._profile is None:
-            return []
+        import pyrealsense2 as rs
+
         rates = {
             profile.fps()
-            for sensor in self._profile.get_device().query_sensors()
+            for device in rs.context().query_devices()
+            if not self.config.serial_number
+            or device.get_info(rs.camera_info.serial_number) == self.config.serial_number
+            for sensor in device.query_sensors()
             for profile in sensor.get_stream_profiles()
             if profile.stream_type() == stream_type
         }
