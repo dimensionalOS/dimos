@@ -69,9 +69,6 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.teleop.quest.quest_types import (
-    Buttons,
-)
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
