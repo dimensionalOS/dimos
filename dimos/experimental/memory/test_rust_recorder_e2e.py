@@ -120,6 +120,7 @@ def test_rust_artifact_is_readable_by_python_memory2(
         store=store,
         record_tf=False,
         encoding_threads=2,
+        stream_codecs={"imu": "lz4+lcm"},
     )
     # LCM appends the payload type to the channel and caps the combined name.
     channel_suffix = uuid.uuid4().hex[:8]
