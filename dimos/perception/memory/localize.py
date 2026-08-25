@@ -367,7 +367,7 @@ def localize(
                     ts=img.ts,
                     image=img,
                 )
-                if det.is_valid() and det.bbox_2d_volume() > 3000:
+                if det.is_valid():
                     candidates.append(det)
         if not candidates:
             continue
