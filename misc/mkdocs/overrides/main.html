@@ -5,6 +5,12 @@
 -#}
 {% extends "base.html" %}
 
+{% block extrahead %}
+  {% if page %}
+    <link rel="alternate" type="text/markdown" href="{{ page.file.src_uri | url }}">
+  {% endif %}
+{% endblock %}
+
 {% block content %}
   {% set markdown = page.file.src_uri | url %}
   <div class="md-content__button md-icon dim-markdown">
