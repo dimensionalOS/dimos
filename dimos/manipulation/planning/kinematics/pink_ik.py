@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pink
+from pink.exceptions import NoSolutionFound
 import pinocchio
 
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
@@ -154,7 +155,16 @@ class PinkIK(_PinkSolverCore):
                     orientation_tolerance=orientation_tolerance,
                 )
             except ValueError as exc:
+                # Mapping failures are seed-independent: the target or seed cannot be
+                # expressed in the model frame at all, so perturbed retries cannot help.
                 return _failure(IKStatus.NO_SOLUTION, f"Pink IK mapping failed: {exc}")
+            except NoSolutionFound as exc:
+                # QP infeasibility can be seed-specific, so try the next perturbed seed.
+                if fallback_result is None:
+                    fallback_result = _failure(
+                        IKStatus.NO_SOLUTION, f"Pink IK solver failed: {exc}"
+                    )
+                continue
             except Exception as exc:
                 return _failure(IKStatus.NO_SOLUTION, f"Pink IK solver failed: {exc}")
 
@@ -271,7 +281,15 @@ class PinkIK(_PinkSolverCore):
                         locked_joint_positions=locked_positions,
                     )
                 except ValueError as exc:
+                    # Seed-independent, as in _solve: mapping cannot succeed on a retry.
                     return _failure(IKStatus.NO_SOLUTION, f"Pink IK mapping failed: {exc}")
+                except NoSolutionFound as exc:
+                    # QP infeasibility can be seed-specific, so try the next perturbed seed.
+                    if fallback_result is None:
+                        fallback_result = _failure(
+                            IKStatus.NO_SOLUTION, f"Pink IK solver failed: {exc}"
+                        )
+                    continue
                 except Exception as exc:
                     return _failure(IKStatus.NO_SOLUTION, f"Pink IK solver failed: {exc}")
 
