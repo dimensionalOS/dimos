@@ -17,12 +17,13 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
 from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.memory.module import StreamModule
+from dimos.memory.module import Recorder, StreamModule
 from dimos.memory.stream import Stream
 from dimos.memory.transform import Transformer
 from dimos.memory.type.observation import Observation
@@ -93,3 +94,12 @@ def test_blueprint_ports(module_cls: type[StreamModule]) -> None:
     stream_names = {s.name for s in atom.streams}
     assert "numbers" in stream_names
     assert "doubled" in stream_names
+
+
+def test_recorder_reports_absolute_recording_path(tmp_path: Path) -> None:
+    recording_path = tmp_path / "recording.db"
+
+    with Recorder(db_path=recording_path, record_tf=False) as recorder:
+        result = recorder.recording_path()
+
+    assert result == str(recording_path)
