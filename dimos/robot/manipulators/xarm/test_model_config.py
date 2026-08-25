@@ -15,7 +15,23 @@
 """xArm prepared-model configuration tests."""
 
 from dimos.manipulation.planning.spec.validation import validate_robot_model_config
-from dimos.robot.manipulators.xarm.config import make_dual_xarm6_model_config
+from dimos.robot.manipulators.xarm.config import (
+    make_dual_xarm6_model_config,
+    make_xarm6_model_config,
+)
+
+
+def test_xarm_gripper_geometry_does_not_imply_control_hardware() -> None:
+    model_only = make_xarm6_model_config(add_gripper=True)
+    controlled = make_xarm6_model_config(
+        add_gripper=True,
+        gripper_hardware_id="arm",
+    )
+
+    assert model_only.planning_groups[0].tip_link == "link_tcp"
+    assert model_only.gripper_hardware_id is None
+    assert controlled.planning_groups[0].tip_link == "link_tcp"
+    assert controlled.gripper_hardware_id == "arm"
 
 
 def test_dual_xarm6_is_one_prepared_model_with_canonical_groups() -> None:

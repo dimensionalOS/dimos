@@ -470,6 +470,11 @@ class ManipulationModule(Module):
             groups=groups,
         )
 
+    def get_operation_status(self) -> OperationStatus:
+        """Return the current operation status without collecting telemetry."""
+        with self._lock:
+            return OperationStatus[self._state.name]
+
     def get_error(self) -> str:
         """Get last error message.
 
