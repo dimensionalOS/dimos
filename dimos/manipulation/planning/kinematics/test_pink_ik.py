@@ -1494,9 +1494,7 @@ def test_solve_mapping_value_error_fails_without_retrying(mocker: MockerFixture)
 
 
 def _pose_targets_seed() -> JointState:
-    return JointState(
-        {"name": ["joint_a", "joint_b", "joint_c"], "position": [0.0, 0.0, 0.0]}
-    )
+    return JointState({"name": ["joint_a", "joint_b", "joint_c"], "position": [0.0, 0.0, 0.0]})
 
 
 def test_solve_pose_targets_retries_after_no_solution_found(mocker: MockerFixture) -> None:

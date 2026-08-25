@@ -43,6 +43,7 @@ PIPER_PACKAGE_PATHS: dict[str, Path] = {
     "piper_description": LfsPath("piper_description"),
     "piper_gazebo": LfsPath("piper_description"),
 }
+PIPER_FK_MODEL = LfsPath("piper_description") / "urdf/piper_description.urdf"
 PIPER_SIM_PATH = LfsPath("piper/scene.xml")
 PIPER_HOME_JOINTS = [
     0.793,
