@@ -266,7 +266,7 @@ class ControlCoordinator(Module):
             dof=len(component.joints),
             address=component.address,
             hardware_id=component.hardware_id,
-            **self._adapter_kwargs(component),
+            **component.adapter_kwargs,
         )
 
     def _create_twist_base_adapter(self, component: HardwareComponent) -> TwistBaseAdapter:
@@ -278,7 +278,7 @@ class ControlCoordinator(Module):
             dof=len(component.joints),
             address=component.address,
             hardware_id=component.hardware_id,
-            **self._adapter_kwargs(component),
+            **component.adapter_kwargs,
         )
 
     def _create_whole_body_adapter(self, component: HardwareComponent) -> WholeBodyAdapter:
@@ -291,15 +291,8 @@ class ControlCoordinator(Module):
             hardware_id=component.hardware_id,
             address=component.address,
             domain_id=component.domain_id,
-            **self._adapter_kwargs(component),
+            **component.adapter_kwargs,
         )
-
-    @staticmethod
-    def _adapter_kwargs(component: HardwareComponent) -> dict[str, Any]:
-        kwargs = dict(component.adapter_kwargs)
-        if component.limits is not None:
-            kwargs["limits"] = component.limits
-        return kwargs
 
     def _create_task_from_config(self, cfg: TaskConfig) -> ControlTask:
         """Create a control task from config via the task registry."""
