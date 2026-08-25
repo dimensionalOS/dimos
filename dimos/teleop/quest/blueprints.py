@@ -59,8 +59,8 @@ teleop_quest_xarm7 = autoconnect(
     coordinator_teleop_xarm7,
 ).remappings(
     [
-        (ArmTeleopModule, "right_controller_output", "cartesian_command"),
-        (ArmTeleopModule, "right_gripper_command", "gripper_command"),
+        (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
+        (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
     ]
 )
 
@@ -71,8 +71,8 @@ teleop_quest_hand_xarm7 = autoconnect(
     coordinator_teleop_xarm7,
 ).remappings(
     [
-        (HandTeleopModule, "right_controller_output", "cartesian_command"),
-        (HandTeleopModule, "right_gripper_command", "gripper_command"),
+        (HandTeleopModule, "right_controller_output", "right_cartesian_command"),
+        (HandTeleopModule, "right_gripper_command", "right_gripper_command"),
     ]
 )
 
@@ -85,8 +85,8 @@ teleop_quest_xarm7_video = (
     )
     .remappings(
         [
-            (VideoArmTeleopModule, "right_controller_output", "cartesian_command"),
-            (VideoArmTeleopModule, "right_gripper_command", "gripper_command"),
+            (VideoArmTeleopModule, "right_controller_output", "right_cartesian_command"),
+            (VideoArmTeleopModule, "right_gripper_command", "right_gripper_command"),
         ]
     )
     .transports(
@@ -103,8 +103,8 @@ teleop_quest_piper = autoconnect(
     coordinator_teleop_piper,
 ).remappings(
     [
-        (ArmTeleopModule, "left_controller_output", "cartesian_command"),
-        (ArmTeleopModule, "left_gripper_command", "gripper_command"),
+        (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
+        (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
     ]
 )
 
@@ -115,8 +115,8 @@ teleop_quest_a1z = autoconnect(
     coordinator_teleop_a1z,
 ).remappings(
     [
-        (ArmTeleopModule, "left_controller_output", "cartesian_command"),
-        (ArmTeleopModule, "left_gripper_command", "gripper_command"),
+        (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
+        (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
     ]
 )
 
@@ -127,20 +127,22 @@ teleop_quest_xarm6 = autoconnect(
     coordinator_teleop_xarm6,
 ).remappings(
     [
-        (ArmTeleopModule, "right_controller_output", "cartesian_command"),
-        (ArmTeleopModule, "right_gripper_command", "gripper_command"),
+        (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
+        (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
     ]
 )
 
 
-# Dual arm teleop: right -> piper, left -> xarm6 (TeleopIK, real-only)
+# Dual arm teleop: right -> piper, left -> xarm6 (two independent Quest IK tasks)
 teleop_quest_dual = autoconnect(
     ArmTeleopModule.blueprint(),
     coordinator_teleop_dual,
 ).remappings(
     [
-        (ArmTeleopModule, "right_controller_output", "right_cartesian"),
-        (ArmTeleopModule, "left_controller_output", "left_cartesian"),
+        (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
+        (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
+        (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
+        (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
     ]
 )
 

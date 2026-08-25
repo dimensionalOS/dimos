@@ -13,12 +13,13 @@
 # limitations under the License.
 
 TASK_FACTORIES = {
-    "teleop_ik": "dimos.control.tasks.teleop_task.teleop_task:create_task",
+    "teleop_ik": ("dimos.control.tasks.teleop_ik_task.teleop_ik_task:create_task"),
 }
 
 TASK_CONSUMES = {
     "teleop_ik": {
-        "cartesian_command": ("on_cartesian_command", "direct"),
+        "left_cartesian_command": ("on_left_cartesian_command", "direct"),
+        "right_cartesian_command": ("on_right_cartesian_command", "direct"),
         "teleop_buttons": ("on_teleop_buttons", "broadcast"),
     },
 }

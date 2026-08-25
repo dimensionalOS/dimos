@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from dimos.control.coordinator import TaskConfig
+from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.manipulation.manipulation_module import ManipulationModule
@@ -80,28 +81,40 @@ _piper_mock_cartesian_hw = make_piper_hardware(
 coordinator_cartesian_ik_mock = ArmPoseCoordinator.blueprint(
     instance_name="ControlCoordinator",
     hardware=[_piper_mock_cartesian_hw],
-    tasks=[cartesian_ik_task(_piper_mock_cartesian_hw, robot_model=_piper_model)],
+    tasks=[
+        cartesian_ik_task(
+            _piper_mock_cartesian_hw,
+            robot_model=_piper_model,
+            target_frame="gripper_base",
+        )
+    ],
 )
 
 _piper_teleop_hw = piper_hardware("arm")
 
 
 coordinator_teleop_piper = autoconnect(
-    ArmPoseCoordinator.blueprint(
+    TeleopControlCoordinator.blueprint(
         instance_name="ControlCoordinator",
         hardware=[_piper_teleop_hw],
         tasks=[
             teleop_ik_task(
                 _piper_teleop_hw,
-                hand="left",
-                name="teleop_piper",
                 robot_model=_piper_model,
+                bindings=[
+                    {
+                        "hand": "left",
+                        "target_frame": "gripper_base",
+                    }
+                ],
+                name="teleop_piper",
             ),
             TaskConfig(
                 name="arm_gripper",
                 type="gripper",
                 joint_names=["arm/gripper"],
                 priority=20,
+                stream_bind={"gripper_command": "left_gripper_command"},
             ),
             trajectory_task(_piper_teleop_hw),
         ],
@@ -110,7 +123,7 @@ coordinator_teleop_piper = autoconnect(
         robots=[_piper_model],
         visualization={"backend": "viser"},
     ),
-    *mujoco_if_sim(PIPER_SIM_PATH, len(_piper_model.joint_names)),
+    *mujoco_if_sim(PIPER_SIM_PATH, len(_piper_teleop_hw.joints)),
 )
 
 _piper_cartesian_hw = make_piper_hardware(
@@ -123,5 +136,11 @@ _piper_cartesian_hw = make_piper_hardware(
 coordinator_cartesian_ik_piper = ArmPoseCoordinator.blueprint(
     instance_name="ControlCoordinator",
     hardware=[_piper_cartesian_hw],
-    tasks=[cartesian_ik_task(_piper_cartesian_hw, robot_model=_piper_model)],
+    tasks=[
+        cartesian_ik_task(
+            _piper_cartesian_hw,
+            robot_model=_piper_model,
+            target_frame="gripper_base",
+        )
+    ],
 )

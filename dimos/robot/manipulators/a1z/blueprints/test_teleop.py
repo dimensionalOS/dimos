@@ -61,17 +61,19 @@ def test_quest_teleop_uses_mock_a1z_hardware_and_gripper_by_default() -> None:
     assert hardware.adapter_type == "mock"
     assert hardware.address is None
     assert hardware.joints[-1] == "arm/gripper"
-
-    assert gripper.name == "arm_gripper"
-    assert gripper.joint_names == ["arm/gripper"]
-    assert gripper.params == {}
-    assert not any(key.startswith("gripper_") for key in teleop.params)
+    binding = teleop.params["bindings"][0]
+    assert binding == {
+        "hand": "left",
+        "target_frame": "gripper_eef_link",
+    }
+    assert teleop.params["max_joint_velocity_rad_s"] == pytest.approx(2.0)
+    assert gripper.stream_bind == {"gripper_command": "left_gripper_command"}
 
 
 def test_quest_left_controller_routes_to_a1z_teleop() -> None:
     assert teleop_quest_a1z.remapping_map == {
-        ("armteleopmodule", "left_controller_output"): "cartesian_command",
-        ("armteleopmodule", "left_gripper_command"): "gripper_command",
+        ("armteleopmodule", "left_controller_output"): "left_cartesian_command",
+        ("armteleopmodule", "left_gripper_command"): "left_gripper_command",
     }
 
 

@@ -68,9 +68,6 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.teleop.quest.quest_types import (
-    Buttons,
-)
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -138,7 +135,7 @@ class ControlCoordinator(Module):
         ...         HardwareComponent(
         ...             hardware_id="arm",
         ...             hardware_type=HardwareType.MANIPULATOR,
-        all_...             joints=make_joints("arm", 7),
+        ...             joints=make_joints("arm", 7),
         ...             adapter_type="xarm",
         ...             address="192.168.1.185",
         ...         ),
@@ -159,9 +156,6 @@ class ControlCoordinator(Module):
 
     # Input: Streaming twist commands for velocity-commanded platforms
     twist_command: In[Twist]
-
-    # Input: Teleop buttons for engage/disengage signaling
-    teleop_buttons: In[Buttons]
 
     # Input: Normalized gripper opening (0.0 closed, 1.0 open).
     gripper_command: In[Float32]
