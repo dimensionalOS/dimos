@@ -87,6 +87,8 @@ def make_dual_xarm6_model_config() -> RobotModelConfig:
                 "dof_1": "6",
                 "dof_2": "6",
                 "limited": "true",
+                "add_gripper_1": "true",
+                "add_gripper_2": "true",
             },
         ),
         joint_names=canonical_joints,
@@ -96,13 +98,13 @@ def make_dual_xarm6_model_config() -> RobotModelConfig:
                 name="left_arm",
                 joint_names=tuple(left_joints),
                 base_link="left/link_base",
-                tip_link="left/link6",
+                tip_link="left/link_tcp",
             ),
             PlanningGroupDefinition(
                 name="right_arm",
                 joint_names=tuple(right_joints),
                 base_link="right/link_base",
-                tip_link="right/link6",
+                tip_link="right/link_tcp",
             ),
             PlanningGroupDefinition(
                 name="both_arms",
@@ -111,6 +113,11 @@ def make_dual_xarm6_model_config() -> RobotModelConfig:
             ),
         ],
         auto_convert_meshes=True,
+        collision_exclusion_pairs=[
+            (f"{prefix}{left}", f"{prefix}{right}")
+            for prefix in ("left/", "right/")
+            for left, right in XARM_GRIPPER_COLLISION_EXCLUSIONS
+        ],
         home_joints=[0.0] * 12,
     )
 

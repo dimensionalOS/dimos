@@ -35,7 +35,7 @@ def test_dual_xarm_mock_limits_survive_blueprint_config_parsing() -> None:
     ]
 
 
-def test_dual_xarm_arm_only_hardware_does_not_declare_grippers() -> None:
+def test_dual_xarm_models_grippers_without_control_tasks() -> None:
     manipulation_atom = next(
         atom
         for atom in dual_xarm6_planner_coordinator.active_blueprints
@@ -46,6 +46,10 @@ def test_dual_xarm_arm_only_hardware_does_not_declare_grippers() -> None:
     config = ManipulationModuleConfig.model_validate(parsed.module_kwargs(manipulation_atom.name))
 
     assert config.model.gripper_hardware_id is None
+    assert [group.tip_link for group in config.model.planning_groups[:2]] == [
+        "left/link_tcp",
+        "right/link_tcp",
+    ]
 
     coordinator_atom = next(
         atom

@@ -16,6 +16,7 @@
 
 from dimos.manipulation.planning.spec.validation import validate_robot_model_config
 from dimos.robot.manipulators.xarm.config import (
+    XARM_GRIPPER_COLLISION_EXCLUSIONS,
     make_dual_xarm6_model_config,
     make_xarm6_model_config,
 )
@@ -40,14 +41,22 @@ def test_dual_xarm6_is_one_prepared_model_with_canonical_groups() -> None:
     model = validate_robot_model_config(config)
 
     assert model.root_link == "world"
-    assert [joint.name for joint in model.joints if joint.type != "fixed"] == config.joint_names
+    assert [joint.name for joint in model.joints if joint.name in config.joint_names] == (
+        config.joint_names
+    )
+    assert {"left/drive_joint", "right/drive_joint"} <= {joint.name for joint in model.joints}
     assert [
         (group.name, group.joint_names, group.base_link, group.tip_link)
         for group in config.planning_groups
     ] == [
-        ("left_arm", tuple(config.joint_names[:6]), "left/link_base", "left/link6"),
-        ("right_arm", tuple(config.joint_names[6:]), "right/link_base", "right/link6"),
+        ("left_arm", tuple(config.joint_names[:6]), "left/link_base", "left/link_tcp"),
+        ("right_arm", tuple(config.joint_names[6:]), "right/link_base", "right/link_tcp"),
         ("both_arms", tuple(config.joint_names), "world", None),
+    ]
+    assert config.collision_exclusion_pairs == [
+        (f"{prefix}{left}", f"{prefix}{right}")
+        for prefix in ("left/", "right/")
+        for left, right in XARM_GRIPPER_COLLISION_EXCLUSIONS
     ]
 
 
