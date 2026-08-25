@@ -15,6 +15,7 @@
 from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.hardware.spec import JointLimits
+from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
 from dimos.robot.manipulators.xarm.blueprints.basic import dual_xarm6_planner_coordinator
 
 
@@ -32,3 +33,16 @@ def test_dual_xarm_mock_limits_survive_blueprint_config_parsing() -> None:
         JointLimits,
         JointLimits,
     ]
+
+
+def test_dual_xarm_arm_only_hardware_does_not_declare_grippers() -> None:
+    manipulation_atom = next(
+        atom
+        for atom in dual_xarm6_planner_coordinator.active_blueprints
+        if issubclass(atom.module, ManipulationModule)
+    )
+
+    parsed = BlueprintConfigParser(dual_xarm6_planner_coordinator).parse(environ={})
+    config = ManipulationModuleConfig.model_validate(parsed.module_kwargs(manipulation_atom.name))
+
+    assert [robot.gripper_hardware_id for robot in config.robots] == [None, None]
