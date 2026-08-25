@@ -1,6 +1,6 @@
----
-title: "Unitree G1"
----
+# Unitree G1
+
+![output](assets/g1_rerun.webp)
 
 ## Requirements
 

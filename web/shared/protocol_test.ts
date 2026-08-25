@@ -225,48 +225,51 @@ Deno.test("msgFromUnknown validates nested session-message shapes", () => {
   const spec = { ch: "odom", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20.5 };
   // hello stays valid without the optional robot/manifest (viewer form).
   assertEquals(msgFromUnknown({ t: "hello", v: 1, role: "viewer" }) !== null, true);
-  const full = { t: "hello", v: 1, role: "robot", robot, manifest: { channels: [spec] } };
+  const full = {
+    t: "hello",
+    v: 1,
+    role: "robot",
+    robot,
+    manifest: { version: 1, channels: [spec] },
+  };
   assertEquals(msgFromUnknown(full) !== null, true);
   // Optional means absent-or-valid: explicit null is rejected.
   assertEquals(msgFromUnknown({ t: "hello", v: 1, role: "robot", robot: null }), null);
   assertEquals(msgFromUnknown({ ...full, robot: { id: 5, name: "x", model: "m" } }), null);
-  assertEquals(
-    msgFromUnknown({ ...full, manifest: { channels: [{ ...spec, maxHz: "20" }] } }),
-    null,
-  );
-  assertEquals(
-    msgFromUnknown({ ...full, manifest: { channels: [{ ...spec, delivery: "bogus" }] } }),
-    null,
-  );
-  assertEquals(msgFromUnknown({ ...full, manifest: { channels: robot } }), null);
-  const panel = { id: "pose", kind: "readout", channels: ["odom"] };
-  assertEquals(
-    msgFromUnknown({ ...full, manifest: { channels: [spec], panels: [panel] } }) !== null,
-    true,
-  );
-  assertEquals(msgFromUnknown({ ...full, manifest: { channels: [spec], panels: null } }), null);
-  assertEquals(
-    msgFromUnknown({ ...full, manifest: { channels: [spec], panels: [{ id: "x" }] } }),
-    null,
-  );
+  // The manifest is opaque at the transport layer: any record passes here
+  // (structure is parseManifest's job, so a garbage manifest gets a proper
+  // invalid_manifest reply instead of a silent drop), but null and
+  // non-records are still protocol violations.
+  assertEquals(msgFromUnknown({ ...full, manifest: { channels: "garbage" } }) !== null, true);
+  assertEquals(msgFromUnknown({ ...full, manifest: null }), null);
+  assertEquals(msgFromUnknown({ ...full, manifest: 5 }), null);
+  assertEquals(msgFromUnknown({ ...full, manifest: [spec] }), null);
   assertEquals(msgFromUnknown({ t: "robots", robots: [robot] }) !== null, true);
   assertEquals(msgFromUnknown({ t: "robots", robots: {} }), null);
   assertEquals(msgFromUnknown({ t: "robots", robots: [{ id: "a", name: "b" }] }), null);
   assertEquals(msgFromUnknown({ t: "robots" }), null);
-  assertEquals(msgFromUnknown({ t: "manifest", robotId: "r", channels: [spec] }) !== null, true);
+  // ManifestMsg nests the manifest; bare = manifest-less robot.
+  assertEquals(msgFromUnknown({ t: "manifest", robotId: "r" }) !== null, true);
   assertEquals(
-    msgFromUnknown({ t: "manifest", robotId: "r", channels: [spec], panels: [panel] }) !== null,
+    msgFromUnknown({ t: "manifest", robotId: "r", manifest: { version: 1, channels: [spec] } }) !==
+      null,
     true,
   );
-  assertEquals(
-    msgFromUnknown({ t: "manifest", robotId: "r", channels: [spec], panels: [{ kind: 5 }] }),
-    null,
-  );
-  assertEquals(msgFromUnknown({ t: "manifest", channels: [spec] }), null);
+  assertEquals(msgFromUnknown({ t: "manifest", robotId: "r", manifest: null }), null);
+  assertEquals(msgFromUnknown({ t: "manifest", robotId: "r", manifest: 7 }), null);
+  assertEquals(msgFromUnknown({ t: "manifest", manifest: { channels: [spec] } }), null);
   assertEquals(msgFromUnknown({ t: "watch" }), null);
   assertEquals(msgFromUnknown({ t: "subs", chs: ["a", "b"], n: 1 }) !== null, true);
   assertEquals(msgFromUnknown({ t: "subs", chs: ["a", 5], n: 1 }), null);
   assertEquals(msgFromUnknown({ t: "subs", chs: ["a"] }), null);
+  // Teleop gen mirrors hello.robot: absent ok, null/non-number rejected.
+  const twist = { t: "twist", vx: 0.5, vy: 0, wz: 0, seq: 1, ts: 2.5 };
+  assertEquals(msgFromUnknown(twist) !== null, true);
+  assertEquals(msgFromUnknown({ ...twist, gen: 3 }) !== null, true);
+  assertEquals(msgFromUnknown({ ...twist, gen: null }), null);
+  assertEquals(msgFromUnknown({ ...twist, gen: "1" }), null);
+  assertEquals(msgFromUnknown({ t: "teleop_start", gen: 3 }) !== null, true);
+  assertEquals(msgFromUnknown({ t: "teleop_stop", gen: null }), null);
 });
 
 Deno.test("frameHeaderFromUnknown validates the header shape", () => {

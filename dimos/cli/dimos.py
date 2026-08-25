@@ -53,6 +53,7 @@ from dimos.cli.commands.apriltag import apriltag
 from dimos.cli.commands.bake import bake
 from dimos.cli.commands.cameracalibrate import cameracalibrate
 from dimos.cli.commands.dataprep import dataprep_app
+from dimos.cli.commands.docs import docs
 from dimos.cli.commands.global_options import create_dynamic_callback
 from dimos.cli.commands.info import list_blueprints, show_config
 from dimos.cli.commands.lifecycle import log_cmd, restart, run, status, stop
@@ -63,6 +64,7 @@ from dimos.cli.commands.topic import topic_app
 from dimos.cli.commands.tuis import agentspy, humancli, lcmspy, spy, top
 from dimos.cli.hardware_cli import app as hardware_app
 from dimos.cli.shell import shell
+from dimos.cli.vqa import app as vqa_app
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
 
 main = typer.Typer(
@@ -119,6 +121,7 @@ main.command(
     }
 )(bake)
 main.command(name="list")(list_blueprints)
+main.command()(docs)
 main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(spy)
 main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(lcmspy)
 main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(agentspy)
@@ -138,6 +141,7 @@ main.add_typer(mem_app, name="mem")
 
 from dimos.evals.cli import app as evals_app
 
+evals_app.add_typer(vqa_app, name="vqa")
 main.add_typer(evals_app, name="evals")
 
 main.command()(cameracalibrate)

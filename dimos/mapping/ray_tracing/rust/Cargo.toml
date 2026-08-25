@@ -29,6 +29,7 @@ tf = "tf2_msgs.TFMessage"
 [package.metadata.dimos.module.ray_tracing.outputs]
 global_map = "sensor_msgs.PointCloud2"
 local_map = "sensor_msgs.PointCloud2"
+local_map_fine = "sensor_msgs.PointCloud2"
 region_bounds = "geometry_msgs.PoseStamped"
 
 [features]

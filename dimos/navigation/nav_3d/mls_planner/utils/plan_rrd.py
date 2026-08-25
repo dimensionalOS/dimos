@@ -32,6 +32,7 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF, tf_stream
 from dimos.memory.transform import FnTransformer
 from dimos.memory.type.observation import Observation
+from dimos.memory.vis.utils import DEFAULT_RENDER_VOXEL, default_render_voxel
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
 from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
@@ -55,6 +56,9 @@ TIMELINE = "ts"
 # matching the live module: one 30 Hz odometry period.
 TF_MATCH_TOLERANCE_S = 1.0 / 30.0
 
+# --voxel-size default, and the render size --render-voxel scales from when unset.
+DEFAULT_VOXEL_SIZE = 0.08
+
 SENSOR_PATH_COLOR = [80, 160, 255]
 
 # Different colors for each path when running with multiple configs
@@ -67,6 +71,28 @@ PATH_PALETTE = [
     [160, 120, 255],
     [120, 255, 200],
     [255, 255, 120],
+]
+
+# Sampled from the turbo colormap, low to high. Shared across both metric plots
+# so a given color reads the same in either.
+TURBO_BLUE = [70, 102, 221]
+TURBO_GREEN = [121, 254, 89]
+TURBO_ORANGE = [245, 105, 24]
+TURBO_RED = [195, 37, 3]
+
+# Each series is (metric key, entity suffix, legend label, color). The suffix
+# sorts the legend top-to-bottom. The label overrides the displayed name.
+TIMING_SERIES = [
+    ("total_ms", "1_total", "total", TURBO_ORANGE),
+    ("update_ms", "2_update", "update", TURBO_GREEN),
+    ("plan_ms", "3_plan", "plan", TURBO_BLUE),
+]
+
+SIZE_SERIES = [
+    ("voxels", "1_voxels", "voxels", TURBO_RED),
+    ("surface_cells", "2_surfaces", "surfaces", TURBO_ORANGE),
+    ("edges", "3_edges", "edges", TURBO_GREEN),
+    ("nodes", "4_nodes", "nodes", TURBO_BLUE),
 ]
 
 
@@ -346,6 +372,13 @@ def _init_recording(db_path: FsPath, out: FsPath | None, live: bool, crop: Local
         rr.spawn()
     rr.send_blueprint(_blueprint(crop))
     register_colormap_annotation("turbo")
+    for group, series in (("timing", TIMING_SERIES), ("size", SIZE_SERIES)):
+        for _key, suffix, name, color in series:
+            rr.log(
+                f"metrics/{group}/{suffix}",
+                rr.SeriesLines(colors=[color], names=[name]),
+                static=True,
+            )
 
 
 def _build_planners(
@@ -417,16 +450,16 @@ def _process_frame(
                 start, planner, render_voxel, clearance_clamp, hard_clearance, crop
             )
 
-    for key, value in ref_timing.items():
-        rr.log(f"metrics/timing/{key}", rr.Scalars(value))
+    for key, suffix, _name, _color in TIMING_SERIES:
+        rr.log(f"metrics/timing/{suffix}", rr.Scalars(ref_timing[key]))
     sizes = {
         "voxels": planners[0][2].voxel_count(),
         "surface_cells": len(surface),
         "nodes": len(nodes),
         "edges": len(edges),
     }
-    for key, value in sizes.items():
-        rr.log(f"metrics/size/{key}", rr.Scalars(value))
+    for key, suffix, _name, _color in SIZE_SERIES:
+        rr.log(f"metrics/size/{suffix}", rr.Scalars(sizes[key]))
     return ref_timing
 
 
@@ -449,7 +482,9 @@ def main(
         "--start-z-offset",
         help="Height of the base frame above the ground; subtracted from the start pose z",
     ),
-    voxel_size: float = typer.Option(0.08, "--voxel-size", help="Voxel edge length (m)"),
+    voxel_size: float = typer.Option(
+        DEFAULT_VOXEL_SIZE, "--voxel-size", help="Voxel edge length (m)"
+    ),
     max_range: float = typer.Option(30.0, "--max-range", help="Max ray cast distance (m)"),
     ray_subsample: int = typer.Option(1, "--ray-subsample", help="Keep every Nth ray"),
     shadow_depth: float = typer.Option(
@@ -514,7 +549,12 @@ def main(
     live: bool = typer.Option(
         False, "--live", help="Also spawn the rerun viewer when --out is set"
     ),
-    render_voxel: float = typer.Option(0.05, "--render-voxel", help="Rerun voxel render size (m)"),
+    render_voxel: float | None = typer.Option(
+        None,
+        "--render-voxel",
+        help="Rerun voxel render size (m); scales with --voxel-size when unset "
+        f"({DEFAULT_RENDER_VOXEL} at the default voxel size of {DEFAULT_VOXEL_SIZE})",
+    ),
     local_radius: float = typer.Option(
         5.0, "--local-radius", help="Close-up view: crop radius around the robot (m)"
     ),
@@ -538,6 +578,9 @@ def main(
     ),
 ) -> None:
     import rerun as rr
+
+    if render_voxel is None:
+        render_voxel = default_render_voxel(voxel_size, DEFAULT_VOXEL_SIZE)
 
     db_path = resolve_named_path(dataset, ".db")
     crop = LocalCrop(local_radius, local_above, local_below)

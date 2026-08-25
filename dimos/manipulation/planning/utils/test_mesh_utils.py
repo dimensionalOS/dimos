@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 from urllib.parse import unquote, urlparse
 
+import numpy as np
 import pytest
 
 from dimos.manipulation.planning.utils import mesh_utils
@@ -127,3 +128,63 @@ def test_mesh_conversion_keeps_different_same_stem_meshes_distinct(
     assert obj_paths[0] != obj_paths[1]
     assert all(path.exists() for path in obj_paths)
     assert obj_paths[0].read_text() != obj_paths[1].read_text()
+
+
+def _cube_points(scale: float) -> np.ndarray:
+    return np.array(
+        [[x, y, z] for x in (0.0, scale) for y in (0.0, scale) for z in (0.0, scale)],
+        dtype=np.float64,
+    )
+
+
+def _hull_for_scale(scale: float) -> str | None:
+    # Separate frame so the array is freed on return and CPython reuses its
+    # address, the aliasing the old id(points) name turned into shared files.
+    points = _cube_points(scale)
+    return mesh_utils.pointcloud_to_convex_hull_obj(points)
+
+
+def test_convex_hull_default_path_is_unique_per_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mesh_utils, "_CACHE_DIR", tmp_path / "derived" / "drake_meshes")
+
+    paths = [_hull_for_scale(0.1 * (i + 1)) for i in range(4)]
+
+    assert all(path is not None for path in paths)
+    assert len(set(paths)) == len(paths)
+    assert len({Path(path).read_text() for path in paths}) == len(paths)
+
+
+def test_convex_hull_cache_key_reuses_one_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mesh_utils, "_CACHE_DIR", tmp_path / "derived" / "drake_meshes")
+
+    first = mesh_utils.pointcloud_to_convex_hull_obj(_cube_points(0.1), cache_key="object_a")
+    assert first is not None
+    before = Path(first).read_text()
+
+    second = mesh_utils.pointcloud_to_convex_hull_obj(_cube_points(0.4), cache_key="object_a")
+    assert second == first
+    assert Path(first).read_text() != before
+
+    hull_dir = tmp_path / "derived" / "drake_meshes" / "convex_hulls"
+    assert len(list(hull_dir.glob("*.obj"))) == 1
+
+
+def test_convex_hull_cache_keys_that_sanitize_alike_stay_distinct(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mesh_utils, "_CACHE_DIR", tmp_path / "derived" / "drake_meshes")
+
+    first = mesh_utils.pointcloud_to_convex_hull_obj(_cube_points(0.1), cache_key="object a/1")
+    second = mesh_utils.pointcloud_to_convex_hull_obj(_cube_points(0.4), cache_key="object_a_1")
+
+    assert first is not None
+    assert second is not None
+    assert first != second
+    assert Path(first).read_text() != Path(second).read_text()

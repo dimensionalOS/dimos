@@ -16,9 +16,9 @@ import {
   encodeControlFrame,
   encodeDatagram,
   type Msg,
-  type PanelSpec,
   PROTOCOL_VERSION,
   type RobotInfo,
+  type RobotManifest,
 } from "@dimos/shared";
 import { parseManifest } from "@dimos/shared/manifest";
 import {
@@ -59,8 +59,12 @@ function closeAfterFlush(wt: WebTransport, reason: string): void {
 
 export class RobotSession implements RobotPeer {
   info: RobotInfo | null = null;
+  /** Normalized channel specs (parseManifest output): feeds the delivery map
+   * and sub validation. */
   channels: ChannelSpec[] = [];
-  panels: PanelSpec[] = [];
+  /** The manifest exactly as the robot sent it: forwarded verbatim to
+   * viewers, never normalized (the relay stays layout-blind). */
+  manifest: RobotManifest | null = null;
   /** Close reason; set before transport close so rejected hello resends
    * cannot register this session. */
   closed: string | null = null;
@@ -131,11 +135,12 @@ export class RobotSession implements RobotPeer {
         );
       }
       // Manifest-less hellos are legal (transport tests); a declared manifest
-      // must pass the domain rules or duplicate/bogus channels would be
-      // interpreted inconsistently downstream.
+      // must pass the domain rules (incl. the version gate) or duplicate/
+      // bogus channels would be interpreted inconsistently downstream.
+      let channels: ChannelSpec[] = [];
       if (msg.manifest !== undefined) {
         try {
-          parseManifest(msg.manifest);
+          channels = parseManifest(msg.manifest).channels;
         } catch (e) {
           return this.#reject("invalid_manifest", (e as Error).message, "invalid manifest");
         }
@@ -144,8 +149,8 @@ export class RobotSession implements RobotPeer {
       // must not mutate identity mid-session.
       if (this.info === null) {
         this.info = msg.robot;
-        this.channels = msg.manifest?.channels ?? [];
-        this.panels = msg.manifest?.panels ?? [];
+        this.channels = channels;
+        this.manifest = msg.manifest ?? null;
       }
       if (!this.#registry.registerRobot(this)) {
         return this.#reject(

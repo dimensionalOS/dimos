@@ -18,7 +18,6 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use validator::Validate;
 
-use crate::edges::edges_to_segments;
 use crate::mls_planner::{Config, Planner, RegionBounds};
 use crate::voxel::{surface_point_xyz, VoxelKey};
 
@@ -69,6 +68,7 @@ impl MLSPlanner {
         wall_buffer_weight = 100.0,
         step_threshold_m = 0.16,
         step_penalty_weight = 4.0,
+        worker_threads = 4,
     ))]
     fn new(
         voxel_size: f32,
@@ -81,6 +81,7 @@ impl MLSPlanner {
         wall_buffer_weight: f32,
         step_threshold_m: f32,
         step_penalty_weight: f32,
+        worker_threads: u32,
     ) -> PyResult<Self> {
         let config = Config {
             world_frame: String::new(),
@@ -101,13 +102,14 @@ impl MLSPlanner {
             goal_tolerance: 1.0,
             // Unused here. Only the binary's worker publishes viz artifacts.
             viz_publish_hz: 1.0,
+            worker_threads,
         };
         config
             .validate()
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(Self {
+            planner: Planner::new(config.worker_threads),
             config,
-            planner: Planner::default(),
         })
     }
 
@@ -208,9 +210,9 @@ impl MLSPlanner {
     /// Each row is `[x0, y0, z0, x1, y1, z1, cost]`.
     fn node_edges<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
         let voxel_size = self.config.voxel_size;
-        let graph = self.planner.graph();
+        let planner = &self.planner;
         let values: Vec<f32> = py.allow_threads(|| {
-            let segments = edges_to_segments(&graph.cells, &graph.cell_state, &graph.node_edges);
+            let segments = planner.edge_segments();
             let mut out: Vec<f32> = Vec::with_capacity(segments.len() * 7);
             for (a, b, cost) in segments {
                 let pa = surface_point_xyz(a.0, a.1, a.2, voxel_size);
@@ -272,7 +274,7 @@ impl MLSPlanner {
     }
 
     fn clear(&mut self) {
-        self.planner = Planner::default();
+        self.planner = Planner::new(self.config.worker_threads);
     }
 
     fn __repr__(&self) -> String {

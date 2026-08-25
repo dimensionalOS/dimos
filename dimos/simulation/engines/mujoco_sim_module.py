@@ -504,6 +504,7 @@ class MujocoSimModule(
             self._gripper_idx = dof
             self._gripper_ctrl_range = ctrl_range
             self._gripper_joint_range = joint_range
+            self._shm.write_gripper_range(*joint_range)
             logger.info(
                 "MujocoSimModule: gripper detected",
                 idx=dof,
@@ -799,7 +800,7 @@ class MujocoSimModule(
             and self._imu_base_qpos_slice is None
         ):
             if not self._shm_ready_signaled:
-                shm.signal_ready(num_joints=len(engine.joint_names))
+                shm.signal_ready(num_joints=len(engine.joint_names), arm_joints=self.config.dof)
                 self._shm_ready_signaled = True
             return
 
@@ -829,7 +830,7 @@ class MujocoSimModule(
         )
 
         if not self._shm_ready_signaled:
-            shm.signal_ready(num_joints=len(engine.joint_names))
+            shm.signal_ready(num_joints=len(engine.joint_names), arm_joints=self.config.dof)
             self._shm_ready_signaled = True
 
     def _build_camera_info(self) -> None:
