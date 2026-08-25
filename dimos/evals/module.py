@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import importlib
-import pkgutil
 
 from dimos.agents.annotation import skill
 from dimos.agents.skill_result import SkillResult
@@ -25,12 +24,31 @@ from dimos.core.module import Module
 
 
 def list_suites() -> list[str]:
-    """Dotted module paths under dimos.evals.suites exporting ``SUITE``."""
+    """Dotted module paths under dimos.evals.suites exporting ``SUITE``.
+
+    One level of subpackages is included so a benchmark can live in its own
+    directory (``suites/space/``). Modules prefixed ``_`` are that benchmark's
+    internals — config, shared plumbing — not suites, and are skipped.
+    """
+    from pathlib import Path
+
     from dimos.evals import suites
 
-    return [
-        name for _, name, _ in pkgutil.iter_modules(suites.__path__, prefix=f"{suites.__name__}.")
-    ]
+    names: list[str] = []
+    for root in suites.__path__:
+        for entry in sorted(Path(root).iterdir()):
+            if entry.suffix == ".py":
+                names.append(f"{suites.__name__}.{entry.stem}")
+            elif entry.is_dir() and not entry.name.startswith(("_", ".")):
+                # pkgutil.iter_modules skips __init__-less directories, and the
+                # repo bans __init__.py — so benchmark directories are found on
+                # the filesystem instead.
+                names += [
+                    f"{suites.__name__}.{entry.name}.{module.stem}"
+                    for module in sorted(entry.glob("*.py"))
+                    if not module.name.startswith("_")
+                ]
+    return names
 
 
 class EvalModule(Module):

@@ -380,6 +380,18 @@ scene = [
     "usd-core>=23.11",
 ]
 
+# Packages Apple's ml-space-benchmark imports at module scope, so that
+# dimos/evals/suites/space_*.py can call its official answer parser unmodified.
+# The benchmark itself ships no packaging metadata and cannot be pip-installed:
+# scripts/space_setup.sh clones it and dimos/evals/space_bench.py puts that
+# checkout on sys.path.
+space = [
+    "dimos[agents]",
+    "mdutils",
+    "func-timeout",
+    "anthropic",
+]
+
 graspgenx = [
     "graspgenx",
     "huggingface-hub>=0.30,<1",
@@ -681,6 +693,8 @@ module = [
     "scipy",
     "scipy.*",
     "sensor_msgs.*",
+    "habitat_sim",  # rendering backend for SPACE ego navigation
+    "space.*",  # Apple ml-space-benchmark: source tree, ships no type info
     "sqlite_vec",
     "std_msgs.*",
     "tf2_msgs.*",
