@@ -17,7 +17,7 @@ it built. All five run through the [eval framework](/docs/usage/evaluation/evals
 | `space.shortcut_discovery` | interactive episode | 30 environments | benchmark's SPL |
 
 Each suite carries both media presentations, told apart by tags: `bevimage`
-(top-down walkthrough video) and `ego` (first-person walkthrough — the setting
+(top-down walkthrough video) and `ego` (first-person walkthrough, the setting
 a robot actually lives in). The prose presentations are deliberately not wired
 up: they have no visual pathway, which is the part a robot stack cares about.
 
@@ -48,14 +48,14 @@ dimos evals run dimos.evals.suites.space.route_retracing --tags bevimage --limit
 instructions and ask the model to think step by step, which the default
 `EVAL_SYSTEM_PROMPT` ("reply with the answer value only") contradicts.
 
-`--blind` withholds exactly the walkthrough and keeps the question — the
+`--blind` withholds exactly the walkthrough and keeps the question: the
 paper's own ablation. A QA case that still passes blind is guessable; chance on
 the four-way items is 25%.
 
 ### Egocentric navigation needs a habitat-sim interpreter
 
 The `ego` cases of the two navigation suites render observations online, which
-requires [habitat-sim](https://github.com/facebookresearch/habitat-sim) — a
+requires [habitat-sim](https://github.com/facebookresearch/habitat-sim), a
 native simulator with x86_64 Linux conda packages only (no GPU required). Its
 builds exist for Python 3.9 alone, while dimOS requires 3.10+, so the
 environment runs in a sidecar interpreter (`suites/space/_ego_env.py`) that the
@@ -72,7 +72,7 @@ else runs anywhere.
 ## Fidelity
 
 - **Scoring is upstream's, unmodified.** QA replies go through SPACE's
-  `parse_answer_from_response` (called unbound — it never touches `self`) and
+  `parse_answer_from_response` (called unbound; it never touches `self`) and
   are compared exactly as `space/evaluate_qas.py` does. Episodes are scored by
   `space.envs.nav_dm.evaluate_path_efficiency` and the habitat SPL classes.
   `test_scoring_matches_the_official_metric` pins the QA agreement case by
@@ -85,7 +85,7 @@ else runs anywhere.
   flattened into one message per step, prior replies quoted as text.
 - **Ordering:** rows ship in groups of four rotating the correct option through
   positions 1-4. In file order, `--limit 20` would buy five questions asked
-  four times each with the answer key 1,2,3,4,1,2,3,4 — the suites reorder so
+  four times each with the answer key 1,2,3,4,1,2,3,4; the suites reorder so
   any prefix stays a spread sample (`_bench.spread`).
 
 ## Adding another benchmark
