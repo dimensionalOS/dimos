@@ -21,9 +21,11 @@ from typing import Any, TypedDict
 
 from dimos.control.components import HardwareComponent
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.tasks.pose_target_ik import PinkPoseTargetSolver
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.manipulators.common.topics import (
     CARTESIAN_IK_TASK_NAME,
@@ -32,30 +34,11 @@ from dimos.robot.manipulators.common.topics import (
 )
 
 
-class PinkControlIKOverrides(TypedDict, total=False):
-    """Pink tuning values that may be overridden by a manipulator blueprint."""
+class TeleopBinding(TypedDict):
+    """Declarative mapping from an operator hand to one robot target."""
 
-    solver: str
-    max_velocity: float
-    lm_damping: float
-    task_gain: float
-    position_cost: float
-    orientation_cost: float
-    posture_cost: float
-    joint_centering_cost: float
-    damping_cost: float
-    position_limit_margin: float
-    seed_limit_tolerance: float
-    reference_q: list[float] | None
-    qpsolver_options: dict[str, float]
-
-
-class GripperTaskOverrides(TypedDict, total=False):
-    """Optional gripper fields shared by teleop and EEF-twist tasks."""
-
-    gripper_joint: str
-    gripper_open_pos: float
-    gripper_closed_pos: float
+    hand: str
+    target_frame: str
 
 
 def trajectory_task(
@@ -72,78 +55,59 @@ def trajectory_task(
     )
 
 
-def _resolve_control_ik(
+def _model_joint_names(
     hardware: HardwareComponent,
     robot_model: RobotModelConfig,
-    control_ik: PinkControlIKOverrides | None,
-) -> dict[str, Any]:
-    coordinator_joints = robot_model.get_coordinator_joint_names()
-    if hardware.joints != coordinator_joints:
-        raise ValueError("hardware joints must match RobotModelConfig coordinator joints")
-    payload = dict(control_ik or {})
-    payload["robot_model"] = robot_model
-    return payload
+) -> list[str]:
+    joint_names = robot_model.get_coordinator_joint_names()
+    if not set(joint_names) <= set(hardware.joints):
+        raise ValueError("hardware joints must contain RobotModelConfig coordinator joints")
+    return joint_names
 
 
 def cartesian_ik_task(
     hardware: HardwareComponent,
     *,
+    robot_model: RobotModelConfig,
+    target_frame: str,
     name: str = CARTESIAN_IK_TASK_NAME,
     priority: int = 10,
-    timeout: float = 0.5,
-    max_joint_delta_deg: float = 15.0,
-    max_tracking_error_deg: float = 10.0,
-    min_dt: float = 1e-4,
-    max_dt: float = 0.05,
-    control_ik: PinkControlIKOverrides | None = None,
-    robot_model: RobotModelConfig,
 ) -> TaskConfig:
-    resolved_control_ik = _resolve_control_ik(hardware, robot_model, control_ik)
     return TaskConfig(
         name=name,
         type="cartesian_ik",
-        joint_names=hardware.joints,
+        joint_names=_model_joint_names(hardware, robot_model),
         priority=priority,
-        params={
-            "control_ik": resolved_control_ik,
-            "timeout": timeout,
-            "max_joint_delta_deg": max_joint_delta_deg,
-            "max_tracking_error_deg": max_tracking_error_deg,
-            "min_dt": min_dt,
-            "max_dt": max_dt,
-        },
+        params={"robot_model": robot_model, "target_frame": target_frame},
     )
 
 
 def eef_twist_task(
     hardware: HardwareComponent,
     *,
+    robot_model: RobotModelConfig,
+    target_frame: str | None = None,
     name: str = EEF_TWIST_TASK_NAME,
     priority: int = 10,
     timeout: float = 0.3,
-    max_joint_delta_deg: float = 15.0,
-    max_tracking_error_deg: float = 10.0,
-    min_dt: float = 1e-4,
-    max_dt: float = 0.05,
-    control_ik: PinkControlIKOverrides | None = None,
-    robot_model: RobotModelConfig,
-    params: GripperTaskOverrides | None = None,
+    max_joint_velocity_rad_s: float = 5.0,
+    max_command_tracking_error_deg: float = 10.0,
+    pink: PinkKinematicsConfig | None = None,
 ) -> TaskConfig:
-    resolved_control_ik = _resolve_control_ik(hardware, robot_model, control_ik)
     task_params: dict[str, Any] = {
-        "control_ik": resolved_control_ik,
+        "robot_model": robot_model,
         "timeout": timeout,
-        "max_joint_delta_deg": max_joint_delta_deg,
-        "max_tracking_error_deg": max_tracking_error_deg,
-        "min_dt": min_dt,
-        "max_dt": max_dt,
+        "max_joint_velocity_rad_s": max_joint_velocity_rad_s,
+        "max_command_tracking_error_deg": max_command_tracking_error_deg,
     }
-    if params:
-        task_params.update(params)
+    if target_frame is not None:
+        task_params["target_frame"] = target_frame
+    if pink is not None:
+        task_params["pink"] = pink
     return TaskConfig(
         name=name,
         type="eef_twist",
-        joint_names=hardware.joints,
+        joint_names=_model_joint_names(hardware, robot_model),
         priority=priority,
         params=task_params,
     )
@@ -152,38 +116,31 @@ def eef_twist_task(
 def teleop_ik_task(
     hardware: HardwareComponent,
     *,
-    hand: str,
-    name: str,
     robot_model: RobotModelConfig,
+    bindings: Sequence[TeleopBinding],
+    name: str,
+    joint_names: Sequence[str] | None = None,
     priority: int = 10,
-    timeout: float = 0.5,
-    max_joint_delta_deg: float = 5.0,
-    max_tracking_error_deg: float = 10.0,
-    min_dt: float = 1e-4,
-    max_dt: float = 0.05,
-    control_ik: PinkControlIKOverrides | None = None,
-    params: GripperTaskOverrides | None = None,
-    stream_bind: dict[str, str] | None = None,
+    solver_type: type[PinkPoseTargetSolver] = PinkPoseTargetSolver,
+    params: dict[str, Any] | None = None,
 ) -> TaskConfig:
-    resolved_control_ik = _resolve_control_ik(hardware, robot_model, control_ik)
     task_params: dict[str, Any] = {
-        "control_ik": resolved_control_ik,
-        "hand": hand,
-        "timeout": timeout,
-        "max_joint_delta_deg": max_joint_delta_deg,
-        "max_tracking_error_deg": max_tracking_error_deg,
-        "min_dt": min_dt,
-        "max_dt": max_dt,
+        "robot_model": robot_model,
+        "bindings": list(bindings),
+        "solver_type": solver_type,
     }
     if params:
         task_params.update(params)
     return TaskConfig(
         name=name,
         type="teleop_ik",
-        joint_names=hardware.joints,
+        joint_names=(
+            list(joint_names)
+            if joint_names is not None
+            else _model_joint_names(hardware, robot_model)
+        ),
         priority=priority,
         params=task_params,
-        stream_bind=stream_bind or {},
     )
 
 

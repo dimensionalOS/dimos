@@ -23,6 +23,7 @@ deltas, and publishes PoseStamped commands.
 
 import asyncio
 from dataclasses import dataclass
+import json
 import math
 from pathlib import Path
 import threading
@@ -34,11 +35,14 @@ from dimos_lcm.sensor_msgs import Joy as LCMJoy
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import Field
+from reactivex.disposable import Disposable
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import Out
+from dimos.core.stream import In, Out
+from dimos.imitation.collection.episode_monitor import EpisodeStatus
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Joy import Joy
 
@@ -51,6 +55,15 @@ from dimos.web.robot_web_interface import RobotWebInterface
 logger = setup_logger()
 
 STATIC_DIR = Path(__file__).parent / "web" / "static"
+
+
+async def _ws_send_text(ws: WebSocket, data: str) -> None:
+    try:
+        await ws.send_text(data)
+    except Exception:
+        # The receive loop removes disconnected clients. Outbound status
+        # updates should not disrupt teleoperation while that happens.
+        pass
 
 
 @dataclass
@@ -69,6 +82,7 @@ class QuestTeleopConfig(ModuleConfig):
 
     control_loop_hz: float = 50.0
     server_port: int = 8443
+    input_timeout_s: float = Field(default=1.0, gt=0)
 
 
 _Config = TypeVar("_Config", bound=QuestTeleopConfig)
@@ -93,6 +107,7 @@ class QuestTeleopModule(Module):
     left_controller_output: Out[PoseStamped]
     right_controller_output: Out[PoseStamped]
     teleop_buttons: Out[Buttons]
+    status: In[EpisodeStatus]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -102,6 +117,11 @@ class QuestTeleopModule(Module):
         self._initial_poses: dict[Hand, PoseStamped | None] = {Hand.LEFT: None, Hand.RIGHT: None}
         self._current_poses: dict[Hand, PoseStamped | None] = {Hand.LEFT: None, Hand.RIGHT: None}
         self._controllers: dict[Hand, QuestControllerState | None] = {
+            Hand.LEFT: None,
+            Hand.RIGHT: None,
+        }
+        self._last_pose_update: dict[Hand, float | None] = {Hand.LEFT: None, Hand.RIGHT: None}
+        self._last_controller_update: dict[Hand, float | None] = {
             Hand.LEFT: None,
             Hand.RIGHT: None,
         }
@@ -128,6 +148,7 @@ class QuestTeleopModule(Module):
         self._connected_clients: set[WebSocket] = set()
         self._clients_lock = threading.Lock()
         self._ws_loop: asyncio.AbstractEventLoop | None = None
+        self._latest_episode_status: EpisodeStatus | None = None
 
     def _setup_routes(self) -> None:
         """Register teleop routes on the embedded web server."""
@@ -147,8 +168,10 @@ class QuestTeleopModule(Module):
         async def websocket_endpoint(ws: WebSocket) -> None:
             await ws.accept()
             self._ws_loop = asyncio.get_running_loop()
-            with self._clients_lock:
-                self._connected_clients.add(ws)
+            if not self._client_connected(ws):
+                logger.warning("Rejecting additional Quest control client")
+                await ws.close(code=1008, reason="A Quest control client is already connected")
+                return
             logger.info("Quest client connected")
             try:
                 while True:
@@ -164,8 +187,56 @@ class QuestTeleopModule(Module):
             except Exception:
                 logger.exception("WebSocket error")
             finally:
-                with self._clients_lock:
-                    self._connected_clients.discard(ws)
+                self._client_disconnected(ws)
+
+    def _client_connected(self, ws: WebSocket) -> bool:
+        with self._clients_lock:
+            if self._connected_clients:
+                return False
+            self._connected_clients.add(ws)
+            self._reset_controller_state()
+        with self._lock:
+            status = self._latest_episode_status
+        if status is not None:
+            self._broadcast_text(self._encode_episode_status(status))
+        return True
+
+    def _client_disconnected(self, ws: WebSocket) -> None:
+        with self._clients_lock:
+            was_connected = ws in self._connected_clients
+            self._connected_clients.discard(ws)
+            if was_connected:
+                self._reset_controller_state()
+
+    def _broadcast_text(self, data: str) -> None:
+        """Schedule a text message for the active Quest client."""
+        loop = self._ws_loop
+        if loop is None:
+            return
+        with self._clients_lock:
+            clients = tuple(self._connected_clients)
+        for ws in clients:
+            asyncio.run_coroutine_threadsafe(_ws_send_text(ws, data), loop)
+
+    def _on_episode_status(self, status: EpisodeStatus) -> None:
+        with self._lock:
+            self._latest_episode_status = status
+        self._broadcast_text(self._encode_episode_status(status))
+
+    @staticmethod
+    def _encode_episode_status(status: EpisodeStatus) -> str:
+        payload = status.model_dump(mode="json")
+        payload["type"] = "episode_status"
+        payload["elapsed_s"] = (
+            max(0.0, time.time() - status.ts) if status.state == "recording" else 0.0
+        )
+        return json.dumps(payload, separators=(",", ":"))
+
+    @rpc
+    def build(self) -> None:
+        super().build()
+        if self.status.connection is not None or self.status._transport is not None:
+            self.register_disposable(Disposable(self.status.subscribe(self._on_episode_status)))
 
     @rpc
     def start(self) -> None:
@@ -179,8 +250,53 @@ class QuestTeleopModule(Module):
     @rpc
     def stop(self) -> None:
         self._stop_control_loop()
+        self._reset_controller_state()
         self._stop_server()
         super().stop()
+
+    def _reset_controller_state(self) -> None:
+        """Clear stale input and publish the zero-button safe command."""
+        with self._lock:
+            for hand in Hand:
+                self._is_engaged[hand] = False
+                self._initial_poses[hand] = None
+                self._current_poses[hand] = None
+                self._controllers[hand] = None
+                self._last_pose_update[hand] = None
+                self._last_controller_update[hand] = None
+            self._publish_button_state(None, None)
+            self._publish_safe_command()
+
+    def _expire_stale_state(self, now: float) -> None:
+        """Disengage hands whose pose or controller updates have timed out.
+
+        Assumes ``self._lock`` is held.
+        """
+        input_expired = False
+        for hand in Hand:
+            pose_update = self._last_pose_update[hand]
+            controller_update = self._last_controller_update[hand]
+            pose_stale = pose_update is None or now - pose_update > self.config.input_timeout_s
+            controller_stale = (
+                controller_update is None or now - controller_update > self.config.input_timeout_s
+            )
+            input_expired |= (pose_stale and pose_update is not None) or (
+                controller_stale and controller_update is not None
+            )
+            if pose_stale:
+                self._current_poses[hand] = None
+                self._last_pose_update[hand] = None
+            if controller_stale:
+                self._controllers[hand] = None
+                self._last_controller_update[hand] = None
+            if pose_stale or controller_stale:
+                self._is_engaged[hand] = False
+                self._initial_poses[hand] = None
+        if input_expired:
+            self._publish_safe_command()
+
+    def _publish_safe_command(self) -> None:
+        """Publish any subclass-specific command needed to stop motion."""
 
     def _engage(self, hand: Hand | None = None) -> bool:
         """Engage a hand. Assumes self._lock is held."""
@@ -229,20 +345,28 @@ class QuestTeleopModule(Module):
         robot_pose = webxr_to_robot(msg, is_left_controller=(hand == Hand.LEFT))
         with self._lock:
             self._current_poses[hand] = robot_pose
+            self._last_pose_update[hand] = time.monotonic()
 
-    def _on_joy_bytes(self, data: bytes) -> None:
+    def _on_joy_bytes(self, data: bytes) -> bool:
         """Decode LCM bytes into Joy, parse into QuestControllerState."""
         msg = Joy.lcm_decode(data)
-        hand = Hand.LEFT if msg.frame_id == "left" else Hand.RIGHT
+        hand = self._resolve_hand(msg.frame_id)
         try:
             controller = QuestControllerState.from_joy(msg, is_left=(hand == Hand.LEFT))
         except ValueError:
             logger.warning(
                 f"Malformed Joy for {hand.name}: axes={len(msg.axes or [])}, buttons={len(msg.buttons or [])}"
             )
-            return
+            with self._lock:
+                self._controllers[hand] = None
+                self._last_controller_update[hand] = None
+                self._is_engaged[hand] = False
+                self._initial_poses[hand] = None
+            return False
         with self._lock:
             self._controllers[hand] = controller
+            self._last_controller_update[hand] = time.monotonic()
+        return True
 
     def _start_server(self) -> None:
         """Start the embedded FastAPI server with HTTPS in a daemon thread."""
@@ -305,6 +429,7 @@ class QuestTeleopModule(Module):
             loop_start = time.perf_counter()
             try:
                 with self._lock:
+                    self._expire_stale_state(time.monotonic())
                     self._handle_engage()
 
                     for hand in Hand:

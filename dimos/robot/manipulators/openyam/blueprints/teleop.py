@@ -33,6 +33,8 @@ from dimos.robot.manipulators.common.topics import (
 from dimos.robot.manipulators.openyam.config import (
     OPENYAM_ARM_JOINTS,
     OPENYAM_GRIPPER_JOINT,
+    OPENYAM_HARDWARE_ID,
+    OPENYAM_JOINTS,
     make_openyam_model_config,
     openyam_hardware,
 )
@@ -48,21 +50,20 @@ def _eef_twist_task(*, priority: int = 10) -> TaskConfig:
         type="eef_twist",
         joint_names=list(OPENYAM_ARM_JOINTS),
         priority=priority,
-        params={"control_ik": {"robot_model": _openyam_model}},
+        params={"robot_model": _openyam_model},
     )
 
 
 def _trajectory_task(*, priority: int = 10) -> TaskConfig:
-    return joint_trajectory_task(OPENYAM_ARM_JOINTS, priority=priority)
+    return joint_trajectory_task(OPENYAM_JOINTS, priority=priority)
 
 
 def _gripper_task() -> TaskConfig:
     return TaskConfig(
-        name="servo_gripper",
-        type="servo",
+        name=f"{OPENYAM_HARDWARE_ID}_gripper",
+        type="gripper",
         joint_names=[OPENYAM_GRIPPER_JOINT],
         priority=20,
-        params={"timeout": 0.0},
     )
 
 

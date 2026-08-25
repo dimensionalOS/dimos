@@ -33,12 +33,16 @@ import subprocess
 import sys
 import threading
 import time
+from typing import Any
+import zlib
 
 import numpy as np
 import pytest
 
 from dimos.core.transport import pLCMTransport
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.web.relay_bridge.e2e_support import attach_viewer, collect_until, stop_module
 from dimos.web.relay_bridge.protocol import Unsub
@@ -47,6 +51,13 @@ from dimos.web.relay_bridge.wt_client import RelayClient
 
 ROBOT_ID = "bridge-e2e"
 POSE = PoseStamped(ts=42.5, position=[1.5, -2.5, 0.25], orientation=[0.0, 0.0, 0.0, 1.0])
+COSTMAP_GRID = OccupancyGrid(
+    grid=np.array([[-1, 0, 50], [100, 0, -1]], dtype=np.int8),
+    resolution=0.05,
+    origin=Pose(-1.25, 2.5, 0.0),
+    ts=42.5,
+)
+COSTMAP_CELLS = bytes([255, 0, 50, 100, 0, 255])
 _LISTENER = """
 import socket
 import time
@@ -91,24 +102,28 @@ class _Publisher:
         self.image.stop()
 
 
-def _start_bridge() -> tuple[RelayBridgeModule, pLCMTransport, pLCMTransport]:
+def _start_bridge() -> tuple[RelayBridgeModule, tuple[pLCMTransport, ...]]:
     # cockpit_build=False: tests must never trigger the npm-downloading build.
     module = RelayBridgeModule(
         local_port=0, open_browser=False, cockpit_build=False, robot_id=ROBOT_ID
     )
-    odom_tr = pLCMTransport("/rb_e2e/odom")
-    image_tr = pLCMTransport("/rb_e2e/color_image")
-    odom_tr.start()
-    image_tr.start()
-    module.odom.transport = odom_tr
-    module.color_image.transport = image_tr
+    transports = (
+        pLCMTransport("/rb_e2e/odom"),
+        pLCMTransport("/rb_e2e/color_image"),
+        pLCMTransport("/rb_e2e/global_costmap"),
+    )
+    for transport in transports:
+        transport.start()
+    module.odom.transport = transports[0]
+    module.color_image.transport = transports[1]
+    module.global_costmap.transport = transports[2]
     module.start()  # spawns the Deno relay, connects, registers
-    return module, odom_tr, image_tr
+    return module, transports
 
 
 @pytest.fixture(scope="module")
 def bridge() -> Iterator[RelayBridgeModule]:
-    module, _, _ = _start_bridge()
+    module, _ = _start_bridge()
     try:
         yield module
     finally:
@@ -124,13 +139,13 @@ def respawn_bridge() -> Iterator[RelayBridgeModule]:
     conftest thread-leak check. Owning the bridge scopes those threads to the
     test, with everything reaped here.
     """
-    module, odom_tr, image_tr = _start_bridge()
+    module, transports = _start_bridge()
     try:
         yield module
     finally:
         stop_module(module)
-        odom_tr.stop()
-        image_tr.stop()
+        for transport in transports:
+            transport.stop()
 
 
 @pytest.fixture(scope="module")
@@ -217,6 +232,119 @@ def test_full_session_flow_and_lazy_encode(
             assert "odom" in bridge._session.unsubs
 
     asyncio.run(flow())
+
+
+class _CostmapPublisher:
+    """Stoppable costmap publisher: the resend tests must prove a frame
+    arrives with no producer running, so it cannot ride the always-on
+    _Publisher."""
+
+    def __init__(self, grid: OccupancyGrid = COSTMAP_GRID) -> None:
+        self.grid = grid
+        self.transport = pLCMTransport("/rb_e2e/global_costmap")
+        self.stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def start(self) -> None:
+        self.transport.start()
+        self._thread.start()
+
+    def _run(self) -> None:
+        while not self.stop.is_set():
+            self.transport.publish(self.grid)
+            time.sleep(0.05)
+
+    def close(self) -> None:
+        self.stop.set()
+        self._thread.join(timeout=2)
+        self.transport.stop()
+
+
+async def _watch_costmap(bridge: RelayBridgeModule, expected_cells: bytes = COSTMAP_CELLS) -> Any:
+    """Attach a fresh viewer, wait for one costmap frame, return that frame."""
+    assert bridge._url is not None
+    async with await RelayClient.connect(bridge._url, "viewer") as viewer:
+        await viewer.hello()
+        await attach_viewer(viewer, ROBOT_ID, ["global_costmap"])
+        frames = await collect_until(
+            viewer,
+            lambda fs: any(f.header.ch == "global_costmap" for f in fs),
+            timeout=15.0,
+        )
+        frame = next(f for f in frames if f.header.ch == "global_costmap")
+        assert frame.header.delivery == "latest"
+        meta = frame.header.meta
+        assert meta is not None
+        assert (meta["w"], meta["h"]) == (3, 2)
+        # The LCM leg narrows resolution to float32; exact 0.05 is not owed.
+        assert meta["res"] == pytest.approx(0.05)
+        assert meta["origin"][:2] == [-1.25, 2.5]
+        assert meta["origin"][2] == pytest.approx(0.0, abs=1e-12)
+        assert zlib.decompress(bytes(frame.payload)) == expected_cells
+        return frame
+
+
+def _wait_costmap_unsubscribed(bridge: RelayBridgeModule) -> None:
+    """Wait until the relay reported the shrunken sub set and encoding stopped."""
+    deadline = time.monotonic() + 10
+    while (
+        bridge._session is not None
+        and "global_costmap" in bridge._session.unsubs
+        and time.monotonic() < deadline
+    ):
+        time.sleep(0.05)
+    assert bridge._session is not None
+    assert "global_costmap" not in bridge._session.unsubs, "bridge never heard the unsub"
+
+
+def test_costmap_full_grid_arrives_and_resends_on_subscribe(bridge: RelayBridgeModule) -> None:
+    publisher = _CostmapPublisher()
+    publisher.start()
+    try:
+        first = asyncio.run(_watch_costmap(bridge))
+    finally:
+        publisher.close()
+
+    _wait_costmap_unsubscribed(bridge)
+
+    # A fresh subscription with the producer stopped: the bridge must replay
+    # the cached message instead of waiting for a publish that never comes.
+    encoded_before = bridge.encoded["global_costmap"]
+    second = asyncio.run(_watch_costmap(bridge))
+    assert bytes(second.payload) == bytes(first.payload)
+    # Re-encoded from the raw cache; the counter tracks live encodes only.
+    assert bridge.encoded["global_costmap"] == encoded_before
+
+
+def test_costmap_replay_reflects_publishes_while_unwatched(bridge: RelayBridgeModule) -> None:
+    # A different grid published with zero viewers must land in the raw cache,
+    # so the next subscriber gets it - stamped with its arrival time (honest
+    # staleness on the wire), not the replay time.
+    _wait_costmap_unsubscribed(bridge)
+    grid_b = OccupancyGrid(
+        grid=np.array([[100, 100, 100], [0, 0, -1]], dtype=np.int8),
+        resolution=0.05,
+        origin=Pose(-1.25, 2.5, 0.0),
+        ts=43.0,
+    )
+    t0 = time.time()
+    publisher = _CostmapPublisher(grid_b)
+    publisher.start()
+    try:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            cached = bridge._last_msg.get("global_costmap")
+            if cached is not None and cached[0].grid[0, 0] == 100:
+                break
+            time.sleep(0.05)
+    finally:
+        publisher.close()
+    t1 = time.time()
+    cached = bridge._last_msg.get("global_costmap")
+    assert cached is not None and cached[0].grid[0, 0] == 100, "cache never saw grid B"
+
+    frame = asyncio.run(_watch_costmap(bridge, expected_cells=bytes([100, 100, 100, 0, 0, 255])))
+    assert t0 <= frame.header.ts <= t1
 
 
 def test_relay_child_death_respawns_and_recovers(

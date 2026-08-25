@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# Build the mkdocs site and stage it into the github pages repo.
+#
+# The pages repo serves rendered html straight from the working tree, so
+# deploying is: build, replace the target directory, commit there. The sphinx
+# build lives beside it under sphinx/ so the two can be compared.
+#
+# Leaves the pages repo staged but uncommitted unless --commit is passed, and
+# never pushes. A CI job should call this same script.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+# No default: where you keep the pages checkout is yours, not the repo's.
+PAGES_REPO="${DOCS_PAGES_REPO:-}"
+TARGET_DIR="."
+DO_COMMIT=0
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: bin/docs-deploy [options]
+
+  --pages-repo DIR  Checkout of dimensionalOS.github.io. Required, or set
+                    DOCS_PAGES_REPO in your environment.
+  --target DIR      Where within that repo to publish (default: ., the site root)
+  --commit          Commit in the pages repo. Never pushes.
+
+Publishes to https://dimensionalos.github.io/<target>/, leaving careers/ alone.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    --pages-repo)
+      PAGES_REPO="${2:?--pages-repo requires a path}"
+      shift 2
+      ;;
+    --target)
+      TARGET_DIR="${2:?--target requires a name}"
+      shift 2
+      ;;
+    --commit)
+      DO_COMMIT=1
+      shift
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage
+      exit 2
+      ;;
+  esac
+done
+
+if [[ -z "$PAGES_REPO" ]]; then
+  echo "Where is the pages repo? Pass --pages-repo DIR or set DOCS_PAGES_REPO." >&2
+  exit 2
+fi
+
+if [[ ! -d "$PAGES_REPO/.git" ]]; then
+  echo "Not a git checkout: $PAGES_REPO" >&2
+  exit 1
+fi
+
+DEST="$PAGES_REPO/$TARGET_DIR"
+
+# Deliberately not `uv run`: that syncs the project and its default groups
+# first, which builds pyaudio and wants portaudio headers. The site build
+# needs nothing from dimos, so use whichever mkdocs is already installed.
+if [[ -x .venv/bin/mkdocs ]]; then
+  MKDOCS=.venv/bin/mkdocs
+elif command -v mkdocs &>/dev/null; then
+  MKDOCS=mkdocs
+else
+  echo "mkdocs is not installed. Install it with: uv sync --group docs" >&2
+  exit 1
+fi
+
+echo "Building mkdocs site..."
+# See dimos/cli/commands/docs.py for what this silences.
+export NO_MKDOCS_2_WARNING=true
+"$MKDOCS" build --strict --site-dir "$REPO_ROOT/site"
+
+# Replace rather than merge: a stale page left behind still resolves, and a
+# reader has no way to tell it is from the previous build. rsync --delete does
+# the replacing, since at the repo root an rm -rf would take .git with it.
+#
+# KEEP lists what lives beside the docs and is not ours to remove: the careers
+# page, which is linked from job postings we do not control.
+KEEP=(--exclude=.git/ --exclude=careers/ --exclude=.nojekyll --exclude=CNAME)
+
+echo "Replacing $DEST"
+mkdir -p "$DEST"
+if [[ -n "$(rsync -rnv --delete "${KEEP[@]}" "$REPO_ROOT/site/" "$DEST/" | grep '^deleting ' || true)" ]]; then
+  echo
+  echo "Removing from $TARGET_DIR:"
+  rsync -rnv --delete "${KEEP[@]}" "$REPO_ROOT/site/" "$DEST/" | grep '^deleting ' | sed 's/^deleting /  /'
+  echo
+fi
+rsync -r --delete "${KEEP[@]}" "$REPO_ROOT/site/" "$DEST/"
+
+cd "$PAGES_REPO"
+git add -A "$TARGET_DIR"
+
+SOURCE_REV="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
+echo
+echo "Staged $(git diff --cached --numstat -- "$TARGET_DIR" | wc -l) files in $PAGES_REPO/$TARGET_DIR"
+echo "Built from dimos $SOURCE_REV"
+
+if git diff --cached --quiet; then
+  echo "Site is unchanged; nothing to commit."
+  exit 0
+fi
+
+if [[ "$DO_COMMIT" -eq 1 ]]; then
+  git commit -q -m "docs: deploy mkdocs build from dimos $SOURCE_REV"
+  echo "Committed. Push it yourself when you are happy with it."
+else
+  echo "Review with: git -C $PAGES_REPO diff --cached --stat"
+fi

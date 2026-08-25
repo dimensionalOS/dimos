@@ -21,14 +21,16 @@ from pathlib import Path
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
 from dimos.core.global_config import global_config
+from dimos.hardware.spec import JointLimits
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.manipulators._modeling import (
     base_pose,
     coordinator_joint_mapping,
     joint_names,
 )
-from dimos.utils.data import LfsPath
 
 A750_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("base_link", "link1"),
@@ -53,11 +55,15 @@ A750_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
 ]
 
 A750_HOME_JOINTS = [0.0, 0.0, -math.radians(90), 0.0, 0.0, 0.0]
-A750_MODEL_PATH = LfsPath("a750_description") / "urdf/a750_rev1.urdf"
-A750_FK_MODEL = LfsPath("a750_description/urdf/a750_rev1_no_gripper.urdf")
+A750_DESCRIPTION_REPO = "https://github.com/adob/a750_description"
+A750_DESCRIPTION_REF = "3e4b7fe6ea0550e1f13d3dbd62f8d800ef348b14"
+_A750_REPO = RobotDescriptionSource(
+    url=A750_DESCRIPTION_REPO,
+    ref=A750_DESCRIPTION_REF,
+)
+A750_MODEL_PATH = _A750_REPO / "urdf" / "a750_rev1.urdf"
 A750_PACKAGE_PATHS: dict[str, Path] = {
-    "a750_description": LfsPath("a750_description"),
-    "a750_gazebo": LfsPath("a750_description"),
+    "a750_description": _A750_REPO / ".",
 }
 
 
@@ -70,16 +76,23 @@ def make_a750_hardware(
     auto_enable: bool = True,
     home_joints: list[float] | None = None,
 ) -> HardwareComponent:
-    joints = make_joints(hw_id, 6)
+    gripper_joints = [f"{hw_id}/finger"] if gripper else []
+    initial_positions = [*(home_joints or A750_HOME_JOINTS), *([0.0] * len(gripper_joints))]
+    adapter_kwargs: dict[str, object] = {"initial_positions": initial_positions}
+    if adapter_type == "mock":
+        adapter_kwargs["limits"] = JointLimits(
+            position_lower=[*([-math.pi] * 6), *([0.0] * len(gripper_joints))],
+            position_upper=[*([math.pi] * 6), *([0.06] * len(gripper_joints))],
+            velocity_max=[*([math.pi] * 6), *([0.0] * len(gripper_joints))],
+        )
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.MANIPULATOR,
-        joints=joints,
+        joints=[*make_joints(hw_id, 6), *gripper_joints],
         adapter_type=adapter_type,
         address=address,
         auto_enable=auto_enable,
-        gripper_joints=[f"{hw_id}/finger"] if gripper else [],
-        adapter_kwargs={"initial_positions": home_joints or A750_HOME_JOINTS},
+        adapter_kwargs=adapter_kwargs,
     )
 
 
@@ -103,9 +116,14 @@ def make_a750_model_config(
 ) -> RobotModelConfig:
     dof = 6
     local_joint_names = joint_names(dof)
+    model = (
+        RobotModel.from_file(A750_MODEL_PATH, package_paths=A750_PACKAGE_PATHS)
+        .with_joint_position_limits("finger", lower=0.0, upper=0.06)
+        .with_joint_position_limits("finger_mimic", lower=0.0, upper=0.06)
+    )
     return RobotModelConfig(
         name=name,
-        model_path=A750_MODEL_PATH,
+        model=model,
         base_pose=base_pose(),
         joint_names=local_joint_names,
         base_link="base_link",
@@ -117,7 +135,6 @@ def make_a750_model_config(
                 tip_link="gripper_base",
             )
         ],
-        package_paths=A750_PACKAGE_PATHS,
         auto_convert_meshes=True,
         collision_exclusion_pairs=A750_GRIPPER_COLLISION_EXCLUSIONS,
         joint_name_mapping=coordinator_joint_mapping(

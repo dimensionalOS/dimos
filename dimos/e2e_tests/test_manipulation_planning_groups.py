@@ -42,9 +42,10 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 pytestmark = [pytest.mark.self_hosted_large]
 
 JOINT_STATE_TOPIC = "/coordinator_joint_state#sensor_msgs.JointState"
-BLUEPRINT = "openarm-mock-planner-coordinator"
-LEFT_GROUP_ID = "left_arm/manipulator"
-RIGHT_GROUP_ID = "right_arm/manipulator"
+# OpenArm defaults to the in-memory whole-body adapter when --can-port is absent.
+BLUEPRINT = "openarm-planner-coordinator"
+LEFT_GROUP_ID = "openarm/left_manipulator"
+RIGHT_GROUP_ID = "openarm/right_manipulator"
 
 
 def _wait_for_groups(
@@ -205,7 +206,7 @@ def test_dual_arm_plans_and_dispatches_both_arms_through_control_coordinator(
         planned = client.plan_to_joints(
             {
                 left_id: _offset_target(snapshot, left_id, 0.02),
-                right_id: _offset_target(snapshot, right_id, -0.02),
+                right_id: _offset_target(snapshot, right_id, 0.02),
             }
         )
         assert planned.succeeded, planned

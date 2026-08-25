@@ -1,6 +1,4 @@
----
-title: "Evals"
----
+# Evals
 
 Evals measure what an agent (or a bare model, or a single skill) can do with
 the robot's memory. Two kinds:
@@ -28,6 +26,9 @@ dimos evals list
 
 Each run prints a per-case table and writes `results.jsonl`, `summary.json`,
 and per-case transcripts to `~/.local/state/dimos/evals/run-*/`.
+
+To generate deterministic image questions from recordings, see
+[Visual Question Answering](/docs/usage/vqa.md).
 
 ## Your first eval, end to end
 

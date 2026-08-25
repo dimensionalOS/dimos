@@ -41,71 +41,60 @@ from dimos.manipulation.planning.groups.utils import (
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.model_parser import JointDescription, ModelDescription
+from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
-def _serial_model(*joint_types: str) -> ModelDescription:
-    joints = [
-        JointDescription(
-            name=f"joint{i + 1}",
-            type=joint_type,
-            parent_link=f"link{i}",
-            child_link=f"link{i + 1}",
-        )
-        for i, joint_type in enumerate(joint_types)
-    ]
-    return ModelDescription(
-        joints=joints,
-        root_link="link0",
-        links=[f"link{i}" for i in range(len(joint_types) + 1)],
+def _loaded_model(
+    links: list[str],
+    joints: list[tuple[str, str, str, str]],
+    *,
+    source_path: Path = Path("/tmp/robot.urdf"),
+) -> LoadedRobotModel:
+    links_xml = "".join(f"<link name='{name}'/>" for name in links)
+    joints_xml = "".join(
+        f"<joint name='{name}' type='{joint_type}'>"
+        f"<parent link='{parent}'/><child link='{child}'/></joint>"
+        for name, joint_type, parent, child in joints
+    )
+    return LoadedRobotModel(
+        f"<robot name='test'>{links_xml}{joints_xml}</robot>",
+        source_path,
+        {},
     )
 
 
-def _branching_model() -> ModelDescription:
-    return ModelDescription(
-        joints=[
-            JointDescription(
-                name="left_joint",
-                type="revolute",
-                parent_link="base",
-                child_link="left_link",
-            ),
-            JointDescription(
-                name="right_joint",
-                type="revolute",
-                parent_link="base",
-                child_link="right_link",
-            ),
+def _serial_model(
+    *joint_types: str,
+    source_path: Path = Path("/tmp/robot.urdf"),
+) -> LoadedRobotModel:
+    return _loaded_model(
+        [f"link{i}" for i in range(len(joint_types) + 1)],
+        [
+            (f"joint{i + 1}", joint_type, f"link{i}", f"link{i + 1}")
+            for i, joint_type in enumerate(joint_types)
         ],
-        root_link="base",
-        links=["base", "left_link", "right_link"],
+        source_path=source_path,
     )
 
 
-def _model_with_branched_prismatic_gripper() -> ModelDescription:
-    return ModelDescription(
-        joints=[
-            JointDescription(
-                name="arm_joint",
-                type="revolute",
-                parent_link="base",
-                child_link="wrist",
-            ),
-            JointDescription(
-                name="left_finger_joint",
-                type="prismatic",
-                parent_link="wrist",
-                child_link="left_finger",
-            ),
-            JointDescription(
-                name="right_finger_joint",
-                type="prismatic",
-                parent_link="wrist",
-                child_link="right_finger",
-            ),
+def _branching_model() -> LoadedRobotModel:
+    return _loaded_model(
+        ["base", "left_link", "right_link"],
+        [
+            ("left_joint", "revolute", "base", "left_link"),
+            ("right_joint", "revolute", "base", "right_link"),
         ],
-        root_link="base",
-        links=["base", "wrist", "left_finger", "right_finger"],
+    )
+
+
+def _model_with_branched_prismatic_gripper() -> LoadedRobotModel:
+    return _loaded_model(
+        ["base", "wrist", "left_finger", "right_finger"],
+        [
+            ("arm_joint", "revolute", "base", "wrist"),
+            ("left_finger_joint", "prismatic", "wrist", "left_finger"),
+            ("right_finger_joint", "prismatic", "wrist", "right_finger"),
+        ],
     )
 
 
@@ -133,7 +122,7 @@ def _robot_config(
 ) -> RobotModelConfig:
     return RobotModelConfig(
         name=name,
-        model_path=Path("/tmp/robot.urdf"),
+        model=RobotModel.from_file(Path("/tmp/robot.urdf")),
         base_pose=PoseStamped(),
         joint_names=["joint1", "joint2", "joint3"],
         planning_groups=planning_groups
@@ -302,8 +291,7 @@ def test_discovery_rejects_missing_explicit_srdf(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="SRDF file not found"):
         discover_planning_group_definitions(
             robot_name="robot",
-            model_path=tmp_path / "robot.urdf",
-            model=_serial_model("revolute"),
+            model=_serial_model("revolute", source_path=tmp_path / "robot.urdf"),
             controllable_joint_names=["joint1"],
             srdf_path=tmp_path / "missing.srdf",
         )
@@ -318,8 +306,7 @@ def test_discovery_falls_back_when_srdf_has_no_supported_groups(tmp_path: Path) 
 
     groups = discover_planning_group_definitions(
         robot_name="robot",
-        model_path=model_path,
-        model=_serial_model("revolute"),
+        model=_serial_model("revolute", source_path=model_path),
         controllable_joint_names=["joint1"],
     )
 
@@ -328,9 +315,9 @@ def test_discovery_falls_back_when_srdf_has_no_supported_groups(tmp_path: Path) 
 
 
 def test_discovery_prefers_explicit_srdf_over_fallback(tmp_path: Path) -> None:
-    model = _serial_model("revolute", "revolute")
     model_path = tmp_path / "robot.urdf"
     model_path.write_text("<robot name='test'/>")
+    model = _serial_model("revolute", "revolute", source_path=model_path)
     srdf_path = _write_srdf(
         tmp_path,
         "<group name='srdf_arm'><chain base_link='link0' tip_link='link2'/></group>",
@@ -338,7 +325,6 @@ def test_discovery_prefers_explicit_srdf_over_fallback(tmp_path: Path) -> None:
 
     groups = discover_planning_group_definitions(
         robot_name="robot",
-        model_path=model_path,
         model=model,
         controllable_joint_names=["joint1", "joint2"],
         srdf_path=srdf_path,
@@ -348,9 +334,9 @@ def test_discovery_prefers_explicit_srdf_over_fallback(tmp_path: Path) -> None:
 
 
 def test_discovery_auto_discovers_srdf(tmp_path: Path) -> None:
-    model = _serial_model("revolute")
     model_path = tmp_path / "robot.urdf"
     model_path.write_text("<robot name='test'/>")
+    model = _serial_model("revolute", source_path=model_path)
     _write_srdf(
         tmp_path,
         "<group name='auto_arm'><chain base_link='link0' tip_link='link1'/></group>",
@@ -358,7 +344,6 @@ def test_discovery_auto_discovers_srdf(tmp_path: Path) -> None:
 
     groups = discover_planning_group_definitions(
         robot_name="robot",
-        model_path=model_path,
         model=model,
         controllable_joint_names=["joint1"],
     )
@@ -371,7 +356,7 @@ def test_primary_pose_group_id_for_robot_raises_when_ambiguous() -> None:
         [
             RobotModelConfig(
                 name="robot",
-                model_path=Path("/tmp/robot.urdf"),
+                model=RobotModel.from_file(Path("/tmp/robot.urdf")),
                 base_pose=PoseStamped(),
                 joint_names=["joint1", "joint2"],
                 planning_groups=[
@@ -635,7 +620,7 @@ def test_local_joint_name_from_global_validates_robot_prefix_and_local_shape() -
 def test_robot_model_config_derives_legacy_end_effector_link_from_pose_group() -> None:
     config = RobotModelConfig(
         name="arm",
-        model_path=Path("robot.urdf"),
+        model=RobotModel.from_file(Path("robot.urdf")),
         joint_names=["j1", "j2"],
         joint_name_mapping={"hw_j1": "j1", "hw_j2": "j2"},
         planning_groups=[
@@ -657,7 +642,7 @@ def test_robot_model_config_derives_legacy_end_effector_link_from_pose_group() -
 def test_robot_model_config_end_effector_link_requires_pose_group() -> None:
     config = RobotModelConfig(
         name="arm",
-        model_path=Path("robot.urdf"),
+        model=RobotModel.from_file(Path("robot.urdf")),
         joint_names=["j1"],
         planning_groups=[
             PlanningGroupDefinition(
@@ -675,7 +660,7 @@ def test_robot_model_config_end_effector_link_requires_pose_group() -> None:
 def test_robot_model_config_end_effector_link_rejects_ambiguous_pose_groups() -> None:
     config = RobotModelConfig(
         name="arm",
-        model_path=Path("robot.urdf"),
+        model=RobotModel.from_file(Path("robot.urdf")),
         joint_names=["j1", "j2"],
         planning_groups=[
             PlanningGroupDefinition(

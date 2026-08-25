@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import threading
 from types import SimpleNamespace
@@ -75,6 +75,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
 @dataclass
@@ -175,18 +176,12 @@ class Config:
     home_joints: list[float] | None
     base_link: str = "base"
     end_effector_link: str = "tool"
-    model_path: Path | str = "robot.urdf"
-    package_paths: dict[str, str] | None = None
-    xacro_args: dict[str, str] | None = None
+    model: RobotModel = field(default_factory=lambda: RobotModel.from_file("robot.urdf"))
     auto_convert_meshes: bool = False
     max_velocity: float = 1.0
     max_acceleration: float = 1.0
     joint_name_mapping: dict[str, str] | None = None
     pre_grasp_offset: float = 0.0
-
-    def __post_init__(self) -> None:
-        if isinstance(self.model_path, str):
-            self.model_path = Path(self.model_path)
 
 
 def group(robot: str, name: str, joints: tuple[str, ...], *, pose: bool = False) -> PlanningGroup:
@@ -818,6 +813,15 @@ class Urdf:
 @pytest.fixture(autouse=True)
 def fake_yourdfpy_loader(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
+        RobotModel,
+        "load",
+        lambda _self: LoadedRobotModel(
+            xml='<robot name="test"><link name="base"/></robot>',
+            source_path=Path("robot.urdf"),
+            package_paths={},
+        ),
+    )
+    monkeypatch.setattr(
         scene_module.URDF,
         "load",
         lambda *_args, **_kwargs: SimpleNamespace(
@@ -835,7 +839,6 @@ def test_scene_active_only_ghosts_group_gizmos_feasibility_and_shared_ticks(
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
     server.scene.add_transform_controls = lambda *_args, **_kwargs: Handle()
     scene = ViserManipulationScene(server, Urdf)
-    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
     config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
     scene.register_robot("id-arm", config)
     scene.set_target_active("id-arm", False)
@@ -1050,7 +1053,6 @@ def test_scene_target_ghost_tracks_current_only_until_explicit_target() -> None:
     server = Server()
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
     scene = ViserManipulationScene(server, Urdf)
-    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
     config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
     scene.register_robot("id-arm", config)
 
@@ -1067,7 +1069,6 @@ def test_scene_target_feasibility_colors_ghost_and_gizmo() -> None:
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
     server.scene.add_transform_controls = lambda *_args, **_kwargs: Handle()
     scene = ViserManipulationScene(server, Urdf)
-    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
     config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
     scene.register_robot("id-arm", config)
     scene.ensure_target_controls("id-arm", lambda _target: None)
@@ -1089,7 +1090,6 @@ def test_panel_feasibility_colors_group_controls_and_deduplicated_robot_ghosts()
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
     server.scene.add_transform_controls = lambda *_args, **_kwargs: Handle()
     scene = ViserManipulationScene(server, Urdf)
-    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
     scene.register_robot("id-arm", module.configs["arm"])
     scene.register_robot("id-other", module.configs["other"])
     gui = scene_gui(module, server, scene)
@@ -1158,7 +1158,6 @@ def test_scene_shared_clock_uses_stored_unequal_robot_frames(
     server = Server()
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
     scene = ViserManipulationScene(server, Urdf)
-    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
     config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
     scene.register_robot("left", config)
     scene.register_robot("right", config)
@@ -1259,7 +1258,6 @@ def test_scene_cancel_generation_hides_preview_and_rejects_old_animation() -> No
     server = Server()
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
     scene = ViserManipulationScene(server, Urdf)
-    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
     config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
     scene.register_robot("id-arm", config)
     scene._preview_visible["id-arm"] = True
@@ -1275,13 +1273,15 @@ def test_scene_base_pose_requires_urdf_root_to_match(monkeypatch: pytest.MonkeyP
     server = Server()
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
     scene = ViserManipulationScene(server, Urdf)
-    monkeypatch.setattr(
-        "dimos.manipulation.visualization.viser.scene.parse_model",
-        lambda _path: SimpleNamespace(root_link="world"),
-    )
-
     with pytest.raises(ValueError, match="base_link 'base'.*URDF root 'world'"):
-        scene._assert_base_link_is_urdf_root(SimpleNamespace(base_link="base"), "robot.urdf")
+        scene._assert_base_link_is_urdf_root(
+            SimpleNamespace(base_link="base"),
+            LoadedRobotModel(
+                xml='<robot name="test"><link name="world"/></robot>',
+                source_path=Path("robot.urdf"),
+                package_paths={},
+            ),
+        )
 
 
 def test_scene_detects_non_identity_base_pose() -> None:
@@ -1302,7 +1302,6 @@ def test_scene_display_mode_survives_primary_recreation_and_keeps_ghosts_unchang
 ) -> None:
     server = Server()
     scene = ViserManipulationScene(server, Urdf)
-    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
     config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
     scene.register_robot("id-arm", config)
     current = scene._urdfs["id-arm:current"]
@@ -1352,7 +1351,6 @@ def test_panel_robot_display_selector_and_collision_warning_use_session_scene(
     # The panel fixture intentionally uses a session without a scene; attach the
     # already-created scene controls through the normal panel API contract.
     scene = ViserManipulationScene(server, Urdf)
-    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
     scene.register_robot(
         "id-arm", Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
     )
@@ -1375,7 +1373,6 @@ def test_scene_inflight_preview_never_updates_after_generation_replacement(
     server = Server()
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
     scene = ViserManipulationScene(server, Urdf)
-    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
     config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
     scene.register_robot("id-arm", config)
     first_tick, release = threading.Event(), threading.Event()

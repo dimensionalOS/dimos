@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.a750.config import (
@@ -24,6 +25,7 @@ from dimos.robot.manipulators.a750.config import (
 )
 from dimos.robot.manipulators.common.blueprints import (
     eef_twist_task,
+    trajectory_task,
 )
 from dimos.robot.manipulators.common.coordinators import (
     ArmTwistCoordinator,
@@ -45,11 +47,18 @@ keyboard_teleop_a750 = autoconnect(
             eef_twist_task(
                 _a750_hw,
                 robot_model=_a750_model,
-            )
+            ),
+            trajectory_task(_a750_hw),
+            TaskConfig(
+                name="arm_gripper",
+                type="gripper",
+                joint_names=["arm/finger"],
+                priority=20,
+            ),
         ],
     ),
     ManipulationModule.blueprint(
         robots=[_a750_model],
-        visualization={"backend": "meshcat"},
+        visualization={"backend": "viser"},
     ),
 )

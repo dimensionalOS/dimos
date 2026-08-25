@@ -95,7 +95,10 @@ def inspect(dataset: Path | None, output_format: Literal["lerobot", "hdf5"] | No
     from dimos.imitation.dataprep.build import inspect_dataset
 
     if dataset is None:
-        typer.echo("error: no dataset given (pass a .hdf5 file or a lerobot directory)", err=True)
+        typer.echo(
+            "error: no path given (pass a recording .db, .hdf5 file, or lerobot directory)",
+            err=True,
+        )
         raise typer.Exit(2)
 
     try:

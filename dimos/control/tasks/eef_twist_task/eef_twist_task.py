@@ -12,204 +12,197 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Command-integrating end-effector twist control."""
+"""Command-integrating end-effector twist control over shared Pink IK."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
 import threading
 from typing import TYPE_CHECKING
 
+import attrs
 import numpy as np
 import pinocchio
 
-from dimos.control.coordinator import TaskConfig
-from dimos.control.task import CoordinatorState, JointCommandOutput, ResourceClaim
-from dimos.control.tasks.cartesian_ik_task.cartesian_ik_task import (
-    CartesianIKTask,
-    CartesianIKTaskConfig,
-    CartesianIKTaskParams,
-    append_gripper_position,
-    claim_with_gripper,
+from dimos.control.task import CoordinatorState
+from dimos.control.tasks.pose_target_ik import (
+    FrameTargetSnapshot,
+    PinkPoseTargetSolver,
+    PoseTargetIKTask,
+    PoseTargetIKTaskConfig,
+    PoseTargetIKTaskParams,
+    string_tuple_converter,
 )
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import twist_to_numpy
+from dimos.utils.transform_utils import matrix_to_pose, pose_to_matrix, twist_to_numpy
 
 if TYPE_CHECKING:
+    from dimos.control.coordinator import TaskConfig
+    from dimos.control.hardware_interface import ConnectedHardware, ConnectedWholeBody
     from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-    from dimos.msgs.std_msgs.Bool import Bool
 
 logger = setup_logger()
 
 
-@dataclass
-class EEFTwistTaskConfig(CartesianIKTaskConfig):
-    """Configuration for command-relative EEF twist control."""
+@attrs.frozen(slots=False)
+class EEFTwistTaskConfig(PoseTargetIKTaskConfig):
+    """Configuration for command-relative end-effector twist control."""
 
-    gripper_joint: str | None = None
-    gripper_open_pos: float = 0.0
-    gripper_closed_pos: float = 0.0
+    target_frames: tuple[str, ...] = attrs.field(
+        default=(),
+        converter=string_tuple_converter,
+        validator=[attrs.validators.min_len(1), attrs.validators.max_len(1)],
+    )
+    command_timeout: float = attrs.field(default=0.3, converter=float)
 
 
-class EEFTwistTask(CartesianIKTask):
-    """Integrate twists from the last accepted command while the stream is active."""
+class EEFTwistTask(PoseTargetIKTask):
+    """Integrate twists into a Cartesian target solved by the shared IK core."""
 
     _config: EEFTwistTaskConfig
 
-    def __init__(self, name: str, config: EEFTwistTaskConfig) -> None:
-        super().__init__(name, config)
-        self._twist_lock = threading.Lock()
+    def __init__(
+        self,
+        name: str,
+        config: EEFTwistTaskConfig,
+        *,
+        solver: PinkPoseTargetSolver | None = None,
+    ) -> None:
+        self._input_lock = threading.Lock()
         self._latest_twist: TwistStamped | None = None
+        self._last_twist_time = 0.0
+        self._target_pose: PoseStamped | None = None
         self._estopped = False
-        self._gripper_target = config.gripper_open_pos
-        self._gripper_active = config.gripper_joint is not None
-
-    def claim(self) -> ResourceClaim:
-        return claim_with_gripper(super().claim(), self._config.gripper_joint)
+        super().__init__(name, config, solver=solver)
 
     def is_active(self) -> bool:
-        with self._twist_lock:
-            has_twist = self._latest_twist is not None
-            estopped = self._estopped
-        with self._lock:
-            has_gripper_hold = self._config.gripper_joint is not None and self._active
-            return not estopped and (has_twist or has_gripper_hold) and self._active
+        with self._input_lock:
+            return not self._estopped
 
     def is_tracking(self) -> bool:
         return self.is_active()
 
-    def _uses_prepared_target(self) -> bool:
-        return True
-
     def on_cartesian_command(self, pose: object, t_now: float) -> bool:
-        """Reject Cartesian stream commands; twist is this task's only input."""
-        logger.warning("EEFTwistTask rejects Cartesian commands", task=self.name)
+        """Reject Cartesian commands because this task accepts only twists."""
+        logger.warning("EEFTwistTask rejects Cartesian commands", task=self._name)
         return False
 
     def on_ee_twist_command(self, twist: TwistStamped, t_now: float) -> bool:
         values = twist_to_numpy(twist)
         if values.shape != (6,) or not np.all(np.isfinite(values)):
-            logger.warning("EEFTwistTask rejecting invalid twist", task=self.name)
+            logger.warning("EEFTwistTask rejecting invalid twist", task=self._name)
             return False
-        with self._twist_lock:
+        with self._input_lock:
             if self._estopped:
                 return False
-            if np.allclose(values, 0.0):
-                self._latest_twist = None
-                cleared = True
-            else:
-                self._latest_twist = twist
-                cleared = False
-        if cleared:
-            self._reset_command_state()
-        if cleared and self._config.gripper_joint is None:
-            super().clear()
-            return True
-        with self._lock:
-            if not self._active:
-                self._last_commanded_joints = None
-            self._last_update_time = t_now
-            self._active = True
-        return True
-
-    def on_gripper_command(self, msg: Bool, t_now: float) -> bool:
-        if self._config.gripper_joint is None:
-            return False
-        with self._twist_lock:
-            if self._estopped:
-                return False
-            self._gripper_target = (
-                self._config.gripper_closed_pos if msg.data else self._config.gripper_open_pos
-            )
-            self._gripper_active = True
-        with self._lock:
-            if not self._active:
-                self._last_commanded_joints = None
-            self._last_update_time = t_now
-            self._active = True
+            self._latest_twist = None if np.allclose(values, 0.0) else twist
+            self._last_twist_time = t_now
         return True
 
     def set_estop(self, estopped: bool) -> None:
-        with self._twist_lock:
+        with self._input_lock:
             self._estopped = estopped
             if estopped:
                 self._latest_twist = None
-                self._gripper_active = False
-        if estopped:
-            super().clear()
+                self._target_pose = None
+        self._reset_command_state()
 
-    def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
-        output = super().compute(state)
-        with self._twist_lock:
-            gripper_target = self._gripper_target
-            gripper_joint = self._config.gripper_joint if self._gripper_active else None
-        return append_gripper_position(
-            output,
-            gripper_joint,
-            gripper_target,
-        )
-
-    def _prepare_target(
-        self,
-        state: CoordinatorState,
-        q_current: np.ndarray,
-        dt: float,
-    ) -> pinocchio.SE3 | None:
-        with self._twist_lock:
-            twist = self._latest_twist
-        if twist is None:
-            return None
-        pose = self.forward_kinematics(q_current)
-        values = twist_to_numpy(twist)
-        pose.translation = pose.translation + values[:3] * dt
-        angular_step = values[3:] * dt
-        if np.linalg.norm(angular_step) > 0.0:
-            pose.rotation = pinocchio.exp3(angular_step) @ pose.rotation
-        if not np.all(np.isfinite(pose.translation)) or not np.all(np.isfinite(pose.rotation)):
-            return None
-        return pose
+    def start(self) -> None:
+        return None
 
     def stop(self) -> None:
-        self._clear_inputs()
-        super().stop()
-
-    def _clear_inputs(self) -> None:
-        """Discard twist and gripper commands owned by this specialization."""
-        with self._twist_lock:
-            self._latest_twist = None
-            self._gripper_active = False
-
-    def _on_timeout(self) -> None:
-        with self._twist_lock:
-            self._latest_twist = None
+        self.clear()
 
     def clear(self) -> None:
-        self._clear_inputs()
-        super().clear()
+        with self._input_lock:
+            self._latest_twist = None
+            self._target_pose = None
+        self._reset_command_state()
+
+    def _frame_target_snapshot(self, state: CoordinatorState) -> FrameTargetSnapshot | None:
+        with self._input_lock:
+            if self._estopped:
+                return None
+            if (
+                self._latest_twist is not None
+                and self._config.command_timeout > 0.0
+                and state.t_now - self._last_twist_time > self._config.command_timeout
+            ):
+                self._latest_twist = None
+            twist = self._latest_twist
+            target = self._target_pose
+
+        if target is None:
+            poses = self.current_frame_poses(state, self._config.target_frames)
+            if poses is None:
+                return None
+            target = poses[self._config.target_frames[0]]
+
+        if twist is not None:
+            target = _integrate_twist(target, twist, max(state.dt, 0.0))
+
+        with self._input_lock:
+            if self._estopped:
+                return None
+            self._target_pose = target
+
+        return FrameTargetSnapshot(
+            targets={self._config.target_frames[0]: target},
+            last_update_time=state.t_now,
+        )
+
+    def _on_target_timeout(self) -> None:
+        self.clear()
+
+    def _on_pose_target_preempted(self, by_task: str, joints: frozenset[str]) -> None:
+        with self._input_lock:
+            self._latest_twist = None
+            self._target_pose = None
 
 
-class EEFTwistTaskParams(CartesianIKTaskParams):
+class EEFTwistTaskParams(PoseTargetIKTaskParams):
+    target_frame: str | None = None
     timeout: float = 0.3
-    gripper_joint: str | None = None
-    gripper_open_pos: float = 0.0
-    gripper_closed_pos: float = 0.0
 
 
-def create_task(cfg: TaskConfig, hardware: object) -> EEFTwistTask:
+def create_task(
+    cfg: TaskConfig,
+    hardware: Mapping[str, ConnectedHardware | ConnectedWholeBody],
+) -> EEFTwistTask:
+    del hardware
     params = EEFTwistTaskParams.model_validate(cfg.params)
     return EEFTwistTask(
         cfg.name,
         EEFTwistTaskConfig(
-            joint_names=cfg.joint_names,
+            joint_names=tuple(cfg.joint_names),
+            robot_model=params.robot_model,
+            target_frames=(params.target_frame or params.robot_model.end_effector_link,),
+            pink=params.pink,
             priority=cfg.priority,
-            timeout=params.timeout,
-            max_joint_delta_deg=params.max_joint_delta_deg,
-            max_tracking_error_deg=params.max_tracking_error_deg,
-            min_dt=params.min_dt,
-            max_dt=params.max_dt,
-            control_ik=params.control_ik,
-            gripper_joint=params.gripper_joint,
-            gripper_open_pos=params.gripper_open_pos,
-            gripper_closed_pos=params.gripper_closed_pos,
+            timeout=0.0,
+            command_timeout=params.timeout,
+            max_joint_velocity_rad_s=params.max_joint_velocity_rad_s,
+            joint_velocity_limits_rad_s=params.joint_velocity_limits_rad_s,
+            joint_command_filter_cutoff_hz=params.joint_command_filter_cutoff_hz,
+            max_command_tracking_error_deg=params.max_command_tracking_error_deg,
+            feedback_limit_tolerance=params.feedback_limit_tolerance,
+            command_limit_margin=params.command_limit_margin,
         ),
+    )
+
+
+def _integrate_twist(pose: PoseStamped, twist: TwistStamped, dt: float) -> PoseStamped:
+    matrix = np.asarray(pose_to_matrix(pose), dtype=np.float64)
+    values = twist_to_numpy(twist)
+    matrix[:3, 3] += values[:3] * dt
+    angular_step = values[3:] * dt
+    if np.linalg.norm(angular_step) > 0.0:
+        matrix[:3, :3] = pinocchio.exp3(angular_step) @ matrix[:3, :3]
+    integrated = matrix_to_pose(matrix)
+    return PoseStamped(
+        ts=pose.ts,
+        frame_id=pose.frame_id,
+        position=integrated.position,
+        orientation=integrated.orientation,
     )
