@@ -33,7 +33,11 @@ from dimos.control.components import (
     make_twist_base_joints,
 )
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
-from dimos.control.hardware_interface import ConnectedHardware, ConnectedTwistBase
+from dimos.control.hardware_interface import (
+    ConnectedHardware,
+    ConnectedTwistBase,
+    ConnectedWholeBody,
+)
 from dimos.control.task import (
     BaseControlTask,
     ControlMode,
@@ -57,6 +61,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 from dimos.control.tick_loop import TickLoop
 from dimos.core.stream import In
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
+from dimos.hardware.whole_body.spec import MotorState, WholeBodyAdapter
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -980,6 +985,63 @@ class TestArbitration:
 
 
 class TestTickLoop:
+    def test_unready_whole_body_is_excluded_from_read_and_write(self, mocker):
+        adapter = MagicMock(spec=WholeBodyAdapter)
+        adapter.has_motor_states.return_value = False
+        component = HardwareComponent(
+            hardware_id="g1",
+            hardware_type=HardwareType.WHOLE_BODY,
+            joints=["g1/joint1"],
+        )
+        hardware = ConnectedWholeBody(adapter, component)
+        log_error = mocker.patch("dimos.control.tick_loop.logger.error")
+        tick_loop = TickLoop(
+            tick_rate=100.0,
+            hardware={"g1": hardware},
+            hardware_lock=threading.Lock(),
+            tasks={},
+            task_lock=threading.Lock(),
+            joint_to_hardware={"g1/joint1": "g1"},
+        )
+
+        state, per_hardware = tick_loop._read_all_hardware()
+        imu = tick_loop._read_all_imu()
+        tick_loop._write_all_hardware({"g1": ({"g1/joint1": 0.25}, ControlMode.SERVO_POSITION)})
+
+        assert state.joint_positions == {}
+        assert per_hardware == {}
+        assert imu == {}
+        adapter.read_motor_states.assert_not_called()
+        adapter.read_imu.assert_not_called()
+        adapter.write_motor_commands.assert_not_called()
+        log_error.assert_not_called()
+
+    def test_ready_whole_body_reads_and_writes(self):
+        adapter = MagicMock(spec=WholeBodyAdapter)
+        adapter.has_motor_states.return_value = True
+        adapter.read_motor_states.return_value = [MotorState(q=0.5, dq=0.1, tau=0.2)]
+        adapter.write_motor_commands.return_value = True
+        component = HardwareComponent(
+            hardware_id="g1",
+            hardware_type=HardwareType.WHOLE_BODY,
+            joints=["g1/joint1"],
+        )
+        hardware = ConnectedWholeBody(adapter, component)
+        tick_loop = TickLoop(
+            tick_rate=100.0,
+            hardware={"g1": hardware},
+            hardware_lock=threading.Lock(),
+            tasks={},
+            task_lock=threading.Lock(),
+            joint_to_hardware={"g1/joint1": "g1"},
+        )
+
+        state, _per_hardware = tick_loop._read_all_hardware()
+        tick_loop._write_all_hardware({"g1": ({"g1/joint1": 0.25}, ControlMode.SERVO_POSITION)})
+
+        assert state.joint_positions == {"g1/joint1": 0.5}
+        adapter.write_motor_commands.assert_called_once()
+
     def test_partial_trajectory_and_gripper_command_share_hardware_write(self, mocker):
         joint_names = ["arm/joint1", "arm/joint2", "arm/gripper"]
         adapter = mocker.Mock(spec=ManipulatorAdapter)
