@@ -84,7 +84,8 @@ def test_openyam_hardware_simulation_mode_returns_generic_whole_body_mock(
     hardware = openyam_hardware()
 
     assert hardware.adapter_type == "mock_whole_body"
-    limits = hardware.adapter_kwargs["limits"]
+    limits = hardware.limits
+    assert limits is not None
     assert limits.position_lower == [*([None] * OPENYAM_DOF), 0.0]
     assert limits.position_upper == [*([None] * OPENYAM_DOF), 1.0]
 
