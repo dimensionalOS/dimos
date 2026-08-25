@@ -23,7 +23,6 @@ from typing import Any
 import pytest
 
 from dimos.cloud import data as cd
-from dimos.cloud.codecs import codec
 from dimos.cloud.data import CloudData, MultipartBackend
 from dimos.core.global_config import global_config
 
@@ -112,7 +111,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[CloudData, Fak
     t = FakeTransport()
     monkeypatch.setattr(cd, "RECORDINGS_DIR", tmp_path)
     monkeypatch.setattr(global_config, "dimos_upload_retries", 1)
-    cloud = CloudData(MultipartBackend(t, codec("lz4"), None, retries=1))
+    cloud = CloudData(MultipartBackend(t, "lz4", None, retries=1))
     return cloud, t, recording(tmp_path)
 
 
@@ -134,7 +133,7 @@ def test_roundtrip_with_resume_and_manifest(env: tuple[CloudData, FakeTransport,
 def test_resume_sends_only_missing_parts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     t = FakeTransport()
     monkeypatch.setattr(cd, "RECORDINGS_DIR", tmp_path)
-    cloud = CloudData(MultipartBackend(t, codec("lz4"), None, retries=0))
+    cloud = CloudData(MultipartBackend(t, "lz4", None, retries=0))
     db = recording(tmp_path)
     t.fail_at = 2
     with pytest.raises(RuntimeError, match="failed after"):
@@ -234,7 +233,7 @@ def test_pull_with_cross_filesystem_staging(
     monkeypatch.setattr(cd, "RECORDINGS_DIR", tmp_path)
     staging = tmp_path / "otherfs"
     staging.mkdir()
-    cloud = CloudData(MultipartBackend(t, codec("lz4"), staging, retries=0))
+    cloud = CloudData(MultipartBackend(t, "lz4", staging, retries=0))
     db = recording(tmp_path)
     r = cloud.upload(db)
 
@@ -258,7 +257,7 @@ def test_pull_with_cross_filesystem_staging(
 def test_codecs_interchangeable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, algo: str) -> None:
     t = FakeTransport()
     monkeypatch.setattr(cd, "RECORDINGS_DIR", tmp_path)
-    cloud = CloudData(MultipartBackend(t, codec(algo), None, retries=0))
+    cloud = CloudData(MultipartBackend(t, algo, None, retries=0))
     db = recording(tmp_path)
     r = cloud.upload(db)
     assert t.uploads[r["upload_id"]]["content_encoding"] == algo

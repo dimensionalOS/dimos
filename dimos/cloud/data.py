@@ -31,7 +31,7 @@ import time
 from typing import Any, Protocol
 
 from dimos.cli.cloud import api_key
-from dimos.cloud.codecs import FileCodec, codec
+from dimos.cloud import codecs
 from dimos.cloud.http_transport import HttpTransport, Transport
 from dimos.constants import RECORDINGS_DIR
 from dimos.core.global_config import global_config
@@ -54,11 +54,11 @@ class MultipartBackend:
     API = "/v1/data"
 
     def __init__(
-        self, transport: Transport, file_codec: FileCodec, staging_dir: Path | None, retries: int
+        self, transport: Transport, codec_id: str, staging_dir: Path | None, retries: int
     ) -> None:
-        self.t, self.codec, self.staging_dir, self.retries = (
+        self.t, self.codec_id, self.staging_dir, self.retries = (
             transport,
-            file_codec,
+            codec_id,
             staging_dir,
             retries,
         )
@@ -80,9 +80,9 @@ class MultipartBackend:
     ) -> dict[str, Any]:
         manifest = _manifest(path)
         with self._staging(path) as tmp:
-            if self.codec.id and path.suffix != self.codec.suffix:
-                artifact = Path(tmp) / (path.name + self.codec.suffix)
-                self.codec.encode(path, artifact)
+            if self.codec_id and path.suffix != codecs.suffix(self.codec_id):
+                artifact = Path(tmp) / (path.name + codecs.suffix(self.codec_id))
+                codecs.compress(self.codec_id, path, artifact)
             else:
                 artifact = path
             size = artifact.stat().st_size
@@ -94,7 +94,7 @@ class MultipartBackend:
                     "size": size,
                     "sha256": _sha256(artifact),
                     "kind": kind,
-                    "content_encoding": self.codec.id or None,
+                    "content_encoding": self.codec_id or None,
                     "robot_id": robot_id,
                     "manifest": manifest,
                     "part_size": part_size,
@@ -119,9 +119,9 @@ class MultipartBackend:
 
     def pull(self, upload_id: str, dest: Path | None) -> Path:
         d = self.t.request("GET", f"{self.API}/uploads/{upload_id}/download")
-        wire = codec(d.get("content_encoding") or "")
+        wire = d.get("content_encoding") or ""
         name = Path(d["filename"]).name
-        plain = name.removesuffix(wire.suffix) if wire.suffix else name
+        plain = name.removesuffix(codecs.suffix(wire)) if wire else name
         if not plain or plain in (".", ".."):
             raise RuntimeError(f"server returned an invalid filename: {d['filename']!r}")
         out = dest or RECORDINGS_DIR / plain
@@ -131,9 +131,12 @@ class MultipartBackend:
             self._retry(functools.partial(self.t.download, d["url"], raw), "download")
             if _sha256(raw) != d["sha256"]:
                 raise RuntimeError("sha256 mismatch — refusing to keep the file")
-            decoded = Path(tmp) / plain
-            wire.decode(raw, decoded)
-            _move_into_place(decoded, out)
+            if wire:
+                decoded = Path(tmp) / plain
+                codecs.decompress(wire, raw, decoded)
+                _move_into_place(decoded, out)
+            else:
+                _move_into_place(raw, out)
         return out
 
     def ls(self) -> list[dict[str, Any]]:
@@ -162,7 +165,7 @@ class CloudData:
             )
             backend = BACKENDS[global_config.dimos_cloud_backend](
                 transport,
-                codec(global_config.dimos_upload_codec),
+                global_config.dimos_upload_codec,
                 global_config.dimos_staging_dir,
                 global_config.dimos_upload_retries,
             )

@@ -12,63 +12,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Streaming file codecs for upload artifacts.
-
-Compression algorithms are interchangeable behind one class: every supported
-library exposes the same `open(path, mode)` file API, so the algorithm is data,
-not a subclass. Ids double as the wire `content_encoding`."""
+"""File compression for upload artifacts. Every supported library exposes the same
+`open(path, mode)` API, so an algorithm is a table entry, not a class. The id is
+stored as the upload's `content_encoding`; decode is selected by that stamp."""
 
 from __future__ import annotations
 
 import importlib
 from pathlib import Path
 import shutil
-from typing import Protocol
+
+_ALGOS = {
+    "lz4": ("lz4.frame", ".lz4"),
+    "gzip": ("gzip", ".gz"),
+    "bz2": ("bz2", ".bz2"),
+    "xz": ("lzma", ".xz"),
+}
 
 
-class FileCodec(Protocol):
-    id: str
-    suffix: str
-
-    def encode(self, src: Path, dst: Path) -> None: ...
-    def decode(self, src: Path, dst: Path) -> None: ...
+def _lib(codec_id: str):  # type: ignore[no-untyped-def]
+    if codec_id not in _ALGOS:
+        raise ValueError(f"unknown codec {codec_id!r}; known: {sorted(_ALGOS)}")
+    return importlib.import_module(_ALGOS[codec_id][0])
 
 
-class NoCodec:
-    id, suffix = "", ""
-
-    def encode(self, src: Path, dst: Path) -> None:
-        shutil.copyfile(src, dst)
-
-    def decode(self, src: Path, dst: Path) -> None:
-        shutil.copyfile(src, dst)
+def suffix(codec_id: str) -> str:
+    return _ALGOS[codec_id][1] if codec_id else ""
 
 
-class Compression:
-    _algos = {
-        "lz4": ("lz4.frame", ".lz4"),
-        "gzip": ("gzip", ".gz"),
-        "bz2": ("bz2", ".bz2"),
-        "xz": ("lzma", ".xz"),
-    }
-
-    def __init__(self, algo: str) -> None:
-        module, self.suffix = self._algos[algo]
-        self.id = algo
-        self._lib = importlib.import_module(module)
-
-    def encode(self, src: Path, dst: Path) -> None:
-        with src.open("rb") as i, self._lib.open(dst, "wb") as o:
-            shutil.copyfileobj(i, o)
-
-    def decode(self, src: Path, dst: Path) -> None:
-        with self._lib.open(src, "rb") as i, dst.open("wb") as o:
-            shutil.copyfileobj(i, o)
+def compress(codec_id: str, src: Path, dst: Path) -> None:
+    with src.open("rb") as i, _lib(codec_id).open(dst, "wb") as o:
+        shutil.copyfileobj(i, o)
 
 
-def codec(codec_id: str) -> FileCodec:
-    if not codec_id:
-        return NoCodec()
-    if codec_id not in Compression._algos:
-        raise ValueError(f"unknown codec {codec_id!r}; known: {sorted(Compression._algos)}")
-    return Compression(codec_id)
+def decompress(codec_id: str, src: Path, dst: Path) -> None:
+    with _lib(codec_id).open(src, "rb") as i, dst.open("wb") as o:
+        shutil.copyfileobj(i, o)
