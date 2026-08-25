@@ -20,6 +20,7 @@ from typing import Any, Protocol, cast
 from unittest.mock import MagicMock
 
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import (
@@ -64,7 +65,7 @@ def _test_model() -> RobotModelConfig:
 
 
 @pytest.fixture
-def module_factory() -> Iterator[ModuleFactory]:
+def module_factory(mocker: MockerFixture) -> Iterator[ModuleFactory]:
     """Create started modules and stop every instance during fixture teardown."""
     modules: list[ManipulationModule] = []
 
@@ -75,7 +76,7 @@ def module_factory() -> Iterator[ModuleFactory]:
             coordinator if coordinator is not None else _mock_control_coordinator()
         )
         cast("Any", module).coordinator_joint_state = None
-        module._initialize_planning = MagicMock()
+        mocker.patch.object(module, "_initialize_planning")
         module.start()
         return module
 

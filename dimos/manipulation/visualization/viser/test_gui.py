@@ -236,15 +236,17 @@ def test_gui_feasibility_status_uses_exact_status_mapping(
     assert gui._feasibility_status(result, success, collision_free) == expected
 
 
-def test_group_status_composes_shared_panel_state_without_robot_dropdown() -> None:
+def test_group_status_composes_shared_panel_state_without_robot_dropdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     gui = make_gui()
     values: dict[str, str] = {}
     gui.state.selected_group_ids = ("manipulator", "gripper")
     gui.state.error = "planner unavailable"
     gui.state.target_status = gui.state.target_status.FEASIBLE
     gui.state.plan_state.status = gui.state.plan_state.status.FRESH
-    gui._stale_models = lambda _group_ids: ("model",)  # type: ignore[method-assign]
-    gui._set_handle_value = values.__setitem__  # type: ignore[method-assign]
+    monkeypatch.setattr(gui, "_stale_models", lambda _group_ids: ("model",))
+    monkeypatch.setattr(gui, "_set_handle_value", values.__setitem__)
 
     gui._update_status_text()
 

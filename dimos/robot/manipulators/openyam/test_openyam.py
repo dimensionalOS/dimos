@@ -20,6 +20,7 @@ from dimos.control.components import HardwareType
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
+from dimos.manipulation.planning.spec.validation import validate_robot_model_config
 from dimos.robot.manipulators.openyam.blueprints.basic import (
     coordinator_openyam,
     openyam_planner_coordinator,
@@ -51,8 +52,12 @@ def _coordinator_kwargs(blueprint: Blueprint) -> dict[str, Any]:
 
 def test_make_openyam_model_config_uses_canonical_arm_joints() -> None:
     config = make_openyam_model_config()
+    model = validate_robot_model_config(config)
 
     assert config.joint_names == OPENYAM_ARM_JOINTS
+    assert [joint.name for joint in model.joints if joint.name in config.joint_names] == (
+        OPENYAM_ARM_JOINTS
+    )
     assert config.base_link == "yam_base_link"
     assert config.planning_groups[0].tip_link == "yam_hand_tcp"
     assert config.gripper_hardware_id == "arm"

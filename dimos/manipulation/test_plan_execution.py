@@ -89,28 +89,8 @@ def test_execute_consumes_cached_plan_after_dispatch(
 
     assert module.execute(blocking=False).status is ExecutionStatus.ACCEPTED
     assert module.execute(blocking=False).status is ExecutionStatus.NO_PLAN
-    assert coordinator.execute_trajectory.call_count == 1
-    for call in coordinator.execute_trajectory.call_args_list:
-        dispatched = call.args[0]
-        assert [point.time_from_start for point in dispatched.points] == [
-            point.time_from_start for point in plan.trajectory.points
-        ]
-        assert [point.velocities for point in dispatched.points] == [
-            point.velocities for point in plan.trajectory.points
-        ]
-
-
-def test_execute_dispatches_the_pending_plan(module_factory) -> None:
-    coordinator = _coordinator()
-    module = _module_with_coordinator(coordinator, module_factory)
-    cached = _plan(1.0)
-    module._last_plan = cached
-
-    assert module.execute(blocking=False).status is ExecutionStatus.ACCEPTED
-
     assert module._last_plan is None
-    dispatched = coordinator.execute_trajectory.call_args.args[0]
-    assert dispatched.points[-1].positions == [1.0]
+    coordinator.execute_trajectory.assert_called_once_with(plan.trajectory)
 
 
 def test_known_coordinator_rejection_restores_previous_state(

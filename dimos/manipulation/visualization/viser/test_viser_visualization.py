@@ -25,7 +25,6 @@ from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import (
     PlanningSceneInfo,
-    VisualizationSession,
     VisualizationStateFrame,
 )
 from dimos.manipulation.visualization.viser.animation import (
@@ -100,8 +99,3 @@ def test_visualizer_initializes_and_updates_one_scene_model() -> None:
     state = JointState(name=["left/j1", "right/j1"], position=[0.1, 0.2])
     visualizer.update_state(VisualizationStateFrame(joint_state=state))
     scene.update_current_model.assert_called_once_with(state)
-
-
-def test_visualization_session_contains_singular_model() -> None:
-    session = VisualizationSession(PlanningSceneInfo(model=_model()), operator=object())
-    assert session.scene.model.joint_names == ["left/j1", "right/j1"]

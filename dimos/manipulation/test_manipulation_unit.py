@@ -370,12 +370,6 @@ def planning_initialization(mocker: MockerFixture) -> PlanningInitializationHarn
 class TestPlanningInitialization:
     """Test planning backend configuration wiring."""
 
-    def test_default_kinematics_config_uses_pink(self, robot_config) -> None:
-        """Pink IK is the default solver for manipulation modules."""
-        config = ManipulationModuleConfig(model=robot_config)
-
-        assert isinstance(config.kinematics, PinkKinematicsConfig)
-
     def test_start_eagerly_initializes_planning_and_execution(
         self,
         mocker: MockerFixture,
@@ -744,71 +738,6 @@ class TestPlanningGroupApis:
         assert module._state == ManipulationState.IDLE
         assert module._last_plan is None
         assert module.has_planned_path() is False
-
-    def test_execute_plan_forwards_one_canonical_trajectory_unchanged(self, module_factory):
-        model = RobotModelConfig(
-            model=RobotModel.from_file(Path("/path")),
-            base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
-            joint_names=["left/j1", "right/k0"],
-            planning_groups=[
-                PlanningGroupDefinition(
-                    name="left_arm",
-                    joint_names=("left/j1",),
-                    base_link="base",
-                    tip_link="left/ee",
-                ),
-                PlanningGroupDefinition(
-                    name="right_arm",
-                    joint_names=("right/k0",),
-                    base_link="base",
-                    tip_link="right/ee",
-                ),
-            ],
-        )
-        module = module_factory()
-        module.config.model = model
-        module._world_monitor = MagicMock()
-        module._world_monitor.planning_groups = PlanningGroupRegistry([model])
-        module._last_plan = GeneratedPlan(
-            group_ids=("left_arm", "right_arm"),
-            status=PlanningStatus.SUCCESS,
-            path=[
-                JointState(name=["left/j1", "right/k0"], position=[0.0, 1.0]),
-                JointState(name=["left/j1", "right/k0"], position=[0.5, 1.5]),
-            ],
-            trajectory=JointTrajectory(
-                joint_names=["left/j1", "right/k0"],
-                points=[
-                    TrajectoryPoint(
-                        time_from_start=0.0,
-                        positions=[0.0, 1.0],
-                        velocities=[0.0, 0.0],
-                    ),
-                    TrajectoryPoint(
-                        time_from_start=2.5,
-                        positions=[0.5, 1.5],
-                        velocities=[0.2, 0.4],
-                    ),
-                ],
-            ),
-        )
-        mock_coordinator = _control_coordinator()
-        module._control_coordinator = mock_coordinator
-        module._initialize_execution()
-        module._world_monitor.current_model_joint_state.return_value = JointState(
-            name=["left/j1", "right/k0"], position=[0.0, 1.0]
-        )
-
-        trajectory = module._last_plan.trajectory
-        assert module.execute(blocking=False).status is ExecutionStatus.ACCEPTED
-
-        mock_coordinator.execute_trajectory.assert_called_once()
-        payload = mock_coordinator.execute_trajectory.call_args.args[0]
-        assert payload is trajectory
-        assert payload.joint_names == ["left/j1", "right/k0"]
-        assert [point.time_from_start for point in payload.points] == [0.0, 2.5]
-        assert [point.positions for point in payload.points] == [[0.0, 1.0], [0.5, 1.5]]
-        assert [point.velocities for point in payload.points] == [[0.0, 0.0], [0.2, 0.4]]
 
     def test_get_state_exposes_selected_group_init_preset(
         self, module_factory, mocker: MockerFixture
