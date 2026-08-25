@@ -60,6 +60,8 @@ class GlobalConfig(BaseSettings):
     simulation: str = ""
     replay: bool = False
     replay_db: str = "go2_short"
+    # Exit once every subscribed replay stream finishes (with --replay).
+    replay_exit: bool = False
     new_memory: bool = False
     # How every zenoh session this process opens joins the network.
     zenoh_mode: ZenohProcessMode = "peer"

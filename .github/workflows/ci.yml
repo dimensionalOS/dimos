@@ -783,6 +783,122 @@ jobs:
           echo "uv cache size: ${size_mb} MB"
           if [ "$size_mb" -gt 25600 ]; then uv cache prune --ci; fi
 
+  benchmark:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    permissions:  # Restricted to run untested code. Reporting in next job.
+      contents: read  # For checkout
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Cache the replay dataset archive
+        uses: actions/cache@v6
+        with:
+          path: data/.lfs/go2_short.db.tar.gz
+          key: lfs-go2-short-${{ hashFiles('data/.lfs/go2_short.db.tar.gz') }}
+      - name: Fetch the replay dataset from LFS if not cached
+        run: |
+          if git lfs pointer --check --file data/.lfs/go2_short.db.tar.gz; then
+            git lfs pull --include="data/.lfs/go2_short.db.tar.gz" --exclude=""
+          else
+            echo "archive already smudged"
+          fi
+      # pyaudio build needs portaudio; the recording's JPEG frames need turbojpeg.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y portaudio19-dev libturbojpeg
+      # LCM lidar/image UDP fragments drop with small kernel buffers; the
+      # in-process configurator (64MB) skips under pytest, so do it here.
+      - name: Raise UDP receive buffers for LCM
+        run: sudo sysctl -w net.core.rmem_max=67108864 net.core.rmem_default=67108864
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.3.2
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --group tests --frozen
+        env:
+          # Compile bytecode at install rather than at first import.
+          UV_COMPILE_BYTECODE: "1"
+      - name: Pre-extract the replay database
+        run: uv run python -c "from dimos.utils.data import get_data; print(get_data('go2_short.db'))"
+      - name: Precompile the numba kernels
+        run: |
+          uv run python -c "
+          import numpy as np
+          from dimos.mapping.pointclouds.occupancy import height_cost_occupancy
+          from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+          points = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32)
+          height_cost_occupancy(PointCloud2.from_numpy(points, timestamp=1.0))
+          "
+      - name: Run the replay under cgroup accounting
+        run: uv run pytest -m '' --no-cov dimos/robot/unitree/go2/test_replay_benchmark.py
+        env:
+          DIMOS_BENCH_METRICS: benchmark.json
+          # Hash randomization is per-process; pin it so the processes don't
+          # each bring their own dict-ordering jitter.
+          PYTHONHASHSEED: "0"
+      - name: Upload the metrics
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-metrics
+          path: benchmark.json
+
+  benchmark-track:
+    needs: benchmark
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # To push the benchmark series to gh-pages branch
+      pull-requests: write  # For PR comments
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Download the metrics
+        uses: actions/download-artifact@v8
+        with:
+          name: benchmark-metrics
+      # Re-runs reuse the original event payload, which predates any label
+      # added in response to a failure — so query the live labels instead.
+      - name: Check for an acknowledged regression
+        id: ack
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          acked=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" \
+            --jq '[.labels[].name] | contains(["benchmark-ack"])')
+          echo "acked=$acked" >> "$GITHUB_OUTPUT"
+      - name: Track results
+        id: track
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: go2 replay realtime
+          tool: customSmallerIsBetter
+          output-file-path: benchmark.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # Append to the tracked series on main; PRs only compare against it.
+          auto-push: ${{ github.event_name == 'push' }}
+          save-data-file: ${{ github.event_name == 'push' }}
+          alert-threshold: 108%
+          # Fork PRs run with a read-only token that can't post comments;
+          # there the numbers land in the job summary and the step log only.
+          comment-on-alert: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          comment-always: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          summary-always: true
+          max-items-in-chart: 200
+          fail-on-alert: ${{ github.event_name == 'pull_request' && steps.ack.outputs.acked != 'true' }}
+      - name: Explain how to acknowledge the regression
+        if: failure() && steps.track.outcome == 'failure'
+        run: |
+          {
+            echo 'If this regression is expected, a maintainer can add the `benchmark-ack`'
+            echo 'label to the PR and re-run this job in order to merge.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error title=Benchmark regression::If expected, add the 'benchmark-ack' label and re-run."
+
   # Cross-job fail-fast: GitHub Actions only fail-fasts within a matrix,
   # not across sibling jobs. This watcher fires the moment `tests` fails
   # and cancels the whole workflow run.
@@ -809,6 +925,7 @@ jobs:
     - web
     - tests
     - self-hosted-tests
+    - benchmark-track
     #- self-hosted-large-tests
 
     runs-on: ubuntu-latest

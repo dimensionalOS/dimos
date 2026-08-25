@@ -90,6 +90,7 @@ class ModuleCoordinator(Resource):
         self._modules_lock = threading.RLock()
         self._rpc_lock = threading.RLock()
         self._coordinator_rpc: CoordinatorRPC | None = None
+        self._shutdown_event = threading.Event()
 
     def start(self) -> None:
         from dimos.core.o3dpickle import register_picklers
@@ -138,11 +139,16 @@ class ModuleCoordinator(Resource):
             "load_blueprint": self.load_blueprint,
             "restart_module_by_class_name": self.restart_module_by_class_name,
             "restart_module_by_name": self.restart_module_by_name,
+            "shutdown": self.shutdown,
         }
 
     def ping(self) -> str:
         """Used by clients to check if the coordinator is alive and responsive."""
         return "pong"
+
+    def shutdown(self) -> None:
+        """Unblock loop(), which then stops every module and returns."""
+        self._shutdown_event.set()
 
     def list_modules(self) -> list[ModuleDescriptor]:
         with self._modules_lock:
@@ -645,14 +651,16 @@ class ModuleCoordinator(Resource):
         return new_proxy
 
     def loop(self) -> None:
-        """Serve coordinator RPC and block until the process is interrupted.
+        """Serve coordinator RPC and block until interrupted or shut down.
 
         Owning service startup here gives CLI and direct Python ``build().loop()``
-        launches the same attachment behavior.
+        launches the same attachment behavior. ``shutdown()`` (also exposed over
+        RPC) unblocks the wait; either way every module is stopped on the way
+        out.
         """
         self.start_rpc_service()
         try:
-            threading.Event().wait()
+            self._shutdown_event.wait()
         except KeyboardInterrupt:
             return
         finally:
