@@ -42,6 +42,9 @@ class Track:
     name: str
     controller: str  # REGISTRY name of the law this track currently runs
     annotate_clearance: bool  # is the follower handed the clearance array
+    # Not read on this branch: the referee that scores pace lives on
+    # ivan/feat/trajectory_ctrl. They are half of what a track IS (see above),
+    # so they are written down here with the other half, not derived twice.
     cruise: float  # m/s to hold through curves
     pace_weight: float  # how much pace counts when this track is scored
 
@@ -54,8 +57,3 @@ TRACKS: dict[str, Track] = {
 }
 
 DEFAULT = "hinted"
-
-
-def track_of(annotate_clearance: bool) -> Track:
-    """The track an episode ran under, from what its config handed over."""
-    return TRACKS["hinted"] if annotate_clearance else TRACKS["blind"]

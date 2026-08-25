@@ -144,9 +144,6 @@ REGISTRY = {
     "blind-rs": "dimos.navigation.motion.control.laws.blind:make_rust",
     "hinted": "dimos.navigation.motion.control.laws.hinted:make",
     "hinted-rs": "dimos.navigation.motion.control.laws.hinted:make_rust",
-    # the seed's names before the tracks split; kept so old invocations work
-    "pursuit": "dimos.navigation.motion.control.laws.seed:make",
-    "pursuit-rs": "dimos.navigation.motion.control.laws.seed:make_rust",
 }
 
 BUILD_CMD = (

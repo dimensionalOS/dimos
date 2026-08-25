@@ -272,8 +272,6 @@ def test_registry_and_build_hint() -> None:
         assert REGISTRY[f"{name}-rs"].endswith(":make_rust")
         assert load(f"{name}-rs") is make_rs
         assert isinstance(load(f"{name}-rs")().config, ControllerConfig)
-    # the seed's pre-split names still resolve
-    assert load("pursuit-rs") is seed.make_rust
 
 
 @pytest.mark.parametrize("law", sorted(STATEFUL))
