@@ -73,9 +73,7 @@ def _normal_colors(voxel_colors: NDArray[np.uint8]) -> NDArray[np.uint8]:
 
 
 def _planarity_scale(min_eigs: NDArray[np.float32]) -> NDArray[np.float32]:
-    """Arrow length factors, larger for more planar fits.
-    Inverse smallest eigenvalue, median-normalized and clamped to 0.25-2x.
-    """
+    """Arrow length factors, larger for more planar fits."""
     if len(min_eigs) == 0:
         return np.empty(0, np.float32)
     inv = 1.0 / np.maximum(min_eigs, 1e-12)

@@ -166,3 +166,24 @@ def test_global_map_normal_fits_matches_shapes() -> None:
     assert min_eigs.shape == (mapper.voxel_count(),)
     assert min_eigs.dtype == np.float32
     np.testing.assert_allclose(np.sort(centers, axis=0), np.sort(mapper.global_map(), axis=0))
+
+
+def test_global_map_normal_fits_min_eigs_track_planarity() -> None:
+    mapper = make_mapper()
+    rng = np.random.default_rng(0)
+    n = 64
+    flat = np.column_stack(
+        [rng.uniform(5.1, 5.9, n), rng.uniform(0.1, 0.9, n), np.full(n, 0.5)]
+    ).astype(np.float32)
+    rough = np.column_stack(
+        [rng.uniform(9.1, 9.9, n), rng.uniform(5.1, 5.9, n), rng.uniform(3.4, 3.6, n)]
+    ).astype(np.float32)
+    mapper.add_frame(np.vstack([flat, rough]), ORIGIN, IDENTITY)
+
+    centers, normals, min_eigs = mapper.global_map_normal_fits()
+    flat_i = np.flatnonzero((centers == [5.5, 0.5, 0.5]).all(axis=1))[0]
+    rough_i = np.flatnonzero((centers == [9.5, 5.5, 3.5]).all(axis=1))[0]
+    assert min_eigs[flat_i] < 1e-5, "an exactly coplanar patch fits with near-zero residual"
+    assert min_eigs[rough_i] > 1e-4, "a jittered patch fits with a visible residual"
+    np.testing.assert_allclose(np.abs(normals[flat_i]), [0.0, 0.0, 1.0], atol=1e-3)
+    np.testing.assert_allclose(np.abs(normals[rough_i]), [0.0, 0.0, 1.0], atol=0.05)

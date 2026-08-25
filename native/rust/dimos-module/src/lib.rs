@@ -32,7 +32,7 @@ pub use lcm::LcmTransport;
 pub use module::{run, Builder, Input, Io, Module, ModuleConfig, NativeConfig, NoConfig, Output};
 pub use tf::{Lookup, Tf, Transform};
 pub use transport::{SharedTransport, Transport};
-pub use workers::init_worker_pool;
+pub use workers::worker_pool;
 pub use zenoh::ZenohTransport;
 
 pub use nalgebra;

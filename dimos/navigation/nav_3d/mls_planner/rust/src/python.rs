@@ -18,9 +18,6 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use validator::Validate;
 
-use dimos_module::init_worker_pool;
-
-use crate::edges::edges_to_segments;
 use crate::mls_planner::{Config, Planner, RegionBounds};
 use crate::voxel::{surface_point_xyz, VoxelKey};
 
@@ -109,10 +106,9 @@ impl MLSPlanner {
         config
             .validate()
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        init_worker_pool(config.worker_threads);
         Ok(Self {
+            planner: Planner::new(config.worker_threads),
             config,
-            planner: Planner::default(),
         })
     }
 
@@ -213,9 +209,9 @@ impl MLSPlanner {
     /// Each row is `[x0, y0, z0, x1, y1, z1, cost]`.
     fn node_edges<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
         let voxel_size = self.config.voxel_size;
-        let graph = self.planner.graph();
+        let planner = &self.planner;
         let values: Vec<f32> = py.allow_threads(|| {
-            let segments = edges_to_segments(&graph.node_edges);
+            let segments = planner.edge_segments();
             let mut out: Vec<f32> = Vec::with_capacity(segments.len() * 7);
             for (a, b, cost) in segments {
                 let pa = surface_point_xyz(a.0, a.1, a.2, voxel_size);
@@ -277,7 +273,7 @@ impl MLSPlanner {
     }
 
     fn clear(&mut self) {
-        self.planner = Planner::default();
+        self.planner = Planner::new(self.config.worker_threads);
     }
 
     fn __repr__(&self) -> String {

@@ -90,8 +90,7 @@ pub struct Config {
     /// stray far hit cannot inflate it.
     #[validate(range(min = 0.0, max = 100.0))]
     pub region_percentile: f32,
-    /// Worker threads for parallel map work. More threads gain no wall time
-    /// and steal cores the rest of the robot needs.
+    /// Worker threads for parallel map work.
     #[validate(range(min = 1))]
     pub worker_threads: u32,
 }
@@ -157,10 +156,8 @@ impl VoxelMap {
     }
 
     /// Add a return to its voxel's accumulated moments, marking its fine cell
-    /// when a divisor is given. Returns the key, whether the return crossed
-    /// the normal-refit milestone, and the fine key. The fine child index
-    /// derives from the coarse key, not a fine-grid float path, which can
-    /// disagree at cell boundaries and plant phantom voxels.
+    /// when a divisor is given. The fine child index derives from the coarse
+    /// key so cell-boundary float error cannot plant phantom voxels.
     fn accumulate(
         &mut self,
         point: (f32, f32, f32),
@@ -611,6 +608,17 @@ fn box_inside(b: &LocalBounds, min: (f32, f32, f32), max: (f32, f32, f32)) -> bo
     dx * dx + dy * dy <= b.r_xy_max_sq
 }
 
+/// Whether the axis-aligned box is entirely outside the cylinder bounds,
+/// by its nearest corner.
+fn box_outside(b: &LocalBounds, min: (f32, f32, f32), max: (f32, f32, f32)) -> bool {
+    if max.2 < b.z_min || min.2 > b.z_max {
+        return true;
+    }
+    let dx = (min.0 - b.origin_x).max(b.origin_x - max.0).max(0.0);
+    let dy = (min.1 - b.origin_y).max(b.origin_y - max.1).max(0.0);
+    dx * dx + dy * dy > b.r_xy_max_sq
+}
+
 /// The world-space box of the grid cell at `key`, for cells of `edge` meters.
 fn cell_box(key: (i32, i32, i32), edge: f32) -> ((f32, f32, f32), (f32, f32, f32)) {
     let min = (
@@ -682,14 +690,13 @@ fn is_supported(map: &VoxelMap, key: VoxelKey, support_min: i32) -> bool {
 
 /// Scan the healthy voxels of every chunk overlapping `bounds` (all chunks
 /// when `None`) in parallel, flattening the per-chunk output. `emit` gets each
-/// key and whether its whole chunk is inside the cylinder. `per_key` sizes the
-/// chunk buffers in points, `extra` reserves for the caller's live merge.
+/// key and whether its whole chunk is inside the cylinder.
 fn scan_chunks<F>(
     map: &VoxelMap,
     voxel_size: f32,
     bounds: Option<&LocalBounds>,
-    per_key: usize,
-    extra: usize,
+    points_per_key: usize,
+    extra_points: usize,
     emit: F,
 ) -> Vec<f32>
 where
@@ -699,14 +706,17 @@ where
     let parts: Vec<Vec<f32>> = match bounds {
         Some(b) => chunks_in_bounds(map, b, voxel_size)
             .par_iter()
-            .map(|&(chunk, keys)| {
+            .filter_map(|&(chunk, keys)| {
                 let (min, max) = cell_box(chunk, chunk_edge);
+                if box_outside(b, min, max) {
+                    return None;
+                }
                 let chunk_inside = box_inside(b, min, max);
-                let mut part = Vec::with_capacity(3 * per_key * keys.len());
+                let mut part = Vec::with_capacity(3 * points_per_key * keys.len());
                 for &key in keys {
                     emit(key, chunk_inside, &mut part);
                 }
-                part
+                Some(part)
             })
             .collect(),
         None => map
@@ -715,7 +725,7 @@ where
             .collect::<Vec<_>>()
             .par_iter()
             .map(|keys| {
-                let mut part = Vec::with_capacity(3 * per_key * keys.len());
+                let mut part = Vec::with_capacity(3 * points_per_key * keys.len());
                 for &key in keys.iter() {
                     emit(key, true, &mut part);
                 }
@@ -723,7 +733,7 @@ where
             })
             .collect(),
     };
-    flatten_with_capacity(parts, 3 * extra)
+    flatten_with_capacity(parts, 3 * extra_points)
 }
 
 /// Points for an emitted cloud, flat (x, y, z) triples: healthy surface voxels
@@ -743,11 +753,13 @@ pub fn emit_points(
         1,
         live.len(),
         |key, chunk_inside, part| {
-            if !is_supported(map, key, support_min) {
+            // Bounds first: the containment test is cheap, the support test
+            // pays a hash lookup.
+            let (x, y, z) = voxel_center(key, voxel_size);
+            if !(chunk_inside || bounds.is_none_or(|b| b.contains(x, y, z))) {
                 return;
             }
-            let (x, y, z) = voxel_center(key, voxel_size);
-            if chunk_inside || bounds.is_none_or(|b| b.contains(x, y, z)) {
+            if is_supported(map, key, support_min) {
                 part.extend_from_slice(&[x, y, z]);
             }
         },
@@ -788,18 +800,21 @@ pub fn emit_points_fine(
         4,
         live_fine.len(),
         |key, chunk_inside, part| {
+            // Boundary chunks test each voxel's box before paying the map
+            // lookup. Boundary voxels fall back to per-cell checks.
+            let inside = chunk_inside || {
+                let (min, max) = cell_box(key, voxel_size);
+                if bounds.is_some_and(|b| box_outside(b, min, max)) {
+                    return;
+                }
+                bounds.is_some_and(|b| box_inside(b, min, max))
+            };
             let Some(v) = map.voxels.get(&key) else {
                 return;
             };
             if !voxel_supported(v, support_min) {
                 return;
             }
-            // Boundary chunks test each voxel's box. Boundary voxels fall
-            // back to per-cell checks.
-            let inside = chunk_inside || {
-                let (min, max) = cell_box(key, voxel_size);
-                bounds.is_some_and(|b| box_inside(b, min, max))
-            };
             let mut bits = v.fine;
             while bits != 0 {
                 let i = bits.trailing_zeros() as usize;

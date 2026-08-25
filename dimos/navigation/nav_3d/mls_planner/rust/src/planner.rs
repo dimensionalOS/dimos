@@ -166,20 +166,10 @@ pub fn plan(
     // Nearest candidate first so the lead-in anchors at the robot's own cell.
     // The rest are only a fallback when it cannot connect.
     let (near, rest) = start_cells.split_at(start_cells.len().min(1));
-    let entry = select_entry(
-        plg,
-        near,
-        goal_cell,
-        goal_node,
-        &cost_to_go,
-        &pred_to_goal,
-        &node_cells,
-        radius,
-    )
-    .or_else(|| {
+    let entry = [near, rest].into_iter().find_map(|group| {
         select_entry(
             plg,
-            rest,
+            group,
             goal_cell,
             goal_node,
             &cost_to_go,
@@ -511,7 +501,7 @@ fn robot_search(
     let mut dist: AHashMap<CellId, f32> = AHashMap::new();
     let mut geo: AHashMap<CellId, f32> = AHashMap::new();
     let mut pred: AHashMap<CellId, CellId> = AHashMap::new();
-    let mut heap: BinaryHeap<Scored<NodeId>> = BinaryHeap::new();
+    let mut heap: BinaryHeap<Scored<CellId>> = BinaryHeap::new();
     for &source in sources {
         dist.insert(source, 0.0);
         geo.insert(source, 0.0);

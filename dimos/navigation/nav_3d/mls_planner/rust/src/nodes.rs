@@ -119,18 +119,17 @@ pub fn relocate_dead_nodes(
         return;
     }
     let step = params.step_cells;
-    let dead_idx: AHashSet<usize> = dead_nodes.iter().map(|&(i, _)| i).collect();
-    let mut taken: AHashSet<CellId> = nodes
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| !dead_idx.contains(i))
-        .map(|(_, n)| n.cell_id)
-        .collect();
+    let mut dead = vec![false; nodes.len()];
+    for &(i, _) in dead_nodes {
+        dead[i] = true;
+    }
+    let mut taken = vec![false; cells.slot_capacity()];
     // Fragment fallbacks whose relocation would crowd the main surface die
     // instead of moving.
     let mut bins = NodeBins::new(params.node_spacing_m);
     for (i, n) in nodes.iter().enumerate() {
-        if !dead_idx.contains(&i) {
+        if !dead[i] {
+            taken[n.cell_id as usize] = true;
             bins.insert(n.pos);
         }
     }
@@ -149,7 +148,7 @@ pub fn relocate_dead_nodes(
                 let Some(id) = cells.id(k) else {
                     continue;
                 };
-                if taken.contains(&id) {
+                if taken[id as usize] {
                     continue;
                 }
                 let rank = 2 * dz + dx.abs() + dy.abs();
@@ -166,7 +165,8 @@ pub fn relocate_dead_nodes(
                     n.cell_id = NO_CELL;
                     continue;
                 }
-                taken.insert(id);
+                taken[id as usize] = true;
+                bins.insert(pos);
                 n.cell_id = id;
                 n.pos = pos;
             }
@@ -898,11 +898,43 @@ mod tests {
     }
 
     #[test]
+    fn co_relocating_nodes_crowd_each_other() {
+        // Two nodes die in the same update with adjacent relocation targets.
+        // The second relocation must see the first and die instead of landing
+        // within the crowding radius of it.
+        let surface = [(5, 5, 1), (5, 6, 1)];
+        let mut lookup = SurfaceLookup::new();
+        build_surface_lookup(&surface, &mut lookup);
+        let sc = build_cells(&surface, 2);
+        let mut nodes = vec![
+            NodeData {
+                cell_id: 0,
+                pos: surface_point_xyz(5, 5, 0, VOXEL),
+            },
+            NodeData {
+                cell_id: 1,
+                pos: surface_point_xyz(5, 6, 0, VOXEL),
+            },
+        ];
+        relocate_dead_nodes(
+            &sc,
+            &lookup,
+            &mut nodes,
+            &[(0, (5, 5, 0)), (1, (5, 6, 0))],
+            &params(0.0, 0.0),
+        );
+        let relocated = sc.id((5, 5, 1)).unwrap();
+        assert_eq!(nodes[0].cell_id, relocated, "first relocation lands");
+        assert_eq!(
+            nodes[1].cell_id, NO_CELL,
+            "second relocation must be crowded out by the first"
+        );
+    }
+
+    #[test]
     fn spawn_floor_blocks_new_nodes_near_walls() {
-        // Region placement spawns nodes only on added cells that clear
-        // wall_clearance + half the buffer. A cell one ring in from the patch
-        // edge (0.1 m) sits under the 0.15 m spawn floor. The center (~0.5 m)
-        // clears it.
+        // A cell inside the spawn floor must not spawn a node, while an open
+        // cell that clears it must.
         let surface = open_patch(0, 0, 10);
         let mut sc = build_cells(&surface, 2);
         let mut state = DijkstraState::default();

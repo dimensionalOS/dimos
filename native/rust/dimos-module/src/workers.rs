@@ -12,11 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/// Cap the process-wide rayon worker pool. One pool per process: a no-op when
-/// some other module in this process already sized it, which keeps the first
-/// configured value.
-pub fn init_worker_pool(threads: u32) {
-    let _ = rayon::ThreadPoolBuilder::new()
-        .num_threads(threads as usize)
-        .build_global();
+use std::sync::Arc;
+
+/// A dedicated rayon pool for one component's parallel work. Owned per object
+/// and installed around its parallel sections, so thread settings from
+/// components sharing a process never collide.
+pub fn worker_pool(threads: u32) -> Arc<rayon::ThreadPool> {
+    Arc::new(
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads as usize)
+            .build()
+            .expect("failed to build the worker thread pool"),
+    )
 }

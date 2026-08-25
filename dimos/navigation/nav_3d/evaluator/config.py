@@ -50,7 +50,7 @@ class EvalConfig:
     # Which pipeline is under test, by registry name.
     pipeline: str = "mls"
     # Pipeline constructor overrides, e.g. --set planner.wall_clearance_m=0.0.
-    planner: dict[str, float] = field(default_factory=dict)
+    planner: dict[str, float | int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.validate()

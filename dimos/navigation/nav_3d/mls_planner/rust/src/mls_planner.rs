@@ -14,13 +14,15 @@
 
 //! Config and the owned-state Planner that builds and queries the MLS graph.
 
+use std::sync::Arc;
+
 use ahash::{AHashMap, AHashSet};
-use dimos_module::native_config;
+use dimos_module::{native_config, worker_pool};
 use rayon::prelude::*;
 use validator::ValidationError;
 
 use crate::adjacency::{build_surface_cells, build_surface_lookup, rebuild_edges_around, CellId};
-use crate::edges::{build_node_edges, build_node_edges_region, PlannerGraph};
+use crate::edges::{build_node_edges, build_node_edges_region, edges_to_segments, PlannerGraph};
 use crate::nodes::{
     place_nodes, place_nodes_region, relocate_dead_nodes, PlacementParams, HOLE_SPAN_CELLS,
 };
@@ -76,8 +78,7 @@ pub struct Config {
     /// artifacts. 0 disables them entirely. The path output is unthrottled.
     #[validate(range(min = 0.0))]
     pub viz_publish_hz: f32,
-    /// Worker threads for parallel planner work. More threads gain no wall
-    /// time and steal cores the rest of the robot needs.
+    /// Worker threads for parallel planner work.
     #[validate(range(min = 1))]
     pub worker_threads: u32,
 }
@@ -175,8 +176,10 @@ impl RegionBounds {
     }
 }
 
-#[derive(Default)]
 pub struct Planner {
+    // The planner owns its worker pool, so its thread setting cannot collide
+    // with other components sharing the process.
+    pool: Arc<rayon::ThreadPool>,
     graph: PlannerGraph,
     voxel_map: AHashSet<VoxelKey>,
     by_col: ColumnIz,
@@ -189,26 +192,40 @@ pub struct Planner {
 }
 
 impl Planner {
-    pub fn update_global_map(&mut self, points: &[(f32, f32, f32)], config: &Config) {
-        let voxel_size = config.voxel_size;
-        let clearance = config.headroom_cells();
-
-        self.voxel_map.clear();
-        for &p in points {
-            self.voxel_map.insert(voxelize(p, voxel_size));
+    pub fn new(worker_threads: u32) -> Self {
+        Self {
+            pool: worker_pool(worker_threads),
+            graph: PlannerGraph::default(),
+            voxel_map: AHashSet::new(),
+            by_col: ColumnIz::default(),
+            last_path: None,
+            last_result: None,
         }
+    }
 
-        let mut surface: Vec<VoxelKey> = Vec::new();
-        extract_surfaces(
-            &self.voxel_map,
-            clearance,
-            config.closing_passes(),
-            &mut self.by_col,
-            &mut surface,
-        );
-        build_surface_lookup(&surface, &mut self.graph.surface_lookup);
+    pub fn update_global_map(&mut self, points: &[(f32, f32, f32)], config: &Config) {
+        let pool = Arc::clone(&self.pool);
+        pool.install(|| {
+            let voxel_size = config.voxel_size;
+            let clearance = config.headroom_cells();
 
-        self.rebuild_graph(config);
+            self.voxel_map.clear();
+            for &p in points {
+                self.voxel_map.insert(voxelize(p, voxel_size));
+            }
+
+            let mut surface: Vec<VoxelKey> = Vec::new();
+            extract_surfaces(
+                &self.voxel_map,
+                clearance,
+                config.closing_passes(),
+                &mut self.by_col,
+                &mut surface,
+            );
+            build_surface_lookup(&surface, &mut self.graph.surface_lookup);
+
+            self.rebuild_graph(config);
+        });
     }
 
     /// Update planner artifacts within a local region instead of rebuilding
@@ -219,24 +236,27 @@ impl Planner {
         bounds: &RegionBounds,
         config: &Config,
     ) {
-        let voxel_size = config.voxel_size;
-        let clearance = config.headroom_cells();
-        let pad = (2 * config.closing_passes()) as i32;
+        let pool = Arc::clone(&self.pool);
+        pool.install(|| {
+            let voxel_size = config.voxel_size;
+            let clearance = config.headroom_cells();
+            let pad = (2 * config.closing_passes()) as i32;
 
-        let changed = self.replace_region_voxels(local_points, bounds, voxel_size);
+            let changed = self.replace_region_voxels(local_points, bounds, voxel_size);
 
-        // No voxel changed, so surfaces and the graph are untouched.
-        let Some((bx0, bx1, by0, by1)) = changed else {
-            return;
-        };
+            // No voxel changed, so surfaces and the graph are untouched.
+            let Some((bx0, bx1, by0, by1)) = changed else {
+                return;
+            };
 
-        // A changed column shifts surfaces only within pad of it.
-        let write = (bx0 - pad, bx1 + pad, by0 - pad, by1 + pad);
-        let new_cells =
-            extract_surfaces_region(&self.by_col, clearance, config.closing_passes(), write);
-        let (added, removed) = self.replace_surface_region(write, &new_cells);
+            // A changed column shifts surfaces only within pad of it.
+            let write = (bx0 - pad, bx1 + pad, by0 - pad, by1 + pad);
+            let new_cells =
+                extract_surfaces_region(&self.by_col, clearance, config.closing_passes(), write);
+            let (added, removed) = self.replace_surface_region(write, &new_cells);
 
-        self.rebuild_region_graph(added, removed, config);
+            self.rebuild_region_graph(added, removed, config);
+        });
     }
 
     /// Patch changed cells, then repair nodes and edges around the change.
@@ -400,23 +420,26 @@ impl Planner {
         let mut added: Vec<VoxelKey> = Vec::new();
         let mut removed: Vec<VoxelKey> = Vec::new();
         for (col, new_zs) in changed {
-            let old_zs = if new_zs.is_empty() {
-                self.graph.surface_lookup.remove(&col).unwrap_or_default()
-            } else {
-                self.graph
-                    .surface_lookup
-                    .insert(col, new_zs.clone())
-                    .unwrap_or_default()
-            };
+            let old_zs = self
+                .graph
+                .surface_lookup
+                .get(&col)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
             for &iz in &new_zs {
                 if old_zs.binary_search(&iz).is_err() {
                     added.push((col.0, col.1, iz));
                 }
             }
-            for &iz in &old_zs {
+            for &iz in old_zs {
                 if new_zs.binary_search(&iz).is_err() {
                     removed.push((col.0, col.1, iz));
                 }
+            }
+            if new_zs.is_empty() {
+                self.graph.surface_lookup.remove(&col);
+            } else {
+                self.graph.surface_lookup.insert(col, new_zs);
             }
         }
         (added, removed)
@@ -588,6 +611,12 @@ impl Planner {
         &self.graph
     }
 
+    /// Corridor segments of every node edge, for visualization.
+    pub fn edge_segments(&self) -> Vec<(VoxelKey, VoxelKey, f32)> {
+        self.pool
+            .install(|| edges_to_segments(&self.graph.node_edges))
+    }
+
     pub fn surface(&self) -> impl Iterator<Item = VoxelKey> + '_ {
         self.graph
             .surface_lookup
@@ -654,13 +683,13 @@ impl ChangeBounds {
 
 #[cfg(test)]
 mod region_tests {
+    use super::*;
+    use std::collections::{BTreeMap, BTreeSet};
+
     /// Slack for comparing regional and full-rebuild path lengths. Node
     /// placement differs between the two, so paths are equivalent, not equal.
     const PATH_LEN_RATIO: f32 = 1.6;
     const PATH_LEN_SLACK_M: f32 = 0.5;
-
-    use super::*;
-    use std::collections::{BTreeMap, BTreeSet};
 
     fn test_config() -> Config {
         Config {
@@ -785,7 +814,7 @@ mod region_tests {
         };
         let all = world_points();
 
-        let mut full = Planner::default();
+        let mut full = Planner::new(cfg.worker_threads);
         full.update_global_map(&all, &cfg);
 
         let inside: Vec<_> = all
@@ -805,7 +834,7 @@ mod region_tests {
         for iz in 3..8 {
             seeded.push((2.05, 2.05, iz as f32 * cfg.voxel_size + 0.05));
         }
-        let mut region = Planner::default();
+        let mut region = Planner::new(cfg.worker_threads);
         region.update_global_map(&seeded, &cfg);
         region.update_region(&inside, &bounds, &cfg);
 
@@ -845,7 +874,7 @@ mod region_tests {
         let cfg = test_config();
         let all = big_world();
         let vs = cfg.voxel_size;
-        let mut p = Planner::default();
+        let mut p = Planner::new(cfg.worker_threads);
         p.update_global_map(&all, &cfg);
         let in_patch = |pos: (f32, f32, f32)| {
             let d = (pos.0 - 1.5, pos.1 - 1.5);
@@ -902,7 +931,7 @@ mod region_tests {
         let cfg = test_config();
         let all = big_world();
         let vs = cfg.voxel_size;
-        let mut p = Planner::default();
+        let mut p = Planner::new(cfg.worker_threads);
         p.update_global_map(&all, &cfg);
 
         // The node nearest the center of the open left half.
@@ -946,7 +975,7 @@ mod region_tests {
         };
         let all = big_world();
         let vs = cfg.voxel_size;
-        let mut p = Planner::default();
+        let mut p = Planner::new(cfg.worker_threads);
         p.update_global_map(&all, &cfg);
 
         let target = p
@@ -986,7 +1015,7 @@ mod region_tests {
         let cfg = test_config();
         let all = big_world();
         let vs = cfg.voxel_size;
-        let mut p = Planner::default();
+        let mut p = Planner::new(cfg.worker_threads);
         p.update_global_map(&all, &cfg);
         let before = node_coords(&p);
 
@@ -1031,7 +1060,7 @@ mod region_tests {
         let inside = (2.05, 2.05, 0.05);
         let outside = (10.05, 10.05, 0.05);
 
-        let mut p = Planner::default();
+        let mut p = Planner::new(cfg.worker_threads);
         p.update_region(&[inside, outside], &bounds, &cfg);
 
         assert!(p.voxel_map.contains(&voxelize(inside, cfg.voxel_size)));
@@ -1121,7 +1150,7 @@ mod region_tests {
         let all = big_world();
         let vs = cfg.voxel_size;
 
-        let mut p = Planner::default();
+        let mut p = Planner::new(cfg.worker_threads);
         p.update_global_map(&all, &cfg);
         let before_cells = cell_edges(&p);
         let before_nodes = node_coords(&p);
@@ -1163,10 +1192,10 @@ mod region_tests {
         let all = big_world();
         let vs = cfg.voxel_size;
 
-        let mut full = Planner::default();
+        let mut full = Planner::new(cfg.worker_threads);
         full.update_global_map(&all, &cfg);
 
-        let mut region = Planner::default();
+        let mut region = Planner::new(cfg.worker_threads);
         let mut cx = 0.5;
         while cx <= 7.5 {
             let mut cy = 0.5;
@@ -1234,13 +1263,13 @@ mod region_tests {
 
         // No clearance: the shortest route slips straight through the narrow gap.
         cfg.wall_clearance_m = 0.0;
-        let mut open = Planner::default();
+        let mut open = Planner::new(cfg.worker_threads);
         open.update_global_map(&pts, &cfg);
         let wp_open = open.plan(start, goal, &cfg).expect("open plan exists");
 
         // Clearance wider than the narrow gap: it is impassable, so detour wide.
         cfg.wall_clearance_m = 0.2;
-        let mut safe = Planner::default();
+        let mut safe = Planner::new(cfg.worker_threads);
         safe.update_global_map(&pts, &cfg);
         let wp_safe = safe.plan(start, goal, &cfg).expect("safe plan exists");
 
@@ -1266,7 +1295,7 @@ mod region_tests {
         cfg.wall_clearance_m = 0.2;
         cfg.wall_buffer_m = 0.5;
         let all = big_world();
-        let mut p = Planner::default();
+        let mut p = Planner::new(cfg.worker_threads);
         p.update_global_map(&all, &cfg);
 
         let wp = p
@@ -1338,7 +1367,7 @@ mod region_tests {
         cfg.wall_buffer_m = 0.0;
         cfg.node_spacing_m = 0.5;
         let pts = block_world();
-        let mut p = Planner::default();
+        let mut p = Planner::new(cfg.worker_threads);
         p.update_global_map(&pts, &cfg);
 
         let wp = p
@@ -1395,13 +1424,13 @@ mod region_tests {
 
         // No step penalty: the short route crosses the ridge low.
         cfg.step_penalty_weight = 0.0;
-        let mut cheap = Planner::default();
+        let mut cheap = Planner::new(cfg.worker_threads);
         cheap.update_global_map(&pts, &cfg);
         let wp_cheap = cheap.plan(start, goal, &cfg).expect("plan exists");
 
         // Heavy step penalty: the flat detour to the iy 10 gap wins.
         cfg.step_penalty_weight = 30.0;
-        let mut avoid = Planner::default();
+        let mut avoid = Planner::new(cfg.worker_threads);
         avoid.update_global_map(&pts, &cfg);
         let wp_avoid = avoid.plan(start, goal, &cfg).expect("plan exists");
 
@@ -1440,7 +1469,7 @@ mod region_tests {
             pts.push((ix as f32 * vs + half, 5.0 * vs + half, half));
         }
 
-        let mut p = Planner::default();
+        let mut p = Planner::new(cfg.worker_threads);
         p.update_global_map(&pts, &cfg);
 
         let start = (0.45, 0.45, 0.0);

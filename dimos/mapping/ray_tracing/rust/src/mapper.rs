@@ -12,11 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::sync::Arc;
+
+use dimos_module::worker_pool;
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
 use crate::voxel_ray_tracer::{
-    batch_local_bounds, emit_points, emit_points_fine, update_map, Config, Cylinder, FrameHits,
-    LocalBounds, VoxelMap,
+    batch_local_bounds, emit_points, emit_points_fine, global_normal_fits, update_map, Config,
+    Cylinder, FrameHits, LocalBounds, VoxelMap,
 };
 
 pub type Point = (f32, f32, f32);
@@ -32,6 +35,9 @@ pub struct Pose {
 /// binding. Callers own transport only.
 pub struct Mapper {
     config: Config,
+    // The mapper owns its worker pool, so its thread setting cannot collide
+    // with other components sharing the process.
+    pool: Arc<rayon::ThreadPool>,
     map: VoxelMap,
     live: FrameHits,
     batch_points: Vec<Point>,
@@ -45,6 +51,7 @@ impl Mapper {
     /// The config must already be validated at the caller's boundary.
     pub fn new(config: Config) -> Self {
         Self {
+            pool: worker_pool(config.worker_threads),
             config,
             map: VoxelMap::default(),
             live: FrameHits::default(),
@@ -66,20 +73,17 @@ impl Mapper {
 
     /// Register a sensor-frame cloud into the world by `pose` and fold it into
     /// the map.
-    pub fn add_frame(&mut self, sensor_points: &[Point], pose: Pose) {
+    pub fn add_frame(&mut self, mut sensor_points: Vec<Point>, pose: Pose) {
         let (px, py, pz) = pose.position;
         let (qx, qy, qz, qw) = pose.orientation;
         let translation = Vector3::new(px, py, pz);
         let rot =
             UnitQuaternion::from_quaternion(Quaternion::new(qw, qx, qy, qz)).to_rotation_matrix();
-        let points: Vec<Point> = sensor_points
-            .iter()
-            .map(|&(x, y, z)| {
-                let p = rot * Vector3::new(x, y, z) + translation;
-                (p.x, p.y, p.z)
-            })
-            .collect();
-        self.ingest(points, pose.position);
+        for p in sensor_points.iter_mut() {
+            let w = rot * Vector3::new(p.0, p.1, p.2) + translation;
+            *p = (w.x, w.y, w.z);
+        }
+        self.ingest(sensor_points, pose.position);
     }
 
     /// Fold an already world-frame cloud into the map, raycasting from `origin`.
@@ -88,7 +92,8 @@ impl Mapper {
     }
 
     fn ingest(&mut self, points: Vec<Point>, origin: Point) {
-        self.live = update_map(&mut self.map, origin, &points, &self.config);
+        let pool = Arc::clone(&self.pool);
+        self.live = pool.install(|| update_map(&mut self.map, origin, &points, &self.config));
 
         // The batch only feeds the local region bounds, so skip it when the
         // local cadence is disabled.
@@ -144,39 +149,52 @@ impl Mapper {
 
     /// All healthy voxel centers plus this frame's live voxels, flat triples.
     pub fn global_points(&self) -> Vec<f32> {
-        emit_points(
-            &self.map,
-            self.config.voxel_size,
-            None,
-            0,
-            &self.live.coarse,
-        )
+        self.pool.install(|| {
+            emit_points(
+                &self.map,
+                self.config.voxel_size,
+                None,
+                0,
+                &self.live.coarse,
+            )
+        })
     }
 
     /// Support-gated healthy voxel centers within `bounds`, plus live voxels,
     /// flat triples.
     pub fn local_points(&self, bounds: &LocalBounds) -> Vec<f32> {
-        emit_points(
-            &self.map,
-            self.config.voxel_size,
-            Some(bounds),
-            self.config.support_min,
-            &self.live.coarse,
-        )
+        self.pool.install(|| {
+            emit_points(
+                &self.map,
+                self.config.voxel_size,
+                Some(bounds),
+                self.config.support_min,
+                &self.live.coarse,
+            )
+        })
     }
 
     /// Fine cells within `bounds` under the same gates as `local_points`, or
     /// None when the fine layer is off.
     pub fn fine_points(&self, bounds: &LocalBounds) -> Option<Vec<f32>> {
         let (divisor, _) = self.config.fine_layer()?;
-        Some(emit_points_fine(
-            &self.map,
-            self.config.voxel_size,
-            divisor,
-            Some(bounds),
-            self.config.support_min,
-            &self.live.fine,
-        ))
+        Some(self.pool.install(|| {
+            emit_points_fine(
+                &self.map,
+                self.config.voxel_size,
+                divisor,
+                Some(bounds),
+                self.config.support_min,
+                &self.live.fine,
+            )
+        }))
+    }
+
+    /// Positions, normals, and smallest eigenvalues from a fresh whole-map
+    /// pooled fit. Visualization only.
+    pub fn normal_fits(&self) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+        self.pool
+            .install(|| global_normal_fits(&self.map, self.config.voxel_size))
     }
 
     /// Reset to an empty map, keeping the config.
@@ -230,7 +248,7 @@ mod tests {
             position: (10.0, 0.0, 0.0),
             orientation: (0.0, 0.0, half, half),
         };
-        mapper.add_frame(&[(3.5, 0.0, 0.5)], pose);
+        mapper.add_frame(vec![(3.5, 0.0, 0.5)], pose);
         let world = mapper.registered_points();
         assert!((world[0].0 - 10.0).abs() < 1e-5);
         assert!((world[0].1 - 3.5).abs() < 1e-5);
@@ -253,7 +271,7 @@ mod tests {
             position: (0.0, 0.0, 0.0),
             orientation: IDENTITY,
         };
-        mapper.add_frame(&[(5.5, 0.5, 0.5)], pose);
+        mapper.add_frame(vec![(5.5, 0.5, 0.5)], pose);
         assert_eq!(mapper.registered_points(), &[(5.5, 0.5, 0.5)]);
         assert_eq!(mapper.global_points(), vec![5.5, 0.5, 0.5]);
     }
@@ -265,7 +283,7 @@ mod tests {
             position: (1.0, 2.0, 3.0),
             orientation: IDENTITY,
         };
-        mapper.add_frame(&[(2.0, 0.5, 0.5)], pose);
+        mapper.add_frame(vec![(2.0, 0.5, 0.5)], pose);
         let c = mapper.take_local_bounds();
         assert_eq!((c.cx, c.cy), (1.0, 2.0));
         assert!(c.radius > 0.0);
@@ -290,7 +308,7 @@ mod tests {
         };
         let mut dues = Vec::new();
         for _ in 0..6 {
-            mapper.add_frame(&[(5.5, 0.5, 0.5)], pose);
+            mapper.add_frame(vec![(5.5, 0.5, 0.5)], pose);
             dues.push((mapper.local_due(), mapper.global_due()));
         }
         assert_eq!(
@@ -307,13 +325,31 @@ mod tests {
     }
 
     #[test]
+    fn zero_cadence_disables_emits() {
+        let cfg = Config {
+            emit_every: 0,
+            global_emit_every: 0,
+            ..config()
+        };
+        let mut mapper = Mapper::new(cfg);
+        let pose = Pose {
+            position: (0.0, 0.0, 0.0),
+            orientation: IDENTITY,
+        };
+        for _ in 0..4 {
+            mapper.add_frame(vec![(5.5, 0.5, 0.5)], pose);
+            assert_eq!((mapper.local_due(), mapper.global_due()), (false, false));
+        }
+    }
+
+    #[test]
     fn fine_points_none_when_layer_off() {
         let mut mapper = Mapper::new(config());
         let pose = Pose {
             position: (0.0, 0.0, 0.0),
             orientation: IDENTITY,
         };
-        mapper.add_frame(&[(5.5, 0.5, 0.5)], pose);
+        mapper.add_frame(vec![(5.5, 0.5, 0.5)], pose);
         let bounds = LocalBounds {
             origin_x: 0.0,
             origin_y: 0.0,
@@ -327,7 +363,7 @@ mod tests {
             fine_divisor: 2,
             ..config()
         });
-        fine.add_frame(&[(5.1, 0.1, 0.1)], pose);
+        fine.add_frame(vec![(5.1, 0.1, 0.1)], pose);
         assert_eq!(fine.fine_points(&bounds).unwrap(), vec![5.25, 0.25, 0.25]);
     }
 }

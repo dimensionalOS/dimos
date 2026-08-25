@@ -68,12 +68,14 @@ class MLSPipeline:
         from dimos.navigation.nav_3d.mls_planner.mls_planner import MLSPlanner
 
         self._mapper = VoxelRayMapper(voxel_size=cfg.voxel_size, max_range=cfg.max_range)
+        overrides = dict(cfg.planner)
+        # The planner's one int param, bound explicitly so the unpack type-checks.
+        threads = int(overrides.pop("worker_threads", 4))
         self._planner = MLSPlanner(
             voxel_size=cfg.voxel_size,
             robot_height=cfg.robot_height,
-            # The only int param, bound explicitly so the float overrides unpack checks.
-            worker_threads=4,
-            **cfg.planner,
+            worker_threads=threads,
+            **overrides,
         )
         self._pending = False
         self._mapped = False

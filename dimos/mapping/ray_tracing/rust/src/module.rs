@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use crate::mapper::{Mapper, Pose};
 use crate::voxel_ray_tracer::Config;
-use dimos_module::{error_throttled, init_worker_pool, warn_throttled, Input, Module, Output};
+use dimos_module::{error_throttled, warn_throttled, Input, Module, Output};
 use lcm_msgs::geometry_msgs::{Point, Pose as PoseMsg, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
@@ -56,7 +56,6 @@ pub struct RayTracingVoxelMap {
 
 impl RayTracingVoxelMap {
     async fn init_mapper(&mut self) {
-        init_worker_pool(self.config.worker_threads);
         self.mapper = Some(Mapper::new(self.config.clone()));
     }
 
@@ -111,7 +110,7 @@ impl RayTracingVoxelMap {
         }
 
         let mapper = self.mapper.as_mut().expect("built in setup");
-        mapper.add_frame(&points, pose);
+        mapper.add_frame(points, pose);
 
         let region = mapper.local_due().then(|| mapper.take_local_bounds());
         let cylinder = region.map(|c| c.bounds());
