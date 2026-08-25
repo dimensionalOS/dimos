@@ -25,6 +25,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 import json
+import os
 from pathlib import Path
 import subprocess
 import time
@@ -171,7 +172,9 @@ class EvalRunner(Configurable, CompositeResource):
         return self._run_dir
 
     def _new_run_dir(self) -> Path:
-        run_dir = self.config.out_dir / time.strftime("run-%Y%m%d-%H%M%S")
+        # The pid keeps runners launched in the same second — parallel suite
+        # sweeps — from silently sharing one directory.
+        run_dir = self.config.out_dir / f"{time.strftime('run-%Y%m%d-%H%M%S')}-{os.getpid()}"
         run_dir.mkdir(parents=True, exist_ok=True)
         return run_dir
 
