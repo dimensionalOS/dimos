@@ -37,6 +37,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.shm import attach_shm
 
 logger = setup_logger()
 
@@ -121,6 +122,9 @@ def shm_key_from_path(config_path: Path | str) -> str:
     return hashlib.md5(resolved.encode("utf-8")).hexdigest()[:12]
 
 
+_ATTACH_WINDOW_S = 0.5
+
+
 def _buffer_name(key: str, buffer: str) -> str:
     return f"{_NAME_PREFIX}_{key}_{buffer}"
 
@@ -187,7 +191,7 @@ class ManipShmSet:
         buffers: dict[str, SharedMemory] = {}
         for buffer_name in _shm_sizes:
             name = _buffer_name(key, buffer_name)
-            buffers[buffer_name] = _unregister(SharedMemory(name=name))
+            buffers[buffer_name] = attach_shm(name, timeout=_ATTACH_WINDOW_S)
         return cls(**buffers)
 
     def as_list(self) -> list[SharedMemory]:

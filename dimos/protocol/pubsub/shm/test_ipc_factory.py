@@ -14,13 +14,16 @@
 
 """Unit tests for the ring-buffer SHM channel (``CpuShmQueue``)."""
 
+import os
 import threading
+import time
 import uuid
 
 import numpy as np
 import pytest
 
 from dimos.protocol.pubsub.shm.ipc_factory import CpuShmQueue
+from dimos.utils.shm import ShmNotReadyError
 
 CAP = 64
 
@@ -184,3 +187,76 @@ def test_layout_mismatch_rejected() -> None:
             CpuShmQueue((CAP,), np.uint8, data_name=data_name, ctrl_name=ctrl_name, slots=256)
     finally:
         owner.close()
+
+
+@pytest.fixture
+def slow_ftruncate(monkeypatch):
+    """Widen the creator's shm_open->ftruncate window so the race is deterministic."""
+    real = os.ftruncate
+
+    def delayed(fd: int, length: int) -> None:
+        time.sleep(0.15)
+        return real(fd, length)
+
+    monkeypatch.setattr(os, "ftruncate", delayed)
+
+
+def test_concurrent_open_survives_the_creation_window(slow_ftruncate) -> None:
+    """Two peers opening the same segment at once: one creates, one waits it out.
+
+    Before the readiness wait, the peer that lost the create raced into the
+    creator's unsized segment and died with "cannot mmap an empty file".
+    """
+    tag = uuid.uuid4().hex[:12]
+    data_name, ctrl_name = f"tq_{tag}_data", f"tq_{tag}_ctrl"
+    channels: list[CpuShmQueue] = []
+    errors: list[BaseException] = []
+    lock = threading.Lock()
+    barrier = threading.Barrier(2)
+
+    def open_peer() -> None:
+        barrier.wait()
+        try:
+            ch = CpuShmQueue((CAP,), np.uint8, data_name=data_name, ctrl_name=ctrl_name, slots=4)
+        except BaseException as exc:
+            with lock:
+                errors.append(exc)
+            return
+        with lock:
+            channels.append(ch)
+
+    threads = [threading.Thread(target=open_peer, daemon=True) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=15)
+
+    try:
+        assert not errors, f"concurrent open failed: {errors!r}"
+        assert len(channels) == 2
+        writer, reader = channels
+        _publish(writer, b"hello")
+        got, _ = _drain(reader)
+        assert [payload for _, payload in got] == [b"hello"]
+    finally:
+        for ch in channels:
+            ch.close()
+
+
+def test_attach_reports_a_bounded_timeout_not_a_hang() -> None:
+    """A descriptor pointing at a segment nobody creates fails with a clear error."""
+    tag = uuid.uuid4().hex[:12]
+    desc = {
+        "kind": "cpu_queue",
+        "shape": (CAP,),
+        "dtype": "|u1",
+        "frame_nbytes": CAP,
+        "slots": 4,
+        "data_name": f"tq_missing_{tag}_data",
+        "ctrl_name": f"tq_missing_{tag}_ctrl",
+    }
+    started = time.monotonic()
+    with pytest.raises(ShmNotReadyError, match="never became ready"):
+        CpuShmQueue.attach(desc)
+    assert time.monotonic() - started < 30.0
+    assert issubclass(ShmNotReadyError, FileNotFoundError)
