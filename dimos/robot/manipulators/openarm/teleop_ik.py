@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpenArm-specific Pink pose-target solver for Quest teleoperation."""
+"""OpenArm-specific Pink pose-target solver for WebXR teleoperation."""
 
 from __future__ import annotations
 

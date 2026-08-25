@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Generic teleop stream recorder (quest, phone, hosted).
+"""Generic teleop stream recorder (WebXR, phone, hosted).
 
 Declares the *superset* of teleop output ports; autoconnect wires whichever the
 composed blueprint produces, the rest stay empty in the DB. Compose at the CLI::
 
-    dimos run teleop-quest-xarm7          teleop-recorder
+    dimos run teleop-webxr-xarm7          teleop-recorder
     dimos run teleop-hosted-go2-transport teleop-recorder
 """
 
@@ -31,9 +31,9 @@ from dimos.memory.module import Recorder, RecorderConfig
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.teleop.quest.quest_types import Buttons
 from dimos.teleop.utils.report import generate_report
 from dimos.teleop.utils.video_stats import VideoStats
+from dimos.teleop.webxr.controller_types import Buttons
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

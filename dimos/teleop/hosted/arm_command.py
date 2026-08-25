@@ -34,16 +34,16 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.teleop.hosted.command_executor import SerializedCommandExecutor
-from dimos.teleop.quest.quest_extensions import ArmTeleopModule
-from dimos.teleop.quest.quest_teleop_module import QuestTeleopConfig
-from dimos.teleop.quest.quest_types import Hand
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
+from dimos.teleop.webxr.controller_types import Hand
+from dimos.teleop.webxr.extensions import ArmTeleopModule
+from dimos.teleop.webxr.module import WebXRTeleopConfig
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 
-class ArmCommandConfig(QuestTeleopConfig):
+class ArmCommandConfig(WebXRTeleopConfig):
     cmd_stale_after_sec: float = 0.5
     enable_ui_scaling: bool = False
 

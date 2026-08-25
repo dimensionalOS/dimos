@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Behavior tests for unified single- and two-hand Quest teleoperation."""
+"""Behavior tests for unified single- and two-hand WebXR teleoperation."""
 
 from pathlib import Path
 from typing import cast
@@ -36,7 +36,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
-from dimos.teleop.quest.quest_types import Buttons
+from dimos.teleop.webxr.controller_types import Buttons
 
 
 def _robot_model() -> RobotModelConfig:

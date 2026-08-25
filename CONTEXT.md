@@ -4,12 +4,12 @@ Canonical language for robot capabilities and operator interaction in DimOS.
 
 ## Teleoperation
 
-**Quest arm teleoperation**:
-Arm teleoperation in which tracked Quest controllers provide clutched, relative Cartesian pose commands and gripper input.
+**WebXR arm teleoperation**:
+Arm teleoperation in which tracked WebXR controllers provide clutched, relative Cartesian pose commands and gripper input.
 _Avoid_: Keyboard teleoperation, leader-follower teleoperation
 
 **Operator hand**:
-The left or right Quest controller as a source of teleoperation intent, independent of the robot arm it controls.
+The left or right WebXR controller as a source of teleoperation intent, independent of the robot arm it controls.
 _Avoid_: Hand, side
 
 **Mixed-arm setup**:

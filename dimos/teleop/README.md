@@ -1,11 +1,12 @@
 # Teleop Stack
 
-Teleoperation modules for DimOS. Supports Meta Quest 3 VR controllers and phone motion sensors.
+Teleoperation modules for DimOS. Supports browser-based WebXR devices, including
+Meta Quest and PICO headsets, plus phone motion sensors.
 
 ## Architecture
 
 ```
-Quest/Phone Browser
+WebXR/Phone Browser
     │
     │  LCM-encoded binary via WebSocket
     ▼
@@ -13,7 +14,7 @@ Embedded FastAPI Server (HTTPS)
     │
     │  Fingerprint-based message dispatch
     ▼
-TeleopModule (Quest or Phone)
+TeleopModule (WebXR or Phone)
     │  Frame transforms + pose/twist computation
     ▼
 PoseStamped / TwistStamped / Buttons outputs
@@ -26,8 +27,8 @@ Each teleop module embeds a `RobotWebInterface` (FastAPI + uvicorn) that:
 
 ## Modules
 
-### QuestTeleopModule
-Base Quest teleop module. Gets controller data via WebSocket, computes output poses, and publishes them. Default engage: hold primary button (X/A). Subclass to customize.
+### WebXRTeleopModule
+Base WebXR teleop module. Gets controller data via WebSocket, computes output poses, and publishes them. Default engage: hold primary button (X/A). Subclass to customize.
 
 ### ArmTeleopModule
 Toggle-based engage — press primary button once to engage, press again to disengage.
@@ -43,7 +44,7 @@ Filters to mobile-base axes (linear.x, linear.y, angular.z) and publishes as `Tw
 
 ## Subclassing
 
-`QuestTeleopModule` is designed for extension. Override these methods:
+`WebXRTeleopModule` is designed for extension. Override these methods:
 
 | Method | Purpose |
 |--------|---------|
@@ -63,10 +64,11 @@ Filters to mobile-base axes (linear.x, linear.y, angular.z) and publishes as `Tw
 
 ```
 teleop/
-├── quest/
-│   ├── quest_teleop_module.py   # Base Quest teleop module (local WebSocket)
-│   ├── quest_extensions.py      # ArmTeleop, TwistTeleop
-│   ├── quest_types.py           # QuestControllerState, Buttons
+├── webxr/
+│   ├── module.py                # Base WebXR teleop module (local WebSocket)
+│   ├── extensions.py            # ArmTeleop, TwistTeleop
+│   ├── controller_types.py      # WebXRControllerState, Buttons
+│   ├── tracking_types.py        # Viewer, inputs, and body tracking
 │   └── web/
 │       └── static/index.html    # WebXR client
 ├── hosted/                      # Hosted teleop (transport-swap, per-concern modules)
@@ -97,10 +99,10 @@ teleop/
 ## Quick Start
 
 ```bash
-dimos run teleop-quest-rerun     # Quest teleop + Rerun viz
+dimos run teleop-webxr-rerun     # WebXR teleop + Rerun viz
 dimos run teleop-phone-go2      # Phone → Go2
 ```
 
 Open `https://<host-ip>:<port>/teleop` on device. Accept the self-signed certificate.
-- Quest: port 8443
+- WebXR headset: port 8443
 - Phone: port 8444
