@@ -526,7 +526,7 @@ def test_create_kinematics_pink_unavailable_solver_mentions_manipulation_extra(
 ) -> None:
     mocker.patch.object(pink_ik.qpsolvers, "available_solvers", [])
 
-    with pytest.raises(ImportError, match="--extra manipulation"):
+    with pytest.raises(ImportError, match="--extra manipulation --inexact"):
         create_kinematics("pink")
 
 
