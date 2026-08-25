@@ -24,7 +24,7 @@ from dimos.manipulation.planning.spec.models import (
     PlanningGroupID,
 )
 
-PlanningGroupSource: TypeAlias = Literal["srdf", "fallback"]
+PlanningGroupSource: TypeAlias = Literal["configured", "srdf", "fallback"]
 
 
 @dataclass(frozen=True)
@@ -39,7 +39,7 @@ class PlanningGroupDefinition:
     joint_names: tuple[JointName, ...]
     base_link: str
     tip_link: str | None = None
-    source: PlanningGroupSource = "srdf"
+    source: PlanningGroupSource = "configured"
 
     @property
     def has_pose_target(self) -> bool:
@@ -58,7 +58,7 @@ class PlanningGroup:
     joint_names: tuple[JointName, ...]
     base_link: str
     tip_link: str | None = None
-    source: PlanningGroupSource = "srdf"
+    source: PlanningGroupSource = "configured"
 
     @property
     def has_pose_target(self) -> bool:

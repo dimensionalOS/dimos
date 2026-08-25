@@ -340,28 +340,6 @@ class TestStateMachine:
         assert module._state == ManipulationState.IDLE
         assert module._error_message == "Test error"
 
-    def test_motion_speed_applies_to_future_plans_only(self, module_factory):
-        module = module_factory()
-        accepted = GeneratedPlan(
-            trajectory=JointTrajectory(),
-            group_ids=("manipulator",),
-            path=[JointState(name=["arm/j0"], position=[0.0])],
-        )
-        module._last_plan = accepted
-
-        assert module.set_motion_speed(0.5) is True
-        assert module.get_motion_speed() == pytest.approx(0.5)
-        assert module._last_plan is accepted
-
-    @pytest.mark.parametrize("invalid", [0.0, 1.01, float("nan")])
-    def test_motion_speed_rejects_invalid_values(self, module_factory, invalid: float):
-        module = module_factory()
-        assert module.set_motion_speed(0.5) is True
-
-        assert module.set_motion_speed(invalid) is False
-        assert module.get_motion_speed() == pytest.approx(0.5)
-        assert "motion speed scale" in module.get_error()
-
 
 class PlanningInitializationHarness:
     def __init__(self, mocker: MockerFixture) -> None:
@@ -411,6 +389,42 @@ class TestPlanningInitialization:
         with module:
             initialize_planning.assert_called_once_with()
             initialize_execution.assert_called_once_with()
+
+    def test_start_is_idempotent(self, mocker: MockerFixture, robot_config) -> None:
+        module = ManipulationModule(model=robot_config)
+        module.coordinator_joint_state = None
+        initialize_planning = mocker.patch.object(module, "_initialize_planning")
+        initialize_execution = mocker.patch.object(module, "_initialize_execution")
+
+        try:
+            module.start()
+            module.start()
+
+            initialize_execution.assert_called_once_with()
+            initialize_planning.assert_called_once_with()
+        finally:
+            module.stop()
+
+    def test_state_is_readable_during_planning_initialization(
+        self,
+        mocker: MockerFixture,
+        robot_config,
+    ) -> None:
+        module = ManipulationModule(model=robot_config)
+        module._control_coordinator = _control_coordinator()
+        module.coordinator_joint_state = None
+        observed_status: list[ExecutionStatus] = []
+
+        def observe_state() -> None:
+            observed_status.append(module.get_state().execution_status)
+
+        mocker.patch.object(module, "_initialize_planning", side_effect=observe_state)
+
+        try:
+            module.start()
+            assert observed_status == [ExecutionStatus.IDLE]
+        finally:
+            module.stop()
 
     def test_kinematics_config_is_passed_to_factory(
         self,

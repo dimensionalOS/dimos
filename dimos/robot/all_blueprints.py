@@ -68,6 +68,7 @@ all_blueprints = {
     "keyboard-teleop-a1z": "dimos.robot.manipulators.a1z.blueprints.teleop:keyboard_teleop_a1z",
     "keyboard-teleop-a750": "dimos.robot.manipulators.a750.blueprints.teleop:keyboard_teleop_a750",
     "keyboard-teleop-openyam": "dimos.robot.manipulators.openyam.blueprints.teleop:keyboard_teleop_openyam",
+    "keyboard-teleop-openyam-planner": "dimos.robot.manipulators.openyam.blueprints.teleop:keyboard_teleop_openyam_planner",
     "keyboard-teleop-piper": "dimos.robot.manipulators.piper.blueprints.teleop:keyboard_teleop_piper",
     "keyboard-teleop-xarm6": "dimos.robot.manipulators.xarm.blueprints.teleop:keyboard_teleop_xarm6",
     "keyboard-teleop-xarm7": "dimos.robot.manipulators.xarm.blueprints.teleop:keyboard_teleop_xarm7",

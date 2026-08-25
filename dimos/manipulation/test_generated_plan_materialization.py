@@ -146,7 +146,6 @@ def test_materializes_once_with_reordered_groups_heterogeneous_limits_and_distin
 def test_cartesian_plan_preserves_planner_timestamps_and_velocities(monkeypatch, module_factory):
     module = _module(monkeypatch, module_factory)
     module._state = ManipulationState.IDLE
-    assert module.set_motion_speed(0.5)
     names = ["left/b", "left/a"]
     start = JointState(name=names, position=[0.0, 0.0])
     path = [
@@ -160,7 +159,7 @@ def test_cartesian_plan_preserves_planner_timestamps_and_velocities(monkeypatch,
         timestamps=[0.0, 0.25],
     )
 
-    success = module.plan_cartesian_targets(
+    plan = module.generate_cartesian_plan(
         {
             "left_arm": (
                 Transform.identity(),
@@ -171,10 +170,9 @@ def test_cartesian_plan_preserves_planner_timestamps_and_velocities(monkeypatch,
             velocity_scale=0.8,
             acceleration_scale=0.6,
         ),
+        speed_scale=0.5,
     )
-    plan = module._last_plan
 
-    assert success
     assert plan is not None
     assert [point.time_from_start for point in plan.trajectory.points] == [0.0, 0.25]
     assert [point.velocities for point in plan.trajectory.points] == [

@@ -169,8 +169,3 @@ def openarm_bimanual_model_config() -> RobotModelConfig:
         max_acceleration=1.0,
         home_joints=list(OPENARM_HOME_JOINTS),
     )
-
-
-def openarm_dual_model_config() -> RobotModelConfig:
-    """Return the canonical bimanual OpenArm planning model."""
-    return openarm_bimanual_model_config()

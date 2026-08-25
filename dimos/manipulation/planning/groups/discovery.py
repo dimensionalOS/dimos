@@ -196,6 +196,7 @@ def _parse_chain_group(
         joint_names=tuple(joint.name for joint in controlled_joints),
         base_link=base_link,
         tip_link=tip_link,
+        source="srdf",
     )
 
 
@@ -225,6 +226,7 @@ def _parse_joint_list_group(
         joint_names=tuple(joint.name for joint in ordered_joints),
         base_link=ordered_joints[0].parent_link,
         tip_link=ordered_joints[-1].child_link,
+        source="srdf",
     )
 
 

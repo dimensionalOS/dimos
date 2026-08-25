@@ -51,13 +51,16 @@ def unique_pose_target_frame(world: WorldSpec) -> str | None:
 def seed_positions_with_world_fallback(
     world: WorldSpec, joint_names: list[str], seed: JointState | None
 ) -> NDArray[np.float64]:
+    if seed is not None and not seed.name:
+        return positions_by_name(seed, joint_names)
+    if seed is not None and set(seed.name) == set(joint_names):
+        return positions_by_name(seed, joint_names)
+
     with world.scratch_context() as ctx:
         current = world.get_joint_state(ctx)
     fallback = positions_by_name(current, joint_names)
     if seed is None:
         return fallback
-    if not seed.name:
-        return positions_by_name(seed, joint_names)
     known = set(joint_names)
     for name, position in zip(seed.name, seed.position, strict=True):
         if name not in known:

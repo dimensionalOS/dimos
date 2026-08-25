@@ -1880,6 +1880,31 @@ def test_collision_exclusion_pairs_are_written_to_generated_srdf(
     assert "other_base" not in srdf
 
 
+def test_generated_srdf_uses_python_planning_group_definitions(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    robot_config.planning_groups = [
+        PlanningGroupDefinition("left_arm", ("joint1",), "base", "link1"),
+        PlanningGroupDefinition("right_arm", ("joint2",), "link1", "link2"),
+        PlanningGroupDefinition("both_arms", ("joint1", "joint2"), "base"),
+    ]
+    assert robot_config.srdf_path is None
+
+    world = _make_world(fake_roboplan, robot_config)
+    root = ET.fromstring(world._scene.constructor_kwargs["srdf"])
+    configured = {
+        group.get("name"): [joint.get("name") for joint in group.findall("joint")]
+        for group in root.findall("group")
+        if group.get("name") in {"left_arm", "right_arm", "both_arms"}
+    }
+
+    assert configured == {
+        "left_arm": ["joint1"],
+        "right_arm": ["joint2"],
+        "both_arms": ["joint1", "joint2"],
+    }
+
+
 def test_collision_exclusion_with_one_unknown_link_is_rejected(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:

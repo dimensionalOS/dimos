@@ -218,9 +218,6 @@ class ViserPanelGui:
     def get_error(self) -> str:
         return self.operator.status().error
 
-    def reset(self) -> bool:
-        return self.operator.reset()
-
     def evaluate_joint_target_set(
         self, group_ids: Sequence[PlanningGroupID], targets: Mapping[PlanningGroupID, JointState]
     ) -> TargetEvaluationResult:

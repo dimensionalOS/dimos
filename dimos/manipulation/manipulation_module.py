@@ -185,7 +185,7 @@ class ManipulationModule(Module):
         self._lock = threading.Lock()
         self._error_message = ""
         self._planning_epoch = 0
-        self._motion_speed_scale = self.config.default_speed_scale
+        self._started = False
 
         # Planning components (initialized in start())
         self._world_monitor: WorldMonitor | None = None
@@ -211,18 +211,24 @@ class ManipulationModule(Module):
     @rpc
     def start(self) -> None:
         """Start the manipulation module."""
-        super().start()
+        if self._started:
+            logger.warning("ManipulationModule already running")
+            return
+        self._started = True
+        try:
+            super().start()
 
-        # Initialize planning stack
-        self._initialize_planning()
-        self._initialize_execution()
+            # Observers may query execution state as planning and visualization start.
+            self._initialize_execution()
+            self._initialize_planning()
 
-        # Subscribe to joint state via port
-        if self.coordinator_joint_state is not None:
-            self.coordinator_joint_state.subscribe(self._on_joint_state)
-            logger.info("Subscribed to coordinator_joint_state port")
-
-        logger.info("ManipulationModule started")
+            if self.coordinator_joint_state is not None:
+                self.coordinator_joint_state.subscribe(self._on_joint_state)
+                logger.info("Subscribed to coordinator_joint_state port")
+            logger.info("ManipulationModule started")
+        except BaseException:
+            self._started = False
+            raise
 
     def _initialize_planning(self) -> None:
         """Initialize world, planner, and trajectory generator."""
@@ -405,27 +411,6 @@ class ManipulationModule(Module):
         return self._error_message
 
     @rpc
-    def set_motion_speed(self, speed_scale: float) -> bool:
-        """Set a runtime speed reduction for plans generated in the future.
-
-        Existing accepted plans and dispatched trajectories remain unchanged.
-        Plan again after changing this value.
-        """
-        if not math.isfinite(speed_scale) or speed_scale <= 0.0 or speed_scale > 1.0:
-            self._record_error("motion speed scale must be finite, > 0, and <= 1")
-            return False
-        with self._lock:
-            self._motion_speed_scale = float(speed_scale)
-            self._error_message = ""
-        return True
-
-    @rpc
-    def get_motion_speed(self) -> float:
-        """Return the runtime speed reduction used for future plans."""
-        with self._lock:
-            return self._motion_speed_scale
-
-    @rpc
     def cancel(self) -> ExecutionResult:
         """Cancel planning or the active trajectory."""
         with self._lock:
@@ -481,7 +466,7 @@ class ManipulationModule(Module):
         if self._world_monitor is None:
             logger.error("Planning not initialized")
             return None
-        resolved_speed = self.get_motion_speed() if speed_scale is None else speed_scale
+        resolved_speed = self.config.default_speed_scale if speed_scale is None else speed_scale
         if not math.isfinite(resolved_speed) or not 0.0 < resolved_speed <= 1.0:
             self._record_error("speed_scale must be finite, > 0, and <= 1")
             return None
@@ -1529,3 +1514,4 @@ class ManipulationModule(Module):
             self._world_monitor.stop_all_monitors()
 
         super().stop()
+        self._started = False

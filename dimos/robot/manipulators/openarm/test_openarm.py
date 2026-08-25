@@ -13,11 +13,11 @@
 # limitations under the License.
 
 from dimos.manipulation.planning.spec.validation import validate_robot_model_config
-from dimos.robot.manipulators.openarm.config import openarm_dual_model_config
+from dimos.robot.manipulators.openarm.config import openarm_bimanual_model_config
 
 
 def test_openarm_dual_model_contains_every_canonical_joint_and_group_frame() -> None:
-    config = openarm_dual_model_config()
+    config = openarm_bimanual_model_config()
 
     description = validate_robot_model_config(config)
 

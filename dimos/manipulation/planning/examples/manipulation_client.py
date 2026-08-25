@@ -12,53 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-RPC client for interacting with a running ManipulationModule.
+"""Small RPC client for a running :class:`ManipulationModule`.
 
-Usage:
-    # Start a manipulation blueprint in another terminal first:
-    #   dimos run xarm7-planner-coordinator
-    #
-    # Then run this client:
-    python -i -m dimos.manipulation.planning.examples.manipulation_client
-
-Available functions:
-    joints()              Get current joint positions
-    ee()                  Get end-effector pose
-    groups()              List explicit planning groups
-    state()               Get module state (IDLE, PLANNING, EXECUTING, ...)
-    ik_pose(x,y,z, seed_joints=None) Solve IK only, without path planning
-    ik_group_pose(group_id,x,y,z) Solve IK for an explicit planning group
-    plan(joints)          Plan to joint configuration, e.g. plan([0.1]*7)
-    plan_group(group_id,joints) Plan to an explicit planning-group joint target
-    plan_pose(x,y,z)      Plan to Cartesian pose
-    plan_group_pose(group_id,x,y,z) Plan to an explicit planning-group pose target
-    preview(duration=None) Preview planned path in Meshcat
-    execute()             Execute planned trajectory via coordinator
-    home()                Move to home position
-    url()                 Get Meshcat visualization URL
-    info()                Get model configuration details
-    gripper(pos)          Set gripper position (0.0=closed, 0.85=open)
-    add_box(name,x,y,z)   Add box obstacle
-    add_sphere(name,x,y,z) Add sphere obstacle
-    add_cylinder(name,x,y,z) Add cylinder obstacle
-    update_box(name,x,y,z,w,h,d) Replace a complete box obstacle
-    update_sphere(name,x,y,z,radius) Replace a complete sphere obstacle
-    update_cylinder(name,x,y,z,radius,height) Replace a complete cylinder obstacle
-    update_pose(name,x,y,z) Move an obstacle without changing its geometry
-    remove(id)            Remove obstacle by ID
-    collision_free(joints) Check if config is collision-free
+Start ``dimos run xarm7-planner-coordinator``, then run this module with
+``python -i -m dimos.manipulation.planning.examples.manipulation_client``.
 """
 
-# mypy: disable-error-code=no-any-return
 from __future__ import annotations
 
-from typing import Any
+from typing import cast
 
 from dimos.core.rpc_client import RPCClient
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.manipulation.planning.groups.models import PlanningGroup
-from dimos.manipulation.planning.spec.models import IKResult
+from dimos.manipulation.manipulation_spec import (
+    CommandResult,
+    ExecutionResult,
+    ManipulationSnapshot,
+    MoveResult,
+    PlanningGroupInfo,
+    PlanResult,
+)
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -68,211 +41,119 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 _client = RPCClient(None, ManipulationModule)
 
 
-def joints() -> list[float] | None:
-    """Get current joint positions."""
-    return _client.get_current_joints()
+def groups() -> tuple[PlanningGroupInfo, ...]:
+    """List opaque planning-group IDs and capabilities."""
+    return cast("tuple[PlanningGroupInfo, ...]", _client.list_planning_groups())
 
 
-def ee(group_id: str | None = None) -> Pose | None:
-    """Get end-effector pose."""
-    return _client.get_ee_pose(group_id)
+def state() -> ManipulationSnapshot:
+    """Get one snapshot containing every planning group."""
+    return cast("ManipulationSnapshot", _client.get_state())
 
 
-def state() -> str:
-    """Get module state."""
-    return _client.get_state()
-
-
-def plan(target_joints: list[float], group_id: str | None = None) -> bool:
-    """Plan to joint configuration. e.g. plan([0.1]*7)"""
-    js = JointState(position=target_joints)
-    return _client.plan_to_joints(js, group_id)
-
-
-def groups() -> list[PlanningGroup]:
-    """List explicit planning groups available for group APIs."""
-    return _client.list_planning_groups()
-
-
-def plan_group(group_id: str, target_joints: list[float] | JointState) -> bool:
-    """Plan to a joint target for an explicit planning group."""
-    target = (
-        target_joints
-        if isinstance(target_joints, JointState)
-        else JointState(position=target_joints)
-    )
-    return _client.plan_to_joint_targets({group_id: target})
-
-
-def _make_target_pose(
-    x: float,
-    y: float,
-    z: float,
-    roll: float | None = None,
-    pitch: float | None = None,
-    yaw: float | None = None,
-    group_id: str | None = None,
-) -> Pose:
-    """Create a target pose, preserving current orientation if rpy is not given."""
-    if roll is not None or pitch is not None or yaw is not None:
-        orientation = Quaternion.from_euler(Vector3(x=roll or 0, y=pitch or 0, z=yaw or 0))
-    else:
-        # Preserve current EE orientation
-        current = _client.get_ee_pose(group_id)
-        orientation = current.orientation if current else Quaternion(0, 0, 0, 1)
-    return Pose(position=Vector3(x=x, y=y, z=z), orientation=orientation)
-
-
-def _make_seed_joint_state(
-    seed_joints: list[float] | JointState | None,
-) -> JointState | None:
-    """Create a seed JointState for IK from explicit joints, if provided."""
-    if seed_joints is None:
-        return None
-    if isinstance(seed_joints, JointState):
-        return seed_joints
-
-    info = _client.get_model_info() or {}
-    joint_names = info.get("joint_names", [])
-    if len(joint_names) != len(seed_joints):
-        joint_names = []
-    return JointState(name=joint_names, position=seed_joints)
-
-
-def ik_pose(
-    x: float,
-    y: float,
-    z: float,
-    roll: float | None = None,
-    pitch: float | None = None,
-    yaw: float | None = None,
-    group_id: str | None = None,
-    seed_joints: list[float] | JointState | None = None,
-) -> IKResult:
-    """Solve IK for a Cartesian pose without path planning.
-
-    Args:
-        x: Target world x position.
-        y: Target world y position.
-        z: Target world z position.
-        roll: Optional target roll. Preserves current orientation if omitted.
-        pitch: Optional target pitch. Preserves current orientation if omitted.
-        yaw: Optional target yaw. Preserves current orientation if omitted.
-        group_id: Planning group to solve; omission requires one compatible group.
-        seed_joints: Optional initial joint configuration for local IK. Pass either
-            a list of joint positions in robot joint order or a named JointState.
-    """
-    target = _make_target_pose(x, y, z, roll, pitch, yaw, group_id)
-    seed = _make_seed_joint_state(seed_joints)
-    return _client.inverse_kinematics_single(target, group_id, seed)
-
-
-def ik_group_pose(
-    group_id: str,
-    x: float,
-    y: float,
-    z: float,
-    roll: float | None = None,
-    pitch: float | None = None,
-    yaw: float | None = None,
-    seed: JointState | None = None,
-) -> IKResult:
-    """Solve IK for an explicit planning group pose target."""
-    target = _make_target_pose(x, y, z, roll, pitch, yaw)
-    stamped = PoseStamped(
-        frame_id="world",
-        position=target.position,
-        orientation=target.orientation,
-    )
-    return _client.inverse_kinematics({group_id: stamped}, seed=seed)
+def plan_joints(
+    positions: list[float],
+    planning_group: str | None = None,
+    speed_scale: float | None = None,
+) -> PlanResult:
+    """Plan joint motion without executing it."""
+    group = _select_group(planning_group)
+    target = JointState(name=list(group.joint_names), position=positions)
+    return cast("PlanResult", _client.plan_to_joints({group.id: target}, speed_scale))
 
 
 def plan_pose(
     x: float,
     y: float,
     z: float,
-    roll: float | None = None,
-    pitch: float | None = None,
-    yaw: float | None = None,
-    group_id: str | None = None,
-) -> bool:
-    """Plan to Cartesian pose. Preserves current orientation if rpy not given."""
-    target = _make_target_pose(x, y, z, roll, pitch, yaw, group_id)
-    return _client.plan_to_pose(target, group_id)
+    planning_group: str | None = None,
+    speed_scale: float | None = None,
+) -> PlanResult:
+    """Plan an absolute world-frame pose while preserving orientation."""
+    group = _select_group(planning_group, pose_capable=True)
+    current = state().groups[group.id].end_effector_pose
+    if current is None:
+        raise RuntimeError(f"End-effector pose is unavailable for {group.id!r}")
+    target = PoseStamped(
+        frame_id="world",
+        position=Vector3(x, y, z),
+        orientation=current.orientation,
+    )
+    return cast("PlanResult", _client.plan_to_poses({group.id: target}, speed_scale))
 
 
-def plan_group_pose(
-    group_id: str,
-    x: float,
-    y: float,
-    z: float,
-    roll: float | None = None,
-    pitch: float | None = None,
-    yaw: float | None = None,
-) -> bool:
-    """Plan to a Cartesian pose for an explicit planning group."""
-    target = _make_target_pose(x, y, z, roll, pitch, yaw)
-    return _client.plan_to_pose_targets({group_id: target})
+def execute(blocking: bool = True, timeout: float | None = None) -> ExecutionResult:
+    """Consume and execute the pending plan."""
+    return cast("ExecutionResult", _client.execute(blocking, timeout))
 
 
-def preview(
-    duration: float | None = None,
-) -> bool:
-    """Preview the last generated plan in the visualizer."""
-    return _client.preview_plan(None, duration)
+def wait(timeout: float | None = None) -> ExecutionResult:
+    """Wait for the current execution's terminal JTT status."""
+    return cast("ExecutionResult", _client.wait_for_execution(timeout))
 
 
-def execute() -> bool:
-    """Execute planned trajectory via coordinator."""
-    return _client.execute()
+def move_linear(
+    dx: float = 0.0,
+    dy: float = 0.0,
+    dz: float = 0.0,
+    planning_group: str | None = None,
+    check_collision: bool = False,
+    blocking: bool = True,
+) -> MoveResult:
+    """Move an end effector by a world-frame translation."""
+    return cast(
+        "MoveResult",
+        _client.move_linear(
+            dx,
+            dy,
+            dz,
+            planning_group,
+            check_collision,
+            None,
+            blocking,
+            None,
+        ),
+    )
 
 
-def home(group_id: str | None = None) -> bool:
-    """Plan and execute move to home position."""
-    from dimos.msgs.sensor_msgs.JointState import JointState
-
-    home_joints = _client.get_model_info().get("home_joints", [0.0] * 7)
-    success = _client.plan_to_joints(JointState(position=home_joints), group_id)
-    if success:
-        return _client.execute()
-    return False
+def gripper(position: float, planning_group: str | None = None) -> CommandResult:
+    """Set gripper opening in metres."""
+    return cast("CommandResult", _client.set_gripper_position(position, planning_group))
 
 
-def url() -> str | None:
-    """Get Meshcat visualization URL."""
-    return _client.get_visualization_url()
+def cancel() -> ExecutionResult:
+    """Cancel planning or active execution."""
+    return cast("ExecutionResult", _client.cancel())
 
 
-def info() -> dict[str, Any]:
-    """Get configured model details."""
-    return _client.get_model_info()
-
-
-def gripper(position: float) -> str:
-    """Set gripper position (0.0=closed, 0.85=open)."""
-    return _client.set_gripper(position)
+def _select_group(
+    planning_group: str | None,
+    *,
+    pose_capable: bool = False,
+) -> PlanningGroupInfo:
+    candidates = tuple(
+        group
+        for group in groups()
+        if (planning_group is None or group.id == planning_group)
+        and (not pose_capable or group.tip_frame is not None)
+    )
+    if len(candidates) != 1:
+        raise ValueError("Planning group is missing or ambiguous")
+    return candidates[0]
 
 
 def add_box(
-    name: str, x: float, y: float, z: float, w: float = 0.05, h: float = 0.05, d: float = 0.05
+    name: str,
+    x: float,
+    y: float,
+    z: float,
+    w: float = 0.05,
+    h: float = 0.05,
+    d: float = 0.05,
 ) -> str | None:
-    """Add a box obstacle. e.g. add_box("cube", 0.3, 0, 0.2)"""
+    """Add a box obstacle."""
     pose = Pose(position=Vector3(x=x, y=y, z=z), orientation=Quaternion(0, 0, 0, 1))
-    return _client.add_obstacle(name, pose, "box", [w, h, d], None)
-
-
-def add_sphere(name: str, x: float, y: float, z: float, radius: float = 0.05) -> str | None:
-    """Add a sphere obstacle. e.g. add_sphere("ball", 0.3, 0, 0.2)"""
-    pose = Pose(position=Vector3(x=x, y=y, z=z), orientation=Quaternion(0, 0, 0, 1))
-    return _client.add_obstacle(name, pose, "sphere", [radius], None)
-
-
-def add_cylinder(
-    name: str, x: float, y: float, z: float, radius: float = 0.03, height: float = 0.1
-) -> str | None:
-    """Add a cylinder obstacle. e.g. add_cylinder("can", 0.3, 0, 0.2)"""
-    pose = Pose(position=Vector3(x=x, y=y, z=z), orientation=Quaternion(0, 0, 0, 1))
-    return _client.add_obstacle(name, pose, "cylinder", [radius, height], None)
+    return cast("str | None", _client.add_obstacle(name, pose, "box", [w, h, d], None))
 
 
 def update_obstacle(
@@ -283,8 +164,8 @@ def update_obstacle(
     mesh_path: str | None = None,
     color: list[float] | None = None,
 ) -> bool:
-    """Replace a complete obstacle; omitted values use new-object defaults."""
-    return _client.update_obstacle(name, pose, shape, dimensions, mesh_path, color)
+    """Replace a complete obstacle."""
+    return cast("bool", _client.update_obstacle(name, pose, shape, dimensions, mesh_path, color))
 
 
 def update_box(
@@ -338,29 +219,17 @@ def update_pose(
     pitch: float = 0.0,
     yaw: float = 0.0,
 ) -> bool:
-    """Move an obstacle while preserving its geometry and appearance."""
-    orientation = Quaternion.from_euler(Vector3(x=roll, y=pitch, z=yaw))
-    pose = Pose(position=Vector3(x=x, y=y, z=z), orientation=orientation)
-    return _client.update_obstacle_pose(name, pose)
+    """Move an obstacle without changing its geometry."""
+    pose = Pose(
+        position=Vector3(x=x, y=y, z=z),
+        orientation=Quaternion.from_euler(Vector3(x=roll, y=pitch, z=yaw)),
+    )
+    return cast("bool", _client.update_obstacle_pose(name, pose))
 
 
 def remove(obstacle_id: str) -> bool:
-    """Remove an obstacle by ID (returned from add_*)."""
-    return _client.remove_obstacle(obstacle_id)
-
-
-def collision_free(target_joints: list[float]) -> bool:
-    """Check if a joint configuration is collision-free."""
-    return _client.is_collision_free(target_joints)
-
-
-def commands() -> None:
-    """Print available functions and raw RPC methods."""
-    print("=== Client Functions ===")
-    for name, obj in sorted(globals().items()):
-        if callable(obj) and not name.startswith("_") and obj.__module__ == __name__:
-            doc = (obj.__doc__ or "").split("\n")[0]
-            print(f"  {name:25s} {doc}")
+    """Remove an obstacle by ID."""
+    return cast("bool", _client.remove_obstacle(obstacle_id))
 
 
 def stop() -> None:
@@ -369,6 +238,4 @@ def stop() -> None:
 
 
 if __name__ == "__main__":
-    print("Manipulation RPC client ready.")
-    print("Type commands() for available functions.")
-    print("Try: joints(), ik_pose(0.45, 0, 0.25), plan([0.1]*7), preview(), execute()")
+    print("Manipulation RPC client ready: groups(), state(), plan_joints(), execute()")
