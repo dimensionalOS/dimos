@@ -38,18 +38,26 @@ from __future__ import annotations
 import base64
 import io
 import json
+import os
 import sys
 from typing import Any
 
 
 def main() -> None:
+    # habitat and its C++ renderer write banners to stdout, which is the
+    # protocol channel. Keep a private copy of the original stdout for protocol
+    # replies and point fd 1 at stderr for everything else, C prints included.
+    protocol = os.fdopen(os.dup(1), "w")
+    os.dup2(2, 1)
+    sys.stdout = sys.stderr
+
     env: Any = None
     positions: list[Any] = []
     metric_makers: tuple[Any, Any, Any] | None = None
 
     def send(payload: dict[str, Any]) -> None:
-        sys.stdout.write(json.dumps(payload) + "\n")
-        sys.stdout.flush()
+        protocol.write(json.dumps(payload) + "\n")
+        protocol.flush()
 
     def encode_obs(obs: Any) -> str:
         import numpy as np
