@@ -9,11 +9,15 @@ import {
   DataFrameStreamError,
   DataFrameStreamReader,
   encodeControlFrame,
+  encodeDatagram,
   type Msg,
+  type PanelSpec,
   PROTOCOL_VERSION,
   type RobotInfo,
 } from "@dimos/shared";
-import { parseManifest } from "@dimos/shared/manifest";
+import { type Manifest, ManifestError, parseManifest } from "@dimos/shared/manifest";
+import { getPanel } from "../panels/registry.tsx";
+import type { TeleopHooks } from "../panels/teleopMachine.ts";
 import { getDecoder } from "./decoders/index.ts";
 import { ChannelStore, StatusStore } from "./store.ts";
 import { ReconnectingTransport, type TransportDeps, type WebTransportLike } from "./transport.ts";
@@ -23,24 +27,71 @@ const UI_TICK_MS = 500;
 export interface SessionHandle {
   status: StatusStore;
   channels: ChannelStore;
+  teleop: TeleopHooks;
   stop(): void;
 }
 
-/** True when both lists describe the same channels (order-insensitive). */
-export function manifestsEqual(a: ChannelSpec[], b: ChannelSpec[]): boolean {
-  if (a.length !== b.length) return false;
+/** Structural equality over plain-JSON values (params, layout trees). Key
+ * order is ignored so a re-serialized but identical manifest does not churn
+ * the epoch. */
+function jsonEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return (
+      Array.isArray(a) &&
+      Array.isArray(b) &&
+      a.length === b.length &&
+      a.every((v, i) => jsonEqual(v, b[i]))
+    );
+  }
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  const ra = a as Record<string, unknown>;
+  const rb = b as Record<string, unknown>;
+  const keys = Object.keys(ra);
+  return keys.length === Object.keys(rb).length &&
+    keys.every((k) => Object.hasOwn(rb, k) && jsonEqual(ra[k], rb[k]));
+}
+
+/** True when both manifests describe the same channels (order-insensitive),
+ * the same panels (order-sensitive: panel order is display order), and the
+ * same layout/pages. Layout/pages differences must compare unequal or a
+ * layout-only blueprint edit would render a stale tree (the epoch remount
+ * in App.tsx keys off this). */
+export function manifestsEqual(a: Manifest, b: Manifest): boolean {
+  if (
+    a.version !== b.version ||
+    a.channels.length !== b.channels.length ||
+    a.panels.length !== b.panels.length
+  ) {
+    return false;
+  }
   const key = (c: ChannelSpec) => c.ch;
-  const sortedA = [...a].sort((x, y) => key(x).localeCompare(key(y)));
-  const sortedB = [...b].sort((x, y) => key(x).localeCompare(key(y)));
-  return sortedA.every((c, i) => {
+  const sortedA = [...a.channels].sort((x, y) => key(x).localeCompare(key(y)));
+  const sortedB = [...b.channels].sort((x, y) => key(x).localeCompare(key(y)));
+  const channelsEqual = sortedA.every((c, i) => {
     const other = sortedB[i];
     return (
       c.ch === other.ch &&
+      c.dir === other.dir &&
       c.encoding === other.encoding &&
       c.delivery === other.delivery &&
-      c.maxHz === other.maxHz
+      c.maxHz === other.maxHz &&
+      jsonEqual(c.params, other.params)
     );
   });
+  const panelsEqual = a.panels.every((p, i) => {
+    const other = b.panels[i];
+    return (
+      p.id === other.id &&
+      p.kind === other.kind &&
+      p.title === other.title &&
+      p.channels.length === other.channels.length &&
+      p.channels.every((ch, j) => ch === other.channels[j]) &&
+      jsonEqual(p.params, other.params)
+    );
+  });
+  return channelsEqual && panelsEqual && jsonEqual(a.layout, b.layout) &&
+    a.pages.length === b.pages.length && a.pages.every((id, i) => id === b.pages[i]);
 }
 
 /** Local auto-select policy: watch the robot only when it is the only one. */
@@ -48,17 +99,45 @@ export function pickAutoWatch(robots: RobotInfo[]): RobotInfo | null {
   return robots.length === 1 ? robots[0] : null;
 }
 
-/**
- * Channels worth subscribing: only those with a decoder. Subscribing to
- * undecodable channels wastes encode CPU and bandwidth, and a 15 Hz JPEG
- * stream nobody renders overflows the relay's reliable FIFO under Firefox's
- * tighter QUIC credit (the relay kicks the viewer every ~8 s). Panels take
- * over subscription decisions in T7; the video channel joins in T5 with its
- * decoder.
- */
-export function subscribableChannels(channels: ChannelSpec[]): ChannelSpec[] {
-  return channels.filter((spec) => getDecoder(spec.encoding) !== undefined);
+// Encodings whose subscription costs real encode CPU and bandwidth;
+// subscribed only when a panel this build can render binds them.
+const PANEL_ONLY_ENCODINGS = new Set(["jpeg.v1", "costmap.zlib.v1"]);
+
+/** True when this build can put the channel to use: rx only, it has a
+ * decoder, and a panel-only encoding is additionally bound by a renderable
+ * panel. getPanel must keep returning undefined for unknown kinds here: an
+ * UnknownPanel fallback in this gate would make it vacuously true and
+ * subscribe every video/costmap channel of a newer bridge (the render-only
+ * fallback lives in LayoutTree/Tabs). Page-tab visibility does not gate
+ * subscriptions in T7 (deferred until a page panel carries real rate). */
+export function channelSubscribable(spec: ChannelSpec, panels: PanelSpec[]): boolean {
+  if (spec.dir !== "rx") return false;
+  if (getDecoder(spec.encoding) === undefined) return false;
+  if (!PANEL_ONLY_ENCODINGS.has(spec.encoding)) return true;
+  return panels.some((p) => getPanel(p.kind) !== undefined && p.channels.includes(spec.ch));
 }
+
+/**
+ * Channels worth subscribing: only rx channels with a decoder, and
+ * panel-only encodings only when a renderable panel binds them. Subscribing
+ * to channels nobody can render wastes encode CPU and bandwidth, and a
+ * high-rate JPEG stream nobody renders overflows the relay's reliable FIFO
+ * under Firefox's tighter QUIC credit (the relay kicks the viewer every
+ * ~8 s).
+ */
+export function subscribableChannels(channels: ChannelSpec[], panels: PanelSpec[]): ChannelSpec[] {
+  return channels.filter((spec) => channelSubscribable(spec, panels));
+}
+
+/** What a bare manifest reply (a robot that registered without a manifest)
+ * adopts: valid, empty, renders nothing but the status bar. */
+const EMPTY_MANIFEST: Manifest = {
+  version: 1,
+  channels: [],
+  panels: [],
+  layout: null,
+  pages: [],
+};
 
 class Session {
   readonly status = new StatusStore();
@@ -68,8 +147,24 @@ class Session {
   // Bumped per connection; data-plane writes from a previous connection's
   // still-draining reader loops are dropped by comparing against it.
   #runId = 0;
-  #manifest: ChannelSpec[] | null = null;
+  #manifest: Manifest | null = null;
   #ticker: ReturnType<typeof setInterval>;
+
+  // Per-connection teleop senders, swapped in #runSession. Fire-and-forget:
+  // a send racing a reconnect lands on the dead connection and is dropped
+  // (the machine repeats at publishHz and the bridge deadman covers loss).
+  #teleopControl: ((msg: Msg) => void) | null = null;
+  #teleopDatagram: ((msg: Msg) => void) | null = null;
+  #teleopCbs = new Set<(msg: Msg) => void>();
+  readonly teleop: TeleopHooks = {
+    control: (msg) => this.#teleopControl?.(msg),
+    datagram: (msg) => this.#teleopDatagram?.(msg),
+    onMsg: (cb) => {
+      this.#teleopCbs.add(cb);
+      return () => this.#teleopCbs.delete(cb);
+    },
+    status: this.status,
+  };
 
   constructor(transportDeps: TransportDeps = {}) {
     this.transport = new ReconnectingTransport(
@@ -93,6 +188,13 @@ class Session {
     const writer = control.writable.getWriter();
     const send = async (msg: Msg) => {
       await writer.write(encodeControlFrame(msg));
+    };
+    const datagrams = wt.datagrams.writable.getWriter();
+    this.#teleopControl = (msg) => {
+      if (runId === this.#runId) void send(msg).catch(() => {});
+    };
+    this.#teleopDatagram = (msg) => {
+      if (runId === this.#runId) void datagrams.write(encodeDatagram(msg)).catch(() => {});
     };
     await send({ t: "hello", v: PROTOCOL_VERSION, role: "viewer" });
     void this.#readUniStreams(wt, runId);
@@ -129,26 +231,50 @@ class Session {
               // A reply to a watch that raced a robot change must not be
               // adopted: only the currently picked robot's manifest counts.
               if (msg.robotId !== this.status.get().robot?.id) break;
-              let channels: ChannelSpec[];
-              try {
-                // Domain validation (duplicate/bogus ids) on top of the
-                // transport shape check: a duplicate id would make the
-                // store and the channel list disagree on the winner.
-                channels = parseManifest({ channels: msg.channels }).channels;
-              } catch (e) {
-                this.status.update({ lastError: `invalid manifest: ${(e as Error).message}` });
-                break;
+              let manifest: Manifest;
+              if (msg.manifest === undefined) {
+                manifest = EMPTY_MANIFEST;
+              } else {
+                try {
+                  // Domain validation (version gate, duplicate/bogus ids,
+                  // panel/layout refs) on top of the transport record check:
+                  // the relay forwards the robot's manifest verbatim.
+                  manifest = parseManifest(msg.manifest);
+                } catch (e) {
+                  if (e instanceof ManifestError && e.code === "unsupported_version") {
+                    // A robot newer than this cockpit build (stale cached
+                    // dist behind a newer relay): drop anything stale and
+                    // show the polite notice instead of a raw error.
+                    this.#clearProducer();
+                    this.status.update({ manifestUnsupported: true, lastError: null });
+                  } else {
+                    this.status.update({
+                      lastError: `invalid manifest: ${(e as Error).message}`,
+                    });
+                  }
+                  break;
+                }
               }
-              this.status.update({ lastError: null });
-              for (const spec of subscribableChannels(channels)) {
+              this.status.update({ lastError: null, manifestUnsupported: false });
+              // Adopt before subscribing: a sub can trigger an immediate
+              // frame (the bridge replays the cached costmap), and #ingest
+              // drops everything while no manifest is adopted.
+              this.#applyManifest(manifest);
+              for (const spec of subscribableChannels(manifest.channels, manifest.panels)) {
                 await send({ t: "sub", ch: spec.ch });
               }
-              this.#applyManifest(channels);
               break;
             }
+            case "teleop_started":
+              for (const cb of this.#teleopCbs) cb(msg);
+              break;
             case "error": {
               if (msg.code === "version_mismatch") {
                 this.transport.fail(msg.message);
+              } else if (msg.code === "teleop_held") {
+                // A refused lease is the teleop panel's state, not a
+                // session-level error banner.
+                for (const cb of this.#teleopCbs) cb(msg);
               } else {
                 this.status.update({ lastError: `${msg.code}: ${msg.message}` });
               }
@@ -171,17 +297,17 @@ class Session {
    * tracking always rebaselines; a first adopt drops data left over from a
    * dead producer, and a changed manifest additionally remounts.
    */
-  #applyManifest(channels: ChannelSpec[]): void {
+  #applyManifest(manifest: Manifest): void {
     const prev = this.#manifest;
-    this.#manifest = channels;
+    this.#manifest = manifest;
     if (prev === null) {
       this.channels.reset();
-      this.status.update({ channels });
-    } else if (!manifestsEqual(prev, channels)) {
+      this.status.update({ manifest });
+    } else if (!manifestsEqual(prev, manifest)) {
       this.channels.reset();
-      this.status.update({ channels, epoch: this.status.get().epoch + 1 });
+      this.status.update({ manifest, epoch: this.status.get().epoch + 1 });
     } else {
-      this.status.update({ channels });
+      this.status.update({ manifest });
     }
     this.channels.rebaseline();
   }
@@ -195,7 +321,11 @@ class Session {
     if (this.#manifest === null) return;
     this.#manifest = null;
     this.channels.reset();
-    this.status.update({ channels: [], epoch: this.status.get().epoch + 1 });
+    this.status.update({
+      manifest: null,
+      manifestUnsupported: false,
+      epoch: this.status.get().epoch + 1,
+    });
   }
 
   async #readUniStreams(wt: WebTransportLike, runId: number): Promise<void> {
@@ -240,7 +370,7 @@ class Session {
     // No adopted manifest means no confirmed producer: anything arriving is
     // stale drain from a dead robot session and must not re-dirty the store.
     if (this.#manifest === null) return;
-    const spec = this.#manifest.find((c) => c.ch === frame.header.ch);
+    const spec = this.#manifest.channels.find((c) => c.ch === frame.header.ch);
     const decoder = getDecoder(spec?.encoding);
     let value: unknown;
     let preview: string | undefined;
@@ -262,6 +392,7 @@ export function startSession(transportDeps: TransportDeps = {}): SessionHandle {
   return {
     status: session.status,
     channels: session.channels,
+    teleop: session.teleop,
     stop: () => session.stop(),
   };
 }

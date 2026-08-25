@@ -1,4 +1,4 @@
-# Manipulation Planning Groups
+# Planning Groups
 
 Planning groups are named, selectable kinematic chains used by manipulation
 planning. They let APIs target a specific part of a robot, such as an arm or
@@ -28,7 +28,7 @@ Robot configs can provide planning groups explicitly with
 does not run discovery or synthesize groups in `model_post_init`; callers must
 pass explicit `planning_groups` there.
 
-When code uses the discovery helper instead of explicit config, DimOS discovers
+When code uses the discovery helper instead of explicit config, dimOS discovers
 groups in this order:
 
 1. Explicit `srdf_path` provided to the helper.
@@ -56,7 +56,7 @@ Supported SRDF group forms:
 Unsupported SRDF forms are skipped with warnings: link groups, nested group
 references, mixed group declarations, branching or non-serial groups, and SRDF
 `<end_effector>` metadata. A chain group's `tip_link` is its pose target frame.
-An ordered joint-list group can be pose-targeted only when DimOS can validate a
+An ordered joint-list group can be pose-targeted only when dimOS can validate a
 unique serial target frame.
 
 ## Fallback behavior

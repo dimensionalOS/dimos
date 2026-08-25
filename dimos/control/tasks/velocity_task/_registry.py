@@ -19,3 +19,7 @@ TASK_FACTORIES = {
 TASK_CONSUMES = {
     "velocity": {"joint_command": ("on_joint_command", "claim_overlap")},
 }
+
+TASK_EXPOSES = {
+    "velocity": ["start"],
+}

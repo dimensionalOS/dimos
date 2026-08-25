@@ -24,7 +24,6 @@ from __future__ import annotations
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from pathlib import Path
 from threading import RLock
 from typing import TYPE_CHECKING, Any
 
@@ -111,8 +110,7 @@ class RoboPlanWorld:
         """Register a robot for the scene built by :meth:`finalize`."""
         if self._finalized:
             raise RuntimeError("Cannot add robot after world is finalized")
-        if not Path(config.model_path).exists():
-            raise FileNotFoundError(f"Robot model not found: {Path(config.model_path).resolve()}")
+        config.model.load()
         if any(data.config.name == config.name for data in self._robots.values()):
             raise ValueError(f"Robot name '{config.name}' is already registered")
         self._validate_planning_group_config(config)
@@ -525,10 +523,14 @@ class RoboPlanWorld:
         overlay: tuple[WorldRobotID, NDArray[np.float64]] | None = None,
     ) -> NDArray[np.float64]:
         scene = self._require_scene()
-        group = self._require_model().all_group
+        model = self._require_model()
+        group = model.all_group
         positions = self._current_global_positions(ctx, overlay)
         q = np.asarray([positions[name] for name in group.public_names], dtype=np.float64)
-        return np.asarray(scene.toFullJointPositions(group.name, q), dtype=np.float64)
+        return np.asarray(
+            scene.toFullJointPositions(group.name, q),
+            dtype=np.float64,
+        )
 
     def _current_global_positions(
         self,

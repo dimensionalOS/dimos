@@ -12,7 +12,8 @@
 // producer brings a new clock, and published ages clamp at 0 when a slot
 // predates the current estimate.
 
-import type { ChannelSpec, FrameHeader, RobotInfo } from "@dimos/shared";
+import type { FrameHeader, RobotInfo } from "@dimos/shared";
+import type { Manifest } from "@dimos/shared/manifest";
 import type { TransportPhase } from "./transport.ts";
 
 /** Latest successfully decoded frame of one channel (latest-wins by header seq). */
@@ -304,7 +305,11 @@ export interface SessionStatus {
   transport: TransportPhase;
   robot: RobotInfo | null;
   robotCount: number;
-  channels: ChannelSpec[];
+  /** The adopted (normalized) manifest; null until a watch is confirmed. */
+  manifest: Manifest | null;
+  /** True when the robot's manifest version is newer than this build parses;
+   * the App shows a polite update notice instead of panels. */
+  manifestUnsupported: boolean;
   epoch: number;
   lastError: string | null;
 }
@@ -314,7 +319,8 @@ export class StatusStore {
     transport: { phase: "connecting", attempt: 1 },
     robot: null,
     robotCount: 0,
-    channels: [],
+    manifest: null,
+    manifestUnsupported: false,
     epoch: 0,
     lastError: null,
   };

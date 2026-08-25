@@ -1,0 +1,565 @@
+// Copyright 2026 Dimensional Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use std::collections::VecDeque;
+use std::time::Duration;
+
+use crate::mapper::{Mapper, Pose};
+use crate::voxel_ray_tracer::Config;
+use dimos_module::{error_throttled, warn_throttled, Input, Module, Output};
+use lcm_msgs::geometry_msgs::{Point, Pose as PoseMsg, PoseStamped, Quaternion};
+use lcm_msgs::nav_msgs::Odometry;
+use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
+use lcm_msgs::std_msgs::{Header, Time};
+
+#[derive(Module)]
+#[module(name = "ray_tracing", setup = init_mapper)]
+pub struct RayTracingVoxelMap {
+    #[input(decode = PointCloud2::decode, handler = on_lidar)]
+    lidar: Input<PointCloud2>,
+
+    #[input(decode = Odometry::decode, handler = on_odometry)]
+    odometry: Input<Odometry>,
+
+    #[output(encode = PointCloud2::encode)]
+    global_map: Output<PointCloud2>,
+
+    #[output(encode = PointCloud2::encode)]
+    local_map: Output<PointCloud2>,
+
+    #[output(encode = PointCloud2::encode)]
+    local_map_fine: Output<PointCloud2>,
+
+    // Cylinder bounds of the local map. Position is the center, orientation holds
+    // radius, z_min, z_max. Stamped like local_map so consumers pair them.
+    #[output(encode = PoseStamped::encode)]
+    region_bounds: Output<PoseStamped>,
+
+    #[config]
+    config: Config,
+
+    // Built once at startup by init_mapper. All mapping state lives inside.
+    mapper: Option<Mapper>,
+    poses: VecDeque<(f64, Pose)>,
+}
+
+impl RayTracingVoxelMap {
+    async fn init_mapper(&mut self) {
+        self.mapper = Some(Mapper::new(self.config.clone()));
+    }
+
+    async fn on_odometry(&mut self, msg: Odometry) {
+        let p = &msg.pose.pose.position;
+        let q = &msg.pose.pose.orientation;
+        push_pose(
+            &mut self.poses,
+            (
+                time_secs(&msg.header.stamp),
+                Pose {
+                    position: (p.x as f32, p.y as f32, p.z as f32),
+                    orientation: (q.x as f32, q.y as f32, q.z as f32, q.w as f32),
+                },
+            ),
+        );
+    }
+
+    async fn on_lidar(&mut self, msg: PointCloud2) {
+        // Register with the pose nearest the cloud stamp, never a stale one.
+        let stamp = time_secs(&msg.header.stamp);
+        let Some(pose) = nearest_pose(&self.poses, stamp) else {
+            // An empty buffer means no odometry is arriving at all; a large gap
+            // means it is arriving but cannot be paired.
+            let gap = self
+                .poses
+                .iter()
+                .map(|&(t, ..)| (t - stamp).abs())
+                .fold(f64::INFINITY, f64::min);
+            warn_throttled!(
+                Duration::from_secs(1),
+                poses = self.poses.len(),
+                gap_s = gap,
+                "No odometry within tolerance of the cloud stamp, dropped a cloud.",
+            );
+            return;
+        };
+
+        let points = match extract_xyz(&msg) {
+            Ok(p) => p,
+            Err(e) => {
+                warn_throttled!(
+                    Duration::from_secs(1),
+                    error = %e,
+                    "Failed to get lidar points, dropped a cloud.",
+                );
+                return;
+            }
+        };
+        if points.is_empty() {
+            return;
+        }
+
+        let mapper = self.mapper.as_mut().expect("built in setup");
+        mapper.add_frame(points, pose);
+
+        let region = mapper.local_due().then(|| mapper.take_local_bounds());
+        let cylinder = region.map(|c| c.bounds());
+
+        let global_points = mapper.global_due().then(|| mapper.global_points());
+        let local_points = cylinder.as_ref().map(|cyl| mapper.local_points(cyl));
+        let fine_points = cylinder.as_ref().and_then(|cyl| mapper.fine_points(cyl));
+
+        let out_frame_id = "world";
+        let stamp = msg.header.stamp;
+
+        // Bounds pair with local_map by stamp, so publish them on its cadence.
+        if let Some(c) = region {
+            let bounds_msg = PoseStamped {
+                header: Header {
+                    seq: 0,
+                    stamp: stamp.clone(),
+                    frame_id: out_frame_id.to_string(),
+                },
+                pose: PoseMsg {
+                    position: Point {
+                        x: c.cx as f64,
+                        y: c.cy as f64,
+                        z: 0.0,
+                    },
+                    orientation: Quaternion {
+                        x: c.radius as f64,
+                        y: c.z_min as f64,
+                        z: c.z_max as f64,
+                        w: 0.0,
+                    },
+                },
+            };
+            if let Err(e) = self.region_bounds.publish(&bounds_msg).await {
+                error_throttled!(
+                    Duration::from_secs(1),
+                    error = %e,
+                    "Region bounds failed to publish",
+                );
+            }
+        }
+
+        if let Some(points) = global_points {
+            let global = points_to_cloud(&points, out_frame_id, stamp.clone());
+            publish_cloud(&self.global_map, &global).await;
+        }
+        if let Some(points) = local_points {
+            let local = points_to_cloud(&points, out_frame_id, stamp.clone());
+            publish_cloud(&self.local_map, &local).await;
+        }
+        if let Some(points) = fine_points {
+            let fine = points_to_cloud(&points, out_frame_id, stamp);
+            publish_cloud(&self.local_map_fine, &fine).await;
+        }
+    }
+}
+
+/// Odometry samples kept for cloud-stamp matching.
+const POSE_BUFFER_LEN: usize = 256;
+
+/// Max stamp gap between a cloud and the pose used to register it (s).
+const POSE_MATCH_TOLERANCE_S: f64 = 0.1;
+
+fn time_secs(t: &Time) -> f64 {
+    t.sec as f64 + t.nsec as f64 * 1e-9
+}
+
+/// Append a pose sample, evicting the oldest to keep the buffer bounded.
+fn push_pose(poses: &mut VecDeque<(f64, Pose)>, sample: (f64, Pose)) {
+    poses.push_back(sample);
+    if poses.len() > POSE_BUFFER_LEN {
+        poses.pop_front();
+    }
+}
+
+/// The buffered pose with the stamp nearest the cloud stamp, within tolerance.
+fn nearest_pose(poses: &VecDeque<(f64, Pose)>, stamp: f64) -> Option<Pose> {
+    let mut best_gap = f64::INFINITY;
+    let mut best = None;
+    for &(t, pose) in poses {
+        let gap = (t - stamp).abs();
+        if gap < best_gap {
+            best_gap = gap;
+            best = Some(pose);
+        }
+    }
+    if best_gap <= POSE_MATCH_TOLERANCE_S {
+        best
+    } else {
+        None
+    }
+}
+
+struct ExtractError(&'static str);
+impl std::fmt::Display for ExtractError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+fn extract_xyz(msg: &PointCloud2) -> Result<Vec<(f32, f32, f32)>, ExtractError> {
+    let mut x_off: Option<usize> = None;
+    let mut y_off: Option<usize> = None;
+    let mut z_off: Option<usize> = None;
+    for f in &msg.fields {
+        if f.datatype != PointField::FLOAT32 as u8 {
+            continue;
+        }
+        match f.name.as_str() {
+            "x" => x_off = Some(f.offset as usize),
+            "y" => y_off = Some(f.offset as usize),
+            "z" => z_off = Some(f.offset as usize),
+            _ => {}
+        }
+    }
+    let xo = x_off.ok_or(ExtractError("missing float32 x field"))?;
+    let yo = y_off.ok_or(ExtractError("missing float32 y field"))?;
+    let zo = z_off.ok_or(ExtractError("missing float32 z field"))?;
+
+    let n = (msg.width as usize) * (msg.height as usize);
+    let step = msg.point_step as usize;
+    if step == 0 {
+        return Err(ExtractError("point_step is 0"));
+    }
+    if msg.data.len() < n * step {
+        return Err(ExtractError(
+            "data buffer shorter than width*height*point_step",
+        ));
+    }
+    if xo + 4 > step || yo + 4 > step || zo + 4 > step {
+        return Err(ExtractError(
+            "xyz field offsets do not fit within point_step",
+        ));
+    }
+    if msg.is_bigendian {
+        return Err(ExtractError("big-endian point data not supported"));
+    }
+
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let base = i * step;
+        let x = read_f32_le(&msg.data, base + xo);
+        let y = read_f32_le(&msg.data, base + yo);
+        let z = read_f32_le(&msg.data, base + zo);
+        if x.is_finite() && y.is_finite() && z.is_finite() {
+            out.push((x, y, z));
+        }
+    }
+    Ok(out)
+}
+
+#[inline]
+fn read_f32_le(buf: &[u8], off: usize) -> f32 {
+    let bytes: [u8; 4] = buf[off..off + 4]
+        .try_into()
+        .expect("bounds checked by caller");
+    f32::from_le_bytes(bytes)
+}
+
+fn write_point(data: &mut Vec<u8>, n: &mut i32, x: f32, y: f32, z: f32) {
+    data.extend_from_slice(&x.to_le_bytes());
+    data.extend_from_slice(&y.to_le_bytes());
+    data.extend_from_slice(&z.to_le_bytes());
+    data.extend_from_slice(&0.0_f32.to_le_bytes());
+    *n += 1;
+}
+
+fn make_cloud(data: Vec<u8>, n: i32, frame_id: &str, stamp: Time) -> PointCloud2 {
+    let make_field = |name: &str, off: i32| PointField {
+        name: name.into(),
+        offset: off,
+        datatype: PointField::FLOAT32 as u8,
+        count: 1,
+    };
+    PointCloud2 {
+        header: Header {
+            seq: 0,
+            stamp,
+            frame_id: frame_id.into(),
+        },
+        height: 1,
+        width: n,
+        fields: vec![
+            make_field("x", 0),
+            make_field("y", 4),
+            make_field("z", 8),
+            make_field("intensity", 12),
+        ],
+        is_bigendian: false,
+        point_step: 16,
+        row_step: 16 * n,
+        data,
+        is_dense: true,
+    }
+}
+
+/// Pack flat (x, y, z) triples into an LCM cloud message.
+fn points_to_cloud(points: &[f32], frame_id: &str, stamp: Time) -> PointCloud2 {
+    let mut data = Vec::with_capacity((points.len() / 3) * 16);
+    let mut n: i32 = 0;
+    for p in points.as_chunks::<3>().0 {
+        write_point(&mut data, &mut n, p[0], p[1], p[2]);
+    }
+    make_cloud(data, n, frame_id, stamp)
+}
+
+async fn publish_cloud(out: &Output<PointCloud2>, cloud: &PointCloud2) {
+    if let Err(e) = out.publish(cloud).await {
+        error_throttled!(
+            Duration::from_secs(1),
+            error = %e,
+            topic = %out.topic,
+            "Voxel map failed to publish",
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::voxel_ray_tracer::{emit_points, update_map, LocalBounds, VoxelKey, VoxelMap};
+    use ahash::AHashSet;
+
+    /// Build a map whose listed voxels are healthy, through the public API.
+    fn map_with_healthy(keys: &[VoxelKey]) -> VoxelMap {
+        let cfg = Config {
+            voxel_size: 1.0,
+            fine_divisor: 0,
+            max_range: 1000.0,
+            ray_subsample: 1,
+            shadow_depth: 0.0,
+            grace_depth: 0.0,
+            min_health: 0,
+            max_health: 1,
+            graze_cos: 0.5,
+            support_min: 0,
+            emit_every: 1,
+            global_emit_every: 1,
+            region_percentile: 95.0,
+            worker_threads: 4,
+        };
+        let mut map = VoxelMap::default();
+        let pts: Vec<(f32, f32, f32)> = keys
+            .iter()
+            .map(|&(x, y, z)| (x as f32 + 0.5, y as f32 + 0.5, z as f32 + 0.5))
+            .collect();
+        update_map(&mut map, (0.25, 0.25, 0.25), &pts, &cfg);
+        map
+    }
+
+    fn pose_at(x: f32) -> Pose {
+        Pose {
+            position: (x, 0.0, 0.0),
+            orientation: (0.0, 0.0, 0.0, 1.0),
+        }
+    }
+
+    #[test]
+    fn nearest_pose_picks_by_stamp_and_gates_on_tolerance() {
+        let mut poses: VecDeque<(f64, Pose)> = VecDeque::new();
+        for (t, x) in [(1.0, 1.0f32), (2.0, 2.0), (3.0, 3.0)] {
+            poses.push_back((t, pose_at(x)));
+        }
+        let pose = nearest_pose(&poses, 2.04).expect("within tolerance");
+        assert_eq!(pose.position.0, 2.0, "nearest stamp wins, not the latest");
+        assert!(
+            nearest_pose(&poses, 3.5).is_none(),
+            "stale poses must not register a cloud"
+        );
+        assert!(nearest_pose(&VecDeque::new(), 1.0).is_none());
+    }
+
+    #[test]
+    fn push_pose_evicts_oldest_beyond_capacity() {
+        let mut poses: VecDeque<(f64, Pose)> = VecDeque::new();
+        for i in 0..(POSE_BUFFER_LEN + 10) {
+            push_pose(&mut poses, (i as f64, pose_at(0.0)));
+        }
+        assert_eq!(
+            poses.len(),
+            POSE_BUFFER_LEN,
+            "buffer capped at POSE_BUFFER_LEN"
+        );
+        assert_eq!(poses.front().unwrap().0, 10.0, "oldest 10 evicted");
+        assert_eq!(poses.back().unwrap().0, (POSE_BUFFER_LEN + 9) as f64);
+    }
+
+    fn cloud_points(c: &PointCloud2) -> AHashSet<(u32, u32, u32)> {
+        let mut out = AHashSet::new();
+        let step = c.point_step as usize;
+        for i in 0..c.width as usize {
+            let base = i * step;
+            let x = f32::from_le_bytes(c.data[base..base + 4].try_into().unwrap());
+            let y = f32::from_le_bytes(c.data[base + 4..base + 8].try_into().unwrap());
+            let z = f32::from_le_bytes(c.data[base + 8..base + 12].try_into().unwrap());
+            out.insert((x.to_bits(), y.to_bits(), z.to_bits()));
+        }
+        out
+    }
+
+    fn voxel_center(kx: i32, ky: i32, kz: i32) -> (u32, u32, u32) {
+        (
+            (kx as f32 + 0.5).to_bits(),
+            (ky as f32 + 0.5).to_bits(),
+            (kz as f32 + 0.5).to_bits(),
+        )
+    }
+
+    #[test]
+    fn local_map_includes_voxel_inside_cylinder() {
+        let map = map_with_healthy(&[(0, 0, 0)]);
+        let live: AHashSet<VoxelKey> = AHashSet::new();
+        let cylinder = LocalBounds {
+            origin_x: 0.0,
+            origin_y: 0.0,
+            r_xy_max_sq: 4.0,
+            z_min: 0.0,
+            z_max: 1.0,
+        };
+        let global = points_to_cloud(
+            &emit_points(&map, 1.0, None, 0, &live),
+            "world",
+            Time::default(),
+        );
+        let local = points_to_cloud(
+            &emit_points(&map, 1.0, Some(&cylinder), 0, &live),
+            "world",
+            Time::default(),
+        );
+        assert!(cloud_points(&global).contains(&voxel_center(0, 0, 0)));
+        assert!(cloud_points(&local).contains(&voxel_center(0, 0, 0)));
+    }
+
+    #[test]
+    fn local_map_excludes_voxel_outside_radius() {
+        let map = map_with_healthy(&[(5, 0, 0)]);
+        let live: AHashSet<VoxelKey> = AHashSet::new();
+        let cylinder = LocalBounds {
+            origin_x: 0.0,
+            origin_y: 0.0,
+            r_xy_max_sq: 4.0,
+            z_min: -10.0,
+            z_max: 10.0,
+        };
+        let global = points_to_cloud(
+            &emit_points(&map, 1.0, None, 0, &live),
+            "world",
+            Time::default(),
+        );
+        let local = points_to_cloud(
+            &emit_points(&map, 1.0, Some(&cylinder), 0, &live),
+            "world",
+            Time::default(),
+        );
+        assert!(cloud_points(&global).contains(&voxel_center(5, 0, 0)));
+        assert!(!cloud_points(&local).contains(&voxel_center(5, 0, 0)));
+        assert_eq!(local.width, 0);
+    }
+
+    #[test]
+    fn local_map_excludes_voxel_outside_z_range() {
+        let map = map_with_healthy(&[(0, 0, 5)]);
+        let live: AHashSet<VoxelKey> = AHashSet::new();
+        let cylinder = LocalBounds {
+            origin_x: 0.0,
+            origin_y: 0.0,
+            r_xy_max_sq: 100.0,
+            z_min: 0.0,
+            z_max: 1.0,
+        };
+        let global = points_to_cloud(
+            &emit_points(&map, 1.0, None, 0, &live),
+            "world",
+            Time::default(),
+        );
+        let local = points_to_cloud(
+            &emit_points(&map, 1.0, Some(&cylinder), 0, &live),
+            "world",
+            Time::default(),
+        );
+        assert!(cloud_points(&global).contains(&voxel_center(0, 0, 5)));
+        assert!(!cloud_points(&local).contains(&voxel_center(0, 0, 5)));
+        assert_eq!(local.width, 0);
+    }
+
+    #[test]
+    fn live_voxels_follow_the_cylinder_in_local_map() {
+        let map = VoxelMap::default();
+        let mut live: AHashSet<VoxelKey> = AHashSet::new();
+        live.insert((1, 0, 0));
+        live.insert((10, 10, 10));
+        let cylinder = LocalBounds {
+            origin_x: 0.0,
+            origin_y: 0.0,
+            r_xy_max_sq: 4.0,
+            z_min: 0.0,
+            z_max: 1.0,
+        };
+        let global = points_to_cloud(
+            &emit_points(&map, 1.0, None, 0, &live),
+            "world",
+            Time::default(),
+        );
+        let local = points_to_cloud(
+            &emit_points(&map, 1.0, Some(&cylinder), 0, &live),
+            "world",
+            Time::default(),
+        );
+        assert!(cloud_points(&global).contains(&voxel_center(1, 0, 0)));
+        assert!(cloud_points(&global).contains(&voxel_center(10, 10, 10)));
+        assert!(cloud_points(&local).contains(&voxel_center(1, 0, 0)));
+        assert!(!cloud_points(&local).contains(&voxel_center(10, 10, 10)));
+    }
+
+    #[test]
+    fn local_map_applies_support_min() {
+        // The live local cloud must honor support_min, so an isolated healthy
+        // voxel is dropped while a dense patch survives. Live voxels bypass it.
+        let mut keys: Vec<VoxelKey> = Vec::new();
+        for x in 0..3 {
+            for y in 0..3 {
+                keys.push((x, y, 0));
+            }
+        }
+        keys.push((20, 0, 0));
+        let map = map_with_healthy(&keys);
+        let mut live: AHashSet<VoxelKey> = AHashSet::new();
+        live.insert((25, 0, 0));
+        let cylinder = LocalBounds {
+            origin_x: 0.0,
+            origin_y: 0.0,
+            r_xy_max_sq: 1e6,
+            z_min: -10.0,
+            z_max: 10.0,
+        };
+        let local = points_to_cloud(
+            &emit_points(&map, 1.0, Some(&cylinder), 3, &live),
+            "world",
+            Time::default(),
+        );
+        let pts = cloud_points(&local);
+        assert!(pts.contains(&voxel_center(1, 1, 0)), "dense patch kept");
+        assert!(
+            !pts.contains(&voxel_center(20, 0, 0)),
+            "isolated healthy voxel dropped by support_min"
+        );
+        assert!(
+            pts.contains(&voxel_center(25, 0, 0)),
+            "live voxel bypasses support_min"
+        );
+    }
+}

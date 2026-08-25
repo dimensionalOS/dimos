@@ -43,7 +43,7 @@ xarm_perception = autoconnect(
             )
         ],
         planning_timeout=10.0,
-        visualization={"backend": "meshcat"},
+        visualization={"backend": "viser"},
         floor_z=-0.02,
     ),
     RealSenseCamera.blueprint(

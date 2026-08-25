@@ -21,5 +21,5 @@ TASK_CONSUMES: dict[str, dict[str, tuple[str, str]]] = {
 }
 
 TASK_EXPOSES: dict[str, list[str]] = {
-    "trajectory": ["execute", "cancel", "get_state"],
+    "trajectory": ["execute", "cancel", "get_state", "get_status"],
 }

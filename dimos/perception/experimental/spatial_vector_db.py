@@ -16,7 +16,7 @@
 Spatial vector database for storing and querying images with XY locations.
 
 This module extends the ChromaDB implementation to support storing images with
-their XY locations and querying by location or image similarity.
+their XY locations and querying by text or image similarity.
 """
 
 from typing import Any
@@ -35,7 +35,7 @@ class SpatialVectorDB:
     A vector database for storing and querying images mapped to X,Y,theta absolute locations for SpatialMemory.
 
     This class extends the ChromaDB implementation to support storing images with
-    their absolute locations and querying by location, text, or image cosine semantic similarity.
+    their absolute locations and querying by text or image cosine semantic similarity.
     """
 
     def __init__(  # type: ignore[no-untyped-def]
@@ -153,52 +153,6 @@ class SpatialVectorDB:
 
         return self._process_query_results(results)
 
-    # TODO: implement efficient nearest neighbor search
-    def query_by_location(
-        self, x: float, y: float, radius: float = 2.0, limit: int = 5
-    ) -> list[dict]:  # type: ignore[type-arg]
-        """
-        Query the vector database for images near the specified location.
-
-        Args:
-            x: X coordinate
-            y: Y coordinate
-            radius: Search radius in meters
-            limit: Maximum number of results to return
-
-        Returns:
-            List of results, each containing the image and its metadata
-        """
-        results = self.image_collection.get()
-
-        if not results or not results["ids"]:
-            return []
-
-        filtered_results = {"ids": [], "metadatas": [], "distances": []}  # type: ignore[var-annotated]
-
-        for i, metadata in enumerate(results["metadatas"]):  # type: ignore[arg-type]
-            item_x = metadata.get("x")
-            item_y = metadata.get("y")
-
-            if item_x is not None and item_y is not None:
-                distance = np.sqrt((x - item_x) ** 2 + (y - item_y) ** 2)
-
-                if distance <= radius:
-                    filtered_results["ids"].append(results["ids"][i])
-                    filtered_results["metadatas"].append(metadata)
-                    filtered_results["distances"].append(distance)
-
-        sorted_indices = np.argsort(filtered_results["distances"])
-        filtered_results["ids"] = [filtered_results["ids"][i] for i in sorted_indices[:limit]]
-        filtered_results["metadatas"] = [
-            filtered_results["metadatas"][i] for i in sorted_indices[:limit]
-        ]
-        filtered_results["distances"] = [
-            filtered_results["distances"][i] for i in sorted_indices[:limit]
-        ]
-
-        return self._process_query_results(filtered_results)
-
     def _process_query_results(self, results) -> list[dict]:  # type: ignore[no-untyped-def, type-arg]
         """Process query results to include decoded images."""
         if not results or not results["ids"]:
@@ -265,33 +219,6 @@ class SpatialVectorDB:
             f"Text query: '{text}' returned {len(results['ids'] if 'ids' in results else [])} results"
         )
         return self._process_query_results(results)
-
-    def get_all_locations(self) -> list[tuple[float, float, float]]:
-        """Get all locations stored in the database."""
-        # Get all items from the collection without embeddings
-        results = self.image_collection.get(include=["metadatas"])
-
-        if not results or "metadatas" not in results or not results["metadatas"]:
-            return []
-
-        # Extract x, y coordinates from metadata
-        locations = []
-        for metadata in results["metadatas"]:
-            if isinstance(metadata, list) and metadata and isinstance(metadata[0], dict):
-                metadata = metadata[0]  # Handle nested metadata
-
-            if isinstance(metadata, dict) and "x" in metadata and "y" in metadata:
-                x = metadata.get("x", 0)
-                y = metadata.get("y", 0)
-                z = metadata.get("z", 0) if "z" in metadata else 0
-                locations.append((x, y, z))
-
-        return locations
-
-    @property
-    def image_storage(self):  # type: ignore[no-untyped-def]
-        """Legacy accessor for compatibility with existing code."""
-        return self.visual_memory.images
 
     def tag_location(self, location: RobotLocation) -> None:
         """

@@ -15,6 +15,28 @@ crate-type = ["cdylib", "rlib"]
 name = "voxel_ray_tracing"
 path = "src/main.rs"
 
+# Bake registry entry, cross-checked at compile time by the module macro.
+# threads = 2 keeps per-scan map compute from serializing with publish work.
+[package.metadata.dimos.module.ray_tracing]
+path = "dimos_voxel_ray_tracing::module::RayTracingVoxelMap"
+python = "dimos.mapping.ray_tracing.module:RayTracingVoxelMap"
+threads = 2
+
+[package.metadata.dimos.module.ray_tracing.inputs]
+lidar = "sensor_msgs.PointCloud2"
+odometry = "nav_msgs.Odometry"
+
+[package.metadata.dimos.module.ray_tracing.outputs]
+global_map = "sensor_msgs.PointCloud2"
+local_map = "sensor_msgs.PointCloud2"
+local_map_fine = "sensor_msgs.PointCloud2"
+region_bounds = "geometry_msgs.PoseStamped"
+
+[features]
+# Baked host binaries build with default-features off to keep libpython out of a static link.
+default = ["python"]
+python = ["dep:pyo3", "dep:numpy"]
+
 [dependencies]
 dimos-module = { path = "../../../../native/rust/dimos-module" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
@@ -24,8 +46,8 @@ ahash = "0.8"
 arrayvec = "0.7"
 rayon = "1"
 tracing = "0.1"
-pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"] }
-numpy = "0.25"
+pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"], optional = true }
+numpy = { version = "0.25", optional = true }
 validator = { version = "0.20", features = ["derive"] }
 nalgebra = "0.35.0"
 

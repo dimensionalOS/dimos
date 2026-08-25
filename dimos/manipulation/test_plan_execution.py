@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for ManipulationModule plan-execution result projection."""
+"""Tests for the single-owner manipulation execution lifecycle."""
 
 from pathlib import Path
 from unittest.mock import MagicMock
+
+import pytest
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import (
@@ -25,51 +27,46 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
 )
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationState
+from dimos.manipulation.manipulation_spec import ExecutionStatus
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import GeneratedPlan
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
+from dimos.robot.assets.model import RobotModel
 
 
-def _plan(final_position: float = 1.0) -> GeneratedPlan:
+def _plan() -> GeneratedPlan:
     names = ["arm/j0"]
-    trajectory = JointTrajectory(
-        joint_names=names,
-        points=[
-            TrajectoryPoint(
-                positions=[0.0],
-                velocities=[0.0],
-                time_from_start=0.0,
-            ),
-            TrajectoryPoint(
-                positions=[final_position],
-                velocities=[0.0],
-                time_from_start=1.0,
-            ),
-        ],
-    )
     return GeneratedPlan(
         group_ids=("arm/manipulator",),
-        trajectory=trajectory,
-        path=[
-            JointState(name=names, position=[0.0]),
-            JointState(name=names, position=[final_position]),
-        ],
+        trajectory=JointTrajectory(
+            joint_names=names,
+            points=[
+                TrajectoryPoint(positions=[0.0], time_from_start=0.0),
+                TrajectoryPoint(positions=[1.0], time_from_start=1.0),
+            ],
+        ),
         status=PlanningStatus.SUCCESS,
     )
 
 
-def _module_with_coordinator(
-    coordinator: MagicMock,
-    module_factory,
-) -> ManipulationModule:
-    module = module_factory(coordinator)
+@pytest.fixture
+def module(module_factory) -> ManipulationModule:
+    coordinator = MagicMock(spec=ControlCoordinator)
+    coordinator.execute_trajectory.return_value = TrajectoryExecutionResult(
+        TrajectoryExecutionStatus.ACCEPTED
+    )
+    coordinator.cancel_trajectory.return_value = TrajectoryCancellationResult(
+        TrajectoryCancellationStatus.ALREADY_STOPPED
+    )
+    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.IDLE)
+    manipulation = module_factory(coordinator)
     config = RobotModelConfig(
         name="arm",
-        model_path=Path("/path/to/robot.urdf"),
+        model=RobotModel.from_file(Path("/path/to/robot.urdf")),
         joint_names=["j0"],
         base_link="base",
         planning_groups=[
@@ -81,90 +78,114 @@ def _module_with_coordinator(
             )
         ],
     )
-    module._robots = {"arm": ("arm_id", config)}
-    module._initialize_execution()
-    return module
+    manipulation._robots = {"arm": ("arm_id", config)}
+    manipulation.config = manipulation.config.model_copy(update={"robots": [config]})
+    manipulation._initialize_execution()
+    return manipulation
 
 
-def _coordinator(
-    *,
-    execute_status: TrajectoryExecutionStatus = TrajectoryExecutionStatus.ACCEPTED,
-    cancel_status: TrajectoryCancellationStatus = (TrajectoryCancellationStatus.ALREADY_STOPPED),
-) -> MagicMock:
-    coordinator = MagicMock(spec=ControlCoordinator)
-    coordinator.execute_trajectory.return_value = TrajectoryExecutionResult(execute_status)
-    coordinator.cancel_trajectory.return_value = TrajectoryCancellationResult(cancel_status)
-    return coordinator
+def test_execute_without_pending_plan_is_rejected(module) -> None:
+    result = module.execute(blocking=False)
+
+    assert result.status is ExecutionStatus.NO_PLAN
 
 
-def test_execute_plan_can_dispatch_cached_plan_repeatedly(
-    module_factory,
-) -> None:
-    coordinator = _coordinator()
-    module = _module_with_coordinator(coordinator, module_factory)
-    plan = _plan()
-    module._last_plan = plan
-
-    assert module.execute_plan()
-    assert module.execute_plan()
-    assert coordinator.execute_trajectory.call_count == 2
-    for call in coordinator.execute_trajectory.call_args_list:
-        dispatched = call.args[0]
-        assert [point.time_from_start for point in dispatched.points] == [
-            point.time_from_start for point in plan.trajectory.points
-        ]
-        assert [point.velocities for point in dispatched.points] == [
-            point.velocities for point in plan.trajectory.points
-        ]
-
-
-def test_direct_plan_does_not_replace_cached_plan(module_factory) -> None:
-    coordinator = _coordinator()
-    module = _module_with_coordinator(coordinator, module_factory)
-    cached = _plan(1.0)
-    direct = _plan(2.0)
-    module._last_plan = cached
-
-    assert module.execute_plan(plan=direct)
-
-    assert module._last_plan is cached
-    dispatched = coordinator.execute_trajectory.call_args.args[0]
-    assert dispatched.points[-1].positions == [2.0]
-
-
-def test_known_coordinator_rejection_restores_previous_state(
-    module_factory,
-) -> None:
-    coordinator = _coordinator(execute_status=TrajectoryExecutionStatus.START_STATE_MISMATCH)
-    module = _module_with_coordinator(coordinator, module_factory)
+def test_nonblocking_execute_returns_acceptance_and_consumes_plan(module) -> None:
     module._last_plan = _plan()
-    module._state = ManipulationState.COMPLETED
 
-    assert not module.execute_plan()
+    accepted = module.execute(blocking=False)
+    repeated = module.execute(blocking=False)
 
+    assert accepted.status is ExecutionStatus.ACCEPTED
+    assert repeated.status is ExecutionStatus.NO_PLAN
+    module._control_coordinator.execute_trajectory.assert_called_once()
+
+
+def test_rejected_dispatch_also_consumes_plan(module) -> None:
+    module._control_coordinator.execute_trajectory.return_value = TrajectoryExecutionResult(
+        TrajectoryExecutionStatus.START_STATE_MISMATCH
+    )
+    module._last_plan = _plan()
+
+    rejected = module.execute(blocking=False)
+    repeated = module.execute(blocking=False)
+
+    assert rejected.status is ExecutionStatus.REJECTED
+    assert repeated.status is ExecutionStatus.NO_PLAN
+    assert module._state is ManipulationState.IDLE
+
+
+def test_blocking_execute_waits_for_terminal_jtt_status(module) -> None:
+    module._last_plan = _plan()
+    module._control_coordinator.task_invoke.side_effect = [
+        TrajectoryStatus(state=TrajectoryState.EXECUTING, progress=0.5),
+        TrajectoryStatus(state=TrajectoryState.COMPLETED, progress=1.0),
+    ]
+
+    result = module.execute(blocking=True, timeout=1.0)
+
+    assert result.status is ExecutionStatus.COMPLETED
+    assert result.trajectory_status is not None
     assert module._state is ManipulationState.COMPLETED
-    assert module._last_plan is not None
 
 
-def test_uncertain_execute_projects_to_fault(module_factory) -> None:
-    coordinator = _coordinator()
-    coordinator.execute_trajectory.side_effect = TimeoutError("timed out")
-    module = _module_with_coordinator(coordinator, module_factory)
+def test_execution_timeout_does_not_cancel_motion(module) -> None:
+    module._control_coordinator.task_invoke.return_value = TrajectoryStatus(
+        state=TrajectoryState.EXECUTING
+    )
     module._last_plan = _plan()
 
-    assert not module.execute_plan()
+    result = module.execute(blocking=True, timeout=0.0)
 
+    assert result.status is ExecutionStatus.TIMED_OUT
+    module._control_coordinator.cancel_trajectory.assert_not_called()
+    assert module._execution_manager.status is ExecutionStatus.EXECUTING
+
+
+def test_wait_preserves_aborted_jtt_terminal_state(module) -> None:
+    module._last_plan = _plan()
+    module.execute(blocking=False)
+
+    module._control_coordinator.task_invoke.return_value = TrajectoryStatus(
+        state=TrajectoryState.ABORTED
+    )
+    result = module.wait_for_execution(timeout=0.0)
+
+    assert result.status is ExecutionStatus.ABORTED
+    assert module._state is ManipulationState.IDLE
+
+
+def test_uncertain_dispatch_faults_and_consumes_plan(module) -> None:
+    module._control_coordinator.execute_trajectory.side_effect = TimeoutError("timed out")
+    module._last_plan = _plan()
+
+    result = module.execute(blocking=False)
+
+    assert result.status is ExecutionStatus.UNCERTAIN
     assert module._state is ManipulationState.FAULT
+    assert module._last_plan is None
     assert "timed out" in module.get_error()
 
 
-def test_uncertain_cancel_projects_to_fault(module_factory) -> None:
-    coordinator = _coordinator()
-    coordinator.cancel_trajectory.side_effect = TimeoutError("timed out")
-    module = _module_with_coordinator(coordinator, module_factory)
-    module._state = ManipulationState.EXECUTING
+def test_safe_cancel_clears_uncertain_dispatch_fault(module) -> None:
+    module._control_coordinator.execute_trajectory.side_effect = TimeoutError("timed out")
+    module._last_plan = _plan()
+    module.execute(blocking=False)
 
-    assert not module.cancel()
+    result = module.cancel()
+    snapshot = module.get_state()
 
+    assert result.status is ExecutionStatus.NO_EXECUTION
+    assert snapshot.operation_status.name == "IDLE"
+    assert snapshot.execution_status is ExecutionStatus.NO_EXECUTION
+    assert snapshot.error is None
+
+
+def test_uncertain_cancel_faults_module(module) -> None:
+    module._control_coordinator.cancel_trajectory.side_effect = TimeoutError("timed out")
+
+    result = module.cancel()
+
+    assert result.status is ExecutionStatus.UNCERTAIN
     assert module._state is ManipulationState.FAULT
     assert "timed out" in module.get_error()

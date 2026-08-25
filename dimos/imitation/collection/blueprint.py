@@ -14,7 +14,7 @@
 
 """Recording blueprints.
 
-`CollectionRecorder` (a memory2 Recorder) captures the obs/action/status
+`CollectionRecorder` (a memory Recorder) captures the obs/action/status
 streams to a SQLite session DB during the run and flushes it durably on
 shutdown. DataPrep reads that DB afterwards.
 """
@@ -55,16 +55,24 @@ def _camera_if_real() -> tuple[Blueprint, ...]:
 # recorder captures whatever joints are present, so the coordinator's aggregate
 # stream is its intended input (see dimos/control/README.md).
 learning_collect_quest_xarm7 = autoconnect(
+    CollectionRecorder.blueprint(
+        db_path=_session_db("xarm7"),
+        poseless_streams=["color_image", "coordinator_joint_state", "status"],
+        record_tf=False,
+    ),
+    EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
     teleop_quest_xarm7,
     *_camera_if_real(),
-    EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
-    CollectionRecorder.blueprint(db_path=_session_db("xarm7")),
 )
 
 
 learning_collect_quest_piper = autoconnect(
+    CollectionRecorder.blueprint(
+        db_path=_session_db("piper"),
+        poseless_streams=["color_image", "coordinator_joint_state", "status"],
+        record_tf=False,
+    ),
+    EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
     teleop_quest_piper,
     *_camera_if_real(),
-    EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
-    CollectionRecorder.blueprint(db_path=_session_db("piper")),
 )

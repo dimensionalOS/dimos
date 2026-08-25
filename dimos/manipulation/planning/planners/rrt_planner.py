@@ -298,6 +298,7 @@ class RRTConnectPlanner:
         config: CartesianPathConfig,
         *,
         auxiliary_groups: Sequence[PlanningGroupID] = (),
+        check_collision: bool = True,
     ) -> PlanningResult:
         """Report that RRT-Connect does not support Cartesian path planning."""
         return PlanningResult(

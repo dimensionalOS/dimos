@@ -1,6 +1,4 @@
----
-title: "DimOS Modules"
----
+# dimOS Modules
 
 Modules are subsystems on a robot that operate autonomously and communicate with other subsystems using standardized messages.
 
@@ -50,9 +48,11 @@ print(CameraModule.io())
 └┬─────────────┘
  ├─ color_image: Image
  ├─ camera_info: CameraInfo
+ ├─ tf: TFMessage
  │
  ├─ RPC build() -> None
  ├─ RPC get_skills() -> list
+ ├─ RPC peek_stream(stream_name: str, timeout: float) -> Any
  ├─ RPC set_module_ref(name: str, module_ref: RPCClient) -> None
  ├─ RPC set_transport(stream_name: str, transport: Transport) -> bool
  ├─ RPC start() -> None
@@ -154,7 +154,7 @@ camera.stop()
 
 As we build module structures, we'll quickly want to utilize all cores on the machine (which Python doesn't allow as a single process) and potentially distribute modules across machines or even the internet.
 
-For this, we use `dimos.core` and DimOS transport protocols.
+For this, we use `dimos.core` and dimOS transport protocols.
 
 Defining message exchange protocols and message types also gives us the ability to write models in faster languages.
 

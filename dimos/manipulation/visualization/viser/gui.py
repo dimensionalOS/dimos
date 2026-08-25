@@ -254,9 +254,6 @@ class ViserPanelGui:
     def get_error(self) -> str:
         return self.operator.status().error
 
-    def reset(self) -> bool:
-        return self.operator.reset()
-
     def evaluate_joint_target_set(
         self, group_ids: Sequence[PlanningGroupID], targets: Mapping[PlanningGroupID, JointState]
     ) -> TargetEvaluationResult:
@@ -1013,7 +1010,9 @@ class ViserPanelGui:
             current = self.get_current_joint_state(robot_name)
             if config is None or current is None:
                 continue
-            values = self._local_values_for_robot(robot_name, current)
+            values = merged.get(robot_name)
+            if values is None:
+                values = self._local_values_for_robot(robot_name, current)
             target_raw = self._state_values_by_local_name(target)
             for local_name, global_name in zip(
                 group.local_joint_names, group.joint_names, strict=True

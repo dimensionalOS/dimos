@@ -20,15 +20,15 @@ from dimos.core.core import rpc
 from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.mapping.voxels.grid import VoxelGrid
-from dimos.memory2.module import StreamModule
-from dimos.memory2.stream import Stream
-from dimos.memory2.transform import Transformer
+from dimos.memory.module import StreamModule
+from dimos.memory.stream import Stream
+from dimos.memory.transform import Transformer
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from dimos.memory2.type.observation import Observation
+    from dimos.memory.type.observation import Observation
 
 
 class VoxelMapTransformer(Transformer[PointCloud2, PointCloud2]):

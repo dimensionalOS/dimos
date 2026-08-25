@@ -21,22 +21,28 @@ from __future__ import annotations
 
 from pathlib import Path as FsPath
 from time import perf_counter
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
 from numpy.typing import NDArray
 import typer
 
 from dimos.mapping.ray_tracing.transformer import RayTraceMap
-from dimos.memory2.store.sqlite import SqliteStore
-from dimos.memory2.tf import StreamTF
-from dimos.memory2.transform import FnTransformer
-from dimos.memory2.type.observation import Observation
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.tf import StreamTF, tf_stream
+from dimos.memory.transform import FnTransformer
+from dimos.memory.type.observation import Observation
+from dimos.memory.vis.utils import (
+    DEFAULT_RENDER_VOXEL,
+    attach_pose_from_odom,
+    default_render_voxel,
+)
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
+from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
 from dimos.navigation.nav_3d.mls_planner.mls_planner import MLSPlanner
 from dimos.navigation.tf_pose import base_height_above_ground
 from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT, ROBOT_LENGTH, ROBOT_WIDTH
@@ -45,10 +51,12 @@ from dimos.utils.data import resolve_named_path
 if TYPE_CHECKING:
     import rerun.blueprint as rrb
 
+    from dimos.memory.stream import Stream
+
 TIMELINE = "ts"
 
-AXIS_LEN = 0.5
-AXIS_RADIUS_RATIO = 25
+# --voxel-size default, and the render size --render-voxel scales from when unset.
+DEFAULT_VOXEL_SIZE = 0.08
 
 # Mount frames as recorded on the tf stream.
 BASE_FRAME = "base_link"
@@ -66,6 +74,28 @@ PATH_PALETTE = [
     [160, 120, 255],
     [120, 255, 200],
     [255, 255, 120],
+]
+
+# Sampled from the turbo colormap, low to high. Shared across both metric plots
+# so a given color reads the same in either.
+TURBO_BLUE = [70, 102, 221]
+TURBO_GREEN = [121, 254, 89]
+TURBO_ORANGE = [245, 105, 24]
+TURBO_RED = [195, 37, 3]
+
+# Each series is (metric key, entity suffix, legend label, color). The suffix
+# sorts the legend top-to-bottom. The label overrides the displayed name.
+TIMING_SERIES = [
+    ("total_ms", "1_total", "total", TURBO_ORANGE),
+    ("update_ms", "2_update", "update", TURBO_GREEN),
+    ("plan_ms", "3_plan", "plan", TURBO_BLUE),
+]
+
+SIZE_SERIES = [
+    ("voxels", "1_voxels", "voxels", TURBO_RED),
+    ("surface_cells", "2_surfaces", "surfaces", TURBO_ORANGE),
+    ("edges", "3_edges", "edges", TURBO_GREEN),
+    ("nodes", "4_nodes", "nodes", TURBO_BLUE),
 ]
 
 
@@ -96,24 +126,6 @@ def _parse_configs(
     return out
 
 
-PairObs = Observation[tuple[Observation[PointCloud2], Observation[Odometry]]]
-
-
-def _attach_pose_from_odom(pair_obs: PairObs) -> Observation[PointCloud2]:
-    lidar_obs, odom_obs = pair_obs.data
-    odom = odom_obs.data
-    pose_tuple = (
-        float(odom.position.x),
-        float(odom.position.y),
-        float(odom.position.z),
-        float(odom.orientation.x),
-        float(odom.orientation.y),
-        float(odom.orientation.z),
-        float(odom.orientation.w),
-    )
-    return lidar_obs.with_pose(pose_tuple)
-
-
 def _log_edges(edges: NDArray[np.float32], entity: str) -> None:
     import rerun as rr
 
@@ -137,11 +149,44 @@ def _log_path_wp(waypoints: NDArray[np.float32] | None, entity: str, color: list
     rr.log(entity, rr.LineStrips3D([points], colors=[color], radii=0.05))
 
 
+def _tf_over(store: SqliteStore, window: Stream[Any]) -> Stream[TFMessage] | None:
+    """The recorded tf stream clipped to another stream's span.
+
+    Absolute bounds: relative ones anchor on each stream's own first observation.
+    """
+    recorded = tf_stream(store)
+    if recorded is None:
+        print("no tf stream in the recording; skipping the tf tree")
+        return None
+    try:
+        first, last = window.first().ts, window.last().ts
+    except LookupError:
+        return None
+    return recorded.order_by("ts").time_range(first, last)
+
+
+class _TfSync:
+    """Logs a recorded tf stream up to a given timestamp, in step with another stream."""
+
+    def __init__(self, tf: Stream[TFMessage] | None) -> None:
+        self._pending = iter(tf) if tf is not None else iter(())
+        self._next = next(self._pending, None)
+        self._tree = TfFrameTree()
+
+    def up_to(self, ts: float) -> None:
+        import rerun as rr
+
+        while self._next is not None and self._next.ts <= ts:
+            rr.set_time(TIMELINE, timestamp=self._next.ts)
+            for path, archetype in self._next.data.to_rerun(self._tree):
+                rr.log(path, archetype)
+            self._next = next(self._pending, None)
+
+
 def _base_from_sensor(store: SqliteStore) -> Transform | None:
     """Sensor to robot base link transform from the recorded tf stream."""
     tf = StreamTF.from_store(store)
     if tf is None:
-        print("no tf stream in the recording; skipping the base_link triad")
         return None
     return tf.get(SENSOR_FRAME, BASE_FRAME)
 
@@ -191,12 +236,8 @@ def _log_odometry(
     """Trace the sensor moving throughout the scene."""
     import rerun as rr
 
-    px, py, pz, qx, qy, qz, qw = pose
+    px, py, pz, *_ = pose
     rr.set_time(TIMELINE, timestamp=ts)
-    rr.log(
-        "world/mid360_link",
-        rr.Transform3D(translation=[px, py, pz], quaternion=rr.Quaternion(xyzw=[qx, qy, qz, qw])),
-    )
     trail.append((px, py, pz))
     if len(trail) > 1:
         rr.log(
@@ -205,7 +246,7 @@ def _log_odometry(
     if base is None:
         return
     rr.log(
-        "world/base_link",
+        "world/robot_body",
         rr.Transform3D(
             translation=[base.translation.x, base.translation.y, base.translation.z],
             quaternion=rr.Quaternion(
@@ -323,6 +364,11 @@ def _blueprint(crop: LocalCrop) -> rrb.Blueprint:
                 origin="world",
                 name="world",
                 contents=["+ $origin/**", "- $origin/local/**"],
+                # The graph buries the map it was built from.
+                overrides={
+                    "world/nodes": rrb.EntityBehavior(visible=False),
+                    "world/node_edges": rrb.EntityBehavior(visible=False),
+                },
             ),
             rrb.Vertical(
                 rrb.Spatial3DView(
@@ -354,6 +400,13 @@ def _init_recording(db_path: FsPath, out: FsPath | None, live: bool, crop: Local
         rr.spawn()
     rr.send_blueprint(_blueprint(crop))
     register_colormap_annotation("turbo")
+    for group, series in (("timing", TIMING_SERIES), ("size", SIZE_SERIES)):
+        for _key, suffix, name, color in series:
+            rr.log(
+                f"metrics/{group}/{suffix}",
+                rr.SeriesLines(colors=[color], names=[name]),
+                static=True,
+            )
 
 
 def _build_planners(
@@ -426,16 +479,16 @@ def _process_frame(
                 start, planner, render_voxel, clearance_clamp, hard_clearance, crop
             )
 
-    for key, value in ref_timing.items():
-        rr.log(f"metrics/timing/{key}", rr.Scalars(value))
+    for key, suffix, _name, _color in TIMING_SERIES:
+        rr.log(f"metrics/timing/{suffix}", rr.Scalars(ref_timing[key]))
     sizes = {
         "voxels": planners[0][2].voxel_count(),
         "surface_cells": len(surface),
         "nodes": len(nodes),
         "edges": len(edges),
     }
-    for key, value in sizes.items():
-        rr.log(f"metrics/size/{key}", rr.Scalars(value))
+    for key, suffix, _name, _color in SIZE_SERIES:
+        rr.log(f"metrics/size/{suffix}", rr.Scalars(sizes[key]))
     return ref_timing
 
 
@@ -451,7 +504,9 @@ def main(
         "pointlio_odometry", "--odom-stream", help="Odometry stream in the recording"
     ),
     align_tol: float = typer.Option(0.05, "--align-tol", help="Lidar/odom alignment tolerance (s)"),
-    voxel_size: float = typer.Option(0.08, "--voxel-size", help="Voxel edge length (m)"),
+    voxel_size: float = typer.Option(
+        DEFAULT_VOXEL_SIZE, "--voxel-size", help="Voxel edge length (m)"
+    ),
     max_range: float = typer.Option(30.0, "--max-range", help="Max ray cast distance (m)"),
     ray_subsample: int = typer.Option(1, "--ray-subsample", help="Keep every Nth ray"),
     shadow_depth: float = typer.Option(
@@ -516,7 +571,12 @@ def main(
     live: bool = typer.Option(
         False, "--live", help="Also spawn the rerun viewer when --out is set"
     ),
-    render_voxel: float = typer.Option(0.05, "--render-voxel", help="Rerun voxel render size (m)"),
+    render_voxel: float | None = typer.Option(
+        None,
+        "--render-voxel",
+        help="Rerun voxel render size (m); scales with --voxel-size when unset "
+        f"({DEFAULT_RENDER_VOXEL} at the default voxel size of {DEFAULT_VOXEL_SIZE})",
+    ),
     local_radius: float = typer.Option(
         5.0, "--local-radius", help="Close-up view: crop radius around the robot (m)"
     ),
@@ -541,6 +601,9 @@ def main(
 ) -> None:
     import rerun as rr
 
+    if render_voxel is None:
+        render_voxel = default_render_voxel(voxel_size, DEFAULT_VOXEL_SIZE)
+
     db_path = resolve_named_path(dataset, ".db")
     crop = LocalCrop(local_radius, local_above, local_below)
     _init_recording(db_path, out, live, crop)
@@ -553,9 +616,10 @@ def main(
         if to_time is not None:
             lidar = lidar.to_time(to_time)
         odom = store.stream(odom_stream, Odometry).order_by("ts")
+        tf = _tf_over(store, lidar)
 
         pose_tagged = lidar.align(odom, tolerance=align_tol).transform(
-            FnTransformer(_attach_pose_from_odom)
+            FnTransformer(attach_pose_from_odom)
         )
         ray_pipeline = pose_tagged.transform(
             RayTraceMap(
@@ -570,6 +634,7 @@ def main(
                 support_min=support_min,
             )
         )
+        tf_sync = _TfSync(tf)
 
         configs = _parse_configs(config, wall_clearance, wall_buffer, wall_buffer_weight)
         ref_clearance = configs[0][0]
@@ -592,27 +657,9 @@ def main(
             if base_from_sensor is not None
             else 0.0
         )
-        entities = ["world/mid360_link/axes"] + (
-            ["world/base_link/axes"] if base_from_sensor else []
-        )
-        for entity in entities:
-            rr.log(
-                entity,
-                rr.Arrows3D(
-                    origins=[[0.0, 0.0, 0.0]] * 3,
-                    vectors=[
-                        [AXIS_LEN, 0.0, 0.0],
-                        [0.0, AXIS_LEN, 0.0],
-                        [0.0, 0.0, AXIS_LEN],
-                    ],
-                    colors=[[255, 0, 0], [0, 255, 0], [0, 0, 255]],
-                    radii=AXIS_LEN / AXIS_RADIUS_RATIO,
-                ),
-                static=True,
-            )
         if base_from_sensor is not None:
             rr.log(
-                "world/base_link/outline",
+                "world/robot_body/outline",
                 rr.Boxes3D(
                     half_sizes=[ROBOT_LENGTH / 2, ROBOT_WIDTH / 2, robot_height / 2],
                     colors=[(0, 255, 127)],
@@ -621,7 +668,7 @@ def main(
             )
             # wall_clearance is the planner's proxy for the robot radius.
             rr.log(
-                "world/base_link/clearance",
+                "world/robot_body/clearance",
                 rr.Cylinders3D(
                     lengths=[robot_height],
                     radii=[wall_clearance],
@@ -635,6 +682,7 @@ def main(
         try:
             frame = 0
             for ray_obs in ray_pipeline:
+                tf_sync.up_to(ray_obs.ts)
                 if ray_obs.pose_tuple is None:
                     continue
                 start, base = _plan_start(

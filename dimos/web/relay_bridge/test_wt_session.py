@@ -16,6 +16,7 @@
 frames are fed straight into the protocol callbacks)."""
 
 from aioquic.quic.connection import QuicConnection
+from aioquic.quic.events import StreamReset
 
 from dimos.web.relay_bridge._wt_session import (
     _FRAME_QUEUE_MAX,
@@ -25,7 +26,6 @@ from dimos.web.relay_bridge._wt_session import (
     make_quic_configuration,
 )
 from dimos.web.relay_bridge.protocol import (
-    ChannelSpec,
     DataFrame,
     FrameHeader,
     Manifest,
@@ -90,10 +90,24 @@ async def test_per_encoding_payload_caps():
     session._control_msg_received(
         Manifest(
             robotId="r1",
-            channels=[
-                ChannelSpec(ch="odom", encoding="pose.json.v1", delivery="reliable", maxHz=20.5),
-                ChannelSpec(ch="cam", encoding="jpeg.v1", delivery="latest", maxHz=15.5),
-            ],
+            manifest={
+                "version": 1,
+                "channels": [
+                    {
+                        "ch": "odom",
+                        "encoding": "pose.json.v1",
+                        "delivery": "reliable",
+                        "maxHz": 20.5,
+                    },
+                    {"ch": "cam", "encoding": "jpeg.v1", "delivery": "latest", "maxHz": 15.5},
+                    {
+                        "ch": "global_costmap",
+                        "encoding": "costmap.zlib.v1",
+                        "delivery": "latest",
+                        "maxHz": 5.5,
+                    },
+                ],
+            },
         )
     )
     # The manifest still reaches the control consumer queue.
@@ -103,11 +117,36 @@ async def test_per_encoding_payload_caps():
     session._stream_data_received(4, _frame_bytes("odom", 1, 128 * 1024), False)
     assert session.frames.qsize() == 0
     assert session.frames_oversized == 1
+    # Over the costmap cap: dropped too.
+    session._stream_data_received(8, _frame_bytes("global_costmap", 1, 9 * 1024 * 1024), False)
+    assert session.frames.qsize() == 0
+    assert session.frames_oversized == 2
     # Under the caps: queued.
     session._stream_data_received(4, _frame_bytes("odom", 2, 100), False)
     session._stream_data_received(8, _frame_bytes("cam", 1, 1024 * 1024), False)
-    assert session.frames.qsize() == 2
-    # Channels with no known encoding only get the outer frame-size bound.
-    session._stream_data_received(12, _frame_bytes("mystery", 1, 9 * 1024 * 1024), True)
+    session._stream_data_received(12, _frame_bytes("global_costmap", 2, 30 * 1024), False)
     assert session.frames.qsize() == 3
-    assert session.frames_oversized == 1
+    # Channels with no known encoding only get the outer frame-size bound.
+    session._stream_data_received(16, _frame_bytes("mystery", 1, 9 * 1024 * 1024), True)
+    assert session.frames.qsize() == 4
+    assert session.frames_oversized == 2
+
+
+async def test_stream_reset_drops_the_frame_reader():
+    # The relay ends every latest stream with a reset (reap/dispose); the
+    # reader map must not grow one leaked entry per stream, and a partial
+    # frame is stale by definition.
+    session = _session()
+    full = _frame_bytes("cam", 1, 1024)
+    session._stream_data_received(4, full[: len(full) // 2], False)
+    assert 4 in session._frame_readers
+    session.quic_event_received(StreamReset(error_code=1, stream_id=4))
+    assert 4 not in session._frame_readers
+    assert session.frames.qsize() == 0
+
+    # A reset for a stream that already dispatched its frame is a no-op.
+    session._stream_data_received(8, _frame_bytes("cam", 2, 16), False)
+    assert session.frames.qsize() == 1
+    session.quic_event_received(StreamReset(error_code=1, stream_id=8))
+    assert 8 not in session._frame_readers
+    assert session.frames.qsize() == 1

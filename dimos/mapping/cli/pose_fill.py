@@ -37,9 +37,9 @@ import typer
 # Heavy dimos imports are deferred (TYPE_CHECKING / inside functions) so that
 # `dimos map --help` stays fast. See test_cli_startup.py.
 if TYPE_CHECKING:
-    from dimos.memory2.backend import Backend
-    from dimos.memory2.stream import Stream
-    from dimos.memory2.type.observation import Observation
+    from dimos.memory.backend import Backend
+    from dimos.memory.stream import Stream
+    from dimos.memory.type.observation import Observation
     from dimos.msgs.geometry_msgs.Transform import Transform
 
 
@@ -64,7 +64,7 @@ def pose_fill(
     camera_optical`` so a base-frame odometry source yields an optical-frame
     image pose.
     """
-    from dimos.memory2.type.observation import _to_tuple
+    from dimos.memory.type.observation import _to_tuple
     from dimos.msgs.geometry_msgs.Quaternion import Quaternion
     from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -103,7 +103,7 @@ def pose_fill_db(
     rtree spatial index is rebuilt from it on insert). Returns a per-stream
     count of observations written.
     """
-    from dimos.memory2.store.sqlite import SqliteStore
+    from dimos.memory.store.sqlite import SqliteStore
 
     dest_p = Path(dest_path)
     if dest_p.exists():

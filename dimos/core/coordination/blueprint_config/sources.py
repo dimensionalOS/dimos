@@ -66,7 +66,7 @@ def validate_global_values(values: Mapping[str, Any]) -> dict[str, Any]:
 def read_config_file(path: Path) -> Mapping[str, Any]:
     try:
         raw = path.read_text()
-    except FileNotFoundError:
+    except (FileNotFoundError, IsADirectoryError):
         return {}
     except OSError as error:
         raise BlueprintConfigError(f"Could not read config file {path}: {error}") from error

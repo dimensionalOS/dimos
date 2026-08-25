@@ -34,7 +34,6 @@ from dimos.control.components import (
 )
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.hardware_interface import ConnectedHardware, ConnectedTwistBase
-from dimos.control.routing import Routing
 from dimos.control.task import (
     BaseControlTask,
     ControlMode,
@@ -43,13 +42,20 @@ from dimos.control.task import (
     JointStateSnapshot,
     ResourceClaim,
 )
+from dimos.control.tasks.gripper_task.gripper_task import (
+    GripperControlTask,
+    GripperControlTaskConfig,
+)
 from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JOINT_TRAJECTORY_TASK_NAME,
     JointTrajectoryTask,
     JointTrajectoryTaskConfig,
     TrajectoryCancellationStatus,
     TrajectoryExecutionStatus,
+    joint_trajectory_task,
 )
 from dimos.control.tick_loop import TickLoop
+from dimos.core.stream import In
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
@@ -91,7 +97,7 @@ def trajectory_task():
         joint_names=["arm/joint1", "arm/joint2", "arm/joint3"],
         priority=10,
     )
-    return JointTrajectoryTask(name="test_traj", config=config)
+    return JointTrajectoryTask(config=config)
 
 
 @pytest.fixture
@@ -186,25 +192,27 @@ class TestJointStateSnapshot:
 
 
 class TestConnectedHardware:
-    def test_normalized_gripper_commands_are_mapped_at_hardware_boundary(self, mock_adapter):
-        mock_adapter.read_gripper_position.return_value = 0.035
+    def test_gripper_rides_the_one_array_without_conversion(self, mock_adapter):
+        mock_adapter.read_joint_positions.return_value = [0.0] * 6 + [0.035]
+        mock_adapter.read_joint_velocities.return_value = [0.0] * 7
+        mock_adapter.read_joint_efforts.return_value = [0.0] * 7
         component = HardwareComponent(
             hardware_id="arm",
             hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("arm", 6),
-            gripper_joints=["arm/gripper"],
-            gripper_open_position=0.07,
-            gripper_closed_position=0.0,
+            joints=[*make_joints("arm", 6), "arm/gripper"],
         )
         hardware = ConnectedHardware(mock_adapter, component)
 
-        assert hardware.read_state()["arm/gripper"].position == pytest.approx(0.5)
-        hardware.write_command({"arm/gripper": 0.0}, ControlMode.POSITION)
-        hardware.write_command({"arm/gripper": 1.0}, ControlMode.POSITION)
-        assert mock_adapter.write_gripper_position.call_args_list == [
-            ((0.0,), {}),
-            ((0.07,), {}),
-        ]
+        # Read: the adapter's value, verbatim — not remapped to a fraction.
+        assert hardware.read_state()["arm/gripper"].position == pytest.approx(0.035)
+
+        # Write: one call carrying arm and gripper, gripper value untouched.
+        assert hardware.write_command({"arm/gripper": 0.07}, ControlMode.POSITION)
+        mock_adapter.write_joint_positions.assert_called_once_with([0.0] * 6 + [0.07])
+
+        # Velocity commands use the same complete joint order and zero omitted joints.
+        assert hardware.write_command({"arm/joint1": 0.5}, ControlMode.VELOCITY)
+        mock_adapter.write_joint_velocities.assert_called_once_with([0.5] + [0.0] * 6)
 
     def test_joint_names_prefixed(self, connected_hardware):
         names = connected_hardware.joint_names
@@ -240,8 +248,10 @@ def make_coordinator() -> Iterator[Callable[..., ControlCoordinator]]:
     """Factory for real coordinators, all stopped on teardown."""
     coordinators: list[ControlCoordinator] = []
 
-    def make(**kwargs: Any) -> ControlCoordinator:
-        coordinator = ControlCoordinator(publish_joint_state=False, **kwargs)
+    def make(
+        cls: type[ControlCoordinator] = ControlCoordinator, **kwargs: Any
+    ) -> ControlCoordinator:
+        coordinator = cls(publish_joint_state=False, **kwargs)
         coordinators.append(coordinator)
         return coordinator
 
@@ -252,36 +262,19 @@ def make_coordinator() -> Iterator[Callable[..., ControlCoordinator]]:
             coordinator.stop()
 
 
+class _EEFTwistCoordinator(ControlCoordinator):
+    ee_twist_command: In[TwistStamped]
+
+
 class TestControlCoordinatorLifecycle:
-    def test_dispatch_routes_ee_twist_only_to_matching_frame_id(self, make_coordinator):
-        coordinator = make_coordinator()
-        matching_task = RecordingTask("eef")
-        other_task = RecordingTask("other")
-        coordinator._tasks = {"eef": matching_task, "other": other_task}
-        coordinator._routes = {
-            "coordinator_ee_twist_command": [
-                (matching_task, "on_ee_twist_command", Routing.BY_TASK_NAME),
-                (other_task, "on_ee_twist_command", Routing.BY_TASK_NAME),
-            ]
-        }
-
-        for frame_id in ("eef", "missing", ""):
-            coordinator._dispatch(
-                "coordinator_ee_twist_command",
-                TwistStamped(frame_id=frame_id, linear=[0.1, 0.0, 0.0], angular=[0.0, 0.0, 0.0]),
-            )
-
-        assert len(matching_task.ee_twist_calls) == 1
-        assert other_task.ee_twist_calls == []
-
     def test_start_subscribes_ee_twist_only_for_eef_twist_tasks(self, make_coordinator, mocker):
         mocker.patch("dimos.core.module.Module.start")
         mocker.patch("dimos.control.coordinator.TickLoop")
 
         def start_coordinator(tasks):
-            coordinator = make_coordinator(tasks=tasks)
+            coordinator = make_coordinator(cls=_EEFTwistCoordinator, tasks=tasks)
             coordinator._create_task_from_config = lambda cfg: RecordingTask(cfg.name)
-            subscribe = mocker.patch.object(coordinator.coordinator_ee_twist_command, "subscribe")
+            subscribe = mocker.patch.object(coordinator.ee_twist_command, "subscribe")
             coordinator.start()
             return coordinator, subscribe
 
@@ -305,7 +298,7 @@ class TestControlCoordinatorLifecycle:
     def test_stop_unsubscribes_ee_twist_subscription(self, make_coordinator, mocker):
         coordinator = make_coordinator()
         unsubscribe = mocker.Mock()
-        coordinator._stream_unsubs = {"coordinator_ee_twist_command": unsubscribe}
+        coordinator._stream_unsubs = {"ee_twist_command": unsubscribe}
 
         coordinator.stop()
 
@@ -350,6 +343,11 @@ class TestControlCoordinatorLifecycle:
                 return None
 
             def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
+                pass
+
+            def on_twist_command(self, msg: Any, t_now: float) -> None:
+                # The g1_groot_wbc card binds twist_command; add_task now
+                # resolves handlers at registration, so the stub needs it.
                 pass
 
             def reset_runtime_state(self, reactivate: bool | None = None) -> bool:
@@ -430,38 +428,39 @@ class TestControlCoordinatorLifecycle:
 
 
 class TestControlCoordinatorTrajectoryExecution:
-    def test_rejects_second_trajectory_task(self, make_coordinator):
+    def test_trajectory_config_requires_canonical_name(self, make_coordinator):
         coordinator = make_coordinator()
-        first = JointTrajectoryTask(
-            "first",
-            JointTrajectoryTaskConfig(joint_names=["arm/joint1"]),
-        )
-        second = JointTrajectoryTask(
-            "second",
-            JointTrajectoryTaskConfig(joint_names=["arm/joint2"]),
+        config = TaskConfig(
+            name="other_name",
+            type="trajectory",
+            joint_names=["arm/joint1"],
         )
 
-        assert coordinator.add_task(first, task_type="trajectory")
-        with pytest.raises(ValueError, match="exactly one JointTrajectoryTask"):
-            coordinator.add_task(second, task_type="trajectory")
+        with pytest.raises(ValueError, match="must be named 'joint_trajectory'"):
+            coordinator._create_task_from_config(config)
 
-        assert coordinator.list_tasks() == ["first"]
+    def test_joint_trajectory_task_factory(self):
+        config = joint_trajectory_task(
+            ("arm/joint1", "arm/joint2"),
+            priority=7,
+            start_position_tolerance=0.02,
+        )
+
+        assert config.name == JOINT_TRAJECTORY_TASK_NAME
+        assert config.type == "trajectory"
+        assert config.joint_names == ["arm/joint1", "arm/joint2"]
+        assert config.priority == 7
+        assert config.params == {"start_position_tolerance": 0.02}
 
     def test_removing_trajectory_task_allows_replacement(self, make_coordinator):
         coordinator = make_coordinator()
-        first = JointTrajectoryTask(
-            "first",
-            JointTrajectoryTaskConfig(joint_names=["arm/joint1"]),
-        )
-        second = JointTrajectoryTask(
-            "second",
-            JointTrajectoryTaskConfig(joint_names=["arm/joint2"]),
-        )
+        first = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["arm/joint1"]))
+        second = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["arm/joint2"]))
         coordinator.add_task(first, task_type="trajectory")
 
-        assert coordinator.remove_task("first")
+        assert coordinator.remove_task(JOINT_TRAJECTORY_TASK_NAME)
         assert coordinator.add_task(second, task_type="trajectory")
-        assert coordinator.list_tasks() == ["second"]
+        assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME) is second
 
     def test_execute_and_cancel_without_trajectory_task_are_semantic(self, make_coordinator):
         coordinator = make_coordinator()
@@ -509,7 +508,7 @@ class TestJointTrajectoryTask:
             )
 
     def test_initial_state(self, trajectory_task):
-        assert trajectory_task.name == "test_traj"
+        assert trajectory_task.name == JOINT_TRAJECTORY_TASK_NAME
         assert not trajectory_task.is_active()
         assert trajectory_task.get_state() == TrajectoryState.IDLE
 
@@ -527,6 +526,20 @@ class TestJointTrajectoryTask:
         assert result.status is TrajectoryExecutionStatus.ACCEPTED
         assert trajectory_task.is_active()
         assert trajectory_task.get_state() == TrajectoryState.EXECUTING
+
+    def test_status_snapshot_is_non_destructive(self, trajectory_task, simple_trajectory):
+        trajectory_task.execute(simple_trajectory, trajectory_start_positions(simple_trajectory))
+        trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=10.0, dt=0.01))
+
+        active = trajectory_task.get_status(10.25)
+        assert active.state is TrajectoryState.EXECUTING
+        assert active.progress == pytest.approx(0.25)
+
+        trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=11.5, dt=0.01))
+        terminal = trajectory_task.get_status(11.5)
+        assert terminal.state is TrajectoryState.COMPLETED
+        assert terminal.progress == pytest.approx(1.0)
+        assert trajectory_task.get_status(11.6).state is TrajectoryState.COMPLETED
 
     def test_execute_partial_subset_and_claims_full_configuration(self, trajectory_task):
         trajectory = JointTrajectory(
@@ -692,12 +705,12 @@ class TestJointTrajectoryTask:
         )
         assert (
             trajectory_task.execute(second, trajectory_start_positions(second)).status
-            is TrajectoryExecutionStatus.ACCEPTED
+            is TrajectoryExecutionStatus.ALREADY_EXECUTING
         )
         trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=1.0, dt=0.01))
         output = trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=1.5, dt=0.01))
         assert output is not None
-        assert output.joint_names == ["arm/joint3"]
+        assert output.joint_names == ["arm/joint1"]
         assert trajectory_task.cancel().status is TrajectoryCancellationStatus.CANCELLED
         assert (
             trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=2.0, dt=0.01))
@@ -902,6 +915,53 @@ class TestArbitration:
 
 
 class TestTickLoop:
+    def test_partial_trajectory_and_gripper_command_share_hardware_write(self, mocker):
+        joint_names = ["arm/joint1", "arm/joint2", "arm/gripper"]
+        adapter = mocker.Mock(spec=ManipulatorAdapter)
+        adapter.read_joint_positions.return_value = [0.0, 0.0, 0.0]
+        adapter.read_joint_velocities.return_value = [0.0, 0.0, 0.0]
+        adapter.read_joint_efforts.return_value = [0.0, 0.0, 0.0]
+        adapter.set_control_mode.return_value = True
+        adapter.write_joint_positions.return_value = True
+        hardware = ConnectedHardware(
+            adapter,
+            HardwareComponent(
+                hardware_id="arm",
+                hardware_type=HardwareType.MANIPULATOR,
+                joints=joint_names,
+            ),
+        )
+        trajectory_task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=joint_names))
+        gripper_task = GripperControlTask(
+            "gripper",
+            GripperControlTaskConfig(joint_names=["arm/gripper"]),
+            limits=[(0.0, 1.0)],
+        )
+        trajectory = JointTrajectory(
+            joint_names=["arm/joint1", "arm/joint2"],
+            points=[
+                TrajectoryPoint(positions=[0.0, 0.0], velocities=[0.0, 0.0], time_from_start=0.0),
+                TrajectoryPoint(positions=[0.5, 0.5], velocities=[0.0, 0.0], time_from_start=1.0),
+            ],
+        )
+        tick_loop = TickLoop(
+            tick_rate=100.0,
+            hardware={"arm": hardware},
+            hardware_lock=threading.Lock(),
+            tasks={trajectory_task.name: trajectory_task, "gripper": gripper_task},
+            task_lock=threading.Lock(),
+            joint_to_hardware=dict.fromkeys(joint_names, "arm"),
+        )
+
+        assert (
+            trajectory_task.execute(trajectory, trajectory_start_positions(trajectory)).status
+            is TrajectoryExecutionStatus.ACCEPTED
+        )
+        assert gripper_task.set_position([0.75])
+        tick_loop._tick()
+
+        adapter.write_joint_positions.assert_called_once_with([0.0, 0.0, 0.75])
+
     def test_tick_loop_starts_and_stops(self, mock_adapter, wait_until):
         component = HardwareComponent(
             hardware_id="arm",
@@ -970,6 +1030,25 @@ class TestTickLoop:
 
         assert mock_task.compute.call_count > 0
 
+    def test_write_all_hardware_rejected_command_logs_error(self, mocker):
+        hardware = {"arm": MagicMock()}
+        hardware["arm"].write_command.return_value = False
+        log_error = mocker.patch("dimos.control.tick_loop.logger.error")
+        tick_loop = TickLoop(
+            tick_rate=100.0,
+            hardware=hardware,
+            hardware_lock=threading.Lock(),
+            tasks={},
+            task_lock=threading.Lock(),
+            joint_to_hardware={"arm/joint1": "arm"},
+        )
+
+        tick_loop._write_all_hardware({"arm": ({"arm/joint1": 0.25}, ControlMode.SERVO_POSITION)})
+
+        log_error.assert_called_once_with(
+            "Hardware arm rejected SERVO_POSITION command from control task"
+        )
+
 
 class TestIntegration:
     def test_full_trajectory_execution(self, mock_adapter, wait_until):
@@ -985,8 +1064,8 @@ class TestIntegration:
             joint_names=[f"arm/joint{i + 1}" for i in range(6)],
             priority=10,
         )
-        traj_task = JointTrajectoryTask(name="traj_arm", config=config)
-        tasks = {"traj_arm": traj_task}
+        traj_task = JointTrajectoryTask(config=config)
+        tasks = {JOINT_TRAJECTORY_TASK_NAME: traj_task}
 
         joint_to_hardware = {f"arm/joint{i + 1}": "arm" for i in range(6)}
 

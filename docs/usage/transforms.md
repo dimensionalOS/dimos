@@ -1,6 +1,4 @@
----
-title: "Transforms"
----
+# Transforms
 
 ## The Problem: Everything Measures from Its Own Perspective
 
@@ -165,7 +163,7 @@ print(matrix)
 
 ## Frame IDs in Modules
 
-Modules in DimOS automatically get a `frame_id` property. This is controlled by two config options in [`core/module.py`](/dimos/core/module.py#L78):
+Modules in dimOS automatically get a `frame_id` property. This is controlled by two config options in [`core/module.py`](/dimos/core/module.py#L78):
 
 - `frame_id` - The base frame name (defaults to the class name)
 - `frame_id_prefix` - Optional prefix for namespacing
@@ -367,7 +365,7 @@ Transform tree:
 
 You can view these transforms in 3D using the Rerun viewer (see [Visualization](/docs/usage/visualization.md)).
 
-![transforms](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/usage/assets/transforms.png)
+![transforms](assets/transforms.png)
 
 Key points:
 
@@ -411,7 +409,7 @@ text "CameraModule" italic at ((CL.x + CO.x)/2, CL.s.y - 0.25in)
 
 ![output](assets/transforms_modules.svg)
 
-# Internals
+## Internals
 
 ## Transform Buffer
 
@@ -449,7 +447,7 @@ print(tf)
 Latest transform: x=4.0
 Buffer has 1 transform pair(s)
 MultiTBuffer(1 buffers):
-  TBuffer(base_link -> camera_link, 5 msgs, 0.40s [2026-05-15 21:11:37 - 2026-05-15 21:11:37])
+  TBuffer(base_link -> camera_link, 5 msgs, 0.40s [2026-08-24 15:36:04 - 2026-08-24 15:36:04])
 ```
 
 This is essential for sensor fusion where you need to know where the camera was when an image was captured, not where it is now.

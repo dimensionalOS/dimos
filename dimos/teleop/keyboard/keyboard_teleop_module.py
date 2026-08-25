@@ -48,8 +48,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -60,20 +59,13 @@ os.environ["SDL_VIDEODRIVER"] = "x11"
 # Default jog speeds
 DEFAULT_LINEAR_SPEED = 0.05  # m/s
 DEFAULT_ANGULAR_SPEED = 0.5  # rad/s
-# Normalized gripper command values.
-GRIPPER_OPEN_POSITION = 1.0
-GRIPPER_CLOSED_POSITION = 0.0
-# TODO: Improve gripper handling.
-GRIPPER_JOINT_NAME = "arm/gripper"
 
 TwistVector = tuple[float, float, float]
 
 
 class KeyboardTeleopConfig(ModuleConfig):
-    task_name: str = EEF_TWIST_TASK_NAME
     linear_speed: float = DEFAULT_LINEAR_SPEED
     angular_speed: float = DEFAULT_ANGULAR_SPEED
-    gripper_open_position: float = GRIPPER_OPEN_POSITION
 
 
 def _motion_key_codes() -> frozenset[int]:
@@ -112,17 +104,17 @@ class KeyboardTeleopModule(Module):
 
     config: KeyboardTeleopConfig
 
-    coordinator_ee_twist_command: Out[TwistStamped]
-    joint_command: Out[JointState]
+    ee_twist_command: Out[TwistStamped]
+    gripper_command: Out[Float32]
 
     _stop_event: threading.Event
     _thread: threading.Thread | None = None
-    _gripper_position: float | None = None
+    _gripper_opening: float | None = None
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._stop_event = threading.Event()
-        self._gripper_position = None
+        self._gripper_opening = None
 
     @rpc
     def start(self) -> None:
@@ -143,11 +135,9 @@ class KeyboardTeleopModule(Module):
         super().stop()
 
     def _pygame_loop(self) -> None:
-        task_name = self.config.task_name
-
         pygame.init()
         screen = pygame.display.set_mode((600, 400), pygame.SWSURFACE)
-        pygame.display.set_caption(f"Keyboard Teleop — {task_name}")
+        pygame.display.set_caption("Keyboard Teleop")
         font = pygame.font.Font(None, 28)
         clock = pygame.time.Clock()
         held_motion_keys: set[int] = set()
@@ -155,7 +145,7 @@ class KeyboardTeleopModule(Module):
 
         while not self._stop_event.is_set():
             for event in pygame.event.get():
-                if self._handle_pygame_event(event, held_motion_keys, task_name):
+                if self._handle_pygame_event(event, held_motion_keys):
                     self._stop_event.set()
 
             linear, angular = _twist_from_keys(
@@ -168,18 +158,14 @@ class KeyboardTeleopModule(Module):
 
             is_moving = any(value != 0.0 for value in (*linear, *angular))
             if is_moving or was_moving:
-                self._publish_twist(
-                    task_name,
-                    linear=linear,
-                    angular=angular,
-                )
+                self._publish_twist(linear=linear, angular=angular)
                 was_moving = is_moving
 
             # Draw UI
             screen.fill((30, 30, 30))
             y_pos = 20
 
-            title = font.render(f"Keyboard Teleop — {task_name}", True, (255, 255, 255))
+            title = font.render("Keyboard Teleop", True, (255, 255, 255))
             screen.blit(title, (20, y_pos))
             y_pos += 40
 
@@ -210,14 +196,13 @@ class KeyboardTeleopModule(Module):
             pygame.display.flip()
             clock.tick(50)
 
-        self._publish_twist(task_name)
+        self._publish_twist()
         pygame.quit()
 
     def _handle_pygame_event(
         self,
         event: Any,
         held_motion_keys: set[int],
-        task_name: str,
     ) -> bool:
         """Apply one pygame event and synchronously stop motion on KEYUP."""
         if pygame is None:
@@ -231,9 +216,9 @@ class KeyboardTeleopModule(Module):
             if event.key in _motion_key_codes():
                 held_motion_keys.add(event.key)
             elif event.key == left_bracket:
-                self._set_gripper_position(self.config.gripper_open_position)
+                self._publish_gripper_command(opening=1.0)
             elif event.key == right_bracket:
-                self._set_gripper_position(GRIPPER_CLOSED_POSITION)
+                self._publish_gripper_command(opening=0.0)
         elif event.type == pygame.KEYUP and event.key in _motion_key_codes():
             held_motion_keys.discard(event.key)
             linear, angular = _twist_from_keys(
@@ -241,26 +226,23 @@ class KeyboardTeleopModule(Module):
                 linear_speed=self.config.linear_speed,
                 angular_speed=self.config.angular_speed,
             )
-            self._publish_twist(task_name, linear=linear, angular=angular)
+            self._publish_twist(linear=linear, angular=angular)
         return False
 
     def _publish_twist(
         self,
-        task_name: str,
         *,
         linear: TwistVector = (0.0, 0.0, 0.0),
         angular: TwistVector = (0.0, 0.0, 0.0),
     ) -> None:
-        self.coordinator_ee_twist_command.publish(
-            TwistStamped(frame_id=task_name, linear=list(linear), angular=list(angular))
-        )
+        self.ee_twist_command.publish(TwistStamped(linear=list(linear), angular=list(angular)))
 
-    def _set_gripper_position(self, position: float) -> None:
-        """Latch and publish a changed gripper endpoint command."""
-        if self._gripper_position == position:
+    def _publish_gripper_command(self, *, opening: float) -> None:
+        """Publish a changed normalized gripper opening."""
+        if self._gripper_opening == opening:
             return
-        self._gripper_position = position
-        self.joint_command.publish(JointState(name=[GRIPPER_JOINT_NAME], position=[position]))
+        self._gripper_opening = opening
+        self.gripper_command.publish(Float32(data=opening))
 
 
 def _twist_from_keys(

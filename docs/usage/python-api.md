@@ -1,8 +1,6 @@
----
-title: "Python API"
----
+# Python API
 
-The `Dimos` class is the main entry point for using DimOS from Python. There are two modes:
+The `Dimos` class is the main entry point for using dimOS from Python. There are two modes:
 
 1. **Local** — `Dimos()` creates and runs modules in the current process.
 2. **Remote** — `Dimos.connect()` connects to an already-running instance.
@@ -138,7 +136,7 @@ app.stop()  # closes the connection (does NOT stop the remote process)
 
 `Dimos.connect()` probes the coordinator on the configured transport bus. It does
 not require a CLI run-registry entry, so it also attaches to
-`ModuleCoordinator.build(...).loop()` launched directly from Python. DimOS
+`ModuleCoordinator.build(...).loop()` launched directly from Python. dimOS
 supports one coordinator per bus; configure the transport bus consistently to
 connect across processes or hosts.
 

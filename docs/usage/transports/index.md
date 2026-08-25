@@ -1,6 +1,4 @@
----
-title: "Transports"
----
+# Transports
 
 Transports connect **module streams** across **process boundaries** and/or **networks**.
 
@@ -44,11 +42,11 @@ dimos --transport=lcm run unitree-go2
 dimos --transport=zenoh run unitree-go2
 ```
 
-On macOS, large replay workloads can be unreliable over LCM UDP, so DimOS defaults the global stream transport to `zenoh` there. Other platforms default to `lcm`.
+On macOS, large replay workloads can be unreliable over LCM UDP, so dimOS defaults the global stream transport to `zenoh` there. Other platforms default to `lcm`.
 
 ## Zenoh quickstart
 
-Zenoh ships with DimOS by default (`eclipse-zenoh` is a base dependency), so there is nothing extra to install.
+Zenoh ships with dimOS by default (`eclipse-zenoh` is a base dependency), so there is nothing extra to install.
 
 **Default global stream transport** (only applies when you do not pass `--transport` or set `DIMOS_TRANSPORT`):
 
@@ -84,7 +82,7 @@ Quick view on performance of our pubsub backends:
 python -m pytest -sv -k "not bytes" dimos/protocol/pubsub/benchmark/tool_benchmark.py
 ```
 
-![Benchmark results](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/usage/assets/pubsub_benchmark.png)
+![Benchmark results](../assets/pubsub_benchmark.png)
 
 ## Abstraction layers
 
@@ -217,23 +215,23 @@ if __name__ == "__main__":
 ```
 
 ```results
-13:11:40.135 [inf][ation/worker_manager_python.py] Worker pool started. n_workers=2
-13:11:40.776 [inf][/coordination/python_worker.py] Deployed module. module=TickerCameraModule module_id=0 worker_id=0
-13:11:40.784 [inf][/coordination/python_worker.py] Deployed module. module=ImageListener module_id=1 worker_id=1
-13:11:42.805 [inf][dination/module_coordinator.py] Stopping module... module=ImageListener
-13:11:42.809 [inf][dination/module_coordinator.py] Module stopped. module=ImageListener
-13:11:42.809 [inf][dination/module_coordinator.py] Stopping module... module=TickerCameraModule
-13:11:42.860 [inf][dination/module_coordinator.py] Module stopped. module=TickerCameraModule
-13:11:42.861 [inf][ation/worker_manager_python.py] Shutting down all workers...
+12:36:05.648 [inf][ation/worker_manager_python.py] Worker pool started. n_workers=2
+12:36:06.053 [inf][/coordination/python_worker.py] Deployed module. module=TickerCameraModule module_id=0 worker_id=0
+12:36:06.159 [inf][/coordination/python_worker.py] Deployed module. module=ImageListener module_id=1 worker_id=1
+12:36:08.283 [inf][dination/module_coordinator.py] Stopping module... module=imagelistener
+12:36:08.284 [inf][dination/module_coordinator.py] Module stopped. module=imagelistener
+12:36:08.285 [inf][dination/module_coordinator.py] Stopping module... module=tickercameramodule
+12:36:08.334 [inf][dination/module_coordinator.py] Module stopped. module=tickercameramodule
+12:36:08.335 [inf][ation/worker_manager_python.py] Shutting down all workers...
 Received: (480, 640, 3)
 Received: (480, 640, 3)
 Received: (480, 640, 3)
 Received: (480, 640, 3)
-13:11:42.862 [inf][/coordination/python_worker.py] Worker stopping module... module=ImageListener module_id=1 worker_id=1
-13:11:42.862 [inf][/coordination/python_worker.py] Worker module stopped. module=ImageListener module_id=1 worker_id=1
-13:11:42.914 [inf][/coordination/python_worker.py] Worker stopping module... module=TickerCameraModule module_id=0 worker_id=0
-13:11:42.914 [inf][/coordination/python_worker.py] Worker module stopped. module=TickerCameraModule module_id=0 worker_id=0
-13:11:42.920 [inf][ation/worker_manager_python.py] All workers shut down
+12:36:08.336 [inf][/coordination/python_worker.py] Worker stopping module... module=ImageListener module_id=1 worker_id=1
+12:36:08.336 [inf][/coordination/python_worker.py] Worker module stopped. module=ImageListener module_id=1 worker_id=1
+12:36:08.388 [inf][/coordination/python_worker.py] Worker stopping module... module=TickerCameraModule module_id=0 worker_id=0
+12:36:08.388 [inf][/coordination/python_worker.py] Worker module stopped. module=TickerCameraModule module_id=0 worker_id=0
+12:36:08.394 [inf][ation/worker_manager_python.py] All workers shut down
 ```
 
 See [Modules](/docs/usage/modules.md) for more on module architecture.
@@ -241,7 +239,7 @@ See [Modules](/docs/usage/modules.md) for more on module architecture.
 ## Inspecting traffic (CLI)
 
 `dimos spy` is the universal transport spy: one live view of every topic moving on every
-DimOS pubsub transport — names, message rates, bandwidth, sizes, and liveness — whether the
+dimOS pubsub transport — names, message rates, bandwidth, sizes, and liveness — whether the
 system runs on LCM, Zenoh, or both.
 
 ```bash
@@ -250,7 +248,7 @@ dimos spy --transport zenoh   # filter to one transport (repeatable flag)
 dimos lcmspy                  # deprecated alias for: dimos spy --transport lcm
 ```
 
-![dimos spy](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/usage/assets/lcmspy.png)
+![dimos spy](../assets/lcmspy.png)
 
 `dimos topic echo /topic` listens on typed channels like `/topic#pkg.Msg` and decodes automatically:
 
@@ -304,7 +302,14 @@ print(inspect.getsource(PubSub.subscribe))
     def subscribe(
         self, topic: TopicT, callback: Callable[[MsgT, TopicT], None]
     ) -> Callable[[], None]:
-        """Subscribe to a topic with a callback. returns unsubscribe function"""
+        """Subscribe to a topic with a callback. returns unsubscribe function
+
+        The unsubscribe function must not block waiting for an in-flight
+        callback (callers may hold an event loop the backend needs for
+        progress), must be callable from within the callback itself, and once
+        it returns no further deliveries start (a callback already executing
+        may still complete).
+        """
         ...
 ```
 
@@ -341,13 +346,13 @@ Received velocity: x=1.0, y=0.0, z=0.5
 
 ### Zenoh
 
-Zenoh provides network pubsub without relying on UDP multicast for the user-facing stream transport. In DimOS it carries the same typed messages by encoding them with `LCMEncoderMixin`, so existing `dimos.msgs.*` types still work.
+Zenoh provides network pubsub without relying on UDP multicast for the user-facing stream transport. In dimOS it carries the same typed messages by encoding them with `LCMEncoderMixin`, so existing `dimos.msgs.*` types still work.
 
 Use Zenoh when:
 
 * you want a transport that behaves better than UDP multicast on macOS
 * you are replaying large or high-rate data and want a more reliable network path
-* you want to keep the DimOS typed stream model while changing the transport backend
+* you want to keep the dimOS typed stream model while changing the transport backend
 
 At the stream level, the transport wrappers are `ZenohTransport` and `pZenohTransport`. Install, defaults, and CLI versus environment overrides are in the [Zenoh quickstart](#zenoh-quickstart) above.
 
@@ -528,7 +533,7 @@ Add your backend to benchmarks to compare in context:
 python -m pytest -sv -k "not bytes" dimos/protocol/pubsub/benchmark/tool_benchmark.py
 ```
 
-# Available transports
+## Available transports
 
 | Transport      | Use case                            | Cross-process | Network | Notes                                |
 |----------------|-------------------------------------|---------------|---------|--------------------------------------|

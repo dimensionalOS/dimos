@@ -97,20 +97,22 @@ class build_py(_build_py):
         if not (src / "relay" / "main.ts").is_file():
             raise RuntimeError(f"relay sources missing at {src}; refusing to build the wheel")
         if not (src / "cockpit" / "dist" / "index.html").is_file():
-            # Release wheels must carry the Cockpit (the release workflow
-            # builds it first). A plain `pip install .` from a checkout
-            # without a built dist still works: the relay serves the debug
-            # page instead.
-            if os.environ.get("CIBUILDWHEEL") == "1":
+            # Wheels must carry the Cockpit: there is no fallback debug page,
+            # so a dist-less wheel's relay serves no UI at all. Building a
+            # deliberate python-only wheel (e.g. where deno is unavailable)
+            # requires the explicit env-var opt-out.
+            if os.environ.get("DIMOS_ALLOW_MISSING_COCKPIT") != "1":
                 raise RuntimeError(
                     f"cockpit dist missing at {src / 'cockpit' / 'dist'}; run "
-                    "`deno task build` in web/cockpit before building release wheels"
+                    "`deno task build` in web/cockpit (or `dimos run --local-relay` "
+                    "from a checkout builds it), or set DIMOS_ALLOW_MISSING_COCKPIT=1 "
+                    "to build a UI-less wheel anyway"
                 )
-            self.warn("cockpit dist missing; this wheel will serve the debug page only")
+            self.warn("cockpit dist missing; this wheel's relay will have no UI")
         dst = Path(self.build_lib) / RELAY_DIST_TARGET
         for name in RELAY_DIST_SOURCES:
             entry = src / name
-            if not entry.exists():  # only cockpit/dist may be absent (warned above)
+            if not entry.exists():  # only cockpit/dist may be absent (env-var opt-out above)
                 continue
             for path in sorted(entry.rglob("*")) if entry.is_dir() else [entry]:
                 # Filter on the path below src: matching path.parts would also

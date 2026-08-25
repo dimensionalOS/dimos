@@ -34,6 +34,10 @@ from dimos.manipulation.manipulation_module import (
     ManipulationModuleConfig,
     ManipulationState,
 )
+from dimos.manipulation.manipulation_spec import (
+    ExecutionStatus,
+    PlanStatus,
+)
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
@@ -58,6 +62,8 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
+from dimos.robot.assets.model import RobotModel
 
 
 def _control_coordinator(
@@ -68,6 +74,7 @@ def _control_coordinator(
     coordinator = MagicMock(spec=ControlCoordinator)
     coordinator.execute_trajectory.return_value = TrajectoryExecutionResult(execute_status)
     coordinator.cancel_trajectory.return_value = TrajectoryCancellationResult(cancel_status)
+    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.IDLE)
     return coordinator
 
 
@@ -76,7 +83,7 @@ def robot_config():
     """Create a robot config for testing."""
     return RobotModelConfig(
         name="test_arm",
-        model_path=Path("/path/to/robot.urdf"),
+        model=RobotModel.from_file(Path("/path/to/robot.urdf")),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["joint1", "joint2", "joint3"],
         base_link="link_base",
@@ -98,7 +105,7 @@ def robot_config_with_mapping():
     """Create a robot config with joint name mapping (dual-arm scenario)."""
     return RobotModelConfig(
         name="left_arm",
-        model_path=Path("/path/to/robot.urdf"),
+        model=RobotModel.from_file(Path("/path/to/robot.urdf")),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["joint1", "joint2", "joint3"],
         base_link="link_base",
@@ -121,7 +128,7 @@ def robot_config_with_mapping():
 def _one_joint_config(name: str = "arm") -> RobotModelConfig:
     return RobotModelConfig(
         name=name,
-        model_path=Path("/path"),
+        model=RobotModel.from_file(Path("/path/robot.urdf")),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["j0"],
         base_link="base_link",
@@ -141,6 +148,7 @@ def _install_generated_plan(
     """Install a generated plan and enough monitor state to derive robot paths."""
     global_joint_names = [f"{config.name}/{joint}" for joint in config.joint_names]
     module._robots = {config.name: ("robot_id", config)}
+    module.config = module.config.model_copy(update={"robots": [config]})
     module._world_monitor = MagicMock()
     module._world_monitor.planning_groups = PlanningGroupRegistry([config])
     module._world_monitor.get_current_joint_state.return_value = JointState(
@@ -290,115 +298,64 @@ class TestObstacleUpdates:
 class TestStateMachine:
     """Test state transitions."""
 
-    def test_cancel_interrupts_active_work(self, module_factory):
-        """Cancel works for executing motion and in-progress planning."""
+    def test_cancel_interrupts_planning(self, module_factory):
         module = module_factory()
-
-        module._state = ManipulationState.IDLE
-        assert module.cancel() is False
 
         module._state = ManipulationState.PLANNING
-        assert module.cancel() is True
-        assert module._state == ManipulationState.IDLE
+        result = module.cancel()
+
+        assert result.status is ExecutionStatus.ABORTED
         assert module._planning_epoch == 1
+        assert module._state is ManipulationState.IDLE
 
-        module._state = ManipulationState.EXECUTING
-        assert module.cancel() is True
-        assert module._state == ManipulationState.IDLE
-
-    def test_cancel_hides_active_plan_preview(self, module_factory):
+    def test_cancel_discards_pending_plan_and_preview(self, module_factory):
         module = module_factory()
-        module._state = ManipulationState.EXECUTING
         module._last_plan = GeneratedPlan(
             trajectory=JointTrajectory(), group_ids=("arm/manipulator",), path=[]
         )
         module._world_monitor = MagicMock()
 
-        assert module.cancel() is True
+        result = module.cancel()
 
+        assert result.status is ExecutionStatus.NO_EXECUTION
+        assert module._last_plan is None
         module._world_monitor.cancel_preview_animation.assert_called_once_with()
 
-    def test_cancel_completed_execution_cancels_coordinator_task(self, module_factory):
+    def test_cancel_forwards_to_coordinator(self, module_factory):
         module = module_factory()
         config = _one_joint_config()
         _install_generated_plan(module, config, [0.0], [0.1])
-        coordinator = _control_coordinator(cancel_status=TrajectoryCancellationStatus.CANCELLED)
+        coordinator = _control_coordinator()
         module._control_coordinator = coordinator
         module._initialize_execution()
 
-        assert module.execute_plan() is True
-        assert module._state == ManipulationState.COMPLETED
+        result = module.cancel()
 
-        assert module.cancel() is True
-        module._control_coordinator.cancel_trajectory.assert_called_once_with()
-        assert module._state == ManipulationState.IDLE
+        assert result.status is ExecutionStatus.NO_EXECUTION
+        coordinator.cancel_trajectory.assert_called_once_with()
 
-    def test_reset_not_during_execution(self, module_factory):
-        """Reset works in any state except EXECUTING."""
-        module = module_factory()
-
-        module._state = ManipulationState.FAULT
-        module._error_message = "Error"
-        result = module.reset()
-        assert result.is_success()
-        assert module._state == ManipulationState.IDLE
-        assert module._error_message == ""
-
-        module._state = ManipulationState.EXECUTING
-        result = module.reset()
-        assert not result.is_success()
-        assert result.error_code == "INVALID_STATE"
-
-    def test_fail_sets_fault_state(self, module_factory):
-        """_fail helper sets FAULT state and message."""
+    def test_planning_error_remains_retryable(self, module_factory):
+        """Planning errors preserve the message without latching FAULT."""
         module = module_factory()
         module._state = ManipulationState.PLANNING
 
         result = module._fail("Test error")
         assert result is False
-        assert module._state == ManipulationState.FAULT
+        assert module._state == ManipulationState.IDLE
         assert module._error_message == "Test error"
 
-    def test_motion_speed_applies_to_future_plans_only(self, module_factory):
-        module = module_factory()
-        accepted = GeneratedPlan(
-            trajectory=JointTrajectory(),
-            group_ids=("arm/manipulator",),
-            path=[JointState(name=["arm/j0"], position=[0.0])],
-        )
-        module._last_plan = accepted
-
-        assert module.set_motion_speed(0.5) is True
-        assert module.get_motion_speed() == pytest.approx(0.5)
-        assert module._last_plan is accepted
-
-    @pytest.mark.parametrize("invalid", [0.0, 1.01, float("nan")])
-    def test_motion_speed_rejects_invalid_values(self, module_factory, invalid: float):
-        module = module_factory()
-        assert module.set_motion_speed(0.5) is True
-
-        assert module.set_motion_speed(invalid) is False
-        assert module.get_motion_speed() == pytest.approx(0.5)
-        assert "motion speed scale" in module.get_error()
-
-    def test_begin_planning_state_checks(self, robot_config, module_factory):
-        """_begin_planning only allowed from IDLE or COMPLETED."""
+    def test_group_planning_resolves_speed_per_request(self, module_factory):
         module = module_factory()
         module._world_monitor = MagicMock()
-        module._robots = {"test_arm": ("robot_id", robot_config)}
 
-        # From IDLE - OK
-        module._state = ManipulationState.IDLE
-        assert module._begin_planning() == ("test_arm", "robot_id")
+        assert module._begin_group_planning(0.2) == (1, 0.2)
         assert module._state == ManipulationState.PLANNING
 
-        # From COMPLETED - OK
         module._state = ManipulationState.COMPLETED
-        assert module._begin_planning() == ("test_arm", "robot_id")
+        assert module._begin_group_planning() == (2, module.config.default_speed_scale)
 
-        # From EXECUTING - Fail
         module._state = ManipulationState.EXECUTING
-        assert module._begin_planning() is None
+        assert module._begin_group_planning() is None
 
 
 class TestRobotSelection:
@@ -476,8 +433,44 @@ class TestPlanningInitialization:
         initialize_execution = mocker.patch.object(module, "_initialize_execution")
 
         with module:
-            initialize_planning.assert_called_once_with()
             initialize_execution.assert_called_once_with()
+            initialize_planning.assert_called_once_with()
+
+    def test_start_is_idempotent(self, mocker: MockerFixture) -> None:
+        module = ManipulationModule()
+        initialize_planning = mocker.patch.object(module, "_initialize_planning")
+        initialize_execution = mocker.patch.object(module, "_initialize_execution")
+        subscribe = mocker.patch.object(module.coordinator_joint_state, "subscribe")
+
+        try:
+            module.start()
+            module.start()
+
+            initialize_execution.assert_called_once_with()
+            initialize_planning.assert_called_once_with()
+            subscribe.assert_called_once_with(module._on_joint_state)
+        finally:
+            module.stop()
+
+    def test_state_is_readable_during_planning_initialization(
+        self,
+        mocker: MockerFixture,
+    ) -> None:
+        module = ManipulationModule()
+        module._control_coordinator = _control_coordinator()
+        module.coordinator_joint_state = None
+        observed_status: list[ExecutionStatus] = []
+
+        def observe_state() -> None:
+            observed_status.append(module.get_state().execution_status)
+
+        mocker.patch.object(module, "_initialize_planning", side_effect=observe_state)
+
+        try:
+            module.start()
+            assert observed_status == [ExecutionStatus.IDLE]
+        finally:
+            module.stop()
 
     def test_kinematics_config_is_passed_to_factory(
         self,
@@ -631,7 +624,7 @@ class TestPlanningInitialization:
 class TestPlanningGroupApis:
     """Test explicit planning-group API behavior."""
 
-    def test_list_planning_groups_and_robot_info_include_groups(self, robot_config, module_factory):
+    def test_list_planning_groups_exposes_group_capabilities(self, robot_config, module_factory):
         module = module_factory()
         registry = PlanningGroupRegistry([robot_config])
         module._robots = {"test_arm": ("robot_id", robot_config)}
@@ -640,13 +633,14 @@ class TestPlanningGroupApis:
         module._init_joints = {}
 
         groups = module.list_planning_groups()
-        info = module.get_robot_info()
 
         assert [group.id for group in groups] == ["test_arm/manipulator"]
-        assert info is not None
-        assert info["planning_groups"] == groups
-        assert info["end_effector_link"] == "link_tcp"
-        assert info["has_joint_name_mapping"] is False
+        assert groups[0].tip_frame == "link_tcp"
+        assert groups[0].joint_names == (
+            "test_arm/joint1",
+            "test_arm/joint2",
+            "test_arm/joint3",
+        )
 
     def test_plan_to_joint_targets_stores_generated_plan_and_legacy_caches(
         self, robot_config, module_factory
@@ -841,7 +835,7 @@ class TestPlanningGroupApis:
         )
 
         assert success is False
-        assert module._state == ManipulationState.FAULT
+        assert module._state == ManipulationState.IDLE
         assert module._last_plan is None
         assert module.has_planned_path() is False
 
@@ -850,7 +844,7 @@ class TestPlanningGroupApis:
     ):
         left = RobotModelConfig(
             name="left",
-            model_path=Path("/path"),
+            model=RobotModel.from_file(Path("/path/robot.urdf")),
             base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
             joint_names=["j0", "j1"],
             planning_groups=[
@@ -862,7 +856,7 @@ class TestPlanningGroupApis:
         )
         right = RobotModelConfig(
             name="right",
-            model_path=Path("/path"),
+            model=RobotModel.from_file(Path("/path/robot.urdf")),
             base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
             joint_names=["k0", "k1"],
             planning_groups=[
@@ -876,6 +870,7 @@ class TestPlanningGroupApis:
             "left": ("left_id", left),
             "right": ("right_id", right),
         }
+        module.config = module.config.model_copy(update={"robots": [left, right]})
         module._world_monitor = MagicMock()
         module._world_monitor.planning_groups = PlanningGroupRegistry([left, right])
         module._last_plan = GeneratedPlan(
@@ -912,8 +907,9 @@ class TestPlanningGroupApis:
             name=["left/j1", "right/k0"], position=[0.0, 1.0]
         )
 
-        assert module.execute_plan() is True
+        result = module.execute(blocking=False)
 
+        assert result.status is ExecutionStatus.ACCEPTED
         mock_coordinator.execute_trajectory.assert_called_once()
         payload = mock_coordinator.execute_trajectory.call_args.args[0]
         assert payload.joint_names == ["left_coord_j1", "k0"]
@@ -926,7 +922,7 @@ class TestPlanningGroupApis:
     ):
         no_pose_config = RobotModelConfig(
             name="test_arm",
-            model_path=robot_config.model_path,
+            model=robot_config.model,
             base_pose=robot_config.base_pose,
             joint_names=robot_config.joint_names,
             base_link=robot_config.base_link,
@@ -958,7 +954,7 @@ class TestPlanningGroupApis:
     ):
         multi_pose_config = RobotModelConfig(
             name="test_arm",
-            model_path=robot_config.model_path,
+            model=robot_config.model,
             base_pose=robot_config.base_pose,
             joint_names=robot_config.joint_names,
             base_link=robot_config.base_link,
@@ -1016,8 +1012,8 @@ class TestPlanningGroupApis:
 
 
 class TestPlanningDiagnostics:
-    def test_planner_failure_preserves_backend_detail(self, robot_config, module_factory):
-        """Planning diagnostics include the backend message."""
+    def test_planner_failure_preserves_detail_and_allows_retry(self, robot_config, module_factory):
+        """Planning diagnostics remain visible until the next planning request."""
         module = module_factory()
         module._world_monitor = MagicMock()
         module._world_monitor.planning_groups = PlanningGroupRegistry([robot_config])
@@ -1031,12 +1027,24 @@ class TestPlanningDiagnostics:
         )
 
         module._robots = {"test_arm": ("robot_id", robot_config)}
-        assert not module.plan_to_joints(
-            JointState(position=[1.0, 1.0, 1.0]), robot_name="test_arm"
+        result = module.plan_to_joints(
+            {
+                "test_arm/manipulator": JointState(
+                    name=robot_config.joint_names,
+                    position=[1.0, 1.0, 1.0],
+                )
+            }
         )
 
+        assert result.status is PlanStatus.FAILED
         assert module.get_error() == "Planning failed: TIMEOUT: planner timed out"
-        assert module._state == ManipulationState.FAULT
+        assert module._state == ManipulationState.IDLE
+
+        retry_epoch = module._begin_group_planning()
+
+        assert retry_epoch is not None
+        assert module._state == ManipulationState.PLANNING
+        assert module.get_error() == ""
 
 
 class TestExecute:
@@ -1047,7 +1055,7 @@ class TestExecute:
         module = module_factory()
         module._robots = {"test_arm": ("id", robot_config)}
 
-        assert module.execute() is False
+        assert module.execute().status is ExecutionStatus.NO_PLAN
         assert module._state == ManipulationState.IDLE
 
 

@@ -30,13 +30,3 @@ else
   echo "warning: ZED SDK not found; ZED tests will skip. It needs an NVIDIA GPU and" >&2
   echo "         ~2 GB; install from https://www.stereolabs.com/developers/release" >&2
 fi
-
-# cmu_nav native binaries (nix). Skips modules whose executable already exists.
-if command -v nix &>/dev/null; then
-  bin/build-cmu-nav-natives
-else
-  echo "warning: nix not found; skipping cmu_nav native builds, their tests will skip." >&2
-  echo "         Install Nix via https://nixos.org/download. Cold builds are slow; see" >&2
-  echo "         'Faster builds via the Cachix substituter' in docs/usage/native_modules.md" >&2
-  echo "         to download CI-built binaries instead." >&2
-fi

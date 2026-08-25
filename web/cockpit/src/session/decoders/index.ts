@@ -1,9 +1,11 @@
 // Payload decoder registry, keyed by the manifest's encoding id. An encoding
 // without a decoder is not an error: the channel renders as "unsupported"
-// (forward compatibility with newer bridges). Binary decoders (jpeg.v1,
-// costmap.zlib.v1, ...) arrive with their panels from T4 on.
+// (forward compatibility with newer bridges). Binary decoders
+// (h264.v1, ...) arrive with their panels.
 
 import type { FrameHeader } from "@dimos/shared";
+import { costmapDecoder } from "./costmap.ts";
+import { jpegDecoder } from "./jpeg.ts";
 import { jsonDecoder } from "./json.ts";
 
 export interface Decoded {
@@ -27,3 +29,6 @@ export function getDecoder(encoding: string | undefined): Decoder | undefined {
   if (/\.json\.v\d+$/.test(encoding)) return jsonDecoder;
   return undefined;
 }
+
+registerDecoder("jpeg.v1", jpegDecoder);
+registerDecoder("costmap.zlib.v1", costmapDecoder);

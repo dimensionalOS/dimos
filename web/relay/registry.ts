@@ -16,12 +16,14 @@ import {
   type Msg,
   PROTOCOL_VERSION,
   type RobotInfo,
+  type RobotManifest,
 } from "@dimos/shared";
 
 import {
   type ChannelPolicy,
   LatestChannel,
   parseRobotFrameHeader,
+  Rate,
   ReliableChannel,
   type ViewerSink,
 } from "./forward.ts";
@@ -35,7 +37,11 @@ const DATAGRAM_BUDGET_BYTES = 1200;
 export interface RobotPeer {
   /** Set by the session once a valid robot hello arrived. */
   readonly info: RobotInfo | null;
+  /** Normalized channel specs (feeds the delivery map / sub validation). */
   readonly channels: ChannelSpec[];
+  /** Raw manifest as received; forwarded verbatim in watch replies (the
+   * relay never normalizes it and stays layout-blind). */
+  readonly manifest: RobotManifest | null;
   /** Close reason once closed; a closed session must never (re)register. */
   readonly closed: string | null;
   /** Control message upstream to the bridge (datagram: lossy, never blocks). */
@@ -67,17 +73,31 @@ interface ChannelInStats {
   delivery: Delivery;
   framesIn: number;
   bytesIn: number;
+  rate: Rate;
 }
 
 interface RobotEntry {
   peer: RobotPeer;
   /** Manifest delivery per channel; frame-header delivery is the fallback. */
   delivery: Map<string, Delivery>;
+  /** Viewer holding the exclusive teleop lease, or null. Dies with the
+   * entry: a re-registered robot starts lease-free. */
+  teleop: ViewerPeer | null;
+  /** Lease generation, bumped on every fresh grant and stamped into
+   * robot-bound teleop messages so the bridge can permanently void a
+   * released lease's in-flight datagrams. Dies with the entry (safe: the
+   * bridge resets its floor with the session). */
+  teleopGen: number;
   /** Snapshot counter, monotonic for this robot session's registration. */
   n: number;
   /** Last snapshot content, for change detection and periodic resend. */
   lastChs: string[];
+  /** Per-channel ingress stats, declared channels only. */
   channelsIn: Map<string, ChannelInStats>;
+  /** One aggregate bucket for frames on undeclared channels: arbitrary
+   * header ch strings must not grow channelsIn. A manifest-less robot's
+   * traffic lands entirely here. */
+  undeclared: { framesIn: number; bytesIn: number; rate: Rate };
 }
 
 export class Registry {
@@ -85,6 +105,8 @@ export class Registry {
   #viewers = new Set<ViewerPeer>();
   #framesDropped = 0;
   #framesFromUnregistered = 0;
+  #teleopForwarded = 0;
+  #teleopDropped = 0;
 
   addViewer(viewer: ViewerPeer): void {
     this.#viewers.add(viewer);
@@ -93,7 +115,10 @@ export class Registry {
   viewerClosed(viewer: ViewerPeer): void {
     if (!this.#viewers.delete(viewer)) return;
     disposePolicies(viewer);
-    if (viewer.watched !== null) this.#syncSubs(viewer.watched);
+    if (viewer.watched !== null) {
+      this.#releaseTeleop(viewer.watched, viewer);
+      this.#syncSubs(viewer.watched);
+    }
   }
 
   /**
@@ -114,9 +139,12 @@ export class Registry {
     this.#robots.set(info.id, {
       peer,
       delivery,
+      teleop: null,
+      teleopGen: 0,
       n: 0,
       lastChs: [],
       channelsIn: new Map(),
+      undeclared: { framesIn: 0, bytesIn: 0, rate: new Rate() },
     });
     this.#pushRobots();
     // Forced: gives a fresh bridge its baseline and reattaches surviving
@@ -185,11 +213,17 @@ export class Registry {
         if (previous !== null && previous !== msg.robotId) {
           viewer.subs.clear();
           disposePolicies(viewer);
+          this.#releaseTeleop(previous, viewer);
         }
         viewer.watched = msg.robotId;
         if (previous !== null && previous !== msg.robotId) this.#syncSubs(previous);
         this.#syncSubs(msg.robotId);
-        reply({ t: "manifest", robotId: msg.robotId, channels: entry.peer.channels });
+        reply({
+          t: "manifest",
+          robotId: msg.robotId,
+          // undefined for a manifest-less robot; JSON.stringify omits it.
+          manifest: entry.peer.manifest ?? undefined,
+        });
         break;
       }
       case "sub":
@@ -226,8 +260,76 @@ export class Registry {
         this.#syncSubs(viewer.watched);
         break;
       }
+      case "teleop_start": {
+        if (viewer.watched === null) {
+          reply({ t: "error", code: "no_watch", message: "watch a robot before teleop_start" });
+          break;
+        }
+        const entry = this.#robots.get(viewer.watched);
+        if (entry === undefined) {
+          reply({ t: "error", code: "unknown_robot", message: `no robot ${viewer.watched}` });
+          break;
+        }
+        if (entry.teleop !== null && entry.teleop !== viewer) {
+          reply({
+            t: "error",
+            code: "teleop_held",
+            message: `robot ${viewer.watched} teleop is held by another viewer`,
+          });
+          break;
+        }
+        if (entry.teleop === null) {
+          entry.teleop = viewer;
+          entry.teleopGen++;
+          console.log(
+            `[relay] robot ${viewer.watched} teleop lease -> viewer ${viewer.id} ` +
+              `(gen ${entry.teleopGen})`,
+          );
+        }
+        // Resent on an idempotent re-arm to heal datagram loss, like the
+        // re-acked teleop_started; the bridge ignores duplicates.
+        entry.peer.sendMsg({ t: "teleop_start", gen: entry.teleopGen });
+        reply({ t: "teleop_started" });
+        break;
+      }
+      case "teleop_stop": {
+        // Idempotent release; no ack (disarm is local to the cockpit and the
+        // bridge watchdog covers a lost robot-ward teleop_stop).
+        if (viewer.watched !== null) this.#releaseTeleop(viewer.watched, viewer);
+        break;
+      }
+      case "twist":
+      case "stop": {
+        // Lease-gated, silent on drop: gating runs at twist rate on lossy
+        // datagrams, and the arm handshake (teleop_start) is where a viewer
+        // learns it lacks the lease.
+        const entry = viewer.watched === null ? undefined : this.#robots.get(viewer.watched);
+        if (entry === undefined || entry.teleop !== viewer) {
+          this.#teleopDropped++;
+          break;
+        }
+        // The spread puts the relay's stamp last: a viewer-supplied gen is
+        // overridden, the relay is the only generation authority.
+        entry.peer.sendMsg({ ...msg, gen: entry.teleopGen });
+        this.#teleopForwarded++;
+        break;
+      }
     }
     return true;
+  }
+
+  /** Release `viewer`'s teleop lease on `robotId`, if held: the bridge gets
+   * a gen-stamped teleop_stop that permanently voids this lease's datagrams
+   * (its deadman watchdog covers a lost stop) and the next teleop_start
+   * wins the lease. */
+  #releaseTeleop(robotId: string, viewer: ViewerPeer): void {
+    const entry = this.#robots.get(robotId);
+    if (entry === undefined || entry.teleop !== viewer) return;
+    entry.teleop = null;
+    // At release time teleopGen still names the released lease (it bumps
+    // only on grant).
+    entry.peer.sendMsg({ t: "teleop_stop", gen: entry.teleopGen });
+    console.log(`[relay] robot ${robotId} teleop lease released (viewer ${viewer.id})`);
   }
 
   /**
@@ -249,13 +351,27 @@ export class Registry {
       return;
     }
     const ch = header.ch;
-    const delivery = entry.delivery.get(ch) ?? header.delivery;
+    const declared = entry.delivery.get(ch);
+    // Manifest delivery wins; the header's is the undeclared-channel fallback.
+    const delivery = declared ?? header.delivery;
 
-    const stats = entry.channelsIn.get(ch) ?? { delivery, framesIn: 0, bytesIn: 0 };
-    stats.delivery = delivery;
-    stats.framesIn++;
-    stats.bytesIn += bytes.byteLength;
-    entry.channelsIn.set(ch, stats);
+    if (declared === undefined) {
+      // Aggregate bucket only: arbitrary header ch strings must not grow the
+      // per-channel map. Routing below still forwards to subscribed viewers
+      // (a robot that declared no manifest accepts any sub).
+      entry.undeclared.framesIn++;
+      entry.undeclared.bytesIn += bytes.byteLength;
+      entry.undeclared.rate.push(bytes.byteLength, Date.now());
+    } else {
+      // delivery is fixed at creation: the manifest cannot change within a
+      // registration.
+      const stats = entry.channelsIn.get(ch) ??
+        { delivery, framesIn: 0, bytesIn: 0, rate: new Rate() };
+      stats.framesIn++;
+      stats.bytesIn += bytes.byteLength;
+      stats.rate.push(bytes.byteLength, Date.now());
+      entry.channelsIn.set(ch, stats);
+    }
 
     for (const viewer of this.#viewers) {
       if (viewer.watched !== id || !viewer.subs.has(ch)) continue;
@@ -282,6 +398,15 @@ export class Registry {
     }
   }
 
+  /** Reap stale accepted latest streams on every viewer. Offers reap
+   * opportunistically, but an idle input stops offering; server.ts drives
+   * this on an interval. Clock passed in so tests fabricate time. */
+  reapAll(nowMs: number): void {
+    for (const viewer of this.#viewers) {
+      for (const policy of viewer.policies.values()) policy.reap(nowMs);
+    }
+  }
+
   robotsMsg(): Msg {
     return { t: "robots", robots: this.#robotInfos() };
   }
@@ -295,15 +420,31 @@ export class Registry {
   }
 
   stats(): unknown {
+    const now = Date.now();
     return {
       robots: this.#robotInfos(),
       viewers: this.#viewers.size,
       framesDropped: this.#framesDropped,
       framesFromUnregistered: this.#framesFromUnregistered,
+      teleopForwarded: this.#teleopForwarded,
+      teleopDropped: this.#teleopDropped,
       perRobot: Object.fromEntries(
         [...this.#robots].map(([id, e]) => [id, {
           subs: e.lastChs,
-          channels: Object.fromEntries(e.channelsIn),
+          teleop: e.teleop?.id ?? null,
+          channels: Object.fromEntries(
+            [...e.channelsIn].map(([ch, s]) => [ch, {
+              delivery: s.delivery,
+              framesIn: s.framesIn,
+              bytesIn: s.bytesIn,
+              ...s.rate.snapshot(now),
+            }]),
+          ),
+          undeclared: {
+            framesIn: e.undeclared.framesIn,
+            bytesIn: e.undeclared.bytesIn,
+            ...e.undeclared.rate.snapshot(now),
+          },
         }]),
       ),
       perViewer: [...this.#viewers].map((v) => ({
@@ -311,10 +452,17 @@ export class Registry {
         watched: v.watched,
         subs: [...v.subs].sort(),
         channels: Object.fromEntries(
-          [...v.policies].map(([ch, p]) => [
-            ch,
-            { sent: p.sent, dropped: p.dropped, queued: p.queued() },
-          ]),
+          [...v.policies].map(([ch, p]) => [ch, {
+            delivery: p.delivery,
+            sent: p.sent,
+            dropped: p.dropped,
+            queued: p.queued(),
+            aborted: p.aborted,
+            expired: p.expired,
+            inflight: p.inflight(),
+            bytesOut: p.bytesOut,
+            ...p.rate.snapshot(now),
+          }]),
         ),
       })),
     };

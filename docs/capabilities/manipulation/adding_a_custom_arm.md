@@ -1,11 +1,10 @@
----
-title: "How to Integrate a New Manipulator Arm"
----
-This guide walks through integrating a new robot arm with DimOS, from writing the hardware adapter to creating blueprints for planning and control.
+# How to Integrate a New Manipulator Arm
+
+This guide walks through integrating a new robot arm with dimOS, from writing the hardware adapter to creating blueprints for planning and control.
 
 ## Architecture Overview
 
-DimOS uses a **Protocol-based adapter pattern** — no base class inheritance required. Your adapter wraps the vendor SDK and exposes a standard interface that the rest of the system consumes:
+dimOS uses a **Protocol-based adapter pattern** — no base class inheritance required. Your adapter wraps the vendor SDK and exposes a standard interface that the rest of the system consumes:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -72,7 +71,7 @@ Below is a complete annotated adapter. Implement each method by wrapping your ve
 """YourArm adapter — implements ManipulatorAdapter protocol.
 
 SDK Units: <describe your SDK's native units here>
-DimOS Units: angles=radians, distance=meters, velocity=rad/s
+dimOS Units: angles=radians, distance=meters, velocity=rad/s
 """
 
 from __future__ import annotations
@@ -177,7 +176,7 @@ class YourArmAdapter:
     def set_control_mode(self, mode: ControlMode) -> bool:
         """Set control mode.
 
-        Map DimOS ControlMode enum values to your SDK's mode codes.
+        Map dimOS ControlMode enum values to your SDK's mode codes.
         Return False for modes your arm doesn't support.
         """
         if not self._sdk:
@@ -389,7 +388,7 @@ print(adapter_registry.available())  # Should include "yourarm"
 
 ## Step 3: Create Your Robot Folder and Blueprints
 
-Each robot in DimOS gets its own folder under `dimos/robot/`. This is where you define all blueprints for your arm — coordinator, planning, perception, etc. This follows the same pattern as Unitree robots (`dimos/robot/unitree/`).
+Each robot in dimOS gets its own folder under `dimos/robot/`. This is where you define all blueprints for your arm — coordinator, planning, perception, etc. This follows the same pattern as Unitree robots (`dimos/robot/unitree/`).
 
 ### 3a. Create the robot directory
 
@@ -428,7 +427,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import ControlCoordinator
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 
 
 # YourArm (6-DOF) — real hardware
@@ -440,19 +440,14 @@ coordinator_yourarm = ControlCoordinator.blueprint(
         HardwareComponent(
             hardware_id="arm",                        # Unique ID for this hardware
             hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("arm", 6),             # Creates ["arm_joint1", ..., "arm_joint6"]
+            joints=make_joints("arm", 6),             # Creates ["arm/joint1", ..., "arm/joint6"]
             adapter_type="yourarm",                   # Must match registry name
             address="192.168.1.100",                  # Passed to adapter __init__
             auto_enable=True,                         # Auto-enable servos on start
         ),
     ],
     tasks=[
-        TaskConfig(
-            name="traj_arm",                          # Task name (used by ManipulationModule RPC)
-            type="trajectory",                        # Trajectory execution task
-            joint_names=[f"arm_joint{i+1}" for i in range(6)],
-            priority=10,                              # Higher priority wins arbitration
-        ),
+        joint_trajectory_task([f"arm_joint{i+1}" for i in range(6)]),
     ],
 )
 
@@ -466,7 +461,7 @@ coordinator_yourarm = ControlCoordinator.blueprint(
 | `hardware_id` | Unique name for this hardware component. Used to route commands. |
 | `adapter_type` | Name registered with `adapter_registry` (e.g., `"yourarm"`). |
 | `address` | Connection info passed to adapter's `__init__` as `address` kwarg. |
-| `joints` | List of joint names. `make_joints("arm", 6)` creates `["arm_joint1", ..., "arm_joint6"]`. |
+| `joints` | List of joint names. `make_joints("arm", 6)` creates `["arm/joint1", ..., "arm/joint6"]`. |
 | `auto_enable` | If `True`, servos are enabled automatically when the coordinator starts. |
 | `task.name` | Name used by the ManipulationModule to invoke trajectory execution via RPC. |
 | `task.type` | Task type: `"trajectory"`, `"servo"`, `"velocity"`, or `"cartesian_ik"`. |
@@ -479,12 +474,16 @@ to your robot's own `blueprints.py`.
 
 ### 4a. Add your URDF
 
-Place your URDF/xacro files under LFS data so they can be resolved via `LfsPath`. `LfsPath` is a `Path` subclass that lazily downloads LFS data on first access — this avoids downloading at import time when the blueprint module is loaded.
+Prefer an upstream `RobotDescriptionSource` beside your robot adapter. Joining
+paths from the source is lazy: importing the catalog does not clone or update
+the repository, while the first concrete path access resolves it into the
+robot asset cache. Use `LfsPath` only when the description is intentionally
+vendored, locally modified, or has no suitable upstream source.
 
 If the planning blueprint selects the RoboPlan TOPP-RA trajectory
-parametrizer, DimOS currently pins RoboPlan to `0.5.1`. Every movable joint in
+parametrizer, dimOS currently pins RoboPlan to `0.5.1`. Every movable joint in
 each selected planning group must provide finite, positive velocity limits.
-Authored extended acceleration limits take precedence; when absent, DimOS
+Authored extended acceleration limits take precedence; when absent, dimOS
 temporarily inserts a global `2.0 rad/s²` acceleration fallback during RoboPlan
 model composition:
 
@@ -503,22 +502,27 @@ model composition:
 
 RoboPlan loads both limits from its scene model. If either is absent, zero,
 negative, or non-finite, plan materialization fails before preview or execution
-and identifies the affected joint. DimOS does not substitute
+and identifies the affected joint. dimOS does not substitute
 `RobotModelConfig.max_velocity`, `velocity_limits`, or `max_acceleration` for
-this backend. Formal per-joint DimOS overrides will be added separately.
+this backend. Formal per-joint dimOS overrides will be added separately.
 
 ```python skip
-from dimos.utils.data import LfsPath
 from dimos.manipulation.manipulation_module import manipulation_module
+from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec import RobotModelConfig
-from dimos.manipulation.planning.spec.models import PlanningGroupDefinition
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.source import RobotDescriptionSource
+from dimos.robot.manipulators._modeling import coordinator_joint_mapping
 
-# LfsPath defers download until the path is actually accessed
-_YOURARM_URDF_PATH = LfsPath("yourarm_description/urdf/yourarm.urdf")
-_YOURARM_PACKAGE_PATH = LfsPath("yourarm_description")
+_YOURARM_REPO = RobotDescriptionSource(
+    url="https://github.com/example/yourarm_description",
+    ref="main",
+)
+_YOURARM_URDF_PATH = _YOURARM_REPO / "urdf" / "yourarm.urdf.xacro"
+_YOURARM_PACKAGE_PATHS = {"yourarm_description": _YOURARM_REPO / "."}
 
 
 def _make_base_pose(x=0.0, y=0.0, z=0.0) -> PoseStamped:
@@ -547,7 +551,10 @@ def _make_yourarm_config(
 
     return RobotModelConfig(
         name=name,
-        model_path=_YOURARM_URDF_PATH,
+        model=RobotModel.from_file(
+            _YOURARM_URDF_PATH,
+            package_paths=_YOURARM_PACKAGE_PATHS,
+        ),
         joint_names=joint_names,
         planning_groups=[
             PlanningGroupDefinition(
@@ -559,10 +566,9 @@ def _make_yourarm_config(
         ],
         base_pose=_make_base_pose(y=y_offset),  # world -> base_link placement
         base_link="base_link",                 # Robot-scoped placement/weld/strip link
-        package_paths={"yourarm_description": _YOURARM_PACKAGE_PATH},
-        xacro_args={},                  # Xacro arguments if using .xacro files
         collision_exclusion_pairs=[],   # Pairs of links that can touch (e.g., gripper fingers)
         auto_convert_meshes=True,       # Convert DAE/STL meshes for Drake
+        joint_name_mapping=coordinator_joint_mapping(name, 6),
         max_velocity=1.0,               # Max velocity scaling factor
         max_acceleration=2.0,           # Max acceleration scaling factor
     )
@@ -609,12 +615,12 @@ yourarm_planner = manipulation_module(
 
 | Field | Description |
 |-------|-------------|
-| `model_path` | Path to `.urdf` or `.xacro` file |
+| `model` | Lazy `RobotModel` created from a `.urdf` or `.xacro` source |
 | `joint_names` | Ordered controllable local model joint set (must match URDF); not itself a planning group |
 | `planning_groups` / `srdf_path` | Explicit planning groups or SRDF source; direct `RobotModelConfig(...)` helpers should pass explicit groups, while shared config helpers can discover groups from SRDF/fallback |
 | `base_pose` / `base_link` | Optional robot placement: `base_pose` places `base_link` in the world for weld/strip behavior |
-| `package_paths` | Maps `package://` URIs to filesystem paths (for xacro) |
 | `collision_exclusion_pairs` | List of `(link_a, link_b)` tuples for links that may legitimately touch (e.g., gripper fingers) |
+| `joint_name_mapping` | Maps coordinator names such as `arm/joint1` to local URDF names such as `joint1` |
 
 Coordinator-facing joint states and trajectories use global joint names derived
 mechanically as `{robot_name}/{local_joint_name}` (for example, `arm/joint1`).
@@ -626,47 +632,66 @@ target frames. `base_link` is only the robot-scoped link placed by
 `base_pose`; do not use it as a substitute for planning-group chain metadata.
 See [Planning Groups](/docs/capabilities/manipulation/planning_groups.md).
 
-### 4d. Configure Cartesian, EEF-twist, and teleop control IK
+### 4d. Add Cartesian and teleoperation IK
 
-Cartesian, EEF-twist, and engagement-relative teleop tasks use the direct URDF
-or Xacro in `RobotModelConfig`. Set `package_paths` and `xacro_args` when needed,
-name the end-effector link, and map coordinator joints to model joints. The task
-validates the prepared model, frame, and joint mapping at startup. Teleop uses
-the named frame and does not accept a separate model path or numeric
-end-effector joint ID.
+Cartesian, EEF-twist, and engagement-relative teleoperation tasks share the
+Pink backend. Install its dependencies with the manipulation extra:
 
-Pass the same model configuration to the common helpers:
+```bash skip
+uv sync --extra manipulation --inexact
+```
+
+Use one control task for each robot model that Pink should solve as one system:
+
+| Robot setup | Task layout |
+| --- | --- |
+| One arm | One task with one target frame |
+| Two independent robot models | One task per arm |
+| One bimanual robot model | One task with both arm joint sets and two target frames |
+
+The task uses coordinator-facing joint names and URDF frame names. Give it the
+same `RobotModelConfig` used by planning; hardware-native naming remains inside
+the adapter.
 
 ```python skip
-from dimos.robot.manipulators.common.blueprints import (
-    cartesian_ik_task,
-    eef_twist_task,
-    teleop_ik_task,
-)
+from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
+from dimos.robot.manipulators.common.blueprints import teleop_ik_task
 
-cartesian_task = cartesian_ik_task(
-    hardware,
-    robot_model=robot_model,
-)
-twist_task = eef_twist_task(
-    hardware,
-    robot_model=robot_model,
-)
+pink = PinkKinematicsConfig()
+robot_model = _make_yourarm_config()
 teleop_task = teleop_ik_task(
     hardware,
     name="teleop_arm",
-    hand="right",
     robot_model=robot_model,
+    bindings=[{"hand": "right", "target_frame": "link6"}],
+    params={"pink": pink},
 )
 ```
 
-Each tick starts from measured joints and applies model position and velocity
-limits. Twist targets are derived from measured forward kinematics. Teleop
-targets apply controller deltas to a measured engagement baseline and discard
-that baseline across disengage, timeout, stop, clear, or E-STOP. Invalid models
-or mappings fail at startup; invalid runtime output holds the measured position.
-Validate Cartesian, twist, and teleop behavior in simulation or replay before
-hardware use.
+For a bimanual model, pass both joint sets and bind each hand to its own frame:
+
+```python skip
+bimanual_task = teleop_ik_task(
+    dual_arm_hardware,
+    name="teleop_dual_arm",
+    robot_model=dual_arm_model,
+    joint_names=[*left_arm_joint_names, *right_arm_joint_names],
+    bindings=[
+        {"hand": "left", "target_frame": "left_tool_frame"},
+        {"hand": "right", "target_frame": "right_tool_frame"},
+    ],
+    params={"pink": PinkKinematicsConfig()},
+)
+```
+
+Do not pass planning groups into a control task. Planning groups select planning
+requests; control IK needs only the controlled joints and target frames. A
+single-hand task requires that hand's primary button. A bimanual task requires
+both buttons, and releasing either clears both controller references.
+
+Before connecting hardware, follow [Pink IK Configuration and Tuning](/docs/capabilities/manipulation/pink_ik_tuning.md)
+to tune task weights, robot-specific objectives, velocity limits, feedback
+tolerance, and command tracking.
 
 ## Step 5: Register Blueprints
 
@@ -676,7 +701,7 @@ The blueprint registry in `dimos/robot/all_blueprints.py` is **auto-generated** 
    ```bash
    pytest dimos/robot/test_all_blueprints_generation.py
    ```
-3. Now you can run your arm via CLI:
+2. Now you can run your arm via CLI:
    ```bash
    dimos run coordinator-yourarm
    dimos run yourarm-planner        # If you added a planning blueprint

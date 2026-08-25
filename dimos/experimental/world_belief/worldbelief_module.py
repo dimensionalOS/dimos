@@ -40,7 +40,7 @@ from dimos.experimental.world_belief.world_belief import (
 from dimos.experimental.world_belief.worldbelief_recorder import (
     WorldBeliefRecorderSpec,
 )
-from dimos.memory2.module import MemoryModuleConfig
+from dimos.memory.module import MemoryModuleConfig
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
@@ -239,7 +239,7 @@ class WorldBeliefModule(Module):
         from dimos.experimental.world_belief.scene_scan import (
             ScanIncompleteError,
         )
-        from dimos.memory2.store.sqlite import SqliteStore
+        from dimos.memory.store.sqlite import SqliteStore
         from dimos.perception.experimental.object import (
             aggregate_pointclouds,
             to_detection3d_array,
@@ -340,7 +340,7 @@ class WorldBeliefModule(Module):
         from contextlib import nullcontext
 
         from dimos.experimental.world_belief.recall import recall as _recall
-        from dimos.memory2.store.sqlite import SqliteStore
+        from dimos.memory.store.sqlite import SqliteStore
 
         text = text.strip()
         if not text:

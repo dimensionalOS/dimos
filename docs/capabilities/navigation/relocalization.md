@@ -1,13 +1,10 @@
----
-title: "Premap & Relocalization"
-description: "Record a Go2 run, export a loop-closed premap with dimos map, and relocalize on replay or live hardware."
----
+# Premap & Relocalization
 
 Relocalization lets a Go2 navigate on a previously built map instead of only on what it sees right now. At runtime, `RelocalizationModule` aligns live LiDAR to a saved premap and publishes a `world → map` transform, so the costmap and planner operate on the live scan and premap together.
 
-![relocalize on the live go2 and nav_to a point in the premap](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/reloc_and_nav_to.webp)
+![relocalize on the live go2 and nav_to a point in the premap](assets/reloc_and_nav_to.webp)
 
-> **Note:** Requires DimOS v0.0.13 or newer for PGO loop closure and `dimos map` export.
+> **Note:** Requires dimOS v0.0.13 or newer for PGO loop closure and `dimos map` export.
 
 This guide takes four steps:
 
@@ -16,7 +13,7 @@ This guide takes four steps:
 3. Test relocalization in replay, no robot needed
 4. Deploy on the live Go2
 
-Throughout this guide, `{DB_NAME}` is the stem of your recording, for example `recording_go2` for `recording_go2.db`. For `map_file`, pass the same stem and DimOS appends `.pc2.lcm` automatically.
+Throughout this guide, `{DB_NAME}` is the stem of your recording, for example `recording_go2` for `recording_go2.db`. For `map_file`, pass the same stem and dimOS appends `.pc2.lcm` automatically.
 
 ## 1. Record a run
 
@@ -163,7 +160,7 @@ Note that [`CostMapper`](/dimos/mapping/costmapper.py) builds the costmap from t
 
 | File | Format | Produced by | Consumed by |
 |------|--------|-------------|-------------|
-| `{name}.db` | memory2 SQLite (`lidar`, `odom`, `color_image`, …) | `unitree-go2-memory` | `dimos map *`, `--replay-db` |
+| `{name}.db` | memory SQLite (`lidar`, `odom`, `color_image`, …) | `unitree-go2-memory` | `dimos map *`, `--replay-db` |
 | `{name}.pc2.lcm` | LCM-encoded `PointCloud2` premap | `dimos map global --export` | `RelocalizationModule` (`map_file`) |
 | `{name}.rrd` | Rerun recording (visual QA) | `dimos map global` | Rerun viewer |
 
@@ -175,7 +172,7 @@ for example `--relocalizationmodule.map-file=…`.
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `map_file` | `None` (module disabled) | Premap stem or path. DimOS appends `.pc2.lcm` automatically |
+| `map_file` | `None` (module disabled) | Premap stem or path. dimOS appends `.pc2.lcm` automatically |
 | `fitness_threshold` | `0.45` | Minimum ICP fitness to accept a relocalization (0 to 1) |
 | `publish_loaded_map` | `false` | Republish raw premap on `loaded_map` every 2 s |
 | `use_carving` | `true` | Column-carve when merging premap and live scan |

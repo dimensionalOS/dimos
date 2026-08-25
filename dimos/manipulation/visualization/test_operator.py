@@ -15,8 +15,14 @@
 """Focused tests for the manipulation visualization operator facade."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
-from dimos.agents.skill_result import SkillResult
+from dimos.manipulation.manipulation_spec import (
+    ExecutionResult,
+    ExecutionStatus,
+    ManipulationSnapshot,
+    OperationStatus,
+)
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.planners.roboplan_config import RoboPlanCartesianPathConfig
@@ -40,6 +46,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.robot.assets.model import RobotModel
 
 
 def _robot_config(
@@ -68,7 +75,7 @@ def _robot_config(
         ]
     return RobotModelConfig(
         name=name,
-        model_path=Path("/robot.urdf"),
+        model=RobotModel.from_file(Path("/robot.urdf")),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=joints,
         base_link="base",
@@ -78,6 +85,7 @@ def _robot_config(
 
 class FakeModule:
     def __init__(self) -> None:
+        self.config = SimpleNamespace(default_speed_scale=1.0)
         self.state = "COMPLETED"
         self.error = ""
         self.has_plan = True
@@ -113,12 +121,18 @@ class FakeModule:
         self.execute_success = True
         self.cancel_success = True
         self.clear_success = True
-        self.reset_success = True
         self.topology_calls = 0
         self.telemetry_calls = 0
 
-    def get_state(self) -> str:
-        return self.state
+    def get_state(self) -> ManipulationSnapshot:
+        return ManipulationSnapshot(
+            timestamp=0.0,
+            operation_status=OperationStatus[self.state],
+            error=self.error or None,
+            has_pending_plan=self.has_plan,
+            execution_status=ExecutionStatus.IDLE,
+            groups={},
+        )
 
     def get_error(self) -> str:
         return self.error
@@ -157,7 +171,9 @@ class FakeModule:
         return self.plan_success
 
     def generate_plan_to_joint_targets(
-        self, targets: dict[PlanningGroupID, JointState]
+        self,
+        targets: dict[PlanningGroupID, JointState],
+        speed_scale: float | None = None,
     ) -> GeneratedPlan | None:
         self.plan_joint_targets.append(targets)
         return self.plan if self.plan_success else None
@@ -174,6 +190,7 @@ class FakeModule:
         self,
         targets: dict[PlanningGroupID, PoseStamped],
         auxiliary_groups: tuple[PlanningGroupID, ...] = (),
+        speed_scale: float | None = None,
     ) -> GeneratedPlan | None:
         self.plan_pose_targets.append((targets, auxiliary_groups))
         return self.plan if self.plan_success else None
@@ -183,6 +200,8 @@ class FakeModule:
         targets: dict[PlanningGroupID, tuple[PoseStamped, ...]],
         config: RoboPlanCartesianPathConfig,
         auxiliary_groups: tuple[PlanningGroupID, ...] = (),
+        speed_scale: float | None = None,
+        check_collision: bool = True,
     ) -> GeneratedPlan | None:
         self.cartesian_targets.append((targets, config, auxiliary_groups))
         return self.plan if self.plan_success else None
@@ -192,19 +211,15 @@ class FakeModule:
     ) -> bool:
         return self.preview_success
 
-    def execute_plan(self, plan: GeneratedPlan | None = None) -> bool:
+    def _execute_generated_plan(self, plan: GeneratedPlan) -> bool:
         return self.execute_success
 
-    def cancel(self) -> bool:
-        return self.cancel_success
+    def cancel(self) -> ExecutionResult:
+        status = ExecutionStatus.ABORTED if self.cancel_success else ExecutionStatus.UNCERTAIN
+        return ExecutionResult(status)
 
     def clear_planned_path(self) -> bool:
         return self.clear_success
-
-    def reset(self) -> SkillResult[str]:
-        if self.reset_success:
-            return SkillResult.ok("reset")
-        return SkillResult.fail("ERR", "no reset")
 
 
 class FakeWorldMonitor:
@@ -434,7 +449,6 @@ def test_actions_return_typed_results_and_cancel_fallback_ownership() -> None:
     assert operator.preview(module.plan, 0.5) is True
     assert operator.execute(module.plan) is True
     assert operator.clear_plan() is True
-    assert operator.reset() is True
     cancel_result = operator.cancel()
     assert cancel_result is True
     assert monitor.cancel_preview_calls == 0

@@ -304,24 +304,6 @@ class SpatialMemory(Module):
             logger.error(f"Error processing frame: {e}")
 
     @rpc
-    def query_by_location(
-        self, x: float, y: float, radius: float = 2.0, limit: int = 5
-    ) -> list[dict]:  # type: ignore[type-arg]
-        """
-        Query the vector database for images near the specified location.
-
-        Args:
-            x: X coordinate
-            y: Y coordinate
-            radius: Search radius in meters
-            limit: Maximum number of results to return
-
-        Returns:
-            List of results, each containing the image and its metadata
-        """
-        return self.vector_db.query_by_location(x, y, radius, limit)
-
-    @rpc
     def save(self) -> bool:
         """
         Save the visual memory component to disk.

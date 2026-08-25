@@ -1,6 +1,4 @@
----
-title: "Code Style Guidelines"
----
+# Code Style Guidelines
 
 Rules for writing code in dimos. These address recurring issues found in code review.
 
@@ -41,13 +39,13 @@ something/
 Never add imports to `__init__.py` files. Re-exporting from `__init__.py` makes imports too wide and slow — importing one symbol pulls in the entire package tree.
 
 ```python skip
-# BAD — dimos/memory2/__init__.py
-from dimos.memory2.store import Store, SqliteStore
-from dimos.memory2.stream import Stream
+# BAD — dimos/memory/__init__.py
+from dimos.memory.store import Store, SqliteStore
+from dimos.memory.stream import Stream
 ```
 
 ```python
 # GOOD — import directly from the module
-from dimos.memory2.store.base import Store
-from dimos.memory2.stream import Stream
+from dimos.memory.store.base import Store
+from dimos.memory.stream import Stream
 ```

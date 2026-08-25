@@ -1,17 +1,43 @@
----
-title: "Agents"
----
-LLM agents run as native DimOS modules. They subscribe to camera, LiDAR, odometry, and spatial memory streams and they control the robot through skills.
+# Agents
+
+LLM agents run as native dimOS modules. They subscribe to camera, LiDAR, odometry, and spatial memory streams and they control the robot through skills.
 
 ## Architecture
 
+<details>
+<summary>Pikchr</summary>
+
+```pikchr fold output=assets/agent_architecture.svg
+color = white
+fill = none
+boxrad = 5px
+
+Input: box "humancli / WebInput" "dimos agent-send" fit wid 170% ht 170%
+arrow right 0.6in "human_input" above "In[str]" below
+Agent: box "McpClient" "LangGraph + LLM" fit wid 170% ht 170%
+Skills: box "@skill methods" "on any Module" fit wid 170% ht 170% \
+    with .w at (Agent.e.x + 0.9in, Agent.e.y)
+arrow right 0.5in from Skills.e
+Robot: box "Robot" fit wid 200% ht 190%
+
+# The agent calls a skill and waits for what it returns, so the two directions
+# get their own lane rather than one arrow standing in for both.
+arrow from (Agent.e.x, Agent.e.y + 0.13in) to (Skills.w.x, Skills.w.y + 0.13in) \
+    "skill call (RPC)" above
+arrow from (Skills.w.x, Skills.w.y - 0.13in) to (Agent.e.x, Agent.e.y - 0.13in) \
+    "result" below
+
+Streams: box "color_image  ·  odom  ·  spatial_memory" fit wid 120% ht 170% \
+    with .n at (Agent.s.x, Agent.s.y - 0.6in)
+arrow from Streams.n to Agent.s "subscribes" ljust
+
+arrow from Agent.n up 0.5in then left until even with Input.n then to Input.n \
+    "agent: Out[BaseMessage]" above
 ```
-Human Input ──→ Agent ──→ Skill Calls ──→ Robot
-  (text/voice)     │         (RPC)
-                   │
-          subscribes to streams:
-          color_image, odom, spatial_memory
-```
+
+</details>
+
+![output](assets/agent_architecture.svg)
 
 **McpClient** (`dimos/agents/mcp/mcp_client.py`) is a `Module` with:
 - `human_input: In[str]`: receives text from `humancli`, `WebInput`, or `agent-send`

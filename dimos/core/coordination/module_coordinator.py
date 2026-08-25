@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 import dataclasses
 import importlib
 import inspect
@@ -263,7 +264,9 @@ class ModuleCoordinator(Resource):
 
     def _instance_keys_of(self, module: type[ModuleBase]) -> list[str]:
         cls = self._resolve_class(module)
-        return [n for n, c in self._instance_classes.items() if self._resolve_class(c) is cls]
+        return [
+            n for n, c in self._instance_classes.items() if issubclass(self._resolve_class(c), cls)
+        ]
 
     def _resolve_instance_key(self, module: type[ModuleBase] | str) -> str:
         """Resolve a module class or instance name to the deployed instance name."""
@@ -360,12 +363,18 @@ class ModuleCoordinator(Resource):
         coordinator = cls(g=global_config)
         coordinator.start()
 
-        _deploy_all_modules(blueprint, coordinator, global_config, module_kwargs)
-        coordinator._connect_streams(blueprint, transports)
-        _connect_module_refs(blueprint, coordinator)
+        try:
+            _deploy_all_modules(blueprint, coordinator, global_config, module_kwargs)
+            coordinator._connect_streams(blueprint, transports)
+            _connect_module_refs(blueprint, coordinator)
 
-        coordinator.build_all_modules()
-        coordinator.start_all_modules()
+            coordinator.build_all_modules()
+            coordinator.start_all_modules()
+        except BaseException:
+            # The caller never gets a coordinator to stop, so stop it here.
+            with suppress(Exception):
+                coordinator.stop()
+            raise
 
         _log_blueprint_graph(blueprint, coordinator)
 

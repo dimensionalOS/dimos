@@ -90,6 +90,7 @@ def merge_environment(
         roots[config_key(module.atom.name).lower()] = module.atom.name
         roots[module.atom.name.lower()] = module.atom.name
 
+    known_transports = {transport.name for transport in schema.transports}
     global_env_names = global_environment_names()
     targets = {target.identity: target for target in schema.targets}
     env_source: dict[str, Any] = {}
@@ -109,6 +110,8 @@ def merge_environment(
 
         parts = tuple(part.lower().replace("-", "_") for part in raw_name.split("__"))
         if len(parts) < 2 or parts[0] not in roots:
+            continue
+        if parts[0] == "transports" and (len(parts) < 3 or parts[1] not in known_transports):
             continue
         set_coerced((roots[parts[0]], *parts[1:]), raw_name, value)
 

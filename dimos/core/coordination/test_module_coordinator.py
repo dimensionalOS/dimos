@@ -281,6 +281,25 @@ def test_build_does_not_mutate_parsed_config(mocker) -> None:
     assert deploy.call_args.args[3] == {ModuleA.name: module_values}
 
 
+def test_build_stops_the_coordinator_when_deploy_fails(mocker) -> None:
+    blueprint = ModuleA.blueprint()
+    parsed = BlueprintConfigParser(blueprint).parse(
+        environ={},
+        overrides={"g": {"viewer": "none"}},
+    )
+    mocker.patch.object(ModuleCoordinator, "start")
+    stop = mocker.patch.object(ModuleCoordinator, "stop")
+    mocker.patch(
+        "dimos.core.coordination.module_coordinator._deploy_all_modules",
+        side_effect=RuntimeError("deploy failed"),
+    )
+
+    with pytest.raises(RuntimeError, match="deploy failed"):
+        ModuleCoordinator.build(blueprint, parsed)
+
+    stop.assert_called_once()
+
+
 def test_build_rejects_config_parsed_for_another_blueprint() -> None:
     source = ModuleA.blueprint()
     parsed = BlueprintConfigParser(source).parse(environ={})
@@ -517,6 +536,7 @@ def test_module_ref_direct_accepts_a_subclass_provider() -> None:
         assert mod1 is not None
         assert mod1.calc is not None
         assert mod1.calc.compute1(2, 3) == 5
+        assert mod1.calc.compute2(1.5, 2.5) == 4.0
     finally:
         coordinator.stop()
 

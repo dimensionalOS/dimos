@@ -23,13 +23,13 @@ from math import floor
 import re
 from typing import TYPE_CHECKING, Any, cast
 
-from dimos.memory2.embed import EmbedImages
+from dimos.memory.embed import EmbedImages
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.memory2.store.base import Store
-    from dimos.memory2.type.observation import EmbeddedObservation
+    from dimos.memory.store.base import Store
+    from dimos.memory.type.observation import EmbeddedObservation
 
 logger = setup_logger()
 
