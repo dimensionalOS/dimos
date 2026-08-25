@@ -263,23 +263,17 @@ def test_nav_preflight_reports_whats_missing(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_nav_ego_preflight_names_habitat(monkeypatch: pytest.MonkeyPatch) -> None:
-    if config.data_dir.joinpath("3D_scenes").is_dir() is False:
+    """Without a habitat interpreter configured, preflight must say how to get one."""
+    scenes = config.data_dir / "3D_scenes"
+    if not scenes.is_dir():
         pytest.skip("SPACE dataset not present")
-    try:
-        import habitat_sim  # noqa: F401
-
-        pytest.skip("habitat available here; the error path cannot fire")
-    except ImportError:
-        pass
-    scene = sorted(p.name for p in (config.data_dir / "3D_scenes").iterdir() if p.is_dir())[0]
+    monkeypatch.setattr(config, "habitat_python", None)
+    scene = sorted(p.name for p in scenes.iterdir() if p.is_dir())[0]
     case = SpaceNav(
-        id="nav",
-        inputs="nav",
-        env_name=scene,
-        walkthrough_key="shortestpath",
-        presentation="ego",
+        id="nav", inputs="nav", env_name=scene,
+        walkthrough_key="shortestpath", presentation="ego",
     )
-    with pytest.raises(RuntimeError, match="habitat-sim"):
+    with pytest.raises(RuntimeError, match="DIMOS_SPACE_HABITAT_PYTHON"):
         case.preflight(FakeRig())
 
 
