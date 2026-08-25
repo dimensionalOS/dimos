@@ -49,7 +49,7 @@ def test_vqa_generate_cli_declares_single_image_input() -> None:
     assert "--start" in output
     assert "--stop" in output
     assert "--stride" in output
-    assert "--sync-tolerance" in output
+    assert "--sync-tolerance" not in output
     assert "--output" in output
     assert "absent or empty" in output
 
@@ -64,9 +64,11 @@ def test_vqa_run_cli_declares_standalone_dataset_input() -> None:
 
 
 def test_vqa_generate_cli_runs_generation(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    seen: list[tuple[GenerationRequest, VqaGenerationConfig]] = []
+    seen: list[tuple[GenerationRequest, VqaGenerationConfig | None]] = []
 
-    def fake_generate(request: GenerationRequest, config: VqaGenerationConfig) -> GenerationResult:
+    def fake_generate(
+        request: GenerationRequest, config: VqaGenerationConfig | None = None
+    ) -> GenerationResult:
         seen.append((request, config))
         return GenerationResult(
             output=request.output_directory(),
@@ -93,8 +95,6 @@ def test_vqa_generate_cli_runs_generation(monkeypatch: pytest.MonkeyPatch, tmp_p
             "3",
             "--output",
             str(tmp_path),
-            "--sync-tolerance",
-            "0.25",
         ],
     )
 
@@ -102,7 +102,7 @@ def test_vqa_generate_cli_runs_generation(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert seen == [
         (
             GenerationRequest(dataset="recording.db", image_index=3, output=tmp_path),
-            VqaGenerationConfig(synchronization_tolerance_s=0.25),
+            None,
         )
     ]
     assert "Generated 1 VQA case" in result.stdout
@@ -111,9 +111,11 @@ def test_vqa_generate_cli_runs_generation(monkeypatch: pytest.MonkeyPatch, tmp_p
 def test_vqa_generate_cli_accepts_frame_range(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    seen: list[tuple[GenerationRequest, VqaGenerationConfig]] = []
+    seen: list[tuple[GenerationRequest, VqaGenerationConfig | None]] = []
 
-    def fake_generate(request: GenerationRequest, config: VqaGenerationConfig) -> GenerationResult:
+    def fake_generate(
+        request: GenerationRequest, config: VqaGenerationConfig | None = None
+    ) -> GenerationResult:
         seen.append((request, config))
         return GenerationResult(output=request.output_directory(), cases=())
 
@@ -147,13 +149,15 @@ def test_vqa_generate_cli_accepts_frame_range(
                 stride=3,
                 output=tmp_path,
             ),
-            VqaGenerationConfig(),
+            None,
         )
     ]
 
 
 def test_vqa_generate_cli_formats_expected_errors(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_generate(request: GenerationRequest, config: VqaGenerationConfig) -> GenerationResult:
+    def fake_generate(
+        request: GenerationRequest, config: VqaGenerationConfig | None = None
+    ) -> GenerationResult:
         raise ValueError("dataset has no 'tf' stream")
 
     monkeypatch.setattr(generate_module, "generate_dataset", fake_generate)

@@ -27,8 +27,7 @@ Generated datasets default to:
 Use `--output <directory>` to override that location. The destination must be empty. Generation
 requires non-empty `color_image`, `camera_info`, `tf`, and either `pointlio_lidar` or `lidar` streams;
 incomplete datasets are rejected at startup. For a valid dataset, point-cloud evidence is available
-when image and LiDAR observations are within `0.1` seconds by default; use
-`--sync-tolerance <seconds>` to adjust that limit. Individual frames with unmatched LiDAR
+when image and LiDAR observations are within `0.1` seconds. Individual frames with unmatched LiDAR
 observations or unresolvable TF retain only image-based question families.
 
 ### Point-cloud frame preparation
