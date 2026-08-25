@@ -16,11 +16,10 @@ use std::io::Write;
 
 use anyhow::{anyhow, Context, Result};
 use lcm_msgs::sensor_msgs::Image;
-use lcm_msgs::tf2_msgs::TFMessage;
 use lz4_flex::frame::FrameEncoder;
 use turbojpeg::{PixelFormat, Subsamp};
 
-use crate::timestamp::{header_timestamp, timestamp_for};
+use crate::decoding::{DecodedObservation, DecodedPayload};
 use crate::{Codec, StreamConfig};
 
 pub(crate) const JPEG_QUALITY: i32 = 50;
@@ -33,69 +32,32 @@ pub(crate) struct StoredObservation {
 
 pub(crate) fn encode(
     stream: &StreamConfig,
-    data: &[u8],
-    reception_ts: f64,
-    stores_wire_bytes: bool,
-) -> Result<Vec<StoredObservation>> {
-    if stores_wire_bytes {
-        return Ok(vec![StoredObservation {
-            ts: timestamp_for(&stream.payload_type, data, reception_ts)?,
-            data: data.to_vec(),
-        }]);
-    }
-    if stream.is_tf() {
-        return encode_tf(stream, data, reception_ts);
-    }
-
-    let (ts, data) = match stream.codec {
-        Codec::Lcm => (
-            timestamp_for(&stream.payload_type, data, reception_ts)?,
-            data.to_vec(),
-        ),
-        Codec::Lz4Lcm => (
-            timestamp_for(&stream.payload_type, data, reception_ts)?,
-            lz4_frame(data)?,
-        ),
-        Codec::Jpeg => encode_jpeg(data, reception_ts)?,
+    observation: DecodedObservation,
+) -> Result<StoredObservation> {
+    let data = match stream.codec {
+        Codec::Lcm => lcm_encode(observation.payload),
+        Codec::Lz4Lcm => lz4_frame(&lcm_encode(observation.payload))?,
+        Codec::Jpeg => jpeg_encode(observation.payload)?,
     };
-    Ok(vec![StoredObservation { ts, data }])
+    Ok(StoredObservation {
+        ts: observation.ts,
+        data,
+    })
 }
 
-fn encode_tf(
-    stream: &StreamConfig,
-    data: &[u8],
-    reception_ts: f64,
-) -> Result<Vec<StoredObservation>> {
-    if stream.codec != Codec::Lcm {
-        return Err(anyhow!("tf only supports the lcm codec"));
+fn lcm_encode(payload: DecodedPayload) -> Vec<u8> {
+    match payload {
+        DecodedPayload::Lcm(data) => data,
+        DecodedPayload::Image(image) => image.encode(),
     }
-    let message = TFMessage::decode(data).context("invalid LCM TFMessage")?;
-    Ok(message
-        .transforms
-        .into_iter()
-        .map(|transform| StoredObservation {
-            ts: header_timestamp(
-                transform.header.stamp.sec,
-                transform.header.stamp.nsec,
-                reception_ts,
-            ),
-            data: TFMessage {
-                transforms: vec![transform],
-            }
-            .encode(),
-        })
-        .collect())
 }
 
-pub(crate) fn encode_jpeg(data: &[u8], reception_ts: f64) -> Result<(f64, Vec<u8>)> {
-    let mut image = Image::decode(data).context("invalid LCM Image")?;
-    let ts = header_timestamp(
-        image.header.stamp.sec,
-        image.header.stamp.nsec,
-        reception_ts,
-    );
+fn jpeg_encode(payload: DecodedPayload) -> Result<Vec<u8>> {
+    let DecodedPayload::Image(mut image) = payload else {
+        return Err(anyhow!("JPEG storage codec requires an Image payload"));
+    };
     if image.encoding == "jpeg" {
-        return Ok((ts, data.to_vec()));
+        return Ok(image.encode());
     }
 
     let format = pixel_format(&image.encoding)?;
@@ -113,7 +75,7 @@ pub(crate) fn encode_jpeg(data: &[u8], reception_ts: f64) -> Result<(f64, Vec<u8
     image.is_bigendian = 0;
     image.step = 0;
     image.data = jpeg.to_vec();
-    Ok((ts, image.encode()))
+    Ok(image.encode())
 }
 
 fn pixel_format(encoding: &str) -> Result<PixelFormat> {
