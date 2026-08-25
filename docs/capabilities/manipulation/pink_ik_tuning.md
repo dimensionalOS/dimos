@@ -1,6 +1,4 @@
----
-title: "Pink IK Configuration and Tuning"
----
+# Pink IK Configuration and Tuning
 
 dimOS uses [Pink](https://github.com/stephane-caron/pink) for Cartesian,
 EEF-twist, and engagement-relative teleoperation control. This guide explains
