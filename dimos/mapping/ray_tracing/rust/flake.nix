@@ -40,7 +40,16 @@
           cargoRoot = "dimos/mapping/ray_tracing/rust";
           buildAndTestSubdir = "dimos/mapping/ray_tracing/rust";
 
-          cargoHash = "sha256-uYCf2WCSlRk/wUTGrViD64zAkHl6D8VKaEO43fAeU2E=";
+          # Vendor straight from Cargo.lock so no crates.io vendor hash needs
+          # recomputing when a dependency changes. Only the dimos-lcm git dep
+          # needs its fetched tree hash pinned, keyed by any one crate from that
+          # rev (nixpkgs maps the key to the commit SHA, covering lcm-msgs too).
+          cargoLock = {
+            lockFile = ./Cargo.lock;
+            outputHashes = {
+              "dimos-lcm-0.1.0" = "sha256-4DWFTf7Xqnx6pd2jXA/MVpRmZiFr6HqTSp9Qo9ZjToA=";
+            };
+          };
 
           # macOS: pyo3's extension-module leaves CPython symbols undefined in the
           # cdylib; let the loader resolve them at import time.
