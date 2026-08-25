@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -34,17 +33,16 @@ _INVOCATION = {
 
 # The host builds into the repo's cargo target dir, so it reuses the workspace's
 # already-compiled dependencies instead of compiling its own copy of them.
+# Explicit so an inherited CARGO_TARGET_DIR cannot move the output artifact_path
+# reads. cross absolutizes and bind-mounts this dir into its container.
 TARGET_DIR = DIMOS_PROJECT_ROOT / "target"
 
 
-def build_command(
-    builder: str, crate_dir: Path, *, target: str | None = None, debug: bool = False
-) -> list[str]:
+def build_command(builder: str, *, target: str | None = None, debug: bool = False) -> list[str]:
     if builder not in _INVOCATION:
         raise BakeError(f"unknown --builder {builder!r}; choose from {', '.join(BUILDERS)}")
     cmd = list(_INVOCATION[builder])
-    # Relative so it also resolves inside a cross container.
-    cmd.extend(["--target-dir", os.path.relpath(TARGET_DIR, crate_dir)])
+    cmd.extend(["--target-dir", str(TARGET_DIR)])
     if not debug:
         cmd.append("--release")
     if target:
@@ -74,7 +72,7 @@ def build_host(
     debug: bool = False,
 ) -> Path:
     """Compile the generated crate and return the path to the built binary."""
-    cmd = build_command(builder, crate_dir, target=target, debug=debug)
+    cmd = build_command(builder, target=target, debug=debug)
     if shutil.which(cmd[0]) is None:
         raise BakeError(f"`{cmd[0]}` is not on PATH")
     result = subprocess.run(cmd, cwd=crate_dir, check=False)

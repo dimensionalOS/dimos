@@ -30,38 +30,26 @@ from dimos.cli.bake.build import (
     install,
     target_dir_name,
 )
-from dimos.cli.bake.codegen import crate_dir
 from dimos.cli.bake.errors import BakeError
 
 
 def test_build_command_per_builder() -> None:
-    crate = crate_dir("go2-nav")
-    assert build_command("cargo", crate) == [
+    assert build_command("cargo") == [
         "cargo",
         "build",
         "--target-dir",
-        "../../../target",
+        str(TARGET_DIR),
         "--release",
     ]
-    assert build_command("cargo", crate, debug=True)[-1] != "--release"
-    assert build_command("cross", crate, target="aarch64-unknown-linux-musl")[:2] == [
-        "cross",
-        "build",
-    ]
-    assert build_command("zigbuild", crate)[:2] == ["cargo", "zigbuild"]
-    assert build_command("cargo", crate, target="aarch64-unknown-linux-musl")[-2:] == [
+    assert "--release" not in build_command("cargo", debug=True)
+    assert build_command("cross", target="aarch64-unknown-linux-musl")[:2] == ["cross", "build"]
+    assert build_command("zigbuild")[:2] == ["cargo", "zigbuild"]
+    assert build_command("cargo", target="aarch64-unknown-linux-musl")[-2:] == [
         "--target",
         "aarch64-unknown-linux-musl",
     ]
     with pytest.raises(BakeError, match="unknown --builder"):
-        build_command("make", crate)
-
-
-def test_build_command_targets_the_shared_workspace_dir() -> None:
-    crate = crate_dir("go2-nav")
-    cmd = build_command("cargo", crate)
-    given = cmd[cmd.index("--target-dir") + 1]
-    assert (crate / given).resolve() == TARGET_DIR
+        build_command("make")
 
 
 def test_target_dir_name_strips_the_zigbuild_glibc_suffix() -> None:

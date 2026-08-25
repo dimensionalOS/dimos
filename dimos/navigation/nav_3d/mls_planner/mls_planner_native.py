@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -26,7 +27,8 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 class MLSPlannerNativeConfig(NativeModuleConfig):
     cwd: str | None = "rust"
-    executable: str = "target/release/mls_planner"
+    # The crate is a workspace member, so cargo builds into the repo-root target dir.
+    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "mls_planner")
     build_command: str | None = "cargo build --release"
     stdin_config: bool = True
 

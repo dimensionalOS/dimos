@@ -584,10 +584,14 @@ dependencies = [
 name = "dimos-module"
 version = "0.1.0"
 dependencies = [
+ "approx",
+ "bytemuck",
  "dimos-lcm",
  "dimos-module-macros",
  "lcm-msgs",
  "nalgebra 0.35.0",
+ "num-rational",
+ "num-traits",
  "serde",
  "serde_json",
  "tokio",
