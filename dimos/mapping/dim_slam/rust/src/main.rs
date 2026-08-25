@@ -92,14 +92,14 @@ fn fusion_sources(config: &DimSlamConfig) -> BTreeMap<String, SourceConfig> {
     config
         .source_frames
         .iter()
-        .zip(config.source_pose_variances.chunks_exact(6))
-        .zip(config.source_twist_variances.chunks_exact(6))
+        .zip(config.source_pose_variances.as_chunks::<6>().0)
+        .zip(config.source_twist_variances.as_chunks::<6>().0)
         .map(|((frame, pose), twist)| {
             (
                 frame.clone(),
                 SourceConfig {
-                    pose_variances: pose.try_into().expect("chunks_exact yields 6"),
-                    twist_variances: twist.try_into().expect("chunks_exact yields 6"),
+                    pose_variances: *pose,
+                    twist_variances: *twist,
                 },
             )
         })
