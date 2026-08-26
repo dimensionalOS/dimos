@@ -57,11 +57,14 @@ from dimos.core.stream import In
 from dimos.core.transport import pSHMTransport
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionRecorder
+from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
+    _G1GrootCoordinator,
     unitree_g1_groot_wbc,
 )
+from dimos.robot.unitree.g1.manip_config import g1_upper_body_model_config
 from dimos.teleop.quest.quest_extensions import MobileVideoArmTeleopModule
 
 
@@ -103,10 +106,19 @@ def _camera_if_real() -> tuple[Blueprint, ...]:
     return (DedicatedRealSenseCamera.blueprint(enable_pointcloud=False),)
 
 
+class G1ManipulationModule(ManipulationModule):
+    """Own the fixed, stationary-only G1 upper-body planning model."""
+
+    def _initialize_planning(self) -> None:
+        self.config.robots = [g1_upper_body_model_config()]
+        super()._initialize_planning()
+
+
 unitree_g1_teleop = (
     autoconnect(
         unitree_g1_groot_wbc,
         MobileVideoArmTeleopModule.blueprint(),
+        G1ManipulationModule.blueprint(instance_name="G1Manipulation"),
         *_camera_if_real(),
         EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
         G1CollectionRecorder.blueprint(
@@ -127,6 +139,7 @@ unitree_g1_teleop = (
             (MobileVideoArmTeleopModule, "left_controller_output", "left_cartesian_command"),
             (MobileVideoArmTeleopModule, "right_controller_output", "right_cartesian_command"),
             (MobileVideoArmTeleopModule, "cmd_vel", "tele_cmd_vel"),
+            (G1ManipulationModule, "_control_coordinator", _G1GrootCoordinator),
         ]
     )
     # Camera frames stay off the LCM bus: every consumer (quest module,

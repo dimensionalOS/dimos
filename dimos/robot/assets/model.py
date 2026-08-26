@@ -99,6 +99,8 @@ class RobotModel:
     _fixed_frames: tuple[_FixedFrame, ...] = ()
     _fixed_joints: tuple[str, ...] = ()
     _joint_position_limits: tuple[_JointPositionLimits, ...] = ()
+    _subtree_root_link: str | None = None
+    _removed_joint_subtrees: tuple[str, ...] = ()
 
     @classmethod
     def from_file(
@@ -133,6 +135,30 @@ class RobotModel:
             self,
             _fixed_frames=(*self._fixed_frames, _FixedFrame(name, parent, xyz, rpy)),
         )
+
+    def with_subtree_rooted_at(self, root_link: str) -> RobotModel:
+        """Return a view containing an existing link and its descendants.
+
+        This selects an existing structural subtree. It does not reverse joints
+        or recompute transforms as a kinematic rerooting operation would.
+        """
+        if not root_link:
+            raise ValueError("Subtree root link must not be empty")
+        if self._subtree_root_link is not None:
+            raise ValueError(f"Subtree root link is already selected: {self._subtree_root_link}")
+        return replace(self, _subtree_root_link=root_link)
+
+    def without_joint_subtrees(self, *joint_names: str) -> RobotModel:
+        """Return a view without the named joints and their descendant branches."""
+        if not joint_names:
+            raise ValueError("At least one joint subtree must be removed")
+        if any(not name for name in joint_names):
+            raise ValueError("Joint subtree names must not be empty")
+        requested = (*self._removed_joint_subtrees, *joint_names)
+        if len(set(requested)) != len(requested):
+            duplicate = next(name for name in requested if requested.count(name) > 1)
+            raise ValueError(f"Joint subtree already requested for removal: {duplicate}")
+        return replace(self, _removed_joint_subtrees=requested)
 
     def with_fixed_joints(self, *names: str) -> RobotModel:
         """Return a model with movable joints fixed at their URDF zero pose."""
@@ -180,6 +206,16 @@ class RobotModel:
         else:
             xml = source_path.read_text()
         xml = _resolve_package_uris(xml, package_paths)
+        if self._subtree_root_link is not None or self._removed_joint_subtrees:
+            xml = _select_structural_subtree(
+                xml,
+                root_link=self._subtree_root_link,
+                removed_joint_subtrees=self._removed_joint_subtrees,
+            )
+        xml = _resolve_relative_asset_paths(
+            xml,
+            search_directories=(source_path.parent, *package_paths.values()),
+        )
         if self._fixed_joints:
             xml = _set_joints_fixed(xml, self._fixed_joints)
         if self._joint_position_limits:
@@ -228,6 +264,80 @@ def _add_fixed_frames(xml: str, frames: tuple[_FixedFrame, ...]) -> str:
         joint_names.add(frame.joint_name)
 
     return ET.tostring(root, encoding="unicode")
+
+
+def _select_structural_subtree(
+    xml: str,
+    *,
+    root_link: str | None,
+    removed_joint_subtrees: tuple[str, ...],
+) -> str:
+    root = ET.fromstring(xml)
+    links = {link.get("name"): link for link in root.findall("link")}
+    joints = {joint.get("name"): joint for joint in root.findall("joint")}
+    if None in links or len(links) != len(root.findall("link")):
+        raise ValueError("Robot model links must have unique non-empty names")
+    if None in joints or len(joints) != len(root.findall("joint")):
+        raise ValueError("Robot model joints must have unique non-empty names")
+
+    topology = _parse_topology(xml)
+    selected_root = root_link or topology[1]
+    if selected_root not in links:
+        raise ValueError(f"Subtree root link not found: {selected_root}")
+
+    children_by_link: dict[str, list[tuple[str, str]]] = {}
+    joint_children: dict[str, str] = {}
+    for joint in topology[0]:
+        if not joint.parent_link or not joint.child_link:
+            raise ValueError(f"Joint has incomplete topology: {joint.name}")
+        children_by_link.setdefault(joint.parent_link, []).append((joint.name, joint.child_link))
+        joint_children[joint.name] = joint.child_link
+
+    selected_links, selected_joints = _descendant_closure(selected_root, children_by_link)
+    for joint_name in removed_joint_subtrees:
+        if joint_name not in joints:
+            raise ValueError(f"Joint subtree not found: {joint_name}")
+        if joint_name not in selected_joints:
+            raise ValueError(
+                f"Joint subtree is outside selected root '{selected_root}': {joint_name}"
+            )
+
+    removed_links: set[str] = set()
+    removed_joints: set[str] = set()
+    for joint_name in removed_joint_subtrees:
+        child_link = joint_children[joint_name]
+        branch_links, branch_joints = _descendant_closure(child_link, children_by_link)
+        removed_links.update(branch_links)
+        removed_joints.add(joint_name)
+        removed_joints.update(branch_joints)
+
+    kept_links = selected_links - removed_links
+    kept_joints = selected_joints - removed_joints
+    for link in list(root.findall("link")):
+        if link.get("name") not in kept_links:
+            root.remove(link)
+    for joint_element in list(root.findall("joint")):
+        if joint_element.get("name") not in kept_joints:
+            root.remove(joint_element)
+    return ET.tostring(root, encoding="unicode")
+
+
+def _descendant_closure(
+    root_link: str,
+    children_by_link: Mapping[str, list[tuple[str, str]]],
+) -> tuple[set[str], set[str]]:
+    links: set[str] = set()
+    joints: set[str] = set()
+    pending = [root_link]
+    while pending:
+        link_name = pending.pop()
+        if link_name in links:
+            raise ValueError(f"Robot model topology contains a cycle at link: {link_name}")
+        links.add(link_name)
+        for joint_name, child_link in children_by_link.get(link_name, []):
+            joints.add(joint_name)
+            pending.append(child_link)
+    return links, joints
 
 
 def _set_joints_fixed(xml: str, names: tuple[str, ...]) -> str:
@@ -344,6 +454,32 @@ def _resolve_package_uris(xml: str, package_paths: Mapping[str, Path]) -> str:
         return match.group(0)
 
     return re.sub(pattern, replace_uri, xml)
+
+
+def _resolve_relative_asset_paths(
+    xml: str,
+    *,
+    search_directories: tuple[Path, ...],
+) -> str:
+    """Resolve URDF assets against the source directory and package roots."""
+    root = ET.fromstring(xml)
+    changed = False
+    for element in (*root.findall(".//mesh"), *root.findall(".//texture")):
+        filename = element.get("filename")
+        if not filename or Path(filename).is_absolute() or "://" in filename:
+            continue
+        candidates = list(
+            dict.fromkeys((directory / filename).resolve() for directory in search_directories)
+        )
+        matches = [candidate for candidate in candidates if candidate.exists()]
+        if len(matches) == 1:
+            element.set("filename", str(matches[0]))
+            changed = True
+        elif len(matches) > 1:
+            raise ValueError(f"Ambiguous relative asset path {filename!r}: {matches}")
+        else:
+            logger.warning(f"Relative asset not found in {search_directories}: {filename}")
+    return ET.tostring(root, encoding="unicode") if changed else xml
 
 
 def _normalize_package_paths(
