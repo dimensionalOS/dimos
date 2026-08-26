@@ -86,35 +86,48 @@ do not walk while executing planned arm motion.
 The robot must already be standing and balancing in sport mode. Stop any other
 program that can publish Unitree low-level commands before starting dimOS.
 
+### Known platform issue: RoboPlan static TLS failure
+
+The current RoboPlan 0.6.0 aarch64 wheel bundles a private, renamed copy of
+`libgomp`. Pinocchio loads the system `libgomp.so.1`, so a dimOS forkserver
+worker can load two OpenMP runtimes and fail with:
+
+```text
+cannot allocate memory in static TLS block
+```
+
+This is a RoboPlan wheel-packaging issue, not a missing Python dependency or a
+G1 control failure. A dimOS in-process fix would retain both OpenMP runtimes and
+hide the underlying problem. Until RoboPlan publishes a corrected wheel, start
+teleoperation with the dual preload below. The private RoboPlan library must
+come first.
+
 On the G1 computer:
 
 ```bash
 cd ~/cc/dimos
 uv sync --extra all
 
-LD_PRELOAD=/lib/aarch64-linux-gnu/libgomp.so.1 \
-  uv run dimos \
-    --viewer none \
-    run unitree-g1-teleop \
-    --network-interface eth0
+ROBOPLAN_GOMP="$(find "$PWD/.venv/lib/python3.12/site-packages/roboplan.libs" \
+  -maxdepth 1 -name 'libgomp-*.so*' -print -quit)"
+test -n "$ROBOPLAN_GOMP" || {
+  echo "RoboPlan's bundled libgomp was not found"
+  exit 1
+}
+
+LD_PRELOAD="$ROBOPLAN_GOMP:/lib/aarch64-linux-gnu/libgomp.so.1" \
+  uv run --no-sync dimos run unitree-g1-teleop --network-interface eth0
 ```
 
 `--network-interface` is blueprint configuration, so it belongs after the
-blueprint name. On the Jetson, preloading `libgomp` avoids the static TLS error
-that can occur while importing Pinocchio.
+blueprint name. The teleop blueprint intentionally excludes localization,
+mapping, autonomous route planning, and the legacy navigation viewer. Quest
+walking commands connect directly to the GR00T controller, so no module-disable
+arguments are needed.
 
-For an upper-body-only session, omit the mapping and route-planning workers but
-keep `MovementManager`, which routes the Quest walking command:
-
-```bash
-LD_PRELOAD=/lib/aarch64-linux-gnu/libgomp.so.1 \
-  uv run dimos \
-    --viewer none \
-    run unitree-g1-teleop \
-    --network-interface eth0 \
-    --disable point-lio ray-tracing-voxel-map cost-mapper \
-      replanning-a-star-planner websocket-vis-module
-```
+`--no-sync` prevents uv from replacing the environment after the private
+library path has been resolved. This workaround remains necessary until
+RoboPlan publishes an aarch64 wheel that uses the system OpenMP runtime.
 
 Wait for the Quest server to report that it is listening on port 8443. The
 process starts unarmed and in dry-run on real hardware.
@@ -250,22 +263,17 @@ The viewer should open up. It'll run in faster-than-real speed until its caught 
 
 ### `libgomp.so.1: cannot allocate memory in static TLS block`
 
-Launch with:
-
-```bash
-LD_PRELOAD=/lib/aarch64-linux-gnu/libgomp.so.1 uv run dimos ...
-```
-
-If the failing path is under `roboplan.libs`, the RoboPlan aarch64 wheel has
-loaded a second private `libgomp`; preloading the platform library alone is not
-enough. See the [RoboPlan static TLS handoff](/docs/platforms/humanoid/g1/roboplan-libgomp-handoff.md) for
-the confirmed reproducer, temporary workaround, and wheel acceptance criteria.
+Use the dual-preload launch command in [Start G1 teleoperation](#4-start-g1-teleoperation).
+Preloading only `/lib/aarch64-linux-gnu/libgomp.so.1` is insufficient because
+RoboPlan's native extension explicitly requests its renamed private copy. If
+the dual preload still fails, confirm that `ROBOPLAN_GOMP` resolves to an
+existing file and that it appears first in `LD_PRELOAD`.
 
 ### A mapping module tries to build with Nix
 
-Use the upper-body-only launch command above. It disables Point-LIO, voxel
-mapping, cost mapping, route planning, and the navigation web view without
-removing the Quest camera, arm control, recording, or walking-command router.
+Update this branch. The G1 teleop blueprint no longer includes Point-LIO, voxel
+mapping, cost mapping, route planning, or the navigation web view. Seeing one
+of those modules means the checkout predates the upper-body-only composition.
 
 ### `dimos hardware g1 status` cannot connect
 

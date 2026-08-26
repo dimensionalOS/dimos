@@ -309,10 +309,7 @@ if global_config.simulation == "mujoco":
         ),
         MovementManager.blueprint(),
     )
-    _remappings = [
-        (VoxelGridMapper, "lidar", "pointcloud"),
-        (_G1GrootCoordinator, "twist_command", "cmd_vel"),
-    ]
+    _nav_remappings = [(VoxelGridMapper, "lidar", "pointcloud")]
 else:
     from dimos.hardware.sensors.lidar.pointlio.module import PointLio
     from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
@@ -365,7 +362,7 @@ else:
         ),
         MovementManager.blueprint(),
     )
-    _remappings = [(_G1GrootCoordinator, "twist_command", "cmd_vel")]
+    _nav_remappings = []
 
 
 def _g1_groot_rerun_blueprint() -> Any:
@@ -577,8 +574,12 @@ _coordinator = _G1GrootCoordinator.blueprint(
     }
 )
 
-unitree_g1_groot_wbc = (
-    autoconnect(_backend, _coordinator, _nav_stack, _viewer())
-    .remappings(cast("Any", _remappings))
+_unitree_g1_groot_wbc_core = (
+    autoconnect(_backend, _coordinator)
+    .remappings([(_G1GrootCoordinator, "twist_command", "cmd_vel")])
     .global_config(robot_model="unitree_g1", n_workers=_n_workers)
+)
+
+unitree_g1_groot_wbc = autoconnect(_unitree_g1_groot_wbc_core, _nav_stack, _viewer()).remappings(
+    cast("Any", _nav_remappings)
 )

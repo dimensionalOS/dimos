@@ -117,11 +117,28 @@ def test_g1_teleop_wires_arm_velocity_and_recording_streams() -> None:
         == "right_cartesian_command"
     )
     assert (
-        unitree_g1_teleop.remapping_map[(MobileVideoArmTeleopModule.name, "cmd_vel")]
-        == "tele_cmd_vel"
+        unitree_g1_teleop.remapping_map[(MobileVideoArmTeleopModule.name, "cmd_vel")] == "cmd_vel"
     )
     assert "left_cartesian_command" in G1CollectionRecorder.__annotations__
     assert "right_cartesian_command" in G1CollectionRecorder.__annotations__
+
+
+def test_g1_teleop_excludes_navigation_and_legacy_visualization() -> None:
+    module_names = {atom.module.__name__ for atom in unitree_g1_teleop.active_blueprints}
+
+    assert module_names.isdisjoint(
+        {
+            "PointLio",
+            "RayTracingVoxelMap",
+            "VoxelGridMapper",
+            "CostMapper",
+            "ReplanningAStarPlanner",
+            "MovementManager",
+            "WebsocketVisModule",
+            "RerunBridgeModule",
+            "RerunWebSocketServer",
+        }
+    )
 
 
 def test_g1_collection_streams_do_not_require_world_poses() -> None:
