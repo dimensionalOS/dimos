@@ -58,6 +58,7 @@ if TYPE_CHECKING:
         VisualizationSession,
         VisualizationStateFrame,
     )
+    from dimos.manipulation.visualization.layers import VisualizationLayer
 
 try:
     from pydrake.geometry import (
@@ -1195,6 +1196,14 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
     def clear_vis_obstacles(self) -> None:
         """Embedded Meshcat observes native WorldSpec obstacle mutations."""
+        return None
+
+    def set_layer(self, layer: VisualizationLayer) -> None:
+        """Embedded Meshcat ignores generic display-only layers."""
+        return None
+
+    def clear_layer(self, layer_id: str) -> None:
+        """Embedded Meshcat ignores generic display-only layers."""
         return None
 
     def get_visualization_url(self) -> str | None:

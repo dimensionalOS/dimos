@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Real-hardware xArm perception manipulation blueprints."""
+"""GraspGenX-enabled real-hardware xArm perception blueprint."""
 
 from __future__ import annotations
 
@@ -20,22 +20,18 @@ import math
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
+from dimos.manipulation.grasping.grasp_gen_x import GraspGenXModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place import PickAndPlaceModule
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
+from dimos.robot.manipulators.xarm.blueprints.perception import XARM_PERCEPTION_CAMERA_TRANSFORM
 from dimos.robot.manipulators.xarm.config import make_xarm7_model_config
+from dimos.robot.manipulators.xarm.grasp_config import make_xarm_graspgenx_config
 
-XARM_PERCEPTION_CAMERA_TRANSFORM = Transform(
-    translation=Vector3(x=0.06693724, y=-0.0309563, z=0.00691482),
-    rotation=Quaternion(0.70513398, 0.00535696, 0.70897578, -0.01052180),  # xyzw
-)
+_graspgenx_config = make_xarm_graspgenx_config()
 
-xarm_perception = autoconnect(
+xarm_graspgenx = autoconnect(
     ManipulationModule.blueprint(
         robots=[
             make_xarm7_model_config(
@@ -46,22 +42,19 @@ xarm_perception = autoconnect(
             )
         ],
         planning_timeout=10.0,
-        visualization={"backend": "viser"},
         floor_z=-0.02,
     ),
     ManipulationSkills.blueprint(instance_name="manipulation_skills"),
-    PickAndPlaceModule.blueprint(instance_name="pick_and_place"),
-    HeuristicGraspModule.blueprint(instance_name="heuristic_grasp"),
+    PickAndPlaceModule.blueprint(
+        instance_name="pick_and_place",
+        grasp="graspgenx",
+    ),
     RealSenseCamera.blueprint(
         base_frame_id="link7",
         base_transform=XARM_PERCEPTION_CAMERA_TRANSFORM,
     ),
-    ObjectSceneRegistrationModule.blueprint(
-        target_frame="world",
-        distance_threshold=0.08,
-        min_detections_for_permanent=3,
-        max_distance=1.0,
-        use_aabb=True,
-        max_obstacle_width=0.06,
+    ObjectSceneRegistrationModule.blueprint(target_frame="world"),
+    GraspGenXModule.blueprint(
+        **_graspgenx_config.model_dump(exclude={"rpc_transport", "tf_transport", "g"})
     ),
-).global_config(n_workers=4)
+).global_config(n_workers=5)

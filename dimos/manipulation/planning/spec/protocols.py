@@ -43,6 +43,7 @@ if TYPE_CHECKING:
         VisualizationStateFrame,
         WorldRobotID,
     )
+    from dimos.manipulation.visualization.layers import VisualizationLayer
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.sensor_msgs.JointState import JointState
     from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
@@ -223,6 +224,14 @@ class VisualizationSpec(Protocol):
 
     def clear_vis_obstacles(self) -> None:
         """Clear obstacle representations from the visualization."""
+        ...
+
+    def set_layer(self, layer: VisualizationLayer) -> None:
+        """Replace one complete display-only visualization layer."""
+        ...
+
+    def clear_layer(self, layer_id: str) -> None:
+        """Clear one display-only layer while retaining viewer-owned state."""
         ...
 
     def get_visualization_url(self) -> str | None:

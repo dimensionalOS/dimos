@@ -41,6 +41,7 @@ from dimos.manipulation.visualization.config import (
     NoManipulationVisualizationConfig,
 )
 from dimos.manipulation.visualization.factory import create_manipulation_visualization
+from dimos.manipulation.visualization.layers import VisualizationLayer
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -82,6 +83,12 @@ class FakeVisualization:
         return None
 
     def clear_vis_obstacles(self) -> None:
+        return None
+
+    def set_layer(self, layer: VisualizationLayer) -> None:
+        return None
+
+    def clear_layer(self, layer_id: str) -> None:
         return None
 
 
@@ -238,6 +245,12 @@ class FakeMeshcatWorld(FakeWorld):
     def clear_vis_obstacles(self) -> None:
         self.visualization_calls.append(("clear_vis_obstacles",))
 
+    def set_layer(self, layer: VisualizationLayer) -> None:
+        self.visualization_calls.append(("set_layer", layer))
+
+    def clear_layer(self, layer_id: str) -> None:
+        self.visualization_calls.append(("clear_layer", layer_id))
+
 
 def test_config_defaults_to_no_visualization() -> None:
     config = ManipulationModuleConfig()
@@ -308,6 +321,7 @@ def test_create_visualization_meshcat_accepts_structural_world() -> None:
         pose=PoseStamped(),
         dimensions=(1.0, 1.0, 1.0),
     )
+    layer = VisualizationLayer("debug/cloud", "world", ())
     visualization.initialize(session)
     assert visualization.get_visualization_url() == "meshcat://test"
     visualization.update_state(frame)
@@ -317,6 +331,8 @@ def test_create_visualization_meshcat_accepts_structural_world() -> None:
     visualization.add_vis_obstacle("box", obstacle)
     visualization.remove_vis_obstacle("box")
     visualization.clear_vis_obstacles()
+    visualization.set_layer(layer)
+    visualization.clear_layer(layer.id)
     assert fake_world.visualization_calls == [
         ("initialize", session),
         ("get_visualization_url",),
@@ -327,6 +343,8 @@ def test_create_visualization_meshcat_accepts_structural_world() -> None:
         ("add_vis_obstacle", "box", obstacle),
         ("remove_vis_obstacle", "box"),
         ("clear_vis_obstacles",),
+        ("set_layer", layer),
+        ("clear_layer", layer.id),
     ]
     assert fake_world.native_calls == []
 

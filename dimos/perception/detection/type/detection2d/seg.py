@@ -34,6 +34,25 @@ class Detection2DSeg(Detection2DBBox):
 
     mask: np.ndarray[Any, np.dtype[np.uint8]]  # Binary mask [H, W], uint8 0 or 255
 
+    def draw_on(self, img: Any, scale: float = 1.0) -> None:
+        """Blend the segmentation mask onto a BGR image, then draw its box and label."""
+        mask = self.mask
+        if mask.shape[:2] != img.shape[:2]:
+            mask = cv2.resize(
+                mask,
+                (img.shape[1], img.shape[0]),
+                interpolation=cv2.INTER_NEAREST,
+            )
+
+        selected = mask > 0
+        if np.any(selected):
+            mask_color = np.array([0, 180, 255], dtype=np.float32)
+            img[selected] = (img[selected].astype(np.float32) * 0.55 + mask_color * 0.45).astype(
+                np.uint8
+            )
+
+        super().draw_on(img, scale=scale)
+
     @classmethod
     def from_sam2_result(
         cls,

@@ -12,25 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Planner contract used to reject unsafe learned grasp proposals."""
+
 from typing import Protocol
 
-from dimos.msgs.geometry_msgs.PoseArray import PoseArray
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.manipulation.planning.spec.models import IKResult, RobotName
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.spec.utils import Spec
 
 
-class LegacyGraspGenSpec(Spec, Protocol):
-    def generate_grasps(
+class GraspCandidateFilterSpec(Spec, Protocol):
+    def inverse_kinematics_single(
         self,
-        pointcloud: PointCloud2,
-        scene_pointcloud: PointCloud2 | None = None,
-    ) -> PoseArray | None: ...
-
-
-class GraspGenSpec(Spec, Protocol):
-    def propose_grasps(self, object_pointcloud: PointCloud2) -> GraspCandidateArray: ...
-
-
-class HeuristicGraspSpec(GraspGenSpec, Protocol):
-    """Contract for deterministic grasp proposals from an object point cloud."""
+        pose: Pose,
+        robot_name: RobotName | None = None,
+        seed: JointState | None = None,
+        check_collision: bool = True,
+    ) -> IKResult: ...

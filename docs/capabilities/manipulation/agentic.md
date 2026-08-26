@@ -41,61 +41,34 @@ uv run dimos stop
 
 Use `dimos log -f` to follow the log while the run is active.
 
-## Daily interaction
+## Learned grasp-to-pick pipeline
 
-For normal interactive use, start the human-friendly terminal client:
-
-```bash
-uv run dimos humancli
-```
-
-It connects to the running agent so you can send prompts and read responses in
-one session.
-
-### Try these prompts
-
-Start with a non-motion state check:
-
-```text
-Report the current robot state without moving.
-```
-
-Scan the scene for objects. This moves the arm to its observation pose:
-
-```text
-Scan for objects.
-```
-
-Try basic motion commands:
-
-```text
-Move 10 cm to the left.
-```
-
-```text
-Move 10 cm above the detected object's pose.
-```
-
-## Debugging and testing interfaces
-
-Use `agent-send` for one-shot LCM input when testing or diagnosing the agent:
+The real-hardware `xarm-graspgenx-agent` blueprint adds GraspGenX proposals to
+the xArm perception stack. Install the optional runtime and start it with:
 
 ```bash
-uv run dimos agent-send "Report the current robot state and visible objects; do not move the arm or gripper."
+uv sync --extra graspgenx --extra manipulation --inexact
+uv run dimos run xarm-graspgenx-agent
 ```
 
-The blueprint also includes an MCP server. Use these commands for direct
-server inspection and tool-level testing:
+`PickAndPlaceModule` is robot-independent. It composes object-scene,
+grasp-provider, candidate-filter, and execution Specs; `ManipulationModule`
+provides the planner, motion, and gripper execution capabilities in xArm
+blueprints.
+
+Its canonical workflow is `scan_objects(prompts)`, `get_object(object_id)`,
+`select_grasp(object_id, rank=0)`, `get_grasp_candidates()`,
+`pick_selected(robot_name=None)`, and
+`place_at(x, y, z, robot_name=None)`. Use the stable `Object.object_id`
+returned by a scan to select an exact object. The core workflow does not model
+tables, boxes, or scene obstacles and does not publish visualization state.
+
+## Direct interaction
+
+Use the MCP server to inspect the canonical skills after launching an agent
+blueprint:
 
 ```bash
 uv run dimos mcp status
 uv run dimos mcp list-tools
-```
-
-For example:
-
-```bash
-uv run dimos mcp call get_robot_state
-uv run dimos mcp call look
-uv run dimos mcp call scan_objects
 ```

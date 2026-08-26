@@ -17,12 +17,13 @@ from __future__ import annotations
 from collections.abc import Iterator
 import sys
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 import numpy as np
 import pytest
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 
@@ -75,7 +76,56 @@ def test_temporal_tf_lookup_uses_bounded_image_timestamp(
         _image(12.5),
     )
 
-    assert tf.calls == [(("map", "camera", 12.5, 0.1), {"forward_tolerance": 0.2})]
+    assert tf.calls == [(("map", "camera", 12.5, 3.0), {"forward_tolerance": 0.2})]
+
+
+def test_detector_confidence_is_configurable() -> None:
+    module = ObjectSceneRegistrationModule(detector_confidence=0.4)
+    try:
+        assert module._detector_confidence == 0.4
+    finally:
+        module.stop()
+
+
+def test_segmentation_backend_defaults_to_yolo() -> None:
+    module = ObjectSceneRegistrationModule()
+    try:
+        assert module._segmentation_backend == "yolo"
+    finally:
+        module.stop()
+
+    with pytest.raises(ValueError, match="seg"):
+        ObjectSceneRegistrationModule(segmentation_backend="invalid")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="det"):
+        ObjectSceneRegistrationModule(detector_backend="invalid")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="requires"):
+        ObjectSceneRegistrationModule(det="moondream", seg="yolo")
+
+
+def test_edgetam_backend_refines_yolo_detections(
+    monkeypatch: Any, module: ObjectSceneRegistrationModule
+) -> None:
+    color = Image(
+        data=np.zeros((2, 2, 3), dtype=np.uint8),
+        format=ImageFormat.BGR,
+        frame_id="camera",
+        ts=4.0,
+    )
+    raw_detections = ImageDetections2D(color, [])
+    segmented_detections = ImageDetections2D(color, [])
+    module._detector = MagicMock()
+    module._detector.process_image.return_value = raw_detections
+    module._segmenter = MagicMock()
+    module._segmenter.segment.return_value = segmented_detections
+    module.detections_2d = MagicMock()
+    module.annotated_image = MagicMock()
+    process_3d = MagicMock()
+    monkeypatch.setattr(module, "_process_3d_detections", process_3d)
+
+    module._process_images(color, _image(4.0))
+
+    module._segmenter.segment.assert_called_once_with(raw_detections)
+    process_3d.assert_called_once_with(segmented_detections, color, ANY)
 
 
 def test_failed_lookup_does_not_retry_without_time_or_replace_coherent_cache(
@@ -106,7 +156,7 @@ def test_failed_lookup_does_not_retry_without_time_or_replace_coherent_cache(
     )
 
     assert len(tf.calls) == 2
-    assert tf.calls[1] == (("map", "camera", 2.0, 0.1), {"forward_tolerance": 0.2})
+    assert tf.calls[1] == (("map", "camera", 2.0, 3.0), {"forward_tolerance": 0.2})
     assert module._latest_scene_snapshot == (old_depth, old_transform)
 
 
@@ -143,3 +193,97 @@ def test_full_scene_pointcloud_uses_one_coherent_scene_snapshot(
 
     module.get_full_scene_pointcloud()
     result.transform.assert_called_once_with(transform)
+
+
+def test_process_images_publishes_annotated_detection_image(
+    monkeypatch: Any, module: ObjectSceneRegistrationModule
+) -> None:
+    annotated = MagicMock(spec=Image)
+    detections = MagicMock(spec=ImageDetections2D)
+    detections.detections = []
+    detections.annotated_image.return_value = annotated
+    module._detector = MagicMock()
+    module._detector.process_image.return_value = detections
+    module.detections_2d = MagicMock()
+    module.annotated_image = MagicMock()
+    process_3d = MagicMock()
+    monkeypatch.setattr(module, "_process_3d_detections", process_3d)
+
+    color = Image(
+        data=np.zeros((2, 2, 3), dtype=np.uint8),
+        format=ImageFormat.BGR,
+        frame_id="camera",
+        ts=4.0,
+    )
+    module._process_images(color, _image(4.0))
+
+    module.annotated_image.publish.assert_called_once_with(annotated)
+    process_3d.assert_called_once()
+
+
+def test_live_mode_publishes_current_objects_without_registration(
+    monkeypatch: Any,
+) -> None:
+    module = ObjectSceneRegistrationModule(target_frame="camera", register_objects=False)
+    module._camera_info = MagicMock()
+    module._object_db.add_objects = MagicMock()
+    module.detections_3d = MagicMock()
+    module.objects = MagicMock()
+    module.pointcloud = MagicMock()
+    detected_object = MagicMock()
+    pointcloud = MagicMock()
+    monkeypatch.setattr(
+        "dimos.perception.experimental.object_scene_registration.Object.from_2d_to_list",
+        lambda **_: [detected_object],
+    )
+    monkeypatch.setattr(
+        "dimos.perception.experimental.object_scene_registration.to_detection3d_array",
+        lambda *_args, **_kwargs: MagicMock(),
+    )
+    monkeypatch.setattr(
+        "dimos.perception.experimental.object_scene_registration.aggregate_pointclouds",
+        lambda _objects: pointcloud,
+    )
+
+    ObjectSceneRegistrationModule._process_3d_detections(
+        module,
+        MagicMock(spec=ImageDetections2D),
+        _image(4.0),
+        _image(4.0),
+    )
+
+    module._object_db.add_objects.assert_not_called()
+    module.objects.publish.assert_called_once_with([detected_object])
+    module.pointcloud.publish.assert_called_once_with(pointcloud)
+    assert module._latest_objects == [detected_object]
+    module.stop()
+
+
+def test_request_driven_scan_processes_latest_cached_frame(monkeypatch: Any) -> None:
+    module = ObjectSceneRegistrationModule(target_frame="camera", detect_on_request=True)
+    color = Image(
+        data=np.zeros((2, 2, 3), dtype=np.uint8),
+        format=ImageFormat.BGR,
+        frame_id="camera",
+        ts=4.0,
+    )
+    depth = _image(4.0)
+    module._latest_aligned_frames = (color, depth)
+    output = MagicMock(frame_id="camera", ts=4.0)
+
+    def process_images(got_color: Image, got_depth: Image) -> None:
+        assert (got_color, got_depth) == (color, depth)
+        module._latest_output_objects = (output,)
+
+    detections = MagicMock(spec=Detection3DArray)
+    monkeypatch.setattr(module, "_process_images", process_images)
+    monkeypatch.setattr(
+        "dimos.perception.experimental.object_scene_registration.to_detection3d_array",
+        lambda *_args, **_kwargs: detections,
+    )
+
+    result = module.scan_scene()
+
+    assert result is detections
+    assert module._latest_output_objects == (output,)
+    module.stop()

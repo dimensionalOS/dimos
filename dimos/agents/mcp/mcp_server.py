@@ -33,7 +33,7 @@ from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CapabilityRegistry
 from dimos.agents.mcp import tool_stream
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RpcCall, RPCClient
 from dimos.core.transport_factory import make_transport
 from dimos.utils.logging_config import setup_logger
@@ -51,6 +51,14 @@ _SSE_KEEPALIVE_INTERVAL = 20.0  # seconds
 # Background holders run until stopped, so they are never waited on (see
 # `_can_wait` in `_handle_tools_call`).
 DEFAULT_CAP_ACQUIRE_TIMEOUT = 30.0  # seconds
+
+
+class McpServerConfig(ModuleConfig):
+    """Configuration for the MCP HTTP server."""
+
+    allowed_skills: list[str] | None = None
+    """Optional names of skills exposed through MCP; None exposes every deployed skill."""
+
 
 app = FastAPI()
 app.add_middleware(
@@ -78,6 +86,27 @@ def _jsonrpc_result_text(req_id: Any, text: str) -> dict[str, Any]:
 
 def _jsonrpc_error(req_id: Any, code: int, message: str) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}}
+
+
+def _filter_skills(skills: list[SkillInfo], allowed_skills: list[str] | None) -> list[SkillInfo]:
+    """Keep only explicitly exposed skills when an MCP allowlist is configured."""
+    if allowed_skills is None:
+        return skills
+    allowed = set(allowed_skills)
+    return [skill_info for skill_info in skills if skill_info.func_name in allowed]
+
+
+def _select_module_skills(
+    modules: list[RPCClient], allowed_skills: list[str] | None
+) -> list[tuple[RPCClient, SkillInfo]]:
+    """Return exposed skills together with their deployed module RPC address."""
+    allowed = set(allowed_skills) if allowed_skills is not None else None
+    return [
+        (module, skill_info)
+        for module in modules
+        for skill_info in (module.get_skills() or [])
+        if allowed is None or skill_info.func_name in allowed
+    ]
 
 
 def _handle_initialize(req_id: Any) -> dict[str, Any]:
@@ -345,6 +374,7 @@ async def mcp_sse_endpoint() -> StreamingResponse:
 
 
 class McpServer(Module):
+    config: McpServerConfig
     _uvicorn_server: uvicorn.Server | None = None
     _serve_future: concurrent.futures.Future[None] | None = None
     _tool_stream_cleanup: Callable[[], None] | None = None
@@ -381,15 +411,14 @@ class McpServer(Module):
     def on_system_modules(self, modules: list[RPCClient]) -> None:
         # TODO: this is a bit hacky, also not thread-safe
         assert self.rpc is not None
-        app.state.skills = [
-            skill_info for module in modules for skill_info in (module.get_skills() or [])
-        ]
+        module_skills = _select_module_skills(modules, self.config.allowed_skills)
+        app.state.skills = [skill_info for _, skill_info in module_skills]
         app.state.skills_by_name = {s.func_name: s for s in app.state.skills}
         app.state.rpc_calls = {
             skill_info.func_name: RpcCall(
-                None, self.rpc, skill_info.func_name, skill_info.class_name, []
+                None, self.rpc, skill_info.func_name, module.remote_name, []
             )
-            for skill_info in app.state.skills
+            for module, skill_info in module_skills
         }
 
     @skill

@@ -141,7 +141,6 @@ class XArmAdapter(ManipulatorAdapter):
         """
         if not self._arm:
             return False
-
         mode_map = {
             ControlMode.POSITION: _XARM_MODE_POSITION,
             ControlMode.SERVO_POSITION: _XARM_MODE_SERVO_CARTESIAN,  # Mode 1 for high-freq
@@ -257,7 +256,6 @@ class XArmAdapter(ManipulatorAdapter):
         """Enable motion and move the arm to its initial joint pose."""
         if not self._arm:
             return False
-
         self._prepare_for_position_motion()
         if not self._move_to_initial_pose():
             return False
@@ -267,12 +265,14 @@ class XArmAdapter(ManipulatorAdapter):
         """Move the arm to its initial joint pose and enter stopped state."""
         if not self._arm:
             return False
-
         self._prepare_for_position_motion()
         homed = self._move_to_initial_pose()
+        gripper_opened = True
+        if self._gripper_enabled:
+            gripper_opened = self._arm.set_gripper_position(0.85 * M_TO_MM, wait=True) == 0
         self._arm.motion_enable(enable=False)
         code: int = self._arm.set_state(4)
-        return homed and code == 0
+        return homed and gripper_opened and code == 0
 
     def _move_to_initial_pose(self) -> bool:
         if not self._arm:

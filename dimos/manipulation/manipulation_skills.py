@@ -246,6 +246,13 @@ class ManipulationSkills(Module):
 
         return self._command_result(self.manipulation.set_gripper_position(1.0, planning_group))
 
+    def get_gripper(self, planning_group: PlanningGroupID | None = None) -> float | None:
+        """Return the normalized opening of one gripper, if feedback is available."""
+        group_id = self._select_group(planning_group)
+        if group_id is None:
+            return None
+        return self.manipulation.get_state().groups[group_id].gripper_position
+
     @skill
     def close_gripper(
         self, planning_group: PlanningGroupID | None = None

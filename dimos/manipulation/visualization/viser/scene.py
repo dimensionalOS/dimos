@@ -26,6 +26,7 @@ from typing import Any, Protocol, TypeAlias, cast
 import xml.etree.ElementTree as ET
 
 import numpy as np
+from numpy.typing import NDArray
 import trimesh
 from yourdfpy import URDF  # type: ignore[import-untyped]
 
@@ -33,6 +34,12 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import DEFAULT_OBSTACLE_RGBA, Obstacle
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
+from dimos.manipulation.visualization.layers import (
+    LineSetElement,
+    MeshElement,
+    PointCloudElement,
+    VisualizationLayer,
+)
 from dimos.manipulation.visualization.viser.animation import (
     GroupPreviewAnimation,
     PreviewFrame,
@@ -96,6 +103,12 @@ OBSTACLE_DEFAULT_RGBA = DEFAULT_OBSTACLE_RGBA
 OBSTACLE_FALLBACK_COLOR = (55, 190, 210)
 OBSTACLE_FALLBACK_OPACITY = 0.55
 OBSTACLE_PROXY_COLOR = (255, 45, 25)
+VISUALIZATION_LAYER_NAMESPACE = "/manipulation/layers"
+VISUALIZATION_POINT_CAP = 20_000
+VISUALIZATION_DEFAULT_POINT_SIZE = 0.005
+VISUALIZATION_DEFAULT_POINT_COLOR = (0, 204, 204)
+VISUALIZATION_DEFAULT_LINE_COLOR = (255, 255, 255)
+VISUALIZATION_DEFAULT_LINE_WIDTH = 1.0
 
 
 class RobotDisplayMode(StrEnum):
@@ -141,6 +154,8 @@ class ViserManipulationScene:
         self._obstacles_visible = True
         self._obstacle_gui_handles: list[object] = []
         self._obstacle_warning_handle: Any | None = None
+        self._visualization_layer_handles: dict[str, list[Any]] = {}
+        self._visualization_layer_visibility: dict[str, bool] = {}
         self._closed = False
         self._ensure_obstacle_control()
         self._ensure_reference_grid()
@@ -154,6 +169,130 @@ class ViserManipulationScene:
             for handles in self._obstacle_handles.values():
                 for handle in handles:
                     self._set_handle_visibility(handle, self._obstacles_visible)
+
+    @staticmethod
+    def _visualization_path_segment(value: str) -> str:
+        return f"id-{value.encode('utf-8').hex()}"
+
+    def replace_visualization_layer(
+        self,
+        layer: VisualizationLayer,
+        *,
+        generation: int,
+        visible: bool,
+    ) -> None:
+        """Atomically replace a display-only layer with one complete generation."""
+        if layer.frame_id != "world":
+            raise ValueError(
+                f"Viser visualization layer '{layer.id}' requires frame 'world', "
+                f"got '{layer.frame_id}'"
+            )
+        base_path = (
+            f"{VISUALIZATION_LAYER_NAMESPACE}/"
+            f"{self._visualization_path_segment(layer.id)}/generation-{generation}"
+        )
+        pending: list[Any] = []
+        with self._scene_lock:
+            if self._closed:
+                raise RuntimeError("Viser scene is closed")
+            try:
+                for element in layer.elements:
+                    path = f"{base_path}/{self._visualization_path_segment(element.id)}"
+                    if isinstance(element, PointCloudElement):
+                        handle = self._render_point_cloud_element(path, element)
+                    elif isinstance(element, LineSetElement):
+                        handle = self._render_line_set_element(path, element)
+                    elif isinstance(element, MeshElement):
+                        handle = self._render_mesh_element(path, element)
+                    else:
+                        raise TypeError(f"unsupported visualization element: {type(element)!r}")
+                    if handle is not None:
+                        self._set_handle_visibility(handle, False)
+                        pending.append(handle)
+            except Exception:
+                for handle in pending:
+                    self._remove_scene_handle(handle)
+                raise
+
+            previous = self._visualization_layer_handles.get(layer.id, [])
+            for handle in pending:
+                self._set_handle_visibility(handle, visible)
+            self._visualization_layer_handles[layer.id] = pending
+            self._visualization_layer_visibility[layer.id] = visible
+            for handle in previous:
+                self._remove_scene_handle(handle)
+
+    def clear_visualization_layer(self, layer_id: str) -> None:
+        """Remove one layer's handles while retaining its visibility."""
+        with self._scene_lock:
+            for handle in self._visualization_layer_handles.pop(layer_id, []):
+                self._remove_scene_handle(handle)
+
+    def clear_visualization_layers(self) -> None:
+        """Remove every generic layer handle."""
+        with self._scene_lock:
+            for layer_id in list(self._visualization_layer_handles):
+                self.clear_visualization_layer(layer_id)
+
+    def set_visualization_layer_visible(self, layer_id: str, visible: bool) -> None:
+        """Apply viewer-owned visibility to a layer's current generation."""
+        with self._scene_lock:
+            self._visualization_layer_visibility[layer_id] = bool(visible)
+            for handle in self._visualization_layer_handles.get(layer_id, []):
+                self._set_handle_visibility(handle, bool(visible))
+
+    def _render_point_cloud_element(self, path: str, element: PointCloudElement) -> Any | None:
+        if len(element.points) == 0:
+            return None
+        stride = max(1, math.ceil(len(element.points) / VISUALIZATION_POINT_CAP))
+        points = element.points[::stride]
+        colors: NDArray[np.uint8] | tuple[int, int, int]
+        if element.colors is None:
+            colors = VISUALIZATION_DEFAULT_POINT_COLOR
+        else:
+            colors = np.asarray(element.colors[::stride], dtype=np.uint8)
+        return self.server.scene.add_point_cloud(
+            path,
+            points=points,
+            colors=colors,
+            point_size=element.point_size or VISUALIZATION_DEFAULT_POINT_SIZE,
+            point_shape="circle",
+            visible=False,
+        )
+
+    def _render_line_set_element(self, path: str, element: LineSetElement) -> Any | None:
+        if len(element.edges) == 0:
+            return None
+        points = element.vertices[element.edges]
+        colors: NDArray[np.uint8] | tuple[int, int, int]
+        if element.colors is None:
+            colors = VISUALIZATION_DEFAULT_LINE_COLOR
+        elif element.colors.ndim == 1:
+            colors = np.asarray(element.colors, dtype=np.uint8)
+        else:
+            colors = np.asarray(
+                np.repeat(element.colors[:, np.newaxis, :], 2, axis=1),
+                dtype=np.uint8,
+            )
+        return self.server.scene.add_line_segments(
+            path,
+            points=points,
+            colors=colors,
+            line_width=element.line_width or VISUALIZATION_DEFAULT_LINE_WIDTH,
+            visible=False,
+        )
+
+    def _render_mesh_element(self, path: str, element: MeshElement) -> Any | None:
+        if len(element.triangles) == 0:
+            return None
+        return self.server.scene.add_mesh_simple(
+            path,
+            vertices=element.vertices,
+            faces=element.triangles,
+            color=tuple(int(value) for value in element.color),
+            opacity=element.opacity,
+            visible=False,
+        )
 
     def add_vis_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
         """Render one accepted planner obstacle under the local obstacle namespace."""
@@ -661,6 +800,8 @@ class ViserManipulationScene:
             self._obstacle_handles.clear()
             self._obstacles.clear()
             self._obstacle_render_failures.clear()
+            self.clear_visualization_layers()
+            self._visualization_layer_visibility.clear()
             for key in list(self._handles):
                 self._remove_handle(key)
             if self._grid_handle is not None:
@@ -672,7 +813,8 @@ class ViserManipulationScene:
                 self._remove_scene_handle(frame)
             for urdf in self._collision_fallback_urdfs.values():
                 self._remove_scene_handle(urdf)
-            for handle in self._obstacle_gui_handles:
+            # Viser folders own their children, so remove children before folders.
+            for handle in reversed(self._obstacle_gui_handles):
                 self._remove_scene_handle(handle)
             self._obstacle_gui_handles.clear()
             self._urdfs.clear()
