@@ -809,7 +809,7 @@ mod tests {
     fn a_reset_law_answers_like_a_fresh_one() {
         // the contract `laws/hinted.rs` states, and what makes the
         // stop_movement reset a real reset rather than a hope
-        let cfg = emb::hinted_params(&go2());
+        let cfg = emb::hinted_params(&fixture());
         let states: Vec<State> = (0..20).map(|k| [k as f64 * 0.1, 0.0, 0.0]).collect();
         let mut fresh = HintedLaw::new();
         let mut used = HintedLaw::new();
@@ -825,24 +825,27 @@ mod tests {
 
     // the no-cloud clearance fallback
 
-    fn go2() -> Emb {
-        Emb::go2()
+    fn fixture() -> Emb {
+        Emb::fixture()
     }
 
     #[test]
     fn the_params_split_lands_every_field_in_the_right_law() {
-        assert_eq!(emb::hinted_params(&go2()).base.lookahead, 0.35);
+        assert_eq!(emb::hinted_params(&fixture()).base.lookahead, 0.35);
         // the hinted law drives inside the gait band, blind inside the governor's
         assert_eq!(
-            emb::hinted_params(&go2()).base.min_speed,
-            go2().gait_band[0]
+            emb::hinted_params(&fixture()).base.min_speed,
+            fixture().gait_band[0]
         );
-        assert_eq!(emb::blind_params(&go2()).base.max_speed, go2().max_speed);
-        assert_eq!(emb::hinted_params(&go2()).brake_margin, 0.15);
-        assert_eq!(emb::hinted_params(&go2()).base.speed_lookahead, 2.0);
+        assert_eq!(
+            emb::blind_params(&fixture()).base.max_speed,
+            fixture().max_speed
+        );
+        assert_eq!(emb::hinted_params(&fixture()).brake_margin, 0.15);
+        assert_eq!(emb::hinted_params(&fixture()).base.speed_lookahead, 2.0);
         // python spells it walk_slip_ramp, the law spells it slip_ramp
-        assert_eq!(emb::blind_params(&go2()).slip_ramp, 0.08);
-        assert_eq!(emb::blind_params(&go2()).walk_gain, 0.964);
+        assert_eq!(emb::blind_params(&fixture()).slip_ramp, 0.08);
+        assert_eq!(emb::blind_params(&fixture()).walk_gain, 0.964);
     }
 
     #[test]
@@ -851,7 +854,7 @@ mod tests {
         // stamps, so a follower with no map of its own has to invert the
         // dialect. A tightly-stamped plan must come out as tight room.
         let states: Vec<State> = (0..12).map(|k| [k as f64 * 0.2, 0.0, 0.0]).collect();
-        let emb = Emb::go2();
+        let emb = Emb::fixture();
         let gov = emb::governor(&emb);
         let tight = stamps::encode_precision(&states, &[gov.floor; 12], 0.0, &gov);
         let roomy = stamps::encode_precision(&states, &[10.0; 12], 0.0, &gov);
@@ -870,7 +873,7 @@ mod tests {
         // and it actually reaches the law: the tight plan is requested slower.
         // The RAW law, not `step` -- a first tick out of a standing start is
         // the rate limiter's answer, not the governor's, on either plan.
-        let cfg = emb::hinted_params(&go2());
+        let cfg = emb::hinted_params(&fixture());
         let slow = dimos_motion2_tc::laws::hinted::update((0.0, 0.0, 0.0), &states, Some(&a), &cfg);
         let fast = dimos_motion2_tc::laws::hinted::update((0.0, 0.0, 0.0), &states, Some(&b), &cfg);
         assert!(
@@ -884,7 +887,9 @@ mod tests {
         // a producer that does not speak the dialect must not be read as a
         // tight corridor; None is the honest answer and the law cruises
         let states: Vec<State> = (0..5).map(|k| [k as f64 * 0.2, 0.0, 0.0]).collect();
-        assert!(stamps::decode_ceilings(&[0.0; 5], &states, &dialect_band(&Emb::go2())).is_none());
+        assert!(
+            stamps::decode_ceilings(&[0.0; 5], &states, &dialect_band(&Emb::fixture())).is_none()
+        );
     }
 
     // the room hint's band -- the cases in adapter/test_follower.py
@@ -894,7 +899,7 @@ mod tests {
             track: "hinted".to_string(),
             control_frequency: 10.0,
             goal_tolerance: 0.2,
-            embodiment: Emb::go2(),
+            embodiment: Emb::fixture(),
             body_dilate_m: 0.0,
             base_frame: "base_link".to_string(),
             obstacle_model: "body_band".into(),
@@ -904,7 +909,7 @@ mod tests {
     }
 
     fn half_width() -> f64 {
-        emb::half_width(&Emb::go2())
+        emb::half_width(&Emb::fixture())
     }
 
     /// A ground slab at `ground_z` with a post 0.20..0.30 m above it, at x=1.
@@ -983,7 +988,7 @@ mod tests {
                 (1.0, 2.0, 0.5),
                 &states,
                 None,
-                &emb::hinted_params(&go2()),
+                &emb::hinted_params(&fixture()),
                 0.02
             ),
             (0.0, 0.0, 0.0)
@@ -994,7 +999,7 @@ mod tests {
                 &states,
                 None,
                 Some(&ts),
-                &emb::blind_params(&go2())
+                &emb::blind_params(&fixture())
             ),
             (0.0, 0.0, 0.0)
         );

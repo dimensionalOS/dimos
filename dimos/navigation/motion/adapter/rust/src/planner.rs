@@ -713,7 +713,7 @@ mod tests {
         // contract the refusal shape rests on
         let held = hold_stub((1.5, -2.0, 0.0), "odom", 0.0, 0.0);
         let states = msg::path_states(&held);
-        let cfg = emb::hinted_params(&Emb::go2());
+        let cfg = emb::hinted_params(&Emb::fixture());
         assert_eq!(
             dimos_motion2_tc::laws::hinted::update((1.5, -2.0, 0.0), &states, None, &cfg),
             (0.0, 0.0, 0.0)
@@ -754,7 +754,7 @@ mod tests {
 
     fn config() -> Config {
         Config {
-            embodiment: Emb::go2(),
+            embodiment: Emb::fixture(),
             body_dilate_m: 0.0,
             resolution: 0.1,
             replan_hz: 5.0,
@@ -770,8 +770,8 @@ mod tests {
         }
     }
 
-    fn go2() -> Emb {
-        Emb::go2()
+    fn fixture() -> Emb {
+        Emb::fixture()
     }
 
     /// The model a config names, for the plan_once calls below.
@@ -785,7 +785,7 @@ mod tests {
         let cfg = config();
         let produced = plan_once(
             &cfg,
-            &go2(),
+            &fixture(),
             model(&cfg).as_ref(),
             &[],
             (0.0, 0.0, 0.0),
@@ -805,7 +805,7 @@ mod tests {
         );
         // and the profile reads back out, which is what the follower does
         let states = msg::path_states(&produced);
-        let params = emb::blind_params(&Emb::go2()).base;
+        let params = emb::blind_params(&Emb::fixture()).base;
         assert!(stamps::decode_ceilings(&ts, &states, &params).is_some());
     }
 
@@ -832,7 +832,7 @@ mod tests {
         let m = model(&cfg);
         let roomy = plan_once(
             &cfg,
-            &go2(),
+            &fixture(),
             m.as_ref(),
             &gap(1.4),
             (0.0, 0.0, 0.0),
@@ -842,7 +842,7 @@ mod tests {
         );
         let tight = plan_once(
             &cfg,
-            &go2(),
+            &fixture(),
             m.as_ref(),
             &gap(0.45),
             (0.0, 0.0, 0.0),
@@ -874,7 +874,7 @@ mod tests {
         let cfg = config();
         let produced = plan_once(
             &cfg,
-            &go2(),
+            &fixture(),
             model(&cfg).as_ref(),
             &walls,
             (0.0, 0.0, 0.0),
@@ -904,7 +904,7 @@ mod tests {
         let cfg = config();
         let produced = plan_once(
             &cfg,
-            &go2(),
+            &fixture(),
             model(&cfg).as_ref(),
             &lifted,
             (0.0, 0.0, 0.0),
@@ -954,7 +954,7 @@ mod tests {
         };
         let seen = plan_once(
             &cfg,
-            &go2(),
+            &fixture(),
             model(&cfg).as_ref(),
             &room,
             (0.0, 0.0, 0.0),
@@ -983,7 +983,7 @@ mod tests {
         let detour = |m: &dyn ObstacleModel| -> f64 {
             let out = plan_once(
                 &config(),
-                &go2(),
+                &fixture(),
                 m,
                 &wall,
                 (0.0, 0.0, 0.0),
@@ -1001,7 +1001,7 @@ mod tests {
         };
         let tall = Emb {
             height: 0.60,
-            ..Emb::go2()
+            ..Emb::fixture()
         };
         let tall_model = obstacles::load("body_band", &tall).expect("known model");
         assert!(
@@ -1010,9 +1010,9 @@ mod tests {
         );
         // and the control: the same wall IS over a go2's belly, so it is not a wall
         let cfg = config();
-        let go2_model = model(&cfg);
-        assert!(obstacles::hard_points(go2_model.as_ref(), &wall, 0.0).is_empty());
-        assert!(detour(go2_model.as_ref()) < 0.2);
+        let fixture_model = model(&cfg);
+        assert!(obstacles::hard_points(fixture_model.as_ref(), &wall, 0.0).is_empty());
+        assert!(detour(fixture_model.as_ref()) < 0.2);
     }
 
     #[test]
@@ -1037,7 +1037,7 @@ mod tests {
         }
         let produced = plan_once(
             &cfg,
-            &go2(),
+            &fixture(),
             model(&cfg).as_ref(),
             &slab,
             (0.0, 0.0, 0.0),

@@ -13,16 +13,11 @@
 # limitations under the License.
 
 
-"""The Unitree Go2, as measured: the one place its numbers live.
-
-`go2.json` beside this file is the same record for the rust crates; `test_embodiment.py`
-pins the two together.
-"""
+"""The Unitree Go2, as measured: the one place its numbers live."""
 
 from __future__ import annotations
 
 from dataclasses import replace
-from pathlib import Path
 
 from dimos.navigation.motion.control.controller import ControllerConfig
 
@@ -95,7 +90,3 @@ GO2_PAYLOAD = replace(
     envelope=(),
     arc_inflate=0.0,
 )
-
-
-if __name__ == "__main__":  # regenerate go2.json, the rust crates' copy of GO2
-    Path(__file__).with_name("go2.json").write_bytes((GO2.to_json(indent=2) + "\n").encode())

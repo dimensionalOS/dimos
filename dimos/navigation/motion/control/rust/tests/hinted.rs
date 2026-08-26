@@ -19,15 +19,15 @@ use dimos_motion2_tc::emb::{base_params, hinted_params};
 use dimos_motion2_tc::geom::{ieee_remainder, TAU};
 use dimos_motion2_tc::laws::hinted::{update, HintedParams, Law};
 
-/// The go2's hinted tuning, driving inside its gait band -- what deploys.
+/// The fixture's hinted tuning, driving inside its gait band.
 fn gait() -> HintedParams {
-    hinted_params(&Emb::go2())
+    hinted_params(&Emb::fixture())
 }
 
 /// The same tuning inside the governor's band, which the cases below were
 /// written against: they exercise the pursuit, not the stall band.
 fn cfg() -> HintedParams {
-    let e = Emb::go2();
+    let e = Emb::fixture();
     HintedParams {
         base: base_params(&e, [e.min_speed, e.max_speed]),
         ..gait()

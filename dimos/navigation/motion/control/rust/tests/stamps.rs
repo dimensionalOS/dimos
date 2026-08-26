@@ -33,7 +33,7 @@ fn straight(n: usize, step: f64) -> Vec<[f64; 3]> {
     (0..n).map(|k| [k as f64 * step, 0.0, 0.0]).collect()
 }
 
-/// `embodiment/go2.py::GO2`'s governor, the curve every number below was written against.
+/// `Emb::fixture()`'s governor, the curve every number below was written against.
 const GOV: Governor = Governor {
     max_speed: 0.5,
     min_speed: 0.2,
@@ -67,8 +67,8 @@ fn a_stamped_segment_reads_back_as_the_speed_it_was_priced_at() {
     let path = straight(5, 0.4);
     let clearance = vec![f64::INFINITY, 0.3, 0.1, FLOOR_CLEARANCE, 1.0];
     let ts = encode_precision(&path, &clearance, 0.0, &GOV);
-    let got =
-        decode_ceilings(&ts, &path, &blind_params(&Emb::go2()).base).expect("stamped path decodes");
+    let got = decode_ceilings(&ts, &path, &blind_params(&Emb::fixture()).base)
+        .expect("stamped path decodes");
 
     // a ceiling is a property of the segment ENDING at its waypoint, so
     // ceilings[k] carries the tighter of clearance[k-1], clearance[k]

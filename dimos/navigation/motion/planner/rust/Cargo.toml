@@ -22,7 +22,7 @@ numpy = { version = "0.25", optional = true }
 # Python; maturin builds with defaults and gets the extension module.
 default = ["python"]
 python = ["dep:pyo3", "dep:numpy"]
-# `Emb::go2()` from `embodiment/go2.json`, for tests in this crate and its dependants.
+# `Emb::fixture()`, a test body for this crate and its dependants.
 test-bodies = []
 
 [dev-dependencies]

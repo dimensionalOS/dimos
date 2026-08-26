@@ -48,7 +48,7 @@ mod tests {
 
     #[test]
     fn dilation_grows_every_box_per_side_and_nothing_else() {
-        let e = Emb::go2();
+        let e = Emb::fixture();
         let d = dilated(e.clone(), 0.05);
         assert!((d.length - e.length - 0.10).abs() < 1e-12);
         assert!((d.width - e.width - 0.10).abs() < 1e-12);
@@ -63,8 +63,8 @@ mod tests {
 
     #[test]
     fn the_body_round_trips_through_its_config_json() {
-        // the python module sends `Embodiment` as a dict; `go2.json` is that dict
-        let e = Emb::go2();
+        // the python module sends `Embodiment` as a dict
+        let e = Emb::fixture();
         let back: Emb = serde_json::from_str(&serde_json::to_string(&e).unwrap()).unwrap();
         assert_eq!(back.envelope, e.envelope);
         assert_eq!(governor(&back), governor(&e));

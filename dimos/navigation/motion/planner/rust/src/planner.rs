@@ -182,11 +182,57 @@ pub struct Emb {
 }
 
 impl Emb {
-    /// `embodiment/go2.py::GO2`, read from the `go2.json` its python test pins
-    /// to it. Test bodies only: a deployed module is configured with its own.
+    /// A test body; not any robot. A deployed module is configured with its own.
     #[cfg(any(test, feature = "test-bodies"))]
-    pub fn go2() -> Self {
-        serde_json::from_str(include_str!("../../../embodiment/go2.json")).expect("go2.json parses")
+    pub fn fixture() -> Self {
+        Emb {
+            length: 0.883,
+            width: 0.593,
+            center_off: 0.002,
+            comfort: 0.4,
+            precision: 0.05,
+            max_speed: 0.5,
+            min_speed: 0.2,
+            speed_clearance: 0.35,
+            max_yaw_rate: 1.4,
+            command_slew: [2.5, 2.0, 5.0],
+            gait_band: [0.45, 0.95],
+            walk_gain: 0.964,
+            walk_slip: 0.132,
+            walk_slip_ramp: 0.08,
+            steppable: 0.2,
+            height: 0.45,
+            base_height: 0.29,
+            control: Tuning {
+                lookahead: 0.35,
+                k_pos: 2.0,
+                k_yaw: 2.0,
+                fan_yaw_per_m: 3.0,
+                fan_yaw_done: 0.25,
+                speed_lookahead: 2.0,
+                tangent_preview: 0.15,
+                escape_clearance: 0.1,
+                escape_preview: 1.0,
+                escape_speed: 0.75,
+                brake_accel: 0.8,
+                brake_margin: 0.15,
+            },
+            strafe: 1.8,
+            reverse: 1.5,
+            yaw_w: 0.25,
+            envelope: vec![
+                [0.0, 0.819, 0.416, -0.023, 0.0],
+                [26.6, 0.802, 0.436, -0.032, -0.008],
+                [45.0, 0.788, 0.472, -0.035, -0.018],
+                [63.4, 0.781, 0.5, -0.039, -0.016],
+                [90.0, 0.781, 0.507, -0.039, -0.009],
+                [116.6, 0.781, 0.497, -0.039, 0.0],
+                [135.0, 0.781, 0.463, -0.039, -0.001],
+                [153.4, 0.781, 0.422, -0.039, -0.003],
+                [180.0, 0.781, 0.416, -0.039, 0.0],
+            ],
+            arc_inflate: 0.0334,
+        }
     }
 
     /// The pricing curve, read off the body.
@@ -2434,7 +2480,7 @@ mod tests {
     /// asserts that BOTH appear, so it cannot pass by never taking a branch.
     #[test]
     fn published_yaw_never_reaches_the_cylinder_threshold() {
-        let emb = Emb::go2();
+        let emb = Emb::fixture();
         // A slot barely wider than the body, so the turn into it has no room
         // for a swept station and the fine tier must win.
         let mut tight = ring(2.6, 0.0, 1.2, 0.05);
@@ -2493,7 +2539,7 @@ mod tests {
             MAX_STATION_YAW < 0.5,
             "station window reaches the cylinder threshold"
         );
-        for reach in [0.1f64, reach_of(Fps::new(&Emb::go2()).union()), 0.9] {
+        for reach in [0.1f64, reach_of(Fps::new(&Emb::fixture()).union()), 0.9] {
             let excursion = 2.0 * reach * (0.5 * MAX_STATION_YAW).sin();
             assert!(
                 sweep_slack(reach) - excursion >= SNAP + 0.05 - 1e-12,
@@ -2516,7 +2562,7 @@ mod tests {
     #[test]
     fn determinism() {
         let pts = ring(2.0, 0.0, 0.25, 0.05);
-        let emb = Emb::go2();
+        let emb = Emb::fixture();
         let a = plan(
             &pts,
             (0.0, 0.0, 0.0),
@@ -2560,7 +2606,7 @@ mod tests {
             yaw_w: 0.25,
             envelope: Vec::new(),
             arc_inflate: 0.0,
-            ..Emb::go2()
+            ..Emb::fixture()
         };
         let mut pts = Vec::new();
         let mut y = -4.0;
@@ -2595,7 +2641,7 @@ mod tests {
             &pts,
             (0.0, 0.0, 0.0),
             (4.0, 0.0),
-            &Emb::go2(),
+            &Emb::fixture(),
             0.1,
             None,
             COMMIT_MARGIN
@@ -2611,7 +2657,7 @@ mod tests {
     /// floors -- no hand-set ceiling anywhere.
     #[test]
     fn governor_price_is_never_below_one() {
-        let emb = Emb::go2();
+        let emb = Emb::fixture();
         let fps = Fps::new(&emb);
         let pts = ring(2.0, 0.0, 0.6, 0.03);
         let cap = emb.comfort.max(emb.speed_clearance) + reach_of(fps.union()) + SNAP;
@@ -2650,7 +2696,7 @@ mod tests {
     /// only a cell the union REJECTS ever pays for a row scan.
     #[test]
     fn every_row_is_nested_inside_the_union() {
-        let emb = Emb::go2();
+        let emb = Emb::fixture();
         let u = emb.union_box();
         let (ux0, ux1) = (u[2] - u[0] / 2.0, u[2] + u[0] / 2.0);
         let (uy0, uy1) = (u[3] - u[1] / 2.0, u[3] + u[1] / 2.0);
@@ -2671,10 +2717,10 @@ mod tests {
     /// And the standing box is nested inside every ROW, in both drift signs --
     /// which is what makes the seed witness unable to refuse a pose the search
     /// itself routed through. `embodiment/base.py::stand_box` must agree number for
-    /// number, so the measured go2 answer is spelled out here as well.
+    /// number, so the fixture's answer is spelled out here as well.
     #[test]
     fn the_standing_box_is_nested_inside_every_row() {
-        let emb = Emb::go2();
+        let emb = Emb::fixture();
         let b = emb.stand_box();
         let (bx0, bx1) = (b[2] - b[0] / 2.0, b[2] + b[0] / 2.0);
         let (by0, by1) = (b[3] - b[1] / 2.0, b[3] + b[1] / 2.0);
@@ -2695,14 +2741,14 @@ mod tests {
                 );
             }
         }
-        // 0.781 x 0.416 at -0.039: the go2's 180-degree row.
+        // 0.781 x 0.416 at -0.039: the fixture's 180-degree row.
         assert!((b[0] - 0.781).abs() < 5e-4, "length {}", b[0]);
         assert!((b[1] - 0.416).abs() < 5e-4, "width {}", b[1]);
         assert!((b[2] + 0.039).abs() < 5e-4, "off_x {}", b[2]);
         // Nobody measured the others, so they stand in their union.
         let plain = Emb {
             envelope: Vec::new(),
-            ..Emb::go2()
+            ..Emb::fixture()
         };
         assert_eq!(plain.stand_box(), plain.union_box());
         assert_eq!(Fps::new(&plain).stand, 0);
@@ -2712,7 +2758,7 @@ mod tests {
     /// signs, and `off_y` mirrors with the sign as the schema says it does.
     #[test]
     fn envelope_lookup_is_exact_at_the_lattice_drift_angles() {
-        let emb = Emb::go2();
+        let emb = Emb::fixture();
         for row in &emb.envelope {
             let d = row[0].to_radians();
             for s in [1.0f64, -1.0] {
@@ -2732,7 +2778,7 @@ mod tests {
         // An embodiment with no measured rows reads the union at every heading.
         let plain = Emb {
             envelope: Vec::new(),
-            ..Emb::go2()
+            ..Emb::fixture()
         };
         for deg in [0.0f64, 37.0, 90.0, 180.0, -140.0] {
             assert_eq!(plain.envelope_at(deg.to_radians()), plain.union_box());
@@ -2744,7 +2790,7 @@ mod tests {
     /// can add rows and can never re-phase the field. Bit-exact, not close.
     #[test]
     fn a_far_point_cannot_move_the_answer() {
-        let emb = Emb::go2();
+        let emb = Emb::fixture();
         let pts = ring(2.0, 0.0, 0.45, 0.05);
         let base = plan(
             &pts,
@@ -2800,7 +2846,7 @@ mod tests {
     /// because there the translation is by whole indices and is exact.
     #[test]
     fn a_whole_period_translation_translates_the_answer() {
-        let emb = Emb::go2();
+        let emb = Emb::fixture();
         let pts = ring(2.0, 0.0, 0.45, 0.05);
         let base = plan(
             &pts,
@@ -2854,17 +2900,17 @@ mod tests {
     #[test]
     fn footprint_sample_order_is_a_permutation() {
         for emb in [
-            Emb::go2(),
+            Emb::fixture(),
             Emb {
                 width: 0.45,
                 comfort: 0.5,
-                ..Emb::go2()
+                ..Emb::fixture()
             },
             Emb {
                 length: 2.0,
                 width: 0.24,
                 comfort: 0.3,
-                ..Emb::go2()
+                ..Emb::fixture()
             },
         ] {
             let boxes = std::iter::once(emb.union_box())
@@ -2899,7 +2945,7 @@ mod tests {
     #[test]
     #[allow(clippy::needless_range_loop)] // (b, i, j) index every array in the body
     fn lazy_clearance_matches_full_footprint_scan() {
-        let emb = Emb::go2();
+        let emb = Emb::fixture();
         let fps = Fps::new(&emb);
         let pts = ring(2.0, 0.0, 0.6, 0.03);
         let offs = fps.union().to_vec();

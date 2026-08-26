@@ -4,8 +4,7 @@ Plan a path around obstacles over a 5-10 m horizon, walk it, and prove both
 work. Three packages, one body:
 
 ```
-embodiment/     base.py Embodiment · go2.py the measured Go2 (go2.json is its
-                copy for the rust crates) · synthetic.py test bodies
+embodiment/     base.py Embodiment · go2.py the measured Go2 · synthetic.py test bodies
 obstacles.py    which returns are obstacles: a z-rule the body decides
 loader.py       the one "module:factory" loader
 

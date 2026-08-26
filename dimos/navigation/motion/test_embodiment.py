@@ -12,26 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The Go2's numbers live in `embodiment/go2.py`; everything else is pinned to them.
-
-`go2.json` beside it is what the rust crates test against (`Emb::go2()`), so the
-one test here that reads it is the only thing keeping python and rust the same body.
-"""
-
-from pathlib import Path
+"""The Go2's numbers live in `embodiment/go2.py`; everything else is pinned to them."""
 
 from dimos.navigation.motion.embodiment.go2 import GO2
 from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT
-
-GO2_JSON = Path(__file__).parent / "embodiment" / "go2.json"
-
-
-def test_go2_json_is_the_go2() -> None:
-    want = (GO2.to_json(indent=2) + "\n").encode()
-    assert GO2_JSON.read_bytes() == want, (
-        f"{GO2_JSON} has drifted from embodiment/go2.py::GO2; regenerate it with "
-        "`uv run python -m dimos.navigation.motion.embodiment.go2`"
-    )
 
 
 def test_go2_height_matches_the_robot_constant() -> None:

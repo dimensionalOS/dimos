@@ -30,9 +30,9 @@ use dimos_motion2_tc::emb::base_params;
 use dimos_motion2_tc::geom::{ieee_remainder, Params, TAU};
 use dimos_motion2_tc::laws::seed::update;
 
-/// The go2's tuning inside its governor band.
+/// The fixture's tuning inside its governor band.
 fn cfg() -> Params {
-    let e = Emb::go2();
+    let e = Emb::fixture();
     base_params(&e, [e.min_speed, e.max_speed])
 }
 

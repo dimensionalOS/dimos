@@ -52,7 +52,7 @@ fn slalom() -> Vec<[f64; 2]> {
 #[test]
 fn deterministic_across_calls() {
     let pts = slalom();
-    let emb = Emb::go2();
+    let emb = Emb::fixture();
     let a = plan(
         &pts,
         (0.0, 0.0, 0.0),
@@ -101,7 +101,7 @@ fn deterministic_across_calls() {
 #[test]
 fn no_cross_call_memoization() {
     let pts = slalom();
-    let emb = Emb::go2();
+    let emb = Emb::fixture();
     // The assertion is repeat-A against fresh-B: a query the planner has
     // already answered, versus an equivalent one it has not. That ratio is
     // immune to how fast or busy the machine is, unlike comparing A to its
@@ -158,7 +158,7 @@ fn sealed_box_refuses() {
             &pts,
             (0.0, 0.0, 0.0),
             (4.0, 0.0),
-            &Emb::go2(),
+            &Emb::fixture(),
             0.1,
             None,
             COMMIT_MARGIN
@@ -184,7 +184,7 @@ fn thin_wall_not_hopped() {
         // no measured envelope: the union applies at every heading
         envelope: Vec::new(),
         arc_inflate: 0.0,
-        ..Emb::go2()
+        ..Emb::fixture()
     };
     let mut pts = Vec::new();
     let mut y = -4.0;
@@ -219,7 +219,7 @@ fn open_world_routes() {
         &[],
         (0.0, 0.0, 0.0),
         (4.0, 0.0),
-        &Emb::go2(),
+        &Emb::fixture(),
         0.1,
         None,
         COMMIT_MARGIN,

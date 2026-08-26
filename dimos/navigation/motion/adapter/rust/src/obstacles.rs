@@ -107,8 +107,8 @@ pub fn hard_points(model: &dyn ObstacleModel, points: &[[f32; 3]], ground_z: f64
 mod tests {
     use super::*;
 
-    fn go2() -> Emb {
-        Emb::go2()
+    fn fixture() -> Emb {
+        Emb::fixture()
     }
 
     /// A ground slab 0..0.12 m thick under a 0.30 m obstacle, lifted to `base_z`.
@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn the_body_band_drops_the_ground_slab_and_keeps_the_obstacle() {
         // the phantom regression: a quantised floor must not become a wall
-        let model = load("body_band", &go2()).expect("known model");
+        let model = load("body_band", &fixture()).expect("known model");
         let got = hard_points(model.as_ref(), &room(-0.28), -0.28);
         assert_eq!(got.len(), 3, "{got:?}");
         for (p, want) in got.iter().zip([0.18f32, 0.24, 0.30]) {
@@ -141,7 +141,7 @@ mod tests {
 
     #[test]
     fn the_body_band_looks_under_the_belly_not_over_it() {
-        let model = load("body_band", &go2()).expect("known model");
+        let model = load("body_band", &fixture()).expect("known model");
         let cloud = [[1.0, 0.0, 0.3], [1.0, 0.0, 0.46]];
         let got = hard_points(model.as_ref(), &cloud, 0.0);
         assert_eq!(got, vec![[1.0, 0.0, 0.3]]);
@@ -149,10 +149,10 @@ mod tests {
 
     #[test]
     fn an_unknown_model_is_refused_rather_than_defaulted() {
-        assert!(load("floor_anchor", &go2()).is_none());
+        assert!(load("floor_anchor", &fixture()).is_none());
         for name in MODELS {
             assert!(
-                load(name, &go2()).is_some(),
+                load(name, &fixture()).is_some(),
                 "{name} is advertised but unknown"
             );
         }
@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn the_soft_tier_is_empty_for_now() {
-        let model = load("body_band", &go2()).expect("known model");
+        let model = load("body_band", &fixture()).expect("known model");
         assert!(model.field(&room(0.0)).soft.is_empty());
     }
 }

@@ -37,9 +37,9 @@ use dimos_motion2_tc::geom::{ieee_remainder, TAU};
 use dimos_motion2_tc::laws::blind::{update, walk_command, BlindParams};
 use dimos_motion2_tc::stamps::decode_ceilings;
 
-/// The go2's tuning and gait plant inside its governor band.
+/// The fixture's tuning and gait plant inside its governor band.
 fn cfg() -> BlindParams {
-    blind_params(&Emb::go2())
+    blind_params(&Emb::fixture())
 }
 
 /// The ground speed a command is worth, inverting `walk_command` above the ramp.
