@@ -62,7 +62,7 @@ def test_dilate_moves_every_box_by_the_same_amount_per_side():
         assert abs(row[1] - (was[1] - 0.06)) < 1e-12
         assert abs(row[2] - (was[2] - 0.06)) < 1e-12
         assert row[3:] == was[3:]  # offsets are where the box sits, not its size
-    assert GO2.dilated(by=0.0) is GO2 or GO2.dilated(by=0.0) == GO2
+    assert GO2.dilated(by=0.0) == GO2
 
 
 def test_dilate_leaves_the_clearance_floor_alone():

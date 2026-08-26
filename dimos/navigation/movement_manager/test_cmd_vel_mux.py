@@ -46,19 +46,22 @@ class Captured:
 
 
 @pytest.fixture()
-def mux_and_captured() -> Generator[tuple[CmdVelMux, Captured], None, None]:
+def modules() -> Generator[list, None, None]:
+    """Modules built by a test, stopped after it."""
+    built: list = []
+    yield built
+    for module in built:
+        module.stop()
+
+
+@pytest.fixture()
+def mux_and_captured(modules) -> tuple[CmdVelMux, Captured]:
     module = CmdVelMux(tele_cooldown_sec=COOLDOWN, nav_stale_s=STALE)
+    modules.append(module)
     captured = Captured()
-    unsubs = [
-        module.cmd_vel.subscribe(captured.cmd_vel.append),
-        module.stop_movement.subscribe(captured.stop_movement.append),
-    ]
-    try:
-        yield module, captured
-    finally:
-        for unsub in unsubs:
-            unsub()
-        module._close_module()
+    module.cmd_vel.subscribe(captured.cmd_vel.append)
+    module.stop_movement.subscribe(captured.stop_movement.append)
+    return module, captured
 
 
 def _twist(lx=0.0, az=0.0):
@@ -135,18 +138,15 @@ def test_the_watchdog_is_suppressed_while_teleop_drives(mux_and_captured):
     assert mux._nav_is_stale(101.7)
 
 
-def test_the_two_muxes_are_swappable():
+def test_the_two_muxes_are_swappable(modules):
     """Same ports and same config keys, so a stack swaps one for the other.
 
     The rust is the one that goes on the robot; this pins the python twin to it
     so a blueprint does not have to know which it got.
     """
     py, native = CmdVelMux(), CmdVelMuxNative()
-    try:
-        assert set(py.inputs) == set(native.inputs)
-        assert set(py.outputs) == set(native.outputs)
-        # every key the rust reads is one the python spells the same way
-        assert set(CmdVelMuxConfig.model_fields) >= set(CmdVelMuxNativeConfig().to_config_dict())
-    finally:
-        py._close_module()
-        native._close_module()
+    modules += [py, native]
+    assert set(py.inputs) == set(native.inputs)
+    assert set(py.outputs) == set(native.outputs)
+    # every key the rust reads is one the python spells the same way
+    assert set(CmdVelMuxConfig.model_fields) >= set(CmdVelMuxNativeConfig().to_config_dict())

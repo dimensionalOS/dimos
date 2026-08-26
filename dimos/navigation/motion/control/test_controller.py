@@ -15,6 +15,8 @@
 from dataclasses import replace
 import math
 
+import numpy as np
+from pydantic import ValidationError
 import pytest
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -94,16 +96,14 @@ def test_yaw_rate_clamped() -> None:
 
 
 def test_config_rejects_unknown_fields() -> None:
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         ControllerConfig(nonexistent=1.0)  # extra=forbid
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         # the controller never looked one up; the field claimed it did
         ControllerConfig(frame_id="base_link")
 
 
 def test_governor_creeps_in_tight_room() -> None:
-    import numpy as np
-
     path = _straight_path()
     tight = np.full(len(path), 0.06)  # barely above the precision floor
     tw = PursuitController().update(_pose(0.0, 0.0), path, 0.0, clearance=tight)
@@ -111,8 +111,6 @@ def test_governor_creeps_in_tight_room() -> None:
 
 
 def test_governor_full_speed_in_open_room() -> None:
-    import numpy as np
-
     path = _straight_path()
     wide = np.full(len(path), 1.0)
     tw_open = PursuitController().update(_pose(-1.0, 0.0), path, 0.0, clearance=wide)
@@ -123,8 +121,6 @@ def test_governor_full_speed_in_open_room() -> None:
 
 
 def test_governor_reads_room_ahead_not_behind() -> None:
-    import numpy as np
-
     path = _straight_path()  # 4 m of path
     clear = np.full(len(path), 1.0)
     clear[:5] = 0.06  # tight patch already behind the lookahead window

@@ -145,6 +145,15 @@ def replan_due(
     return seq != cloud_seq or math.dist(was, carrot) > carrot_m
 
 
+def retask_due(
+    planned: tuple[int, tuple[float, float]] | None,
+    carrot: tuple[float, float],
+    reset_m: float = RESET_CARROT_M,
+) -> bool:
+    """Did the carrot jump far enough from the planned one to be a different task?"""
+    return planned is not None and math.dist(planned[1], carrot) > reset_m
+
+
 class MotionPlannerConfig(ModuleConfig):
     planner: str = "dimos.navigation.motion.planner.planners.target:make"
     embodiment: Embodiment = GO2
@@ -307,7 +316,7 @@ class MotionPlanner(Module):
                 # nothing has re-validated.
                 self._planned = None
                 self._incumbent = None
-                self._hold(pose, age)
+                self.hold(pose, age)
             elif cloud is not None and pose is not None and global_xy is not None:
                 if self._stale:
                     self._stale = False
@@ -315,32 +324,30 @@ class MotionPlanner(Module):
                 # the carrot is the whole of the route the plan consumes, so it
                 # is computed every tick and the gate reads it, not the array
                 goal = carrot_along(global_xy, (pose.x, pose.y), self.config.goal_lookahead_m)
-                if self._due(cloud_seq, goal):
-                    if self._retask(goal):
+                if self.due(cloud_seq, goal):
+                    if self.retask(goal):
                         # a new task: warm starts, hysteresis and the route
                         # being held are all about the old one
                         self._episode.reset()
                         self._incumbent = None
                     # a pose implies a ground reference: both come off the same
                     # tf-resolved base, so this cannot be None here
-                    if self._plan_once(cloud, pose, goal, 0.0 if ground_z is None else ground_z):
+                    if self.plan_once(cloud, pose, goal, 0.0 if ground_z is None else ground_z):
                         self._planned = (cloud_seq, goal)
             elapsed = time.perf_counter() - started
             self._stop_event.wait(max(0.0, period - elapsed))
 
-    def _due(self, cloud_seq: int, carrot: tuple[float, float]) -> bool:
+    def due(self, cloud_seq: int, carrot: tuple[float, float]) -> bool:
         """Has an input the plan depends on moved since the plan was made?"""
         if not self.config.replan_on_change:
             return True
         return replan_due(self._planned, cloud_seq, carrot, self.config.replan_carrot_m)
 
-    def _retask(self, carrot: tuple[float, float]) -> bool:
+    def retask(self, carrot: tuple[float, float]) -> bool:
         """Did the carrot jump far enough to be a different task?"""
-        if self._planned is None:
-            return False
-        return math.dist(self._planned[1], carrot) > self.config.reset_carrot_m
+        return retask_due(self._planned, carrot, self.config.reset_carrot_m)
 
-    def _hold(self, pose: PoseStamped, age: float) -> None:
+    def hold(self, pose: PoseStamped, age: float) -> None:
         """Refuse the way the planner does — a single-pose stub reads as "stop"."""
         # edge-triggered: the loop runs at replan_hz, and a dead link would
         # otherwise warn five times a second for as long as it stays dead
@@ -362,7 +369,7 @@ class MotionPlanner(Module):
         self.path.publish(held)
         self._publish_viz(held)
 
-    def _plan_once(
+    def plan_once(
         self,
         cloud: PointCloud2,
         pose: PoseStamped,

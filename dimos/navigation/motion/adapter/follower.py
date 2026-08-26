@@ -248,11 +248,11 @@ class TrajectoryFollower(Module):
                 {"odometry": pose is not None, "path (local plan)": path is not None}
             ):
                 assert pose is not None and path is not None and age is not None
-                self._step(pose, path, age)
+                self.step(pose, path, age)
             elapsed = time.perf_counter() - started
             self._stop_event.wait(max(0.0, period - elapsed))
 
-    def _step(self, pose: PoseStamped, path: Path, age: float) -> None:
+    def step(self, pose: PoseStamped, path: Path, age: float) -> None:
         """One control tick against a path that arrived `age` seconds ago."""
         # The deadman outranks arrival: a goal reached against a plan nobody
         # is refreshing is a coincidence, not an arrival.
@@ -272,7 +272,7 @@ class TrajectoryFollower(Module):
             self.nav_cmd_vel.publish(Twist())
             self._stall.blocked("a new goal -- the last one is reached and latched")
             return
-        tw = self._controller.update(pose, path, time.monotonic(), self._clearance_for(path, pose))
+        tw = self._controller.update(pose, path, time.monotonic(), self.clearance_for(path, pose))
         self.nav_cmd_vel.publish(tw)
 
         # Standing still with a plan in hand is the ambiguous case, and the two
@@ -293,7 +293,7 @@ class TrajectoryFollower(Module):
         else:
             self._stall.ok("driving")
 
-    def _clearance_for(self, path: Path, pose: PoseStamped) -> NDArray[np.float64] | None:
+    def clearance_for(self, path: Path, pose: PoseStamped) -> NDArray[np.float64] | None:
         if not self._track.annotate_clearance:
             # the blind track: the law reads the path's own stamps instead
             return None

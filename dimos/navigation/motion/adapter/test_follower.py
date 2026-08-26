@@ -28,7 +28,9 @@ from dimos.navigation.motion.adapter.follower import (
     TrajectoryFollower,
     TrajectoryFollowerConfig,
 )
-from dimos.navigation.motion.obstacles import hard_points, path_clearance
+from dimos.navigation.motion.adapter.follower_native import TrajectoryFollowerNativeConfig
+from dimos.navigation.motion.embodiment.go2 import GO2
+from dimos.navigation.motion.obstacles import hard_points, load as load_model, path_clearance
 
 # Followers built by the helper below. The real constructor stands up the module's
 # LCM RPC transport (a run_forever + _lcm_loop daemon pair per instance); these
@@ -123,11 +125,11 @@ def _straight_path(end_x: float = 0.5) -> Path:
 
 def test_the_room_hint_is_measured_against_the_body_reference():
     follower = _room_follower()
-    follower._cloud = _room_with_a_post(-0.28)
+    follower._on_local_map(_room_with_a_post(-0.28))
     # the base rides 0.29 m over the ground, so the post is where the planner
     # sees it: 0.20..0.30 m up, well inside the band
-    hint = follower._clearance_for(_straight_path(), _base_at(0.01))
-    hw = follower._half_width
+    hint = follower.clearance_for(_straight_path(), _base_at(0.01))
+    hw = GO2.width / 2.0
     assert abs(float(hint[0]) - (1.0 - hw)) < 1e-6
     assert abs(float(hint[1]) - (0.5 - hw)) < 1e-6
 
@@ -139,12 +141,12 @@ def test_the_room_hint_is_the_model_hard_set_not_the_whole_map():
     follower = _room_follower()
     raw = _room_with_a_post(-0.28).points_f32()
     whole = np.concatenate([raw, np.array([[0.25, 0.0, -0.28 + 1.5]], dtype=np.float32)])
-    follower._cloud = PointCloud2.from_numpy(whole, frame_id="odom")
+    follower._on_local_map(PointCloud2.from_numpy(whole, frame_id="odom"))
     xy = np.array([[0.0, 0.0], [0.5, 0.0]])
-    hard = hard_points(follower._model, whole, -0.28)
-    want = path_clearance(xy, hard, follower._half_width)
-    assert np.array_equal(follower._clearance_for(_straight_path(), _base_at(0.01)), want)
-    over = path_clearance(xy, whole, follower._half_width)
+    hard = hard_points(load_model(TrajectoryFollowerConfig().obstacle_model, GO2), whole, -0.28)
+    want = path_clearance(xy, hard, GO2.width / 2.0)
+    assert np.array_equal(follower.clearance_for(_straight_path(), _base_at(0.01)), want)
+    over = path_clearance(xy, whole, GO2.width / 2.0)
     assert over[0] < want[0], "the whole map has to read tighter, or this proves nothing"
 
 
@@ -154,11 +156,11 @@ def test_a_new_path_in_the_freed_one_s_memory_gets_its_own_hint():
     # keyed on id() compares equal and prices the PREVIOUS plan's room.
     follower = _room_follower()
     follower._on_local_map(_room_with_a_post(-0.28))
-    hw = follower._half_width
+    hw = GO2.width / 2.0
     pose = _base_at(0.01)
     # the post is at x=1, so the two plans stop with different room left
-    short = float(follower._clearance_for(_straight_path(0.5), pose)[-1])
-    close = float(follower._clearance_for(_straight_path(0.9), pose)[-1])
+    short = float(follower.clearance_for(_straight_path(0.5), pose)[-1])
+    close = float(follower.clearance_for(_straight_path(0.9), pose)[-1])
     assert abs(short - (0.5 - hw)) < 1e-6
     assert abs(close - (0.1 - hw)) < 1e-6
 
@@ -187,22 +189,22 @@ def test_the_lost_room_hint_warns_once_per_outage(heard):
     follower = _room_follower()
     pose, path = _base_at(0.01), _straight_path()
     for _ in range(10):
-        follower._clearance_for(path, pose)
+        follower.clearance_for(path, pose)
     assert len([m for m in heard if "no local_map" in m]) == 1
 
     # and it re-arms, so a second outage is heard too
     heard.clear()
     follower._on_local_map(_room_with_a_post(-0.28))
-    follower._clearance_for(path, pose)
-    follower._cloud = None
-    follower._clearance_for(path, pose)
+    follower.clearance_for(path, pose)
+    follower._cloud = None  # the map going away has no handler to drive
+    follower.clearance_for(path, pose)
     assert len([m for m in heard if "no local_map" in m]) == 1
 
 
 def test_the_blind_track_never_warns_about_the_map_it_does_not_read(heard):
     follower = _room_follower(track="blind")
     for _ in range(10):
-        follower._clearance_for(_straight_path(), _base_at(0.01))
+        follower.clearance_for(_straight_path(), _base_at(0.01))
     assert not [m for m in heard if "no local_map" in m]
 
 
@@ -215,27 +217,36 @@ def _driven(follower: TrajectoryFollower) -> list:
     return out
 
 
+def _reached(follower: TrajectoryFollower) -> list:
+    out: list = []
+    follower.goal_reached.subscribe(out.append)
+    return out
+
+
 def test_a_stale_path_zeroes_the_twist():
     follower = _room_follower()
     out = _driven(follower)
     path, pose = _straight_path(5.0), _base_at(0.01)
     follower._on_path(path)
-    follower._step(pose, path, age=follower.config.max_path_age_s + 0.1)
+    follower.step(pose, path, age=follower.config.max_path_age_s + 0.1)
     assert (out[-1].linear.x, out[-1].linear.y, out[-1].angular.z) == (0.0, 0.0, 0.0)
     # the boundary is exclusive: a path exactly at the limit drives
-    follower._step(pose, path, age=follower.config.max_path_age_s)
+    follower.step(pose, path, age=follower.config.max_path_age_s)
     assert out[-1].linear.x > 0.0
 
 
 def test_a_stale_path_outranks_an_arrival():
     follower = _room_follower()
-    out = _driven(follower)
+    out, reached = _driven(follower), _reached(follower)
     path = _straight_path(0.5)
     follower._on_path(path)
     at_goal = PoseStamped(ts=0.0, frame_id="odom", position=Vector3(0.5, 0.0, 0.01))
-    follower._step(at_goal, path, age=9.0)
+    follower.step(at_goal, path, age=9.0)
     assert out[-1].linear.x == 0.0
-    assert not follower._latch.reached
+    assert not reached
+    # ...and the same tick against a fresh path IS the arrival
+    follower.step(at_goal, path, age=0.0)
+    assert [m.data for m in reached] == [True]
 
 
 def test_stop_movement_forgets_the_slew_history():
@@ -246,18 +257,16 @@ def test_stop_movement_forgets_the_slew_history():
     # walk the law up its ramp on its own clock; the tick clock here is real time
     for k in range(20):
         primed = follower._controller.update(pose, path, t=0.1 * k)
-    step = follower._emb.command_slew[0] * 0.10  # one MAX_TICK from standstill
+    step = GO2.command_slew[0] * 0.10  # one MAX_TICK from standstill
     assert primed.linear.x > step, "priming has to leave the law mid-ramp, or this proves nothing"
     follower._on_stop(Bool(True))
     assert (out[-1].linear.x, out[-1].linear.y, out[-1].angular.z) == (0.0, 0.0, 0.0)
     follower._on_path(path)
-    follower._step(pose, path, age=0.0)
+    follower.step(pose, path, age=0.0)
     assert 0.0 < out[-1].linear.x <= step + 1e-9
 
 
 def test_native_twin_shares_the_python_defaults():
-    from dimos.navigation.motion.adapter.follower_native import TrajectoryFollowerNativeConfig
-
     native, py = TrajectoryFollowerNativeConfig.model_fields, TrajectoryFollowerConfig.model_fields
     shared = set(native) & set(py) - set(ModuleConfig.model_fields)
     assert {f: native[f].default for f in shared} == {f: py[f].default for f in shared}

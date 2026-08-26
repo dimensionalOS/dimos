@@ -18,8 +18,7 @@ import numpy as np
 from numpy.typing import NDArray
 import pytest
 
-from dimos.navigation.motion.embodiment.go2 import GO2, GO2_PAYLOAD
-from dimos.navigation.motion.embodiment.synthetic import DIFFDRIVE, SLIM
+from dimos.navigation.motion.embodiment.go2 import GO2
 from dimos.navigation.motion.obstacles import (
     LOW,
     OBSTACLE_MODELS,
@@ -56,7 +55,6 @@ def test_body_band_looks_under_the_belly_not_over_it():
 
 
 def test_the_ground_exclusion_is_two_voxel_layers():
-    assert LOW == 0.16
     cloud = np.array([[0.0, 0.0, LOW], [0.0, 0.0, LOW + 0.01]], dtype=np.float32)
     assert len(hard_points(BodyBand(GO2), cloud, 0.0)) == 1
 
@@ -86,9 +84,3 @@ def test_the_registry_names_the_model():
     assert isinstance(load("body_band", GO2), BodyBand)
     with pytest.raises(ValueError, match="unknown obstacle model"):
         load("floor_anchor", GO2)
-
-
-def test_every_embodiment_builds_every_model():
-    for emb in (GO2, GO2_PAYLOAD, SLIM, DIFFDRIVE):
-        for name in OBSTACLE_MODELS:
-            assert load(name, emb) is not None

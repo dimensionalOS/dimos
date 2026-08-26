@@ -25,6 +25,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path
+from dimos.navigation.motion.adapter import diagnostics
 from dimos.navigation.motion.adapter.diagnostics import StallReporter
 from dimos.navigation.motion.adapter.viz import (
     motion_visual_override,
@@ -47,7 +48,7 @@ def _plan(n: int = 40, yaw: float = 0.0) -> Path:
     return Path(frame_id="odom", poses=[_pose(k * 0.1, 0.0, yaw) for k in range(n)])
 
 
-def _rgba(boxes) -> NDArray[np.float64]:  # type: ignore[no-untyped-def]
+def _rgba(boxes) -> NDArray[np.float64]:
     """rerun packs colors as u32 0xRRGGBBAA, not as rows."""
     packed = np.asarray(boxes.colors.pa_array.to_pylist(), dtype=np.uint32)
     return np.column_stack(
@@ -93,7 +94,7 @@ def test_an_unstamped_plan_draws_one_flat_colour() -> None:
     """
     plan = _plan()  # never passed through encode_precision
     room = plan_clearance(plan, GO2)
-    assert room is None or len(np.unique(np.round(room, 6))) == 1
+    assert room is not None and len(np.unique(np.round(room, 6))) == 1
     colors = _rgba(render_plan_body(plan))
     assert len({tuple(c[:3]) for c in colors}) == 1
 
@@ -121,10 +122,8 @@ def test_the_override_is_off_when_the_planner_is_not_publishing() -> None:
     assert motion_visual_override(2.0)["world/plan_body"] is not None
 
 
-def _said(monkeypatch) -> list[str]:  # type: ignore[no-untyped-def]
+def _said(monkeypatch) -> list[str]:
     """Capture the reporter's own lines; the project logger bypasses caplog."""
-    from dimos.navigation.motion.adapter import diagnostics
-
     lines: list[str] = []
 
     def said(msg: str, **kw: object) -> None:
@@ -135,7 +134,7 @@ def _said(monkeypatch) -> list[str]:  # type: ignore[no-untyped-def]
     return lines
 
 
-def test_stall_reporter_names_the_first_missing_input(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_stall_reporter_names_the_first_missing_input(monkeypatch) -> None:
     """Ordered dependencies: the first absent input is the cause, not a symptom."""
     lines = _said(monkeypatch)
     r = StallReporter("Stage", heartbeat_s=100.0)
@@ -144,7 +143,7 @@ def test_stall_reporter_names_the_first_missing_input(monkeypatch) -> None:  # t
     assert "path" not in lines[0], "reported a symptom alongside its cause"
 
 
-def test_stall_reporter_is_edge_triggered(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_stall_reporter_is_edge_triggered(monkeypatch) -> None:
     """The same complaint every tick at 10 Hz is not a diagnostic."""
     lines = _said(monkeypatch)
     r = StallReporter("Stage", heartbeat_s=100.0)
@@ -157,7 +156,7 @@ def test_stall_reporter_is_edge_triggered(monkeypatch) -> None:  # type: ignore[
     assert any("resuming" in ln for ln in lines)
 
 
-def test_stall_reporter_distinguishes_stages(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_stall_reporter_distinguishes_stages(monkeypatch) -> None:
     """The whole point is answering "planner or follower?" without bisecting."""
     lines = _said(monkeypatch)
     StallReporter("MotionPlanner", 100.0).check({"local_map": False})

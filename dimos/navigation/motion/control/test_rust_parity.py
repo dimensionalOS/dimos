@@ -45,12 +45,10 @@ from dimos.navigation.motion.control.profile import (
     encode_precision,
 )
 from dimos.navigation.motion.embodiment.go2 import GO2
+from dimos.navigation.motion.loader import load
 from dimos.navigation.motion.obstacles import path_clearance as follower_clearance
 
-# The crate under test. Skipped rather than failed when it is not built, the way
-# ray_tracing and mls_planner do it: `uv run maturin develop --uv --release -m
-# dimos/navigation/motion/control/rust/Cargo.toml`.
-pytest.importorskip("dimos_motion2_tc")
+load_extension()  # the crate under test; the ImportError names the build command
 
 TOL = 1e-9
 CASES = 240
@@ -279,8 +277,6 @@ def test_wrap_boundaries(yaw: float) -> None:
 
 
 def test_loader_and_build_hint() -> None:
-    from dimos.navigation.motion.loader import load
-
     for _, make_rs in LAWS.values():
         assert load(f"{make_rs.__module__}:make_rust") is make_rs
         assert isinstance(make_rs().config, ControllerConfig)

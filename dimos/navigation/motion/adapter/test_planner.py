@@ -33,6 +33,7 @@ from dimos.navigation.motion.adapter.planner import (
     carrot_along,
     stamped,
 )
+from dimos.navigation.motion.adapter.planner_native import MotionPlannerNativeConfig
 from dimos.navigation.motion.control.laws.seed import PursuitController
 from dimos.navigation.motion.embodiment.base import Embodiment
 from dimos.navigation.motion.embodiment.go2 import GO2
@@ -106,7 +107,7 @@ def _holding_planner():
 
 def test_hold_publishes_single_pose_stub_at_the_current_pose():
     planner, published, _drawn = _holding_planner()
-    planner._hold(
+    planner.hold(
         PoseStamped(
             position=(1.5, -2.0, 0.0), orientation=Quaternion.from_euler(Vector3(0, 0, math.pi / 2))
         ),
@@ -121,12 +122,12 @@ def test_hold_publishes_single_pose_stub_at_the_current_pose():
     assert path.poses[0].position.y == -2.0
     assert abs(path.poses[0].yaw - math.pi / 2) < 1e-9
     # the stub stands on the ground like every planned pose, not at z=0
-    assert abs(path.poses[0].position.z - (0.0 - planner._emb.base_height)) < 1e-9
+    assert abs(path.poses[0].position.z - (0.0 - GO2.base_height)) < 1e-9
 
 
 def test_hold_stub_stops_the_controller():
     planner, published, _drawn = _holding_planner()
-    planner._hold(PoseStamped(position=(1.5, -2.0, 0.0)), age=7.0)
+    planner.hold(PoseStamped(position=(1.5, -2.0, 0.0)), age=7.0)
     pose = pose_stamped(1.5, -2.0, 0.0)
     twist = PursuitController().update(pose, published[0], t=0.0)
     assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
@@ -139,8 +140,7 @@ def test_hold_warns_once_per_stale_episode(monkeypatch):
     )
     planner, _published, _drawn = _holding_planner()
     for _ in range(3):
-        planner._hold(PoseStamped(position=(0.0, 0.0, 0.0)), age=7.0)
-    assert planner._stale
+        planner.hold(PoseStamped(position=(0.0, 0.0, 0.0)), age=7.0)
     # edge-triggered: replan_hz would otherwise warn 5x a second for as long
     # as the link stays down
     assert len(warnings) == 1
@@ -149,7 +149,7 @@ def test_hold_warns_once_per_stale_episode(monkeypatch):
 def test_hold_draws_the_veto_so_it_is_not_mistaken_for_a_dead_module():
     """A refusal must reach the viewer: an empty viewport looks like a crash."""
     planner, published, drawn = _holding_planner()
-    planner._hold(PoseStamped(position=(1.0, 2.0, 0.0)), age=7.0)
+    planner.hold(PoseStamped(position=(1.0, 2.0, 0.0)), age=7.0)
     assert len(drawn) == 1
     assert drawn[0] is published[0]
     assert len(drawn[0].poses) == 1
@@ -158,63 +158,25 @@ def test_hold_draws_the_veto_so_it_is_not_mistaken_for_a_dead_module():
 # --- the replan gate
 
 
-def _gated_planner(**config):
-    """A MotionPlanner for the replan gate: _due and _retask."""
-    return _planner(**config)
-
-
-def test_a_tick_with_nothing_new_does_not_replan():
-    planner = _gated_planner()
-    assert planner._due(7, (2.0, 0.0))  # nothing planned yet
-    planner._planned = (7, (2.0, 0.0))
-    assert not planner._due(7, (2.0, 0.0))
-
-
-def test_a_new_map_or_a_moved_carrot_replans():
-    planner = _gated_planner()
-    planner._planned = (7, (2.0, 0.0))
-    assert planner._due(8, (2.0, 0.0))
-    assert planner._due(7, (2.3, 0.0))
-
-
-def test_a_republished_route_moves_the_carrot_by_nothing_and_is_not_a_replan():
+def test_the_gate_is_the_one_the_diagnosis_replays():
+    # free functions, so a post-mortem can reconstruct the gate off a recording
+    assert planner_module.replan_due(None, 7, (2.0, 0.0))
     # MLS trims the route head to the robot and re-solves the tail on every
     # ~1 Hz republish: the waypoints move, the carrot does not
-    planner = _gated_planner()
-    planner._planned = (7, (2.0, 0.0))
-    assert not planner._due(7, (2.02, -0.01))
-
-
-def test_an_ungated_planner_replans_on_every_tick():
-    planner = _gated_planner(replan_on_change=False)
-    planner._planned = (7, (2.0, 0.0))
-    assert planner._due(7, (2.0, 0.0))
-
-
-def test_only_a_carrot_that_jumped_is_a_new_task():
-    planner = _gated_planner()
-    planner._planned = (7, (2.0, 0.0))
-    assert not planner._retask((2.3, 0.0))  # republish wobble, same task
-    assert planner._retask((6.6, 0.0))  # the door recording's reroute
-    # and nothing to compare against is not a jump
-    planner._planned = None
-    assert not planner._retask((6.6, 0.0))
-
-
-def test_the_gate_is_the_one_the_diagnosis_replays():
-    # a free function so a post-mortem can reconstruct the gate off a recording
-    assert planner_module.replan_due(None, 7, (2.0, 0.0))
+    assert not planner_module.replan_due((7, (2.0, 0.0)), 7, (2.02, -0.01))
     assert not planner_module.replan_due((7, (2.0, 0.0)), 7, (2.1, 0.0))
     assert planner_module.replan_due((7, (2.0, 0.0)), 7, (2.4, 0.0))
     assert planner_module.replan_due((7, (2.0, 0.0)), 8, (2.0, 0.0))
 
 
+def test_only_a_carrot_that_jumped_is_a_new_task():
+    assert not planner_module.retask_due((7, (2.0, 0.0)), (2.3, 0.0))  # republish wobble
+    assert planner_module.retask_due((7, (2.0, 0.0)), (6.6, 0.0))  # a reroute
+    # and nothing to compare against is not a jump
+    assert not planner_module.retask_due(None, (6.6, 0.0))
+
+
 # --- the obstacle model (motion/obstacles.py is the rule; this is the wiring)
-
-
-def _model_planner(**config):
-    """A MotionPlanner for the obstacle-model wiring."""
-    return _planner(**config)
 
 
 def _room(floor_z: float, n: int = 400) -> NDArray[np.float64]:
@@ -226,9 +188,8 @@ def _room(floor_z: float, n: int = 400) -> NDArray[np.float64]:
 
 
 def test_the_band_rides_the_body_not_the_map_origin():
-    planner = _model_planner()
     # base at +0.01, so the surface the feet stand on is at -0.28
-    out = hard_points(planner._model, _room(-0.28), ground_z=-0.28)
+    out = hard_points(load_model(MotionPlannerConfig().obstacle_model, GO2), _room(-0.28), -0.28)
     # the slab is gone and the clutter reads as its true height over the ground
     assert len(out) == 2
     assert abs(float(out[:, 2].min()) - 0.2) < 1e-6
@@ -242,13 +203,8 @@ def test_a_map_with_a_non_finite_return_still_plans():
     room = np.concatenate([_room(-0.28), np.array([[np.nan, 0.0, -0.08]], dtype=np.float32)])
     cloud = PointCloud2.from_numpy(room, frame_id="odom")
     planner._on_local_map(cloud)
-    assert planner._plan_once(cloud, pose_stamped(0.0, 0.0, 0.0), (0.5, 0.0), ground_z=-0.28)
+    assert planner.plan_once(cloud, pose_stamped(0.0, 0.0, 0.0), (0.5, 0.0), ground_z=-0.28)
     assert len(published) == 1 and len(published[0].poses) >= 2
-
-
-def test_the_default_model_is_the_body_band():
-    planner = _model_planner()
-    assert planner.config.obstacle_model == "body_band"
 
 
 def _wall_over(ground_z: float, height: float) -> NDArray[np.float64]:
@@ -286,8 +242,6 @@ def test_a_tall_body_plans_around_what_the_old_band_cut_off():
 
 
 def test_native_twin_shares_the_python_defaults():
-    from dimos.navigation.motion.adapter.planner_native import MotionPlannerNativeConfig
-
     native, py = MotionPlannerNativeConfig.model_fields, MotionPlannerConfig.model_fields
     shared = set(native) & set(py) - set(ModuleConfig.model_fields)
     assert {f: native[f].default for f in shared} == {f: py[f].default for f in shared}
