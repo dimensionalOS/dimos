@@ -23,14 +23,14 @@ import pytest_mock
 
 from dimos.imitation.collection.episode_monitor import EpisodeStatus
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.teleop.webxr.extensions import ArmTeleopModule, Go2TeleopModule, HandTeleopModule
-from dimos.teleop.webxr.module import WebXRTeleopModule, _ws_send_text
 from dimos.teleop.webxr.controller_types import (
     Buttons,
     Hand,
-    WebXRControllerState,
     ThumbstickState,
+    WebXRControllerState,
 )
+from dimos.teleop.webxr.extensions import ArmTeleopModule, Go2TeleopModule, HandTeleopModule
+from dimos.teleop.webxr.module import WebXRTeleopModule, _ws_send_text
 
 
 @pytest.fixture

@@ -45,10 +45,10 @@ from dimos.core.stream import In, Out
 from dimos.imitation.collection.episode_monitor import EpisodeStatus
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Joy import Joy
+from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 
 # Hand is re-exported for back-compat; it lives in controller_types.
 from dimos.teleop.webxr.controller_types import Buttons, Hand, WebXRControllerState
-from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.utils.logging_config import setup_logger
 from dimos.web.robot_web_interface import RobotWebInterface
 

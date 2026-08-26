@@ -62,9 +62,9 @@ def test_episode_monitor_stops_after_input_producers(blueprint: Blueprint) -> No
 
 @pytest.mark.parametrize(
     "blueprint",
-    [learning_collect_quest_xarm7, learning_collect_quest_piper],
+    [learning_collect_webxr_xarm7, learning_collect_webxr_piper],
 )
-def test_collection_status_is_wired_to_quest_hud(blueprint: Blueprint) -> None:
+def test_collection_status_is_wired_to_webxr_hud(blueprint: Blueprint) -> None:
     hud = next(atom for atom in blueprint.blueprints if atom.module is ArmTeleopModule)
     status = next(stream for stream in hud.streams if stream.name == "status")
 
