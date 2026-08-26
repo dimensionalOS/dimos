@@ -12,16 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
-
 import pytest
 
+from dimos.cli.bake.cli import emit_config
+from dimos.cli.bake.discovery import discover_modules, select_modules
+from dimos.cli.bake.graph import build_graph
 from dimos.navigation.motion.adapter.follower_native import TrajectoryFollowerNativeConfig
 from dimos.navigation.motion.adapter.planner_native import MotionPlannerNativeConfig
 from dimos.navigation.movement_manager.cmd_vel_mux_native import CmdVelMuxNativeConfig
 from dimos.robot.unitree.go2.tf.go2_tf import Go2TfConfig
 from dimos.robot.unitree.go2.zenoh.blueprints import MOTION_BODY_DILATE_M
-from dimos.robot.unitree.go2.zenoh.motion_host import MAX_SPEED, MODULES, motion_host_config
+from dimos.robot.unitree.go2.zenoh.motion_host import GO2_MOTION_HOST, MAX_SPEED
 
 CONFIGS = {
     "motion_planner": MotionPlannerNativeConfig,
@@ -33,12 +34,15 @@ CONFIGS = {
 
 @pytest.fixture(scope="module")
 def blob():
-    return motion_host_config()
+    """What `dimos bake --deployment ...:GO2_MOTION_HOST -o motion-host` embeds."""
+    selected = select_modules(discover_modules(), GO2_MOTION_HOST.modules)
+    graph = build_graph("motion-host", selected)
+    return emit_config(graph, selected, GO2_MOTION_HOST.configs, GO2_MOTION_HOST.session)
 
 
 def test_every_module_block_is_its_native_config_again(blob):
     """The drift that shipped a string embodiment: every block must re-validate."""
-    assert set(blob["modules"]) == set(MODULES) == set(CONFIGS)
+    assert set(blob["modules"]) == set(GO2_MOTION_HOST.modules) == set(CONFIGS)
     for module, config_type in CONFIGS.items():
         block = blob["modules"][module]["config"]
         assert config_type(**block).to_config_dict() == block
@@ -63,6 +67,5 @@ def test_the_session_is_a_loopback_client_of_the_router(blob):
     }
 
 
-def test_the_blob_is_one_line_and_stamped(blob):
-    assert "\n" not in json.dumps(blob)
+def test_the_blob_is_stamped(blob):
     assert blob["graph"]

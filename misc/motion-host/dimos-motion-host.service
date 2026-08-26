@@ -6,18 +6,14 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/root/motion-host
-# DIMOS_TRANSPORT is the only zenoh setting the host reads from the environment.
-# Mode, endpoints and scouting come from the `session` block in motion-host.json:
-# the rust module has no DIMOS_ZENOH_* fallbacks, and without that block it opens
-# zenoh's defaults -- a PEER with multicast scouting, which a router does not
-# forward to. The host is a CLIENT of dimos-helper (the go2web bridge, the router
-# on 7447), dials it over loopback, and listens on nothing.
+# DIMOS_TRANSPORT is the only setting the host reads from the environment. Its
+# whole config -- module blocks, wiring, and the zenoh `session` that makes it a
+# CLIENT of dimos-helper (the go2web bridge, the router on 7447) over loopback --
+# is baked into the binary from dimos.robot.unitree.go2.zenoh.motion_host.
+# A JSON line on stdin would deep-merge over it; here there is none.
 Environment=DIMOS_TRANSPORT=zenoh
 Environment=RUST_LOG=info
-# The host reads its whole config from one line on stdin and exits if it is
-# missing a key. The file is GENERATED, never hand-edited:
-#   python -m dimos.robot.unitree.go2.zenoh.motion_host > motion-host.json
-ExecStart=/bin/sh -c "exec /root/motion-host/motion-host < /root/motion-host/motion-host.json"
+ExecStart=/root/motion-host/motion-host
 Restart=on-failure
 RestartSec=2
 

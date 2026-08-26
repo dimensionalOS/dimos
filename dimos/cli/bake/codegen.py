@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 import json
 from pathlib import Path
 import re
@@ -69,6 +69,7 @@ static SPEC: HostSpec = HostSpec {{
     default_qos: include_str!("default_qos.json"),
     graph_json: include_str!("graph.json"),
     graph_hash: "{fingerprint}",
+    config_json: include_str!("config.json"),
 }};
 
 fn main() {{
@@ -134,9 +135,10 @@ def generate_crate(
     host: str,
     modules: Sequence[RegisteredModule],
     graph: Graph,
+    config: Mapping[str, object],
     root: Path | None = None,
 ) -> Path:
-    """Write the generated crate and return its directory."""
+    """Write the generated crate, `config` embedded as the host's launch config."""
     check_host_name(host)
     root = root or DIMOS_PROJECT_ROOT
     directory = crate_dir(host, root)
@@ -148,4 +150,5 @@ def generate_crate(
     (src / "default_topics.json").write_text(json.dumps(graph.topics(), indent=2) + "\n")
     (src / "default_qos.json").write_text(json.dumps(graph.qos(), indent=2) + "\n")
     (src / "graph.json").write_text(json.dumps(graph.to_json(), indent=2) + "\n")
+    (src / "config.json").write_text(json.dumps(config) + "\n")
     return directory

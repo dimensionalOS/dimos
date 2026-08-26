@@ -171,32 +171,36 @@ its pose at `None` and plans nothing, rather than planning off-heading. One
 ## Config is the sharp edge
 
 The rust modules have **no defaults**: `#[native_config]` forbids serde
-defaults and rejects unknown fields, so the host needs every field on its
-stdin line and exits naming the first one it lacks. Python owns the defaults.
+defaults and rejects unknown fields, so the host needs every field of its
+config and exits naming the first one it lacks. Python owns the defaults.
 That is a feature — one owner — right up until the deployed config is a file
 someone hand-maintains, because then a renamed field, a re-shaped one (the
 embodiment went from a registry name to the body itself) or a blueprint-tuned
 value the class does not carry all present as the host refusing to boot, or
 worse, as a controller bug. Three debugging sessions were lost to exactly
-that skew before the file was made generated.
+that skew before the config was made generated, and one more to a generated
+file that was not regenerated with its binary.
 
-So `motion-host.json` is not committed. `dimos.robot.unitree.go2.zenoh.motion_host`
-builds it from the python classes — `dimos bake --emit-config`'s blob (which
-carries the `graph` stamp, so a config baked for another graph is refused),
-with the deployment's overrides applied as pydantic constructor arguments
-(`body_dilate_m`, the `max_speed` ceiling) and the zenoh `session` block. A
-test re-validates every module block into its config class, so a field that
-drifts fails in CI, not on the robot.
+So the config travels inside the binary. `dimos bake --deployment` takes a
+`Deployment` (`dimos.robot.unitree.go2.zenoh.motion_host:GO2_MOTION_HOST`:
+the module list, the overrides applied as pydantic constructor arguments —
+`body_dilate_m`, the `max_speed` ceiling — and the zenoh `session` block),
+builds the blob from the python classes and embeds it, `graph` stamp and all.
+Binary and config cannot drift apart because there is one artifact. A test
+re-validates every module block into its config class, so a field that drifts
+fails in CI, not on the robot.
+
+Stdin is for overrides only. A JSON line there deep-merges over the embedded
+blob — objects descend, scalars and arrays replace — so one nested number can
+be changed for a run without a rebake. Nothing on stdin (the unit, a tty)
+means the embedded config as is. The merged result is checked exactly as
+before: an unknown key, or a `graph` stamp from another bake, is refused.
 
 The `session` block is load-bearing. go2web runs as the zenoh ROUTER on 7447;
 the host is its CLIENT over loopback and listens on nothing. The rust side
 reads only `DIMOS_TRANSPORT` from the environment, so without the block it
 opens zenoh's own defaults — a peer with multicast scouting, which a router
 does not forward to.
-
-It is ONE LINE, and it has to be: the host reads a single line, so a
-pretty-printed blob crash-loops it with `EOF while parsing an object at line
-1 column 1`.
 
 ### Blueprint-as-arg
 

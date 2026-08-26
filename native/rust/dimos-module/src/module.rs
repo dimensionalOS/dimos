@@ -512,12 +512,23 @@ pub(crate) fn propagate_task_failure(name: &str, res: Result<(), tokio::task::Jo
     }
 }
 
-/// Read the launch config the coordinator writes to stdin as one JSON line.
-pub(crate) async fn read_launch_config() -> io::Result<serde_json::Value> {
+/// The first line of stdin, or `None` when stdin is a terminal or empty.
+pub(crate) async fn read_stdin_line() -> io::Result<Option<String>> {
+    if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        return Ok(None);
+    }
     let mut line = String::new();
     BufReader::new(tokio::io::stdin())
         .read_line(&mut line)
         .await?;
+    Ok(Some(line).filter(|l| !l.trim().is_empty()))
+}
+
+/// Read the launch config the coordinator writes to stdin as one JSON line.
+pub(crate) async fn read_launch_config() -> io::Result<serde_json::Value> {
+    let line = read_stdin_line().await?.ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidData, "no launch config line on stdin")
+    })?;
     parse_launch_config(&line)
 }
 

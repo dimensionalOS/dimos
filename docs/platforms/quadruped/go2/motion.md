@@ -53,13 +53,11 @@ latches forever once synced; only the stamps tracking wall time prove it.)
 From the dimos repo, inside the dev shell:
 
 ```sh
-dimos bake motion_planner trajectory_follower cmd_vel_mux go2_tf \
+dimos bake --deployment dimos.robot.unitree.go2.zenoh.motion_host:GO2_MOTION_HOST \
     -o motion-host --builder zigbuild --target aarch64-unknown-linux-gnu.2.31
-python -m dimos.robot.unitree.go2.zenoh.motion_host > motion-host.json
 
 ssh go2 mkdir -p /root/motion-host
-scp target/dimos-bake/motion-host/target/aarch64-unknown-linux-gnu/release/motion-host \
-    motion-host.json go2:/root/motion-host/
+scp motion-host go2:/root/motion-host/
 scp misc/motion-host/dimos-motion-host.service go2:/etc/systemd/system/
 ssh go2 'systemctl daemon-reload && systemctl enable --now dimos-motion-host'
 ```
@@ -67,20 +65,21 @@ ssh go2 'systemctl daemon-reload && systemctl enable --now dimos-motion-host'
 The `.2.31` pins the glibc floor to the Go2's Ubuntu 20.04; check the robot's
 with `ldd --version` and pin at or below.
 
-The host reads its whole config as one JSON line on stdin, and the rust side
-has no defaults of its own — python owns them. So `motion-host.json` is
-**generated** from the python config classes
-(`dimos/robot/unitree/go2/zenoh/motion_host.py`: class defaults, the
-deployment's few overrides, and the zenoh `session` block that makes the host
-a client of go2web's router over loopback). Never hand-edit it; regenerate it
-with the binary, every time. `test_motion_host.py` asserts each module block
-re-validates, which is the drift that used to present as a controller bug.
+The binary carries its own config. The rust side has no defaults of its own —
+python owns them — so `--deployment` names a `Deployment`
+(`dimos/robot/unitree/go2/zenoh/motion_host.py`: the module list, class
+defaults plus the deployment's few overrides, and the zenoh `session` block
+that makes the host a client of go2web's router over loopback) and bake embeds
+the resulting blob. There is no config file to ship or hand-edit; a value
+changes by editing the deployment and rebaking. `test_motion_host.py` asserts
+each module block re-validates, which is the drift that used to present as a
+controller bug.
 
-Two things the host refuses, and says so in the journal:
-
-- a config whose `modules` do not match the bake list (`MODULES` in
-  `motion_host.py` is that list — keep the bake command above equal to it)
-- a config stamped for another graph (`graph`): rebake and regenerate together
+To try a value without rebaking, feed one JSON line on stdin: it deep-merges
+over the embedded config (objects descend, leaves replace), so
+`{"modules":{"trajectory_follower":{"config":{"embodiment":{"max_speed":0.5}}}}}`
+changes that one number. A key the struct does not have, or a `graph` stamp
+from another bake, is refused and named in the journal.
 
 **Check**: `ssh go2 journalctl -u dimos-motion-host -n 20` — all four modules
 log `module started`, go2_tf logs `publishing the go2 mount tree`, and within
