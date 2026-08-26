@@ -72,7 +72,7 @@ class Embodiment:
     # The follower tuning SEARCHED on this body (the referee, on the sim
     # branch) -- fitted, where everything above is measured. Nested so the
     # line between the two stays visible.
-    control: ControllerConfig = field(default_factory=ControllerConfig)
+    control: ControllerConfig = field(kw_only=True)
     # gait preferences for the planner's cost function.
     # forward = 1; strafe/reverse scale it; yaw_w prices rotation per rad.
     strafe: float = 1.8

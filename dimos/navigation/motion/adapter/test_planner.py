@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import replace
 import math
 
 import numpy as np
@@ -260,7 +261,7 @@ def test_a_tall_body_plans_around_what_the_old_band_cut_off():
     points the model had correctly kept, and drove straight through them.
     """
     wall = _wall_over(0.0, 0.55)
-    tall = Embodiment(tag="tall", height=0.60)
+    tall = replace(GO2, tag="tall", height=0.60)
     assert _detour(tall, wall, 0.0) > 0.8, "the tall body drove through its own obstacle"
     # and the control: the same wall IS over a go2's belly, so it is not a wall
     assert not len(hard_points(load_model("body_band", GO2), wall, 0.0))

@@ -165,13 +165,15 @@ def _cases(seed: int = 20260802, n: int = CASES):  # type: ignore[no-untyped-def
         if k % 5 == 0:
             emb = replace(
                 GO2,
-                control=ControllerConfig(
-                    lookahead=float(rng.uniform(0.1, 1.2)),
-                    k_pos=float(rng.uniform(0.5, 4.0)),
-                    k_yaw=float(rng.uniform(0.5, 4.0)),
-                    fan_yaw_per_m=float(rng.uniform(1.0, 6.0)),
-                    fan_yaw_done=float(rng.uniform(0.05, 0.6)),
-                    speed_lookahead=float(rng.uniform(0.5, 4.0)),
+                control=GO2.control.model_copy(
+                    update=dict(
+                        lookahead=float(rng.uniform(0.1, 1.2)),
+                        k_pos=float(rng.uniform(0.5, 4.0)),
+                        k_yaw=float(rng.uniform(0.5, 4.0)),
+                        fan_yaw_per_m=float(rng.uniform(1.0, 6.0)),
+                        fan_yaw_done=float(rng.uniform(0.05, 0.6)),
+                        speed_lookahead=float(rng.uniform(0.5, 4.0)),
+                    )
                 ),
                 max_speed=float(rng.uniform(0.2, 1.5)),
                 min_speed=float(rng.uniform(0.05, 0.3)),
@@ -274,7 +276,7 @@ def test_wrap_boundaries(yaw: float) -> None:
     """+-pi is where a `%`-based wrap diverges from IEEE remainder."""
     path = _path([(0.0, 0.0, math.pi), (0.0, 0.0, -math.pi + 0.2), (1.0, 0.0, -math.pi + 0.2)])
     for law in sorted(LAWS):
-        a, b = _twists(law, ControllerConfig(), _pose(0.0, 0.0, yaw), path, None)
+        a, b = _twists(law, GO2.control, _pose(0.0, 0.0, yaw), path, None)
         assert a == b, f"{law} yaw={yaw!r}: python {a} vs rust {b}"
 
 

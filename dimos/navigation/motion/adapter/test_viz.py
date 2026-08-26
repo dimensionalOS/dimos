@@ -14,6 +14,7 @@
 
 """The plan-body overlay and the stall reporter."""
 
+from dataclasses import replace
 import math
 from types import SimpleNamespace
 
@@ -30,7 +31,6 @@ from dimos.navigation.motion.adapter.viz import (
     render_plan_body,
 )
 from dimos.navigation.motion.control.profile import encode_precision
-from dimos.navigation.motion.embodiment.base import Embodiment
 from dimos.navigation.motion.embodiment.go2 import GO2
 
 
@@ -108,7 +108,9 @@ def test_the_veto_stub_is_drawn_rather_than_blanked() -> None:
 
 def test_the_box_sits_on_the_body_not_on_the_pose_point() -> None:
     """center_off is along the pose's own heading, so yaw has to rotate it."""
-    facing_y = render_plan_body(_plan(yaw=math.pi / 2), Embodiment(tag="t", center_off=-0.10))
+    facing_y = render_plan_body(
+        _plan(yaw=math.pi / 2), replace(GO2, tag="t", center_off=-0.10, envelope=())
+    )
     cx, cy, _ = facing_y.centers.pa_array.to_pylist()[0]
     # the yaw round-trips through a float32 quaternion, so this is not exact
     assert abs(cx - 0.0) < 1e-6, "offset leaked into x while facing +y"

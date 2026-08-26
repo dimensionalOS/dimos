@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
-from dimos.navigation.motion.embodiment.base import Embodiment
 from dimos.navigation.motion.embodiment.go2 import GO2, GO2_PAYLOAD
 from dimos.navigation.motion.embodiment.synthetic import DIFFDRIVE, SLIM
 from dimos.navigation.motion.obstacles import (
@@ -63,7 +64,7 @@ def test_a_tall_body_keeps_what_the_absolute_band_would_have_cut_off():
     # The latent bug the 2D search contract closes: a body taller than the old
     # 0.05..0.45 slice had its correctly-kept obstacles truncated by a SECOND
     # cut downstream. There is only one cut now, and it is this one.
-    tall = Embodiment(tag="tall", height=0.60)
+    tall = replace(GO2, tag="tall", height=0.60)
     cloud = np.array([[1.0, 0.0, 0.55], [1.0, 0.5, 0.61]], dtype=np.float32)
     out = hard_points(BodyBand(tall), cloud, 0.0)
     assert len(out) == 1 and out[0][2] == pytest.approx(0.55)

@@ -48,35 +48,37 @@ def angle_diff(a: float, b: float) -> float:
 class ControllerConfig(BaseConfig):
     """A law's tuning. Everything the plant dictates -- speeds, the governor's
     band, the yaw rate, slew, slip -- is the embodiment's and is read from it;
-    what is here is what a referee search over a fixed body may move.
+    what is here is what a referee search over a fixed body may move -- and so
+    nothing here has a default: a body brings the numbers searched on it
+    (`embodiment/go2.py::GO2_CONTROL`), or explicitly borrows another's.
     """
 
-    lookahead: float = 0.35  # carrot distance along the path (m)
-    k_pos: float = 2.0  # body-frame position error gain (1/s)
-    k_yaw: float = 2.0  # yaw error gain (1/s)
+    lookahead: float  # carrot distance along the path (m)
+    k_pos: float  # body-frame position error gain (1/s)
+    k_yaw: float  # yaw error gain (1/s)
     # yaw-per-meter above this is a commanded rotation (fan), not a curve --
     # matches the referee's fan detection threshold (sim.py _fan_marks)
-    fan_yaw_per_m: float = 3.0
+    fan_yaw_per_m: float
     # while a fan segment is being executed, hold position and rotate until
     # the yaw error drops under this (rad)
-    fan_yaw_done: float = 0.25
+    fan_yaw_done: float
     # the governor (the embodiment's curve, control/profile.py) is judged over
     # the next speed_lookahead metres of path
-    speed_lookahead: float = 2.0
+    speed_lookahead: float
     # Read by the hinted law only (laws/hinted.py).
     # Centred window the tangent feedforward reads the plan's direction over.
-    tangent_preview: float = 0.15
+    tangent_preview: float
     # The governor's pinch-escape leg: below escape_clearance of room (read over
     # escape_preview of arc, not the ramp's speed_lookahead) the lower anchor
     # rises toward escape_speed, because what kills in a gap is dwell.
-    escape_clearance: float = 0.10
-    escape_preview: float = 1.00
-    escape_speed: float = 0.75
+    escape_clearance: float
+    escape_preview: float
+    escape_speed: float
     # Brake-feasible preview: a previewed waypoint imposes only what it can,
     # given the body may decelerate on the way there. brake_accel 0 reproduces
     # the seed's flat minimum exactly.
-    brake_accel: float = 0.8
-    brake_margin: float = 0.15
+    brake_accel: float
+    brake_margin: float
 
     @property
     def hinted_params(self) -> tuple[float, float, float, float, float, float]:
