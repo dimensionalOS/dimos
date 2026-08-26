@@ -110,7 +110,7 @@ def _read_rows(path: Path) -> list[dict[str, Any]]:
 
 def test_editable_question_requires_valid_unique_choices() -> None:
     with pytest.raises(ValidationError, match="choices must be unique"):
-        EditableQuestion(id="q", question="Question?", choices=("yes", "yes"), answer="yes")
+        EditableQuestion(id="q", question="Question?", choices=("yes", "YES"), answer="yes")
     with pytest.raises(ValidationError, match="answer must be one of the choices"):
         EditableQuestion(id="q", question="Question?", choices=("yes", "no"), answer="maybe")
 

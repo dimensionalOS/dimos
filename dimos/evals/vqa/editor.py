@@ -52,7 +52,8 @@ from dimos.evals.vqa.pointcloud_frame import (
 
 if TYPE_CHECKING:
     from dimos.evals.vqa.author import QuestionAuthor
-    from dimos.evals.vqa.contracts import ObjectDetector, ObjectMaskEstimator, ObjectRangeEstimator
+    from dimos.evals.vqa.contracts import ObjectMaskEstimator, ObjectRangeEstimator
+    from dimos.models.vl.base import VlModel
     from dimos.msgs.sensor_msgs.Image import Image
 
 _FRAME_IMAGE = re.compile(r"^assets/frame-(\d{6})\.png$")
@@ -70,7 +71,7 @@ class EditableQuestion(BaseModel):
 
     @model_validator(mode="after")
     def valid_answer(self) -> EditableQuestion:
-        if len(set(self.choices)) != len(self.choices):
+        if len({choice.casefold() for choice in self.choices}) != len(self.choices):
             raise ValueError("choices must be unique")
         if self.answer not in self.choices:
             raise ValueError("answer must be one of the choices")
@@ -488,7 +489,7 @@ class VqaEditorSession:
 
     def _generation_models(
         self,
-    ) -> tuple[QuestionAuthor, ObjectDetector, ObjectRangeEstimator, ObjectMaskEstimator]:
+    ) -> tuple[QuestionAuthor, VlModel, ObjectRangeEstimator, ObjectMaskEstimator]:
         from dimos.evals.vqa.author import OpenAIQuestionAuthor
 
         if self._models is None:

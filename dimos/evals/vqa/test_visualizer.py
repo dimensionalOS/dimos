@@ -38,6 +38,12 @@ class FakeSession:
         self.started = True
         return self
 
+    def __enter__(self) -> FakeSession:
+        return self.start()
+
+    def __exit__(self, *_: Any) -> None:
+        self.stop()
+
     def stop(self) -> None:
         self.started = False
 
