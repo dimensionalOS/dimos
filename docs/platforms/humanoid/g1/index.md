@@ -32,8 +32,8 @@ WiFi passwords (varies by unit): `888888888` or `00000000`
 ### Network Interface Names
 
 Common interface names needed for SDK examples:
-- `eth0` / `enp2s0` — Ethernet
-- `wlan0` — WiFi
+- `eth0` / `enp2s0`: Ethernet
+- `wlan0`: WiFi
 
 Check with: `ip addr show`
 

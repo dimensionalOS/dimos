@@ -1,53 +1,25 @@
-import { afterEach, describe, expect, it } from "vitest";
-import {
-  type ChannelSpec,
-  ControlFrameReader,
-  decodeDatagram,
-  encodeControlFrame,
-  encodeDataFrame,
-  type Msg,
-  type PanelSpec,
-  PROTOCOL_VERSION,
-  type RobotInfo,
-} from "@dimos/shared";
-import type { Manifest } from "@dimos/shared/manifest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { type Msg, PROTOCOL_VERSION, type RobotInfo } from "@dimos/shared";
 import type { CostmapValue } from "./decoders/costmap.ts";
+import { teleopHooks } from "./internal/teleopMachine.ts";
 import {
-  channelSubscribable,
+  connect,
+  type ConnectOptions,
   manifestsEqual,
   pickAutoWatch,
-  type SessionHandle,
-  startSession,
-  subscribableChannels,
+  type Session,
 } from "./session.ts";
-import type { RelayInfo, WebTransportLike } from "./transport.ts";
-
-// Normalized specs on purpose: pushing them over the fake wire and parsing
-// them back yields the identical objects, so adoption asserts stay exact.
-function spec(over: Partial<ChannelSpec> = {}): ChannelSpec {
-  return {
-    ch: "odom",
-    dir: "rx",
-    encoding: "pose.json.v1",
-    delivery: "reliable",
-    maxHz: 20,
-    params: {},
-    ...over,
-  };
-}
-
-function panel(over: Partial<PanelSpec> & { id: string; kind: string }): PanelSpec {
-  return { title: "", channels: [], params: {}, ...over };
-}
-
-function manifest(
-  channels: ChannelSpec[],
-  panels: PanelSpec[] = [],
-  layout: Manifest["layout"] = null,
-  pages: string[] = [],
-): Manifest {
-  return { version: 1, channels, panels, layout, pages };
-}
+import {
+  FakeRelayEnd,
+  INFO,
+  manifest,
+  panel,
+  ROBOT_A,
+  ROBOT_B,
+  settle,
+  spec,
+  until,
+} from "./testing/fakeRelay.ts";
 
 describe("manifestsEqual", () => {
   it("ignores channel order", () => {
@@ -99,7 +71,8 @@ describe("manifestsEqual", () => {
 
   it("detects layout and pages changes (a layout-only edit must remount)", () => {
     const video = panel({ id: "cam", kind: "video", channels: ["odom"] });
-    const withLayout = (layout: Manifest["layout"]) => manifest([spec()], [video], layout);
+    const withLayout = (layout: Parameters<typeof manifest>[2]) =>
+      manifest([spec()], [video], layout);
     expect(manifestsEqual(withLayout("cam"), withLayout("cam"))).toBe(true);
     expect(manifestsEqual(withLayout({ row: ["cam"] }), withLayout({ row: ["cam"] }))).toBe(true);
     expect(manifestsEqual(withLayout({ row: ["cam"] }), withLayout({ col: ["cam"] }))).toBe(false);
@@ -129,166 +102,22 @@ describe("pickAutoWatch", () => {
   });
 });
 
-describe("subscribableChannels", () => {
-  const odom = spec();
-  const jpeg = spec({ ch: "color_image", encoding: "jpeg.v1", delivery: "latest" });
-  const costmap = spec({ ch: "global_costmap", encoding: "costmap.zlib.v1", delivery: "latest" });
-  const future = spec({ ch: "voxels", encoding: "voxels.bin.v9", delivery: "latest" });
-  const videoPanel = panel({ id: "cam", kind: "video", channels: ["color_image"] });
-  const mapPanel = panel({ id: "map", kind: "map2d", channels: ["global_costmap", "odom"] });
-
-  it("keeps only channels with a decoder (undecodable ones waste bandwidth)", () => {
-    expect(subscribableChannels([odom, jpeg, future], [videoPanel])).toEqual([odom, jpeg]);
-    expect(subscribableChannels([future], [])).toEqual([]);
-  });
-
-  it("never subscribes tx channels", () => {
-    expect(channelSubscribable(spec({ dir: "tx" }), [])).toBe(false);
-  });
-
-  it("gates panel-only encodings on a renderable panel binding them", () => {
-    expect(channelSubscribable(jpeg, [])).toBe(false);
-    expect(channelSubscribable(jpeg, [videoPanel])).toBe(true);
-    // A panel kind this build cannot render does not justify the bandwidth
-    // (and the UnknownPanel fallback must never leak into this gate).
-    expect(channelSubscribable(jpeg, [{ ...videoPanel, kind: "hologram" }])).toBe(false);
-    // Cheap JSON channels are subscribed with or without a panel.
-    expect(channelSubscribable(odom, [])).toBe(true);
-  });
-
-  it("gates the costmap encoding like jpeg (grids nobody renders stay unencoded)", () => {
-    expect(channelSubscribable(costmap, [])).toBe(false);
-    expect(channelSubscribable(costmap, [mapPanel])).toBe(true);
-    expect(channelSubscribable(costmap, [{ ...mapPanel, kind: "hologram" }])).toBe(false);
-  });
-});
-
 // ---------------------------------------------------------------------------
 // Integration tests: the real Session against a fake relay behind the
-// WebTransportLike seam. The fake is the relay end of one connection: it
-// collects viewer control messages and can push control messages and data
-// frames, so robot lifecycle transitions run over the actual wire encoding
-// while the relay and "viewer connection" stay up the whole time.
-
-const INFO: RelayInfo = {
-  wtUrl: "https://127.0.0.1:1/viewer",
-  certHash: "aGFzaA==",
-  v: PROTOCOL_VERSION,
-};
-
-const ROBOT_A: RobotInfo = { id: "a", name: "A", model: "go2" };
-const ROBOT_B: RobotInfo = { id: "b", name: "B", model: "go2" };
-
-class FakeRelayEnd {
-  readonly sent: Msg[] = [];
-  /** Decoded datagrams the viewer sent (the teleop twist path). */
-  readonly sentDatagrams: Msg[] = [];
-  /** Awaited per decoded viewer message: lets a test react at the exact
-   * moment a message is observed while holding the session's control writer
-   * (e.g. to land a data frame mid-sub-loop). */
-  onMsg: ((msg: Msg) => void | Promise<void>) | null = null;
-  readonly wt: WebTransportLike;
-  #control!: ReadableStreamDefaultController<Uint8Array>;
-  #uni!: ReadableStreamDefaultController<ReadableStream<Uint8Array>>;
-
-  constructor() {
-    const inbound = new ControlFrameReader();
-    const readable = new ReadableStream<Uint8Array>({
-      start: (c) => {
-        this.#control = c;
-      },
-    });
-    const writable = new WritableStream<Uint8Array>({
-      write: async (chunk) => {
-        for (const msg of inbound.push(chunk)) {
-          this.sent.push(msg);
-          await this.onMsg?.(msg);
-        }
-      },
-    });
-    let closeWt = () => {};
-    const closed = new Promise<unknown>((resolve) => {
-      closeWt = () => resolve({});
-    });
-    this.wt = {
-      ready: Promise.resolve(),
-      closed,
-      close: () => closeWt(),
-      createBidirectionalStream: () => Promise.resolve({ readable, writable }),
-      incomingUnidirectionalStreams: new ReadableStream<ReadableStream<Uint8Array>>({
-        start: (c) => {
-          this.#uni = c;
-        },
-      }),
-      datagrams: {
-        writable: new WritableStream<Uint8Array>({
-          write: (chunk) => {
-            const msg = decodeDatagram(chunk);
-            if (msg !== null) this.sentDatagrams.push(msg);
-          },
-        }),
-      },
-    };
-  }
-
-  push(msg: Msg): void {
-    this.#control.enqueue(encodeControlFrame(msg));
-  }
-
-  pushManifest(robotId: string, m: Manifest): void {
-    this.push({ t: "manifest", robotId, manifest: m as unknown as Record<string, unknown> });
-  }
-
-  /** One data frame on its own uni stream, JSON payload like the bridge's. */
-  pushFrame(seq: number, value: unknown, ch = "odom"): void {
-    this.pushRaw(seq, new TextEncoder().encode(JSON.stringify(value)), ch);
-  }
-
-  /** One data frame on its own uni stream, arbitrary payload bytes. */
-  pushRaw(seq: number, payload: Uint8Array, ch: string, meta?: Record<string, unknown>): void {
-    const frame = encodeDataFrame({ ch, seq, ts: seq, delivery: "reliable", meta }, payload);
-    this.#uni.enqueue(
-      new ReadableStream<Uint8Array>({
-        start: (c) => {
-          c.enqueue(frame);
-          c.close();
-        },
-      }),
-    );
-  }
-
-  watches(id: string): number {
-    return this.sent.filter((m) => m.t === "watch" && m.robotId === id).length;
-  }
-
-  subs(): string[] {
-    return this.sent.flatMap((m) => (m.t === "sub" ? [m.ch] : []));
-  }
-}
-
-async function until(cond: () => boolean, what = "condition"): Promise<void> {
-  const deadline = Date.now() + 2000;
-  while (!cond()) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
-    await new Promise((resolve) => setTimeout(resolve, 2));
-  }
-}
-
-/** Lets already-queued streams/messages drain before a negative assertion. */
-function settle(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 20));
-}
+// WebTransportLike seam (testing/fakeRelay.ts): robot lifecycle transitions
+// run over the actual wire encoding while the relay and "viewer connection"
+// stay up the whole time.
 
 describe("Session over a fake WebTransport", () => {
-  const handles: SessionHandle[] = [];
+  const handles: Session[] = [];
 
   afterEach(() => {
-    for (const handle of handles.splice(0)) handle.stop();
+    for (const handle of handles.splice(0)) handle.close();
   });
 
-  function start(): { relay: FakeRelayEnd; handle: SessionHandle } {
+  function start(options?: ConnectOptions): { relay: FakeRelayEnd; handle: Session } {
     const relay = new FakeRelayEnd();
-    const handle = startSession({
+    const handle = connect(options, {
       fetchInfo: () => Promise.resolve(INFO),
       createWebTransport: () => relay.wt,
     });
@@ -296,16 +125,31 @@ describe("Session over a fake WebTransport", () => {
     return { relay, handle };
   }
 
-  function adopted(handle: SessionHandle): ChannelSpec[] {
+  /** Like start(), but every (re)connection gets its own fresh relay end. */
+  function startReconnecting(): { relays: FakeRelayEnd[]; handle: Session } {
+    const relays: FakeRelayEnd[] = [];
+    const handle = connect(undefined, {
+      fetchInfo: () => Promise.resolve(INFO),
+      createWebTransport: () => {
+        const relay = new FakeRelayEnd();
+        relays.push(relay);
+        return relay.wt;
+      },
+    });
+    handles.push(handle);
+    return { relays, handle };
+  }
+
+  function adopted(handle: Session) {
     return handle.status.get().manifest?.channels ?? [];
   }
 
   async function goLive(
     relay: FakeRelayEnd,
-    handle: SessionHandle,
+    handle: Session,
     robot = ROBOT_A,
     channels = [spec()],
-    panels: PanelSpec[] = [],
+    panels: Parameters<typeof manifest>[1] = [],
   ): Promise<void> {
     relay.push({ t: "welcome", v: PROTOCOL_VERSION });
     relay.push({ t: "robots", robots: [robot] });
@@ -323,74 +167,249 @@ describe("Session over a fake WebTransport", () => {
     await until(() => handle.status.get().transport.phase === "connected", "connected");
   });
 
-  it("watches the sole robot and subs only decodable manifest channels", async () => {
+  it("watches the sole robot and sends no subs without consumers", async () => {
     const { relay, handle } = start();
     await goLive(relay, handle, ROBOT_A, [
       spec(),
       spec({ ch: "color_image", encoding: "jpeg.v1", delivery: "latest" }),
-      spec({ ch: "voxels", encoding: "voxels.bin.v9", delivery: "latest" }),
     ]);
     expect(relay.watches("a")).toBe(1);
-    // No panel binds color_image, so the jpeg channel stays unsubscribed too.
-    expect(relay.subs()).toEqual(["odom"]);
-    expect(handle.status.get().robot).toEqual(ROBOT_A);
+    await settle();
+    expect(relay.subs()).toEqual([]);
+    expect(handle.status.get().watchedRobot).toEqual(ROBOT_A);
+    expect(handle.status.get().robots).toEqual([ROBOT_A]);
   });
 
-  it("subs the jpeg channel when a video panel binds it", async () => {
+  it("connect({robot}) pins the watch among multiple robots", async () => {
+    const { relay, handle } = start({ robot: "b" });
+    relay.push({ t: "welcome", v: PROTOCOL_VERSION });
+    relay.push({ t: "robots", robots: [ROBOT_A, ROBOT_B] });
+    await until(() => relay.watches("b") === 1, "watch b");
+    expect(relay.watches("a")).toBe(0);
+    expect(handle.status.get().watchedRobot).toEqual(ROBOT_B);
+  });
+
+  it("sends one sub for the first consumer and one unsub after the last", async () => {
     const { relay, handle } = start();
-    await goLive(
-      relay,
-      handle,
-      ROBOT_A,
-      [spec(), spec({ ch: "color_image", encoding: "jpeg.v1", delivery: "latest" })],
-      [panel({ id: "cam", kind: "video", channels: ["color_image"] })],
-    );
-    expect(relay.subs()).toEqual(["odom", "color_image"]);
+    await goLive(relay, handle);
+    const first = handle.subscribe("odom", () => {});
+    const second = handle.subscribe("odom", () => {});
+    await until(() => relay.subs().length === 1, "sub");
+    expect(relay.subs()).toEqual(["odom"]);
+
+    first();
+    await settle();
+    expect(relay.unsubs()).toEqual([]);
+
+    second();
+    await until(() => relay.unsubs().length === 1, "unsub");
+    expect(relay.unsubs()).toEqual(["odom"]);
+    expect(relay.subs()).toEqual(["odom"]);
+
+    second(); // releasing twice is a no-op
+    await settle();
+    expect(relay.unsubs()).toEqual(["odom"]);
   });
 
-  it("keeps the jpeg channel unsubscribed under an unrenderable panel kind", async () => {
+  it("stays silent when a subscription is released before any manifest", async () => {
     const { relay, handle } = start();
-    await goLive(
-      relay,
-      handle,
-      ROBOT_A,
-      [spec(), spec({ ch: "color_image", encoding: "jpeg.v1", delivery: "latest" })],
-      [panel({ id: "holo", kind: "hologram", channels: ["color_image"] })],
-    );
+    relay.push({ t: "welcome", v: PROTOCOL_VERSION });
+    relay.push({ t: "robots", robots: [ROBOT_A] });
+    await until(() => relay.watches("a") === 1, "watch");
+
+    const unsubscribe = handle.subscribe("odom", () => {});
+    unsubscribe();
+    relay.pushManifest("a", manifest([spec()]));
+    await until(() => adopted(handle).length === 1, "manifest");
+    await settle();
+    expect(relay.subs()).toEqual([]);
+    expect(relay.unsubs()).toEqual([]);
+  });
+
+  it("replays desired subscriptions after a reconnect", async () => {
+    const { relays, handle } = startReconnecting();
+    await until(() => relays.length === 1, "first connection");
+    await goLive(relays[0], handle);
+    handle.subscribe("odom", () => {});
+    await until(() => relays[0].subs().length === 1, "sub on first connection");
+
+    relays[0].wt.close();
+    await until(() => relays.length === 2, "second connection");
+    const relay = relays[1];
+    relay.push({ t: "welcome", v: PROTOCOL_VERSION });
+    relay.push({ t: "robots", robots: [ROBOT_A] });
+    await until(() => relay.watches("a") === 1, "rewatch");
+    relay.pushManifest("a", manifest([spec()]));
+    await until(() => relay.subs().length === 1, "sub replayed");
     expect(relay.subs()).toEqual(["odom"]);
   });
 
-  it("never subs a tx channel", async () => {
+  it("switches robots on manual watch and re-subs after the new adoption", async () => {
+    const { relay, handle } = start();
+    relay.push({ t: "welcome", v: PROTOCOL_VERSION });
+    relay.push({ t: "robots", robots: [ROBOT_A, ROBOT_B] });
+    await until(() => handle.status.get().robots.length === 2, "robots");
+    expect(handle.status.get().watchedRobot).toBeNull(); // ambiguous: no auto watch
+
+    const adoptionA = handle.watch("a");
+    await until(() => relay.watches("a") === 1, "watch a");
+    relay.pushManifest("a", manifest([spec()]));
+    expect(await adoptionA).toEqual(manifest([spec()]));
+
+    handle.subscribe("odom", () => {});
+    await until(() => relay.subs().length === 1, "sub under a");
+
+    const adoptionB = handle.watch("b");
+    await until(() => relay.watches("b") === 1, "watch b");
+    // Switching drops the old producer locally; no unsub is sent because the
+    // relay clears this viewer's subscriptions on the watch switch itself.
+    expect(handle.status.get().manifest).toBeNull();
+    expect(relay.unsubs()).toEqual([]);
+
+    relay.pushManifest("b", manifest([spec()]));
+    expect(await adoptionB).toEqual(manifest([spec()]));
+    await until(() => relay.subs().length === 2, "re-sub under b");
+    expect(relay.subs()).toEqual(["odom", "odom"]);
+  });
+
+  it("supersedes a pending watch with a newer one", async () => {
+    const { relay, handle } = start();
+    relay.push({ t: "welcome", v: PROTOCOL_VERSION });
+    relay.push({ t: "robots", robots: [ROBOT_A, ROBOT_B] });
+    await until(() => handle.status.get().robots.length === 2, "robots");
+
+    const first = handle.watch("a");
+    const second = handle.watch("b");
+    await expect(first).rejects.toMatchObject({
+      name: "WatchRejectedError",
+      reason: "superseded",
+    });
+    await until(() => relay.watches("b") === 1, "watch b");
+    relay.pushManifest("b", manifest([]));
+    expect(await second).toEqual(manifest([]));
+  });
+
+  it("rejects a pending watch on close", async () => {
+    const { handle } = start();
+    const pending = handle.watch("a");
+    handle.close();
+    await expect(pending).rejects.toMatchObject({ reason: "closed" });
+  });
+
+  it("flags a desired channel missing from the manifest and subs it later", async () => {
+    const { relay, handle } = start();
+    await goLive(relay, handle); // manifest carries only odom
+    handle.subscribe("gps", () => {});
+    await until(() => handle.status.get().lastError !== null, "unknown_channel");
+    expect(handle.status.get().lastError).toEqual({
+      code: "unknown_channel",
+      ch: "gps",
+      message: "channel gps is not an rx channel of the adopted manifest",
+    });
+    await settle();
+    expect(relay.subs()).toEqual([]);
+
+    // A later manifest carrying the channel satisfies the desire and clears
+    // the error.
+    relay.pushManifest("a", manifest([spec(), spec({ ch: "gps" })]));
+    await until(() => relay.subs().includes("gps"), "gps subbed");
+    expect(relay.subs()).toEqual(["gps"]);
+    expect(handle.status.get().lastError).toBeNull();
+  });
+
+  it("revalidates wired subscriptions against every new manifest", async () => {
+    const { relay, handle } = start();
+    await goLive(relay, handle); // manifest carries odom
+    handle.subscribe("odom", () => {});
+    await until(() => relay.subs().length === 1, "sub");
+
+    // The channel leaves the manifest: the wire interest is dropped
+    // relay-side while the desire stays and surfaces as unknown_channel.
+    relay.pushManifest("a", manifest([spec({ ch: "status" })]));
+    await until(() => relay.unsubs().length === 1, "unsub");
+    expect(relay.unsubs()).toEqual(["odom"]);
+    expect(handle.status.get().lastError?.code).toBe("unknown_channel");
+
+    // It returns: the desired set re-subscribes and the error clears.
+    relay.pushManifest("a", manifest([spec()]));
+    await until(() => relay.subs().length === 2, "re-sub");
+    expect(relay.subs()).toEqual(["odom", "odom"]);
+    expect(handle.status.get().lastError).toBeNull();
+  });
+
+  it("flags a tx channel as unsubscribable instead of subbing it", async () => {
     const { relay, handle } = start();
     await goLive(relay, handle, ROBOT_A, [
       spec(),
       spec({ ch: "tele_cmd_vel", dir: "tx", encoding: "twist.json.v1", delivery: "latest" }),
     ]);
-    expect(relay.subs()).toEqual(["odom"]);
+    handle.subscribe("tele_cmd_vel", () => {});
+    await until(() => handle.status.get().lastError?.code === "unknown_channel", "error");
+    await settle();
+    expect(relay.subs()).toEqual([]);
   });
 
-  it("subs the costmap channel when a map2d panel binds it", async () => {
-    const { relay, handle } = start();
-    await goLive(
-      relay,
-      handle,
-      ROBOT_A,
-      [spec(), spec({ ch: "global_costmap", encoding: "costmap.zlib.v1", delivery: "latest" })],
-      [panel({ id: "map", kind: "map2d", channels: ["global_costmap", "odom"] })],
-    );
-    expect(relay.subs()).toEqual(["odom", "global_costmap"]);
+  it("keeps notifying other subscribers when one callback throws", async () => {
+    const { relay, handle } = start({ uiTickMs: 3_600_000 });
+    await goLive(relay, handle);
+    const seen: number[] = [];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      handle.subscribe("odom", () => {
+        throw new Error("boom");
+      });
+      handle.subscribe("odom", (snapshot) => {
+        if (snapshot.slot !== null) seen.push(snapshot.slot.seq);
+      });
+      relay.pushFrame(1, { x: 1 });
+      await until(() => handle.store.get("odom")?.seq === 1, "frame");
+      handle.store.publishUi();
+      expect(seen).toEqual([1]);
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
-  it("keeps the costmap channel unsubscribed under an unrenderable panel kind", async () => {
+  it("keeps a reliable stream alive when a direct store subscriber throws", async () => {
     const { relay, handle } = start();
-    await goLive(
-      relay,
-      handle,
-      ROBOT_A,
-      [spec(), spec({ ch: "global_costmap", encoding: "costmap.zlib.v1", delivery: "latest" })],
-      [panel({ id: "holo", kind: "hologram", channels: ["global_costmap"] })],
+    await goLive(relay, handle);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      handle.store.subscribe("odom", () => {
+        throw new Error("boom");
+      });
+      // Both frames ride one uni stream, like a reliable channel's
+      // persistent stream: the throw on the first frame must not abandon
+      // the stream reader before the second.
+      relay.pushFrames([{ seq: 1, value: { x: 1 } }, { seq: 2, value: { x: 2 } }]);
+      await until(() => handle.store.get("odom")?.seq === 2, "both frames ingested");
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("connect({url}) fetches the absolute /api/info", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string | URL | Request) => {
+        urls.push(String(input));
+        return Promise.resolve(new Response(JSON.stringify(INFO)));
+      }),
     );
-    expect(relay.subs()).toEqual(["odom"]);
+    try {
+      const relay = new FakeRelayEnd();
+      const handle = connect({ url: "https://relay.example:7780" }, {
+        createWebTransport: () => relay.wt,
+      });
+      handles.push(handle);
+      await until(() => urls.length === 1, "info fetch");
+      expect(urls[0]).toBe("https://relay.example:7780/api/info");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("stores a costmap frame that arrives while subs are still being sent", async () => {
@@ -398,11 +417,13 @@ describe("Session over a fake WebTransport", () => {
     // can beat the control loop's continuation. The hook injects it
     // synchronously at the sub and then holds the control writer for one
     // macrotask, letting the whole uni-stream ingest chain drain first: with
-    // adoption after the sub loop, #ingest would drop it as manifest-less.
+    // adoption after the sub reconcile, #ingest would drop it as
+    // manifest-less.
     const { relay, handle } = start();
     relay.push({ t: "welcome", v: PROTOCOL_VERSION });
     relay.push({ t: "robots", robots: [ROBOT_A] });
     await until(() => relay.watches("a") === 1, "watch");
+    handle.subscribe("global_costmap", () => {}); // desired before any manifest
 
     relay.onMsg = (msg) => {
       if (msg.t !== "sub" || msg.ch !== "global_costmap") return;
@@ -416,38 +437,31 @@ describe("Session over a fake WebTransport", () => {
     };
     relay.pushManifest(
       "a",
-      manifest(
-        [
-          spec(),
-          spec({ ch: "global_costmap", encoding: "costmap.zlib.v1", delivery: "latest" }),
-        ],
-        [panel({ id: "map", kind: "map2d", channels: ["global_costmap", "odom"] })],
-      ),
+      manifest([
+        spec(),
+        spec({ ch: "global_costmap", encoding: "costmap.zlib.v1", delivery: "latest" }),
+      ]),
     );
 
-    await until(() => handle.channels.get("global_costmap") !== null, "stored costmap");
-    const slot = handle.channels.get("global_costmap")!;
+    await until(() => handle.store.get("global_costmap") !== null, "stored costmap");
+    const slot = handle.store.get("global_costmap")!;
     expect((slot.value as CostmapValue).w).toBe(2);
     expect(slot.seq).toBe(1);
   });
 
   it("counts a corrupt jpeg frame as a decode error instead of storing it", async () => {
     const { relay, handle } = start();
-    await goLive(
-      relay,
-      handle,
-      ROBOT_A,
-      [spec({ ch: "color_image", encoding: "jpeg.v1", delivery: "latest" })],
-      [panel({ id: "cam", kind: "video", channels: ["color_image"] })],
-    );
+    await goLive(relay, handle, ROBOT_A, [
+      spec({ ch: "color_image", encoding: "jpeg.v1", delivery: "latest" }),
+    ]);
     // Garbage bytes with no JPEG SOI: the decoder must throw at ingest.
     relay.pushRaw(1, new Uint8Array([1, 2, 3, 4, 5, 6]), "color_image");
     await until(() => {
-      handle.channels.publishUi();
-      return handle.channels.getUiSnapshot("color_image").stats.frames === 1;
+      handle.store.publishUi();
+      return handle.store.getUiSnapshot("color_image").stats.frames === 1;
     }, "corrupt frame counted");
-    expect(handle.channels.get("color_image")).toBeNull(); // never stored
-    const { stats } = handle.channels.getUiSnapshot("color_image");
+    expect(handle.store.get("color_image")).toBeNull(); // never stored
+    const { stats } = handle.store.getUiSnapshot("color_image");
     expect(stats.decodeErrors).toBe(1);
     expect(stats.decodeFailing).toBe(true);
   });
@@ -462,7 +476,11 @@ describe("Session over a fake WebTransport", () => {
     // unknown_robot and pushed an empty robots list.
     relay.push({ t: "robots", robots: [] });
     relay.push({ t: "error", code: "unknown_robot", message: "no robot a" });
-    await until(() => handle.status.get().lastError === "unknown_robot: no robot a", "error");
+    await until(
+      () => handle.status.get().lastError?.message === "unknown_robot: no robot a",
+      "error",
+    );
+    expect(handle.status.get().lastError?.code).toBe("relay_error");
 
     // The same id coming back must trigger a fresh watch, and its manifest
     // clears the stale error.
@@ -504,7 +522,7 @@ describe("Session over a fake WebTransport", () => {
     const { relay, handle } = start();
     await goLive(relay, handle);
     relay.pushFrame(7, { x: 7 });
-    await until(() => handle.channels.get("odom")?.seq === 7, "value");
+    await until(() => handle.store.get("odom")?.seq === 7, "value");
 
     // The robot restarted with a manifest this build cannot parse: stale
     // panels/data drop and the polite flag replaces the raw error.
@@ -516,7 +534,7 @@ describe("Session over a fake WebTransport", () => {
     await until(() => handle.status.get().manifestUnsupported, "unsupported flag");
     expect(handle.status.get().manifest).toBeNull();
     expect(handle.status.get().lastError).toBeNull();
-    expect(handle.channels.get("odom")).toBeNull();
+    expect(handle.store.get("odom")).toBeNull();
     expect(handle.status.get().epoch).toBe(1);
 
     // A downgrade back to v1 recovers without a reload.
@@ -536,7 +554,8 @@ describe("Session over a fake WebTransport", () => {
       manifest: { version: 1, channels: [spec(), spec()] },
     });
     await until(() => handle.status.get().lastError !== null, "error");
-    expect(handle.status.get().lastError).toContain("duplicate_channel_id");
+    expect(handle.status.get().lastError?.code).toBe("invalid_manifest");
+    expect(handle.status.get().lastError?.message).toContain("duplicate_channel_id");
     expect(handle.status.get().manifestUnsupported).toBe(false);
   });
 
@@ -544,19 +563,19 @@ describe("Session over a fake WebTransport", () => {
     const { relay, handle } = start();
     await goLive(relay, handle);
     relay.pushFrame(500, { x: 500 });
-    await until(() => handle.channels.get("odom")?.seq === 500, "first frame");
+    await until(() => handle.store.get("odom")?.seq === 500, "first frame");
 
     // Robot gone: manifest, values, and the watch confirmation are dropped.
     relay.push({ t: "robots", robots: [] });
     await until(() => handle.status.get().manifest === null, "cleared manifest");
-    expect(handle.status.get().robotCount).toBe(0);
+    expect(handle.status.get().robots).toEqual([]);
     expect(handle.status.get().epoch).toBe(1);
-    expect(handle.channels.get("odom")).toBeNull();
+    expect(handle.store.get("odom")).toBeNull();
 
     // A frame still draining out of the dead robot's relay queue is ignored.
     relay.pushFrame(501, { x: 501 });
     await settle();
-    expect(handle.channels.get("odom")).toBeNull();
+    expect(handle.store.get("odom")).toBeNull();
 
     // Same id returns: the watch must be re-sent even though the id never
     // changed, and the manifest re-adopted.
@@ -568,17 +587,17 @@ describe("Session over a fake WebTransport", () => {
     // A late high-seq frame from the dead producer must not lock out the
     // new producer's restarted counter.
     relay.pushFrame(502, { x: 502 });
-    await until(() => handle.channels.get("odom")?.seq === 502, "late old frame");
+    await until(() => handle.store.get("odom")?.seq === 502, "late old frame");
     relay.pushFrame(1, { x: 1 });
-    await until(() => handle.channels.get("odom")?.seq === 1, "restarted seq");
-    expect(handle.channels.get("odom")?.value).toEqual({ x: 1 });
+    await until(() => handle.store.get("odom")?.seq === 1, "restarted seq");
+    expect(handle.store.get("odom")?.value).toEqual({ x: 1 });
   });
 
   it("does not carry values into a replacement robot with an identical manifest", async () => {
     const { relay, handle } = start();
     await goLive(relay, handle);
     relay.pushFrame(900, { x: 900 });
-    await until(() => handle.channels.get("odom")?.seq === 900, "value from A");
+    await until(() => handle.store.get("odom")?.seq === 900, "value from A");
 
     relay.push({ t: "robots", robots: [] });
     await until(() => handle.status.get().manifest === null, "cleared");
@@ -589,24 +608,24 @@ describe("Session over a fake WebTransport", () => {
     await until(() => adopted(handle).length === 1, "manifest B");
 
     // Identical manifest, different robot: A's value must not show under B.
-    expect(handle.channels.get("odom")).toBeNull();
-    expect(handle.status.get().robot).toEqual(ROBOT_B);
+    expect(handle.store.get("odom")).toBeNull();
+    expect(handle.status.get().watchedRobot).toEqual(ROBOT_B);
     relay.pushFrame(1, { x: 1 });
-    await until(() => handle.channels.get("odom")?.seq === 1, "value from B");
-    expect(handle.channels.get("odom")?.value).toEqual({ x: 1 });
+    await until(() => handle.store.get("odom")?.seq === 1, "value from B");
+    expect(handle.store.get("odom")?.value).toEqual({ x: 1 });
   });
 
   it("drops data and remounts when the watched robot's manifest changes", async () => {
     const { relay, handle } = start();
     await goLive(relay, handle);
     relay.pushFrame(900, { x: 900 });
-    await until(() => handle.channels.get("odom")?.seq === 900, "value");
+    await until(() => handle.store.get("odom")?.seq === 900, "value");
 
     const changed = spec({ ch: "status" });
     relay.pushManifest("a", manifest([changed]));
     await until(() => adopted(handle)[0]?.ch === "status", "new manifest");
     expect(handle.status.get().epoch).toBe(1);
-    expect(handle.channels.get("odom")).toBeNull();
+    expect(handle.store.get("odom")).toBeNull();
   });
 
   it("drops data and remounts when only the layout changes", async () => {
@@ -625,14 +644,14 @@ describe("Session over a fake WebTransport", () => {
     const { relay, handle } = start();
     await goLive(relay, handle);
     relay.pushFrame(900, { x: 900 });
-    await until(() => handle.channels.get("odom")?.seq === 900, "value from A");
+    await until(() => handle.store.get("odom")?.seq === 900, "value from A");
 
     // A second robot appears: auto-watch is ambiguous, everything clears.
     relay.push({ t: "robots", robots: [ROBOT_A, ROBOT_B] });
-    await until(() => handle.status.get().robotCount === 2, "two robots");
-    expect(handle.status.get().robot).toBeNull();
+    await until(() => handle.status.get().robots.length === 2, "two robots");
+    expect(handle.status.get().watchedRobot).toBeNull();
     expect(handle.status.get().manifest).toBeNull();
-    expect(handle.channels.get("odom")).toBeNull();
+    expect(handle.store.get("odom")).toBeNull();
 
     // A manifest reply that raced the second registration is not adopted.
     relay.pushManifest("a", manifest([spec()]));
@@ -649,10 +668,11 @@ describe("Session over a fake WebTransport", () => {
   it("teleop control rides the control stream and twists ride datagrams", async () => {
     const { relay, handle } = start();
     await goLive(relay, handle);
-    handle.teleop.control({ t: "teleop_start" });
+    const teleop = teleopHooks(handle);
+    teleop.control({ t: "teleop_start" });
     await until(() => relay.sent.some((m) => m.t === "teleop_start"), "teleop_start");
     const twist: Msg = { t: "twist", vx: 0.5, vy: 0.25, wz: -0.25, seq: 1, ts: 1.5 };
-    handle.teleop.datagram(twist);
+    teleop.datagram(twist);
     await until(() => relay.sentDatagrams.length === 1, "twist datagram");
     expect(relay.sentDatagrams[0]).toEqual(twist);
     expect(relay.sent.some((m) => m.t === "twist")).toBe(false); // not on the stream
@@ -662,7 +682,7 @@ describe("Session over a fake WebTransport", () => {
     const { relay, handle } = start();
     await goLive(relay, handle);
     const received: Msg[] = [];
-    const unsubscribe = handle.teleop.onMsg((msg) => received.push(msg));
+    const unsubscribe = teleopHooks(handle).onMsg((msg) => received.push(msg));
     relay.push({ t: "teleop_started" });
     await until(() => received.length === 1, "teleop_started routed");
     relay.push({ t: "error", code: "teleop_held", message: "held by viewer 1" });
@@ -680,6 +700,6 @@ describe("Session over a fake WebTransport", () => {
     await goLive(relay, handle);
     relay.push({ t: "error", code: "unknown_channel", message: "no channel x" });
     await until(() => handle.status.get().lastError !== null, "lastError");
-    expect(handle.status.get().lastError).toContain("unknown_channel");
+    expect(handle.status.get().lastError?.message).toContain("unknown_channel");
   });
 });
