@@ -30,6 +30,7 @@ REQUIRED = (
     "web/cockpit/dist/index.html",
     "web/deno.lock",
     "web/relay/main.ts",
+    "web/sdk/deno.json",
 )
 
 

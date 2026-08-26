@@ -2,7 +2,7 @@
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": ["vite/client", "node"],
+    "types": ["node"],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "moduleDetection": "force",
@@ -20,12 +20,11 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@dimos/sdk": ["../sdk/src/index.ts"],
-      "@dimos/sdk/react": ["../sdk/src/react.ts"],
-      "@dimos/sdk/internal/teleop": ["../sdk/src/internal/teleopMachine.ts"],
+      "@dimos/sdk": ["./src/index.ts"],
+      "@dimos/sdk/react": ["./src/react.ts"],
       "@dimos/shared": ["../shared/protocol.ts"],
       "@dimos/shared/manifest": ["../shared/manifest.ts"]
     }
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "fixture", "vitest.config.ts"]
 }
