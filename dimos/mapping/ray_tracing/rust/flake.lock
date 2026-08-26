@@ -1,21 +1,5 @@
 {
   "nodes": {
-    "dimos-repo": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1787337638,
-        "narHash": "sha256-H2OHbkZTAR72w9r1yaWh6MhqQlqa2O7oCBfHp7aZFO4=",
-        "ref": "refs/heads/andrew/feat/navigation-with-transforms",
-        "rev": "4664aa9d6b6aed06986b5308fce19254effe0f47",
-        "revCount": 1096,
-        "type": "git",
-        "url": "file:../../../.."
-      },
-      "original": {
-        "type": "git",
-        "url": "file:../../../.."
-      }
-    },
     "flake-utils": {
       "inputs": {
         "systems": "systems"
@@ -52,7 +36,6 @@
     },
     "root": {
       "inputs": {
-        "dimos-repo": "dimos-repo",
         "flake-utils": "flake-utils",
         "nixpkgs": "nixpkgs"
       }

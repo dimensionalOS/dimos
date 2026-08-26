@@ -144,7 +144,7 @@ def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, An
         "visual_override": {
             "world/camera_info": _camera_info_to_pinhole,
             "world/pointlio_map": _render_map,
-            "world/lidar": None,
+            "world/lidar": _render_map,
             "world/local_map": _render_map,
             "world/global_map": _render_map,
             "world/path": _render_path,
@@ -189,7 +189,7 @@ _mls_planner = MLSPlannerNative.blueprint(
 # wins over basic's.
 _raytraced_vis = vis_module(
     viewer_backend=global_config.viewer,
-    rerun_config=_rerun_config({"world/pointlio_map": None, "world/lidar": None}),
+    rerun_config=_rerun_config({"world/pointlio_map": None}),
 )
 
 ray_tracing_config = RayTracingVoxelMapConfig(

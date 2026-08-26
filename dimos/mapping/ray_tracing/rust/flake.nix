@@ -34,7 +34,7 @@
           cargoRoot = "dimos/mapping/ray_tracing/rust";
           buildAndTestSubdir = "dimos/mapping/ray_tracing/rust";
 
-          cargoHash = "sha256-dHh6GjpdZ+/aaurgaZKoxEc8IVqd5ZkzeXc3jfVcmH8=";
+          cargoHash = "sha256-ZZi/zOD4iWkJKTmUA+aU7qkP2CRrY+q9eb8oBJXheOk=";
 
           meta.mainProgram = "voxel_ray_tracing";
         };
