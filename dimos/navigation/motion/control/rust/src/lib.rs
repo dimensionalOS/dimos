@@ -16,11 +16,11 @@
 //! with no python in the tick.
 //!
 //! LAYOUT. `geom` and `stamps` are shared facilities; `laws/` holds one
-//! module per law and each track names one through `control/tracks.py`. A
-//! research generation lands by replacing its track's law module -- never by
-//! editing `laws/seed.rs`, which is the permanent A/B baseline, and never by
-//! changing the meaning of an existing `geom` function, which would move
-//! another track's baseline as a side effect.
+//! module per law: `hinted`, which the follower runs, and `seed`, the
+//! permanent A/B baseline. A research generation lands by replacing
+//! `laws/hinted.rs` -- never by editing `laws/seed.rs`, and never by changing
+//! the meaning of an existing `geom` function, which would move the baseline
+//! as a side effect.
 //!
 //! RULES. Every law is a PORT, not a redesign -- its `control/laws/*.py` twin
 //! is the specification and `control/test_rust_parity.py` holds the two to
@@ -28,13 +28,12 @@
 //! side first. Single-threaded and deterministic; dependencies stay at
 //! pyo3/numpy.
 //!
-//! STATE. A law may keep some, and `laws/hinted.rs` does -- one tick of its
-//! own previous command, so it can ramp its output at the plant's slew. Such a
-//! law is a `#[pyclass]` rather than a free function, `reset()` must make a
-//! used instance indistinguishable from a fresh one, and its parity is
-//! replayed as a SEQUENCE (a single call would only ever prove tick one).
-//! Determinism is unchanged by this: no wall clock, no unseeded randomness,
-//! and the tick time arrives as an argument.
+//! STATE. Neither law keeps any. One that does would be a `#[pyclass]`
+//! rather than a free function, `reset()` would have to make a used instance
+//! indistinguishable from a fresh one, and its parity would be replayed as a
+//! SEQUENCE (a single call would only ever prove tick one). Determinism holds
+//! either way: no wall clock, no unseeded randomness, and the tick time
+//! arrives as an argument.
 //!
 //! NUMERICS. Parity is per-operation, not per-formula: `geom.rs` keeps the
 //! python's operation ORDER and its exact tie-breaks (`argmin` takes the

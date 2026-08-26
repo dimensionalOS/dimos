@@ -12,22 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The hinted track's law: clear the plant's dead zone, brake late, ramp itself.
+"""The follower's law: follow the path the gait can actually walk.
 
-Four mechanisms over :mod:`~...laws.seed`:
+Three mechanisms over :mod:`~...laws.seed`, in order of worth:
 
-1. WALK-THRESHOLD ENVELOPE (the embodiment's ``gait_band``). ``min_speed`` 0.2 sits inside the
-   walking policy's dead zone, so the governor's creep was a stand-still.
-2. TANGENT FEEDFORWARD + FOOT CORRECTION replacing the aim-at-the-carrot term,
-   whose chord cut corners toward the obstacle the plan curved around.
-3. BRAKE-FEASIBLE PREVIEW: a previewed waypoint imposes only what it can, given
-   the body may brake on the way there.
-4. SELF-RATE-LIMITED COMMAND: the law ramps its own output at the plant's slew,
-   so the request it signs its name to is the one the robot executes. This is
-   the only law here that keeps state, and ``reset()`` clears it.
+1. :func:`walk_command`, the gait slip inverse. The twist is a REQUEST to a
+   learned policy that under-delivers it, and the governor's creep rung sits
+   inside the gait's dead-stall band, so asking for it stops the robot dead.
+2. Constant time headway: the carrot distance scales with commanded speed
+   instead of staying fixed, shrinking the pursuit chord where the plan is
+   tight — and the chord always falls toward the obstacle the planner curved
+   around.
+3. The stamped precision profile as the governor's input: the follower holds
+   no map of its own, so the room the planner priced arrives in the path's
+   own timestamps (:mod:`~...control.profile`).
 
-Blind cancels the same dead zone with an actuator inverse instead of by moving
-the envelope.
+(1) and (2) are held here rather than shared with :mod:`~...laws.seed`, which
+is the frozen baseline.
 """
 
 from __future__ import annotations
@@ -48,15 +49,9 @@ from dimos.navigation.motion.control.controller import (
     load_extension,
     path_xy_yaw,
 )
+from dimos.navigation.motion.control.profile import decode_ceilings
 from dimos.navigation.motion.embodiment.base import Embodiment
 from dimos.navigation.motion.embodiment.go2 import GO2
-
-# Tick period assumed when there is no previous tick to difference against, and
-# the cap on the period the limiter will integrate over: a longer gap means the
-# caller stalled, and banking that time hands back the unbounded step the
-# limiter exists to prevent.
-NOMINAL_TICK = 0.02
-MAX_TICK = 0.10
 
 
 def make(emb: Embodiment = GO2) -> HintedController:
@@ -67,324 +62,214 @@ def make_rust(emb: Embodiment = GO2) -> RustHintedController:
     return RustHintedController(emb)
 
 
-def _project_onto(
-    xy: NDArray[np.float64], arcs: NDArray[np.float64], px: float, py: float
-) -> tuple[NDArray[np.float64], float]:
-    """Foot of the perpendicular onto the polyline, and its arc length.
+def walk_command(want: float, gain: float, slip: float, ramp: float) -> float:
+    """The command that asks the gait for a ground speed of ``want`` m/s.
 
-    Where on the LINE the body is, rather than which waypoint it is nearest:
-    cross-track error proper, which the seed never computed.
+    The twist is a request to a learning walking policy that under-delivers:
+    ground speed ~= ``gain * cmd - slip`` above the stall band, nothing at all
+    below it (the embodiment's ``walk_*``, measured open loop). This inverts
+    that affine map so the intended ground speed stays exactly the one the
+    governor chose — an actuator inverse, not a flat offset, which would
+    overshoot at cruise. Identity at ``want = 0``, the full inverse once
+    ``want >= ramp``, since a stop request has to remain a stop.
     """
-    best, foot, s_star = math.inf, xy[0], 0.0
-    for m in range(len(xy) - 1):
-        ax, ay = float(xy[m][0]), float(xy[m][1])
-        dx, dy = float(xy[m + 1][0]) - ax, float(xy[m + 1][1]) - ay
-        dd = dx * dx + dy * dy
-        u = min(max(((px - ax) * dx + (py - ay) * dy) / dd, 0.0), 1.0) if dd > 1e-12 else 0.0
-        qx, qy = ax + u * dx, ay + u * dy
-        d = float(np.hypot(px - qx, py - qy))
-        # strict `<` keeps the FIRST minimum, the same tie-break the seed's
-        # argmin has -- a plan that doubles back must not snap forward
-        if d < best:
-            best = d
-            foot = np.array([qx, qy])
-            s_star = float(arcs[m]) + u * (float(arcs[m + 1]) - float(arcs[m]))
-    return foot, s_star
-
-
-def _point_at(xy: NDArray[np.float64], arcs: NDArray[np.float64], s: float) -> NDArray[np.float64]:
-    """Point on the polyline at arc ``s``, clamped to its ends."""
-    n = len(xy)
-    if s <= 0.0:
-        return np.asarray(xy[0])
-    if s >= float(arcs[n - 1]):
-        return np.asarray(xy[n - 1])
-    k = min(max(int(np.searchsorted(arcs, s)), 1), n - 1)
-    a0, a1 = float(arcs[k - 1]), float(arcs[k])
-    u = (s - a0) / (a1 - a0) if a1 > a0 else 0.0
-    return np.asarray(xy[k - 1] + u * (xy[k] - xy[k - 1]))
-
-
-def _tangent_at(
-    xy: NDArray[np.float64], arcs: NDArray[np.float64], s: float, preview: float
-) -> tuple[float, float]:
-    """Unit direction of travel at ``s``: a chord across a CENTRED window.
-
-    Centred, not forward-looking, and that is the whole design of it. A forward
-    chord from ``s`` to ``s + preview`` is rotated toward the inside of a curve
-    by ``preview / (2R)``, so the feedforward would push the body inward until
-    the correction balanced it — reintroducing the seed's chord bug at small
-    scale. A centred chord is the average tangent over the window, which on
-    constant curvature is the tangent at ``s`` exactly: the bias is zero and
-    only the anticipation survives.
-    """
-    total = float(arcs[len(xy) - 1])
-    # widen if the window is degenerate (a plan made of fans has no arc to
-    # difference across); the last resort is the whole plan's own direction
-    for h in (preview * 0.5, preview * 1.5, total):
-        a = _point_at(xy, arcs, max(s - h, 0.0))
-        b = _point_at(xy, arcs, min(s + h, total))
-        dx, dy = float(b[0]) - float(a[0]), float(b[1]) - float(a[1])
-        length = float(np.hypot(dx, dy))
-        if length > 1e-9:
-            return dx / length, dy / length
-    return 0.0, 0.0
-
-
-def update(
-    pose: PoseStamped, path: Path, emb: Embodiment, clearance: NDArray[np.float64] | None = None
-) -> tuple[float, float, float]:
-    """The pure law, before the rate limiter.
-
-    It drives inside the body's GAIT band, not the governor's. The band is a
-    plant measurement, not a preference: gait initiation is a BIFURCATION, not
-    a ramp -- below it the policy stands, so the governor's floor is a
-    stand-still wherever the clearance sits near it. The ceiling is not about
-    pace either: a body that crosses a tight gap fast is out the far side
-    before its tracking drift has eaten the margin (the go2's 0.95 stops short
-    of the 1.0 that hands its policy to a dedicated expert).
-    """
-    cfg = emb.control
-    if len(path) < 2:
-        # empty path or a single-pose veto stub: there is nothing to
-        # follow -- hold position (the planner is saying "stop")
-        return (0.0, 0.0, 0.0)
-    xy = np.array([[p.position.x, p.position.y] for p in path.poses])
-    yaws = np.array([p.yaw for p in path.poses])
-    px, py, pyaw = pose.position.x, pose.position.y, pose.yaw
-    n = len(xy)
-
-    seg = np.linalg.norm(np.diff(xy, axis=0), axis=1) if n > 1 else np.zeros(1)
-    arcs = np.concatenate([[0.0], np.cumsum(seg)])
-
-    i = int(np.argmin(np.linalg.norm(xy - (px, py), axis=1)))
-    while (
-        i + 1 < n
-        and float(arcs[i + 1] - arcs[i]) < 1e-6
-        and abs(angle_diff(float(yaws[i + 1]), pyaw)) < abs(angle_diff(float(yaws[i]), pyaw))
-    ):
-        i += 1
-
-    j = min(i + 1, n - 1)
-    ds = float(arcs[j] - arcs[i])
-    dyaw = abs(angle_diff(float(yaws[j]), float(yaws[i])))
-    in_fan = j > i and dyaw > 1e-6 and dyaw / max(ds, 1e-6) > cfg.fan_yaw_per_m
-    rotating = in_fan and abs(angle_diff(float(yaws[j]), pyaw)) > cfg.fan_yaw_done
-
-    foot, s_star = _project_onto(xy, arcs, px, py)
-
-    # `yaw_ff` is the plan's turn rate per metre over the window the body is
-    # about to cross; times the commanded speed it is the open-loop yaw rate
-    # that holds the heading error at zero.
-    rotation_in_window = False
-    if rotating:
-        target_yaw, yaw_ff = float(yaws[j]), 0.0
-    else:
-        s = float(arcs[i]) + cfg.lookahead
-        k = min(int(np.searchsorted(arcs, s)), n - 1)
-        # POSITION leads by `lookahead`; ORIENTATION does not. A body held at
-        # the next segment's heading while still inside this one sweeps its
-        # corners across a corridor it has not left yet, so aim at the heading
-        # the plan wants HERE and cancel the P-loop's standing error with
-        # feedforward instead of with lead. Bounded by `fan_yaw_per_m`, past
-        # which the law has decided the plan rotates rather than curves;
-        # `rotation_in_window` carries that the clamp FIRED down to the command
-        # site, where the number is the threshold, not the plan's curvature.
-        span = float(arcs[k] - arcs[i])
-        raw_rate = angle_diff(float(yaws[k]), float(yaws[i])) / span if span > 0.05 else 0.0
-        rotation_in_window = abs(raw_rate) > cfg.fan_yaw_per_m
-        target_yaw = float(yaws[i])
-        yaw_ff = min(max(raw_rate, -cfg.fan_yaw_per_m), cfg.fan_yaw_per_m)
-
-    # speed governor: cap cruise by the room ahead, when we know it
-    vmax = emb.gait_band[1]
-    # Does the ramp find full cruise over its WHOLE window? The separator the
-    # yaw feedforward's silence condition is written against; it has to keep
-    # meaning "there is room everywhere ahead" rather than "the braking profile
-    # happens to permit cruise here". Blind ticks leave it true, which is what
-    # `vmax == max_speed` did for them.
-    ramp_unlimited = True
-    if clearance is not None and len(clearance) == n:
-        # THE PREVIEW IS A BRAKING PROFILE, NOT A MINIMUM: a flat min asks the
-        # body to already be at a pinch's speed metres before reaching it. Each
-        # previewed waypoint imposes only what it can given the body may brake
-        # on the way there; at d <= brake_margin that is the flat value, so the
-        # waypoint the body stands on binds as hard as ever. Still a MIN over
-        # the same window, so brake_accel = 0 is the seed's governor bit for
-        # bit and nothing here can make it SLOWER.
-        window = (arcs >= arcs[i]) & (arcs <= arcs[i] + cfg.speed_lookahead)
-        denom = max(emb.speed_clearance - emb.precision, 1e-6)
-        cap = emb.gait_band[1]
-        room = math.inf
-        for k in range(n):
-            if not window[k]:
-                continue
-            ck = float(clearance[k])
-            room = min(room, ck)
-            frac_k = min(max((ck - emb.precision) / denom, 0.0), 1.0)
-            v_k = emb.gait_band[0] + (emb.gait_band[1] - emb.gait_band[0]) * frac_k
-            d_k = max(float(arcs[k]) - float(arcs[i]) - cfg.brake_margin, 0.0)
-            reachable = math.sqrt(v_k * v_k + 2.0 * cfg.brake_accel * d_k)
-            if reachable < cap:
-                cap = reachable
-        # arcs[i] always passes its own mask, so the window is never empty
-        if room == math.inf:
-            room = float(clearance[i])
-        # the flat-min ramp, kept only as the feedforward's separator:
-        # `vmax == max_speed` under the seed's governor was exactly this
-        ramp_unlimited = room >= emb.speed_clearance
-        vmax = min(max(cap, emb.gait_band[0]), emb.gait_band[1])
-
-        # PINCH ESCAPE: the lower anchor is not a constant. With room to spare
-        # a low anchor is what buys precision; with the room gone it is a loss,
-        # because what kills in a gap is DWELL -- the cross-track offset is a
-        # fixed distance, so time inside decides whether it becomes a contact.
-        # Taken as a `max` against the ramp, so the join is continuous and the
-        # leg can never SLOW anything, and read over `escape_preview` rather
-        # than the ramp's window, which would lift the cap while the robot is
-        # still in open space short of the gap.
-        hi_here = float(arcs[i]) + cfg.escape_preview
-        room_here = float(clearance[i])
-        for k in range(n):
-            if arcs[i] <= arcs[k] <= hi_here and float(clearance[k]) < room_here:
-                room_here = float(clearance[k])
-        if cfg.escape_speed > emb.gait_band[0] and room_here < cfg.escape_clearance:
-            e = min(
-                max((cfg.escape_clearance - room_here) / max(cfg.escape_clearance, 1e-6), 0.0), 1.0
-            )
-            top = min(cfg.escape_speed, emb.gait_band[1])
-            vmax = max(vmax, emb.gait_band[0] + (top - emb.gait_band[0]) * e)
-
-    # Aiming the whole velocity at the carrot drives down a CHORD, which cuts
-    # the inside of every corner by about L^2/(8R) -- a distance, not a lag.
-    # Splitting the jobs removes it: a FEEDFORWARD along the plan's tangent
-    # carries the body at the governor's speed, and a proportional CORRECTION
-    # toward the foot is the only term that answers to being off the line, so
-    # the error decays to zero instead of settling at the chord's sagitta. The
-    # carrot survives only as the YAW reference.
-    if rotating:
-        # the fan branch is the seed's, gain included
-        wx = cfg.k_pos * (float(xy[i][0]) - px)
-        wy = cfg.k_pos * (float(xy[i][1]) - py)
-    else:
-        tx, ty = _tangent_at(xy, arcs, s_star, cfg.tangent_preview)
-        # terminal deceleration: the seed got this free from its carrot pinning
-        # to the last waypoint, so reproduce it explicitly
-        v_ff = min(vmax, cfg.k_pos * max(float(arcs[n - 1]) - s_star, 0.0))
-        wx = v_ff * tx + cfg.k_pos * (float(foot[0]) - px)
-        wy = v_ff * ty + cfg.k_pos * (float(foot[1]) - py)
-
-    c, s_ = math.cos(-pyaw), math.sin(-pyaw)
-    vx, vy = c * wx - s_ * wy, s_ * wx + c * wy
-    speed = float(np.hypot(vx, vy))
-    if speed > vmax:
-        vx, vy = vx / speed * vmax, vy / speed * vmax
-
-    # Feedforward: at `cmd_speed` along a plan turning `yaw_ff` rad per metre
-    # the heading must slew at `yaw_ff * cmd_speed` just to stay aligned.
-    # Supplying it open loop is what lets the proportional term settle at zero
-    # error. Added inside the clamp, so the envelope holds.
-    #
-    # SILENT where it is an artefact: past `fan_yaw_per_m` -- a curve-vs-rotate
-    # CLASSIFIER, not a yaw-authority bound -- the value fed forward is the
-    # threshold itself, which can demand more rate than the ceiling allows; the
-    # sum clamp then goes FLAT in the heading error, deleting the proportional
-    # term rather than attenuating it, and the heading loop runs open. Gated on
-    # `ramp_unlimited`, not on `vmax >= max_speed`: the braking profile reaches
-    # max_speed on the APPROACH to a pinch too. It cannot be zeroed outright --
-    # the same feedforward that is a hazard in open room is load-bearing in a
-    # gap.
-    cmd_speed = float(np.hypot(vx, vy))
-    ff = 0.0 if (rotation_in_window and ramp_unlimited) else yaw_ff * cmd_speed
-    wz = float(
-        np.clip(cfg.k_yaw * angle_diff(target_yaw, pyaw) + ff, -emb.max_yaw_rate, emb.max_yaw_rate)
-    )
-    return (vx, vy, wz)
+    if want <= 0.0:
+        return 0.0
+    correction = (gain * want + slip) - want
+    return want + correction * min(want / ramp, 1.0)
 
 
 class HintedController:
-    """The hinted law plus the only state it keeps: its own previous command,
-    so the request it signs its name to is one the plant can execute."""
+    """Pursuit governed by the stamped precision profile, at gait-true speeds.
+
+    ``clearance`` is the lab's channel: an explicit per-waypoint room array
+    outranks the stamps when one is handed in. The follower never hands one.
+    """
 
     config: ControllerConfig
 
     def __init__(self, emb: Embodiment = GO2) -> None:
         self.config = emb.control
         self.emb = emb
-        self._slew = emb.command_slew
         self.reset()
 
     def reset(self) -> None:
-        self._last_cmd: tuple[float, float, float] | None = None
-        self._last_t: float | None = None
+        pass
 
     def update(
         self, pose: PoseStamped, path: Path, t: float, clearance: NDArray[np.float64] | None = None
     ) -> Twist:
-        emb = self.emb
-        raw = update(pose, path, emb, clearance)
-
-        # THE VETO IS NOT RATE LIMITED. A path shorter than two poses is the
-        # planner saying "stop", and the contract is that the law obeys it by
-        # commanding zero -- not by ramping toward zero over the ~12 ticks the
-        # slew would take. "Hold position" is a claim about what the law ASKS
-        # for, and the limiter must not quietly turn it into "coast to a halt".
+        cfg, emb = self.config, self.emb
         if len(path) < 2:
-            self._last_cmd = (0.0, 0.0, 0.0)
-            self._last_t = t if math.isfinite(t) else None
+            # empty path or a single-pose veto stub: there is nothing to
+            # follow -- hold position (the planner is saying "stop")
             return Twist(Vector3(0, 0, 0), Vector3(0, 0, 0))
+        xy = np.array([[p.position.x, p.position.y] for p in path.poses])
+        yaws = np.array([p.yaw for p in path.poses])
+        px, py, pyaw = pose.position.x, pose.position.y, pose.yaw
+        n = len(xy)
 
-        # Elapsed since the command currently standing at the plant's ramp. A
-        # non-finite, zero or backwards `t` carries no information about how far
-        # the ramp advanced, so fall back to the nominal period rather than to
-        # an unbounded (or negative) step.
-        if self._last_t is not None and math.isfinite(t) and t > self._last_t:
-            dt = min(t - self._last_t, MAX_TICK)
+        seg = np.linalg.norm(np.diff(xy, axis=0), axis=1) if n > 1 else np.zeros(1)
+        arcs = np.concatenate([[0.0], np.cumsum(seg)])
+
+        # closest waypoint = progress along the path; inside a fan the
+        # waypoints are coincident, so advance by yaw progress instead of
+        # re-rotating from the fan's first pose
+        i = int(np.argmin(np.linalg.norm(xy - (px, py), axis=1)))
+        while (
+            i + 1 < n
+            and float(arcs[i + 1] - arcs[i]) < 1e-6
+            and abs(angle_diff(float(yaws[i + 1]), pyaw)) < abs(angle_diff(float(yaws[i]), pyaw))
+        ):
+            i += 1
+
+        # Speed governor, hoisted above target selection because the lookahead
+        # distance is derived from it (constant time headway, below).
+        vmax = emb.max_speed
+        governed = False
+        if clearance is not None and len(clearance) == n:
+            governed = True
+            ahead = clearance[(arcs >= arcs[i]) & (arcs <= arcs[i] + cfg.speed_lookahead)]
+            room = float(np.min(ahead)) if len(ahead) else float(clearance[i])
+            frac = (room - emb.precision) / max(emb.speed_clearance - emb.precision, 1e-6)
+            vmax = emb.min_speed + (emb.max_speed - emb.min_speed) * min(max(frac, 0.0), 1.0)
+
+        # THE SAME GOVERNOR, OFF THE STAMPS. When no clearance array arrives
+        # the room ahead has not been withheld, only re-encoded: the planner
+        # stamps the required-precision profile into the path's own timestamps
+        # on every replan (control/profile.py). Decoding it
+        # puts a speed ceiling back under this law at exactly the point the
+        # clearance branch occupies, so the two channels are alternatives
+        # rather than layers.
+        if not governed:
+            ceilings = decode_ceilings(path, emb.min_speed, emb.max_speed)
+            if ceilings is not None:
+                # Read from i + 1, not i. Not an off-by-one: a decoded ceiling
+                # is a property of the SEGMENT ending at its waypoint, so
+                # ceilings[k] already carries clr[k-1]. Scanning [i+1 ..]
+                # reproduces the clearance branch's window exactly, whereas
+                # starting at i would drag in the waypoint behind the robot.
+                hi = arcs[i] + cfg.speed_lookahead
+                window = ceilings[i + 1 :][arcs[i + 1 :] <= hi]
+                # the segment about to be traversed always counts, even if a
+                # degenerate speed_lookahead would exclude it; at the end of
+                # the plan there is no next segment and the last one stands
+                nxt = float(ceilings[min(i + 1, n - 1)])
+                vmax = min(nxt, float(np.min(window))) if len(window) else nxt
+
+        # CONSTANT TIME HEADWAY, not a constant distance. Steering at a carrot
+        # a fixed distance away chords the plan's curvature, and the chord
+        # always falls to the INSIDE of the turn -- toward the obstacle the
+        # planner curved around -- with an inset that grows as the square of
+        # the carrot distance. Holding the TIME headway constant instead
+        # (lookahead / max_speed) leaves full cruise untouched and shortens the
+        # carrot where the governor has slowed for a pinch.
+        #
+        # It costs no speed: the command magnitude is min(k_pos * L, vmax), so
+        # any L >= vmax / k_pos still saturates, and the floor below enforces
+        # that so an odd config cannot turn a shorter carrot into a slower
+        # robot.
+        headway = cfg.lookahead / max(emb.max_speed, 1e-6)
+        look = max(vmax * headway, vmax / max(abs(cfg.k_pos), 1e-6))
+
+        # fan detection at the current position: yaw stepping with (near-)zero
+        # displacement means the planner commands a rotation here
+        j = min(i + 1, n - 1)
+        ds = float(arcs[j] - arcs[i])
+        dyaw = abs(angle_diff(float(yaws[j]), float(yaws[i])))
+        in_fan = j > i and dyaw > 1e-6 and dyaw / max(ds, 1e-6) > cfg.fan_yaw_per_m
+        if in_fan and abs(angle_diff(float(yaws[j]), pyaw)) > cfg.fan_yaw_done:
+            target_xy = xy[i]
+            target_yaw = float(yaws[j])
         else:
-            dt = NOMINAL_TICK
-        pvx, pvy, pwz = self._last_cmd or (0.0, 0.0, 0.0)
-        sx, sy, sw = (self._slew[0] * dt, self._slew[1] * dt, self._slew[2] * dt)
-        vx = pvx + min(max(raw[0] - pvx, -sx), sx)
-        vy = pvy + min(max(raw[1] - pvy, -sy), sy)
-        wz = min(max(pwz + min(max(raw[2] - pwz, -sw), sw), -emb.max_yaw_rate), emb.max_yaw_rate)
+            target_xy, target_yaw = _carrot_lerp(xy, yaws, arcs, i, look)
 
-        # THE DECLARED ENVELOPE IS A DISC AND THE SLEW IS A BOX, so a step taken
-        # toward a point inside the disc can still leave it -- the rectangle
-        # between the previous command and the request has corners the disc does
-        # not contain. Measured largest overshoot anywhere: |v| = 0.9509 against
-        # max_speed 0.95, always a REDUCTION, but far past the parity tolerance,
-        # so dropping this would put the law outside its own declared envelope.
+        # body-frame error -> velocity
+        ex, ey = target_xy[0] - px, target_xy[1] - py
+        c, s_ = math.cos(-pyaw), math.sin(-pyaw)
+        bx, by = c * ex - s_ * ey, s_ * ex + c * ey
+        vx, vy = cfg.k_pos * bx, cfg.k_pos * by
+        # np.hypot, not math.hypot: CPython implements its own correctly-rounded
+        # hypot, rust's f64::hypot is libm, and the two differ by an ulp. This
+        # law divides by `speed` on EVERY tick (the seed only did so when
+        # clamping), so that ulp reaches the twist -- np.hypot is the same libm
+        # call the rust makes. See test_rust_parity.
         speed = float(np.hypot(vx, vy))
-        if speed > emb.gait_band[1] and speed > 0.0:
-            vx, vy = vx / speed * emb.gait_band[1], vy / speed * emb.gait_band[1]
-
-        if math.isfinite(vx) and math.isfinite(vy) and math.isfinite(wz):
-            self._last_cmd = (vx, vy, wz)
-            self._last_t = t
+        if speed > 1e-12:
+            # `want` is the intended GROUND speed -- the pursuit gain, capped
+            # by the governor. Unchanged from the seed.
+            want = min(speed, vmax)
+            # ...and this is what the gait has to be asked for to deliver it.
+            cmd = walk_command(want, emb.walk_gain, emb.walk_slip, emb.walk_slip_ramp)
+            vx, vy = vx / speed * cmd, vy / speed * cmd
+        wz = float(
+            np.clip(cfg.k_yaw * angle_diff(target_yaw, pyaw), -emb.max_yaw_rate, emb.max_yaw_rate)
+        )
         return Twist(Vector3(vx, vy, 0.0), Vector3(0.0, 0.0, wz))
 
 
+def _carrot_lerp(
+    xy: NDArray[np.float64],
+    yaws: NDArray[np.float64],
+    arcs: NDArray[np.float64],
+    i: int,
+    look: float,
+) -> tuple[NDArray[np.float64], float]:
+    """The point at exactly ``arcs[i] + look``, interpolated within its segment.
+
+    The plan is discretised at 0.1 m — fine noise against a 0.35 m carrot, but
+    70% of a 0.14 m one. Without this the shortened headway would make the
+    carrot distance, and so the commanded heading, chatter waypoint to
+    waypoint.
+    """
+    n = len(xy)
+    s = float(arcs[i]) + look
+    k = int(np.searchsorted(arcs, s))
+    if k == 0 or k >= n:
+        # s is at or beyond an endpoint: pursue the endpoint itself
+        k = min(k, n - 1)
+        return xy[k], float(yaws[k])
+    a0, a1 = float(arcs[k - 1]), float(arcs[k])
+    d = a1 - a0
+    if d <= 1e-9:
+        return xy[k], float(yaws[k])
+    u = min(max((s - a0) / d, 0.0), 1.0)
+    point = xy[k - 1] + u * (xy[k] - xy[k - 1])
+    # interpolate yaw the short way round, not linearly in the raw angle, so a
+    # wrap across +-pi does not spin the carrot
+    yaw = float(yaws[k - 1]) + u * angle_diff(float(yaws[k]), float(yaws[k - 1]))
+    return point, yaw
+
+
 class RustHintedController:
-    """``dimos_motion2_tc.HintedLaw`` behind the controller protocol."""
+    """``dimos_motion2_tc.update_hinted`` behind the controller protocol."""
 
     config: ControllerConfig
 
     def __init__(self, emb: Embodiment = GO2) -> None:
-        mod: Any = load_extension()
+        self._mod: Any = load_extension()
         self.config = emb.control
-        self._law = mod.HintedLaw(emb.to_json())
+        self._emb = emb.to_json()
+        self.reset()
 
     def reset(self) -> None:
-        self._law.reset()
+        pass
 
     def update(
         self, pose: PoseStamped, path: Path, t: float, clearance: NDArray[np.float64] | None = None
     ) -> Twist:
         clr = None if clearance is None else np.ascontiguousarray(clearance, dtype=np.float64)
-        vx, vy, wz = self._law.step(
+        # The path's own per-waypoint stamps. The law reads only the deltas,
+        # never the absolute times: the stamps are a precision profile and not
+        # a schedule.
+        ts = np.ascontiguousarray(
+            np.array([p.ts for p in path.poses], dtype=np.float64).reshape(-1)
+        )
+        vx, vy, wz = self._mod.update_hinted(
             (float(pose.position.x), float(pose.position.y), float(pose.yaw)),
             path_xy_yaw(path),
             clr,
-            float(t),
+            ts,
+            self._emb,
         )
         return Twist(Vector3(vx, vy, 0.0), Vector3(0.0, 0.0, wz))

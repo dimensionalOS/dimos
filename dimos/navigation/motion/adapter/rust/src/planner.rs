@@ -656,7 +656,7 @@ mod tests {
         let states = msg::path_states(&held);
         let cfg = emb::hinted_params(&Emb::fixture());
         assert_eq!(
-            dimos_motion2_tc::laws::hinted::update((1.5, -2.0, 0.0), &states, None, &cfg),
+            dimos_motion2_tc::laws::hinted::update((1.5, -2.0, 0.0), &states, None, None, &cfg),
             (0.0, 0.0, 0.0)
         );
     }
@@ -728,7 +728,7 @@ mod tests {
         );
         // and the profile reads back out, which is what the follower does
         let states = msg::path_states(&produced);
-        let params = emb::blind_params(&Emb::fixture()).base;
+        let params = emb::hinted_params(&Emb::fixture()).base;
         assert!(stamps::decode_ceilings(&ts, &states, &params).is_some());
     }
 

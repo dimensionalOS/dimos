@@ -24,7 +24,7 @@ than the encoding is always legal.
 
 Encoding is planner/annotator-owned: when the executor's measured precision
 improves, only :func:`governor_speed` moves and every follower keeps
-decoding dt/length blindly. Fan segments (rotation in place, ~zero length)
+decoding dt/length naively. Fan segments (rotation in place, ~zero length)
 carry dt = yaw span / max yaw rate so the timeline stays monotone.
 """
 
@@ -89,15 +89,14 @@ def decode_ceilings(path: Path, lo: float, hi: float) -> NDArray[np.float64] | N
     """Per-waypoint speed ceiling (m/s) from the stamps; None if unstamped.
 
     Unstamped = flat or non-monotone ts (a plain path from a producer that
-    does not speak this dialect) — the follower then falls back to its own
-    clearance source or plain max speed. Fan segments inherit the previous
+    does not speak this dialect) — the follower then drives at plain max
+    speed. Fan segments inherit the previous
     ceiling; the result is clipped into ``[lo, hi]`` so a slow upstream
     planner can only ever make the robot more careful, and garbage stamps
     saturate at cruise instead of commanding something absurd.
 
     ``lo``/``hi`` is the CONSUMER's band: the embodiment's governor band for
-    anyone reading the wire as stamped, its ``gait_band`` for a law that drives
-    inside the gait's envelope instead.
+    anyone reading the wire as stamped.
     """
     n = len(path.poses)
     if n < 2:
@@ -128,9 +127,8 @@ def decode_ceilings(path: Path, lo: float, hi: float) -> NDArray[np.float64] | N
 def ceilings_to_clearance(ceilings: NDArray[np.float64], emb: Embodiment) -> NDArray[np.float64]:
     """Speed ceilings -> the clearance that reproduces them under the governor.
 
-    Exact linear inverse on [min_speed, max_speed]; lets a stamped path feed
-    any controller through its existing clearance seam, so the laws (python
-    and rust, parity-locked) stay untouched.
+    Exact linear inverse on [min_speed, max_speed]; what the viewer colours a
+    plan's room by (adapter/viz.py).
     """
     lo, hi = emb.min_speed, emb.max_speed
     assert hi != lo, "a body with min_speed == max_speed has no governor band to invert"

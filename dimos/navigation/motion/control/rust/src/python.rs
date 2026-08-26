@@ -14,7 +14,7 @@
 
 //! One pyfunction per law. A new law gets a new entry point rather than a
 //! flag on an existing one: the signatures differ (a law marshals only the
-//! inputs it reads) and a track's binding must not shift when another track's
+//! inputs it reads) and the baseline's binding must not shift when a
 //! generation lands.
 
 use numpy::{PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
@@ -24,9 +24,8 @@ use pyo3::prelude::*;
 use dimos_motion2_target::planner::Emb;
 
 use crate::clearance;
-use crate::emb::{base_params, blind_params, governor, hinted_params};
-use crate::laws::blind::update as blind_impl;
-use crate::laws::hinted::{update as hinted_impl, HintedParams, Law as HintedLaw};
+use crate::emb::{base_params, governor, hinted_params};
+use crate::laws::hinted::update as hinted_impl;
 use crate::laws::seed::update as seed_impl;
 use crate::stamps;
 
@@ -76,12 +75,12 @@ fn update_seed(
     Ok(py.allow_threads(|| seed_impl(pose, &rows, clr.as_deref(), &cfg)))
 }
 
-/// One tick of the blind law. As `update_seed`, plus `ts`, the optional
+/// One tick of the hinted law. As `update_seed`, plus `ts`, the optional
 /// length-N vector of the path's own per-waypoint stamps carrying the
 /// planner's required-precision profile (see `stamps::decode_ceilings`).
 #[pyfunction]
 #[pyo3(signature = (pose, path, clearance, ts, emb))]
-fn update_blind(
+fn update_hinted(
     py: Python<'_>,
     pose: (f64, f64, f64),
     path: PyReadonlyArray2<'_, f64>,
@@ -92,67 +91,8 @@ fn update_blind(
     let rows = rows_of(&path)?;
     let clr = vec_of(clearance.as_ref());
     let stamps = vec_of(ts.as_ref());
-    let cfg = blind_params(&emb_of(emb)?);
-    Ok(py.allow_threads(|| blind_impl(pose, &rows, clr.as_deref(), stamps.as_deref(), &cfg)))
-}
-
-/// The hinted law, which keeps one tick of memory (its own previous command
-/// and the time it was issued) so it can ramp its output at the plant's own
-/// command slew. A class rather than a free function for exactly that reason;
-/// `reset()` clears the history.
-#[pyclass(name = "HintedLaw")]
-pub struct PyHintedLaw {
-    inner: HintedLaw,
-    cfg: HintedParams,
-}
-
-#[pymethods]
-impl PyHintedLaw {
-    /// `emb` is the body as JSON; the law drives inside its gait band.
-    #[new]
-    fn new(emb: &str) -> PyResult<Self> {
-        Ok(Self {
-            inner: HintedLaw::new(),
-            cfg: hinted_params(&emb_of(emb)?),
-        })
-    }
-
-    fn reset(&mut self) {
-        self.inner.reset();
-    }
-
-    /// One tick, rate limited. As `update_seed`, plus the tick time `t`.
-    #[pyo3(signature = (pose, path, clearance, t))]
-    fn step(
-        &mut self,
-        py: Python<'_>,
-        pose: (f64, f64, f64),
-        path: PyReadonlyArray2<'_, f64>,
-        clearance: Option<PyReadonlyArray1<'_, f64>>,
-        t: f64,
-    ) -> PyResult<(f64, f64, f64)> {
-        let rows = rows_of(&path)?;
-        let clr = vec_of(clearance.as_ref());
-        let (inner, cfg) = (&mut self.inner, &self.cfg);
-        Ok(py.allow_threads(move || inner.step(pose, &rows, clr.as_deref(), cfg, t)))
-    }
-}
-
-/// The hinted law WITHOUT its rate limiter -- the pure tick, for parity sweeps
-/// and for anything that wants the request rather than the ramped command.
-#[pyfunction]
-#[pyo3(signature = (pose, path, clearance, emb))]
-fn update_hinted_raw(
-    py: Python<'_>,
-    pose: (f64, f64, f64),
-    path: PyReadonlyArray2<'_, f64>,
-    clearance: Option<PyReadonlyArray1<'_, f64>>,
-    emb: &str,
-) -> PyResult<(f64, f64, f64)> {
-    let rows = rows_of(&path)?;
-    let clr = vec_of(clearance.as_ref());
     let cfg = hinted_params(&emb_of(emb)?);
-    Ok(py.allow_threads(|| hinted_impl(pose, &rows, clr.as_deref(), &cfg)))
+    Ok(py.allow_threads(|| hinted_impl(pose, &rows, clr.as_deref(), stamps.as_deref(), &cfg)))
 }
 
 /// The planner's side of the stamp dialect: per-waypoint timestamps carrying
@@ -174,22 +114,6 @@ fn encode_precision(
     // encoder, so the empty vec stands in for both
     let clr = vec_of(clearance.as_ref()).unwrap_or_default();
     Ok(py.allow_threads(|| stamps::encode_precision(&rows, &clr, t0, &gov)))
-}
-
-/// The dialect's inverse leg: decoded speed ceilings back to the clearance
-/// that produced them. Exposed for parity against
-/// `profile.ceilings_to_clearance` -- on the robot the follower module calls
-/// the rust directly when it is on the hinted track with no cloud of its own.
-#[pyfunction]
-#[pyo3(signature = (ceilings, emb))]
-fn ceilings_to_clearance(
-    py: Python<'_>,
-    ceilings: PyReadonlyArray1<'_, f64>,
-    emb: &str,
-) -> PyResult<Vec<f64>> {
-    let v: Vec<f64> = ceilings.as_array().iter().copied().collect();
-    let gov = governor(&emb_of(emb)?);
-    Ok(py.allow_threads(|| stamps::ceilings_to_clearance(&v, &gov)))
 }
 
 /// Per-waypoint room hint. `xy` is (N, 2) float64 waypoints, `points` the
@@ -231,10 +155,7 @@ fn path_clearance(
 fn dimos_motion2_tc(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(path_clearance, m)?)?;
     m.add_function(wrap_pyfunction!(update_seed, m)?)?;
-    m.add_function(wrap_pyfunction!(update_blind, m)?)?;
-    m.add_function(wrap_pyfunction!(update_hinted_raw, m)?)?;
+    m.add_function(wrap_pyfunction!(update_hinted, m)?)?;
     m.add_function(wrap_pyfunction!(encode_precision, m)?)?;
-    m.add_function(wrap_pyfunction!(ceilings_to_clearance, m)?)?;
-    m.add_class::<PyHintedLaw>()?;
     Ok(())
 }

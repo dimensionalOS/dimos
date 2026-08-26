@@ -114,9 +114,9 @@ def test_governor_full_speed_in_open_room() -> None:
     path = _straight_path()
     wide = np.full(len(path), 1.0)
     tw_open = PursuitController().update(_pose(-1.0, 0.0), path, 0.0, clearance=wide)
-    tw_blind = PursuitController().update(_pose(-1.0, 0.0), path, 0.0)
+    tw_bare = PursuitController().update(_pose(-1.0, 0.0), path, 0.0)
     assert math.hypot(tw_open.linear.x, tw_open.linear.y) == pytest.approx(
-        math.hypot(tw_blind.linear.x, tw_blind.linear.y)
+        math.hypot(tw_bare.linear.x, tw_bare.linear.y)
     )
 
 

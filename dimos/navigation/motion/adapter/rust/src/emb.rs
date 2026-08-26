@@ -17,7 +17,7 @@
 //! record -- there is no table here to drift from it.
 
 use dimos_motion2_target::planner::Emb;
-pub use dimos_motion2_tc::emb::{base_params, blind_params, governor, hinted_params};
+pub use dimos_motion2_tc::emb::{base_params, governor, hinted_params};
 
 /// `Embodiment.dilated`, formula for formula: every box grown by `by` PER
 /// SIDE, the measured rows with it.

@@ -128,12 +128,6 @@ pub struct Tuning {
     pub fan_yaw_per_m: f64,
     pub fan_yaw_done: f64,
     pub speed_lookahead: f64,
-    pub tangent_preview: f64,
-    pub escape_clearance: f64,
-    pub escape_preview: f64,
-    pub escape_speed: f64,
-    pub brake_accel: f64,
-    pub brake_margin: f64,
 }
 
 /// `embodiment/base.py::Embodiment`, field for field: the body a module is
@@ -210,12 +204,6 @@ impl Emb {
                 fan_yaw_per_m: 3.0,
                 fan_yaw_done: 0.25,
                 speed_lookahead: 2.0,
-                tangent_preview: 0.15,
-                escape_clearance: 0.1,
-                escape_preview: 1.0,
-                escape_speed: 0.75,
-                brake_accel: 0.8,
-                brake_margin: 0.15,
             },
             strafe: 1.8,
             reverse: 1.5,

@@ -15,14 +15,11 @@
 """TrajectoryFollower: the motion controller as a dimos module.
 
 A thin transport shell around the pluggable ``TrajectoryController`` — the
-controller stays a pure pose+path -> twist law (the piece that later ports
-to rust); this module owns subscriptions, the control clock, the on-robot
-clearance annotation and goal arrival. Clearance is recomputed from the local
-map per (path, map) pair.
+controller stays a pure pose+path -> twist law (the piece that ports to
+rust); this module owns subscriptions, the control clock and goal arrival.
 
-It reads the map through the planner's own obstacle model
-(``motion/obstacles.py``), because the governor and the planner's stamped
-precision profile have to be talking about the same slice of the world.
+It holds no map: the room the planner priced arrives in the path's own
+timestamps (``control/profile.py``), and the law reads it from there.
 """
 
 from __future__ import annotations
@@ -33,8 +30,6 @@ from threading import Event, RLock, Thread
 import time
 from typing import Any
 
-import numpy as np
-from numpy.typing import NDArray
 from pydantic import ImportString
 from reactivex.disposable import Disposable
 
@@ -45,21 +40,13 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.motion.adapter.diagnostics import StallReporter
 from dimos.navigation.motion.control.controller import TrajectoryController
-from dimos.navigation.motion.control.profile import ceilings_to_clearance, decode_ceilings
-from dimos.navigation.motion.control.tracks import TRACKS
+from dimos.navigation.motion.control.laws import hinted
 from dimos.navigation.motion.embodiment.base import Embodiment
 from dimos.navigation.motion.embodiment.go2 import GO2
-from dimos.navigation.motion.obstacles import (
-    ObstacleModel,
-    hard_points,
-    load as load_model,
-    path_clearance,
-)
 from dimos.navigation.tf_pose import TfPose
 from dimos.utils.logging_config import setup_logger
 
@@ -96,37 +83,18 @@ class GoalLatch:
 
 
 class TrajectoryFollowerConfig(ModuleConfig):
-    # The track fixes the law AND whether the controller is handed the path
-    # room hint (control/tracks.py). "hinted" is right wherever the raycaster's
-    # local map is actually live, which on the go2-zenoh stack it is; "blind"
-    # runs the law that recovers required precision from the path stamps alone.
-    track: str = "hinted"
-    controller: ImportString[Callable[..., Any]] | None = (
-        None  # "module:factory"; None = the track's law
-    )
+    # "module:factory" of the law; None runs `laws/hinted.py`, which is what
+    # the native twin runs. `laws/seed.py:make` is the baseline for an A/B.
+    controller: ImportString[Callable[..., Any]] | None = None
     control_frequency: float = 10.0
     goal_tolerance: float = 0.20  # planar distance that counts as arrival (m)
-    # The clearance hint this module recomputes on the robot has to be the same
-    # quantity the planner stamped into the path (`emb.width / 2` off the same
-    # body), or the follower's governor is reading a different world than the
-    # one that was planned. There is deliberately no half_width override: a
-    # `float | None` cannot cross into the native module (`to_config_dict`
-    # drops None and `#[native_config]` bans Option), and a knob the deployed
-    # twin cannot carry is a knob that drifts.
+    # The planner's own body: the law decodes the path stamps with its governor band.
     embodiment: Embodiment = GO2
-    # Must equal the planner's `body_dilate_m`: the room hint has to price the
-    # body the plan was made for, or the governor creeps through gaps the plan
-    # calls fine.
-    body_dilate_m: float = 0.0
     # The pose is read off tf each tick: `path.frame_id -> base_frame`, so the
     # law controls in the frame the plan is expressed in. Ticks wait until it
     # resolves, and zero the twist once its stamp stops advancing for
     # max_path_age_s.
     base_frame: str = "base_link"
-    # Which returns are obstacles (motion/obstacles.py). It has to be the
-    # planner's model, or the room hint measured here is a different world than
-    # the one the plan was priced in — MotionPlannerConfig carries the twin.
-    obstacle_model: str = "body_band"
     # Seconds between "still not moving, and here is why" lines.
     stall_report_s: float = 3.0
     # A commanded speed at or under this is standing still, whatever the reason.
@@ -144,7 +112,6 @@ class TrajectoryFollower(Module):
     config: TrajectoryFollowerConfig
 
     path: In[Path]
-    local_map: In[PointCloud2]
     stop_movement: In[Bool]
     tf: In[TFMessage]
 
@@ -158,30 +125,13 @@ class TrajectoryFollower(Module):
         self._pose_src: TfPose | None = None
         self._path: Path | None = None
         self._path_at: float | None = None
-        self._cloud: PointCloud2 | None = None
-        self._clearance: NDArray[np.float64] | None = None
-        # The very (path, cloud) the hint was measured from, held rather than
-        # keyed by id(): CPython recycles addresses, so a cache that remembers
-        # only an id compares equal to a NEW path that landed in the freed one's
-        # slot and serves the previous plan's room. Holding the refs pins them,
-        # which makes `is` exact and costs one extra cloud alive.
-        self._clearance_path: Path | None = None
-        self._clearance_cloud: PointCloud2 | None = None
         self._latch = GoalLatch(self.config.goal_tolerance)
-        self._track = TRACKS[self.config.track]
-        # The same dilation the planner used, or the governor prices a body
-        # the plan was not made for and creeps through gaps the plan calls fine.
-        self._emb = self.config.embodiment.dilated(by=self.config.body_dilate_m)
-        self._model: ObstacleModel = load_model(self.config.obstacle_model, self._emb)
-        self._half_width = self._emb.width / 2.0
-        self._controller: TrajectoryController = (self.config.controller or self._track.controller)(
-            self._emb
+        self._controller: TrajectoryController = (self.config.controller or hinted.make)(
+            self.config.embodiment
         )
         self._stop_event = Event()
         self._thread: Thread | None = None
         self._stall = StallReporter("TrajectoryFollower", self.config.stall_report_s)
-        # Edge trigger for the hinted track running without its map (follower.rs::Gate).
-        self._blind = False
 
     @rpc
     def start(self) -> None:
@@ -189,7 +139,6 @@ class TrajectoryFollower(Module):
         self._controller.reset()
         self._pose_src = TfPose(self.tfbuffer, self.config.base_frame, self.config.max_path_age_s)
         self.register_disposable(Disposable(self.path.subscribe(self._on_path)))
-        self.register_disposable(Disposable(self.local_map.subscribe(self._on_local_map)))
         if self.stop_movement.transport is not None:
             self.register_disposable(Disposable(self.stop_movement.subscribe(self._on_stop)))
         self._thread = Thread(target=self._control_loop, daemon=True)
@@ -212,12 +161,8 @@ class TrajectoryFollower(Module):
                 # never an arrival target
                 self._latch.set_goal((msg.poses[-1].position.x, msg.poses[-1].position.y))
 
-    def _on_local_map(self, msg: PointCloud2) -> None:
-        with self._lock:
-            self._cloud = msg
-
     def _on_stop(self, msg: Bool) -> None:
-        """Preemption: drop the plan, stop, and forget the law's slew history."""
+        """Preemption: drop the plan and stop."""
         if msg.data:
             with self._lock:
                 self._path = None
@@ -278,7 +223,7 @@ class TrajectoryFollower(Module):
             self.nav_cmd_vel.publish(Twist())
             self._stall.blocked("a new goal -- the last one is reached and latched")
             return
-        tw = self._controller.update(pose, path, time.monotonic(), self.clearance_for(path, pose))
+        tw = self._controller.update(pose, path, time.monotonic())
         self.nav_cmd_vel.publish(tw)
 
         # Standing still with a plan in hand is the ambiguous case, and the two
@@ -298,38 +243,3 @@ class TrajectoryFollower(Module):
                 )
         else:
             self._stall.ok("driving")
-
-    def clearance_for(self, path: Path, pose: PoseStamped) -> NDArray[np.float64] | None:
-        if not self._track.annotate_clearance:
-            # the blind track: the law reads the path's own stamps instead
-            return None
-        with self._lock:
-            cloud = self._cloud
-        if cloud is None:
-            # no local map: fall back to the precision the planner stamped
-            # into the path's own timestamps (control/profile.py dialect).
-            # That is the hinted track running blind in all but name, and the
-            # twist it commands looks healthy either way, so it is said out
-            # loud once per outage. No ceilings is the worse case: the law gets
-            # no room at all and drives on the governor's floor.
-            ceilings = decode_ceilings(path, self._emb.min_speed, self._emb.max_speed)
-            if not self._blind:
-                self._blind = True
-                logger.warning(
-                    "no local_map on the hinted track: driving on the path's stamped precision",
-                    stamped=ceilings is not None,
-                )
-            return ceilings_to_clearance(ceilings, self._emb) if ceilings is not None else None
-        if self._blind:
-            self._blind = False
-            logger.info("local_map is back, the room hint is measured again")
-        if path is not self._clearance_path or cloud is not self._clearance_cloud:
-            wp = np.array([[p.position.x, p.position.y] for p in path.poses]).reshape(-1, 2)
-            # Re-referenced per (path, map) pair like the hint itself: the
-            # surface under the robot moves far slower than the pair it is
-            # cached with.
-            ground_z = pose.position.z - self._emb.base_height
-            pts = hard_points(self._model, cloud.points_f32(), ground_z)
-            self._clearance = path_clearance(wp, pts, self._half_width)
-            self._clearance_path, self._clearance_cloud = path, cloud
-        return self._clearance

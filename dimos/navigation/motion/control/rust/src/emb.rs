@@ -19,12 +19,10 @@
 use dimos_motion2_target::planner::Emb;
 
 use crate::geom::Params;
-use crate::laws::blind::BlindParams;
 use crate::laws::hinted::HintedParams;
 use crate::stamps::Governor;
 
-/// The body's tuning plus its plant, driving inside `band` -- the governor's
-/// for seed/blind, the gait's for hinted.
+/// The body's tuning plus its plant, driving inside `band` (the governor's).
 pub fn base_params(emb: &Emb, band: [f64; 2]) -> Params {
     let c = &emb.control;
     Params {
@@ -43,21 +41,7 @@ pub fn base_params(emb: &Emb, band: [f64; 2]) -> Params {
 }
 
 pub fn hinted_params(emb: &Emb) -> HintedParams {
-    let c = &emb.control;
     HintedParams {
-        base: base_params(emb, emb.gait_band),
-        slew: emb.command_slew,
-        tangent_preview: c.tangent_preview,
-        escape_clearance: c.escape_clearance,
-        escape_preview: c.escape_preview,
-        escape_speed: c.escape_speed,
-        brake_accel: c.brake_accel,
-        brake_margin: c.brake_margin,
-    }
-}
-
-pub fn blind_params(emb: &Emb) -> BlindParams {
-    BlindParams {
         base: base_params(emb, [emb.min_speed, emb.max_speed]),
         walk_gain: emb.walk_gain,
         walk_slip: emb.walk_slip,

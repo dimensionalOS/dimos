@@ -8,8 +8,8 @@ embodiment/     base.py Embodiment · go2.py the measured Go2 · synthetic.py te
 obstacles.py    which returns are obstacles: a z-rule the body decides
 
 planner/                                control/
-  planners/   base.py protocol, se2.py    controller.py tracks.py profile.py
-              the SE(2) search (the       laws/   seed, blind, hinted
+  planners/   base.py protocol, se2.py    controller.py profile.py
+              the SE(2) search (the       laws/   hinted, seed (baseline)
               spec), target.py the        rust/   the same laws, bit-exact
               shipped candidate
   rust/       the production crate
@@ -22,7 +22,7 @@ adapter/      MotionPlanner + TrajectoryFollower as dimos modules (python and
 |---------------|---------------------------------------------------------------------------------------------|--------------------------------------|
 | `embodiment/` | one robot's measured and fitted numbers; planner and follower are configured with the same one |                                   |
 | `planner/`    | SE(2) local planner: the rust crate that ships and the python search it is checked against  | [tools.md](tools.md)                 |
-| `control/`    | the follower: per-track laws in python + bit-exact rust, and the precision dialect          | [control/tools.md](control/tools.md) |
+| `control/`    | the follower's law in python + bit-exact rust, and the precision dialect                    | [control/tools.md](control/tools.md) |
 | `adapter/`    | planner + follower as dimos modules for the go2-zenoh blueprints                            | [adapter/tools.md](adapter/tools.md) |
 
 The planner's world is the raycaster cloud sliced by the body's own z-band; the
@@ -64,7 +64,6 @@ print(TrajectoryFollower.io(color=False))
 
 ```results
  ├─ path: Path
- ├─ local_map: PointCloud2
  ├─ stop_movement: Bool
  ├─ tf: TFMessage
 ┌┴───────────────────┐
@@ -81,6 +80,8 @@ Rules the ports carry:
   segment = tight segment. Running slower than the encoding is always legal;
   a plain-`ts` path just loses the hint, and third-party producers interoperate.
 - a single-pose `path` means "hold, no safe route".
-- `local_map` into the follower is optional: with it the room is measured;
-  without it the follower decodes the path stamps (the `blind` track).
-- one law per *track* (`control/tracks.py`), never named by config or blueprint.
+- the follower reads no map: it decodes the room the planner encoded in the
+  path stamps. `local_map` goes to the planner only.
+- the follower runs `control/laws/hinted.py` (rust twin on the robot); a
+  config may name another `controller="module:factory"`, e.g. the `seed`
+  baseline for an A/B.

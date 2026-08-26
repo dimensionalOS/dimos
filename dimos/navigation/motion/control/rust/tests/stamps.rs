@@ -14,7 +14,7 @@
 
 //! The wire dialect, from the producer's end.
 //!
-//! `decode_ceilings` has its cases in `blind.rs`, written from the consumer's
+//! `decode_ceilings` has its cases in `hinted.rs`, written from the consumer's
 //! end. These are the mirror: the encoder's own
 //! behaviour, plus the round trip that ties the two together. If both files
 //! pass, a stamp written here is read as the same speed there — which is the
@@ -23,10 +23,8 @@
 use std::f64::consts::PI;
 
 use dimos_motion2_target::planner::Emb;
-use dimos_motion2_tc::emb::blind_params;
-use dimos_motion2_tc::stamps::{
-    ceilings_to_clearance, decode_ceilings, encode_precision, governor_speed, Governor,
-};
+use dimos_motion2_tc::emb::hinted_params;
+use dimos_motion2_tc::stamps::{decode_ceilings, encode_precision, governor_speed, Governor};
 
 /// A straight run along +x at `step` metres per waypoint.
 fn straight(n: usize, step: f64) -> Vec<[f64; 3]> {
@@ -67,7 +65,7 @@ fn a_stamped_segment_reads_back_as_the_speed_it_was_priced_at() {
     let path = straight(5, 0.4);
     let clearance = vec![f64::INFINITY, 0.3, 0.1, FLOOR_CLEARANCE, 1.0];
     let ts = encode_precision(&path, &clearance, 0.0, &GOV);
-    let got = decode_ceilings(&ts, &path, &blind_params(&Emb::fixture()).base)
+    let got = decode_ceilings(&ts, &path, &hinted_params(&Emb::fixture()).base)
         .expect("stamped path decodes");
 
     // a ceiling is a property of the segment ENDING at its waypoint, so
@@ -146,48 +144,6 @@ fn degenerate_paths_do_not_panic() {
         encode_precision(&[[1.0, 2.0, 0.3]], &[0.1], 7.0, &GOV),
         vec![7.0]
     );
-}
-
-#[test]
-fn ceilings_invert_the_governor_exactly() {
-    // the property the hinted-with-no-cloud fallback rests on: bending a
-    // decoded ceiling back into a clearance must land on a clearance the
-    // governor prices at that same ceiling
-    for &c in &[
-        f64::INFINITY,
-        SPEED_CLEARANCE,
-        0.2,
-        FLOOR_CLEARANCE,
-        0.0,
-        -1.0,
-    ] {
-        let v = governor_speed(c, &GOV);
-        let back = ceilings_to_clearance(&[v], &GOV)[0];
-        assert!(
-            (governor_speed(back, &GOV) - v).abs() < 1e-12,
-            "clearance {c} -> {v} m/s -> {back} m re-prices at {}",
-            governor_speed(back, &GOV)
-        );
-    }
-}
-
-#[test]
-fn ceilings_outside_the_band_saturate_at_its_ends() {
-    // the wire is free to hand over anything; the clip is what keeps the
-    // result inside the embodiment's own [floor, cruise] room band
-    assert_eq!(
-        ceilings_to_clearance(&[MIN_SPEED - 1.0], &GOV)[0],
-        FLOOR_CLEARANCE
-    );
-    assert_eq!(
-        ceilings_to_clearance(&[MAX_SPEED + 1.0], &GOV)[0],
-        SPEED_CLEARANCE
-    );
-    assert_eq!(
-        ceilings_to_clearance(&[f64::INFINITY], &GOV)[0],
-        SPEED_CLEARANCE
-    );
-    assert!(ceilings_to_clearance(&[], &GOV).is_empty());
 }
 
 #[test]

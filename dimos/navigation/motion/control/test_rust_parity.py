@@ -16,7 +16,7 @@
 
 Every branch of the law gets sampled: straight runs, S-curves, fan clusters
 of coincident waypoints, degenerate one/zero-pose paths, clearance annotated
-and blind, poses on/off/behind the path, yaws swept across +-pi. Agreement is
+and bare, poses on/off/behind the path, yaws swept across +-pi. Agreement is
 asserted per component at 1e-9, but the observed spread is exactly zero
 (`test_parity_headroom` pins that separately): the two run the same operations
 in the same order against the same libm, so they agree bit for bit, and any
@@ -38,11 +38,8 @@ from dimos.navigation.motion.control.controller import (
     load_extension,
     path_xy_yaw,
 )
-from dimos.navigation.motion.control.laws import blind, hinted, seed
-from dimos.navigation.motion.control.profile import (
-    ceilings_to_clearance,
-    encode_precision,
-)
+from dimos.navigation.motion.control.laws import hinted, seed
+from dimos.navigation.motion.control.profile import encode_precision
 from dimos.navigation.motion.embodiment.go2 import GO2
 from dimos.navigation.motion.obstacles import path_clearance as follower_clearance
 
@@ -145,7 +142,7 @@ def _cases(seed: int = 20260802, n: int = CASES):  # type: ignore[no-untyped-def
             if k % 8 == 1:  # a wrong-length annotation must be ignored by both
                 clearance = clearance[:-1]
         # Stamp a share of the paths with the precision profile: it is the
-        # blind law's only governor channel, and an unstamped path exercises
+        # hinted law's governor channel on the robot, and an unstamped path exercises
         # its fallback. k % 8 == 3 leaves stamps that are deliberate nonsense.
         if k % 3 and len(states) > 1:
             enc = np.clip(srng.uniform(0.0, 0.8, len(states)), 0.0, None)
@@ -172,14 +169,12 @@ def _cases(seed: int = 20260802, n: int = CASES):  # type: ignore[no-untyped-def
                 ),
                 max_speed=float(rng.uniform(0.2, 1.5)),
                 min_speed=float(rng.uniform(0.05, 0.3)),
-                gait_band=(float(rng.uniform(0.05, 0.5)), float(rng.uniform(0.5, 1.5))),
                 max_yaw_rate=float(rng.uniform(0.4, 3.0)),
                 speed_clearance=float(rng.uniform(0.2, 0.8)),
                 precision=float(rng.uniform(0.01, 0.15)),
                 walk_gain=float(srng.uniform(0.7, 1.3)),
                 walk_slip=float(srng.uniform(0.0, 0.3)),
                 walk_slip_ramp=float(srng.uniform(0.02, 0.3)),
-                command_slew=tuple(float(v) for v in srng.uniform(0.5, 6.0, 3)),
             )
         yield emb.control, pose, path, clearance, emb
 
@@ -187,36 +182,8 @@ def _cases(seed: int = 20260802, n: int = CASES):  # type: ignore[no-untyped-def
 # every law and its rust twin; each pair is held to TOL independently
 LAWS = {
     "seed": (seed.make, seed.make_rust),
-    "blind": (blind.make, blind.make_rust),
     "hinted": (hinted.make, hinted.make_rust),
 }
-
-# laws that keep state across ticks, so a single call proves nothing: their
-# parity has to be replayed as a SEQUENCE through one controller instance
-STATEFUL = {"hinted"}
-
-
-def _raw_twists(law, cfg, pose, path, clearance, emb=GO2):  # type: ignore[no-untyped-def]
-    """The PURE tick of a law, before any state it keeps.
-
-    A stateful law's first tick is the only one a fresh instance can produce,
-    and for `hinted` that tick is rate limited from a standing start -- so
-    sweeping `update()` would never reach the clamp or the governor's ceiling
-    and the branch census below would be measuring the limiter, not the law.
-    The limiter has its own gate in `test_stateful_parity_over_a_sequence`.
-    """
-    if law not in STATEFUL:
-        return _twists(law, cfg, pose, path, clearance, emb)
-    ext = load_extension()
-    clr = None if clearance is None else np.ascontiguousarray(clearance, dtype=np.float64)
-    py = hinted.update(pose, path, emb, clearance)
-    rs = ext.update_hinted_raw(
-        (float(pose.position.x), float(pose.position.y), float(pose.yaw)),
-        path_xy_yaw(path),
-        clr,
-        emb.to_json(),
-    )
-    return py, rs
 
 
 def _twists(law, cfg, pose, path, clearance, emb=GO2):  # type: ignore[no-untyped-def]
@@ -233,11 +200,11 @@ def _twists(law, cfg, pose, path, clearance, emb=GO2):  # type: ignore[no-untype
 def test_rust_matches_python(law: str) -> None:
     seen = {"fan": 0, "governed": 0, "clamped": 0, "held": 0}
     for k, case in enumerate(_cases()):
-        a, b = _raw_twists(law, *case)
+        a, b = _twists(law, *case)
         for c, (x, y) in enumerate(zip(a, b, strict=True)):
             assert abs(x - y) <= TOL, f"case {k} component {c}: python {x!r} vs rust {y!r}"
         emb = case[4]
-        top = emb.gait_band[1] if law == "hinted" else emb.max_speed
+        top = emb.max_speed
         if a == (0.0, 0.0, 0.0):
             seen["held"] += 1
         if abs(a[2]) >= emb.max_yaw_rate - 1e-12 or math.hypot(a[0], a[1]) >= top - 1e-12:
@@ -255,7 +222,7 @@ def test_parity_headroom(law: str) -> None:
     """Report the real spread: it must sit far under the asserted tolerance."""
     worst = 0.0
     for case in _cases():
-        a, b = _raw_twists(law, *case)
+        a, b = _twists(law, *case)
         worst = max(worst, max(abs(x - y) for x, y in zip(a, b, strict=True)))
     assert worst <= TOL, f"max component diff {worst:.3e}"
     # libm hypot/sin/cos are shared between the two, so the only expected
@@ -277,53 +244,6 @@ def test_wrap_boundaries(yaw: float) -> None:
 def test_rust_factories_build() -> None:
     for _, make_rs in LAWS.values():
         assert isinstance(make_rs().config, ControllerConfig)
-
-
-@pytest.mark.parametrize("law", sorted(STATEFUL))
-def test_stateful_parity_over_a_sequence(law: str) -> None:
-    """A law with memory has to agree tick after tick, not just once.
-
-    One instance each, fed the whole sweep in order at a realistic 50 Hz clock:
-    a rate limiter that diverged by an ulp on tick one would carry that ulp
-    forward, so this is the assertion that actually binds it. The tick times
-    deliberately include a stall longer than the limiter's MAX_TICK and a
-    repeated timestamp, both of which its dt fallback has to handle the same
-    way on either side.
-    """
-    make_py, make_rs = LAWS[law]
-    cases = list(_cases())
-    py_law, rs_law = make_py(cases[0][4]), make_rs(cases[0][4])
-    worst = 0.0
-    t = 0.0
-    for k, (_cfg, pose, path, clearance, emb) in enumerate(cases):
-        # the config is per-case in this sweep, so rebuild on a change and
-        # reset BOTH -- a fresh law and a reset law must answer identically
-        if k and emb is not cases[k - 1][4]:
-            py_law, rs_law = make_py(emb), make_rs(emb)
-        t += (0.02, 0.02, 0.0, 0.5)[k % 4]  # nominal, nominal, repeat, stall
-        a = py_law.update(pose, path, t, clearance)
-        b = rs_law.update(pose, path, t, clearance)
-        got = ((a.linear.x, a.linear.y, a.angular.z), (b.linear.x, b.linear.y, b.angular.z))
-        for c, (x, y) in enumerate(zip(*got, strict=True)):
-            assert abs(x - y) <= TOL, f"tick {k} component {c}: python {x!r} vs rust {y!r}"
-            worst = max(worst, abs(x - y))
-    assert worst == 0.0, f"unexpected non-zero divergence {worst:.3e}"
-
-
-@pytest.mark.parametrize("law", sorted(STATEFUL))
-def test_reset_clears_every_tick_of_history(law: str) -> None:
-    """reset() must make a used law indistinguishable from a fresh one."""
-    make_py, make_rs = LAWS[law]
-    cfg, pose, path, clearance, emb = next(c for c in _cases() if len(c[2].poses) > 3)
-    other = next(c for c in _cases() if len(c[2].poses) > 3 and c[2] is not path)
-    for make in (make_py, make_rs):
-        fresh, used = make(emb), make(emb)
-        for _ in range(5):  # give `used` a foreign history to forget
-            used.update(other[1], other[2], 0.02, other[3])
-        used.reset()
-        a = fresh.update(pose, path, 0.02, clearance)
-        b = used.update(pose, path, 0.02, clearance)
-        assert (a.linear.x, a.linear.y, a.angular.z) == (b.linear.x, b.linear.y, b.angular.z)
 
 
 def test_encode_precision_matches_python() -> None:
@@ -349,33 +269,6 @@ def test_encode_precision_matches_python() -> None:
             assert abs(x - y) <= TOL, f"waypoint {k}: python {x!r} vs rust {y!r}"
             worst = max(worst, abs(x - y))
     assert worst == 0.0, f"unexpected non-zero divergence {worst:.3e}"
-
-
-def test_ceilings_to_clearance_matches_python() -> None:
-    """The dialect's inverse leg, the half the follower module runs.
-
-    A hinted follower with no cloud of its own has no clearance array, and the
-    hinted law takes no stamps -- so the stamps are decoded to ceilings and
-    bent back into the clearance that produced them. Both legs are wire
-    constants, so a divergence here would silently re-price every waypoint of
-    a plan the robot is already following.
-    """
-    rs = load_extension()
-    rng = np.random.default_rng(20260803)
-    # in band, either side of both knees, and the values the wire can hand over
-    # that the encoder never produces
-    ceilings = np.concatenate(
-        [
-            rng.uniform(0.0, 1.0, 200),
-            np.array([GO2.min_speed, GO2.max_speed, 0.0, -1.0, 1e9, np.inf]),
-        ]
-    )
-    want = ceilings_to_clearance(ceilings, GO2)
-    got = np.asarray(rs.ceilings_to_clearance(np.ascontiguousarray(ceilings), GOVERNOR))
-    assert got.shape == want.shape
-    for k, (a, b) in enumerate(zip(want, got, strict=True)):
-        assert a == b, f"ceiling {ceilings[k]!r}: python {a!r} vs rust {b!r}"
-    assert not len(rs.ceilings_to_clearance(np.zeros(0), GOVERNOR))
 
 
 def test_path_clearance_matches_scipy() -> None:

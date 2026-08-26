@@ -53,9 +53,7 @@ GO2_MOTION_HOST = Deployment(
         "motion_planner": MotionPlannerNativeConfig(
             embodiment=BODY, body_dilate_m=MOTION_BODY_DILATE_M
         ).to_config_dict(),
-        "trajectory_follower": TrajectoryFollowerNativeConfig(
-            embodiment=BODY, body_dilate_m=MOTION_BODY_DILATE_M
-        ).to_config_dict(),
+        "trajectory_follower": TrajectoryFollowerNativeConfig(embodiment=BODY).to_config_dict(),
     },
     session=SESSION.to_wire(),
 )

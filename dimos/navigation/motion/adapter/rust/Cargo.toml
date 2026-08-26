@@ -28,10 +28,9 @@ path = "src/bin/trajectory_follower.rs"
 # adapters share a crate: they share both pure crates, one Cargo.lock and one
 # dependency list, and they mirror the python package layout.
 #
-# threads = 2 on both: their worker tasks call block_in_place -- the planner
-# around `plan()`, the follower around the clearance rebuild -- so a
-# current_thread runtime inside a baked host would stall that module's
-# dispatch loop.
+# threads = 2 on both: the planner's worker calls block_in_place around
+# `plan()`, so a current_thread runtime inside a baked host would stall its
+# dispatch loop; the follower keeps the same shape so the two hosts match.
 [package.metadata.dimos.module.motion_planner]
 path = "dimos_motion_adapter::planner::MotionPlanner"
 python = "dimos.navigation.motion.adapter.planner_native:MotionPlannerNative"
@@ -55,7 +54,6 @@ threads = 2
 
 [package.metadata.dimos.module.trajectory_follower.inputs]
 path = "nav_msgs.Path"
-local_map = "sensor_msgs.PointCloud2"
 stop_movement = "std_msgs.Bool"
 tf = "tf2_msgs.TFMessage"
 

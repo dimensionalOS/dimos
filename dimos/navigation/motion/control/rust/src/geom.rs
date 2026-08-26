@@ -16,12 +16,11 @@
 //! plan, fan detection, carrot selection, the clearance governor, and the
 //! body-frame error terms.
 //!
-//! This module is SHARED across tracks and is deliberately conservative --
+//! This module is SHARED across laws and is deliberately conservative --
 //! each function reproduces one statement of `control/laws/seed.py` and the
 //! laws in `laws/` compose them in their own order. A research branch that
 //! wants different geometry adds a function here rather than editing one, so
-//! that folding in one track's generation cannot silently move another's
-//! baseline.
+//! that folding in a generation cannot silently move the baseline.
 //!
 //! NUMERICS. Parity with the python is per-operation, not per-formula: the
 //! operation ORDER and the exact tie-breaks are preserved (`argmin` takes the

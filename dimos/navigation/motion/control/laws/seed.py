@@ -126,7 +126,7 @@ class PursuitController:
         # is libm, and they differ by an ulp on some inputs. It only reaches the
         # twist here when the command clamps, and the sweep in test_rust_parity
         # is bit-exact, so this stays as it is -- the baseline does not move for
-        # a latent ulp. A NEW law should use np.hypot, as laws/blind.py does.
+        # a latent ulp. A NEW law should use np.hypot, as laws/hinted.py does.
         speed = math.hypot(vx, vy)
         if speed > vmax:
             vx, vy = vx / speed * vmax, vy / speed * vmax

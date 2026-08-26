@@ -62,7 +62,6 @@ all_blueprints = {
     "go2-zenoh-basic": "dimos.robot.unitree.go2.zenoh.blueprints:go2_zenoh_basic",
     "go2-zenoh-htc": "dimos.robot.unitree.go2.zenoh.blueprints:go2_zenoh_htc",
     "go2-zenoh-motion": "dimos.robot.unitree.go2.zenoh.blueprints:go2_zenoh_motion",
-    "go2-zenoh-motion-blind": "dimos.robot.unitree.go2.zenoh.blueprints:go2_zenoh_motion_blind",
     "go2-zenoh-motion-local": "dimos.robot.unitree.go2.zenoh.blueprints:go2_zenoh_motion_local",
     "go2-zenoh-nav": "dimos.robot.unitree.go2.zenoh.blueprints:go2_zenoh_nav",
     "go2-zenoh-nav-baked": "dimos.robot.unitree.go2.zenoh.blueprints:go2_zenoh_nav_baked",

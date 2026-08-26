@@ -17,8 +17,8 @@
 //! agreement with the python is a separate gate -- `test_rust_parity.py`.
 //!
 //! This law is the permanent baseline, so these cases are frozen: a research
-//! generation that wants different behaviour lands in its own track's law and
-//! brings its own test file (see `blind.rs`).
+//! generation that wants different behaviour lands in `laws/hinted.rs` and
+//! brings its own test file (see `hinted.rs`).
 //!
 //! Run with `cargo test --release --no-default-features` to skip the pyo3
 //! link; the crate exposes the laws as an rlib.
@@ -146,16 +146,16 @@ fn governor_creeps_in_tight_room() {
 }
 
 #[test]
-fn governor_is_open_room_and_a_no_op_when_blind() {
+fn governor_is_open_room_and_a_no_op_without_clearance() {
     let cfg = cfg();
     let p = straight();
     let wide = vec![1.0; p.len()];
     let open = update((-1.0, 0.0, 0.0), &p, Some(&wide), &cfg);
-    let blind = update((-1.0, 0.0, 0.0), &p, None, &cfg);
-    assert_eq!(open, blind, "wide clearance changed the command");
+    let bare = update((-1.0, 0.0, 0.0), &p, None, &cfg);
+    assert_eq!(open, bare, "wide clearance changed the command");
     // a wrong-length annotation is ignored, exactly as in the python
     let stub = vec![0.06; p.len() - 1];
-    assert_eq!(update((-1.0, 0.0, 0.0), &p, Some(&stub), &cfg), blind);
+    assert_eq!(update((-1.0, 0.0, 0.0), &p, Some(&stub), &cfg), bare);
 }
 
 /// The window is [arc_i, arc_i + speed_lookahead]: room already behind the

@@ -29,11 +29,8 @@ so a failure can be bisected by dropping down a level:
 - ``go2-zenoh-htc`` — ``go2-zenoh-nav`` with the follower swapped for the
   ``DanLocalPlanner`` + ``DanHolonomicTC`` pair from ``unitree-go2-mls-htc``.
 - ``go2-zenoh-motion`` — the motion stack (``dimos/navigation/motion``): the evolved
-  local planner and the trajectory follower over the raycaster's local map, on the
-  ``hinted`` track.
-- ``go2-zenoh-motion-blind`` — the same stack on the ``blind`` track: the follower is
-  handed no clearance array and reads required precision off the path stamps. Same
-  graph, so an A/B against ``go2-zenoh-motion`` isolates the law.
+  local planner over the raycaster's local map, and the trajectory follower reading
+  the required precision off the path stamps.
 - ``go2-zenoh-motion-local`` — ``go2-zenoh-motion`` with planner, follower and mux
   lifted onto the robot as one ``dimos bake`` host.
 """
@@ -304,18 +301,17 @@ _mls_planner_motion = MLSPlannerNative.blueprint(
 # mount is a rotation AND a lever arm -- a stack that skips it plans for a body 0.30 m
 # ahead of the robot and 0.16 m above it.
 #
-# SPEEDS ARE SIM-CALIBRATED. Each law's envelope was measured against the freewalk_mcf
-# policy in the matched MuJoCo env, NOT against the gait the robot actually runs:
-# `hinted` asks up to 0.95 m/s commanded, and `blind` feeds its twist through a gait-slip
-# inverse keyed to that same blob (~23% over-speed on a different gait). Re-probe against
-# the deployed gait before trusting either at speed; until then dial the ceiling down
-# here rather than in the law -- e.g. embodiment=replace(GO2, max_speed=0.4), or
+# SPEEDS ARE SIM-CALIBRATED. The law's gait-slip inverse was measured against the
+# freewalk_mcf policy in the matched MuJoCo env, NOT against the gait the robot actually
+# runs (~23% over-speed on a different gait). Re-probe against the deployed gait before
+# trusting it at speed; until then dial the ceiling down here rather than in the law --
+# e.g. embodiment=replace(GO2, max_speed=0.4), or
 # replace(GO2, control=GO2.control.model_copy(update={"k_pos": 1.5})) for its gains.
 #
 # Everything but the follower is shared, so it composes as a sub-blueprint the way
-# go2_zenoh_raycaster does and the two tracks differ by one argument. Private (leading
-# underscore) so the generated registry does not offer a headless stack as a runnable
-# blueprint -- it has no follower and would plan without ever moving.
+# go2_zenoh_raycaster does. Private (leading underscore) so the generated registry does
+# not offer a headless stack as a runnable blueprint -- it has no follower and would
+# plan without ever moving.
 _go2_zenoh_motion_base = autoconnect(
     go2_zenoh_raycaster,
     # Re-declared on the motion rig: autoconnect keeps the LAST duplicate, so this
@@ -335,21 +331,12 @@ _go2_zenoh_motion_base = autoconnect(
     CmdVelMux.blueprint(),
 )
 
-# hinted: the follower is handed the per-waypoint clearance array recomputed from the
-# raycaster's local map, which on this stack is live -- so this is the honest default.
-# It reads that map through the planner's obstacle model (the shared default), because
-# the room hint has to be measured off the slice the plan was priced in.
+# The follower reads no map: the required precision arrives in the path's own
+# timestamps (control/profile.py), so it survives a local map that is stale, empty, or
+# not the follower's to read.
 go2_zenoh_motion = autoconnect(
     _go2_zenoh_motion_base,
-    TrajectoryFollower.blueprint(body_dilate_m=MOTION_BODY_DILATE_M),
-).global_config(transport="zenoh", n_workers=9, robot_model="unitree_go2")
-
-# blind: the same graph with the clearance hint withheld. The law recovers the required
-# precision from the path's own timestamps instead (control/profile.py), which is the
-# regime that survives when the local map is stale, empty, or not the follower's to read.
-go2_zenoh_motion_blind = autoconnect(
-    _go2_zenoh_motion_base,
-    TrajectoryFollower.blueprint(track="blind", body_dilate_m=MOTION_BODY_DILATE_M),
+    TrajectoryFollower.blueprint(),
 ).global_config(transport="zenoh", n_workers=9, robot_model="unitree_go2")
 
 # go2-zenoh-motion with the time-critical half lifted off the laptop. The three modules

@@ -20,10 +20,10 @@ follower runs off a locally-held path at a steady 10 Hz instead of receiving
 ``cmd_vel`` in bursts whenever the link hiccups. :mod:`.follower` stays the
 reference implementation.
 
-Two fields do NOT cross. ``controller``, because the track already names the
-law and a native module has one law per track by construction; and
-``stall_report_s``, because the rust side reports through throttled tracing
-lines rather than a StallReporter.
+Two fields do NOT cross. ``controller``, because the native module runs the
+one law (``laws/hinted.rs``) by construction; and ``stall_report_s``, because
+the rust side reports through throttled tracing lines rather than a
+StallReporter.
 """
 
 from __future__ import annotations
@@ -34,7 +34,6 @@ from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.motion.adapter.follower import TrajectoryFollowerConfig
@@ -59,13 +58,10 @@ class TrajectoryFollowerNativeConfig(NativeModuleConfig):
     # them must: a native config has no rust-side defaults. Defaults are the
     # python follower's own, read off its config so the twins cannot drift
     # (test_follower.py asserts it).
-    track: str = _default("track")
     control_frequency: float = _default("control_frequency")
     goal_tolerance: float = _default("goal_tolerance")
     embodiment: Embodiment = _default("embodiment")
-    body_dilate_m: float = _default("body_dilate_m")
     base_frame: str = _default("base_frame")
-    obstacle_model: str = _default("obstacle_model")
     idle_speed: float = _default("idle_speed")
     max_path_age_s: float = _default("max_path_age_s")
 
@@ -76,7 +72,6 @@ class TrajectoryFollowerNative(NativeModule):
     config: TrajectoryFollowerNativeConfig
 
     path: In[Path]
-    local_map: In[PointCloud2]
     stop_movement: In[Bool]
     tf: IO[TFMessage]  # IO, not In: see planner_native.py
 

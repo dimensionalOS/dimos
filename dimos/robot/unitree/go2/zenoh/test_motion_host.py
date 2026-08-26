@@ -49,9 +49,9 @@ def test_every_module_block_is_its_native_config_again(blob):
 
 
 def test_the_deployment_overrides_land_in_both_halves(blob):
+    assert blob["modules"]["motion_planner"]["config"]["body_dilate_m"] == MOTION_BODY_DILATE_M
     for module in ("motion_planner", "trajectory_follower"):
         cfg = blob["modules"][module]["config"]
-        assert cfg["body_dilate_m"] == MOTION_BODY_DILATE_M
         assert cfg["embodiment"]["max_speed"] == MAX_SPEED
 
 

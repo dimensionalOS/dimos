@@ -14,16 +14,13 @@
 
 //! The room hint: how much space each waypoint has, from a set of obstacles.
 //!
-//! Shared facility, not a law. Both deployed modules need it and need it to
-//! agree -- the planner stamps the profile it computes here into the path
-//! (`stamps::encode_precision`), and the follower on the hinted track
-//! recomputes the same quantity from its own copy of the map. If the two
-//! disagreed, the follower's governor would be reading a different world than
-//! the one the plan was priced for.
+//! Shared facility, not a law. The planner stamps the profile it computes
+//! here into the path (`stamps::encode_precision`), and the follower reads it
+//! back out of the stamps (`stamps::decode_ceilings`) rather than measuring
+//! the map again.
 //!
-//! The python side is `control/world.py:path_clearance` (planner) and
-//! `adapter/follower.py:path_clearance` (follower), which are the same
-//! function written twice; both are the specification.
+//! The python side is `motion/obstacles.py:path_clearance`, which is the
+//! specification.
 //!
 //! The input is an obstacle model's hard set (`obstacles.rs`): every point
 //! handed in is something the body can hit, and z rides along unread. There is

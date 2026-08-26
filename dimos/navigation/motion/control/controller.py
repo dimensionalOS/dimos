@@ -18,9 +18,8 @@ The protocol is the deployment seam — on the robot the same object consumes
 the pose off the odometry message and the planner topic; here the episode
 runner feeds it the simulated equivalents. There is no tf lookup on either
 side. The laws themselves live in
-:mod:`dimos.navigation.motion.control.laws`, one module each, and a *track*
-names one by its ``"module:factory"`` through
-:mod:`dimos.navigation.motion.control.tracks`.
+:mod:`dimos.navigation.motion.control.laws`, one module each; the follower
+runs ``hinted`` unless its config names another ``"module:factory"``.
 """
 
 from __future__ import annotations
@@ -60,20 +59,6 @@ class ControllerConfig(BaseConfig):
     # the governor (the embodiment's curve, control/profile.py) is judged over
     # the next speed_lookahead metres of path
     speed_lookahead: float
-    # Read by the hinted law only (laws/hinted.py).
-    # Centred window the tangent feedforward reads the plan's direction over.
-    tangent_preview: float
-    # The governor's pinch-escape leg: below escape_clearance of room (read over
-    # escape_preview of arc, not the ramp's speed_lookahead) the lower anchor
-    # rises toward escape_speed, because what kills in a gap is dwell.
-    escape_clearance: float
-    escape_preview: float
-    escape_speed: float
-    # Brake-feasible preview: a previewed waypoint imposes only what it can,
-    # given the body may decelerate on the way there. brake_accel 0 reproduces
-    # the seed's flat minimum exactly.
-    brake_accel: float
-    brake_margin: float
 
 
 class TrajectoryController(Protocol):

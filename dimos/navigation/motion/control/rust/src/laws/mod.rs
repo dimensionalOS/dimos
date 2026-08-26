@@ -15,11 +15,9 @@
 //! One module per law, mirroring `control/laws/`.
 //!
 //! A law composes `geom` (and `stamps`, if it reads the wire dialect) into a
-//! tick. Tracks name a law through `control/tracks.py`; nothing outside that
-//! map should name one directly. Folding in a research generation means
-//! replacing its track's module here, which is why the modules stay small and
-//! the shared facilities stay in `geom`/`stamps`.
+//! tick. The follower runs `hinted`; `seed` is the permanent baseline. A
+//! research generation lands by replacing `hinted`, which is why the modules
+//! stay small and the shared facilities stay in `geom`/`stamps`.
 
-pub mod blind;
 pub mod hinted;
 pub mod seed;

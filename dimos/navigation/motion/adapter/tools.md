@@ -21,8 +21,7 @@ MLS stays the global planner but its path is remapped to `planner_path` and only
 feeds the carrot: a point `goal_lookahead_m` (5 m) of arc along it. The local
 planner replans to the carrot at `replan_hz` over the raycaster's `local_map`;
 a refusal is a single-pose stub the follower holds on while MLS reroutes. The
-follower annotates the path with clearance from the local map (computed
-on-robot, off the planner's own obstacle model) and stops
+follower reads no map -- the room arrives in the path stamps -- and stops
 through a goal latch that ignores sub-tolerance carrot jitter. Neither module
 reads odometry: the pose is the `world -> base_link` edge on tf, looked up per
 tick (`navigation/tf_pose.py::TfPose`) — go2_tf publishes it off odometry

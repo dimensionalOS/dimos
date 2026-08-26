@@ -71,12 +71,6 @@ GO2 = Embodiment(
         fan_yaw_per_m=3.0,  # yaw-per-metre above this is a rotation in place, not a curve
         fan_yaw_done=0.25,  # a fan holds position until the yaw error is under this (rad)
         speed_lookahead=2.0,  # the governor reads room over this much path ahead (m)
-        tangent_preview=0.15,  # centred window the feedforward reads the plan's direction over
-        escape_clearance=0.10,  # below this room the pinch-escape leg lifts the floor (m)
-        escape_preview=1.00,  # ...read over this much arc ahead (m)
-        escape_speed=0.75,  # ...up to this speed where the room has run out (m/s)
-        brake_accel=0.8,  # deceleration a previewed waypoint credits the body with (m/s^2)
-        brake_margin=0.15,  # within this arc a previewed waypoint binds in full (m)
     ),
 )
 
