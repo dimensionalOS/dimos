@@ -112,8 +112,6 @@ def test_pico_body_tracking_demo_connects_required_webxr_to_monitor() -> None:
     webxr = next(
         atom for atom in demo_pico_body_tracking.blueprints if atom.module is WebXRTeleopModule
     )
-    transport = demo_pico_body_tracking.transport_map[("body_tracking", BodyTrackingSnapshot)]
-
     assert modules == {WebXRTeleopModule, BodyTrackingMonitor}
     assert webxr.kwargs["body_tracking_mode"] == "required"
-    assert transport.channel == "/teleop/body_tracking"
+    assert ("body_tracking", BodyTrackingSnapshot) not in demo_pico_body_tracking.transport_map

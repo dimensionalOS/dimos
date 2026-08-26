@@ -21,7 +21,7 @@ hardware. The underlying coordinator blueprints branch on `global_config.simulat
 
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.transport import LCMTransport, pLCMTransport, pSHMTransport
+from dimos.core.transport import LCMTransport, pSHMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Image import Image
@@ -33,7 +33,6 @@ from dimos.robot.manipulators.xarm.blueprints.teleop import (
     coordinator_teleop_xarm7,
 )
 from dimos.robot.unitree.go2.connection import GO2Connection
-from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
 from dimos.teleop.webxr.body_tracking_monitor import BodyTrackingMonitor
 from dimos.teleop.webxr.extensions import (
     ArmTeleopModule,
@@ -172,8 +171,4 @@ teleop_webxr_go2 = (
 demo_pico_body_tracking = autoconnect(
     WebXRTeleopModule.blueprint(body_tracking_mode="required"),
     BodyTrackingMonitor.blueprint(),
-).transports(
-    {
-        ("body_tracking", BodyTrackingSnapshot): pLCMTransport("/teleop/body_tracking"),
-    }
 )

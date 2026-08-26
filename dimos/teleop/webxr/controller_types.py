@@ -53,7 +53,6 @@ class WebXRControllerState:
     """
 
     EXPECTED_AXES: ClassVar[int] = 4
-    MIN_BUTTONS: ClassVar[int] = 6
 
     is_left: bool = True
     # Analog values (0.0-1.0)
@@ -79,8 +78,6 @@ class WebXRControllerState:
         buttons = joy.buttons or []
         axes = joy.axes or []
 
-        if len(buttons) < cls.MIN_BUTTONS:
-            raise ValueError(f"Expected at least {cls.MIN_BUTTONS} buttons, got {len(buttons)}")
         if len(axes) < cls.EXPECTED_AXES:
             raise ValueError(f"Expected {cls.EXPECTED_AXES} axes, got {len(axes)}")
 
