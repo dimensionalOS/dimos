@@ -35,8 +35,8 @@ from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.teleop.webxr.module import WebXRTeleopConfig, WebXRTeleopModule
 from dimos.teleop.webxr.controller_types import Buttons, Hand, WebXRControllerState
+from dimos.teleop.webxr.module import WebXRTeleopConfig, WebXRTeleopModule
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
