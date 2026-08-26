@@ -253,17 +253,17 @@ Host.
 
 ### Advertisement protocol
 
-The discovery protocol uses Zenoh liveliness for presence and a queryable for
-the current descriptor, conceptually:
+The discovery and control protocol uses Zenoh liveliness for presence and
+Zenoh RPC queryables for Host operations. The MVP reserves these namespaces:
 
-```text
-dimos/hosts/<host-id>/live
-dimos/hosts/<host-id>/describe
-dimos/hosts/<host-id>/control/<operation>
-```
+| Purpose | Zenoh key expression |
+| --- | --- |
+| Host presence | `dimos/hosts/<host-id>/live` |
+| Host control RPC | `dimos/rpc/hosts/<host-id>/<operation>` |
+| Application stream | `dimos/runs/<run-id>/streams/<logical-stream>/<message-type>` |
+| Module RPC | `dimos/rpc/runs/<run-id>/hosts/<host-id>/modules/<module>/<method>` |
 
-The exact key expressions are an implementation detail, but these properties
-are required:
+The namespace has these required properties:
 
 - Host presence disappears when its Zenoh liveliness token is lost;
 - a descriptor is fetched from the live Host rather than trusted from a stale
@@ -271,6 +271,7 @@ are required:
 - discovery works through routers and gossip, not only local multicast;
 - control operations are addressed by opaque Host ID;
 - application stream keys use a separate run-scoped namespace;
+- module RPC keys are scoped by run, Host, and module instance;
 - one Host restart has an observable incarnation/epoch, preventing an old lease
   from being mistaken for a current one.
 
@@ -473,9 +474,9 @@ explicitly pinned machine-local transport crosses a Host boundary.
 Both ends of a boundary stream must independently derive the same Zenoh key
 expression. They must also be isolated from older or concurrent runs of the
 same application. Physical topics should therefore include a run-scoped prefix,
-conceptually `dimos/runs/<run-id>/streams/<logical-stream>/<message-type>`.
+`dimos/runs/<run-id>/streams/<logical-stream>/<message-type>`.
 
-The exact format is an implementation detail, but the following are required:
+Within that namespace, the following are required:
 
 - identical logical stream name and message type resolve to the same key on all
   Hosts in a run;
@@ -486,6 +487,14 @@ The exact format is an implementation detail, but the following are required:
 
 Run scoping is a necessary change to the current topic factory, which currently
 uses a global `dimos/<name>` namespace for Zenoh.
+
+Application module RPC uses the corresponding run-scoped RPC namespace:
+`dimos/rpc/runs/<run-id>/hosts/<host-id>/modules/<module>/<method>`. RPC and
+stream traffic travel directly between the participating module runtimes over
+Zenoh; the controller, Host service, and Host client do not proxy them.
+The MVP still keeps module-reference-connected modules on the same Host; the
+run-scoped RPC namespace prevents collisions on the shared fabric and leaves a
+stable address for later cross-Host module references.
 
 ## Module-reference rules
 
@@ -534,9 +543,21 @@ return the current result rather than starting duplicate deployments. A Host
 must reject a conflicting run when it has no free deployment slot. An expired
 prepare lease must clean up staged state without killing a committed run.
 
-Host services use opaque-ID-scoped names such as `Host/<host-id>`. Local module
-RPC names are scoped by run and Host wherever they are visible on the shared
-Zenoh fabric.
+Host services use opaque-ID-scoped RPC names under
+`dimos/rpc/hosts/<host-id>/`. Module RPC names are scoped by run, Host, and
+module instance wherever they are visible on the shared Zenoh fabric.
+
+Connecting a Host client and server means that both join the same Zenoh fabric:
+the server declares its liveliness token and control queryables, while the
+controller uses one shared Zenoh RPC channel to address every selected Host.
+There is no dedicated socket or Zenoh session per Host client.
+
+`HostClient` is an internal startup facade owned by the controller. It uses one
+shared Zenoh RPC channel to discover, prepare, and start selected Hosts. After
+startup, application module RPC and streams communicate directly through their
+run-scoped Zenoh keys. The controller may retain the control channel for
+`status`, `logs`, and `stop`, but application code does not explicitly call a
+`HostClient` and the client is not part of the application data path.
 
 ## Startup sequence
 

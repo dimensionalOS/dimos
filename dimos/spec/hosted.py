@@ -46,13 +46,107 @@ pinned_g1 = autoconnect(
 # Select one matching embodiment; this does not create replicas.
 available_g1 = unitree_g1.blueprint().placement(tags={"g1"})
 
-# Host client
+# Hosted Zenoh namespaces
+#
+# ZenohRPC adds the ``dimos/rpc/`` prefix to the logical RPC names below.
+HOST_LIVELINESS_KEY = "dimos/hosts/{host_id}/live"
+HOST_CONTROL_RPC_NAME = "hosts/{host_id}"
+RUN_STREAM_KEY = "dimos/runs/{run_id}/streams/{stream}/{message_type}"
+RUN_MODULE_RPC_NAME = "runs/{run_id}/hosts/{host_id}/modules/{module}"
+
+
+# Host control plane
 # ```bash
 # dimos host serve --name g1-01 --tag g1 --tag lab-a
 
 
+class HostControl:
+    """One controller-side Zenoh RPC channel shared by all Host clients."""
+
+    def __init__(self, rpc: RPCSpec) -> None:
+        self._rpc = rpc
+
+    def client(self, host_id: str, epoch: str, timeout: float = 5.0) -> HostClient:
+        """Create the startup proxy used internally by ``dimos run``."""
+        ...
+
+    def serve(self, server: HostServer) -> None:
+        """Expose a HostServer under ``hosts/<host_id>`` on this channel."""
+        ...
+
+    def call(
+        self,
+        host_id: str,
+        method: str,
+        *args: object,
+        timeout: float,
+    ) -> object:
+        """Call ``dimos/rpc/hosts/<host_id>/<method>``."""
+        ...
+
+
 class HostClient:
-    pass
+    """Startup-only control proxy created internally by ``dimos run``."""
+
+    def __init__(
+        self,
+        host_id: str,
+        epoch: str,
+        control: HostControl,
+        timeout: float = 5.0,
+    ) -> None:
+        self._host_id = host_id
+        self._epoch = epoch
+        self._control = control
+        self._timeout = timeout
+
+    def describe(self) -> HostDescriptor: ...
+
+    def prepare(self, run: HostedRun) -> str: ...
+
+    def start(self, run_id: str, generation: int) -> str: ...
+
+    def status(self, run_id: str) -> str: ...
+
+    def stop(self, run_id: str, generation: int) -> str: ...
+
+
+class HostServer:
+    """Persistent Host supervisor whose methods are exposed over Zenoh RPC."""
+
+    def __init__(
+        self,
+        host_id: str,
+        name: str,
+        tags: set[str],
+    ) -> None:
+        self._host_id = host_id
+        self._name = name
+        self._tags = tags
+        self._epoch = uuid.uuid4().hex
+        self._current_run: HostedRun | None = None
+
+    @rpc
+    def describe(self) -> HostDescriptor: ...
+
+    @rpc
+    def prepare(self, epoch: str, run: HostedRun) -> str: ...
+
+    @rpc
+    def start(self, epoch: str, run_id: str, generation: int) -> str: ...
+
+    @rpc
+    def status(self, run_id: str) -> str: ...
+
+    @rpc
+    def stop(self, epoch: str, run_id: str, generation: int) -> str: ...
+
+
+# Host process bootstrap registers HostServer under HOST_CONTROL_RPC_NAME.
+# DistributedRunner owns HostControl and creates HostClient instances only for
+# discovery, prepare, start, status, and stop. Once start succeeds, modules use
+# RUN_STREAM_KEY and RUN_MODULE_RPC_NAME directly over Zenoh; HostClient is not
+# part of the application data path.
 
 
 # Placement Method
