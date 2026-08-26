@@ -75,7 +75,6 @@ from dimos.core.coordination.blueprint_config.values import (
     plain,
     plain_mapping,
     snapshot_mapping,
-    validated_model_values,
 )
 from dimos.core.coordination.blueprints import (
     Blueprint,
@@ -422,7 +421,7 @@ class BlueprintConfigParser:
                 raise BlueprintConfigError(
                     format_validation_error(module.atom.name, error)
                 ) from error
-            dumped = validated_model_values(model, exclude_unset=True)
+            dumped = model.model_dump(mode="python", exclude_unset=True)
             dumped.pop("g", None)
             dumped.pop("instance_name", None)
             parsed[module.atom.name] = dumped
@@ -464,7 +463,7 @@ class BlueprintConfigParser:
                     ) from error
             if not models:
                 continue
-            full = validated_model_values(models[0])
+            full = models[0].model_dump(mode="python")
             if raw_overrides:
                 parsed[transport.name] = extract_shape(full, raw_overrides)
         return parsed

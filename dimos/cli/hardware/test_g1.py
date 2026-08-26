@@ -60,6 +60,18 @@ def test_hardware_namespace_exposes_g1_operator_commands() -> None:
         assert command in result.output
 
 
+def test_status_rejects_coordinator_without_required_rpcs(mocker) -> None:
+    coordinator = Mock(spec=["task_invoke"])
+    client = _Client(coordinator)
+    mocker.patch.object(g1_cli.Dimos, "connect", return_value=client)
+
+    result = runner.invoke(g1_cli.app, ["status"])
+
+    assert result.exit_code == 1
+    assert "required G1 coordinator RPCs" in result.output
+    assert client.stopped
+
+
 def test_arm_forces_dry_run_before_activation_and_waits_for_armed(mocker) -> None:
     coordinator = Mock()
     coordinator.task_invoke.return_value = _state(armed=True, dry_run=True)

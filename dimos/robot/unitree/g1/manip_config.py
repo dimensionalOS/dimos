@@ -48,6 +48,9 @@ G1_UPPER_BODY_MODEL = (
     .with_subtree_rooted_at("pelvis")
     .without_joint_subtrees("left_hip_pitch_joint", "right_hip_pitch_joint")
 )
+G1_TELEOP_ARM_MODEL = G1_UPPER_BODY_MODEL.with_fixed_joints(
+    *(_urdf_joint_name(name) for name in G1_WAIST_JOINTS)
+)
 
 G1_READY_JOINTS = {
     "left_arm": (-0.4, 0.2, 0.0, 1.2, 0.0, 0.0, 0.0),
