@@ -53,7 +53,7 @@ class WebXRControllerState:
     """
 
     EXPECTED_AXES: ClassVar[int] = 4
-    EXPECTED_BUTTONS: ClassVar[int] = 7
+    MIN_BUTTONS: ClassVar[int] = 6
 
     is_left: bool = True
     # Analog values (0.0-1.0)
@@ -72,15 +72,15 @@ class WebXRControllerState:
     def from_joy(cls, joy: Joy, is_left: bool = True) -> "WebXRControllerState":
         """Create WebXRControllerState from Joy message.
         Expected axes: [thumbstick_x, thumbstick_y, trigger_analog, grip_analog]
-        Expected buttons: [trigger, grip, touchpad, thumbstick, X/A, Y/B, menu]
+        Expected buttons: [trigger, grip, touchpad, thumbstick, X/A, Y/B, optional menu]
         Raises:
             ValueError: If Joy message doesn't have expected WebXR controller format.
         """
         buttons = joy.buttons or []
         axes = joy.axes or []
 
-        if len(buttons) < cls.EXPECTED_BUTTONS:
-            raise ValueError(f"Expected {cls.EXPECTED_BUTTONS} buttons, got {len(buttons)}")
+        if len(buttons) < cls.MIN_BUTTONS:
+            raise ValueError(f"Expected at least {cls.MIN_BUTTONS} buttons, got {len(buttons)}")
         if len(axes) < cls.EXPECTED_AXES:
             raise ValueError(f"Expected {cls.EXPECTED_AXES} axes, got {len(axes)}")
 
@@ -92,7 +92,7 @@ class WebXRControllerState:
             thumbstick_press=buttons[3] > 0.5,
             primary=buttons[4] > 0.5,
             secondary=buttons[5] > 0.5,
-            menu=buttons[6] > 0.5,
+            menu=len(buttons) > 6 and buttons[6] > 0.5,
             thumbstick=ThumbstickState(x=float(axes[0]), y=float(axes[1])),
         )
 
