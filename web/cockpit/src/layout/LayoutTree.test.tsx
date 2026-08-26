@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { ChannelSpec, PanelSpec } from "@dimos/shared";
 import type { Manifest } from "@dimos/shared/manifest";
-import { ChannelStore } from "../session/store.ts";
+import { ChannelStore } from "@dimos/sdk";
 import { LayoutTree } from "./LayoutTree.tsx";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

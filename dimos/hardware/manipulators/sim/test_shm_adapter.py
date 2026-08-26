@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 import uuid
 
 import pytest
@@ -24,8 +25,32 @@ import dimos.hardware.manipulators.sim.adapter as adapter_mod
 from dimos.hardware.manipulators.sim.adapter import ShmMujocoAdapter
 from dimos.hardware.manipulators.spec import ControlMode, ManipulatorAdapter
 from dimos.simulation.engines.mujoco_shm import ManipShmWriter
+from dimos.simulation.engines.mujoco_sim_module import _WholeBodySimHooks
 
 ARM_DOF = 7
+
+# The xarm7 hand, which is what the fixtures below stand in for.
+GRIPPER_RANGE = (0.0, 0.85)
+GRIPPER_CTRL_RANGE = (0.0, 255.0)
+GRIPPER_CLOSED, GRIPPER_OPEN = GRIPPER_RANGE
+
+
+def sim_settles_at(command: float) -> float:
+    """The raw MJCF joint value the sim reaches for a gripper ``command``.
+
+    Runs the real command mapping, then the actuator. Measured on data/xarm7:
+    ctrl 0 leaves the joint at 0.003 with the jaws 14cm apart, ctrl 255 drives
+    it to 0.848 with the jaws closed, so the joint tracks the ctrl endpoints
+    while the command mapping inverts.
+    """
+    sim = SimpleNamespace(
+        _gripper_joint_range=GRIPPER_RANGE,
+        _gripper_ctrl_range=GRIPPER_CTRL_RANGE,
+    )
+    ctrl = _WholeBodySimHooks._gripper_joint_to_ctrl(sim, command)
+    low, high = GRIPPER_RANGE
+    ctrl_low, ctrl_high = GRIPPER_CTRL_RANGE
+    return low + (high - low) * (ctrl - ctrl_low) / (ctrl_high - ctrl_low)
 
 
 @pytest.fixture
@@ -122,17 +147,16 @@ class TestReadState:
     ):
         """The gripper's state is published separately, not read off the tail.
 
-        The sim module writes the gripper into the ``grp`` segment (already
-        mapped through the MJCF joint range), so the adapter must take the
-        arm from the joint array and the gripper from ``grp`` — never
-        ``positions[dof]``, which is the unmapped model value.
+        The sim module writes the gripper into the ``grp`` segment, so the
+        adapter must take the arm from the joint array and the gripper from
+        ``grp`` — never ``positions[dof]``, which is the raw model value.
         """
         writer_with_gripper.write_joint_state(
             positions=list(range(8)),
             velocities=[0.0] * 8,
             efforts=[0.0] * 8,
         )
-        writer_with_gripper.write_gripper_state(0.42)
+        writer_with_gripper.write_gripper_state(sim_settles_at(0.42))
 
         positions = adapter_with_gripper.read_joint_positions()
         assert len(positions) == ARM_DOF + 1
@@ -181,7 +205,7 @@ class TestGripper:
         assert len(adapter.get_limits().position_lower) == ARM_DOF
 
     def test_gripper_trails_the_read_array(self, adapter_with_gripper, writer_with_gripper):
-        writer_with_gripper.write_gripper_state(0.33)
+        writer_with_gripper.write_gripper_state(sim_settles_at(0.33))
         assert adapter_with_gripper.read_joint_positions() == pytest.approx(
             [0.0] * ARM_DOF + [0.33]
         )
@@ -194,6 +218,50 @@ class TestGripper:
         assert adapter_with_gripper.write_joint_positions([0.0] * ARM_DOF + [0.5]) is True
         # Unscaled — the sim module maps MJCF joint range to actuator ctrl.
         assert writer_with_gripper.read_gripper_command() == pytest.approx(0.5)
+
+
+class TestGripperRoundTrip:
+    """Reads and writes must agree on which end of the range is closed.
+
+    ``get_limits()`` publishes the MJCF joint range, and PR #3381 normalizes
+    against it as ``(p - lower) / (upper - lower)`` with 0.0 closed and 1.0
+    open. So the position the adapter reads back has to be the position that
+    was commanded, on that same coordinate.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [GRIPPER_CLOSED, GRIPPER_OPEN, 0.5 * (GRIPPER_CLOSED + GRIPPER_OPEN)],
+        ids=["closed", "open", "midpoint"],
+    )
+    def test_commanded_position_reads_back_unchanged(
+        self, adapter_with_gripper, writer_with_gripper, command
+    ):
+        assert adapter_with_gripper.write_joint_positions([0.0] * ARM_DOF + [command]) is True
+        sent = writer_with_gripper.read_gripper_command()
+        assert sent is not None
+        writer_with_gripper.write_gripper_state(sim_settles_at(sent))
+
+        assert adapter_with_gripper.read_joint_positions()[-1] == pytest.approx(command)
+
+    def test_closing_does_not_read_back_as_fully_open(
+        self, adapter_with_gripper, writer_with_gripper
+    ):
+        """The bug this guards: closed jaws normalized to 1.00 (fully open)."""
+        adapter_with_gripper.write_joint_positions([0.0] * ARM_DOF + [GRIPPER_CLOSED])
+        settled = sim_settles_at(writer_with_gripper.read_gripper_command())
+        # Closing drives the raw MJCF joint to the top of its range...
+        assert settled == pytest.approx(GRIPPER_OPEN)
+        writer_with_gripper.write_gripper_state(settled)
+
+        # ...which must still read back as the closed end of the range.
+        lower, upper = (
+            adapter_with_gripper.get_limits().position_lower[-1],
+            (adapter_with_gripper.get_limits().position_upper[-1]),
+        )
+        position = adapter_with_gripper.read_joint_positions()[-1]
+        normalized = (position - lower) / (upper - lower)
+        assert normalized == pytest.approx(0.0)
 
 
 class TestConnect:
