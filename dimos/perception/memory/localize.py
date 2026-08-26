@@ -43,7 +43,7 @@ from dimos.memory.transform import QualityWindow, peaks
 from dimos.perception.detection.identity import Identity, fused, spatial
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-from dimos.perception.memory.rig import Rig
+from dimos.perception.memory.rig import CLOUD_MIN_POINTS, Rig
 from dimos.perception.memory.types import Localization, LocalizePolicy, Support
 from dimos.utils.logging_config import setup_logger
 
@@ -157,14 +157,15 @@ def _lift(
     if pose is None:
         return []
     camera = np.array([pose.position.x, pose.position.y, pose.position.z])
-    lifted = rig.lift(detections)
+    lifted = rig.lift(detections, plane)
     if lifted is None:
         return []
 
+    floor = policy.min_depth_points if rig.cloud is None else CLOUD_MIN_POINTS
     valid: list[Detection3DPC] = []
     for det3d in lifted:
         points = np.asarray(det3d.pointcloud.pointcloud.points)
-        if len(points) < policy.min_depth_points:
+        if len(points) < floor:
             continue
         extent = points.max(axis=0) - points.min(axis=0)
         if float(extent.max()) > policy.max_object_extent_m:
@@ -173,7 +174,7 @@ def _lift(
         if float(np.median(ranges)) < policy.min_camera_range_m:
             continue
         if plane is not None:
-            heights = plane.height_above(points)
+            heights = rig.support_heights(detections.ts, plane, points)
             low = float(np.quantile(heights, 0.05))
             high = float(np.quantile(heights, 0.95))
             if low > policy.surface_patch_min_drop_m and high < policy.surface_patch_max_rise_m:

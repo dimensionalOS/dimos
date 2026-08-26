@@ -22,9 +22,9 @@ Two independent axes generalize the perception stack beyond one robot:
 * **Geometry source.** 3D geometry comes from an aligned ``depth`` stream,
   unprojected per detection mask, or from a world-frame pointcloud stream
   (a registered lidar), projected through the camera per detection mask.
-  Registered scans are sparse, so the cloud at a timestamp is the
-  concatenation of the scans in a short window around it - the scene is
-  static in world frame, which is what makes accumulation valid.
+  The cloud at a timestamp merges the scans in a short window around it:
+  sparse continuous scans concatenate whole, rolling-map snapshots merge
+  nearest-first with cleared cells honored (see ``Rig.cloud_at``).
 
 ``Rig.from_store`` recognizes both recording shapes; every field can also
 be supplied directly for live stores whose streams are still filling.
@@ -45,12 +45,14 @@ from dimos.memory.transform import Transformer
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.perception.detection.project import sees as project_sees
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
+from dimos.perception.detection.type.detection3d.pointcloud import lattice_quantum
 from dimos.perception.detection.type.detection3d.pointcloud_filters import (
     range_cluster,
     statistical,
 )
 from dimos.perception.memory import gates
 from dimos.perception.memory.gates import SPEED_MAX, STILL_ENVELOPE, TF_TOLERANCE
+from dimos.perception.memory.support_plane import PLANE_DISTANCE_CLOUD
 from dimos.perception.memory.types import InventoryPolicy, LocalizePolicy
 from dimos.utils.logging_config import setup_logger
 
@@ -82,7 +84,6 @@ DEPTH_TOLERANCE = 0.06  # s - temporal join color->depth
 CLOUD_ACCUM_S = 4.0
 
 _SCAN_CACHE_MAX = 256  # registered scans held per rig; a window needs a few dozen
-_CELL_OFFSET = 1 << 20  # shifts lattice cell indices positive for 21-bit key packing
 
 EMBED_HZ = 1.0  # index density for a wrist camera parked over a workspace
 # A walking robot changes viewpoint every frame and its frames blur
@@ -90,10 +91,39 @@ EMBED_HZ = 1.0  # index density for a wrist camera parked over a workspace
 # sharp sightings.
 WALK_EMBED_HZ = 3.0
 
+# Color-stream delay estimation: image timestamps stamped at receive lag the
+# pose source by a constant the recording itself reveals - the lag that best
+# correlates optical-flow yaw rate with the camera's heading rate. The grid
+# is the searched span and its resolution; a true delay outside the span
+# lands on an edge and is refused rather than clamped.
+DELAY_LAGS = np.arange(-0.5, 0.5001, 0.01)
+# Flow is sampled in short windows spread over the recording - a compute
+# budget, like the pose samples of _camera_span.
+DELAY_WINDOWS = 12
+DELAY_WINDOW_S = 2.5
+
 # Sparse projected clouds: split off background seen through the mask, then a
 # loose outlier trim. The dense-cloud defaults (raycast + radius) assume a
 # density registered lidar does not have.
-_CLOUD_LIFT_FILTERS = [range_cluster(), statistical(nb_neighbors=12, std_ratio=2.0)]
+_CLOUD_TRIM_NEIGHBORS = 12
+_CLOUD_LIFT_FILTERS = [
+    range_cluster(),
+    statistical(nb_neighbors=_CLOUD_TRIM_NEIGHBORS, std_ratio=2.0),
+]
+# The projected lift's evidence floor. Depth-pixel counts and lattice-cell
+# counts do not compare - a bottle-sized object can never cover thirty 5 cm
+# cells - so a policy's depth-scale floor does not apply to a projected
+# cloud; the floor there is the smallest cloud the trim can vet, its own
+# neighborhood.
+CLOUD_MIN_POINTS = _CLOUD_TRIM_NEIGHBORS + 1
+
+
+def _column_keys(points: np.ndarray, quantum: float, anchor: np.ndarray) -> np.ndarray:
+    """Packed XY lattice-cell key per point, anchored so any grid phase maps exactly."""
+    cells = np.round((points[:, :2] - anchor) / quantum).astype(np.int64) + (1 << 20)
+    keys: np.ndarray = (cells[:, 0] << 21) | cells[:, 1]
+    return keys
+
 
 # Room-scale policies for mobile-robot rigs: objects are furniture-sized,
 # viewpoints meters apart, odometry drifts centimeters between passes, and
@@ -154,28 +184,126 @@ def _camera_span(rig: Rig) -> float:
     return float(np.linalg.norm(spread.max(axis=0) - spread.min(axis=0)))
 
 
-def _lattice_quantum(points: np.ndarray) -> float | None:
-    """The grid pitch when coordinates lie on a lattice; None for continuous scans.
+def _heading_series(rig: Rig, spans: list[tuple[float, float]]) -> tuple[np.ndarray, np.ndarray]:
+    """Camera heading rate over the given time spans: (rate midpoints, rates).
 
-    Grid-quantized sources (an occupancy map streamed as clouds) repeat the
-    same cell across snapshots and dedup by cell key; continuous scans never
-    collide and skip dedup entirely.
+    A poses stream is read directly - a rigid mount adds a constant offset,
+    so the base yaw rate is the camera heading rate. A tf rig has no pose
+    stream to iterate; the optical axis is sampled through tf on each span's
+    frame-period grid instead.
     """
-    sample = points[:2048]
-    x = np.unique(sample[:, 0])
-    if len(x) < 8:
-        return None
-    diffs = np.diff(x)
-    diffs = diffs[diffs > 1e-9]
-    if len(diffs) == 0:
-        return None
-    quantum = float(diffs.min())
-    if quantum < 1e-4:
-        return None
-    scaled = (sample - sample[0]) / quantum
-    if float(np.abs(scaled - np.round(scaled)).max()) > 0.01:
-        return None
-    return quantum
+    times: list[float] = []
+    headings: list[float] = []
+    if rig.poses is not None:
+        for obs in rig.poses.after(spans[0][0]).before(spans[-1][1]):
+            q = obs.pose_stamped.orientation
+            times.append(obs.ts)
+            headings.append(np.arctan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z)))
+    else:
+        for lo, hi in spans:
+            frame_ts = [obs.ts for obs in rig.color.after(lo).before(hi)]
+            if len(frame_ts) < 2:
+                continue
+            step = float(np.median(np.diff(frame_ts)))
+            for t in np.arange(lo, hi, step):
+                transform = rig.world_to_optical(float(t))
+                if transform is None:
+                    continue
+                axis = (-transform).to_matrix()[:3, 2]
+                times.append(float(t))
+                headings.append(np.arctan2(axis[1], axis[0]))
+    if len(times) < 3:
+        return np.empty(0), np.empty(0)
+    stamps = np.array(times)
+    yaw = np.unwrap(np.array(headings))
+    return (stamps[1:] + stamps[:-1]) / 2, np.diff(yaw) / np.diff(stamps)
+
+
+def estimate_color_delay(rig: Rig) -> float:
+    """Constant lag of color timestamps behind the rig's pose source, in seconds.
+
+    Optical-flow yaw rate between consecutive frames is compared against the
+    camera heading rate at a grid of candidate lags; the lag maximizing
+    their absolute correlation is the delay (the sign of the relation is
+    mount-dependent). The estimate validates itself on the recording: the
+    full sample and its two interleaved halves must estimate mutually equal
+    lags to within one frame period - each flow sample integrates motion
+    over a frame period, so that is the measurement's own resolution - and
+    every peak must be interior to the searched span. A recording without
+    usable rotation fails that and keeps 0.0.
+    """
+    import cv2
+
+    try:
+        t0, t1 = rig.color.get_time_range()
+    except LookupError:
+        return 0.0  # live store, nothing recorded yet
+
+    fx = rig.camera_info.K[0]
+    flow_ts: list[float] = []
+    flow_rate: list[float] = []
+    flow_dt: list[float] = []
+    span = max(t1 - t0 - DELAY_WINDOW_S, 0.0)
+    starts = [t0 + span * k / max(DELAY_WINDOWS - 1, 1) for k in range(DELAY_WINDOWS)]
+    windows = [(lo, lo + DELAY_WINDOW_S) for lo in starts]
+    for lo, hi in windows:
+        previous: np.ndarray | None = None
+        previous_ts = 0.0
+        for obs in rig.color.after(lo).before(hi):
+            frame = obs.data.to_opencv()
+            scale = 640 / frame.shape[1]
+            gray = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (640, int(frame.shape[0] * scale)))
+            if previous is not None and obs.ts > previous_ts:
+                corners = cv2.goodFeaturesToTrack(previous, 150, 0.01, 12)
+                if corners is not None:
+                    moved, status, _err = cv2.calcOpticalFlowPyrLK(previous, gray, corners, None)  # type: ignore[call-overload]
+                    tracked = status.ravel().astype(bool)
+                    if tracked.any():
+                        dx = float(np.median(moved[tracked, 0, 0] - corners[tracked, 0, 0])) / scale
+                        flow_ts.append(0.5 * (obs.ts + previous_ts))
+                        flow_rate.append(dx / fx / (obs.ts - previous_ts))
+                        flow_dt.append(obs.ts - previous_ts)
+            previous, previous_ts = gray, obs.ts
+    if len(flow_ts) < 4:
+        return 0.0  # each interleaved half needs a correlation of its own
+
+    margin = float(DELAY_LAGS[-1])
+    rate_t, rates = _heading_series(rig, [(lo - margin, hi + margin) for lo, hi in windows])
+    if len(rates) == 0:
+        return 0.0
+
+    flow_t = np.array(flow_ts)
+    flow = np.array(flow_rate)
+
+    def lag_of(sel: np.ndarray) -> float | None:
+        strength = np.abs(
+            np.array(
+                [
+                    np.corrcoef(flow[sel], np.interp(flow_t[sel] - lag, rate_t, rates))[0, 1]
+                    for lag in DELAY_LAGS
+                ]
+            )
+        )
+        if not np.isfinite(strength).all():
+            return None
+        peak = int(strength.argmax())
+        if peak == 0 or peak == len(DELAY_LAGS) - 1:
+            return None  # the true lag is outside the searched span
+        lag = float(DELAY_LAGS[peak])
+        a, b, c = strength[peak - 1], strength[peak], strength[peak + 1]
+        denominator = a - 2 * b + c
+        if denominator < 0:
+            lag += 0.5 * (a - c) / denominator * float(DELAY_LAGS[1] - DELAY_LAGS[0])
+        return lag
+
+    everything = np.arange(len(flow))
+    lags = [lag_of(everything), lag_of(everything[0::2]), lag_of(everything[1::2])]
+    if any(lag is None for lag in lags):
+        return 0.0
+    estimates = cast("list[float]", lags)
+    if max(estimates) - min(estimates) > float(np.median(flow_dt)):
+        return 0.0
+    return estimates[0]
 
 
 class RegisterScans(Transformer["PointCloud2", "PointCloud2"]):
@@ -253,18 +381,24 @@ class Rig:
     tf_tolerance: float = TF_TOLERANCE
     cloud_accum_s: float = CLOUD_ACCUM_S
     speed_max: float = SPEED_MAX
+    color_delay: float = 0.0  # s - color timestamps lag the pose stream by this
     scene_gate: bool = True
     embed_hz: float = EMBED_HZ
     mobile: bool = False  # camera rides a mobile base: room-scale policies
-    _cloud_memo: tuple[float, PointCloud2] | None = field(default=None, repr=False, init=False)
+    # (ts, merged cloud, the window's measured lattice quantum)
+    _cloud_memo: tuple[float, PointCloud2, float | None] | None = field(
+        default=None, repr=False, init=False
+    )
+    # (ts, plane, per-column floor table of the frame's merged cloud)
+    _shell_memo: tuple[float, Any, tuple[np.ndarray, np.ndarray, float, np.ndarray]] | None = field(
+        default=None, repr=False, init=False
+    )
     _scan_cache: OrderedDict[float, np.ndarray | None] = field(
         default_factory=OrderedDict, repr=False, init=False
     )
     _plane_cache: dict[tuple[int, int], SupportPlane] = field(
         default_factory=dict, repr=False, init=False
     )
-    _quantum: float | None = field(default=None, repr=False, init=False)
-    _quantum_known: bool = field(default=False, repr=False, init=False)
 
     @classmethod
     def from_store(
@@ -473,15 +607,19 @@ class Rig:
             rig.speed_max = WALK_SPEED_MAX
             rig.scene_gate = False
             rig.embed_hz = WALK_EMBED_HZ
+            if camera_info is not None:
+                rig.color_delay = estimate_color_delay(rig)
         logger.info(
             f"rig: color={color_name!r} depth={depth_name!r} cloud={cloud_name!r} "
-            f"tf={tf_name!r} world={world_frame!r} span={span:.1f}m mobile={rig.mobile}"
+            f"tf={tf_name!r} world={world_frame!r} span={span:.1f}m mobile={rig.mobile} "
+            f"color_delay={rig.color_delay * 1000:.0f}ms"
         )
         return rig
 
     # pose
 
     def world_to_optical(self, ts: float) -> Transform | None:
+        ts -= self.color_delay  # color stamps lag; the capture instant is earlier
         if self.tf is not None:
             return self.tf.get(self.optical_frame, self.world_frame, ts, self.tf_tolerance)
         pose = self.pose_at(ts)
@@ -491,18 +629,38 @@ class Rig:
         return -(Transform.from_pose("base_link", pose) + mount)
 
     def pose_at(self, ts: float) -> PoseStamped | None:
-        """World base pose nearest ts, from the poses stream.
+        """World base pose at ts, interpolated between the bracketing samples.
 
-        ``at().first()`` is window-earliest, not window-nearest; a walking
-        robot covers centimeters per pose period, so the nearest pose in the
-        window is what keeps the projection aligned.
+        A walking robot covers centimeters and degrees per pose period, so
+        snapping to a recorded sample misplaces the projection; interpolation
+        follows the motion. Outside the bracketed span the nearest sample in
+        the tolerance window stands.
         """
+        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+
         candidates = list(self.poses.at(ts, self.tf_tolerance))
         if not candidates:
             return None
-        obs = min(candidates, key=lambda o: abs(o.ts - ts))
-        pose: PoseStamped | None = obs.pose_stamped
-        return pose
+        earlier = [o for o in candidates if o.ts <= ts]
+        later = [o for o in candidates if o.ts > ts]
+        if not earlier or not later:
+            pose: PoseStamped | None = min(candidates, key=lambda o: abs(o.ts - ts)).pose_stamped
+            return pose
+        a = max(earlier, key=lambda o: o.ts).pose_stamped
+        b = min(later, key=lambda o: o.ts).pose_stamped
+        alpha = (ts - a.ts) / (b.ts - a.ts)
+        qa = np.array([a.orientation.x, a.orientation.y, a.orientation.z, a.orientation.w])
+        qb = np.array([b.orientation.x, b.orientation.y, b.orientation.z, b.orientation.w])
+        if float(qa @ qb) < 0:
+            qb = -qb
+        q = (1 - alpha) * qa + alpha * qb
+        q /= np.linalg.norm(q)
+        return PoseStamped(
+            ts=ts,
+            frame_id=a.frame_id,
+            position=a.position + (b.position - a.position) * alpha,
+            orientation=(float(q[0]), float(q[1]), float(q[2]), float(q[3])),
+        )
 
     def camera_pose(self, ts: float) -> PoseStamped | None:
         """World pose of the camera optical frame at ts."""
@@ -593,43 +751,158 @@ class Rig:
             self._scan_cache.popitem(last=False)
         return points
 
-    def _cloud_quantum(self, points: np.ndarray) -> float | None:
-        if not self._quantum_known:
-            self._quantum = _lattice_quantum(points)
-            self._quantum_known = True
-        return self._quantum
-
     def cloud_at(self, ts: float) -> PointCloud2 | None:
-        """World-frame geometry at ts: the scans accumulated around it."""
+        """World-frame geometry at ts: the window's scans merged.
+
+        The merge rule follows the source's shape, measured per window from
+        the points themselves. A grid-quantized stream is a rolling
+        occupancy map: each snapshot is already temporally integrated over
+        the area it covers and the map clears what moved away, so snapshots
+        merge nearest-ts first, a farther snapshot contributing only cells
+        outside the XY coverage of every nearer one - plain accumulation
+        would resurrect every moved object's trail. Continuous scans are
+        sparse and the scene static in world frame, so they accumulate
+        whole.
+        """
         if self._cloud_memo is not None and self._cloud_memo[0] == ts:
             return self._cloud_memo[1]
         from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
         scans = self.cloud.after(ts - self.cloud_accum_s).before(ts + self.cloud_accum_s)
-        parts = [p for p in (self.registered_scan(scan) for scan in scans) if p is not None]
-        if not parts:
+        pairs = [
+            (scan.ts, points)
+            for scan in scans
+            if (points := self.registered_scan(scan)) is not None
+        ]
+        if not pairs:
             return None
-        if len(parts) == 1:
-            points = parts[0]
+        nearest = min(pairs, key=lambda pair: abs(pair[0] - ts))[1]
+        quantum = lattice_quantum(nearest)
+        if len(pairs) == 1:
+            points = pairs[0][1]
+        elif quantum is None:
+            points = np.vstack([p for _t, p in pairs])
         else:
-            stacked = np.vstack(parts)
-            quantum = self._cloud_quantum(parts[0])
-            if quantum is None:
-                points = stacked
-            else:
-                # A grid-quantized source repeats the same cell in every
-                # snapshot it persists through; accumulation must not count
-                # one voxel once per snapshot. Cell keys dedup in one pass.
-                cells = np.round((stacked - stacked[0]) / quantum).astype(np.int64) + _CELL_OFFSET
-                keys = (cells[:, 0] << 42) | (cells[:, 1] << 21) | cells[:, 2]
-                _, index = np.unique(keys, return_index=True)
-                points = stacked[index]
+            anchor = nearest[0, :2]
+            kept: list[np.ndarray] = []
+            lows: list[np.ndarray] = []
+            highs: list[np.ndarray] = []
+            for _t, part in sorted(pairs, key=lambda pair: abs(pair[0] - ts)):
+                cells = np.round((part[:, :2] - anchor) / quantum).astype(np.int64)
+                if lows:
+                    lo, hi = np.stack(lows), np.stack(highs)
+                    covered = (
+                        (cells[:, None, :] >= lo[None]) & (cells[:, None, :] <= hi[None])
+                    ).all(axis=2)
+                    fresh = ~covered.any(axis=1)
+                    if fresh.any():
+                        kept.append(part[fresh])
+                else:
+                    kept.append(part)
+                lows.append(cells.min(axis=0))
+                highs.append(cells.max(axis=0))
+            points = np.vstack(kept)
         merged = PointCloud2.from_numpy(points, frame_id=self.world_frame, timestamp=ts)
-        self._cloud_memo = (ts, merged)
+        self._cloud_memo = (ts, merged, quantum)
         return merged
 
-    def lift(self, detections: ImageDetections2D) -> ImageDetections3DPC | None:
-        """2D detections to world-frame 3D clouds, or None without geometry/pose."""
+    def _shell_table(
+        self, ts: float, plane: SupportPlane
+    ) -> tuple[np.ndarray, np.ndarray, float, np.ndarray] | None:
+        """Per-column floor of the frame's merged cloud; None for continuous sources.
+
+        A rolling map registers each snapshot with its own odometry error,
+        so the support surface sits at a different absolute level per
+        region. The floor of a point's own XY column is the local reference
+        a single global plane cannot be.
+        """
+        cloud = self.cloud_at(ts)
+        if cloud is None or self._cloud_memo[2] is None:  # type: ignore[index]
+            return None
+        memo = self._shell_memo
+        if memo is not None and memo[0] == ts and memo[1] is plane:
+            return memo[2]
+        quantum = cast("float", self._cloud_memo[2])  # type: ignore[index]
+        points = cloud.as_numpy()[0]
+        anchor = points[0, :2]
+        keys = _column_keys(points, quantum, anchor)
+        heights = plane.height_above(points)
+        order = np.argsort(keys)
+        keys_sorted = keys[order]
+        starts = np.nonzero(np.concatenate(([True], np.diff(keys_sorted) != 0)))[0]
+        table = (keys_sorted[starts], np.minimum.reduceat(heights[order], starts), quantum, anchor)
+        self._shell_memo = (ts, plane, table)
+        return table
+
+    def support_heights(self, ts: float, plane: SupportPlane, points: np.ndarray) -> np.ndarray:
+        """Signed heights of points above the frame's support shell.
+
+        Depth rigs and continuous-scan sources measure against the fitted
+        plane directly. A rolling-map source measures against the local
+        column floor of the frame's own merged cloud (see ``_shell_table``);
+        ``points`` must come from that cloud, which is what every projected
+        lift produces.
+        """
+        heights = plane.height_above(points)
+        if self.cloud is None:
+            return heights
+        table = self._shell_table(ts, plane)
+        if table is None:
+            return heights
+        col_keys, col_floor, quantum, anchor = table
+        idx = np.searchsorted(col_keys, _column_keys(points, quantum, anchor))
+        local: np.ndarray = heights - col_floor[idx]
+        return local
+
+    def _support_strip(self, ts: float, plane: SupportPlane, shell: float, gap: float = 0.3) -> Any:
+        """Filter dropping support-shell points outside the object's own stance.
+
+        A misaligned mask row collects the support surface along the whole
+        view ray; shell points survive only within the camera-range span of
+        the detection's above-shell structure - under the object, not along
+        the approach. The stance is the dominant range cluster of the
+        above-shell points (the same ``gap`` split as ``range_cluster``), so
+        background caught on the mask rim cannot widen it. Points below the
+        shell (mirror returns through a glossy surface) never survive. A
+        detection with no structure above the shell passes untouched.
+        """
+
+        def filter_func(det: Any, pc: Any, ci: Any, tf: Any) -> Any:
+            points, _ = pc.as_numpy()
+            local = self.support_heights(ts, plane, points)
+            above = local > shell
+            if not above.any():
+                return pc
+            camera = tf.inverse().translation.to_numpy()
+            ranges = np.linalg.norm(points - camera, axis=1)
+            stance = np.sort(ranges[above])
+            splits = np.nonzero(np.diff(stance) > gap)[0]
+            starts = np.concatenate(([0], splits + 1))
+            ends = np.concatenate((splits + 1, [len(stance)]))
+            median_idx = np.searchsorted(stance, np.median(stance))
+            start, end = next(
+                (s, e) for s, e in zip(starts, ends, strict=True) if s <= median_idx < e
+            )
+            in_stance = (ranges >= stance[start]) & (ranges <= stance[end - 1])
+            keep = above | ((local >= -shell) & in_stance)
+            from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+            return PointCloud2.from_numpy(points[keep], frame_id=pc.frame_id, timestamp=pc.ts)
+
+        return filter_func
+
+    def lift(
+        self, detections: ImageDetections2D, plane: SupportPlane | None = None
+    ) -> ImageDetections3DPC | None:
+        """2D detections to world-frame 3D clouds, or None without geometry/pose.
+
+        With a support ``plane``, a projected lift strips support-shell
+        points outside each detection's stance before the generic filters.
+        The shell is the support surface's own occupied band: a plane
+        crossing a lattice straddles at most two adjacent levels, so a
+        rolling map's shell ends halfway to the third; a continuous source's
+        shell is the plane fit's inlier distance.
+        """
         transform = self.world_to_optical(detections.ts)
         if transform is None:
             return None
@@ -641,9 +914,12 @@ class Rig:
         cloud = self.cloud_at(detections.ts)
         if cloud is None:
             return None
-        return ImageDetections3DPC.from_2d(
-            detections, cloud, self.camera_info, transform, _CLOUD_LIFT_FILTERS
-        )
+        filters = _CLOUD_LIFT_FILTERS
+        if plane is not None:
+            quantum = cast("float | None", self._cloud_memo[2])  # type: ignore[index]
+            shell = 1.5 * quantum if quantum is not None else PLANE_DISTANCE_CLOUD
+            filters = [self._support_strip(detections.ts, plane, shell), *_CLOUD_LIFT_FILTERS]
+        return ImageDetections3DPC.from_2d(detections, cloud, self.camera_info, transform, filters)
 
     def backdrop(self, ts: float, depth_trunc: float = 1.5) -> PointCloud2 | None:
         """World-frame scene cloud around ts, for plane fits and rendering."""
