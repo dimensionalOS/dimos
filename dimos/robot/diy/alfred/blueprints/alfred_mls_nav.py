@@ -20,10 +20,12 @@ dimos run alfred-mls-nav
 from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.transport import JpegLcmTransport
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.diy.alfred.blueprints.vis_nav import _vis_nav
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
 
@@ -55,6 +57,13 @@ alfred_mls_nav = (
             (RealSenseCamera, "camera_info", "color_camera_info"),
             (AlfredHighLevel, "wheel_odometry", "source_odometry"),
         ]
+    )
+    .transports(
+        {
+            # Raw colour is 19.6 MB/s of the Jetson's LCM traffic and only ever gets
+            # looked at, so pay a JPEG encode to buy back the bus and the CPU.
+            ("color_image", Image): JpegLcmTransport("/color_image", Image),
+        }
     )
     .global_config(n_workers=10, robot_model="alfred")
 )
