@@ -344,6 +344,12 @@ class MujocoSimModule(
         self._gripper_joint_range: tuple[float, float] = (0.0, 1.0)
         self._stop_event = threading.Event()
         self._publish_thread: threading.Thread | None = None
+        # Guards _camera_info_base and _latest_frame_ts, which the publish
+        # thread, the camera_info interval, the RPC thread, and stop() all
+        # touch. Hold it only across the field access itself: never across the
+        # publish-thread join in stop(), and never while calling a method that
+        # takes it again (it is not reentrant).
+        self._state_lock = threading.Lock()
         self._camera_info_base: CameraInfo | None = None
         self._shm_ready_signaled = False
         self._latest_frame_ts: float | None = None
@@ -380,25 +386,26 @@ class MujocoSimModule(
         return f"{self.config.camera_name}_depth_optical_frame"
 
     def _camera_info_ts(self) -> float:
-        """Latest frame's sim time; wall clock only before the first frame.
-
-        Read once: the publish thread writes this while stop() clears it, so a
-        second read could return None after the first saw a stamp.
-        """
-        ts = self._latest_frame_ts
+        """Latest frame's sim time; wall clock only before the first frame."""
+        with self._state_lock:
+            ts = self._latest_frame_ts
         return time.time() if ts is None else ts
 
     @rpc
     def get_color_camera_info(self) -> CameraInfo | None:
-        if self._camera_info_base is None:
+        with self._state_lock:
+            base = self._camera_info_base
+        if base is None:
             return None
-        return self._camera_info_base.with_ts(self._camera_info_ts())
+        return base.with_ts(self._camera_info_ts())
 
     @rpc
     def get_depth_camera_info(self) -> CameraInfo | None:
-        if self._camera_info_base is None:
+        with self._state_lock:
+            base = self._camera_info_base
+        if base is None:
             return None
-        return self._camera_info_base.with_ts(self._camera_info_ts())
+        return base.with_ts(self._camera_info_ts())
 
     @rpc
     def get_depth_scale(self) -> float:
@@ -690,8 +697,9 @@ class MujocoSimModule(
                 errors.append(("shm.cleanup", exc))
 
         self._sim_hooks = None
-        self._camera_info_base = None
-        self._latest_frame_ts = None
+        with self._state_lock:
+            self._camera_info_base = None
+            self._latest_frame_ts = None
         super().stop()
 
         if errors:
@@ -856,7 +864,7 @@ class MujocoSimModule(
         fovy_rad = math.radians(fovy_deg)
         fy = h / (2.0 * math.tan(fovy_rad / 2.0))
         fx = fy  # square pixels
-        self._camera_info_base = CameraInfo.from_intrinsics(
+        camera_info = CameraInfo.from_intrinsics(
             fx=fx,
             fy=fy,
             cx=w / 2.0,
@@ -865,6 +873,8 @@ class MujocoSimModule(
             height=h,
             frame_id=self._color_optical_frame,
         )
+        with self._state_lock:
+            self._camera_info_base = camera_info
 
     def _publish_loop(self) -> None:
         """Poll engine for rendered frames and publish at configured FPS."""
@@ -905,7 +915,8 @@ class MujocoSimModule(
                 continue
             last_timestamp = frame.timestamp
             ts = frame.timestamp
-            self._latest_frame_ts = ts
+            with self._state_lock:
+                self._latest_frame_ts = ts
 
             if self.config.enable_color:
                 color_img = Image(
@@ -941,7 +952,8 @@ class MujocoSimModule(
                 time.sleep(sleep_time)
 
     def _publish_camera_info(self) -> None:
-        base = self._camera_info_base
+        with self._state_lock:
+            base = self._camera_info_base
         if base is None:
             return
         ts = self._camera_info_ts()
@@ -1003,7 +1015,9 @@ class MujocoSimModule(
             self._generate_mujoco_lidar_pointcloud()
             return
         # Back-project the primary camera's depth image.
-        if self._camera_info_base is None:
+        with self._state_lock:
+            camera_info = self._camera_info_base
+        if camera_info is None:
             return
         frame = self._engine.read_camera(self.config.camera_name)
         if frame is None:
@@ -1024,7 +1038,7 @@ class MujocoSimModule(
             pcd = PointCloud2.from_rgbd(
                 color_image=color_img,
                 depth_image=depth_img,
-                camera_info=self._camera_info_base,
+                camera_info=camera_info,
                 depth_scale=1.0,
             )
             pcd = pcd.voxel_downsample(0.005)

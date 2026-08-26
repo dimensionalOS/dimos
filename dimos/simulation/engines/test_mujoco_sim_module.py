@@ -582,3 +582,27 @@ def test_camera_info_ts_reads_the_frame_stamp_only_once() -> None:
             assert module._camera_info_ts() == 1000.0
     finally:
         module.stop()
+
+
+def test_camera_info_rpcs_snapshot_the_base_once() -> None:
+    # stop() clears _camera_info_base, so a check-then-use would call
+    # with_ts() on None.
+    module = MujocoSimModule()
+    try:
+        module.config = MujocoSimModuleConfig()
+        module._latest_frame_ts = 1000.0
+        base = CameraInfo.from_intrinsics(
+            width=1, height=1, fx=1.0, fy=1.0, cx=0.5, cy=0.5, frame_id="wrist_camera_color_frame"
+        )
+        with patch.object(
+            type(module),
+            "_camera_info_base",
+            new_callable=PropertyMock,
+            side_effect=[base, None],
+            create=True,
+        ):
+            info = module.get_color_camera_info()
+        assert info is not None
+        assert info.ts == 1000.0
+    finally:
+        module.stop()
