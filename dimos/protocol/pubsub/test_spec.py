@@ -66,21 +66,14 @@ except (ConnectionError, ImportError):
     print("Redis not available")
 
 try:
-    from geometry_msgs.msg import Vector3 as ROSVector3
-    from rclpy.qos import (
-        QoSDurabilityPolicy,
-        QoSHistoryPolicy,
-        QoSProfile,
-        QoSReliabilityPolicy,
-    )
+    import rosless
 
-    from dimos.protocol.pubsub.impl.rospubsub import RawROS, RawROSTopic
+    from dimos.protocol.pubsub.impl.rospubsub import RawROS, RawROSTopic, ROSQoS
 
-    # Use RELIABLE QoS with larger depth for testing
-    _test_qos = QoSProfile(
-        reliability=QoSReliabilityPolicy.RELIABLE,
-        history=QoSHistoryPolicy.KEEP_ALL,
-        durability=QoSDurabilityPolicy.VOLATILE,
+    _test_qos = ROSQoS(
+        reliability="reliable",
+        durability="volatile",
+        history="keep_last",
         depth=5000,
     )
 
@@ -97,11 +90,13 @@ try:
     testdata.append(
         (
             ros_context,
-            RawROSTopic(topic="/test_ros_topic", ros_type=ROSVector3, qos=_test_qos),
+            RawROSTopic(
+                topic="/test_ros_topic", ros_type="geometry_msgs/msg/Vector3", qos=_test_qos
+            ),
             [
-                ROSVector3(x=1.0, y=2.0, z=3.0),
-                ROSVector3(x=4.0, y=5.0, z=6.0),
-                ROSVector3(x=7.0, y=8.0, z=9.0),
+                rosless.Message("geometry_msgs/msg/Vector3", x=1.0, y=2.0, z=3.0),
+                rosless.Message("geometry_msgs/msg/Vector3", x=4.0, y=5.0, z=6.0),
+                rosless.Message("geometry_msgs/msg/Vector3", x=7.0, y=8.0, z=9.0),
             ],
         )
     )

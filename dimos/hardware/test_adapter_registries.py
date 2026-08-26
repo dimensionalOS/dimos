@@ -37,7 +37,6 @@ OPTIONAL_VENDOR_MODULES = {
     "cyclonedds",
     "mujoco",
     "piper_sdk",
-    "rclpy",
     "unitree_sdk2py",
     "xarm",
 }

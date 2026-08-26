@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Generator
+from typing import Any
 
 from dimos_lcm.geometry_msgs import PointStamped
 import numpy as np
@@ -29,6 +30,10 @@ PointStamped.msg_name = "geometry_msgs.PointStamped"
 from dimos.utils.testing.collector import CallbackCollector
 from dimos.utils.testing.replay import TimedSensorReplay
 
+# DDS discards anything written before a reader has been discovered, so every
+# test waits for the match instead of racing a single publish against discovery.
+MATCH_TIMEOUT = 10.0
+
 
 def ros_node():
     ros = DimosROS()
@@ -37,6 +42,20 @@ def ros_node():
         yield ros
     finally:
         ros.stop()
+
+
+def subscribe_then_publish(
+    publisher: DimosROS,
+    subscriber: DimosROS,
+    topic: ROSTopic,
+    collector: CallbackCollector,
+    message: Any,
+) -> None:
+    subscriber.subscribe(topic, collector)
+    assert publisher.wait_for_subscriber(topic, MATCH_TIMEOUT), (
+        f"no subscriber matched {topic.topic} within {MATCH_TIMEOUT}s"
+    )
+    publisher.publish(topic, message)
 
 
 @pytest.fixture()
@@ -49,7 +68,6 @@ def subscriber() -> Generator[DimosROS, None, None]:
     yield from ros_node()
 
 
-@pytest.mark.skipif_no_ros
 def test_basic_conversion(publisher, subscriber):
     """Test Vector3 publish/subscribe through ROS.
 
@@ -58,8 +76,7 @@ def test_basic_conversion(publisher, subscriber):
     topic = ROSTopic("/test_ros_topic", Vector3)
     collector = CallbackCollector(1)
 
-    subscriber.subscribe(topic, collector)
-    publisher.publish(topic, Vector3(1.0, 2.0, 3.0))
+    subscribe_then_publish(publisher, subscriber, topic, collector, Vector3(1.0, 2.0, 3.0))
 
     collector.wait()
     assert len(collector.results) == 1
@@ -69,7 +86,6 @@ def test_basic_conversion(publisher, subscriber):
     assert msg.z == 3.0
 
 
-@pytest.mark.skipif_no_ros
 @pytest.mark.self_hosted
 def test_pointcloud2_pubsub(publisher, subscriber):
     """Test PointCloud2 publish/subscribe through ROS.
@@ -88,8 +104,7 @@ def test_pointcloud2_pubsub(publisher, subscriber):
     topic = ROSTopic("/test_pointcloud2", PointCloud2)
     collector = CallbackCollector(1, timeout=5.0)
 
-    subscriber.subscribe(topic, collector)
-    publisher.publish(topic, original)
+    subscribe_then_publish(publisher, subscriber, topic, collector, original)
 
     collector.wait()
     assert len(collector.results) == 1
@@ -119,7 +134,6 @@ def test_pointcloud2_pubsub(publisher, subscriber):
     assert abs(original.ts - converted.ts) < 0.001
 
 
-@pytest.mark.skipif_no_ros
 def test_pointcloud2_empty_pubsub(publisher, subscriber):
     """Test empty PointCloud2 publish/subscribe.
 
@@ -134,15 +148,13 @@ def test_pointcloud2_empty_pubsub(publisher, subscriber):
     topic = ROSTopic("/test_empty_pointcloud", PointCloud2)
     collector = CallbackCollector(1)
 
-    subscriber.subscribe(topic, collector)
-    publisher.publish(topic, original)
+    subscribe_then_publish(publisher, subscriber, topic, collector, original)
 
     collector.wait()
     assert len(collector.results) == 1
     assert len(collector.results[0][0]) == 0
 
 
-@pytest.mark.skipif_no_ros
 def test_posestamped_pubsub(publisher, subscriber):
     """Test PoseStamped publish/subscribe through ROS.
 
@@ -159,8 +171,7 @@ def test_posestamped_pubsub(publisher, subscriber):
     topic = ROSTopic("/test_posestamped", PoseStamped)
     collector = CallbackCollector(1)
 
-    subscriber.subscribe(topic, collector)
-    publisher.publish(topic, original)
+    subscribe_then_publish(publisher, subscriber, topic, collector, original)
 
     collector.wait()
     assert len(collector.results) == 1
@@ -177,7 +188,6 @@ def test_posestamped_pubsub(publisher, subscriber):
     np.testing.assert_allclose(converted.orientation.w, original.orientation.w, rtol=1e-5)
 
 
-@pytest.mark.skipif_no_ros
 def test_pointstamped_pubsub(publisher, subscriber):
     """Test PointStamped publish/subscribe through ROS.
 
@@ -195,8 +205,7 @@ def test_pointstamped_pubsub(publisher, subscriber):
     topic = ROSTopic("/test_pointstamped", PointStamped)
     collector = CallbackCollector(1)
 
-    subscriber.subscribe(topic, collector)
-    publisher.publish(topic, original)
+    subscribe_then_publish(publisher, subscriber, topic, collector, original)
 
     collector.wait()
     assert len(collector.results) == 1
@@ -214,7 +223,6 @@ def test_pointstamped_pubsub(publisher, subscriber):
     assert converted.point.z == original.point.z
 
 
-@pytest.mark.skipif_no_ros
 def test_twist_pubsub(publisher, subscriber):
     """Test Twist publish/subscribe through ROS.
 
@@ -229,8 +237,7 @@ def test_twist_pubsub(publisher, subscriber):
     topic = ROSTopic("/test_twist", Twist)
     collector = CallbackCollector(1)
 
-    subscriber.subscribe(topic, collector)
-    publisher.publish(topic, original)
+    subscribe_then_publish(publisher, subscriber, topic, collector, original)
 
     collector.wait()
     assert len(collector.results) == 1

@@ -512,7 +512,7 @@ jobs:
               options: --memory=6g --memory-swap=6g
               volumes:
                 - /var/cache/dimos-root-cache:/root/.cache
-            markers: "self_hosted or skipif_no_ros"
+            markers: "self_hosted"
             experimental: false
           # macOS runner disabled for now — we don't want Mac tests.
           # - os: macOS

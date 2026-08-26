@@ -12,29 +12,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Conversion functions between dimos messages and ROS messages.
+"""Conversion between dimos messages and the `rosless.Message` rosless exchanges.
 
-This module provides conversion functions between dimos message types and ROS messages.
-It handles three categories of types:
+rosless hands a decoded ROS message over as a `rosless.Message`, whose fields are
+attributes, and takes one back to encode. That is already a field-for-field match
+for the LCM message dimos types are built from, so the conversion is a copy driven
+by the ROS schema rather than a re-serialization.
 
-1. Complex types (different internal representation) - use LCM roundtrip
-2. Simple types (field structures match) - use direct field copy
-3. No dimos.msgs equivalent - return dimos_lcm type
+Types whose dimos representation differs from their wire layout (point clouds,
+images) still go through an LCM roundtrip to reach that representation.
 """
 
 from __future__ import annotations
 
+import array
+from dataclasses import dataclass
 import importlib
-import re
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
+
+import rosless
 
 if TYPE_CHECKING:
     from dimos.msgs.protocol import DimosMsg
-    from dimos.protocol.pubsub.impl.rospubsub import ROSMessage
 
 
-# Complex types that need LCM roundtrip (explicit list)
-# These types have different internal representations in dimos vs ROS/LCM
+# Types whose dimos representation (numpy arrays, custom accessors) is not a
+# plain field bag, so they have to be rebuilt through their LCM encoding.
 COMPLEX_TYPES: set[str] = {
     "sensor_msgs.PointCloud2",
     "sensor_msgs.Image",
@@ -43,324 +46,151 @@ COMPLEX_TYPES: set[str] = {
     "geometry_msgs.PoseStamped",
 }
 
-# Cache for dynamic imports of dimos types
-_dimos_type_cache: dict[str, type[DimosMsg] | None] = {}
-
-# Cache for LCM type derivation
-_lcm_type_cache: dict[str, type[Any]] = {}
-
-# Field name mappings between ROS and LCM (ROS name -> LCM name)
-# This is some mixup in dimos_lcm having ROS1 and ROS2 message definitions?
-# Would be good to clarify later, but this works for now
-_ROS_TO_LCM_FIELD_MAP: dict[str, str] = {
-    "nanosec": "nsec",  # ROS2 Time.nanosec -> LCM Time.nsec
+# dimos_lcm carries ROS 1 field spellings for a few types. Keyed by type because
+# `std_msgs/msg/ColorRGBA.r` must not pick up `CameraInfo`'s `r` -> `R`.
+_ROS_TO_LCM_FIELD_MAP: dict[str, dict[str, str]] = {
+    "builtin_interfaces/msg/Time": {"nanosec": "nsec"},
+    "builtin_interfaces/msg/Duration": {"nanosec": "nsec"},
+    "sensor_msgs/msg/CameraInfo": {"d": "D", "k": "K", "r": "R", "p": "P"},
 }
 
-# Reverse mapping (LCM name -> ROS name)
-_LCM_TO_ROS_FIELD_MAP: dict[str, str] = {v: k for k, v in _ROS_TO_LCM_FIELD_MAP.items()}
+_lcm_type_cache: dict[str, type[Any]] = {}
 
 
-def get_dimos_type(msg_name: str) -> type[DimosMsg] | None:
-    """Try to import dimos.msgs type, return None if not found. Cached.
+@dataclass(frozen=True, slots=True)
+class _FieldPlan:
+    """How one ROS field maps onto its LCM counterpart."""
 
-    Args:
-        msg_name: Message name in format "package.MessageName" (e.g., "geometry_msgs.Vector3")
+    ros_name: str
+    lcm_name: str
+    nested_type: str | None
+    is_array: bool
 
-    Returns:
-        The dimos message type, or None if not found
-    """
-    if msg_name in _dimos_type_cache:
-        return _dimos_type_cache[msg_name]
 
-    try:
-        package, name = msg_name.split(".")
-        module = importlib.import_module(f"dimos.msgs.{package}.{name}")
-        dimos_type = cast("type[DimosMsg]", getattr(module, name))
-        _dimos_type_cache[msg_name] = dimos_type
-        return dimos_type
-    except (ImportError, AttributeError, ValueError):
-        _dimos_type_cache[msg_name] = None
-        return None
+_field_plans: dict[str, tuple[_FieldPlan, ...]] = {}
+
+
+def derive_ros_type_name(dimos_type: type[DimosMsg]) -> str:
+    """`sensor_msgs.PointCloud2` -> `sensor_msgs/msg/PointCloud2`."""
+    package, _, message_name = dimos_type.msg_name.partition(".")
+    if not message_name:
+        raise ValueError(
+            f"Invalid msg_name format: {dimos_type.msg_name}, expected 'package.MessageName'"
+        )
+    return f"{package}/msg/{message_name}"
 
 
 def derive_lcm_type(dimos_type: type[DimosMsg]) -> type[Any]:
-    """Derive the LCM message type from a dimos message type.
+    """Find the `dimos_lcm` class a dimos message type encodes to."""
+    msg_name = dimos_type.msg_name
+    cached = _lcm_type_cache.get(msg_name)
+    if cached is not None:
+        return cached
 
-    Args:
-        dimos_type: A dimos message type (e.g., dimos.msgs.sensor_msgs.PointCloud2)
-
-    Returns:
-        The corresponding LCM message type (e.g., dimos_lcm.sensor_msgs.PointCloud2)
-    """
-    msg_name = dimos_type.msg_name  # e.g., "sensor_msgs.PointCloud2"
-
-    if msg_name in _lcm_type_cache:
-        return _lcm_type_cache[msg_name]
-
-    parts = msg_name.split(".")
-    if len(parts) != 2:
+    package, _, message_name = msg_name.partition(".")
+    if not message_name:
         raise ValueError(f"Invalid msg_name format: {msg_name}, expected 'package.MessageName'")
-
-    package, message_name = parts
-    lcm_module = importlib.import_module(f"dimos_lcm.{package}.{message_name}")
-    lcm_type: type[Any] = getattr(lcm_module, message_name)
+    module = importlib.import_module(f"dimos_lcm.{package}.{message_name}")
+    lcm_type: type[Any] = getattr(module, message_name)
     _lcm_type_cache[msg_name] = lcm_type
     return lcm_type
 
 
-def derive_ros_type(dimos_type: type[DimosMsg]) -> type[ROSMessage]:
-    """Derive the ROS message type from a dimos message type.
+def _lcm_type_for_ros_type(ros_type_name: str) -> type[Any]:
+    """`sensor_msgs/msg/PointField` -> `dimos_lcm.sensor_msgs.PointField`."""
+    cached = _lcm_type_cache.get(ros_type_name)
+    if cached is not None:
+        return cached
 
-    Args:
-        dimos_type: A dimos message type (e.g., dimos.msgs.geometry_msgs.Vector3)
-
-    Returns:
-        The corresponding ROS message type (e.g., geometry_msgs.msg.Vector3)
-
-    Example:
-        msg_name = "geometry_msgs.Vector3" -> geometry_msgs.msg.Vector3
-    """
-    msg_name = dimos_type.msg_name  # e.g., "geometry_msgs.Vector3"
-    parts = msg_name.split(".")
-    if len(parts) != 2:
-        raise ValueError(f"Invalid msg_name format: {msg_name}, expected 'package.MessageName'")
-
-    package, message_name = parts
-    ros_module = importlib.import_module(f"{package}.msg")
-    return cast("type[ROSMessage]", getattr(ros_module, message_name))
+    package, _, message_name = ros_type_name.split("/")
+    module = importlib.import_module(f"dimos_lcm.{package}.{message_name}")
+    lcm_type: type[Any] = getattr(module, message_name)
+    _lcm_type_cache[ros_type_name] = lcm_type
+    return lcm_type
 
 
-def _copy_ros_to_lcm_recursive(ros_msg: Any, lcm_msg: Any) -> None:
-    """Recursively copy fields from ROS message to LCM message.
+def _plan_for(ros_type_name: str) -> tuple[_FieldPlan, ...]:
+    cached = _field_plans.get(ros_type_name)
+    if cached is not None:
+        return cached
 
-    Handles nested messages, arrays, and primitive types.
+    schema = rosless.lookup(ros_type_name)
+    if schema is None:
+        raise ValueError(f"{ros_type_name} is not in the rosless type catalogue")
+    renames = _ROS_TO_LCM_FIELD_MAP.get(ros_type_name, {})
+    plan = tuple(
+        _FieldPlan(
+            ros_name=field.name,
+            lcm_name=renames.get(field.name, field.name),
+            nested_type=field.type_name if rosless.lookup(field.type_name) else None,
+            is_array=field.multiplicity != "unit",
+        )
+        for field in schema.fields
+    )
+    _field_plans[ros_type_name] = plan
+    return plan
 
-    Args:
-        ros_msg: Source ROS message
-        lcm_msg: Target LCM message (modified in place)
-    """
-    if not hasattr(ros_msg, "get_fields_and_field_types"):
-        raise TypeError(f"Expected ROS message, got {type(ros_msg).__name__}")
 
-    field_types = ros_msg.get_fields_and_field_types()
-    for ros_field_name in field_types:
-        # Map ROS field name to LCM field name
-        lcm_field_name = _ROS_TO_LCM_FIELD_MAP.get(ros_field_name, ros_field_name)
+def _read_fields(source: Any, ros_type_name: str) -> rosless.Message:
+    fields: dict[str, Any] = {}
+    for field in _plan_for(ros_type_name):
+        if not hasattr(source, field.lcm_name):
+            continue
+        value = getattr(source, field.lcm_name)
+        if field.nested_type is None:
+            fields[field.ros_name] = value
+        elif field.is_array:
+            fields[field.ros_name] = [_read_fields(item, field.nested_type) for item in value]
+        else:
+            fields[field.ros_name] = _read_fields(value, field.nested_type)
+    return rosless.Message(ros_type_name, **fields)
 
-        if not hasattr(lcm_msg, lcm_field_name):
+
+def _write_fields(target: Any, source: Any, ros_type_name: str) -> None:
+    for field in _plan_for(ros_type_name):
+        value = getattr(source, field.ros_name, None)
+        if value is None or not hasattr(target, field.lcm_name):
             continue
 
-        ros_value = getattr(ros_msg, ros_field_name)
-        lcm_value = getattr(lcm_msg, lcm_field_name)
-
-        # Handle nested messages
-        if hasattr(ros_value, "get_fields_and_field_types"):
-            _copy_ros_to_lcm_recursive(ros_value, lcm_value)
-        # Handle arrays of messages
-        elif isinstance(ros_value, (list, tuple)) and len(ros_value) > 0:
-            if hasattr(ros_value[0], "get_fields_and_field_types"):
-                # Array of nested messages - create LCM instances
-                lcm_array = []
-                for ros_item in ros_value:
-                    # Get the LCM element type from the first lcm_value element if available
-                    # Otherwise try to derive from ros item
-                    if isinstance(lcm_value, list) and len(lcm_value) > 0:
-                        lcm_item = type(lcm_value[0])()
-                    else:
-                        # Try to create matching LCM type
-                        lcm_item = _create_lcm_instance_for_ros_msg(ros_item)
-                    _copy_ros_to_lcm_recursive(ros_item, lcm_item)
-                    lcm_array.append(lcm_item)
-                setattr(lcm_msg, lcm_field_name, lcm_array)
-            else:
-                # Array of primitives - direct copy
-                setattr(lcm_msg, lcm_field_name, list(ros_value))
-        # Handle bytes/data fields
-        elif isinstance(ros_value, (bytes, bytearray)):
-            setattr(lcm_msg, lcm_field_name, bytes(ros_value))
-        # Handle array.array (ROS uses this for data fields)
-        elif hasattr(ros_value, "tobytes"):
-            setattr(lcm_msg, lcm_field_name, ros_value.tobytes())
+        if field.nested_type is None:
+            setattr(target, field.lcm_name, value)
+        elif field.is_array:
+            element_type = _lcm_type_for_ros_type(field.nested_type)
+            elements = []
+            for item in value:
+                element = element_type()
+                _write_fields(element, item, field.nested_type)
+                elements.append(element)
+            setattr(target, field.lcm_name, elements)
         else:
-            # Primitive type - direct copy
-            setattr(lcm_msg, lcm_field_name, ros_value)
+            _write_fields(getattr(target, field.lcm_name), value, field.nested_type)
 
-        # Update length fields if present (LCM convention: field_name_length)
-        length_field = f"{lcm_field_name}_length"
-        if hasattr(lcm_msg, length_field):
-            value = getattr(lcm_msg, lcm_field_name)
-            if isinstance(value, (list, tuple, bytes, bytearray)):
-                setattr(lcm_msg, length_field, len(value))
-
-
-def _copy_lcm_to_ros_recursive(lcm_msg: Any, ros_msg: Any) -> None:
-    """Recursively copy fields from LCM message to ROS message.
-
-    Handles nested messages, arrays, and primitive types.
-
-    Args:
-        lcm_msg: Source LCM message
-        ros_msg: Target ROS message (modified in place)
-    """
-    if not hasattr(ros_msg, "get_fields_and_field_types"):
-        raise TypeError(f"Expected ROS message, got {type(ros_msg).__name__}")
-
-    field_types = ros_msg.get_fields_and_field_types()
-    for ros_field_name in field_types:
-        # Map ROS field name to LCM field name
-        lcm_field_name = _ROS_TO_LCM_FIELD_MAP.get(ros_field_name, ros_field_name)
-
-        if not hasattr(lcm_msg, lcm_field_name):
-            continue
-
-        lcm_value = getattr(lcm_msg, lcm_field_name)
-        ros_value = getattr(ros_msg, ros_field_name)
-
-        # Handle nested messages
-        if hasattr(ros_value, "get_fields_and_field_types"):
-            _copy_lcm_to_ros_recursive(lcm_value, ros_value)
-        # Handle arrays of messages
-        elif isinstance(lcm_value, (list, tuple)) and len(lcm_value) > 0:
-            if hasattr(lcm_value[0], "lcm_encode"):
-                # Array of nested LCM messages
-                ros_array = []
-                for lcm_item in lcm_value:
-                    ros_item = _create_ros_instance_for_lcm_msg(
-                        lcm_item, field_types[ros_field_name]
-                    )
-                    _copy_lcm_to_ros_recursive(lcm_item, ros_item)
-                    ros_array.append(ros_item)
-                setattr(ros_msg, ros_field_name, ros_array)
-            else:
-                # Array of primitives - direct copy
-                setattr(ros_msg, ros_field_name, list(lcm_value))
-        # Handle bytes/data fields
-        elif isinstance(lcm_value, (bytes, bytearray)):
-            # ROS data fields might expect array.array
-            if hasattr(ros_value, "frombytes"):
-                import array
-
-                arr = array.array("B")
-                arr.frombytes(lcm_value)
-                setattr(ros_msg, ros_field_name, arr)
-            else:
-                setattr(ros_msg, ros_field_name, bytes(lcm_value))
-        else:
-            # Primitive type - direct copy
-            setattr(ros_msg, ros_field_name, lcm_value)
+        length_field = f"{field.lcm_name}_length"
+        stored = getattr(target, field.lcm_name)
+        if hasattr(target, length_field) and isinstance(
+            stored, (list, tuple, bytes, bytearray, array.array)
+        ):
+            setattr(target, length_field, len(stored))
 
 
-def _create_lcm_instance_for_ros_msg(ros_msg: Any) -> Any:
-    """Create an LCM message instance that matches the ROS message type.
-
-    Args:
-        ros_msg: ROS message to match
-
-    Returns:
-        New LCM message instance
-    """
-    # Get the ROS type name (e.g., "std_msgs.msg.Header" -> "std_msgs.Header")
-    ros_type = type(ros_msg)
-    module_name = ros_type.__module__  # e.g., "std_msgs.msg"
-    class_name = ros_type.__name__  # e.g., "Header"
-
-    # Convert to LCM module path (std_msgs.msg.Header -> dimos_lcm.std_msgs.Header)
-    package = module_name.split(".")[0]  # e.g., "std_msgs"
-    lcm_module = importlib.import_module(f"dimos_lcm.{package}.{class_name}")
-    lcm_type = getattr(lcm_module, class_name)
-    return lcm_type()
+def dimos_to_ros(msg: DimosMsg, ros_type_name: str) -> rosless.Message:
+    """Flatten a dimos message into the `rosless.Message` rosless encodes from."""
+    if type(msg).msg_name in COMPLEX_TYPES:
+        source: Any = derive_lcm_type(type(msg)).lcm_decode(msg.lcm_encode())
+    else:
+        source = msg
+    return _read_fields(source, ros_type_name)
 
 
-def _create_ros_instance_for_lcm_msg(lcm_msg: Any, ros_type_hint: str) -> Any:
-    """Create a ROS message instance that matches the LCM message type.
+def ros_to_dimos(ros_msg: rosless.Message, dimos_type: type[DimosMsg]) -> DimosMsg:
+    """Build a dimos message from the `rosless.Message` rosless decoded."""
+    ros_type_name = derive_ros_type_name(dimos_type)
 
-    Args:
-        lcm_msg: LCM message to match
-        ros_type_hint: ROS type hint string (e.g., "sequence<sensor_msgs/PointField>")
-
-    Returns:
-        New ROS message instance
-    """
-    # Parse the type hint to get the message type
-    # e.g., "sequence<sensor_msgs/PointField>" -> "sensor_msgs", "PointField"
-    # e.g., "sensor_msgs/PointField" -> "sensor_msgs", "PointField"
-
-    match = re.search(r"(\w+)/(\w+)", ros_type_hint)
-    if match:
-        package, class_name = match.groups()
-        ros_module = importlib.import_module(f"{package}.msg")
-        ros_type = getattr(ros_module, class_name)
-        return ros_type()
-
-    # Fallback: try to derive from LCM type
-    lcm_type = type(lcm_msg)
-    module_name = lcm_type.__module__  # e.g., "dimos_lcm.std_msgs.Header"
-    class_name = lcm_type.__name__
-    parts = module_name.split(".")
-    if len(parts) >= 2:
-        package = parts[1]  # e.g., "std_msgs"
-        ros_module = importlib.import_module(f"{package}.msg")
-        ros_type = getattr(ros_module, class_name)
-        return ros_type()
-
-    raise ValueError(f"Cannot determine ROS type for LCM message: {lcm_type}")
-
-
-def dimos_to_ros(msg: DimosMsg, ros_type: type[ROSMessage]) -> ROSMessage:
-    """Convert a dimos message to a ROS message.
-
-    For complex types (PointCloud2, Image, CameraInfo), uses LCM roundtrip
-    to properly convert internal representations. For simple types, uses
-    direct field copy.
-
-    Args:
-        msg: Dimos message instance
-        ros_type: Target ROS message type
-
-    Returns:
-        ROS message instance
-    """
-    msg_name = type(msg).msg_name
-
-    if msg_name in COMPLEX_TYPES:
-        # Complex: dimos → encode → decode LCM → copy to ROS
-        lcm_type = derive_lcm_type(type(msg))
-        lcm_bytes = msg.lcm_encode()
-        lcm_msg = lcm_type.lcm_decode(lcm_bytes)
-        ros_msg = ros_type()
-        _copy_lcm_to_ros_recursive(lcm_msg, ros_msg)
-        return ros_msg
-
-    # Simple: recursive field copy (handles nested messages)
-    ros_msg = ros_type()
-    _copy_lcm_to_ros_recursive(msg, ros_msg)
-    return ros_msg
-
-
-def ros_to_dimos(msg: Any, dimos_type: type[DimosMsg]) -> DimosMsg:
-    """Convert a ROS message to a dimos message.
-
-    For complex types (PointCloud2, Image, CameraInfo), uses LCM roundtrip
-    to properly build the dimos internal representation. For simple types,
-    uses direct field copy.
-
-    Args:
-        msg: ROS message instance
-        dimos_type: Target dimos message type
-
-    Returns:
-        Dimos message instance
-    """
-    msg_name = dimos_type.msg_name
-
-    if msg_name in COMPLEX_TYPES:
-        # Complex: ROS → LCM → encode → decode → dimos
-        lcm_type = derive_lcm_type(dimos_type)
-        lcm_msg = lcm_type()
-        _copy_ros_to_lcm_recursive(msg, lcm_msg)
+    if dimos_type.msg_name in COMPLEX_TYPES:
+        lcm_msg = derive_lcm_type(dimos_type)()
+        _write_fields(lcm_msg, ros_msg, ros_type_name)
         return dimos_type.lcm_decode(lcm_msg.lcm_encode())
 
-    # Simple type: recursive field copy (handles nested messages)
     dimos_msg = dimos_type()
-    _copy_ros_to_lcm_recursive(msg, dimos_msg)
+    _write_fields(dimos_msg, ros_msg, ros_type_name)
     return dimos_msg
