@@ -232,6 +232,23 @@ def test_websocket_rejects_additional_control_client(
     ws.receive_bytes.assert_not_awaited()
 
 
+def test_websocket_dispatches_binary_and_text_messages(
+    module: WebXRTeleopModule,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    app = _setup_test_app(module, mocker)
+    dispatch_binary = mocker.patch.object(module, "_dispatch_binary_message")
+    dispatch_text = mocker.patch.object(module, "_dispatch_text_message")
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_bytes(b"controller")
+            websocket.send_text('{"type":"body_tracking_snapshot"}')
+
+    dispatch_binary.assert_called_once_with(b"controller")
+    dispatch_text.assert_called_once_with('{"type":"body_tracking_snapshot"}')
+
+
 def test_first_client_connection_rejects_stale_cached_state(
     module: WebXRTeleopModule, mocker: pytest_mock.MockerFixture
 ) -> None:
@@ -505,6 +522,21 @@ def test_binary_pose_dispatch_remains_on_existing_decoder(
     assert accepted
     assert module._current_poses[Hand.LEFT] is not None
     body_publish.assert_not_called()
+
+
+def test_unknown_binary_message_is_dropped(
+    module: WebXRTeleopModule,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    warning = mocker.patch("dimos.teleop.webxr.module.logger.warning")
+
+    accepted = module._dispatch_binary_message(b"unknown-message")
+
+    assert not accepted
+    warning.assert_called_once_with(
+        "Unknown WebXR message fingerprint",
+        fingerprint=b"unknown-".hex(),
+    )
 
 
 def test_translation_scale_changes_pose_delta(module: WebXRTeleopModule) -> None:
