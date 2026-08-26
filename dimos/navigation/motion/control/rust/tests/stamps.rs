@@ -15,7 +15,7 @@
 //! The wire dialect, from the producer's end.
 //!
 //! `decode_ceilings` has its cases in `blind.rs`, written from the consumer's
-//! end against the referee's encoder. These are the mirror: the encoder's own
+//! end. These are the mirror: the encoder's own
 //! behaviour, plus the round trip that ties the two together. If both files
 //! pass, a stamp written here is read as the same speed there — which is the
 //! only property the dialect actually has to have.

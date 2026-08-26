@@ -90,10 +90,9 @@ def decode_ceilings(path: Path, lo: float, hi: float) -> np.ndarray | None:
     planner can only ever make the robot more careful, and garbage stamps
     saturate at cruise instead of commanding something absurd.
 
-    ``lo``/``hi`` is the CONSUMER's band: the embodiment's for anyone reading
-    the wire as stamped, a controller's own ``ControllerConfig`` band so that a
-    non-default config decodes the same ceiling its own governor would have
-    produced.
+    ``lo``/``hi`` is the CONSUMER's band: the embodiment's governor band for
+    anyone reading the wire as stamped, its ``gait_band`` for a law that drives
+    inside the gait's envelope instead.
     """
     n = len(path.poses)
     if n < 2:

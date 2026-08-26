@@ -588,7 +588,7 @@ fn curve_tracking_error_decays_to_zero() {
             p.2 + wz * dt,
         );
         if step > 50 {
-            // settled: measure distance to the polyline the way the judge does
+            // settled: cross-track distance to the polyline
             let mut d = f64::INFINITY;
             for m in 0..path.len() - 1 {
                 let (ax, ay) = (path[m][0], path[m][1]);

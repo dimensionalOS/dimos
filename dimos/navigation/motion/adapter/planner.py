@@ -143,9 +143,8 @@ def replan_due(
 class MotionPlannerConfig(ModuleConfig):
     planner: str = "dimos.navigation.motion.planner.planners.target:make"
     embodiment: Embodiment = GO2
-    # HOW AGGRESSIVE the search is allowed to be, and the only two numbers that
-    # decide whether a gap admits a route. A gap has to be
-    # `box_width + 2 * clearance_margin_m` wide before one exists at all.
+    # HOW AGGRESSIVE the search is allowed to be: a gap has to be
+    # `box_width + 2 * precision` wide before a route through it exists at all.
     #
     # `body_dilate_m` grows (or, negative, shrinks) every planning box PER SIDE.
     # The table's boxes are MEASURED -- the swinging legs, not the trunk, set

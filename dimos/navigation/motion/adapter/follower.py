@@ -119,14 +119,12 @@ class TrajectoryFollowerConfig(ModuleConfig):
     control_frequency: float = 10.0
     goal_tolerance: float = 0.20  # planar distance that counts as arrival (m)
     # The clearance hint this module recomputes on the robot has to be the same
-    # quantity the planner stamped into the path, or the follower's governor is
-    # reading a different world than the one that was planned. The referee's
-    # control/world.py takes `emb.width / 2`, so this does too -- naming the
-    # EMBODIMENT rather than a number, so body dimensions live in exactly one
-    # place (planner/planners/se2.py). There is deliberately no
-    # half_width override: a `float | None` cannot cross into the native module
-    # (`to_config_dict` drops None and `#[native_config]` bans Option), and a
-    # knob the deployed twin cannot carry is a knob that drifts.
+    # quantity the planner stamped into the path (`emb.width / 2` off the same
+    # body), or the follower's governor is reading a different world than the
+    # one that was planned. There is deliberately no half_width override: a
+    # `float | None` cannot cross into the native module (`to_config_dict`
+    # drops None and `#[native_config]` bans Option), and a knob the deployed
+    # twin cannot carry is a knob that drifts.
     embodiment: Embodiment = GO2
     # Must equal the planner's `body_dilate_m`: the room hint has to price the
     # body the plan was made for, or the governor creeps through gaps the plan

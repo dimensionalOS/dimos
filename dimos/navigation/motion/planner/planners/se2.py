@@ -209,9 +209,8 @@ def se2_search(
     incumbent: States | None = None,
     commit_margin: float = COMMIT_MARGIN,
 ) -> States | None:
-    """The SE(2) lattice search on a prebuilt fine SDF grid — shared by any
-    caller that builds its grid from the cloud and, on the research branch, by
-    the gold oracle's box-exact one. Returns (N, 3) smoothed states or None.
+    """The SE(2) lattice search on a prebuilt fine SDF grid. Returns (N, 3)
+    smoothed states or None.
 
     Feasibility is motion-conditioned: an edge is tested against the swept box
     the embodiment needs for THAT edge's drift angle (move direction minus body

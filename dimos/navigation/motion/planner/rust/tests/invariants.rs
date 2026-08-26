@@ -141,10 +141,8 @@ fn no_cross_call_memoization() {
         rep_a >= 0.7 * fresh_b,
         "a repeated query took {:.3} ms while an equivalent fresh one (the same world \
          translated) took {:.3} ms ({:.0}% of it). The planner appears to reuse work across \
-         calls -- of the answer, the distance field, or anything else keyed on the input -- \
-         which fakes the speed pillar: the referee scores avoid_ms as the MINIMUM over repeated \
-         calls on identical input, so a cache collects the whole pillar without planning \
-         anything faster. Reuse across genuinely different replans is fine; this is not that.",
+         calls -- of the answer, the distance field, or anything else keyed on the input. \
+         Reuse across genuinely different replans is fine; this is not that.",
         rep_a * 1e3,
         fresh_b * 1e3,
         100.0 * rep_a / fresh_b
@@ -171,8 +169,7 @@ fn sealed_box_refuses() {
 }
 
 /// A thin wall blocks only one lattice column: the search must not hop it.
-/// This is the collision invariant in miniature -- the referee's DQ gate
-/// catches it in the battery, but only for the worlds the battery contains.
+/// This is the collision invariant in miniature.
 #[test]
 fn thin_wall_not_hopped() {
     let emb = Emb {

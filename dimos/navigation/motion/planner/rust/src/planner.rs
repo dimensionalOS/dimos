@@ -2268,7 +2268,7 @@ fn path_cost(w: &mut World, offs: &[(f64, f64)], emb: &Emb, states: &[[f64; 3]])
 /// answer does not do this either: it opens at the lattice pose its seed snapped
 /// to, up to half a cell diagonal from the robot. Both routes are PRICED from
 /// the true pose, which is where that walk is accounted for.
-/// `scenarios.py::trim_to_pose`.
+/// `se2.py::trim_to_pose`.
 fn trim_to_pose(states: &[[f64; 3]], pose: (f64, f64, f64)) -> Vec<[f64; 3]> {
     if states.is_empty() {
         return vec![[pose.0, pose.1, pose.2]];

@@ -23,12 +23,10 @@
 //! track to law, and folding in a research generation is a one-line change
 //! there. Nothing outside [`Track`] in this file mentions a law by name.
 //!
-//! THE DEADMAN. On the laptop the link was the deadman: drop it and `cmd_vel`
-//! stopped and the bridge watchdog halted the robot. Co-located with the
-//! planner that accidental safety is gone, so `max_path_age_s` is its
-//! replacement -- measured from ARRIVAL, and it guards a dead planner rather
-//! than a dead link. The planner's own hold stub covers a stale map; this
-//! covers a planner that stopped speaking at all.
+//! THE DEADMAN. `max_path_age_s`, measured from ARRIVAL, zeroes the twist
+//! once the held path is that old: it guards a planner that stopped speaking,
+//! alive-and-failing included. The planner's own hold stub covers a stale
+//! map; this covers the planner itself.
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -801,7 +799,7 @@ mod tests {
         assert_eq!(Track::parse("blind"), Some(Track::Blind));
         // laws are NOT tracks: naming one here is the mistake this refuses
         assert_eq!(Track::parse("seed"), None);
-        assert_eq!(Track::parse("hinted-rs"), None);
+        assert_eq!(Track::parse("pursuit"), None);
         assert_eq!(Track::parse(""), None);
         assert!(Track::Hinted.annotate_clearance());
         assert!(!Track::Blind.annotate_clearance());

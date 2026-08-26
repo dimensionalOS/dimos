@@ -55,8 +55,8 @@ GO2 = Embodiment(
     height=0.45,  # above this the body passes underneath; not an obstacle (m)
     base_height=0.29,  # base origin above support; frame plumbing, not semantics (m)
     # Baked by the fitted-sim envelope sweep over the governed slow band (stand +
-    # 0.35 + 0.50 m/s). The sweep lives with the sim (README, "What is not
-    # here"); this is its output, which is what the planner reads.
+    # 0.35 + 0.50 m/s). The sweep lives with the sim (README, "Not on this
+    # branch"); this is its output, which is what the planner reads.
     envelope=(
         (0.0, 0.819, 0.416, -0.023, 0.000),
         (26.6, 0.802, 0.436, -0.032, -0.008),
@@ -69,9 +69,9 @@ GO2 = Embodiment(
         (180.0, 0.781, 0.416, -0.039, 0.000),
     ),
     arc_inflate=0.0334,  # extra width per rad/m of curvature, residuals <= 12 mm
-    # The follower tuning searched on this body: gen40 of the hinted lab on the
-    # closed-loop referee (README, "What is not here"). Fitted, unlike
-    # everything above, which is why it is its own record.
+    # The follower tuning searched on this body in the closed-loop lab (README,
+    # "Not on this branch"). Fitted, unlike everything above, which is why it
+    # is its own record.
     control=ControllerConfig(
         lookahead=0.35,  # carrot distance along the path (m)
         k_pos=2.0,  # body-frame position error gain (1/s)

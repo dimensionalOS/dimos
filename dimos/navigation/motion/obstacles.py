@@ -34,19 +34,19 @@ from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 
+from dimos.navigation.motion.planner.planners.se2 import VOXEL
+
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from dimos.navigation.motion.embodiment.base import Embodiment
 
-# The absolute band `planners/target.py` slices, which is only the body's band
-# if the map's z origin happens to be the ground.
-# Ground exclusion for the body-referenced band. TWO voxel layers, not one: a
+# Ground exclusion for the body-referenced band: TWO voxel layers, not one. A
 # floor whose true height sits near a voxel boundary quantises into both layers
 # either side of it, and one layer leaves the upper one standing as a carpet
-# the search cannot cross: at one layer the robot
-# is inside its own band on every tick, at two on 7 % of them.
-LOW = 0.16
+# the search cannot cross (measured: at one layer the robot is inside its own
+# band on every tick, at two on 7 % of them).
+LOW = 2 * VOXEL
 
 
 def _no_soft() -> NDArray[np.float32]:

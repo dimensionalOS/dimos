@@ -321,7 +321,7 @@ _mls_planner_motion = MLSPlannerNative.blueprint(
 # inverse keyed to that same blob (~23% over-speed on a different gait). Re-probe against
 # the deployed gait before trusting either at speed; until then dial the ceiling down
 # here rather than in the law -- e.g. embodiment=replace(GO2, max_speed=0.4), or
-# control=ControllerConfig(k_pos=1.5) on the body for its gains.
+# replace(GO2, control=GO2.control.model_copy(update={"k_pos": 1.5})) for its gains.
 #
 # Everything but the follower is shared, so it composes as a sub-blueprint the way
 # go2_zenoh_raycaster does and the two tracks differ by one argument. Private (leading

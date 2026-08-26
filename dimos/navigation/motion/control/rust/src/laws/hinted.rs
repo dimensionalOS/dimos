@@ -85,10 +85,9 @@ pub struct HintedParams {
 /// Foot of the perpendicular from `(px, py)` onto the path polyline, and its
 /// arc length.
 ///
-/// Where on the LINE the body is, rather than which waypoint it is nearest --
-/// the quantity the judge measures (`judge.cross_track` projects onto segments
-/// too). Zero-length (fan) segments project to their own point, which is what
-/// the clamp to `[0, 1]` already does.
+/// Where on the LINE the body is, rather than which waypoint it is nearest:
+/// cross-track error proper. Zero-length (fan) segments project to their own
+/// point, which is what the clamp to `[0, 1]` already does.
 fn project_onto(path: &[[f64; 3]], arcs: &[f64], px: f64, py: f64) -> ([f64; 2], f64) {
     let mut best = f64::INFINITY;
     let mut foot = [path[0][0], path[0][1]];

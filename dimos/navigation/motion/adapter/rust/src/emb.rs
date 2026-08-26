@@ -17,8 +17,7 @@
 //! record -- there is no table here to drift from it.
 
 use dimos_motion2_target::planner::Emb;
-pub use dimos_motion2_tc::emb::{base_params, blind_params, hinted_params};
-use dimos_motion2_tc::stamps;
+pub use dimos_motion2_tc::emb::{base_params, blind_params, governor, hinted_params};
 
 /// `Embodiment.dilated`, formula for formula: every box grown by `by` PER
 /// SIDE, the measured rows with it.
@@ -41,17 +40,6 @@ pub fn dilated(emb: Emb, by: f64) -> Emb {
 
 pub fn half_width(emb: &Emb) -> f64 {
     emb.width / 2.0
-}
-
-/// The stamp dialect's curve, read off the body the plan was made for.
-pub fn governor(emb: &Emb) -> stamps::Governor {
-    stamps::Governor {
-        max_speed: emb.max_speed,
-        min_speed: emb.min_speed,
-        speed_clearance: emb.speed_clearance,
-        floor: emb.precision,
-        max_yaw_rate: emb.max_yaw_rate,
-    }
 }
 
 #[cfg(test)]

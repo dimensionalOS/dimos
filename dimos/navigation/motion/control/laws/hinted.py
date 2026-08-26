@@ -72,9 +72,8 @@ def _project_onto(
 ) -> tuple[np.ndarray, float]:
     """Foot of the perpendicular onto the polyline, and its arc length.
 
-    Where on the LINE the body is, rather than which waypoint it is nearest —
-    the quantity the judge measures (``judge.cross_track`` projects onto
-    segments too) and the one the seed never computed.
+    Where on the LINE the body is, rather than which waypoint it is nearest:
+    cross-track error proper, which the seed never computed.
     """
     best, foot, s_star = math.inf, xy[0], 0.0
     for m in range(len(xy) - 1):

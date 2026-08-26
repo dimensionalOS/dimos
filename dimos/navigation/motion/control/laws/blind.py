@@ -64,37 +64,13 @@ def make_rust(emb: Embodiment = GO2) -> RustBlindPursuitController:
 def walk_command(want: float, gain: float, slip: float, ramp: float) -> float:
     """The command that asks the gait for a ground speed of ``want`` m/s.
 
-    The twist this law emits is not a velocity, it is a request to a learned
-    walking policy — and that policy under-delivers. Measured open loop by
-    ``control/probe_walk_slip.py`` (flat empty world, constant command held
-    12 s, body pose differenced after the 3 s settle)::
-
-        cmd  0.20  0.25  0.30  0.35  0.40  0.50  0.65  0.80  1.00
-        got  0.002 0.036 0.130 0.217 0.275 0.388 0.532 0.707 0.932
-
-    Above cmd ~0.32 the map is affine: a least-squares fit over cmd >= 0.35
-    gives ``got ~= 1.10*cmd - 0.168``, a deficit of 0.11-0.13 m/s across the
-    working range, and the same probe at 45/90 degrees of heading and |wz| up
-    to 0.5 rad/s reproduces it to within 0.02 — gait slip, not a direction
-    artefact. Below cmd ~0.30 the gait does not initiate at all: a 0.20 m/s
-    request moves the body 0.002 m/s, and it wobbles doing it (tilt p99
-    0.09-0.16 through the stall band against 0.06-0.07 at cruise).
-
-    ``min_speed`` is 0.20, so the creep rung of the governor sat inside that
-    stall band. An episode commanding 0.207 m/s for 39 s of a 40 s horizon
-    covered 0.88 m and timed out having never come within 0.45 m of a wall:
-    that is the clock the timeouts lost to, not a follower driving too
-    carefully — one whose careful speeds were not speeds.
-
-    The correction is an actuator inverse, not a speed increase: ``gain`` and
-    ``slip`` invert that affine fit over the reachable command range only, so
-    the intended ground speed is still exactly the one the governor chose.
-    Deliberately not a flat offset — ``want + 0.15`` matches the inverse near
-    the floor but overshoots ~9% at cruise, and quietly running 9% over the
-    speed your own annotation licensed is not solving the stall.
-
-    Identity at ``want = 0``; the affine inverse once ``want >= ramp``, since
-    a stop request has to remain a stop.
+    The twist is a request to a learning walking policy that under-delivers:
+    ground speed ~= ``gain * cmd - slip`` above the stall band, nothing at all
+    below it (the embodiment's ``walk_*``, measured open loop). This inverts
+    that affine map so the intended ground speed stays exactly the one the
+    governor chose — an actuator inverse, not a flat offset, which would
+    overshoot at cruise. Identity at ``want = 0``, the full inverse once
+    ``want >= ramp``, since a stop request has to remain a stop.
     """
     if want <= 0.0:
         return 0.0

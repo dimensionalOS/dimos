@@ -32,8 +32,8 @@
 //! taller than whatever band this file happened to carry.
 //!
 //! A HINT, not a safety contract. It is the nearest thing that could touch the
-//! body, minus the body -- the judge measures actual clearance separately, and
-//! nothing here is allowed to be the reason a robot does or does not collide.
+//! body, minus the body -- and nothing here is allowed to be the reason a
+//! robot does or does not collide.
 
 use std::collections::HashMap;
 

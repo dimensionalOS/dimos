@@ -46,7 +46,7 @@ def angle_diff(a: float, b: float) -> float:
 class ControllerConfig(BaseConfig):
     """A law's tuning. Everything the plant dictates -- speeds, the governor's
     band, the yaw rate, slew, slip -- is the embodiment's and is read from it;
-    what is here is what a referee search over a fixed body may move -- and so
+    what is here is what a search over a fixed body may move -- and so
     nothing here has a default: a body brings the numbers searched on it
     (`embodiment/go2.py::GO2.control`), or explicitly borrows another's.
     """
@@ -54,8 +54,7 @@ class ControllerConfig(BaseConfig):
     lookahead: float  # carrot distance along the path (m)
     k_pos: float  # body-frame position error gain (1/s)
     k_yaw: float  # yaw error gain (1/s)
-    # yaw-per-meter above this is a commanded rotation (fan), not a curve --
-    # matches the referee's fan detection threshold (sim.py _fan_marks)
+    # yaw-per-meter above this is a commanded rotation (fan), not a curve
     fan_yaw_per_m: float
     # while a fan segment is being executed, hold position and rotate until
     # the yaw error drops under this (rad)

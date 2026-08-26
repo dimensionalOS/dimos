@@ -35,28 +35,10 @@ use crate::geom::{
 };
 use crate::stamps::{ceiling_ahead, decode_ceilings};
 
-/// Locomotion feed-forward, in m/s.
-///
-/// The twist this law emits is not a velocity, it is a *request* to a learned
-/// walking policy -- and that policy under-delivers. Measured open loop, the
-/// map is affine and well behaved above ~0.32 commanded, with a deficit of
-/// 0.11-0.13 m/s across the working range; below ~0.30 the gait does not
-/// initiate at all and the robot marches on the spot. `min_speed` is 0.20, so
-/// the creep rung of the clearance governor sits inside that stall band and
-/// asking for it stops the robot dead.
-///
-/// The correction is an actuator inverse over the reachable command range, not
-/// a speed increase: the *intended* ground speed stays the one the governor
-/// chose and the correction cancels the deficit rather than exceeding it. A
-/// flat offset would instead overshoot at cruise, which is not solving the
-/// stall, it is driving faster than the clearance annotation licensed.
-///
-/// DEPLOY. These are properties of the gait blob, not of the law -- on a
-/// different gait they are a ~23% over-speed. They live on the embodiment for
-/// exactly that reason (`walk_gain`, `walk_slip`, `walk_slip_ramp`): re-probe
-/// against the deployed gait and key them to it before this drives hardware.
-///
-/// `Params` plus the gait calibration this law feeds forward through.
+/// `Params` plus the gait calibration this law feeds forward through: the
+/// embodiment's `walk_gain`/`walk_slip`/`walk_slip_ramp`, properties of the
+/// gait blob and not of the law. Re-probe them on a different gait before it
+/// drives hardware.
 pub struct BlindParams {
     pub base: Params,
     pub walk_gain: f64,
@@ -66,9 +48,10 @@ pub struct BlindParams {
     pub slip_ramp: f64,
 }
 
-/// The command that asks the gait for a ground speed of `want` m/s.
-///
-/// Identity at `want = 0`; the affine inverse above once `want >= ramp`.
+/// The command that asks the gait for a ground speed of `want` m/s: the
+/// inverse of `ground ~= gain * cmd - slip`, so the intended ground speed
+/// stays the one the governor chose (`laws/blind.py::walk_command`).
+/// Identity at `want = 0`; the full inverse once `want >= ramp`.
 #[inline]
 pub fn walk_command(want: f64, gain: f64, slip: f64, ramp: f64) -> f64 {
     if want <= 0.0 {
