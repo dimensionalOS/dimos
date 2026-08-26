@@ -1,9 +1,11 @@
 # Running the motion stack on your Go2
 
-Everything here was executed and verified on a real Go2 Air on 2026-08-06.
-Each step ends with a check — do not skip them; every one of these has caught
-a real deployment mistake. `<robot>` is your Go2's IP; `ssh go2` assumes an
-ssh-config alias for root on it.
+The local planner, trajectory follower, cmd_vel mux and the go2 tf tree run
+on the robot as one baked binary; mapping stays on the laptop. Why the stack
+is cut there, and what it measured: [motion-deployment.md](/docs/platforms/quadruped/go2/motion-deployment.md).
+Each step ends with a check — every one has caught a real deployment mistake.
+`<robot>` is your Go2's IP; `ssh root@<robot>` is written `ssh go2` below,
+i.e. an ssh-config alias for root on it.
 
 ## 0. What you need
 
@@ -15,8 +17,9 @@ ssh-config alias for root on it.
 
 ## 1. go2web (the bridge) onto the robot
 
+From your go2web checkout:
+
 ```sh
-cd ~/coding/go2web
 scripts/build-nix-musl.sh          # aarch64 static binary -> ./dimos-helper
 scripts/deploy.sh go2              # copies binary + dimos-helper.service, restarts
 ```
@@ -35,8 +38,8 @@ segment; it auto-slaves, no lidar-side config. Full story + gotchas:
 
 ```sh
 ssh go2 apt install -y linuxptp    # one package, no deps
-scp ~/coding/go2web/scripts/ptp4l-mid360.conf go2:/etc/linuxptp/
-scp ~/coding/go2web/scripts/ptp4l-mid360.service go2:/etc/systemd/system/
+scp scripts/ptp4l-mid360.conf go2:/etc/linuxptp/        # from go2web
+scp scripts/ptp4l-mid360.service go2:/etc/systemd/system/
 ssh go2 'systemctl daemon-reload && systemctl enable --now ptp4l-mid360'
 ssh go2 systemctl restart dimos-helper    # re-latch the clock mode
 ```
@@ -52,28 +55,32 @@ From the dimos repo, inside the dev shell:
 ```sh
 dimos bake motion_planner trajectory_follower cmd_vel_mux go2_tf \
     -o motion-host --builder zigbuild --target aarch64-unknown-linux-gnu.2.31
+python -m dimos.robot.unitree.go2.zenoh.motion_host > motion-host.json
 
 ssh go2 mkdir -p /root/motion-host
 scp target/dimos-bake/motion-host/target/aarch64-unknown-linux-gnu/release/motion-host \
-    go2:/root/motion-host/
-scp dimos/navigation/motion/dimos-motion-host.service go2:/etc/systemd/system/
-```
-
-The host reads its whole config as one JSON line on stdin:
-`/root/motion-host/motion-host.json`. This file is the deployment artifact —
-the sharp edge is documented in
-[deployment_plan.md](../deployment_plan.md) ("Config is the sharp edge").
-Two rules that have both bitten already:
-
-- the `modules` it names must exactly match the bake list above (the host
-  refuses to start otherwise, and says so)
-- after pulling new dimos code, stale/renamed config keys make the host exit
-  with `unknown field` / `missing field` — the journal names the field; fix
-  the JSON, don't rebake
-
-```sh
+    motion-host.json go2:/root/motion-host/
+scp misc/motion-host/dimos-motion-host.service go2:/etc/systemd/system/
 ssh go2 'systemctl daemon-reload && systemctl enable --now dimos-motion-host'
 ```
+
+The `.2.31` pins the glibc floor to the Go2's Ubuntu 20.04; check the robot's
+with `ldd --version` and pin at or below.
+
+The host reads its whole config as one JSON line on stdin, and the rust side
+has no defaults of its own — python owns them. So `motion-host.json` is
+**generated** from the python config classes
+(`dimos/robot/unitree/go2/zenoh/motion_host.py`: class defaults, the
+deployment's few overrides, and the zenoh `session` block that makes the host
+a client of go2web's router over loopback). Never hand-edit it; regenerate it
+with the binary, every time. `test_motion_host.py` asserts each module block
+re-validates, which is the drift that used to present as a controller bug.
+
+Two things the host refuses, and says so in the journal:
+
+- a config whose `modules` do not match the bake list (`MODULES` in
+  `motion_host.py` is that list — keep the bake command above equal to it)
+- a config stamped for another graph (`graph`): rebake and regenerate together
 
 **Check**: `ssh go2 journalctl -u dimos-motion-host -n 20` — all four modules
 log `module started`, go2_tf logs `publishing the go2 mount tree`, and within
@@ -84,13 +91,17 @@ loopback dial to the bridge working). They keep waiting on `local_map` /
 ## 4. The laptop half
 
 ```sh
-dimos --robot-ip <robot> run go2-zenoh-motion
+dimos --robot-ip <robot> run go2-zenoh-motion-local
 ```
+
+`-local` is the point: it is `go2-zenoh-motion` MINUS the modules the host now
+runs. Plain `go2-zenoh-motion` against a live host gives you two planners, two
+followers and two muxes on the same topics.
 
 One dial: go2web runs as a zenoh ROUTER on 7447, and everything hangs off it —
 the motion host on the robot connects to it as a client over loopback, and the
 laptop's raycaster + MLS reach the robot-side planner through the same router.
-There is no second port anymore. Click a goal in the viewer.
+Click a goal in the viewer.
 
 **Check**: the robot walks. The follower journal shows plans arriving; a
 standing robot logging `single-pose stub, i.e. no safe route` is the planner
@@ -107,9 +118,9 @@ scp go2:/tmp/go2-recordings/<stamp>.zenoh.mcap data/ml-trajectory-research/
 ```
 
 The offline post-mortem that reads those recordings (map churn, plan flips,
-planner and follower replay with input ablation) is not on this branch -- it is
+planner and follower replay with input ablation) is not on this branch — it is
 `adapter/diagnose.py` on `ivan/feat/trajectory_ctrl`. Oneliners for what IS
-here: [../tools.md](../tools.md).
+here: `dimos/navigation/motion/tools.md`.
 
 ---
 

@@ -15,7 +15,8 @@ WorkingDirectory=/root/motion-host
 Environment=DIMOS_TRANSPORT=zenoh
 Environment=RUST_LOG=info
 # The host reads its whole config from one line on stdin and exits if it is
-# missing a key, so the file is the unit is the wiring.
+# missing a key. The file is GENERATED, never hand-edited:
+#   python -m dimos.robot.unitree.go2.zenoh.motion_host > motion-host.json
 ExecStart=/bin/sh -c "exec /root/motion-host/motion-host < /root/motion-host/motion-host.json"
 Restart=on-failure
 RestartSec=2

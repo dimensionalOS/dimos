@@ -99,8 +99,9 @@ access to its candidate and none to the referee scoring it.
 
 Oneliners for everything: [tools.md](tools.md).
 
-Setting up a Go2 from scratch: [installation/go2.md](installation/go2.md).
-Putting the time-critical half on the robot: [deployment_plan.md](deployment_plan.md).
+Setting up a Go2 from scratch: [docs/platforms/quadruped/go2/motion.md](../../../docs/platforms/quadruped/go2/motion.md).
+Why the time-critical half runs on the robot, and what it costs:
+[docs/platforms/quadruped/go2/motion-deployment.md](../../../docs/platforms/quadruped/go2/motion-deployment.md).
 How to write a native module from scratch is a general dimos topic rather than a
 motion one; the long-form recipe is on `ivan/feat/trajectory_ctrl`
 (`native_module_recipe.md`), and `dimos/cli/bake/` is the code it describes.

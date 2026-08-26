@@ -43,7 +43,7 @@ uv run maturin develop --uv --release -m dimos/navigation/motion/control/rust/Ca
 dimos run go2-zenoh-motion
 
 # bake the robot-side host (runs ON the robot, next to the go2web bridge);
-# toolchain prereqs + deploy notes: deployment_plan.md "Baking the motion host"
+# toolchain prereqs + deploy notes: docs/platforms/quadruped/go2/motion.md
 dimos bake motion_planner trajectory_follower cmd_vel_mux go2_tf \
     -o motion-host --builder zigbuild --target aarch64-unknown-linux-gnu.2.31
 ```

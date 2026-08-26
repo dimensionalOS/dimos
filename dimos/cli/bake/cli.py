@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 import importlib
 import json
 from pathlib import Path
@@ -49,14 +49,22 @@ def default_config(module: RegisteredModule) -> dict[str, object]:
     return dict(config_type().to_config_dict())
 
 
-def emit_config(graph: Graph, modules: Sequence[RegisteredModule]) -> dict[str, object]:
-    """The stdin blob for the host, bar the `session` block only the deployment knows."""
+def emit_config(
+    graph: Graph,
+    modules: Sequence[RegisteredModule],
+    configs: Mapping[str, dict[str, object]] | None = None,
+) -> dict[str, object]:
+    """The stdin blob for the host, bar the `session` block only the deployment knows.
+
+    `configs` replaces a module's class-default block with the deployment's own.
+    """
     topics = graph.topics()
+    configs = configs or {}
     return {
         "modules": {
             module.id: {
                 "topics": topics[module.id],
-                "config": default_config(module) or None,
+                "config": configs.get(module.id, default_config(module)) or None,
             }
             for module in modules
         },

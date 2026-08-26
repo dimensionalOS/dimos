@@ -3,6 +3,7 @@
 - [Setup your Dog](/docs/platforms/quadruped/go2/setup.md) — requirements, install, connecting to your Go2, and agentic control
 - [Simulation](/docs/platforms/quadruped/go2/simulation.md) — try it with no hardware via replay or MuJoCo
 - [Mapping & Navigation](/docs/capabilities/navigation/index.md) — live nav, premap recording, and relocalization
+- [Motion stack on the robot](/docs/platforms/quadruped/go2/motion.md) — bake the local planner + follower and run them on the Go2; [why and what it costs](/docs/platforms/quadruped/go2/motion-deployment.md)
 
 ## Available Blueprints
 

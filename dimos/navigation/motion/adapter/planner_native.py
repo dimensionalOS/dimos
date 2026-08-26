@@ -26,7 +26,7 @@ this module.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
@@ -34,8 +34,14 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.navigation.motion.adapter.planner import MotionPlannerConfig
 from dimos.navigation.motion.embodiment.base import Embodiment
-from dimos.navigation.motion.embodiment.go2 import GO2
+from dimos.navigation.motion.planner.planners.base import RESOLUTION
+
+
+def _default(field: str) -> Any:
+    """The python planner's default for a field the native twin shares."""
+    return MotionPlannerConfig.model_fields[field].default
 
 
 class MotionPlannerNativeConfig(NativeModuleConfig):
@@ -47,24 +53,24 @@ class MotionPlannerNativeConfig(NativeModuleConfig):
 
     # Every field below crosses to the rust struct verbatim, and every one of
     # them must: a native config has no rust-side defaults, so a field added
-    # there and not here fails startup with `missing [...]`.
-    embodiment: Embodiment = GO2
-    # Every planning box grown by this much PER SIDE; negative shrinks it.
-    # Both modules must carry the SAME value.
-    body_dilate_m: float = 0.0
+    # there and not here fails startup with `missing [...]`. Defaults are the
+    # python module's own, read off its config so the twins cannot drift
+    # (test_planner.py asserts it).
+    embodiment: Embodiment = _default("embodiment")
+    body_dilate_m: float = _default("body_dilate_m")
     # planners/base.py RESOLUTION; here it crosses explicitly, because the rust
     # planner has no python default to read.
-    resolution: float = 0.1
-    replan_hz: float = 5.0
-    goal_lookahead_m: float = 5.0
-    world_frame: str = "odom"
-    base_frame: str = "base_link"
-    replan_on_change: bool = True
-    replan_carrot_m: float = 0.2
-    reset_carrot_m: float = 1.0
-    obstacle_model: str = "body_band"
-    max_map_age_s: float = 5.0
-    viz_publish_hz: float = 2.0
+    resolution: float = RESOLUTION
+    replan_hz: float = _default("replan_hz")
+    goal_lookahead_m: float = _default("goal_lookahead_m")
+    world_frame: str = _default("world_frame")
+    base_frame: str = _default("base_frame")
+    replan_on_change: bool = _default("replan_on_change")
+    replan_carrot_m: float = _default("replan_carrot_m")
+    reset_carrot_m: float = _default("reset_carrot_m")
+    obstacle_model: str = _default("obstacle_model")
+    max_map_age_s: float = _default("max_map_age_s")
+    viz_publish_hz: float = _default("viz_publish_hz")
 
 
 class MotionPlannerNative(NativeModule):

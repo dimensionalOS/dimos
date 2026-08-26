@@ -17,6 +17,7 @@ import math
 import numpy as np
 import pytest
 
+from dimos.core.module import ModuleConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path
@@ -25,6 +26,7 @@ from dimos.msgs.std_msgs.Bool import Bool
 from dimos.navigation.motion.adapter.follower import (
     GoalLatch,
     TrajectoryFollower,
+    TrajectoryFollowerConfig,
     path_clearance,
 )
 from dimos.navigation.motion.obstacles import hard_points
@@ -252,3 +254,11 @@ def test_stop_movement_forgets_the_slew_history():
     follower._on_path(path)
     follower._step(pose, path, age=0.0)
     assert 0.0 < out[-1].linear.x <= step + 1e-9
+
+
+def test_native_twin_shares_the_python_defaults():
+    from dimos.navigation.motion.adapter.follower_native import TrajectoryFollowerNativeConfig
+
+    native, py = TrajectoryFollowerNativeConfig.model_fields, TrajectoryFollowerConfig.model_fields
+    shared = set(native) & set(py) - set(ModuleConfig.model_fields)
+    assert {f: native[f].default for f in shared} == {f: py[f].default for f in shared}

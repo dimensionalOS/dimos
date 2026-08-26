@@ -18,6 +18,7 @@ import math
 import numpy as np
 import pytest
 
+from dimos.core.module import ModuleConfig
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -27,6 +28,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.motion.adapter import planner as planner_module
 from dimos.navigation.motion.adapter.planner import (
     MotionPlanner,
+    MotionPlannerConfig,
     carrot_along,
     stamped,
 )
@@ -280,3 +282,11 @@ def test_a_tall_body_plans_around_what_the_old_band_cut_off():
     # and the control: the same wall IS over a go2's belly, so it is not a wall
     assert not len(hard_points(load_model("body_band", GO2), wall, 0.0))
     assert _detour(GO2, wall, 0.0) < 0.2
+
+
+def test_native_twin_shares_the_python_defaults():
+    from dimos.navigation.motion.adapter.planner_native import MotionPlannerNativeConfig
+
+    native, py = MotionPlannerNativeConfig.model_fields, MotionPlannerConfig.model_fields
+    shared = set(native) & set(py) - set(ModuleConfig.model_fields)
+    assert {f: native[f].default for f in shared} == {f: py[f].default for f in shared}

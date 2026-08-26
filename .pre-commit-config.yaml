@@ -58,11 +58,8 @@ repos:
       - id: pretty-format-json
         name: format json
         args: [ --autofix, --no-sort-keys ]
-        # misc/DimSim/public/sims/ is LFS-tracked; web/ JSON is owned by `deno fmt`;
-        # motion-host.json is a baked host's stdin blob, which is read as ONE LINE
-        # (dimos-module read_launch_config) -- pretty-printing it stops the host
-        # booting with "EOF while parsing an object at line 1 column 1".
-        exclude: ^(misc/DimSim/public/sims/|web/|dimos/navigation/motion/motion-host\.json$)
+        # misc/DimSim/public/sims/ is LFS-tracked; web/ JSON is owned by `deno fmt`.
+        exclude: ^(misc/DimSim/public/sims/|web/)
 
   - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
     rev: 3.4.1
