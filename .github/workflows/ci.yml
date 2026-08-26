@@ -343,6 +343,14 @@ jobs:
         working-directory: web
         run: deno task test
 
+      - name: SDK type-check
+        working-directory: web/sdk
+        run: deno task check
+
+      - name: SDK vitest
+        working-directory: web/sdk
+        run: deno task test
+
       - name: Cockpit type-check
         working-directory: web/cockpit
         run: deno task check

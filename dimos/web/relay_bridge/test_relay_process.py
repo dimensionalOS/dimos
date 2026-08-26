@@ -131,6 +131,8 @@ def fake_web(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (tmp_path / "cockpit" / "package.json").write_text("{}")
     (tmp_path / "shared").mkdir()
     (tmp_path / "shared" / "protocol.ts").write_text("code")
+    (tmp_path / "sdk" / "src").mkdir(parents=True)
+    (tmp_path / "sdk" / "src" / "index.ts").write_text("code")
     monkeypatch.setattr(relay_process, "ensure_deno", lambda: "deno")
     monkeypatch.delenv(WEB_DIR_ENV_VAR, raising=False)
     monkeypatch.delenv(WEB_DIR_BUILD_ENV_VAR, raising=False)
@@ -167,6 +169,22 @@ def test_ensure_cockpit_dist_rebuilds_on_source_change(
     monkeypatch.setattr(relay_process, "_run_build", build)
     ensure_cockpit_dist(fake_web)
     source = fake_web / "cockpit" / "src" / "main.tsx"
+    stat = source.stat()
+    source.write_text("edited")
+    os.utime(source, (stat.st_atime, stat.st_mtime))  # content, not mtime, decides
+    ensure_cockpit_dist(fake_web)
+    assert len(build.calls) == 2
+
+
+def test_ensure_cockpit_dist_rebuilds_on_sdk_change(
+    fake_web: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The cockpit bundles the SDK sources, so an sdk/ edit must invalidate
+    # the stamp too.
+    build = _FakeBuild()
+    monkeypatch.setattr(relay_process, "_run_build", build)
+    ensure_cockpit_dist(fake_web)
+    source = fake_web / "sdk" / "src" / "index.ts"
     stat = source.stat()
     source.write_text("edited")
     os.utime(source, (stat.st_atime, stat.st_mtime))  # content, not mtime, decides

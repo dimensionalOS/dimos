@@ -1,0 +1,13 @@
+{
+  "name": "@dimos/sdk",
+  "exports": {
+    ".": "./src/index.ts",
+    "./react": "./src/react.ts",
+    "./internal/teleop": "./src/internal/teleopMachine.ts"
+  },
+  "tasks": {
+    "test": "deno run -A npm:vitest run",
+    "check": "deno run -A npm:typescript/tsc --noEmit",
+    "fixture": "deno run -A npm:vite --config fixture/vite.config.ts"
+  }
+}

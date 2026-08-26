@@ -25,6 +25,7 @@ from types import MappingProxyType, ModuleType, SimpleNamespace
 from typing import Any, cast
 
 import numpy as np
+from pink.exceptions import NoSolutionFound
 import pytest
 from pytest_mock import MockerFixture
 
@@ -1472,3 +1473,249 @@ def test_solve_pose_targets_auxiliary_only_retains_seed_selection_order(
     assert result.joint_state.name == ["arm/joint_c", "arm/joint_a", "arm/joint_b"]
     assert result.joint_state.position == [0.3, 0.1, 0.2]
     assert world.joint_state_calls == 0
+
+
+def _solved_joint_state() -> JointState:
+    return JointState({"name": ["joint_a", "joint_b", "joint_c"], "position": [0.1, 0.2, 0.3]})
+
+
+def _qp_infeasible() -> NoSolutionFound:
+    return NoSolutionFound(
+        problem=cast("Any", SimpleNamespace()),
+        results=cast("Any", SimpleNamespace()),
+    )
+
+
+def test_solve_retries_after_no_solution_found(mocker: MockerFixture) -> None:
+    ik = _pink_ik(mocker, converge=True)
+    ik._robot_contexts = {("robot", "tool"): _context()}
+    outcomes: list[object] = [
+        _qp_infeasible(),
+        IKResult(
+            status=IKStatus.SUCCESS,
+            joint_state=_solved_joint_state(),
+            position_error=0.0006,
+            orientation_error=0.0,
+            iterations=1,
+        ),
+    ]
+
+    def fake_solve_targets(**_: object) -> IKResult:
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return cast("IKResult", outcome)
+
+    solve_targets = mocker.patch.object(ik, "_solve_targets", side_effect=fake_solve_targets)
+
+    result = ik.solve(
+        world=cast("Any", _FakeWorld(collision_free=True)),
+        robot_id="robot",
+        target_pose=PoseStamped(
+            position=Vector3(0.1, 0.0, 0.0),
+            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        ),
+        check_collision=True,
+        max_attempts=2,
+    )
+
+    assert solve_targets.call_count == 2
+    assert result.status == IKStatus.SUCCESS
+    assert result.joint_state is not None
+
+
+def test_solve_reports_first_no_solution_found_after_all_attempts(
+    mocker: MockerFixture,
+) -> None:
+    ik = _pink_ik(mocker, converge=True)
+    ik._robot_contexts = {("robot", "tool"): _context()}
+
+    def fake_solve_targets(**_: object) -> IKResult:
+        raise _qp_infeasible()
+
+    solve_targets = mocker.patch.object(ik, "_solve_targets", side_effect=fake_solve_targets)
+
+    result = ik.solve(
+        world=cast("Any", _FakeWorld(collision_free=True)),
+        robot_id="robot",
+        target_pose=PoseStamped(
+            position=Vector3(0.1, 0.0, 0.0),
+            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        ),
+        check_collision=True,
+        max_attempts=3,
+    )
+
+    assert solve_targets.call_count == 3
+    assert result.status == IKStatus.NO_SOLUTION
+    assert "QP solver did not find a solution" in result.message
+
+
+def test_solve_does_not_retry_unexpected_exception(mocker: MockerFixture) -> None:
+    ik = _pink_ik(mocker, converge=True)
+    ik._robot_contexts = {("robot", "tool"): _context()}
+    solve_targets = mocker.patch.object(
+        ik, "_solve_targets", side_effect=RuntimeError("unexpected solver failure")
+    )
+
+    result = ik.solve(
+        world=cast("Any", _FakeWorld(collision_free=True)),
+        robot_id="robot",
+        target_pose=PoseStamped(
+            position=Vector3(0.1, 0.0, 0.0),
+            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        ),
+        check_collision=True,
+        max_attempts=3,
+    )
+
+    assert solve_targets.call_count == 1
+    assert result.status == IKStatus.NO_SOLUTION
+    assert result.message == "Pink IK solver failed: unexpected solver failure"
+
+
+def test_solve_mapping_value_error_fails_without_retrying(mocker: MockerFixture) -> None:
+    ik = _pink_ik(mocker, converge=True)
+    ik._robot_contexts = {("robot", "tool"): _context()}
+    solve_targets = mocker.patch.object(
+        ik, "_solve_targets", side_effect=ValueError("joint 'joint_z' is not in the model")
+    )
+
+    result = ik.solve(
+        world=cast("Any", _FakeWorld(collision_free=True)),
+        robot_id="robot",
+        target_pose=PoseStamped(
+            position=Vector3(0.1, 0.0, 0.0),
+            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        ),
+        check_collision=True,
+        max_attempts=5,
+    )
+
+    assert solve_targets.call_count == 1
+    assert result.status == IKStatus.NO_SOLUTION
+    assert "Pink IK mapping failed" in result.message
+
+
+def _pose_targets_seed() -> JointState:
+    return JointState(
+        {"name": ["arm/joint_a", "arm/joint_b", "arm/joint_c"], "position": [0.0, 0.0, 0.0]}
+    )
+
+
+def test_solve_pose_targets_retries_after_no_solution_found(mocker: MockerFixture) -> None:
+    ik = _pink_ik(mocker, converge=True)
+    mocker.patch.object(ik, "_get_robot_context", return_value=_context())
+    world = _FakeWorld()
+    outcomes: list[object] = [
+        _qp_infeasible(),
+        IKResult(
+            status=IKStatus.SUCCESS,
+            joint_state=_solved_joint_state(),
+            position_error=0.0006,
+            orientation_error=0.0,
+        ),
+    ]
+
+    def fake_solve_targets(**_: object) -> IKResult:
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return cast("IKResult", outcome)
+
+    solve_targets = mocker.patch.object(ik, "_solve_targets", side_effect=fake_solve_targets)
+
+    result = ik.solve_pose_targets(
+        world=cast("Any", world),
+        pose_targets={
+            world.groups["arm/manipulator"]: PoseStamped(
+                position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+            )
+        },
+        seed=_pose_targets_seed(),
+        max_attempts=2,
+    )
+
+    assert solve_targets.call_count == 2
+    assert result.status == IKStatus.SUCCESS
+    assert result.joint_state is not None
+
+
+def test_solve_pose_targets_reports_first_no_solution_found_after_all_attempts(
+    mocker: MockerFixture,
+) -> None:
+    ik = _pink_ik(mocker, converge=True)
+    mocker.patch.object(ik, "_get_robot_context", return_value=_context())
+    world = _FakeWorld()
+
+    def fake_solve_targets(**_: object) -> IKResult:
+        raise _qp_infeasible()
+
+    solve_targets = mocker.patch.object(ik, "_solve_targets", side_effect=fake_solve_targets)
+
+    result = ik.solve_pose_targets(
+        world=cast("Any", world),
+        pose_targets={
+            world.groups["arm/manipulator"]: PoseStamped(
+                position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+            )
+        },
+        seed=_pose_targets_seed(),
+        max_attempts=3,
+    )
+
+    assert solve_targets.call_count == 3
+    assert result.status == IKStatus.NO_SOLUTION
+    assert "QP solver did not find a solution" in result.message
+
+
+def test_solve_pose_targets_does_not_retry_unexpected_exception(
+    mocker: MockerFixture,
+) -> None:
+    ik = _pink_ik(mocker, converge=True)
+    mocker.patch.object(ik, "_get_robot_context", return_value=_context())
+    world = _FakeWorld()
+    solve_targets = mocker.patch.object(
+        ik, "_solve_targets", side_effect=RuntimeError("unexpected solver failure")
+    )
+
+    result = ik.solve_pose_targets(
+        world=cast("Any", world),
+        pose_targets={
+            world.groups["arm/manipulator"]: PoseStamped(
+                position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+            )
+        },
+        seed=_pose_targets_seed(),
+        max_attempts=3,
+    )
+
+    assert solve_targets.call_count == 1
+    assert result.status == IKStatus.NO_SOLUTION
+    assert result.message == "Pink IK solver failed: unexpected solver failure"
+
+
+def test_solve_pose_targets_mapping_value_error_fails_without_retrying(
+    mocker: MockerFixture,
+) -> None:
+    ik = _pink_ik(mocker, converge=True)
+    mocker.patch.object(ik, "_get_robot_context", return_value=_context())
+    world = _FakeWorld()
+    solve_targets = mocker.patch.object(
+        ik, "_solve_targets", side_effect=ValueError("joint 'joint_z' is not in the model")
+    )
+
+    result = ik.solve_pose_targets(
+        world=cast("Any", world),
+        pose_targets={
+            world.groups["arm/manipulator"]: PoseStamped(
+                position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+            )
+        },
+        seed=_pose_targets_seed(),
+        max_attempts=5,
+    )
+
+    assert solve_targets.call_count == 1
+    assert result.status == IKStatus.NO_SOLUTION
+    assert "Pink IK mapping failed" in result.message

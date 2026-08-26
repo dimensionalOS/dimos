@@ -1,9 +1,9 @@
 # Unitree Go2
 
-- [Setup your Dog](/docs/platforms/quadruped/go2/setup.md) — requirements, install, connecting to your Go2, and agentic control
-- [Simulation](/docs/platforms/quadruped/go2/simulation.md) — try it with no hardware via replay or MuJoCo
-- [Mapping & Navigation](/docs/capabilities/navigation/index.md) — live nav, premap recording, and relocalization
-- [Motion stack on the robot](/docs/platforms/quadruped/go2/motion.md) — bake the local planner + follower and run them on the Go2; [the cut](/docs/platforms/quadruped/go2/motion-deployment.md)
+- [Setup your Dog](/docs/platforms/quadruped/go2/setup.md): requirements, install, connecting to your Go2, and agentic control
+- [Simulation](/docs/platforms/quadruped/go2/simulation.md): try it with no hardware via replay or MuJoCo
+- [Mapping & Navigation](/docs/capabilities/navigation/index.md): live nav, premap recording, and relocalization
+- [Motion stack on the robot](/docs/platforms/quadruped/go2/motion.md): bake the local planner + follower and run them on the Go2; [the cut](/docs/platforms/quadruped/go2/motion-deployment.md)
 
 ## Available Blueprints
 
@@ -20,10 +20,10 @@
 
 ## Deep Dive
 
-- [Navigation overview](/docs/capabilities/navigation/index.md) — live mapping vs premap relocalization
-- [Navigation stack](/docs/capabilities/navigation/deep_dive.md) — column-carving voxel mapping, costmap generation, A* planning
-- [Relocalization](/docs/capabilities/navigation/relocalization.md) — record → `dimos map global --export` → replay or live deploy
-- [Visualization](/docs/usage/visualization.md) — Rerun, performance tuning
-- [Data Streams](/docs/usage/data_streams/index.md) — RxPY streams, backpressure, quality filtering
-- [Transports](/docs/usage/transports/index.md) — LCM, SHM, DDS
-- [Blueprints](/docs/usage/blueprints.md) — composing modules
+- [Navigation overview](/docs/capabilities/navigation/index.md): live mapping vs premap relocalization
+- [Navigation stack](/docs/capabilities/navigation/deep_dive.md): column-carving voxel mapping, costmap generation, A* planning
+- [Relocalization](/docs/capabilities/navigation/relocalization.md): record → `dimos map global --export` → replay or live deploy
+- [Visualization](/docs/usage/visualization.md): Rerun, performance tuning
+- [Data Streams](/docs/usage/data_streams/index.md): RxPY streams, backpressure, quality filtering
+- [Transports](/docs/usage/transports/index.md): LCM, SHM, DDS
+- [Blueprints](/docs/usage/blueprints.md): composing modules

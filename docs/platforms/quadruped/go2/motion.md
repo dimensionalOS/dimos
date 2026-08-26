@@ -36,16 +36,16 @@ ssh go2 'systemctl daemon-reload && systemctl enable --now dimos-motion-host'
 Config is embedded at bake time (`dimos/robot/unitree/go2/zenoh/motion_host.py`); to try
 a value without rebaking, feed one JSON line on stdin, e.g.
 `{"modules":{"trajectory_follower":{"config":{"embodiment":{"max_speed":0.5}}}}}`.
-Check: `ssh go2 journalctl -u dimos-motion-host -n 20` — four `module started`, and `odometry: true` within seconds.
+Check `ssh go2 journalctl -u dimos-motion-host -n 20`: four `module started`, and `odometry: true` within seconds.
 
 ## 4. Laptop half
 
 ```sh
 dimos --robot-ip <robot> run go2-zenoh-motion-local
 ```
-Click a goal in the viewer. Check: the robot walks; `single-pose stub` in the follower journal means no safe route — look at the map.
+Click a goal in the viewer. Check: the robot walks; `single-pose stub` in the follower journal means no safe route, so look at the map.
 
 ## 5. Recordings
 
-`ssh go2 ls /tmp/go2-recordings/` — `*.zenoh.mcap` is the one analysis wants; start/stop from the go2web UI.
+`ssh go2 ls /tmp/go2-recordings/`: `*.zenoh.mcap` is the one analysis wants; start/stop from the go2web UI.
 Offline tools: `dimos/navigation/motion/tools.md`.

@@ -1,0 +1,28 @@
+{#-
+  https://llmstxt.org/: the site's pages, in nav order, for agents. Each link
+  is the page's markdown, which hooks.py serves beside its html.
+-#}
+{%- macro link(page) %}
+- [{{ page.title | striptags }}]({{ config.site_url }}{{ page.file.src_uri }})
+{%- endmacro -%}
+# {{ config.site_name }}
+
+> {{ config.site_description | trim }}
+
+Every page is also served as markdown at its docs/ path: `usage/modules/` is
+`usage/modules.md`, and a section's index page is `usage/index.md`.
+{% for item in nav %}
+{%- if item.is_page %}
+{{- link(item) }}
+{%- else %}
+
+## {{ item.title }}
+{% for child in item.children recursive %}
+{%- if child.is_page %}
+{{- link(child) }}
+{%- else %}
+{{- loop(child.children) }}
+{%- endif %}
+{%- endfor %}
+{%- endif %}
+{%- endfor %}

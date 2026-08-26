@@ -1,4 +1,4 @@
-// The cockpit consumes shared/protocol.ts through the vite/vitest pipeline
+// The SDK consumes shared/protocol.ts through the vite/vitest pipeline
 // (alias + bundler resolution) instead of Deno's. Running the golden vectors
 // here proves that pipeline yields byte-identical framing.
 
@@ -15,10 +15,10 @@ import {
   msgFromUnknown,
 } from "@dimos/shared";
 import { ManifestError, parseManifest } from "@dimos/shared/manifest";
-import controlFrames from "../../../shared/fixtures/control_frames.json";
-import dataFrames from "../../../shared/fixtures/data_frames.json";
-import datagrams from "../../../shared/fixtures/datagrams.json";
-import manifests from "../../../shared/fixtures/manifests.json";
+import controlFrames from "../../shared/fixtures/control_frames.json";
+import dataFrames from "../../shared/fixtures/data_frames.json";
+import datagrams from "../../shared/fixtures/datagrams.json";
+import manifests from "../../shared/fixtures/manifests.json";
 
 function b64ToBytes(b64: string): Uint8Array {
   return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
