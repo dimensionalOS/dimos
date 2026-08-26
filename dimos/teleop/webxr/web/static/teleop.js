@@ -6,7 +6,7 @@ window.onerror = (msg, url, line, col, error) => {
 
 import { geometry_msgs, std_msgs, sensor_msgs } from "https://esm.sh/jsr/@dimos/msgs@0.1.4";
 
-// WebSocket and VR state
+// WebSocket and WebXR state
 let ws = null;
 let xrSession = null;
 let xrRefSpace = null;
@@ -542,7 +542,7 @@ function processTracking(frame) {
     }
 }
 
-// VR render loop
+// WebXR render loop
 function onXRFrame(_time, frame) {
     if (!xrSession) return;
     xrSession.requestAnimationFrame(onXRFrame);
@@ -571,12 +571,12 @@ function onXRFrame(_time, frame) {
     }
 }
 
-// Start VR session with passthrough
-async function startVR() {
+// Start an immersive WebXR session with passthrough when available.
+async function startWebXRSession() {
     try {
         setStatus('Initializing WebGL...');
         initGL();
-        setStatus('Requesting VR session...');
+        setStatus('Requesting WebXR session...');
 
         // Try immersive-ar first (true passthrough), fall back to immersive-vr
         let session = null;
@@ -607,11 +607,11 @@ async function startVR() {
         // Get reference space
         xrRefSpace = await session.requestReferenceSpace('local-floor');
 
-        setStatus('VR active');
+        setStatus('WebXR active');
 
         // Session event handlers
         session.addEventListener('end', () => {
-            setStatus('VR session ended');
+            setStatus('WebXR session ended');
             handSelectActive.clear();
             hudPlaced = false;
             xrSession = null;
@@ -635,8 +635,8 @@ async function startVR() {
         session.requestAnimationFrame(onXRFrame);
 
     } catch (error) {
-        setStatus('VR failed: ' + error.message);
-        console.error('VR session error:', error);
+        setStatus('WebXR failed: ' + error.message);
+        console.error('WebXR session error:', error);
         throw error;
     }
 }
@@ -648,14 +648,14 @@ window.connect = async function() {
 
         // Check WebXR support
         if (!navigator.xr) {
-            throw new Error('WebXR not supported. Use Quest 3 browser.');
+            throw new Error('WebXR not supported. Use a WebXR-capable browser.');
         }
 
         // Setup WebSocket
         await setupWebSocket();
 
-        // Start VR
-        await startVR();
+        // Start WebXR
+        await startWebXRSession();
 
         // Update UI
         connectBtn.classList.add('hidden');
@@ -698,12 +698,12 @@ window.addEventListener('load', async () => {
     }
 
     try {
-        // Check for AR (passthrough) or VR support
+        // Check for immersive AR (passthrough) or VR session support.
         const arSupported = await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
         const vrSupported = await navigator.xr.isSessionSupported('immersive-vr').catch(() => false);
 
         if (!arSupported && !vrSupported) {
-            setStatus('VR/AR not supported');
+            setStatus('Immersive WebXR not supported');
             connectBtn.disabled = true;
         }
     } catch (error) {

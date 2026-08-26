@@ -14,9 +14,9 @@
 # limitations under the License.
 
 """
-Quest Teleoperation Module.
+WebXR Teleoperation Module.
 
-Receives VR controller tracking data from the Quest web app via an embedded
+Receives spatial input tracking data from the WebXR client via an embedded
 FastAPI WebSocket server.  Transforms from WebXR to robot frame, computes
 deltas, and publishes PoseStamped commands.
 """
@@ -45,10 +45,10 @@ from dimos.core.stream import In, Out
 from dimos.imitation.collection.episode_monitor import EpisodeStatus
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Joy import Joy
-
-# Hand is re-exported for back-compat; it lives in quest_types.
-from dimos.teleop.quest.quest_types import Buttons, Hand, QuestControllerState
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
+
+# Hand is re-exported for callers; it lives in controller_types.
+from dimos.teleop.webxr.controller_types import Buttons, Hand, WebXRControllerState
 from dimos.utils.logging_config import setup_logger
 from dimos.web.robot_web_interface import RobotWebInterface
 
@@ -67,7 +67,7 @@ async def _ws_send_text(ws: WebSocket, data: str) -> None:
 
 
 @dataclass
-class QuestTeleopStatus:
+class WebXRTeleopStatus:
     """Current teleoperation status."""
 
     left_engaged: bool
@@ -77,21 +77,21 @@ class QuestTeleopStatus:
     buttons: Buttons
 
 
-class QuestTeleopConfig(ModuleConfig):
-    """Configuration for Quest Teleoperation Module."""
+class WebXRTeleopConfig(ModuleConfig):
+    """Configuration for WebXR Teleoperation Module."""
 
     control_loop_hz: float = 50.0
     server_port: int = 8443
     input_timeout_s: float = Field(default=1.0, gt=0)
 
 
-_Config = TypeVar("_Config", bound=QuestTeleopConfig)
+_Config = TypeVar("_Config", bound=WebXRTeleopConfig)
 
 
-class QuestTeleopModule(Module):
-    """Quest Teleoperation Module for Meta Quest controllers.
+class WebXRTeleopModule(Module):
+    """Teleoperation module for browser WebXR input sources.
 
-    Receives controller data from the Quest web app via an embedded WebSocket
+    Receives controller data from the WebXR client via an embedded WebSocket
     server, computes output poses, and publishes them.  Subclass to customize
     pose computation, output format, and engage behavior.
 
@@ -101,7 +101,7 @@ class QuestTeleopModule(Module):
         - teleop_buttons: Buttons (button states for both controllers)
     """
 
-    config: QuestTeleopConfig
+    config: WebXRTeleopConfig
 
     # Outputs: delta poses for each controller
     left_controller_output: Out[PoseStamped]
@@ -116,7 +116,7 @@ class QuestTeleopModule(Module):
         self._is_engaged: dict[Hand, bool] = {Hand.LEFT: False, Hand.RIGHT: False}
         self._initial_poses: dict[Hand, PoseStamped | None] = {Hand.LEFT: None, Hand.RIGHT: None}
         self._current_poses: dict[Hand, PoseStamped | None] = {Hand.LEFT: None, Hand.RIGHT: None}
-        self._controllers: dict[Hand, QuestControllerState | None] = {
+        self._controllers: dict[Hand, WebXRControllerState | None] = {
             Hand.LEFT: None,
             Hand.RIGHT: None,
         }
@@ -169,10 +169,10 @@ class QuestTeleopModule(Module):
             await ws.accept()
             self._ws_loop = asyncio.get_running_loop()
             if not self._client_connected(ws):
-                logger.warning("Rejecting additional Quest control client")
-                await ws.close(code=1008, reason="A Quest control client is already connected")
+                logger.warning("Rejecting additional WebXR control client")
+                await ws.close(code=1008, reason="A WebXR control client is already connected")
                 return
-            logger.info("Quest client connected")
+            logger.info("WebXR client connected")
             try:
                 while True:
                     data = await ws.receive_bytes()
@@ -183,7 +183,7 @@ class QuestTeleopModule(Module):
                     else:
                         logger.warning(f"Unknown message fingerprint: {fingerprint.hex()}")
             except WebSocketDisconnect:
-                logger.info("Quest client disconnected")
+                logger.info("WebXR client disconnected")
             except Exception:
                 logger.exception("WebSocket error")
             finally:
@@ -209,7 +209,7 @@ class QuestTeleopModule(Module):
                 self._reset_controller_state()
 
     def _broadcast_text(self, data: str) -> None:
-        """Schedule a text message for the active Quest client."""
+        """Schedule a text message for the active WebXR client."""
         loop = self._ws_loop
         if loop is None:
             return
@@ -245,7 +245,7 @@ class QuestTeleopModule(Module):
         self._setup_routes()
         self._start_server()
         self._start_control_loop()
-        logger.info("Quest Teleoperation Module started")
+        logger.info("WebXR Teleoperation Module started")
 
     @rpc
     def stop(self) -> None:
@@ -318,11 +318,11 @@ class QuestTeleopModule(Module):
             self._is_engaged[h] = False
             logger.info(f"{h.name} disengaged.")
 
-    def get_status(self) -> QuestTeleopStatus:
+    def get_status(self) -> WebXRTeleopStatus:
         with self._lock:
             left = self._controllers.get(Hand.LEFT)
             right = self._controllers.get(Hand.RIGHT)
-            return QuestTeleopStatus(
+            return WebXRTeleopStatus(
                 left_engaged=self._is_engaged[Hand.LEFT],
                 right_engaged=self._is_engaged[Hand.RIGHT],
                 left_pose=self._current_poses.get(Hand.LEFT),
@@ -348,11 +348,11 @@ class QuestTeleopModule(Module):
             self._last_pose_update[hand] = time.monotonic()
 
     def _on_joy_bytes(self, data: bytes) -> bool:
-        """Decode LCM bytes into Joy, parse into QuestControllerState."""
+        """Decode LCM bytes into Joy, parse into WebXRControllerState."""
         msg = Joy.lcm_decode(data)
         hand = self._resolve_hand(msg.frame_id)
         try:
-            controller = QuestControllerState.from_joy(msg, is_left=(hand == Hand.LEFT))
+            controller = WebXRControllerState.from_joy(msg, is_left=(hand == Hand.LEFT))
         except ValueError:
             logger.warning(
                 f"Malformed Joy for {hand.name}: axes={len(msg.axes or [])}, buttons={len(msg.buttons or [])}"
@@ -381,10 +381,10 @@ class QuestTeleopModule(Module):
             target=self._web_server.run,
             kwargs={"ssl": True, "ssl_certs_dir": DIMOS_PROJECT_ROOT / "assets" / "teleop_certs"},
             daemon=True,
-            name="QuestTeleopWebServer",
+            name="WebXRTeleopWebServer",
         )
         self._web_server_thread.start()
-        logger.info(f"Quest teleop web server started on https://0.0.0.0:{self.config.server_port}")
+        logger.info(f"WebXR teleop web server started on https://0.0.0.0:{self.config.server_port}")
 
     def _stop_server(self) -> None:
         """Shutdown the embedded web server."""
@@ -394,7 +394,7 @@ class QuestTeleopModule(Module):
         if self._web_server_thread is not None:
             self._web_server_thread.join(timeout=3)
             self._web_server_thread = None
-        logger.info("Quest teleop web server stopped")
+        logger.info("WebXR teleop web server stopped")
 
     def _start_control_loop(self) -> None:
         """Start the control loop thread."""
@@ -405,7 +405,7 @@ class QuestTeleopModule(Module):
         self._control_loop_thread = threading.Thread(
             target=self._control_loop,
             daemon=True,
-            name="QuestTeleopControlLoop",
+            name="WebXRTeleopControlLoop",
         )
         self._control_loop_thread.start()
         logger.info(f"Control loop started at {self.config.control_loop_hz} Hz")
@@ -517,8 +517,8 @@ class QuestTeleopModule(Module):
 
     def _publish_button_state(
         self,
-        left: QuestControllerState | None,
-        right: QuestControllerState | None,
+        left: WebXRControllerState | None,
+        right: WebXRControllerState | None,
     ) -> None:
         """Publish button states for both controllers.
 

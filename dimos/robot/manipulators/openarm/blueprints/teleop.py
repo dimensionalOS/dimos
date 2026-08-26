@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpenArm Quest teleop blueprint."""
+"""OpenArm WebXR teleop blueprint."""
 
 from __future__ import annotations
 
@@ -33,9 +33,9 @@ from dimos.robot.manipulators.openarm.config import (
     openarm_hardware,
 )
 from dimos.robot.manipulators.openarm.teleop_ik import OpenArmPinkPoseTargetSolver
-from dimos.teleop.quest.quest_extensions import ArmTeleopModule
+from dimos.teleop.webxr.extensions import ArmTeleopModule
 
-OPENARM_QUEST_TASK_NAME = "teleop_openarm"
+OPENARM_WEBXR_TASK_NAME = "teleop_openarm"
 
 _OPENARM_ARM_VELOCITY_PROFILE_RAD_S = (1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0)
 _OPENARM_JOINT_VELOCITY_LIMITS_RAD_S = {
@@ -80,7 +80,7 @@ class OpenArmTeleopCoordinator(TeleopControlCoordinator):
                     "robot_model": openarm_bimanual_model_config(),
                 },
             )
-            if task.name == OPENARM_QUEST_TASK_NAME
+            if task.name == OPENARM_WEBXR_TASK_NAME
             else task
             for task in self.config.tasks
         ]
@@ -101,7 +101,7 @@ class _OpenArmManipulationModule(ManipulationModule):
         super()._initialize_planning()
 
 
-_openarm_quest_pink = PinkKinematicsConfig(
+_openarm_webxr_pink = PinkKinematicsConfig(
     dt=0.01,
     position_cost=8.0,
     orientation_cost=2.0,
@@ -110,8 +110,8 @@ _openarm_quest_pink = PinkKinematicsConfig(
     lm_damping=0.01,
     gain=0.25,
 )
-_openarm_quest_task = TaskConfig(
-    name=OPENARM_QUEST_TASK_NAME,
+_openarm_webxr_task = TaskConfig(
+    name=OPENARM_WEBXR_TASK_NAME,
     type="teleop_ik",
     joint_names=OPENARM_ARM_JOINTS,
     params={
@@ -126,7 +126,7 @@ _openarm_quest_task = TaskConfig(
             },
         ],
         "solver_type": OpenArmPinkPoseTargetSolver,
-        "pink": _openarm_quest_pink,
+        "pink": _openarm_webxr_pink,
         "timeout": 0.5,
         "max_command_tracking_error_deg": 10.0,
         "max_joint_velocity_rad_s": 2.0,
@@ -137,12 +137,12 @@ _openarm_quest_task = TaskConfig(
 
 # Safe default: both controllers feed one bimanual task backed by in-memory
 # hardware. Supplying both CAN ports selects the physical adapter.
-teleop_quest_openarm = autoconnect(
+teleop_webxr_openarm = autoconnect(
     ArmTeleopModule.blueprint(),
     OpenArmTeleopCoordinator.blueprint(
         instance_name="ControlCoordinator",
         tasks=[
-            _openarm_quest_task,
+            _openarm_webxr_task,
             TaskConfig(
                 name="left_arm_gripper",
                 type="gripper",
@@ -161,7 +161,7 @@ teleop_quest_openarm = autoconnect(
         ],
     ),
     _OpenArmManipulationModule.blueprint(
-        kinematics=_openarm_quest_pink,
+        kinematics=_openarm_webxr_pink,
         visualization={"backend": "viser"},
     ),
 ).remappings(
