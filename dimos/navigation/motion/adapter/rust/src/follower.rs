@@ -34,6 +34,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use dimos_module::{native_config, warn_throttled, Input, Module, Output, Tf};
+use dimos_motion2_target::planner::Emb;
 use dimos_motion2_tc::geom::Params;
 use dimos_motion2_tc::laws::blind::{update as blind_update, BlindParams};
 use dimos_motion2_tc::laws::hinted::{HintedParams, Law as HintedLaw};
@@ -330,13 +331,15 @@ pub struct TrajectoryFollower {
 impl TrajectoryFollower {
     async fn spawn_worker(&mut self) {
         let vert = emb::vert_by_tag(&self.config.embodiment).expect("validated embodiment tag");
+        let emb = emb::dilated(
+            emb::by_tag(&self.config.embodiment).expect("validated embodiment tag"),
+            self.config.body_dilate_m,
+        );
         let worker = Worker {
             shared: Arc::clone(&self.shared),
             track: Track::parse(&self.config.track).expect("validated track"),
-            half_width: emb::half_width(&emb::dilated(
-                emb::by_tag(&self.config.embodiment).expect("validated embodiment tag"),
-                self.config.body_dilate_m,
-            )),
+            half_width: emb::half_width(&emb),
+            emb,
             model: obstacles::load(&self.config.obstacle_model, &vert)
                 .expect("validated obstacle model name"),
             config: self.config.clone(),
@@ -482,14 +485,14 @@ type Room = Arc<Vec<f64>>;
 ///
 /// `decode_ceilings` takes the CONSUMER's band so a controller recovers the
 /// ceiling its own governor would have produced -- but this path is not that.
-/// It is `follower.py`'s `decode_ceilings(path)` with no arguments, i.e. the
-/// module constants, because the result is about to be bent back through the
+/// It is `follower.py`'s `decode_ceilings(path, emb.min_speed, emb.max_speed)`:
+/// the body's own band, because the result is about to be bent back through the
 /// encoder's inverse. Reading with one band and writing with another would
 /// re-price every waypoint.
-fn dialect_band() -> Params {
+fn dialect_band(emb: &Emb) -> Params {
     Params {
-        min_speed: stamps::MIN_SPEED,
-        max_speed: stamps::MAX_SPEED,
+        min_speed: emb.min_speed,
+        max_speed: emb.max_speed,
         ..Params::default()
     }
 }
@@ -520,6 +523,7 @@ struct Worker {
     shared: Arc<Mutex<Shared>>,
     config: Config,
     track: Track,
+    emb: Emb,
     half_width: f64,
     model: Box<dyn ObstacleModel>,
     nav_cmd_vel: Output<Twist>,
@@ -667,14 +671,17 @@ impl Worker {
             // loud, once per outage. `stamped=false` is the worse case: the
             // plan carries no decodable precision, so the law gets no room at
             // all and drives on the governor's floor.
-            let ceilings = stamps::decode_ceilings(ts, states, &dialect_band());
+            let ceilings = stamps::decode_ceilings(ts, states, &dialect_band(&self.emb));
             if cache.blind.enter() {
                 tracing::warn!(
                     stamped = ceilings.is_some(),
                     "no local_map on the hinted track: driving on the path's stamped precision"
                 );
             }
-            return Some(Arc::new(stamps::ceilings_to_clearance(&ceilings?)));
+            return Some(Arc::new(stamps::ceilings_to_clearance(
+                &ceilings?,
+                &emb::governor(&self.emb),
+            )));
         };
         if cache.blind.recover() {
             info!("local_map is back, the room hint is measured again");
@@ -953,19 +960,21 @@ mod tests {
         // stamps, so a follower with no map of its own has to invert the
         // dialect. A tightly-stamped plan must come out as tight room.
         let states: Vec<State> = (0..12).map(|k| [k as f64 * 0.2, 0.0, 0.0]).collect();
-        let tight = stamps::encode_precision(&states, &[stamps::FLOOR_CLEARANCE; 12], 0.0);
-        let roomy = stamps::encode_precision(&states, &[10.0; 12], 0.0);
+        let emb = emb::by_tag("go2").expect("known tag");
+        let gov = emb::governor(&emb);
+        let tight = stamps::encode_precision(&states, &[gov.floor; 12], 0.0, &gov);
+        let roomy = stamps::encode_precision(&states, &[10.0; 12], 0.0, &gov);
 
-        let band = dialect_band();
+        let band = dialect_band(&emb);
         let of = |ts: &[f64]| {
             let ceilings =
                 stamps::decode_ceilings(ts, &states, &band).expect("a stamped plan decodes");
-            stamps::ceilings_to_clearance(&ceilings)
+            stamps::ceilings_to_clearance(&ceilings, &gov)
         };
         let (a, b) = (of(&tight), of(&roomy));
         assert!(a[5] < b[5], "tight {} should be under roomy {}", a[5], b[5]);
-        assert!((a[5] - stamps::FLOOR_CLEARANCE).abs() < 1e-12);
-        assert!((b[5] - stamps::SPEED_CLEARANCE).abs() < 1e-12);
+        assert!((a[5] - gov.floor).abs() < 1e-12);
+        assert!((b[5] - gov.speed_clearance).abs() < 1e-12);
 
         // and it actually reaches the law: the tight plan is requested slower.
         // The RAW law, not `step` -- a first tick out of a standing start is
@@ -984,7 +993,12 @@ mod tests {
         // a producer that does not speak the dialect must not be read as a
         // tight corridor; None is the honest answer and the law cruises
         let states: Vec<State> = (0..5).map(|k| [k as f64 * 0.2, 0.0, 0.0]).collect();
-        assert!(stamps::decode_ceilings(&[0.0; 5], &states, &dialect_band()).is_none());
+        assert!(stamps::decode_ceilings(
+            &[0.0; 5],
+            &states,
+            &dialect_band(&emb::by_tag("go2").expect("known tag"))
+        )
+        .is_none());
     }
 
     // the room hint's band -- the cases in adapter/test_follower.py

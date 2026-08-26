@@ -26,7 +26,21 @@ use crate::planner::{plan as plan_impl, Emb, COMMIT_MARGIN};
 /// all-gait union at every heading, which is what an unmeasured embodiment
 /// gets. A tuple rather than a class because `planners/target.py` marshals it
 /// straight off the frozen dataclass, and the crossing is the spec.
-type EmbTuple = (f64, f64, f64, f64, f64, f64, f64, f64, Vec<[f64; 5]>, f64);
+/// `target.py`'s marshalling of an `Embodiment`; the governor rides as its own
+/// tuple because pyo3 extracts at most twelve elements.
+type EmbTuple = (
+    f64,
+    f64,
+    f64,
+    f64,
+    f64,
+    f64,
+    f64,
+    f64,
+    Vec<[f64; 5]>,
+    f64,
+    (f64, f64, f64, f64),
+);
 
 /// One plan call. points: (N, 2) float64 obstacle xy in world frame -- every
 /// row is an obstacle, the caller's model already decided which (see
@@ -89,6 +103,10 @@ fn plan<'py>(
         yaw_w: emb.7,
         envelope: emb.8,
         arc_inflate: emb.9,
+        max_speed: emb.10 .0,
+        min_speed: emb.10 .1,
+        speed_clearance: emb.10 .2,
+        max_yaw_rate: emb.10 .3,
     };
     let out = py.allow_threads(|| {
         plan_impl(

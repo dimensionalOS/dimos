@@ -50,6 +50,20 @@ fn vec_of(a: Option<&PyReadonlyArray1<'_, f64>>) -> Option<Vec<f64>> {
     a.map(|v| v.as_array().iter().copied().collect())
 }
 
+/// (max_speed, min_speed, speed_clearance, floor, max_yaw_rate): the
+/// embodiment's governor, as `embodiment.py` orders it.
+type GovernorTuple = (f64, f64, f64, f64, f64);
+
+fn governor_of(g: GovernorTuple) -> stamps::Governor {
+    stamps::Governor {
+        max_speed: g.0,
+        min_speed: g.1,
+        speed_clearance: g.2,
+        floor: g.3,
+        max_yaw_rate: g.4,
+    }
+}
+
 fn base_params(p: BaseParams) -> Params {
     Params {
         lookahead: p.0,
@@ -198,18 +212,20 @@ fn update_hinted_raw(
 /// `profile.encode_precision` -- on the robot the planner module calls the
 /// rust directly, with no python in the loop.
 #[pyfunction]
-#[pyo3(signature = (path, clearance, t0))]
+#[pyo3(signature = (path, clearance, t0, governor))]
 fn encode_precision(
     py: Python<'_>,
     path: PyReadonlyArray2<'_, f64>,
     clearance: Option<PyReadonlyArray1<'_, f64>>,
     t0: f64,
+    governor: GovernorTuple,
 ) -> PyResult<Vec<f64>> {
+    let gov = governor_of(governor);
     let rows = rows_of(&path)?;
     // no clearance and a wrong-length clearance are the same case to the
     // encoder, so the empty vec stands in for both
     let clr = vec_of(clearance.as_ref()).unwrap_or_default();
-    Ok(py.allow_threads(|| stamps::encode_precision(&rows, &clr, t0)))
+    Ok(py.allow_threads(|| stamps::encode_precision(&rows, &clr, t0, &gov)))
 }
 
 /// The dialect's inverse leg: decoded speed ceilings back to the clearance
@@ -217,10 +233,15 @@ fn encode_precision(
 /// `profile.ceilings_to_clearance` -- on the robot the follower module calls
 /// the rust directly when it is on the hinted track with no cloud of its own.
 #[pyfunction]
-#[pyo3(signature = (ceilings))]
-fn ceilings_to_clearance(py: Python<'_>, ceilings: PyReadonlyArray1<'_, f64>) -> Vec<f64> {
+#[pyo3(signature = (ceilings, governor))]
+fn ceilings_to_clearance(
+    py: Python<'_>,
+    ceilings: PyReadonlyArray1<'_, f64>,
+    governor: GovernorTuple,
+) -> Vec<f64> {
     let v: Vec<f64> = ceilings.as_array().iter().copied().collect();
-    py.allow_threads(|| stamps::ceilings_to_clearance(&v))
+    let gov = governor_of(governor);
+    py.allow_threads(|| stamps::ceilings_to_clearance(&v, &gov))
 }
 
 /// Per-waypoint room hint. `xy` is (N, 2) float64 waypoints, `points` the

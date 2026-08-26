@@ -30,6 +30,7 @@ from dimos.navigation.motion.adapter.viz import (
     render_plan_body,
 )
 from dimos.navigation.motion.control.profile import encode_precision
+from dimos.navigation.motion.embodiment import GO2, Embodiment
 
 
 def _pose(x: float, y: float, yaw: float = 0.0) -> PoseStamped:
@@ -66,9 +67,9 @@ def test_colour_tracks_the_precision_the_planner_stamped() -> None:
     """The colour channel is decoded from the path, not passed alongside it."""
     plan = _plan()
     tight = np.concatenate([np.full(15, 0.6), np.full(10, 0.02), np.full(15, 0.6)])
-    encode_precision(plan, tight)
+    encode_precision(plan, tight, GO2)
 
-    room = plan_clearance(plan)
+    room = plan_clearance(plan, GO2)
     assert room is not None
     assert room.min() <= 0.05 and room.max() >= 0.34
 
@@ -89,7 +90,7 @@ def test_an_unstamped_plan_draws_one_flat_colour() -> None:
     noise: every box comes out the same colour.
     """
     plan = _plan()  # never passed through encode_precision
-    room = plan_clearance(plan)
+    room = plan_clearance(plan, GO2)
     assert room is None or len(np.unique(np.round(room, 6))) == 1
     colors = _rgba(render_plan_body(plan))
     assert len({tuple(c[:3]) for c in colors}) == 1
@@ -106,7 +107,7 @@ def test_the_veto_stub_is_drawn_rather_than_blanked() -> None:
 
 def test_the_box_sits_on_the_body_not_on_the_pose_point() -> None:
     """center_off is along the pose's own heading, so yaw has to rotate it."""
-    facing_y = render_plan_body(_plan(yaw=math.pi / 2), center_off=-0.10)
+    facing_y = render_plan_body(_plan(yaw=math.pi / 2), Embodiment(tag="t", center_off=-0.10))
     cx, cy, _ = facing_y.centers.pa_array.to_pylist()[0]
     # the yaw round-trips through a float32 quaternion, so this is not exact
     assert abs(cx - 0.0) < 1e-6, "offset leaked into x while facing +y"

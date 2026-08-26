@@ -33,23 +33,20 @@ from __future__ import annotations
 import numpy as np
 
 from dimos.msgs.nav_msgs.Path import Path
+from dimos.navigation.motion.embodiment import Embodiment
 
-# The one governor curve. ControllerConfig and rust stamps.rs carry the same
-# numbers; keep them in step deliberately.
-MAX_SPEED = 0.5
-MIN_SPEED = 0.2
-SPEED_CLEARANCE = 0.35  # room at which full speed is granted (m)
-FLOOR_CLEARANCE = 0.05  # embodiment precision floor (m)
-MAX_YAW_RATE = 1.4  # rad/s, prices fan segments' dt
+# The governor curve is the embodiment's (max_speed, min_speed, speed_clearance,
+# precision, max_yaw_rate): a wire contract between planner and follower, so
+# both read it off the body they were configured with.
 _FAN_EPS = 1e-6  # segment shorter than this is a rotation, not a move
 
 
-def governor_speed(clearance: np.ndarray) -> np.ndarray:
+def governor_speed(clearance: np.ndarray, emb: Embodiment) -> np.ndarray:
     """Clearance (m) -> speed ceiling (m/s): creep at the floor, cruise with room."""
-    frac = (np.asarray(clearance, dtype=float) - FLOOR_CLEARANCE) / (
-        SPEED_CLEARANCE - FLOOR_CLEARANCE
+    frac = (np.asarray(clearance, dtype=float) - emb.precision) / (
+        emb.speed_clearance - emb.precision
     )
-    return MIN_SPEED + (MAX_SPEED - MIN_SPEED) * np.clip(frac, 0.0, 1.0)
+    return emb.min_speed + (emb.max_speed - emb.min_speed) * np.clip(frac, 0.0, 1.0)
 
 
 def _segments(path: Path) -> tuple[np.ndarray, np.ndarray]:
@@ -58,7 +55,7 @@ def _segments(path: Path) -> tuple[np.ndarray, np.ndarray]:
     return xy, yaws
 
 
-def encode_precision(path: Path, clearance: np.ndarray, t0: float = 0.0) -> Path:
+def encode_precision(path: Path, clearance: np.ndarray, emb: Embodiment, t0: float = 0.0) -> Path:
     """Stamp the path in place: ts[i+1]-ts[i] = seg length / governor speed.
 
     ``clearance`` is per waypoint; a segment uses the tighter of its two
@@ -68,14 +65,14 @@ def encode_precision(path: Path, clearance: np.ndarray, t0: float = 0.0) -> Path
     if n == 0:
         return path
     xy, yaws = _segments(path)
-    v = governor_speed(clearance) if len(clearance) == n else np.full(n, MAX_SPEED)
+    v = governor_speed(clearance, emb) if len(clearance) == n else np.full(n, emb.max_speed)
     t = t0
     path.poses[0].ts = t
     for i in range(1, n):
         ds = float(np.linalg.norm(xy[i] - xy[i - 1]))
         if ds < _FAN_EPS:
             dyaw = abs(float(np.remainder(yaws[i] - yaws[i - 1] + np.pi, 2 * np.pi) - np.pi))
-            t += dyaw / MAX_YAW_RATE
+            t += dyaw / emb.max_yaw_rate
         else:
             t += ds / float(min(v[i - 1], v[i]))
         path.poses[i].ts = t
@@ -83,7 +80,7 @@ def encode_precision(path: Path, clearance: np.ndarray, t0: float = 0.0) -> Path
     return path
 
 
-def decode_ceilings(path: Path, lo: float = MIN_SPEED, hi: float = MAX_SPEED) -> np.ndarray | None:
+def decode_ceilings(path: Path, lo: float, hi: float) -> np.ndarray | None:
     """Per-waypoint speed ceiling (m/s) from the stamps; None if unstamped.
 
     Unstamped = flat or non-monotone ts (a plain path from a producer that
@@ -93,10 +90,10 @@ def decode_ceilings(path: Path, lo: float = MIN_SPEED, hi: float = MAX_SPEED) ->
     planner can only ever make the robot more careful, and garbage stamps
     saturate at cruise instead of commanding something absurd.
 
-    ``lo``/``hi`` default to this module's governor band, which is what a
-    third-party consumer wants. A controller passes its own
-    ``ControllerConfig`` band instead, so that a non-default config decodes
-    the same ceiling its own governor would have produced.
+    ``lo``/``hi`` is the CONSUMER's band: the embodiment's for anyone reading
+    the wire as stamped, a controller's own ``ControllerConfig`` band so that a
+    non-default config decodes the same ceiling its own governor would have
+    produced.
     """
     n = len(path.poses)
     if n < 2:
@@ -124,12 +121,13 @@ def decode_ceilings(path: Path, lo: float = MIN_SPEED, hi: float = MAX_SPEED) ->
     return out
 
 
-def ceilings_to_clearance(ceilings: np.ndarray) -> np.ndarray:
+def ceilings_to_clearance(ceilings: np.ndarray, emb: Embodiment) -> np.ndarray:
     """Speed ceilings -> the clearance that reproduces them under the governor.
 
-    Exact linear inverse on [MIN_SPEED, MAX_SPEED]; lets a stamped path feed
+    Exact linear inverse on [min_speed, max_speed]; lets a stamped path feed
     any controller through its existing clearance seam, so the laws (python
     and rust, parity-locked) stay untouched.
     """
-    frac = (np.clip(ceilings, MIN_SPEED, MAX_SPEED) - MIN_SPEED) / (MAX_SPEED - MIN_SPEED)
-    return FLOOR_CLEARANCE + frac * (SPEED_CLEARANCE - FLOOR_CLEARANCE)
+    lo, hi = emb.min_speed, emb.max_speed
+    frac = (np.clip(ceilings, lo, hi) - lo) / (hi - lo)
+    return emb.precision + frac * (emb.speed_clearance - emb.precision)

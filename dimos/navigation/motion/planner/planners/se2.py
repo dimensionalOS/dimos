@@ -32,7 +32,7 @@ import numpy as np
 # a second copy. Same direction adapter/planner.py already imports in (the
 # stamps it encodes are the same curve); profile.py depends on nothing here, so
 # this stays a leaf.
-from dimos.navigation.motion.control.profile import MAX_SPEED, governor_speed
+from dimos.navigation.motion.control.profile import governor_speed
 from dimos.navigation.motion.embodiment import Embodiment, box_offsets
 
 # (N, 3) rows of (x, y, yaw): the state the search speaks, and the rust boundary's.
@@ -120,7 +120,7 @@ def path_cost(grid: SdfGrid, states: States, emb: Embodiment, step: float = COST
 
     The pricing the search puts on its own edges, read along a continuous
     curve instead of along a lattice: a metre of gait-weighted travel, charged
-    `MAX_SPEED/governor(clearance)` for the time it will take, plus the yaw the
+    `max_speed/governor(clearance)` for the time it will take, plus the yaw the
     route commands -- half price while translating, as a blend edge pays it,
     full price for a rotation in place, as a turn edge does. Clearance is read
     on the UNION, again as the search reads it: a preference has to be
@@ -132,11 +132,11 @@ def path_cost(grid: SdfGrid, states: States, emb: Embodiment, step: float = COST
     off = box_offsets(emb.box(None))
 
     def tight(px: np.ndarray, py: np.ndarray, th: np.ndarray) -> np.ndarray:
-        """MAX_SPEED/governor(clearance): what a metre here costs in metres."""
+        """max_speed/governor(clearance): what a metre here costs in metres."""
         c_, s_ = np.cos(th)[:, None], np.sin(th)[:, None]
         wx = px[:, None] + c_ * off[None, :, 0] - s_ * off[None, :, 1]
         wy = py[:, None] + s_ * off[None, :, 0] + c_ * off[None, :, 1]
-        return np.asarray(MAX_SPEED / governor_speed(np.min(grid.lookup(wx, wy), axis=1)))
+        return np.asarray(emb.max_speed / governor_speed(np.min(grid.lookup(wx, wy), axis=1), emb))
 
     d = s[1:] - s[:-1]
     span = np.hypot(d[:, 0], d[:, 1])
@@ -386,15 +386,15 @@ def se2_search(
 
         # Tightness prices TIME, on the follower's own committed speed law: a
         # metre at clearance c takes 1/governor_speed(c) seconds, so it costs
-        # MAX_SPEED/governor_speed(c) metres of open-space walking. Planner and
+        # max_speed/governor_speed(c) metres of open-space walking. Planner and
         # follower then optimize the same clock instead of a tunable comfort
         # ramp, and the multiplier composes with the gait factors, which are
         # ratios of the same kind. It needs no artificial ceiling: the governor
-        # floors at MIN_SPEED, so the charge caps itself at
-        # MAX_SPEED/MIN_SPEED = 2.5x. Read on the UNION clearance — a
+        # floors at min_speed, so the charge caps itself at
+        # max_speed/min_speed = 2.5x. Read on the UNION clearance — a
         # preference has to be comparable across edges, so it may not shift
         # with the edge's own drift row (feasibility stays per-heading).
-        tight = MAX_SPEED / governor_speed(clr[:, UNION])
+        tight = emb.max_speed / governor_speed(clr[:, UNION], emb)
         dist = np.full((yaw_bins, nx, ny), np.inf)
         prev = np.full((yaw_bins, nx, ny, 3), -1, dtype=np.int16)
         dist[sb, si, sj] = 0.0

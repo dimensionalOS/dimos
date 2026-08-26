@@ -40,11 +40,10 @@ from dimos.navigation.motion.control.controller import (
 )
 from dimos.navigation.motion.control.laws import blind, hinted, seed
 from dimos.navigation.motion.control.profile import (
-    MAX_SPEED,
-    MIN_SPEED,
     ceilings_to_clearance,
     encode_precision,
 )
+from dimos.navigation.motion.embodiment import GO2
 
 # The crate under test. Skipped rather than failed when it is not built, the way
 # ray_tracing and mls_planner do it: `uv run maturin develop --uv --release -m
@@ -53,6 +52,10 @@ pytest.importorskip("dimos_motion2_tc")
 
 TOL = 1e-9
 CASES = 240
+
+
+# the governor the rust encoder is handed, as the embodiment's tuple
+GOVERNOR = (GO2.max_speed, GO2.min_speed, GO2.speed_clearance, GO2.precision, GO2.max_yaw_rate)
 
 
 def _pose(x: float, y: float, yaw: float = 0.0) -> PoseStamped:
@@ -149,7 +152,7 @@ def _cases(seed: int = 20260802, n: int = CASES):  # type: ignore[no-untyped-def
         # its fallback. k % 8 == 3 leaves stamps that are deliberate nonsense.
         if k % 3 and len(states) > 1:
             enc = np.clip(srng.uniform(0.0, 0.8, len(states)), 0.0, None)
-            encode_precision(path, enc, t0=float(srng.uniform(0.0, 1e9)))
+            encode_precision(path, enc, GO2, t0=float(srng.uniform(0.0, 1e9)))
             if k % 8 == 3:
                 for q in path.poses:
                     q.ts = 5.0  # flat: not the dialect, both must ignore it
@@ -337,8 +340,8 @@ def test_encode_precision_matches_python() -> None:
         # a t0 well off zero: only the deltas are the dialect, so an offset
         # that cancels in the diff would hide a divergence in the base stamp
         t0 = 1754212345.75
-        want = [p.ts for p in encode_precision(path, clr, t0=t0).poses]
-        got = rs.encode_precision(path_xy_yaw(path), clr if len(clr) else None, t0)
+        want = [p.ts for p in encode_precision(path, clr, GO2, t0=t0).poses]
+        got = rs.encode_precision(path_xy_yaw(path), clr if len(clr) else None, t0, GOVERNOR)
         assert len(got) == len(want)
         for k, (x, y) in enumerate(zip(want, got, strict=True)):
             assert abs(x - y) <= TOL, f"waypoint {k}: python {x!r} vs rust {y!r}"
@@ -362,15 +365,15 @@ def test_ceilings_to_clearance_matches_python() -> None:
     ceilings = np.concatenate(
         [
             rng.uniform(0.0, 1.0, 200),
-            np.array([MIN_SPEED, MAX_SPEED, 0.0, -1.0, 1e9, np.inf]),
+            np.array([GO2.min_speed, GO2.max_speed, 0.0, -1.0, 1e9, np.inf]),
         ]
     )
-    want = ceilings_to_clearance(ceilings)
-    got = np.asarray(rs.ceilings_to_clearance(np.ascontiguousarray(ceilings)))
+    want = ceilings_to_clearance(ceilings, GO2)
+    got = np.asarray(rs.ceilings_to_clearance(np.ascontiguousarray(ceilings), GOVERNOR))
     assert got.shape == want.shape
     for k, (a, b) in enumerate(zip(want, got, strict=True)):
         assert a == b, f"ceiling {ceilings[k]!r}: python {a!r} vs rust {b!r}"
-    assert not len(rs.ceilings_to_clearance(np.zeros(0)))
+    assert not len(rs.ceilings_to_clearance(np.zeros(0), GOVERNOR))
 
 
 def test_path_clearance_matches_scipy() -> None:

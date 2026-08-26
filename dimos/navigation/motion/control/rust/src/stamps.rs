@@ -39,12 +39,20 @@ pub const FAN_EPS: f64 = 1e-6;
 /// different controller tuning would stamp the same path differently. The
 /// python keeps these as module constants for the same reason, and notes that
 /// they are held in step with `ControllerConfig` by hand.
-pub const MAX_SPEED: f64 = 0.5;
-pub const MIN_SPEED: f64 = 0.2;
-pub const SPEED_CLEARANCE: f64 = 0.35;
-pub const FLOOR_CLEARANCE: f64 = 0.05;
-/// Prices fan segments, whose dt is a yaw span rather than a distance.
-pub const MAX_YAW_RATE: f64 = 1.4;
+/// The governor curve the encoder speaks: the embodiment's (`embodiment.py`),
+/// handed across by whoever owns the body -- the python module or the native
+/// module's own table -- never a per-process tuning.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Governor {
+    pub max_speed: f64,
+    pub min_speed: f64,
+    /// Room at which full speed is granted (m).
+    pub speed_clearance: f64,
+    /// The embodiment's precision floor (m).
+    pub floor: f64,
+    /// rad/s, prices fan segments' dt.
+    pub max_yaw_rate: f64,
+}
 
 /// Clearance (m) -> speed ceiling (m/s): creep at the floor, cruise with room.
 ///
@@ -56,9 +64,9 @@ pub const MAX_YAW_RATE: f64 = 1.4;
 // a distance), but a panic in the planner tick is a far worse failure than the
 // creep this degrades to, and the encoder runs on whatever the map hands it.
 #[allow(clippy::manual_clamp)]
-pub fn governor_speed(clearance: f64) -> f64 {
-    let frac = (clearance - FLOOR_CLEARANCE) / (SPEED_CLEARANCE - FLOOR_CLEARANCE);
-    MIN_SPEED + (MAX_SPEED - MIN_SPEED) * frac.max(0.0).min(1.0)
+pub fn governor_speed(clearance: f64, gov: &Governor) -> f64 {
+    let frac = (clearance - gov.floor) / (gov.speed_clearance - gov.floor);
+    gov.min_speed + (gov.max_speed - gov.min_speed) * frac.max(0.0).min(1.0)
 }
 
 /// Stamp a path with its precision profile: the timestamps, in order.
@@ -75,10 +83,10 @@ pub fn governor_speed(clearance: f64) -> f64 {
 /// produces a well-formed path, it just carries no precision hint.
 ///
 /// Fan segments (yaw with no displacement) are priced by yaw span at
-/// `MAX_YAW_RATE` instead, which is why the decoder has to skip them -- their
+/// `max_yaw_rate` instead, which is why the decoder has to skip them -- their
 /// dt is not a distance over a speed and reading one as such would invent a
 /// ceiling from a rotation.
-pub fn encode_precision(path: &[[f64; 3]], clearance: &[f64], t0: f64) -> Vec<f64> {
+pub fn encode_precision(path: &[[f64; 3]], clearance: &[f64], t0: f64, gov: &Governor) -> Vec<f64> {
     let n = path.len();
     if n == 0 {
         return Vec::new();
@@ -86,9 +94,9 @@ pub fn encode_precision(path: &[[f64; 3]], clearance: &[f64], t0: f64) -> Vec<f6
     let use_clearance = clearance.len() == n;
     let speed = |k: usize| {
         if use_clearance {
-            governor_speed(clearance[k])
+            governor_speed(clearance[k], gov)
         } else {
-            MAX_SPEED
+            gov.max_speed
         }
     };
     let mut ts = vec![t0; n];
@@ -104,7 +112,7 @@ pub fn encode_precision(path: &[[f64; 3]], clearance: &[f64], t0: f64) -> Vec<f6
             let dyaw = path[k][2] - path[k - 1][2];
             let wrapped = (dyaw + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU)
                 - std::f64::consts::PI;
-            t += wrapped.abs() / MAX_YAW_RATE;
+            t += wrapped.abs() / gov.max_yaw_rate;
         } else {
             t += ds / speed(k - 1).min(speed(k));
         }
@@ -193,7 +201,7 @@ pub fn decode_ceilings(ts: &[f64], path: &[[f64; 3]], cfg: &Params) -> Option<Ve
 /// governor.
 ///
 /// A port of `profile.ceilings_to_clearance`, and the exact linear inverse of
-/// `governor_speed` on `[MIN_SPEED, MAX_SPEED]`. Deliberately keyed to this
+/// `governor_speed` on `[min_speed, max_speed]`. Deliberately keyed to this
 /// module's wire constants rather than to a consumer `Params`, for the same
 /// reason `governor_speed` is: it undoes the encoder, and the encoder is the
 /// producer's half of a wire contract.
@@ -208,14 +216,15 @@ pub fn decode_ceilings(ts: &[f64], path: &[[f64; 3]], cfg: &Params) -> Option<Ve
 // `max` then `min` rather than `clamp`, for `governor_speed`'s reason: the
 // input is whatever the stamps decoded to, and f64::clamp PANICS on a NaN.
 #[allow(clippy::manual_clamp)]
-pub fn ceilings_to_clearance(ceilings: &[f64]) -> Vec<f64> {
+pub fn ceilings_to_clearance(ceilings: &[f64], gov: &Governor) -> Vec<f64> {
     ceilings
         .iter()
         .map(|&v| {
             // `np.clip` order, and `max` then `min` rather than `clamp`, which
             // panics on a NaN the wire is free to hand us
-            let frac = (v.max(MIN_SPEED).min(MAX_SPEED) - MIN_SPEED) / (MAX_SPEED - MIN_SPEED);
-            FLOOR_CLEARANCE + frac * (SPEED_CLEARANCE - FLOOR_CLEARANCE)
+            let (lo, hi) = (gov.min_speed, gov.max_speed);
+            let frac = (v.max(lo).min(hi) - lo) / (hi - lo);
+            gov.floor + frac * (gov.speed_clearance - gov.floor)
         })
         .collect()
 }

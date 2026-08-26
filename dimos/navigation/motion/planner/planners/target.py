@@ -124,6 +124,7 @@ class RustTargetEpisode:
                 e.yaw_w,
                 e.envelope,
                 e.arc_inflate,
+                (e.max_speed, e.min_speed, e.speed_clearance, e.max_yaw_rate),
             ),
             self._res,
             None if inc is None else np.ascontiguousarray(inc, dtype=np.float64),

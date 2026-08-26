@@ -414,7 +414,7 @@ pub fn plan_once(
     // priced for a world the follower does not see.
     let xy: Vec<[f64; 2]> = states.iter().map(|s| [s[0], s[1]]).collect();
     let room = clearance::path_clearance(&xy, points, emb::half_width(emb));
-    let ts = stamps::encode_precision(&states, &room, t0);
+    let ts = stamps::encode_precision(&states, &room, t0, &emb::governor(emb));
     debug!(
         waypoints = states.len(),
         plan_ms = ms_since(started),

@@ -41,20 +41,16 @@ import numpy as np
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.motion.control.profile import (
-    SPEED_CLEARANCE,
     ceilings_to_clearance,
     decode_ceilings,
 )
+from dimos.navigation.motion.embodiment import EMBODIMENTS, GO2, Embodiment
 
 if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
 
 # Lift the box off the floor so it does not z-fight the surface points.
 _Z_LIFT = 0.02
-
-# Above this much room the governor stops asking for care at all, so the plan
-# is drawn as roomy; the tight end is the embodiment's own precision floor.
-_ROOMY = SPEED_CLEARANCE
 
 
 def _body_centre(pose: PoseStamped, center_off: float) -> tuple[float, float]:
@@ -66,38 +62,39 @@ def _body_centre(pose: PoseStamped, center_off: float) -> tuple[float, float]:
     )
 
 
-def plan_clearance(msg: Path) -> np.ndarray | None:
+def plan_clearance(msg: Path, emb: Embodiment) -> np.ndarray | None:
     """Per-waypoint room (m) recovered from the plan's stamps, or None.
 
     A path from a producer that does not speak the precision dialect decodes to
     nothing, and an undecorated plan should draw as one flat colour rather than
     as a confident lie about clearance.
     """
-    ceilings = decode_ceilings(msg)
-    return None if ceilings is None else ceilings_to_clearance(ceilings)
+    ceilings = decode_ceilings(msg, emb.min_speed, emb.max_speed)
+    return None if ceilings is None else ceilings_to_clearance(ceilings, emb)
 
 
 def render_plan_body(
     msg: Path,
-    length: float = 0.819,  # the GO2 straight-drift box; see motion_visual_override
-    width: float = 0.416,
+    emb: Embodiment = GO2,
     height: float = 0.32,
-    center_off: float = 0.002,
-    precision: float = 0.05,
     stride_m: float = 0.35,
     line_radius: float = 0.012,
 ) -> Archetype | None:
     """The plan's expected body poses as oriented boxes, coloured by room.
 
-    ``stride_m`` subsamples along arc rather than by index: plans are
-    discretised at 0.1 m, so drawing every waypoint is an opaque wall of boxes
-    that hides the very geometry it is there to show. ``center_off`` is the
-    embodiment's own body-centre offset along its +x, so the box sits where the
-    robot does rather than centred on the pose point. ``line_radius`` is the
-    wireframe's own thickness in metres -- thin edges disappear against a dense
-    point cloud at any useful zoom.
+    The box is the embodiment's STRAIGHT-DRIFT row, not the all-gait union (see
+    motion_visual_override), sitting ``center_off`` along the pose's +x so it is
+    where the robot is rather than centred on the pose point. Room colours off
+    the embodiment's own governor: red at or under its precision floor, amber
+    on the ramp, green past ``speed_clearance``. ``stride_m`` subsamples along
+    arc rather than by index: plans are discretised at 0.1 m, so drawing every
+    waypoint is an opaque wall of boxes that hides the very geometry it is
+    there to show. ``line_radius`` is the wireframe's own thickness in metres
+    -- thin edges disappear against a dense point cloud at any useful zoom.
     """
     import rerun as rr
+
+    length, width, center_off, _ = emb.box(0.0)
 
     n = len(msg.poses)
     if n == 0:
@@ -128,7 +125,7 @@ def render_plan_body(
     picks = np.unique(np.searchsorted(arcs, np.arange(0.0, float(arcs[-1]) + 1e-9, stride_m)))
     picks = np.unique(np.append(np.clip(picks, 0, n - 1), n - 1))
 
-    clear = plan_clearance(msg)
+    clear = plan_clearance(msg, emb)
     centers, angles, colors = [], [], []
     for i in picks:
         p = msg.poses[int(i)]
@@ -139,9 +136,9 @@ def render_plan_body(
             colors.append([100, 160, 255, 160])  # unstamped: the plan line's own blue
         else:
             room = float(clear[int(i)])
-            if room <= precision:
+            if room <= emb.precision:
                 colors.append([255, 60, 60, 220])
-            elif room < _ROOMY:
+            elif room < emb.speed_clearance:
                 colors.append([255, 200, 60, 200])
             else:
                 colors.append([80, 220, 80, 160])
@@ -172,17 +169,7 @@ def motion_visual_override(
     forward edge actually has to fit; drawing it everywhere makes every corridor
     look impassable and hides the margin the plan really has.
     """
-    from dimos.navigation.motion.embodiment import EMBODIMENTS
-
     emb = EMBODIMENTS[embodiment].dilated(by=body_dilate_m)
-    length, width, off_x, _ = emb.box(0.0)
     on = viz_publish_hz > 0.0
-    body = partial(
-        render_plan_body,
-        length=length,
-        width=width,
-        center_off=off_x,
-        precision=emb.precision,
-        line_radius=line_radius,
-    )
+    body = partial(render_plan_body, emb=emb, line_radius=line_radius)
     return {"world/plan_body": body if on else None}

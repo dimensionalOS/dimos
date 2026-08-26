@@ -49,6 +49,14 @@ class Embodiment:
     center_off: float = 0.002  # body center relative to the pose point
     comfort: float = 0.4
     precision: float = 0.05
+    # The governor curve: the speed the planner prices a metre of clearance at
+    # and the follower reads back out of the path's stamps (control/profile.py).
+    # The ramp's floor is `precision`. It is a wire contract between the two
+    # modules, so it is the body's and not either module's config.
+    max_speed: float = 0.5  # cruise, granted at speed_clearance of room (m/s)
+    min_speed: float = 0.2  # creep at the precision floor (m/s)
+    speed_clearance: float = 0.35  # room at which full speed is granted (m)
+    max_yaw_rate: float = 1.4  # rad/s; prices a rotation in place
     # gait preferences for the planner's cost function.
     # forward = 1; strafe/reverse scale it; yaw_w prices rotation per rad.
     strafe: float = 1.8

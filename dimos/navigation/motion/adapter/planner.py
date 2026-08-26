@@ -69,7 +69,7 @@ def annotate(
     nav = stamped(ref, ts=ts, frame_id=frame_id, ground_z=ground_z)
     xy = np.array([[p.position.x, p.position.y] for p in ref.poses]).reshape(-1, 2)
     clearance = path_clearance(xy, obstacles, emb.width / 2.0)
-    return encode_precision(nav, clearance, t0=ts)
+    return encode_precision(nav, clearance, emb, t0=ts)
 
 
 def stamped(ref: Path, ts: float = 0.0, frame_id: str = "odom", ground_z: float = 0.0) -> Path:

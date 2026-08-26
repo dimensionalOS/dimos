@@ -422,7 +422,7 @@ fn the_stamped_creep_is_a_speed_the_gait_can_realize() {
     let c = cfg();
     let p = straight();
     // the tightest thing the encoder can express: at or under the floor, so
-    // every segment is stamped at MIN_SPEED
+    // every segment is stamped at min_speed
     let ts = encode_precision(&p, &vec![0.02; p.len()], 0.0);
     let (vx, vy, _) = update((0.0, 0.0, 0.0), &p, None, Some(&ts), &c);
     let cmd = vx.hypot(vy);

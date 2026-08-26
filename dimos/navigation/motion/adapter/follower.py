@@ -306,14 +306,14 @@ class TrajectoryFollower(Module):
             # twist it commands looks healthy either way, so it is said out
             # loud once per outage. No ceilings is the worse case: the law gets
             # no room at all and drives on the governor's floor.
-            ceilings = decode_ceilings(path)
+            ceilings = decode_ceilings(path, self._emb.min_speed, self._emb.max_speed)
             if not self._blind:
                 self._blind = True
                 logger.warning(
                     "no local_map on the hinted track: driving on the path's stamped precision",
                     stamped=ceilings is not None,
                 )
-            return ceilings_to_clearance(ceilings) if ceilings is not None else None
+            return ceilings_to_clearance(ceilings, self._emb) if ceilings is not None else None
         if self._blind:
             self._blind = False
             logger.info("local_map is back, the room hint is measured again")

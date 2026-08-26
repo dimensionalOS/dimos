@@ -73,25 +73,16 @@ const BUCKET: f64 = 0.2;
 // speed the follower is contractually held to at that clearance, normalized so
 // open space is 1.0. Planner and follower then optimize the same clock instead
 // of the planner pricing a comfort preference the robot never pays. The charge
-// caps itself: the governor floors at MIN_SPEED, so the multiplier tops out at
-// MAX_SPEED / MIN_SPEED at contact. `comfort` leaves the cost entirely -- it
+// caps itself: the governor floors at min_speed, so the multiplier tops out at
+// max_speed / min_speed at contact. `comfort` leaves the cost entirely -- it
 // stays a labelling radius and the smoothing cap. See planner/revision.md §4.
-const MAX_SPEED: f64 = 0.5;
-const MIN_SPEED: f64 = 0.2;
-/// Room at which full speed is granted (m).
-const SPEED_CLEARANCE: f64 = 0.35;
-/// Embodiment precision floor (m); below it clearance is fiction.
-const FLOOR_CLEARANCE: f64 = 0.05;
-/// The multiplier at contact, `MAX_SPEED / MIN_SPEED`.
-const TIGHT_MAX: f64 = MAX_SPEED / MIN_SPEED;
-
 /// Pitch at which a route is PRICED, along its own arc rather than its
 /// vertices: an incumbent arrives at path resolution and a fresh answer is a
 /// handful of smoothed vertices, and the two are weighed on one scale.
-/// `scenarios.py::COST_STEP`.
+/// `se2.py::COST_STEP`.
 const COST_STEP: f64 = FINE;
 
-/// `scenarios.py::COMMIT_MARGIN`, mirrored for this crate's own tests only.
+/// `se2.py::COMMIT_MARGIN`, mirrored for this crate's own tests only.
 ///
 /// Python owns the number and hands it to `plan` on every call, exactly as it
 /// hands over the envelope -- a constant measured by
@@ -99,17 +90,37 @@ const COST_STEP: f64 = FINE;
 /// can drift away from it.
 pub const COMMIT_MARGIN: f64 = 1.50;
 
-/// Clearance (m) -> speed ceiling (m/s): creep at the floor, cruise with room.
-fn governor_speed(clearance: f64) -> f64 {
-    MIN_SPEED
-        + (MAX_SPEED - MIN_SPEED)
-            * ((clearance - FLOOR_CLEARANCE) / (SPEED_CLEARANCE - FLOOR_CLEARANCE)).clamp(0.0, 1.0)
+/// The governor curve, read off the embodiment (`Emb::governor`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Governor {
+    pub max_speed: f64,
+    pub min_speed: f64,
+    /// Room at which full speed is granted (m).
+    pub speed_clearance: f64,
+    /// The precision floor (m); below it clearance is fiction.
+    pub floor: f64,
 }
 
-/// Metres of open-space walking one metre at this clearance costs.
-#[inline]
-fn tight_of(clearance: f64) -> f64 {
-    MAX_SPEED / governor_speed(clearance)
+impl Governor {
+    /// Clearance -> the speed the follower is held to.
+    #[inline]
+    pub fn speed(&self, clearance: f64) -> f64 {
+        self.min_speed
+            + (self.max_speed - self.min_speed)
+                * ((clearance - self.floor) / (self.speed_clearance - self.floor)).clamp(0.0, 1.0)
+    }
+
+    /// What a metre at this clearance costs in open-space metres.
+    #[inline]
+    pub fn tight(&self, clearance: f64) -> f64 {
+        self.max_speed / self.speed(clearance)
+    }
+
+    /// The multiplier at contact, `max_speed / min_speed`.
+    #[inline]
+    pub fn tight_max(&self) -> f64 {
+        self.max_speed / self.min_speed
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -119,6 +130,13 @@ pub struct Emb {
     pub center_off: f64,
     pub comfort: f64,
     pub precision: f64,
+    /// The governor curve (`embodiment.py`): cruise granted at `speed_clearance`
+    /// of room, creep at the `precision` floor. A wire contract with the
+    /// follower, so it is the body's.
+    pub max_speed: f64,
+    pub min_speed: f64,
+    pub speed_clearance: f64,
+    pub max_yaw_rate: f64,
     pub strafe: f64,
     pub reverse: f64,
     pub yaw_w: f64,
@@ -154,11 +172,25 @@ impl Emb {
             center_off: 0.002,
             comfort: 0.4,
             precision: 0.05,
+            max_speed: 0.5,
+            min_speed: 0.2,
+            speed_clearance: 0.35,
+            max_yaw_rate: 1.4,
             strafe: 1.8,
             reverse: 1.5,
             yaw_w: 0.25,
             envelope: GO2_ENVELOPE.to_vec(),
             arc_inflate: 0.0334,
+        }
+    }
+
+    /// The pricing curve, read off the body.
+    pub fn governor(&self) -> Governor {
+        Governor {
+            max_speed: self.max_speed,
+            min_speed: self.min_speed,
+            speed_clearance: self.speed_clearance,
+            floor: self.precision,
         }
     }
 
@@ -784,7 +816,7 @@ struct Clear<'a> {
     w: &'a mut World,
     /// Union clearance per (bin, cell): 0.0 = not evaluated, -1.0 = the body
     /// does not fit, otherwise the footprint's minimum clearance -- or
-    /// `SPEED_CLEARANCE` for a cell certified clear without a scan, which is a
+    /// `speed_clearance` for a cell certified clear without a scan, which is a
     /// LOWER bound and the only thing the value is ever used for up there
     /// (it prices at 1.0 and clears every threshold).
     t: Vec<f64>,
@@ -816,6 +848,7 @@ struct Clear<'a> {
     certify: f64,
     /// The standing body's box id -- `free`'s shape, and only `free`'s.
     stand: usize,
+    gov: Governor,
 }
 
 /// The lattice's yaw bins, in radians.
@@ -826,7 +859,14 @@ fn yaw_bins() -> Vec<f64> {
 }
 
 impl<'a> Clear<'a> {
-    fn new(w: &'a mut World, fps: &Fps, margin: f64, gx: Vec<f64>, gy: Vec<f64>) -> Self {
+    fn new(
+        w: &'a mut World,
+        fps: &Fps,
+        margin: f64,
+        gx: Vec<f64>,
+        gy: Vec<f64>,
+        gov: Governor,
+    ) -> Self {
         let (nx, ny) = (gx.len(), gy.len());
         let noff = fps.union().len();
         let mut rot = Vec::with_capacity(YAW_BINS * noff);
@@ -860,11 +900,12 @@ impl<'a> Clear<'a> {
             dx: vec![false; YAW_BINS * nx],
             dy: vec![false; YAW_BINS * ny],
             margin,
-            // Full speed is granted at `SPEED_CLEARANCE`, so that -- not
+            // Full speed is granted at `speed_clearance`, so that -- not
             // `comfort`, which has left the cost -- is where a cell stops being
             // worth scanning.
-            certify: SPEED_CLEARANCE + reach + SNAP,
+            certify: gov.speed_clearance + reach + SNAP,
             stand: fps.stand,
+            gov,
         }
     }
 
@@ -907,8 +948,8 @@ impl<'a> Clear<'a> {
 
     fn eval(&mut self, k: usize, b: usize, i: usize, j: usize) -> f64 {
         if self.w.lookup(self.gx[i], self.gy[j]) >= self.certify {
-            self.t[k] = SPEED_CLEARANCE;
-            return SPEED_CLEARANCE;
+            self.t[k] = self.gov.speed_clearance;
+            return self.gov.speed_clearance;
         }
         let rx = b * self.nx + i;
         if !self.dx[rx] {
@@ -971,13 +1012,13 @@ impl<'a> Clear<'a> {
     /// the edge's own drift row -- feasibility stays per-heading, pricing does
     /// not. A cell the union does not fit in prices at the governor's floor:
     /// its clearance is at or below `margin`, and every embodiment's `margin`
-    /// is at or below `FLOOR_CLEARANCE`, where the law has already saturated.
+    /// is at or below `precision`, where the law has already saturated.
     #[inline]
-    fn price(v: f64) -> f64 {
+    fn price(&self, v: f64) -> f64 {
         if v < 0.0 {
-            TIGHT_MAX
+            self.gov.tight_max()
         } else {
-            tight_of(v)
+            self.gov.tight(v)
         }
     }
 
@@ -1118,7 +1159,7 @@ pub fn se2_search(
     margin: f64,
 ) -> Option<Vec<[f64; 3]>> {
     let (gx, gy) = lattice_axes(w);
-    let mut cl = Clear::new(w, fps, margin, gx, gy);
+    let mut cl = Clear::new(w, fps, margin, gx, gy, emb.governor());
     se2_search_in(&mut cl, fps, start, goal, emb, margin)
 }
 
@@ -1507,7 +1548,7 @@ fn se2_search_in(
                 // blocked test and the comfort price are read off it.
                 let mtop = cl.w.lookup(px, py) + 1.5 * SNAP;
                 mul[kk] = if mtop - r_pass > margin {
-                    tight_of(mtop - r_price)
+                    cl.gov.tight(mtop - r_price)
                 } else {
                     -1.0
                 };
@@ -1621,7 +1662,7 @@ fn se2_search_in(
                 let k = kbase as usize;
                 let uv = cl.clear_at(k, nb, i, j);
                 if uv > 0.0 {
-                    let yc = yaw_cost * Clear::price(uv);
+                    let yc = yaw_cost * cl.price(uv);
                     if d + yc < dist[k] {
                         dist[k] = d + yc;
                         prev[k] = from + 1;
@@ -1663,7 +1704,7 @@ fn se2_search_in(
                 // judged at the yaw it arrives in and pays the splay one bin of
                 // turn costs over its own length.
                 let uv = cl.clear_at(k, nb, ni, nj);
-                let c = cmin * Clear::price(uv);
+                let c = cmin * cl.price(uv);
                 if d + c >= dist[k] {
                     continue;
                 }
@@ -2134,7 +2175,7 @@ pub fn densify(
 ///
 /// The pricing the search puts on its own edges, read along a continuous curve
 /// instead of along a lattice: a metre of gait-weighted travel charged
-/// `MAX_SPEED/governor(clearance)` for the time it will take, plus the yaw the
+/// `max_speed/governor(clearance)` for the time it will take, plus the yaw the
 /// route commands -- half price while translating, as a blend edge pays it, full
 /// price for a rotation in place, as a turn edge does. Clearance is read on the
 /// UNION, again as the search reads it: a preference has to be comparable across
@@ -2145,12 +2186,13 @@ pub fn densify(
 /// an incumbent that came back at path resolution prices identically to the
 /// sparse answer it was smoothed from, rather than to within a quadrature error
 /// sitting next to the very threshold it is being compared against.
-/// `scenarios.py::path_cost`.
+/// `se2.py::path_cost`.
 fn path_cost(w: &mut World, offs: &[(f64, f64)], emb: &Emb, states: &[[f64; 3]]) -> f64 {
     if states.len() < 2 {
         return 0.0;
     }
     let n = states.len() - 1;
+    let gov = emb.governor();
     let mut span = vec![0.0f64; n];
     let mut dyaw = vec![0.0f64; n];
     let mut arcs = vec![0.0f64; n + 1];
@@ -2165,7 +2207,7 @@ fn path_cost(w: &mut World, offs: &[(f64, f64)], emb: &Emb, states: &[[f64; 3]])
             // A rotation in place carries no arc, so it is priced here rather
             // than in the integral below, which is parameterised by arc alone.
             let th = a[2] + 0.5 * dyaw[m];
-            total += emb.yaw_w * dyaw[m].abs() * tight_of(pose_clear(w, offs, a[0], a[1], th));
+            total += emb.yaw_w * dyaw[m].abs() * gov.tight(pose_clear(w, offs, a[0], a[1], th));
         }
     }
     let mv: Vec<usize> = (0..n).filter(|&m| span[m] > 1e-9).collect();
@@ -2200,7 +2242,7 @@ fn path_cost(w: &mut World, offs: &[(f64, f64)], emb: &Emb, states: &[[f64; 3]])
         let turn = 0.5 * emb.yaw_w * dyaw[m].abs() / span[m];
         let x = a[0] + t * (b[0] - a[0]);
         let y = a[1] + t * (b[1] - a[1]);
-        total += (gait + turn) * h * tight_of(pose_clear(w, offs, x, y, th));
+        total += (gait + turn) * h * gov.tight(pose_clear(w, offs, x, y, th));
     }
     total
 }
@@ -2340,9 +2382,9 @@ pub fn plan(
     let offs = fps.union().to_vec();
     let reach = reach_of(&offs);
     // The distance cap has to cover both consumers of an exact distance: the
-    // clearance certificate (which stops caring above `SPEED_CLEARANCE`) and the
+    // clearance certificate (which stops caring above `speed_clearance`) and the
     // smoothing floor (capped at `comfort`).
-    let cap = emb.comfort.max(SPEED_CLEARANCE) + reach + SNAP;
+    let cap = emb.comfort.max(emb.speed_clearance) + reach + SNAP;
     let mut w = build_world(points, pose, goal, cap);
     let margin = emb.precision;
     // The world is built from {pose, goal, cloud} and never from the incumbent:
@@ -2355,7 +2397,7 @@ pub fn plan(
     // cell the extension reads instead of scanning again.
     let (fresh, held) = {
         let (gx, gy) = lattice_axes(&w);
-        let mut cl = Clear::new(&mut w, &fps, margin, gx, gy);
+        let mut cl = Clear::new(&mut w, &fps, margin, gx, gy, emb.governor());
         let fresh = se2_search_in(&mut cl, &fps, pose, goal, emb, margin);
         let held = match incumbent {
             None => None,
@@ -2589,6 +2631,7 @@ mod tests {
             yaw_w: 0.25,
             envelope: Vec::new(),
             arc_inflate: 0.0,
+            ..Emb::go2()
         };
         let mut pts = Vec::new();
         let mut y = -4.0;
@@ -2635,27 +2678,28 @@ mod tests {
     /// it is either the blocked sentinel or at least 1.0, never anything in
     /// between, so the unmultiplied edge cost really is a lower bound and the
     /// check can never discard a genuine improvement. It caps itself at
-    /// `MAX_SPEED / MIN_SPEED`, which is where the follower's own speed law
+    /// `max_speed / min_speed`, which is where the follower's own speed law
     /// floors -- no hand-set ceiling anywhere.
     #[test]
     fn governor_price_is_never_below_one() {
         let emb = Emb::go2();
         let fps = Fps::new(&emb);
         let pts = ring(2.0, 0.0, 0.6, 0.03);
-        let cap = emb.comfort.max(SPEED_CLEARANCE) + reach_of(fps.union()) + SNAP;
+        let cap = emb.comfort.max(emb.speed_clearance) + reach_of(fps.union()) + SNAP;
         let mut w = build_world(&pts, (0.0, 0.0, 0.0), (4.0, 0.0), cap);
         let (x0, y0, x1, y1) = w.bounds;
         let gx = arange(x0, x1 + CELL, CELL);
         let gy = arange(y0, y1 + CELL, CELL);
         let (nx, ny) = (gx.len(), gy.len());
-        let mut cl = Clear::new(&mut w, &fps, emb.precision, gx, gy);
+        let mut cl = Clear::new(&mut w, &fps, emb.precision, gx, gy, emb.governor());
         let (mut blocked, mut charged) = (0usize, 0usize);
         for b in 0..YAW_BINS {
             for i in 0..nx {
                 for j in 0..ny {
-                    let v = Clear::price(cl.clear(b, i, j));
+                    let uv = cl.clear(b, i, j);
+                    let v = cl.price(uv);
                     assert!(
-                        (1.0..=TIGHT_MAX).contains(&v),
+                        (1.0..=cl.gov.tight_max()).contains(&v),
                         "price {v} at bin {b}, cell ({i}, {j}) leaves the governor band"
                     );
                     if cl.clear(b, i, j) < 0.0 {
@@ -2930,7 +2974,7 @@ mod tests {
         let fps = Fps::new(&emb);
         let pts = ring(2.0, 0.0, 0.6, 0.03);
         let offs = fps.union().to_vec();
-        let cap = emb.comfort.max(SPEED_CLEARANCE) + reach_of(&offs) + SNAP;
+        let cap = emb.comfort.max(emb.speed_clearance) + reach_of(&offs) + SNAP;
         let mut w = build_world(&pts, (0.0, 0.0, 0.0), (4.0, 0.0), cap);
         // Reference field: no cap, so every cell holds its exact distance.
         let mut wref = build_world(&pts, (0.0, 0.0, 0.0), (4.0, 0.0), f64::INFINITY);
@@ -2941,7 +2985,7 @@ mod tests {
         let thetas = yaw_bins();
         let noff = offs.len();
         let margin = emb.precision;
-        let mut cl = Clear::new(&mut w, &fps, margin, gx.clone(), gy.clone());
+        let mut cl = Clear::new(&mut w, &fps, margin, gx.clone(), gy.clone(), emb.governor());
         // Every row is checked too, against the same uncapped reference: the
         // lazy per-(bin, box) planes are the door's half of the table.
         for b in 0..YAW_BINS {
@@ -2958,12 +3002,12 @@ mod tests {
                             }
                         }
                         let want = if m > margin { m } else { -1.0 };
-                        // Above `SPEED_CLEARANCE` the value is a lower bound and
+                        // Above `speed_clearance` the value is a lower bound and
                         // nothing can see the difference: the certificate stores
                         // exactly that bound, the distance cap stops measuring,
                         // and every consumer -- the price and every feasibility
                         // threshold -- has already saturated.
-                        if got >= SPEED_CLEARANCE && want >= SPEED_CLEARANCE {
+                        if got >= emb.speed_clearance && want >= emb.speed_clearance {
                             continue;
                         }
                         assert_eq!(

@@ -31,6 +31,7 @@
 //! that says so out loud.
 
 use dimos_motion2_target::planner::{Emb, GO2_ENVELOPE};
+use dimos_motion2_tc::stamps;
 
 /// `embodiment.py::GO2` -- the all-gait union, plus the per-heading envelope
 /// rows measured over the governed slow band (`planner/envelope_results.md`).
@@ -41,6 +42,10 @@ fn go2() -> Emb {
         center_off: 0.002,
         comfort: 0.4,
         precision: 0.05,
+        max_speed: 0.5,
+        min_speed: 0.2,
+        speed_clearance: 0.35,
+        max_yaw_rate: 1.4,
         strafe: 1.8,
         reverse: 1.5,
         yaw_w: 0.25,
@@ -153,6 +158,17 @@ pub const TAGS: [&str; 4] = ["go2", "go2-payload", "slim", "diffdrive"];
 /// (`control/world.py` and `adapter/follower.py` both take `emb.width / 2`).
 pub fn half_width(emb: &Emb) -> f64 {
     emb.width / 2.0
+}
+
+/// The stamp dialect's curve, read off the body the plan was made for.
+pub fn governor(emb: &Emb) -> stamps::Governor {
+    stamps::Governor {
+        max_speed: emb.max_speed,
+        min_speed: emb.min_speed,
+        speed_clearance: emb.speed_clearance,
+        floor: emb.precision,
+        max_yaw_rate: emb.max_yaw_rate,
+    }
 }
 
 #[cfg(test)]
