@@ -110,10 +110,6 @@ def _camera_if_real() -> tuple[Blueprint, ...]:
 class G1ManipulationModule(ManipulationModule):
     """Own the fixed, stationary-only G1 upper-body planning model."""
 
-    def _initialize_planning(self) -> None:
-        self.config.robots = [g1_upper_body_model_config()]
-        super()._initialize_planning()
-
 
 unitree_g1_teleop = (
     autoconnect(
@@ -121,6 +117,7 @@ unitree_g1_teleop = (
         MobileVideoArmTeleopModule.blueprint(),
         G1ManipulationModule.blueprint(
             instance_name="G1Manipulation",
+            robots=[g1_upper_body_model_config()],
             visualization=ViserVisualizationConfig(host="0.0.0.0"),
         ),
         *_camera_if_real(),
