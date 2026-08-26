@@ -35,6 +35,7 @@ app = typer.Typer(help="Operate a running Unitree G1 stack safely")
 _COORDINATOR = "ControlCoordinator"
 _MANIPULATION = "G1Manipulation"
 _GROOT_TASK = "groot_wbc"
+_TELEOP_TASK = "teleop_g1"
 _ARM_POLL_SECONDS = 0.1
 
 
@@ -64,6 +65,56 @@ def _require_armed_and_enabled(coordinator: Any) -> dict[str, Any]:
     if state.get("dry_run"):
         _abort("motor output is still disabled; run `dimos hardware g1 enable` first")
     return state
+
+
+def _fully_armed(state: dict[str, Any]) -> bool:
+    return bool(state.get("armed") and not state.get("arming") and not state.get("arm_pending"))
+
+
+def _arm_and_wait(coordinator: Any, timeout: float) -> dict[str, Any]:
+    coordinator.set_dry_run(True)
+    coordinator.set_activated(True)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        state = _groot_state(coordinator)
+        if _fully_armed(state):
+            return state
+        time.sleep(_ARM_POLL_SECONDS)
+    _abort(f"G1 did not finish arming within {timeout:g}s; motor output remains in dry-run")
+
+
+def _enable_motor_output(
+    coordinator: Any,
+    state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    current = state if state is not None else _groot_state(coordinator)
+    if not _fully_armed(current):
+        _abort("G1 is not fully armed; run `dimos hardware g1 arm` first")
+    coordinator.set_dry_run(False)
+    enabled = _groot_state(coordinator)
+    if enabled.get("dry_run"):
+        _abort("G1 remained in dry-run after the enable request")
+    return enabled
+
+
+def _require_teleop_disengaged(coordinator: Any) -> None:
+    if _TELEOP_TASK in coordinator.get_active_tasks():
+        _abort("G1 teleoperation is active; disengage both hands before moving to ready pose")
+
+
+def _execute_ready_pose(coordinator: Any, manipulation: Any) -> None:
+    _require_armed_and_enabled(coordinator)
+    _require_teleop_disengaged(coordinator)
+    targets = {
+        f"{G1_UPPER_BODY_NAME}/{group}": JointState(position=list(positions))
+        for group, positions in G1_READY_JOINTS.items()
+    }
+    planned = manipulation.plan_to_joints(targets, speed_scale=G1_READY_SPEED_SCALE)
+    if not planned.succeeded:
+        _abort(f"ready-pose planning failed: {planned}")
+    executed = manipulation.execute(blocking=True)
+    if not executed.succeeded:
+        _abort(f"ready-pose execution failed: {executed}")
 
 
 @app.command()
@@ -96,22 +147,12 @@ def status() -> None:
 
 @app.command()
 def arm(timeout: float = typer.Option(15.0, min=0.1, help="Arming timeout in seconds.")) -> None:
-    """Arm in dry-run and wait for the pose ramp to finish."""
+    """Run the GR00T pose ramp, then keep policy output in dry-run."""
     client = _connect()
     try:
         coordinator = cast("Any", client.get_module(_COORDINATOR))
-        coordinator.set_dry_run(True)
-        coordinator.set_activated(True)
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            state = _groot_state(coordinator)
-            if state.get("armed") and not state.get("arming") and not state.get("arm_pending"):
-                typer.echo(
-                    "G1 armed in dry-run; inspect the robot, then run `dimos hardware g1 enable`."
-                )
-                return
-            time.sleep(_ARM_POLL_SECONDS)
-        _abort(f"G1 did not finish arming within {timeout:g}s; motor output remains in dry-run")
+        _arm_and_wait(coordinator, timeout)
+        typer.echo("G1 armed in dry-run; inspect the robot, then run `dimos hardware g1 enable`.")
     except (AttributeError, KeyError, RuntimeError) as exc:
         _abort(f"failed to arm G1: {exc}")
     finally:
@@ -124,15 +165,60 @@ def enable() -> None:
     client = _connect()
     try:
         coordinator = cast("Any", client.get_module(_COORDINATOR))
-        state = _groot_state(coordinator)
-        if not state.get("armed") or state.get("arming") or state.get("arm_pending"):
-            _abort("G1 is not fully armed; run `dimos hardware g1 arm` first")
-        coordinator.set_dry_run(False)
-        if _groot_state(coordinator).get("dry_run"):
-            _abort("G1 remained in dry-run after the enable request")
+        _enable_motor_output(coordinator)
         typer.echo("G1 motor output enabled.")
     except (AttributeError, KeyError, RuntimeError) as exc:
         _abort(f"failed to enable G1: {exc}")
+    finally:
+        client.stop()
+
+
+@app.command()
+def activate(
+    timeout: float = typer.Option(15.0, min=0.1, help="Arming timeout in seconds."),
+    ready: bool = typer.Option(
+        False,
+        "--ready",
+        help="Move both arms to the conservative ready pose after enabling motor output.",
+    ),
+) -> None:
+    """Arm, confirm physical safety, and enable live GR00T output."""
+    client = _connect()
+    motor_output_enabled = False
+    try:
+        coordinator = cast("Any", client.get_module(_COORDINATOR))
+        state = _groot_state(coordinator)
+        if not _fully_armed(state):
+            state = _arm_and_wait(coordinator, timeout)
+
+        if state.get("dry_run"):
+            typer.echo(
+                "Arming ramp complete. Inspect the robot and confirm the remote and E-stop "
+                "are ready."
+            )
+            if not typer.confirm("Enable live GR00T motor output?", default=False):
+                typer.echo("Activation cancelled; G1 remains armed in dry-run.")
+                raise typer.Exit(1)
+            _enable_motor_output(coordinator, state)
+            motor_output_enabled = True
+            typer.echo("G1 motor output enabled.")
+        else:
+            motor_output_enabled = True
+            typer.echo("G1 is already activated.")
+
+        if ready:
+            manipulation = cast("Any", client.get_module(_MANIPULATION))
+            try:
+                _execute_ready_pose(coordinator, manipulation)
+            except typer.Exit:
+                typer.echo("GR00T motor output remains enabled.", err=True)
+                raise
+            typer.echo("G1 reached the ready pose.")
+        elif state.get("dry_run"):
+            typer.echo("G1 activated.")
+    except (AttributeError, KeyError, RuntimeError) as exc:
+        suffix = "; GR00T motor output remains enabled" if motor_output_enabled else ""
+        _abort(f"failed to activate G1: {exc}{suffix}")
     finally:
         client.stop()
 
@@ -143,18 +229,8 @@ def ready() -> None:
     client = _connect()
     try:
         coordinator = cast("Any", client.get_module(_COORDINATOR))
-        _require_armed_and_enabled(coordinator)
         manipulation = cast("Any", client.get_module(_MANIPULATION))
-        targets = {
-            f"{G1_UPPER_BODY_NAME}/{group}": JointState(position=list(positions))
-            for group, positions in G1_READY_JOINTS.items()
-        }
-        planned = manipulation.plan_to_joints(targets, speed_scale=G1_READY_SPEED_SCALE)
-        if not planned.succeeded:
-            _abort(f"ready-pose planning failed: {planned}")
-        executed = manipulation.execute(blocking=True)
-        if not executed.succeeded:
-            _abort(f"ready-pose execution failed: {executed}")
+        _execute_ready_pose(coordinator, manipulation)
         typer.echo("G1 reached the ready pose.")
     except (AttributeError, KeyError, RuntimeError) as exc:
         _abort(f"failed to move G1 to the ready pose: {exc}")
