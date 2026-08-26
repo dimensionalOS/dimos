@@ -57,45 +57,15 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-RPC_POLL_SECONDS = 0.002
-ODOMETRY_ERROR_LOG_INTERVAL_SECONDS = 10.0
-# Both together stay under DEFAULT_THREAD_JOIN_TIMEOUT so the teardown join outlasts them.
+# these combined need to be less than DEFAULT_THREAD_JOIN_TIMEOUT so the teardown join outlasts them.
 STOP_COMMAND_TIMEOUT_SECONDS = DEFAULT_THREAD_JOIN_TIMEOUT / 2
 CONNECTION_CLOSE_TIMEOUT_SECONDS = DEFAULT_THREAD_JOIN_TIMEOUT / 4
-
-
-async def _rpc_result(future: portal.Future) -> Any:
-    """Poll instead of blocking a thread: ``asyncio.run`` joins the default executor on
-    the way out, so a single wedged RPC would keep the process alive forever.
-    """
-    while not future.done():
-        await asyncio.sleep(RPC_POLL_SECONDS)
-    return future.result()
-
-
-def _stop_and_close(client: portal.Client) -> None:
-    """Portal answers on a worker thread, so a close chained to the stop through the
-    event loop is skipped outright once the loop shuts down, leaving the client open.
-    """
-    try:
-        client.set_target_velocity({"target_velocity": np.zeros(3), "frame": "local"}).result(
-            timeout=STOP_COMMAND_TIMEOUT_SECONDS
-        )
-    except Exception as e:
-        logger.error(f"Error stopping Alfred: {e!r}")
-    # Closing fails every request the connection still owes, so it goes after the stop.
-    try:
-        # Left unbounded, portal waits out a send queue that a dead peer never drains.
-        client.close(timeout=CONNECTION_CLOSE_TIMEOUT_SECONDS)
-    except Exception as e:
-        logger.error(f"Error closing the Alfred connection: {e!r}")
 
 
 class AlfredHighLevelConfig(ModuleConfig):
     address: str = DEFAULT_ADDRESS
     cmd_vel_timeout: float = 0.2
     wheel_odometry_hz: FiniteFloat = Field(50.0, gt=0.0)
-    # Never published to tf: a source to fuse, not a second odom->base_link publisher.
     wheel_odom_frame_id: str = "wheel_odom"
     base_frame_id: str = "base_link"
 
@@ -268,9 +238,10 @@ class AlfredHighLevel(Module):
                 return
             except Exception as error:
                 now = asyncio.get_running_loop().time()
+                odometry_error_log_interval_seconds = 10.0
                 if (
                     last_error_log is None
-                    or now - last_error_log >= ODOMETRY_ERROR_LOG_INTERVAL_SECONDS
+                    or now - last_error_log >= odometry_error_log_interval_seconds
                 ):
                     last_error_log = now
                     logger.error(f"Alfred wheel odometry poll failed: {error}")
@@ -284,3 +255,31 @@ class AlfredHighLevel(Module):
             await asyncio.wait_for(self._odometry_stop.wait(), seconds)
         except asyncio.TimeoutError:
             pass
+
+
+PORTAL_RPC_POLL_SECONDS = 0.002
+
+
+async def _rpc_result(future: portal.Future) -> Any:
+    """portal.Future's are kinda dumb. We have to wait on them to unwrap."""
+    while not future.done():
+        await asyncio.sleep(PORTAL_RPC_POLL_SECONDS)
+    return future.result()
+
+
+def _stop_and_close(client: portal.Client) -> None:
+    """Portal answers on a worker thread, so a close chained to the stop through the
+    event loop is skipped outright once the loop shuts down, leaving the client open.
+    """
+    try:
+        client.set_target_velocity({"target_velocity": np.zeros(3), "frame": "local"}).result(
+            timeout=STOP_COMMAND_TIMEOUT_SECONDS
+        )
+    except Exception as e:
+        logger.error(f"Error stopping Alfred: {e!r}")
+    # Closing fails every request the connection still owes, so it goes after the stop.
+    try:
+        # Left unbounded, portal waits out a send queue that a dead peer never drains.
+        client.close(timeout=CONNECTION_CLOSE_TIMEOUT_SECONDS)
+    except Exception as e:
+        logger.error(f"Error closing the Alfred connection: {e!r}")
