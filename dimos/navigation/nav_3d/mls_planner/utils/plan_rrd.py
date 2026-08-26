@@ -121,11 +121,8 @@ def _parse_configs(
 
 
 def _pose_from_tf(tf: StreamTF, world_frame: str) -> FnTransformer[PointCloud2, PointCloud2]:
-    """Attach the registration transform looked up at the cloud stamp.
-
-    A cloud with no transform within tolerance stays poseless and is dropped
-    downstream, as the live module drops it.
-    """
+    """Attach the tf pose at the cloud stamp. A failed lookup clears any
+    recorded pose so the cloud is dropped downstream."""
 
     def attach(obs: Observation[PointCloud2]) -> Observation[PointCloud2]:
         t = tf.get(
@@ -134,7 +131,7 @@ def _pose_from_tf(tf: StreamTF, world_frame: str) -> FnTransformer[PointCloud2, 
             time_point=obs.ts,
             time_tolerance=TF_MATCH_TOLERANCE_S,
         )
-        return obs if t is None else obs.with_pose(t)
+        return obs.with_pose(t)
 
     return FnTransformer(attach)
 
@@ -469,7 +466,7 @@ def main(
         "pointlio_lidar", "--lidar-stream", help="Lidar stream in the recording"
     ),
     world_frame: str = typer.Option(
-        "world", "--world-frame", help="Fixed frame clouds are registered and planning runs in"
+        "odom", "--world-frame", help="Fixed frame clouds are registered and planning runs in"
     ),
     base_frame: str = typer.Option(
         "base_link", "--base-frame", help="Frame whose tf pose is the planning start"
@@ -647,46 +644,29 @@ def main(
         )
         sensor_trail: list[tuple[float, float, float]] = []
 
-        # None until the first frame decides whether the tree reaches the base
-        # frame. Legacy recordings carry no mount chain, so it never resolves.
-        base_reachable: bool | None = None
-
         try:
             frame = 0
             for ray_obs in ray_pipeline:
                 tf_sync.up_to(ray_obs.ts)
                 if ray_obs.pose_tuple is None:
                     continue
-                base: Transform | None = None
-                if base_reachable is not False:
-                    # Small tolerance keeps this lookup's ensure window inside
-                    # the pose lookups' cached span, avoiding a double reload.
-                    base = tf_lookup.get(
-                        world_frame,
-                        base_frame,
-                        time_point=ray_obs.ts,
-                        time_tolerance=TF_MATCH_TOLERANCE_S,
-                    )
-                if base_reachable is None:
-                    base_reachable = base is not None
-                    if not base_reachable:
-                        print(
-                            f"no {world_frame} -> {base_frame} on tf; starting from the "
-                            f"cloud frame pose minus the robot height"
-                        )
-                if base_reachable:
-                    if base is None:
-                        continue
-                    start = (
-                        float(base.translation.x),
-                        float(base.translation.y),
-                        float(base.translation.z) - start_z_offset,
-                    )
-                    sensor_z = float(base.translation.z)
-                else:
-                    px, py, pz, *_ = ray_obs.pose_tuple
-                    start = (float(px), float(py), float(pz) - robot_height)
-                    sensor_z = float(pz)
+                # Small tolerance keeps this lookup's ensure window inside the
+                # pose lookups' cached span, avoiding a double reload. The
+                # buffer warns on every miss, so a skipped frame is never silent.
+                base = tf_lookup.get(
+                    world_frame,
+                    base_frame,
+                    time_point=ray_obs.ts,
+                    time_tolerance=TF_MATCH_TOLERANCE_S,
+                )
+                if base is None:
+                    continue
+                start = (
+                    float(base.translation.x),
+                    float(base.translation.y),
+                    float(base.translation.z) - start_z_offset,
+                )
+                sensor_z = float(base.translation.z)
                 ref_timing = _process_frame(
                     ray_obs,
                     planners,

@@ -117,7 +117,7 @@ def main(
     ),
     lidar_stream: str = typer.Option("pointlio_lidar", "--lidar-stream"),
     world_frame: str = typer.Option(
-        "world", "--world-frame", help="Fixed frame clouds are registered in"
+        "odom", "--world-frame", help="Fixed frame clouds are registered in"
     ),
     voxel_size: float = typer.Option(
         DEFAULT_VOXEL_SIZE, "--voxel-size", help="Voxel edge length (m)"

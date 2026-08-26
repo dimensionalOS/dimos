@@ -23,7 +23,7 @@ use lcm_msgs::nav_msgs::Path;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
 use tokio::sync::Notify;
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// A point in the planner's world frame.
 type Xyz = (f32, f32, f32);
@@ -238,7 +238,14 @@ impl Worker {
                     }
                 };
                 let z_max = bounds.pose.orientation.z as f32;
-                let sensor_z = self.base_position().map_or(z_max, |(_, _, z)| z);
+                let Some((_, _, sensor_z)) = self.base_position() else {
+                    warn!(
+                        world_frame = %self.config.world_frame,
+                        base_frame = %self.config.base_frame,
+                        "No base pose on tf, dropped a region update.",
+                    );
+                    return false;
+                };
                 let bounds = RegionBounds::capped(
                     bounds.pose.position.x as f32,
                     bounds.pose.position.y as f32,

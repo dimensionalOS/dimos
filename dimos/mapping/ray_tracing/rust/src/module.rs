@@ -20,6 +20,7 @@ use dimos_module::{error_throttled, warn_throttled, Input, Module, Output, Tf};
 use lcm_msgs::geometry_msgs::{Point, Pose as PoseMsg, PoseStamped, Quaternion};
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
+use tracing::warn;
 
 #[derive(Module)]
 #[module(name = "ray_tracing", setup = init_mapper)]
@@ -68,8 +69,8 @@ impl RayTracingVoxelMap {
             .within(TF_WAIT_TIMEOUT)
             .await
         else {
-            warn_throttled!(
-                Duration::from_secs(1),
+            warn!(
+                stamp,
                 world_frame = %self.config.world_frame,
                 cloud_frame = %msg.header.frame_id,
                 "No transform within tolerance of the cloud stamp, dropped a cloud.",
