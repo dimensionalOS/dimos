@@ -27,16 +27,22 @@ Check: the clock line now says `already unix`, offset in tens of ms.
 ## 3. Bake and install the motion host (from dimos)
 
 ```sh
-dimos bake --deployment dimos.robot.unitree.go2.zenoh.motion_host:GO2_MOTION_HOST \
-    -o motion-host --builder zigbuild --target aarch64-unknown-linux-gnu.2.31
-ssh go2 mkdir -p /root/motion-host && scp motion-host go2:/root/motion-host/
-scp misc/motion-host/dimos-motion-host.service go2:/etc/systemd/system/
-ssh go2 'systemctl daemon-reload && systemctl enable --now dimos-motion-host'
+dimos/navigation/motion/deploy/deploy.sh go2
 ```
-Config is embedded at bake time (`dimos/robot/unitree/go2/zenoh/motion_host.py`); to try
-a value without rebaking, feed one JSON line on stdin, e.g.
-`{"modules":{"trajectory_follower":{"config":{"embodiment":{"max_speed":0.5}}}}}`.
-Check `ssh go2 journalctl -u dimos-motion-host -n 20`: four `module started`, and `odometry: true` within seconds.
+It bakes, installs to `/root/motion-host/`, and enables the unit, in one step. Run
+it from anywhere: paths resolve off the script, not your working directory. It
+checks the robot over ssh before baking, so a robot that is off costs you seconds
+rather than a build. The bake is unconditional -- cargo already does the
+incremental staleness check, and a warm bake is about 25 seconds. `--no-build`
+installs the binary you already have.
+Config is embedded at bake time (`dimos/robot/unitree/go2/zenoh/motion_host.py`), so
+changing a value means re-running the script. The binary would deep-merge one JSON line
+on stdin over the baked config, but the installed unit does not feed it any, so a stray
+`motion-host.json` next to the binary is a leftover from an older unit and does nothing.
+
+The script reports `4/4 modules loaded config` and fails if it does not get four. To look
+yourself: `ssh go2 journalctl -u dimos-motion-host -n 20`, where you want four
+`config loaded` lines, then `pose: true` in the planner's warnings once tf is up.
 
 ## 4. Laptop half
 
