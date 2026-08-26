@@ -34,6 +34,8 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.memory.embed import EmbedImages
+from dimos.memory.store.base import Store
+from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.null import NullStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
@@ -70,6 +72,10 @@ def default_recording_dir() -> Path:
         + now.strftime("%Z")
     )
     return RECORDINGS_DIR / stamp
+
+
+# One dir per process; every Recorder in a run writes under it (mem2.db, pcaps, ...).
+RECORDING_DIR = default_recording_dir()
 
 
 def stream_to_port(stream: Stream[T], out: Out[T]) -> DisposableBase:
@@ -196,17 +202,29 @@ class MemoryModule(Module):
     """
 
     config: MemoryModuleConfig
-    _store: SqliteStore | None = None
+    _store: Store | None = None
 
     @property
-    def store(self) -> SqliteStore:
+    def db_path(self) -> Path:
+        """``config.db_path`` with the suffix filled in from ``--record-format`` when absent."""
+        p = Path(self.config.db_path)
+        if p.suffix:
+            return p
+        return p.with_suffix(".mcap" if self.config.g.record_format == "mcap" else ".db")
+
+    @property
+    def store(self) -> Store:
         if self._store is not None:
             return self._store
 
-        Path(self.config.db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._store = self.register_disposable(
-            SqliteStore(path=str(self.config.db_path)),
-        )
+        path = self.db_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        store: Store
+        if path.suffix == ".mcap":
+            store = McapStore(path=str(path), mode="w")
+        else:
+            store = SqliteStore(path=str(path))
+        self._store = self.register_disposable(store)
         self._store.start()
         return self._store
 
@@ -281,7 +299,7 @@ class RecorderConfig(MemoryModuleConfig):
     root_frame: str = "world"
     default_frame_id: str = "base_link"
     tf_tolerance: float = 0.5
-    db_path: str | Path = "recording.db"
+    db_path: str | Path = RECORDING_DIR / "mem2"  # suffix from --record-format
     # Also record the live tf stream (under "tf") alongside the In ports.
     record_tf: bool = True
     # Rename recorded streams: {port_name: db_stream_name}. Conceptually this is
@@ -347,9 +365,10 @@ class Recorder(MemoryModule):
         super().start()
 
         if self.config.g.replay:
-            logger.info(
-                "Replay mode active — Recorder disabled, leaving %s untouched", self.config.db_path
-            )
+            logger.info("Replay mode active — Recorder disabled")
+            return
+        if not self.config.g.record:
+            logger.info("Recording off — pass --record to write %s", self.db_path)
             return
 
         self._pose_setters = self._collect_pose_setters()
@@ -358,7 +377,7 @@ class Recorder(MemoryModule):
         # shouldn't need to know about files (SqliteStore specific), and
         # .live() subs need to know how to re-sub in case of a restart of
         # this module in a deployed blueprint.
-        db_path = Path(self.config.db_path)
+        db_path = self.db_path
         if db_path.exists():
             if self.config.on_existing is OnExisting.APPEND:
                 pass  # keep the db; _prepare_streams handles any per-stream replacement

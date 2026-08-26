@@ -63,7 +63,7 @@ learning_collect_quest_xarm7 = autoconnect(
     EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
     teleop_quest_xarm7,
     *_camera_if_real(),
-)
+).global_config(record=True)
 
 
 learning_collect_quest_piper = autoconnect(
@@ -75,4 +75,4 @@ learning_collect_quest_piper = autoconnect(
     EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
     teleop_quest_piper,
     *_camera_if_real(),
-)
+).global_config(record=True)

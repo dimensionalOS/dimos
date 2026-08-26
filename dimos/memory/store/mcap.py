@@ -12,15 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Read-only memory store backed by an mcap file.
+"""Memory store backed by an mcap file.
 
-Generic and codec-injected — it knows nothing about any robot. The caller
-supplies ``codecs`` (DDS/wire topic -> codec that decodes a message's stored
-bytes) and an optional ``streams`` map (friendly stream name -> topic). See
+Write mode (``mode="w"``) is what a Recorder uses: one channel per stream,
+``message_encoding="dimos-obs"``, schema name = payload type path, schema data
+= codec id. Each message is an envelope: 4-byte big-endian header length, JSON
+header ``{"pose": [x,y,z,qx,qy,qz,qw] | null, "tags": {...}}``, codec payload.
+No blobs, vectors, or embeddings.
+
+Read mode decodes those channels with the recorded codec. Foreign channels
+(e.g. Go2 DDS captures) need injected ``codecs`` (topic -> codec) and an
+optional ``streams`` map (friendly stream name -> topic). See
 ``dimos.robot.unitree.go2.dds.store.Go2McapStore`` for the Go2 wiring.
-
-Read-only: no append, blobs, vectors, or embeddings. Payloads decode lazily on
-``obs.data``; ts and counts are cheap (counts come from the mcap index).
+Payloads decode lazily on ``obs.data``; counts come from the mcap index.
 """
 
 from __future__ import annotations
@@ -28,10 +32,14 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from dataclasses import replace
 from functools import partial
-from typing import Any, Protocol, runtime_checkable
+import json
+import os
+import struct
+import threading
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from dimos.memory.backend import Backend
-from dimos.memory.codecs.base import codec_for
+from dimos.memory.codecs.base import Codec, codec_for, codec_from_id, codec_id, resolve_payload_type
 from dimos.memory.notifier.subject import SubjectNotifier
 from dimos.memory.observationstore.base import ObservationStore, ObservationStoreConfig
 from dimos.memory.store.base import Store, StoreConfig
@@ -59,6 +67,30 @@ class _BytesCodec:
 
 
 _BYTES_CODEC = _BytesCodec()
+
+DIMOS_ENCODING = "dimos-obs"
+_HDR = struct.Struct(">I")
+
+
+class _DimosCodec:
+    """Adapts a recorded dimos codec (schema id + payload type) to :class:`StreamCodec`."""
+
+    def __init__(self, codec: Codec[Any], payload_type: type) -> None:
+        self.codec = codec
+        self.payload_type = payload_type
+
+    def decode(self, data: bytes) -> Any:
+        return self.codec.decode(data[_HDR.size + _HDR.unpack_from(data)[0] :])
+
+
+def _pack(obs: Observation[Any], payload: bytes) -> bytes:
+    header = json.dumps({"pose": obs.pose_tuple, "tags": obs.tags}).encode()
+    return _HDR.pack(len(header)) + header + payload
+
+
+def _unpack_header(data: bytes) -> dict[str, Any]:
+    n = _HDR.unpack_from(data)[0]
+    return json.loads(data[_HDR.size : _HDR.size + n])  # type: ignore[no-any-return]
 
 
 def _slug(topic: str) -> str:
@@ -96,11 +128,15 @@ class McapObservationStore(ObservationStore[Any]):
         decode, dtype, n = self._codec.decode, self._codec.payload_type, self._count
         with open(self._path, "rb") as f:
             msgs = make_reader(f).iter_messages(topics=[self._topic], reverse=reverse)
-            for i, (_s, _c, m) in enumerate(msgs):
+            for i, (_s, ch, m) in enumerate(msgs):
+                hdr = _unpack_header(m.data) if ch.message_encoding == DIMOS_ENCODING else {}
+                pose = hdr.get("pose")
                 yield Observation(
                     id=(n - 1 - i) if reverse else i,
                     ts=m.log_time / 1e9,
                     data_type=dtype,
+                    pose_tuple=tuple(pose) if pose else None,
+                    tags=hdr.get("tags"),
                     _loader=partial(decode, m.data),
                 )
 
@@ -128,19 +164,63 @@ class McapObservationStore(ObservationStore[Any]):
         return [o for o in self._iter() if o.id in want]
 
     def insert(self, obs: Observation[Any]) -> int:
-        raise NotImplementedError("McapStore is read-only")
+        raise NotImplementedError("McapStore opened read-only")
+
+
+class McapWriteObservationStore(ObservationStore[Any]):
+    """Append-only channel writer. Encodes the payload itself (no blob store)."""
+
+    config: McapObservationStoreConfig
+
+    def __init__(
+        self, *, name: str, writer: Any, channel_id: int, codec: Codec[Any], lock: threading.Lock
+    ) -> None:
+        super().__init__(name=name)
+        self._writer = writer
+        self._channel_id = channel_id
+        self._codec = codec
+        self._lock = lock
+        self._n = 0
+
+    @property
+    def name(self) -> str:
+        return self.config.name
+
+    def insert(self, obs: Observation[Any]) -> int:
+        data = _pack(obs, self._codec.encode(obs.data))
+        t = int(obs.ts * 1e9)
+        with self._lock:
+            row_id = self._n
+            self._n += 1
+            self._writer.add_message(
+                channel_id=self._channel_id, log_time=t, publish_time=t, data=data, sequence=row_id
+            )
+        return row_id
+
+    def query(self, q: StreamQuery) -> Iterator[Observation[Any]]:
+        raise NotImplementedError("McapStore opened write-only; reopen the file to read")
+
+    def count(self, q: StreamQuery) -> int:
+        return self._n
+
+    def fetch_by_ids(self, ids: list[int]) -> list[Observation[Any]]:
+        raise NotImplementedError("McapStore opened write-only; reopen the file to read")
 
 
 class McapStoreConfig(StoreConfig):
     path: str = ""
+    mode: Literal["r", "w"] = "r"
 
 
 class McapStore(Store):
-    """A memory store backed by an mcap file (read-only).
+    """A memory store backed by an mcap file.
 
-    Every channel present in the file with a codec is exposed. Names default to
+    Read mode exposes every channel in the file: dimos-recorded channels decode
+    with their recorded codec; others need an injected codec. Names default to
     the slugified topic (see :func:`_slug`); ``streams`` (friendly name -> topic)
     overrides the name for specific topics.
+
+    Write mode creates the file; each ``stream(name, payload_type)`` opens a channel.
     """
 
     config: McapStoreConfig
@@ -148,35 +228,97 @@ class McapStore(Store):
     def __init__(
         self,
         *,
-        codecs: Mapping[str, StreamCodec],
+        codecs: Mapping[str, StreamCodec] | None = None,
         streams: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> None:
-        from mcap.reader import make_reader  # optional dep (go2/unitree extra)
-
         super().__init__(**kwargs)
-        self._codecs = codecs
-        name_of = {topic: name for name, topic in (streams or {}).items()}  # topic -> override
-        with open(self.config.path, "rb") as f:
-            summary = make_reader(f).get_summary()
+        self._codecs: dict[str, StreamCodec] = dict(codecs or {})
         self._stream_topic: dict[str, str] = {}  # stream name -> topic
         self._available: dict[str, int] = {}  # stream name -> message count
         # Channels with no registered codec are still exposed, as Stream[bytes] via
         # _BYTES_CODEC — reachable but undecoded. _raw maps their stream name to the
         # source schema so summary() can flag them [raw bytes: <schema>].
         self._raw: dict[str, str | None] = {}  # raw stream name -> source schema
-        if summary is not None and summary.statistics is not None:
-            for cid, ch in summary.channels.items():
-                count = summary.statistics.channel_message_counts.get(cid, 0)
-                name = name_of.get(ch.topic) or _slug(ch.topic)
-                self._stream_topic[name] = ch.topic
-                self._available[name] = count
-                if ch.topic not in self._codecs:
-                    sch = summary.schemas.get(ch.schema_id)
-                    self._raw[name] = sch.name if sch else None
+        self._writer: Any = None
+        self._lock = threading.Lock()
+        if self.config.mode == "w":
+            self._open_writer()
+        else:
+            self._scan(streams)
+
+    def _open_writer(self) -> None:
+        from mcap.writer import Writer
+
+        parent = os.path.dirname(self.config.path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        self._file = open(self.config.path, "wb")
+        self._writer = Writer(self._file)
+        self._writer.start(profile="dimos", library="dimos")
+
+    def _scan(self, streams: dict[str, str] | None) -> None:
+        from mcap.reader import make_reader
+
+        name_of = {topic: name for name, topic in (streams or {}).items()}  # topic -> override
+        with open(self.config.path, "rb") as f:
+            summary = make_reader(f).get_summary()
+        if summary is None or summary.statistics is None:
+            return
+        for cid, ch in summary.channels.items():
+            count = summary.statistics.channel_message_counts.get(cid, 0)
+            name = name_of.get(ch.topic) or _slug(ch.topic)
+            self._stream_topic[name] = ch.topic
+            self._available[name] = count
+            sch = summary.schemas.get(ch.schema_id)
+            if ch.message_encoding == DIMOS_ENCODING and sch is not None:
+                ptype = resolve_payload_type(sch.name)
+                self._codecs[ch.topic] = _DimosCodec(
+                    codec_from_id(sch.data.decode(), sch.name), ptype
+                )
+            elif ch.topic not in self._codecs:
+                self._raw[name] = sch.name if sch else None
+
+    def _create_write_backend(
+        self, name: str, payload_type: type | None, raw_codec: Any
+    ) -> Backend[Any]:
+        if payload_type is None:
+            raise TypeError(f"Stream {name!r}: payload_type is required to record")
+        codec = self._resolve_codec(payload_type, raw_codec)
+        module = f"{payload_type.__module__}.{payload_type.__qualname__}"
+        with self._lock:
+            schema_id = self._writer.register_schema(
+                name=module, encoding="dimos", data=codec_id(codec).encode()
+            )
+            channel_id = self._writer.register_channel(
+                topic=name, message_encoding=DIMOS_ENCODING, schema_id=schema_id
+            )
+        self._stream_topic[name] = name
+        obs = McapWriteObservationStore(
+            name=name, writer=self._writer, channel_id=channel_id, codec=codec, lock=self._lock
+        )
+        return Backend(
+            metadata_store=obs,
+            codec=codec,
+            data_type=payload_type,
+            blob_store=None,
+            vector_store=None,
+            notifier=SubjectNotifier(),
+        )
+
+    def delete_stream(self, name: str) -> None:
+        raise NotImplementedError("McapStore cannot delete streams; record to a new file")
 
     def list_streams(self) -> list[str]:
         return sorted(set(self._available) | set(self._streams))
+
+    def stop(self) -> None:
+        super().stop()
+        if self._writer is not None:
+            with self._lock:
+                self._writer.finish()
+                self._file.close()
+                self._writer = None
 
     def summary(self) -> str:
         """Base summary, tagging codecless streams with ``[raw bytes: <schema>]``."""
@@ -192,6 +334,8 @@ class McapStore(Store):
     def _create_backend(
         self, name: str, payload_type: type | None = None, **config: Any
     ) -> Backend[Any]:
+        if self._writer is not None:
+            return self._create_write_backend(name, payload_type, config.get("codec"))
         if name not in self._available:
             raise KeyError(f"No stream {name!r}. Available: {sorted(self._available)}")
         topic = self._stream_topic[name]

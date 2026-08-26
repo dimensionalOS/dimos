@@ -35,6 +35,7 @@ from typing import Any
 from dimos.core.baked_host import baked_host
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
+from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap, RayTracingVoxelMapConfig
 from dimos.navigation.basic_path_follower.module import BasicPathFollower
 from dimos.navigation.dannav.holonomic_tc.module import DanHolonomicTC
@@ -160,7 +161,13 @@ go2_zenoh_basic = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config()),
     GO2Zenoh.blueprint(mid360_mount=MID360_MOUNT),
     MovementManager.blueprint(),
-).global_config(transport="zenoh", n_workers=4, robot_model="unitree_go2")
+    PointlioRecorder.blueprint().remappings(
+        [
+            (PointlioRecorder, "pointlio_lidar", "lidar"),
+            (PointlioRecorder, "pointlio_odometry", "odometry"),
+        ]
+    ),
+).global_config(transport="zenoh", n_workers=5, robot_model="unitree_go2")
 
 # global_map is remapped off so the planner runs purely on the
 # incremental local_map + region_bounds pair.

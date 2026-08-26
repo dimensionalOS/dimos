@@ -263,7 +263,7 @@ def _build_blueprint(
                 (FastLio2Recorder, "fastlio_lidar", "lidar"),
             ]
         )
-        .global_config(n_workers=4, robot_model="mid360_fastlio_pcap_to_db")
+        .global_config(n_workers=4, robot_model="mid360_fastlio_pcap_to_db", record=True)
     )
 
 

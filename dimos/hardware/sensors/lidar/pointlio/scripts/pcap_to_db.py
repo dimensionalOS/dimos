@@ -342,7 +342,7 @@ def _build_blueprint(
                 (PointlioRecorder, _LIDAR_STREAM, "lidar"),
             ]
         )
-        .global_config(n_workers=4, robot_model="mid360_pointlio_pcap_to_db")
+        .global_config(n_workers=4, robot_model="mid360_pointlio_pcap_to_db", record=True)
     )
 
 

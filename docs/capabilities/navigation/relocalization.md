@@ -8,36 +8,36 @@ Relocalization lets a Go2 navigate on a previously built map instead of only on 
 
 This guide takes four steps:
 
-1. Record a walk-through with `unitree-go2-memory`
+1. Record a walk-through with `unitree-go2`
 2. Build the premap with `dimos map global {DB_NAME} --export`
 3. Test relocalization in replay, no robot needed
 4. Deploy on the live Go2
 
-Throughout this guide, `{DB_NAME}` is the stem of your recording, for example `recording_go2` for `recording_go2.db`. For `map_file`, pass the same stem and dimOS appends `.pc2.lcm` automatically.
+Throughout this guide, `{DB_NAME}` is the path of your recording, for example `recordings/2026-08-26_03-06-11pm-PDT/mem2.mcap`. For `map_file`, pass the same stem and dimOS appends `.pc2.lcm` automatically.
 
 ## 1. Record a run
 
 Drive the Go2 through the space you want as your premap. Close loops when you can because PGO uses revisits to correct drift.
 
 ```bash
-dimos --robot-ip {YOUR_ROBOT_IP} run unitree-go2-memory
+dimos --record --robot-ip {YOUR_ROBOT_IP} run unitree-go2
 ```
 
 If `ROBOT_IP` is set in the environment or `.env`, you can omit `--robot-ip`:
 
 ```bash
-dimos run unitree-go2-memory
+dimos --record run unitree-go2
 ```
 
-This writes `recording_go2.db` to the repo root (`DIMOS_PROJECT_ROOT`) and records `lidar`, `odom`, and `color_image` plus the live TF tree. The recorder stamps lidar frames with the latest odom pose so `dimos map global` can reconstruct poses later- see [`Go2Memory`](/dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py).
+This writes `recordings/<timestamp>/mem2.mcap` under the checkout (`~/.local/state/dimos/recordings/` for an installed package) and records `lidar`, `odom`, and `color_image` plus the live TF tree. `--record-format sqlite` writes `mem2.db` instead. The recorder stamps lidar frames with the latest odom pose so `dimos map global` can reconstruct poses later- see [`Go2Memory`](/dimos/robot/unitree/go2/blueprints/basic/unitree_go2_basic.py).
 
 ### Quick validation (optional)
 
 Before building a premap, inspect the recording:
 
 ```bash
-dimos mem summary recording_go2
-dimos map replay recording_go2 --duration 60
+dimos mem summary {DB_NAME}
+dimos map replay {DB_NAME} --duration 60
 ```
 
 `summary` prints stream names and time ranges. `replay` opens Rerun so you can confirm lidar and odometry look sane.
@@ -47,7 +47,7 @@ dimos map replay recording_go2 --duration 60
 Export a loop-closed global map as `.pc2.lcm`:
 
 ```bash
-dimos map global recording_go2 --export
+dimos map global {DB_NAME} --export
 ```
 
 | Flag | Effect |
@@ -66,7 +66,7 @@ dimos map global recording_go2 --export
 Examples:
 
 ```bash
-dimos map global recording_go2 --export --no-gui
+dimos map global {DB_NAME} --export --no-gui
 dimos map global ./recordings/office_walk.db --export
 dimos map global data/go2_hongkong_office.db --export
 ```
@@ -76,8 +76,8 @@ Sample log:
 ```
 running PGO twopass map...
   Pass 1: 908 frames, 1 keyframes
-exporting PGO twopass map to .../recording_go2.pc2.lcm...
-wrote .../recording_go2.pc2.lcm
+exporting PGO twopass map to .../{DB_NAME}.pc2.lcm...
+wrote .../{DB_NAME}.pc2.lcm
 ```
 
 Open the companion `{DB_NAME}.rrd` in Rerun to verify loop closure before deploying to hardware.
@@ -87,8 +87,8 @@ Open the companion `{DB_NAME}.rrd` in Rerun to verify loop closure before deploy
 Test alignment without the robot. `unitree-go2-relocalization` is `unitree-go2` plus `RelocalizationModule`:
 
 ```bash
-dimos --replay --replay-db recording_go2 run unitree-go2-relocalization \
-  --map-file=recording_go2
+dimos --replay --replay-db {DB_NAME} run unitree-go2-relocalization \
+  --map-file={DB_NAME}
 ```
 
 `map_file` resolves `{DB_NAME}.pc2.lcm` with the same search order as above (cwd, then project root, then `data/`).
@@ -96,7 +96,7 @@ dimos --replay --replay-db recording_go2 run unitree-go2-relocalization \
 ### Reading the logs
 
 ```
-Relocalization module started: map_file='recording_go2'  loaded_map.frame_id='map'
+Relocalization module started: map_file='{DB_NAME}'  loaded_map.frame_id='map'
 relocalize skipped: n_pts=37770 < MIN_LOCAL_POINTS=50000
 relocalize rejected: fitness=0.433 < threshold=0.45 time_cost=8.1s n_pts=57385
 relocalize: fitness=0.657 time_cost=3.0s n_pts=64703 reloc_t=[-0.007, -0.01, -0.102] TF 'world' -> 'map' published_t=[0.007, 0.009, 0.102]
@@ -119,7 +119,7 @@ Run the replay test first. On hardware, use the same blueprint and `map_file`:
 
 ```bash
 dimos --robot-ip {YOUR_ROBOT_IP} run unitree-go2-relocalization \
-  --map-file=recording_go2
+  --map-file={DB_NAME}
 ```
 
 Before sending navigation goals, walk through this checklist:
@@ -160,7 +160,7 @@ Note that [`CostMapper`](/dimos/mapping/costmapper.py) builds the costmap from t
 
 | File | Format | Produced by | Consumed by |
 |------|--------|-------------|-------------|
-| `{name}.db` | memory SQLite (`lidar`, `odom`, `color_image`, …) | `unitree-go2-memory` | `dimos map *`, `--replay-db` |
+| `{name}.db` | memory SQLite (`lidar`, `odom`, `color_image`, …) | `unitree-go2` | `dimos map *`, `--replay-db` |
 | `{name}.pc2.lcm` | LCM-encoded `PointCloud2` premap | `dimos map global --export` | `RelocalizationModule` (`map_file`) |
 | `{name}.rrd` | Rerun recording (visual QA) | `dimos map global` | Rerun viewer |
 
@@ -189,7 +189,7 @@ To accept all candidates for visualization only (not for production nav):
 
 ```bash
 dimos run unitree-go2-relocalization \
-  --map-file=recording_go2 \
+  --map-file={DB_NAME} \
   --fitness-threshold=0.0
 ```
 

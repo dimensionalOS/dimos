@@ -120,7 +120,7 @@ Manage the background run with `dimos status`, `dimos log -f`, and `dimos stop`.
 | Command | What it does |
 | --- | --- |
 | `dimos --replay run unitree-go2` | Quadruped navigation replay with SLAM, costmap, and A-star planning |
-| `dimos --replay --replay-db go2_bigoffice run unitree-go2-memory` | Quadruped spatial memory replay |
+| `dimos --replay --replay-db go2_bigoffice run unitree-go2` | Quadruped spatial memory replay |
 | `dimos --simulation run unitree-go2-agentic` | Quadruped LLM agent plus MCP server in simulation (needs `OPENAI_API_KEY`) |
 | `dimos --simulation run unitree-g1-sim` | Humanoid in MuJoCo simulation |
 | `dimos --replay run drone-basic` | Drone video and telemetry replay |

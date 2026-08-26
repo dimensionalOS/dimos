@@ -36,7 +36,7 @@ from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.livox.module import Mid360
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
-from dimos.memory.module import default_recording_dir
+from dimos.memory.module import RECORDING_DIR
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.robot.unitree.go2.go2_mid360_recorder import Go2Mid360Recorder
@@ -48,9 +48,6 @@ _RECORD_PCAP = os.getenv("RECORD_PCAP", "").lower() in ("1", "true", "yes", "on"
 
 _TELEOP_LINEAR_SPEED = 0.3
 _TELEOP_ANGULAR_SPEED = 0.6
-
-
-_RECORDING_DIR = default_recording_dir()
 
 
 unitree_go2_mid360_record = autoconnect(
@@ -73,7 +70,7 @@ unitree_go2_mid360_record = autoconnect(
             (PointLio, "odometry", "pointlio_odometry"),
         ]
     ),
-    Go2Mid360Recorder.blueprint(db_path=str(_RECORDING_DIR / "mem2.db")),
+    Go2Mid360Recorder.blueprint(),
     # Continuously republishes the rig's mount frames onto tf (no latched static tf).
     Go2Mid360StaticTf.blueprint(),
     # Pygame keyboard teleop (WASD drive + Q/E strafe). Its cmd_vel feeds
@@ -85,12 +82,12 @@ unitree_go2_mid360_record = autoconnect(
             (KeyboardTeleop, "cmd_vel", "tele_cmd_vel"),
         ]
     ),
-).global_config(n_workers=12, robot_model="unitree_go2")
+).global_config(n_workers=12, robot_model="unitree_go2", record=True)
 
 if _RECORD_PCAP:
     unitree_go2_mid360_record = autoconnect(
         unitree_go2_mid360_record,
-        Mid360PcapRecorder.blueprint(pcap_path=str(_RECORDING_DIR / "mid360.pcap")),
+        Mid360PcapRecorder.blueprint(pcap_path=str(RECORDING_DIR / "mid360.pcap")),
     )
 
 

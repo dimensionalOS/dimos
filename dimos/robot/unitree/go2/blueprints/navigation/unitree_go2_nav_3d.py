@@ -15,12 +15,9 @@
 
 """3d navigation on Go2 with ray tracing and MLS planning"""
 
-from datetime import datetime
 import os
-from pathlib import Path
 from typing import Any
 
-from dimos.constants import RECORDINGS_DIR
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.stream import In
@@ -28,7 +25,7 @@ from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder
 from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.memory.module import pose_setter_for
+from dimos.memory.module import RECORDING_DIR, pose_setter_for
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.basic_path_follower.module import BasicPathFollower
@@ -67,17 +64,6 @@ _RECORD = os.getenv("DIMOS_NAV_RECORD", "").lower() in ("1", "true", "yes", "on"
 # Opt-in raw-Livox capture: set RECORD_PCAP=1 to also tcpdump the Mid-360 UDP
 # stream into recordings/ (needs DIMOS_MID360_LIDAR_IP).
 _RECORD_PCAP = os.getenv("RECORD_PCAP", "").lower() in ("1", "true", "yes", "on")
-
-
-def _recording_dir() -> Path:
-    now = datetime.now().astimezone()
-    stamp = (
-        now.strftime("%Y-%m-%d") + "_" + now.strftime("%I-%M%p").lower() + "-" + now.strftime("%Z")
-    )
-    return RECORDINGS_DIR / stamp
-
-
-_RECORDING_DIR = _recording_dir()
 
 
 def _render_global_map(msg: Any) -> Any:
@@ -178,16 +164,16 @@ unitree_go2_nav_3d = autoconnect(
 if _RECORD:
     unitree_go2_nav_3d = autoconnect(
         unitree_go2_nav_3d,
-        Go2Mid360Recorder.blueprint(db_path=str(_RECORDING_DIR / "mem2.db")).remappings(
+        Go2Mid360Recorder.blueprint().remappings(
             [
                 (Go2Mid360Recorder, "pointlio_lidar", "lidar"),
                 (Go2Mid360Recorder, "pointlio_odometry", "odometry"),
             ]
         ),
-    )
+    ).global_config(record=True)
 
 if _RECORD_PCAP:
     unitree_go2_nav_3d = autoconnect(
         unitree_go2_nav_3d,
-        Mid360PcapRecorder.blueprint(pcap_path=_RECORDING_DIR / "mid360.pcap"),
+        Mid360PcapRecorder.blueprint(pcap_path=RECORDING_DIR / "mid360.pcap"),
     )

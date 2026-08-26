@@ -27,15 +27,12 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
-from dimos.memory.module import default_recording_dir
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.g1.effectors.high_level.dds_sdk import G1HighLevelDdsSdk
 from dimos.robot.unitree.g1.g1_recorder import G1Recorder
 from dimos.robot.unitree.g1.g1_tf_publisher import G1TfPublisher
 from dimos.visualization.vis_module import vis_module
-
-_RECORDING_DIR = default_recording_dir()
 
 
 def _g1_record_rerun_blueprint() -> Any:
@@ -123,12 +120,12 @@ unitree_g1_record = autoconnect(
             (RealSenseCamera, "depth_camera_info", "realsense_depth_camera_info"),
         ]
     ),
-    G1Recorder.blueprint(db_path=str(_RECORDING_DIR / "mem2.db")),
+    G1Recorder.blueprint(),
     # Mount frames onto tf, base_link edge live from the waist joints.
     G1TfPublisher.blueprint(),
     # Viewer keyboard teleop feeds MovementManager via tele_cmd_vel.
     _record_vis,
-).global_config(n_workers=12, robot_model="unitree_g1")
+).global_config(n_workers=12, robot_model="unitree_g1", record=True)
 
 
 if __name__ == "__main__":

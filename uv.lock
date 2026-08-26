@@ -1726,6 +1726,7 @@ dependencies = [
     { name = "lazy-loader" },
     { name = "llvmlite" },
     { name = "lz4" },
+    { name = "mcap" },
     { name = "numba" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -2022,7 +2023,6 @@ unitree-dds = [
     { name = "langchain-ollama" },
     { name = "langchain-openai" },
     { name = "lap" },
-    { name = "mcap" },
     { name = "moondream" },
     { name = "ollama" },
     { name = "omegaconf" },
@@ -2213,7 +2213,6 @@ tests-self-hosted = [
     { name = "langchain-openai" },
     { name = "lap" },
     { name = "maturin" },
-    { name = "mcap" },
     { name = "md-babel-py" },
     { name = "moondream" },
     { name = "mujoco" },
@@ -2314,7 +2313,7 @@ requires-dist = [
     { name = "manifold3d", marker = "extra == 'apriltag'", specifier = ">=2.5.0" },
     { name = "matplotlib", marker = "extra == 'graspgenx'", specifier = ">=3.7.1" },
     { name = "matplotlib", marker = "extra == 'manipulation'", specifier = ">=3.7.1" },
-    { name = "mcap", marker = "extra == 'unitree-dds'", specifier = ">=1.2.0" },
+    { name = "mcap", specifier = ">=1.2.0" },
     { name = "moondream", marker = "extra == 'perception'" },
     { name = "mujoco", marker = "extra == 'sim'", specifier = ">=3.3.4" },
     { name = "numba", specifier = ">=0.60.0" },
@@ -2550,7 +2549,6 @@ tests-self-hosted = [
     { name = "langchain-openai", specifier = ">=1,<2" },
     { name = "lap", specifier = ">=0.5.12" },
     { name = "maturin", specifier = ">=1.7" },
-    { name = "mcap", specifier = ">=1.2.0" },
     { name = "md-babel-py", specifier = ">=1.4.0" },
     { name = "moondream" },
     { name = "mujoco", specifier = ">=3.3.4" },
@@ -4383,6 +4381,12 @@ wheels = [
 ]
 
 [[package]]
+name = "jsmin"
+version = "3.0.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/5e/73/e01e4c5e11ad0494f4407a3f623ad4d87714909f50b17a06ed121034ff6e/jsmin-3.0.1.tar.gz", hash = "sha256:c0959a121ef94542e807a674142606f7e90214a2b3d1eb17300244bbb5cc2bfc", size = 13925, upload-time = "2022-01-16T20:35:59.13Z" }
+
+[[package]]
 name = "jsonlines"
 version = "4.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4393,12 +4397,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/35/87/bcda8e46c88d0e34c
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f8/62/d9ba6323b9202dd2fe166beab8a86d29465c41a0288cbe229fac60c1ab8d/jsonlines-4.0.0-py3-none-any.whl", hash = "sha256:185b334ff2ca5a91362993f42e83588a360cf95ce4b71a73548502bda52a7c55", size = 8701, upload-time = "2023-09-01T12:34:42.563Z" },
 ]
-
-[[package]]
-name = "jsmin"
-version = "3.0.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/5e/73/e01e4c5e11ad0494f4407a3f623ad4d87714909f50b17a06ed121034ff6e/jsmin-3.0.1.tar.gz", hash = "sha256:c0959a121ef94542e807a674142606f7e90214a2b3d1eb17300244bbb5cc2bfc", size = 13925, upload-time = "2022-01-16T20:35:59.13Z" }
 
 [[package]]
 name = "jsonpatch"

@@ -137,7 +137,7 @@ mid360_realsense_record = autoconnect(
     Mid360RealsenseRecorder.blueprint(),
     # Continuously republishes the rig's mount frames onto tf (no latched static tf).
     Mid360RealsenseStaticTf.blueprint(),
-).global_config(n_workers=8)
+).global_config(n_workers=8, record=True)
 
 # Same rig, also capturing a raw .pcap of the Mid-360 UDP stream.
 mid360_realsense_record_with_pcap = autoconnect(

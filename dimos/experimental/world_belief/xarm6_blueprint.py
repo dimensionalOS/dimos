@@ -134,4 +134,4 @@ xarm6_worldbelief = autoconnect(
         hardware=[_hw],
         tasks=[trajectory_task(_hw)],
     ),
-).global_config(n_workers=8)
+).global_config(n_workers=8, record=True)

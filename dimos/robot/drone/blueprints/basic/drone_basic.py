@@ -20,6 +20,11 @@ from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
+from dimos.core.stream import In
+from dimos.memory.module import Recorder, pose_setter_for
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.drone.camera_module import DroneCameraModule
 from dimos.robot.drone.connection_module import DroneConnectionModule
 from dimos.visualization.vis_module import vis_module
@@ -66,6 +71,23 @@ _rerun_config = {
 
 _vis = vis_module(global_config.viewer, rerun_config=_rerun_config)
 
+
+class DroneRecorder(Recorder):
+    color_image: In[Image]
+    odom: In[PoseStamped]
+
+    _last_odom: Pose | None = None
+
+    @pose_setter_for("odom")
+    async def _odom_pose(self, msg: PoseStamped) -> Pose | None:
+        self._last_odom = msg
+        return self._last_odom
+
+    @pose_setter_for("color_image")
+    async def _image_pose(self, msg: Image) -> Pose | None:
+        return self._last_odom
+
+
 # Determine connection string based on replay flag
 connection_string = "udp:0.0.0.0:14550"
 video_port = 5600
@@ -80,4 +102,5 @@ drone_basic = autoconnect(
         outdoor=False,
     ),
     DroneCameraModule.blueprint(camera_intrinsics=[1000.0, 1000.0, 960.0, 540.0]),
+    DroneRecorder.blueprint(),
 )

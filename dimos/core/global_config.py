@@ -60,6 +60,9 @@ class GlobalConfig(BaseSettings):
     simulation: str = ""
     replay: bool = False
     replay_db: str = "go2_short"
+    # --record: Recorders in the blueprint write to RECORDING_DIR (off unless set).
+    record: bool = False
+    record_format: Literal["mcap", "sqlite"] = "mcap"
     new_memory: bool = False
     # How every zenoh session this process opens joins the network.
     zenoh_mode: ZenohProcessMode = "peer"
