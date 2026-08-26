@@ -183,12 +183,19 @@ _vis_nav = autoconnect(
             "blueprint": _rerun_blueprint,
             "static": {ALFRED_RERUN_ROOT: _alfred_urdf_static},
             # Keyed by the topic's entity path, before any visual_override renames it.
-            # Both imagers share world/image, so it needs twice the rate to land one of
-            # each per second.
+            # Everything heavy is held to 1 Hz: the viewer rides a wifi link, and the
+            # uncapped clouds put it seconds behind live. tf and odometry stay uncapped
+            # so the pose renders smoothly; they are a few hundred bytes a message.
             "max_hz": {
                 "world/color_image": 1.0,
                 "world/depth_image": 1.0,
-                "world/image": 2.0,
+                "world/image": 1.0,
+                "world/depth_cloud": 1.0,
+                "world/global_map": 1.0,
+                "world/local_map": 1.0,
+                "world/surface_map": 1.0,
+                "world/nodes": 1.0,
+                "world/node_edges": 1.0,
             },
             # An image only renders if it shares an entity with its Pinhole.
             "visual_override": {
