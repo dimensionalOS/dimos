@@ -82,10 +82,18 @@ dimos dataprep build -s <session.db> -c <config.json> -f hdf5
 
 # Physical OpenYam + Quest + /dev/video0 wrist camera
 dimos run learning-collect-quest-openyam --can-port can0
+# Experimental native recorder over reliable Zenoh
+dimos run learning-collect-quest-openyam-native --can-port can0
 dimos dataprep build \
   --source <session_openyam.db> \
   --config dimos/imitation/dataprep/openyam_lerobot.json
 ```
+
+The native OpenYAM blueprint is an explicit experiment; the command without
+`-native` keeps using the Python recorder and shared-memory camera transport.
+The native graph uses reliable Zenoh for all recorded streams. Override its
+session path with
+`--nativecollectionrecorder.store.path /path/to/session_openyam.db`.
 
 `--source` / `--output` / `--format` override whatever the config specifies, so
 you can reuse one config across runs and just swap `--source`. The dataset is

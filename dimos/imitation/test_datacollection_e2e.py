@@ -28,11 +28,6 @@ import pyarrow.parquet as pq
 import pytest
 
 from dimos.core.stream import Stream, Transport
-from dimos.imitation.collection.episode_monitor import (
-    EpisodeEvent,
-    EpisodeStatus,
-    RecordingState,
-)
 from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.imitation.dataprep.build import inspect_dataset, run_dataprep
 from dimos.imitation.dataprep.core import (
@@ -44,6 +39,11 @@ from dimos.imitation.dataprep.core import (
     extract_episodes,
 )
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.imitation_msgs.EpisodeStatus import (
+    EpisodeEvent,
+    EpisodeStatus,
+    RecordingState,
+)
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.testing.waiting import wait_until
