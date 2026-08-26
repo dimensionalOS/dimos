@@ -94,3 +94,18 @@ Append mode remains unsupported for MCAP.
 Both backends preserve source timestamps for common stamped messages. Arbitrary
 pickle payloads, Python `pose_setter_for` hooks, and spatial pose attachment
 remain Python-recorder features; unsupported combinations fail during startup.
+
+## OpenYAM collection profile
+
+The experimental imitation-learning profile uses this recorder without adding
+Python-side recording behavior:
+
+```bash
+dimos run learning-collect-quest-openyam-native --can-port can0
+```
+
+It records the USB wrist camera, aggregate coordinator joint state, and typed
+episode status over reliable Zenoh into a Python-readable SQLite artifact. The
+stable `learning-collect-quest-openyam` command continues to use the Python
+recorder and pSHM. Override the native artifact path with
+`--nativecollectionrecorder.store.path /path/to/session_openyam.db`.

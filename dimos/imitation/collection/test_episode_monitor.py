@@ -32,9 +32,9 @@ import pytest_mock
 
 from dimos.imitation.collection.episode_monitor import (
     EpisodeMonitorModule,
-    EpisodeStatus,
     KeyPress,
 )
+from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.teleop.quest.quest_types import BUTTON_ALIASES, Buttons
 

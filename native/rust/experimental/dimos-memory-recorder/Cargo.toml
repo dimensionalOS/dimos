@@ -9,7 +9,7 @@ license = "Apache-2.0"
 anyhow = "1"
 crossbeam-channel = "0.5"
 dimos-module = { path = "../../dimos-module" }
-lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "dd2159513ebfaa7ebc5fc32bf60209cd09aa1ca5" }
 lz4_flex = "0.14.0"
 mcap = { version = "0.25.0", default-features = false, features = ["zstd"] }
 rusqlite = "0.40.2"
