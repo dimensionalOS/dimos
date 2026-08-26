@@ -28,13 +28,6 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 REPORT_INTERVAL_S = 5.0
-INSPECTED_BODY_JOINTS = (
-    "hips",
-    "left-hand-wrist",
-    "right-hand-wrist",
-    "left-foot-ankle",
-    "right-foot-ankle",
-)
 
 
 def body_tracking_summary(
@@ -48,14 +41,14 @@ def body_tracking_summary(
     state = "unavailable" if joints is None else "empty" if not joints else "tracking"
     positions: dict[str, tuple[float, float, float]] = {}
     if joints:
-        for name in INSPECTED_BODY_JOINTS:
-            pose = joints.get(name)
-            if pose is not None:
-                positions[name] = (
-                    round(pose.position.x, 3),
-                    round(pose.position.y, 3),
-                    round(pose.position.z, 3),
-                )
+        positions = {
+            name: (
+                round(pose.position[0], 3),
+                round(pose.position[1], 3),
+                round(pose.position[2], 3),
+            )
+            for name, pose in joints.items()
+        }
 
     return {
         "snapshot_rate_hz": round(snapshot_rate_hz, 1),

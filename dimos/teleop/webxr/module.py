@@ -35,7 +35,7 @@ from dimos_lcm.sensor_msgs import Joy as LCMJoy
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import Field
+from pydantic import Field, ValidationError
 from reactivex.disposable import Disposable
 
 from dimos.constants import DIMOS_PROJECT_ROOT
@@ -49,7 +49,6 @@ from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.teleop.webxr.body_tracking import (
     BodyTrackingMode,
     BodyTrackingSnapshot,
-    decode_body_tracking_snapshot,
 )
 
 # Hand is re-exported for callers; it lives in controller_types.
@@ -237,9 +236,9 @@ class WebXRTeleopModule(Module):
 
     def _dispatch_text_message(self, payload: str) -> bool:
         try:
-            snapshot = decode_body_tracking_snapshot(payload)
-        except ValueError as exc:
-            logger.warning("Dropping malformed WebXR text message", error=str(exc))
+            snapshot = BodyTrackingSnapshot.model_validate_json(payload)
+        except ValidationError as exc:
+            logger.warning("Dropping malformed WebXR body snapshot", error=str(exc))
             return False
         self.body_tracking.publish(snapshot)
         return True

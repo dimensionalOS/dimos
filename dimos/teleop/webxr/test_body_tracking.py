@@ -14,9 +14,10 @@
 
 import json
 
+from pydantic import ValidationError
 import pytest
 
-from dimos.teleop.webxr.body_tracking import decode_body_tracking_snapshot
+from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
 
 
 def _payload(*, joints) -> str:
@@ -30,8 +31,8 @@ def _payload(*, joints) -> str:
     )
 
 
-def test_decode_body_tracking_snapshot_preserves_named_poses() -> None:
-    snapshot = decode_body_tracking_snapshot(
+def test_body_tracking_snapshot_validates_named_poses() -> None:
+    snapshot = BodyTrackingSnapshot.model_validate_json(
         _payload(
             joints={
                 "hips": {
@@ -50,13 +51,13 @@ def test_decode_body_tracking_snapshot_preserves_named_poses() -> None:
     assert snapshot.frame_id == "bounded-floor"
     assert snapshot.joints is not None
     assert list(snapshot.joints) == ["hips", "left-foot-ankle"]
-    assert snapshot.joints["hips"].position.to_list() == [1.0, 2.0, 3.0]
-    assert snapshot.joints["hips"].orientation.to_list() == [0.1, 0.2, 0.3, 0.9]
+    assert snapshot.joints["hips"].position == (1.0, 2.0, 3.0)
+    assert snapshot.joints["hips"].orientation == (0.1, 0.2, 0.3, 0.9)
 
 
 @pytest.mark.parametrize("joints", [None, {}])
-def test_decode_body_tracking_snapshot_preserves_absence_state(joints) -> None:
-    snapshot = decode_body_tracking_snapshot(_payload(joints=joints))
+def test_body_tracking_snapshot_preserves_absence_state(joints) -> None:
+    snapshot = BodyTrackingSnapshot.model_validate_json(_payload(joints=joints))
 
     assert snapshot.joints == joints
 
@@ -82,6 +83,6 @@ def test_decode_body_tracking_snapshot_preserves_absence_state(joints) -> None:
         ),
     ],
 )
-def test_decode_body_tracking_snapshot_rejects_malformed_payloads(payload: str) -> None:
-    with pytest.raises(ValueError, match="invalid body-tracking snapshot"):
-        decode_body_tracking_snapshot(payload)
+def test_body_tracking_snapshot_rejects_malformed_payloads(payload: str) -> None:
+    with pytest.raises(ValidationError):
+        BodyTrackingSnapshot.model_validate_json(payload)

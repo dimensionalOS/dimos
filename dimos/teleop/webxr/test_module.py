@@ -16,8 +16,9 @@ import asyncio
 from collections.abc import Awaitable, Callable, Iterator
 import json
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 import pytest_mock
@@ -34,7 +35,6 @@ from dimos.teleop.webxr.controller_types import (
 )
 from dimos.teleop.webxr.extensions import ArmTeleopModule, Go2TeleopModule, HandTeleopModule
 from dimos.teleop.webxr.module import WebXRTeleopModule, _ws_send_text
-from dimos.web.robot_web_interface import RobotWebInterface
 
 
 @pytest.fixture
@@ -44,6 +44,17 @@ def module() -> Iterator[WebXRTeleopModule]:
         yield module
     finally:
         module.stop()
+
+
+def _setup_test_app(
+    module: WebXRTeleopModule,
+    mocker: pytest_mock.MockerFixture,
+) -> FastAPI:
+    app = FastAPI()
+    web_server = mocker.Mock(app=app)
+    module._web_server = cast("Any", web_server)
+    module._setup_routes()
+    return app
 
 
 def test_webxr_web_server_is_initialized_during_start(
@@ -340,13 +351,14 @@ def test_enabled_webxr_config_requests_body_tracking(
         module.stop()
 
 
-def test_webxr_config_route_exposes_body_tracking_mode() -> None:
+def test_webxr_config_route_exposes_body_tracking_mode(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
     module = WebXRTeleopModule(body_tracking_mode="required")
-    module._web_server = RobotWebInterface(host="127.0.0.1", port=9443)
-    module._setup_routes()
+    app = _setup_test_app(module, mocker)
 
     try:
-        with TestClient(module._web_server.app) as client:
+        with TestClient(app) as client:
             response = client.get("/teleop/config")
 
         assert response.status_code == 200
@@ -400,13 +412,14 @@ def test_go2_malformed_joy_clears_stale_state_and_publishes_zero_velocity(
         module.stop()
 
 
-def test_webxr_body_reader_is_served_as_javascript() -> None:
+def test_webxr_body_reader_is_served_as_javascript(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
     module = WebXRTeleopModule()
-    module._web_server = RobotWebInterface(host="127.0.0.1", port=9443)
-    module._setup_routes()
+    app = _setup_test_app(module, mocker)
 
     try:
-        with TestClient(module._web_server.app) as client:
+        with TestClient(app) as client:
             response = client.get("/static/webxr_body.mjs")
 
         assert response.status_code == 200
@@ -465,7 +478,7 @@ def test_text_body_tracking_snapshot_is_published(
     assert isinstance(snapshot, BodyTrackingSnapshot)
     assert snapshot.frame_id == "bounded-floor"
     assert snapshot.joints is not None
-    assert snapshot.joints["hips"].position.to_list() == [1.0, 2.0, 3.0]
+    assert snapshot.joints["hips"].position == (1.0, 2.0, 3.0)
 
 
 def test_malformed_text_message_is_dropped(

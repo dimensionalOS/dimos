@@ -100,6 +100,14 @@ entire session; both hands must engage again before commands resume.
 **Buttons**: trigger, grip, touchpad, thumbstick, X/A, Y/B, optional menu. WebXR
 omits a platform-reserved menu button on devices such as PICO controllers.
 
+## Body Tracking Messages
+
+The WebSocket carries two frame formats. Controller poses and joystick state use
+binary LCM messages. When body tracking is enabled, the browser sends JSON text
+frames containing every joint resolved by the headset. A `null` joint map means
+the body source is unavailable; an empty map means no joints resolved for that
+frame.
+
 ## File Structure
 
 ```

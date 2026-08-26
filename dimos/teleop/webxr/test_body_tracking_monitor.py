@@ -16,7 +16,6 @@ from collections.abc import Iterator
 
 import pytest
 
-from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
 from dimos.teleop.webxr.body_tracking_monitor import (
     BodyTrackingMonitor,
@@ -35,11 +34,18 @@ def monitor() -> Iterator[BodyTrackingMonitor]:
 
 def test_body_tracking_summary_reports_best_effort_joint_positions() -> None:
     snapshot = BodyTrackingSnapshot(
+        type="body_tracking_snapshot",
         capture_time_s=10.0,
         frame_id="bounded-floor",
         joints={
-            "hips": Pose(0.12345, 1.23456, -0.34567),
-            "vendor-extra-joint": Pose(3.0, 2.0, 1.0),
+            "hips": {
+                "position": (0.12345, 1.23456, -0.34567),
+                "orientation": (0.0, 0.0, 0.0, 1.0),
+            },
+            "vendor-extra-joint": {
+                "position": (3.0, 2.0, 1.0),
+                "orientation": (0.0, 0.0, 0.0, 1.0),
+            },
         },
     )
 
@@ -55,7 +61,10 @@ def test_body_tracking_summary_reports_best_effort_joint_positions() -> None:
         "reference_space": "bounded-floor",
         "resolved_joint_count": 2,
         "resolved_joint_ever_seen": True,
-        "joint_positions": {"hips": (0.123, 1.235, -0.346)},
+        "joint_positions": {
+            "hips": (0.123, 1.235, -0.346),
+            "vendor-extra-joint": (3.0, 2.0, 1.0),
+        },
     }
 
 
@@ -68,7 +77,17 @@ def test_body_tracking_monitor_logs_first_resolved_joint_once(
         side_effect=[monitor._report_started_at + 1.0, monitor._report_started_at + 2.0],
     )
     info = mocker.patch("dimos.teleop.webxr.body_tracking_monitor.logger.info")
-    snapshot = BodyTrackingSnapshot(1.0, "local-floor", {"hips": Pose()})
+    snapshot = BodyTrackingSnapshot(
+        type="body_tracking_snapshot",
+        capture_time_s=1.0,
+        frame_id="local-floor",
+        joints={
+            "hips": {
+                "position": (0.0, 0.0, 0.0),
+                "orientation": (0.0, 0.0, 0.0, 1.0),
+            }
+        },
+    )
 
     monitor._on_body_tracking(snapshot)
     monitor._on_body_tracking(snapshot)
@@ -90,7 +109,14 @@ def test_body_tracking_monitor_warns_when_required_heartbeat_has_no_body(
     )
     warning = mocker.patch("dimos.teleop.webxr.body_tracking_monitor.logger.warning")
 
-    monitor._on_body_tracking(BodyTrackingSnapshot(1.0, "local-floor", None))
+    monitor._on_body_tracking(
+        BodyTrackingSnapshot(
+            type="body_tracking_snapshot",
+            capture_time_s=1.0,
+            frame_id="local-floor",
+            joints=None,
+        )
+    )
 
     warning.assert_called_once_with(
         "WebXR body tracking has no resolved joints",
