@@ -17,6 +17,9 @@ The APIs and some names below do not exist yet. This file only shows how we
 expect hosted placement to be used.
 """
 
+from __future__ import annotations
+
+# Top level Blueprint
 # Keep the robot stack local and run marker detection on one GPU Host.
 unitree_go2_markers = autoconnect(
     unitree_go2,
@@ -42,3 +45,29 @@ pinned_g1 = autoconnect(
 
 # Select one matching embodiment; this does not create replicas.
 available_g1 = unitree_g1.blueprint().placement(tags={"g1"})
+
+# Host client
+# ```bash
+# dimos host serve --name g1-01 --tag g1 --tag lab-a
+
+
+class HostClient:
+    pass
+
+
+# Placement Method
+
+
+class Blueprint:
+    def placement(self, host: str | None = None, tags: set[str] | None = None) -> Blueprint:
+        """Specify placement constraints for this blueprint.
+
+        Args:
+            host: The exact host name or ID to place on.
+            tags: A set of tags to match against available hosts.
+
+        Returns:
+            A new Blueprint with the specified placement constraints.
+        """
+        # Implementation would go here
+        return self
