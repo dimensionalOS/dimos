@@ -37,9 +37,9 @@ def joint_origin(name: str) -> tuple[np.ndarray, np.ndarray]:
 
 
 def test_the_camera_mount_the_blueprint_publishes_matches_the_urdf():
-    """The camera driver publishes base_link->camera_link itself and never reads the urdf,
+    """The camera driver publishes base_link->d455_link itself and never reads the urdf,
     so the two can drift apart silently."""
-    translation, rpy = joint_origin("camera_joint")
+    translation, rpy = joint_origin("d455_joint")
     mount = D455_MOUNT.translation
     assert np.allclose([mount.x, mount.y, mount.z], translation, atol=1e-4)
 

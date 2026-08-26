@@ -81,17 +81,18 @@
     <origin xyz="-0.2 -0.2 0.05" rpy="0 0 0"/>
   </joint>
 
-  <!-- Lift mast, now at the front center of the deck. ESTIMATED 2026-08-26 by
-       back-projecting its base brackets in the top-down photo. -->
+  <!-- Lift mast at the front center of the deck. Height MEASURED 2026-08-26 from
+       the side photo, scaled by the FLOW base height (deck top 0.33 m above
+       floor): mast top 2.01 m above floor -> 1.68 m of extrusion above the deck. -->
   <link name="mast_link">
     <visual>
-      <origin xyz="0 0 0.325" rpy="0 0 0"/>
-      <geometry><box size="0.10 0.20 0.65"/></geometry>
+      <origin xyz="0 0 0.84" rpy="0 0 0"/>
+      <geometry><box size="0.10 0.20 1.68"/></geometry>
       <material name="frame"/>
     </visual>
     <collision>
-      <origin xyz="0 0 0.325" rpy="0 0 0"/>
-      <geometry><box size="0.10 0.20 0.65"/></geometry>
+      <origin xyz="0 0 0.84" rpy="0 0 0"/>
+      <geometry><box size="0.10 0.20 1.68"/></geometry>
     </collision>
   </link>
   <joint name="mast_joint" type="fixed">
@@ -124,8 +125,10 @@
        RealSense driver puts it; child offsets below are nominal D435i values,
        replace with factory extrinsics read back off the device. -->
   <link name="camera_link">
+    <!-- The link sits at the left IR imager, not the housing center, so the box
+         is offset along -y (infra2 is 50 mm along -y, housing 90 mm wide). -->
     <visual>
-      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <origin xyz="0 -0.025 0" rpy="0 0 0"/>
       <geometry><box size="0.025 0.090 0.025"/></geometry>
       <material name="sensor"/>
     </visual>
@@ -187,6 +190,83 @@
   <link name="camera_accel_optical_frame"/>
   <joint name="camera_accel_optical_joint" type="fixed">
     <parent link="camera_accel_frame"/><child link="camera_accel_optical_frame"/>
+    <origin xyz="0 0 0" rpy="-1.5707963 0 -1.5707963"/>
+  </joint>
+
+  <!-- RealSense D455 on the mast, centered left-right, facing forward, pitched
+       10 deg down. MEASURED 2026-08-26 from the side photo scaled by the FLOW
+       base height: camera center 1.69 m above floor (0.32 m below the mast top),
+       bracket standing it ~3 cm proud of the mast front face (0.26 + 0.03).
+       Frame prefix d455 so it can coexist with the rear D435i (camera_*); run
+       the driver with camera_name="d455". Child offsets are nominal D455 values
+       (95 mm IR baseline); needs a spin calibration. -->
+  <link name="d455_link">
+    <!-- The link sits at the left IR imager (RealSense convention), ~15 mm from
+         the left end of the 124 mm housing, so the box is offset along -y. -->
+    <visual>
+      <origin xyz="0 -0.0475 0" rpy="0 0 0"/>
+      <geometry><box size="0.026 0.124 0.029"/></geometry>
+      <material name="sensor"/>
+    </visual>
+  </link>
+  <!-- y +0.0475 puts the HOUSING dead center; the link itself is the left imager. -->
+  <joint name="d455_joint" type="fixed">
+    <parent link="base_link"/><child link="d455_link"/>
+    <origin xyz="0.29 0.0475 1.69" rpy="0 0.1745329 0"/>
+  </joint>
+
+  <link name="d455_depth_frame"/>
+  <joint name="d455_depth_joint" type="fixed">
+    <parent link="d455_link"/><child link="d455_depth_frame"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+  <link name="d455_depth_optical_frame"/>
+  <joint name="d455_depth_optical_joint" type="fixed">
+    <parent link="d455_depth_frame"/><child link="d455_depth_optical_frame"/>
+    <origin xyz="0 0 0" rpy="-1.5707963 0 -1.5707963"/>
+  </joint>
+
+  <link name="d455_color_frame"/>
+  <joint name="d455_color_joint" type="fixed">
+    <parent link="d455_link"/><child link="d455_color_frame"/>
+    <origin xyz="0 -0.029 0" rpy="0 0 0"/>
+  </joint>
+  <link name="d455_color_optical_frame"/>
+  <joint name="d455_color_optical_joint" type="fixed">
+    <parent link="d455_color_frame"/><child link="d455_color_optical_frame"/>
+    <origin xyz="0 0 0" rpy="-1.5707963 0 -1.5707963"/>
+  </joint>
+
+  <link name="d455_infra1_frame"/>
+  <joint name="d455_infra1_joint" type="fixed">
+    <parent link="d455_link"/><child link="d455_infra1_frame"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+  <link name="d455_infra1_optical_frame"/>
+  <joint name="d455_infra1_optical_joint" type="fixed">
+    <parent link="d455_infra1_frame"/><child link="d455_infra1_optical_frame"/>
+    <origin xyz="0 0 0" rpy="-1.5707963 0 -1.5707963"/>
+  </joint>
+
+  <link name="d455_infra2_frame"/>
+  <joint name="d455_infra2_joint" type="fixed">
+    <parent link="d455_link"/><child link="d455_infra2_frame"/>
+    <origin xyz="0 -0.095 0" rpy="0 0 0"/>
+  </joint>
+  <link name="d455_infra2_optical_frame"/>
+  <joint name="d455_infra2_optical_joint" type="fixed">
+    <parent link="d455_infra2_frame"/><child link="d455_infra2_optical_frame"/>
+    <origin xyz="0 0 0" rpy="-1.5707963 0 -1.5707963"/>
+  </joint>
+
+  <link name="d455_accel_frame"/>
+  <joint name="d455_accel_joint" type="fixed">
+    <parent link="d455_link"/><child link="d455_accel_frame"/>
+    <origin xyz="-0.0160 -0.0302 0.0074" rpy="0 0 0"/>
+  </joint>
+  <link name="d455_accel_optical_frame"/>
+  <joint name="d455_accel_optical_joint" type="fixed">
+    <parent link="d455_accel_frame"/><child link="d455_accel_optical_frame"/>
     <origin xyz="0 0 0" rpy="-1.5707963 0 -1.5707963"/>
   </joint>
 

@@ -40,16 +40,16 @@ ALFRED_RERUN_ROOT = "world/alfred"
 CAMERA_RERUN_ROOT = "world/camera"
 
 IR_ENTITY_BY_FRAME = {
-    "camera_infra1_optical_frame": f"{CAMERA_RERUN_ROOT}/infra1",
-    "camera_infra2_optical_frame": f"{CAMERA_RERUN_ROOT}/infra2",
+    "d455_infra1_optical_frame": f"{CAMERA_RERUN_ROOT}/infra1",
+    "d455_infra2_optical_frame": f"{CAMERA_RERUN_ROOT}/infra2",
 }
 """The IR pair, left first. Both imagers arrive on one topic, so the entity has to come
 from the message, and cuVSLAM's rig has to be told the order."""
 
-DEPTH_FRAME = "camera_color_optical_frame"
+DEPTH_FRAME = "d455_color_optical_frame"
 """The camera aligns depth to colour, so the depth image arrives in the colour frame."""
 
-IMU_FRAME = "camera_accel_optical_frame"
+IMU_FRAME = "d455_accel_optical_frame"
 
 
 def _image_at(msg: Any, entity_path: str) -> list[tuple[str, Any]]:
@@ -157,7 +157,10 @@ _vis_nav = autoconnect(
         replay_buffer_seconds=2.0,
         # Halves final drift on drive_2026-08-18_23-05-04.db: wheel alone ends 2.66 m out,
         # wheel + gyro 1.33 m, against a 0.59 m floor on the lidar reference's own heading.
-        use_imu=False,  # D435i swapped in; D455_MOUNT calibration misaligns gravity by ~2.4 m/s^2 -> fusion diverges
+        # The mast D455 mount is photo-derived and uncalibrated; the last uncalibrated
+        # mount misaligned gravity by ~2.4 m/s^2 and diverged the fusion, so the IMU
+        # stays off until the spin calibration lands.
+        use_imu=False,
         # Bosch BMI055 datasheet figures, the part in the D455.
         imus={
             IMU_FRAME: ImuConfig(
