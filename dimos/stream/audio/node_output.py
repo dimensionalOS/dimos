@@ -93,10 +93,6 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
             self._stream.start()  # type: ignore[attr-defined]
             self._running.set()
 
-            logger.info(
-                f"Started audio output: {self.sample_rate}Hz, "
-                f"{self.channels} channels, {self.block_size} samples per frame"
-            )
         except Exception as e:
             self._stream = None
             logger.warning(
@@ -126,7 +122,6 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
 
     def stop(self) -> None:
         """Stop audio output and clean up resources."""
-        logger.info("Stopping audio output")
         self._running.clear()
 
         if self._subscription:
