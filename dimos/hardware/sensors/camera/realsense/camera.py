@@ -59,6 +59,8 @@ def ms_to_s(milliseconds: float) -> float:
 if TYPE_CHECKING:
     import pyrealsense2 as rs  # type: ignore[import-not-found,import-untyped]
 
+logger = setup_logger()
+
 
 def default_base_transform() -> Transform:
     """Default identity transform for camera mounting."""
@@ -97,11 +99,7 @@ class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     enable_imu: bool = False
     # Gyro rate, and so the Imu output rate.
     imu_hz: int = 400
-    # Noise model published on ``imu_info`` alongside the samples. Only the Allan
-    # constants are read from here: the frame and delivered rate the driver knows
-    # and stamps itself. The device cannot report these (the calibration table
-    # carries no noise variances), so they ride in config; the defaults are D455
-    # values from a kalibr run. None publishes nothing.
+    # Noise model published on ``imu_info``; the driver stamps frame and rate itself.
     imu_info: ImuInfo | None = Field(default_factory=default_imu_info)
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0
@@ -565,9 +563,14 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         while self._running and self._pipeline is not None:
             try:
                 frames = self._pipeline.wait_for_frames(timeout_ms=1000)
-            except (RuntimeError, AttributeError):
-                # Pipeline stopped or None - exit loop
+            except AttributeError:
+                # Pipeline cleared by stop() - exit loop
                 break
+            except RuntimeError:
+                # Frame timeouts are transient, from warm-up or USB stalls. Keep waiting.
+                if self._running:
+                    logger.warning("RealSense: no frames within 1s - retrying")
+                continue
 
             # Grab the infrared stereo pair from the raw frameset before align()
             # (align rebuilds the frameset around depth+color and drops IR).

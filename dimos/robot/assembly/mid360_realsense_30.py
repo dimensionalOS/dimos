@@ -15,12 +15,12 @@
 """The RealSense D435i + Mid-360 rig: static mount frames, recorder, record blueprints.
 
 A single physical sensor assembly described in one place: the mount geometry published
-onto tf (:class:`Mid360RealsenseStaticTf`), the memory2 recorder
+onto tf (:class:`Mid360RealsenseStaticTf`), the memory recorder
 (:class:`Mid360RealsenseRecorder`), and the record blueprints that wire them to the
 live sensors.
 
 Point-LIO odom+lidar and the RealSense color/depth/pointcloud streams are recorded into
-a memory2 db, with the rig's mount frames published continuously onto tf. Two variants:
+a memory db, with the rig's mount frames published continuously onto tf. Two variants:
 ``mid360_realsense_record`` (db only) and ``mid360_realsense_record_with_pcap`` (also
 captures a raw .pcap of the Mid-360 UDP stream).
 
@@ -97,7 +97,7 @@ class Mid360RealsenseStaticTf(StaticTfPublisher):
 
 
 class Mid360RealsenseRecorder(PointlioRecorder):
-    """Records Point-LIO odom+lidar plus the RealSense streams into a memory2 db.
+    """Records Point-LIO odom+lidar plus the RealSense streams into a memory db.
 
     Trajectory is baked into ``pointlio_lidar`` via the inherited ``@pose_setter_for``.
     The raw Livox stream is NOT recorded here — enable the pcap recorder in the record
