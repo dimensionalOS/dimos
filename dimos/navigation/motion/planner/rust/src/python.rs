@@ -19,42 +19,15 @@ use pyo3::prelude::*;
 
 use crate::planner::{plan as plan_impl, Emb, COMMIT_MARGIN};
 
-/// The `Embodiment` fields the search reads, in declaration order: length,
-/// width, center_off, comfort, precision, strafe, reverse, yaw_w, envelope,
-/// arc_inflate. `envelope` is the measured per-heading rows,
-/// `(deg, length, width, off_x, off_y)` each; an empty sequence asks for the
-/// all-gait union at every heading, which is what an unmeasured embodiment
-/// gets. A tuple rather than a class because `planners/target.py` marshals it
-/// straight off the frozen dataclass, and the crossing is the spec.
-/// `target.py`'s marshalling of an `Embodiment`; the governor rides as its own
-/// tuple because pyo3 extracts at most twelve elements.
-type EmbTuple = (
-    f64,
-    f64,
-    f64,
-    f64,
-    f64,
-    f64,
-    f64,
-    f64,
-    Vec<[f64; 5]>,
-    f64,
-    (
-        (f64, f64, f64, f64),
-        (f64, f64, f64),
-        (f64, f64),
-        (f64, f64, f64),
-        (f64, f64, f64),
-    ),
-    String,
-);
-
 /// One plan call. points: (N, 2) float64 obstacle xy in world frame -- every
 /// row is an obstacle, the caller's model already decided which (see
-/// `planner.rs`). `incumbent` is the (M, 3) route the caller last published, or
-/// None on the first plan and after a reset; `commit_margin` is
-/// `scenarios.COMMIT_MARGIN`, which python owns and hands over here the way it
-/// hands over the envelope. Returns an (M, 3) array of (x, y, yaw) at
+/// `planner.rs`). `emb` is the `Embodiment` as JSON -- the same dict the native
+/// modules are configured with, dumped by `planners/target.py`; an empty
+/// `envelope` asks for the all-gait union at every heading, which is what an
+/// unmeasured embodiment gets. `incumbent` is the (M, 3) route the caller last
+/// published, or None on the first plan and after a reset; `commit_margin` is
+/// `se2.COMMIT_MARGIN`, which python owns and hands over here the way it hands
+/// over the body. Returns an (M, 3) array of (x, y, yaw) at
 /// `resolution`, or None to refuse.
 #[pyfunction]
 #[pyo3(signature = (points, pose, goal, emb, resolution, incumbent=None, commit_margin=COMMIT_MARGIN))]
@@ -67,7 +40,7 @@ fn plan<'py>(
     points: PyReadonlyArray2<'py, f64>,
     pose: (f64, f64, f64),
     goal: (f64, f64),
-    emb: EmbTuple,
+    emb: &str,
     resolution: f64,
     incumbent: Option<PyReadonlyArray2<'py, f64>>,
     commit_margin: f64,
@@ -99,32 +72,9 @@ fn plan<'py>(
     let pts: Vec<[f64; 2]> = (0..view.shape()[0])
         .map(|k| [view[[k, 0]], view[[k, 1]]])
         .collect();
-    let plant = &emb.10;
-    let emb = Emb {
-        tag: emb.11.clone(),
-        length: emb.0,
-        width: emb.1,
-        center_off: emb.2,
-        comfort: emb.3,
-        precision: emb.4,
-        strafe: emb.5,
-        reverse: emb.6,
-        yaw_w: emb.7,
-        envelope: emb.8,
-        arc_inflate: emb.9,
-        max_speed: plant.0 .0,
-        min_speed: plant.0 .1,
-        speed_clearance: plant.0 .2,
-        max_yaw_rate: plant.0 .3,
-        command_slew: [plant.1 .0, plant.1 .1, plant.1 .2],
-        gait_band: [plant.2 .0, plant.2 .1],
-        walk_gain: plant.3 .0,
-        walk_slip: plant.3 .1,
-        walk_slip_ramp: plant.3 .2,
-        steppable: plant.4 .0,
-        height: plant.4 .1,
-        base_height: plant.4 .2,
-    };
+    // the body as `Embodiment` dumps it: one dict, the native modules' own
+    let emb: Emb = serde_json::from_str(emb)
+        .map_err(|e| PyValueError::new_err(format!("emb is not an Embodiment: {e}")))?;
     let out = py.allow_threads(|| {
         plan_impl(
             &pts,

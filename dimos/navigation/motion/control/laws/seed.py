@@ -33,6 +33,7 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.motion.control.controller import (
     ControllerConfig,
     angle_diff,
+    law_params,
     load_extension,
     path_xy_yaw,
 )
@@ -40,14 +41,12 @@ from dimos.navigation.motion.embodiment.base import Embodiment
 from dimos.navigation.motion.embodiment.go2 import GO2
 
 
-def make(config: ControllerConfig | None = None, _emb: Embodiment = GO2) -> PursuitController:
-    return PursuitController(config)
+def make(emb: Embodiment = GO2) -> PursuitController:
+    return PursuitController(emb)
 
 
-def make_rust(
-    config: ControllerConfig | None = None, _emb: Embodiment = GO2
-) -> RustPursuitController:
-    return RustPursuitController(config)
+def make_rust(emb: Embodiment = GO2) -> RustPursuitController:
+    return RustPursuitController(emb)
 
 
 class PursuitController:
@@ -61,8 +60,9 @@ class PursuitController:
 
     config: ControllerConfig
 
-    def __init__(self, config: ControllerConfig | None = None) -> None:
-        self.config = config or ControllerConfig()
+    def __init__(self, emb: Embodiment = GO2) -> None:
+        self.config = emb.control
+        self.emb = emb
         self.reset()
 
     def reset(self) -> None:
@@ -71,7 +71,7 @@ class PursuitController:
     def update(
         self, pose: PoseStamped, path: Path, t: float, clearance: np.ndarray | None = None
     ) -> Twist:
-        cfg = self.config
+        cfg, emb = self.config, self.emb
         if len(path) < 2:
             # empty path or a single-pose veto stub: there is nothing to
             # follow -- hold position (the planner is saying "stop")
@@ -110,14 +110,12 @@ class PursuitController:
             target_yaw = float(yaws[k])
 
         # speed governor: cap cruise by the room ahead, when we know it
-        vmax = cfg.max_speed
+        vmax = emb.max_speed
         if clearance is not None and len(clearance) == len(xy):
             ahead = clearance[(arcs >= arcs[i]) & (arcs <= arcs[i] + cfg.speed_lookahead)]
             room = float(np.min(ahead)) if len(ahead) else float(clearance[i])
-            frac = (room - cfg.speed_floor_clearance) / max(
-                cfg.speed_clearance - cfg.speed_floor_clearance, 1e-6
-            )
-            vmax = cfg.min_speed + (cfg.max_speed - cfg.min_speed) * min(max(frac, 0.0), 1.0)
+            frac = (room - emb.precision) / max(emb.speed_clearance - emb.precision, 1e-6)
+            vmax = emb.min_speed + (emb.max_speed - emb.min_speed) * min(max(frac, 0.0), 1.0)
 
         # body-frame error -> velocity
         ex, ey = target_xy[0] - px, target_xy[1] - py
@@ -133,7 +131,7 @@ class PursuitController:
         if speed > vmax:
             vx, vy = vx / speed * vmax, vy / speed * vmax
         wz = float(
-            np.clip(cfg.k_yaw * angle_diff(target_yaw, pyaw), -cfg.max_yaw_rate, cfg.max_yaw_rate)
+            np.clip(cfg.k_yaw * angle_diff(target_yaw, pyaw), -emb.max_yaw_rate, emb.max_yaw_rate)
         )
         return Twist(Vector3(vx, vy, 0.0), Vector3(0.0, 0.0, wz))
 
@@ -143,10 +141,10 @@ class RustPursuitController:
 
     config: ControllerConfig
 
-    def __init__(self, config: ControllerConfig | None = None) -> None:
+    def __init__(self, emb: Embodiment = GO2) -> None:
         self._mod: Any = load_extension()
-        self.config = config or ControllerConfig()
-        self._params = self.config.law_params
+        self.config = emb.control
+        self._params = law_params(emb)
         self.reset()
 
     def reset(self) -> None:

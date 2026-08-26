@@ -34,7 +34,6 @@ from typing import Any
 
 from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 import numpy as np
-from pydantic import Field
 from reactivex.disposable import Disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -49,7 +48,6 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.motion.adapter.diagnostics import StallReporter
 from dimos.navigation.motion.control.controller import (
-    ControllerConfig,
     TrajectoryController,
     load,
 )
@@ -120,7 +118,6 @@ class TrajectoryFollowerConfig(ModuleConfig):
     # runs the law that recovers required precision from the path stamps alone.
     track: str = "hinted"
     controller: str | None = None  # registry name or "module:factory"; None = the track's law
-    controller_config: ControllerConfig = Field(default_factory=ControllerConfig)
     control_frequency: float = 10.0
     goal_tolerance: float = 0.20  # planar distance that counts as arrival (m)
     # The clearance hint this module recomputes on the robot has to be the same
@@ -197,9 +194,7 @@ class TrajectoryFollower(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self._controller = load(self.config.controller or self._track.controller)(
-            self.config.controller_config, self._emb
-        )
+        self._controller = load(self.config.controller or self._track.controller)(self._emb)
         self._controller.reset()
         self.register_disposable(Disposable(self.path.subscribe(self._on_path)))
         self.register_disposable(Disposable(self.odometry.subscribe(self._on_odometry)))

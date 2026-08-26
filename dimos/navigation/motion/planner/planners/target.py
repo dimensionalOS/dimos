@@ -25,6 +25,7 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+from pydantic import TypeAdapter
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.nav_msgs.Path import Path
@@ -93,7 +94,8 @@ class RustTargetEpisode:
         import dimos_motion2_target
 
         self._mod = dimos_motion2_target
-        self._emb = emb
+        # the body crosses as the same dict the native modules are configured with
+        self._emb = TypeAdapter(Embodiment).dump_json(emb).decode()
         self._res = resolution
 
     def reset(self) -> None:
@@ -108,31 +110,11 @@ class RustTargetEpisode:
     ) -> Path:
         pts = np.ascontiguousarray(np.asarray(obstacles, dtype=np.float64).reshape(-1, 2))
         inc = states_of(incumbent)
-        e = self._emb
         out = self._mod.plan(
             pts,
             (pose.x, pose.y, pose.yaw),
             (goal.x, goal.y),
-            (
-                e.length,
-                e.width,
-                e.center_off,
-                e.comfort,
-                e.precision,
-                e.strafe,
-                e.reverse,
-                e.yaw_w,
-                e.envelope,
-                e.arc_inflate,
-                (
-                    (e.max_speed, e.min_speed, e.speed_clearance, e.max_yaw_rate),
-                    e.command_slew,
-                    e.gait_band,
-                    (e.walk_gain, e.walk_slip, e.walk_slip_ramp),
-                    (e.steppable, e.height, e.base_height),
-                ),
-                e.tag,
-            ),
+            self._emb,
             self._res,
             None if inc is None else np.ascontiguousarray(inc, dtype=np.float64),
             # One copy of the constant, crossing the boundary the way the

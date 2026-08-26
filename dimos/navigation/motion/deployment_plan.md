@@ -333,7 +333,7 @@ a bake bug.
 `--emit-config` builds the standalone stdin blob from **python class
 defaults**, not from blueprint values. For this stack that is not cosmetic:
 
-> The follower's eleven tuned `controller_config` numbers and the planner's
+> The follower's eleven tuned `Embodiment.control` numbers and the planner's
 > `replan_hz` / `goal_lookahead_m` all come from the blueprint, not from the
 > class. A host baked today runs the class defaults. Silent, and it presents as
 > a controller bug.

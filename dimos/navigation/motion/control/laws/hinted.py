@@ -44,6 +44,7 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.motion.control.controller import (
     ControllerConfig,
     angle_diff,
+    law_params,
     load_extension,
     path_xy_yaw,
 )
@@ -58,26 +59,12 @@ NOMINAL_TICK = 0.02
 MAX_TICK = 0.10
 
 
-def config(emb: Embodiment = GO2) -> ControllerConfig:
-    """The shared config, driving inside the body's own gait band.
-
-    The band is a plant measurement, not a preference. Gait initiation is a
-    BIFURCATION, not a ramp: below it the policy stands, so the governor's 0.2
-    floor is a stand-still wherever the clearance sits near it. The ceiling is
-    not about pace either -- a body that crosses a tight gap fast is out the
-    far side before its tracking drift has eaten the margin -- and the go2's
-    0.95 stops short of the 1.0 that hands its policy to a dedicated expert.
-    """
-    lo, hi = emb.gait_band
-    return ControllerConfig(min_speed=lo, max_speed=hi)
+def make(emb: Embodiment = GO2) -> HintedController:
+    return HintedController(emb)
 
 
-def make(cfg: ControllerConfig | None = None, emb: Embodiment = GO2) -> HintedController:
-    return HintedController(cfg, emb)
-
-
-def make_rust(cfg: ControllerConfig | None = None, emb: Embodiment = GO2) -> RustHintedController:
-    return RustHintedController(cfg, emb)
+def make_rust(emb: Embodiment = GO2) -> RustHintedController:
+    return RustHintedController(emb)
 
 
 def _project_onto(
@@ -144,9 +131,19 @@ def _tangent_at(xy: np.ndarray, arcs: np.ndarray, s: float, preview: float) -> t
 
 
 def update(
-    pose: PoseStamped, path: Path, cfg: ControllerConfig, clearance: np.ndarray | None = None
+    pose: PoseStamped, path: Path, emb: Embodiment, clearance: np.ndarray | None = None
 ) -> tuple[float, float, float]:
-    """The pure law, before the rate limiter."""
+    """The pure law, before the rate limiter.
+
+    It drives inside the body's GAIT band, not the governor's. The band is a
+    plant measurement, not a preference: gait initiation is a BIFURCATION, not
+    a ramp -- below it the policy stands, so the governor's floor is a
+    stand-still wherever the clearance sits near it. The ceiling is not about
+    pace either: a body that crosses a tight gap fast is out the far side
+    before its tracking drift has eaten the margin (the go2's 0.95 stops short
+    of the 1.0 that hands its policy to a dedicated expert).
+    """
+    cfg = emb.control
     if len(path) < 2:
         # empty path or a single-pose veto stub: there is nothing to
         # follow -- hold position (the planner is saying "stop")
@@ -199,7 +196,7 @@ def update(
         yaw_ff = min(max(raw_rate, -cfg.fan_yaw_per_m), cfg.fan_yaw_per_m)
 
     # speed governor: cap cruise by the room ahead, when we know it
-    vmax = cfg.max_speed
+    vmax = emb.gait_band[1]
     # Does the ramp find full cruise over its WHOLE window? The separator the
     # yaw feedforward's silence condition is written against; it has to keep
     # meaning "there is room everywhere ahead" rather than "the braking profile
@@ -215,16 +212,16 @@ def update(
         # the same window, so brake_accel = 0 is the seed's governor bit for
         # bit and nothing here can make it SLOWER.
         window = (arcs >= arcs[i]) & (arcs <= arcs[i] + cfg.speed_lookahead)
-        denom = max(cfg.speed_clearance - cfg.speed_floor_clearance, 1e-6)
-        cap = cfg.max_speed
+        denom = max(emb.speed_clearance - emb.precision, 1e-6)
+        cap = emb.gait_band[1]
         room = math.inf
         for k in range(n):
             if not window[k]:
                 continue
             ck = float(clearance[k])
             room = min(room, ck)
-            frac_k = min(max((ck - cfg.speed_floor_clearance) / denom, 0.0), 1.0)
-            v_k = cfg.min_speed + (cfg.max_speed - cfg.min_speed) * frac_k
+            frac_k = min(max((ck - emb.precision) / denom, 0.0), 1.0)
+            v_k = emb.gait_band[0] + (emb.gait_band[1] - emb.gait_band[0]) * frac_k
             d_k = max(float(arcs[k]) - float(arcs[i]) - cfg.brake_margin, 0.0)
             reachable = math.sqrt(v_k * v_k + 2.0 * cfg.brake_accel * d_k)
             if reachable < cap:
@@ -234,8 +231,8 @@ def update(
             room = float(clearance[i])
         # the flat-min ramp, kept only as the feedforward's separator:
         # `vmax == max_speed` under the seed's governor was exactly this
-        ramp_unlimited = room >= cfg.speed_clearance
-        vmax = min(max(cap, cfg.min_speed), cfg.max_speed)
+        ramp_unlimited = room >= emb.speed_clearance
+        vmax = min(max(cap, emb.gait_band[0]), emb.gait_band[1])
 
         # PINCH ESCAPE: the lower anchor is not a constant. With room to spare
         # a low anchor is what buys precision; with the room gone it is a loss,
@@ -250,12 +247,12 @@ def update(
         for k in range(n):
             if arcs[i] <= arcs[k] <= hi_here and float(clearance[k]) < room_here:
                 room_here = float(clearance[k])
-        if cfg.escape_speed > cfg.min_speed and room_here < cfg.escape_clearance:
+        if cfg.escape_speed > emb.gait_band[0] and room_here < cfg.escape_clearance:
             e = min(
                 max((cfg.escape_clearance - room_here) / max(cfg.escape_clearance, 1e-6), 0.0), 1.0
             )
-            top = min(cfg.escape_speed, cfg.max_speed)
-            vmax = max(vmax, cfg.min_speed + (top - cfg.min_speed) * e)
+            top = min(cfg.escape_speed, emb.gait_band[1])
+            vmax = max(vmax, emb.gait_band[0] + (top - emb.gait_band[0]) * e)
 
     # Aiming the whole velocity at the carrot drives down a CHORD, which cuts
     # the inside of every corner by about L^2/(8R) -- a distance, not a lag.
@@ -299,7 +296,7 @@ def update(
     cmd_speed = float(np.hypot(vx, vy))
     ff = 0.0 if (rotation_in_window and ramp_unlimited) else yaw_ff * cmd_speed
     wz = float(
-        np.clip(cfg.k_yaw * angle_diff(target_yaw, pyaw) + ff, -cfg.max_yaw_rate, cfg.max_yaw_rate)
+        np.clip(cfg.k_yaw * angle_diff(target_yaw, pyaw) + ff, -emb.max_yaw_rate, emb.max_yaw_rate)
     )
     return (vx, vy, wz)
 
@@ -319,8 +316,9 @@ class HintedController:
 
     config: ControllerConfig
 
-    def __init__(self, cfg: ControllerConfig | None = None, emb: Embodiment = GO2) -> None:
-        self.config = cfg or config(emb)
+    def __init__(self, emb: Embodiment = GO2) -> None:
+        self.config = emb.control
+        self.emb = emb
         self._slew = emb.command_slew
         self.reset()
 
@@ -331,8 +329,8 @@ class HintedController:
     def update(
         self, pose: PoseStamped, path: Path, t: float, clearance: np.ndarray | None = None
     ) -> Twist:
-        cfg = self.config
-        raw = update(pose, path, cfg, clearance)
+        emb = self.emb
+        raw = update(pose, path, emb, clearance)
 
         # THE VETO IS NOT RATE LIMITED. A path shorter than two poses is the
         # planner saying "stop", and the contract is that the law obeys it by
@@ -356,7 +354,7 @@ class HintedController:
         sx, sy, sw = (self._slew[0] * dt, self._slew[1] * dt, self._slew[2] * dt)
         vx = pvx + min(max(raw[0] - pvx, -sx), sx)
         vy = pvy + min(max(raw[1] - pvy, -sy), sy)
-        wz = min(max(pwz + min(max(raw[2] - pwz, -sw), sw), -cfg.max_yaw_rate), cfg.max_yaw_rate)
+        wz = min(max(pwz + min(max(raw[2] - pwz, -sw), sw), -emb.max_yaw_rate), emb.max_yaw_rate)
 
         # THE DECLARED ENVELOPE IS A DISC AND THE SLEW IS A BOX, so a step taken
         # toward a point inside the disc can still leave it -- the rectangle
@@ -365,8 +363,8 @@ class HintedController:
         # max_speed 0.95, always a REDUCTION, but far past the parity tolerance,
         # so dropping this would put the law outside its own declared envelope.
         speed = float(np.hypot(vx, vy))
-        if speed > cfg.max_speed and speed > 0.0:
-            vx, vy = vx / speed * cfg.max_speed, vy / speed * cfg.max_speed
+        if speed > emb.gait_band[1] and speed > 0.0:
+            vx, vy = vx / speed * emb.gait_band[1], vy / speed * emb.gait_band[1]
 
         if math.isfinite(vx) and math.isfinite(vy) and math.isfinite(wz):
             self._last_cmd = (vx, vy, wz)
@@ -379,11 +377,11 @@ class RustHintedController:
 
     config: ControllerConfig
 
-    def __init__(self, cfg: ControllerConfig | None = None, emb: Embodiment = GO2) -> None:
+    def __init__(self, emb: Embodiment = GO2) -> None:
         mod: Any = load_extension()
-        self.config = cfg or config(emb)
+        self.config = emb.control
         self._law = mod.HintedLaw()
-        self._params = self.config.law_params
+        self._params = law_params(emb, emb.gait_band)
         self._hinted = self.config.hinted_params
         self._slew = emb.command_slew
 

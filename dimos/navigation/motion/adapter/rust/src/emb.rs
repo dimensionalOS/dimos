@@ -17,6 +17,9 @@
 //! record -- there is no table here to drift from it.
 
 use dimos_motion2_target::planner::Emb;
+use dimos_motion2_tc::geom::Params;
+use dimos_motion2_tc::laws::blind::BlindParams;
+use dimos_motion2_tc::laws::hinted::HintedParams;
 use dimos_motion2_tc::stamps;
 
 /// `Embodiment.dilated`, formula for formula: every box grown by `by` PER
@@ -35,6 +38,48 @@ pub fn dilated(emb: Emb, by: f64) -> Emb {
             .map(|r| [r[0], r[1] + pad, r[2] + pad, r[3], r[4]])
             .collect(),
         ..emb
+    }
+}
+
+/// `controller.law_params`: the body's tuning plus its plant, driving inside
+/// `band` -- the governor's for seed/blind, the gait's for hinted.
+pub fn base_params(emb: &Emb, band: [f64; 2]) -> Params {
+    let c = &emb.control;
+    Params {
+        lookahead: c.lookahead,
+        max_speed: band[1],
+        max_yaw_rate: emb.max_yaw_rate,
+        k_pos: c.k_pos,
+        k_yaw: c.k_yaw,
+        fan_yaw_per_m: c.fan_yaw_per_m,
+        fan_yaw_done: c.fan_yaw_done,
+        min_speed: band[0],
+        speed_clearance: emb.speed_clearance,
+        speed_floor_clearance: emb.precision,
+        speed_lookahead: c.speed_lookahead,
+    }
+}
+
+pub fn hinted_params(emb: &Emb) -> HintedParams {
+    let c = &emb.control;
+    HintedParams {
+        base: base_params(emb, emb.gait_band),
+        slew: emb.command_slew,
+        tangent_preview: c.tangent_preview,
+        escape_clearance: c.escape_clearance,
+        escape_preview: c.escape_preview,
+        escape_speed: c.escape_speed,
+        brake_accel: c.brake_accel,
+        brake_margin: c.brake_margin,
+    }
+}
+
+pub fn blind_params(emb: &Emb) -> BlindParams {
+    BlindParams {
+        base: base_params(emb, [emb.min_speed, emb.max_speed]),
+        walk_gain: emb.walk_gain,
+        walk_slip: emb.walk_slip,
+        slip_ramp: emb.walk_slip_ramp,
     }
 }
 

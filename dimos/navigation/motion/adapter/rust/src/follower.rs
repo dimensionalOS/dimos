@@ -36,16 +36,16 @@ use std::time::{Duration, Instant};
 use dimos_module::{native_config, warn_throttled, Input, Module, Output, Tf};
 use dimos_motion2_target::planner::Emb;
 use dimos_motion2_tc::geom::Params;
-use dimos_motion2_tc::laws::blind::{update as blind_update, BlindParams};
-use dimos_motion2_tc::laws::hinted::{HintedParams, Law as HintedLaw};
+use dimos_motion2_tc::laws::blind::update as blind_update;
+use dimos_motion2_tc::laws::hinted::Law as HintedLaw;
 use dimos_motion2_tc::{clearance, stamps};
 use lcm_msgs::geometry_msgs::Twist;
 use lcm_msgs::nav_msgs::{Odometry, Path};
 use lcm_msgs::sensor_msgs::PointCloud2;
 use lcm_msgs::std_msgs::Bool;
-use serde::{Deserialize, Serialize};
+// serde derives come in through #[native_config]
 use tracing::info;
-use validator::{Validate, ValidationError};
+use validator::ValidationError;
 
 use crate::emb;
 use crate::msg::{self, State};
@@ -79,78 +79,6 @@ impl Track {
     }
 }
 
-/// Mirror of the python `ControllerConfig`, flat, and nested inside [`Config`]
-/// exactly as pydantic's `model_dump()` nests it.
-///
-/// Hand-written derives rather than `#[native_config]`: that attribute's checks
-/// apply to a module's TOP-level config, and the one-to-one key check at
-/// startup does not recurse. What keeps this honest is `deny_unknown_fields`
-/// plus every field being required -- serde's missing-field error is the
-/// backstop, and it names the field.
-#[derive(Debug, Clone, Deserialize, Serialize, Validate)]
-#[serde(deny_unknown_fields)]
-pub struct ControllerConfig {
-    // --- the eleven every law reads (`ControllerConfig.law_params`) ---
-    pub lookahead: f64,
-    pub max_speed: f64,
-    pub max_yaw_rate: f64,
-    pub k_pos: f64,
-    pub k_yaw: f64,
-    pub fan_yaw_per_m: f64,
-    pub fan_yaw_done: f64,
-    pub min_speed: f64,
-    pub speed_clearance: f64,
-    pub speed_floor_clearance: f64,
-    pub speed_lookahead: f64,
-    // --- read by the hinted law only ---
-    pub tangent_preview: f64,
-    pub escape_clearance: f64,
-    pub escape_preview: f64,
-    pub escape_speed: f64,
-    pub brake_accel: f64,
-    pub brake_margin: f64,
-}
-
-impl ControllerConfig {
-    pub fn base(&self) -> Params {
-        Params {
-            lookahead: self.lookahead,
-            max_speed: self.max_speed,
-            max_yaw_rate: self.max_yaw_rate,
-            k_pos: self.k_pos,
-            k_yaw: self.k_yaw,
-            fan_yaw_per_m: self.fan_yaw_per_m,
-            fan_yaw_done: self.fan_yaw_done,
-            min_speed: self.min_speed,
-            speed_clearance: self.speed_clearance,
-            speed_floor_clearance: self.speed_floor_clearance,
-            speed_lookahead: self.speed_lookahead,
-        }
-    }
-
-    pub fn hinted(&self, emb: &Emb) -> HintedParams {
-        HintedParams {
-            base: self.base(),
-            slew: emb.command_slew,
-            tangent_preview: self.tangent_preview,
-            escape_clearance: self.escape_clearance,
-            escape_preview: self.escape_preview,
-            escape_speed: self.escape_speed,
-            brake_accel: self.brake_accel,
-            brake_margin: self.brake_margin,
-        }
-    }
-
-    pub fn blind(&self, emb: &Emb) -> BlindParams {
-        BlindParams {
-            base: self.base(),
-            walk_gain: emb.walk_gain,
-            walk_slip: emb.walk_slip,
-            slip_ramp: emb.walk_slip_ramp,
-        }
-    }
-}
-
 /// Mirrors `TrajectoryFollowerConfig` (adapter/follower.py).
 #[native_config]
 #[derive(Clone)]
@@ -158,8 +86,6 @@ impl ControllerConfig {
 pub struct Config {
     /// A TRACK name, never a law. See [`Track`].
     pub track: String,
-    #[validate(nested)]
-    pub controller_config: ControllerConfig,
     #[validate(range(exclusive_min = 0.0))]
     pub control_frequency: f64,
     /// Planar distance that counts as arrival (m).
@@ -535,8 +461,8 @@ impl Worker {
             tokio::time::interval(Duration::from_secs_f64(1.0 / self.config.control_frequency));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-        let hinted = self.config.controller_config.hinted(&self.emb);
-        let blind = self.config.controller_config.blind(&self.emb);
+        let hinted = emb::hinted_params(&self.emb);
+        let blind = emb::blind_params(&self.emb);
         let mut law = HintedLaw::new();
         let mut latch = GoalLatch::new(self.config.goal_tolerance);
         let mut stale = Gate::default();
@@ -889,7 +815,7 @@ mod tests {
     fn a_reset_law_answers_like_a_fresh_one() {
         // the contract `laws/hinted.rs` states, and what makes the
         // stop_movement reset a real reset rather than a hope
-        let cfg = controller_config().hinted(&go2());
+        let cfg = emb::hinted_params(&go2());
         let states: Vec<State> = (0..20).map(|k| [k as f64 * 0.1, 0.0, 0.0]).collect();
         let mut fresh = HintedLaw::new();
         let mut used = HintedLaw::new();
@@ -909,37 +835,20 @@ mod tests {
         Emb::go2()
     }
 
-    fn controller_config() -> ControllerConfig {
-        ControllerConfig {
-            lookahead: 0.35,
-            max_speed: 0.5,
-            max_yaw_rate: 1.4,
-            k_pos: 2.0,
-            k_yaw: 2.0,
-            fan_yaw_per_m: 3.0,
-            fan_yaw_done: 0.25,
-            min_speed: 0.2,
-            speed_clearance: 0.35,
-            speed_floor_clearance: 0.05,
-            speed_lookahead: 2.0,
-            tangent_preview: 0.15,
-            escape_clearance: 0.10,
-            escape_preview: 1.00,
-            escape_speed: 0.75,
-            brake_accel: 0.8,
-            brake_margin: 0.15,
-        }
-    }
-
     #[test]
     fn the_params_split_lands_every_field_in_the_right_law() {
-        let cfg = controller_config();
-        assert_eq!(cfg.base().lookahead, 0.35);
-        assert_eq!(cfg.hinted(&go2()).brake_margin, 0.15);
-        assert_eq!(cfg.hinted(&go2()).base.speed_lookahead, 2.0);
+        assert_eq!(emb::hinted_params(&go2()).base.lookahead, 0.35);
+        // the hinted law drives inside the gait band, blind inside the governor's
+        assert_eq!(
+            emb::hinted_params(&go2()).base.min_speed,
+            go2().gait_band[0]
+        );
+        assert_eq!(emb::blind_params(&go2()).base.max_speed, go2().max_speed);
+        assert_eq!(emb::hinted_params(&go2()).brake_margin, 0.15);
+        assert_eq!(emb::hinted_params(&go2()).base.speed_lookahead, 2.0);
         // python spells it walk_slip_ramp, the law spells it slip_ramp
-        assert_eq!(cfg.blind(&go2()).slip_ramp, 0.08);
-        assert_eq!(cfg.blind(&go2()).walk_gain, 0.964);
+        assert_eq!(emb::blind_params(&go2()).slip_ramp, 0.08);
+        assert_eq!(emb::blind_params(&go2()).walk_gain, 0.964);
     }
 
     #[test]
@@ -967,7 +876,7 @@ mod tests {
         // and it actually reaches the law: the tight plan is requested slower.
         // The RAW law, not `step` -- a first tick out of a standing start is
         // the rate limiter's answer, not the governor's, on either plan.
-        let cfg = controller_config().hinted(&go2());
+        let cfg = emb::hinted_params(&go2());
         let slow = dimos_motion2_tc::laws::hinted::update((0.0, 0.0, 0.0), &states, Some(&a), &cfg);
         let fast = dimos_motion2_tc::laws::hinted::update((0.0, 0.0, 0.0), &states, Some(&b), &cfg);
         assert!(
@@ -989,7 +898,6 @@ mod tests {
     fn config() -> Config {
         Config {
             track: "hinted".to_string(),
-            controller_config: controller_config(),
             control_frequency: 10.0,
             goal_tolerance: 0.2,
             embodiment: Emb::go2(),
@@ -1076,9 +984,14 @@ mod tests {
         let stub = planner::hold_stub((1.0, 2.0, 0.5), "odom", 0.0, 0.0);
         let states = msg::path_states(&stub);
         let ts = msg::path_stamps(&stub);
-        let cfg = controller_config();
         assert_eq!(
-            HintedLaw::new().step((1.0, 2.0, 0.5), &states, None, &cfg.hinted(&go2()), 0.02),
+            HintedLaw::new().step(
+                (1.0, 2.0, 0.5),
+                &states,
+                None,
+                &emb::hinted_params(&go2()),
+                0.02
+            ),
             (0.0, 0.0, 0.0)
         );
         assert_eq!(
@@ -1087,7 +1000,7 @@ mod tests {
                 &states,
                 None,
                 Some(&ts),
-                &cfg.blind(&go2())
+                &emb::blind_params(&go2())
             ),
             (0.0, 0.0, 0.0)
         );

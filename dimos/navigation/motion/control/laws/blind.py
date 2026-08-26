@@ -44,6 +44,7 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.motion.control.controller import (
     ControllerConfig,
     angle_diff,
+    law_params,
     load_extension,
     path_xy_yaw,
 )
@@ -52,14 +53,12 @@ from dimos.navigation.motion.embodiment.base import Embodiment
 from dimos.navigation.motion.embodiment.go2 import GO2
 
 
-def make(config: ControllerConfig | None = None, emb: Embodiment = GO2) -> BlindPursuitController:
-    return BlindPursuitController(config, emb)
+def make(emb: Embodiment = GO2) -> BlindPursuitController:
+    return BlindPursuitController(emb)
 
 
-def make_rust(
-    config: ControllerConfig | None = None, emb: Embodiment = GO2
-) -> RustBlindPursuitController:
-    return RustBlindPursuitController(config, emb)
+def make_rust(emb: Embodiment = GO2) -> RustBlindPursuitController:
+    return RustBlindPursuitController(emb)
 
 
 def walk_command(want: float, gain: float, slip: float, ramp: float) -> float:
@@ -108,8 +107,8 @@ class BlindPursuitController:
 
     config: ControllerConfig
 
-    def __init__(self, config: ControllerConfig | None = None, emb: Embodiment = GO2) -> None:
-        self.config = config or ControllerConfig()
+    def __init__(self, emb: Embodiment = GO2) -> None:
+        self.config = emb.control
         self.emb = emb
         self.reset()
 
@@ -119,7 +118,7 @@ class BlindPursuitController:
     def update(
         self, pose: PoseStamped, path: Path, t: float, clearance: np.ndarray | None = None
     ) -> Twist:
-        cfg = self.config
+        cfg, emb = self.config, self.emb
         if len(path) < 2:
             # empty path or a single-pose veto stub: there is nothing to
             # follow -- hold position (the planner is saying "stop")
@@ -145,16 +144,14 @@ class BlindPursuitController:
 
         # Speed governor, hoisted above target selection because the lookahead
         # distance is derived from it (constant time headway, below).
-        vmax = cfg.max_speed
+        vmax = emb.max_speed
         governed = False
         if clearance is not None and len(clearance) == n:
             governed = True
             ahead = clearance[(arcs >= arcs[i]) & (arcs <= arcs[i] + cfg.speed_lookahead)]
             room = float(np.min(ahead)) if len(ahead) else float(clearance[i])
-            frac = (room - cfg.speed_floor_clearance) / max(
-                cfg.speed_clearance - cfg.speed_floor_clearance, 1e-6
-            )
-            vmax = cfg.min_speed + (cfg.max_speed - cfg.min_speed) * min(max(frac, 0.0), 1.0)
+            frac = (room - emb.precision) / max(emb.speed_clearance - emb.precision, 1e-6)
+            vmax = emb.min_speed + (emb.max_speed - emb.min_speed) * min(max(frac, 0.0), 1.0)
 
         # THE SAME GOVERNOR, OFF THE STAMPS. When no clearance array arrives
         # the room ahead has not been withheld, only re-encoded: the planner
@@ -164,7 +161,7 @@ class BlindPursuitController:
         # clearance branch occupies, so the two channels are alternatives
         # rather than layers.
         if not governed:
-            ceilings = decode_ceilings(path, cfg.min_speed, cfg.max_speed)
+            ceilings = decode_ceilings(path, emb.min_speed, emb.max_speed)
             if ceilings is not None:
                 # Read from i + 1, not i. Not an off-by-one: a decoded ceiling
                 # is a property of the SEGMENT ending at its waypoint, so
@@ -191,7 +188,7 @@ class BlindPursuitController:
         # any L >= vmax / k_pos still saturates, and the floor below enforces
         # that so an odd config cannot turn a shorter carrot into a slower
         # robot.
-        headway = cfg.lookahead / max(cfg.max_speed, 1e-6)
+        headway = cfg.lookahead / max(emb.max_speed, 1e-6)
         look = max(vmax * headway, vmax / max(abs(cfg.k_pos), 1e-6))
 
         # fan detection at the current position: yaw stepping with (near-)zero
@@ -222,11 +219,10 @@ class BlindPursuitController:
             # by the governor. Unchanged from the seed.
             want = min(speed, vmax)
             # ...and this is what the gait has to be asked for to deliver it.
-            emb = self.emb
             cmd = walk_command(want, emb.walk_gain, emb.walk_slip, emb.walk_slip_ramp)
             vx, vy = vx / speed * cmd, vy / speed * cmd
         wz = float(
-            np.clip(cfg.k_yaw * angle_diff(target_yaw, pyaw), -cfg.max_yaw_rate, cfg.max_yaw_rate)
+            np.clip(cfg.k_yaw * angle_diff(target_yaw, pyaw), -emb.max_yaw_rate, emb.max_yaw_rate)
         )
         return Twist(Vector3(vx, vy, 0.0), Vector3(0.0, 0.0, wz))
 
@@ -265,10 +261,10 @@ class RustBlindPursuitController:
 
     config: ControllerConfig
 
-    def __init__(self, config: ControllerConfig | None = None, emb: Embodiment = GO2) -> None:
+    def __init__(self, emb: Embodiment = GO2) -> None:
         self._mod: Any = load_extension()
-        self.config = config or ControllerConfig()
-        self._params = self.config.law_params
+        self.config = emb.control
+        self._params = law_params(emb)
         self._walk = (emb.walk_gain, emb.walk_slip, emb.walk_slip_ramp)
         self.reset()
 

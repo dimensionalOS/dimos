@@ -53,7 +53,7 @@ def test_rate_limit_is_the_plants_own_slew() -> None:
     pytest.importorskip("dimos_motion2_tc")  # the rust half, when it is built
     for slew in [GO2.command_slew, (1.0, 0.5, 2.0)]:
         for factory in (hinted.make, hinted.make_rust):
-            law = factory(emb=replace(GO2, command_slew=slew))
+            law = factory(replace(GO2, command_slew=slew))
             tw = law.update(_pose(0.0, 0.0), _straight(), 0.0, None)
             assert abs(tw.linear.x - slew[0] * hinted.NOMINAL_TICK) < 1e-12, (factory, slew)
 
@@ -65,10 +65,10 @@ def test_envelope_clears_the_gait_dead_zone() -> None:
     freewalk policy stands. A floor inside that band is what made the seed's
     "careful" episodes time out having never approached geometry.
     """
-    cfg = hinted.config(GO2)
-    assert cfg.min_speed >= 0.28, "the governor's creep is inside the gait dead zone"
+    lo, hi = GO2.gait_band
+    assert lo >= 0.28, "the governor's creep is inside the gait dead zone"
     # and stops short of the 1.0 expert-switch boundary the sim does not model
-    assert cfg.max_speed < 1.0
+    assert hi < 1.0
 
 
 def test_veto_is_not_rate_limited() -> None:

@@ -33,7 +33,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
-from pydantic import Field
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
@@ -42,7 +41,6 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.navigation.motion.control.controller import ControllerConfig
 from dimos.navigation.motion.embodiment.base import Embodiment
 from dimos.navigation.motion.embodiment.go2 import GO2
 
@@ -52,16 +50,12 @@ class TrajectoryFollowerNativeConfig(NativeModuleConfig):
     executable: str = "target/release/trajectory_follower"
     build_command: str | None = "cargo build --release"
     stdin_config: bool = True
-    # argv is ignored by the rust side, which reads stdin; keeping a twenty-field
+    # argv is ignored by the rust side, which reads stdin; keeping a thirty-field
     # object out of it leaves `ps` readable.
-    cli_exclude: frozenset[str] = frozenset({"controller_config", "embodiment"})
+    cli_exclude: frozenset[str] = frozenset({"embodiment"})
 
     # A TRACK, never a law (control/tracks.py). The rust maps track to law.
     track: str = "hinted"
-    # Nests as an object inside the stdin blob, and the rust struct mirrors it
-    # field for field. Adding a field to ControllerConfig therefore breaks this
-    # module's startup until the rust side grows it too, which is the feature.
-    controller_config: ControllerConfig = Field(default_factory=ControllerConfig)
     control_frequency: float = 10.0
     goal_tolerance: float = 0.20
     # Names the body rather than a number, so the half-width the governor reads

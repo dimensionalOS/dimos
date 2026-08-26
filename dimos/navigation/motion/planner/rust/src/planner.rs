@@ -123,6 +123,43 @@ impl Governor {
     }
 }
 
+/// `ControllerConfig`, field for field: a law's tuning, as searched on one body.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct Tuning {
+    pub lookahead: f64,
+    pub k_pos: f64,
+    pub k_yaw: f64,
+    pub fan_yaw_per_m: f64,
+    pub fan_yaw_done: f64,
+    pub speed_lookahead: f64,
+    pub tangent_preview: f64,
+    pub escape_clearance: f64,
+    pub escape_preview: f64,
+    pub escape_speed: f64,
+    pub brake_accel: f64,
+    pub brake_margin: f64,
+}
+
+impl Default for Tuning {
+    /// `ControllerConfig`'s defaults: the go2's, for this crate's tests.
+    fn default() -> Self {
+        Self {
+            lookahead: 0.35,
+            k_pos: 2.0,
+            k_yaw: 2.0,
+            fan_yaw_per_m: 3.0,
+            fan_yaw_done: 0.25,
+            speed_lookahead: 2.0,
+            tangent_preview: 0.15,
+            escape_clearance: 0.10,
+            escape_preview: 1.00,
+            escape_speed: 0.75,
+            brake_accel: 0.8,
+            brake_margin: 0.15,
+        }
+    }
+}
+
 /// `embodiment/base.py::Embodiment`, field for field: the body a module is
 /// configured with, deserialised straight from its config.
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
@@ -152,6 +189,9 @@ pub struct Emb {
     pub steppable: f64,
     pub height: f64,
     pub base_height: f64,
+    /// The follower tuning searched on this body (`ControllerConfig`) --
+    /// fitted, where the rest is measured. The planner never reads it.
+    pub control: Tuning,
     pub strafe: f64,
     pub reverse: f64,
     pub yaw_w: f64,
@@ -200,6 +240,7 @@ impl Emb {
             steppable: 0.20,
             height: 0.45,
             base_height: 0.29,
+            control: Tuning::default(),
             strafe: 1.8,
             reverse: 1.5,
             yaw_w: 0.25,

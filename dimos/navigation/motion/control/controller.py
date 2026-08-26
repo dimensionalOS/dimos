@@ -28,7 +28,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from importlib import import_module
 import math
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
 
@@ -37,15 +37,21 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.protocol.service.spec import BaseConfig
 
+if TYPE_CHECKING:
+    from dimos.navigation.motion.embodiment.base import Embodiment
+
 
 def angle_diff(a: float, b: float) -> float:
     return math.remainder(a - b, math.tau)
 
 
 class ControllerConfig(BaseConfig):
+    """A law's tuning. Everything the plant dictates -- speeds, the governor's
+    band, the yaw rate, slew, slip -- is the embodiment's and is read from it;
+    what is here is what a referee search over a fixed body may move.
+    """
+
     lookahead: float = 0.35  # carrot distance along the path (m)
-    max_speed: float = 0.5  # planar clamp (m/s)
-    max_yaw_rate: float = 1.4  # rad/s
     k_pos: float = 2.0  # body-frame position error gain (1/s)
     k_yaw: float = 2.0  # yaw error gain (1/s)
     # yaw-per-meter above this is a commanded rotation (fan), not a curve --
@@ -54,13 +60,8 @@ class ControllerConfig(BaseConfig):
     # while a fan segment is being executed, hold position and rotate until
     # the yaw error drops under this (rad)
     fan_yaw_done: float = 0.25
-    # speed governor over the optional clearance annotation, the curve of
-    # profile.py: cruise at max_speed with
-    # speed_clearance of room, creep at min_speed at the precision floor,
-    # linear between; judged over the next speed_lookahead metres of path
-    min_speed: float = 0.2
-    speed_clearance: float = 0.35
-    speed_floor_clearance: float = 0.05  # the embodiment precision floor
+    # the governor (the embodiment's curve, control/profile.py) is judged over
+    # the next speed_lookahead metres of path
     speed_lookahead: float = 2.0
     # Read by the hinted law only (laws/hinted.py).
     # Centred window the tangent feedforward reads the plan's direction over.
@@ -78,26 +79,6 @@ class ControllerConfig(BaseConfig):
     brake_margin: float = 0.15
 
     @property
-    def law_params(self) -> tuple[float, ...]:
-        """The numeric fields the rust laws take, in declaration order.
-
-        The gait plant (slip, slew) is the embodiment's and travels with it.
-        """
-        return (
-            self.lookahead,
-            self.max_speed,
-            self.max_yaw_rate,
-            self.k_pos,
-            self.k_yaw,
-            self.fan_yaw_per_m,
-            self.fan_yaw_done,
-            self.min_speed,
-            self.speed_clearance,
-            self.speed_floor_clearance,
-            self.speed_lookahead,
-        )
-
-    @property
     def hinted_params(self) -> tuple[float, float, float, float, float, float]:
         return (
             self.tangent_preview,
@@ -107,6 +88,29 @@ class ControllerConfig(BaseConfig):
             self.brake_accel,
             self.brake_margin,
         )
+
+
+def law_params(emb: Embodiment, band: tuple[float, float] | None = None) -> tuple[float, ...]:
+    """The numbers the rust laws take, in the crate's `Params` order: the
+    body's tuning plus its plant, driving inside ``band`` -- the governor's
+    (min_speed, max_speed) by default, the gait band for the law that lives
+    there (hinted).
+    """
+    lo, hi = (emb.min_speed, emb.max_speed) if band is None else band
+    c = emb.control
+    return (
+        c.lookahead,
+        hi,
+        emb.max_yaw_rate,
+        c.k_pos,
+        c.k_yaw,
+        c.fan_yaw_per_m,
+        c.fan_yaw_done,
+        lo,
+        emb.speed_clearance,
+        emb.precision,
+        c.speed_lookahead,
+    )
 
 
 class TrajectoryController(Protocol):

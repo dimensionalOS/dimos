@@ -36,6 +36,7 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.motion.adapter.follower import path_clearance as follower_clearance
 from dimos.navigation.motion.control.controller import (
     ControllerConfig,
+    law_params,
     load_extension,
     path_xy_yaw,
 )
@@ -158,33 +159,32 @@ def _cases(seed: int = 20260802, n: int = CASES):  # type: ignore[no-untyped-def
                 for q in path.poses:
                     q.ts = 5.0  # flat: not the dialect, both must ignore it
 
-        cfg = ControllerConfig()
-        if k % 5 == 0:  # non-default gains, so the params tuple order is load-bearing
-            cfg = ControllerConfig(
-                lookahead=float(rng.uniform(0.1, 1.2)),
-                max_speed=float(rng.uniform(0.2, 1.5)),
-                max_yaw_rate=float(rng.uniform(0.4, 3.0)),
-                k_pos=float(rng.uniform(0.5, 4.0)),
-                k_yaw=float(rng.uniform(0.5, 4.0)),
-                fan_yaw_per_m=float(rng.uniform(1.0, 6.0)),
-                fan_yaw_done=float(rng.uniform(0.05, 0.6)),
-                min_speed=float(rng.uniform(0.05, 0.3)),
-                speed_clearance=float(rng.uniform(0.2, 0.8)),
-                speed_floor_clearance=float(rng.uniform(0.01, 0.15)),
-                speed_lookahead=float(rng.uniform(0.5, 4.0)),
-            )
-        # the gait plant is the body's; vary it with the gains so its order
-        # across the boundary is load-bearing too
+        # non-default gains AND plant every fifth case, so the params tuple
+        # order across the boundary is load-bearing
         emb = GO2
         if k % 5 == 0:
             emb = replace(
                 GO2,
+                control=ControllerConfig(
+                    lookahead=float(rng.uniform(0.1, 1.2)),
+                    k_pos=float(rng.uniform(0.5, 4.0)),
+                    k_yaw=float(rng.uniform(0.5, 4.0)),
+                    fan_yaw_per_m=float(rng.uniform(1.0, 6.0)),
+                    fan_yaw_done=float(rng.uniform(0.05, 0.6)),
+                    speed_lookahead=float(rng.uniform(0.5, 4.0)),
+                ),
+                max_speed=float(rng.uniform(0.2, 1.5)),
+                min_speed=float(rng.uniform(0.05, 0.3)),
+                gait_band=(float(rng.uniform(0.05, 0.5)), float(rng.uniform(0.5, 1.5))),
+                max_yaw_rate=float(rng.uniform(0.4, 3.0)),
+                speed_clearance=float(rng.uniform(0.2, 0.8)),
+                precision=float(rng.uniform(0.01, 0.15)),
                 walk_gain=float(srng.uniform(0.7, 1.3)),
                 walk_slip=float(srng.uniform(0.0, 0.3)),
                 walk_slip_ramp=float(srng.uniform(0.02, 0.3)),
                 command_slew=tuple(float(v) for v in srng.uniform(0.5, 6.0, 3)),
             )
-        yield cfg, pose, path, clearance, emb
+        yield emb.control, pose, path, clearance, emb
 
 
 # every law and its rust twin; each pair is held to TOL independently
@@ -212,12 +212,12 @@ def _raw_twists(law, cfg, pose, path, clearance, emb=GO2):  # type: ignore[no-un
         return _twists(law, cfg, pose, path, clearance, emb)
     ext = load_extension()
     clr = None if clearance is None else np.ascontiguousarray(clearance, dtype=np.float64)
-    py = hinted.update(pose, path, cfg, clearance)
+    py = hinted.update(pose, path, emb, clearance)
     rs = ext.update_hinted_raw(
         (float(pose.position.x), float(pose.position.y), float(pose.yaw)),
         path_xy_yaw(path),
         clr,
-        cfg.law_params,
+        law_params(emb, emb.gait_band),
         cfg.hinted_params,
     )
     return py, rs
@@ -225,8 +225,8 @@ def _raw_twists(law, cfg, pose, path, clearance, emb=GO2):  # type: ignore[no-un
 
 def _twists(law, cfg, pose, path, clearance, emb=GO2):  # type: ignore[no-untyped-def]
     make_py, make_rs = LAWS[law]
-    py = make_py(cfg, emb).update(pose, path, 0.0, clearance)
-    rs = make_rs(cfg, emb).update(pose, path, 0.0, clearance)
+    py = make_py(emb).update(pose, path, 0.0, clearance)
+    rs = make_rs(emb).update(pose, path, 0.0, clearance)
     return (
         (py.linear.x, py.linear.y, py.angular.z),
         (rs.linear.x, rs.linear.y, rs.angular.z),
@@ -240,10 +240,11 @@ def test_rust_matches_python(law: str) -> None:
         a, b = _raw_twists(law, *case)
         for c, (x, y) in enumerate(zip(a, b, strict=True)):
             assert abs(x - y) <= TOL, f"case {k} component {c}: python {x!r} vs rust {y!r}"
-        cfg = case[0]
+        emb = case[4]
+        top = emb.gait_band[1] if law == "hinted" else emb.max_speed
         if a == (0.0, 0.0, 0.0):
             seen["held"] += 1
-        if abs(a[2]) >= cfg.max_yaw_rate - 1e-12 or math.hypot(a[0], a[1]) >= cfg.max_speed - 1e-12:
+        if abs(a[2]) >= emb.max_yaw_rate - 1e-12 or math.hypot(a[0], a[1]) >= top - 1e-12:
             seen["clamped"] += 1
         if case[3] is not None and len(case[3]) == len(case[2]):
             seen["governed"] += 1
@@ -299,14 +300,14 @@ def test_stateful_parity_over_a_sequence(law: str) -> None:
     """
     make_py, make_rs = LAWS[law]
     cases = list(_cases())
-    py_law, rs_law = make_py(cases[0][0], cases[0][4]), make_rs(cases[0][0], cases[0][4])
+    py_law, rs_law = make_py(cases[0][4]), make_rs(cases[0][4])
     worst = 0.0
     t = 0.0
-    for k, (cfg, pose, path, clearance, emb) in enumerate(cases):
+    for k, (_cfg, pose, path, clearance, emb) in enumerate(cases):
         # the config is per-case in this sweep, so rebuild on a change and
         # reset BOTH -- a fresh law and a reset law must answer identically
-        if k and (cfg is not cases[k - 1][0] or emb is not cases[k - 1][4]):
-            py_law, rs_law = make_py(cfg, emb), make_rs(cfg, emb)
+        if k and emb is not cases[k - 1][4]:
+            py_law, rs_law = make_py(emb), make_rs(emb)
         t += (0.02, 0.02, 0.0, 0.5)[k % 4]  # nominal, nominal, repeat, stall
         a = py_law.update(pose, path, t, clearance)
         b = rs_law.update(pose, path, t, clearance)
@@ -324,7 +325,7 @@ def test_reset_clears_every_tick_of_history(law: str) -> None:
     cfg, pose, path, clearance, emb = next(c for c in _cases() if len(c[2].poses) > 3)
     other = next(c for c in _cases() if len(c[2].poses) > 3 and c[2] is not path)
     for make in (make_py, make_rs):
-        fresh, used = make(cfg, emb), make(cfg, emb)
+        fresh, used = make(emb), make(emb)
         for _ in range(5):  # give `used` a foreign history to forget
             used.update(other[1], other[2], 0.02, other[3])
         used.reset()

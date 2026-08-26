@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import replace
 import math
 
 import pytest
@@ -22,6 +23,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.motion.control.controller import ControllerConfig
 from dimos.navigation.motion.control.laws.seed import PursuitController
+from dimos.navigation.motion.embodiment.go2 import GO2
 
 
 def _pose(x: float, y: float, yaw: float = 0.0) -> PoseStamped:
@@ -57,8 +59,9 @@ def test_lateral_offset_commands_crab_back() -> None:
 
 
 def test_speed_clamped() -> None:
-    cfg = ControllerConfig(max_speed=0.5)
-    tw = PursuitController(cfg).update(_pose(-2.0, -2.0), _straight_path(), 0.0)
+    tw = PursuitController(replace(GO2, max_speed=0.5)).update(
+        _pose(-2.0, -2.0), _straight_path(), 0.0
+    )
     assert math.hypot(tw.linear.x, tw.linear.y) <= 0.5 + 1e-9
 
 
@@ -84,8 +87,9 @@ def test_empty_path_stops() -> None:
 
 
 def test_yaw_rate_clamped() -> None:
-    cfg = ControllerConfig(max_yaw_rate=1.4)
-    tw = PursuitController(cfg).update(_pose(0.0, 0.0, math.pi - 0.1), _straight_path(), 0.0)
+    tw = PursuitController(replace(GO2, max_yaw_rate=1.4)).update(
+        _pose(0.0, 0.0, math.pi - 0.1), _straight_path(), 0.0
+    )
     assert abs(tw.angular.z) <= 1.4 + 1e-9
 
 
@@ -103,8 +107,7 @@ def test_governor_creeps_in_tight_room() -> None:
     path = _straight_path()
     tight = np.full(len(path), 0.06)  # barely above the precision floor
     tw = PursuitController().update(_pose(0.0, 0.0), path, 0.0, clearance=tight)
-    cfg = ControllerConfig()
-    assert math.hypot(tw.linear.x, tw.linear.y) <= cfg.min_speed + 0.02
+    assert math.hypot(tw.linear.x, tw.linear.y) <= GO2.min_speed + 0.02
 
 
 def test_governor_full_speed_in_open_room() -> None:
@@ -126,5 +129,4 @@ def test_governor_reads_room_ahead_not_behind() -> None:
     clear = np.full(len(path), 1.0)
     clear[:5] = 0.06  # tight patch already behind the lookahead window
     tw = PursuitController().update(_pose(1.5, 0.0), path, 0.0, clearance=clear)
-    cfg = ControllerConfig()
-    assert math.hypot(tw.linear.x, tw.linear.y) > cfg.min_speed + 0.1
+    assert math.hypot(tw.linear.x, tw.linear.y) > GO2.min_speed + 0.1

@@ -22,10 +22,12 @@ geometry and gait-cost numbers, no dependency on worlds or on the sim.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import math
 
 import numpy as np
+
+from dimos.navigation.motion.control.controller import ControllerConfig
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,10 @@ class Embodiment:
     walk_gain: float = 0.964
     walk_slip: float = 0.132
     walk_slip_ramp: float = 0.08
+    # The follower tuning SEARCHED on this body (the referee, on the sim
+    # branch) -- fitted, where everything above is measured. Nested so the
+    # line between the two stays visible.
+    control: ControllerConfig = field(default_factory=ControllerConfig)
     # gait preferences for the planner's cost function.
     # forward = 1; strafe/reverse scale it; yaw_w prices rotation per rad.
     strafe: float = 1.8
