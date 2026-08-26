@@ -170,6 +170,7 @@ def test_g1_teleop_wires_manipulation_to_existing_coordinator() -> None:
     manipulation_kwargs = _module_kwargs(unitree_g1_teleop, G1ManipulationModule)
 
     assert manipulation_kwargs["instance_name"] == "G1Manipulation"
+    assert [robot.name for robot in manipulation_kwargs["robots"]] == ["g1_upper_body"]
     assert manipulation_kwargs["visualization"] == ViserVisualizationConfig(host="0.0.0.0")
     assert (
         unitree_g1_teleop.remapping_map[("G1Manipulation", "_control_coordinator")]
