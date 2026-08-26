@@ -205,6 +205,7 @@ all_modules = {
     "g1-connection-base": "dimos.robot.unitree.g1.connection.G1ConnectionBase",
     "g1-high-level-dds-sdk": "dimos.robot.unitree.g1.effectors.high_level.dds_sdk.G1HighLevelDdsSdk",
     "g1-high-level-web-rtc": "dimos.robot.unitree.g1.effectors.high_level.webrtc.G1HighLevelWebRtc",
+    "g1-manipulation-module": "dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop.G1ManipulationModule",
     "g1-recorder": "dimos.robot.unitree.g1.g1_recorder.G1Recorder",
     "g1-sim-connection": "dimos.robot.unitree.g1.mujoco_sim.G1SimConnection",
     "g1-tf-publisher": "dimos.robot.unitree.g1.g1_tf_publisher.G1TfPublisher",

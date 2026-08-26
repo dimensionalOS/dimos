@@ -84,7 +84,7 @@ hardware run. The upper-body planner does not include leg collision geometry;
 do not walk while executing planned arm motion.
 
 The robot must already be standing and balancing in sport mode. Stop any other
-program that can publish Unitree low-level commands before starting DimOS.
+program that can publish Unitree low-level commands before starting dimOS.
 
 On the G1 computer:
 
@@ -246,7 +246,7 @@ LD_PRELOAD=/lib/aarch64-linux-gnu/libgomp.so.1 uv run dimos ...
 
 If the failing path is under `roboplan.libs`, the RoboPlan aarch64 wheel has
 loaded a second private `libgomp`; preloading the platform library alone is not
-enough. See the [RoboPlan static TLS handoff](roboplan-libgomp-handoff.md) for
+enough. See the [RoboPlan static TLS handoff](/docs/platforms/humanoid/g1/roboplan-libgomp-handoff.md) for
 the confirmed reproducer, temporary workaround, and wheel acceptance criteria.
 
 ### A mapping module tries to build with Nix
@@ -258,7 +258,7 @@ removing the Quest camera, arm control, recording, or walking-command router.
 ### `dimos hardware g1 status` cannot connect
 
 The teleop blueprint must still be running, and both terminals must use the
-same DimOS transport configuration. Check the primary process with
+same dimOS transport configuration. Check the primary process with
 `uv run dimos status` and `uv run dimos log -f`.
 
 ### Ready-pose planning fails
