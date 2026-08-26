@@ -56,17 +56,48 @@ class DatasetBackend(Protocol):
     def quota(self) -> dict[str, Any]: ...
 
 
+class DataApi:
+    """The /v1/data operations, by name. The only place routes and payloads live."""
+
+    PREFIX = "/v1/data"
+
+    def __init__(self, transport: Transport) -> None:
+        self.t = transport
+
+    def create(self, **spec: Any) -> dict[str, Any]:
+        return self.t.request("POST", f"{self.PREFIX}/uploads", spec)
+
+    def status(self, upload_id: str) -> dict[str, Any]:
+        return self.t.request("GET", f"{self.PREFIX}/uploads/{upload_id}")
+
+    def complete(self, upload_id: str, parts: list[dict[str, Any]]) -> dict[str, Any]:
+        return self.t.request(
+            "POST", f"{self.PREFIX}/uploads/{upload_id}/complete", {"parts": parts}
+        )
+
+    def download(self, upload_id: str) -> dict[str, Any]:
+        return self.t.request("GET", f"{self.PREFIX}/uploads/{upload_id}/download")
+
+    def list(self) -> list[dict[str, Any]]:
+        return list(self.t.request("GET", f"{self.PREFIX}/uploads")["uploads"])
+
+    def quota(self) -> dict[str, Any]:
+        return self.t.request("GET", f"{self.PREFIX}/quota")
+
+    def put_part(self, url: str, chunk: bytes) -> None:
+        self.t.put(url, chunk)
+
+    def fetch(self, url: str, dst: Path) -> None:
+        self.t.download(url, dst)
+
+
 class MultipartBackend:
     """Blob artifacts via /v1/data: presigned multipart to S3, server-side part
     listing as the only resume state, sha256-verified pulls."""
 
-    API = "/v1/data"
-
-    def __init__(
-        self, transport: Transport, codec_id: str, staging_dir: Path | None, retries: int
-    ) -> None:
-        self.t, self.codec_id, self.staging_dir, self.retries = (
-            transport,
+    def __init__(self, api: DataApi, codec_id: str, staging_dir: Path | None, retries: int) -> None:
+        self.api, self.codec_id, self.staging_dir, self.retries = (
+            api,
             codec_id,
             staging_dir,
             retries,
@@ -103,19 +134,15 @@ class MultipartBackend:
             else:
                 artifact = path
             size = artifact.stat().st_size
-            create = self.t.request(
-                "POST",
-                f"{self.API}/uploads",
-                {
-                    "filename": artifact.name,
-                    "size": size,
-                    "sha256": _sha256(artifact),
-                    "kind": kind,
-                    "content_encoding": self.codec_id or None,
-                    "robot_id": robot_id,
-                    "manifest": manifest,
-                    "part_size": part_size,
-                },
+            create = self.api.create(
+                filename=artifact.name,
+                size=size,
+                sha256=_sha256(artifact),
+                kind=kind,
+                content_encoding=self.codec_id or None,
+                robot_id=robot_id,
+                manifest=manifest,
+                part_size=part_size,
             )
             if create["state"] == "complete":
                 return {**create, "skipped": True}
@@ -131,17 +158,17 @@ class MultipartBackend:
                     f.seek((part["part_number"] - 1) * ps)
                     chunk = f.read(ps)
                     self._retry(
-                        functools.partial(self.t.put, part["url"], chunk),
+                        functools.partial(self.api.put_part, part["url"], chunk),
                         f"part {part['part_number']}",
                     )
                     done += len(chunk)
                     tick("upload", done, size)
             parts = sorted(self.status(uid)["parts"], key=lambda p: p["part_number"])
-            done = self.t.request("POST", f"{self.API}/uploads/{uid}/complete", {"parts": parts})
+            done = self.api.complete(uid, parts)
             return {**done, "upload_id": uid, "skipped": False}
 
     def pull(self, upload_id: str, dest: Path | None) -> Path:
-        d = self.t.request("GET", f"{self.API}/uploads/{upload_id}/download")
+        d = self.api.download(upload_id)
         wire = d.get("content_encoding") or ""
         name = Path(d["filename"]).name
         plain = name.removesuffix(codecs.suffix(wire)) if wire else name
@@ -151,7 +178,7 @@ class MultipartBackend:
         out.parent.mkdir(parents=True, exist_ok=True)
         with self._staging(out) as tmp:
             raw = Path(tmp) / name
-            self._retry(functools.partial(self.t.download, d["url"], raw), "download")
+            self._retry(functools.partial(self.api.fetch, d["url"], raw), "download")
             if _sha256(raw) != d["sha256"]:
                 raise RuntimeError("sha256 mismatch — refusing to keep the file")
             if wire:
@@ -163,13 +190,13 @@ class MultipartBackend:
         return out
 
     def ls(self) -> list[dict[str, Any]]:
-        return list(self.t.request("GET", f"{self.API}/uploads")["uploads"])
+        return self.api.list()
 
     def status(self, upload_id: str) -> dict[str, Any]:
-        return self.t.request("GET", f"{self.API}/uploads/{upload_id}")
+        return self.api.status(upload_id)
 
     def quota(self) -> dict[str, Any]:
-        return self.t.request("GET", f"{self.API}/quota")
+        return self.api.quota()
 
 
 BACKENDS: dict[str, Any] = {"multipart": MultipartBackend}
@@ -187,7 +214,7 @@ class CloudData:
                 global_config.dimos_cloud_url, key, global_config.dimos_http_timeout
             )
             backend = BACKENDS[global_config.dimos_cloud_backend](
-                transport,
+                DataApi(transport),
                 global_config.dimos_upload_codec,
                 global_config.dimos_staging_dir,
                 global_config.dimos_upload_retries,
