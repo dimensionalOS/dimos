@@ -391,7 +391,6 @@ def _g1_nav_path(path: NavPath) -> Any:
 _G1_ROOT = G1_RERUN_ROOT if global_config.simulation == "mujoco" else "world/odometry/g1"
 
 _G1_URDF_PATH = Path(__file__).resolve().parents[2] / "g1.urdf"
-G1_TELEOP_TASK_NAME = "teleop_g1"
 _G1_ARM_JOINT_NAME_MAPPING = {
     joint_name: G1_UPPER_BODY_JOINT_NAME_MAPPING[joint_name] for joint_name in g1_arms
 }
@@ -540,7 +539,7 @@ _coordinator = _G1GrootCoordinator.blueprint(
         _arm_holder,
         # Shared bimanual Quest task with G1-only model and objective tuning.
         TaskConfig(
-            name=G1_TELEOP_TASK_NAME,
+            name="teleop_g1",
             type="teleop_ik",
             joint_names=g1_arms,
             priority=20,

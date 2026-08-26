@@ -378,20 +378,6 @@ class LfsPath(type(Path())):  # type: ignore[misc]
         """Return filesystem path, downloading from LFS if needed."""
         return str(self._ensure_downloaded())
 
-    def __eq__(self, other: object) -> bool:
-        """Compare lazy handles without downloading their contents."""
-        if not isinstance(other, LfsPath):
-            return NotImplemented
-        return bool(
-            object.__getattribute__(self, "_lfs_filename")
-            == object.__getattribute__(other, "_lfs_filename")
-        )
-
-    def __hash__(self) -> int:
-        """Hash the logical LFS name without downloading its contents."""
-        filename = object.__getattribute__(self, "_lfs_filename")
-        return hash((LfsPath, os.fspath(filename)))
-
     def __truediv__(self, other: object) -> "LfsPath":
         """Path division operator - returns a new lazy LfsPath (no download)."""
         filename = object.__getattribute__(self, "_lfs_filename")
