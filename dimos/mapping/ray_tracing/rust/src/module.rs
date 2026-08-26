@@ -64,7 +64,7 @@ impl RayTracingVoxelMap {
             .tf
             .lookup(&self.config.world_frame, &msg.header.frame_id)
             .at(stamp)
-            .tolerance(TF_MATCH_TOLERANCE_S)
+            .tolerance(self.config.tf_match_tolerance_s)
             .within(TF_WAIT_TIMEOUT)
             .await
         else {
@@ -161,10 +161,6 @@ impl RayTracingVoxelMap {
         }
     }
 }
-
-/// Max stamp gap between a cloud and the transform used to register it (s), one
-/// period of the 30 Hz odometry.
-const TF_MATCH_TOLERANCE_S: f64 = 1.0 / 30.0;
 
 /// How long to wait for a late transform before dropping a cloud.
 const TF_WAIT_TIMEOUT: Duration = Duration::from_millis(50);
@@ -320,6 +316,7 @@ mod tests {
             global_emit_every: 1,
             region_percentile: 95.0,
             world_frame: "world".to_string(),
+            tf_match_tolerance_s: 0.1,
             worker_threads: 4,
         };
         let mut map = VoxelMap::default();

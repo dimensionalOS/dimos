@@ -132,6 +132,7 @@ impl VoxelRayMapper {
             global_emit_every: 1,
             region_percentile,
             world_frame: "world".to_string(),
+            tf_match_tolerance_s: 0.1,
             worker_threads,
         };
         config

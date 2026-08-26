@@ -24,9 +24,10 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.spec import mapping
 
-# Max stamp gap between a cloud and the transform used to register it (s),
-# matching the native module: one 30 Hz odometry period.
-TF_MATCH_TOLERANCE_S = 1.0 / 30.0
+# Max stamp gap between a cloud and the transform used to register it (s).
+# One LIO scan period, so any cloud stamped within a pose sample's period
+# can register against it.
+TF_MATCH_TOLERANCE_S = 0.1
 
 
 class RayTracingVoxelMapConfig(NativeModuleConfig):
@@ -67,6 +68,8 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     # Fixed frame clouds are registered and published in. Each cloud is placed
     # by the tf lookup world_frame -> cloud frame_id at the cloud stamp.
     world_frame: str = "odom"
+    # Max stamp gap between a cloud and the transform used to register it (s).
+    tf_match_tolerance_s: float = TF_MATCH_TOLERANCE_S
     # Worker threads for parallel map work.
     worker_threads: int = 4
 
