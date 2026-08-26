@@ -66,6 +66,7 @@ def _gripper_task() -> TaskConfig:
         priority=20,
     )
 
+
 keyboard_teleop_openyam = autoconnect(
     KeyboardTeleopModule.blueprint(),
     ArmTwistCoordinator.blueprint(
