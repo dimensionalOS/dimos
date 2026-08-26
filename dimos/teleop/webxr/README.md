@@ -97,7 +97,8 @@ entire session; both hands must engage again before commands resume.
 
 **Axes**: thumbstick X, thumbstick Y, trigger (analog), grip (analog)
 
-**Buttons**: trigger, grip, touchpad, thumbstick, X/A, Y/B, menu
+**Buttons**: trigger, grip, touchpad, thumbstick, X/A, Y/B, optional menu. WebXR
+omits a platform-reserved menu button on devices such as PICO controllers.
 
 ## File Structure
 

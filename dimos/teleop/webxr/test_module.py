@@ -24,6 +24,7 @@ import pytest_mock
 
 from dimos.imitation.collection.episode_monitor import EpisodeStatus
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
 from dimos.teleop.webxr.controller_types import (
     Buttons,
@@ -350,6 +351,28 @@ def test_webxr_config_route_exposes_body_tracking_mode() -> None:
 
         assert response.status_code == 200
         assert response.json() == module._webxr_client_config()
+    finally:
+        module.stop()
+
+
+def test_go2_accepts_pico_six_button_joystick(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    module = Go2TeleopModule()
+    publish = mocker.patch.object(module.cmd_vel, "publish")
+    joy = Joy(
+        ts=1.0,
+        frame_id="left",
+        axes=[0.25, -0.75, 0.0, 0.0],
+        buttons=[0, 0, 0, 0, 0, 0],
+    )
+    try:
+        assert module._on_joy_bytes(joy.lcm_encode()) is True
+
+        twist = publish.call_args.args[0]
+        assert twist.linear.x == pytest.approx(0.75 * module.config.linear_speed)
+        assert twist.linear.y == pytest.approx(-0.25 * module.config.linear_speed)
+        assert twist.angular.z == 0.0
     finally:
         module.stop()
 
