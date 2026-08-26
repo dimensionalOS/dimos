@@ -82,7 +82,7 @@ controller = CartesianMotionController(
         control_frequency=20.0,
         position_kp=1.0,
         max_linear_velocity=0.15,  # m/s
-    )
+    ),
 )
 
 # 3. Set up topic connections (shared memory)
@@ -103,8 +103,8 @@ controller.start()
 # 5. Send Cartesian goal (move 10cm in X)
 controller.set_target_pose(
     position=[0.3, 0.0, 0.5],  # xyz in meters
-    orientation=[0, 0, 0],     # roll, pitch, yaw in radians
-    frame_id="world"
+    orientation=[0, 0, 0],  # roll, pitch, yaw in radians
+    frame_id="world",
 )
 
 # 6. Wait for convergence
@@ -137,14 +137,11 @@ from dimos.msgs.geometry_msgs import PoseStamped
 target = PoseStamped(
     frame_id="world",
     position=[0.3, 0.2, 0.5],
-    orientation=[0, 0, 0, 1]  # quaternion
+    orientation=[0, 0, 0, 1],  # quaternion
 )
 
 # Option 1: Via RPC
-controller.set_target_pose(
-    position=list(target.position),
-    orientation=list(target.orientation)
-)
+controller.set_target_pose(position=list(target.position), orientation=list(target.orientation))
 
 # Option 2: Via topic (if connected)
 controller.target_pose.publish(target)
@@ -162,22 +159,22 @@ Target poses can be published to the controller's `/target_pose` topic via LCM t
 class CartesianMotionControllerConfig:
     # Control loop
     control_frequency: float = 20.0  # Hz (recommend 10-50Hz)
-    command_timeout: float = 1.0     # seconds
+    command_timeout: float = 1.0  # seconds
 
     # PID gains (position)
-    position_kp: float = 1.0   # m/s per meter of error
-    position_ki: float = 0.0   # Integral gain
-    position_kd: float = 0.1   # Derivative gain (damping)
+    position_kp: float = 1.0  # m/s per meter of error
+    position_ki: float = 0.0  # Integral gain
+    position_kd: float = 0.1  # Derivative gain (damping)
 
     # PID gains (orientation)
-    orientation_kp: float = 2.0   # rad/s per radian of error
+    orientation_kp: float = 2.0  # rad/s per radian of error
     orientation_ki: float = 0.0
     orientation_kd: float = 0.2
 
     # Safety limits
-    max_linear_velocity: float = 0.2   # m/s
+    max_linear_velocity: float = 0.2  # m/s
     max_angular_velocity: float = 1.0  # rad/s
-    max_position_error: float = 0.5    # m (emergency stop threshold)
+    max_position_error: float = 0.5  # m (emergency stop threshold)
     max_orientation_error: float = 1.57  # rad (~90°)
 
     # Convergence

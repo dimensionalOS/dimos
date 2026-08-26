@@ -475,13 +475,13 @@ class MujocoSimModule(
 
         # Hooks are installed via set_step_hooks() after gripper detection
         # below, since they depend on the resolved gripper index.
-        engine_kwargs: dict[str, Any] = dict(
-            headless=self.config.headless,
-            cameras=cameras,
-            raycast_lidars=raycast_lidars,
-            robot_sim_spec=self.config.robot_sim_spec,
-            reset_joint_positions=self.config.reset_joint_positions,
-        )
+        engine_kwargs: dict[str, Any] = {
+            "headless": self.config.headless,
+            "cameras": cameras,
+            "raycast_lidars": raycast_lidars,
+            "robot_sim_spec": self.config.robot_sim_spec,
+            "reset_joint_positions": self.config.reset_joint_positions,
+        }
         if self.config.robot_mjcf is not None:
             engine_kwargs["config_path"] = Path(self.config.robot_mjcf)
             engine_kwargs["model"] = self._compose_model()

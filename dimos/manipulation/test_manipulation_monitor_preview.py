@@ -336,7 +336,7 @@ class TestWorldMonitorVisualization:
         assert monitor.visualization is viz
         assert viz.published is True
         assert viz.preview_animation_cancellations == 2
-        assert viz.animations == [(tuple(), [], 4.5)]
+        assert viz.animations == [((), [], 4.5)]
 
         monitor.stop_all_monitors()
 
@@ -362,8 +362,8 @@ class TestManipulationPreview:
         module._last_plan = plan
         module._world_monitor = MagicMock()
         plan_during_dismissal: list[GeneratedPlan | None] = []
-        module._world_monitor.cancel_preview_animation.side_effect = (
-            lambda: plan_during_dismissal.append(module._last_plan)
+        module._world_monitor.cancel_preview_animation.side_effect = lambda: (
+            plan_during_dismissal.append(module._last_plan)
         )
 
         assert module.clear_planned_path() is True

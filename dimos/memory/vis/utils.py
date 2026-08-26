@@ -74,13 +74,13 @@ def mosaic(
             images.append(f)
         elif isinstance(f, ImageDetections2D):
             images.append(f.annotated_image(scale=4))
-        elif isinstance(f, Observation) and isinstance(f.data, Image):
+        elif (isinstance(f, Observation) and isinstance(f.data, Image)) or (
+            isinstance(f, EmbeddedObservation) and isinstance(f.data, Image)
+        ):
             images.append(f.data)
-        elif isinstance(f, EmbeddedObservation) and isinstance(f.data, Image):
-            images.append(f.data)
-        elif isinstance(f, Observation) and isinstance(f.data, ImageDetections2D):
-            images.append(f.data.annotated_image(scale=4))
-        elif isinstance(f, EmbeddedObservation) and isinstance(f.data, ImageDetections2D):
+        elif (isinstance(f, Observation) and isinstance(f.data, ImageDetections2D)) or (
+            isinstance(f, EmbeddedObservation) and isinstance(f.data, ImageDetections2D)
+        ):
             images.append(f.data.annotated_image(scale=4))
         else:
             raise TypeError(f"Cannot extract Image from {type(f).__name__}: {f!r}")

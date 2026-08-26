@@ -250,7 +250,7 @@ class WorldMonitor:
         self.stop_visualization_thread()
 
         with self._lock:
-            for _robot_id, monitor in self._state_monitors.items():
+            for monitor in self._state_monitors.values():
                 monitor.stop()
             self._state_monitors.clear()
 

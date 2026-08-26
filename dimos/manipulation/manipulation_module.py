@@ -295,7 +295,7 @@ class ManipulationModule(Module):
             self._world_monitor.add_obstacle(floor_obs)
             logger.info(f"Floor obstacle added at z={fz:.3f}")
 
-        for _, (robot_id, _) in self._robots.items():
+        for robot_id, _ in self._robots.values():
             self._world_monitor.start_state_monitor(robot_id)
 
         if self._world_monitor.visualization is not None:
@@ -1030,7 +1030,7 @@ class ManipulationModule(Module):
             self._fail("Cartesian target groups must be unique")
             return None
         auxiliary_ids = tuple(planning_group_id_from_selector(group) for group in auxiliary_groups)
-        group_ids = tuple((*normalized_targets.keys(), *auxiliary_ids))
+        group_ids = (*normalized_targets.keys(), *auxiliary_ids)
         planning = self._begin_group_planning(speed_scale)
         if planning is None:
             return None
@@ -1140,10 +1140,9 @@ class ManipulationModule(Module):
         except Exception as exc:
             logger.error("Generated plan cannot be resolved: %s", exc)
             return False
-        if robot_name is not None:
-            if robot_name not in affected:
-                logger.error("Generated plan does not affect robot '%s'", robot_name)
-                return False
+        if robot_name is not None and robot_name not in affected:
+            logger.error("Generated plan does not affect robot '%s'", robot_name)
+            return False
         if self._world_monitor is None:
             return False
         self._world_monitor.animate_trajectory(plan.trajectory, duration)

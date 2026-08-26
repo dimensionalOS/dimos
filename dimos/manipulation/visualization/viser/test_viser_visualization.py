@@ -26,6 +26,8 @@ import pytest
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
+from typing_extensions import Self
+
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
 from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
 from dimos.manipulation.planning.spec.models import (
@@ -107,7 +109,7 @@ class Folder(Handle):
         super().__init__(label=label)
         self.kwargs = kwargs
 
-    def __enter__(self) -> Folder:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *_: object) -> bool:
@@ -399,11 +401,9 @@ class Operator:
                 tuple(request.auxiliary_group_ids),  # type: ignore[attr-defined]
             )
         )
-        group_ids = tuple(
-            (
-                *request.pose_targets.keys(),  # type: ignore[attr-defined]
-                *request.auxiliary_group_ids,  # type: ignore[attr-defined]
-            )
+        group_ids = (
+            *request.pose_targets.keys(),  # type: ignore[attr-defined]
+            *request.auxiliary_group_ids,  # type: ignore[attr-defined]
         )
         return self.module.make_plan(group_ids) if self.module.cartesian_plan_success else None
 
@@ -1561,8 +1561,8 @@ def test_scene_uses_fallback_appearance_and_proxy_for_invalid_obstacles(
         return Handle(visible=bool(kwargs["visible"]))
 
     server.scene.add_box = add_box
-    server.scene.add_label = (
-        lambda path, text, **kwargs: calls.append((path, {"text": text, **kwargs})) or Handle()
+    server.scene.add_label = lambda path, text, **kwargs: (
+        calls.append((path, {"text": text, **kwargs})) or Handle()
     )
     scene = ViserManipulationScene(server, Urdf)
 
@@ -1578,8 +1578,8 @@ def test_scene_replaces_invalid_box_geometry_with_a_visible_proxy() -> None:
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
     calls: list[tuple[str, dict[str, object]]] = []
     server.scene.add_box = lambda path, **kwargs: calls.append((path, kwargs)) or Handle()
-    server.scene.add_label = (
-        lambda path, text, **kwargs: calls.append((path, {"text": text, **kwargs})) or Handle()
+    server.scene.add_label = lambda path, text, **kwargs: (
+        calls.append((path, {"text": text, **kwargs})) or Handle()
     )
     scene = ViserManipulationScene(server, Urdf)
 
@@ -1613,8 +1613,8 @@ def test_scene_mesh_rendering_accepts_scene_meshes_and_falls_back_on_load_failur
     assert mesh_calls[0][2].shape == (1, 3)
 
     fallback_paths: list[str] = []
-    server.scene.add_box = lambda path, **kwargs: fallback_paths.append(path) or Handle(
-        visible=bool(kwargs["visible"])
+    server.scene.add_box = lambda path, **kwargs: (
+        fallback_paths.append(path) or Handle(visible=bool(kwargs["visible"]))
     )
     server.scene.add_label = lambda path, *_args, **_kwargs: fallback_paths.append(path) or Handle()
     monkeypatch.setattr(
@@ -1633,9 +1633,8 @@ def test_scene_obstacle_visibility_replacement_cleanup_and_closed_state() -> Non
     server = Server()
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
     handles: list[Handle] = []
-    server.scene.add_box = (
-        lambda _path, **kwargs: handles.append(Handle(visible=bool(kwargs["visible"])))
-        or handles[-1]
+    server.scene.add_box = lambda _path, **kwargs: (
+        handles.append(Handle(visible=bool(kwargs["visible"]))) or handles[-1]
     )
     scene = ViserManipulationScene(server, Urdf)
     item = obstacle(ObstacleType.BOX, (1.0, 1.0, 1.0))

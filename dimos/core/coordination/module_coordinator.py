@@ -312,7 +312,7 @@ class ModuleCoordinator(Resource):
                 if isinstance(remapped_name, str):
                     streams[remapped_name, conn.type].append((bp.name, conn.name))
 
-        for remapped_name, stream_type in streams.keys():
+        for remapped_name, stream_type in streams:
             key = (remapped_name, stream_type)
             if key in self._transport_registry:
                 transport = self._transport_registry[key]
@@ -707,7 +707,7 @@ def _coerce_transport_to_backend(transport: Transport[Any]) -> Transport[Any]:
         raw, msg_type = transport.topic.topic, transport.topic.lcm_type
     # Strip the Zenoh 'dimos/' namespace (if present) back to the logical name.
     # The factory re-applies the right prefix for the target backend.
-    logical = raw[len("dimos/") :] if raw.startswith("dimos/") else raw
+    logical = raw.removeprefix("dimos/")
     return make_transport(logical, msg_type)
 
 

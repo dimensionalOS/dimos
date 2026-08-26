@@ -118,7 +118,6 @@ class FakeWorld:
 
     def finalize(self) -> None:
         self.calls.append(("finalize",))
-        return None
 
     @property
     def is_finalized(self):
@@ -136,7 +135,6 @@ class FakeWorld:
 
     def set_joint_state(self, ctx, robot_id, joint_state) -> None:
         self.calls.append(("set_joint_state", ctx, robot_id, joint_state))
-        return None
 
     def get_joint_state(self, ctx, robot_id):
         return None

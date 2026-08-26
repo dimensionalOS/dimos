@@ -24,4 +24,3 @@ if TYPE_CHECKING:
 
 def render(plot: Plot, app_id: str = "plot", spawn: bool = True) -> None:
     """Placeholder — does nothing. Real rerun output for Plot is future work."""
-    pass
