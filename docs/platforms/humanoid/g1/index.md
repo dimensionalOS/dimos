@@ -177,6 +177,20 @@ Quest arm targets preempt a running planned arm trajectory because the Quest IK
 task has the higher coordinator priority. Releasing arm tracking does not
 resume an old trajectory.
 
+### Connect the manipulation panel
+
+The G1 teleop blueprint starts the Viser manipulation panel on all network
+interfaces at port `8095`. Open this address from a computer on the robot's
+trusted network:
+
+```text
+http://<g1-computer-ip>:8095
+```
+
+Viser remains available when the global viewer is `none`; it is independent of
+Rerun. The panel can plan and execute arm motion, so do not expose port `8095`
+to an untrusted network.
+
 ### Optional Rerun viewer
 
 The teleoperation UI is the Quest page. Rerun is a separate visualization of
@@ -229,6 +243,11 @@ Launch with:
 ```bash
 LD_PRELOAD=/lib/aarch64-linux-gnu/libgomp.so.1 uv run dimos ...
 ```
+
+If the failing path is under `roboplan.libs`, the RoboPlan aarch64 wheel has
+loaded a second private `libgomp`; preloading the platform library alone is not
+enough. See the [RoboPlan static TLS handoff](roboplan-libgomp-handoff.md) for
+the confirmed reproducer, temporary workaround, and wheel acceptance criteria.
 
 ### A mapping module tries to build with Nix
 
