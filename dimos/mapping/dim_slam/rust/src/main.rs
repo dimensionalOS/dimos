@@ -22,8 +22,8 @@ use std::collections::BTreeMap;
 
 use dim_slam::nalgebra::Isometry3;
 use dim_slam::{
-    CuvslamCore, CuvslamOdometryConfig, FusionCore, OdometryEstimate, OdometryFusionConfig,
-    SourceConfig,
+    CameraConfig, CuvslamCore, CuvslamOdometryConfig, FusionCore, ImuConfig, OdometryEstimate,
+    OdometryFusionConfig, SourceConfig, SourceKey,
 };
 use dimos_module::{native_config, run_with_transport, warn_throttled, Input, Module, Output, Tf};
 use imu_info::ImuInfo;
@@ -37,10 +37,12 @@ use msg_convert::{
 #[native_config]
 struct DimSlamConfig {
     camera_mode: String,
+    /// Declares cuVSLAM's rig order, which a JSON object's key order could not carry.
     camera_frames: Vec<String>,
-    rectified: bool,
+    /// Keyed by the frame_id the images carry, depth streams included.
+    cameras: BTreeMap<String, CameraConfig>,
     use_gpu: bool,
-    /// Fused as a drifting source, so it must also appear in source_frames.
+    /// Fused as a drifting source, so it must also be the parent of a key in sources.
     visual_odom_frame: String,
     rig_frame: String,
     covariance_gate_translation_std: f64,
@@ -48,10 +50,6 @@ struct DimSlamConfig {
     speed_gate_max_angular: f64,
     /// cuVSLAM's own inertial mode, separate from the filter's use_imu.
     cuvslam_enable_imu: bool,
-    depth_units_per_meter: f64,
-    depth_cloud_min_range: f64,
-    depth_cloud_max_range: f64,
-    depth_cloud_decimation: i64,
 
     odom_frame: String,
     base_frame: String,
@@ -61,49 +59,17 @@ struct DimSlamConfig {
     mahalanobis_gate: f64,
     max_position_m: f64,
     use_imu: bool,
-    imu_gyro_noise_density: f64,
-    imu_gyro_random_walk: f64,
-    imu_accel_noise_density: f64,
-    imu_accel_random_walk: f64,
+    /// Keyed by the frame_id the samples carry.
+    imus: BTreeMap<String, ImuConfig>,
     gravity: f64,
     imu_init_samples: i64,
     initial_position_std: f64,
     initial_velocity_std: f64,
     initial_rotation_std: f64,
     initial_bias_std: f64,
-    source_frames: Vec<String>,
-    source_pose_variances: Vec<f64>,
-    source_twist_variances: Vec<f64>,
+    /// Keyed by the transform the source reports, written "parent_frame->child_frame".
+    sources: BTreeMap<SourceKey, SourceConfig>,
     constraint_twist_variances: Vec<f64>,
-}
-
-/// The flat lists are what native_config can express; the library wants them keyed by frame.
-fn fusion_sources(config: &DimSlamConfig) -> BTreeMap<String, SourceConfig> {
-    assert_eq!(
-        config.source_pose_variances.len(),
-        config.source_frames.len() * 6,
-        "source_pose_variances needs 6 entries per source frame"
-    );
-    assert_eq!(
-        config.source_twist_variances.len(),
-        config.source_frames.len() * 6,
-        "source_twist_variances needs 6 entries per source frame"
-    );
-    config
-        .source_frames
-        .iter()
-        .zip(config.source_pose_variances.as_chunks::<6>().0)
-        .zip(config.source_twist_variances.as_chunks::<6>().0)
-        .map(|((frame, pose), twist)| {
-            (
-                frame.clone(),
-                SourceConfig {
-                    pose_variances: *pose,
-                    twist_variances: *twist,
-                },
-            )
-        })
-        .collect()
 }
 
 fn tf_lookup(tf: &Tf) -> impl Fn(&str, &str) -> Option<Isometry3<f64>> + '_ {
@@ -131,7 +97,7 @@ struct DimSlam {
     /// cuvslam_enable_imu only: the IMU's noise model and frame.
     #[input(decode = ImuInfo::decode)]
     imu_info: Input<ImuInfo>,
-    /// External odometry sources, told apart by header.frame_id.
+    /// External odometry sources, told apart by the transform they report.
     #[input(decode = Odometry::decode)]
     sources: Input<Odometry>,
     #[output(encode = Odometry::encode)]
@@ -153,7 +119,7 @@ impl DimSlam {
         self.vo = Some(CuvslamCore::new(CuvslamOdometryConfig {
             camera_mode: self.config.camera_mode.clone(),
             camera_frames: self.config.camera_frames.clone(),
-            rectified: self.config.rectified,
+            cameras: self.config.cameras.clone(),
             use_gpu: self.config.use_gpu,
             odom_frame: self.config.visual_odom_frame.clone(),
             base_frame: self.config.base_frame.clone(),
@@ -162,10 +128,6 @@ impl DimSlam {
             speed_gate_max_linear: self.config.speed_gate_max_linear,
             speed_gate_max_angular: self.config.speed_gate_max_angular,
             enable_imu: self.config.cuvslam_enable_imu,
-            depth_units_per_meter: self.config.depth_units_per_meter,
-            depth_cloud_min_range: self.config.depth_cloud_min_range,
-            depth_cloud_max_range: self.config.depth_cloud_max_range,
-            depth_cloud_decimation: self.config.depth_cloud_decimation,
         }));
         self.fusion = Some(FusionCore::new(OdometryFusionConfig {
             odom_frame: self.config.odom_frame.clone(),
@@ -175,17 +137,14 @@ impl DimSlam {
             mahalanobis_gate: self.config.mahalanobis_gate,
             max_position_m: self.config.max_position_m,
             use_imu: self.config.use_imu,
-            imu_gyro_noise_density: self.config.imu_gyro_noise_density,
-            imu_gyro_random_walk: self.config.imu_gyro_random_walk,
-            imu_accel_noise_density: self.config.imu_accel_noise_density,
-            imu_accel_random_walk: self.config.imu_accel_random_walk,
+            imus: self.config.imus.clone(),
             gravity: self.config.gravity,
             imu_init_samples: self.config.imu_init_samples,
             initial_position_std: self.config.initial_position_std,
             initial_velocity_std: self.config.initial_velocity_std,
             initial_rotation_std: self.config.initial_rotation_std,
             initial_bias_std: self.config.initial_bias_std,
-            sources: fusion_sources(&self.config),
+            sources: self.config.sources.clone(),
             constraint_twist_variances: self
                 .config
                 .constraint_twist_variances

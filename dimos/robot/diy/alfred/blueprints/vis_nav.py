@@ -25,7 +25,7 @@ from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.mapping.dim_slam.dim_slam import DimSlam
+from dimos.mapping.dim_slam.dim_slam import CameraConfig, DimSlam, ImuConfig, SourceConfig
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.dannav.holonomic_tc.module import DanHolonomicTC
 from dimos.navigation.dannav.local_planner.module import DanLocalPlanner
@@ -45,6 +45,11 @@ IR_ENTITY_BY_FRAME = {
 }
 """The IR pair, left first. Both imagers arrive on one topic, so the entity has to come
 from the message, and cuVSLAM's rig has to be told the order."""
+
+DEPTH_FRAME = "camera_color_optical_frame"
+"""The camera aligns depth to colour, so the depth image arrives in the colour frame."""
+
+IMU_FRAME = "camera_accel_optical_frame"
 
 
 def _image_at(msg: Any, entity_path: str) -> list[tuple[str, Any]]:
@@ -111,23 +116,30 @@ _vis_nav = autoconnect(
         # Both imagers share one camera_info topic. Left undeclared, cuVSLAM orders its rig
         # by sorting the frame names it saw, which is left-then-right only by luck of naming.
         camera_frames=list(IR_ENTITY_BY_FRAME),
-        depth_units_per_meter=1000.0,
-        depth_cloud_max_range=DEPTH_MAX_RANGE_METERS,
-        # A full-resolution D455 cloud is ~400k points a frame at 30 Hz and drowns the mapper.
-        depth_cloud_decimation=3,
-        source_frames=["visual_odom", "wheel_odom"],
+        cameras={
+            DEPTH_FRAME: CameraConfig(
+                depth_cloud_max_range=DEPTH_MAX_RANGE_METERS,
+                # A full-resolution D455 cloud is ~400k points a frame at 30 Hz and
+                # drowns the mapper.
+                depth_cloud_decimation=3,
+            )
+        },
         # Fixed variances: the message covariances report accumulated drift, not the delta
         # fused. The wheels contribute x/y only; visual z is dropped, which the planar
-        # constraint below pins.
-        source_pose_variances=[
-            *(0.01, 0.01, 0.0, 0.05, 0.05, 0.05),
-            *(0.05, 0.05, 0.0, 0.0, 0.0, 0.0),
-        ],
+        # constraint below pins. Only the wheels measure velocity; the tracker publishes
+        # no twist at all.
+        sources={
+            "visual_odom->base_link": SourceConfig(
+                pose_variances=[0.01, 0.01, 0.0, 0.05, 0.05, 0.05],
+            ),
+            "wheel_odom->base_link": SourceConfig(
+                pose_variances=[0.05, 0.05, 0.0, 0.0, 0.0, 0.0],
+                twist_variances=[0.02, 0.02, 0.0, 0.0, 0.0, 0.05],
+            ),
+        },
         # The CPU tracker's reported translation std starts above 1.0 and grows past 9
         # while driving normally, so no threshold separates good frames from bad.
         covariance_gate_translation_std=0.0,
-        # Only the wheels measure velocity; the tracker publishes no twist at all.
-        source_twist_variances=[*(0.0,) * 6, *(0.02, 0.02, 0.0, 0.0, 0.0, 0.05)],
         # Alfred is holonomic in the plane.
         constraint_twist_variances=[0.0, 0.0, 0.01, 0.01, 0.01, 0.0],
         # Wheel odometry crosses the wifi link and can land seconds late.
@@ -136,10 +148,14 @@ _vis_nav = autoconnect(
         # wheel + gyro 1.33 m, against a 0.59 m floor on the lidar reference's own heading.
         use_imu=True,
         # Bosch BMI055 datasheet figures, the part in the D455.
-        imu_gyro_noise_density=0.0018,
-        imu_gyro_random_walk=2e-5,
-        imu_accel_noise_density=0.02,
-        imu_accel_random_walk=3e-3,
+        imus={
+            IMU_FRAME: ImuConfig(
+                gyro_noise_density=0.0018,
+                gyro_random_walk=2e-5,
+                accel_noise_density=0.02,
+                accel_random_walk=3e-3,
+            )
+        },
     ).remappings([(DimSlam, "sources", "source_odometry")]),
     RayTracingVoxelMap.blueprint(
         voxel_size=VOXEL_SIZE_METERS,
