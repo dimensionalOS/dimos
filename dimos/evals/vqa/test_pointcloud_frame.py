@@ -207,6 +207,67 @@ def test_load_uses_recorded_camera_info_and_tf(
     assert np.allclose(frame.pointcloud_to_camera.to_matrix(), (-world_from_camera).to_matrix())
 
 
+def test_load_resolves_tf_through_non_world_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    dataset = tmp_path / "recording.db"
+    image = Image.from_numpy(
+        np.zeros((2, 2, 3), dtype=np.uint8), frame_id="camera_optical", ts=10.0
+    )
+    cloud = PointCloud2.from_numpy(np.array([[0.0, 0.0, 1.0]]), frame_id="lidar", timestamp=10.0)
+    camera_info = CameraInfo.from_intrinsics(1.0, 1.0, 0.0, 0.0, 2, 2, frame_id="camera_optical")
+    transforms = (
+        Transform(frame_id="map", child_frame_id="camera_optical", ts=10.0),
+        Transform(frame_id="map", child_frame_id="lidar", ts=10.0),
+    )
+    with SqliteStore(path=dataset) as store:
+        store.stream("color_image", Image).append(image, ts=10.0)
+        store.stream("lidar", PointCloud2).append(cloud, ts=10.0)
+        store.stream("camera_info", CameraInfo).append(camera_info, ts=10.0)
+        store.stream("tf", TFMessage).append(TFMessage(*transforms), ts=10.0)
+
+    loader = PointCloudFrameLoader(dataset)
+    monkeypatch.setattr(loader._rectifier, "rectify", lambda source, info: (source, info))
+    with loader:
+        frame = loader.load(0)
+
+    assert np.allclose(frame.pointcloud_to_camera.to_matrix(), np.eye(4))
+
+
+def test_load_applies_camera_rectification_to_pointcloud_transform(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    dataset = tmp_path / "recording.db"
+    image = Image.from_numpy(
+        np.zeros((2, 2, 3), dtype=np.uint8), frame_id="camera_optical", ts=10.0
+    )
+    cloud = PointCloud2.from_numpy(np.array([[0.0, 0.0, 1.0]]), frame_id="lidar", timestamp=10.0)
+    camera_info = CameraInfo.from_intrinsics(1.0, 1.0, 0.0, 0.0, 2, 2, frame_id="camera_optical")
+    rectification = np.array(
+        [
+            [0.0, -1.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ]
+    )
+    camera_info.R = rectification.ravel().tolist()
+    with SqliteStore(path=dataset) as store:
+        store.stream("color_image", Image).append(image, ts=10.0)
+        store.stream("lidar", PointCloud2).append(cloud, ts=10.0)
+        store.stream("camera_info", CameraInfo).append(camera_info, ts=10.0)
+        store.stream("tf", TFMessage).append(
+            TFMessage(Transform(frame_id="camera_optical", child_frame_id="lidar", ts=10.0)),
+            ts=10.0,
+        )
+
+    loader = PointCloudFrameLoader(dataset)
+    monkeypatch.setattr(loader._rectifier, "rectify", lambda source, info: (source, info))
+    with loader:
+        frame = loader.load(0)
+
+    assert np.allclose(frame.pointcloud_to_camera.to_matrix()[:3, :3], rectification)
+
+
 def test_load_selects_camera_info_for_each_image_timestamp(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

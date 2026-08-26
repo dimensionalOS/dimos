@@ -200,6 +200,14 @@ class PointCloudFrameLoader:
             recorded_tf,
             self._tolerance_s,
         )
+        rectification = np.eye(4, dtype=np.float64)
+        rectification[:3, :3] = np.asarray(source_camera_info.R, dtype=np.float64).reshape(3, 3)
+        pointcloud_to_camera = Transform.from_matrix(
+            rectification @ pointcloud_to_camera.to_matrix(),
+            ts=image_obs.ts,
+            frame_id=camera_info.frame_id,
+            child_frame_id=lidar_obs.data.frame_id,
+        )
         if not np.all(np.isfinite(pointcloud_to_camera.to_matrix())):
             raise PointCloudFrameUnavailableError(
                 "recorded point-cloud-to-camera transform must be finite"
@@ -313,31 +321,18 @@ def _recorded_pointcloud_to_camera(
     cloud_frame = lidar_obs.data.frame_id
     if not cloud_frame:
         raise PointCloudFrameUnavailableError("recorded point cloud requires a frame_id")
-    camera_from_world = tf.get(
+    camera_from_cloud = tf.get(
         camera_frame,
-        "world",
+        cloud_frame,
         time_point=image_obs.ts,
         time_tolerance=tolerance_s,
     )
-    if camera_from_world is None:
+    if camera_from_cloud is None:
         raise PointCloudFrameUnavailableError(
-            f"recorded tf cannot resolve {camera_frame!r} <- 'world' "
+            f"recorded tf cannot resolve {camera_frame!r} <- {cloud_frame!r} "
             f"at image timestamp {image_obs.ts}"
         )
-    if cloud_frame == "world":
-        return camera_from_world
-    world_from_cloud = tf.get(
-        "world",
-        cloud_frame,
-        time_point=lidar_obs.ts,
-        time_tolerance=tolerance_s,
-    )
-    if world_from_cloud is None:
-        raise PointCloudFrameUnavailableError(
-            f"recorded tf cannot resolve 'world' <- {cloud_frame!r} "
-            f"at point-cloud timestamp {lidar_obs.ts}"
-        )
-    return camera_from_world + world_from_cloud
+    return camera_from_cloud
 
 
 def _rectification_maps(

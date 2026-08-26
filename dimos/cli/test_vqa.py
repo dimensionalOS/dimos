@@ -172,6 +172,21 @@ def test_vqa_generate_cli_formats_expected_errors(monkeypatch: pytest.MonkeyPatc
     assert "Traceback" not in result.output
 
 
+def test_vqa_run_cli_formats_dataset_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def fail_load(dataset: Path) -> tuple[()]:
+        raise ValueError(f"invalid VQA dataset file: {dataset / 'cases.jsonl'}")
+
+    monkeypatch.setattr(suite_module, "load_suite", fail_load)
+
+    result = CliRunner().invoke(app, ["evals", "vqa", "run", str(tmp_path)])
+
+    assert result.exit_code != 0
+    assert "invalid VQA dataset file" in result.output
+    assert "Traceback" not in result.output
+
+
 def test_vqa_run_cli_runs_shared_evaluator(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     class FakeRunner:
         def __init__(self, **kwargs: object) -> None:

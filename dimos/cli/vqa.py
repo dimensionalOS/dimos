@@ -73,7 +73,10 @@ def run(
     if model:
         overrides["model"] = model
     runner = EvalRunner(**overrides)
-    results = runner.run(load_suite(dataset))
+    try:
+        results = runner.run(load_suite(dataset))
+    except (ValueError, OSError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
     for result in results:
         status = "ERROR" if result.error else ("PASS" if result.passed else "fail")
         detail = result.error or f"answer={result.outputs[:60]!r}"
