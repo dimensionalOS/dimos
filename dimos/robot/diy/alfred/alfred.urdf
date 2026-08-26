@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <!-- Alfred: an i2rt FLOW holonomic base carrying a Livox Mid-360 and a RealSense
-     D455. Caster layout is the FLOW's own kinematic constant; the two sensor
+     D435i. Caster layout is the FLOW's own kinematic constant; the two sensor
      mounts are measured from the robot. -->
 <robot name="alfred">
 
@@ -81,20 +81,22 @@
     <origin xyz="-0.2 -0.2 0.05" rpy="0 0 0"/>
   </joint>
 
+  <!-- Lift mast, now at the front center of the deck. ESTIMATED 2026-08-26 by
+       back-projecting its base brackets in the top-down photo. -->
   <link name="mast_link">
     <visual>
       <origin xyz="0 0 0.325" rpy="0 0 0"/>
-      <geometry><box size="0.12 0.18 0.65"/></geometry>
+      <geometry><box size="0.10 0.20 0.65"/></geometry>
       <material name="frame"/>
     </visual>
     <collision>
       <origin xyz="0 0 0.325" rpy="0 0 0"/>
-      <geometry><box size="0.12 0.18 0.65"/></geometry>
+      <geometry><box size="0.10 0.20 0.65"/></geometry>
     </collision>
   </link>
   <joint name="mast_joint" type="fixed">
     <parent link="base_link"/><child link="mast_link"/>
-    <origin xyz="-0.04 0 0.331" rpy="0 0 0"/>
+    <origin xyz="0.21 0 0.331" rpy="0 0 0"/>
   </joint>
 
   <!-- Livox Mid-360 on an angled bracket, pitched ~22.5 deg forward.
@@ -112,22 +114,25 @@
     <origin xyz="0.2307 -0.1636 0.437" rpy="-0.0096 0.3933 -0.0219"/>
   </joint>
 
-  <!-- RealSense D455 on the rear corner bracket. Roll, pitch and height come from
-       the 2026-08-25 spin recording against the Mid-360; yaw, x and y stay as
-       measured by hand, since a spin in place leaves them flat.
+  <!-- RealSense D435i mounted upside-down at the rear, centered left-right,
+       facing off the back, on a 40 mm extrusion rail lying on the deck about
+       12 cm inboard of the rear edge. ESTIMATED 2026-08-26 from photos
+       (deck 0.33 + 0.040 rail + ~0.008 mount + 0.0125 half body = 0.391);
+       needs a spin calibration like the old D455 mount had.
+       Roll pi = upside-down, yaw pi = facing rearward.
        camera_link sits at the depth (left infrared) imager, which is where the
-       RealSense driver puts it, so the child offsets below are the factory
-       extrinsics read back off the device. -->
+       RealSense driver puts it; child offsets below are nominal D435i values,
+       replace with factory extrinsics read back off the device. -->
   <link name="camera_link">
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry><box size="0.026 0.124 0.029"/></geometry>
+      <geometry><box size="0.025 0.090 0.025"/></geometry>
       <material name="sensor"/>
     </visual>
   </link>
   <joint name="camera_joint" type="fixed">
     <parent link="base_link"/><child link="camera_link"/>
-    <origin xyz="-0.2518 -0.2736 0.4292" rpy="0.0512 0.1592 -3.1030"/>
+    <origin xyz="-0.13 0 0.391" rpy="3.1415927 0 3.1415927"/>
   </joint>
 
   <link name="camera_depth_frame"/>
@@ -144,7 +149,7 @@
   <link name="camera_color_frame"/>
   <joint name="camera_color_joint" type="fixed">
     <parent link="camera_link"/><child link="camera_color_frame"/>
-    <origin xyz="-0.0004 -0.0592 0.0001" rpy="0 0 0"/>
+    <origin xyz="0 -0.015 0" rpy="0 0 0"/>
   </joint>
   <link name="camera_color_optical_frame"/>
   <joint name="camera_color_optical_joint" type="fixed">
@@ -166,7 +171,7 @@
   <link name="camera_infra2_frame"/>
   <joint name="camera_infra2_joint" type="fixed">
     <parent link="camera_link"/><child link="camera_infra2_frame"/>
-    <origin xyz="0 -0.0949 0" rpy="0 0 0"/>
+    <origin xyz="0 -0.050 0" rpy="0 0 0"/>
   </joint>
   <link name="camera_infra2_optical_frame"/>
   <joint name="camera_infra2_optical_joint" type="fixed">
@@ -177,7 +182,7 @@
   <link name="camera_accel_frame"/>
   <joint name="camera_accel_joint" type="fixed">
     <parent link="camera_link"/><child link="camera_accel_frame"/>
-    <origin xyz="-0.016 -0.0302 0.0074" rpy="0 0 0"/>
+    <origin xyz="-0.0112 -0.0055 0.0051" rpy="0 0 0"/>
   </joint>
   <link name="camera_accel_optical_frame"/>
   <joint name="camera_accel_optical_joint" type="fixed">
