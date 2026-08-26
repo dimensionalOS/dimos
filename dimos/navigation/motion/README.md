@@ -43,35 +43,45 @@ why the time-critical half runs on the robot:
 
 Stock dimos msgs; the port declarations are the spec:
 
-```python
+**MotionPlanner**
+
+```python session=io
 from typing import get_args, get_origin, get_type_hints
 from dimos.core.stream import In, Out
-from dimos.navigation.motion.adapter.follower import TrajectoryFollower
 from dimos.navigation.motion.adapter.planner import MotionPlanner
 
-for module in (MotionPlanner, TrajectoryFollower):
-    print(module.__name__)
-    for name, hint in get_type_hints(module).items():
-        if get_origin(hint) in (In, Out):
-            print(f"  {get_origin(hint).__name__:<4} {name:<14} {get_args(hint)[0].__name__}")
+for name, hint in get_type_hints(MotionPlanner).items():
+    if get_origin(hint) in (In, Out):
+        print(f"{get_origin(hint).__name__:<4} {name:<14} {get_args(hint)[0].__name__}")
 ```
 
 ```results
-MotionPlanner
-  In   local_map      PointCloud2
-  In   odometry       Odometry
-  In   planner_path   Path
-  In   tf             TFMessage
-  Out  path           Path
-  Out  plan_body      Path
-TrajectoryFollower
-  In   path           Path
-  In   odometry       Odometry
-  In   local_map      PointCloud2
-  In   stop_movement  Bool
-  In   tf             TFMessage
-  Out  nav_cmd_vel    Twist
-  Out  goal_reached   Bool
+In   local_map      PointCloud2
+In   odometry       Odometry
+In   planner_path   Path
+In   tf             TFMessage
+Out  path           Path
+Out  plan_body      Path
+```
+
+**TrajectoryFollower**
+
+```python session=io
+from dimos.navigation.motion.adapter.follower import TrajectoryFollower
+
+for name, hint in get_type_hints(TrajectoryFollower).items():
+    if get_origin(hint) in (In, Out):
+        print(f"{get_origin(hint).__name__:<4} {name:<14} {get_args(hint)[0].__name__}")
+```
+
+```results
+In   path           Path
+In   odometry       Odometry
+In   local_map      PointCloud2
+In   stop_movement  Bool
+In   tf             TFMessage
+Out  nav_cmd_vel    Twist
+Out  goal_reached   Bool
 ```
 
 Rules the ports carry:
