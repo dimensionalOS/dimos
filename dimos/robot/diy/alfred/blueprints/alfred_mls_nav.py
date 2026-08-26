@@ -29,6 +29,10 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.diy.alfred.blueprints.vis_nav import _vis_nav
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
 
+# librealsense leaks usbfs fds (~8/s) in this worker; keep socket-accepting modules
+# out of its fd table so EMFILE cannot take down rerun/keyboard controls.
+RealSenseCamera.dedicated_worker = True
+
 D455_MOUNT = Transform(
     translation=Vector3(-0.2518, -0.2736, 0.4292),
     rotation=Quaternion(0.079967, -0.023978, -0.996361, 0.017193),

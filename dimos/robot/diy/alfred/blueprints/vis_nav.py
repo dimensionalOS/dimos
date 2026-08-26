@@ -147,7 +147,7 @@ _vis_nav = autoconnect(
         replay_buffer_seconds=2.0,
         # Halves final drift on drive_2026-08-18_23-05-04.db: wheel alone ends 2.66 m out,
         # wheel + gyro 1.33 m, against a 0.59 m floor on the lidar reference's own heading.
-        use_imu=True,
+        use_imu=False,  # D435i swapped in; D455_MOUNT calibration misaligns gravity by ~2.4 m/s^2 -> fusion diverges
         # Bosch BMI055 datasheet figures, the part in the D455.
         imus={
             IMU_FRAME: ImuConfig(
