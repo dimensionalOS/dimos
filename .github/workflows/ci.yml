@@ -540,9 +540,6 @@ jobs:
         run: uv run pytest -m web_browser dimos/e2e_tests/test_cockpit_browser.py --no-cov
 
   tests:
-    # Native-module binaries come from Cachix, so when their inputs changed the
-    # publish job must finish before tests may fetch them. A skipped
-    # cachix-build (fork PR, or nothing to publish) is fine; a failed one blocks.
     if: |
       !cancelled() &&
       contains(fromJSON('["success", "skipped"]'), needs.cachix-build.result)
