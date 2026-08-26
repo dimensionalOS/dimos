@@ -36,10 +36,9 @@ exists to make unrepresentable.
 from __future__ import annotations
 
 from collections.abc import Callable
-from importlib import import_module
 import itertools
 import math
-from typing import Any, Protocol
+from typing import Protocol
 
 import numpy as np
 
@@ -65,23 +64,6 @@ class PlannerEpisode(Protocol):
 
 
 PlannerFactory = Callable[..., PlannerEpisode]
-
-# name -> "module:factory"; arbitrary "module:factory" strings load too, so
-# generated candidates plug in without registering. Registry entries are
-# package-relative so the package works wherever it is copied.
-REGISTRY = {
-    "target-py": ".target:make_py",  # port spec (python)
-    "target": ".target:make",  # rust candidate
-}
-
-
-def load(name: str) -> PlannerFactory:
-    """Resolve a registry name or a dotted "module:factory" string."""
-    target = REGISTRY.get(name, name)
-    mod, _, attr = target.partition(":")
-    module = import_module(mod, package=__package__) if mod.startswith(".") else import_module(mod)
-    factory: Any = getattr(module, attr or "make")
-    return factory  # type: ignore[no-any-return]
 
 
 # Path <-> states, shared by every candidate: the search speaks (x, y, yaw)

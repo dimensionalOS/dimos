@@ -23,6 +23,7 @@ dependencies = [
  "dimos-motion2-target",
  "numpy",
  "pyo3",
+ "serde_json",
 ]
 
 [[package]]

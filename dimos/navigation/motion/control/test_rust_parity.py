@@ -36,7 +36,7 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.motion.adapter.follower import path_clearance as follower_clearance
 from dimos.navigation.motion.control.controller import (
     ControllerConfig,
-    law_params,
+    emb_json,
     load_extension,
     path_xy_yaw,
 )
@@ -56,8 +56,7 @@ TOL = 1e-9
 CASES = 240
 
 
-# the governor the rust encoder is handed, as the embodiment's tuple
-GOVERNOR = (GO2.max_speed, GO2.min_speed, GO2.speed_clearance, GO2.precision, GO2.max_yaw_rate)
+GOVERNOR = emb_json(GO2)
 
 
 def _pose(x: float, y: float, yaw: float = 0.0) -> PoseStamped:
@@ -219,8 +218,7 @@ def _raw_twists(law, cfg, pose, path, clearance, emb=GO2):  # type: ignore[no-un
         (float(pose.position.x), float(pose.position.y), float(pose.yaw)),
         path_xy_yaw(path),
         clr,
-        law_params(emb, emb.gait_band),
-        cfg.hinted_params,
+        emb_json(emb),
     )
     return py, rs
 
@@ -280,13 +278,12 @@ def test_wrap_boundaries(yaw: float) -> None:
         assert a == b, f"{law} yaw={yaw!r}: python {a} vs rust {b}"
 
 
-def test_registry_and_build_hint() -> None:
-    from dimos.navigation.motion.control.controller import REGISTRY, load
+def test_loader_and_build_hint() -> None:
+    from dimos.navigation.motion.loader import load
 
-    for name, (_, make_rs) in LAWS.items():
-        assert REGISTRY[f"{name}-rs"].endswith(":make_rust")
-        assert load(f"{name}-rs") is make_rs
-        assert isinstance(load(f"{name}-rs")().config, ControllerConfig)
+    for _, make_rs in LAWS.values():
+        assert load(f"{make_rs.__module__}:make_rust") is make_rs
+        assert isinstance(make_rs().config, ControllerConfig)
 
 
 @pytest.mark.parametrize("law", sorted(STATEFUL))

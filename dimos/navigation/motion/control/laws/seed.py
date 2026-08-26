@@ -33,7 +33,7 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.motion.control.controller import (
     ControllerConfig,
     angle_diff,
-    law_params,
+    emb_json,
     load_extension,
     path_xy_yaw,
 )
@@ -144,7 +144,7 @@ class RustPursuitController:
     def __init__(self, emb: Embodiment = GO2) -> None:
         self._mod: Any = load_extension()
         self.config = emb.control
-        self._params = law_params(emb)
+        self._emb = emb_json(emb)
         self.reset()
 
     def reset(self) -> None:
@@ -158,6 +158,6 @@ class RustPursuitController:
             (float(pose.position.x), float(pose.position.y), float(pose.yaw)),
             path_xy_yaw(path),
             clr,
-            self._params,
+            self._emb,
         )
         return Twist(Vector3(vx, vy, 0.0), Vector3(0.0, 0.0, wz))

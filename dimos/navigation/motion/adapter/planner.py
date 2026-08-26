@@ -50,8 +50,9 @@ from dimos.navigation.motion.adapter.follower import path_clearance
 from dimos.navigation.motion.control.profile import encode_precision
 from dimos.navigation.motion.embodiment.base import Embodiment
 from dimos.navigation.motion.embodiment.go2 import GO2
+from dimos.navigation.motion.loader import load
 from dimos.navigation.motion.obstacles import ObstacleModel, hard_points, load as load_model
-from dimos.navigation.motion.planner.planners.base import PlannerEpisode, load
+from dimos.navigation.motion.planner.planners.base import PlannerEpisode
 from dimos.navigation.tf_pose import OdomBasePose
 from dimos.utils.logging_config import setup_logger
 
@@ -140,7 +141,7 @@ def replan_due(
 
 
 class MotionPlannerConfig(ModuleConfig):
-    planner: str = "target"  # registry name or "module:factory"
+    planner: str = "dimos.navigation.motion.planner.planners.target:make"
     embodiment: Embodiment = GO2
     # HOW AGGRESSIVE the search is allowed to be, and the only two numbers that
     # decide whether a gap admits a route. A gap has to be

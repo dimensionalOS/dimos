@@ -16,12 +16,13 @@ crate-type = ["cdylib", "rlib"]
 dimos-motion2-target = { path = "../../planner/rust", default-features = false }
 pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"], optional = true }
 numpy = { version = "0.25", optional = true }
+serde_json = { version = "1", features = ["float_roundtrip"], optional = true }
 
 [features]
 # `cargo test --no-default-features` runs the pure-Rust tests without linking
 # Python; maturin builds with defaults and gets the extension module.
 default = ["python"]
-python = ["dep:pyo3", "dep:numpy"]
+python = ["dep:pyo3", "dep:numpy", "dep:serde_json"]
 
 [dev-dependencies]
 dimos-motion2-target = { path = "../../planner/rust", default-features = false, features = ["test-bodies"] }

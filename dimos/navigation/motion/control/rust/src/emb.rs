@@ -12,18 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! A law's parameters, read off the body it drives -- `controller.law_params`
-//! and friends. The body itself arrives in a module's config, deserialised
-//! from `embodiment/base.py`'s record; there is no table here to drift from it.
+//! A law's parameters, read off the body it drives. The body itself arrives
+//! as `embodiment/base.py`'s record -- a module's config, or the JSON the
+//! python wrappers pass; there is no table here to drift from it.
 
 use dimos_motion2_target::planner::Emb;
 
 use crate::geom::Params;
 use crate::laws::blind::BlindParams;
 use crate::laws::hinted::HintedParams;
+use crate::stamps::Governor;
 
-/// `controller.law_params`: the body's tuning plus its plant, driving inside
-/// `band` -- the governor's for seed/blind, the gait's for hinted.
+/// The body's tuning plus its plant, driving inside `band` -- the governor's
+/// for seed/blind, the gait's for hinted.
 pub fn base_params(emb: &Emb, band: [f64; 2]) -> Params {
     let c = &emb.control;
     Params {
@@ -61,5 +62,16 @@ pub fn blind_params(emb: &Emb) -> BlindParams {
         walk_gain: emb.walk_gain,
         walk_slip: emb.walk_slip,
         slip_ramp: emb.walk_slip_ramp,
+    }
+}
+
+/// The governor curve the stamp dialect prices clearance with.
+pub fn governor(emb: &Emb) -> Governor {
+    Governor {
+        max_speed: emb.max_speed,
+        min_speed: emb.min_speed,
+        speed_clearance: emb.speed_clearance,
+        floor: emb.precision,
+        max_yaw_rate: emb.max_yaw_rate,
     }
 }

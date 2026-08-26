@@ -47,14 +47,12 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.motion.adapter.diagnostics import StallReporter
-from dimos.navigation.motion.control.controller import (
-    TrajectoryController,
-    load,
-)
+from dimos.navigation.motion.control.controller import TrajectoryController
 from dimos.navigation.motion.control.profile import ceilings_to_clearance, decode_ceilings
 from dimos.navigation.motion.control.tracks import TRACKS
 from dimos.navigation.motion.embodiment.base import Embodiment
 from dimos.navigation.motion.embodiment.go2 import GO2
+from dimos.navigation.motion.loader import load
 from dimos.navigation.motion.obstacles import ObstacleModel, hard_points, load as load_model
 from dimos.navigation.tf_pose import OdomBasePose
 from dimos.utils.logging_config import setup_logger
@@ -117,7 +115,7 @@ class TrajectoryFollowerConfig(ModuleConfig):
     # local map is actually live, which on the go2-zenoh stack it is; "blind"
     # runs the law that recovers required precision from the path stamps alone.
     track: str = "hinted"
-    controller: str | None = None  # registry name or "module:factory"; None = the track's law
+    controller: str | None = None  # "module:factory"; None = the track's law
     control_frequency: float = 10.0
     goal_tolerance: float = 0.20  # planar distance that counts as arrival (m)
     # The clearance hint this module recomputes on the robot has to be the same

@@ -40,7 +40,7 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class Track:
     name: str
-    controller: str  # REGISTRY name of the law this track currently runs
+    controller: str  # "module:factory" of the law this track currently runs
     annotate_clearance: bool  # is the follower handed the clearance array
     # Not read on this branch: the referee that scores pace lives on
     # ivan/feat/trajectory_ctrl. They are half of what a track IS (see above),
@@ -51,9 +51,9 @@ class Track:
 
 TRACKS: dict[str, Track] = {
     # The python law is the default so nothing needs the crate built; its
-    # rust twin ("seed-rs" / "blind-rs") is parity-locked and is what deploys.
-    "hinted": Track("hinted", "hinted", True, 0.75, 5.0),
-    "blind": Track("blind", "blind", False, 0.35, 0.5),
+    # rust twin (`:make_rust`) is parity-locked and is what deploys.
+    "hinted": Track("hinted", "dimos.navigation.motion.control.laws.hinted:make", True, 0.75, 5.0),
+    "blind": Track("blind", "dimos.navigation.motion.control.laws.blind:make", False, 0.35, 0.5),
 }
 
 DEFAULT = "hinted"

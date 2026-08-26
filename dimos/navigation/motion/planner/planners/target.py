@@ -15,8 +15,7 @@
 """The shipped planner: an SE(2) search whose world model is built from the
 cloud rather than from any ground truth.
 
-Two factories: `make_py` ("target-py") is the python port spec, and `make`
-("target") adapts the rust crate (dimos_motion2_target) — same algorithm, and
+Two factories: `make_py` is the python port spec, and `make` adapts the rust crate (dimos_motion2_target) — same algorithm, and
 the crate is what runs on a robot.
 """
 
