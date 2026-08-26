@@ -776,6 +776,21 @@ mod tests {
         );
     }
 
+    /// A config dict whose keys mean something in order (a camera rig, a pipeline) is only
+    /// possible while serde_json carries the order it read.
+    #[test]
+    fn a_config_object_keeps_the_key_order_it_was_written_in() {
+        let json = r#"{"topics": {}, "config": {"zeta": 1, "alpha": 2}}"#;
+        let value: serde_json::Value = serde_json::from_str(json).unwrap();
+        let keys: Vec<&str> = value["config"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(keys, ["zeta", "alpha"]);
+    }
+
     #[test]
     fn missing_config_field_returns_error() {
         let json = r#"{"topics": {"data": "/foo/data"}}"#;
