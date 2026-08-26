@@ -183,10 +183,11 @@ _vis_nav = autoconnect(
             "blueprint": _rerun_blueprint,
             "static": {ALFRED_RERUN_ROOT: _alfred_urdf_static},
             # Keyed by the topic's entity path, before any visual_override renames it.
-            # Everything heavy is held to 1 Hz: the viewer rides a wifi link, and the
-            # uncapped clouds put it seconds behind live. tf and odometry stay uncapped
-            # so the pose renders smoothly; they are a few hundred bytes a message.
+            # Everything is held to 1 Hz: the viewer rides a wifi link, and the
+            # uncapped clouds put it seconds behind live. tf is capped too, so the
+            # whole scene ticks once a second rather than re-posing per odom update.
             "max_hz": {
+                "world/tf": 1.0,
                 "world/color_image": 1.0,
                 "world/depth_image": 1.0,
                 "world/image": 1.0,
