@@ -354,13 +354,23 @@ def build_manifest(modules: tuple[DiscoveredModule, ...]) -> str:
 
 def _in_cachix_cache(cache: str, store_path: str) -> bool:
     store_hash = Path(store_path).name.split("-", 1)[0]
+    url = f"https://{cache}.cachix.org/{store_hash}.narinfo"
     request = urllib.request.Request(
-        f"https://{cache}.cachix.org/{store_hash}.narinfo", method="HEAD"
+        url,
+        method="HEAD",
+        # The CDN rejects urllib's default Python-urllib agent with a 403.
+        headers={"User-Agent": "nix/2.28 (dimos bin/build-native-modules)"},
     )
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
             return bool(response.status == 200)
-    except OSError:  # 404s (HTTPError), DNS failures, timeouts — all read as "not there yet"
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            return False
+        # 403 and friends are config problems, not propagation lag — retrying
+        # for the full PUSH_VERIFY_TIMEOUT would just stall the publish job.
+        raise SystemExit(f"{url}: unexpected HTTP {error.code} probing the cache")
+    except OSError:  # DNS failures, timeouts — transient, read as "not there yet"
         return False
 
 
