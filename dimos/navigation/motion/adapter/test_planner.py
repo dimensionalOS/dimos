@@ -100,16 +100,15 @@ def test_carrot_single_waypoint():
 
 
 def _holding_planner():
-    """A MotionPlanner with both of its output ports tapped."""
+    """A MotionPlanner with its path port tapped."""
     planner = _planner()
-    published, drawn = [], []
+    published: list = []
     planner.path.subscribe(published.append)
-    planner.plan_body.subscribe(drawn.append)
-    return planner, published, drawn
+    return planner, published
 
 
 def test_hold_publishes_single_pose_stub_at_the_current_pose():
-    planner, published, _drawn = _holding_planner()
+    planner, published = _holding_planner()
     planner.hold(
         PoseStamped(
             position=(1.5, -2.0, 0.0), orientation=Quaternion.from_euler(Vector3(0, 0, math.pi / 2))
@@ -129,7 +128,7 @@ def test_hold_publishes_single_pose_stub_at_the_current_pose():
 
 
 def test_hold_stub_stops_the_controller():
-    planner, published, _drawn = _holding_planner()
+    planner, published = _holding_planner()
     planner.hold(PoseStamped(position=(1.5, -2.0, 0.0)), age=7.0)
     pose = pose_stamped(1.5, -2.0, 0.0)
     twist = PursuitController().update(pose, published[0], t=0.0)
@@ -141,21 +140,12 @@ def test_hold_warns_once_per_stale_episode(monkeypatch):
     monkeypatch.setattr(
         planner_module.logger, "warning", lambda msg, **kw: warnings.append(msg), raising=False
     )
-    planner, _published, _drawn = _holding_planner()
+    planner, _published = _holding_planner()
     for _ in range(3):
         planner.hold(PoseStamped(position=(0.0, 0.0, 0.0)), age=7.0)
     # edge-triggered: replan_hz would otherwise warn 5x a second for as long
     # as the link stays down
     assert len(warnings) == 1
-
-
-def test_hold_draws_the_veto_so_it_is_not_mistaken_for_a_dead_module():
-    """A refusal must reach the viewer: an empty viewport looks like a crash."""
-    planner, published, drawn = _holding_planner()
-    planner.hold(PoseStamped(position=(1.0, 2.0, 0.0)), age=7.0)
-    assert len(drawn) == 1
-    assert drawn[0] is published[0]
-    assert len(drawn[0].poses) == 1
 
 
 class _Clock:
@@ -174,7 +164,7 @@ def test_a_stale_pose_is_a_missing_pose(monkeypatch):
         lambda msg, **kw: waiting.append(kw.get("on", "")),
         raising=False,
     )
-    planner, published, _drawn = _holding_planner()
+    planner, published = _holding_planner()
     tf, clock = MultiTBuffer(), _Clock()
     planner._pose_src = TfPose(tf, "base_link", planner.config.max_map_age_s, clock=clock)
     tf.receive_transform(
@@ -243,7 +233,7 @@ def test_the_band_rides_the_body_not_the_map_origin():
 def test_a_map_with_a_non_finite_return_still_plans():
     # one NaN x used to reach the search as a NaN grid corner: every tick
     # raised, "keeping the last published path" forever
-    planner, published, _drawn = _holding_planner()
+    planner, published = _holding_planner()
     room = np.concatenate([_room(-0.28), np.array([[np.nan, 0.0, -0.08]], dtype=np.float32)])
     cloud = PointCloud2.from_numpy(room, frame_id="odom")
     planner._on_local_map(cloud)

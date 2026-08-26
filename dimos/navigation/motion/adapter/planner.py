@@ -198,9 +198,6 @@ class MotionPlannerConfig(ModuleConfig):
     # and a dropped link must not leave us replanning on a frozen world at
     # cruise speed — an old map is survivable, an unbounded one is not.
     max_map_age_s: float = 5.0
-    # Publish the plan's expected body poses for the viewer (0.0 = off). Drives
-    # adapter/viz.py's override too, so drawing and publishing cannot drift.
-    viz_publish_hz: float = 2.0
     # Seconds between "still blocked, and here is what on" lines while an input
     # the planner needs has never arrived or has gone away.
     stall_report_s: float = 3.0
@@ -216,7 +213,6 @@ class MotionPlanner(Module):
     tf: In[TFMessage]
 
     path: Out[Path]
-    plan_body: Out[Path]  # the same plan, subsampled, for the viewer's body boxes
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -241,7 +237,6 @@ class MotionPlanner(Module):
         self._stop_event = Event()
         self._thread: Thread | None = None
         self._stall = StallReporter("MotionPlanner", self.config.stall_report_s)
-        self._viz_at = 0.0
 
     @rpc
     def start(self) -> None:
@@ -361,7 +356,6 @@ class MotionPlanner(Module):
         )
         held = Path(ts=ts, frame_id=self.config.world_frame, poses=[stub])
         self.path.publish(held)
-        self._publish_viz(held)
 
     def plan_once(
         self,
@@ -393,16 +387,4 @@ class MotionPlanner(Module):
         )
         self.path.publish(plan)
         self._stall.ok("planning")
-        self._publish_viz(plan)
         return True
-
-    def _publish_viz(self, plan: Path) -> None:
-        """Mirror the plan onto the viewer stream, at its own rate."""
-        hz = self.config.viz_publish_hz
-        if hz <= 0.0:
-            return
-        now = time.monotonic()
-        if now - self._viz_at < 1.0 / hz:
-            return
-        self._viz_at = now
-        self.plan_body.publish(plan)

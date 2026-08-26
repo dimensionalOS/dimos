@@ -69,7 +69,6 @@ class MotionPlannerNativeConfig(NativeModuleConfig):
     reset_carrot_m: float = _default("reset_carrot_m")
     obstacle_model: str = _default("obstacle_model")
     max_map_age_s: float = _default("max_map_age_s")
-    viz_publish_hz: float = _default("viz_publish_hz")
 
 
 class MotionPlannerNative(NativeModule):
@@ -84,7 +83,6 @@ class MotionPlannerNative(NativeModule):
     tf: IO[TFMessage]
 
     path: Out[Path]
-    plan_body: Out[Path]  # the same plan, for the viewer's body boxes
 
 
 if TYPE_CHECKING:

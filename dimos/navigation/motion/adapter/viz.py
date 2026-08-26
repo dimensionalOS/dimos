@@ -21,14 +21,14 @@ and is actually threading the robot's corner through a wall looks wrong.
 
 Colour is the required-precision profile, and it costs no extra channel: the
 planner stamps that profile into the path's own per-waypoint timestamps
-(``control/profile.py``), so :func:`render_plan_body` decodes it back out of
+(``control/profile.py``), so :func:`render_body` decodes it back out of
 the message it is already being handed. Green = room to spare, amber = inside
 the governor's ramp, red = at or under the embodiment's precision floor, which
 is where a few centimetres of tracking error becomes contact.
 
-Paired with :class:`~dimos.navigation.motion.adapter.planner.MotionPlanner`'s
-``viz_publish_hz`` the same way the MLS planner's overrides are — one number in
-the blueprint drives both the publishing and the drawing, so they cannot drift.
+Both are drawn off the one ``path`` topic: :func:`render_plan` puts the line
+on the entity and the boxes on a child of it, so the planner publishes nothing
+it does not itself need.
 """
 
 from __future__ import annotations
@@ -50,6 +50,8 @@ from dimos.navigation.motion.embodiment.go2 import GO2
 
 if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
+
+    from dimos.visualization.rerun.bridge import RerunMulti
 
 # Lift the box off the floor so it does not z-fight the surface points.
 _Z_LIFT = 0.02
@@ -75,7 +77,7 @@ def plan_clearance(msg: Path, emb: Embodiment) -> NDArray[np.float64] | None:
     return None if ceilings is None else ceilings_to_clearance(ceilings, emb)
 
 
-def render_plan_body(
+def render_body(
     msg: Path,
     emb: Embodiment = GO2,
     stride_m: float = 0.35,
@@ -154,16 +156,43 @@ def render_plan_body(
     )
 
 
+def render_plan(
+    msg: Path,
+    entity: str = "world/path",
+    emb: Embodiment = GO2,
+    stride_m: float = 0.35,
+    line_radius: float = 0.012,
+) -> RerunMulti | None:
+    """The plan as its line on ``entity`` and its body boxes on ``entity/body``.
+
+    An empty path is the planner's "no route"; blanking the last good picture
+    on that is worse than holding it, so it draws nothing.
+    """
+    import rerun as rr  # heavy, optional: only the viewer process pays for it
+
+    if not msg.poses:
+        return None
+    out: RerunMulti = [
+        # the bridge only pins single-archetype entities to their tf frame
+        (entity, rr.Transform3D(parent_frame=f"tf#/{msg.frame_id}")),
+        (entity, msg.to_rerun()),
+    ]
+    boxes = render_body(msg, emb, stride_m, line_radius)
+    if boxes is not None:
+        out.append((f"{entity}/body", boxes))
+    return out
+
+
 def motion_visual_override(
-    viz_publish_hz: float,
     embodiment: Embodiment = GO2,
     line_radius: float = 0.012,
     body_dilate_m: float = 0.0,
+    entity: str = "world/path",
 ) -> dict[str, Any]:
-    """rerun overrides for the motion stack, keyed off the planner's publish rate.
+    """rerun override drawing the local plan's line and body boxes off ``path``.
 
-    Pass the same ``viz_publish_hz``, ``embodiment`` and ``body_dilate_m`` given
-    to ``MotionPlanner.blueprint(...)``: a picture drawn from a body the planner
+    Pass the same ``embodiment`` and ``body_dilate_m`` given to
+    ``MotionPlanner.blueprint(...)``: a picture drawn from a body the planner
     did not plan with is a picture of the wrong question.
 
     The box is the STRAIGHT-DRIFT row, not the all-gait union. The union is what
@@ -172,6 +201,4 @@ def motion_visual_override(
     look impassable and hides the margin the plan really has.
     """
     emb = embodiment.dilated(by=body_dilate_m)
-    on = viz_publish_hz > 0.0
-    body = partial(render_plan_body, emb=emb, line_radius=line_radius)
-    return {"world/plan_body": body if on else None}
+    return {entity: partial(render_plan, entity=entity, emb=emb, line_radius=line_radius)}

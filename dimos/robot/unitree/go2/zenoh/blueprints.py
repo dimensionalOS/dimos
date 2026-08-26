@@ -66,11 +66,6 @@ voxel_size = 0.08
 # Raise above 0 (2.0 works) to draw what the planner searched over: surface, nodes and
 # cost-colored edges. Drives both its publishing and the rerun overrides.
 planner_viz_hz = 2.0
-# Draw the local plan's expected BODY POSES as oriented boxes, coloured by the
-# required precision the planner stamped into the path (green = room, amber =
-# inside the governor's ramp, red = at the embodiment's floor). 0.0 = off.
-# Drives MotionPlanner's publishing and the rerun override together.
-motion_viz_hz = 2.0
 
 # How much tighter than the MEASURED body the local planner is allowed to plan,
 # per side. The body table's boxes are the swinging legs, not the trunk (0.31 m
@@ -142,14 +137,6 @@ def _render_map(msg: Any) -> Any:
     return msg.to_rerun(voxel_size=0.01)
 
 
-def _render_path(msg: Any) -> Any:
-    # The planner emits an empty path when it finds no route to the goal.
-    # Logging those would blank the line, so drop them and keep the last path.
-    if len(msg.poses) == 0:
-        return None
-    return msg
-
-
 def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, Any]:
     """The bridge's own view, plus whatever the layer above it adds."""
     return {
@@ -166,11 +153,12 @@ def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, An
             "world/lidar": None,
             "world/local_map": _render_map,
             "world/global_map": _render_map,
-            "world/path": _render_path,
+            # The local plan's line plus its expected BODY POSES as oriented boxes on
+            # world/path/body, coloured by the precision the planner stamped into the
+            # path (green = room, amber = inside the governor's ramp, red = at the
+            # embodiment's floor). Off the one path topic, so nothing to publish.
+            **motion_visual_override(body_dilate_m=MOTION_BODY_DILATE_M),
             **planner_visual_override(planner_viz_hz, voxel_size=voxel_size, wall_clearance_m=0.1),
-            # keyed by entity path, so it is inert on the stacks that have no
-            # MotionPlanner to publish world/plan_body -- same as the MLS one
-            **motion_visual_override(motion_viz_hz, body_dilate_m=MOTION_BODY_DILATE_M),
             **(visual_override or {}),
         },
     }
@@ -340,7 +328,7 @@ _go2_zenoh_motion_base = autoconnect(
     # referenced to that surface says what the planner can hit. Nothing about the map's
     # z origin -- which on a LIO stack is base height -- has to be guessed
     # (motion/obstacles.py).
-    MotionPlanner.blueprint(viz_publish_hz=motion_viz_hz, body_dilate_m=MOTION_BODY_DILATE_M),
+    MotionPlanner.blueprint(body_dilate_m=MOTION_BODY_DILATE_M),
     MovementManager.blueprint(),
     # Teleop preempts nav on cmd_vel and a watchdog zeros it when the follower dies.
     # MovementManager keeps the click relay; both see tele_cmd_vel.

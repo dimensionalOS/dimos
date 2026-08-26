@@ -54,7 +54,6 @@ print(MotionPlanner.io(color=False))
 │ MotionPlanner │
 └┬──────────────┘
  ├─ path: Path
- ├─ plan_body: Path
 ```
 
 ```python
@@ -82,12 +81,6 @@ Rules the ports carry:
   segment = tight segment. Running slower than the encoding is always legal;
   a plain-`ts` path just loses the hint, and third-party producers interoperate.
 - a single-pose `path` means "hold, no safe route".
-- there is no odometry port: the pose is read off `tf` each tick — the planner
-  looks up `world_frame -> base_frame`, the follower `path.frame_id ->
-  base_frame`, so it controls in the frame the plan is expressed in. An edge
-  whose stamp stops advancing for the module's deadman (`max_map_age_s`,
-  `max_path_age_s`) is a missing pose: the planner plans nothing, the follower
-  zeroes the twist.
 - `local_map` into the follower is optional: with it the room is measured;
   without it the follower decodes the path stamps (the `blind` track).
 - one law per *track* (`control/tracks.py`), never named by config or blueprint.

@@ -97,9 +97,6 @@ pub struct Config {
     /// Hold once the local map is this old, measured from ARRIVAL.
     #[validate(range(exclusive_min = 0.0))]
     pub max_map_age_s: f64,
-    /// Rate cap for mirroring the plan onto the viewer stream. 0 disables it.
-    #[validate(range(min = 0.0))]
-    pub viz_publish_hz: f64,
 }
 
 fn validate_obstacle_model(config: &Config) -> Result<(), ValidationError> {
@@ -136,10 +133,6 @@ pub struct MotionPlanner {
     #[output(encode = Path::encode)]
     path: Output<Path>,
 
-    /// The same plan, for the viewer's body boxes, at its own rate.
-    #[output(encode = Path::encode)]
-    plan_body: Output<Path>,
-
     #[config]
     config: Config,
 
@@ -161,7 +154,6 @@ impl MotionPlanner {
             emb,
             model,
             path: self.path.clone(),
-            plan_body: self.plan_body.clone(),
             tf: self.tf.clone(),
         };
         self.worker = Some(tokio::spawn(worker.run()));
@@ -302,30 +294,6 @@ impl StaleGate {
     }
 }
 
-/// Rate cap for a stream that is watched rather than consumed.
-pub struct RateCap {
-    hz: f64,
-    last: Option<Instant>,
-}
-
-impl RateCap {
-    pub fn new(hz: f64) -> Self {
-        Self { hz, last: None }
-    }
-
-    pub fn due(&mut self, now: Instant) -> bool {
-        if self.hz <= 0.0 {
-            return false;
-        }
-        let period = Duration::from_secs_f64(1.0 / self.hz);
-        if self.last.is_none_or(|t| now.duration_since(t) >= period) {
-            self.last = Some(now);
-            return true;
-        }
-        false
-    }
-}
-
 /// One search plus the precision annotation: `planner.py::_plan_once` and
 /// `planner.py::annotate`, in that order.
 ///
@@ -393,7 +361,6 @@ struct Worker {
     emb: Emb,
     model: Box<dyn ObstacleModel>,
     path: Output<Path>,
-    plan_body: Output<Path>,
     tf: Tf,
 }
 
@@ -416,7 +383,6 @@ impl Worker {
 
         let mut gate = StaleGate::default();
         let mut watch = PoseWatch::new(self.config.max_map_age_s);
-        let mut viz = RateCap::new(self.config.viz_publish_hz);
         let mut points: Option<(u64, Arc<Vec<[f32; 3]>>)> = None;
         // The (cloud, carrot) the published plan was made from.
         let mut planned: Option<(u64, (f64, f64))> = None;
@@ -468,7 +434,7 @@ impl Worker {
                         msg::now_secs(),
                         ground_z.unwrap_or(0.0),
                     );
-                    self.publish(&held, now, &mut viz).await;
+                    msg::publish(&self.path, &held).await;
                 }
                 Tick::Plan => {
                     if gate.recover() {
@@ -519,7 +485,7 @@ impl Worker {
                     if let Some(produced) = produced {
                         planned = Some((snap.cloud_seq, goal));
                         incumbent = Some(msg::path_states(&produced));
-                        self.publish(&produced, now, &mut viz).await;
+                        msg::publish(&self.path, &produced).await;
                     }
                 }
                 Tick::Wait => warn_throttled!(
@@ -569,17 +535,6 @@ impl Worker {
                 );
                 None
             }
-        }
-    }
-
-    /// The plan on `path`, and a mirror on `plan_body` at the viz rate.
-    ///
-    /// A refusal is drawn too: an empty viewport looks like a crashed module,
-    /// and a held stub is a decision the operator has to be able to see.
-    async fn publish(&self, plan: &Path, now: Instant, viz: &mut RateCap) {
-        msg::publish(&self.path, plan).await;
-        if viz.due(now) {
-            msg::publish(&self.plan_body, plan).await;
         }
     }
 }
@@ -719,23 +674,6 @@ mod tests {
         assert!(gate.enter()); // and a second spell warns again
     }
 
-    #[test]
-    fn the_rate_cap_passes_the_first_call_then_holds() {
-        let mut cap = RateCap::new(2.0);
-        let t0 = Instant::now();
-        assert!(cap.due(t0));
-        assert!(!cap.due(t0 + Duration::from_millis(100)));
-        assert!(cap.due(t0 + Duration::from_millis(600)));
-    }
-
-    #[test]
-    fn a_zero_rate_cap_is_off() {
-        let mut cap = RateCap::new(0.0);
-        let t0 = Instant::now();
-        assert!(!cap.due(t0));
-        assert!(!cap.due(t0 + Duration::from_secs(60)));
-    }
-
     // the annotation, end to end
 
     fn config() -> Config {
@@ -752,7 +690,6 @@ mod tests {
             reset_carrot_m: 1.0,
             obstacle_model: "body_band".into(),
             max_map_age_s: 5.0,
-            viz_publish_hz: 2.0,
         }
     }
 

@@ -47,7 +47,6 @@ tf = "tf2_msgs.TFMessage"
 
 [package.metadata.dimos.module.motion_planner.outputs]
 path = "nav_msgs.Path"
-plan_body = "nav_msgs.Path"
 
 [package.metadata.dimos.module.trajectory_follower]
 path = "dimos_motion_adapter::follower::TrajectoryFollower"
