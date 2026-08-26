@@ -33,11 +33,13 @@ from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
 # out of its fd table so EMFILE cannot take down rerun/keyboard controls.
 RealSenseCamera.dedicated_worker = True
 
-D455_MOUNT = Transform(
-    translation=Vector3(-0.2518, -0.2736, 0.4292),
-    rotation=Quaternion(0.079967, -0.023978, -0.996361, 0.017193),
+D435I_MOUNT = Transform(
+    translation=Vector3(-0.13, 0.0, 0.391),
+    rotation=Quaternion(0.0, 1.0, 0.0, 0.0),
 )
-"""base_link -> camera_link, mirroring the calibration recorded in alfred.urdf."""
+"""base_link -> camera_link, mirroring the estimate recorded in alfred.urdf:
+upside-down (roll pi), facing off the back (yaw pi). Photo-derived 2026-08-26,
+pending spin calibration."""
 
 alfred_mls_nav = (
     autoconnect(
@@ -46,7 +48,7 @@ alfred_mls_nav = (
             enable_infrared=True,
             emitter_enabled=False,
             enable_imu=True,
-            base_transform=D455_MOUNT,
+            base_transform=D435I_MOUNT,
         ),
         AlfredHighLevel.blueprint(),
         _vis_nav,
