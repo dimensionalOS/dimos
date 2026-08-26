@@ -119,9 +119,10 @@ _vis_nav = autoconnect(
         cameras={
             DEPTH_FRAME: CameraConfig(
                 depth_cloud_max_range=DEPTH_MAX_RANGE_METERS,
-                # A full-resolution D455 cloud is ~400k points a frame at 30 Hz and
-                # drowns the mapper.
-                depth_cloud_decimation=3,
+                # A full-resolution D455 cloud is ~400k points a frame at 30 Hz and drowns
+                # the mapper: voxel_ray_tracing handles one cloud at a time and its cost is
+                # linear in point count, so at 3 it sheds most of what it is sent.
+                depth_cloud_decimation=5,
             )
         },
         # Fixed variances: the message covariances report accumulated drift, not the delta
@@ -181,6 +182,14 @@ _vis_nav = autoconnect(
         rerun_config={
             "blueprint": _rerun_blueprint,
             "static": {ALFRED_RERUN_ROOT: _alfred_urdf_static},
+            # Keyed by the topic's entity path, before any visual_override renames it.
+            # Both imagers share world/image, so it needs twice the rate to land one of
+            # each per second.
+            "max_hz": {
+                "world/color_image": 1.0,
+                "world/depth_image": 1.0,
+                "world/image": 2.0,
+            },
             # An image only renders if it shares an entity with its Pinhole.
             "visual_override": {
                 "world/color_image": partial(_image_at, entity_path=f"{CAMERA_RERUN_ROOT}/color"),
