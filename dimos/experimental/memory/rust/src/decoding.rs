@@ -18,6 +18,7 @@ use lcm_msgs::geometry_msgs::{
     PointStamped, PoseStamped, PoseWithCovarianceStamped, TwistStamped, TwistWithCovarianceStamped,
     WrenchStamped,
 };
+use lcm_msgs::imitation_msgs::EpisodeStatus;
 use lcm_msgs::nav_msgs::{OccupancyGrid, Odometry, Path};
 use lcm_msgs::sensor_msgs::{
     CameraInfo, CompressedImage, Image, Imu, JointState, Joy, PointCloud2,
@@ -141,6 +142,11 @@ fn source_timestamp(payload_type: &str, data: &[u8], reception_ts: f64) -> Resul
                 .context("invalid LCM foxglove_msgs.CompressedVideo")?;
             (message.timestamp.sec, message.timestamp.nanosec)
         }
+        "dimos.msgs.imitation_msgs.EpisodeStatus.EpisodeStatus" => {
+            let message =
+                EpisodeStatus::decode(data).context("invalid LCM imitation_msgs.EpisodeStatus")?;
+            (message.header.stamp.sec, message.header.stamp.nsec)
+        }
         "dimos.msgs.geometry_msgs.Transform.Transform" => {
             let message = TFMessage::decode(data).context("invalid LCM TFMessage")?;
             let Some(transform) = message.transforms.first() else {
@@ -158,5 +164,38 @@ pub(crate) fn header_timestamp(sec: i32, nsec: i32, fallback: f64) -> f64 {
         f64::from(sec) + f64::from(nsec) / 1_000_000_000.0
     } else {
         fallback
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use lcm_msgs::imitation_msgs::EpisodeStatus;
+    use lcm_msgs::std_msgs::{Header, Time};
+
+    use super::source_timestamp;
+
+    #[test]
+    fn episode_status_uses_source_timestamp() {
+        let status = EpisodeStatus {
+            header: Header {
+                stamp: Time {
+                    sec: 42,
+                    nsec: 250_000_000,
+                },
+                ..Header::default()
+            },
+            state: "recording".to_string(),
+            last_event: "start".to_string(),
+            ..EpisodeStatus::default()
+        };
+
+        let timestamp = source_timestamp(
+            "dimos.msgs.imitation_msgs.EpisodeStatus.EpisodeStatus",
+            &status.encode(),
+            99.0,
+        )
+        .expect("generated status should decode");
+
+        assert_eq!(timestamp, 42.25);
     }
 }
