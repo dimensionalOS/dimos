@@ -36,15 +36,12 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::f64::consts::PI;
 
-/// Voxel size of the map this deployment plans on. A config constant of the
-/// deployment, never sniffed from data: changing it is a new spec and a new
-/// baseline (`planner/revision.md` §2).
-pub const VOXEL: f64 = 0.08;
-/// Fine distance-field pitch, half a voxel -- so every voxel centre lands
+/// Fine distance-field pitch: half the map's voxel (0.08 m, a config constant
+/// of the deployment, never sniffed from data) -- so every voxel centre lands
 /// exactly on a fine sample, a voxel pattern reads the same clearance wherever
 /// it sits, and whole-voxel translation of a scene translates the answer.
-pub const FINE: f64 = 0.04; // VOXEL / 2
-pub const PAD: f64 = 1.5;
+const FINE: f64 = 0.04; // VOXEL / 2
+const PAD: f64 = 1.5;
 /// Lattice pitch: three fine samples.
 const CELL: f64 = 0.12; // 3 * FINE
 /// The pitch at which lattice, fine field and voxel grid are all commensurate
@@ -75,7 +72,7 @@ const BUCKET: f64 = 0.2;
 // of the planner pricing a comfort preference the robot never pays. The charge
 // caps itself: the governor floors at min_speed, so the multiplier tops out at
 // max_speed / min_speed at contact. `comfort` leaves the cost entirely -- it
-// stays a labelling radius and the smoothing cap. See planner/revision.md §4.
+// stays a labelling radius and the smoothing cap.
 /// Pitch at which a route is PRICED, along its own arc rather than its
 /// vertices: an incumbent arrives at path resolution and a fresh answer is a
 /// handful of smoothed vertices, and the two are weighed on one scale.
@@ -85,14 +82,13 @@ const COST_STEP: f64 = FINE;
 /// `se2.py::COMMIT_MARGIN`, mirrored for this crate's own tests only.
 ///
 /// Python owns the number and hands it to `plan` on every call, exactly as it
-/// hands over the envelope -- a constant measured by
-/// `planner/referee/measure_margin.py` may not have a second definition that
-/// can drift away from it.
+/// hands over the envelope: a measured constant may not have a second
+/// definition that can drift away from it.
 pub const COMMIT_MARGIN: f64 = 1.50;
 
 /// The governor curve, read off the embodiment (`Emb::governor`).
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Governor {
+struct Governor {
     pub max_speed: f64,
     pub min_speed: f64,
     /// Room at which full speed is granted (m).
@@ -104,7 +100,7 @@ pub struct Governor {
 impl Governor {
     /// Clearance -> the speed the follower is held to.
     #[inline]
-    pub fn speed(&self, clearance: f64) -> f64 {
+    fn speed(&self, clearance: f64) -> f64 {
         self.min_speed
             + (self.max_speed - self.min_speed)
                 * ((clearance - self.floor) / (self.speed_clearance - self.floor)).clamp(0.0, 1.0)
@@ -112,13 +108,13 @@ impl Governor {
 
     /// What a metre at this clearance costs in open-space metres.
     #[inline]
-    pub fn tight(&self, clearance: f64) -> f64 {
+    fn tight(&self, clearance: f64) -> f64 {
         self.max_speed / self.speed(clearance)
     }
 
     /// The multiplier at contact, `max_speed / min_speed`.
     #[inline]
-    pub fn tight_max(&self) -> f64 {
+    fn tight_max(&self) -> f64 {
         self.max_speed / self.min_speed
     }
 }
@@ -193,7 +189,7 @@ impl Emb {
     }
 
     /// The pricing curve, read off the body.
-    pub fn governor(&self) -> Governor {
+    fn governor(&self) -> Governor {
         Governor {
             max_speed: self.max_speed,
             min_speed: self.min_speed,
@@ -326,7 +322,7 @@ fn offsets(b: &[f64; 4]) -> Vec<(f64, f64)> {
 ///
 /// The table is complete before the search starts -- `id` is a pure lookup that
 /// cannot grow it -- so the per-(bin, box) caches can be sized once.
-pub struct Fps {
+struct Fps {
     keys: Vec<[i64; 4]>,
     offs: Vec<Vec<(f64, f64)>>,
     /// The static body the seed is witnessed on -- id 0 for an unmeasured
@@ -383,12 +379,12 @@ impl Fps {
             .expect("every reachable box is interned by Fps::new")
     }
 
-    pub fn union(&self) -> &[(f64, f64)] {
+    fn union(&self) -> &[(f64, f64)] {
         &self.offs[0]
     }
 
     /// The standing body's samples, and its box id for the lattice caches.
-    pub fn stand(&self) -> &[(f64, f64)] {
+    fn stand(&self) -> &[(f64, f64)] {
         &self.offs[self.stand]
     }
 }
@@ -399,9 +395,8 @@ impl Fps {
 /// Two costs go away. `round_ties_even` lowers to `llvm.rint.f64`, and a
 /// baseline x86-64 target has no single instruction for it -- `roundsd` needs
 /// SSE4.1, which this crate is not built for and which the aarch64 robot would
-/// not share anyway -- so LLVM emits a call. Under `perf` that call is **2.1%
-/// of the entire scored process**, roughly 5% of the planner's own time,
-/// because it sits on the per-sample path of the footprint scan (`fill_x` /
+/// not share anyway -- so LLVM emits a call. Under `perf` that call is ~5% of
+/// the planner's own time, because it sits on the per-sample path of the footprint scan (`fill_x` /
 /// `fill_y`) and on every distance-field lookup, which means every clearance
 /// evaluation and every `seg_free` step. The `as i64` that always follows it
 /// then costs a `cvttsd2si` plus the compare-and-cmov chain Rust needs to make
@@ -494,11 +489,10 @@ impl PointBuckets {
         }
         // Collapse coincident points, bucket by bucket.
         //
-        // The referee's obstacles are a z-band SLICE of box surfaces sampled
-        // on a 3D grid and projected to xy, so every vertical face contributes
-        // the same (x, y) once per z layer: the band is 0.4 m tall at
-        // CLOUD_STEP 0.05, and measured across the battery it carries 6.4-8.4
-        // copies of each distinct point. `nearest` reduces a multiset of squared distances with `min`,
+        // The obstacles are a z-band SLICE of a voxel cloud projected to xy,
+        // so every vertical face contributes the same (x, y) once per z layer
+        // (measured: 6-8 copies of each distinct point). `nearest` reduces a
+        // multiset of squared distances with `min`,
         // and a repeat contributes a value the set already holds, so dropping
         // repeats cannot move the result by one bit -- it only stops the ring
         // sweep from re-measuring the same wall seven times. It also shrinks
@@ -612,7 +606,7 @@ impl PointBuckets {
     }
 }
 
-pub struct World {
+struct World {
     /// ABSOLUTE fine-grid index of the field's first column/row -- `fkx * FINE`
     /// is where it sits in the world frame. Positions are reconstructed from
     /// the absolute index and never from a stored origin: `x0 + i * FINE` is
@@ -694,12 +688,7 @@ impl World {
     }
 }
 
-pub fn build_world(
-    points: &[[f64; 2]],
-    pose: (f64, f64, f64),
-    goal: (f64, f64),
-    cap: f64,
-) -> World {
+fn build_world(points: &[[f64; 2]], pose: (f64, f64, f64), goal: (f64, f64), cap: f64) -> World {
     let band: Vec<(f64, f64)> = points.iter().map(|p| (p[0], p[1])).collect();
     // The working area is taken over {pose, goal, cloud} padded by `PAD`, and
     // its LOW corner is then snapped down onto the world frame's own absolute
@@ -713,7 +702,7 @@ pub fn build_world(
     // replans) or, just as effectively, a single lidar return metres behind it.
     // Anchored, a point appearing or vanishing anywhere changes which samples
     // exist, never where they are, and the search keeps answering the same
-    // question. See `referee/test_grid_invariance.py`.
+    // question.
     let mut x0 = goal.0.min(pose.0);
     let mut y0 = goal.1.min(pose.1);
     let mut x1 = goal.0.max(pose.0);
@@ -1158,19 +1147,6 @@ fn lattice_axes(w: &World) -> (Vec<f64>, Vec<f64>) {
     )
 }
 
-pub fn se2_search(
-    w: &mut World,
-    fps: &Fps,
-    start: (f64, f64, f64),
-    goal: (f64, f64),
-    emb: &Emb,
-    margin: f64,
-) -> Option<Vec<[f64; 3]>> {
-    let (gx, gy) = lattice_axes(w);
-    let mut cl = Clear::new(w, fps, margin, gx, gy, emb.governor());
-    se2_search_in(&mut cl, fps, start, goal, emb, margin)
-}
-
 /// `se2_search` on a clearance table the caller owns.
 ///
 /// The table is a pure memo of (world, footprints, margin, lattice) -- a cell's
@@ -1215,8 +1191,7 @@ fn se2_search_in(
     // so the seed's feasibility is read at the TRUE start pose and not at the
     // cell it snaps to. The snap moves the body by up to half a cell diagonal,
     // and a start whose real pose clears the margin can land in a cell that does
-    // not (door_side: 0.083 true, 0.043 snapped, against a 0.05 margin). The
-    // cell still NAMES the seed; it no longer decides whether the robot is
+    // not. The cell still NAMES the seed; it no longer decides whether the robot is
     // allowed to be where it already is.
     //
     // Standing has no direction of travel, and the shape it occupies is the
@@ -1228,9 +1203,9 @@ fn se2_search_in(
     // clears the witness too. A start genuinely inside an obstacle still reads
     // negative.
     //
-    // Below the witness the old repair still stands, and it is not the same
-    // question: the referee's replan spot IS a pose this planner published, and
-    // refusing there scores the world zero outright. Take the nearest lattice
+    // Below the witness the repair still stands, and it is not the same
+    // question: a replan starts from a pose this planner published, and
+    // refusing there is refusing its own route. Take the nearest lattice
     // state that does fit -- STANDING, on the same shape the witness reads --
     // ordered by distance from the true pose and then by yaw error, and accept
     // it only if the straight segment from the true pose to it is clear.
@@ -1356,9 +1331,8 @@ fn se2_search_in(
     // bound is the body's smallest width against that. This used to be
     // masked: the lattice phase was pinned to the start pose, so on any given
     // query a thin wall happened to fall on a column. It no longer is, and
-    // the bound is a property of the lattice rather than of the roster. All
-    // four scored embodiments are 1.4-2.7x wider than a diagonal cell, so
-    // this is inert on every scored and held-out world. Read on the NARROWEST
+    // the bound is a property of the lattice rather than of the roster (every
+    // real body is 1.4-2.7x wider than a diagonal cell). Read on the NARROWEST
     // box the envelope can hand out, not on the union: that is the one an edge
     // may actually be cleared by.
     let thinnest = emb
@@ -1382,11 +1356,9 @@ fn se2_search_in(
     // obstacle. A heuristic that prices each metre at 1.0 therefore
     // under-estimates by whatever those multipliers come to over the whole
     // remaining route, and that error is enormous -- measured as
-    // `h(start) / C*` over the battery, it ranges from 0.90 on the worlds
-    // that fit the budget down to 0.34-0.52 on the worlds that blow it, and
-    // the correlation with the blow-up is the tightest in the run: worlds at
-    // h/C* ~ 0.9 expand well under one state per position cell, worlds at
-    // h/C* ~ 0.5 expand six to eight. A* has to open every state whose
+    // `h(start) / C*`, it ranges from 0.90 on easy worlds down to 0.34-0.52 on
+    // the ones that blow the budget, which expand six to eight states per
+    // position cell against well under one. A* has to open every state whose
     // `g + h` falls under the true optimum, so an `h` at half the optimum
     // opens half the reachable lattice, in every yaw bin.
     //
@@ -1396,8 +1368,8 @@ fn se2_search_in(
     // least this much"; take the exact shortest path to the goal in that
     // relaxation over the same 16 moves.
     //
-    // Admissibility -- not optional, since the referee scores gold against a
-    // brute-force SE(2) reference -- rests on two facts and no assumptions:
+    // Admissibility -- not optional, the route has to stay the optimum --
+    // rests on two facts and no assumptions:
     //
     //   1. Every state the search can occupy projects into the relaxed free
     //      set. If the footprint fits at cell (i, j) in ANY yaw bin, then no
@@ -1433,10 +1405,9 @@ fn se2_search_in(
     // Together: every SE(2) path projects to a relaxed path no more expensive
     // than itself, so `d2` lower-bounds the true cost-to-go, and it dominates
     // the straight line because the relaxed edge costs are geometric lengths
-    // times something >= 1. Measured: expansions -28% across the battery
-    // (gen033 28975 -> 18739, offset_wall 5675 -> 986, boxed_in 711 -> 0) with
-    // all 56 published paths bit-identical, which is what an admissible change
-    // to `h` alone must look like.
+    // times something >= 1. Measured: expansions -28% with every published
+    // path bit-identical, which is what an admissible change to `h` alone must
+    // look like.
     //
     // The cost of computing it is the part round 1 got wrong. Sweeping the
     // whole padded area was measured at net 0.93x: correct, and slower. Two
@@ -1507,7 +1478,7 @@ fn se2_search_in(
     // the precondition is asserted at each one. `is_sign_positive` is not
     // redundant with `>= 0.0`: `-0.0 >= 0.0` is true, and `-0.0` is exactly
     // the value that breaks the encoding hardest. Debug-only, so the
-    // release `.so` the battery times carries no instruction for it.
+    // release `.so` carries no instruction for it.
     let f0 = 0.0f64; // bound so the assert reads a value, not two equal literals (clippy::eq_op)
     debug_assert!(f0 >= 0.0 && f0.is_sign_positive());
     heap2.push(Node {
@@ -1797,14 +1768,12 @@ fn se2_search_in(
     //
     // The spec walks this greedy from index 0 and takes the farthest reachable
     // vertex each time, so every anchor is a function of the *prefix*. That is
-    // what makes the answer discontinuous in the start pose: the referee
-    // advances the start a third of the way down this very path and replans,
-    // and the new chain re-chords the whole remainder from a new anchor, so
-    // two answers that route through the same corridor still cut its corners
-    // in different places. Measured on the 56-world battery, this one stage is
-    // 81% of all consistency drift -- publishing the unsmoothed lattice path
-    // takes sum(consist) from 4.4756 to 0.8451, which also says the A* route
-    // itself is already stable under the perturbation.
+    // what makes the answer discontinuous in the start pose: a replan from
+    // part-way down this very path re-chords the whole remainder from a new
+    // anchor, so two answers that route through the same corridor still cut
+    // its corners in different places. Measured, this one stage was 81% of
+    // all replan-to-replan drift; the A* route itself is already stable under
+    // the perturbation.
     //
     // Walking the same greedy from the last vertex instead makes every anchor
     // a function of the *suffix*. A replan's raw path is (geometrically) the
@@ -1825,12 +1794,10 @@ fn se2_search_in(
     // the corner; swept from the goal it is the near side and the chord runs
     // straight past the corner the reference maneuver still turns at.
     //
-    // Measured on gen023 -- diffdrive, min_scored 0.152, the battery's worst
-    // world at gold 0.894: the goal-anchored chain publishes 4 vertices where
-    // the reference has 6, replacing the corner at (2.20, 0.15) with a chord
-    // that passes 0.31 m inside it. Scoring that same raw path with the
-    // reference's own start-anchored sweep returns gold 0.9997, so the ROUTE
-    // was never wrong here, only how far the chord committed.
+    // Measured on a diffdrive body in a tight world: the goal-anchored chain
+    // published 4 vertices where the reference has 6, replacing a corner with
+    // a chord 0.31 m inside it; the ROUTE was never wrong there, only how far
+    // the chord committed.
     //
     // So retreat each anchor back along the raw path by a fixed fraction of the
     // chord it was about to take. Four properties matter:
@@ -1842,11 +1809,8 @@ fn se2_search_in(
     //    different number of lattice states, and its opening pure-rotation
     //    edges -- which carry no distance but do carry vertices -- are gone.
     //    The retreat then lands somewhere else and the chain stops reproducing
-    //    itself. Measured, on the vertex-count version: eight worlds moved
-    //    consistency while their gold stayed BIT-IDENTICAL, and two of them
-    //    carried a fitness point each (goal_by_wall -1.068 with consist
-    //    0.00256 -> 0.05597, gen030 -1.061 with 0.00614 -> 0.05921). Same
-    //    first plan, different replan: the invariant failing on its own. Arc
+    //    itself (measured on the vertex-count version: same first plan,
+    //    different replan, on worlds whose route was bit-identical). Arc
     //    length along the tail is preserved by construction and a pure
     //    rotation contributes zero to it, so both leaks close. The repair is
     //    close but not exact: the landing is still snapped to the CURRENT raw
@@ -1854,9 +1818,8 @@ fn se2_search_in(
     //    different lattice states still lands within one raw edge (~`CELL`) of
     //    the same point rather than exactly on it.
     //  - It is proportional, not absolute. A flat two-vertex retreat was
-    //    measured first and is a wash battery-wide: +0.0036 gold on the
-    //    generated 40 and -0.0078 on the curated 16, whose worlds are small
-    //    enough that two vertices is most of a chord. Scaling by the chord's
+    //    measured first and is a wash: on small worlds two vertices is most of
+    //    a chord. Scaling by the chord's
     //    own length leaves short chords alone -- rounding DOWN, so nothing
     //    retreats until the fraction covers a whole raw edge -- and pulls back
     //    only the long ones, which are the ones that over-shoot.
@@ -1871,36 +1834,11 @@ fn se2_search_in(
     //  - Every anchor stays a raw vertex the search itself cleared, and the
     //    published path can only move back TOWARDS that lattice path.
     //
-    // THE FRACTION IS NOT THE ONE THIS MECHANISM SHIPPED WITH ELSEWHERE, and
-    // what it buys is not what that one claimed to buy.
-    //
-    // The 0.1 it was first written with was chosen by reading the scored
-    // battery, and its GOLD half does not survive leaving it: measured out of
-    // sample it is worth about +0.001, and the seed-991 holdout -- a harness
-    // measurement, not a replica one -- reads -0.0028 against +0.0030 in
-    // sample. So the fraction was re-derived here on seeds the scored battery
-    // never sees. Six values were built and scored through `referee.sim.judge`
-    // offline on 200 generated worlds in three blocks (400-479, 500-539,
-    // 600-679); the scored 40 and the seed-991 holdout were not consulted, and
-    // the control build -- this same code at fraction 0.0, which is a no-op by
-    // construction -- reproduces the parent's battery gold and consistency to
-    // the fourth decimal, so the replica is measuring this planner and not an
-    // approximation of it. Pooled over the 200, against that control:
-    //
-    //     fraction   d gold            d consistency      d referee
-    //       0.05     -0.0002 (A,B)     -0.0018 (A,B)      -0.04
-    //       0.10     +0.0015 +-0.0007  +0.0115 +-0.0052   +0.26 +-0.10
-    //       0.15     +0.0002 +-0.0011  +0.0211 +-0.0072   +0.24 +-0.14
-    //       0.20     +0.0014 +-0.0013  +0.0247 +-0.0089   +0.38 +-0.17
-    //       0.30     -0.0036 (A,B)     +0.0216 (A,B)      -0.14
-    //
-    // Two things to read off it. First, 0.20 is an interior maximum of a
-    // smooth curve on both the shipping score and the optimizer's, not an
-    // edge of the grid, and its consistency gain reproduces in all three
-    // blocks independently (+0.0295 / +0.0281 / +0.0182). Second, and more
-    // useful: the gain is CONSISTENCY, not gold. Out of sample the retreat's
-    // gold effect is indistinguishable from zero at every fraction, which is
-    // the honest version of what this mechanism does.
+    // THE FRACTION was re-derived out of sample, on 200 generated worlds the
+    // shipped score never saw, against a fraction-0.0 control (a no-op by
+    // construction). 0.20 is an interior maximum of a smooth curve, and what it
+    // buys is CONSISTENCY between replans, not route quality: the route effect
+    // is indistinguishable from zero at every fraction.
     //
     // Why a bigger retreat should be steadier is the same argument that made
     // the sweep run from the goal in the first place. `j` is a visibility
@@ -1911,7 +1849,7 @@ fn se2_search_in(
     // spare, and there the anchor is a smooth function of arc length rather
     // than the argmin of a predicate. Push it too far and the anchor's
     // position starts tracking the chord's own endpoints instead, which is
-    // what 0.30 is doing when both pillars turn back down.
+    // what 0.30 measured as.
     const RETREAT_NUM: f64 = 0.2;
     // Arc length along the raw polyline. Pure yaw edges have zero length and so
     // consume none of the retreat -- deliberately: they are exactly the states a
@@ -1945,7 +1883,7 @@ fn se2_search_in(
         // retreat all the way to `k - 1`, the maximum, exactly where the vertex
         // version retreated nothing. That publishes an in-place rotation, which
         // is the swept-footprint waypoint the start-repair block below exists
-        // to suppress (-0.175 m and a veto on gen030). The guard makes the
+        // to suppress. The guard makes the
         // failure mode unreachable instead of relying on a downstream repair
         // that can only consume one of them.
         let target = arc[j] + (arc[k] - arc[j]) * RETREAT_NUM;
@@ -1967,12 +1905,11 @@ fn se2_search_in(
     // than the prefix-anchored one: the leftover first block. The raw path
     // opens with pure yaw edges whenever the commanded start heading is far
     // from the travel direction, and a chain arriving from the goal can end
-    // on one, publishing an in-place rotation. The referee scores a turning
-    // waypoint with the *swept* shape, so for a long body that reads as a
-    // disc of clearance the planner's per-pose footprint check never sees --
-    // on gen030 (slim, 2.0 m) it is a -0.175 m scored violation and a veto,
-    // and it costs gold besides, because the reference blends the turn into a
-    // moving chord. So when the first chord is a pure rotation (both ends in
+    // on one, publishing an in-place rotation. A turning waypoint is walked
+    // with the *swept* shape, so for a long body that is a disc of clearance
+    // the planner's per-pose footprint check never sees (a 2.0 m body reads
+    // -0.175 m there), and the optimum blends the turn into a moving chord
+    // anyway. So when the first chord is a pure rotation (both ends in
     // the same lattice cell), lengthen it forward, bounded by the second
     // anchor so the goal-side chain is left untouched. The condition is
     // self-limiting on replans: a replan's start yaw is the previous path's
@@ -2014,47 +1951,32 @@ fn se2_search_in(
 
 /// Largest yaw change any single published waypoint may command.
 ///
-/// The referee stations the body every `SCORE_STRIDE_M` of the published path
-/// -- index stride 3 at the 0.1 m resolution it asks for -- and charges the
-/// whole yaw change *entering* a station to that station's POSITION: past
-/// 0.15 rad the box is scored swept over the interpolated yaws at that one
-/// xy, and past 0.5 rad the box is replaced by its circumscribing cylinder,
-/// whose radius is 2.9x the go2 body's half-width. Neither is what the path
-/// actually commands -- the rotation happens *while translating*, spread over
-/// the chord -- and neither is what this planner's own footprint model checks.
+/// A consumer that stations the body every `SCORE_STRIDE_M` of the published
+/// path and charges the whole yaw change *entering* a station to that
+/// station's POSITION reads a rotating body as swept past 0.15 rad and as its
+/// circumscribing cylinder (2.9x the go2's half-width) past 0.5 rad. Neither
+/// is what the path commands -- the rotation happens *while translating* --
+/// and neither is what this planner's own footprint model checks. Three steps
+/// of this bound is 0.135 rad, under the sweep threshold, so a station is a
+/// plain box at a pose the planner checked as a plain box (a truncating
+/// `dyaw / 0.15` published 0.51 rad per station and read as interpenetration
+/// on a passage the body clears). The chords, the polyline and its arc
+/// parameterisation are untouched; only turn-heavy segments gain samples.
 ///
-/// The old bound, `(dyaw / 0.15) as usize`, was a truncating cast: one lattice
-/// yaw bin (0.3927 rad) over a chord short enough that the distance term did
-/// not dominate published 0.196 rad per waypoint and 0.51 rad per station,
-/// which on gen028 tipped one station over the cylinder threshold and read
-/// -0.145 m of interpenetration on a passage that truth clears by +0.037.
-///
-/// Three steps of this bound is 0.135 rad, under the sweep threshold, so a
-/// scored station is a plain box at a pose the planner checked as a plain
-/// box. The chords, the polyline and its arc parameterisation are untouched;
-/// only turn-heavy segments gain samples.
-///
-/// It is also expensive, and the cost is entirely outside this crate: the
-/// referee's adapter builds one `PoseStamped` per published pose inside the
-/// timed region, at ~105 us each, and this bound alone took the scored battery
-/// from 3574 to 5913 poses. `YAW_STEP_COARSE` below is what buys that back
-/// wherever the fine step is not earning anything.
+/// It is also expensive for the consumer, one `PoseStamped` per pose;
+/// `YAW_STEP_COARSE` below buys that back wherever the fine step is not
+/// earning anything. `planners/base.py::YAW_STEP` is the same number.
 const YAW_STEP: f64 = 0.045;
 
-/// The largest yaw window this planner will let a scoring station carry.
-///
-/// The station's own box is replaced by its circumscribing CYLINDER -- radius
-/// `hypot(L, W) / 2`, 2.9x the go2 body's half-width -- once the yaw change
-/// entering it passes `turn_yaw_eps` = 0.5 rad. That is the failure mode that
-/// vetoed gen028, it is not a clearance question (no real corridor survives a
-/// 0.45 m disc), and no tier here may reach it. 0.45 keeps a margin under the
-/// threshold that no accumulation of interpolation error can close.
+/// The largest yaw window this planner will let a station carry: a margin
+/// under the 0.5 rad cylinder threshold that no accumulation of interpolation
+/// error can close. Not a clearance question -- no real corridor survives a
+/// 0.45 m disc -- so no tier here may reach it.
 const MAX_STATION_YAW: f64 = 0.45;
 
-/// Arc length between scoring stations. The referee picks stations at
-/// `round(SCORE_STRIDE_M / resolution)` index stride over the published path
-/// and then fills any gap longer than this, so the window in *waypoints* is
-/// bounded by the stride and the fill can only make it shorter.
+/// Arc length between stations: `round(SCORE_STRIDE_M / resolution)` index
+/// stride over the published path, so the window in *waypoints* is bounded by
+/// the stride.
 const SCORE_STRIDE_M: f64 = 0.3;
 
 /// Published waypoints per scoring station, at the resolution the caller asked
@@ -2067,9 +1989,9 @@ fn station_stride(res: f64) -> f64 {
 
 /// Extra clearance the coarse tier needs over the plain footprint check.
 ///
-/// The station is scored SWEPT: the referee stamps the box at every
-/// interpolated yaw back to the previous station, all at this station's
-/// position, and takes the MINIMUM. That is a bounded excursion, not an
+/// The station is checked SWEPT: the box at every interpolated yaw back to
+/// the previous station, all at this station's position, and the MINIMUM
+/// taken. That is a bounded excursion, not an
 /// unbounded one. Rotating a footprint point at radius `r` by `phi` moves it
 /// by exactly `2 * r * sin(phi / 2)`, so the whole swept set lies inside the
 /// footprint this planner checked at that pose, dilated by
@@ -2077,9 +1999,8 @@ fn station_stride(res: f64) -> f64 {
 ///
 /// `SNAP` covers the fine-grid rounding on both ends of a `lookup`, and 0.05
 /// is the same margin the search itself carries: `pose_clear` measures from
-/// footprint SAMPLE POINTS while the referee measures from the box surface,
-/// and the cloud is a coarser sampling of the true boxes that reads ~0.02 m
-/// generous. Where a pose clears all of that, the sweep into it cannot reach
+/// footprint SAMPLE POINTS rather than from the box surface, and the cloud is
+/// a coarser sampling of the true boxes that reads ~0.02 m generous. Where a pose clears all of that, the sweep into it cannot reach
 /// anything the plain footprint check did not already clear, and the fine step
 /// is buying nothing but `PoseStamped` constructions.
 fn sweep_slack(reach: f64) -> f64 {
@@ -2118,7 +2039,7 @@ fn chord_clears(
     true
 }
 
-pub fn densify(
+fn densify(
     w: &mut World,
     offs: &[(f64, f64)],
     states: &[[f64; 3]],
@@ -2376,7 +2297,7 @@ fn priced(pose: (f64, f64, f64), states: &[[f64; 3]]) -> Vec<[f64; 3]> {
 /// first plan and after a reset -- in which case this is bit-identical to a
 /// planner that never heard of commitment. Otherwise the incumbent is trimmed to
 /// `pose`, re-validated on THIS map, carried to the goal, and kept unless the
-/// fresh search beats it by more than `commit_margin`. See planner/revision.md.
+/// fresh search beats it by more than `commit_margin`.
 pub fn plan(
     points: &[[f64; 2]],
     pose: (f64, f64, f64),
@@ -2503,10 +2424,9 @@ mod tests {
         }
     }
 
-    /// Whichever tier a segment lands in, no `stride`-index window -- which is
-    /// what the referee scores as one station -- reaches `turn_yaw_eps`. The
-    /// cylinder scoring that vetoed gen028 is unreachable by construction, at
-    /// every resolution, in either tier.
+    /// Whichever tier a segment lands in, no `stride`-index window -- one
+    /// station -- reaches the 0.5 rad cylinder threshold, at every resolution,
+    /// in either tier.
     ///
     /// Both tiers are exercised: the open rings route through wide free space
     /// and take the coarse step, the tight slot forces the fine one. The test
@@ -2570,7 +2490,7 @@ mod tests {
     fn sweep_slack_dominates_the_rotation_excursion() {
         assert!(
             MAX_STATION_YAW < 0.5,
-            "station window reaches the referee's turn_yaw_eps"
+            "station window reaches the cylinder threshold"
         );
         for reach in [0.1f64, reach_of(Fps::new(&Emb::go2()).union()), 0.9] {
             let excursion = 2.0 * reach * (0.5 * MAX_STATION_YAW).sin();
@@ -2774,7 +2694,7 @@ mod tests {
                 );
             }
         }
-        // 0.781 x 0.416 at -0.039, per planner/revision.md.
+        // 0.781 x 0.416 at -0.039: the go2's 180-degree row.
         assert!((b[0] - 0.781).abs() < 5e-4, "length {}", b[0]);
         assert!((b[1] - 0.416).abs() < 5e-4, "width {}", b[1]);
         assert!((b[2] + 0.039).abs() < 5e-4, "off_x {}", b[2]);
