@@ -137,6 +137,14 @@ pub struct Emb {
     pub min_speed: f64,
     pub speed_clearance: f64,
     pub max_yaw_rate: f64,
+    /// The gait plant, measured: the policy's command ramp per second, the
+    /// commanded band it actually walks in, and the slip inverse the laws
+    /// feed forward through. The planner never reads them; the follower does.
+    pub command_slew: [f64; 3],
+    pub gait_band: [f64; 2],
+    pub walk_gain: f64,
+    pub walk_slip: f64,
+    pub walk_slip_ramp: f64,
     pub strafe: f64,
     pub reverse: f64,
     pub yaw_w: f64,
@@ -176,6 +184,11 @@ impl Emb {
             min_speed: 0.2,
             speed_clearance: 0.35,
             max_yaw_rate: 1.4,
+            command_slew: [2.5, 2.0, 5.0],
+            gait_band: [0.45, 0.95],
+            walk_gain: 0.964,
+            walk_slip: 0.132,
+            walk_slip_ramp: 0.08,
             strafe: 1.8,
             reverse: 1.5,
             yaw_w: 0.25,

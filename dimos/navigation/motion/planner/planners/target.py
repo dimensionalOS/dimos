@@ -125,6 +125,7 @@ class RustTargetEpisode:
                 e.envelope,
                 e.arc_inflate,
                 (e.max_speed, e.min_speed, e.speed_clearance, e.max_yaw_rate),
+                (e.command_slew, e.gait_band, (e.walk_gain, e.walk_slip, e.walk_slip_ramp)),
             ),
             self._res,
             None if inc is None else np.ascontiguousarray(inc, dtype=np.float64),

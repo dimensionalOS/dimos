@@ -21,16 +21,16 @@ that has to agree with a constant the shared domain owns: rust cannot import
 silently drift away from the plant.
 """
 
-import numpy as np
+from dataclasses import replace
+
 import pytest
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path
-from dimos.navigation.motion.control.controller import load_extension
 from dimos.navigation.motion.control.laws import hinted
-from dimos.navigation.motion.embodiment import GO2_COMMAND_SLEW, GO2_CONTROL_DT
+from dimos.navigation.motion.embodiment import GO2
 
 
 def _pose(x: float, y: float, yaw: float = 0.0) -> PoseStamped:
@@ -46,16 +46,16 @@ def _straight() -> Path:
 
 
 def test_rate_limit_is_the_plants_own_slew() -> None:
-    """The limiter models the plant, so it has to be derived from the plant.
-
-    ``GO2_COMMAND_SLEW`` is per control tick; the law carries a RATE so it
-    stays correct at any control period. If the plant's slew or tick ever
-    moves, this fails rather than leaving the law modelling the old plant.
+    """The limiter models the plant, so it reads the plant: the embodiment's
+    ``command_slew``, not a number of the law's own. From a standing start the
+    first tick is exactly one nominal tick of slew, on both halves.
     """
-    want = tuple(np.asarray(GO2_COMMAND_SLEW, dtype=float) / GO2_CONTROL_DT)
-    assert hinted.CMD_SLEW_PER_S == want
     pytest.importorskip("dimos_motion2_tc")  # the rust half, when it is built
-    assert tuple(load_extension().CMD_SLEW_PER_S) == want
+    for slew in [GO2.command_slew, (1.0, 0.5, 2.0)]:
+        for factory in (hinted.make, hinted.make_rust):
+            law = factory(emb=replace(GO2, command_slew=slew))
+            tw = law.update(_pose(0.0, 0.0), _straight(), 0.0, None)
+            assert abs(tw.linear.x - slew[0] * hinted.NOMINAL_TICK) < 1e-12, (factory, slew)
 
 
 def test_envelope_clears_the_gait_dead_zone() -> None:
@@ -65,7 +65,7 @@ def test_envelope_clears_the_gait_dead_zone() -> None:
     freewalk policy stands. A floor inside that band is what made the seed's
     "careful" episodes time out having never approached geometry.
     """
-    cfg = hinted.config()
+    cfg = hinted.config(GO2)
     assert cfg.min_speed >= 0.28, "the governor's creep is inside the gait dead zone"
     # and stops short of the 1.0 expert-switch boundary the sim does not model
     assert cfg.max_speed < 1.0
@@ -92,5 +92,5 @@ def test_a_stalled_caller_cannot_bank_slew() -> None:
     prev = law.update(_pose(0.0, 0.0), path, 0.0, None).linear.x
     # 10 s later: the limiter must integrate MAX_TICK, not the whole stall
     stalled_step = abs(law.update(_pose(0.0, 0.0), path, 10.0, None).linear.x - prev)
-    assert stalled_step <= hinted.CMD_SLEW_PER_S[0] * hinted.MAX_TICK + 1e-12
+    assert stalled_step <= GO2.command_slew[0] * hinted.MAX_TICK + 1e-12
     assert stalled_step > nominal_step, "the cap swallowed the elapsed time entirely"

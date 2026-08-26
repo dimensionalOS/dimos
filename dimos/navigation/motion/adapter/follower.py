@@ -197,7 +197,7 @@ class TrajectoryFollower(Module):
     def start(self) -> None:
         super().start()
         self._controller = load(self.config.controller or self._track.controller)(
-            self.config.controller_config
+            self.config.controller_config, self._emb
         )
         self._controller.reset()
         self.register_disposable(Disposable(self.path.subscribe(self._on_path)))

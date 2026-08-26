@@ -48,14 +48,17 @@ from dimos.navigation.motion.control.controller import (
     path_xy_yaw,
 )
 from dimos.navigation.motion.control.profile import decode_ceilings
+from dimos.navigation.motion.embodiment import GO2, Embodiment
 
 
-def make(config: ControllerConfig | None = None) -> BlindPursuitController:
-    return BlindPursuitController(config)
+def make(config: ControllerConfig | None = None, emb: Embodiment = GO2) -> BlindPursuitController:
+    return BlindPursuitController(config, emb)
 
 
-def make_rust(config: ControllerConfig | None = None) -> RustBlindPursuitController:
-    return RustBlindPursuitController(config)
+def make_rust(
+    config: ControllerConfig | None = None, emb: Embodiment = GO2
+) -> RustBlindPursuitController:
+    return RustBlindPursuitController(config, emb)
 
 
 def walk_command(want: float, gain: float, slip: float, ramp: float) -> float:
@@ -104,8 +107,9 @@ class BlindPursuitController:
 
     config: ControllerConfig
 
-    def __init__(self, config: ControllerConfig | None = None) -> None:
+    def __init__(self, config: ControllerConfig | None = None, emb: Embodiment = GO2) -> None:
         self.config = config or ControllerConfig()
+        self.emb = emb
         self.reset()
 
     def reset(self) -> None:
@@ -217,7 +221,8 @@ class BlindPursuitController:
             # by the governor. Unchanged from the seed.
             want = min(speed, vmax)
             # ...and this is what the gait has to be asked for to deliver it.
-            cmd = walk_command(want, cfg.walk_gain, cfg.walk_slip, cfg.walk_slip_ramp)
+            emb = self.emb
+            cmd = walk_command(want, emb.walk_gain, emb.walk_slip, emb.walk_slip_ramp)
             vx, vy = vx / speed * cmd, vy / speed * cmd
         wz = float(
             np.clip(cfg.k_yaw * angle_diff(target_yaw, pyaw), -cfg.max_yaw_rate, cfg.max_yaw_rate)
@@ -259,11 +264,11 @@ class RustBlindPursuitController:
 
     config: ControllerConfig
 
-    def __init__(self, config: ControllerConfig | None = None) -> None:
+    def __init__(self, config: ControllerConfig | None = None, emb: Embodiment = GO2) -> None:
         self._mod: Any = load_extension()
         self.config = config or ControllerConfig()
         self._params = self.config.law_params
-        self._walk = self.config.walk_params
+        self._walk = (emb.walk_gain, emb.walk_slip, emb.walk_slip_ramp)
         self.reset()
 
     def reset(self) -> None:

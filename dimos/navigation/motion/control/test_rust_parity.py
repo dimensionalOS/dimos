@@ -23,6 +23,7 @@ in the same order against the same libm, so they agree bit for bit, and any
 drift off zero is a real divergence rather than accumulated noise.
 """
 
+from dataclasses import replace
 import math
 
 import numpy as np
@@ -171,11 +172,19 @@ def _cases(seed: int = 20260802, n: int = CASES):  # type: ignore[no-untyped-def
                 speed_clearance=float(rng.uniform(0.2, 0.8)),
                 speed_floor_clearance=float(rng.uniform(0.01, 0.15)),
                 speed_lookahead=float(rng.uniform(0.5, 4.0)),
+            )
+        # the gait plant is the body's; vary it with the gains so its order
+        # across the boundary is load-bearing too
+        emb = GO2
+        if k % 5 == 0:
+            emb = replace(
+                GO2,
                 walk_gain=float(srng.uniform(0.7, 1.3)),
                 walk_slip=float(srng.uniform(0.0, 0.3)),
                 walk_slip_ramp=float(srng.uniform(0.02, 0.3)),
+                command_slew=tuple(float(v) for v in srng.uniform(0.5, 6.0, 3)),
             )
-        yield cfg, pose, path, clearance
+        yield cfg, pose, path, clearance, emb
 
 
 # every law and its rust twin; each pair is held to TOL independently
@@ -190,7 +199,7 @@ LAWS = {
 STATEFUL = {"hinted"}
 
 
-def _raw_twists(law, cfg, pose, path, clearance):  # type: ignore[no-untyped-def]
+def _raw_twists(law, cfg, pose, path, clearance, emb=GO2):  # type: ignore[no-untyped-def]
     """The PURE tick of a law, before any state it keeps.
 
     A stateful law's first tick is the only one a fresh instance can produce,
@@ -200,7 +209,7 @@ def _raw_twists(law, cfg, pose, path, clearance):  # type: ignore[no-untyped-def
     The limiter has its own gate in `test_stateful_parity_over_a_sequence`.
     """
     if law not in STATEFUL:
-        return _twists(law, cfg, pose, path, clearance)
+        return _twists(law, cfg, pose, path, clearance, emb)
     ext = load_extension()
     clr = None if clearance is None else np.ascontiguousarray(clearance, dtype=np.float64)
     py = hinted.update(pose, path, cfg, clearance)
@@ -214,10 +223,10 @@ def _raw_twists(law, cfg, pose, path, clearance):  # type: ignore[no-untyped-def
     return py, rs
 
 
-def _twists(law, cfg, pose, path, clearance):  # type: ignore[no-untyped-def]
+def _twists(law, cfg, pose, path, clearance, emb=GO2):  # type: ignore[no-untyped-def]
     make_py, make_rs = LAWS[law]
-    py = make_py(cfg).update(pose, path, 0.0, clearance)
-    rs = make_rs(cfg).update(pose, path, 0.0, clearance)
+    py = make_py(cfg, emb).update(pose, path, 0.0, clearance)
+    rs = make_rs(cfg, emb).update(pose, path, 0.0, clearance)
     return (
         (py.linear.x, py.linear.y, py.angular.z),
         (rs.linear.x, rs.linear.y, rs.angular.z),
@@ -290,14 +299,14 @@ def test_stateful_parity_over_a_sequence(law: str) -> None:
     """
     make_py, make_rs = LAWS[law]
     cases = list(_cases())
-    py_law, rs_law = make_py(cases[0][0]), make_rs(cases[0][0])
+    py_law, rs_law = make_py(cases[0][0], cases[0][4]), make_rs(cases[0][0], cases[0][4])
     worst = 0.0
     t = 0.0
-    for k, (cfg, pose, path, clearance) in enumerate(cases):
+    for k, (cfg, pose, path, clearance, emb) in enumerate(cases):
         # the config is per-case in this sweep, so rebuild on a change and
         # reset BOTH -- a fresh law and a reset law must answer identically
-        if k and cfg is not cases[k - 1][0]:
-            py_law, rs_law = make_py(cfg), make_rs(cfg)
+        if k and (cfg is not cases[k - 1][0] or emb is not cases[k - 1][4]):
+            py_law, rs_law = make_py(cfg, emb), make_rs(cfg, emb)
         t += (0.02, 0.02, 0.0, 0.5)[k % 4]  # nominal, nominal, repeat, stall
         a = py_law.update(pose, path, t, clearance)
         b = rs_law.update(pose, path, t, clearance)
@@ -312,10 +321,10 @@ def test_stateful_parity_over_a_sequence(law: str) -> None:
 def test_reset_clears_every_tick_of_history(law: str) -> None:
     """reset() must make a used law indistinguishable from a fresh one."""
     make_py, make_rs = LAWS[law]
-    cfg, pose, path, clearance = next(c for c in _cases() if len(c[2].poses) > 3)
+    cfg, pose, path, clearance, emb = next(c for c in _cases() if len(c[2].poses) > 3)
     other = next(c for c in _cases() if len(c[2].poses) > 3 and c[2] is not path)
     for make in (make_py, make_rs):
-        fresh, used = make(cfg), make(cfg)
+        fresh, used = make(cfg, emb), make(cfg, emb)
         for _ in range(5):  # give `used` a foreign history to forget
             used.update(other[1], other[2], 0.02, other[3])
         used.reset()

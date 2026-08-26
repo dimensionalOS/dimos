@@ -40,6 +40,7 @@ type EmbTuple = (
     Vec<[f64; 5]>,
     f64,
     (f64, f64, f64, f64),
+    ((f64, f64, f64), (f64, f64), (f64, f64, f64)),
 );
 
 /// One plan call. points: (N, 2) float64 obstacle xy in world frame -- every
@@ -107,6 +108,11 @@ fn plan<'py>(
         min_speed: emb.10 .1,
         speed_clearance: emb.10 .2,
         max_yaw_rate: emb.10 .3,
+        command_slew: [emb.11 .0 .0, emb.11 .0 .1, emb.11 .0 .2],
+        gait_band: [emb.11 .1 .0, emb.11 .1 .1],
+        walk_gain: emb.11 .2 .0,
+        walk_slip: emb.11 .2 .1,
+        walk_slip_ramp: emb.11 .2 .2,
     };
     let out = py.allow_threads(|| {
         plan_impl(

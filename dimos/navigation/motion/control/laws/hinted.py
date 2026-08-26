@@ -16,7 +16,7 @@
 
 Four mechanisms over :mod:`~...laws.seed`:
 
-1. WALK-THRESHOLD ENVELOPE (:data:`ENVELOPE`). ``min_speed`` 0.2 sits inside the
+1. WALK-THRESHOLD ENVELOPE (the embodiment's ``gait_band``). ``min_speed`` 0.2 sits inside the
    walking policy's dead zone, so the governor's creep was a stand-still.
 2. TANGENT FEEDFORWARD + FOOT CORRECTION replacing the aim-at-the-carrot term,
    whose chord cut corners toward the obstacle the plan curved around.
@@ -33,7 +33,7 @@ the envelope.
 from __future__ import annotations
 
 import math
-from typing import Any, Final
+from typing import Any
 
 import numpy as np
 
@@ -47,20 +47,7 @@ from dimos.navigation.motion.control.controller import (
     load_extension,
     path_xy_yaw,
 )
-
-# The envelope this law drives inside, in COMMANDED body-velocity units, and a
-# plant measurement rather than a preference. Gait initiation is a BIFURCATION,
-# not a ramp: below ~0.28 commanded the policy stands, so a 0.2 floor is a
-# stand-still wherever the clearance governor sits near it. The ceiling is not
-# about pace either -- a body that crosses a tight gap fast is out the far side
-# before its tracking drift has eaten the margin -- and 0.95 stops short of 1.0
-# because max(|vx|, |vy|) >= 1.0 hands the policy to a dedicated expert.
-ENVELOPE: Final = {"min_speed": 0.45, "max_speed": 0.95}
-
-# The plant's own per-axis command rate limit, in commanded units per SECOND:
-# embodiment.py's GO2_COMMAND_SLEW per GO2_CONTROL_DT. test_hinted.py holds this
-# to those constants rather than to these numbers.
-CMD_SLEW_PER_S = (2.5, 2.0, 5.0)
+from dimos.navigation.motion.embodiment import GO2, Embodiment
 
 # Tick period assumed when there is no previous tick to difference against, and
 # the cap on the period the limiter will integrate over: a longer gap means the
@@ -70,17 +57,26 @@ NOMINAL_TICK = 0.02
 MAX_TICK = 0.10
 
 
-def config() -> ControllerConfig:
-    """The shared config, with this law's own envelope."""
-    return ControllerConfig(min_speed=ENVELOPE["min_speed"], max_speed=ENVELOPE["max_speed"])
+def config(emb: Embodiment = GO2) -> ControllerConfig:
+    """The shared config, driving inside the body's own gait band.
+
+    The band is a plant measurement, not a preference. Gait initiation is a
+    BIFURCATION, not a ramp: below it the policy stands, so the governor's 0.2
+    floor is a stand-still wherever the clearance sits near it. The ceiling is
+    not about pace either -- a body that crosses a tight gap fast is out the
+    far side before its tracking drift has eaten the margin -- and the go2's
+    0.95 stops short of the 1.0 that hands its policy to a dedicated expert.
+    """
+    lo, hi = emb.gait_band
+    return ControllerConfig(min_speed=lo, max_speed=hi)
 
 
-def make(cfg: ControllerConfig | None = None) -> HintedController:
-    return HintedController(cfg or config())
+def make(cfg: ControllerConfig | None = None, emb: Embodiment = GO2) -> HintedController:
+    return HintedController(cfg, emb)
 
 
-def make_rust(cfg: ControllerConfig | None = None) -> RustHintedController:
-    return RustHintedController(cfg or config())
+def make_rust(cfg: ControllerConfig | None = None, emb: Embodiment = GO2) -> RustHintedController:
+    return RustHintedController(cfg, emb)
 
 
 def _project_onto(
@@ -322,8 +318,9 @@ class HintedController:
 
     config: ControllerConfig
 
-    def __init__(self, cfg: ControllerConfig | None = None) -> None:
-        self.config = cfg or config()
+    def __init__(self, cfg: ControllerConfig | None = None, emb: Embodiment = GO2) -> None:
+        self.config = cfg or config(emb)
+        self._slew = emb.command_slew
         self.reset()
 
     def reset(self) -> None:
@@ -355,7 +352,7 @@ class HintedController:
         else:
             dt = NOMINAL_TICK
         pvx, pvy, pwz = self._last_cmd or (0.0, 0.0, 0.0)
-        sx, sy, sw = (CMD_SLEW_PER_S[0] * dt, CMD_SLEW_PER_S[1] * dt, CMD_SLEW_PER_S[2] * dt)
+        sx, sy, sw = (self._slew[0] * dt, self._slew[1] * dt, self._slew[2] * dt)
         vx = pvx + min(max(raw[0] - pvx, -sx), sx)
         vy = pvy + min(max(raw[1] - pvy, -sy), sy)
         wz = min(max(pwz + min(max(raw[2] - pwz, -sw), sw), -cfg.max_yaw_rate), cfg.max_yaw_rate)
@@ -381,12 +378,13 @@ class RustHintedController:
 
     config: ControllerConfig
 
-    def __init__(self, cfg: ControllerConfig | None = None) -> None:
+    def __init__(self, cfg: ControllerConfig | None = None, emb: Embodiment = GO2) -> None:
         mod: Any = load_extension()
-        self.config = cfg or config()
+        self.config = cfg or config(emb)
         self._law = mod.HintedLaw()
         self._params = self.config.law_params
         self._hinted = self.config.hinted_params
+        self._slew = emb.command_slew
 
     def reset(self) -> None:
         self._law.reset()
@@ -402,5 +400,6 @@ class RustHintedController:
             float(t),
             self._params,
             self._hinted,
+            self._slew,
         )
         return Twist(Vector3(vx, vy, 0.0), Vector3(0.0, 0.0, wz))

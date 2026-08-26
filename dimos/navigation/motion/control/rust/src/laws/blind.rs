@@ -52,9 +52,9 @@ use crate::stamps::{ceiling_ahead, decode_ceilings};
 /// stall, it is driving faster than the clearance annotation licensed.
 ///
 /// DEPLOY. These are properties of the gait blob, not of the law -- on a
-/// different gait they are a ~23% over-speed. They are config fields
-/// (`BlindControllerConfig`) for exactly that reason: re-probe against the
-/// deployed gait and key them to it before this drives hardware.
+/// different gait they are a ~23% over-speed. They live on the embodiment for
+/// exactly that reason: re-probe against the deployed gait and key them to it
+/// before this drives hardware. These are the go2's, for this crate's tests.
 pub const WALK_GAIN: f64 = 0.964;
 pub const WALK_SLIP: f64 = 0.132;
 

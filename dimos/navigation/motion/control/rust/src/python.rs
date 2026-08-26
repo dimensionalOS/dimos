@@ -24,7 +24,7 @@ use pyo3::prelude::*;
 use crate::clearance;
 use crate::geom::Params;
 use crate::laws::blind::{update as blind_impl, BlindParams};
-use crate::laws::hinted::{update as hinted_impl, HintedParams, Law as HintedLaw, CMD_SLEW_PER_S};
+use crate::laws::hinted::{update as hinted_impl, HintedParams, Law as HintedLaw};
 use crate::laws::seed::update as seed_impl;
 use crate::stamps;
 
@@ -140,6 +140,8 @@ fn hinted_params(p: BaseParams, h: HintedExtra) -> HintedParams {
         escape_speed: h.3,
         brake_accel: h.4,
         brake_margin: h.5,
+        // the pure law never reads it; `step` sets the body's own
+        ..HintedParams::default()
     }
 }
 
@@ -165,9 +167,9 @@ impl PyHintedLaw {
         self.inner.reset();
     }
 
-    /// One tick, rate limited. As `update_seed`, plus the tick time `t` and the
-    /// six extra `HintedParams` terms.
-    #[pyo3(signature = (pose, path, clearance, t, params, hinted))]
+    /// One tick, rate limited. As `update_seed`, plus the tick time `t`, the
+    /// six extra `HintedParams` terms and the body's `command_slew`.
+    #[pyo3(signature = (pose, path, clearance, t, params, hinted, slew))]
     // the binding is a marshalling boundary: every argument is one input the
     // law reads, and bundling them would only hide the count behind a tuple
     #[allow(clippy::too_many_arguments)]
@@ -180,10 +182,12 @@ impl PyHintedLaw {
         t: f64,
         params: BaseParams,
         hinted: HintedExtra,
+        slew: (f64, f64, f64),
     ) -> PyResult<(f64, f64, f64)> {
         let rows = rows_of(&path)?;
         let clr = vec_of(clearance.as_ref());
-        let cfg = hinted_params(params, hinted);
+        let mut cfg = hinted_params(params, hinted);
+        cfg.slew = [slew.0, slew.1, slew.2];
         let inner = &mut self.inner;
         Ok(py.allow_threads(move || inner.step(pose, &rows, clr.as_deref(), &cfg, t)))
     }
@@ -288,6 +292,5 @@ fn dimos_motion2_tc(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(encode_precision, m)?)?;
     m.add_function(wrap_pyfunction!(ceilings_to_clearance, m)?)?;
     m.add_class::<PyHintedLaw>()?;
-    m.add("CMD_SLEW_PER_S", CMD_SLEW_PER_S)?;
     Ok(())
 }

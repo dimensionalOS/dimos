@@ -57,6 +57,16 @@ class Embodiment:
     min_speed: float = 0.2  # creep at the precision floor (m/s)
     speed_clearance: float = 0.35  # room at which full speed is granted (m)
     max_yaw_rate: float = 1.4  # rad/s; prices a rotation in place
+    # The gait plant, measured: how the walking policy answers a command
+    # (control/probe_walk_slip.py, go2web policy.rs). Re-probe on a new gait.
+    command_slew: tuple[float, float, float] = (2.5, 2.0, 5.0)  # d(vx, vy, wz)/dt it ramps at
+    gait_band: tuple[float, float] = (0.45, 0.95)  # commanded speeds it actually walks between
+    # ground speed ~= walk_gain * cmd - walk_slip above the stall band; the laws
+    # invert it so a request is the speed the governor chose. Below
+    # walk_slip_ramp the inverse fades to identity: a stop stays a stop.
+    walk_gain: float = 0.964
+    walk_slip: float = 0.132
+    walk_slip_ramp: float = 0.08
     # gait preferences for the planner's cost function.
     # forward = 1; strafe/reverse scale it; yaw_w prices rotation per rad.
     strafe: float = 1.8
@@ -182,14 +192,6 @@ GO2_ENVELOPE: tuple[tuple[float, float, float, float, float], ...] = (
 
 # Measured 0.0334 m of extra width per rad/m, residuals <= 12 mm.
 GO2_ARC_INFLATE = 0.0334
-
-# The walking policy's own command ramp: max change in (vx, vy, vyaw) per
-# control tick (go2web policy.rs ramp_velocity, VEL_DV_*). Plant behaviour, not
-# a tuning knob -- the hinted law rate-limits its own output to it so the
-# request it signs its name to is the one the robot executes, and
-# control/test_hinted.py holds both the python law and the rust one here.
-GO2_CONTROL_DT = 0.02
-GO2_COMMAND_SLEW = (0.05, 0.04, 0.10)
 
 GO2 = Embodiment(envelope=GO2_ENVELOPE, arc_inflate=GO2_ARC_INFLATE)
 

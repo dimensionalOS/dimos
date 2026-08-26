@@ -21,7 +21,7 @@
 //!    policy's dead zone -- gait initiation is a bifurcation, not a ramp, and
 //!    below ~0.28 commanded the robot stands. The envelope is 0.45/0.95
 //!    commanded, carried by this law's own config default (see
-//!    `laws/hinted.py::ENVELOPE`).
+//!    the embodiment's `gait_band`).
 //! 2. TANGENT FEEDFORWARD + FOOT CORRECTION, replacing the seed's aim-at-the-
 //!    carrot term, whose chord cut corners toward the obstacle the plan curved
 //!    around. This is also what makes the governor authoritative: an on-plan
@@ -43,14 +43,6 @@
 
 use crate::geom::{angle_diff, arcs_of, progress_index, Params};
 
-/// The plant's own per-axis command rate limit, in commanded units per SECOND.
-///
-/// `simulation/walk.py`: `COMMAND_SLEW = (0.05, 0.04, 0.10)` applied per
-/// `CONTROL_DT = 0.02` s tick on `(vx, vy, wz)`. Kept as a rate rather than a
-/// per-tick step so the limiter is correct at any control period;
-/// `test_hinted.py` holds it to the shared plant constants.
-pub const CMD_SLEW_PER_S: [f64; 3] = [2.5, 2.0, 5.0];
-
 /// Tick period assumed when the law has no previous tick to difference against
 /// (the first call after `reset()`), and the cap on the period it will
 /// integrate over. The plant's control rate is 50 Hz; a gap longer than
@@ -63,6 +55,10 @@ pub const MAX_TICK: f64 = 0.10;
 #[derive(Clone)]
 pub struct HintedParams {
     pub base: Params,
+    /// The plant's own per-axis command rate limit, in commanded units per
+    /// SECOND: the embodiment's `command_slew`. A rate rather than a per-tick
+    /// step so the limiter is correct at any control period.
+    pub slew: [f64; 3],
     /// How far ahead of and behind the foot of the perpendicular the
     /// feedforward reads the plan's direction. NOT a lookahead in the pursuit
     /// sense -- the velocity is never aimed at these points, only the
@@ -90,6 +86,7 @@ impl Default for HintedParams {
     fn default() -> Self {
         Self {
             base: Params::default(),
+            slew: [2.5, 2.0, 5.0],
             tangent_preview: 0.15,
             escape_clearance: 0.10,
             escape_preview: 1.00,
@@ -240,11 +237,7 @@ impl Law {
             _ => NOMINAL_TICK,
         };
         let (px, py, pw) = self.last_cmd.unwrap_or((0.0, 0.0, 0.0));
-        let (sx, sy, sw) = (
-            CMD_SLEW_PER_S[0] * dt,
-            CMD_SLEW_PER_S[1] * dt,
-            CMD_SLEW_PER_S[2] * dt,
-        );
+        let (sx, sy, sw) = (cfg.slew[0] * dt, cfg.slew[1] * dt, cfg.slew[2] * dt);
         // spelled out rather than `clamp`, which panics on an inverted range
         let mut vx = px + (raw.0 - px).max(-sx).min(sx);
         let mut vy = py + (raw.1 - py).max(-sy).min(sy);

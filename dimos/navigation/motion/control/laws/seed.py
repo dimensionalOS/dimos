@@ -36,13 +36,16 @@ from dimos.navigation.motion.control.controller import (
     load_extension,
     path_xy_yaw,
 )
+from dimos.navigation.motion.embodiment import GO2, Embodiment
 
 
-def make(config: ControllerConfig | None = None) -> PursuitController:
+def make(config: ControllerConfig | None = None, _emb: Embodiment = GO2) -> PursuitController:
     return PursuitController(config)
 
 
-def make_rust(config: ControllerConfig | None = None) -> RustPursuitController:
+def make_rust(
+    config: ControllerConfig | None = None, _emb: Embodiment = GO2
+) -> RustPursuitController:
     return RustPursuitController(config)
 
 

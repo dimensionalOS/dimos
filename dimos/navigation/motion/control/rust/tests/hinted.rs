@@ -15,7 +15,7 @@
 use std::f64::consts::PI;
 
 use dimos_motion2_tc::geom::{ieee_remainder, Params, TAU};
-use dimos_motion2_tc::laws::hinted::{update, HintedParams, Law, CMD_SLEW_PER_S};
+use dimos_motion2_tc::laws::hinted::{update, HintedParams, Law};
 
 /// 4 m of straight path along +x at yaw 0, the python `_straight_path()`.
 fn straight() -> Vec<[f64; 3]> {
@@ -646,9 +646,9 @@ fn ramp_respects_the_plant_slew_on_every_axis() {
     for step in 0..40 {
         let out = law.step((-1.0, 1.0, PI - 0.2), &straight(), None, &cfg, t);
         assert!(
-            (out.0 - prev.0).abs() <= CMD_SLEW_PER_S[0] * dt + 1e-12
-                && (out.1 - prev.1).abs() <= CMD_SLEW_PER_S[1] * dt + 1e-12
-                && (out.2 - prev.2).abs() <= CMD_SLEW_PER_S[2] * dt + 1e-12,
+            (out.0 - prev.0).abs() <= cfg.slew[0] * dt + 1e-12
+                && (out.1 - prev.1).abs() <= cfg.slew[1] * dt + 1e-12
+                && (out.2 - prev.2).abs() <= cfg.slew[2] * dt + 1e-12,
             "step {step}: {prev:?} -> {out:?} exceeds the plant slew"
         );
         assert!(
@@ -732,7 +732,7 @@ fn a_backwards_or_stalled_clock_cannot_bank_a_larger_step() {
     let mut prev = (0.0, 0.0, 0.0);
     for t in [0.5, 0.5, 0.5, 0.1, -3.0, 900.0] {
         let out = law.step((-1.0, 1.0, PI - 0.2), &straight(), None, &cfg, t);
-        let cap = CMD_SLEW_PER_S[1] * MAX_TICK_FOR_TEST + 1e-12;
+        let cap = cfg.slew[1] * MAX_TICK_FOR_TEST + 1e-12;
         assert!((out.1 - prev.1).abs() <= cap, "t={t}: {prev:?} -> {out:?}");
         prev = out;
     }

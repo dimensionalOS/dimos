@@ -102,10 +102,6 @@ pub struct ControllerConfig {
     pub speed_clearance: f64,
     pub speed_floor_clearance: f64,
     pub speed_lookahead: f64,
-    // --- gait calibration, read by the blind law only ---
-    pub walk_gain: f64,
-    pub walk_slip: f64,
-    pub walk_slip_ramp: f64,
     // --- read by the hinted law only ---
     pub tangent_preview: f64,
     pub escape_clearance: f64,
@@ -132,9 +128,10 @@ impl ControllerConfig {
         }
     }
 
-    pub fn hinted(&self) -> HintedParams {
+    pub fn hinted(&self, emb: &Emb) -> HintedParams {
         HintedParams {
             base: self.base(),
+            slew: emb.command_slew,
             tangent_preview: self.tangent_preview,
             escape_clearance: self.escape_clearance,
             escape_preview: self.escape_preview,
@@ -144,12 +141,12 @@ impl ControllerConfig {
         }
     }
 
-    pub fn blind(&self) -> BlindParams {
+    pub fn blind(&self, emb: &Emb) -> BlindParams {
         BlindParams {
             base: self.base(),
-            walk_gain: self.walk_gain,
-            walk_slip: self.walk_slip,
-            slip_ramp: self.walk_slip_ramp,
+            walk_gain: emb.walk_gain,
+            walk_slip: emb.walk_slip,
+            slip_ramp: emb.walk_slip_ramp,
         }
     }
 }
@@ -548,8 +545,8 @@ impl Worker {
             tokio::time::interval(Duration::from_secs_f64(1.0 / self.config.control_frequency));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-        let hinted = self.config.controller_config.hinted();
-        let blind = self.config.controller_config.blind();
+        let hinted = self.config.controller_config.hinted(&self.emb);
+        let blind = self.config.controller_config.blind(&self.emb);
         let mut law = HintedLaw::new();
         let mut latch = GoalLatch::new(self.config.goal_tolerance);
         let mut stale = Gate::default();
@@ -902,7 +899,7 @@ mod tests {
     fn a_reset_law_answers_like_a_fresh_one() {
         // the contract `laws/hinted.rs` states, and what makes the
         // stop_movement reset a real reset rather than a hope
-        let cfg = controller_config().hinted();
+        let cfg = controller_config().hinted(&go2());
         let states: Vec<State> = (0..20).map(|k| [k as f64 * 0.1, 0.0, 0.0]).collect();
         let mut fresh = HintedLaw::new();
         let mut used = HintedLaw::new();
@@ -918,6 +915,10 @@ mod tests {
 
     // the no-cloud clearance fallback
 
+    fn go2() -> Emb {
+        emb::by_tag("go2").expect("known tag")
+    }
+
     fn controller_config() -> ControllerConfig {
         ControllerConfig {
             lookahead: 0.35,
@@ -931,9 +932,6 @@ mod tests {
             speed_clearance: 0.35,
             speed_floor_clearance: 0.05,
             speed_lookahead: 2.0,
-            walk_gain: 0.964,
-            walk_slip: 0.132,
-            walk_slip_ramp: 0.08,
             tangent_preview: 0.15,
             escape_clearance: 0.10,
             escape_preview: 1.00,
@@ -947,11 +945,11 @@ mod tests {
     fn the_params_split_lands_every_field_in_the_right_law() {
         let cfg = controller_config();
         assert_eq!(cfg.base().lookahead, 0.35);
-        assert_eq!(cfg.hinted().brake_margin, 0.15);
-        assert_eq!(cfg.hinted().base.speed_lookahead, 2.0);
+        assert_eq!(cfg.hinted(&go2()).brake_margin, 0.15);
+        assert_eq!(cfg.hinted(&go2()).base.speed_lookahead, 2.0);
         // python spells it walk_slip_ramp, the law spells it slip_ramp
-        assert_eq!(cfg.blind().slip_ramp, 0.08);
-        assert_eq!(cfg.blind().walk_gain, 0.964);
+        assert_eq!(cfg.blind(&go2()).slip_ramp, 0.08);
+        assert_eq!(cfg.blind(&go2()).walk_gain, 0.964);
     }
 
     #[test]
@@ -979,7 +977,7 @@ mod tests {
         // and it actually reaches the law: the tight plan is requested slower.
         // The RAW law, not `step` -- a first tick out of a standing start is
         // the rate limiter's answer, not the governor's, on either plan.
-        let cfg = controller_config().hinted();
+        let cfg = controller_config().hinted(&go2());
         let slow = dimos_motion2_tc::laws::hinted::update((0.0, 0.0, 0.0), &states, Some(&a), &cfg);
         let fast = dimos_motion2_tc::laws::hinted::update((0.0, 0.0, 0.0), &states, Some(&b), &cfg);
         assert!(
@@ -1096,11 +1094,17 @@ mod tests {
         let ts = msg::path_stamps(&stub);
         let cfg = controller_config();
         assert_eq!(
-            HintedLaw::new().step((1.0, 2.0, 0.5), &states, None, &cfg.hinted(), 0.02),
+            HintedLaw::new().step((1.0, 2.0, 0.5), &states, None, &cfg.hinted(&go2()), 0.02),
             (0.0, 0.0, 0.0)
         );
         assert_eq!(
-            blind_update((1.0, 2.0, 0.5), &states, None, Some(&ts), &cfg.blind()),
+            blind_update(
+                (1.0, 2.0, 0.5),
+                &states,
+                None,
+                Some(&ts),
+                &cfg.blind(&go2())
+            ),
             (0.0, 0.0, 0.0)
         );
     }
