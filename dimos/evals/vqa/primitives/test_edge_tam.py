@@ -28,14 +28,12 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
+from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 
 if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-
-BBox = tuple[float, float, float, float]
 
 
 class _PointCloud:
@@ -62,7 +60,7 @@ class _TestVlModel(VlModel):
 
 
 class _Detector(_TestVlModel):
-    def __init__(self, boxes: list[BBox]) -> None:
+    def __init__(self, boxes: list[Bbox]) -> None:
         self._boxes = boxes
 
     def query_detections(
@@ -84,7 +82,7 @@ class _Detector(_TestVlModel):
 
 
 class _NamedDetector(_TestVlModel):
-    def __init__(self, boxes: dict[str, BBox]) -> None:
+    def __init__(self, boxes: dict[str, Bbox]) -> None:
         self._boxes = boxes
 
     def query_detections(
@@ -110,7 +108,7 @@ class _NamedDetector(_TestVlModel):
 class _Segmenter:
     def __init__(self, mask: np.ndarray | list[np.ndarray]) -> None:
         self._masks = mask if isinstance(mask, list) else [mask]
-        self.prompted_boxes: list[BBox] = []
+        self.prompted_boxes: list[Bbox] = []
         self.call_count = 0
 
     def segment(
@@ -258,7 +256,7 @@ def test_mask_selection_uses_nearest_camera_z_point_per_pixel() -> None:
 
 
 @pytest.mark.parametrize("boxes", [[], [(0.0, 0.0, 4.0, 4.0), (5.0, 5.0, 9.0, 9.0)]])
-def test_requires_exactly_one_valid_detection(boxes: list[BBox]) -> None:
+def test_requires_exactly_one_valid_detection(boxes: list[Bbox]) -> None:
     cloud = _PointCloud(np.array([[0.0, 0.0, 1.0]]))
     estimator = _range_estimator(_Detector(boxes), _Segmenter(_full_mask()))
 

@@ -23,6 +23,7 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
 from dimos.evals.vqa.contracts import InsufficientEvidenceError, NonEmptyString
+from dimos.perception.detection.type.detection2d.bbox import Bbox
 
 if TYPE_CHECKING:
     from dimos.evals.vqa.contracts import ObjectMaskEstimator
@@ -89,8 +90,8 @@ class ObjectRangeEvidence(BaseModel):
     object_name: NonEmptyString
     camera_range_m: float = Field(ge=0)
     supporting_point_count: int = Field(ge=1)
-    prompt_bbox_xyxy: tuple[float, float, float, float]
-    mask_bbox_xyxy: tuple[float, float, float, float]
+    prompt_bbox_xyxy: Bbox
+    mask_bbox_xyxy: Bbox
     mask_area_px: int = Field(ge=1)
     range_quartiles_m: tuple[float, float, float]
     synchronization_delta_s: float = Field(ge=0)

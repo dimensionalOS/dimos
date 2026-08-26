@@ -17,18 +17,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from dimos.evals.vqa.contracts import InsufficientEvidenceError
-from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
+from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
 if TYPE_CHECKING:
+    from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenterCompatible
     from dimos.models.vl.base import VlModel
     from dimos.msgs.sensor_msgs.Image import Image
-    from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 
 
 @dataclass(frozen=True)
@@ -36,25 +36,17 @@ class ObjectMaskEvidence:
     """One validated box-prompted object mask."""
 
     object_name: str
-    prompt_bbox_xyxy: tuple[float, float, float, float]
+    prompt_bbox_xyxy: Bbox
     detection: Detection2DBBox
     mask: np.ndarray
 
     @property
-    def mask_bbox_xyxy(self) -> tuple[float, float, float, float]:
-        return cast("tuple[float, float, float, float]", tuple(map(float, self.detection.bbox)))
+    def mask_bbox_xyxy(self) -> Bbox:
+        return self.detection.bbox
 
     @property
     def mask_area_px(self) -> int:
         return int(np.count_nonzero(self.mask))
-
-
-class EdgeTAMImageSegmenterCompatible(Protocol):
-    """The box-prompt operation used from ``EdgeTAMImageSegmenter``."""
-
-    def segment(
-        self, detections: ImageDetections2D[Detection2DBBox]
-    ) -> ImageDetections2D[Detection2DSeg]: ...
 
 
 class EdgeTAMObjectMaskPipeline:
@@ -119,15 +111,9 @@ class EdgeTAMObjectMaskPipeline:
                         "object mask requires one valid segmentation mask matching "
                         f"the rectified image for {object_name!r}"
                     )
-                bbox = detection.bbox
                 self._cached_evidence[object_name] = ObjectMaskEvidence(
                     object_name=object_name,
-                    prompt_bbox_xyxy=(
-                        float(bbox[0]),
-                        float(bbox[1]),
-                        float(bbox[2]),
-                        float(bbox[3]),
-                    ),
+                    prompt_bbox_xyxy=detection.bbox,
                     detection=candidate,
                     mask=mask,
                 )
@@ -137,5 +123,5 @@ class EdgeTAMObjectMaskPipeline:
         if self._segmenter is None:
             from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
 
-            self._segmenter = cast("EdgeTAMImageSegmenterCompatible", EdgeTAMImageSegmenter())
+            self._segmenter = EdgeTAMImageSegmenter()
         return self._segmenter

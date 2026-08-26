@@ -17,15 +17,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
 
 import numpy as np
 from pydantic import ValidationError
 import pytest
 
 from dimos.constants import STATE_DIR
-from dimos.evals.types import EvalRig
-from dimos.evals.vqa.author import OpenAIQuestionAuthor, QuestionAuthor
+from dimos.evals.vqa.author import OpenAIQuestionAuthor
 from dimos.evals.vqa.contracts import (
     FamilyAnswer,
     FamilySpec,
@@ -52,11 +50,8 @@ from dimos.evals.vqa.primitives.range import ObjectRangeEvidence
 from dimos.evals.vqa.suite import load_suite
 from dimos.models.vl.base import VlModel
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
+from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-
-if TYPE_CHECKING:
-    from dimos.evals.vqa.pointcloud_frame import PointCloudFrame
 
 
 class _TestVlModel(VlModel):
@@ -188,7 +183,7 @@ class _Detector(_TestVlModel):
 
 
 class _BoxesDetector(_TestVlModel):
-    def __init__(self, boxes: tuple[tuple[float, float, float, float], ...]) -> None:
+    def __init__(self, boxes: tuple[Bbox, ...]) -> None:
         self._boxes = boxes
 
     def query_detections(
@@ -279,7 +274,7 @@ class _RangeEstimator:
         self._range_m = range_m
         self._quartiles = quartiles or (range_m, range_m, range_m)
 
-    def estimate(self, frame: PointCloudFrame, object_name: str) -> ObjectRangeEvidence:
+    def estimate(self, frame: object, object_name: str) -> ObjectRangeEvidence:
         return ObjectRangeEvidence(
             object_name=object_name,
             camera_range_m=self._range_m,
@@ -293,7 +288,7 @@ class _RangeEstimator:
         )
 
     def estimate_many(
-        self, frame: PointCloudFrame, object_names: tuple[str, ...]
+        self, frame: object, object_names: tuple[str, ...]
     ) -> tuple[ObjectRangeEvidence, ...]:
         return tuple(self.estimate(frame, object_name) for object_name in object_names)
 
@@ -332,7 +327,7 @@ class _ClosestRangeEstimator:
     def __init__(self, *quartiles: tuple[float, float, float]) -> None:
         self._quartiles = quartiles
 
-    def estimate(self, frame: PointCloudFrame, object_name: str) -> ObjectRangeEvidence:
+    def estimate(self, frame: object, object_name: str) -> ObjectRangeEvidence:
         quartiles = self._quartiles[0]
         box = (0.0, 0.0, 2.0, 2.0)
         return ObjectRangeEvidence(
@@ -348,7 +343,7 @@ class _ClosestRangeEstimator:
         )
 
     def estimate_many(
-        self, frame: PointCloudFrame, object_names: tuple[str, ...]
+        self, frame: object, object_names: tuple[str, ...]
     ) -> tuple[ObjectRangeEvidence, ...]:
         return tuple(
             ObjectRangeEvidence(
@@ -372,7 +367,7 @@ class _ClosestRangeEstimator:
 
 class _ReorderedClosestRangeEstimator(_ClosestRangeEstimator):
     def estimate_many(
-        self, frame: PointCloudFrame, object_names: tuple[str, ...]
+        self, frame: object, object_names: tuple[str, ...]
     ) -> tuple[ObjectRangeEvidence, ...]:
         return tuple(reversed(super().estimate_many(frame, object_names)))
 
@@ -474,7 +469,7 @@ def test_object_distance_buckets_range_evidence(range_m: float, expected: str) -
         proposal,
         image,
         _Detector(present=True),
-        cast("PointCloudFrame", object()),
+        object(),
         _RangeEstimator(range_m),
     )
 
@@ -492,7 +487,7 @@ def test_object_distance_rejects_evidence_crossing_bucket_boundary() -> None:
             proposal,
             image,
             _Detector(present=True),
-            cast("PointCloudFrame", object()),
+            object(),
             _RangeEstimator(2.01, (1.8, 2.01, 2.2)),
         )
 
@@ -524,7 +519,7 @@ def test_closest_object_compares_multiple_named_references(
         proposal,
         image,
         _Detector(present=True),
-        cast("PointCloudFrame", object()),
+        object(),
         _ClosestRangeEstimator(*quartiles),
     )
 
@@ -546,7 +541,7 @@ def test_closest_object_rejects_overlapping_range_intervals() -> None:
             proposal,
             image,
             _Detector(present=True),
-            cast("PointCloudFrame", object()),
+            object(),
             _ClosestRangeEstimator(
                 (1.0, 1.1, 1.2),
                 (1.1, 1.3, 1.5),
@@ -566,7 +561,7 @@ def test_closest_object_rejects_reordered_range_results() -> None:
             proposal,
             Image.from_numpy(np.zeros((4, 10, 3), dtype=np.uint8)),
             _Detector(present=True),
-            cast("PointCloudFrame", object()),
+            object(),
             _ReorderedClosestRangeEstimator((1.0, 1.1, 1.2), (2.0, 2.1, 2.2)),
         )
 
@@ -620,9 +615,7 @@ def test_presence_family_derives_answer_from_detector_evidence() -> None:
         ((70.0, 0.0, 90.0, 20.0), "right"),
     ),
 )
-def test_horizontal_direction_uses_detection_center(
-    box: tuple[float, float, float, float], expected: str
-) -> None:
+def test_horizontal_direction_uses_detection_center(box: Bbox, expected: str) -> None:
     image = Image.from_numpy(np.zeros((60, 90, 3), dtype=np.uint8))
     proposal = QuestionProposal(family="horizontal_direction", object_names=("robot",))
 
@@ -759,7 +752,7 @@ def test_largest_visible_area_rejects_close_mask_areas() -> None:
 
 def test_openai_author_parses_constrained_proposals() -> None:
     image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
-    author = OpenAIQuestionAuthor(cast("VlModel", _QuestionModel()))
+    author = OpenAIQuestionAuthor(_QuestionModel())
 
     proposals = author.propose(image, AVAILABLE_FAMILIES)
 
@@ -782,7 +775,7 @@ def test_openai_author_parses_constrained_proposals() -> None:
 
 def test_openai_author_keeps_valid_items_from_partly_invalid_response() -> None:
     image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
-    author = OpenAIQuestionAuthor(cast("VlModel", _PartlyInvalidQuestionModel()))
+    author = OpenAIQuestionAuthor(_PartlyInvalidQuestionModel())
 
     proposals = author.propose(image, AVAILABLE_FAMILIES)
 
@@ -791,7 +784,7 @@ def test_openai_author_keeps_valid_items_from_partly_invalid_response() -> None:
 
 def test_openai_author_skips_unavailable_family() -> None:
     image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
-    author = OpenAIQuestionAuthor(cast("VlModel", _UnavailableFamilyQuestionModel()))
+    author = OpenAIQuestionAuthor(_UnavailableFamilyQuestionModel())
 
     proposals = author.propose(image, (AVAILABLE_FAMILIES[0],))
 
@@ -960,7 +953,7 @@ def test_generate_and_evaluate_one_image(tmp_path: Path) -> None:
     result = generate_frames_dataset(
         request,
         (GenerationFrame(4, image),),
-        cast("QuestionAuthor", _Author()),
+        _Author(),
         _Detector(present=True),
     )
 
@@ -973,13 +966,13 @@ def test_generate_and_evaluate_one_image(tmp_path: Path) -> None:
     assert (output / "audit" / "frame-000004" / "ground_truth.json").is_file()
 
     suite = load_suite(output)
-    evaluation = suite[0].evaluate(cast("EvalRig", _Rig()))
+    evaluation = suite[0].evaluate(_Rig())
 
     assert evaluation.case_id == "frame-000004-chair-presence"
     assert json.loads(evaluation.outputs) == {"answer": "yes"}
     assert evaluation.score == 1.0
 
-    invalid = suite[0].evaluate(cast("EvalRig", _Rig(answer="maybe")))
+    invalid = suite[0].evaluate(_Rig(answer="maybe"))
     assert invalid.score == 0.0
 
 
@@ -995,7 +988,7 @@ def test_generation_rejects_nonempty_output_without_modifying_it(tmp_path: Path)
         generate_frames_dataset(
             request,
             (GenerationFrame(4, image),),
-            cast("QuestionAuthor", _Author()),
+            _Author(),
             _Detector(present=True),
         )
 
@@ -1011,7 +1004,7 @@ def test_generation_audits_invalid_family_proposals_and_continues(tmp_path: Path
     result = generate_frames_dataset(
         request,
         (GenerationFrame(4, image),),
-        cast("QuestionAuthor", _InvalidThenValidAuthor()),
+        _InvalidThenValidAuthor(),
         _Detector(present=True),
     )
 
@@ -1028,8 +1021,8 @@ def test_generate_distance_case_from_pointcloud_frame(tmp_path: Path) -> None:
 
     result = generate_frames_dataset(
         request,
-        (GenerationFrame(4, image, cast("PointCloudFrame", object())),),
-        cast("QuestionAuthor", _DistanceAuthor()),
+        (GenerationFrame(4, image, object()),),
+        _DistanceAuthor(),
         _Detector(present=True),
         _RangeEstimator(1.5),
     )
@@ -1052,8 +1045,8 @@ def test_generate_closest_object_case_from_pointcloud_frame(tmp_path: Path) -> N
 
     result = generate_frames_dataset(
         request,
-        (GenerationFrame(4, image, cast("PointCloudFrame", object())),),
-        cast("QuestionAuthor", _ClosestObjectAuthor()),
+        (GenerationFrame(4, image, object()),),
+        _ClosestObjectAuthor(),
         _Detector(present=True),
         _ClosestRangeEstimator(
             (1.0, 1.1, 1.2),
@@ -1081,7 +1074,7 @@ def test_generate_image_coverage_case_without_pointcloud(tmp_path: Path) -> None
     result = generate_frames_dataset(
         GenerationRequest(dataset="recording.db", image_index=4, output=output),
         (GenerationFrame(4, image),),
-        cast("QuestionAuthor", _CoverageAuthor()),
+        _CoverageAuthor(),
         _Detector(present=True),
         mask_estimator=_MaskEstimator({"chair": 24}),
     )
@@ -1098,10 +1091,10 @@ def test_generation_deduplicates_reordered_closest_object_references(tmp_path: P
             GenerationFrame(
                 4,
                 Image.from_numpy(np.zeros((4, 10, 3), dtype=np.uint8)),
-                cast("PointCloudFrame", object()),
+                object(),
             ),
         ),
-        cast("QuestionAuthor", _DuplicateClosestObjectAuthor()),
+        _DuplicateClosestObjectAuthor(),
         _Detector(present=True),
         _ClosestRangeEstimator(
             (1.0, 1.1, 1.2),
@@ -1120,7 +1113,7 @@ def test_generation_deduplicates_reordered_largest_area_references(tmp_path: Pat
     result = generate_frames_dataset(
         GenerationRequest(dataset="recording.db", image_index=4, output=tmp_path / "vqa"),
         (GenerationFrame(4, Image.from_numpy(np.zeros((10, 10, 3), dtype=np.uint8))),),
-        cast("QuestionAuthor", _DuplicateLargestVisibleAreaAuthor()),
+        _DuplicateLargestVisibleAreaAuthor(),
         _Detector(present=True),
         mask_estimator=_MaskEstimator({"chair": 60, "table": 40, "box": 10}),
     )
@@ -1138,7 +1131,7 @@ def test_frame_without_pointcloud_does_not_expose_distance_family(tmp_path: Path
     generate_frames_dataset(
         request,
         (GenerationFrame(4, image),),
-        cast("QuestionAuthor", author),
+        author,
         _Detector(present=True),
         _RangeEstimator(1.5),
     )
@@ -1158,7 +1151,7 @@ def test_frame_without_pointcloud_exposes_mask_families_when_masks_are_available
     generate_frames_dataset(
         GenerationRequest(dataset="recording.db", image_index=4, output=output),
         (GenerationFrame(4, image),),
-        cast("QuestionAuthor", author),
+        author,
         _Detector(present=True),
         mask_estimator=_MaskEstimator({"chair": 24}),
     )
@@ -1189,7 +1182,7 @@ def test_generate_multiple_images_aggregates_frame_artifacts(tmp_path: Path) -> 
     result = generate_frames_dataset(
         request,
         frames,
-        cast("QuestionAuthor", _Author()),
+        _Author(),
         _Detector(present=True),
         config=VqaGenerationConfig(synchronization_tolerance_s=0.025),
         model_names={"author": "gpt-4o-mini", "detector": "vikhyatk/moondream2"},
@@ -1227,7 +1220,7 @@ def test_empty_frame_does_not_count_as_rejected_question(tmp_path: Path) -> None
     generate_frames_dataset(
         request,
         frames,
-        cast("QuestionAuthor", _EmptyThenAuthor()),
+        _EmptyThenAuthor(),
         _Detector(present=True),
     )
 
@@ -1251,7 +1244,7 @@ def test_generation_keeps_answered_questions_and_audits_rejections(tmp_path: Pat
     result = generate_frames_dataset(
         request,
         (GenerationFrame(4, image),),
-        cast("QuestionAuthor", _MixedAuthor()),
+        _MixedAuthor(),
         detector,
     )
 
@@ -1270,7 +1263,7 @@ def test_generation_propagates_detector_failures(tmp_path: Path) -> None:
         generate_frames_dataset(
             request,
             (GenerationFrame(4, image),),
-            cast("QuestionAuthor", _Author()),
+            _Author(),
             _BrokenDetector(),
         )
 
@@ -1289,7 +1282,7 @@ def test_later_frame_failure_does_not_publish_partial_dataset(tmp_path: Path) ->
         generate_frames_dataset(
             request,
             frames,
-            cast("QuestionAuthor", _Author()),
+            _Author(),
             _FailsSecondDetector(),
         )
 
@@ -1304,7 +1297,7 @@ def test_generation_deduplicates_proposals_and_suffixes_id_collisions(tmp_path: 
     result = generate_frames_dataset(
         request,
         (GenerationFrame(4, image),),
-        cast("QuestionAuthor", _CollidingAuthor()),
+        _CollidingAuthor(),
         _Detector(present=True),
     )
 
