@@ -14,7 +14,7 @@
 
 """Live health reporting for the PICO WebXR body-tracking demo."""
 
-import time
+from time import monotonic
 from typing import Any
 
 from reactivex.disposable import Disposable
@@ -67,7 +67,7 @@ class BodyTrackingMonitor(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._report_started_at = time.monotonic()
+        self._report_started_at = monotonic()
         self._snapshots_since_report = 0
         self._resolved_joint_ever_seen = False
 
@@ -86,7 +86,7 @@ class BodyTrackingMonitor(Module):
                 resolved_joint_count=len(snapshot.joints),
             )
 
-        now = time.monotonic()
+        now = monotonic()
         elapsed = now - self._report_started_at
         if elapsed < REPORT_INTERVAL_S:
             return

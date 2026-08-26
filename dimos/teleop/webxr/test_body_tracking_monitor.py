@@ -17,6 +17,7 @@ from collections.abc import Iterator
 import pytest
 import pytest_mock
 
+from dimos.teleop.webxr import body_tracking_monitor as body_tracking_monitor_module
 from dimos.teleop.webxr.body_tracking import BodyJointPose, BodyTrackingSnapshot
 from dimos.teleop.webxr.body_tracking_monitor import (
     BodyTrackingMonitor,
@@ -71,13 +72,14 @@ def test_body_tracking_summary_reports_best_effort_joint_positions() -> None:
 
 def test_body_tracking_monitor_logs_first_resolved_joint_once(
     monitor: BodyTrackingMonitor,
-    mocker,
+    mocker: pytest_mock.MockerFixture,
 ) -> None:
-    mocker.patch(
-        "dimos.teleop.webxr.body_tracking_monitor.time.monotonic",
+    mocker.patch.object(
+        body_tracking_monitor_module,
+        "monotonic",
         side_effect=[monitor._report_started_at + 1.0, monitor._report_started_at + 2.0],
     )
-    info = mocker.patch("dimos.teleop.webxr.body_tracking_monitor.logger.info")
+    logger = mocker.patch.object(body_tracking_monitor_module, "logger")
     snapshot = BodyTrackingSnapshot(
         type="body_tracking_snapshot",
         capture_time_s=1.0,
@@ -93,7 +95,7 @@ def test_body_tracking_monitor_logs_first_resolved_joint_once(
     monitor._on_body_tracking(snapshot)
     monitor._on_body_tracking(snapshot)
 
-    info.assert_called_once_with(
+    logger.info.assert_called_once_with(
         "WebXR body tracking acquired",
         reference_space="local-floor",
         resolved_joint_count=1,
@@ -102,13 +104,14 @@ def test_body_tracking_monitor_logs_first_resolved_joint_once(
 
 def test_body_tracking_monitor_warns_when_required_heartbeat_has_no_body(
     monitor: BodyTrackingMonitor,
-    mocker,
+    mocker: pytest_mock.MockerFixture,
 ) -> None:
-    mocker.patch(
-        "dimos.teleop.webxr.body_tracking_monitor.time.monotonic",
+    mocker.patch.object(
+        body_tracking_monitor_module,
+        "monotonic",
         return_value=monitor._report_started_at + 5.0,
     )
-    warning = mocker.patch("dimos.teleop.webxr.body_tracking_monitor.logger.warning")
+    logger = mocker.patch.object(body_tracking_monitor_module, "logger")
 
     monitor._on_body_tracking(
         BodyTrackingSnapshot(
@@ -119,7 +122,7 @@ def test_body_tracking_monitor_warns_when_required_heartbeat_has_no_body(
         )
     )
 
-    warning.assert_called_once_with(
+    logger.warning.assert_called_once_with(
         "WebXR body tracking has no resolved joints",
         snapshot_rate_hz=0.2,
         state="unavailable",
@@ -135,11 +138,12 @@ def test_body_tracking_monitor_reports_healthy_tracking(
     mocker: pytest_mock.MockerFixture,
 ) -> None:
     report_time = monitor._report_started_at + 5.0
-    mocker.patch(
-        "dimos.teleop.webxr.body_tracking_monitor.time.monotonic",
+    mocker.patch.object(
+        body_tracking_monitor_module,
+        "monotonic",
         return_value=report_time,
     )
-    info = mocker.patch("dimos.teleop.webxr.body_tracking_monitor.logger.info")
+    logger = mocker.patch.object(body_tracking_monitor_module, "logger")
     monitor._resolved_joint_ever_seen = True
 
     monitor._on_body_tracking(
@@ -156,7 +160,7 @@ def test_body_tracking_monitor_reports_healthy_tracking(
         )
     )
 
-    info.assert_called_once_with(
+    logger.info.assert_called_once_with(
         "WebXR body tracking health",
         snapshot_rate_hz=0.2,
         state="tracking",
@@ -171,7 +175,7 @@ def test_body_tracking_monitor_reports_healthy_tracking(
 
 def test_body_tracking_monitor_subscribes_during_start(
     monitor: BodyTrackingMonitor,
-    mocker,
+    mocker: pytest_mock.MockerFixture,
 ) -> None:
     subscribe = mocker.patch.object(
         monitor.body_tracking,
