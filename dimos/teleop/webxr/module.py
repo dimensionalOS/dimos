@@ -16,7 +16,7 @@
 """
 WebXR Teleoperation Module.
 
-Receives VR controller tracking data from the WebXR client via an embedded
+Receives spatial input tracking data from the WebXR client via an embedded
 FastAPI WebSocket server.  Transforms from WebXR to robot frame, computes
 deltas, and publishes PoseStamped commands.
 """
@@ -47,7 +47,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 
-# Hand is re-exported for back-compat; it lives in controller_types.
+# Hand is re-exported for callers; it lives in controller_types.
 from dimos.teleop.webxr.controller_types import Buttons, Hand, WebXRControllerState
 from dimos.utils.logging_config import setup_logger
 from dimos.web.robot_web_interface import RobotWebInterface
@@ -89,7 +89,7 @@ _Config = TypeVar("_Config", bound=WebXRTeleopConfig)
 
 
 class WebXRTeleopModule(Module):
-    """WebXR Teleoperation Module for Meta WebXR controllers.
+    """Teleoperation module for browser WebXR input sources.
 
     Receives controller data from the WebXR client via an embedded WebSocket
     server, computes output poses, and publishes them.  Subclass to customize

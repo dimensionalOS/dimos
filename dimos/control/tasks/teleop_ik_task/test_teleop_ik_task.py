@@ -150,13 +150,13 @@ def test_binding_configuration_rejects_invalid_collections(
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        TeleopIKTask("quest", _config(bindings), solver=_solver(mocker))
+        TeleopIKTask("teleop", _config(bindings), solver=_solver(mocker))
 
 
 def test_single_binding_tracks_relative_controller_motion(mocker: MockerFixture) -> None:
     solver = _solver(mocker)
     task = TeleopIKTask(
-        "quest",
+        "teleop",
         _config((_binding("right", "right_tool"),)),
         solver=solver,
     )
@@ -177,7 +177,7 @@ def test_bimanual_task_requires_both_hands_and_releases_atomically(
 ) -> None:
     solver = _solver(mocker)
     task = TeleopIKTask(
-        "quest",
+        "teleop",
         _config(
             (
                 _binding("left", "left_tool"),
@@ -207,7 +207,7 @@ def test_deadman_reengagement_reseeds_command_from_feedback(
 ) -> None:
     solver = _solver(mocker)
     task = TeleopIKTask(
-        "quest",
+        "teleop",
         _config((_binding("left", "left_tool"),)),
         solver=solver,
     )
@@ -230,7 +230,7 @@ def test_deadman_reengagement_reseeds_command_from_feedback(
 def test_estop_and_preemption_clear_command_session(mocker: MockerFixture) -> None:
     solver = _solver(mocker)
     task = TeleopIKTask(
-        "quest",
+        "teleop",
         _config((_binding("left", "left_tool"),)),
         solver=solver,
     )
@@ -255,7 +255,7 @@ def test_bimanual_timeout_clears_both_sides_and_reengagement_recaptures(
 ) -> None:
     solver = _solver(mocker)
     task = TeleopIKTask(
-        "quest",
+        "teleop",
         _config(
             (
                 _binding("left", "left_tool"),
@@ -299,7 +299,7 @@ def test_stale_deadman_stops_fresh_pose_streams(
     buttons: Buttons,
 ) -> None:
     solver = _solver(mocker)
-    task = TeleopIKTask("quest", _config(bindings, timeout=0.2), solver=solver)
+    task = TeleopIKTask("teleop", _config(bindings, timeout=0.2), solver=solver)
     task.on_teleop_buttons(buttons, 1.0)
     task.on_left_cartesian_command(_pose(0.1), 1.0)
     if len(bindings) == 2:
@@ -318,7 +318,7 @@ def test_stale_deadman_stops_fresh_pose_streams(
 def test_fresh_deadman_keeps_pose_stream_active(mocker: MockerFixture) -> None:
     solver = _solver(mocker)
     task = TeleopIKTask(
-        "quest",
+        "teleop",
         _config((_binding("left", "left_tool"),), timeout=0.2),
         solver=solver,
     )
@@ -338,7 +338,7 @@ def test_bimanual_step_contains_both_targets(
 ) -> None:
     solver = _solver(mocker)
     task = TeleopIKTask(
-        "quest",
+        "teleop",
         _config(
             (
                 _binding("left", "left_tool"),
@@ -366,7 +366,7 @@ def test_factory_constructs_plain_pose_target_solver_by_default(
 ) -> None:
     init = mocker.patch.object(PinkPoseTargetSolver, "__init__", return_value=None)
     cfg = TaskConfig(
-        name="quest",
+        name="teleop",
         type="teleop_ik",
         joint_names=["robot/left", "robot/right"],
         params={
@@ -388,7 +388,7 @@ def test_factory_constructs_plain_pose_target_solver_by_default(
 def test_factory_constructs_fresh_custom_solver_for_each_task() -> None:
     _CustomPoseTargetSolver.instances.clear()
     cfg = TaskConfig(
-        name="quest",
+        name="teleop",
         type="teleop_ik",
         joint_names=["robot/left", "robot/right"],
         params={

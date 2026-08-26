@@ -77,7 +77,7 @@ teleop_webxr_hand_xarm7 = autoconnect(
 )
 
 
-# XArm7 teleop + camera streaming into the Quest scene as a panel.
+# XArm7 teleop + camera streaming into the WebXR scene as a panel.
 teleop_webxr_xarm7_video = (
     autoconnect(
         VideoArmTeleopModule.blueprint(),
@@ -133,7 +133,7 @@ teleop_webxr_xarm6 = autoconnect(
 )
 
 
-# Dual arm teleop: right -> piper, left -> xarm6 (two independent Quest IK tasks)
+# Dual arm teleop: right -> piper, left -> xarm6 (two independent teleop IK tasks)
 teleop_webxr_dual = autoconnect(
     ArmTeleopModule.blueprint(),
     coordinator_teleop_dual,

@@ -433,7 +433,7 @@ warm-starts one bounded Pink update from live coordinator joint state on each
 tick; it does not require a planning world or expose planning groups to the
 coordinator.
 
-Cartesian IK accepts one absolute robot-frame target. Quest IK accepts one or
+Cartesian IK accepts one absolute robot-frame target. Teleoperation IK accepts one or
 two controller-to-frame bindings and owns engagement, reference capture,
 relative target mapping, and optional per-hand gripper commands. The
 coordinator only routes the distinct left/right pose streams by task name and

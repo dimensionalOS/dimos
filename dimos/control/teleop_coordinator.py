@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Control coordinator carrying Quest arm teleoperation inputs."""
+"""Control coordinator carrying spatial arm teleoperation inputs."""
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.stream import In
