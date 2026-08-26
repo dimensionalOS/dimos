@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unitree G1 GR00T WBC + Quest teleop + episode recording.
+"""Unitree G1 GR00T WBC + Quest teleop + manipulation + recording.
 
-The full ``unitree-g1-groot-wbc`` stack (locomotion policy, nav, viewer,
-``--simulation mujoco`` / ``--scene-package`` support) plus the Quest WebXR
-retargeting module and the dimos.imitation data-collection stack. Put on the
-headset, open ``https://<host>:8443/teleop``, and:
+The GR00T locomotion/control core (without navigation, mapping, or the legacy
+viewer) plus the Quest WebXR retargeting module, upper-body manipulation, and
+the dimos.imitation data-collection stack. ``--simulation mujoco`` and
+``--scene-package`` remain supported. Put on the headset, open
+``https://<host>:8443/teleop``, and:
 
     left stick        walk forward/back (+ yaw in strafe mode)
     right stick       yaw (press = zero-Twist e-stop)
@@ -26,8 +27,8 @@ headset, open ``https://<host>:8443/teleop``, and:
     Y                 discard the in-progress episode
 
 Controller poses route to the shared ``teleop_g1`` coordinator task declared
-in the groot blueprint. Locomotion enters ``MovementManager.tele_cmd_vel`` so
-operator input cancels navigation before reaching the GR00T WBC task.
+in the groot blueprint. With no autonomous navigation in this stack, Quest
+locomotion connects directly to the GR00T WBC task.
 
 Recording runs continuously into a timestamped session DB under
 ``~/.local/state/dimos/recordings/``; B/Y only place episode markers
@@ -63,7 +64,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
     _G1GrootCoordinator,
-    unitree_g1_groot_wbc,
+    _unitree_g1_groot_wbc_core,
 )
 from dimos.robot.unitree.g1.manip_config import g1_upper_body_model_config
 from dimos.teleop.quest.quest_extensions import MobileVideoArmTeleopModule
@@ -113,7 +114,7 @@ class G1ManipulationModule(ManipulationModule):
 
 unitree_g1_teleop = (
     autoconnect(
-        unitree_g1_groot_wbc,
+        _unitree_g1_groot_wbc_core,
         MobileVideoArmTeleopModule.blueprint(),
         G1ManipulationModule.blueprint(
             instance_name="G1Manipulation",
@@ -141,15 +142,15 @@ unitree_g1_teleop = (
         [
             (MobileVideoArmTeleopModule, "left_controller_output", "left_cartesian_command"),
             (MobileVideoArmTeleopModule, "right_controller_output", "right_cartesian_command"),
-            (MobileVideoArmTeleopModule, "cmd_vel", "tele_cmd_vel"),
+            (MobileVideoArmTeleopModule, "cmd_vel", "cmd_vel"),
             (G1ManipulationModule, "_control_coordinator", _G1GrootCoordinator),
         ]
     )
-    # Camera frames stay off the LCM bus: every consumer (quest module,
-    # recorder, viewer bridge) is on-box, and raw images multicast over LCM
-    # make each subscribing process pay receive+decode per frame — measured
-    # at ~31 MB/s and a starved coordinator tick loop on the Orin. SHM is
-    # zero-copy; an unconsumed stream costs only the producer's write.
+    # Camera frames stay off the LCM bus: both consumers (quest module and
+    # recorder) are on-box, and raw images multicast over LCM make each
+    # subscribing process pay receive+decode per frame — measured at ~31 MB/s
+    # and a starved coordinator tick loop on the Orin. SHM is zero-copy; an
+    # unconsumed stream costs only the producer's write.
     .transports(
         {
             ("color_image", Image): pSHMTransport(
