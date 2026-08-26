@@ -22,7 +22,11 @@ from dimos.navigation.motion.adapter.planner_native import MotionPlannerNativeCo
 from dimos.navigation.movement_manager.cmd_vel_mux_native import CmdVelMuxNativeConfig
 from dimos.robot.unitree.go2.tf.go2_tf import Go2TfConfig
 from dimos.robot.unitree.go2.zenoh.blueprints import MOTION_BODY_DILATE_M
-from dimos.robot.unitree.go2.zenoh.motion_host import GO2_MOTION_HOST, MAX_SPEED
+from dimos.robot.unitree.go2.zenoh.motion_host import (
+    GO2_MOTION_HOST,
+    MAX_SPEED,
+    MID360_MOUNT_RPY_DEG,
+)
 
 CONFIGS = {
     "motion_planner": MotionPlannerNativeConfig,
@@ -53,6 +57,9 @@ def test_the_deployment_overrides_land_in_both_halves(blob):
     for module in ("motion_planner", "trajectory_follower"):
         cfg = blob["modules"][module]["config"]
         assert cfg["embodiment"]["max_speed"] == MAX_SPEED
+    # The mount the robot bakes. Not Go2TfConfig's default: the deployment states
+    # it, so what ships has to carry it through emit.
+    assert blob["modules"]["go2_tf"]["config"]["mid360_mount_rpy_deg"] == MID360_MOUNT_RPY_DEG
 
 
 def test_the_session_is_a_loopback_client_of_the_router(blob):

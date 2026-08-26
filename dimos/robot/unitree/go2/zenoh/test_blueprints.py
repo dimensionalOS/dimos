@@ -24,8 +24,8 @@ import pytest
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import MID360_MOUNT_PRESETS
-from dimos.robot.unitree.go2.tf.go2_tf import Go2TfConfig
 from dimos.robot.unitree.go2.zenoh import blueprints as bp
+from dimos.robot.unitree.go2.zenoh.motion_host import GO2_MOTION_HOST
 from dimos.robot.unitree.go2.zenoh.zenohconnection import GO2Zenoh, GO2ZenohConfig
 
 
@@ -53,5 +53,10 @@ def test_the_stack_runs_the_mount_it_declares(name: str, preset: str) -> None:
 
 
 def test_the_motion_stacks_agree_with_the_baked_tf():
-    """Both publish the same edges; disagree and base_link jumps between two mounts."""
-    assert list(_mount(bp.go2_zenoh_motion)) == Go2TfConfig().mid360_mount_rpy_deg
+    """Both publish the same edges; disagree and base_link jumps between two mounts.
+
+    Against what the deployment states, not Go2TfConfig's default: the default
+    passing proves nothing about the mount the robot is actually baked with.
+    """
+    baked = GO2_MOTION_HOST.configs["go2_tf"]["mid360_mount_rpy_deg"]
+    assert list(_mount(bp.go2_zenoh_motion)) == baked

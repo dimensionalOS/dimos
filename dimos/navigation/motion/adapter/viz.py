@@ -175,7 +175,8 @@ def render_plan(
     out: RerunMulti = [
         # the bridge only pins single-archetype entities to their tf frame
         (entity, rr.Transform3D(parent_frame=f"tf#/{msg.frame_id}")),
-        (entity, msg.to_rerun()),
+        # supressed path for now, we only want body boxes
+        # (entity, msg.to_rerun(radii=0.025)),
     ]
     boxes = render_body(msg, emb, stride_m, line_radius)
     if boxes is not None:
