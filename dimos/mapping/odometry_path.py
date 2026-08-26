@@ -27,6 +27,11 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 
 
+def path_at_true_height(path: Path) -> Any:
+    """The default z lift clears a costmap a bare odometry demo has none of."""
+    return path.to_rerun(z_offset=0.0, radii=0.02)
+
+
 class OdometryPathConfig(ModuleConfig):
     # Empty follows the odometry's frame_id.
     frame_id: str = ""

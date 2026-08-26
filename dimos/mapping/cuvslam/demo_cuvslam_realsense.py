@@ -27,14 +27,8 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.mapping.cuvslam.cuvslam import CuvslamOdometry
-from dimos.mapping.odometry_path import OdometryPath
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.mapping.odometry_path import OdometryPath, path_at_true_height
 from dimos.visualization.vis_module import vis_module
-
-
-def path_at_true_height(path: Path) -> Any:
-    """The default lift clears a costmap this demo has not got."""
-    return path.to_rerun(z_offset=0.0, radii=0.02)
 
 
 def cuvslam_rerun_blueprint() -> Any:
