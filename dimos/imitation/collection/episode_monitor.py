@@ -34,6 +34,11 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.imitation_msgs.EpisodeStatus import (
+    EpisodeEvent,
+    EpisodeStatus,
+    RecordingState,
+)
 from dimos.teleop.quest.quest_types import BUTTON_ALIASES, Buttons
 from dimos.utils.logging_config import setup_logger
 
@@ -42,18 +47,6 @@ logger = setup_logger()
 # A button/keyboard press requests one of these; `toggle` resolves to
 # `start`/`save` based on the current state, so it never reaches the output.
 EpisodeCommand: TypeAlias = Literal["start", "save", "discard", "toggle"]
-# What gets published as `EpisodeStatus.last_event` (`init` on boot).
-EpisodeEvent: TypeAlias = Literal["start", "save", "discard", "init"]
-RecordingState: TypeAlias = Literal["idle", "recording"]
-
-
-class EpisodeStatus(BaseModel):
-    ts: float
-    state: RecordingState
-    episodes_saved: int
-    episodes_discarded: int
-    last_event: EpisodeEvent = "init"
-    task_label: str | None = None
 
 
 class KeyPress(BaseModel):
