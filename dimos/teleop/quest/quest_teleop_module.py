@@ -339,15 +339,8 @@ class QuestTeleopModule(Module):
         raise ValueError(f"Unexpected frame_id: {frame_id!r}, expected 'left' or 'right'")
 
     def _on_pose_bytes(self, data: bytes) -> None:
-        """Decode LCM bytes into PoseStamped, transform to robot frame.
-
-        Poses that aren't controller poses (e.g. the "head" viewer pose the
-        web client also streams) are ignored here; subclasses that want them
-        override this method. Raising instead would kill the websocket.
-        """
+        """Decode LCM bytes into PoseStamped, transform to robot frame."""
         msg = PoseStamped.lcm_decode(data)
-        if msg.frame_id not in ("left", "right"):
-            return
         hand = self._resolve_hand(msg.frame_id)
         robot_pose = webxr_to_robot(msg, is_left_controller=(hand == Hand.LEFT))
         with self._lock:
