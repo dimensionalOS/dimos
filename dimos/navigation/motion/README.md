@@ -58,14 +58,6 @@ print(MotionPlanner.io(color=False))
 └┬──────────────┘
  ├─ path: Path
  ├─ plan_body: Path
- │
- ├─ RPC build() -> None
- ├─ RPC get_skills() -> list
- ├─ RPC peek_stream(stream_name: str, timeout: float) -> Any
- ├─ RPC set_module_ref(name: str, module_ref: RPCClient) -> None
- ├─ RPC set_transport(stream_name: str, transport: Transport) -> bool
- ├─ RPC start() -> None
- ├─ RPC stop() -> None
 ```
 
 ```python
@@ -85,14 +77,6 @@ print(TrajectoryFollower.io(color=False))
 └┬───────────────────┘
  ├─ nav_cmd_vel: Twist
  ├─ goal_reached: Bool
- │
- ├─ RPC build() -> None
- ├─ RPC get_skills() -> list
- ├─ RPC peek_stream(stream_name: str, timeout: float) -> Any
- ├─ RPC set_module_ref(name: str, module_ref: RPCClient) -> None
- ├─ RPC set_transport(stream_name: str, transport: Transport) -> bool
- ├─ RPC start() -> None
- ├─ RPC stop() -> None
 ```
 
 Rules the ports carry:
