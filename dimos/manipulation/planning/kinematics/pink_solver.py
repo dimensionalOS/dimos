@@ -222,7 +222,6 @@ class _PinkSolverCore:
         description = prepare_urdf_for_drake(config.model.load(), convert_meshes=False)
         model = pinocchio.buildModelFromXML(description.xml)
 
-        model = _reduce_to_controlled_joints(model, config, controlled_joints)
         data = model.createData()
         _assert_base_link_is_model_root(model, config.base_link)
         frame_id = _get_frame_id(model, frame_name)
@@ -274,29 +273,6 @@ class _PinkSolverCore:
             np.linalg.inv(base_world) @ target_world, dtype=np.float64
         )
         return target_model
-
-
-def _reduce_to_controlled_joints(
-    model: pinocchio.Model,
-    config: RobotModelConfig,
-    controlled_joints: Sequence[str] | None,
-) -> pinocchio.Model:
-    """Lock joints outside the solve so IK cannot exploit uncommanded motion."""
-    dimos_joint_names = tuple(controlled_joints or config.joint_names)
-    controlled_joint_ids = {
-        _get_joint_id(model, config.get_urdf_joint_name(joint_name))
-        for joint_name in dimos_joint_names
-    }
-    locked_joint_ids = [
-        joint_id for joint_id in range(1, len(model.joints)) if joint_id not in controlled_joint_ids
-    ]
-    if not locked_joint_ids:
-        return model
-    return pinocchio.buildReducedModel(
-        model,
-        locked_joint_ids,
-        np.asarray(pinocchio.neutral(model), dtype=np.float64),
-    )
 
 
 def _build_joint_mapping(

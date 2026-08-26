@@ -44,6 +44,7 @@ from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import (
 from dimos.robot.unitree.g1.manip_config import (
     G1_LEFT_ARM_JOINTS,
     G1_RIGHT_ARM_JOINTS,
+    G1_TELEOP_ARM_MODEL,
     G1_UPPER_BODY_JOINT_NAME_MAPPING,
     G1_WAIST_JOINTS,
     g1_upper_body_model_config,
@@ -153,16 +154,24 @@ def test_g1_collection_streams_do_not_require_world_poses() -> None:
     ]
 
 
-def test_g1_upper_body_model_keeps_waist_and_arms_but_removes_legs() -> None:
+@pytest.mark.self_hosted
+def test_g1_models_separate_live_waist_planning_from_arm_only_teleop() -> None:
     config = g1_upper_body_model_config()
     loaded = config.model.load()
     joint_names = {joint.name for joint in loaded.joints}
+    teleop_joints = {joint.name: joint.type for joint in G1_TELEOP_ARM_MODEL.load().joints}
 
     assert loaded.root_link == "pelvis"
     assert "left_hip_pitch_joint" not in joint_names
     assert "right_hip_pitch_joint" not in joint_names
     assert {_G1_ARM_JOINT_NAME_MAPPING[name] for name in g1_arms} <= joint_names
     assert {G1_UPPER_BODY_JOINT_NAME_MAPPING[name] for name in G1_WAIST_JOINTS} <= joint_names
+    assert {
+        G1_UPPER_BODY_JOINT_NAME_MAPPING[name]: "fixed" for name in G1_WAIST_JOINTS
+    }.items() <= teleop_joints.items()
+    assert {_G1_ARM_JOINT_NAME_MAPPING[name] for name in g1_arms} == {
+        name for name, joint_type in teleop_joints.items() if joint_type != "fixed"
+    }
     assert config.max_velocity == 1.0
     assert config.max_acceleration == 2.0
 
@@ -206,7 +215,7 @@ def test_g1_upper_body_model_builds_a_roboplan_scene() -> None:
 
 
 @pytest.mark.self_hosted
-def test_g1_pink_solver_reduces_model_and_uses_g1_objective() -> None:
+def test_g1_pink_solver_uses_arm_only_model_and_g1_objective() -> None:
     frames = ("left_rubber_hand", "right_rubber_hand")
     config = PoseTargetIKTaskConfig(
         joint_names=tuple(g1_arms),

@@ -84,8 +84,8 @@ from dimos.robot.unitree.g1.g1_rerun import (
     g1_urdf_static_robot,
 )
 from dimos.robot.unitree.g1.manip_config import (
+    G1_TELEOP_ARM_MODEL,
     G1_UPPER_BODY_JOINT_NAME_MAPPING,
-    G1_UPPER_BODY_MODEL,
 )
 from dimos.robot.unitree.g1.teleop_ik import G1PinkPoseTargetSolver
 from dimos.simulation.scene_assets.spec import ScenePackage
@@ -397,7 +397,7 @@ _G1_ARM_JOINT_NAME_MAPPING = {
 }
 _G1_TELEOP_MODEL = RobotModelConfig(
     name="g1_arms",
-    model=G1_UPPER_BODY_MODEL,
+    model=G1_TELEOP_ARM_MODEL,
     joint_names=list(_G1_ARM_JOINT_NAME_MAPPING.values()),
     base_link="pelvis",
     joint_name_mapping=_G1_ARM_JOINT_NAME_MAPPING,
