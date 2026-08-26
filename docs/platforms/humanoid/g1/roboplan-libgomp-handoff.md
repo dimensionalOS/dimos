@@ -3,7 +3,7 @@
 ## Status
 
 Confirmed on 2026-08-26 on the G1's Ubuntu aarch64 computer with Python 3.12
-and RoboPlan 0.6.0. The failure occurs in a DimOS forkserver worker. RoboPlan
+and RoboPlan 0.6.0. The failure occurs in a dimOS forkserver worker. RoboPlan
 imports successfully in the parent process.
 
 This is a native-wheel and process-load-order problem. It is not a missing
@@ -34,7 +34,7 @@ cannot allocate memory in static TLS block
 - Linux aarch64 on the G1 computer
 - CPython 3.12
 - RoboPlan 0.6.0 from its manylinux 2.28 aarch64 wheel
-- DimOS Python modules run in `multiprocessing` forkserver workers
+- dimOS Python modules run in `multiprocessing` forkserver workers
 - Pinocchio uses the platform `libgomp.so.1`
 - The RoboPlan wheel carries a renamed private copy of `libgomp`
 
@@ -59,7 +59,7 @@ LD_PRELOAD=/lib/aarch64-linux-gnu/libgomp.so.1 \
   'import dimos.manipulation.manipulation_module; import roboplan.core; print("OK")'
 ```
 
-The following hardware-free test reproduces the failure inside a real DimOS
+The following hardware-free test reproduces the failure inside a real dimOS
 worker:
 
 ```bash
@@ -92,7 +92,7 @@ RoboPlan's extension names its private, renamed library as a separate dependency
 
 ## Temporary workaround
 
-Preload both copies before starting DimOS. Resolve the private filename from the
+Preload both copies before starting dimOS. Resolve the private filename from the
 active virtual environment instead of copying its wheel hash:
 
 ```bash
@@ -123,7 +123,7 @@ Publish an aarch64 RoboPlan wheel that depends on the platform
 RoboPlan should then share one OpenMP runtime.
 
 Review the wheel-repair configuration and exclude `libgomp.so.1` from vendoring.
-After publishing the corrected wheel, update the RoboPlan constraint in DimOS
+After publishing the corrected wheel, update the RoboPlan constraint in dimOS
 and remove the dual-preload workaround.
 
 ### Wheel acceptance criteria
@@ -137,7 +137,7 @@ On Linux aarch64 with Python 3.12:
 4. The G1 teleop stack starts repeatedly without a static TLS error.
 5. Planning a representative upper-body motion succeeds.
 
-## DimOS follow-up
+## dimOS follow-up
 
 Fix the optional-dependency guard independently of the wheel. Both
 `roboplan_world.py` and `roboplan_planner.py` catch every `ImportError` raised by
@@ -150,7 +150,7 @@ exception text in the top-level error. Add a test that injects a nested
 `ImportError` and verifies that its loader detail remains visible.
 
 Do not solve the permanent problem by globally preloading RoboPlan in every
-DimOS worker. That would make an optional manipulation backend part of all
+dimOS worker. That would make an optional manipulation backend part of all
 worker startup and would leave the duplicate OpenMP runtimes in place.
 
 ## Investigation notes
@@ -161,7 +161,7 @@ The following hypotheses were eliminated:
   0.6.0.
 - RoboPlan lacked an aarch64 wheel: the installed native extension imported in
   the parent process.
-- The DimOS RoboPlan adapter was invalid: `RoboPlanWorld()` constructed in the
+- The dimOS RoboPlan adapter was invalid: `RoboPlanWorld()` constructed in the
   parent process.
 - Importing `ManipulationModule` first caused the failure: that ordering also
   passed in the parent process.
