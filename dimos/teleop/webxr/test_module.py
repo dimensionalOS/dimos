@@ -406,6 +406,31 @@ def test_go2_accepts_pico_six_button_joystick(
         module.stop()
 
 
+def test_go2_rejects_short_controller_packet_safely(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    module = Go2TeleopModule()
+    publish = mocker.patch.object(module.cmd_vel, "publish")
+    joy = Joy(
+        ts=1.0,
+        frame_id="left",
+        axes=[0.25, -0.75, 0.0, 0.0],
+        buttons=[0, 0, 0, 0, 0],
+    )
+    module._controllers[Hand.LEFT] = WebXRControllerState(thumbstick=ThumbstickState(y=-1.0))
+    try:
+        assert module._on_joy_bytes(joy.lcm_encode()) is False
+
+        assert module._controllers[Hand.LEFT] is None
+        publish.assert_called_once()
+        twist = publish.call_args.args[0]
+        assert twist.linear.x == 0.0
+        assert twist.linear.y == 0.0
+        assert twist.angular.z == 0.0
+    finally:
+        module.stop()
+
+
 def test_go2_malformed_joy_clears_stale_state_and_publishes_zero_velocity(
     mocker: pytest_mock.MockerFixture,
 ) -> None:
