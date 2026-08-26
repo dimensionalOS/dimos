@@ -19,7 +19,7 @@ from pathlib import Path
 import threading
 import time
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import numpy as np
 import pytest
@@ -562,5 +562,23 @@ def test_publish_loop_pacing_is_independent_of_frame_timestamp_magnitude(base_ts
         _run_publish_loop(module, frame_ts)
         elapsed = time.monotonic() - start
         assert elapsed >= (len(frame_ts) - 1) / fps
+    finally:
+        module.stop()
+
+
+def test_camera_info_ts_reads_the_frame_stamp_only_once() -> None:
+    # stop() clears _latest_frame_ts while the publish thread writes it, so a
+    # check-then-use would hand None to CameraInfo(ts=...) during shutdown.
+    module = MujocoSimModule()
+    try:
+        module.config = MujocoSimModuleConfig()
+        with patch.object(
+            type(module),
+            "_latest_frame_ts",
+            new_callable=PropertyMock,
+            side_effect=[1000.0, None],
+            create=True,
+        ):
+            assert module._camera_info_ts() == 1000.0
     finally:
         module.stop()

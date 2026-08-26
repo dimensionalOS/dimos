@@ -380,10 +380,13 @@ class MujocoSimModule(
         return f"{self.config.camera_name}_depth_optical_frame"
 
     def _camera_info_ts(self) -> float:
-        """Latest frame's sim time; wall clock only before the first frame."""
-        if self._latest_frame_ts is None:
-            return time.time()
-        return self._latest_frame_ts
+        """Latest frame's sim time; wall clock only before the first frame.
+
+        Read once: the publish thread writes this while stop() clears it, so a
+        second read could return None after the first saw a stamp.
+        """
+        ts = self._latest_frame_ts
+        return time.time() if ts is None else ts
 
     @rpc
     def get_color_camera_info(self) -> CameraInfo | None:
