@@ -8,6 +8,7 @@
   "tasks": {
     "test": "deno run -A npm:vitest run",
     "check": "deno run -A npm:typescript/tsc --noEmit",
+    "build": "deno run -A npm:vite build",
     "fixture": "deno run -A npm:vite --config fixture/vite.config.ts"
   }
 }

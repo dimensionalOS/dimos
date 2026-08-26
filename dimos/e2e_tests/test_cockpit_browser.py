@@ -35,14 +35,10 @@ freshly-built cockpit dist. Locally:
 """
 
 from collections.abc import Callable, Iterator
-import subprocess
-import sys
-import time
 
 import pytest
-import requests
 
-from dimos.e2e_tests.dimos_cli_call import DimosCliCall
+from dimos.e2e_tests.dimos_cli_call import DimosCliCall, wait_for_http
 
 # Playwright lives in the `browser-tests` dependency group, which only the CI
 # web job installs; collection elsewhere must skip, not fail.
@@ -83,13 +79,6 @@ def start_go2_replay() -> Iterator[Callable[[], DimosCliCall]]:
         call.stop()
 
 
-@pytest.fixture(scope="session")
-def playwright_browsers() -> None:
-    subprocess.run(
-        [sys.executable, "-m", "playwright", "install", "chromium", "firefox"], check=True
-    )
-
-
 @pytest.fixture(params=["chromium", "firefox"])
 def page(request: pytest.FixtureRequest, playwright_browsers: None) -> Iterator[Page]:
     with sync_playwright() as p:
@@ -101,18 +90,7 @@ def page(request: pytest.FixtureRequest, playwright_browsers: None) -> Iterator[
 
 
 def _wait_for_relay(call: DimosCliCall, timeout_s: float) -> None:
-    deadline = time.monotonic() + timeout_s
-    while True:
-        try:
-            requests.get(f"{COCKPIT_URL}api/info", timeout=2).raise_for_status()
-            return
-        except requests.RequestException:
-            assert call.process is not None and call.process.poll() is None, (
-                f"dimos exited with {call.process and call.process.returncode} before the relay came up"
-            )
-            if time.monotonic() > deadline:
-                raise TimeoutError(f"relay not reachable after {timeout_s} s") from None
-            time.sleep(0.5)
+    wait_for_http(call, f"{COCKPIT_URL}api/info", timeout_s)
 
 
 def _assert_odom_ticks(page: Page) -> None:
