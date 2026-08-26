@@ -44,7 +44,6 @@ from dimos.navigation.motion.control.profile import (
     encode_precision,
 )
 from dimos.navigation.motion.embodiment.go2 import GO2
-from dimos.navigation.motion.loader import load
 from dimos.navigation.motion.obstacles import path_clearance as follower_clearance
 
 load_extension()  # the crate under test; the ImportError names the build command
@@ -275,9 +274,8 @@ def test_wrap_boundaries(yaw: float) -> None:
         assert a == b, f"{law} yaw={yaw!r}: python {a} vs rust {b}"
 
 
-def test_loader_and_build_hint() -> None:
+def test_rust_factories_build() -> None:
     for _, make_rs in LAWS.values():
-        assert load(f"{make_rs.__module__}:make_rust") is make_rs
         assert isinstance(make_rs().config, ControllerConfig)
 
 

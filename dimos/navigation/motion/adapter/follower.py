@@ -27,6 +27,7 @@ precision profile have to be talking about the same slice of the world.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import math
 from threading import Event, RLock, Thread
 import time
@@ -34,6 +35,7 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
+from pydantic import ImportString
 from reactivex.disposable import Disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -53,7 +55,6 @@ from dimos.navigation.motion.control.profile import ceilings_to_clearance, decod
 from dimos.navigation.motion.control.tracks import TRACKS
 from dimos.navigation.motion.embodiment.base import Embodiment
 from dimos.navigation.motion.embodiment.go2 import GO2
-from dimos.navigation.motion.loader import load
 from dimos.navigation.motion.obstacles import (
     ObstacleModel,
     hard_points,
@@ -101,7 +102,9 @@ class TrajectoryFollowerConfig(ModuleConfig):
     # local map is actually live, which on the go2-zenoh stack it is; "blind"
     # runs the law that recovers required precision from the path stamps alone.
     track: str = "hinted"
-    controller: str | None = None  # "module:factory"; None = the track's law
+    controller: ImportString[Callable[..., Any]] | None = (
+        None  # "module:factory"; None = the track's law
+    )
     control_frequency: float = 10.0
     goal_tolerance: float = 0.20  # planar distance that counts as arrival (m)
     # The clearance hint this module recomputes on the robot has to be the same
@@ -171,9 +174,9 @@ class TrajectoryFollower(Module):
         self._emb = self.config.embodiment.dilated(by=self.config.body_dilate_m)
         self._model: ObstacleModel = load_model(self.config.obstacle_model, self._emb)
         self._half_width = self._emb.width / 2.0
-        self._controller: TrajectoryController = load(
-            self.config.controller or self._track.controller
-        )(self._emb)
+        self._controller: TrajectoryController = (self.config.controller or self._track.controller)(
+            self._emb
+        )
         self._stop_event = Event()
         self._thread: Thread | None = None
         self._stall = StallReporter("TrajectoryFollower", self.config.stall_report_s)

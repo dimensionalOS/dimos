@@ -27,13 +27,17 @@ real track and not a handicap.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
+
+from dimos.navigation.motion.control.laws import blind, hinted
 
 
 @dataclass(frozen=True)
 class Track:
     name: str
-    controller: str  # "module:factory" of the law this track currently runs
+    controller: Callable[..., Any]  # factory of the law this track currently runs
     annotate_clearance: bool  # is the follower handed the clearance array
 
 
@@ -41,8 +45,8 @@ TRACKS: dict[str, Track] = {
     # The python law is the default so nothing needs the crate built; its rust
     # twin (`:make_rust`) is parity-locked, and the native host runs the rust
     # directly (adapter/rust/src/follower.rs::Track).
-    "hinted": Track("hinted", "dimos.navigation.motion.control.laws.hinted:make", True),
-    "blind": Track("blind", "dimos.navigation.motion.control.laws.blind:make", False),
+    "hinted": Track("hinted", hinted.make, True),
+    "blind": Track("blind", blind.make, False),
 }
 
 DEFAULT = "hinted"

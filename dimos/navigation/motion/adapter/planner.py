@@ -25,6 +25,7 @@ single-pose stub the follower reads as "hold" — while MLS reroutes globally.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import math
 from threading import Event, RLock, Thread
 import time
@@ -32,6 +33,7 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
+from pydantic import Field, ImportString
 from reactivex.disposable import Disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -50,7 +52,6 @@ from dimos.navigation.motion.adapter.diagnostics import StallReporter
 from dimos.navigation.motion.control.profile import encode_precision
 from dimos.navigation.motion.embodiment.base import Embodiment
 from dimos.navigation.motion.embodiment.go2 import GO2
-from dimos.navigation.motion.loader import load
 from dimos.navigation.motion.obstacles import (
     ObstacleModel,
     hard_points,
@@ -155,7 +156,9 @@ def retask_due(
 
 
 class MotionPlannerConfig(ModuleConfig):
-    planner: str = "dimos.navigation.motion.planner.planners.target:make"
+    planner: ImportString[Callable[..., Any]] = Field(
+        "dimos.navigation.motion.planner.planners.target:make", validate_default=True
+    )
     embodiment: Embodiment = GO2
     # HOW AGGRESSIVE the search is allowed to be: a gap has to be
     # `box_width + 2 * precision` wide before a route through it exists at all.
@@ -239,7 +242,7 @@ class MotionPlanner(Module):
         self._global_xy: NDArray[np.float64] | None = None
         self._emb = self.config.embodiment.dilated(by=self.config.body_dilate_m)
         self._model: ObstacleModel = load_model(self.config.obstacle_model, self._emb)
-        self._episode: PlannerEpisode = load(self.config.planner)(self._emb)
+        self._episode: PlannerEpisode = self.config.planner(self._emb)
         self._stop_event = Event()
         self._thread: Thread | None = None
         self._stall = StallReporter("MotionPlanner", self.config.stall_report_s)
