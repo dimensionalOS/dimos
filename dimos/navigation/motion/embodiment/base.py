@@ -15,7 +15,7 @@
 
 """The body under test: what the planner plans for and the judge measures.
 
-Shared domain, not benchmark -- the deployed adapter reads EMBODIMENTS to
+Shared domain, not benchmark -- the deployed adapter is configured with one to
 configure a live robot, and both referees condition their scoring on it. Pure
 geometry and gait-cost numbers, no dependency on worlds or on the sim.
 """

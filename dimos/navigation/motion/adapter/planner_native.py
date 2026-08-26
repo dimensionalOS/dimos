@@ -34,6 +34,8 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.navigation.motion.embodiment.base import Embodiment
+from dimos.navigation.motion.embodiment.go2 import GO2
 
 
 class MotionPlannerNativeConfig(NativeModuleConfig):
@@ -41,11 +43,12 @@ class MotionPlannerNativeConfig(NativeModuleConfig):
     executable: str = "target/release/motion_planner"
     build_command: str | None = "cargo build --release"
     stdin_config: bool = True
+    cli_exclude: frozenset[str] = frozenset({"embodiment"})
 
     # Every field below crosses to the rust struct verbatim, and every one of
     # them must: a native config has no rust-side defaults, so a field added
     # there and not here fails startup with `missing [...]`.
-    embodiment: str = "go2"
+    embodiment: Embodiment = GO2
     # Every planning box grown by this much PER SIDE; negative shrinks it.
     # Both modules must carry the SAME value.
     body_dilate_m: float = 0.0

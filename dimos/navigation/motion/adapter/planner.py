@@ -49,7 +49,7 @@ from dimos.navigation.motion.adapter.diagnostics import StallReporter
 from dimos.navigation.motion.adapter.follower import path_clearance
 from dimos.navigation.motion.control.profile import encode_precision
 from dimos.navigation.motion.embodiment.base import Embodiment
-from dimos.navigation.motion.embodiment.registry import EMBODIMENTS
+from dimos.navigation.motion.embodiment.go2 import GO2
 from dimos.navigation.motion.obstacles import ObstacleModel, hard_points, load as load_model
 from dimos.navigation.motion.planner.planners.base import PlannerEpisode, load
 from dimos.navigation.tf_pose import OdomBasePose
@@ -141,7 +141,7 @@ def replan_due(
 
 class MotionPlannerConfig(ModuleConfig):
     planner: str = "target"  # registry name or "module:factory"
-    embodiment: str = "go2"
+    embodiment: Embodiment = GO2
     # HOW AGGRESSIVE the search is allowed to be, and the only two numbers that
     # decide whether a gap admits a route. A gap has to be
     # `box_width + 2 * clearance_margin_m` wide before one exists at all.
@@ -230,7 +230,7 @@ class MotionPlanner(Module):
         self._base_pose: OdomBasePose | None = None
         self._global_xy: np.ndarray | None = None
         self._episode: PlannerEpisode | None = None
-        self._emb = EMBODIMENTS[self.config.embodiment].dilated(by=self.config.body_dilate_m)
+        self._emb = self.config.embodiment.dilated(by=self.config.body_dilate_m)
         self._model: ObstacleModel = load_model(self.config.obstacle_model, self._emb)
         self._stop_event = Event()
         self._thread: Thread | None = None

@@ -123,8 +123,11 @@ impl Governor {
     }
 }
 
-#[derive(Clone, Debug)]
+/// `embodiment/base.py::Embodiment`, field for field: the body a module is
+/// configured with, deserialised straight from its config.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub struct Emb {
+    pub tag: String,
     pub length: f64,
     pub width: f64,
     pub center_off: f64,
@@ -145,6 +148,10 @@ pub struct Emb {
     pub walk_gain: f64,
     pub walk_slip: f64,
     pub walk_slip_ramp: f64,
+    /// Vertical geometry off the surface the feet stand on (`obstacles.rs`).
+    pub steppable: f64,
+    pub height: f64,
+    pub base_height: f64,
     pub strafe: f64,
     pub reverse: f64,
     pub yaw_w: f64,
@@ -175,6 +182,7 @@ impl Emb {
     /// `embodiment/go2.py::GO2` -- the all-gait union plus the measured rows.
     pub fn go2() -> Self {
         Emb {
+            tag: "go2".into(),
             length: 0.883,
             width: 0.593,
             center_off: 0.002,
@@ -189,6 +197,9 @@ impl Emb {
             walk_gain: 0.964,
             walk_slip: 0.132,
             walk_slip_ramp: 0.08,
+            steppable: 0.20,
+            height: 0.45,
+            base_height: 0.29,
             strafe: 1.8,
             reverse: 1.5,
             yaw_w: 0.25,

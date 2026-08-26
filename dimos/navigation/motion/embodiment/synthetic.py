@@ -13,18 +13,12 @@
 # limitations under the License.
 
 
-"""Every body a module config may name."""
+"""Bodies the planner is checked against, not robots."""
 
 from __future__ import annotations
 
 from .base import Embodiment
-from .go2 import GO2, GO2_PAYLOAD
 
-EMBODIMENTS = {
-    "go2": GO2,
-    "go2-payload": GO2_PAYLOAD,
-    # synthetic bodies the planner is checked against, not robots
-    "slim": Embodiment(tag="slim", length=2.0, width=0.24, comfort=0.3),
-    # cannot crab, and has no legs to step over anything with
-    "diffdrive": Embodiment(tag="diffdrive", strafe=50.0, reverse=3.0, steppable=0.0),
-}
+SLIM = Embodiment(tag="slim", length=2.0, width=0.24, comfort=0.3)
+# cannot crab, and has no legs to step over anything with
+DIFFDRIVE = Embodiment(tag="diffdrive", strafe=50.0, reverse=3.0, steppable=0.0)

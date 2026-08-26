@@ -524,6 +524,7 @@ dependencies = [
  "dimos-motion2-tc",
  "lcm-msgs",
  "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -533,6 +534,9 @@ dependencies = [
 [[package]]
 name = "dimos-motion2-target"
 version = "0.1.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "dimos-motion2-tc"

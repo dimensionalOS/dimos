@@ -48,11 +48,11 @@ use crate::tf_pose::OdomBasePose;
 /// planner, and a wrapper that wants a different one is not this module.
 #[native_config]
 #[derive(Clone)]
-#[validate(schema(function = "validate_embodiment"))]
+#[validate(schema(function = "validate_obstacle_model"))]
 pub struct Config {
-    /// Body dimensions, by `scenarios.py` tag. See `emb.rs` for why the table
-    /// is not the pure crate's `Emb::go2()`.
-    pub embodiment: String,
+    /// The body, as `embodiment/base.py` records it -- the python module's
+    /// own value, so the two halves cannot plan for different robots.
+    pub embodiment: Emb,
     /// Every planning box grown by this much PER SIDE; negative shrinks it,
     /// which is how a deployment asks for a tighter plan than the measured
     /// legs. A gap admits a route when it is `box_width + 2 * precision` wide.
@@ -104,12 +104,7 @@ pub struct Config {
     pub viz_publish_hz: f64,
 }
 
-fn validate_embodiment(config: &Config) -> Result<(), ValidationError> {
-    if emb::by_tag(&config.embodiment).is_none() || emb::vert_by_tag(&config.embodiment).is_none() {
-        return Err(ValidationError::new(
-            "embodiment must be one of: go2, go2-payload, slim, diffdrive",
-        ));
-    }
+fn validate_obstacle_model(config: &Config) -> Result<(), ValidationError> {
     if !obstacles::MODELS.contains(&config.obstacle_model.as_str()) {
         return Err(ValidationError::new(
             "obstacle_model must be one of: body_band",
@@ -130,7 +125,7 @@ struct Shared {
     cloud_at: Option<Instant>,
     pose: Option<(f64, f64, f64)>,
     /// Where the surface under the robot is, off the BODY rather than off the
-    /// scene: the base rides `Vert::base_height` above it.
+    /// scene: the base rides `Emb::base_height` above it.
     ground_z: Option<f64>,
     global_xy: Option<Vec<[f64; 2]>>,
 }
@@ -169,13 +164,8 @@ pub struct MotionPlanner {
 
 impl MotionPlanner {
     async fn spawn_worker(&mut self) {
-        // validated before the module was built, so the tag is known
-        let emb = emb::dilated(
-            emb::by_tag(&self.config.embodiment).expect("validated embodiment tag"),
-            self.config.body_dilate_m,
-        );
-        let vert = emb::vert_by_tag(&self.config.embodiment).expect("validated embodiment tag");
-        let model = obstacles::load(&self.config.obstacle_model, &vert)
+        let emb = emb::dilated(self.config.embodiment.clone(), self.config.body_dilate_m);
+        let model = obstacles::load(&self.config.obstacle_model, &emb)
             .expect("validated obstacle model name");
         let worker = Worker {
             shared: Arc::clone(&self.shared),
@@ -212,9 +202,7 @@ impl MotionPlanner {
             return;
         };
         let pose = crate::tf_pose::state_of(&iso);
-        let base_height = emb::vert_by_tag(&self.config.embodiment)
-            .expect("validated embodiment tag")
-            .base_height;
+        let base_height = self.config.embodiment.base_height;
         let mut s = self.shared.lock().expect("shared mutex");
         s.pose = Some((pose[0], pose[1], pose[2]));
         s.ground_z = Some(iso.translation.z - base_height);
@@ -768,7 +756,7 @@ mod tests {
 
     fn config() -> Config {
         Config {
-            embodiment: "go2".into(),
+            embodiment: Emb::go2(),
             body_dilate_m: 0.0,
             resolution: 0.1,
             replan_hz: 5.0,
@@ -785,16 +773,12 @@ mod tests {
     }
 
     fn go2() -> Emb {
-        emb::by_tag("go2").expect("known tag")
-    }
-
-    fn vert() -> emb::Vert {
-        emb::vert_by_tag("go2").expect("known tag")
+        Emb::go2()
     }
 
     /// The model a config names, for the plan_once calls below.
     fn model(cfg: &Config) -> Box<dyn ObstacleModel> {
-        obstacles::load(&cfg.obstacle_model, &vert()).expect("known model")
+        obstacles::load(&cfg.obstacle_model, &cfg.embodiment).expect("known model")
     }
 
     #[test]
@@ -1017,10 +1001,9 @@ mod tests {
                 .map(|q| q.pose.position.y.abs())
                 .fold(0.0f64, f64::max)
         };
-        let tall = emb::Vert {
-            steppable: 0.20,
+        let tall = Emb {
             height: 0.60,
-            base_height: 0.29,
+            ..Emb::go2()
         };
         let tall_model = obstacles::load("body_band", &tall).expect("known model");
         assert!(

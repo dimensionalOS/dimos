@@ -167,7 +167,8 @@ pub struct Config {
     pub goal_tolerance: f64,
     /// Names the body rather than a number, so `emb.width / 2` is read the same
     /// way the planner read it when it priced the plan.
-    pub embodiment: String,
+    /// The body, as `embodiment/base.py` records it: the planner's own value.
+    pub embodiment: Emb,
     /// Must equal the planner's `body_dilate_m`, for the same reason: the room
     /// hint has to price the body the plan was made for, or the governor creeps
     /// through gaps the plan calls fine.
@@ -193,11 +194,6 @@ pub struct Config {
 fn validate_track_and_embodiment(config: &Config) -> Result<(), ValidationError> {
     if Track::parse(&config.track).is_none() {
         return Err(ValidationError::new("track must be one of: hinted, blind"));
-    }
-    if emb::by_tag(&config.embodiment).is_none() || emb::vert_by_tag(&config.embodiment).is_none() {
-        return Err(ValidationError::new(
-            "embodiment must be one of: go2, go2-payload, slim, diffdrive",
-        ));
     }
     if !obstacles::MODELS.contains(&config.obstacle_model.as_str()) {
         return Err(ValidationError::new(
@@ -273,7 +269,7 @@ pub fn goal_of(path: &Path) -> Option<(f64, f64)> {
 struct Shared {
     pose: Option<(f64, f64, f64)>,
     /// Where the surface under the robot is, off the BODY rather than off the
-    /// scene: the base rides `Vert::base_height` above it.
+    /// scene: the base rides `Emb::base_height` above it.
     ground_z: Option<f64>,
     path: Option<Arc<Path>>,
     /// ARRIVAL, not `msg.ts`: what this guards is how long since the planner
@@ -327,18 +323,14 @@ pub struct TrajectoryFollower {
 
 impl TrajectoryFollower {
     async fn spawn_worker(&mut self) {
-        let vert = emb::vert_by_tag(&self.config.embodiment).expect("validated embodiment tag");
-        let emb = emb::dilated(
-            emb::by_tag(&self.config.embodiment).expect("validated embodiment tag"),
-            self.config.body_dilate_m,
-        );
+        let emb = emb::dilated(self.config.embodiment.clone(), self.config.body_dilate_m);
         let worker = Worker {
             shared: Arc::clone(&self.shared),
             track: Track::parse(&self.config.track).expect("validated track"),
             half_width: emb::half_width(&emb),
-            emb,
-            model: obstacles::load(&self.config.obstacle_model, &vert)
+            model: obstacles::load(&self.config.obstacle_model, &emb)
                 .expect("validated obstacle model name"),
+            emb,
             config: self.config.clone(),
             nav_cmd_vel: self.nav_cmd_vel.clone(),
             goal_reached: self.goal_reached.clone(),
@@ -374,9 +366,7 @@ impl TrajectoryFollower {
             return;
         };
         let pose = crate::tf_pose::state_of(&iso);
-        let base_height = emb::vert_by_tag(&self.config.embodiment)
-            .expect("validated embodiment tag")
-            .base_height;
+        let base_height = self.config.embodiment.base_height;
         let mut s = self.shared.lock().expect("shared mutex");
         s.pose = Some((pose[0], pose[1], pose[2]));
         s.ground_z = Some(iso.translation.z - base_height);
@@ -916,7 +906,7 @@ mod tests {
     // the no-cloud clearance fallback
 
     fn go2() -> Emb {
-        emb::by_tag("go2").expect("known tag")
+        Emb::go2()
     }
 
     fn controller_config() -> ControllerConfig {
@@ -958,7 +948,7 @@ mod tests {
         // stamps, so a follower with no map of its own has to invert the
         // dialect. A tightly-stamped plan must come out as tight room.
         let states: Vec<State> = (0..12).map(|k| [k as f64 * 0.2, 0.0, 0.0]).collect();
-        let emb = emb::by_tag("go2").expect("known tag");
+        let emb = Emb::go2();
         let gov = emb::governor(&emb);
         let tight = stamps::encode_precision(&states, &[gov.floor; 12], 0.0, &gov);
         let roomy = stamps::encode_precision(&states, &[10.0; 12], 0.0, &gov);
@@ -991,12 +981,7 @@ mod tests {
         // a producer that does not speak the dialect must not be read as a
         // tight corridor; None is the honest answer and the law cruises
         let states: Vec<State> = (0..5).map(|k| [k as f64 * 0.2, 0.0, 0.0]).collect();
-        assert!(stamps::decode_ceilings(
-            &[0.0; 5],
-            &states,
-            &dialect_band(&emb::by_tag("go2").expect("known tag"))
-        )
-        .is_none());
+        assert!(stamps::decode_ceilings(&[0.0; 5], &states, &dialect_band(&Emb::go2())).is_none());
     }
 
     // the room hint's band -- the cases in adapter/test_follower.py
@@ -1007,7 +992,7 @@ mod tests {
             controller_config: controller_config(),
             control_frequency: 10.0,
             goal_tolerance: 0.2,
-            embodiment: "go2".to_string(),
+            embodiment: Emb::go2(),
             body_dilate_m: 0.0,
             base_frame: "base_link".to_string(),
             obstacle_model: "body_band".into(),
@@ -1017,7 +1002,7 @@ mod tests {
     }
 
     fn half_width() -> f64 {
-        emb::half_width(&emb::by_tag("go2").expect("go2"))
+        emb::half_width(&Emb::go2())
     }
 
     /// A ground slab at `ground_z` with a post 0.20..0.30 m above it, at x=1.
@@ -1043,8 +1028,7 @@ mod tests {
     }
 
     fn model(cfg: &Config) -> Box<dyn ObstacleModel> {
-        let vert = emb::vert_by_tag(&cfg.embodiment).expect("go2");
-        obstacles::load(&cfg.obstacle_model, &vert).expect("known model")
+        obstacles::load(&cfg.obstacle_model, &cfg.embodiment).expect("known model")
     }
 
     /// The hint measured straight off `points`, with no model in between --

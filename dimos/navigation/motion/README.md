@@ -58,7 +58,7 @@ and a learned one comparable by construction. This branch is the shipped halves 
 below), so what is here is what a robot runs:
 
 ```
-embodiment/     base.py Embodiment · go2.py the measured Go2 · registry.py EMBODIMENTS
+embodiment/     base.py Embodiment · go2.py the measured Go2 · synthetic.py test bodies
 
 planner/                             control/
   planners/     registry, se2 search,  controller.py tracks.py profile.py

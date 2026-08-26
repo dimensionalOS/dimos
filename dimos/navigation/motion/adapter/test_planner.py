@@ -30,7 +30,7 @@ from dimos.navigation.motion.adapter.planner import (
 )
 from dimos.navigation.motion.control.laws.seed import PursuitController
 from dimos.navigation.motion.embodiment.base import Embodiment
-from dimos.navigation.motion.embodiment.registry import EMBODIMENTS
+from dimos.navigation.motion.embodiment.go2 import GO2
 from dimos.navigation.motion.obstacles import hard_points, load as load_model
 from dimos.navigation.motion.planner.planners.base import pose_stamped
 from dimos.navigation.motion.planner.planners.target import make_py
@@ -263,5 +263,5 @@ def test_a_tall_body_plans_around_what_the_old_band_cut_off():
     tall = Embodiment(tag="tall", height=0.60)
     assert _detour(tall, wall, 0.0) > 0.8, "the tall body drove through its own obstacle"
     # and the control: the same wall IS over a go2's belly, so it is not a wall
-    assert not len(hard_points(load_model("body_band", EMBODIMENTS["go2"]), wall, 0.0))
-    assert _detour(EMBODIMENTS["go2"], wall, 0.0) < 0.2
+    assert not len(hard_points(load_model("body_band", GO2), wall, 0.0))
+    assert _detour(GO2, wall, 0.0) < 0.2

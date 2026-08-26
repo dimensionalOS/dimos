@@ -16,8 +16,8 @@ import numpy as np
 import pytest
 
 from dimos.navigation.motion.embodiment.base import Embodiment
-from dimos.navigation.motion.embodiment.go2 import GO2
-from dimos.navigation.motion.embodiment.registry import EMBODIMENTS
+from dimos.navigation.motion.embodiment.go2 import GO2, GO2_PAYLOAD
+from dimos.navigation.motion.embodiment.synthetic import DIFFDRIVE, SLIM
 from dimos.navigation.motion.obstacles import (
     LOW,
     OBSTACLE_MODELS,
@@ -77,6 +77,6 @@ def test_the_registry_names_the_model():
 
 
 def test_every_embodiment_builds_every_model():
-    for emb in EMBODIMENTS.values():
+    for emb in (GO2, GO2_PAYLOAD, SLIM, DIFFDRIVE):
         for name in OBSTACLE_MODELS:
             assert load(name, emb) is not None

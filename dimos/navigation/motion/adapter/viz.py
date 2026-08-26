@@ -46,7 +46,6 @@ from dimos.navigation.motion.control.profile import (
 )
 from dimos.navigation.motion.embodiment.base import Embodiment
 from dimos.navigation.motion.embodiment.go2 import GO2
-from dimos.navigation.motion.embodiment.registry import EMBODIMENTS
 
 if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
@@ -156,7 +155,7 @@ def render_plan_body(
 
 def motion_visual_override(
     viz_publish_hz: float,
-    embodiment: str = "go2",
+    embodiment: Embodiment = GO2,
     line_radius: float = 0.012,
     body_dilate_m: float = 0.0,
 ) -> dict[str, Any]:
@@ -171,7 +170,7 @@ def motion_visual_override(
     forward edge actually has to fit; drawing it everywhere makes every corridor
     look impassable and hides the margin the plan really has.
     """
-    emb = EMBODIMENTS[embodiment].dilated(by=body_dilate_m)
+    emb = embodiment.dilated(by=body_dilate_m)
     on = viz_publish_hz > 0.0
     body = partial(render_plan_body, emb=emb, line_radius=line_radius)
     return {"world/plan_body": body if on else None}

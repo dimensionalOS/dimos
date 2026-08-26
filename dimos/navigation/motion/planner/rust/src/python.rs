@@ -39,8 +39,14 @@ type EmbTuple = (
     f64,
     Vec<[f64; 5]>,
     f64,
-    (f64, f64, f64, f64),
-    ((f64, f64, f64), (f64, f64), (f64, f64, f64)),
+    (
+        (f64, f64, f64, f64),
+        (f64, f64, f64),
+        (f64, f64),
+        (f64, f64, f64),
+        (f64, f64, f64),
+    ),
+    String,
 );
 
 /// One plan call. points: (N, 2) float64 obstacle xy in world frame -- every
@@ -93,7 +99,9 @@ fn plan<'py>(
     let pts: Vec<[f64; 2]> = (0..view.shape()[0])
         .map(|k| [view[[k, 0]], view[[k, 1]]])
         .collect();
+    let plant = &emb.10;
     let emb = Emb {
+        tag: emb.11.clone(),
         length: emb.0,
         width: emb.1,
         center_off: emb.2,
@@ -104,15 +112,18 @@ fn plan<'py>(
         yaw_w: emb.7,
         envelope: emb.8,
         arc_inflate: emb.9,
-        max_speed: emb.10 .0,
-        min_speed: emb.10 .1,
-        speed_clearance: emb.10 .2,
-        max_yaw_rate: emb.10 .3,
-        command_slew: [emb.11 .0 .0, emb.11 .0 .1, emb.11 .0 .2],
-        gait_band: [emb.11 .1 .0, emb.11 .1 .1],
-        walk_gain: emb.11 .2 .0,
-        walk_slip: emb.11 .2 .1,
-        walk_slip_ramp: emb.11 .2 .2,
+        max_speed: plant.0 .0,
+        min_speed: plant.0 .1,
+        speed_clearance: plant.0 .2,
+        max_yaw_rate: plant.0 .3,
+        command_slew: [plant.1 .0, plant.1 .1, plant.1 .2],
+        gait_band: [plant.2 .0, plant.2 .1],
+        walk_gain: plant.3 .0,
+        walk_slip: plant.3 .1,
+        walk_slip_ramp: plant.3 .2,
+        steppable: plant.4 .0,
+        height: plant.4 .1,
+        base_height: plant.4 .2,
     };
     let out = py.allow_threads(|| {
         plan_impl(

@@ -12,6 +12,7 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
 pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"], optional = true }
 numpy = { version = "0.25", optional = true }
 

@@ -23,7 +23,7 @@
 //! A model is z-only and says nothing about xy. The frame is the caller's --
 //! [`hard_points`] is where the two meet.
 
-use crate::emb::Vert;
+use dimos_motion2_target::planner::Emb;
 
 /// Ground exclusion for the body-referenced band. TWO voxel layers, not one: a
 /// floor whose true height sits near a voxel boundary quantises into both
@@ -73,11 +73,11 @@ fn indices(cloud: &[[f32; 3]], keep: impl Fn(f32) -> bool) -> Vec<u32> {
 }
 
 /// The named model, built for this body, or `None` when the name is unknown.
-pub fn load(name: &str, vert: &Vert) -> Option<Box<dyn ObstacleModel>> {
+pub fn load(name: &str, emb: &Emb) -> Option<Box<dyn ObstacleModel>> {
     match name {
         "body_band" => Some(Box::new(BodyBand {
             low: LOW as f32,
-            high: vert.height as f32,
+            high: emb.height as f32,
         })),
         _ => None,
     }
@@ -107,8 +107,8 @@ pub fn hard_points(model: &dyn ObstacleModel, points: &[[f32; 3]], ground_z: f64
 mod tests {
     use super::*;
 
-    fn go2() -> Vert {
-        crate::emb::vert_by_tag("go2").expect("go2")
+    fn go2() -> Emb {
+        Emb::go2()
     }
 
     /// A ground slab 0..0.12 m thick under a 0.30 m obstacle, lifted to `base_z`.

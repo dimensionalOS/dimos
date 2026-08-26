@@ -43,6 +43,8 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.motion.control.controller import ControllerConfig
+from dimos.navigation.motion.embodiment.base import Embodiment
+from dimos.navigation.motion.embodiment.go2 import GO2
 
 
 class TrajectoryFollowerNativeConfig(NativeModuleConfig):
@@ -52,7 +54,7 @@ class TrajectoryFollowerNativeConfig(NativeModuleConfig):
     stdin_config: bool = True
     # argv is ignored by the rust side, which reads stdin; keeping a twenty-field
     # object out of it leaves `ps` readable.
-    cli_exclude: frozenset[str] = frozenset({"controller_config"})
+    cli_exclude: frozenset[str] = frozenset({"controller_config", "embodiment"})
 
     # A TRACK, never a law (control/tracks.py). The rust maps track to law.
     track: str = "hinted"
@@ -64,7 +66,7 @@ class TrajectoryFollowerNativeConfig(NativeModuleConfig):
     goal_tolerance: float = 0.20
     # Names the body rather than a number, so the half-width the governor reads
     # is the one the planner priced the plan with.
-    embodiment: str = "go2"
+    embodiment: Embodiment = GO2
     # Every planning box grown by this much PER SIDE; negative shrinks it.
     # Both modules must carry the SAME value.
     body_dilate_m: float = 0.0

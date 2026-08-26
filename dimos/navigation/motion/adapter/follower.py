@@ -55,7 +55,8 @@ from dimos.navigation.motion.control.controller import (
 )
 from dimos.navigation.motion.control.profile import ceilings_to_clearance, decode_ceilings
 from dimos.navigation.motion.control.tracks import TRACKS
-from dimos.navigation.motion.embodiment.registry import EMBODIMENTS
+from dimos.navigation.motion.embodiment.base import Embodiment
+from dimos.navigation.motion.embodiment.go2 import GO2
 from dimos.navigation.motion.obstacles import ObstacleModel, hard_points, load as load_model
 from dimos.navigation.tf_pose import OdomBasePose
 from dimos.utils.logging_config import setup_logger
@@ -131,7 +132,7 @@ class TrajectoryFollowerConfig(ModuleConfig):
     # half_width override: a `float | None` cannot cross into the native module
     # (`to_config_dict` drops None and `#[native_config]` bans Option), and a
     # knob the deployed twin cannot carry is a knob that drifts.
-    embodiment: str = "go2"
+    embodiment: Embodiment = GO2
     # Must equal the planner's `body_dilate_m`: the room hint has to price the
     # body the plan was made for, or the governor creeps through gaps the plan
     # calls fine.
@@ -183,7 +184,7 @@ class TrajectoryFollower(Module):
         self._track = TRACKS[self.config.track]
         # The same dilation the planner used, or the governor prices a body
         # the plan was not made for and creeps through gaps the plan calls fine.
-        self._emb = EMBODIMENTS[self.config.embodiment].dilated(by=self.config.body_dilate_m)
+        self._emb = self.config.embodiment.dilated(by=self.config.body_dilate_m)
         self._model: ObstacleModel = load_model(self.config.obstacle_model, self._emb)
         self._half_width = self._emb.width / 2.0
         self._controller: TrajectoryController | None = None
