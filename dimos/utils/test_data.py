@@ -305,6 +305,16 @@ def test_lfs_path_safe_attributes() -> None:
     assert callable(ensure_fn)
 
 
+def test_lfs_path_hash_and_equality_do_not_download() -> None:
+    first = LfsPath("robot_description")
+    second = LfsPath("robot_description")
+
+    assert first == second
+    assert hash(first) == hash(second)
+    assert object.__getattribute__(first, "_lfs_resolved_cache") is None
+    assert object.__getattribute__(second, "_lfs_resolved_cache") is None
+
+
 def test_lfs_path_no_download_on_creation() -> None:
     """Test that LfsPath construction doesn't trigger download.
 

@@ -43,3 +43,17 @@ _Avoid_: Teleoperation behavior, solver implementation
 **IK control context**:
 The persistent inverse-kinematics state owned by one control-task instance for one robot model, controlled-joint selection, and target-frame selection, including its Pink task stack. Stateful Pink tasks are never shared between control-task instances.
 _Avoid_: Planning group, teleoperation session
+
+## Robot descriptions
+
+**Robot model source**:
+The canonical URDF or Xacro description from which robot model views are derived.
+_Avoid_: Generated model, planning model
+
+**Robot model view**:
+A derived representation of a robot model source for a particular consumer, without becoming a second canonical robot description.
+_Avoid_: Generated URDF, copied URDF
+
+**Structural subtree selection**:
+A robot model view that retains an existing link and its descendants without reversing joints or changing their transforms.
+_Avoid_: Rerooting, kinematic rerooting

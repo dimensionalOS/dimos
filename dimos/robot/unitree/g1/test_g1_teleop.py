@@ -25,17 +25,27 @@ from dimos.control.tasks.pose_target_ik import PoseTargetIKTaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
+from dimos.manipulation.planning.factory import create_world
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
     _G1_ARM_JOINT_NAME_MAPPING,
     _G1_TELEOP_MODEL,
     _G1_TELEOP_PINK,
     G1_TELEOP_TASK_NAME,
+    _G1GrootCoordinator,
     unitree_g1_groot_wbc,
 )
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import (
     G1CollectionRecorder,
+    G1ManipulationModule,
     unitree_g1_teleop,
+)
+from dimos.robot.unitree.g1.manip_config import (
+    G1_LEFT_ARM_JOINTS,
+    G1_RIGHT_ARM_JOINTS,
+    G1_UPPER_BODY_JOINT_NAME_MAPPING,
+    G1_WAIST_JOINTS,
+    g1_upper_body_model_config,
 )
 from dimos.robot.unitree.g1.teleop_ik import G1PinkPoseTargetSolver
 from dimos.teleop.quest.quest_extensions import MobileVideoArmTeleopModule
@@ -111,6 +121,56 @@ def test_g1_teleop_wires_arm_velocity_and_recording_streams() -> None:
     )
     assert "left_cartesian_command" in G1CollectionRecorder.__annotations__
     assert "right_cartesian_command" in G1CollectionRecorder.__annotations__
+
+
+def test_g1_upper_body_model_keeps_waist_and_arms_but_removes_legs() -> None:
+    config = g1_upper_body_model_config()
+    loaded = config.model.load()
+    joint_names = {joint.name for joint in loaded.joints}
+
+    assert loaded.root_link == "pelvis"
+    assert "left_hip_pitch_joint" not in joint_names
+    assert "right_hip_pitch_joint" not in joint_names
+    assert {_G1_ARM_JOINT_NAME_MAPPING[name] for name in g1_arms} <= joint_names
+    assert {G1_UPPER_BODY_JOINT_NAME_MAPPING[name] for name in G1_WAIST_JOINTS} <= joint_names
+    assert config.max_velocity == 1.0
+    assert config.max_acceleration == 2.0
+
+
+def test_g1_upper_body_plans_arms_without_owning_waist() -> None:
+    config = g1_upper_body_model_config()
+
+    assert config.joint_names == [
+        *(G1_UPPER_BODY_JOINT_NAME_MAPPING[name] for name in G1_WAIST_JOINTS),
+        *(G1_UPPER_BODY_JOINT_NAME_MAPPING[name] for name in g1_arms),
+    ]
+    assert [group.name for group in config.planning_groups] == ["left_arm", "right_arm"]
+    assert config.planning_groups[0].joint_names == tuple(
+        G1_UPPER_BODY_JOINT_NAME_MAPPING[name] for name in G1_LEFT_ARM_JOINTS
+    )
+    assert config.planning_groups[1].joint_names == tuple(
+        G1_UPPER_BODY_JOINT_NAME_MAPPING[name] for name in G1_RIGHT_ARM_JOINTS
+    )
+
+
+def test_g1_teleop_wires_manipulation_to_existing_coordinator() -> None:
+    manipulation_kwargs = _module_kwargs(unitree_g1_teleop, G1ManipulationModule)
+
+    assert manipulation_kwargs["instance_name"] == "G1Manipulation"
+    assert (
+        unitree_g1_teleop.remapping_map[("G1Manipulation", "_control_coordinator")]
+        is _G1GrootCoordinator
+    )
+
+
+@pytest.mark.self_hosted
+def test_g1_upper_body_model_builds_a_roboplan_scene() -> None:
+    world = create_world()
+
+    robot_id = world.add_robot(g1_upper_body_model_config())
+    world.finalize()
+
+    assert world.get_robot_ids() == [robot_id]
 
 
 @pytest.mark.self_hosted

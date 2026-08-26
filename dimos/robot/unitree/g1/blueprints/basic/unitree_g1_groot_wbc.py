@@ -76,13 +76,16 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
-from dimos.robot.assets.model import RobotModel
 from dimos.robot.unitree.g1.config import G1
 from dimos.robot.unitree.g1.g1_rerun import (
     G1_RERUN_ROOT,
     g1_costmap,
     g1_urdf_joint_state,
     g1_urdf_static_robot,
+)
+from dimos.robot.unitree.g1.manip_config import (
+    G1_UPPER_BODY_JOINT_NAME_MAPPING,
+    G1_UPPER_BODY_MODEL,
 )
 from dimos.robot.unitree.g1.teleop_ik import G1PinkPoseTargetSolver
 from dimos.simulation.scene_assets.spec import ScenePackage
@@ -393,11 +396,11 @@ _G1_ROOT = G1_RERUN_ROOT if global_config.simulation == "mujoco" else "world/odo
 _G1_URDF_PATH = Path(__file__).resolve().parents[2] / "g1.urdf"
 G1_TELEOP_TASK_NAME = "teleop_g1"
 _G1_ARM_JOINT_NAME_MAPPING = {
-    joint_name: f"{joint_name.partition('/')[2]}_joint" for joint_name in g1_arms
+    joint_name: G1_UPPER_BODY_JOINT_NAME_MAPPING[joint_name] for joint_name in g1_arms
 }
 _G1_TELEOP_MODEL = RobotModelConfig(
     name="g1_arms",
-    model=RobotModel.from_file(_G1_URDF_PATH),
+    model=G1_UPPER_BODY_MODEL,
     joint_names=list(_G1_ARM_JOINT_NAME_MAPPING.values()),
     base_link="pelvis",
     joint_name_mapping=_G1_ARM_JOINT_NAME_MAPPING,
