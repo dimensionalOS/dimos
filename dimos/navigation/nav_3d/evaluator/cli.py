@@ -225,7 +225,7 @@ def _copy_recording(src: Path, dest: Path) -> None:
 @app.command()
 def ingest(
     source: Path = typer.Argument(
-        ..., help="Recording to ingest: a mem2.db file or the directory holding one"
+        ..., help="Recording to ingest: a memory.db file or the directory holding one"
     ),
     name: str = typer.Option(..., "--name", help="Dataset name; becomes data/<name>.db"),
     lidar_stream: str = typer.Option("pointlio_lidar", "--lidar-stream"),
@@ -236,7 +236,7 @@ def ingest(
     force: bool = typer.Option(False, "--force", help="Overwrite dataset and manifest"),
 ) -> None:
     """Register a recording as a dataset: copy, map, generate cases."""
-    src = source / "mem2.db" if source.is_dir() else source
+    src = source / "memory.db" if source.is_dir() else source
     if not src.exists():
         raise typer.BadParameter(f"{src} does not exist")
     manifest = manifest_path(name)

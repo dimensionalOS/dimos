@@ -27,7 +27,7 @@ Usage:
 
     # add to existing .db (a missing --db is fetched via get_data before falling
     # back to building from scratch)
-    DB="mem2.db"
+    DB="memory.db"
     python -m dimos.hardware.sensors.lidar.fastlio2.tools.pcap_to_db --db "$DB"  --pcap "$PCAP_PATH"
 
     # A quick-look <db>.rrd (aggregated world lidar + pose path) is written next

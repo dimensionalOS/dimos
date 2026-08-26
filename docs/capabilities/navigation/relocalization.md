@@ -13,7 +13,7 @@ This guide takes four steps:
 3. Test relocalization in replay, no robot needed
 4. Deploy on the live Go2
 
-Throughout this guide, `{DB_NAME}` is the path of your recording, for example `recordings/2026-08-26_03-06-11pm-PDT/mem2.mcap`. For `map_file`, pass the same stem and dimOS appends `.pc2.lcm` automatically.
+Throughout this guide, `{DB_NAME}` is the path of your recording, for example `recordings/2026-08-26_03-06-11pm-PDT/memory.mcap`. For `map_file`, pass the same stem and dimOS appends `.pc2.lcm` automatically.
 
 ## 1. Record a run
 
@@ -29,7 +29,7 @@ If `ROBOT_IP` is set in the environment or `.env`, you can omit `--robot-ip`:
 dimos --record run unitree-go2
 ```
 
-This writes `recordings/<timestamp>/mem2.mcap` under the checkout (`~/.local/state/dimos/recordings/` for an installed package) and records `lidar`, `odom`, and `color_image` plus the live TF tree. `--record-format sqlite` writes `mem2.db` instead. The recorder stamps lidar frames with the latest odom pose so `dimos map global` can reconstruct poses later- see [`Go2Memory`](/dimos/robot/unitree/go2/blueprints/basic/unitree_go2_basic.py).
+This writes `recordings/<timestamp>/memory.mcap` under the checkout (`~/.local/state/dimos/recordings/` for an installed package) and records `lidar`, `odom`, and `color_image` plus the live TF tree. `--record-format sqlite` writes `memory.db` instead. The recorder stamps lidar frames with the latest odom pose so `dimos map global` can reconstruct poses later- see [`Go2Memory`](/dimos/robot/unitree/go2/blueprints/basic/unitree_go2_basic.py).
 
 ### Quick validation (optional)
 

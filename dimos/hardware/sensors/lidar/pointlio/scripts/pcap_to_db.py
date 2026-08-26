@@ -23,7 +23,7 @@ Usage:
 
     # add to existing .db (a missing --db is fetched via get_data before falling
     # back to building from scratch; a missing --pcap is likewise fetched)
-    DB="mem2.db"
+    DB="memory.db"
     python -m dimos.hardware.sensors.lidar.pointlio.scripts.pcap_to_db --db "$DB"  --pcap "$PCAP_PATH"
 
     # A quick-look <db>.rrd (aggregated world lidar + pose path) is written next

@@ -74,7 +74,7 @@ def default_recording_dir() -> Path:
     return RECORDINGS_DIR / stamp
 
 
-# One dir per process; every Recorder in a run writes under it (mem2.db, pcaps, ...).
+# One dir per process; every Recorder in a run writes under it (memory.db, pcaps, ...).
 RECORDING_DIR = default_recording_dir()
 
 
@@ -299,7 +299,7 @@ class RecorderConfig(MemoryModuleConfig):
     root_frame: str = "world"
     default_frame_id: str = "base_link"
     tf_tolerance: float = 0.5
-    db_path: str | Path = RECORDING_DIR / "mem2"  # suffix from --record-format
+    db_path: str | Path = RECORDING_DIR / "memory"  # suffix from --record-format
     # Also record the live tf stream (under "tf") alongside the In ports.
     record_tf: bool = True
     # Rename recorded streams: {port_name: db_stream_name}. Conceptually this is
