@@ -16,13 +16,17 @@ import asyncio
 from collections.abc import Awaitable, Callable, Iterator
 import json
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 import pytest
 import pytest_mock
 
 from dimos.imitation.collection.episode_monitor import EpisodeStatus
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.Joy import Joy
+from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
 from dimos.teleop.webxr.controller_types import (
     Buttons,
     Hand,
@@ -40,6 +44,17 @@ def module() -> Iterator[WebXRTeleopModule]:
         yield module
     finally:
         module.stop()
+
+
+def _setup_test_app(
+    module: WebXRTeleopModule,
+    mocker: pytest_mock.MockerFixture,
+) -> FastAPI:
+    app = FastAPI()
+    web_server = mocker.Mock(app=app)
+    module._web_server = cast("Any", web_server)
+    module._setup_routes()
+    return app
 
 
 def test_webxr_web_server_is_initialized_during_start(
@@ -217,6 +232,23 @@ def test_websocket_rejects_additional_control_client(
     ws.receive_bytes.assert_not_awaited()
 
 
+def test_websocket_dispatches_binary_and_text_messages(
+    module: WebXRTeleopModule,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    app = _setup_test_app(module, mocker)
+    dispatch_binary = mocker.patch.object(module, "_dispatch_binary_message")
+    dispatch_text = mocker.patch.object(module, "_dispatch_text_message")
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_bytes(b"controller")
+            websocket.send_text('{"type":"body_tracking_snapshot"}')
+
+    dispatch_binary.assert_called_once_with(b"controller")
+    dispatch_text.assert_called_once_with('{"type":"body_tracking_snapshot"}')
+
+
 def test_first_client_connection_rejects_stale_cached_state(
     module: WebXRTeleopModule, mocker: pytest_mock.MockerFixture
 ) -> None:
@@ -286,6 +318,119 @@ def test_go2_stale_input_publishes_zero_velocity(mocker: pytest_mock.MockerFixtu
         module.stop()
 
 
+def test_default_webxr_config_does_not_request_body_tracking(
+    module: WebXRTeleopModule,
+) -> None:
+    assert module._webxr_client_config() == {
+        "body_tracking_mode": "off",
+        "session_modes": ["immersive-ar", "immersive-vr"],
+        "session_options": {
+            "requiredFeatures": ["local-floor"],
+            "optionalFeatures": ["hand-tracking"],
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("mode", "session_modes", "required_features", "optional_features"),
+    [
+        (
+            "optional",
+            ["immersive-ar", "immersive-vr"],
+            ["local-floor"],
+            ["hand-tracking", "bounded-floor", "body-tracking"],
+        ),
+        (
+            "required",
+            ["immersive-ar"],
+            ["local-floor", "body-tracking"],
+            ["hand-tracking", "bounded-floor"],
+        ),
+    ],
+)
+def test_enabled_webxr_config_requests_body_tracking(
+    mode,
+    session_modes,
+    required_features,
+    optional_features,
+) -> None:
+    module = WebXRTeleopModule(body_tracking_mode=mode)
+    try:
+        assert module._webxr_client_config() == {
+            "body_tracking_mode": mode,
+            "session_modes": session_modes,
+            "session_options": {
+                "requiredFeatures": required_features,
+                "optionalFeatures": optional_features,
+            },
+        }
+    finally:
+        module.stop()
+
+
+def test_webxr_config_route_exposes_body_tracking_mode(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    module = WebXRTeleopModule(body_tracking_mode="required")
+    app = _setup_test_app(module, mocker)
+
+    try:
+        with TestClient(app) as client:
+            response = client.get("/teleop/config")
+
+        assert response.status_code == 200
+        assert response.json() == module._webxr_client_config()
+    finally:
+        module.stop()
+
+
+def test_go2_accepts_pico_six_button_joystick(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    module = Go2TeleopModule()
+    publish = mocker.patch.object(module.cmd_vel, "publish")
+    joy = Joy(
+        ts=1.0,
+        frame_id="left",
+        axes=[0.25, -0.75, 0.0, 0.0],
+        buttons=[0, 0, 0, 0, 0, 0],
+    )
+    try:
+        assert module._on_joy_bytes(joy.lcm_encode()) is True
+
+        twist = publish.call_args.args[0]
+        assert twist.linear.x == pytest.approx(0.75 * module.config.linear_speed)
+        assert twist.linear.y == pytest.approx(-0.25 * module.config.linear_speed)
+        assert twist.angular.z == 0.0
+    finally:
+        module.stop()
+
+
+def test_go2_rejects_short_controller_packet_safely(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    module = Go2TeleopModule()
+    publish = mocker.patch.object(module.cmd_vel, "publish")
+    joy = Joy(
+        ts=1.0,
+        frame_id="left",
+        axes=[0.25, -0.75, 0.0, 0.0],
+        buttons=[0, 0, 0, 0, 0],
+    )
+    module._controllers[Hand.LEFT] = WebXRControllerState(thumbstick=ThumbstickState(y=-1.0))
+    try:
+        assert module._on_joy_bytes(joy.lcm_encode()) is False
+
+        assert module._controllers[Hand.LEFT] is None
+        publish.assert_called_once()
+        twist = publish.call_args.args[0]
+        assert twist.linear.x == 0.0
+        assert twist.linear.y == 0.0
+        assert twist.angular.z == 0.0
+    finally:
+        module.stop()
+
+
 def test_go2_malformed_joy_clears_stale_state_and_publishes_zero_velocity(
     mocker: pytest_mock.MockerFixture,
 ) -> None:
@@ -305,6 +450,23 @@ def test_go2_malformed_joy_clears_stale_state_and_publishes_zero_velocity(
         assert twist.linear.x == 0.0
         assert twist.linear.y == 0.0
         assert twist.angular.z == 0.0
+    finally:
+        module.stop()
+
+
+def test_webxr_body_reader_is_served_as_javascript(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    module = WebXRTeleopModule()
+    app = _setup_test_app(module, mocker)
+
+    try:
+        with TestClient(app) as client:
+            response = client.get("/static/webxr_body.mjs")
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/javascript")
+        assert "export function captureBody" in response.text
     finally:
         module.stop()
 
@@ -330,6 +492,76 @@ def test_go2_unknown_controller_identity_publishes_zero_velocity(
         assert twist.angular.z == 0.0
     finally:
         module.stop()
+
+
+def test_text_body_tracking_snapshot_is_published(
+    module: WebXRTeleopModule,
+    mocker,
+) -> None:
+    publish = mocker.patch.object(module.body_tracking, "publish")
+    payload = json.dumps(
+        {
+            "type": "body_tracking_snapshot",
+            "capture_time_s": 3.0,
+            "frame_id": "bounded-floor",
+            "joints": {
+                "hips": {
+                    "position": [1.0, 2.0, 3.0],
+                    "orientation": [0.0, 0.0, 0.0, 1.0],
+                }
+            },
+        }
+    )
+
+    accepted = module._dispatch_text_message(payload)
+
+    assert accepted
+    snapshot = publish.call_args.args[0]
+    assert isinstance(snapshot, BodyTrackingSnapshot)
+    assert snapshot.frame_id == "bounded-floor"
+    assert snapshot.joints is not None
+    assert snapshot.joints["hips"].position == (1.0, 2.0, 3.0)
+
+
+def test_malformed_text_message_is_dropped(
+    module: WebXRTeleopModule,
+    mocker,
+) -> None:
+    publish = mocker.patch.object(module.body_tracking, "publish")
+
+    accepted = module._dispatch_text_message('{"type": "unknown"}')
+
+    assert not accepted
+    publish.assert_not_called()
+
+
+def test_binary_pose_dispatch_remains_on_existing_decoder(
+    module: WebXRTeleopModule,
+    mocker,
+) -> None:
+    body_publish = mocker.patch.object(module.body_tracking, "publish")
+    pose = PoseStamped(ts=1.0, frame_id="left", position=[1.0, 2.0, 3.0])
+
+    accepted = module._dispatch_binary_message(pose.lcm_encode())
+
+    assert accepted
+    assert module._current_poses[Hand.LEFT] is not None
+    body_publish.assert_not_called()
+
+
+def test_unknown_binary_message_is_dropped(
+    module: WebXRTeleopModule,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    warning = mocker.patch("dimos.teleop.webxr.module.logger.warning")
+
+    accepted = module._dispatch_binary_message(b"unknown-message")
+
+    assert not accepted
+    warning.assert_called_once_with(
+        "Unknown WebXR message fingerprint",
+        fingerprint=b"unknown-".hex(),
+    )
 
 
 def test_translation_scale_changes_pose_delta(module: WebXRTeleopModule) -> None:

@@ -5,14 +5,19 @@ window.onerror = (msg, url, line, col, error) => {
 };
 
 import { geometry_msgs, std_msgs, sensor_msgs } from "https://esm.sh/jsr/@dimos/msgs@0.1.4";
+import { captureBody } from "./webxr_body.mjs";
 
 // WebSocket and WebXR state
 let ws = null;
 let xrSession = null;
 let xrRefSpace = null;
+let xrBodyRefSpace = null;
+let xrBodyRefSpaceType = null;
 let gl = null;
 let lastSendTime = 0;
 const sendInterval = 1000 / 80; // ~80Hz target
+let webXRClientConfig = null;
+const sessionModeSupport = new Map();
 const handSelectActive = new Map();
 const GRIPPER_PINCH_DISTANCE_METERS = 0.04;
 
@@ -65,6 +70,20 @@ function setStatus(msg) {
     statusEl.textContent = msg;
 }
 
+async function loadWebXRClientConfig() {
+    const response = await fetch('/teleop/config', { cache: 'no-store' });
+    if (!response.ok) {
+        throw new Error(`Failed to load teleop configuration: HTTP ${response.status}`);
+    }
+    return response.json();
+}
+
+function describeSessionRequestError(mode, error) {
+    const name = error?.name || 'Error';
+    const message = error?.message || String(error);
+    return `${mode} (${name}: ${message})`;
+}
+
 // WebSocket setup (LCM bridge)
 function setupWebSocket() {
     return new Promise((resolve, reject) => {
@@ -89,7 +108,7 @@ function setupWebSocket() {
         ws.onclose = () => {
             hudOffline = true;
             hudDirty = true;
-            setStatus('WebSocket closed');
+            if (xrSession) setStatus('WebSocket closed');
         };
         // Defer revoking the previous blob URL by one message — revoking
         // immediately after setting src can race with the browser's load
@@ -466,13 +485,12 @@ function sendJoy(handedness, axes, buttons) {
 }
 
 // Send raw controller and wrist tracking data (no processing - done in Python)
-function processTracking(frame) {
+function processTracking(time, frame) {
     // Rate limit tracking data
-    const now = performance.now();
-    if (now - lastSendTime < sendInterval) {
+    if (time - lastSendTime < sendInterval) {
         return;
     }
-    lastSendTime = now;
+    lastSendTime = time;
 
     // Process controller and hand input sources.
     for (const inputSource of frame.session.inputSources) {
@@ -540,14 +558,27 @@ function processTracking(frame) {
             sendJoy(handedness, axes, buttons);
         }
     }
+
+    if (webXRClientConfig.body_tracking_mode !== 'off') {
+        const joints = captureBody(frame, xrBodyRefSpace);
+        const shouldSend = joints !== null || webXRClientConfig.body_tracking_mode === 'required';
+        if (shouldSend && ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                type: 'body_tracking_snapshot',
+                capture_time_s: (performance.timeOrigin + time) / 1000,
+                frame_id: xrBodyRefSpaceType,
+                joints,
+            }));
+        }
+    }
 }
 
 // WebXR render loop
-function onXRFrame(_time, frame) {
+function onXRFrame(time, frame) {
     if (!xrSession) return;
     xrSession.requestAnimationFrame(onXRFrame);
     // Process and send tracking data
-    processTracking(frame);
+    processTracking(time, frame);
 
     const glLayer = xrSession.renderState.baseLayer;
     gl.bindFramebuffer(gl.FRAMEBUFFER, glLayer.framebuffer);
@@ -572,31 +603,32 @@ function onXRFrame(_time, frame) {
 }
 
 // Start an immersive WebXR session with passthrough when available.
-async function startWebXRSession() {
+async function startWebXRSession(clientConfig) {
     try {
         setStatus('Initializing WebGL...');
         initGL();
         setStatus('Requesting WebXR session...');
 
-        // Try immersive-ar first (true passthrough), fall back to immersive-vr
         let session = null;
-        try {
-            session = await navigator.xr.requestSession('immersive-ar', {
-                requiredFeatures: ['local-floor'],
-                optionalFeatures: ['hand-tracking']
-            });
-            console.log('Started immersive-ar session (passthrough)');
-        } catch (arError) {
-            console.log('immersive-ar not available, trying immersive-vr');
-            session = await navigator.xr.requestSession('immersive-vr', {
-                requiredFeatures: ['local-floor'],
-                optionalFeatures: ['hand-tracking']
-            });
-            console.log('Started immersive-vr session');
+        const failures = [];
+        for (const mode of clientConfig.session_modes) {
+            try {
+                session = await navigator.xr.requestSession(mode, clientConfig.session_options);
+                console.log(`Started ${mode} session`);
+                break;
+            } catch (error) {
+                const failure = describeSessionRequestError(mode, error);
+                failures.push(failure);
+                console.warn(`WebXR session request failed: ${failure}`);
+            }
+        }
+        if (!session) {
+            throw new Error(`WebXR session request failed: ${failures.join('; ')}`);
         }
 
         xrSession = session;
         hudPlaced = false;
+        lastSendTime = 0;
 
         // Setup WebGL layer
         const glLayer = new XRWebGLLayer(session, gl);
@@ -607,7 +639,18 @@ async function startWebXRSession() {
         // Get reference space
         xrRefSpace = await session.requestReferenceSpace('local-floor');
 
-        setStatus('WebXR active');
+        if (clientConfig.body_tracking_mode !== 'off') {
+            try {
+                xrBodyRefSpace = await session.requestReferenceSpace('bounded-floor');
+                xrBodyRefSpaceType = 'bounded-floor';
+            } catch (error) {
+                console.warn('bounded-floor unavailable; using local-floor for body poses', error);
+                xrBodyRefSpace = xrRefSpace;
+                xrBodyRefSpaceType = 'local-floor';
+            }
+        }
+
+        setStatus(`WebXR active (${session.mode})`);
 
         // Session event handlers
         session.addEventListener('end', () => {
@@ -615,6 +658,8 @@ async function startWebXRSession() {
             handSelectActive.clear();
             hudPlaced = false;
             xrSession = null;
+            xrBodyRefSpace = null;
+            xrBodyRefSpaceType = null;
             window.disconnect();
         });
 
@@ -650,19 +695,26 @@ window.connect = async function() {
         if (!navigator.xr) {
             throw new Error('WebXR not supported. Use a WebXR-capable browser.');
         }
+        if (!webXRClientConfig) {
+            throw new Error('WebXR configuration is unavailable. Reload the page and try again.');
+        }
 
         // Setup WebSocket
         await setupWebSocket();
 
         // Start WebXR
-        await startWebXRSession();
+        await startWebXRSession(webXRClientConfig);
 
         // Update UI
         connectBtn.classList.add('hidden');
         disconnectBtn.classList.remove('hidden');
 
     } catch (error) {
-        setStatus('Connection failed');
+        const message = error?.message || String(error);
+        const failedWebSocket = ws;
+        ws = null;
+        if (failedWebSocket) failedWebSocket.close();
+        setStatus(`Connection failed: ${message}`);
         console.error('Connection error:', error);
         connectBtn.disabled = false;
     }
@@ -698,15 +750,22 @@ window.addEventListener('load', async () => {
     }
 
     try {
-        // Check for immersive AR (passthrough) or VR session support.
-        const arSupported = await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
-        const vrSupported = await navigator.xr.isSessionSupported('immersive-vr').catch(() => false);
+        webXRClientConfig = await loadWebXRClientConfig();
+        await Promise.all(webXRClientConfig.session_modes.map(async (mode) => {
+            const supported = await navigator.xr.isSessionSupported(mode).catch(() => false);
+            sessionModeSupport.set(mode, supported);
+        }));
 
-        if (!arSupported && !vrSupported) {
-            setStatus('Immersive WebXR not supported');
+        const supported = webXRClientConfig.session_modes.some(
+            (mode) => sessionModeSupport.get(mode),
+        );
+        if (!supported) {
+            setStatus(`Session modes unsupported: ${webXRClientConfig.session_modes.join(', ')}`);
             connectBtn.disabled = true;
         }
     } catch (error) {
-        console.error('WebXR check failed:', error);
+        setStatus(error?.message || String(error));
+        connectBtn.disabled = true;
+        console.error('WebXR setup failed:', error);
     }
 });

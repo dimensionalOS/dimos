@@ -35,7 +35,7 @@ from dimos_lcm.sensor_msgs import Joy as LCMJoy
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import Field
+from pydantic import Field, ValidationError
 from reactivex.disposable import Disposable
 
 from dimos.constants import DIMOS_PROJECT_ROOT
@@ -46,6 +46,10 @@ from dimos.imitation.collection.episode_monitor import EpisodeStatus
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
+from dimos.teleop.webxr.body_tracking import (
+    BodyTrackingMode,
+    BodyTrackingSnapshot,
+)
 
 # Hand is re-exported for callers; it lives in controller_types.
 from dimos.teleop.webxr.controller_types import Buttons, Hand, WebXRControllerState
@@ -83,6 +87,7 @@ class WebXRTeleopConfig(ModuleConfig):
     control_loop_hz: float = 50.0
     server_port: int = 8443
     input_timeout_s: float = Field(default=1.0, gt=0)
+    body_tracking_mode: BodyTrackingMode = "off"
 
 
 _Config = TypeVar("_Config", bound=WebXRTeleopConfig)
@@ -99,6 +104,7 @@ class WebXRTeleopModule(Module):
         - left_controller_output: PoseStamped (output pose for left hand)
         - right_controller_output: PoseStamped (output pose for right hand)
         - teleop_buttons: Buttons (button states for both controllers)
+        - body_tracking: named body-joint poses in their WebXR reference space
     """
 
     config: WebXRTeleopConfig
@@ -108,6 +114,7 @@ class WebXRTeleopModule(Module):
     right_controller_output: Out[PoseStamped]
     teleop_buttons: Out[Buttons]
     status: In[EpisodeStatus]
+    body_tracking: Out[BodyTrackingSnapshot]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -159,6 +166,10 @@ class WebXRTeleopModule(Module):
             index_path = STATIC_DIR / "index.html"
             return HTMLResponse(content=index_path.read_text())
 
+        @self._web_server.app.get("/teleop/config")
+        async def teleop_config() -> dict[str, Any]:
+            return self._webxr_client_config()
+
         if STATIC_DIR.is_dir():
             self._web_server.app.mount(
                 "/static", StaticFiles(directory=str(STATIC_DIR)), name="teleop_static"
@@ -175,19 +186,62 @@ class WebXRTeleopModule(Module):
             logger.info("WebXR client connected")
             try:
                 while True:
-                    data = await ws.receive_bytes()
-                    fingerprint = data[:8]
-                    decoder = self._decoders.get(fingerprint)
-                    if decoder:
-                        decoder(data)
-                    else:
-                        logger.warning(f"Unknown message fingerprint: {fingerprint.hex()}")
+                    message = await ws.receive()
+                    if message["type"] == "websocket.disconnect":
+                        logger.info("WebXR client disconnected")
+                        break
+                    data = message.get("bytes")
+                    text = message.get("text")
+                    if data is not None:
+                        self._dispatch_binary_message(data)
+                    elif text is not None:
+                        self._dispatch_text_message(text)
             except WebSocketDisconnect:
                 logger.info("WebXR client disconnected")
             except Exception:
                 logger.exception("WebSocket error")
             finally:
                 self._client_disconnected(ws)
+
+    def _webxr_client_config(self) -> dict[str, Any]:
+        required_features = ["local-floor"]
+        optional_features = ["hand-tracking"]
+        session_modes = ["immersive-ar", "immersive-vr"]
+
+        if self.config.body_tracking_mode != "off":
+            optional_features.append("bounded-floor")
+        if self.config.body_tracking_mode == "optional":
+            optional_features.append("body-tracking")
+        elif self.config.body_tracking_mode == "required":
+            required_features.append("body-tracking")
+            session_modes = ["immersive-ar"]
+
+        return {
+            "body_tracking_mode": self.config.body_tracking_mode,
+            "session_modes": session_modes,
+            "session_options": {
+                "requiredFeatures": required_features,
+                "optionalFeatures": optional_features,
+            },
+        }
+
+    def _dispatch_binary_message(self, data: bytes) -> bool:
+        fingerprint = data[:8]
+        decoder = self._decoders.get(fingerprint)
+        if decoder is None:
+            logger.warning("Unknown WebXR message fingerprint", fingerprint=fingerprint.hex())
+            return False
+        decoder(data)
+        return True
+
+    def _dispatch_text_message(self, payload: str) -> bool:
+        try:
+            snapshot = BodyTrackingSnapshot.model_validate_json(payload)
+        except ValidationError as exc:
+            logger.warning("Dropping malformed WebXR body snapshot", error=str(exc))
+            return False
+        self.body_tracking.publish(snapshot)
+        return True
 
     def _client_connected(self, ws: WebSocket) -> bool:
         with self._clients_lock:
