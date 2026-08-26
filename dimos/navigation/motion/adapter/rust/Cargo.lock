@@ -542,6 +542,9 @@ dependencies = [
 [[package]]
 name = "dimos-motion2-tc"
 version = "0.1.0"
+dependencies = [
+ "dimos-motion2-target",
+]
 
 [[package]]
 name = "dirs"

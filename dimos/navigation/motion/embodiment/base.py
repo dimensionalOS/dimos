@@ -13,16 +13,15 @@
 # limitations under the License.
 
 
-"""The body under test: what the planner plans for and the judge measures.
+"""The body: what the planner plans for and the follower drives.
 
-Shared domain, not benchmark -- the deployed adapter is configured with one to
-configure a live robot, and both referees condition their scoring on it. Pure
-geometry and gait-cost numbers, no dependency on worlds or on the sim.
+Pure geometry, gait plant and cost numbers, no dependency on worlds or on any
+module. The deployed adapters are configured with one to configure a live robot.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 import math
 
 import numpy as np
@@ -32,58 +31,54 @@ from dimos.navigation.motion.control.controller import ControllerConfig
 
 @dataclass(frozen=True)
 class Embodiment:
-    """The robot under test — conditions the gold oracle, the generator's
-    difficulty rules, and the judge. A net trained on varied embodiments
-    deploys on a new robot by being handed a new one of these.
+    """One robot's measured and fitted numbers; a new robot is a new one of these.
 
+    Nothing measured has a default: a body states every number
+    (`embodiment/go2.py::GO2`) or is `replace(GO2, ...)` of one that does.
     comfort = obstacles-we-care-about radius (preference, tunable);
-    precision = local control tracking accuracy (hard floor — clearance
+    precision = local control tracking accuracy (hard floor -- clearance
     below it is fiction, planning it is planning a contact).
     """
 
+    tag: str
     # Moving-body envelope, measured: the union of all robot geometry over a
-    # command sweep, in the yaw-aligned base frame. The swinging legs, not the
-    # 0.31 m trunk, set the width. It is the fallback wherever a body has no
-    # per-heading `envelope`, so it has to stay conservative.
-    tag: str = "go2"
-    length: float = 0.883
-    width: float = 0.593
-    center_off: float = 0.002  # body center relative to the pose point
-    comfort: float = 0.4
-    precision: float = 0.05
+    # command sweep, in the yaw-aligned base frame. It is the fallback wherever
+    # a body has no per-heading `envelope`, so it has to stay conservative.
+    length: float
+    width: float
+    comfort: float
+    precision: float
     # The governor curve: the speed the planner prices a metre of clearance at
     # and the follower reads back out of the path's stamps (control/profile.py).
     # The ramp's floor is `precision`. It is a wire contract between the two
     # modules, so it is the body's and not either module's config.
-    max_speed: float = 0.5  # cruise, granted at speed_clearance of room (m/s)
-    min_speed: float = 0.2  # creep at the precision floor (m/s)
-    speed_clearance: float = 0.35  # room at which full speed is granted (m)
-    max_yaw_rate: float = 1.4  # rad/s; prices a rotation in place
-    # The gait plant, measured: how the walking policy answers a command
-    # (control/probe_walk_slip.py, go2web policy.rs). Re-probe on a new gait.
-    command_slew: tuple[float, float, float] = (2.5, 2.0, 5.0)  # d(vx, vy, wz)/dt it ramps at
-    gait_band: tuple[float, float] = (0.45, 0.95)  # commanded speeds it actually walks between
+    max_speed: float
+    min_speed: float
+    speed_clearance: float
+    max_yaw_rate: float
+    # The gait plant, measured: how the walking policy answers a command.
     # ground speed ~= walk_gain * cmd - walk_slip above the stall band; the laws
     # invert it so a request is the speed the governor chose. Below
     # walk_slip_ramp the inverse fades to identity: a stop stays a stop.
-    walk_gain: float = 0.964
-    walk_slip: float = 0.132
-    walk_slip_ramp: float = 0.08
-    # The follower tuning SEARCHED on this body (the referee, on the sim
-    # branch) -- fitted, where everything above is measured. Nested so the
-    # line between the two stays visible.
-    control: ControllerConfig = field(kw_only=True)
+    command_slew: tuple[float, float, float]
+    gait_band: tuple[float, float]
+    walk_gain: float
+    walk_slip: float
+    walk_slip_ramp: float
     # gait preferences for the planner's cost function.
     # forward = 1; strafe/reverse scale it; yaw_w prices rotation per rad.
-    strafe: float = 1.8
-    reverse: float = 1.5
-    yaw_w: float = 0.25
+    strafe: float
+    reverse: float
+    yaw_w: float
     # Vertical geometry, all measured from the surface the feet stand on.
     # The base rides a known height above the ground (motion/obstacles.py)
-    steppable: float = 0.20  # legs negotiate obstacles below this - at a cost (TODO)
-    height: float = 0.45  # above this the body passes underneath; not an obstacle
-    base_height: float = 0.29  # base origin above support; frame plumbing, not semantics
-
+    steppable: float
+    height: float
+    base_height: float
+    # The follower tuning searched on this body -- fitted, where everything
+    # above is measured. Nested so the line between the two stays visible.
+    control: ControllerConfig
+    center_off: float = 0.0  # body center relative to the pose point
     # Motion-conditioned envelope, one row per |drift| angle in degrees:
     # (deg, length, width, off_x, off_y). 0 = nose-first, 90 = strafe,
     # 180 = reverse. Rows sit at the lattice's own drift angles, so

@@ -19,7 +19,7 @@
 //! stopped obeying a veto stub would be broken whatever its governor reads),
 //! with ONE restatement: the envelope is a bound on the ground speed the law
 //! INTENDS, not on the number in the twist. The twist is a request to a gait
-//! that under-delivers it by a measured margin (see `WALK_SLIP`), so
+//! that under-delivers it by a measured margin (see `walk_slip`), so
 //! `walk_command(max_speed)` -- not `max_speed` -- is the largest linear
 //! command this law may emit. The bound is still a bound; what changed is
 //! which quantity it is expressed in.
@@ -31,19 +31,21 @@
 
 use std::f64::consts::PI;
 
+use dimos_motion2_target::planner::Emb;
+use dimos_motion2_tc::emb::blind_params;
 use dimos_motion2_tc::geom::{ieee_remainder, TAU};
-use dimos_motion2_tc::laws::blind::{
-    update, walk_command, BlindParams, SLIP_RAMP, WALK_GAIN, WALK_SLIP,
-};
+use dimos_motion2_tc::laws::blind::{update, walk_command, BlindParams};
 use dimos_motion2_tc::stamps::decode_ceilings;
 
+/// The go2's tuning and gait plant inside its governor band.
 fn cfg() -> BlindParams {
-    BlindParams::default()
+    blind_params(&Emb::go2())
 }
 
 /// The ground speed a command is worth, inverting `walk_command` above the ramp.
 fn ground(cmd: f64) -> f64 {
-    (cmd - WALK_SLIP) / WALK_GAIN
+    let c = cfg();
+    (cmd - c.walk_slip) / c.walk_gain
 }
 
 /// 4 m of straight path along +x at yaw 0, the python `_straight_path()`.
@@ -110,7 +112,8 @@ fn speed_and_yaw_rate_clamped() {
 /// intended speed rather than stepping off a cliff at the ramp.
 #[test]
 fn walk_command_is_identity_at_rest_and_continuous() {
-    let (g, s, r) = (WALK_GAIN, WALK_SLIP, SLIP_RAMP);
+    let c = cfg();
+    let (g, s, r) = (c.walk_gain, c.walk_slip, c.slip_ramp);
     assert_eq!(walk_command(0.0, g, s, r), 0.0);
     assert_eq!(walk_command(-1.0, g, s, r), 0.0);
     assert!(walk_command(1e-9, g, s, r) < 1e-6, "a crawl became a lunge");
@@ -163,7 +166,7 @@ fn fan_advances_by_yaw_progress() {
 
 /// The creep is asserted on the GROUND speed the command buys, not on the
 /// command. Asserting it on the command is how the seed came to ask for a
-/// speed the gait answers with 0.002 m/s -- see `WALK_SLIP`. A creep that does
+/// speed the gait answers with 0.002 m/s -- see `walk_slip`. A creep that does
 /// not move the robot is not a creep, it is a stall, and it costs the whole
 /// episode clock for none of the caution it looks like.
 #[test]

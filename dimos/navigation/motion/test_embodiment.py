@@ -12,15 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Numbers the embodiment duplicates on purpose, pinned to their originals.
+"""The Go2's numbers live in `embodiment/go2.py`; everything else is pinned to them.
 
-``embodiment/base.py`` is shared with the standalone referee export, so it may not
-import a dimos robot package -- the go2's own constants are therefore copied
-rather than referenced, and a copy that can drift silently is a bug waiting.
+`go2.json` beside it is what the rust crates test against (`Emb::go2()`), so the
+one test here that reads it is the only thing keeping python and rust the same body.
 """
 
+from pathlib import Path
+
+from pydantic import TypeAdapter
+
+from dimos.navigation.motion.embodiment.base import Embodiment
 from dimos.navigation.motion.embodiment.go2 import GO2
 from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT
+
+GO2_JSON = Path(__file__).parent / "embodiment" / "go2.json"
+
+
+def test_go2_json_is_the_go2() -> None:
+    want = TypeAdapter(Embodiment).dump_json(GO2, indent=2) + b"\n"
+    assert GO2_JSON.read_bytes() == want, (
+        f"{GO2_JSON} has drifted from embodiment/go2.py::GO2; regenerate it with "
+        "`uv run python -m dimos.navigation.motion.embodiment.go2`"
+    )
 
 
 def test_go2_height_matches_the_robot_constant() -> None:

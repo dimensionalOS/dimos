@@ -14,8 +14,25 @@
 
 use std::f64::consts::PI;
 
-use dimos_motion2_tc::geom::{ieee_remainder, Params, TAU};
+use dimos_motion2_target::planner::Emb;
+use dimos_motion2_tc::emb::{base_params, hinted_params};
+use dimos_motion2_tc::geom::{ieee_remainder, TAU};
 use dimos_motion2_tc::laws::hinted::{update, HintedParams, Law};
+
+/// The go2's hinted tuning, driving inside its gait band -- what deploys.
+fn gait() -> HintedParams {
+    hinted_params(&Emb::go2())
+}
+
+/// The same tuning inside the governor's band, which the cases below were
+/// written against: they exercise the pursuit, not the stall band.
+fn cfg() -> HintedParams {
+    let e = Emb::go2();
+    HintedParams {
+        base: base_params(&e, [e.min_speed, e.max_speed]),
+        ..gait()
+    }
+}
 
 /// 4 m of straight path along +x at yaw 0, the python `_straight_path()`.
 fn straight() -> Vec<[f64; 3]> {
@@ -35,7 +52,7 @@ fn fan() -> Vec<[f64; 3]> {
 
 #[test]
 fn on_path_drives_forward() {
-    let (vx, vy, wz) = update((0.0, 0.0, 0.0), &straight(), None, &HintedParams::default());
+    let (vx, vy, wz) = update((0.0, 0.0, 0.0), &straight(), None, &cfg());
     assert!(vx > 0.3, "vx={vx}");
     assert!(vy.abs() < 1e-6 && wz.abs() < 1e-6, "vy={vy} wz={wz}");
 }
@@ -43,25 +60,20 @@ fn on_path_drives_forward() {
 #[test]
 fn lateral_offset_commands_crab_back() {
     // path is at y=0, robot at +0.3: crab right while still advancing
-    let (vx, vy, _) = update((1.0, 0.3, 0.0), &straight(), None, &HintedParams::default());
+    let (vx, vy, _) = update((1.0, 0.3, 0.0), &straight(), None, &cfg());
     assert!(vy < -0.1 && vx > 0.0, "vx={vx} vy={vy}");
 }
 
 #[test]
 fn behind_the_path_still_drives_onto_it() {
     // the carrot is ahead of the closest waypoint, which is the path start
-    let (vx, vy, _) = update(
-        (-1.0, 0.0, 0.0),
-        &straight(),
-        None,
-        &HintedParams::default(),
-    );
+    let (vx, vy, _) = update((-1.0, 0.0, 0.0), &straight(), None, &cfg());
     assert!(vx > 0.0 && vy.abs() < 1e-12, "vx={vx} vy={vy}");
 }
 
 #[test]
 fn speed_and_yaw_rate_clamped() {
-    let cfg = HintedParams::default();
+    let cfg = cfg();
     let (vx, vy, _) = update((-2.0, -2.0, 0.0), &straight(), None, &cfg);
     assert!(
         vx.hypot(vy) <= cfg.base.max_speed + 1e-12,
@@ -78,7 +90,7 @@ fn speed_and_yaw_rate_clamped() {
 
 #[test]
 fn fan_rotates_in_place() {
-    let (vx, vy, wz) = update((0.0, 0.0, 0.0), &fan(), None, &HintedParams::default());
+    let (vx, vy, wz) = update((0.0, 0.0, 0.0), &fan(), None, &cfg());
     assert!(wz > 0.3, "wz={wz}");
     assert!(
         vx.hypot(vy) < 0.15,
@@ -89,7 +101,7 @@ fn fan_rotates_in_place() {
 
 #[test]
 fn fan_done_resumes_translation() {
-    let (vx, vy, _) = update((0.0, 0.0, 1.45), &fan(), None, &HintedParams::default());
+    let (vx, vy, _) = update((0.0, 0.0, 1.45), &fan(), None, &cfg());
     assert!(vx > 0.1 || vy != 0.0, "vx={vx} vy={vy}");
 }
 
@@ -99,7 +111,7 @@ fn fan_done_resumes_translation() {
 /// robot already at 0.6 rad sees the REST of the fan.
 #[test]
 fn fan_advances_by_yaw_progress() {
-    let cfg = HintedParams::default();
+    let cfg = cfg();
     let p = fan(); // yaws 0.0 .. 1.5 in 0.3 steps, all at the origin
                    // At yaw 0.6 the carrot is 0.9, one step ON: k_yaw * 0.3. Without the
                    // advance the index stays pinned at the fan's first pose and the command
@@ -120,7 +132,7 @@ fn fan_advances_by_yaw_progress() {
 
 #[test]
 fn governor_creeps_in_tight_room() {
-    let cfg = HintedParams::default();
+    let cfg = cfg();
     let p = straight();
     // Just above `escape_clearance`: the creep band proper. (The old case sat
     // at 0.06, which the pinch-escape leg now owns -- see the V-shape test.)
@@ -141,14 +153,7 @@ fn governor_creeps_in_tight_room() {
 /// is what turns the follower's fixed cross-track offset into a contact.
 #[test]
 fn governor_escape_leg_is_a_v_not_a_floor() {
-    let cfg = HintedParams {
-        base: Params {
-            min_speed: 0.45,
-            max_speed: 0.95,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+    let cfg = gait();
     let p = straight();
     let speed = |room: f64| {
         let clr = vec![room; p.len()];
@@ -204,14 +209,7 @@ fn governor_escape_leg_is_a_v_not_a_floor() {
 /// TO by the time it arrives. Three invariants, all of them load-bearing.
 #[test]
 fn governor_preview_brakes_rather_than_creeps() {
-    let cfg = HintedParams {
-        base: Params {
-            min_speed: 0.45,
-            max_speed: 0.95,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+    let cfg = gait();
     let p = straight();
     let speed = |cfg: &HintedParams, clr: &[f64], px: f64| {
         let (vx, vy, _) = update((px, 0.0, 0.0), &p, Some(clr), cfg);
@@ -293,7 +291,7 @@ fn governor_preview_brakes_rather_than_creeps() {
 
 #[test]
 fn governor_is_open_room_and_a_no_op_when_blind() {
-    let cfg = HintedParams::default();
+    let cfg = cfg();
     let p = straight();
     let wide = vec![1.0; p.len()];
     let open = update((-1.0, 0.0, 0.0), &p, Some(&wide), &cfg);
@@ -308,7 +306,7 @@ fn governor_is_open_room_and_a_no_op_when_blind() {
 /// robot does not govern it.
 #[test]
 fn governor_reads_room_ahead_not_behind() {
-    let cfg = HintedParams::default();
+    let cfg = cfg();
     let p = straight();
     let mut clear = vec![1.0; p.len()];
     clear[..5].fill(0.06);
@@ -322,7 +320,7 @@ fn governor_reads_room_ahead_not_behind() {
 
 #[test]
 fn empty_and_single_pose_paths_hold_position() {
-    let cfg = HintedParams::default();
+    let cfg = cfg();
     assert_eq!(update((1.0, 2.0, 0.3), &[], None, &cfg), (0.0, 0.0, 0.0));
     let stub = [[5.0, 5.0, 1.0]];
     assert_eq!(update((1.0, 2.0, 0.3), &stub, None, &cfg), (0.0, 0.0, 0.0));
@@ -362,7 +360,7 @@ fn ieee_remainder_matches_python() {
 /// half.
 #[test]
 fn stateless_and_deterministic() {
-    let cfg = HintedParams::default();
+    let cfg = cfg();
     let p = straight();
     let a = update((0.3, -0.2, 0.4), &p, None, &cfg);
     update((9.0, 9.0, 3.0), &fan(), None, &cfg);
@@ -390,7 +388,7 @@ fn arc_path() -> Vec<[f64; 3]> {
 /// clearance it did not have.
 #[test]
 fn yaw_targets_the_heading_here_not_the_carrot_ahead() {
-    let cfg = HintedParams::default();
+    let cfg = cfg();
     let p = arc_path();
     // sitting exactly on the plan at arc 0.5 (heading 0.5 rad), moving
     let (vx, vy, wz) = update((p[10][0], p[10][1], p[10][2]), &p, None, &cfg);
@@ -415,7 +413,7 @@ fn yaw_targets_the_heading_here_not_the_carrot_ahead() {
 /// lead as cruising, which is exactly when the seed's lead went uncancelled.
 #[test]
 fn yaw_feedforward_scales_with_commanded_speed() {
-    let cfg = HintedParams::default();
+    let cfg = cfg();
     let p = arc_path();
     let pose = (p[10][0], p[10][1], p[10][2]);
     let fast = update(pose, &p, None, &cfg).2;
@@ -446,14 +444,7 @@ fn tight_arc(r: f64, step: f64) -> Vec<[f64; 3]> {
 
 #[test]
 fn classifier_saturated_feedforward_is_silent_at_full_cruise() {
-    let cfg = HintedParams {
-        base: Params {
-            min_speed: 0.45,
-            max_speed: 0.95,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+    let cfg = gait();
     let p = tight_arc(0.25, 0.015); // 4.0 rad/m, past fan_yaw_per_m = 3.0
     let on = p[40];
     let roomy = vec![1.0f64; p.len()]; // governor grants the full ceiling
@@ -479,14 +470,7 @@ fn classifier_saturated_feedforward_is_silent_at_full_cruise() {
 /// 0.296 -> 0.516.
 #[test]
 fn classifier_saturated_feedforward_survives_where_the_governor_limits() {
-    let cfg = HintedParams {
-        base: Params {
-            min_speed: 0.45,
-            max_speed: 0.95,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+    let cfg = gait();
     let p = tight_arc(0.25, 0.015);
     let on = p[40];
     let tight = vec![0.11f64; p.len()]; // the creep band: governor is limiting
@@ -510,14 +494,7 @@ fn classifier_saturated_feedforward_survives_where_the_governor_limits() {
 /// would still re-admit it.
 #[test]
 fn a_curve_under_the_classifier_is_untouched_in_open_room() {
-    let cfg = HintedParams {
-        base: Params {
-            min_speed: 0.45,
-            max_speed: 0.95,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+    let cfg = gait();
     let roomy = |p: &Vec<[f64; 3]>| vec![1.0f64; p.len()];
 
     // 1.0 rad/m: deliverable, so the command IS the feedforward
@@ -559,7 +536,7 @@ fn right_angle() -> Vec<[f64; 3]> {
 /// the inside of the turn, 22 cm before there was any turn to make.
 #[test]
 fn does_not_cut_the_corner() {
-    let cfg = HintedParams::default();
+    let cfg = cfg();
     let (vx, vy, _) = update((1.30, 0.0, 0.0), &right_angle(), None, &cfg);
     assert!(vx > 0.4, "lost speed on approach: vx={vx}");
     assert!(
@@ -573,7 +550,7 @@ fn does_not_cut_the_corner() {
 /// separating it from the correction.
 #[test]
 fn on_line_commands_the_full_ceiling() {
-    let cfg = HintedParams::default();
+    let cfg = cfg();
     let (vx, vy, _) = update((1.0, 0.0, 0.0), &straight(), None, &cfg);
     assert!(
         (vx - cfg.base.max_speed).abs() < 1e-9 && vy.abs() < 1e-12,
@@ -588,7 +565,7 @@ fn on_line_commands_the_full_ceiling() {
 /// 2.6 cm, and it does not decay because the aim point is the error.
 #[test]
 fn curve_tracking_error_decays_to_zero() {
-    let cfg = HintedParams::default();
+    let cfg = cfg();
     let r = 0.6;
     // three quarters of a circle, 4 cm waypoint spacing
     let n = 70;
@@ -637,7 +614,7 @@ fn curve_tracking_error_decays_to_zero() {
 
 #[test]
 fn ramp_respects_the_plant_slew_on_every_axis() {
-    let cfg = HintedParams::default();
+    let cfg = cfg();
     let mut law = Law::new();
     // straight path, body parked well off it and mis-aimed: the raw law wants
     // a large step on all three axes at once, from a standstill
@@ -667,7 +644,7 @@ fn ramp_respects_the_plant_slew_on_every_axis() {
 fn veto_stub_is_not_ramped_even_at_full_speed() {
     // A path under two poses is the planner's stop veto. Obeying it is not
     // optional and it is not something the ramp may soften.
-    let cfg = HintedParams::default();
+    let cfg = cfg();
     let mut law = Law::new();
     let (mut t, dt) = (0.5, 0.02);
     for _ in 0..60 {
@@ -692,7 +669,7 @@ fn veto_stub_is_not_ramped_even_at_full_speed() {
 
 #[test]
 fn reset_clears_the_ramp() {
-    let cfg = HintedParams::default();
+    let cfg = cfg();
     let (t, dt) = (0.5, 0.02);
     let mut a = Law::new();
     let mut first = Vec::new();
@@ -725,7 +702,7 @@ fn reset_clears_the_ramp() {
 
 #[test]
 fn a_backwards_or_stalled_clock_cannot_bank_a_larger_step() {
-    let cfg = HintedParams::default();
+    let cfg = cfg();
     let mut law = Law::new();
     // same t every call, then a t far in the past, then a huge jump forward:
     // none of them may licence a step past the nominal tick's worth of slew

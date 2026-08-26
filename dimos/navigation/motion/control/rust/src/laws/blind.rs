@@ -53,32 +53,17 @@ use crate::stamps::{ceiling_ahead, decode_ceilings};
 ///
 /// DEPLOY. These are properties of the gait blob, not of the law -- on a
 /// different gait they are a ~23% over-speed. They live on the embodiment for
-/// exactly that reason: re-probe against the deployed gait and key them to it
-/// before this drives hardware. These are the go2's, for this crate's tests.
-pub const WALK_GAIN: f64 = 0.964;
-pub const WALK_SLIP: f64 = 0.132;
-
-/// Intended speeds below this get a proportionally smaller share of the
-/// correction, reaching zero with it. A stop request has to remain a stop.
-pub const SLIP_RAMP: f64 = 0.08;
-
+/// exactly that reason (`walk_gain`, `walk_slip`, `walk_slip_ramp`): re-probe
+/// against the deployed gait and key them to it before this drives hardware.
+///
 /// `Params` plus the gait calibration this law feeds forward through.
 pub struct BlindParams {
     pub base: Params,
     pub walk_gain: f64,
     pub walk_slip: f64,
+    /// Intended speeds below this get a proportionally smaller share of the
+    /// correction, reaching zero with it. A stop request has to remain a stop.
     pub slip_ramp: f64,
-}
-
-impl Default for BlindParams {
-    fn default() -> Self {
-        Self {
-            base: Params::default(),
-            walk_gain: WALK_GAIN,
-            walk_slip: WALK_SLIP,
-            slip_ramp: SLIP_RAMP,
-        }
-    }
 }
 
 /// The command that asks the gait for a ground speed of `want` m/s.

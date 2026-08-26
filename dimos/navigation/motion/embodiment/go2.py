@@ -13,54 +13,80 @@
 # limitations under the License.
 
 
-"""The Unitree Go2, as measured."""
+"""The Unitree Go2, as measured: the one place its numbers live.
+
+`go2.json` beside this file is the same record for the rust crates; `test_embodiment.py`
+pins the two together.
+"""
 
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
+
+from pydantic import TypeAdapter
 
 from dimos.navigation.motion.control.controller import ControllerConfig
 
 from .base import Embodiment
 
-# Baked by the fitted-sim envelope sweep over the governed slow band (stand +
-# 0.35 + 0.50 m/s). The sweep and the surface these fold out of are the sim's,
-# and live with it (README, "What is not here") -- what is here is its measured
-# output, which is what the planner and the judge actually read.
-GO2_ENVELOPE: tuple[tuple[float, float, float, float, float], ...] = (
-    (0.0, 0.819, 0.416, -0.023, 0.000),
-    (26.6, 0.802, 0.436, -0.032, -0.008),
-    (45.0, 0.788, 0.472, -0.035, -0.018),
-    (63.4, 0.781, 0.500, -0.039, -0.016),
-    (90.0, 0.781, 0.507, -0.039, -0.009),
-    (116.6, 0.781, 0.497, -0.039, 0.000),
-    (135.0, 0.781, 0.463, -0.039, -0.001),
-    (153.4, 0.781, 0.422, -0.039, -0.003),
-    (180.0, 0.781, 0.416, -0.039, 0.000),
+GO2 = Embodiment(
+    tag="go2",
+    # Moving-body union over a command sweep: the swinging legs, not the 0.31 m
+    # trunk, set the width.
+    length=0.883,
+    width=0.593,
+    center_off=0.002,  # body center relative to the pose point
+    comfort=0.4,  # obstacles-we-care-about radius (m)
+    precision=0.05,  # local control tracking accuracy; the clearance floor (m)
+    max_speed=0.5,  # cruise, granted at speed_clearance of room (m/s)
+    min_speed=0.2,  # creep at the precision floor (m/s)
+    speed_clearance=0.35,  # room at which full speed is granted (m)
+    max_yaw_rate=1.4,  # rad/s; prices a rotation in place
+    command_slew=(2.5, 2.0, 5.0),  # d(vx, vy, wz)/dt the walking policy ramps at
+    gait_band=(0.45, 0.95),  # commanded speeds it actually walks between (m/s)
+    walk_gain=0.964,  # ground speed ~= walk_gain * cmd - walk_slip, probed open loop
+    walk_slip=0.132,
+    walk_slip_ramp=0.08,  # below this intended speed the slip inverse fades to identity
+    strafe=1.8,  # planner cost of a metre sideways, forward = 1
+    reverse=1.5,  # ...and backwards
+    yaw_w=0.25,  # planner cost per rad of rotation
+    steppable=0.20,  # legs negotiate obstacles below this (m) - at a cost (TODO)
+    height=0.45,  # above this the body passes underneath; not an obstacle (m)
+    base_height=0.29,  # base origin above support; frame plumbing, not semantics (m)
+    # Baked by the fitted-sim envelope sweep over the governed slow band (stand +
+    # 0.35 + 0.50 m/s). The sweep lives with the sim (README, "What is not
+    # here"); this is its output, which is what the planner reads.
+    envelope=(
+        (0.0, 0.819, 0.416, -0.023, 0.000),
+        (26.6, 0.802, 0.436, -0.032, -0.008),
+        (45.0, 0.788, 0.472, -0.035, -0.018),
+        (63.4, 0.781, 0.500, -0.039, -0.016),
+        (90.0, 0.781, 0.507, -0.039, -0.009),
+        (116.6, 0.781, 0.497, -0.039, 0.000),
+        (135.0, 0.781, 0.463, -0.039, -0.001),
+        (153.4, 0.781, 0.422, -0.039, -0.003),
+        (180.0, 0.781, 0.416, -0.039, 0.000),
+    ),
+    arc_inflate=0.0334,  # extra width per rad/m of curvature, residuals <= 12 mm
+    # The follower tuning searched on this body: gen40 of the hinted lab on the
+    # closed-loop referee (README, "What is not here"). Fitted, unlike
+    # everything above, which is why it is its own record.
+    control=ControllerConfig(
+        lookahead=0.35,  # carrot distance along the path (m)
+        k_pos=2.0,  # body-frame position error gain (1/s)
+        k_yaw=2.0,  # yaw error gain (1/s)
+        fan_yaw_per_m=3.0,  # yaw-per-metre above this is a rotation in place, not a curve
+        fan_yaw_done=0.25,  # a fan holds position until the yaw error is under this (rad)
+        speed_lookahead=2.0,  # the governor reads room over this much path ahead (m)
+        tangent_preview=0.15,  # centred window the feedforward reads the plan's direction over
+        escape_clearance=0.10,  # below this room the pinch-escape leg lifts the floor (m)
+        escape_preview=1.00,  # ...read over this much arc ahead (m)
+        escape_speed=0.75,  # ...up to this speed where the room has run out (m/s)
+        brake_accel=0.8,  # deceleration a previewed waypoint credits the body with (m/s^2)
+        brake_margin=0.15,  # within this arc a previewed waypoint binds in full (m)
+    ),
 )
-
-# Measured 0.0334 m of extra width per rad/m, residuals <= 12 mm.
-GO2_ARC_INFLATE = 0.0334
-
-# The follower tuning searched on this body: gen40 of the hinted lab on the
-# closed-loop referee (README, "What is not here"). Fitted, unlike everything
-# above, which is why it is its own record.
-GO2_CONTROL = ControllerConfig(
-    lookahead=0.35,  # carrot distance along the path (m)
-    k_pos=2.0,  # body-frame position error gain (1/s)
-    k_yaw=2.0,  # yaw error gain (1/s)
-    fan_yaw_per_m=3.0,  # yaw-per-metre above this is a rotation in place, not a curve
-    fan_yaw_done=0.25,  # a fan holds position until the yaw error is under this (rad)
-    speed_lookahead=2.0,  # the governor reads room over this much path ahead (m)
-    tangent_preview=0.15,  # centred window the feedforward reads the plan's direction over
-    escape_clearance=0.10,  # below this room the pinch-escape leg lifts the floor (m)
-    escape_preview=1.00,  # ...read over this much arc ahead (m)
-    escape_speed=0.75,  # ...up to this speed where the room has run out (m/s)
-    brake_accel=0.8,  # deceleration a previewed waypoint credits the body with (m/s^2)
-    brake_margin=0.15,  # within this arc a previewed waypoint binds in full (m)
-)
-
-GO2 = Embodiment(envelope=GO2_ENVELOPE, arc_inflate=GO2_ARC_INFLATE, control=GO2_CONTROL)
 
 # payload adds 8 cm in front: longer body, centre 4 cm further forward.
 # No measured envelope of its own: it falls back to the union everywhere.
@@ -73,3 +99,9 @@ GO2_PAYLOAD = replace(
     envelope=(),
     arc_inflate=0.0,
 )
+
+
+if __name__ == "__main__":  # regenerate go2.json, the rust crates' copy of GO2
+    Path(__file__).with_name("go2.json").write_bytes(
+        TypeAdapter(Embodiment).dump_json(GO2, indent=2) + b"\n"
+    )

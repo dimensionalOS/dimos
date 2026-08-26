@@ -22,7 +22,8 @@
 
 use std::f64::consts::PI;
 
-use dimos_motion2_tc::geom::Params;
+use dimos_motion2_target::planner::Emb;
+use dimos_motion2_tc::emb::blind_params;
 use dimos_motion2_tc::stamps::{
     ceilings_to_clearance, decode_ceilings, encode_precision, governor_speed, Governor,
 };
@@ -66,7 +67,8 @@ fn a_stamped_segment_reads_back_as_the_speed_it_was_priced_at() {
     let path = straight(5, 0.4);
     let clearance = vec![f64::INFINITY, 0.3, 0.1, FLOOR_CLEARANCE, 1.0];
     let ts = encode_precision(&path, &clearance, 0.0, &GOV);
-    let got = decode_ceilings(&ts, &path, &Params::default()).expect("stamped path decodes");
+    let got =
+        decode_ceilings(&ts, &path, &blind_params(&Emb::go2()).base).expect("stamped path decodes");
 
     // a ceiling is a property of the segment ENDING at its waypoint, so
     // ceilings[k] carries the tighter of clearance[k-1], clearance[k]

@@ -85,3 +85,4 @@ codegen-units = 1
 
 [dev-dependencies]
 serde_json = "1"
+dimos-motion2-target = { path = "../../planner/rust", default-features = false, features = ["test-bodies"] }

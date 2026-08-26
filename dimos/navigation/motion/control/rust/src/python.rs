@@ -141,7 +141,7 @@ fn hinted_params(p: BaseParams, h: HintedExtra) -> HintedParams {
         brake_accel: h.4,
         brake_margin: h.5,
         // the pure law never reads it; `step` sets the body's own
-        ..HintedParams::default()
+        slew: [f64::INFINITY; 3],
     }
 }
 

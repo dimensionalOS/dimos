@@ -42,6 +42,7 @@
 //! remainder like `math.remainder`, never `%` or `rem_euclid`.
 
 pub mod clearance;
+pub mod emb;
 pub mod geom;
 pub mod laws;
 pub mod stamps;

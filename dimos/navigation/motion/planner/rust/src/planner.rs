@@ -140,26 +140,6 @@ pub struct Tuning {
     pub brake_margin: f64,
 }
 
-impl Default for Tuning {
-    /// `ControllerConfig`'s defaults: the go2's, for this crate's tests.
-    fn default() -> Self {
-        Self {
-            lookahead: 0.35,
-            k_pos: 2.0,
-            k_yaw: 2.0,
-            fan_yaw_per_m: 3.0,
-            fan_yaw_done: 0.25,
-            speed_lookahead: 2.0,
-            tangent_preview: 0.15,
-            escape_clearance: 0.10,
-            escape_preview: 1.00,
-            escape_speed: 0.75,
-            brake_accel: 0.8,
-            brake_margin: 0.15,
-        }
-    }
-}
-
 /// `embodiment/base.py::Embodiment`, field for field: the body a module is
 /// configured with, deserialised straight from its config.
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
@@ -205,48 +185,12 @@ pub struct Emb {
     pub arc_inflate: f64,
 }
 
-/// `embodiment/go2.py::GO2_ENVELOPE`, baked over the governed slow band.
-pub const GO2_ENVELOPE: [[f64; 5]; 9] = [
-    [0.0, 0.819, 0.416, -0.023, 0.000],
-    [26.6, 0.802, 0.436, -0.032, -0.008],
-    [45.0, 0.788, 0.472, -0.035, -0.018],
-    [63.4, 0.781, 0.500, -0.039, -0.016],
-    [90.0, 0.781, 0.507, -0.039, -0.009],
-    [116.6, 0.781, 0.497, -0.039, 0.000],
-    [135.0, 0.781, 0.463, -0.039, -0.001],
-    [153.4, 0.781, 0.422, -0.039, -0.003],
-    [180.0, 0.781, 0.416, -0.039, 0.000],
-];
-
 impl Emb {
-    /// `embodiment/go2.py::GO2` -- the all-gait union plus the measured rows.
+    /// `embodiment/go2.py::GO2`, read from the `go2.json` its python test pins
+    /// to it. Test bodies only: a deployed module is configured with its own.
+    #[cfg(any(test, feature = "test-bodies"))]
     pub fn go2() -> Self {
-        Emb {
-            tag: "go2".into(),
-            length: 0.883,
-            width: 0.593,
-            center_off: 0.002,
-            comfort: 0.4,
-            precision: 0.05,
-            max_speed: 0.5,
-            min_speed: 0.2,
-            speed_clearance: 0.35,
-            max_yaw_rate: 1.4,
-            command_slew: [2.5, 2.0, 5.0],
-            gait_band: [0.45, 0.95],
-            walk_gain: 0.964,
-            walk_slip: 0.132,
-            walk_slip_ramp: 0.08,
-            steppable: 0.20,
-            height: 0.45,
-            base_height: 0.29,
-            control: Tuning::default(),
-            strafe: 1.8,
-            reverse: 1.5,
-            yaw_w: 0.25,
-            envelope: GO2_ENVELOPE.to_vec(),
-            arc_inflate: 0.0334,
-        }
+        serde_json::from_str(include_str!("../../../embodiment/go2.json")).expect("go2.json parses")
     }
 
     /// The pricing curve, read off the body.

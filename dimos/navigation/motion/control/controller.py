@@ -50,7 +50,7 @@ class ControllerConfig(BaseConfig):
     band, the yaw rate, slew, slip -- is the embodiment's and is read from it;
     what is here is what a referee search over a fixed body may move -- and so
     nothing here has a default: a body brings the numbers searched on it
-    (`embodiment/go2.py::GO2_CONTROL`), or explicitly borrows another's.
+    (`embodiment/go2.py::GO2.control`), or explicitly borrows another's.
     """
 
     lookahead: float  # carrot distance along the path (m)

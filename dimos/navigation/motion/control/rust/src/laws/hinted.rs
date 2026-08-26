@@ -82,21 +82,6 @@ pub struct HintedParams {
     pub brake_margin: f64,
 }
 
-impl Default for HintedParams {
-    fn default() -> Self {
-        Self {
-            base: Params::default(),
-            slew: [2.5, 2.0, 5.0],
-            tangent_preview: 0.15,
-            escape_clearance: 0.10,
-            escape_preview: 1.00,
-            escape_speed: 0.75,
-            brake_accel: 0.8,
-            brake_margin: 0.15,
-        }
-    }
-}
-
 /// Foot of the perpendicular from `(px, py)` onto the path polyline, and its
 /// arc length.
 ///

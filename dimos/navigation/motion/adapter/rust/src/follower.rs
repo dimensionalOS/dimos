@@ -403,11 +403,7 @@ type Room = Arc<Vec<f64>>;
 /// encoder's inverse. Reading with one band and writing with another would
 /// re-price every waypoint.
 fn dialect_band(emb: &Emb) -> Params {
-    Params {
-        min_speed: emb.min_speed,
-        max_speed: emb.max_speed,
-        ..Params::default()
-    }
+    emb::base_params(emb, [emb.min_speed, emb.max_speed])
 }
 
 /// The per-waypoint room hint off the model's own hard set: the twin of

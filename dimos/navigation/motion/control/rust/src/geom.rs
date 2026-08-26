@@ -28,8 +28,8 @@
 //! first minimum, `searchsorted` is side='left'), and angle wrapping is IEEE
 //! remainder like `math.remainder`, never `%` or `rem_euclid`.
 
-/// The numeric half of `ControllerConfig`. `frame_id` stays python-side: it
-/// selects the tf lookup, it does not enter the law.
+/// The numbers a law reads: the body's tuning plus its plant, driving inside
+/// one band -- `emb::base_params` builds it from an `Emb`.
 #[derive(Clone)]
 pub struct Params {
     pub lookahead: f64,
@@ -43,25 +43,6 @@ pub struct Params {
     pub speed_clearance: f64,
     pub speed_floor_clearance: f64,
     pub speed_lookahead: f64,
-}
-
-impl Default for Params {
-    /// The `ControllerConfig` field defaults, verbatim.
-    fn default() -> Self {
-        Self {
-            lookahead: 0.35,
-            max_speed: 0.5,
-            max_yaw_rate: 1.4,
-            k_pos: 2.0,
-            k_yaw: 2.0,
-            fan_yaw_per_m: 3.0,
-            fan_yaw_done: 0.25,
-            min_speed: 0.2,
-            speed_clearance: 0.35,
-            speed_floor_clearance: 0.05,
-            speed_lookahead: 2.0,
-        }
-    }
 }
 
 pub const TAU: f64 = std::f64::consts::TAU;

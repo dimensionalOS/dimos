@@ -25,8 +25,16 @@
 
 use std::f64::consts::PI;
 
+use dimos_motion2_target::planner::Emb;
+use dimos_motion2_tc::emb::base_params;
 use dimos_motion2_tc::geom::{ieee_remainder, Params, TAU};
 use dimos_motion2_tc::laws::seed::update;
+
+/// The go2's tuning inside its governor band.
+fn cfg() -> Params {
+    let e = Emb::go2();
+    base_params(&e, [e.min_speed, e.max_speed])
+}
 
 /// 4 m of straight path along +x at yaw 0, the python `_straight_path()`.
 fn straight() -> Vec<[f64; 3]> {
@@ -46,7 +54,7 @@ fn fan() -> Vec<[f64; 3]> {
 
 #[test]
 fn on_path_drives_forward() {
-    let (vx, vy, wz) = update((0.0, 0.0, 0.0), &straight(), None, &Params::default());
+    let (vx, vy, wz) = update((0.0, 0.0, 0.0), &straight(), None, &cfg());
     assert!(vx > 0.3, "vx={vx}");
     assert!(vy.abs() < 1e-6 && wz.abs() < 1e-6, "vy={vy} wz={wz}");
 }
@@ -54,20 +62,20 @@ fn on_path_drives_forward() {
 #[test]
 fn lateral_offset_commands_crab_back() {
     // path is at y=0, robot at +0.3: crab right while still advancing
-    let (vx, vy, _) = update((1.0, 0.3, 0.0), &straight(), None, &Params::default());
+    let (vx, vy, _) = update((1.0, 0.3, 0.0), &straight(), None, &cfg());
     assert!(vy < -0.1 && vx > 0.0, "vx={vx} vy={vy}");
 }
 
 #[test]
 fn behind_the_path_still_drives_onto_it() {
     // the carrot is ahead of the closest waypoint, which is the path start
-    let (vx, vy, _) = update((-1.0, 0.0, 0.0), &straight(), None, &Params::default());
+    let (vx, vy, _) = update((-1.0, 0.0, 0.0), &straight(), None, &cfg());
     assert!(vx > 0.0 && vy.abs() < 1e-12, "vx={vx} vy={vy}");
 }
 
 #[test]
 fn speed_and_yaw_rate_clamped() {
-    let cfg = Params::default();
+    let cfg = cfg();
     let (vx, vy, _) = update((-2.0, -2.0, 0.0), &straight(), None, &cfg);
     assert!(
         vx.hypot(vy) <= cfg.max_speed + 1e-12,
@@ -84,7 +92,7 @@ fn speed_and_yaw_rate_clamped() {
 
 #[test]
 fn fan_rotates_in_place() {
-    let (vx, vy, wz) = update((0.0, 0.0, 0.0), &fan(), None, &Params::default());
+    let (vx, vy, wz) = update((0.0, 0.0, 0.0), &fan(), None, &cfg());
     assert!(wz > 0.3, "wz={wz}");
     assert!(
         vx.hypot(vy) < 0.15,
@@ -95,7 +103,7 @@ fn fan_rotates_in_place() {
 
 #[test]
 fn fan_done_resumes_translation() {
-    let (vx, vy, _) = update((0.0, 0.0, 1.45), &fan(), None, &Params::default());
+    let (vx, vy, _) = update((0.0, 0.0, 1.45), &fan(), None, &cfg());
     assert!(vx > 0.1 || vy != 0.0, "vx={vx} vy={vy}");
 }
 
@@ -105,7 +113,7 @@ fn fan_done_resumes_translation() {
 /// robot already at 0.6 rad sees the REST of the fan.
 #[test]
 fn fan_advances_by_yaw_progress() {
-    let cfg = Params::default();
+    let cfg = cfg();
     let p = fan(); // yaws 0.0 .. 1.5 in 0.3 steps, all at the origin
                    // At yaw 0.6 the carrot is 0.9, one step ON: k_yaw * 0.3. Without the
                    // advance the index stays pinned at the fan's first pose and the command
@@ -126,7 +134,7 @@ fn fan_advances_by_yaw_progress() {
 
 #[test]
 fn governor_creeps_in_tight_room() {
-    let cfg = Params::default();
+    let cfg = cfg();
     let p = straight();
     let tight = vec![0.06; p.len()]; // barely above the precision floor
     let (vx, vy, _) = update((0.0, 0.0, 0.0), &p, Some(&tight), &cfg);
@@ -139,7 +147,7 @@ fn governor_creeps_in_tight_room() {
 
 #[test]
 fn governor_is_open_room_and_a_no_op_when_blind() {
-    let cfg = Params::default();
+    let cfg = cfg();
     let p = straight();
     let wide = vec![1.0; p.len()];
     let open = update((-1.0, 0.0, 0.0), &p, Some(&wide), &cfg);
@@ -154,7 +162,7 @@ fn governor_is_open_room_and_a_no_op_when_blind() {
 /// robot does not govern it.
 #[test]
 fn governor_reads_room_ahead_not_behind() {
-    let cfg = Params::default();
+    let cfg = cfg();
     let p = straight();
     let mut clear = vec![1.0; p.len()];
     clear[..5].fill(0.06);
@@ -164,7 +172,7 @@ fn governor_reads_room_ahead_not_behind() {
 
 #[test]
 fn empty_and_single_pose_paths_hold_position() {
-    let cfg = Params::default();
+    let cfg = cfg();
     assert_eq!(update((1.0, 2.0, 0.3), &[], None, &cfg), (0.0, 0.0, 0.0));
     let stub = [[5.0, 5.0, 1.0]];
     assert_eq!(update((1.0, 2.0, 0.3), &stub, None, &cfg), (0.0, 0.0, 0.0));
@@ -198,7 +206,7 @@ fn ieee_remainder_matches_python() {
 /// leaves a trace in the next one.
 #[test]
 fn stateless_and_deterministic() {
-    let cfg = Params::default();
+    let cfg = cfg();
     let p = straight();
     let a = update((0.3, -0.2, 0.4), &p, None, &cfg);
     update((9.0, 9.0, 3.0), &fan(), None, &cfg);

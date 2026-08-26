@@ -715,7 +715,7 @@ mod tests {
         // contract the refusal shape rests on
         let held = hold_stub((1.5, -2.0, 0.0), "odom", 0.0, 0.0);
         let states = msg::path_states(&held);
-        let cfg = dimos_motion2_tc::laws::hinted::HintedParams::default();
+        let cfg = emb::hinted_params(&Emb::go2());
         assert_eq!(
             dimos_motion2_tc::laws::hinted::update((1.5, -2.0, 0.0), &states, None, &cfg),
             (0.0, 0.0, 0.0)
@@ -807,7 +807,7 @@ mod tests {
         );
         // and the profile reads back out, which is what the follower does
         let states = msg::path_states(&produced);
-        let params = dimos_motion2_tc::geom::Params::default();
+        let params = emb::blind_params(&Emb::go2()).base;
         assert!(stamps::decode_ceilings(&ts, &states, &params).is_some());
     }
 
