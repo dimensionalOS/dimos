@@ -39,6 +39,7 @@ from typing import Any
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.transform import throttle
+from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC, lattice_quantum
 from dimos.perception.memory.localize import LocalizeTrace
 from dimos.perception.memory.rig import Rig
 from dimos.perception.memory.types import Localization
@@ -120,9 +121,9 @@ def render(
         points = det.pointcloud.points_f32()
         matrix = det.transform.to_matrix()
         cam = points @ matrix[:3, :3].T + matrix[:3, 3]
-        K = rig.camera_info.K
-        cols = np.round(cam[:, 0] / cam[:, 2] * K[0] + K[2]).astype(int)
-        rows = np.round(cam[:, 1] / cam[:, 2] * K[4] + K[5]).astype(int)
+        pixels = Detection3DPC.project_pixels(cam, rig.camera_info)
+        cols = np.round(pixels[:, 0]).astype(int)
+        rows = np.round(pixels[:, 1]).astype(int)
         rgb = det.image.to_rgb().data
         height, width = rgb.shape[:2]
         return rgb[np.clip(rows, 0, height - 1), np.clip(cols, 0, width - 1)]
@@ -157,7 +158,7 @@ def render(
             if (points := rig.registered_scan(obs)) is not None
         ]
         if scans:
-            point_size = rig._cloud_quantum(scans[0]) or point_size
+            point_size = lattice_quantum(scans[0]) or point_size
             merged = PointCloud2.from_numpy(np.vstack(scans), frame_id=rig.world_frame)
             carved = carve(merged.voxel_downsample(0.05).points_f32(), 0.05)
             rr.log("map", height_points(carved, 0.022, 0.7, 0.5), static=True)
