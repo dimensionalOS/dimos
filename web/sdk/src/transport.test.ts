@@ -5,6 +5,7 @@ import {
   CONNECT_TIMEOUT_MS,
   ReconnectingTransport,
   type RelayInfo,
+  resolveInfoUrl,
   type TransportPhase,
   type WebTransportLike,
 } from "./transport.ts";
@@ -53,6 +54,21 @@ describe("backoffDelayMs", () => {
       8000,
       8000,
     ]);
+  });
+});
+
+describe("resolveInfoUrl", () => {
+  it("defaults to the same-origin path", () => {
+    expect(resolveInfoUrl()).toBe("/api/info");
+  });
+
+  it("resolves against an absolute base with or without a trailing slash", () => {
+    expect(resolveInfoUrl("http://127.0.0.1:7780")).toBe("http://127.0.0.1:7780/api/info");
+    expect(resolveInfoUrl("http://127.0.0.1:7780/")).toBe("http://127.0.0.1:7780/api/info");
+  });
+
+  it("keeps a path prefix on the base", () => {
+    expect(resolveInfoUrl("https://ops.example/relay")).toBe("https://ops.example/relay/api/info");
   });
 });
 

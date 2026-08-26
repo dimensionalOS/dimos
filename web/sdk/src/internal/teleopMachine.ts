@@ -18,7 +18,7 @@
 
 import type { Msg } from "@dimos/shared";
 import type { ChannelSpec } from "@dimos/shared/manifest";
-import type { StatusStore } from "../session/store.ts";
+import type { StatusStore } from "../store.ts";
 
 /** The session's teleop surface handed to panels (registry PanelProps). */
 export interface TeleopHooks {
@@ -29,6 +29,22 @@ export interface TeleopHooks {
   /** Teleop-routed relay replies: teleop_started and the teleop_held error. */
   onMsg(cb: (msg: Msg) => void): () => void;
   status: StatusStore;
+}
+
+// Internal until W9: the session registers its raw send hooks here so the
+// cockpit can reach them without them living on the public read-only
+// Session. W1 consumers get no teleop surface; the safe public facade
+// arrives with W9.
+const hooksBySession = new WeakMap<object, TeleopHooks>();
+
+export function registerTeleopHooks(session: object, hooks: TeleopHooks): void {
+  hooksBySession.set(session, hooks);
+}
+
+export function teleopHooks(session: object): TeleopHooks {
+  const hooks = hooksBySession.get(session);
+  if (hooks === undefined) throw new Error("session has no registered teleop hooks");
+  return hooks;
 }
 
 export interface TeleopConfig {

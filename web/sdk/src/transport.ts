@@ -77,9 +77,17 @@ function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
-export async function fetchRelayInfo(signal: AbortSignal): Promise<RelayInfo> {
-  const resp = await fetch("/api/info", { signal });
-  if (!resp.ok) throw new Error(`/api/info returned ${resp.status}`);
+/** The /api/info URL for an HTTP relay base; same origin when no base is
+ * given. A trailing slash is normalized so path-prefixed bases keep their
+ * prefix ("https://x/relay" -> "https://x/relay/api/info"). */
+export function resolveInfoUrl(base?: string): string {
+  if (base === undefined) return "/api/info";
+  return new URL("api/info", base.endsWith("/") ? base : `${base}/`).toString();
+}
+
+export async function fetchRelayInfo(url: string, signal: AbortSignal): Promise<RelayInfo> {
+  const resp = await fetch(url, { signal });
+  if (!resp.ok) throw new Error(`${url} returned ${resp.status}`);
   const data: unknown = await resp.json();
   if (
     typeof data !== "object" || data === null ||
@@ -87,7 +95,7 @@ export async function fetchRelayInfo(signal: AbortSignal): Promise<RelayInfo> {
     typeof (data as Record<string, unknown>).certHash !== "string" ||
     typeof (data as Record<string, unknown>).v !== "number"
   ) {
-    throw new Error("/api/info returned an unexpected shape");
+    throw new Error(`${url} returned an unexpected shape`);
   }
   return data as unknown as RelayInfo;
 }
@@ -116,7 +124,7 @@ export class ReconnectingTransport {
 
   constructor(events: TransportEvents, deps: TransportDeps = {}) {
     this.#events = events;
-    this.#fetchInfo = deps.fetchInfo ?? fetchRelayInfo;
+    this.#fetchInfo = deps.fetchInfo ?? ((signal) => fetchRelayInfo(resolveInfoUrl(), signal));
     this.#create = deps.createWebTransport ?? connectWebTransport;
     this.#now = deps.now ?? Date.now;
   }

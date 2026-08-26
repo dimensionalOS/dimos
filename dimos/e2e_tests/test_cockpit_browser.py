@@ -28,12 +28,15 @@ Runs in both Chromium and Firefox: their WebTransport implementations differ
 enough that one browser staying green says little about the other.
 
 Marked web_browser: excluded from the default suite (needs the
-`browser-tests` dependency group, Playwright browsers and the LFS dataset);
-the CI `web` job runs it against a freshly-built cockpit dist. Locally:
+`browser-tests` dependency group and the LFS dataset; the browser binaries
+auto-install on first run); the CI `web` job runs it against a
+freshly-built cockpit dist. Locally:
 `uv run --group browser-tests pytest -m web_browser dimos/e2e_tests/test_cockpit_browser.py`.
 """
 
 from collections.abc import Callable, Iterator
+import subprocess
+import sys
 import time
 
 import pytest
@@ -80,8 +83,15 @@ def start_go2_replay() -> Iterator[Callable[[], DimosCliCall]]:
         call.stop()
 
 
+@pytest.fixture(scope="session")
+def playwright_browsers() -> None:
+    subprocess.run(
+        [sys.executable, "-m", "playwright", "install", "chromium", "firefox"], check=True
+    )
+
+
 @pytest.fixture(params=["chromium", "firefox"])
-def page(request: pytest.FixtureRequest) -> Iterator[Page]:
+def page(request: pytest.FixtureRequest, playwright_browsers: None) -> Iterator[Page]:
     with sync_playwright() as p:
         browser = getattr(p, request.param).launch()
         try:

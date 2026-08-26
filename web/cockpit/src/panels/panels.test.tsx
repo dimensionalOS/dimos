@@ -3,8 +3,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { FrameHeader, PanelSpec } from "@dimos/shared";
-import type { CostmapValue } from "../session/decoders/costmap.ts";
-import { ChannelStore } from "../session/store.ts";
+import type { CostmapValue } from "@dimos/sdk";
+import { ChannelStore } from "@dimos/sdk";
 import type { DrawHealth } from "../layout/PanelFrame.tsx";
 import { MapPanel, startMapSink } from "./MapPanel.tsx";
 import { fitTransform, posePath } from "./mapRenderer.ts";
