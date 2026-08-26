@@ -33,7 +33,9 @@ TF_MATCH_TOLERANCE_S = 0.1
 class RayTracingVoxelMapConfig(NativeModuleConfig):
     cwd: str | None = "rust"
     executable: str = "result/bin/voxel_ray_tracing"
-    build_command: str | None = "nix build -L path:."
+    # Writing flake.lock dirties the tree, so the locked dimos-repo NAR hash never matches
+    # the next build.
+    build_command: str | None = "nix build -L --no-write-lock-file path:."
     stdin_config: bool = True
 
     voxel_size: float = 0.1
@@ -70,6 +72,8 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     world_frame: str = "odom"
     # Max stamp gap between a cloud and the transform used to register it (s).
     tf_match_tolerance_s: float = TF_MATCH_TOLERANCE_S
+    # How long to wait for a late transform before dropping a cloud (s).
+    tf_wait_timeout_s: float = 0.1
     # Worker threads for parallel map work.
     worker_threads: int = 4
 

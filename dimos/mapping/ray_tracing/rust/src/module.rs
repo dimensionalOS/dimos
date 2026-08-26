@@ -66,7 +66,7 @@ impl RayTracingVoxelMap {
             .lookup(&self.config.world_frame, &msg.header.frame_id)
             .at(stamp)
             .tolerance(self.config.tf_match_tolerance_s)
-            .within(TF_WAIT_TIMEOUT)
+            .within(Duration::from_secs_f64(self.config.tf_wait_timeout_s))
             .await
         else {
             warn!(
@@ -162,9 +162,6 @@ impl RayTracingVoxelMap {
         }
     }
 }
-
-/// How long to wait for a late transform before dropping a cloud.
-const TF_WAIT_TIMEOUT: Duration = Duration::from_millis(50);
 
 fn time_secs(t: &Time) -> f64 {
     t.sec as f64 + t.nsec as f64 * 1e-9
@@ -318,6 +315,7 @@ mod tests {
             region_percentile: 95.0,
             world_frame: "world".to_string(),
             tf_match_tolerance_s: 0.1,
+            tf_wait_timeout_s: 0.1,
             worker_threads: 4,
         };
         let mut map = VoxelMap::default();
