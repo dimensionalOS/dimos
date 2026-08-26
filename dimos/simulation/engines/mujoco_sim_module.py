@@ -346,6 +346,7 @@ class MujocoSimModule(
         self._publish_thread: threading.Thread | None = None
         self._camera_info_base: CameraInfo | None = None
         self._shm_ready_signaled = False
+        self._latest_frame_ts: float | None = None
 
         # IMU sensor slices into MjData.sensordata, resolved once at start.
         # None if the MJCF has no recognized IMU sensors (e.g. arm-only sims).
@@ -378,17 +379,23 @@ class MujocoSimModule(
     def _depth_optical_frame(self) -> str:
         return f"{self.config.camera_name}_depth_optical_frame"
 
+    def _camera_info_ts(self) -> float:
+        """Latest frame's sim time; wall clock only before the first frame."""
+        if self._latest_frame_ts is None:
+            return time.time()
+        return self._latest_frame_ts
+
     @rpc
     def get_color_camera_info(self) -> CameraInfo | None:
         if self._camera_info_base is None:
             return None
-        return self._camera_info_base.with_ts(time.time())
+        return self._camera_info_base.with_ts(self._camera_info_ts())
 
     @rpc
     def get_depth_camera_info(self) -> CameraInfo | None:
         if self._camera_info_base is None:
             return None
-        return self._camera_info_base.with_ts(time.time())
+        return self._camera_info_base.with_ts(self._camera_info_ts())
 
     @rpc
     def get_depth_scale(self) -> float:
@@ -681,6 +688,7 @@ class MujocoSimModule(
 
         self._sim_hooks = None
         self._camera_info_base = None
+        self._latest_frame_ts = None
         super().stop()
 
         if errors:
@@ -877,6 +885,7 @@ class MujocoSimModule(
             return
 
         while not self._stop_event.is_set():
+            loop_start = time.monotonic()
             try:
                 frame = engine.read_camera(self.config.camera_name)
             except RuntimeError as exc:
@@ -892,7 +901,8 @@ class MujocoSimModule(
                 self._stop_event.wait(timeout=interval * 0.5)
                 continue
             last_timestamp = frame.timestamp
-            ts = time.time()
+            ts = frame.timestamp
+            self._latest_frame_ts = ts
 
             if self.config.enable_color:
                 color_img = Image(
@@ -922,7 +932,7 @@ class MujocoSimModule(
                     depth_shape=frame.depth.shape,
                 )
 
-            elapsed = time.time() - ts
+            elapsed = time.monotonic() - loop_start
             sleep_time = interval - elapsed
             if sleep_time > 0:
                 time.sleep(sleep_time)
@@ -931,7 +941,7 @@ class MujocoSimModule(
         base = self._camera_info_base
         if base is None:
             return
-        ts = time.time()
+        ts = self._camera_info_ts()
         info = CameraInfo(
             height=base.height,
             width=base.width,
