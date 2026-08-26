@@ -6,7 +6,6 @@ work. Three packages, one body:
 ```
 embodiment/     base.py Embodiment · go2.py the measured Go2 · synthetic.py test bodies
 obstacles.py    which returns are obstacles: a z-rule the body decides
-loader.py       the one "module:factory" loader
 
 planner/                                control/
   planners/   base.py protocol, se2.py    controller.py tracks.py profile.py
@@ -43,45 +42,57 @@ why the time-critical half runs on the robot:
 
 Stock dimos msgs; the port declarations are the spec:
 
-**MotionPlanner**
-
-```python session=io
-from typing import get_args, get_origin, get_type_hints
-from dimos.core.stream import In, Out
+```python
 from dimos.navigation.motion.adapter.planner import MotionPlanner
 
-for name, hint in get_type_hints(MotionPlanner).items():
-    if get_origin(hint) in (In, Out):
-        print(f"{get_origin(hint).__name__:<4} {name:<14} {get_args(hint)[0].__name__}")
+print(MotionPlanner.io(color=False))
 ```
 
 ```results
-In   local_map      PointCloud2
-In   odometry       Odometry
-In   planner_path   Path
-In   tf             TFMessage
-Out  path           Path
-Out  plan_body      Path
+ ├─ local_map: PointCloud2
+ ├─ odometry: Odometry
+ ├─ planner_path: Path
+ ├─ tf: TFMessage
+┌┴──────────────┐
+│ MotionPlanner │
+└┬──────────────┘
+ ├─ path: Path
+ ├─ plan_body: Path
+ │
+ ├─ RPC build() -> None
+ ├─ RPC get_skills() -> list
+ ├─ RPC peek_stream(stream_name: str, timeout: float) -> Any
+ ├─ RPC set_module_ref(name: str, module_ref: RPCClient) -> None
+ ├─ RPC set_transport(stream_name: str, transport: Transport) -> bool
+ ├─ RPC start() -> None
+ ├─ RPC stop() -> None
 ```
 
-**TrajectoryFollower**
-
-```python session=io
+```python
 from dimos.navigation.motion.adapter.follower import TrajectoryFollower
 
-for name, hint in get_type_hints(TrajectoryFollower).items():
-    if get_origin(hint) in (In, Out):
-        print(f"{get_origin(hint).__name__:<4} {name:<14} {get_args(hint)[0].__name__}")
+print(TrajectoryFollower.io(color=False))
 ```
 
 ```results
-In   path           Path
-In   odometry       Odometry
-In   local_map      PointCloud2
-In   stop_movement  Bool
-In   tf             TFMessage
-Out  nav_cmd_vel    Twist
-Out  goal_reached   Bool
+ ├─ path: Path
+ ├─ odometry: Odometry
+ ├─ local_map: PointCloud2
+ ├─ stop_movement: Bool
+ ├─ tf: TFMessage
+┌┴───────────────────┐
+│ TrajectoryFollower │
+└┬───────────────────┘
+ ├─ nav_cmd_vel: Twist
+ ├─ goal_reached: Bool
+ │
+ ├─ RPC build() -> None
+ ├─ RPC get_skills() -> list
+ ├─ RPC peek_stream(stream_name: str, timeout: float) -> Any
+ ├─ RPC set_module_ref(name: str, module_ref: RPCClient) -> None
+ ├─ RPC set_transport(stream_name: str, transport: Transport) -> bool
+ ├─ RPC start() -> None
+ ├─ RPC stop() -> None
 ```
 
 Rules the ports carry:
