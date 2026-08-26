@@ -49,10 +49,11 @@ class WebXRControllerState:
         0: thumbstick X, 1: thumbstick Y, 2: trigger (analog), 3: grip (analog)
     Button indices (digital, 0 or 1):
         0: trigger, 1: grip, 2: touchpad, 3: thumbstick,
-        4: X/A, 5: Y/B, 6: menu
+        4: X/A, 5: Y/B, 6: menu (optional)
     """
 
     EXPECTED_AXES: ClassVar[int] = 4
+    REQUIRED_BUTTONS: ClassVar[int] = 6
 
     is_left: bool = True
     # Analog values (0.0-1.0)
@@ -80,6 +81,8 @@ class WebXRControllerState:
 
         if len(axes) < cls.EXPECTED_AXES:
             raise ValueError(f"Expected {cls.EXPECTED_AXES} axes, got {len(axes)}")
+        if len(buttons) < cls.REQUIRED_BUTTONS:
+            raise ValueError(f"Expected {cls.REQUIRED_BUTTONS} buttons, got {len(buttons)}")
 
         return cls(
             is_left=is_left,
