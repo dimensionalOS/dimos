@@ -31,6 +31,10 @@ bash scripts/eval/space.sh           # clones the benchmark, downloads the data 
 pip install 'dimos[space]'           # the packages its parser imports
 ```
 
+The script pins the benchmark checkout to the revision the reported scores
+were produced against (`DIMOS_SPACE_REV` overrides it). Scoring runs from that
+checkout unmodified, so the pin is what keeps runs comparable.
+
 Default locations sit under `~/.cache/dimos/space`; override with
 `DIMOS_SPACE_DATA_DIR` / `DIMOS_SPACE_REPO`. Without the data every suite is
 empty and imports still work. Frame sampling and episode limits mirror the

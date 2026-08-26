@@ -14,6 +14,9 @@ CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/dimos/space"
 REPO="${DIMOS_SPACE_REPO:-$CACHE/ml-space-benchmark}"
 DATA_DIR="${DIMOS_SPACE_DATA_DIR:-$CACHE/SPACE_data_release}"
 TARBALL_URL="https://ml-site.cdn-apple.com/datasets/space/space.tar.gz"
+# The revision every score in the eval report was produced against. Scoring
+# comes from this checkout unmodified, so the pin is what makes runs comparable.
+SPACE_REV="${DIMOS_SPACE_REV:-564e43932adc84543800dd56b99cee37efaeabd8}"
 
 mkdir -p "$CACHE"
 
@@ -21,8 +24,9 @@ if [ -d "$REPO/.git" ]; then
     echo "benchmark checkout already present: $REPO"
 else
     echo "cloning ml-space-benchmark -> $REPO"
-    git clone --depth 1 https://github.com/apple/ml-space-benchmark "$REPO"
+    git clone https://github.com/apple/ml-space-benchmark "$REPO"
 fi
+git -C "$REPO" checkout --quiet "$SPACE_REV"
 
 if [ -d "$DATA_DIR" ]; then
     echo "dataset already present: $DATA_DIR"
