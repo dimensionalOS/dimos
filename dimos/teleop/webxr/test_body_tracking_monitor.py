@@ -15,8 +15,9 @@
 from collections.abc import Iterator
 
 import pytest
+import pytest_mock
 
-from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
+from dimos.teleop.webxr.body_tracking import BodyJointPose, BodyTrackingSnapshot
 from dimos.teleop.webxr.body_tracking_monitor import (
     BodyTrackingMonitor,
     body_tracking_summary,
@@ -127,6 +128,45 @@ def test_body_tracking_monitor_warns_when_required_heartbeat_has_no_body(
         resolved_joint_ever_seen=False,
         joint_positions={},
     )
+
+
+def test_body_tracking_monitor_reports_healthy_tracking(
+    monitor: BodyTrackingMonitor,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    report_time = monitor._report_started_at + 5.0
+    mocker.patch(
+        "dimos.teleop.webxr.body_tracking_monitor.time.monotonic",
+        return_value=report_time,
+    )
+    info = mocker.patch("dimos.teleop.webxr.body_tracking_monitor.logger.info")
+    monitor._resolved_joint_ever_seen = True
+
+    monitor._on_body_tracking(
+        BodyTrackingSnapshot(
+            type="body_tracking_snapshot",
+            capture_time_s=1.0,
+            frame_id="bounded-floor",
+            joints={
+                "hips": BodyJointPose(
+                    position=(1.0, 2.0, 3.0),
+                    orientation=(0.0, 0.0, 0.0, 1.0),
+                )
+            },
+        )
+    )
+
+    info.assert_called_once_with(
+        "WebXR body tracking health",
+        snapshot_rate_hz=0.2,
+        state="tracking",
+        reference_space="bounded-floor",
+        resolved_joint_count=1,
+        resolved_joint_ever_seen=True,
+        joint_positions={"hips": (1.0, 2.0, 3.0)},
+    )
+    assert monitor._report_started_at == report_time
+    assert monitor._snapshots_since_report == 0
 
 
 def test_body_tracking_monitor_subscribes_during_start(
