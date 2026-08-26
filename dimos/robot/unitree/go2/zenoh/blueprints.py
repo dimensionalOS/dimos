@@ -21,7 +21,7 @@ so a failure can be bisected by dropping down a level:
 
 - ``go2-zenoh-basic`` — streams plus teleop; the bridge, tf and camera, no mapping.
 - ``go2-zenoh-raycaster`` — adds :class:`RayTracingVoxelMap`.
-- ``go2-zenoh-nav`` — the full stack: planner, goal relay and path follower.
+- ``go2-zenoh-nav`` — the full stack: planner and path follower.
 - ``go2-zenoh-nav-remote`` — ``go2-zenoh-nav`` with both natives dropped, for when
   a baked host on the robot publishes their outputs.
 - ``go2-zenoh-nav-baked`` — ``go2-zenoh-nav`` with both natives replaced by the one
@@ -49,13 +49,18 @@ from dimos.navigation.motion.adapter.planner import MotionPlanner
 from dimos.navigation.motion.adapter.viz import motion_visual_override
 from dimos.navigation.movement_manager.cmd_vel_mux import CmdVelMux
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.nav_3d.mls_planner.goal_relay import GoalRelay
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import (
     MLSPlannerNative,
     MLSPlannerNativeConfig,
 )
+from dimos.navigation.nav_3d.mls_planner.start_relay import StartRelay
 from dimos.navigation.nav_3d.mls_planner.viz import planner_visual_override
-from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT, ROBOT_LENGTH, ROBOT_WIDTH
+from dimos.robot.unitree.go2.constants import (
+    BASE_LINK_HEIGHT,
+    ROBOT_HEIGHT,
+    ROBOT_LENGTH,
+    ROBOT_WIDTH,
+)
 from dimos.robot.unitree.go2.zenoh.zenohconnection import GO2Zenoh
 from dimos.visualization.vis_module import vis_module
 
@@ -147,7 +152,7 @@ def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, An
         "visual_override": {
             "world/camera_info": _camera_info_to_pinhole,
             "world/pointlio_map": _render_map,
-            "world/lidar": None,
+            "world/lidar": _render_map,
             "world/local_map": _render_map,
             "world/global_map": _render_map,
             # The local plan's line plus its expected BODY POSES as oriented boxes on
@@ -175,6 +180,7 @@ mls_planner_config = MLSPlannerNativeConfig(
     world_frame="odom",
     voxel_size=voxel_size,
     robot_height=ROBOT_HEIGHT,
+    start_z_offset_m=BASE_LINK_HEIGHT,
     surface_closing_radius=0.3,
     wall_clearance_m=0.1,
     wall_buffer_m=0.75,
@@ -196,7 +202,7 @@ _mls_planner = MLSPlannerNative.blueprint(
 # module wins over basic's -- as long as it stays to the right of it in the call.
 _raytraced_vis = vis_module(
     viewer_backend=global_config.viewer,
-    rerun_config=_rerun_config({"world/pointlio_map": None, "world/lidar": None}),
+    rerun_config=_rerun_config({"world/pointlio_map": None}),
 )
 
 ray_tracing_config = RayTracingVoxelMapConfig(
@@ -218,8 +224,7 @@ go2_zenoh_raycaster = autoconnect(
 go2_zenoh_nav = autoconnect(
     go2_zenoh_raycaster,
     _mls_planner,
-    GoalRelay.blueprint(lidar_height=ROBOT_HEIGHT),
-    BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6),
+    BasicPathFollower.blueprint(speed=0.5, heading_gain=1.5, max_angular=1.5),
     MovementManager.blueprint(),
 ).global_config(transport="zenoh", n_workers=8, robot_model="unitree_go2")
 
@@ -229,8 +234,7 @@ go2_zenoh_nav = autoconnect(
 go2_zenoh_nav_remote = autoconnect(
     go2_zenoh_basic,
     _raytraced_vis,
-    GoalRelay.blueprint(lidar_height=ROBOT_HEIGHT),
-    BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6),
+    BasicPathFollower.blueprint(speed=0.5, heading_gain=1.5, max_angular=1.5),
     MovementManager.blueprint(),
 ).global_config(transport="zenoh", n_workers=6, robot_model="unitree_go2")
 
@@ -250,15 +254,15 @@ go2_zenoh_nav_baked = autoconnect(
         ray_tracing_config=ray_tracing_config,
         mls_planner_config=mls_planner_config,
     ),
-    GoalRelay.blueprint(lidar_height=ROBOT_HEIGHT),
-    BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6),
+    BasicPathFollower.blueprint(speed=0.5, heading_gain=1.5, max_angular=1.5),
     MovementManager.blueprint(),
 ).global_config(transport="zenoh", n_workers=7, robot_model="unitree_go2")
 
 go2_zenoh_htc = autoconnect(
     go2_zenoh_raycaster,
     _mls_planner.remappings([(MLSPlannerNative, "path", "planner_path")]),
-    GoalRelay.blueprint(lidar_height=ROBOT_HEIGHT),
+    # Solely the tf-driven start_pose source for the dannav odom remaps below.
+    StartRelay.blueprint(),
     DanLocalPlanner.blueprint(resample_spacing_m=0.1).remappings(
         [(DanLocalPlanner, "odom", "start_pose")]
     ),
@@ -317,7 +321,6 @@ _go2_zenoh_motion_base = autoconnect(
     # Re-declared on the motion rig: autoconnect keeps the LAST duplicate, so this
     # overrides basic's SF mount. Order-dependent, hence pinned in test_blueprints.py.
     GO2Zenoh.blueprint(mid360_mount=MOTION_MID360_MOUNT),
-    GoalRelay.blueprint(lidar_height=ROBOT_HEIGHT),
     _mls_planner_motion.remappings([(MLSPlannerNative, "path", "planner_path")]),
     # The obstacle band rides the BODY (obstacle_model="body_band", the default): the
     # base sits a known height above the surface its feet stand on, so the cloud
@@ -386,6 +389,5 @@ go2_zenoh_motion_local = autoconnect(
     ),
     RayTracingVoxelMap.blueprint(**ray_tracing_config.model_dump(exclude_unset=True)),
     _mls_planner_motion.remappings([(MLSPlannerNative, "path", "planner_path")]),
-    GoalRelay.blueprint(lidar_height=ROBOT_HEIGHT),
     MovementManager.blueprint(),
 ).global_config(transport="zenoh", n_workers=6, robot_model="unitree_go2")

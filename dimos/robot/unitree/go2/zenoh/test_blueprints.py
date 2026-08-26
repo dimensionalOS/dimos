@@ -23,7 +23,7 @@ pinned here rather than left to the reader.
 import pytest
 
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.robot.unitree.go2.constants import MID360_MOUNT_PRESETS
+from dimos.robot.unitree.go2.go2_mid360_static_transforms import MID360_MOUNT_PRESETS
 from dimos.robot.unitree.go2.tf.go2_tf import Go2TfConfig
 from dimos.robot.unitree.go2.zenoh import blueprints as bp
 from dimos.robot.unitree.go2.zenoh.zenohconnection import GO2Zenoh, GO2ZenohConfig

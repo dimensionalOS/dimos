@@ -12,79 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The robot's base pose off tf: live (`TfPose`) or resolved from odometry (`OdomBasePose`)."""
+"""The robot's base pose off tf."""
 
 from __future__ import annotations
 
 import time
 from typing import TYPE_CHECKING
 
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.utils.logging_config import setup_logger
-
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-    from dimos.msgs.nav_msgs.Odometry import Odometry
     from dimos.protocol.tf.tf import TFLookup
-
-logger = setup_logger()
-
-
-def base_height_above_ground(lidar_height: float, base_to_sensor: Transform) -> float:
-    """Height of the base frame origin above the ground while standing."""
-    return lidar_height - base_to_sensor.translation.z
-
-
-class OdomBasePose:
-    """Turn odometry messages into the base-frame pose they imply."""
-
-    # While the leg is missing, retry the lookup at most this often. The buffer
-    # warns on every miss, so per-message retries would flood the log.
-    RETRY_PERIOD_S = 1.0
-
-    def __init__(self, tf: TFLookup, base_frame: str) -> None:
-        self._tf = tf
-        self.base_frame = base_frame
-        self._legs: dict[str, Transform] = {}
-        self._waiting = False
-        self._next_lookup = 0.0
-
-    def resolve(self, msg: Odometry) -> PoseStamped | None:
-        """The base pose for one message. None until tf has the mount leg."""
-        if msg.child_frame_id == self.base_frame:
-            return msg.to_pose_stamped()
-        leg = self.sensor_to_base(msg.child_frame_id)
-        if leg is None:
-            return None
-        odom = Transform.from_pose(msg.child_frame_id, msg.to_pose_stamped())
-        return (odom + leg).to_pose(ts=msg.ts)
-
-    def sensor_to_base(self, sensor_frame: str) -> Transform | None:
-        """The cached static sensor -> base leg. Logs once per outage, not per message."""
-        if sensor_frame == self.base_frame:
-            return Transform.identity()
-        leg = self._legs.get(sensor_frame)
-        if leg is None:
-            if self._waiting and time.monotonic() < self._next_lookup:
-                return None
-            leg = self._tf.get(sensor_frame, self.base_frame)
-            if leg is None:
-                self._next_lookup = time.monotonic() + self.RETRY_PERIOD_S
-                if not self._waiting:
-                    self._waiting = True
-                    logger.warning(
-                        "No %s -> %s transform on tf yet, dropping odometry until it arrives.",
-                        sensor_frame,
-                        self.base_frame,
-                    )
-                return None
-            if self._waiting:
-                self._waiting = False
-                logger.info("Got the %s -> %s transform, resuming.", sensor_frame, self.base_frame)
-            self._legs[sensor_frame] = leg
-        return leg
 
 
 class TfPose:

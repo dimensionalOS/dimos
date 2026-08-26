@@ -48,10 +48,12 @@ from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, StaticTfPublisherConfig
 from dimos.robot.unitree.go2.connection import _camera_info_static
-from dimos.robot.unitree.go2.constants import CAMERA_XYZ, MID360_MOUNT_PRESETS, MID360_XYZ
-
-# rpy mapping a sensor frame to its optical frame (x-right, y-down, z-forward)
-OPTICAL_RPY = Vector3(-math.pi / 2, 0.0, -math.pi / 2)
+from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
+    CAMERA_XYZ,
+    MID360_MOUNT_PRESETS,
+    MID360_XYZ,
+    OPTICAL_RPY,
+)
 
 
 class GO2ZenohConfig(StaticTfPublisherConfig):
@@ -165,12 +167,12 @@ class GO2Zenoh(StaticTfPublisher):
         and the body snaps between them at 35 Hz.
         """
         base_to_camera = Transform(
-            translation=CAMERA_XYZ,
+            translation=Vector3(*CAMERA_XYZ),
             frame_id="base_link",
             child_frame_id="front_camera",
         )
         camera_to_mid360 = Transform(
-            translation=MID360_XYZ,
+            translation=Vector3(*MID360_XYZ),
             rotation=Quaternion.from_euler(
                 Vector3(*(math.radians(float(d)) for d in self.config.mid360_mount))
             ),
@@ -178,7 +180,7 @@ class GO2Zenoh(StaticTfPublisher):
             child_frame_id="mid360_link",
         )
         camera_to_optical = Transform(
-            rotation=Quaternion.from_euler(OPTICAL_RPY),
+            rotation=Quaternion.from_euler(Vector3(*OPTICAL_RPY)),
             frame_id="front_camera",
             child_frame_id="camera_optical",
         )

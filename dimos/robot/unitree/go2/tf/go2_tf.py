@@ -32,7 +32,11 @@ from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.robot.unitree.go2.constants import CAMERA_XYZ, MID360_MOUNT_PRESETS, MID360_XYZ
+from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
+    CAMERA_XYZ,
+    MID360_MOUNT_PRESETS,
+    MID360_XYZ,
+)
 
 
 class Go2TfConfig(NativeModuleConfig):

@@ -85,7 +85,7 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
 
         for obs in upstream:
             if obs.pose_tuple is None:
-                logger.debug("RayTraceMap: obs %s has no pose; skipping", obs.id)
+                logger.warning("RayTraceMap: obs %s has no pose. dropped a cloud", obs.id)
                 continue
             x, y, z, qx, qy, qz, qw = obs.pose_tuple
             mapper.add_frame(obs.data.points_f32(), (x, y, z), (qx, qy, qz, qw))
