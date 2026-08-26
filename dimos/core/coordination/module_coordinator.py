@@ -264,7 +264,9 @@ class ModuleCoordinator(Resource):
 
     def _instance_keys_of(self, module: type[ModuleBase]) -> list[str]:
         cls = self._resolve_class(module)
-        return [n for n, c in self._instance_classes.items() if self._resolve_class(c) is cls]
+        return [
+            n for n, c in self._instance_classes.items() if issubclass(self._resolve_class(c), cls)
+        ]
 
     def _resolve_instance_key(self, module: type[ModuleBase] | str) -> str:
         """Resolve a module class or instance name to the deployed instance name."""
@@ -323,7 +325,7 @@ class ModuleCoordinator(Resource):
                 instance = self.get_instance(instance_key)  # type: ignore[assignment]
                 instance.set_transport(original_name, transport)  # type: ignore[union-attr]
                 self._module_transports.setdefault(instance_key, {})[original_name] = transport
-                logger.info(
+                logger.debug(
                     "Transport",
                     name=remapped_name,
                     original_name=original_name,

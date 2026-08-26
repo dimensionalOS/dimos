@@ -1,13 +1,11 @@
----
-title: "Evals"
----
+# Evals
 
 Evals measure what an agent (or a bare model, or a single skill) can do with
 the robot's memory. Two kinds:
 
-- **Passive** — the world is a frozen memory recording. Deterministic, cheap,
+- **Passive**: the world is a frozen memory recording. Deterministic, cheap,
   repeatable. Run these constantly.
-- **Interactive** — a live robot or sim; actions change the world; scoring
+- **Interactive**: a live robot or sim. Actions change the world, and scoring
   samples the live memory store while the agent works.
 
 memory is the source of truth for everything an eval sees: context selectors
@@ -19,7 +17,7 @@ return real `Stream`s, and interactive scoring reads a real `Store`.
 # two documentation cases against the go2_short recording (needs OPENAI_API_KEY)
 dimos evals run dimos.evals.suites.examples
 
-# same questions with observations withheld — the guessing ablation
+# same questions with observations withheld (the guessing ablation)
 dimos evals run dimos.evals.suites.examples --blind
 
 # list available suites
@@ -29,10 +27,13 @@ dimos evals list
 Each run prints a per-case table and writes `results.jsonl`, `summary.json`,
 and per-case transcripts to `~/.local/state/dimos/evals/run-*/`.
 
+To generate deterministic image questions from recordings, see
+[Visual Question Answering](/docs/usage/vqa.md).
+
 ## Your first eval, end to end
 
-Build a tiny recording (any memory store works — this is the same API the
-robot's Recorder uses; see `dimos/memory/intro.md` for the full Stream API):
+Build a tiny recording. Any memory store works, since this is the same API the
+robot's Recorder uses (see `dimos/memory/intro.md` for the full Stream API):
 
 ```python session=evals ansi=false no-result
 import os
@@ -61,12 +62,12 @@ print(odom.summary())
 ```
 
 ```results
-Stream("odom"): 20 items, 1970-01-01 00:16:40 — 1970-01-01 00:16:59 (19.0s, 1.00 Hz, 1.68 KiB)
+Stream("odom"): 20 items, 1970-01-01 00:16:40 to 1970-01-01 00:16:59 (19.0s, 1.00 Hz, 1.68 KiB)
 ```
 
 A passive eval is one Python literal. `context` is a tuple of callables that
-receive the opened `Store` and return the mem2 `Stream`s the model may see —
-anything the Stream API expresses (windows, filters, single frames) works, and
+receive the opened `Store` and return the mem2 `Stream`s the model may see.
+Anything the Stream API expresses (windows, filters, single frames) works, and
 the runner evenly downsamples each selected stream to `context_budget`
 observations before encoding:
 
@@ -85,8 +86,8 @@ case = PassiveEval(
 )
 ```
 
-Run it. `chat_model=` injects any LangChain chat model — here a canned fake so
-this document runs offline; drop the argument to use the production model
+Run it. `chat_model=` injects any LangChain chat model, here a canned fake so
+this document runs offline. Drop the argument to use the production model
 config (`gpt-5.6-luna`, same construction as the deployed `McpClient`):
 
 ```python session=evals ansi=false
@@ -111,7 +112,7 @@ That's the whole loop: dataset -> context streams -> encoded prompt -> model
 ## Scoring
 
 Scores are floats in `[0, 1]`; `passed = score >= threshold`. Scorers are
-plain functions `(expected, got) -> float` — a custom heuristic is a lambda,
+plain functions `(expected, got) -> float`. A custom heuristic is a lambda,
 not a class:
 
 ```python session=evals ansi=false
@@ -126,13 +127,13 @@ print(first_number("around 12.5 m"), yes_no("Yes, clearly."), choice(" Chairs. "
 12.5 yes chairs
 ```
 
-- `exact` — equality (the default). Pair with a parser (`yes_no`, `choice`,
+- `exact`: equality (the default). Pair with a parser (`yes_no`, `choice`,
   `int`) so formatting noise doesn't fail a correct answer.
-- `within(band)` — graded numeric credit: 1.0 exact, 0.5 halfway, 0 outside.
-- `ramp(distance, band)` — same ramp over meters; msg types support
+- `within(band)`: graded numeric credit. 1.0 exact, 0.5 halfway, 0 outside.
+- `ramp(distance, band)`: same ramp over meters. The msg types support
   arithmetic, so physical scorers stay one-liners:
   `lambda s: ramp((GOAL - s.streams.odom.last().data.position).length(), band=0.5)`
-- `judge(rubric)` — LLM-as-judge with partial credit, wrapping the
+- `judge(rubric)`: LLM-as-judge with partial credit, wrapping the
   langchain/openevals standard (`inputs`/`reference_outputs` convention, so
   external VQA benchmarks map on natively).
 
@@ -181,7 +182,7 @@ go_to_bed = InteractiveEval(
 dimos evals run dimos.evals.suites.dimsim_house --live-db recording_go2.db
 ```
 
-The result carries the full `(t, score)` series — "reached the bed at t=50s
+The result carries the full `(t, score)` series, so "reached the bed at t=50s
 and stayed" and "grazed it at the deadline" score differently under `floor`
 vs `final`.
 
@@ -189,16 +190,16 @@ vs `final`.
 
 - **CLI**: `dimos evals run <dotted.suite> [--tags nav --blind --limit 5 --model gpt-4o]`
 - **Python**: `EvalRunner(...).run(SUITE, tags=frozenset({"encoding"}))`
-- **pytest**: suites are importable lists —
+- **pytest**: suites are importable lists. Use
   `@pytest.mark.parametrize("case", SUITE)` and assert on `passed`
   (gate live-model tests with `skipif_no_openai`).
 - **MCP**: the `EvalModule` skills `run_evals` / `list_eval_suites` return the
   summary + run dir, so a coding agent can run evals, grep transcripts, edit
   prompts/encodings, and run again.
 - **Blind ablation**: `EvalRunner(blind=True)` withholds all observations. A
-  case that still passes blind is guessable — fix its distractors. Run every
+  case that still passes blind is guessable. Fix its distractors. Run every
   new suite sighted and blind once before trusting it.
-- **Preflight**: before anything runs, every case is checked against the rig —
-  a missing stream fails with `"No stream 'lidar'. Available: [...]"`, a case
+- **Preflight**: before anything runs, every case is checked against the rig.
+  A missing stream fails with `"No stream 'lidar'. Available: [...]"`, a case
   needing MCP/sim fails with what's missing. Errors are per-case; one broken
   case never kills a run.

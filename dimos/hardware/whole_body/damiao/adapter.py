@@ -17,14 +17,18 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any, NoReturn
 
 import can_motor_control
 import numpy as np
 import pinocchio
 
+from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
+from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -40,13 +44,14 @@ class DamiaoWholeBodyAdapter(ABC):
     arm_joints: dict[str, tuple[str, ...]] = {}
     gripper_joints: dict[str, str] = {}
     bus_defaults: dict[str, str] = {}
-    gravity_joint_names: tuple[str, ...] = ()
+    kinematic_joint_names: tuple[str, ...] = ()
+    feedback_clamp_margin_rad = 0.05
 
     def __init__(
         self,
         address: str | Path | None = None,
         *,
-        runtime_config: DamiaoRuntimeConfig | None = None,
+        runtime_config: DamiaoRuntimeConfig | Mapping[str, Any] | None = None,
         dof: int | None = None,
         hardware_id: str = "whole_body",
         domain_id: int = 0,
@@ -61,7 +66,12 @@ class DamiaoWholeBodyAdapter(ABC):
         del domain_id
         if address is not None:
             raise ValueError("configure Damiao CAN buses through runtime_config.bus_addresses")
-        config = runtime_config or DamiaoRuntimeConfig()
+        if runtime_config is None:
+            config = DamiaoRuntimeConfig()
+        elif isinstance(runtime_config, DamiaoRuntimeConfig):
+            config = runtime_config
+        else:
+            config = DamiaoRuntimeConfig(**runtime_config)
         unknown_buses = config.bus_addresses.keys() - self.bus_defaults.keys()
         if unknown_buses:
             raise ValueError(f"unknown CAN bus overrides: {sorted(unknown_buses)}")
@@ -73,8 +83,8 @@ class DamiaoWholeBodyAdapter(ABC):
             raise ValueError(f"expected {len(joint_names)} joints, got {dof}")
 
         arm_joint_count = sum(len(names) for names in self.arm_joints.values())
-        if self.gravity_joint_names and len(self.gravity_joint_names) != arm_joint_count:
-            raise ValueError("gravity joint mapping must contain every angular arm joint")
+        if self.kinematic_joint_names and len(self.kinematic_joint_names) != arm_joint_count:
+            raise ValueError("kinematic joint mapping must contain every angular arm joint")
 
         self._runtime_config = config
         self._hardware_id = hardware_id
@@ -86,6 +96,9 @@ class DamiaoWholeBodyAdapter(ABC):
         self._grippers: dict[str, can_motor_control.Gripper] = {}
         self._pin_model: pinocchio.Model
         self._pin_data: pinocchio.Data
+        self._arm_position_limits: tuple[tuple[float, float], ...] = ()
+        self._feedback_fault: str | None = None
+        self._warned_feedback_clamps: set[tuple[str, str]] = set()
 
     @property
     def joint_names(self) -> tuple[str, ...]:
@@ -101,8 +114,8 @@ class DamiaoWholeBodyAdapter(ABC):
             raise ValueError(f"subclass did not declare CAN bus {name!r}") from exc
 
     @property
-    def gravity_model_path(self) -> Path | None:
-        """Return the subclass's gravity URDF without resolving it at import time."""
+    def kinematic_model(self) -> RobotModel | None:
+        """Return the subclass's arm model without resolving it at import time."""
         return None
 
     @abstractmethod
@@ -110,6 +123,8 @@ class DamiaoWholeBodyAdapter(ABC):
         """Construct the upstream robot from the subclass's physical topology."""
 
     def connect(self) -> bool:
+        self._feedback_fault = None
+        self._warned_feedback_clamps.clear()
         try:
             robot = self._build_robot()
         except Exception:
@@ -126,7 +141,7 @@ class DamiaoWholeBodyAdapter(ABC):
             self._robot = robot
             self._arms = arms
             self._grippers = grippers
-            self._load_gravity_model()
+            self._load_kinematic_model()
             self._connected = True
             self._refresh()
             return True
@@ -186,7 +201,13 @@ class DamiaoWholeBodyAdapter(ABC):
         return self._connected and self._robot.is_connected()
 
     def activate(self) -> bool:
-        if not self._connected:
+        if not self._connected or self._feedback_fault is not None:
+            if self._feedback_fault is not None:
+                logger.error(
+                    "Damiao activation rejected while feedback fault is latched",
+                    hardware_id=self._hardware_id,
+                    error=self._feedback_fault,
+                )
             return False
         try:
             self._preflight_gravity()
@@ -234,6 +255,8 @@ class DamiaoWholeBodyAdapter(ABC):
     def read_motor_states(self) -> list[MotorState]:
         if not self._connected:
             raise RuntimeError("Damiao whole-body adapter is not connected")
+        if self._feedback_fault is not None:
+            raise RuntimeError(f"Damiao feedback fault is latched: {self._feedback_fault}")
         self._refresh()
         states: list[MotorState] = []
         for name, expected_joints in self.arm_joints.items():
@@ -248,15 +271,24 @@ class DamiaoWholeBodyAdapter(ABC):
                 for position, velocity, effort in zip(q, dq, tau, strict=True)
             )
         for name in self.gripper_joints:
+            if not self._active:
+                # Gripper opening calibrates during activation; report a
+                # placeholder so read-only sessions still stream arm state.
+                states.append(MotorState(q=0.0, dq=0.0, tau=0.0))
+                continue
             opening = float(self._grippers[name].opening)
             if not np.isfinite(opening) or not 0.0 <= opening <= 1.0:
                 raise RuntimeError(f"gripper {name!r} returned invalid opening {opening}")
             states.append(MotorState(q=opening, dq=0.0, tau=0.0))
         self._validate_finite_states(states)
-        return states
+        return self._normalize_arm_feedback(states)
 
     def read_imu(self) -> IMUState:
         return IMUState()
+
+    def get_limits(self) -> JointLimits | None:
+        """Return limits when the concrete robot declares them."""
+        return None
 
     def write_motor_commands(self, commands: list[MotorCommand]) -> bool:
         if not self._connected or not self._active or len(commands) != len(self.joint_names):
@@ -322,33 +354,115 @@ class DamiaoWholeBodyAdapter(ABC):
         self._robot.tick(self._runtime_config.tick_deadline_us)
         self._has_state = True
 
-    def _load_gravity_model(self) -> None:
-        if not self._runtime_config.gravity_comp:
+    def _load_kinematic_model(self) -> None:
+        if not self.kinematic_joint_names:
             return
-        model_path = self.gravity_model_path
-        if model_path is None or not model_path.is_file():
-            raise ValueError("gravity compensation requires an existing URDF")
-        self._pin_model = pinocchio.buildModelFromUrdf(str(model_path))
+        robot_model = self.kinematic_model
+        if robot_model is None:
+            raise ValueError("Damiao arm safety requires a kinematic model")
+        model = pinocchio.buildModelFromXML(robot_model.load().xml)
+        controlled_joints = set(self.kinematic_joint_names)
+        locked_joint_ids = [
+            joint_id
+            for joint_id, name in enumerate(model.names)
+            if joint_id != 0 and str(name) not in controlled_joints
+        ]
+        if locked_joint_ids:
+            model = pinocchio.buildReducedModel(
+                model,
+                locked_joint_ids,
+                pinocchio.neutral(model),
+            )
+        self._pin_model = model
         self._pin_data = self._pin_model.createData()
+        arm_count = sum(len(joints) for joints in self.arm_joints.values())
+        if self._pin_model.nq != arm_count or self._pin_model.nv != arm_count:
+            raise ValueError(
+                f"kinematic model dimensions ({self._pin_model.nq}, {self._pin_model.nv}) "
+                f"do not match {arm_count} angular joints"
+            )
+        model_names = tuple(str(name) for name in self._pin_model.names[1:])
+        if model_names != self.kinematic_joint_names:
+            raise ValueError(
+                f"kinematic model joint order {model_names!r} does not match "
+                f"{self.kinematic_joint_names!r}"
+            )
+        lower = np.asarray(self._pin_model.lowerPositionLimit, dtype=np.float64)
+        upper = np.asarray(self._pin_model.upperPositionLimit, dtype=np.float64)
+        if (
+            lower.shape != (arm_count,)
+            or upper.shape != (arm_count,)
+            or not np.isfinite(lower).all()
+            or not np.isfinite(upper).all()
+            or np.any(lower >= upper)
+        ):
+            raise ValueError("kinematic model contains invalid arm position limits")
+        self._arm_position_limits = tuple(
+            (float(lower_limit), float(upper_limit))
+            for lower_limit, upper_limit in zip(lower, upper, strict=True)
+        )
 
     def _preflight_gravity(self) -> None:
         if not self._runtime_config.gravity_comp:
             return
         q = self._arm_positions()
-        if self._pin_model.nq != len(q) or self._pin_model.nv != len(q):
-            raise ValueError(
-                f"gravity model dimensions ({self._pin_model.nq}, {self._pin_model.nv}) "
-                f"do not match {len(q)} angular joints"
-            )
-        model_names = tuple(str(name) for name in self._pin_model.names[1:])
-        if model_names != self.gravity_joint_names:
-            raise ValueError(
-                f"gravity model joint order {model_names!r} does not match "
-                f"{self.gravity_joint_names!r}"
-            )
         gravity = self._gravity_torques()
         if len(gravity) != len(q) or not np.isfinite(gravity).all():
             raise ValueError("gravity compensation produced invalid torques")
+
+    def _normalize_arm_feedback(self, states: list[MotorState]) -> list[MotorState]:
+        normalized = list(states)
+        arm_joint_names = self.joint_names[: len(self._arm_position_limits)]
+        for index, (joint_name, limits) in enumerate(
+            zip(arm_joint_names, self._arm_position_limits, strict=True)
+        ):
+            lower, upper = limits
+            state = states[index]
+            if lower <= state.q <= upper:
+                continue
+
+            boundary = "lower" if state.q < lower else "upper"
+            limit = lower if state.q < lower else upper
+            if abs(state.q - limit) > self.feedback_clamp_margin_rad + 1e-12:
+                self._latch_feedback_fault(
+                    joint_name=joint_name,
+                    value=state.q,
+                    lower=lower,
+                    upper=upper,
+                )
+
+            warning_key = (joint_name, boundary)
+            if warning_key not in self._warned_feedback_clamps:
+                logger.warning(
+                    "Clamping Damiao joint feedback at position limit",
+                    hardware_id=self._hardware_id,
+                    joint=joint_name,
+                    value=state.q,
+                    limit=limit,
+                )
+                self._warned_feedback_clamps.add(warning_key)
+            normalized[index] = MotorState(q=limit, dq=state.dq, tau=state.tau)
+        return normalized
+
+    def _latch_feedback_fault(
+        self,
+        *,
+        joint_name: str,
+        value: float,
+        lower: float,
+        upper: float,
+    ) -> NoReturn:
+        fault = (
+            f"{joint_name} reported {value} outside [{lower}, {upper}] by more than "
+            f"{self.feedback_clamp_margin_rad} rad"
+        )
+        self._feedback_fault = fault
+        disabled = self.deactivate()
+        self._active = False
+        if not disabled:
+            fault = f"{fault}; motor disable failed"
+            self._feedback_fault = fault
+        raise RuntimeError(f"Damiao feedback fault: {fault}")
 
     def _arm_positions(self) -> np.ndarray:
         positions = np.concatenate(

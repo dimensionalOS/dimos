@@ -24,9 +24,11 @@ OPTIONAL_ERROR_SUBSTRINGS = {
     "Unable to locate turbojpeg library automatically",
     "ZED SDK not installed",
     "Descriptors cannot be created directly",
+    # cockpit() blueprints without the [web] extra installed.
+    "needs the web extra",
 }
 
-# These need git LFS, so can't be run on the ubuntu runners.
+# These need self-hosted dependencies or external robot assets.
 SELF_HOSTED_BLUEPRINTS = frozenset(
     {
         "coordinator-basic",
@@ -38,10 +40,7 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
         "coordinator-mobile-manip-mock",
         "coordinator-mock",
         "coordinator-mock-twist-base",
-        "coordinator-openarm-bimanual",
-        "coordinator-openarm-left",
-        "coordinator-openarm-mock",
-        "coordinator-openarm-right",
+        "coordinator-openarm",
         "coordinator-piper",
         "coordinator-servo-xarm6",
         "coordinator-teleop-dual",
@@ -52,10 +51,7 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
         "coordinator-xarm6",
         "coordinator-xarm7",
         "dual-xarm6-planner-coordinator",
-        "keyboard-teleop-openarm",
-        "keyboard-teleop-openarm-mock",
         "learning-collect-quest-xarm7",
-        "openarm-mock-planner-coordinator",
         "openarm-planner-coordinator",
         "teleop-hosted-go2-multicam",
         "teleop-hosted-go2-transport",

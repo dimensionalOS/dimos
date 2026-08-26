@@ -211,7 +211,7 @@ Parameters: `(Kp, Ki, Kd, (min_output, max_output), integral_limit, deadband_pix
 
 ## Available Skills
 
-All skills are exposed to the LLM agent via the `@skill` decorator on `DroneConnectionModule`:
+All skills are exposed to the LLM agent via the `@skill` decorator on `DroneConnectionModule`, except `observe()`, which comes from the shared `ObserveSkill` container (`dimos/agents/skills/observe_skill.py`, remapped to the drone's `video` stream in `drone_agentic`):
 
 ### Movement & Control
 - `move(x, y, z, duration)` — Move with velocity (m/s)

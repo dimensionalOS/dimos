@@ -71,16 +71,18 @@ class MujocoConnection:
     def __init__(self, global_config: GlobalConfig) -> None:
         try:
             import mujoco  # noqa: F401
-        except ImportError:
-            raise ImportError("'mujoco' is not installed. Use `pip install -e .[sim]`")
+            from mujoco_playground._src import mjx_env
+        except ImportError as exc:
+            raise ImportError(
+                "Simulation dependencies are not installed. "
+                "Run `uv sync --extra sim --inexact` to install them."
+            ) from exc
 
         # Pre-download the mujoco_sim data.
         get_data("mujoco_sim")
 
         # Trigger the download of the mujoco_menagerie package. This is so it
         # doesn't trigger in the mujoco process where it can time out.
-        from mujoco_playground._src import mjx_env
-
         mjx_env.ensure_menagerie_exists()
 
         self.global_config = global_config

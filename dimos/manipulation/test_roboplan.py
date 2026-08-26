@@ -1720,7 +1720,7 @@ def test_native_selected_planner_uses_explicit_start_after_live_state_advances(
     assert observed_scene_start[:2] == pytest.approx(start.position)
 
 
-def test_native_selected_planner_rejects_multi_group_selection(
+def test_native_selected_planner_preserves_disjoint_group_selection_order(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
     config = robot_config.model_copy(
@@ -1732,17 +1732,52 @@ def test_native_selected_planner_rejects_multi_group_selection(
         }
     )
     world, _ = _make_world(fake_roboplan, config)
-    selection = _selection((config,), "arm/left", "arm/right")
+    selection = _selection((config,), "arm/right", "arm/left")
 
     result = _planner_for(world).plan_selected_joint_path(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
-        JointState(name=list(selection.joint_names), position=[0.1, 0.1]),
+        JointState(name=list(selection.joint_names), position=[0.1, 0.2]),
     )
 
-    assert result.status == PlanningStatus.UNSUPPORTED
-    assert "no generated group" in result.message
+    assert result.status == PlanningStatus.SUCCESS
+    assert [state.name for state in result.path] == [list(selection.joint_names)] * 3
+    assert result.path[-1].position == [0.1, 0.2]
+
+
+def test_overlapping_group_selection_rejected_before_planning(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    config = robot_config.model_copy(
+        update={
+            "planning_groups": [
+                PlanningGroupDefinition("left", ("joint1", "joint2"), "base", "left_tip"),
+                PlanningGroupDefinition("right", ("joint2",), "base", "right_tip"),
+            ]
+        }
+    )
+    _make_world(fake_roboplan, config)
+
+    with pytest.raises(ValueError, match="overlap"):
+        _selection((config,), "arm/left", "arm/right")
+
+
+def test_overlapping_group_selection_rejected_before_planning(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    config = robot_config.model_copy(
+        update={
+            "planning_groups": [
+                PlanningGroupDefinition("left", ("joint1", "joint2"), "base", "left_tip"),
+                PlanningGroupDefinition("right", ("joint2",), "base", "right_tip"),
+            ]
+        }
+    )
+    _make_world(fake_roboplan, config)
+
+    with pytest.raises(ValueError, match="overlap"):
+        _selection((config,), "arm/left", "arm/right")
 
 
 def test_native_planner_coordinates_groups_across_two_robots(
@@ -1763,13 +1798,8 @@ def test_native_planner_coordinates_groups_across_two_robots(
     )
 
     assert result.status == PlanningStatus.SUCCESS
-    assert result.path[-1].name == [
-        "arm/joint1",
-        "arm/joint2",
-        "right/joint1",
-        "right/joint2",
-    ]
-    assert result.path[-1].position == [0.1, 0.3, 0.4, 0.2]
+    assert result.path[-1].name == list(selection.joint_names)
+    assert result.path[-1].position == [0.4, 0.2, 0.1, 0.3]
 
 
 def test_cartesian_planner_returns_timed_global_joint_states(

@@ -15,8 +15,8 @@
 """Characterization tests for coordinator input-stream routing.
 
 These pin the observable routing behavior of the coordinator's input
-streams (joint_command, twist_command, teleop_buttons, plus the
-per-instance command ports subclasses declare) so routing refactors can
+streams (joint_command, twist_command, plus the per-instance command
+ports subclasses declare) so routing refactors can
 prove they preserve them. They intentionally avoid coordinator
 internals: messages enter through the ports' ``subscribe`` seam and
 effects are observed on the tasks.
@@ -41,6 +41,7 @@ from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.registry import control_task_registry
 from dimos.control.tasks.servo_task.servo_task import JointServoTask, JointServoTaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
+from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.stream import In
 from dimos.hardware.drive_trains.registry import twist_base_adapter_registry
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -54,7 +55,6 @@ ARM_JOINTS = ["arm/joint1", "arm/joint2"]
 STREAMS = (
     "joint_command",
     "twist_command",
-    "teleop_buttons",
     "gripper_command",
 )
 
@@ -222,14 +222,14 @@ class TestPerInstanceCommandRouting:
             stub_task_types=True,
             tasks=[
                 TaskConfig(
-                    name="teleop_left",
-                    type="teleop_ik",
+                    name="cartesian_left",
+                    type="cartesian_ik",
                     joint_names=ARM_JOINTS,
                     stream_bind={"cartesian_command": "left_cartesian"},
                 ),
                 TaskConfig(
-                    name="teleop_right",
-                    type="teleop_ik",
+                    name="cartesian_right",
+                    type="cartesian_ik",
                     joint_names=ARM_JOINTS,
                     stream_bind={"cartesian_command": "right_cartesian"},
                 ),
@@ -239,8 +239,8 @@ class TestPerInstanceCommandRouting:
 
         taps["left_cartesian"].emit(PoseStamped())
 
-        left = coordinator.get_task("teleop_left")
-        right = coordinator.get_task("teleop_right")
+        left = coordinator.get_task("cartesian_left")
+        right = coordinator.get_task("cartesian_right")
         assert len(left.cartesian_calls) == 1
         assert right.cartesian_calls == []
 
@@ -287,7 +287,7 @@ class TestPerInstanceCommandRouting:
 class TestButtonsRouting:
     def test_buttons_reach_teleop_task(self, make_coordinator):
         coordinator, taps = make_coordinator(
-            coordinator_cls=SingleArmControlCoordinator,
+            coordinator_cls=TeleopControlCoordinator,
             stub_task_types=True,
             tasks=[TaskConfig(name="teleop1", type="teleop_ik", joint_names=ARM_JOINTS)],
         )
@@ -616,7 +616,7 @@ class TestCardRoutingContract:
 
     def test_buttons_skip_card_less_tasks(self, make_coordinator):
         coordinator, taps = make_coordinator(
-            coordinator_cls=SingleArmControlCoordinator,
+            coordinator_cls=TeleopControlCoordinator,
             stub_task_types=True,
             tasks=[TaskConfig(name="teleop1", type="teleop_ik", joint_names=ARM_JOINTS)],
         )

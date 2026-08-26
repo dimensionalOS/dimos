@@ -1,8 +1,6 @@
----
-title: "CLI Reference"
----
+# CLI Reference
 
-The `dimos` CLI manages the full lifecycle of a dimOS robot stack — start, stop, inspect, and interact.
+The `dimos` CLI manages the full lifecycle of a dimOS robot stack: start, stop, inspect, and interact.
 
 ## Global Options
 
@@ -125,7 +123,7 @@ and must be lowercase kebab-case, for example `keyboard-teleop`.
 On macOS, heavy replay workloads can be unreliable over LCM UDP, so the default transport resolves to `zenoh`; you can still force either path explicitly with `--transport=lcm` or `--transport=zenoh`.
 
 When `--daemon` is used, the process:
-1. Builds and starts all modules (foreground — you see errors)
+1. Builds and starts all modules (foreground, so you see errors)
 2. Runs a health check (polls worker PIDs)
 3. Forks to background, writes a run registry entry
 4. Prints run ID, PID, log path, and MCP endpoint
@@ -342,11 +340,11 @@ Send a text message to the running agent via LCM.
 dimos agent-send "walk forward 2 meters"
 ```
 
-Works with any agentic blueprint — does not require MCP. Publishes directly to the `/human_input` LCM topic.
+Works with any agentic blueprint. Does not require MCP. Publishes directly to the `/human_input` LCM topic.
 
 ### `dimos mcp`
 
-Interact with the running MCP server. **Requires a blueprint that includes `McpServer`** — for example `unitree-go2-agentic`. The MCP server runs at `http://localhost:9990/mcp` by default (`--mcp-port` / `--mcp-host` to override).
+Interact with the running MCP server. **Requires a blueprint that includes `McpServer`**, for example `unitree-go2-agentic`. The MCP server runs at `http://localhost:9990/mcp` by default (`--mcp-port` / `--mcp-host` to override).
 
 To add MCP to a blueprint, include both `McpServer` (exposes skills as HTTP tools) and `McpClient.blueprint()` (LLM agent that fetches tools from the server):
 
@@ -396,7 +394,7 @@ dimos mcp call land
 
 #### `dimos mcp status`
 
-Show MCP server status — PID, uptime, deployed modules, skill count.
+Show MCP server status: PID, uptime, deployed modules, skill count.
 
 ```bash
 dimos mcp status
@@ -440,7 +438,7 @@ agentspy
 
 ### `dtop`
 
-Live resource monitor TUI — CPU, memory, and process stats. Can also be activated during a run with `--dtop`:
+Live resource monitor TUI: CPU, memory, and process stats. Can also be activated during a run with `--dtop`:
 
 ```bash
 dimos --dtop run unitree-go2

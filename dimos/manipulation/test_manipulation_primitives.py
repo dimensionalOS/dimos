@@ -56,7 +56,7 @@ def _robot(
         joint_names=["j0"],
         base_link="base",
         home_joints=home,
-        gripper_hardware_id="gripper" if gripper else None,
+        gripper_hardware_id=name if gripper else None,
         planning_groups=[
             PlanningGroupDefinition(
                 name="tool",
@@ -127,7 +127,7 @@ def test_get_state_returns_every_group_with_presets(module_factory) -> None:
         name=["arm/j0"], position=[0.1]
     )
     module._world_monitor.get_group_ee_pose.return_value = None
-    module._control_coordinator.get_gripper_position.return_value = 0.04
+    module._control_coordinator.task_invoke.return_value = [0.04]
 
     snapshot = module.get_state()
 
@@ -136,6 +136,22 @@ def test_get_state_returns_every_group_with_presets(module_factory) -> None:
     assert group.gripper_position == pytest.approx(0.04)
     assert group.joint_presets["home"].position == [0.3]
     assert group.joint_presets["init"].position == [-0.2]
+    module._control_coordinator.task_invoke.assert_called_once_with(
+        "arm_gripper", "get_normalized", {}
+    )
+
+
+def test_set_gripper_position_routes_normalized_command(module_factory) -> None:
+    module = module_factory()
+    _set_groups(module, _robot(gripper=True))
+    module._control_coordinator.task_invoke.return_value = True
+
+    result = module.set_gripper_position(0.4, "arm/tool")
+
+    assert result.succeeded
+    module._control_coordinator.task_invoke.assert_called_once_with(
+        "arm_gripper", "set_normalized", {"values": [0.4]}
+    )
 
 
 def test_move_linear_rejects_ambiguous_default_group(module_factory) -> None:

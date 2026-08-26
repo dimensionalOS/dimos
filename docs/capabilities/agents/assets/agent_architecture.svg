@@ -1,0 +1,33 @@
+<svg xmlns='http://www.w3.org/2000/svg' style='font-size:initial;' class="pikchr" viewBox="0 0 1255.53 299.808" data-pikchr-date="20260403102956">
+<path d="M9.66,159.84L314.075,159.84A7.5 7.5 0 0 0 321.575 152.34L321.575,81.66A7.5 7.5 0 0 0 314.075 74.16L9.66,74.16A7.5 7.5 0 0 0 2.16 81.66L2.16,152.34A7.5 7.5 0 0 0 9.66 159.84Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="161.868" y="106.92" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">humancli / WebInput</text>
+<text x="161.868" y="127.08" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">dimos agent-send</text>
+<polygon points="407.975,117 396.455,121.32 396.455,112.68" style="fill:rgb(255,255,255)"/>
+<path d="M321.575,117L402.215,117"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="364.775" y="105.3" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">human_input</text>
+<text x="364.775" y="128.7" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">In[str]</text>
+<path d="M415.475,159.84L684.247,159.84A7.5 7.5 0 0 0 691.747 152.34L691.747,81.66A7.5 7.5 0 0 0 684.247 74.16L415.475,74.16A7.5 7.5 0 0 0 407.975 81.66L407.975,152.34A7.5 7.5 0 0 0 415.475 159.84Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="549.861" y="106.92" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">McpClient</text>
+<text x="549.861" y="127.08" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">LangGraph + LLM</text>
+<path d="M828.847,159.84L1051.99,159.84A7.5 7.5 0 0 0 1059.49 152.34L1059.49,81.66A7.5 7.5 0 0 0 1051.99 74.16L828.847,74.16A7.5 7.5 0 0 0 821.347 81.66L821.347,152.34A7.5 7.5 0 0 0 828.847 159.84Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="940.418" y="106.92" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">@skill methods</text>
+<text x="940.418" y="127.08" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">on any Module</text>
+<polygon points="1131.49,117 1119.97,121.32 1119.97,112.68" style="fill:rgb(255,255,255)"/>
+<path d="M1059.49,117L1125.73,117"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M1138.99,145.728L1245.87,145.728A7.5 7.5 0 0 0 1253.37 138.228L1253.37,95.772A7.5 7.5 0 0 0 1245.87 88.272L1138.99,88.272A7.5 7.5 0 0 0 1131.49 95.772L1131.49,138.228A7.5 7.5 0 0 0 1138.99 145.728Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="1192.43" y="117" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Robot</text>
+<polygon points="821.347,98.28 809.827,102.6 809.827,93.96" style="fill:rgb(255,255,255)"/>
+<path d="M691.747,98.28L815.587,98.28"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="756.547" y="86.58" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">skill call (RPC)</text>
+<polygon points="691.747,135.72 703.267,131.4 703.267,140.04" style="fill:rgb(255,255,255)"/>
+<path d="M821.347,135.72L697.507,135.72"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="756.547" y="147.42" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">result</text>
+<path d="M343.158,297.648L756.564,297.648A7.5 7.5 0 0 0 764.064 290.148L764.064,253.74A7.5 7.5 0 0 0 756.564 246.24L343.158,246.24A7.5 7.5 0 0 0 335.658 253.74L335.658,290.148A7.5 7.5 0 0 0 343.158 297.648Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="549.861" y="271.944" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">color_image  ·  odom  ·  spatial_memory</text>
+<polygon points="549.861,159.84 554.181,171.36 545.541,171.36" style="fill:rgb(255,255,255)"/>
+<path d="M549.861,246.24L549.861,165.6"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="549.861" y="203.04" text-anchor="start" fill="rgb(255,255,255)" dominant-baseline="central">subscribes</text>
+<polygon points="161.868,74.16 157.548,62.64 166.188,62.64" style="fill:rgb(255,255,255)"/>
+<path d="M549.861,74.16L549.861,2.16L161.868,2.16L161.868,68.4"  style="fill:none;stroke-width:2.16;stroke-linejoin:round;stroke:rgb(255,255,255);" />
+<text x="355.864" y="26.46" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">agent: Out[BaseMessage]</text>
+</svg>

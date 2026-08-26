@@ -1,6 +1,4 @@
----
-title: "Manipulation"
----
+# Manipulation
 
 Motion planning and teleoperation for robotic manipulators. RoboPlan provides
 the default world and native path planner.
@@ -15,16 +13,30 @@ dimos run keyboard-teleop-a750
 
 ### Keyboard Teleop (single command)
 
-Each blueprint launches the full stack — keyboard UI, mock controller, IK solver, and Drake visualization:
+Each blueprint launches the full stack: keyboard UI, mock controller, IK solver, and Drake visualization:
 
 ```bash
 dimos run keyboard-teleop-a750    # A-750 6-DOF
+dimos run openarm-planner-coordinator # OpenArm bimanual 2x(7-DOF + gripper)
 dimos run keyboard-teleop-a1z     # Galaxea A1Z 6-DOF
 dimos run keyboard-teleop-piper   # Piper 6-DOF
 dimos run keyboard-teleop-openyam # OpenYAM 6-DOF + gripper
 dimos run keyboard-teleop-xarm6   # XArm6 6-DOF
 dimos run keyboard-teleop-xarm7   # XArm7 7-DOF
 ```
+
+OpenYAM is exposed as one whole-body device with six angular arm joints and a
+normalized gripper joint. `arm/gripper` uses `0.0` for fully closed and `1.0`
+for fully open; it does not use meters. Hardware activation calibrates both
+mechanical endpoints, so clear the gripper jaws and workspace before startup.
+The gripper has no default startup target and moves only after joint control has
+an explicit target.
+
+OpenArm follows the same whole-body model with both arms and both grippers in
+one device: fourteen angular joints (`left_arm/joint1..7`,
+`right_arm/joint1..7`) plus two normalized gripper joints (`left_arm/gripper`,
+`right_arm/gripper`). The keyboard jogs the left arm while the right arm holds
+its pose; keyboard gripper bindings are a follow-up.
 
 Open the Meshcat URL printed in the terminal (default `http://localhost:7000`) to see the robot.
 
@@ -408,9 +420,33 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
                           JointState ────────────→ (visualization)
 ```
 
-- **KeyboardTeleopModule** — Pygame UI publishing routed spatial EEF twist intent
-- **ControlCoordinator** — 100Hz control loop with mock or real hardware adapters
-- **ManipulationModule** — world backend, optional visualization, RRT motion planning, obstacle management
+- **KeyboardTeleopModule**: Pygame UI publishing routed spatial EEF twist intent
+- **ControlCoordinator**: 100Hz control loop with mock or real hardware adapters
+- **ManipulationModule**: world backend, optional visualization, RRT motion planning, obstacle management
+
+### Streaming pose-target control
+
+`CartesianIKTask` and `TeleopIKTask` are sibling leaves over the shared
+`PoseTargetIKTask` control core. Their configuration uses a `RobotModelConfig`,
+explicit controlled `joint_names`, and named target frames. The common core
+warm-starts one bounded Pink update from live coordinator joint state on each
+tick; it does not require a planning world or expose planning groups to the
+coordinator.
+
+Cartesian IK accepts one absolute robot-frame target. Quest IK accepts one or
+two controller-to-frame bindings and owns engagement, reference capture,
+relative target mapping, and optional per-hand gripper commands. The
+coordinator only routes the distinct left/right pose streams by task name and
+arbitrates the resulting joint command.
+
+### Robot-specific Pink task stacks
+
+For robot-specific control feel, subclass `PinkPoseTargetSolver`, override its
+task-construction hooks, and pass the class through `solver_type`. The
+coordinator constructs a fresh stateful solver for every control task. See
+[Pink IK Configuration and Tuning](/docs/capabilities/manipulation/pink_ik_tuning.md)
+for the supported hooks, objective tuning, command bounds, and hardware test
+order.
 
 Internally, planning code depends on `WorldSpec` for world, collision, and
 kinematics behavior. Meshcat preview and publishing are exposed separately
@@ -447,10 +483,10 @@ planner is locked for its whole native call.
 
 | Robot | DOF | Teleop | Planning | Perception |
 |-------|-----|--------|----------|------------|
-| [A-750](/docs/capabilities/manipulation/a750.md) | 6 | Y | Y | — |
-| [Galaxea A1Z](/docs/capabilities/manipulation/a1z.md) | 6 | Y | Y | — |
-| Piper | 6 | Y | Y | — |
-| XArm6 | 6 | Y | Y | — |
+| [A-750](/docs/capabilities/manipulation/a750.md) | 6 | Y | Y | N |
+| [Galaxea A1Z](/docs/capabilities/manipulation/a1z.md) | 6 | Y | Y | N |
+| Piper | 6 | Y | Y | N |
+| XArm6 | 6 | Y | Y | N |
 | XArm7 | 7 | Y | Y | Y |
 
 ## Adding a Custom Arm
