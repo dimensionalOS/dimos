@@ -263,3 +263,19 @@ def test_codecs_interchangeable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     assert t.uploads[r["upload_id"]]["content_encoding"] == algo
     out = cloud.pull(r["upload_id"], dest=tmp_path / f"back-{algo}.db")
     assert out.read_bytes() == db.read_bytes()
+
+
+def test_progress_prefix_and_default_pull(env: tuple[CloudData, FakeTransport, Path]) -> None:
+    cloud, t, db = env
+    ticks: list[tuple[str, int, int]] = []
+    r = cloud.upload(db, progress=lambda ph, d, tot: ticks.append((ph, d, tot)))
+    assert (
+        ticks[0][0] == "compress"
+        and ticks[-1][:1] == ("upload",)
+        and ticks[-1][1] == ticks[-1][2] > 0
+    )
+    uid = r["upload_id"]
+    assert cloud.resolve(uid[:6]) == uid and cloud.resolve(None) == uid
+    with pytest.raises(RuntimeError, match="no upload matching"):
+        cloud.resolve("zz")
+    assert cloud.pull(uid[:6], dest=db.parent / "p.db").read_bytes() == db.read_bytes()

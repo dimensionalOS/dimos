@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import typer
@@ -42,7 +43,7 @@ def upload(
     failed = False
     for t in targets:
         try:
-            r = cloud.upload(t, robot_id=robot, kind=kind, chunk_mb=chunk)
+            r = cloud.upload(t, robot_id=robot, kind=kind, chunk_mb=chunk, progress=_bar(t.name))
             typer.echo(
                 f"{t.name}: {'already uploaded' if r['skipped'] else r['state']} "
                 f"({r['upload_id'][:12]})"
@@ -54,6 +55,21 @@ def upload(
             failed = True
     if failed:
         raise typer.Exit(1)
+
+
+def _bar(name: str) -> Callable[[str, int, int], None]:
+    from rich.progress import Progress
+
+    bar = Progress(transient=True)
+    bar.start()
+    task = bar.add_task(name, total=None)
+
+    def tick(phase: str, done: int, total: int) -> None:
+        bar.update(task, description=f"{phase} {name}", completed=done, total=total or None)
+        if phase == "upload" and done >= total:
+            bar.stop()
+
+    return tick
 
 
 def ls() -> None:
@@ -77,7 +93,7 @@ def ls() -> None:
     Console().print(table)
 
 
-def pull(upload_id: str, dest: Path | None) -> None:
+def pull(upload_id: str | None, dest: Path | None) -> None:
     try:
         typer.echo(f"pulled to {CloudData().pull(upload_id, dest)}")
     except RuntimeError as e:

@@ -20,6 +20,7 @@ callers. Every knob lives on GlobalConfig; nothing here is hardcoded."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import functools
 import hashlib
 import json
@@ -36,10 +37,18 @@ from dimos.cloud.http_transport import HttpTransport, Transport
 from dimos.constants import RECORDINGS_DIR
 from dimos.core.global_config import global_config
 
+Progress = Callable[[str, int, int], None]  # (phase, done_bytes, total_bytes)
+
 
 class DatasetBackend(Protocol):
     def upload(
-        self, path: Path, *, robot_id: str | None, kind: str, part_size: int | None
+        self,
+        path: Path,
+        *,
+        robot_id: str | None,
+        kind: str,
+        part_size: int | None,
+        progress: Progress | None,
     ) -> dict[str, Any]: ...
     def pull(self, upload_id: str, dest: Path | None) -> Path: ...
     def ls(self) -> list[dict[str, Any]]: ...
@@ -76,12 +85,20 @@ class MultipartBackend:
         return tempfile.TemporaryDirectory(dir=self.staging_dir or beside.parent)
 
     def upload(
-        self, path: Path, *, robot_id: str | None, kind: str, part_size: int | None
+        self,
+        path: Path,
+        *,
+        robot_id: str | None,
+        kind: str,
+        part_size: int | None,
+        progress: Progress | None,
     ) -> dict[str, Any]:
+        tick = progress or (lambda phase, done, total: None)
         manifest = _manifest(path)
         with self._staging(path) as tmp:
             if self.codec_id and path.suffix != codecs.suffix(self.codec_id):
                 artifact = Path(tmp) / (path.name + codecs.suffix(self.codec_id))
+                tick("compress", 0, path.stat().st_size)
                 codecs.compress(self.codec_id, path, artifact)
             else:
                 artifact = path
@@ -104,15 +121,21 @@ class MultipartBackend:
                 return {**create, "skipped": True}
             uid = create["upload_id"]
             have = {p["part_number"] for p in self.status(uid)["parts"]}
+            ps = create["part_size"]
+            done = min(len(have) * ps, size)
+            tick("upload", done, size)
             with artifact.open("rb") as f:
                 for part in create["part_urls"]:
                     if part["part_number"] in have:
                         continue
-                    f.seek((part["part_number"] - 1) * create["part_size"])
+                    f.seek((part["part_number"] - 1) * ps)
+                    chunk = f.read(ps)
                     self._retry(
-                        functools.partial(self.t.put, part["url"], f.read(create["part_size"])),
+                        functools.partial(self.t.put, part["url"], chunk),
                         f"part {part['part_number']}",
                     )
+                    done += len(chunk)
+                    tick("upload", done, size)
             parts = sorted(self.status(uid)["parts"], key=lambda p: p["part_number"])
             done = self.t.request("POST", f"{self.API}/uploads/{uid}/complete", {"parts": parts})
             return {**done, "upload_id": uid, "skipped": False}
@@ -177,6 +200,7 @@ class CloudData:
         robot_id: str | None = None,
         kind: str | None = None,
         chunk_mb: int | None = None,
+        progress: Progress | None = None,
     ) -> dict[str, Any]:
         path = path.expanduser()
         if not path.is_file():
@@ -191,10 +215,21 @@ class CloudData:
             robot_id=robot_id,
             kind=kind or kind_of(path),
             part_size=chunk_mb * 2**20 if chunk_mb else None,
+            progress=progress,
         )
 
-    def pull(self, upload_id: str, dest: Path | None = None) -> Path:
-        return self.backend.pull(upload_id, dest)
+    def resolve(self, prefix: str | None) -> str:
+        """Full upload id from a prefix (as printed by `ls`); None -> newest complete."""
+        rows = [u for u in self.ls() if u["state"] == "complete"]
+        hits = [u for u in rows if not prefix or u["id"].startswith(prefix)]
+        if not hits:
+            raise RuntimeError(f"no upload matching {prefix!r}" if prefix else "no uploads")
+        if prefix and len(hits) > 1 and hits[0]["id"] != prefix:
+            raise RuntimeError(f"ambiguous id prefix {prefix!r}")
+        return str(hits[0]["id"])
+
+    def pull(self, upload_id: str | None, dest: Path | None = None) -> Path:
+        return self.backend.pull(self.resolve(upload_id), dest)
 
     def ls(self) -> list[dict[str, Any]]:
         return self.backend.ls()

@@ -54,7 +54,10 @@ def data_ls() -> None:
 
 
 @data_app.command()
-def pull(upload_id: str, dest: Path | None = typer.Option(None, "--dest")) -> None:
+def pull(
+    upload_id: str | None = typer.Argument(None, help="Id or prefix from `ls`; default: newest"),
+    dest: Path | None = typer.Option(None, "--dest"),
+) -> None:
     from dimos.cloud import cli
 
     cli.pull(upload_id, dest)
