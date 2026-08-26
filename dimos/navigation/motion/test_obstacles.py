@@ -70,6 +70,16 @@ def test_a_tall_body_keeps_what_the_absolute_band_would_have_cut_off():
     assert len(out) == 1 and out[0][2] == pytest.approx(0.55)
 
 
+def test_a_non_finite_return_is_dropped_not_planned_on():
+    # one NaN x reaches the search as a NaN grid corner and the whole plan raises
+    cloud = np.array(
+        [[np.nan, 0.0, 0.3], [1.0, np.inf, 0.3], [1.0, 0.0, np.nan], [1.0, 0.0, 0.3]],
+        dtype=np.float32,
+    )
+    out = hard_points(BodyBand(GO2), cloud, 0.0)
+    assert len(out) == 1 and np.isfinite(out).all()
+
+
 def test_the_registry_names_the_model():
     assert sorted(OBSTACLE_MODELS) == ["body_band"]
     assert isinstance(load("body_band", GO2), BodyBand)

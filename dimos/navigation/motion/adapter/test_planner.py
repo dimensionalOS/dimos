@@ -23,6 +23,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.motion.adapter import planner as planner_module
 from dimos.navigation.motion.adapter.planner import (
     MotionPlanner,
@@ -116,6 +117,8 @@ def test_hold_publishes_single_pose_stub_at_the_current_pose():
     assert path.poses[0].position.x == 1.5
     assert path.poses[0].position.y == -2.0
     assert abs(path.poses[0].yaw - math.pi / 2) < 1e-9
+    # the stub stands on the ground like every planned pose, not at z=0
+    assert abs(path.poses[0].position.z - (0.0 - planner._emb.base_height)) < 1e-9
 
 
 def test_hold_stub_stops_the_controller():
@@ -227,6 +230,17 @@ def test_the_band_rides_the_body_not_the_map_origin():
     assert len(out) == 2
     assert abs(float(out[:, 2].min()) - 0.2) < 1e-6
     assert abs(float(out[:, 2].max()) - 0.4) < 1e-6
+
+
+def test_a_map_with_a_non_finite_return_still_plans():
+    # one NaN x used to reach the search as a NaN grid corner: every tick
+    # raised, "keeping the last published path" forever
+    planner, published, _drawn = _holding_planner()
+    room = np.concatenate([_room(-0.28), np.array([[np.nan, 0.0, -0.08]], dtype=np.float32)])
+    cloud = PointCloud2.from_numpy(room, frame_id="odom")
+    planner._on_local_map(cloud)
+    assert planner._plan_once(cloud, pose_stamped(0.0, 0.0, 0.0), (0.5, 0.0), ground_z=-0.28)
+    assert len(published) == 1 and len(published[0].poses) >= 2
 
 
 def test_the_default_model_is_the_body_band():

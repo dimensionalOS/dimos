@@ -94,8 +94,9 @@ def load(name: str, emb: Embodiment) -> ObstacleModel:
 
 
 def referenced(cloud: NDArray[np.float32], ground_z: float) -> NDArray[np.float32]:
-    """The cloud in the frame a model reads: z off the support surface."""
+    """The cloud in the frame a model reads: z off the support surface, finite rows only."""
     pts = np.asarray(cloud, dtype=np.float32).reshape(-1, 3)
+    pts = pts[np.isfinite(pts).all(axis=1)]
     return pts - np.array([0.0, 0.0, ground_z], dtype=np.float32)
 
 

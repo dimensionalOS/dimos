@@ -32,7 +32,6 @@ from threading import Event, RLock, Thread
 import time
 from typing import Any
 
-from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 import numpy as np
 from reactivex.disposable import Disposable
 
@@ -45,6 +44,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.motion.adapter.diagnostics import StallReporter
 from dimos.navigation.motion.control.controller import (
@@ -146,6 +146,11 @@ class TrajectoryFollowerConfig(ModuleConfig):
     stall_report_s: float = 3.0
     # A commanded speed at or under this is standing still, whatever the reason.
     idle_speed: float = 0.02
+    # The deadman: zero the twist once the held path is this old, measured from
+    # ARRIVAL. It guards a planner that stopped speaking, alive-and-failing
+    # included -- the link dropping is not the only way a plan goes stale.
+    # Must clear the replan cadence (plans arrive per map, gaps to ~1.3 s seen).
+    max_path_age_s: float = 2.5
 
 
 class TrajectoryFollower(Module):
@@ -168,6 +173,7 @@ class TrajectoryFollower(Module):
         self._pose: PoseStamped | None = None
         self._base_pose: OdomBasePose | None = None
         self._path: Path | None = None
+        self._path_at: float | None = None
         self._cloud: PointCloud2 | None = None
         self._clearance: np.ndarray | None = None
         # The very (path, cloud) the hint was measured from, held rather than
@@ -184,7 +190,9 @@ class TrajectoryFollower(Module):
         self._emb = self.config.embodiment.dilated(by=self.config.body_dilate_m)
         self._model: ObstacleModel = load_model(self.config.obstacle_model, self._emb)
         self._half_width = self._emb.width / 2.0
-        self._controller: TrajectoryController | None = None
+        self._controller: TrajectoryController = load(
+            self.config.controller or self._track.controller
+        )(self._emb)
         self._stop_event = Event()
         self._thread: Thread | None = None
         self._stall = StallReporter("TrajectoryFollower", self.config.stall_report_s)
@@ -194,7 +202,6 @@ class TrajectoryFollower(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self._controller = load(self.config.controller or self._track.controller)(self._emb)
         self._controller.reset()
         self.register_disposable(Disposable(self.path.subscribe(self._on_path)))
         self.register_disposable(Disposable(self.odometry.subscribe(self._on_odometry)))
@@ -215,15 +222,18 @@ class TrajectoryFollower(Module):
     def _on_path(self, msg: Path) -> None:
         with self._lock:
             self._path = msg
+            self._path_at = time.monotonic()
             if len(msg.poses) >= 2:
                 # the plan ends at the goal; a single-pose stub is a refusal,
                 # never an arrival target
                 self._latch.set_goal((msg.poses[-1].position.x, msg.poses[-1].position.y))
 
     def _on_odometry(self, msg: Odometry) -> None:
-        if self._base_pose is None:
-            self._base_pose = OdomBasePose(self.tfbuffer, self.config.base_frame)
-        pose = self._base_pose.resolve(msg)
+        with self._lock:
+            if self._base_pose is None:
+                self._base_pose = OdomBasePose(self.tfbuffer, self.config.base_frame)
+            resolver = self._base_pose
+        pose = resolver.resolve(msg)
         if pose is None:
             return
         with self._lock:
@@ -234,37 +244,53 @@ class TrajectoryFollower(Module):
             self._cloud = msg
 
     def _on_stop(self, msg: Bool) -> None:
+        """Preemption: drop the plan, stop, and forget the law's slew history."""
         if msg.data:
             with self._lock:
                 self._path = None
+                self._path_at = None
+                self._controller.reset()
             self.nav_cmd_vel.publish(Twist())
 
     def _control_loop(self) -> None:
         period = 1.0 / self.config.control_frequency
         while not self._stop_event.is_set():
             started = time.perf_counter()
+            now = time.monotonic()
             with self._lock:
                 pose, path = self._pose, self._path
+                age = None if self._path_at is None else now - self._path_at
             # A follower with no pose or no plan is not "not moving", it is not
             # RUNNING, and those want different fixes. `path` going None is also
             # how stop_movement lands here, so it is named as such.
             if self._stall.check(
                 {"odometry": pose is not None, "path (local plan)": path is not None}
             ):
-                assert pose is not None and path is not None
-                self._step(pose, path)
+                assert pose is not None and path is not None and age is not None
+                self._step(pose, path, age)
             elapsed = time.perf_counter() - started
             self._stop_event.wait(max(0.0, period - elapsed))
 
-    def _step(self, pose: PoseStamped, path: Path) -> None:
-        assert self._controller is not None
+    def _step(self, pose: PoseStamped, path: Path, age: float) -> None:
+        """One control tick against a path that arrived `age` seconds ago."""
+        # The deadman outranks arrival: a goal reached against a plan nobody
+        # is refreshing is a coincidence, not an arrival.
+        if age > self.config.max_path_age_s:
+            self.nav_cmd_vel.publish(Twist())
+            self._stall.blocked(
+                f"the planner: the path is {age:.1f} s old "
+                f"(max_path_age_s={self.config.max_path_age_s}), holding"
+            )
+            return
         xy = (pose.position.x, pose.position.y)
-        if self._latch.arrive(xy):
+        with self._lock:
+            arrived, reached = self._latch.arrive(xy), self._latch.reached
+        if arrived:
             self.nav_cmd_vel.publish(Twist())
             self.goal_reached.publish(Bool(True))
             logger.info("Goal reached")
             return
-        if self._latch.reached:
+        if reached:
             self.nav_cmd_vel.publish(Twist())
             self._stall.blocked("a new goal -- the last one is reached and latched")
             return

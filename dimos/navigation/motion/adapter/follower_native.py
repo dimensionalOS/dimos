@@ -23,16 +23,12 @@ reference implementation.
 Two fields do NOT cross. ``controller``, because the track already names the
 law and a native module has one law per track by construction; and
 ``stall_report_s``, because the rust side reports through throttled tracing
-lines rather than a StallReporter. ``max_path_age_s`` is new here and has no
-python twin: on the laptop the link was the deadman, and co-located with the
-planner that accidental safety is gone.
+lines rather than a StallReporter.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-
-from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
@@ -40,6 +36,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.motion.embodiment.base import Embodiment
 from dimos.navigation.motion.embodiment.go2 import GO2
@@ -69,11 +66,9 @@ class TrajectoryFollowerNativeConfig(NativeModuleConfig):
     # slice the plan was priced in (motion/obstacles.py).
     obstacle_model: str = "body_band"
     idle_speed: float = 0.02
-    # Zero the twist once the held path is this old, measured from ARRIVAL. The
-    # planner is co-located, so this guards planner death, not the link.
-    # 1.0 s = five missed 5 Hz replans. Picked, not measured -- tune on robot.
-    # Must clear the replan gate's cadence: plans arrive per MAP (~1 Hz, gaps
-    # to ~1.3 s observed), so a 1.0 ceiling zeroes the twist mid-stride.
+    # The deadman, as in follower.py: measured from ARRIVAL, guards a planner
+    # that stopped speaking (dead, or alive and failing every tick). Must clear
+    # the replan cadence (plans arrive per MAP, gaps to ~1.3 s observed).
     max_path_age_s: float = 2.5
 
 

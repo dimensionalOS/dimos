@@ -229,9 +229,9 @@ class MotionPlanner(Module):
         self._ground_z: float | None = None
         self._base_pose: OdomBasePose | None = None
         self._global_xy: np.ndarray | None = None
-        self._episode: PlannerEpisode | None = None
         self._emb = self.config.embodiment.dilated(by=self.config.body_dilate_m)
         self._model: ObstacleModel = load_model(self.config.obstacle_model, self._emb)
+        self._episode: PlannerEpisode = load(self.config.planner)(self._emb)
         self._stop_event = Event()
         self._thread: Thread | None = None
         self._stall = StallReporter("MotionPlanner", self.config.stall_report_s)
@@ -240,7 +240,6 @@ class MotionPlanner(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self._episode = load(self.config.planner)(self._emb)
         self._episode.reset()
         self.register_disposable(Disposable(self.local_map.subscribe(self._on_local_map)))
         self.register_disposable(Disposable(self.odometry.subscribe(self._on_odometry)))
@@ -264,9 +263,11 @@ class MotionPlanner(Module):
             self._cloud_at = time.monotonic()
 
     def _on_odometry(self, msg: Odometry) -> None:
-        if self._base_pose is None:
-            self._base_pose = OdomBasePose(self.tfbuffer, self.config.base_frame)
-        pose = self._base_pose.resolve(msg)
+        with self._lock:
+            if self._base_pose is None:
+                self._base_pose = OdomBasePose(self.tfbuffer, self.config.base_frame)
+            resolver = self._base_pose
+        pose = resolver.resolve(msg)
         if pose is None:
             return
         with self._lock:
@@ -316,7 +317,7 @@ class MotionPlanner(Module):
                 # is computed every tick and the gate reads it, not the array
                 goal = carrot_along(global_xy, (pose.x, pose.y), self.config.goal_lookahead_m)
                 if self._due(cloud_seq, goal):
-                    if self._retask(goal) and self._episode is not None:
+                    if self._retask(goal):
                         # a new task: warm starts, hysteresis and the route
                         # being held are all about the old one
                         self._episode.reset()
@@ -355,7 +356,7 @@ class MotionPlanner(Module):
         stub = PoseStamped(
             ts=ts,
             frame_id=self.config.world_frame,
-            position=Vector3(pose.x, pose.y, 0.0),
+            position=Vector3(pose.x, pose.y, pose.position.z - self._emb.base_height),
             orientation=Quaternion.from_euler(Vector3(0.0, 0.0, pose.yaw)),
         )
         held = Path(ts=ts, frame_id=self.config.world_frame, poses=[stub])
@@ -370,7 +371,6 @@ class MotionPlanner(Module):
         ground_z: float,
     ) -> bool:
         """Plan and publish. False when the search raised and nothing went out."""
-        assert self._episode is not None
         # The search gets the obstacles, as xy: which returns are obstacles was
         # decided here, by the model, and the search has no z to decide it again
         # with. The follower's room hint is measured off the very same points,

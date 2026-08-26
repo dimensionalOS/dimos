@@ -21,6 +21,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.Bool import Bool
 from dimos.navigation.motion.adapter.follower import (
     GoalLatch,
     TrajectoryFollower,
@@ -202,3 +203,52 @@ def test_the_blind_track_never_warns_about_the_map_it_does_not_read(heard):
     for _ in range(10):
         follower._clearance_for(_straight_path(), _base_at(0.01))
     assert not [m for m in heard if "no local_map" in m]
+
+
+# --- the deadman and preemption (follower.rs is the twin)
+
+
+def _driven(follower: TrajectoryFollower) -> list:
+    out: list = []
+    follower.nav_cmd_vel.subscribe(out.append)
+    return out
+
+
+def test_a_stale_path_zeroes_the_twist():
+    follower = _room_follower()
+    out = _driven(follower)
+    path, pose = _straight_path(5.0), _base_at(0.01)
+    follower._on_path(path)
+    follower._step(pose, path, age=follower.config.max_path_age_s + 0.1)
+    assert (out[-1].linear.x, out[-1].linear.y, out[-1].angular.z) == (0.0, 0.0, 0.0)
+    # the boundary is exclusive: a path exactly at the limit drives
+    follower._step(pose, path, age=follower.config.max_path_age_s)
+    assert out[-1].linear.x > 0.0
+
+
+def test_a_stale_path_outranks_an_arrival():
+    follower = _room_follower()
+    out = _driven(follower)
+    path = _straight_path(0.5)
+    follower._on_path(path)
+    at_goal = PoseStamped(ts=0.0, frame_id="odom", position=Vector3(0.5, 0.0, 0.01))
+    follower._step(at_goal, path, age=9.0)
+    assert out[-1].linear.x == 0.0
+    assert not follower._latch.reached
+
+
+def test_stop_movement_forgets_the_slew_history():
+    follower = _room_follower()
+    out = _driven(follower)
+    path, pose = _straight_path(5.0), _base_at(0.01)
+    follower._on_path(path)
+    # walk the law up its ramp on its own clock; the tick clock here is real time
+    for k in range(20):
+        primed = follower._controller.update(pose, path, t=0.1 * k)
+    step = follower._emb.command_slew[0] * 0.10  # one MAX_TICK from standstill
+    assert primed.linear.x > step, "priming has to leave the law mid-ramp, or this proves nothing"
+    follower._on_stop(Bool(True))
+    assert (out[-1].linear.x, out[-1].linear.y, out[-1].angular.z) == (0.0, 0.0, 0.0)
+    follower._on_path(path)
+    follower._step(pose, path, age=0.0)
+    assert 0.0 < out[-1].linear.x <= step + 1e-9

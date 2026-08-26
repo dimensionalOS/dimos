@@ -129,5 +129,6 @@ def ceilings_to_clearance(ceilings: np.ndarray, emb: Embodiment) -> np.ndarray:
     and rust, parity-locked) stay untouched.
     """
     lo, hi = emb.min_speed, emb.max_speed
+    assert hi != lo, "a body with min_speed == max_speed has no governor band to invert"
     frac = (np.clip(ceilings, lo, hi) - lo) / (hi - lo)
     return emb.precision + frac * (emb.speed_clearance - emb.precision)
