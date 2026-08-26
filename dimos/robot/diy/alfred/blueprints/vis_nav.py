@@ -126,15 +126,17 @@ _vis_nav = autoconnect(
             )
         },
         # Fixed variances: the message covariances report accumulated drift, not the delta
-        # fused. The wheels contribute x/y only; visual z is dropped, which the planar
-        # constraint below pins. Only the wheels measure velocity; the tracker publishes
-        # no twist at all.
+        # fused. Visual z is dropped; the wheels report z=roll=pitch=0 always, so those
+        # are kept as absolute anchors - the zero-twist constraint below only damps the
+        # velocities and let all three random-walk (a second floor in the map, then a
+        # visibly rolled robot). Without the IMU there is no other gravity reference.
+        # Only the wheels measure velocity; the tracker publishes no twist at all.
         sources={
             "visual_odom->base_link": SourceConfig(
                 pose_variances=[0.01, 0.01, 0.0, 0.05, 0.05, 0.05],
             ),
             "wheel_odom->base_link": SourceConfig(
-                pose_variances=[0.05, 0.05, 0.0, 0.0, 0.0, 0.0],
+                pose_variances=[0.05, 0.05, 0.001, 0.001, 0.001, 0.0],
                 twist_variances=[0.02, 0.02, 0.0, 0.0, 0.0, 0.05],
             ),
         },
