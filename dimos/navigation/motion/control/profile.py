@@ -33,7 +33,7 @@ from __future__ import annotations
 import numpy as np
 
 from dimos.msgs.nav_msgs.Path import Path
-from dimos.navigation.motion.embodiment import Embodiment
+from dimos.navigation.motion.embodiment.base import Embodiment
 
 # The governor curve is the embodiment's (max_speed, min_speed, speed_clearance,
 # precision, max_yaw_rate): a wire contract between planner and follower, so

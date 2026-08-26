@@ -55,7 +55,7 @@ from dimos.navigation.motion.control.controller import (
 )
 from dimos.navigation.motion.control.profile import ceilings_to_clearance, decode_ceilings
 from dimos.navigation.motion.control.tracks import TRACKS
-from dimos.navigation.motion.embodiment import EMBODIMENTS
+from dimos.navigation.motion.embodiment.registry import EMBODIMENTS
 from dimos.navigation.motion.obstacles import ObstacleModel, hard_points, load as load_model
 from dimos.navigation.tf_pose import OdomBasePose
 from dimos.utils.logging_config import setup_logger

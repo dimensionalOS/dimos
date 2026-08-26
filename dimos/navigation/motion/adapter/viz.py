@@ -44,7 +44,9 @@ from dimos.navigation.motion.control.profile import (
     ceilings_to_clearance,
     decode_ceilings,
 )
-from dimos.navigation.motion.embodiment import EMBODIMENTS, GO2, Embodiment
+from dimos.navigation.motion.embodiment.base import Embodiment
+from dimos.navigation.motion.embodiment.go2 import GO2
+from dimos.navigation.motion.embodiment.registry import EMBODIMENTS
 
 if TYPE_CHECKING:
     from rerun._baseclasses import Archetype

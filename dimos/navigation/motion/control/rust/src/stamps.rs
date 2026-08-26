@@ -39,7 +39,7 @@ pub const FAN_EPS: f64 = 1e-6;
 /// different controller tuning would stamp the same path differently. The
 /// python keeps these as module constants for the same reason, and notes that
 /// they are held in step with `ControllerConfig` by hand.
-/// The governor curve the encoder speaks: the embodiment's (`embodiment.py`),
+/// The governor curve the encoder speaks: the embodiment's (`embodiment/base.py`),
 /// handed across by whoever owns the body -- the python module or the native
 /// module's own table -- never a per-process tuning.
 #[derive(Clone, Copy, Debug, PartialEq)]

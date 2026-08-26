@@ -37,7 +37,7 @@ import numpy as np
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from dimos.navigation.motion.embodiment import Embodiment
+    from dimos.navigation.motion.embodiment.base import Embodiment
 
 # The absolute band `planners/target.py` slices, which is only the body's band
 # if the map's z origin happens to be the ground.

@@ -47,7 +47,8 @@ from dimos.navigation.motion.control.controller import (
     load_extension,
     path_xy_yaw,
 )
-from dimos.navigation.motion.embodiment import GO2, Embodiment
+from dimos.navigation.motion.embodiment.base import Embodiment
+from dimos.navigation.motion.embodiment.go2 import GO2
 
 # Tick period assumed when there is no previous tick to difference against, and
 # the cap on the period the limiter will integrate over: a longer gap means the

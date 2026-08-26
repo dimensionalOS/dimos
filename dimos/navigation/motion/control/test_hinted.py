@@ -17,7 +17,7 @@
 Its behavioural portrait lives in ``rust/tests/hinted.rs`` and reaches the
 python through the bit-exact parity gate. What cannot live there is anything
 that has to agree with a constant the shared domain owns: rust cannot import
-``embodiment.py``, so a plant number copied into the law is a number that can
+``embodiment/base.py``, so a plant number copied into the law is a number that can
 silently drift away from the plant.
 """
 
@@ -30,7 +30,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.motion.control.laws import hinted
-from dimos.navigation.motion.embodiment import GO2
+from dimos.navigation.motion.embodiment.go2 import GO2
 
 
 def _pose(x: float, y: float, yaw: float = 0.0) -> PoseStamped:

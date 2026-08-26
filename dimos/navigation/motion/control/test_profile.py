@@ -26,7 +26,7 @@ from dimos.navigation.motion.control.profile import (
     encode_precision,
     governor_speed,
 )
-from dimos.navigation.motion.embodiment import GO2
+from dimos.navigation.motion.embodiment.go2 import GO2
 
 FLOOR_CLEARANCE, SPEED_CLEARANCE = GO2.precision, GO2.speed_clearance
 MIN_SPEED, MAX_SPEED = GO2.min_speed, GO2.max_speed

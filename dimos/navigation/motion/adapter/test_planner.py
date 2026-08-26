@@ -29,7 +29,8 @@ from dimos.navigation.motion.adapter.planner import (
     stamped,
 )
 from dimos.navigation.motion.control.laws.seed import PursuitController
-from dimos.navigation.motion.embodiment import EMBODIMENTS, Embodiment
+from dimos.navigation.motion.embodiment.base import Embodiment
+from dimos.navigation.motion.embodiment.registry import EMBODIMENTS
 from dimos.navigation.motion.obstacles import hard_points, load as load_model
 from dimos.navigation.motion.planner.planners.base import pose_stamped
 from dimos.navigation.motion.planner.planners.target import make_py

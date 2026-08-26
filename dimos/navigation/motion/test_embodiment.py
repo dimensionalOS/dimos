@@ -14,12 +14,12 @@
 
 """Numbers the embodiment duplicates on purpose, pinned to their originals.
 
-``embodiment.py`` is shared with the standalone referee export, so it may not
+``embodiment/base.py`` is shared with the standalone referee export, so it may not
 import a dimos robot package -- the go2's own constants are therefore copied
 rather than referenced, and a copy that can drift silently is a bug waiting.
 """
 
-from dimos.navigation.motion.embodiment import GO2
+from dimos.navigation.motion.embodiment.go2 import GO2
 from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT
 
 

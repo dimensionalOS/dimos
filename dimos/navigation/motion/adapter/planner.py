@@ -48,7 +48,8 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.motion.adapter.diagnostics import StallReporter
 from dimos.navigation.motion.adapter.follower import path_clearance
 from dimos.navigation.motion.control.profile import encode_precision
-from dimos.navigation.motion.embodiment import EMBODIMENTS, Embodiment
+from dimos.navigation.motion.embodiment.base import Embodiment
+from dimos.navigation.motion.embodiment.registry import EMBODIMENTS
 from dimos.navigation.motion.obstacles import ObstacleModel, hard_points, load as load_model
 from dimos.navigation.motion.planner.planners.base import PlannerEpisode, load
 from dimos.navigation.tf_pose import OdomBasePose

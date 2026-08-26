@@ -32,7 +32,7 @@ fn straight(n: usize, step: f64) -> Vec<[f64; 3]> {
     (0..n).map(|k| [k as f64 * step, 0.0, 0.0]).collect()
 }
 
-/// `embodiment.py::GO2`'s governor, the curve every number below was written against.
+/// `embodiment/go2.py::GO2`'s governor, the curve every number below was written against.
 const GOV: Governor = Governor {
     max_speed: 0.5,
     min_speed: 0.2,

@@ -44,7 +44,7 @@ from dimos.navigation.motion.control.profile import (
     ceilings_to_clearance,
     encode_precision,
 )
-from dimos.navigation.motion.embodiment import GO2
+from dimos.navigation.motion.embodiment.go2 import GO2
 
 # The crate under test. Skipped rather than failed when it is not built, the way
 # ray_tracing and mls_planner do it: `uv run maturin develop --uv --release -m

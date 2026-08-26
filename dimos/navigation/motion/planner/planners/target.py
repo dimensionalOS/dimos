@@ -28,7 +28,7 @@ import numpy as np
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.nav_msgs.Path import Path
-from dimos.navigation.motion.embodiment import Embodiment
+from dimos.navigation.motion.embodiment.base import Embodiment
 
 from .base import RESOLUTION, densify_states, pose_stamped, states_of
 from .se2 import COMMIT_MARGIN, PERIOD, SdfGrid, anchor, se2_search

@@ -33,7 +33,7 @@ import numpy as np
 # stamps it encodes are the same curve); profile.py depends on nothing here, so
 # this stays a leaf.
 from dimos.navigation.motion.control.profile import governor_speed
-from dimos.navigation.motion.embodiment import Embodiment, box_offsets
+from dimos.navigation.motion.embodiment.base import Embodiment, box_offsets
 
 # (N, 3) rows of (x, y, yaw): the state the search speaks, and the rust boundary's.
 States = np.ndarray

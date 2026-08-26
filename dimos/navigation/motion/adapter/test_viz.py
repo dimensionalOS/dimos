@@ -30,7 +30,8 @@ from dimos.navigation.motion.adapter.viz import (
     render_plan_body,
 )
 from dimos.navigation.motion.control.profile import encode_precision
-from dimos.navigation.motion.embodiment import GO2, Embodiment
+from dimos.navigation.motion.embodiment.base import Embodiment
+from dimos.navigation.motion.embodiment.go2 import GO2
 
 
 def _pose(x: float, y: float, yaw: float = 0.0) -> PoseStamped:

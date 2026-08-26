@@ -17,7 +17,7 @@
 //! WHY THE TABLE IS HERE AND NOT IN THE PURE CRATE. `dimos_motion2_target`
 //! has an `Emb::go2()`, but it is a TEST FIXTURE: the python never calls it
 //! (`RustTargetEpisode.plan` marshals the numbers itself from
-//! `embodiment.py`), and the crate has no business carrying the OTHER three
+//! `embodiment/base.py`), and the crate has no business carrying the OTHER three
 //! tags, whose overrides only exist for the benchmark. The
 //! fixture has gone stale before -- it carried the 0.31 m trunk width for a
 //! while after the measured moving-body envelope landed (`1e4750b03`) -- and
@@ -25,15 +25,15 @@
 //! that walks, and hand the follower's governor a half-width the planner did
 //! not use.
 //!
-//! So the deployed table is written against `embodiment.py`, which is the
-//! source of truth both python modules read. If `embodiment.py` moves, this
+//! So the deployed table is written against `embodiment/base.py`, which is the
+//! source of truth both python modules read. If `embodiment/base.py` moves, this
 //! moves with it, and `go2_matches_the_pure_crate_fixture` below is the pin
 //! that says so out loud.
 
 use dimos_motion2_target::planner::{Emb, GO2_ENVELOPE};
 use dimos_motion2_tc::stamps;
 
-/// `embodiment.py::GO2` -- the all-gait union, plus the per-heading envelope
+/// `embodiment/go2.py::GO2` -- the all-gait union, plus the per-heading envelope
 /// rows measured over the governed slow band (`planner/envelope_results.md`).
 fn go2() -> Emb {
     Emb {
@@ -60,7 +60,7 @@ fn go2() -> Emb {
 }
 
 /// The other three tags have no measured envelope of their own and fall back
-/// to the union at every heading, exactly as `embodiment.py` leaves them.
+/// to the union at every heading, exactly as `embodiment/base.py` leaves them.
 fn unmeasured(emb: Emb) -> Emb {
     Emb {
         envelope: Vec::new(),
@@ -71,7 +71,7 @@ fn unmeasured(emb: Emb) -> Emb {
 
 /// Every box grown by `by` PER SIDE; negative shrinks it.
 ///
-/// `embodiment.py::Embodiment.dilated`, formula for formula. The table's
+/// `embodiment/base.py::Embodiment.dilated`, formula for formula. The table's
 /// numbers are measured -- the swinging legs, not the trunk, set the width --
 /// so a negative value is a deployment planning tighter than the legs measured.
 pub fn dilated(emb: Emb, by: f64) -> Emb {
@@ -123,7 +123,7 @@ pub fn by_tag(tag: &str) -> Option<Emb> {
 }
 
 /// The body's vertical geometry, all measured from the surface the feet stand
-/// on -- `embodiment.py`'s `steppable` / `height` / `base_height`.
+/// on -- `embodiment/base.py`'s `steppable` / `height` / `base_height`.
 ///
 /// Not on `Emb`: that is the pure crate's type, and the search does not read
 /// these. The obstacle models do (`obstacles.rs`).
@@ -183,7 +183,7 @@ mod tests {
     #[test]
     fn go2_carries_the_measured_envelope_not_the_trunk() {
         let e = by_tag("go2").expect("go2 is a known tag");
-        // embodiment.py GO2: the swinging legs set the union's width, not the
+        // embodiment/go2.py GO2: the swinging legs set the union's width, not the
         // 0.31 m trunk, and the union is the honest-conservative shape
         assert_eq!(e.width, 0.593);
         assert_eq!(e.length, 0.883);

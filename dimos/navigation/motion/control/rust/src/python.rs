@@ -51,7 +51,7 @@ fn vec_of(a: Option<&PyReadonlyArray1<'_, f64>>) -> Option<Vec<f64>> {
 }
 
 /// (max_speed, min_speed, speed_clearance, floor, max_yaw_rate): the
-/// embodiment's governor, as `embodiment.py` orders it.
+/// embodiment's governor, as `embodiment/base.py` orders it.
 type GovernorTuple = (f64, f64, f64, f64, f64);
 
 fn governor_of(g: GovernorTuple) -> stamps::Governor {

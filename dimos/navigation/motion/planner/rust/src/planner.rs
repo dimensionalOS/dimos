@@ -130,7 +130,7 @@ pub struct Emb {
     pub center_off: f64,
     pub comfort: f64,
     pub precision: f64,
-    /// The governor curve (`embodiment.py`): cruise granted at `speed_clearance`
+    /// The governor curve (`embodiment/base.py`): cruise granted at `speed_clearance`
     /// of room, creep at the `precision` floor. A wire contract with the
     /// follower, so it is the body's.
     pub max_speed: f64,
@@ -152,13 +152,13 @@ pub struct Emb {
     /// `(deg, length, width, off_x, off_y)`, 0 = nose-first, 180 = reverse.
     /// `off_y` is stored for POSITIVE drift and mirrored by sign at lookup.
     /// EMPTY = the union applies at every heading -- today's behaviour, and the
-    /// fallback for any unmeasured embodiment. See `embodiment.py`.
+    /// fallback for any unmeasured embodiment. See `embodiment/base.py`.
     pub envelope: Vec<[f64; 5]>,
     /// Extra swept WIDTH per rad-per-metre of curvature (edge dyaw / length).
     pub arc_inflate: f64,
 }
 
-/// `embodiment.py::GO2_ENVELOPE`, baked over the governed slow band.
+/// `embodiment/go2.py::GO2_ENVELOPE`, baked over the governed slow band.
 pub const GO2_ENVELOPE: [[f64; 5]; 9] = [
     [0.0, 0.819, 0.416, -0.023, 0.000],
     [26.6, 0.802, 0.436, -0.032, -0.008],
@@ -172,7 +172,7 @@ pub const GO2_ENVELOPE: [[f64; 5]; 9] = [
 ];
 
 impl Emb {
-    /// `embodiment.py::GO2` -- the all-gait union plus the measured rows.
+    /// `embodiment/go2.py::GO2` -- the all-gait union plus the measured rows.
     pub fn go2() -> Self {
         Emb {
             length: 0.883,
@@ -222,7 +222,7 @@ impl Emb {
     /// pose whose row clears the margin clears this too, which is what makes
     /// replanning from a route this planner emitted unable to refuse. No
     /// measured envelope means no rows to intersect and the union is all there
-    /// is. `embodiment.py::stand_box`, formula for formula.
+    /// is. `embodiment/base.py::stand_box`, formula for formula.
     fn stand_box(&self) -> [f64; 4] {
         if self.envelope.is_empty() {
             return self.union_box();
@@ -2754,7 +2754,7 @@ mod tests {
 
     /// And the standing box is nested inside every ROW, in both drift signs --
     /// which is what makes the seed witness unable to refuse a pose the search
-    /// itself routed through. `embodiment.py::stand_box` must agree number for
+    /// itself routed through. `embodiment/base.py::stand_box` must agree number for
     /// number, so the measured go2 answer is spelled out here as well.
     #[test]
     fn the_standing_box_is_nested_inside_every_row() {

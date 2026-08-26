@@ -48,7 +48,8 @@ from dimos.navigation.motion.control.controller import (
     path_xy_yaw,
 )
 from dimos.navigation.motion.control.profile import decode_ceilings
-from dimos.navigation.motion.embodiment import GO2, Embodiment
+from dimos.navigation.motion.embodiment.base import Embodiment
+from dimos.navigation.motion.embodiment.go2 import GO2
 
 
 def make(config: ControllerConfig | None = None, emb: Embodiment = GO2) -> BlindPursuitController:
