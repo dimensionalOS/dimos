@@ -26,19 +26,15 @@ names one by its ``"module:factory"`` through
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol
 
 import numpy as np
 from numpy.typing import NDArray
-from pydantic import TypeAdapter
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.protocol.service.spec import BaseConfig
-
-if TYPE_CHECKING:
-    from dimos.navigation.motion.embodiment.base import Embodiment
 
 
 def angle_diff(a: float, b: float) -> float:
@@ -102,13 +98,6 @@ def load_extension() -> Any:
     except ImportError as e:
         raise ImportError(f"dimos_motion2_tc is not built; run: {BUILD_CMD}") from e
     return dimos_motion2_tc
-
-
-def emb_json(emb: Embodiment) -> str:
-    """The body as the rust laws take it: the same JSON dict the planner crate reads."""
-    from dimos.navigation.motion.embodiment.base import Embodiment  # cyclic at import time
-
-    return TypeAdapter(Embodiment).dump_json(emb).decode()
 
 
 def path_xy_yaw(path: Path) -> NDArray[np.float64]:

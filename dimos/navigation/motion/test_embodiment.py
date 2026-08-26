@@ -20,9 +20,6 @@ one test here that reads it is the only thing keeping python and rust the same b
 
 from pathlib import Path
 
-from pydantic import TypeAdapter
-
-from dimos.navigation.motion.embodiment.base import Embodiment
 from dimos.navigation.motion.embodiment.go2 import GO2
 from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT
 
@@ -30,7 +27,7 @@ GO2_JSON = Path(__file__).parent / "embodiment" / "go2.json"
 
 
 def test_go2_json_is_the_go2() -> None:
-    want = TypeAdapter(Embodiment).dump_json(GO2, indent=2) + b"\n"
+    want = (GO2.to_json(indent=2) + "\n").encode()
     assert GO2_JSON.read_bytes() == want, (
         f"{GO2_JSON} has drifted from embodiment/go2.py::GO2; regenerate it with "
         "`uv run python -m dimos.navigation.motion.embodiment.go2`"

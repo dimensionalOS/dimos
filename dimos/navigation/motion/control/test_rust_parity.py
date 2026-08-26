@@ -35,7 +35,6 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.motion.control.controller import (
     ControllerConfig,
-    emb_json,
     load_extension,
     path_xy_yaw,
 )
@@ -54,7 +53,7 @@ TOL = 1e-9
 CASES = 240
 
 
-GOVERNOR = emb_json(GO2)
+GOVERNOR = GO2.to_json()
 
 
 def _pose(x: float, y: float, yaw: float = 0.0) -> PoseStamped:
@@ -216,7 +215,7 @@ def _raw_twists(law, cfg, pose, path, clearance, emb=GO2):  # type: ignore[no-un
         (float(pose.position.x), float(pose.position.y), float(pose.yaw)),
         path_xy_yaw(path),
         clr,
-        emb_json(emb),
+        emb.to_json(),
     )
     return py, rs
 

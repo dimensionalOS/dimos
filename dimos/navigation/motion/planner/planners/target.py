@@ -25,7 +25,6 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
-from pydantic import TypeAdapter
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.nav_msgs.Path import Path
@@ -95,7 +94,7 @@ class RustTargetEpisode:
 
         self._mod = dimos_motion2_target
         # the body crosses as the same dict the native modules are configured with
-        self._emb = TypeAdapter(Embodiment).dump_json(emb).decode()
+        self._emb = emb.to_json()
         self._res = resolution
 
     def reset(self) -> None:

@@ -26,6 +26,7 @@ import math
 
 import numpy as np
 from numpy.typing import NDArray
+from pydantic import TypeAdapter
 
 from dimos.navigation.motion.control.controller import ControllerConfig
 
@@ -105,6 +106,10 @@ class Embodiment:
         deg = math.degrees(abs(rel))
         row = min(self.envelope, key=lambda r: abs(r[0] - deg))
         return row[1], row[2], row[3], row[4] if rel >= 0.0 else -row[4]
+
+    def to_json(self, indent: int | None = None) -> str:
+        """The body as every rust crate reads it."""
+        return TypeAdapter(Embodiment).dump_json(self, indent=indent).decode()
 
     def box(self, drift: float | None) -> tuple[float, float, float, float]:
         """The swept box a heading needs; ``None`` asks for the all-gait union."""

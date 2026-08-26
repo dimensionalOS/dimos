@@ -139,6 +139,7 @@ pub struct Tuning {
 /// `embodiment/base.py::Embodiment`, field for field: the body a module is
 /// configured with, deserialised straight from its config.
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Emb {
     pub length: f64,
     pub width: f64,

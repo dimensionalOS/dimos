@@ -45,7 +45,6 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.motion.control.controller import (
     ControllerConfig,
     angle_diff,
-    emb_json,
     load_extension,
     path_xy_yaw,
 )
@@ -373,7 +372,7 @@ class RustHintedController:
     def __init__(self, emb: Embodiment = GO2) -> None:
         mod: Any = load_extension()
         self.config = emb.control
-        self._law = mod.HintedLaw(emb_json(emb))
+        self._law = mod.HintedLaw(emb.to_json())
 
     def reset(self) -> None:
         self._law.reset()
