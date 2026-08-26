@@ -119,7 +119,7 @@ LD_PRELOAD=/lib/aarch64-linux-gnu/libgomp.so.1 \
 Wait for the Quest server to report that it is listening on port 8443. The
 process starts unarmed and in dry-run on real hardware.
 
-### Arm and enable the controller
+### Activate the controller
 
 Use the hardware commands from a second SSH session. They are the supported
 operator interface; `dimos shell` is intended for debugging, not routine robot
@@ -129,19 +129,31 @@ startup.
 # Inspect the interlocks and planner connection.
 uv run dimos hardware g1 status
 
-# Start the 10-second handover ramp while motor output remains in dry-run.
+# Run the GR00T pose ramp, inspect the robot at the prompt, then enable live
+# policy output. Add --ready to move both arms after activation.
+uv run dimos hardware g1 activate --ready
+```
+
+`activate` requires an interactive confirmation after the ramp. It has no flag
+for unattended activation. Without `--ready`, it leaves the arms where they
+are.
+
+The arming ramp may move the 12 leg and 3 waist joints toward GR00T's default
+pose. Dry-run suppresses steady-state GR00T policy output after that ramp; it
+is not a global motor interlock for Quest teleoperation or planned arm motion.
+
+The individual stages remain available for diagnostics and recovery:
+
+```bash
 uv run dimos hardware g1 arm
-
-# Inspect the physical robot and remote, then allow motor commands.
 uv run dimos hardware g1 enable
-
-# Optional: collision-check and execute a conservative bimanual ready pose.
 uv run dimos hardware g1 ready
 ```
 
 `ready` moves both shoulders slightly forward, bends both elbows, and uses 25%
 of the configured trajectory speed. It refuses to run until arming is complete
-and dry-run has been disabled.
+and dry-run has been disabled. It also refuses to run while Quest arm
+teleoperation is engaged.
 
 To stop arm motion and return to the safe startup state:
 
