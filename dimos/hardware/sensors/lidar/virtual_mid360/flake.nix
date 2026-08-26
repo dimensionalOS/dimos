@@ -4,13 +4,9 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    # Relative git+file: will be deprecated (nix#12281) but there's no
-    # viable alternative for reaching local path deps outside the flake dir currently
-    # presumably an alternative will be added before this is removed.
-    dimos-repo = { url = "git+file:../../../../..?ref=main"; flake = false; };
   };
 
-  outputs = { self, nixpkgs, flake-utils, dimos-repo }:
+  outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
@@ -23,13 +19,17 @@
           cp ${./Cargo.lock} $out/${sub}/Cargo.lock
 
           mkdir -p $out/native/rust
-          cp -r ${dimos-repo}/native/rust/dimos-module $out/native/rust/dimos-module
-          cp -r ${dimos-repo}/native/rust/dimos-module-macros $out/native/rust/dimos-module-macros
+          # The shared crates live outside this dir. A git-tree flake can reach
+          # them as path literals within the repo tree, so the build always
+          # links the checkout's crates (no pinned-rev lag).
+          cp -r ${../../../../../native/rust/dimos-module} $out/native/rust/dimos-module
+          cp -r ${../../../../../native/rust/dimos-module-macros} $out/native/rust/dimos-module-macros
         '';
       in {
         # Toolchain-only shell for CI fmt/clippy/test. Deliberately avoids the
-        # `src` runCommand (its relative path: input can't resolve once the
-        # flake is copied to the store), so `nix develop` stays cheap.
+        # `src` runCommand: its path literals escape this dir, which only a
+        # git-tree flake can resolve, and the rust job evaluates this flake as
+        # `nix develop path:.` — independence keeps them unevaluated there.
         devShells.default = pkgs.mkShell {
           packages = [ pkgs.cargo pkgs.rustc pkgs.clippy pkgs.rustfmt ];
         };
