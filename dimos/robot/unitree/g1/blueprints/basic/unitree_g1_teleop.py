@@ -58,6 +58,7 @@ from dimos.core.transport import pSHMTransport
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
@@ -118,7 +119,10 @@ unitree_g1_teleop = (
     autoconnect(
         unitree_g1_groot_wbc,
         MobileVideoArmTeleopModule.blueprint(),
-        G1ManipulationModule.blueprint(instance_name="G1Manipulation"),
+        G1ManipulationModule.blueprint(
+            instance_name="G1Manipulation",
+            visualization=ViserVisualizationConfig(host="0.0.0.0"),
+        ),
         *_camera_if_real(),
         EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
         G1CollectionRecorder.blueprint(

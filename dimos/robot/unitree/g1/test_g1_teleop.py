@@ -26,6 +26,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.manipulation.planning.factory import create_world
+from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
     _G1_ARM_JOINT_NAME_MAPPING,
@@ -169,6 +170,7 @@ def test_g1_teleop_wires_manipulation_to_existing_coordinator() -> None:
     manipulation_kwargs = _module_kwargs(unitree_g1_teleop, G1ManipulationModule)
 
     assert manipulation_kwargs["instance_name"] == "G1Manipulation"
+    assert manipulation_kwargs["visualization"] == ViserVisualizationConfig(host="0.0.0.0")
     assert (
         unitree_g1_teleop.remapping_map[("G1Manipulation", "_control_coordinator")]
         is _G1GrootCoordinator
