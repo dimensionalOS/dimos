@@ -14,7 +14,7 @@
 
 """Operator command/E-STOP plane for the hosted arm — the arm analog of
 Go2CommandModule. Actuation runs through the ControlCoordinator over LCM;
-VR poses, browser EE-twists, and the gripper/E-STOP JSON plane arrive here
+WebXR poses, browser EE-twists, and the gripper/E-STOP JSON plane arrive here
 from the broker."""
 
 from __future__ import annotations

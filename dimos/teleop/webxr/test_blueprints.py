@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Construction assertions for migrated Quest manipulator blueprints."""
+"""Construction assertions for WebXR manipulator blueprints."""
 
 from typing import cast
 

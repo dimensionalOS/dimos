@@ -1,12 +1,13 @@
-# Quest Teleop
+# WebXR Teleop
 
-Teleoperation via Meta Quest 3 VR controllers. Dual-hand tracking with WebXR.
+Spatial teleoperation through browser WebXR input sources. Supports tracked
+controllers and hands on compatible headsets, including Meta Quest and PICO.
 
 ## Architecture
 
 ```
-Quest Browser  ──WebSocket──→  Embedded HTTPS Server  ──→  ArmTeleopModule
-(WebXR poses + Joy)             (port 8443)                  (absolute PoseStamped)
+WebXR Browser  ──WebSocket──→  Embedded HTTPS Server  ──→  ArmTeleopModule
+(poses + Joy)                    (port 8443)                  (absolute PoseStamped)
                                                                   │ left/right
                                                                   ▼
                                                      TeleopControlCoordinator
@@ -34,21 +35,23 @@ Select a CAN interface explicitly to control real A1Z hardware:
 dimos --can-port a1zcan run teleop-webxr-a1z
 ```
 
-Open `https://<host-ip>:8443/teleop` on Quest browser. Accept cert, tap Connect.
+Open `https://<host-ip>:8443/teleop` in a WebXR-capable headset browser. Accept
+the certificate, then tap Connect.
 
 For hand teleop, remove the controllers. Pinch the thumb and index finger on
 the selected hand to engage it, move the wrist to control the arm, then pinch
 again to disengage. Pinch the thumb and middle finger to close the gripper;
-release it to open the gripper. Hand tracking must be enabled for the Quest
+release it to open the gripper. Hand tracking must be enabled in the headset
 browser.
 
 `teleop-webxr-openarm` is safe by default: it always uses the in-memory
 `mock_whole_body` adapter, regardless of the global simulation setting. It does
 not select physical OpenArm hardware implicitly. The mock and bimanual model
 start at the canonical all-zero pose. Since that pose places both joint-4
-coordinates at their lower limits, the OpenArm planner and Quest task share a
-Pink joint-limit posture margin that supplies a deterministic inward direction
-without changing the measured seed. No random retry runs in the control loop.
+coordinates at their lower limits, the OpenArm planner and teleoperation task
+share a Pink joint-limit posture margin that supplies a deterministic inward
+direction without changing the measured seed. No random retry runs in the
+control loop.
 
 Specify both CAN interfaces to select real OpenArm hardware. Supplying only one
 is rejected:
@@ -59,8 +62,8 @@ dimos run teleop-webxr-openarm --left-can-port can1 --right-can-port can0
 
 The blueprint also includes `ManipulationModule` with the same bimanual model
 and Viser visualization. Its coordinator has a joint-trajectory task over both
-arms at priority 20; planned execution therefore preempts the priority-10 Quest
-task through normal arbitration and clears the teleoperation engagement state.
+arms at priority 20; planned execution therefore preempts the priority-10
+teleoperation task through normal arbitration and clears the engagement state.
 
 ## Arm task bindings
 
@@ -99,10 +102,10 @@ entire session; both hands must engage again before commands resume.
 ## File Structure
 
 ```
-quest/
-├── module.py   # Base module
-├── extensions.py      # ArmTeleop, TwistTeleop
-├── controller_types.py           # WebXRControllerState, Buttons
+webxr/
+├── module.py             # Base module
+├── extensions.py         # ArmTeleop, TwistTeleop
+├── controller_types.py   # WebXRControllerState, Buttons
 ├── blueprints.py
-└── web/static/index.html    # WebXR client
+└── web/static/index.html # WebXR client
 ```

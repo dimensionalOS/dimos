@@ -68,12 +68,11 @@ teleop/
 │   ├── module.py                # Base WebXR teleop module (local WebSocket)
 │   ├── extensions.py            # ArmTeleop, TwistTeleop
 │   ├── controller_types.py      # WebXRControllerState, Buttons
-│   ├── tracking_types.py        # Viewer, inputs, and body tracking
 │   └── web/
 │       └── static/index.html    # WebXR client
 ├── hosted/                      # Hosted teleop (transport-swap, per-concern modules)
 │   ├── go2_command.py           # Go2CommandModule: command/E-STOP dispatch + drive guard
-│   ├── arm_command.py           # ArmCommandModule: VR poses / EE-twist → coordinator tasks
+│   ├── arm_command.py           # ArmCommandModule: tracked poses / EE-twist → coordinator tasks
 │   ├── command_executor.py      # SerializedCommandExecutor: serialized cmds + safety fence
 │   ├── camera_mux.py            # CameraMuxModule: N cameras → one composited video track
 │   ├── map_compress.py          # MapCompressModule: costmap/odom → minimap datachannel

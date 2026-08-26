@@ -18,7 +18,7 @@ Available subclasses:
     - ArmTeleopModule: Per-hand press-and-hold engage (X/A hold to track)
     - HandTeleopModule: Pinch-to-toggle arm teleop using WebXR hand tracking
     - TwistTeleopModule: Outputs Twist instead of PoseStamped
-    - VideoArmTeleopModule: ArmTeleopModule + JPEG frames pushed to the Quest over /ws
+    - VideoArmTeleopModule: ArmTeleopModule + JPEG frames pushed to the headset over /ws
     - Go2TeleopModule: Thumbstick → Twist velocity for the Go2 + camera over /ws
 """
 
@@ -239,7 +239,7 @@ class VideoArmTeleopConfig(WebXRTeleopConfig):
 
 
 class VideoArmTeleopModule(ArmTeleopModule):
-    """ArmTeleopModule + camera frames pushed to the Quest as JPEG over /ws.
+    """ArmTeleopModule + camera frames pushed to the headset as JPEG over /ws.
 
     Subscribes to color_image, JPEG-encodes each frame, and broadcasts raw
     JPEG bytes to every connected /ws client as a binary message. The client
