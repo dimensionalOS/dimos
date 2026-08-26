@@ -127,7 +127,7 @@ class TrajectoryFollowerConfig(ModuleConfig):
     # reading a different world than the one that was planned. The referee's
     # control/world.py takes `emb.width / 2`, so this does too -- naming the
     # EMBODIMENT rather than a number, so body dimensions live in exactly one
-    # place (planner/referee/scenarios.py). There is deliberately no
+    # place (planner/planners/se2.py). There is deliberately no
     # half_width override: a `float | None` cannot cross into the native module
     # (`to_config_dict` drops None and `#[native_config]` bans Option), and a
     # knob the deployed twin cannot carry is a knob that drifts.

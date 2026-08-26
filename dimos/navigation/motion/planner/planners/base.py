@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Pluggable planner interface for the motion2 environment.
+"""Pluggable planner interface for the motion environment.
 
-A candidate is a factory `make(scenario, cfg) -> PlannerEpisode`. The episode
+A candidate is a factory `make(emb, resolution) -> PlannerEpisode`. The episode
 is stateful across plan() calls (warm starts, hysteresis live inside it) and
 nothing survives reset(). Honest candidates read only what plan() receives —
-obstacles, pose, goal; the scenario handed to the factory is for world-free
-setup, not for peeking at truth.
+obstacles, pose, goal; the factory sees the embodiment and the waypoint
+spacing, never a world.
 
 `plan` also takes the route the caller has PUBLISHED, or None on the first call
 and after a reset. The shell owns that memory (`adapter/planner.py` and the
@@ -43,10 +43,13 @@ from typing import Any, Protocol
 
 import numpy as np
 
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path
+
+RESOLUTION = 0.1  # waypoint spacing of the published route (m)
 
 
 class PlannerEpisode(Protocol):
@@ -55,8 +58,8 @@ class PlannerEpisode(Protocol):
     def plan(
         self,
         obstacles: np.ndarray,
-        pose: tuple[float, float, float],
-        goal: tuple[float, float],
+        pose: Pose,
+        goal: Pose,
         incumbent: Path | None = None,
     ) -> Path: ...
 

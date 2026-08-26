@@ -26,19 +26,12 @@ from typing import Any
 
 import numpy as np
 
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.motion.embodiment import Embodiment
-from dimos.navigation.motion.geometry import AvoidanceConfig
-from dimos.navigation.motion.scenarios import (
-    COMMIT_MARGIN,
-    FINE,
-    PERIOD,
-    Scenario,
-    anchor,
-    se2_search,
-)
 
-from .base import densify_states, pose_stamped, states_of
+from .base import RESOLUTION, densify_states, pose_stamped, states_of
+from .se2 import COMMIT_MARGIN, PERIOD, SdfGrid, anchor, se2_search
 
 PAD = 1.5
 # Free space around the working area, in whole periods -- se2_path's own.
@@ -60,42 +53,33 @@ class TargetEpisode:
     def plan(
         self,
         obstacles: np.ndarray,
-        pose: tuple[float, float, float],
-        goal: tuple[float, float],
+        pose: Pose,
+        goal: Pose,
         incumbent: Path | None = None,
     ) -> Path:
-        from scipy.spatial import cKDTree
-
         band = np.asarray(obstacles, dtype=float).reshape(-1, 2)
 
-        xs = [pose[0], goal[0]] + ([] if not len(band) else [band[:, 0].min(), band[:, 0].max()])
-        ys = [pose[1], goal[1]] + ([] if not len(band) else [band[:, 1].min(), band[:, 1].max()])
+        xs = [pose.x, goal.x] + ([] if not len(band) else [band[:, 0].min(), band[:, 0].max()])
+        ys = [pose.y, goal.y] + ([] if not len(band) else [band[:, 1].min(), band[:, 1].max()])
         # Anchored on the world frame's own lattice, exactly as se2_path is: a
         # return past the cloud's low corner may add rows, never move a sample.
         x0, y0 = anchor(min(xs) - PAD), anchor(min(ys) - PAD)
         x1, y1 = max(xs) + PAD, max(ys) + PAD
-        fgx = np.arange(x0 - GRID_PAD, x1 + GRID_PAD, FINE)
-        fgy = np.arange(y0 - GRID_PAD, y1 + GRID_PAD, FINE)
-        if len(band):
-            FX, FY = np.meshgrid(fgx, fgy, indexing="ij")
-            d, _ = cKDTree(band).query(np.column_stack([FX.ravel(), FY.ravel()]))
-            sdf_grid = d.reshape(len(fgx), len(fgy))
-        else:
-            sdf_grid = np.full((len(fgx), len(fgy)), np.inf)
+        grid = SdfGrid.from_obstacles(
+            (x0 - GRID_PAD, y0 - GRID_PAD, x1 + GRID_PAD, y1 + GRID_PAD), band
+        )
 
         states = se2_search(
-            fgx,
-            fgy,
-            sdf_grid,
+            grid,
             (x0, y0, x1, y1),
-            pose,
-            goal,
+            (pose.x, pose.y, pose.yaw),
+            (goal.x, goal.y),
             self._emb,
             self._emb.precision,
             incumbent=states_of(incumbent),
         )
         if states is None:
-            return Path(ts=0.0, frame_id="world", poses=[pose_stamped(*pose)])
+            return Path(ts=0.0, frame_id="world", poses=[pose_stamped(pose.x, pose.y, pose.yaw)])
         dense = densify_states(states, self._res)
         return Path(
             ts=0.0, frame_id="world", poses=[pose_stamped(x, y, yaw) for x, y, yaw in dense]
@@ -118,8 +102,8 @@ class RustTargetEpisode:
     def plan(
         self,
         obstacles: np.ndarray,
-        pose: tuple[float, float, float],
-        goal: tuple[float, float],
+        pose: Pose,
+        goal: Pose,
         incumbent: Path | None = None,
     ) -> Path:
         pts = np.ascontiguousarray(np.asarray(obstacles, dtype=np.float64).reshape(-1, 2))
@@ -127,8 +111,8 @@ class RustTargetEpisode:
         e = self._emb
         out = self._mod.plan(
             pts,
-            (float(pose[0]), float(pose[1]), float(pose[2])),
-            (float(goal[0]), float(goal[1])),
+            (pose.x, pose.y, pose.yaw),
+            (goal.x, goal.y),
             (
                 e.length,
                 e.width,
@@ -148,19 +132,17 @@ class RustTargetEpisode:
             COMMIT_MARGIN,
         )
         if out is None or not len(out):
-            return Path(ts=0.0, frame_id="world", poses=[pose_stamped(*pose)])
+            return Path(ts=0.0, frame_id="world", poses=[pose_stamped(pose.x, pose.y, pose.yaw)])
         return Path(ts=0.0, frame_id="world", poses=[pose_stamped(x, y, yaw) for x, y, yaw in out])
 
 
-def make_py(sc: Scenario, cfg: AvoidanceConfig | None = None, **_: Any) -> TargetEpisode:
-    res = (cfg or AvoidanceConfig()).resolution
-    return TargetEpisode(sc.emb, res)
+def make_py(emb: Embodiment, resolution: float = RESOLUTION, **_: Any) -> TargetEpisode:
+    return TargetEpisode(emb, resolution)
 
 
-def make(sc: Scenario, cfg: AvoidanceConfig | None = None, **_: Any) -> RustTargetEpisode:
+def make(emb: Embodiment, resolution: float = RESOLUTION, **_: Any) -> RustTargetEpisode:
     try:
         import dimos_motion2_target  # noqa: F401
     except ImportError as e:
         raise ImportError(f"dimos_motion2_target is not built; run: {BUILD_CMD}") from e
-    res = (cfg or AvoidanceConfig()).resolution
-    return RustTargetEpisode(sc.emb, res)
+    return RustTargetEpisode(emb, resolution)

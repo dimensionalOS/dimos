@@ -19,9 +19,7 @@ from dimos.navigation.motion.embodiment import EMBODIMENTS, GO2, Embodiment
 from dimos.navigation.motion.obstacles import (
     LOW,
     OBSTACLE_MODELS,
-    RAW_BAND,
     BodyBand,
-    RawBand,
     hard_points,
     load,
 )
@@ -59,18 +57,6 @@ def test_the_ground_exclusion_is_two_voxel_layers():
     assert len(hard_points(BodyBand(GO2), cloud, 0.0)) == 1
 
 
-def test_raw_band_is_the_absolute_band_on_the_cloud_as_given():
-    # the legacy model exists so recordings made under it replay as they ran,
-    # which means byte-for-byte the selection the stack used to make inside the
-    # search -- 0.05..0.45 of the map's own z, moving nothing
-    rng = np.random.default_rng(7)
-    cloud = rng.uniform(-1.0, 1.0, size=(500, 3)).astype(np.float32)
-    got = hard_points(RawBand(GO2), cloud, ground_z=0.29)
-    z = cloud[:, 2]
-    assert np.array_equal(got, cloud[(z > RAW_BAND[0]) & (z < RAW_BAND[1])])
-    assert RAW_BAND == (0.05, 0.45)
-
-
 def test_a_tall_body_keeps_what_the_absolute_band_would_have_cut_off():
     # The latent bug the 2D search contract closes: a body taller than the old
     # 0.05..0.45 slice had its correctly-kept obstacles truncated by a SECOND
@@ -79,13 +65,11 @@ def test_a_tall_body_keeps_what_the_absolute_band_would_have_cut_off():
     cloud = np.array([[1.0, 0.0, 0.55], [1.0, 0.5, 0.61]], dtype=np.float32)
     out = hard_points(BodyBand(tall), cloud, 0.0)
     assert len(out) == 1 and out[0][2] == pytest.approx(0.55)
-    assert out[0][2] > RAW_BAND[1], "the fixture has to sit above the old band"
 
 
-def test_the_registry_names_the_two_models():
-    assert sorted(OBSTACLE_MODELS) == ["body_band", "raw_band"]
+def test_the_registry_names_the_model():
+    assert sorted(OBSTACLE_MODELS) == ["body_band"]
     assert isinstance(load("body_band", GO2), BodyBand)
-    assert isinstance(load("raw_band", GO2), RawBand)
     with pytest.raises(ValueError, match="unknown obstacle model"):
         load("floor_anchor", GO2)
 

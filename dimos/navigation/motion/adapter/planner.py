@@ -37,21 +37,20 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.nav_msgs.Path import Path, Path as RefereePath
+from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.motion.adapter.diagnostics import StallReporter
 from dimos.navigation.motion.adapter.follower import path_clearance
 from dimos.navigation.motion.control.profile import encode_precision
-from dimos.navigation.motion.embodiment import EMBODIMENTS
-from dimos.navigation.motion.geometry import AvoidanceConfig
+from dimos.navigation.motion.embodiment import EMBODIMENTS, Embodiment
 from dimos.navigation.motion.obstacles import ObstacleModel, hard_points, load as load_model
 from dimos.navigation.motion.planner.planners.base import PlannerEpisode, load
-from dimos.navigation.motion.scenarios import Scenario
 from dimos.navigation.tf_pose import OdomBasePose
 from dimos.utils.logging_config import setup_logger
 
@@ -59,24 +58,22 @@ logger = setup_logger()
 
 
 def annotate(
-    ref: RefereePath,
+    ref: Path,
     obstacles: np.ndarray,
-    emb: Any,
+    emb: Embodiment,
     ts: float,
     frame_id: str,
     ground_z: float = 0.0,
 ) -> Path:
-    """Referee path -> stamped nav Path: precision profile in the timestamps."""
-    nav = to_nav_path(ref, ts=ts, frame_id=frame_id, ground_z=ground_z)
+    """The planner's route as the follower's path: stamped, grounded, precision profile in the timestamps."""
+    nav = stamped(ref, ts=ts, frame_id=frame_id, ground_z=ground_z)
     xy = np.array([[p.position.x, p.position.y] for p in ref.poses]).reshape(-1, 2)
     clearance = path_clearance(xy, obstacles, emb.width / 2.0)
     return encode_precision(nav, clearance, t0=ts)
 
 
-def to_nav_path(
-    ref: RefereePath, ts: float = 0.0, frame_id: str = "odom", ground_z: float = 0.0
-) -> Path:
-    """Referee path -> dimos nav_msgs Path (the type the follower consumes).
+def stamped(ref: Path, ts: float = 0.0, frame_id: str = "odom", ground_z: float = 0.0) -> Path:
+    """The planner's planar route stamped with time, frame and the ground it stands on.
 
     The search is planar and hands back z = 0, but `odom` z = 0 is wherever the
     LIO frame started -- on this rig, a lidar's height above the floor. Stamping
@@ -184,8 +181,7 @@ class MotionPlannerConfig(ModuleConfig):
     world_frame: str = "odom"
     # What counts as an obstacle (motion/obstacles.py). "body_band" reads the
     # cloud against the surface the feet stand on, which the embodiment knows
-    # the base's height above; "raw_band" is the absolute 0.05..0.45 slice the
-    # stack ran before that, kept for replaying recordings made under it.
+    # the base's height above.
     obstacle_model: str = "body_band"
     # Hold once the local map is this old. The mapper can live across a link,
     # and a dropped link must not leave us replanning on a frozen world at
@@ -225,8 +221,8 @@ class MotionPlanner(Module):
         # ...and the plan itself. The search prefers the route it already
         # published unless a fresh one earns the switch, and this module is
         # where that memory lives: the shell owns it, the planner judges it.
-        self._incumbent: RefereePath | None = None
-        self._pose: tuple[float, float, float] | None = None
+        self._incumbent: Path | None = None
+        self._pose: PoseStamped | None = None
         # Where the surface under the robot is, off the body rather than off
         # the scene: the base rides emb.base_height above it.
         self._ground_z: float | None = None
@@ -243,8 +239,7 @@ class MotionPlanner(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        sc = Scenario("live", [], goal=(0.0, 0.0), emb=self._emb)
-        self._episode = load(self.config.planner)(sc, AvoidanceConfig())
+        self._episode = load(self.config.planner)(self._emb)
         self._episode.reset()
         self.register_disposable(Disposable(self.local_map.subscribe(self._on_local_map)))
         self.register_disposable(Disposable(self.odometry.subscribe(self._on_odometry)))
@@ -274,7 +269,7 @@ class MotionPlanner(Module):
         if pose is None:
             return
         with self._lock:
-            self._pose = (pose.position.x, pose.position.y, pose.orientation.euler[2])
+            self._pose = pose
             self._ground_z = pose.position.z - self._emb.base_height
 
     def _on_planner_path(self, msg: Path) -> None:
@@ -318,7 +313,7 @@ class MotionPlanner(Module):
                     logger.info("local_map is live again, resuming planning")
                 # the carrot is the whole of the route the plan consumes, so it
                 # is computed every tick and the gate reads it, not the array
-                goal = carrot_along(global_xy, (pose[0], pose[1]), self.config.goal_lookahead_m)
+                goal = carrot_along(global_xy, (pose.x, pose.y), self.config.goal_lookahead_m)
                 if self._due(cloud_seq, goal):
                     if self._retask(goal) and self._episode is not None:
                         # a new task: warm starts, hysteresis and the route
@@ -344,7 +339,7 @@ class MotionPlanner(Module):
             return False
         return math.dist(self._planned[1], carrot) > self.config.reset_carrot_m
 
-    def _hold(self, pose: tuple[float, float, float], age: float) -> None:
+    def _hold(self, pose: PoseStamped, age: float) -> None:
         """Refuse the way the planner does — a single-pose stub reads as "stop"."""
         # edge-triggered: the loop runs at replan_hz, and a dead link would
         # otherwise warn five times a second for as long as it stays dead
@@ -359,8 +354,8 @@ class MotionPlanner(Module):
         stub = PoseStamped(
             ts=ts,
             frame_id=self.config.world_frame,
-            position=Vector3(pose[0], pose[1], 0.0),
-            orientation=Quaternion.from_euler(Vector3(0.0, 0.0, pose[2])),
+            position=Vector3(pose.x, pose.y, 0.0),
+            orientation=Quaternion.from_euler(Vector3(0.0, 0.0, pose.yaw)),
         )
         held = Path(ts=ts, frame_id=self.config.world_frame, poses=[stub])
         self.path.publish(held)
@@ -369,7 +364,7 @@ class MotionPlanner(Module):
     def _plan_once(
         self,
         cloud: PointCloud2,
-        pose: tuple[float, float, float],
+        pose: PoseStamped,
         goal: tuple[float, float],
         ground_z: float,
     ) -> bool:
@@ -382,7 +377,7 @@ class MotionPlanner(Module):
         # worlds.
         pts = hard_points(self._model, cloud.points_f32(), ground_z)
         try:
-            ref = self._episode.plan(pts[:, :2], pose, goal, self._incumbent)
+            ref = self._episode.plan(pts[:, :2], pose, Pose(goal[0], goal[1], 0.0), self._incumbent)
         except Exception:
             logger.exception("planner failed; keeping the last published path")
             return False

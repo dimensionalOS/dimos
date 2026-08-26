@@ -130,15 +130,6 @@ def test_the_room_hint_is_measured_against_the_body_reference():
     assert abs(float(hint[1]) - (0.5 - hw)) < 1e-6
 
 
-def test_the_raw_band_model_reads_the_map_origin_instead():
-    # the legacy model: on a LIO stack the post sits under the absolute band
-    # and reads as infinite room, which is what the robot actually ran
-    follower = _room_follower(obstacle_model="raw_band")
-    follower._cloud = _room_with_a_post(-0.28)
-    blind = follower._clearance_for(_straight_path(), _base_at(0.01))
-    assert np.all(np.isinf(blind))
-
-
 def test_the_room_hint_is_the_model_hard_set_not_the_whole_map():
     # The governor has to measure the very points the search routed around.
     # path_clearance takes every point it is handed, so the whole map would
@@ -153,19 +144,6 @@ def test_the_room_hint_is_the_model_hard_set_not_the_whole_map():
     assert np.array_equal(follower._clearance_for(_straight_path(), _base_at(0.01)), want)
     over = path_clearance(xy, whole, follower._half_width)
     assert over[0] < want[0], "the whole map has to read tighter, or this proves nothing"
-
-
-def test_a_room_hint_on_a_ground_already_at_zero_matches_the_raw_band():
-    # the referee's sim worlds put the plan poses on the ground, so the two
-    # models agree there and the hint the judge hands the controller cannot move
-    follower = _room_follower()
-    raw = _room_follower(obstacle_model="raw_band")
-    cloud = _room_with_a_post(0.0)
-    follower._cloud = raw._cloud = cloud
-    assert np.array_equal(
-        follower._clearance_for(_straight_path(), _base_at(0.29)),
-        raw._clearance_for(_straight_path(), _base_at(0.29)),
-    )
 
 
 def test_a_new_path_in_the_freed_one_s_memory_gets_its_own_hint():

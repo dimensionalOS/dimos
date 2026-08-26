@@ -49,8 +49,8 @@ class MotionPlannerNativeConfig(NativeModuleConfig):
     # Every planning box grown by this much PER SIDE; negative shrinks it.
     # Both modules must carry the SAME value.
     body_dilate_m: float = 0.0
-    # The python takes this from AvoidanceConfig().resolution; here it crosses
-    # explicitly, because the rust planner has no AvoidanceConfig to read.
+    # planners/base.py RESOLUTION; here it crosses explicitly, because the rust
+    # planner has no python default to read.
     resolution: float = 0.1
     replan_hz: float = 5.0
     goal_lookahead_m: float = 5.0

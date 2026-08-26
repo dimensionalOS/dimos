@@ -203,7 +203,7 @@ fn validate_track_and_embodiment(config: &Config) -> Result<(), ValidationError>
     }
     if !obstacles::MODELS.contains(&config.obstacle_model.as_str()) {
         return Err(ValidationError::new(
-            "obstacle_model must be one of: raw_band, body_band",
+            "obstacle_model must be one of: body_band",
         ));
     }
     Ok(())
@@ -1052,42 +1052,6 @@ mod tests {
         let seen = measure_room(model(&cfg).as_ref(), &room, -0.28, &waypoints(), hw);
         assert!((seen[0] - (1.0 - hw)).abs() < 1e-6, "{seen:?}");
         assert!((seen[1] - (0.5 - hw)).abs() < 1e-6, "{seen:?}");
-    }
-
-    #[test]
-    fn the_raw_band_model_reads_the_map_origin_instead() {
-        // the legacy model: on a LIO stack the post sits under the absolute
-        // band and reads as infinite room -- the governor would drive at full
-        // speed into what the planner routed round, which is what the robot ran
-        let room = room_with_a_post(-0.28);
-        let raw = Config {
-            obstacle_model: "raw_band".into(),
-            ..config()
-        };
-        let blind = measure_room(
-            model(&raw).as_ref(),
-            &room,
-            -0.28,
-            &waypoints(),
-            half_width(),
-        );
-        assert!(blind.iter().all(|d| d.is_infinite()), "{blind:?}");
-    }
-
-    #[test]
-    fn a_room_hint_on_a_ground_already_at_zero_matches_the_raw_band() {
-        // the sim worlds put the plan poses on the ground; the two
-        // models agree there, so the hint the judge hands the controller
-        // cannot move
-        let room = room_with_a_post(0.0);
-        let raw = Config {
-            obstacle_model: "raw_band".into(),
-            ..config()
-        };
-        let cfg = config();
-        let got = measure_room(model(&cfg).as_ref(), &room, 0.0, &waypoints(), half_width());
-        let want = measure_room(model(&raw).as_ref(), &room, 0.0, &waypoints(), half_width());
-        assert_eq!(got, want);
     }
 
     #[test]

@@ -23,8 +23,7 @@ estimated off the scene, so nothing can be estimated wrong.
 
 A model is z-only and says nothing about xy. The frame is the caller's: the
 adapter re-references the cloud (`adapter/planner.py`) before handing it over,
-and `hard_points` is where the two meet. `raw_band` is the pre-body-reference
-behaviour, kept so recordings made under it replay as they ran.
+and `hard_points` is where the two meet.
 """
 
 from __future__ import annotations
@@ -42,7 +41,6 @@ if TYPE_CHECKING:
 
 # The absolute band `planners/target.py` slices, which is only the body's band
 # if the map's z origin happens to be the ground.
-RAW_BAND = (0.05, 0.45)
 # Ground exclusion for the body-referenced band. TWO voxel layers, not one: a
 # floor whose true height sits near a voxel boundary quantises into both layers
 # either side of it, and one layer leaves the upper one standing as a carpet
@@ -64,33 +62,13 @@ class ObstacleField:
 
 
 class ObstacleModel(Protocol):
-    """A z-rule over a cloud; the caller owns the frame it is read in."""
-
-    # Does `field` want z measured from the support surface, or as the map has it?
-    body_referenced: bool
+    """A z-rule over a cloud referenced to the surface the feet stand on."""
 
     def field(self, cloud: NDArray[np.float32]) -> ObstacleField: ...
 
 
-class RawBand:
-    """The absolute 0.05..0.45 slice the stack read before the body was the reference."""
-
-    body_referenced = False
-
-    def __init__(self, emb: Embodiment) -> None:
-        del emb  # an absolute band is not a property of any body
-        self.low, self.high = RAW_BAND
-
-    def field(self, cloud: NDArray[np.float32]) -> ObstacleField:
-        z = cloud[:, 2]
-        hard = np.flatnonzero((z > self.low) & (z < self.high))
-        return ObstacleField(hard=hard.astype(np.int32))
-
-
 class BodyBand:
     """Obstacles by the body's own geometry: clear of the ground, under the belly."""
-
-    body_referenced = True
 
     def __init__(self, emb: Embodiment) -> None:
         self.low = LOW
@@ -103,7 +81,6 @@ class BodyBand:
 
 
 OBSTACLE_MODELS: dict[str, Callable[[Embodiment], ObstacleModel]] = {
-    "raw_band": RawBand,  # legacy: the cloud as given, absolute band
     "body_band": BodyBand,  # z-referenced zones from the embodiment
 }
 
@@ -116,13 +93,9 @@ def load(name: str, emb: Embodiment) -> ObstacleModel:
     return factory(emb)
 
 
-def referenced(
-    model: ObstacleModel, cloud: NDArray[np.float32], ground_z: float
-) -> NDArray[np.float32]:
-    """The cloud in the frame this model reads: z off the support surface, or as it came."""
+def referenced(cloud: NDArray[np.float32], ground_z: float) -> NDArray[np.float32]:
+    """The cloud in the frame a model reads: z off the support surface."""
     pts = np.asarray(cloud, dtype=np.float32).reshape(-1, 3)
-    if not model.body_referenced:
-        return pts
     return pts - np.array([0.0, 0.0, ground_z], dtype=np.float32)
 
 
@@ -130,5 +103,5 @@ def hard_points(
     model: ObstacleModel, cloud: NDArray[np.float32], ground_z: float
 ) -> NDArray[np.float32]:
     """The obstacles this model sees -- the cloud the search plans on."""
-    pts = referenced(model, cloud, ground_z)
+    pts = referenced(cloud, ground_z)
     return np.ascontiguousarray(pts[model.field(pts).hard])

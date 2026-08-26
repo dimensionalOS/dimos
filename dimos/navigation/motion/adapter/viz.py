@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.motion.control.profile import (
     SPEED_CLEARANCE,
@@ -56,7 +57,7 @@ _Z_LIFT = 0.02
 _ROOMY = SPEED_CLEARANCE
 
 
-def _body_centre(pose: Any, center_off: float) -> tuple[float, float]:
+def _body_centre(pose: PoseStamped, center_off: float) -> tuple[float, float]:
     """The body centre for a pose point, offset along the pose's own heading."""
     yaw = pose.yaw
     return (

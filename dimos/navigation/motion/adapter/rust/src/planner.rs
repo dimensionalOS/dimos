@@ -94,8 +94,7 @@ pub struct Config {
     pub reset_carrot_m: f64,
     /// What counts as an obstacle (`obstacles.rs`). "body_band" reads the cloud
     /// against the surface the feet stand on, which the embodiment knows the
-    /// base's height above; "raw_band" is the absolute 0.05..0.45 slice the
-    /// stack ran before that, kept for replaying recordings made under it.
+    /// base's height above.
     pub obstacle_model: String,
     /// Hold once the local map is this old, measured from ARRIVAL.
     #[validate(range(exclusive_min = 0.0))]
@@ -113,7 +112,7 @@ fn validate_embodiment(config: &Config) -> Result<(), ValidationError> {
     }
     if !obstacles::MODELS.contains(&config.obstacle_model.as_str()) {
         return Err(ValidationError::new(
-            "obstacle_model must be one of: raw_band, body_band",
+            "obstacle_model must be one of: body_band",
         ));
     }
     Ok(())
@@ -963,28 +962,10 @@ mod tests {
     }
 
     #[test]
-    fn the_body_band_sees_obstacles_the_raw_band_looks_over() {
+    fn the_body_band_reads_the_walls_off_the_body_reference() {
         let room = room_on_a_floor(-0.28);
-        // raw_band: the band sits 0.28 m over the ground and sees nothing
-        let raw = Config {
-            obstacle_model: "raw_band".into(),
-            ..config()
-        };
-        let blind = plan_once(
-            &raw,
-            &go2(),
-            model(&raw).as_ref(),
-            &room,
-            (0.0, 0.0, 0.0),
-            (4.0, 0.0),
-            -0.28,
-            None,
-        );
-        assert!(
-            blind.poses.len() > 1,
-            "the raw band drove through the walls"
-        );
-        // body_band off the body's own reference: the same room is a sealed box
+        // the walls sit under an absolute band; off the body's own reference
+        // the same room is a sealed box
         let cfg = Config {
             obstacle_model: "body_band".into(),
             ..config()
@@ -1017,10 +998,6 @@ mod tests {
             wall.push([1.5, y, 0.55]);
             y += 0.05;
         }
-        assert!(
-            wall[0][2] as f64 > obstacles::RAW_BAND.1,
-            "the fixture has to sit above the old band"
-        );
         let detour = |m: &dyn ObstacleModel| -> f64 {
             let out = plan_once(
                 &config(),

@@ -14,9 +14,9 @@
 
 """The SE(2) domain the local planner is written in.
 
-`Box` and `Scenario` are the world a query is posed over; `se2_search` is the
-lattice search itself, with the pricing (`path_cost`) and commitment
-(`trim_to_pose`) rules the rust planner is checked against.
+`se2_search` is the lattice search itself, over an `SdfGrid`, with the pricing
+(`path_cost`) and commitment (`trim_to_pose`) rules the rust planner is checked
+against.
 """
 
 from __future__ import annotations
@@ -33,33 +33,11 @@ import numpy as np
 # stamps it encodes are the same curve); profile.py depends on nothing here, so
 # this stays a leaf.
 from dimos.navigation.motion.control.profile import MAX_SPEED, governor_speed
-from dimos.navigation.motion.embodiment import GO2, Embodiment, box_offsets
+from dimos.navigation.motion.embodiment import Embodiment, box_offsets
 
-
-@dataclass
-class Box:
-    """Ground-truth obstacle: axis of yaw, footprint sx*sy, floor to height."""
-
-    cx: float
-    cy: float
-    sx: float
-    sy: float
-    yaw: float = 0.0
-    height: float = 0.6
-
-
-@dataclass
-class Scenario:
-    name: str
-    boxes: list[Box]
-    goal: tuple[float, float]
-    start: tuple[float, float, float] = (0.0, 0.0, 0.0)  # x, y, yaw
-    # "clear": a route exists — find it, no veto. "refuse": the task is
-    # impossible — veto (stop) is the only correct output. "safe": either is
-    # fine, but never a non-vetoed interpenetrating path.
-    expect: str = "clear"
-    emb: Embodiment = GO2
-    note: str = ""
+# (N, 3) rows of (x, y, yaw): the state the search speaks, and the rust boundary's.
+States = np.ndarray
+Pose2 = tuple[float, float, float]  # x, y, yaw
 
 
 # Lattice pitch. VOXEL is a config constant of
@@ -87,6 +65,41 @@ PERIOD = 0.24  # 2 * CELL == 3 * VOXEL == 6 * FINE
 COMMIT_MARGIN = 1.50
 
 
+@dataclass(frozen=True)
+class SdfGrid:
+    """Distance to the nearest obstacle sampled on the fine lattice, indexed [ix, iy]."""
+
+    x0: float
+    y0: float
+    pitch: float
+    d: np.ndarray
+
+    @classmethod
+    def from_obstacles(
+        cls, bounds: tuple[float, float, float, float], obstacles: np.ndarray, pitch: float = FINE
+    ) -> SdfGrid:
+        """Distance to the nearest of (N, 2) obstacle xy, sampled over `bounds` (x0, y0, x1, y1)."""
+        from scipy.spatial import cKDTree
+
+        x0, y0, x1, y1 = bounds
+        xs, ys = np.arange(x0, x1, pitch), np.arange(y0, y1, pitch)
+        if not len(obstacles):
+            return cls(x0, y0, pitch, np.full((len(xs), len(ys)), np.inf))
+        X, Y = np.meshgrid(xs, ys, indexing="ij")
+        d, _ = cKDTree(obstacles).query(np.column_stack([X.ravel(), Y.ravel()]))
+        return cls(x0, y0, pitch, d.reshape(len(xs), len(ys)))
+
+    def ix(self, x: np.ndarray | float) -> np.ndarray:
+        return np.clip(np.round((x - self.x0) / self.pitch).astype(np.intp), 0, self.d.shape[0] - 1)
+
+    def iy(self, y: np.ndarray | float) -> np.ndarray:
+        return np.clip(np.round((y - self.y0) / self.pitch).astype(np.intp), 0, self.d.shape[1] - 1)
+
+    def lookup(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """Nearest-sample clearance at each (x, y), metres."""
+        return np.asarray(self.d[self.ix(x), self.iy(y)])
+
+
 def anchor(v: float, period: float = PERIOD) -> float:
     """Snap a grid corner down onto the frame's own absolute lattice."""
     return math.floor(v / period) * period
@@ -102,14 +115,7 @@ def anchor(v: float, period: float = PERIOD) -> float:
 COST_STEP = FINE
 
 
-def path_cost(
-    fgx: np.ndarray,
-    fgy: np.ndarray,
-    sdf_grid: np.ndarray,
-    states: np.ndarray,
-    emb: Embodiment,
-    step: float = COST_STEP,
-) -> float:
+def path_cost(grid: SdfGrid, states: States, emb: Embodiment, step: float = COST_STEP) -> float:
     """What this route costs on the follower's own clock, in open-space metres.
 
     The pricing the search puts on its own edges, read along a continuous
@@ -123,7 +129,6 @@ def path_cost(
     s = np.asarray(states, dtype=float).reshape(-1, 3)
     if len(s) < 2:
         return 0.0
-    fine = float(fgx[1] - fgx[0])
     off = box_offsets(emb.box(None))
 
     def tight(px: np.ndarray, py: np.ndarray, th: np.ndarray) -> np.ndarray:
@@ -131,9 +136,7 @@ def path_cost(
         c_, s_ = np.cos(th)[:, None], np.sin(th)[:, None]
         wx = px[:, None] + c_ * off[None, :, 0] - s_ * off[None, :, 1]
         wy = py[:, None] + s_ * off[None, :, 0] + c_ * off[None, :, 1]
-        i = np.clip(np.round((wx - fgx[0]) / fine).astype(int), 0, len(fgx) - 1)
-        j = np.clip(np.round((wy - fgy[0]) / fine).astype(int), 0, len(fgy) - 1)
-        return np.asarray(MAX_SPEED / governor_speed(np.min(sdf_grid[i, j], axis=1)))
+        return np.asarray(MAX_SPEED / governor_speed(np.min(grid.lookup(wx, wy), axis=1)))
 
     d = s[1:] - s[:-1]
     span = np.hypot(d[:, 0], d[:, 1])
@@ -173,7 +176,7 @@ def path_cost(
     return total + float(np.sum((gait + turn) * w * tight(px, py, th)))
 
 
-def trim_to_pose(states: np.ndarray, pose: tuple[float, float, float]) -> np.ndarray:
+def trim_to_pose(states: States, pose: Pose2) -> States:
     """Head-trim a published route to where the robot is now: the remainder from
     the nearest published waypoint on, exactly as the global route is trimmed to
     the robot on every republish. That remainder IS the commitment.
@@ -195,19 +198,17 @@ def trim_to_pose(states: np.ndarray, pose: tuple[float, float, float]) -> np.nda
 
 
 def se2_search(
-    fgx: np.ndarray,
-    fgy: np.ndarray,
-    sdf_grid: np.ndarray,
+    grid: SdfGrid,
     bounds: tuple[float, float, float, float],
-    start: tuple[float, float, float],
+    start: Pose2,
     goal: tuple[float, float],
     emb: Embodiment,
     margin: float,
     cell: float = CELL,
     yaw_bins: int = 16,
-    incumbent: np.ndarray | None = None,
+    incumbent: States | None = None,
     commit_margin: float = COMMIT_MARGIN,
-) -> np.ndarray | None:
+) -> States | None:
     """The SE(2) lattice search on a prebuilt fine SDF grid — shared by any
     caller that builds its grid from the cloud and, on the research branch, by
     the gold oracle's box-exact one. Returns (N, 3) smoothed states or None.
@@ -233,17 +234,12 @@ def se2_search(
     challenger wins by more than `commit_margin`. `incumbent=None` is
     bit-identical to a planner that never heard of any of this.
     """
-    fine = float(fgx[1] - fgx[0])
+    fine = grid.pitch
     x0, y0, x1, y1 = bounds
     gx = np.arange(x0, x1 + cell, cell)
     gy = np.arange(y0, y1 + cell, cell)
     nx, ny = len(gx), len(gy)
     thetas = np.linspace(-math.pi, math.pi, yaw_bins, endpoint=False)
-
-    def lookup(px: np.ndarray, py: np.ndarray) -> np.ndarray:
-        i = np.clip(np.round((px - fgx[0]) / fine).astype(int), 0, len(fgx) - 1)
-        j = np.clip(np.round((py - fgy[0]) / fine).astype(int), 0, len(fgy) - 1)
-        return np.asarray(sdf_grid[i, j])
 
     # Footprint table. The envelope answers every drift angle with one of a
     # handful of distinct boxes, so they are interned by geometry: the
@@ -289,9 +285,8 @@ def se2_search(
     # is an INTEGER shift of the field — the whole precompute is gathers on
     # shifted views, and the envelope's extra footprints cost a gather each
     # rather than a fresh round of coordinate arithmetic.
-    ci = np.round((gx - fgx[0]) / fine).astype(np.intp)
-    cj = np.round((gy - fgy[0]) / fine).astype(np.intp)
-    nfx, nfy = len(fgx), len(fgy)
+    ci, cj = grid.ix(gx), grid.iy(gy)
+    nfx, nfy = grid.d.shape
     clr = np.full((yaw_bins, len(fp_offsets), nx, ny), -np.inf, dtype=np.float32)
     for bi, th in enumerate(thetas):
         c, s = math.cos(th), math.sin(th)
@@ -304,7 +299,7 @@ def se2_search(
             for di_, dj_ in sorted(shifts):
                 ii = np.clip(ci + di_, 0, nfx - 1)
                 jj = np.clip(cj + dj_, 0, nfy - 1)
-                np.minimum(clear, sdf_grid[np.ix_(ii, jj)], out=clear)
+                np.minimum(clear, grid.d[np.ix_(ii, jj)], out=clear)
             clr[bi, fp] = clear
     free = clr > margin
 
@@ -316,7 +311,7 @@ def se2_search(
         c_, s_ = math.cos(th), math.sin(th)
         wx = x + c_ * off[:, 0] - s_ * off[:, 1]
         wy = y + s_ * off[:, 0] + c_ * off[:, 1]
-        return float(np.min(lookup(wx, wy)))
+        return float(np.min(grid.lookup(wx, wy)))
 
     def cell_of(p: tuple[float, float]) -> tuple[int, int]:
         return (
@@ -540,6 +535,6 @@ def se2_search(
         here = np.array([[start[0], start[1], start[2]]])
         return p if np.allclose(p[0], here[0]) else np.vstack([here, p])
 
-    fresh = path_cost(fgx, fgy, sdf_grid, priced(result), emb)
-    held = path_cost(fgx, fgy, sdf_grid, priced(route), emb)
+    fresh = path_cost(grid, priced(result), emb)
+    held = path_cost(grid, priced(route), emb)
     return result if fresh < held - commit_margin else route
