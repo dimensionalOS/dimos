@@ -20,11 +20,15 @@ from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.robot.manipulators.common.blueprints import TeleopBinding
 from dimos.teleop.webxr.blueprints import (
+    demo_pico_body_tracking,
     teleop_webxr_dual,
     teleop_webxr_hand_xarm7,
     teleop_webxr_xarm7,
 )
+from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
+from dimos.teleop.webxr.body_tracking_monitor import BodyTrackingMonitor
 from dimos.teleop.webxr.extensions import ArmTeleopModule, HandTeleopModule
+from dimos.teleop.webxr.module import WebXRTeleopModule
 
 
 def _coordinator_tasks(blueprint: Blueprint) -> list[TaskConfig]:
@@ -101,3 +105,15 @@ def test_mixed_arm_blueprint_keeps_two_independent_one_binding_tasks() -> None:
         teleop_webxr_dual.remapping_map[(ArmTeleopModule.name, "right_controller_output")]
         == "right_cartesian_command"
     )
+
+
+def test_pico_body_tracking_demo_connects_required_webxr_to_monitor() -> None:
+    modules = {atom.module for atom in demo_pico_body_tracking.blueprints}
+    webxr = next(
+        atom for atom in demo_pico_body_tracking.blueprints if atom.module is WebXRTeleopModule
+    )
+    transport = demo_pico_body_tracking.transport_map[("body_tracking", BodyTrackingSnapshot)]
+
+    assert modules == {WebXRTeleopModule, BodyTrackingMonitor}
+    assert webxr.kwargs["body_tracking_mode"] == "required"
+    assert transport.channel == "/teleop/body_tracking"

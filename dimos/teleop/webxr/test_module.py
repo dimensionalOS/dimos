@@ -18,11 +18,13 @@ import json
 from types import SimpleNamespace
 from typing import Any
 
+from fastapi.testclient import TestClient
 import pytest
 import pytest_mock
 
 from dimos.imitation.collection.episode_monitor import EpisodeStatus
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
 from dimos.teleop.webxr.controller_types import (
     Buttons,
     Hand,
@@ -31,6 +33,7 @@ from dimos.teleop.webxr.controller_types import (
 )
 from dimos.teleop.webxr.extensions import ArmTeleopModule, Go2TeleopModule, HandTeleopModule
 from dimos.teleop.webxr.module import WebXRTeleopModule, _ws_send_text
+from dimos.web.robot_web_interface import RobotWebInterface
 
 
 @pytest.fixture
@@ -286,6 +289,71 @@ def test_go2_stale_input_publishes_zero_velocity(mocker: pytest_mock.MockerFixtu
         module.stop()
 
 
+def test_default_webxr_config_does_not_request_body_tracking(
+    module: WebXRTeleopModule,
+) -> None:
+    assert module._webxr_client_config() == {
+        "body_tracking_mode": "off",
+        "session_modes": ["immersive-ar", "immersive-vr"],
+        "session_options": {
+            "requiredFeatures": ["local-floor"],
+            "optionalFeatures": ["hand-tracking"],
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("mode", "session_modes", "required_features", "optional_features"),
+    [
+        (
+            "optional",
+            ["immersive-ar", "immersive-vr"],
+            ["local-floor"],
+            ["hand-tracking", "bounded-floor", "body-tracking"],
+        ),
+        (
+            "required",
+            ["immersive-ar"],
+            ["local-floor", "body-tracking"],
+            ["hand-tracking", "bounded-floor"],
+        ),
+    ],
+)
+def test_enabled_webxr_config_requests_body_tracking(
+    mode,
+    session_modes,
+    required_features,
+    optional_features,
+) -> None:
+    module = WebXRTeleopModule(body_tracking_mode=mode)
+    try:
+        assert module._webxr_client_config() == {
+            "body_tracking_mode": mode,
+            "session_modes": session_modes,
+            "session_options": {
+                "requiredFeatures": required_features,
+                "optionalFeatures": optional_features,
+            },
+        }
+    finally:
+        module.stop()
+
+
+def test_webxr_config_route_exposes_body_tracking_mode() -> None:
+    module = WebXRTeleopModule(body_tracking_mode="required")
+    module._web_server = RobotWebInterface(host="127.0.0.1", port=9443)
+    module._setup_routes()
+
+    try:
+        with TestClient(module._web_server.app) as client:
+            response = client.get("/teleop/config")
+
+        assert response.status_code == 200
+        assert response.json() == module._webxr_client_config()
+    finally:
+        module.stop()
+
+
 def test_go2_malformed_joy_clears_stale_state_and_publishes_zero_velocity(
     mocker: pytest_mock.MockerFixture,
 ) -> None:
@@ -305,6 +373,22 @@ def test_go2_malformed_joy_clears_stale_state_and_publishes_zero_velocity(
         assert twist.linear.x == 0.0
         assert twist.linear.y == 0.0
         assert twist.angular.z == 0.0
+    finally:
+        module.stop()
+
+
+def test_webxr_body_reader_is_served_as_javascript() -> None:
+    module = WebXRTeleopModule()
+    module._web_server = RobotWebInterface(host="127.0.0.1", port=9443)
+    module._setup_routes()
+
+    try:
+        with TestClient(module._web_server.app) as client:
+            response = client.get("/static/webxr_body.mjs")
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/javascript")
+        assert "export function captureBody" in response.text
     finally:
         module.stop()
 
@@ -330,6 +414,61 @@ def test_go2_unknown_controller_identity_publishes_zero_velocity(
         assert twist.angular.z == 0.0
     finally:
         module.stop()
+
+
+def test_text_body_tracking_snapshot_is_published(
+    module: WebXRTeleopModule,
+    mocker,
+) -> None:
+    publish = mocker.patch.object(module.body_tracking, "publish")
+    payload = json.dumps(
+        {
+            "type": "body_tracking_snapshot",
+            "capture_time_s": 3.0,
+            "frame_id": "bounded-floor",
+            "joints": {
+                "hips": {
+                    "position": [1.0, 2.0, 3.0],
+                    "orientation": [0.0, 0.0, 0.0, 1.0],
+                }
+            },
+        }
+    )
+
+    accepted = module._dispatch_text_message(payload)
+
+    assert accepted
+    snapshot = publish.call_args.args[0]
+    assert isinstance(snapshot, BodyTrackingSnapshot)
+    assert snapshot.frame_id == "bounded-floor"
+    assert snapshot.joints is not None
+    assert snapshot.joints["hips"].position.to_list() == [1.0, 2.0, 3.0]
+
+
+def test_malformed_text_message_is_dropped(
+    module: WebXRTeleopModule,
+    mocker,
+) -> None:
+    publish = mocker.patch.object(module.body_tracking, "publish")
+
+    accepted = module._dispatch_text_message('{"type": "unknown"}')
+
+    assert not accepted
+    publish.assert_not_called()
+
+
+def test_binary_pose_dispatch_remains_on_existing_decoder(
+    module: WebXRTeleopModule,
+    mocker,
+) -> None:
+    body_publish = mocker.patch.object(module.body_tracking, "publish")
+    pose = PoseStamped(ts=1.0, frame_id="left", position=[1.0, 2.0, 3.0])
+
+    accepted = module._dispatch_binary_message(pose.lcm_encode())
+
+    assert accepted
+    assert module._current_poses[Hand.LEFT] is not None
+    body_publish.assert_not_called()
 
 
 def test_translation_scale_changes_pose_delta(module: WebXRTeleopModule) -> None:
