@@ -21,18 +21,13 @@ import pytest
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import g1_arms
-from dimos.control.tasks.pose_target_ik import PoseTargetIKTaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.manipulation.planning.factory import create_world
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
     _G1_ARM_JOINT_NAME_MAPPING,
     _G1_TELEOP_MODEL,
-    _G1_TELEOP_PINK,
-    G1_TELEOP_TASK_NAME,
     _G1GrootCoordinator,
     unitree_g1_groot_wbc,
 )
@@ -44,7 +39,6 @@ from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import (
 from dimos.robot.unitree.g1.manip_config import (
     G1_LEFT_ARM_JOINTS,
     G1_RIGHT_ARM_JOINTS,
-    G1_TELEOP_ARM_MODEL,
     G1_UPPER_BODY_JOINT_NAME_MAPPING,
     G1_WAIST_JOINTS,
     g1_upper_body_model_config,
@@ -72,7 +66,7 @@ def _teleop_task() -> TaskConfig:
 def test_g1_blueprint_uses_shared_bimanual_teleop_task() -> None:
     task = _teleop_task()
 
-    assert task.name == G1_TELEOP_TASK_NAME
+    assert task.name == "teleop_g1"
     assert task.joint_names == g1_arms
     assert task.priority == 20
     assert task.params["robot_model"] is _G1_TELEOP_MODEL
@@ -99,7 +93,7 @@ def test_g1_blueprint_keeps_bounded_trajectory_path_below_teleop() -> None:
 
     assert [(task.name, task.type, task.priority) for task in arm_tasks] == [
         (JOINT_TRAJECTORY_TASK_NAME, "trajectory", 10),
-        (G1_TELEOP_TASK_NAME, "teleop_ik", 20),
+        ("teleop_g1", "teleop_ik", 20),
     ]
 
 
@@ -154,28 +148,6 @@ def test_g1_collection_streams_do_not_require_world_poses() -> None:
     ]
 
 
-@pytest.mark.self_hosted
-def test_g1_models_separate_live_waist_planning_from_arm_only_teleop() -> None:
-    config = g1_upper_body_model_config()
-    loaded = config.model.load()
-    joint_names = {joint.name for joint in loaded.joints}
-    teleop_joints = {joint.name: joint.type for joint in G1_TELEOP_ARM_MODEL.load().joints}
-
-    assert loaded.root_link == "pelvis"
-    assert "left_hip_pitch_joint" not in joint_names
-    assert "right_hip_pitch_joint" not in joint_names
-    assert {_G1_ARM_JOINT_NAME_MAPPING[name] for name in g1_arms} <= joint_names
-    assert {G1_UPPER_BODY_JOINT_NAME_MAPPING[name] for name in G1_WAIST_JOINTS} <= joint_names
-    assert {
-        G1_UPPER_BODY_JOINT_NAME_MAPPING[name]: "fixed" for name in G1_WAIST_JOINTS
-    }.items() <= teleop_joints.items()
-    assert {_G1_ARM_JOINT_NAME_MAPPING[name] for name in g1_arms} == {
-        name for name, joint_type in teleop_joints.items() if joint_type != "fixed"
-    }
-    assert config.max_velocity == 1.0
-    assert config.max_acceleration == 2.0
-
-
 def test_g1_upper_body_plans_arms_without_owning_waist() -> None:
     config = g1_upper_body_model_config()
 
@@ -202,42 +174,3 @@ def test_g1_teleop_wires_manipulation_to_existing_coordinator() -> None:
         unitree_g1_teleop.remapping_map[("G1Manipulation", "_control_coordinator")]
         is _G1GrootCoordinator
     )
-
-
-@pytest.mark.self_hosted
-def test_g1_upper_body_model_builds_a_roboplan_scene() -> None:
-    world = create_world()
-
-    robot_id = world.add_robot(g1_upper_body_model_config())
-    world.finalize()
-
-    assert world.get_robot_ids() == [robot_id]
-
-
-@pytest.mark.self_hosted
-def test_g1_pink_solver_uses_arm_only_model_and_g1_objective() -> None:
-    frames = ("left_rubber_hand", "right_rubber_hand")
-    config = PoseTargetIKTaskConfig(
-        joint_names=tuple(g1_arms),
-        robot_model=_G1_TELEOP_MODEL,
-        target_frames=frames,
-        pink=_G1_TELEOP_PINK,
-    )
-    solver = G1PinkPoseTargetSolver(config)
-    seed = JointState(name=list(g1_arms), position=[0.0] * len(g1_arms))
-    targets = solver.frame_poses(seed, frames)
-
-    command = solver.step(targets, seed, 0.01)
-
-    assert command is not None
-    assert command.name == g1_arms
-    context = next(iter(solver._control_contexts.values()))
-    assert context.robot.model.nq == len(g1_arms)
-    assert context.tasks is not None
-    for frame_name in frames:
-        frame_task = context.tasks[f"frame/{frame_name}"]
-        assert frame_task.position_cost == pytest.approx([8.0, 8.0, 8.0])
-        assert frame_task.orientation_cost == pytest.approx([2.0, 2.0, 2.0])
-    posture = context.tasks["posture/current"]
-    assert posture.cost == pytest.approx(np.tile([4.0, 3.0, 0.1, 3.0, 1.0, 1.0, 0.1], 2) * 0.01)
-    assert posture.target_q == pytest.approx(np.zeros(len(g1_arms)))

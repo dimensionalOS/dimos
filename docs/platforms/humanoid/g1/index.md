@@ -86,18 +86,8 @@ planned arm motion because the upper-body planner excludes leg geometry.
 On the G1 computer:
 
 ```bash
-cd ~/cc/dimos
 uv sync --extra all
-
-ROBOPLAN_GOMP="$(find "$PWD/.venv/lib/python3.12/site-packages/roboplan.libs" \
-  -maxdepth 1 -name 'libgomp-*.so*' -print -quit)"
-test -n "$ROBOPLAN_GOMP" || {
-  echo "RoboPlan's bundled libgomp was not found"
-  exit 1
-}
-
-LD_PRELOAD="$ROBOPLAN_GOMP:/lib/aarch64-linux-gnu/libgomp.so.1" \
-  uv run --no-sync dimos run unitree-g1-teleop --network-interface eth0
+uv run dimos run unitree-g1-teleop --network-interface eth0
 ```
 
 The teleop blueprint excludes navigation and mapping, so no module-disable
@@ -106,12 +96,15 @@ activate the robot from a second SSH session:
 
 ```bash
 uv run dimos hardware g1 status
-uv run dimos hardware g1 activate --ready
+uv run dimos hardware g1 activate
+uv run dimos hardware g1 status
+uv run dimos hardware g1 ready
 ```
 
 `activate` runs the GR00T pose ramp and requires interactive confirmation before
-enabling output. `--ready` then moves both arms to the conservative ready pose.
-Routine startup must use these hardware commands rather than `dimos shell`.
+enabling output. Check the status before `ready` moves both arms to the
+conservative ready pose. Routine startup must use these hardware commands rather
+than `dimos shell`. `activate --ready` remains available as a combined shortcut.
 
 Open `https://<g1-computer-ip>:8443/teleop` in the Quest browser and accept the
 self-signed certificate.
@@ -177,9 +170,24 @@ The viewer should open up. It'll run in faster-than-real speed until its caught 
 ### `libgomp.so.1: cannot allocate memory in static TLS block`
 
 RoboPlan 0.6.0's aarch64 wheel bundles a renamed private `libgomp`, while
-Pinocchio loads the system copy. Use the dual-preload launch command above;
-preloading only the system library is insufficient. If it still fails, confirm
-that `ROBOPLAN_GOMP` resolves to a file and appears first in `LD_PRELOAD`.
+Pinocchio loads the system copy. On affected systems, start the blueprint with
+both libraries preloaded:
+
+```bash
+ROBOPLAN_GOMP="$(find "$PWD/.venv/lib/python3.12/site-packages/roboplan.libs" \
+  -maxdepth 1 -name 'libgomp-*.so*' -print -quit)"
+test -n "$ROBOPLAN_GOMP" || {
+  echo "RoboPlan's bundled libgomp was not found"
+  exit 1
+}
+
+LD_PRELOAD="$ROBOPLAN_GOMP:/lib/aarch64-linux-gnu/libgomp.so.1" \
+  uv run --no-sync dimos run unitree-g1-teleop --network-interface eth0
+```
+
+Preloading only the system library is insufficient. If startup still fails,
+confirm that `ROBOPLAN_GOMP` resolves to a file and appears first in
+`LD_PRELOAD`.
 
 ### Activation or ready-pose recovery
 
