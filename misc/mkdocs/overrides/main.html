@@ -1,0 +1,50 @@
+{#-
+  Material's page template, plus a menu beside the edit button offering the
+  page as markdown. Every page is served as markdown at its docs/ path (see
+  on_post_page in hooks.py); the menu copies that, or opens it.
+-#}
+{% extends "base.html" %}
+
+{% block extrahead %}
+  {% if page %}
+    <link rel="alternate" type="text/markdown" href="{{ page.file.src_uri | url }}">
+  {% endif %}
+{% endblock %}
+
+{% block content %}
+  {% set markdown = page.file.src_uri | url %}
+  <div class="md-content__button md-icon dim-markdown">
+    <button class="dim-markdown__toggle" title="This page as markdown">
+      {% include ".icons/material/language-markdown.svg" %}
+      {% include ".icons/material/chevron-down.svg" %}
+    </button>
+    <div class="dim-markdown__menu">
+      <button class="dim-markdown__copy" data-href="{{ markdown }}">Copy as markdown</button>
+      <a href="{{ markdown }}">View as markdown</a>
+    </div>
+  </div>
+  {{ super() }}
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <script>
+    document.addEventListener("click", (event) => {
+      const menu = document.querySelector(".dim-markdown");
+      if (event.target.closest(".dim-markdown__toggle")) {
+        menu.classList.toggle("dim-markdown--open");
+      } else {
+        menu.classList.remove("dim-markdown--open");
+      }
+      const copy = event.target.closest(".dim-markdown__copy");
+      if (copy) {
+        const text = fetch(copy.dataset.href)
+          .then((response) => response.text())
+          .then((markdown) => new Blob([markdown], { type: "text/plain" }));
+        navigator.clipboard
+          .write([new ClipboardItem({ "text/plain": text })])
+          .then(() => alert$.next("{{ lang.t('clipboard.copied') }}"));
+      }
+    });
+  </script>
+{% endblock %}

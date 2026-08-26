@@ -4,7 +4,7 @@ This guide walks through integrating a new robot arm with dimOS, from writing th
 
 ## Architecture Overview
 
-dimOS uses a **Protocol-based adapter pattern** — no base class inheritance required. Your adapter wraps the vendor SDK and exposes a standard interface that the rest of the system consumes:
+dimOS uses a **Protocol-based adapter pattern**. No base class inheritance is required. Your adapter wraps the vendor SDK and exposes a standard interface that the rest of the system consumes:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -34,9 +34,9 @@ dimOS uses a **Protocol-based adapter pattern** — no base class inheritance re
 
 ## Prerequisites
 
-1. **Vendor SDK** — The Python SDK for your robot arm (e.g., `xarm-python-sdk`, `piper-sdk`)
-2. **URDF/xacro** — A robot description file (only needed if you want motion planning)
-3. **Connection info** — IP address, CAN port, serial device, etc.
+1. **Vendor SDK**: The Python SDK for your robot arm (e.g., `xarm-python-sdk`, `piper-sdk`)
+2. **URDF/xacro**: A robot description file (only needed if you want motion planning)
+3. **Connection info**: IP address, CAN port, serial device, etc.
 
 ## Step 1: Create the Adapter
 
@@ -55,7 +55,7 @@ dimos/hardware/manipulators/
     └── adapter.py
 ```
 
-### adapter.py — Full Skeleton
+### adapter.py: Full Skeleton
 
 Below is a complete annotated adapter. Implement each method by wrapping your vendor SDK calls. All values crossing the adapter boundary **must use SI units**.
 
@@ -68,7 +68,7 @@ Below is a complete annotated adapter. Implement each method by wrapping your ve
 | Force            | Newtons  |
 
 ```python skip
-"""YourArm adapter — implements ManipulatorAdapter protocol.
+"""YourArm adapter: implements ManipulatorAdapter protocol.
 
 SDK Units: <describe your SDK's native units here>
 dimOS Units: angles=radians, distance=meters, velocity=rad/s
@@ -96,7 +96,7 @@ class YourArmAdapter:
     """YourArm hardware adapter.
 
     Implements ManipulatorAdapter protocol via duck typing.
-    No inheritance required — just match the method signatures in spec.py.
+    No inheritance required. Just match the method signatures in spec.py.
     """
 
     def __init__(self, address: str, dof: int = 6) -> None:
@@ -352,9 +352,9 @@ ADAPTER_FACTORIES = {
 
 ### Key implementation notes
 
-- **Unsupported features** — Return `None` for reads and `False` for writes. Never raise exceptions for optional features.
-- **Velocity/effort feedback** — If your SDK doesn't provide these, return zeros. The coordinator handles this gracefully.
-- **Lazy SDK import** — If the vendor SDK is an optional dependency, you can import it inside `connect()` instead of at module level (see Piper adapter for this pattern):
+- **Unsupported features**: Return `None` for reads and `False` for writes. Never raise exceptions for optional features.
+- **Velocity/effort feedback**: If your SDK doesn't provide these, return zeros. The coordinator handles this gracefully.
+- **Lazy SDK import**: If the vendor SDK is an optional dependency, you can import it inside `connect()` instead of at module level (see Piper adapter for this pattern):
 
   ```py
   def connect(self) -> bool:
@@ -377,7 +377,7 @@ The `AdapterRegistry` in `dimos/hardware/manipulators/registry.py` discovers ada
 2. For each subpackage, it loads `<subpackage>._registry` and records each `ADAPTER_FACTORIES` entry (name → `"module:attr"` import path)
 3. Your adapter module is imported only when `create("yourarm")` is first called
 
-The manifest must import nothing beyond stdlib — it is loaded even when your vendor SDK is missing, so the name always shows up in `available()` and a missing SDK fails loudly at `create()` instead of silently dropping the adapter. A CI test (`dimos/hardware/test_adapter_registries.py`) fails if an adapter directory has no manifest or a manifest path doesn't resolve.
+The manifest must import nothing beyond stdlib. It is loaded even when your vendor SDK is missing, so the name always shows up in `available()` and a missing SDK fails loudly at `create()` instead of silently dropping the adapter. A CI test (`dimos/hardware/test_adapter_registries.py`) fails if an adapter directory has no manifest or a manifest path doesn't resolve.
 
 You can verify discovery works:
 
@@ -388,7 +388,7 @@ print(adapter_registry.available())  # Should include "yourarm"
 
 ## Step 3: Create Your Robot Folder and Blueprints
 
-Each robot in dimOS gets its own folder under `dimos/robot/`. This is where you define all blueprints for your arm — coordinator, planning, perception, etc. This follows the same pattern as Unitree robots (`dimos/robot/unitree/`).
+Each robot in dimOS gets its own folder under `dimos/robot/`. This is where you define all blueprints for your arm: coordinator, planning, perception, etc. This follows the same pattern as Unitree robots (`dimos/robot/unitree/`).
 
 ### 3a. Create the robot directory
 
@@ -431,7 +431,7 @@ from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 
 
-# YourArm (6-DOF) — real hardware
+# YourArm (6-DOF), real hardware
 coordinator_yourarm = ControlCoordinator.blueprint(
     tick_rate=100.0,                    # Control loop frequency (Hz)
     publish_joint_state=True,           # Publish aggregated joint state
@@ -803,7 +803,7 @@ Files to create:
 
 Files to modify:
 
-- [ ] `pyproject.toml` — Add vendor SDK to optional dependencies *(if applicable)*
+- [ ] `pyproject.toml`: Add vendor SDK to optional dependencies *(if applicable)*
 
 Verification:
 

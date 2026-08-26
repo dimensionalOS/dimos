@@ -256,7 +256,7 @@ See [Modules](/docs/usage/modules.md) for more on module architecture.
 ## Inspecting traffic (CLI)
 
 `dimos spy` is the universal transport spy: one live view of every topic moving on every
-dimOS pubsub transport — names, message rates, bandwidth, sizes, and liveness — whether the
+dimOS pubsub transport (names, message rates, bandwidth, sizes, and liveness), whether the
 system runs on LCM, Zenoh, or both.
 
 ```bash

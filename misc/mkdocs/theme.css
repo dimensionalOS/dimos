@@ -17,8 +17,10 @@
   --md-accent-fg-color: var(--dim-brand-bright);
 
   /* Rounding and hairlines, applied consistently to every raised surface. */
-  --dim-radius: 0.6rem;
-  --dim-radius-sm: 0.35rem;
+  --dim-radius: 0.75rem;
+  --dim-radius-sm: 0.375rem;
+  --dim-radius-lg: 1rem;
+  --dim-radius-pill: 9999px;
   --dim-hairline: color-mix(in srgb, var(--md-default-fg-color) 12%, transparent);
   --dim-nav-title: #ffffff;
 }
@@ -326,4 +328,275 @@
 
 .md-footer {
   border-top: 1px solid var(--dim-hairline);
+}
+
+/* ------------------------------------------------------- interactive chrome
+ *
+ * The shape language for anything interactive: a pill for anything you click,
+ * a 1px ring instead of a shadow on anything raised, and colour and transform
+ * as the only transitions. */
+
+/* Search reads as a control rather than a slot in the header bar. */
+.md-search__form {
+  border-radius: var(--dim-radius-pill);
+  border: 1px solid var(--dim-hairline);
+  transition: border-color 150ms, background-color 150ms;
+}
+
+.md-search__form:hover,
+.md-search__input:focus ~ .md-search__form,
+[data-md-toggle="search"]:checked ~ .md-header .md-search__form {
+  border-color: color-mix(in srgb, var(--md-accent-fg-color) 55%, transparent);
+}
+
+@media screen and (min-width: 60em) {
+  .md-search__output {
+    border-radius: var(--dim-radius);
+    margin-top: 0.3rem;
+    border: 1px solid var(--dim-hairline);
+    overflow: hidden;
+  }
+}
+
+/* Nav rows become hit targets you can see. Material only recolours the text,
+ * which on a list this long gives no sense of where the pointer is. */
+.md-nav--primary .md-nav__link {
+  border-radius: var(--dim-radius-sm);
+  padding: 0.25em 0.5em;
+  margin: 0 -0.5em;
+  transition: background-color 120ms, color 120ms;
+}
+
+.md-nav--primary .md-nav__link:hover {
+  background-color: color-mix(in srgb, var(--md-default-fg-color) 7%, transparent);
+}
+
+.md-nav--primary .md-nav__link--active,
+.md-nav--primary .md-nav__link--active:hover {
+  background-color: color-mix(in srgb, var(--md-accent-fg-color) 15%, transparent);
+  color: var(--md-accent-fg-color);
+}
+
+/* Section headings are labels, not rows: keep the pill off them. */
+.md-nav--primary .md-nav__item--section > .md-nav__link,
+.md-nav--primary .md-nav__item--section > label.md-nav__link {
+  background-color: transparent;
+  margin-left: 0;
+  padding-left: 0;
+}
+
+/* The table of contents gets a matching active marker. */
+.md-nav--secondary .md-nav__link {
+  transition: color 120ms;
+}
+
+.md-nav--secondary .md-nav__link--active {
+  color: var(--md-accent-fg-color);
+  font-weight: 600;
+}
+
+/* Admonitions: a soft tinted panel, not a stripe down the left. The tint is
+ * derived from whatever colour material assigned the type, so note, warning
+ * and danger stay distinguishable without a per-type rule each. */
+.md-typeset :is(.admonition, details) {
+  border: 1px solid color-mix(in srgb, var(--md-typeset-a-color) 22%, transparent);
+  border-left-width: 1px;
+  border-radius: var(--dim-radius-lg);
+  background-color: color-mix(in srgb, var(--md-typeset-a-color) 6%, var(--md-default-bg-color));
+  padding: 0.1rem 0.2rem;
+}
+
+.md-typeset :is(.admonition-title, summary) {
+  background-color: transparent;
+  font-weight: 600;
+}
+
+.md-typeset :is(.admonition-title, summary)::before {
+  border-radius: var(--dim-radius-sm);
+}
+
+/* details is a control, so its summary row should respond like one. */
+.md-typeset details > summary {
+  border-radius: var(--dim-radius);
+  transition: background-color 120ms;
+}
+
+.md-typeset details > summary:hover {
+  background-color: color-mix(in srgb, var(--md-default-fg-color) 5%, transparent);
+}
+
+/* Buttons. `[text](url){ .md-button }` in markdown, used for the calls to
+ * action on landing pages. Material ships a square outline; make it a pill
+ * with a filled primary and an outlined secondary. */
+.md-typeset .md-button {
+  border-radius: var(--dim-radius-pill);
+  border-width: 1px;
+  padding: 0.45em 1.1em;
+  font-weight: 600;
+  font-size: 0.72rem;
+  transition: background-color 150ms, border-color 150ms, transform 150ms;
+}
+
+.md-typeset .md-button:hover {
+  transform: translateY(-1px);
+}
+
+.md-typeset .md-button--primary {
+  background-color: var(--dim-brand);
+  border-color: var(--dim-brand);
+  color: #fff;
+}
+
+.md-typeset .md-button--primary:hover {
+  background-color: var(--dim-brand-bright);
+  border-color: var(--dim-brand-bright);
+}
+
+/* The copy-to-clipboard affordance on a code block: a real button, visible
+ * enough to find, quiet enough to ignore. */
+.md-typeset .md-clipboard {
+  border-radius: var(--dim-radius-sm);
+  transition: background-color 120ms, color 120ms;
+}
+
+.md-typeset .highlight:hover .md-clipboard {
+  background-color: color-mix(in srgb, var(--md-default-fg-color) 8%, transparent);
+}
+
+.md-typeset .md-clipboard:hover {
+  background-color: color-mix(in srgb, var(--md-accent-fg-color) 25%, transparent);
+  color: var(--md-default-fg-color);
+}
+
+/* A named code block gets a header strip, so the filename reads as a label on
+ * the block rather than a caption floating above it. */
+.md-typeset .highlight span.filename {
+  border-bottom: 1px solid var(--dim-hairline);
+  border-radius: var(--dim-radius) var(--dim-radius) 0 0;
+  background-color: color-mix(in srgb, var(--md-default-fg-color) 5%, transparent);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+/* Header buttons (edit page, repo, theme) as round targets. */
+.md-header__button {
+  border-radius: var(--dim-radius-pill);
+  transition: background-color 120ms;
+}
+
+.md-header__button:hover {
+  background-color: color-mix(in srgb, var(--md-default-fg-color) 10%, transparent);
+  opacity: 1;
+}
+
+/* The page as markdown: a menu beside the edit button, for readers that
+ * would rather copy the page into an agent than read it here. The markup
+ * is overrides/main.html; the markdown it offers is written by hooks.py. */
+.dim-markdown {
+  position: relative;
+}
+
+.dim-markdown__toggle {
+  display: flex;
+  align-items: center;
+  color: inherit;
+  cursor: pointer;
+  transition: color 120ms;
+}
+
+.dim-markdown__toggle:hover,
+.dim-markdown--open .dim-markdown__toggle {
+  color: var(--md-accent-fg-color);
+}
+
+/* The chevron is a hint that this one opens, not a second icon. */
+.dim-markdown__toggle svg:last-child {
+  width: 0.8rem;
+  height: 0.8rem;
+  margin-left: -0.1rem;
+}
+
+.dim-markdown__menu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 3;
+  margin-top: 0.3rem;
+  padding: 0.25rem;
+  border: 1px solid var(--dim-hairline);
+  border-radius: var(--dim-radius);
+  background-color: var(--md-default-bg-color--light);
+}
+
+.dim-markdown--open .dim-markdown__menu {
+  display: block;
+}
+
+.dim-markdown__menu > :is(a, button) {
+  display: block;
+  width: 100%;
+  padding: 0.35rem 0.7rem;
+  border-radius: var(--dim-radius-sm);
+  color: var(--md-default-fg-color);
+  font-size: 0.68rem;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms, color 120ms;
+}
+
+.dim-markdown__menu > :is(a, button):hover {
+  background-color: color-mix(in srgb, var(--md-default-fg-color) 7%, transparent);
+  color: var(--md-accent-fg-color);
+}
+
+/* Tabs, when a site turns them on, read as pills rather than underlines. */
+.md-tabs__link {
+  border-radius: var(--dim-radius-pill);
+  padding: 0.25em 0.75em;
+  margin: 0.2em 0.1em;
+  opacity: 1;
+  transition: background-color 120ms, color 120ms;
+}
+
+.md-tabs__link:hover {
+  background-color: color-mix(in srgb, var(--md-default-fg-color) 8%, transparent);
+}
+
+.md-tabs__link--active {
+  background-color: color-mix(in srgb, var(--md-accent-fg-color) 18%, transparent);
+  color: var(--md-accent-fg-color);
+}
+
+/* Prev/next: two cards you aim at, which is what material's bare text links
+ * are standing in for. */
+.md-footer__link {
+  border: 1px solid var(--dim-hairline);
+  border-radius: var(--dim-radius);
+  padding: 0.8rem 1rem;
+  margin: 0.4rem;
+  opacity: 1;
+  transition: border-color 150ms, background-color 150ms;
+}
+
+.md-footer__link:hover {
+  border-color: var(--md-accent-fg-color);
+  background-color: color-mix(in srgb, var(--md-default-fg-color) 4%, transparent);
+}
+
+.md-footer__title {
+  background-color: transparent;
+}
+
+/* Copy the shape onto the two remaining raised surfaces so nothing is left at
+ * the old radius. */
+.md-typeset .tabbed-set > .tabbed-labels > label {
+  border-radius: var(--dim-radius-sm) var(--dim-radius-sm) 0 0;
+  transition: background-color 120ms, color 120ms;
+}
+
+.md-typeset .tabbed-set > .tabbed-labels > label:hover {
+  background-color: color-mix(in srgb, var(--md-default-fg-color) 6%, transparent);
 }

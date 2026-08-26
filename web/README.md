@@ -40,8 +40,8 @@ minor.
 
 The cockpit browser e2e (`dimos/e2e_tests/test_cockpit_browser.py`, marker `web_browser`) drives the
 whole stack against the go2 replay dataset in both Playwright Chromium and Firefox (their
-WebTransport stacks differ; see bug 11). The CI `web` job runs it; locally it needs
-`uv run playwright install chromium firefox` once.
+WebTransport stacks differ; see bug 11). The CI `web` job runs it; the pinned browser builds
+auto-install on first run.
 
 ## Teleop safety chain
 

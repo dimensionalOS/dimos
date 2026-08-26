@@ -20,11 +20,16 @@ building instead of rewriting 73 documents:
 - links are repo-root absolute (`/docs/usage/modules.md`, `/dimos/core/module.py`),
   the form `bin/doclinks` maintains and github renders natively
 - code fences carry md-babel parameters (```python skip session=rx)
+
+The site also serves the markdown it was built from, for agents: every page
+at its docs/ path, indexed by llms.txt (overrides/llms.txt).
 """
 
 from pathlib import Path
 import posixpath
 import re
+
+from mkdocs.utils import write_file
 
 THEME_CSS = Path(__file__).with_name("theme.css")
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -219,3 +224,9 @@ def on_page_markdown(markdown, page, config, files):
     markdown = _github_alerts(markdown)
     markdown = _normalize_fences(markdown)
     return _LINK.sub(lambda m: _rewrite_link(m, page.file.src_uri), markdown)
+
+
+def on_post_page(output, page, config):
+    """Serve the page's markdown beside its html: usage/modules.md next to usage/modules/."""
+    write_file(page.markdown.encode(), str(Path(config.site_dir, page.file.src_uri)))
+    return output
