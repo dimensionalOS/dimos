@@ -159,7 +159,7 @@ store the robot's Recorder writes, sampled every `interval_s`:
 
 ```python session=evals ansi=false no-result
 from dimos.evals.scorers import final, ramp
-from dimos.evals.types import InteractiveEval
+from dimos.evals.types import InteractiveEnvironment, InteractiveEval
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 BED = Vector3(-3.567, -1.332, 0.0)
@@ -172,10 +172,16 @@ go_to_bed = InteractiveEval(
     interval_s=2.0,
     timeout_s=180.0,
     blueprint="unitree-go2-agentic go2-memory",
-    simulator="dimsim",
-    scene="apartment",
+    environment=InteractiveEnvironment(
+        simulator="dimsim",
+        scene="apartment",
+    ),
 )
 ```
+
+Provider-backed simulation cases instead set `episode=`. The episode provider
+owns scene launch and reset state, so those cases do not declare an
+`InteractiveEnvironment`.
 
 ```bash
 dimos evals run dimos.evals.suites.dimsim_house --live-db recording_go2.db

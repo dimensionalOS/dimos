@@ -39,16 +39,12 @@ from dimos.evals.scorers import (
     within,
     yes_no,
 )
-from dimos.evals.types import EvalCase, InteractiveEval, PassiveEval
+from dimos.evals.types import EvalCase, InteractiveEnvironment, InteractiveEval, PassiveEval
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.sim2.episodes import PublicEpisodeContext, PublicEpisodeRole
-from dimos.sim2.evaluation import (
-    EpisodeEvaluationResult,
-    EvaluationCase,
-    PreparedEpisode,
-)
+from dimos.sim2.evaluation import EpisodeEvaluationResult, PreparedEpisode
 
 
 def _pose(x: float, y: float) -> PoseStamped:
@@ -146,6 +142,7 @@ class FakeRig:
             simulator="fake",
             context=PublicEpisodeContext(
                 case_id="episode-case",
+                task_family_id="lift-object",
                 instruction="Observe the cup.",
                 roles={
                     role_id: PublicEpisodeRole(
@@ -250,7 +247,7 @@ def test_interactive_dispatch() -> None:
         inputs="go to the bed",
         score=lambda store: 1.0,
         aggregate=floor,
-        simulator="",
+        environment=InteractiveEnvironment(),
     )
     rig = FakeRig(series=[(0.0, 0.2), (1.0, 0.6), (2.0, 0.9)])
     result = case.evaluate(rig)
@@ -260,28 +257,30 @@ def test_interactive_dispatch() -> None:
 
 
 def test_interactive_no_samples_is_error() -> None:
-    case = InteractiveEval(id="n", inputs="x", score=lambda s: 1.0, simulator="")
+    case = InteractiveEval(
+        id="n",
+        inputs="x",
+        score=lambda s: 1.0,
+        environment=InteractiveEnvironment(),
+    )
     assert "no samples" in case.evaluate(FakeRig()).error
 
 
 @dataclass(frozen=True)
 class _EpisodeRequest:
     case_id: str
+    provider_name = "fake"
 
 
-def _episode_case() -> EvaluationCase:
-    return EvaluationCase(
-        episode_request=_EpisodeRequest("episode-case"),
-        blueprint_name="robot-sim",
-    )
+def _episode_case() -> _EpisodeRequest:
+    return _EpisodeRequest("episode-case")
 
 
 def test_interactive_episode_uses_private_goal() -> None:
     case = InteractiveEval(
         id="physical",
-        inputs="do it",
+        blueprint="robot-sim",
         episode=_episode_case(),
-        episode_provider="fake",
         action=lambda app, context: "action result",
     )
     rig = FakeRig(answer="action result", series=[(0.0, 0.0), (1.0, 1.0)])
@@ -301,9 +300,8 @@ def test_interactive_episode_uses_private_goal() -> None:
 def test_interactive_episode_can_score_public_output_against_private_reset_truth() -> None:
     case = InteractiveEval(
         id="perception",
-        inputs="what do you see",
+        blueprint="robot-sim",
         episode=_episode_case(),
-        episode_provider="fake",
         action=lambda app, context: "saw cup at 1.0, 2.0, 3.0",
         output_score=lambda output, episode: float(
             episode.context.role("object").name in output
@@ -323,15 +321,13 @@ def test_interactive_episode_can_score_public_output_against_private_reset_truth
 def test_interactive_episode_uses_exact_instruction_unless_explicitly_overridden() -> None:
     exact = InteractiveEval(
         id="exact-instruction",
-        inputs="report label",
+        blueprint="robot-sim",
         episode=_episode_case(),
-        episode_provider="fake",
     )
     overridden = InteractiveEval(
         id="overridden-instruction",
-        inputs="report label",
+        blueprint="robot-sim",
         episode=_episode_case(),
-        episode_provider="fake",
         instruction_override="Use this intentional paraphrase.",
     )
     exact_rig = FakeRig(series=[(0.0, 1.0)])
@@ -509,7 +505,12 @@ def test_interactive_env_torn_down_per_case(monkeypatch: pytest.MonkeyPatch) -> 
             raise RuntimeError("boom")
 
     runner = EvalRunner()
-    case = BoomCase(id="boom", inputs="x", score=lambda s: 1.0)
+    case = BoomCase(
+        id="boom",
+        inputs="x",
+        score=lambda s: 1.0,
+        environment=InteractiveEnvironment(simulator="dimsim", scene="apartment"),
+    )
     for _ in range(2):
         result = runner._guarded(case)
         assert "boom" in (result.error or "")

@@ -28,7 +28,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from dimos.evals.scorers import final, ramp
-from dimos.evals.types import InteractiveEval, Suite
+from dimos.evals.types import InteractiveEnvironment, InteractiveEval, Suite
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 if TYPE_CHECKING:
@@ -106,9 +106,11 @@ go_to_bed = InteractiveEval(
     interval_s=2.0,
     timeout_s=180.0,  # e2e parity
     blueprint="unitree-go2-agentic go2-memory",
-    simulator="dimsim",
-    scene="apartment",
-    setup=_explore_house,
+    environment=InteractiveEnvironment(
+        simulator="dimsim",
+        scene="apartment",
+        setup=_explore_house,
+    ),
     tags=frozenset({"nav", "system"}),
 )
 

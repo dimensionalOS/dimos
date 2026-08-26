@@ -134,10 +134,10 @@ def _case(
 ) -> InteractiveEval:
     return InteractiveEval(
         id="repeated-distribution",
-        inputs="Lift the selected object",
-        episode=_evaluation_case(),
-        episode_provider="fake",
+        blueprint="robot-sim",
+        episode=_evaluation_case().episode_request,
         action=((lambda _app, context: context.role("object").name) if action is None else action),
+        required_roles=("object",),
         interval_s=0.0,
         timeout_s=0.0,
         trials=trials,

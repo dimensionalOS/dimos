@@ -39,6 +39,7 @@ from dimos.sim2.evaluation import (
 @dataclass(frozen=True)
 class _EpisodeRequest:
     case_id: str = "distribution-case"
+    provider_name = "fake"
 
 
 class _Provider:
@@ -156,6 +157,7 @@ def _context(
 ) -> PublicEpisodeContext:
     return PublicEpisodeContext(
         case_id=case_id,
+        task_family_id="lift-object",
         instruction=f"Lift object {sample_index}",
         roles={
             "object": PublicEpisodeRole(

@@ -384,7 +384,7 @@ class EvalRunner(Configurable, CompositeResource):
         first = trials[0]
         return EvalResult(
             case_id=case.id,
-            provider=case.episode_provider,
+            provider=case.provider_name,
             episode_id=first.episode_id,
             episode_case_id=case.episode.case_id,
             outputs=trials[-1].outputs,
@@ -521,32 +521,34 @@ class EvalRunner(Configurable, CompositeResource):
         self.teardown_env()
 
     def setup_env(self, case: InteractiveEval) -> None:
-        from dimos.evals.types import _no_setup
-
         if case.episode is not None:
             self._setup_episode_env(case)
             if case.action is None and not self._wait_mcp(self.config.launch_timeout_s):
                 raise RuntimeError(f"MCP at {self.mcp_url} not ready — is dimos up?")
             return
 
-        if case.simulator and not self.config.attach:
+        assert case.environment is not None
+        environment = case.environment
+        if environment.simulator and not self.config.attach:
             from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 
             proc = DimosCliCall()
-            proc.simulator = case.simulator
-            proc.global_args = ["--dimsim-scene", case.scene]
+            proc.simulator = environment.simulator
+            proc.global_args = ["--dimsim-scene", environment.scene] if environment.scene else []
             proc.demo_args = ["run", *case.blueprint.split()]
             proc.start()
             self._proc = proc
         if not self._wait_mcp(self.config.launch_timeout_s):
             raise RuntimeError(f"MCP at {self.mcp_url} not ready — is dimos up?")
-        if case.setup is not _no_setup:
+        from dimos.evals.types import _no_setup
+
+        if environment.setup is not _no_setup:
             from dimos.e2e_tests.dim_sim_client import DimSimClient
 
             sim = DimSimClient()
             sim.start()
             self._sim = sim
-            case.setup(sim)
+            environment.setup(sim)
 
     def teardown_env(self) -> None:
         """Per-case cleanup — the runner owns env lifecycle, cases just declare it."""
@@ -579,9 +581,10 @@ class EvalRunner(Configurable, CompositeResource):
                 )
             from dimos.sim2.evaluation import load_episode_provider
 
-            load_episode_provider(case.episode_provider).stop()
+            load_episode_provider(case.provider_name).stop()
             return
-        if self.config.attach or not case.simulator:
+        assert case.environment is not None
+        if self.config.attach or not case.environment.simulator:
             if not self.mcp_ready():
                 raise RuntimeError(
                     f"{case.id}: attach mode needs a running dimos at {self.mcp_url}"
@@ -589,7 +592,7 @@ class EvalRunner(Configurable, CompositeResource):
             return
         import shutil
 
-        if case.simulator == "dimsim" and shutil.which("deno") is None:
+        if case.environment.simulator == "dimsim" and shutil.which("deno") is None:
             raise RuntimeError(f"{case.id}: dimsim requires deno on PATH")
 
     def _wait_mcp(self, timeout: float) -> bool:
@@ -699,17 +702,22 @@ class EvalRunner(Configurable, CompositeResource):
     ) -> None:
         from dimos.e2e_tests.dimos_cli_call import DimosCliCall
         from dimos.e2e_tests.episode import prepare_episode, start_episode
-        from dimos.sim2.evaluation import load_episode_provider
+        from dimos.sim2.evaluation import EvaluationCase, load_episode_provider
 
         assert case.episode is not None
-        provider = load_episode_provider(case.episode_provider)
+        provider = load_episode_provider(case.provider_name)
         self._episode_provider = provider
         episode_output = self.run_dir / case.id / "episode"
         if sample_index is not None:
             episode_output /= f"sample-{sample_index}"
         episode = prepare_episode(
             provider,
-            case.episode,
+            EvaluationCase(
+                episode_request=case.episode,
+                blueprint_name=case.blueprint,
+                required_modules=case.required_modules,
+                required_roles=case.required_roles,
+            ),
             episode_output,
             sample_index=sample_index,
         )

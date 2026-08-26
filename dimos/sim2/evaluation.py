@@ -135,6 +135,14 @@ class EpisodeRequestContract(Protocol):
     def case_id(self) -> str: ...
 
 
+@runtime_checkable
+class ProviderEpisodeRequestContract(EpisodeRequestContract, Protocol):
+    """Public episode reference that also selects its lifecycle provider."""
+
+    @property
+    def provider_name(self) -> str: ...
+
+
 @dataclass(frozen=True, kw_only=True)
 class EvaluationCase:
     """One provider request and the ordinary DimOS application under evaluation."""
@@ -496,6 +504,7 @@ __all__ = [
     "EpisodeUnavailableError",
     "EvaluationCase",
     "PreparedEpisode",
+    "ProviderEpisodeRequestContract",
     "TrialIsolationMode",
     "load_episode_provider",
 ]

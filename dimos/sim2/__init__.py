@@ -15,6 +15,15 @@
 """Public contracts for the maintained DimOS simulation integration."""
 
 from dimos.sim2.episodes import (
+    ContainmentTask,
+    DeviceTask,
+    FixtureTask,
+    LiftTask,
+    MultiObjectRelation,
+    MultiObjectRelationKind,
+    MultiObjectTask,
+    NavigationTask,
+    PlacementTask,
     PublicEpisodeContext,
     PublicEpisodeDevice,
     PublicEpisodeJoint,
@@ -31,13 +40,14 @@ from dimos.sim2.evaluation import (
     EpisodeProvider,
     EpisodeRequestContract,
     EpisodeUnavailableError,
-    EvaluationCase,
     PreparedEpisode,
     TrialIsolationMode,
     load_episode_provider,
 )
 
 __all__ = [
+    "ContainmentTask",
+    "DeviceTask",
     "EpisodeActivationResult",
     "EpisodeBoundary",
     "EpisodeBoundaryListener",
@@ -45,7 +55,13 @@ __all__ = [
     "EpisodeProvider",
     "EpisodeRequestContract",
     "EpisodeUnavailableError",
-    "EvaluationCase",
+    "FixtureTask",
+    "LiftTask",
+    "MultiObjectRelation",
+    "MultiObjectRelationKind",
+    "MultiObjectTask",
+    "NavigationTask",
+    "PlacementTask",
     "PreparedEpisode",
     "PublicEpisodeContext",
     "PublicEpisodeDevice",

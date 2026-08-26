@@ -145,6 +145,12 @@ class PublicEpisodeTargetKind(StrEnum):
     INTERACTION = "interaction"
 
 
+class MultiObjectRelationKind(StrEnum):
+    CONTAINED_IN = "contained-in"
+    ON = "on"
+    STACKED_ON = "stacked-on"
+
+
 @dataclass(frozen=True, kw_only=True)
 class PublicEpisodeTarget:
     """A target deliberately exposed to a deterministic benchmark driver."""
@@ -211,6 +217,66 @@ class PublicEpisodeTarget:
             raise ValueError("public navigation target requires a positioned region")
 
 
+@dataclass(frozen=True, kw_only=True)
+class NavigationTask:
+    goal: PublicEpisodeTarget
+
+
+@dataclass(frozen=True, kw_only=True)
+class LiftTask:
+    object: PublicEpisodeRole
+    source: PublicEpisodeRegion
+
+
+@dataclass(frozen=True, kw_only=True)
+class PlacementTask:
+    object: PublicEpisodeRole
+    source: PublicEpisodeRegion
+    goal: PublicEpisodeRegion
+
+
+@dataclass(frozen=True, kw_only=True)
+class ContainmentTask:
+    object: PublicEpisodeRole
+    source: PublicEpisodeRegion
+    interior: PublicEpisodeRegion
+
+
+@dataclass(frozen=True, kw_only=True)
+class FixtureTask:
+    fixture: PublicEpisodeRole
+    joint: PublicEpisodeJoint
+
+
+@dataclass(frozen=True, kw_only=True)
+class DeviceTask:
+    fixture: PublicEpisodeRole
+    device: PublicEpisodeDevice
+
+
+@dataclass(frozen=True, kw_only=True)
+class MultiObjectRelation:
+    subject: PublicEpisodeRole
+    kind: MultiObjectRelationKind
+    target: PublicEpisodeRole
+    region: PublicEpisodeRegion | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "kind", MultiObjectRelationKind(self.kind))
+
+
+@dataclass(frozen=True, kw_only=True)
+class MultiObjectTask:
+    objects: tuple[PublicEpisodeRole, ...]
+    relations: tuple[MultiObjectRelation, ...]
+
+    def __post_init__(self) -> None:
+        if not self.objects:
+            raise ValueError("multi-object task requires at least one object")
+        if not self.relations:
+            raise ValueError("multi-object task requires at least one goal relation")
+
+
 _Reference = TypeVar(
     "_Reference",
     PublicEpisodeRole,
@@ -259,6 +325,7 @@ class PublicEpisodeContext:
     """
 
     case_id: str
+    task_family_id: str
     instruction: str
     roles: Mapping[str, PublicEpisodeRole]
     regions: Mapping[str, PublicEpisodeRegion] = field(default_factory=dict)
@@ -268,6 +335,11 @@ class PublicEpisodeContext:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "case_id", _required_text(self.case_id, "public case_id"))
+        object.__setattr__(
+            self,
+            "task_family_id",
+            _required_text(self.task_family_id, "public task_family_id"),
+        )
         object.__setattr__(
             self,
             "instruction",
@@ -327,8 +399,131 @@ class PublicEpisodeContext:
     def target(self, target_id: str) -> PublicEpisodeTarget:
         return _get_reference(self.targets, target_id, "target")
 
+    def navigation(self) -> NavigationTask:
+        self._require_family("navigation", "navigate-to-region")
+        return NavigationTask(goal=self.target("goal"))
+
+    def lift(self) -> LiftTask:
+        self._require_family("lift", "lift-object")
+        return LiftTask(object=self.role("object"), source=self.region("source"))
+
+    def placement(self) -> PlacementTask:
+        region_roles = {
+            "object-on-support": ("source", "destination"),
+            "remove-object-from-fixture": ("source", "destination"),
+            "room-transfer": ("source_surface", "destination_surface"),
+        }
+        try:
+            source_role, goal_role = region_roles[self.task_family_id]
+        except KeyError as error:
+            raise ValueError(
+                f"task family {self.task_family_id!r} does not expose a placement view"
+            ) from error
+        return PlacementTask(
+            object=self.role("object"),
+            source=self.region(source_role),
+            goal=self.region(goal_role),
+        )
+
+    def containment(self) -> ContainmentTask:
+        interior_roles = {
+            "object-in-receptacle": "destination",
+            "insert-object-in-fixture": "fixture_inside",
+            "store-object-and-close-fixture": "fixture_inside",
+        }
+        try:
+            interior_role = interior_roles[self.task_family_id]
+        except KeyError as error:
+            raise ValueError(
+                f"task family {self.task_family_id!r} does not expose a containment view"
+            ) from error
+        return ContainmentTask(
+            object=self.role("object"),
+            source=self.region("source"),
+            interior=self.region(interior_role),
+        )
+
+    def fixture(self) -> FixtureTask:
+        self._require_family(
+            "fixture",
+            "open-fixture",
+            "close-fixture",
+            "insert-object-in-fixture",
+            "remove-object-from-fixture",
+            "store-object-and-close-fixture",
+        )
+        return FixtureTask(
+            fixture=self.role("fixture"),
+            joint=self.joint("fixture_joint"),
+        )
+
+    def device_interaction(self) -> DeviceTask:
+        self._require_family("device", "set-device-state")
+        return DeviceTask(
+            fixture=self.role("fixture"),
+            device=self.device("device"),
+        )
+
+    def multi_object(self) -> MultiObjectTask:
+        if self.task_family_id == "collect-objects-in-receptacle":
+            target = self.role("target")
+            destination = self.region("destination")
+            objects = (self.role("first_object"), self.role("second_object"))
+            relations = tuple(
+                MultiObjectRelation(
+                    subject=object_role,
+                    kind=MultiObjectRelationKind.CONTAINED_IN,
+                    target=target,
+                    region=destination,
+                )
+                for object_role in objects
+            )
+        elif self.task_family_id == "rearrange-objects":
+            objects = (self.role("first_object"), self.role("second_object"))
+            relations = (
+                MultiObjectRelation(
+                    subject=objects[0],
+                    kind=MultiObjectRelationKind.CONTAINED_IN,
+                    target=self.role("containment_target"),
+                    region=self.region("containment_destination"),
+                ),
+                MultiObjectRelation(
+                    subject=objects[1],
+                    kind=MultiObjectRelationKind.ON,
+                    target=self.role("support_target"),
+                    region=self.region("support_destination"),
+                ),
+            )
+        elif self.task_family_id == "stack-objects":
+            objects = (self.role("object"), self.role("target"))
+            relations = (
+                MultiObjectRelation(
+                    subject=objects[0],
+                    kind=MultiObjectRelationKind.STACKED_ON,
+                    target=objects[1],
+                ),
+            )
+        else:
+            raise ValueError(
+                f"task family {self.task_family_id!r} does not expose a multi-object view"
+            )
+        return MultiObjectTask(objects=objects, relations=relations)
+
+    def _require_family(self, view: str, *family_ids: str) -> None:
+        if self.task_family_id not in family_ids:
+            raise ValueError(f"task family {self.task_family_id!r} does not expose a {view} view")
+
 
 __all__ = [
+    "ContainmentTask",
+    "DeviceTask",
+    "FixtureTask",
+    "LiftTask",
+    "MultiObjectRelation",
+    "MultiObjectRelationKind",
+    "MultiObjectTask",
+    "NavigationTask",
+    "PlacementTask",
     "PublicEpisodeContext",
     "PublicEpisodeDevice",
     "PublicEpisodeJoint",

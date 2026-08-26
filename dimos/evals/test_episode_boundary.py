@@ -86,10 +86,10 @@ def test_runner_publishes_boundary_after_activation_before_action() -> None:
     )
     case = InteractiveEval(
         id="boundary-order",
-        inputs="Lift the selected object",
-        episode=_evaluation_case(),
-        episode_provider="fake",
+        blueprint="robot-sim",
+        episode=_evaluation_case().episode_request,
         action=lambda _app, context: context.role("object").name,
+        required_roles=("object",),
         trials=2,
     )
 

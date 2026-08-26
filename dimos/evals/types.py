@@ -49,8 +49,8 @@ if TYPE_CHECKING:
     from dimos.sim2.episodes import PublicEpisodeContext
     from dimos.sim2.evaluation import (
         EpisodeEvaluationResult,
-        EvaluationCase,
         PreparedEpisode,
+        ProviderEpisodeRequestContract,
     )
 
 T = TypeVar("T")
@@ -284,9 +284,25 @@ def _no_setup(sim: DimSimClient) -> None:
 
 
 @dataclass(frozen=True, kw_only=True)
+class InteractiveEnvironment:
+    """Legacy or hardware environment for an episode-less interactive eval.
+
+    Provider-backed episodes own their launch environment and do not use this
+    declaration.
+    """
+
+    simulator: str = ""  # empty means attach to a running DimOS instance
+    scene: str = ""
+    setup: Callable[[DimSimClient], None] = _no_setup
+
+    def __post_init__(self) -> None:
+        if self.scene and not self.simulator:
+            raise ValueError("interactive environment scene requires a simulator")
+
+
+@dataclass(frozen=True, kw_only=True)
 class InteractiveEval(EvalCase):
-    """Actions feed back into observations. The case names its environment so
-    the eval is reproducible; the runner only decides attach-vs-launch."""
+    """Evaluate one DimOS blueprint in a provider-owned physical episode."""
 
     # Exactly one scoring path is selected:
     # - score: sample normal public mem2 state;
@@ -297,27 +313,38 @@ class InteractiveEval(EvalCase):
     aggregate: Callable[[Sequence[float]], float] = final
     interval_s: float = 1.0
     timeout_s: float = 300.0
-    episode: EvaluationCase | None = None
-    episode_provider: str = ""
+    inputs: str = ""
+    episode: ProviderEpisodeRequestContract | None = None
     action: InteractiveAction | None = None
     instruction_override: str | None = None
     trials: int = 1
     trial_aggregate: Callable[[Sequence[float]], float] = final
     trial_isolation: TrialIsolationMode = TrialIsolationMode.EPISODE_BOUNDARY
     blueprint: str = "unitree-go2-agentic"
-    simulator: str = "dimsim"  # "" = attach to a running dimos / real robot
-    scene: str = "apartment"  # --dimsim-scene name (ScenePackage name later)
-    setup: Callable[[DimSimClient], None] = _no_setup
+    required_modules: tuple[str, ...] = ()
+    required_roles: tuple[str, ...] = ()
+    environment: InteractiveEnvironment | None = None
 
     def __post_init__(self) -> None:
+        blueprint = self.blueprint.strip()
+        if not blueprint:
+            raise ValueError("interactive eval blueprint must not be empty")
+        object.__setattr__(self, "blueprint", blueprint)
         if self.score is not None and self.output_score is not None:
             raise ValueError("interactive eval cannot combine store and output scoring")
         if self.episode is None and self.score is None:
             raise ValueError("interactive eval without an episode requires a public Store score")
-        if self.episode is not None and not self.episode_provider.strip():
-            raise ValueError("interactive episode requires episode_provider")
-        if self.episode is None and self.episode_provider:
-            raise ValueError("episode_provider requires an exact episode request")
+        if self.episode is not None:
+            from dimos.sim2.evaluation import ProviderEpisodeRequestContract
+
+            if not isinstance(self.episode, ProviderEpisodeRequestContract):
+                raise TypeError("interactive episode must expose provider_name and case_id")
+            if not self.episode.provider_name.strip() or not self.episode.case_id.strip():
+                raise ValueError("interactive episode provider_name and case_id must not be empty")
+            if self.environment is not None:
+                raise ValueError("provider-backed interactive eval cannot declare an environment")
+        elif self.environment is None:
+            raise ValueError("interactive eval without an episode requires an environment")
         if self.output_score is not None and self.episode is None:
             raise ValueError("interactive output scoring requires an exact episode")
         if self.output_score is not None and self.action is None and not self.skill:
@@ -330,6 +357,13 @@ class InteractiveEval(EvalCase):
             raise ValueError("interactive eval trials must be a positive integer")
         if self.trials > 1 and self.episode is None:
             raise ValueError("repeated interactive trials require an episode provider")
+        for field_name in ("required_modules", "required_roles"):
+            values = tuple(value.strip() for value in getattr(self, field_name))
+            if any(not value for value in values) or len(values) != len(set(values)):
+                raise ValueError(
+                    f"interactive eval {field_name} must contain unique non-empty names"
+                )
+            object.__setattr__(self, field_name, values)
         object.__setattr__(self, "trial_isolation", TrialIsolationMode(self.trial_isolation))
         if self.instruction_override is not None:
             override = self.instruction_override.strip()
@@ -338,6 +372,12 @@ class InteractiveEval(EvalCase):
             if self.episode is None:
                 raise ValueError("interactive instruction_override requires an exact episode")
             object.__setattr__(self, "instruction_override", override)
+
+    @property
+    def provider_name(self) -> str:
+        """Return the provider selected by the episode reference."""
+
+        return "" if self.episode is None else self.episode.provider_name
 
     def evaluate(self, rig: EvalRig) -> EvalResult:
         if self.trials > 1:

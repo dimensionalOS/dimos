@@ -38,7 +38,7 @@ import pytest
 
 from dimos.evals.runner import EvalRunner
 from dimos.evals.scorers import final, first_number, ramp, within
-from dimos.evals.types import InteractiveEval, PassiveEval
+from dimos.evals.types import InteractiveEnvironment, InteractiveEval, PassiveEval
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
@@ -186,7 +186,7 @@ def test_interactive_scores_live_store_while_writing(tmp_path: Path) -> None:
         aggregate=final,
         interval_s=0.1,
         timeout_s=10.0,
-        simulator="",
+        environment=InteractiveEnvironment(),
     )
 
     runner = NoEnvRunner(live_db=str(db), out_dir=tmp_path / "evals")
