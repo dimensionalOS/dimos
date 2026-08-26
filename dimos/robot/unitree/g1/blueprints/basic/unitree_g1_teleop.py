@@ -123,10 +123,12 @@ unitree_g1_teleop = (
         EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
         G1CollectionRecorder.blueprint(
             db_path=_session_db(),
-            # Command/status streams have no tf frame to anchor a pose;
-            # declaring them avoids a per-message no-pose warning at
-            # teleop rates.
+            # Collection observations/actions are synchronized by timestamp,
+            # not localized in the world frame. Declaring them poseless also
+            # avoids attempting a world-to-camera lookup when nav localization
+            # is disabled for an upper-body-only session.
             poseless_streams=[
+                "color_image",
                 "status",
                 "left_cartesian_command",
                 "right_cartesian_command",

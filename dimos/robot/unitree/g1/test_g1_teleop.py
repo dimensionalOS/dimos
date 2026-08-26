@@ -123,6 +123,18 @@ def test_g1_teleop_wires_arm_velocity_and_recording_streams() -> None:
     assert "right_cartesian_command" in G1CollectionRecorder.__annotations__
 
 
+def test_g1_collection_streams_do_not_require_world_poses() -> None:
+    recorder_kwargs = _module_kwargs(unitree_g1_teleop, G1CollectionRecorder)
+
+    assert recorder_kwargs["poseless_streams"] == [
+        "color_image",
+        "status",
+        "left_cartesian_command",
+        "right_cartesian_command",
+        "coordinator_joint_state",
+    ]
+
+
 def test_g1_upper_body_model_keeps_waist_and_arms_but_removes_legs() -> None:
     config = g1_upper_body_model_config()
     loaded = config.model.load()
