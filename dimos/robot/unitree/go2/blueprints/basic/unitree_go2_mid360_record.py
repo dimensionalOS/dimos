@@ -36,7 +36,7 @@ from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.livox.module import Mid360
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
-from dimos.memory.module import RECORDING_DIR
+from dimos.memory.module import recording_dir
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.robot.unitree.go2.go2_mid360_recorder import Go2Mid360Recorder
@@ -87,7 +87,7 @@ unitree_go2_mid360_record = autoconnect(
 if _RECORD_PCAP:
     unitree_go2_mid360_record = autoconnect(
         unitree_go2_mid360_record,
-        Mid360PcapRecorder.blueprint(pcap_path=str(RECORDING_DIR / "mid360.pcap")),
+        Mid360PcapRecorder.blueprint(pcap_path=str(recording_dir() / "mid360.pcap")),
     )
 
 

@@ -31,6 +31,7 @@ from reactivex.disposable import Disposable
 from dimos.agents.annotation import skill
 from dimos.constants import DIMOS_PROJECT_ROOT, RECORDINGS_DIR
 from dimos.core.core import rpc
+from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.memory.embed import EmbedImages
@@ -42,8 +43,10 @@ from dimos.memory.stream import Stream
 from dimos.memory.transform import QualityWindow
 from dimos.memory.type.observation import EmbeddedObservation, Observation
 from dimos.models.embedding.base import EmbeddingModel
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.data import backup_file
 from dimos.utils.logging_config import setup_logger
@@ -52,7 +55,6 @@ if TYPE_CHECKING:
     from reactivex.abc import DisposableBase
 
     from dimos.core.stream import Out
-    from dimos.msgs.geometry_msgs.Pose import Pose
 
 logger = setup_logger()
 
@@ -74,8 +76,13 @@ def default_recording_dir() -> Path:
     return RECORDINGS_DIR / stamp
 
 
-# One dir per process; every Recorder in a run writes under it (memory.db, pcaps, ...).
-RECORDING_DIR = default_recording_dir()
+def recording_dir() -> Path:
+    """Where this run records (memory.*, pcaps, ...): ``--recording-dir``, else a fresh stamp."""
+    return (
+        Path(global_config.recording_dir)
+        if global_config.recording_dir
+        else default_recording_dir()
+    )
 
 
 def stream_to_port(stream: Stream[T], out: Out[T]) -> DisposableBase:
@@ -183,11 +190,13 @@ class StreamModule(Module, Generic[TIn, TOut]):
 
 
 class MemoryModuleConfig(ModuleConfig):
-    db_path: str | Path = "recording.db"
+    db_path: str | Path | None = "recording.db"
 
     @field_validator("db_path", mode="before")
     @classmethod
-    def _resolve_path(cls, v: str | Path) -> Path:
+    def _resolve_path(cls, v: str | Path | None) -> Path | None:
+        if v is None:
+            return None
         p = Path(os.fspath(v))
         if not p.is_absolute():
             p = DIMOS_PROJECT_ROOT / p
@@ -206,11 +215,16 @@ class MemoryModule(Module):
 
     @property
     def db_path(self) -> Path:
-        """``config.db_path`` with the suffix filled in from ``--record-format`` when absent."""
-        p = Path(self.config.db_path)
+        """``config.db_path``, defaulting to ``<recording_dir>/memory.<record-format>``."""
+        g = self.config.g
+        if self.config.db_path is None:
+            base = Path(g.recording_dir) if g.recording_dir else default_recording_dir()
+            p = base / "memory"
+        else:
+            p = Path(self.config.db_path)
         if p.suffix:
             return p
-        return p.with_suffix(".mcap" if self.config.g.record_format == "mcap" else ".db")
+        return p.with_suffix(".mcap" if g.record_format == "mcap" else ".db")
 
     @property
     def store(self) -> Store:
@@ -299,7 +313,7 @@ class RecorderConfig(MemoryModuleConfig):
     root_frame: str = "world"
     default_frame_id: str = "base_link"
     tf_tolerance: float = 0.5
-    db_path: str | Path = RECORDING_DIR / "memory"  # suffix from --record-format
+    db_path: str | Path | None = None  # default: recording_dir()/memory.<record-format>
     # Also record the live tf stream (under "tf") alongside the In ports.
     record_tf: bool = True
     # Rename recorded streams: {port_name: db_stream_name}. Conceptually this is
@@ -503,3 +517,22 @@ class Recorder(MemoryModule):
                 pass
 
         self.register_disposable(Disposable(self.tf.subscribe(on_tf)))
+
+
+class OdomRecorder(Recorder):
+    """Records ``color_image``, ``lidar``, ``odom`` (+ tf), posing each frame at the latest odom."""
+
+    color_image: In[Image]
+    lidar: In[PointCloud2]
+    odom: In[PoseStamped]
+
+    _last_odom: Pose | None = None
+
+    @pose_setter_for("odom")
+    async def _odom_pose(self, msg: PoseStamped) -> Pose | None:
+        self._last_odom = msg
+        return self._last_odom
+
+    @pose_setter_for("lidar")
+    async def _lidar_pose(self, msg: PointCloud2) -> Pose | None:
+        return self._last_odom

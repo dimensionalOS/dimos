@@ -25,7 +25,7 @@ from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder
 from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.memory.module import RECORDING_DIR, pose_setter_for
+from dimos.memory.module import pose_setter_for, recording_dir
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.basic_path_follower.module import BasicPathFollower
@@ -175,5 +175,5 @@ if _RECORD:
 if _RECORD_PCAP:
     unitree_go2_nav_3d = autoconnect(
         unitree_go2_nav_3d,
-        Mid360PcapRecorder.blueprint(pcap_path=RECORDING_DIR / "mid360.pcap"),
+        Mid360PcapRecorder.blueprint(pcap_path=recording_dir() / "mid360.pcap"),
     )

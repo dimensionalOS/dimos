@@ -27,6 +27,7 @@ from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.hardware.sensors.camera.zed import compat as zed
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.voxels.module import VoxelGridMapper
+from dimos.memory.module import OdomRecorder
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -129,8 +130,9 @@ unitree_g1_primitive_no_nav = (
         VoxelGridMapper.blueprint(),
         CostMapper.blueprint(),
         WavefrontFrontierExplorer.blueprint(),
+        OdomRecorder.blueprint().remappings([(OdomRecorder, "lidar", "pointcloud")]),
     )
-    .global_config(n_workers=4, robot_model="unitree_g1")
+    .global_config(n_workers=5, robot_model="unitree_g1")
     .transports(
         {
             # G1 uses Twist for movement commands

@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 import typer
 
-from dimos.constants import CONFIG_DIR, LOG_DIR
+from dimos.constants import CONFIG_DIR, LOG_DIR, RECORDINGS_DIR
 from dimos.core.daemon import (
     fork_daemon,
     install_signal_handlers,
@@ -149,6 +149,9 @@ def run(
     except BlueprintConfigError as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
+    blueprint_name = "-".join(blueprint_names)
+    run_id = generate_run_id(blueprint_name)
+    preparsed_global_config.setdefault("recording_dir", str(RECORDINGS_DIR / run_id))
     # Some blueprint modules select their composition at import time, so all
     # global sources must be visible before resolving the requested names.
     global_config.update(**preparsed_global_config)
@@ -195,8 +198,6 @@ def run(
     if stale:
         logger.info(f"Cleaned {stale} stale run entries")
 
-    blueprint_name = "-".join(blueprint_names)
-    run_id = generate_run_id(blueprint_name)
     log_dir = LOG_DIR / run_id
 
     # Tag every descendant with the run id so the watchdog and stale-run
