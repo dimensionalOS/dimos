@@ -344,11 +344,6 @@ class MujocoSimModule(
         self._gripper_joint_range: tuple[float, float] = (0.0, 1.0)
         self._stop_event = threading.Event()
         self._publish_thread: threading.Thread | None = None
-        # Guards _camera_info_base and _latest_frame_ts, which the publish
-        # thread, the camera_info interval, the RPC thread, and stop() all
-        # touch. Hold it only across the field access itself: never across the
-        # publish-thread join in stop(), and never while calling a method that
-        # takes it again (it is not reentrant).
         self._state_lock = threading.Lock()
         self._camera_info_base: CameraInfo | None = None
         self._shm_ready_signaled = False
