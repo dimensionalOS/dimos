@@ -1021,8 +1021,6 @@ jobs:
     - md-babel
     - web
     - tests
-    - cachix-build-check
-    - cachix-build
     - self-hosted-tests
     #- self-hosted-large-tests
 
@@ -1034,7 +1032,7 @@ jobs:
     - name: Decide whether the needed jobs succeeded or failed
       uses: re-actors/alls-green@release/v1
       with:
-        allowed-skips: cachix-build-check, cachix-build, self-hosted-tests, self-hosted-large-tests
+        allowed-skips: self-hosted-tests, self-hosted-large-tests
         jobs: ${{ toJSON(needs) }}
     - name: Trigger Codecov notifications
       uses: codecov/codecov-action@v7
