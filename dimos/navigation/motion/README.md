@@ -32,11 +32,7 @@ invariants (`planner/rust/tests/invariants.rs`): routes an open world, refuses
 a sealed box, never hops a thin wall, answers the same way every call,
 memoizes nothing across calls.
 
-[tools.md](tools.md). Setting up a Go2:
-[docs/platforms/quadruped/go2/motion.md](../../../docs/platforms/quadruped/go2/motion.md);
-
-why the time-critical half runs on the robot:
-[motion-deployment.md](../../../docs/platforms/quadruped/go2/motion-deployment.md).
+[tools.md](tools.md). Deploying the robot-side host: `deploy/deploy.sh <ssh-host>`.
 
 ## Module I/O
 

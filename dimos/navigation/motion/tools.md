@@ -40,8 +40,7 @@ uv run maturin develop --uv --release -m dimos/navigation/motion/control/rust/Ca
 # raycaster -> MLS carrot -> local planner -> follower -> cmd_vel
 dimos run go2-zenoh-motion
 
-# bake the robot-side host (runs ON the robot, next to the go2web bridge);
-# toolchain prereqs + deploy notes: docs/platforms/quadruped/go2/motion.md
-dimos bake --deployment dimos.robot.unitree.go2.zenoh.motion_host:GO2_MOTION_HOST \
-    -o motion-host --builder zigbuild --target aarch64-unknown-linux-gnu.2.31
+# bake AND install the robot-side host (runs ON the robot, next to the go2web
+# bridge). Needs the dev shell for the rust cross toolchain.
+deploy/deploy.sh <ssh-host>
 ```

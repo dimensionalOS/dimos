@@ -344,7 +344,7 @@ go2_zenoh_motion = autoconnect(
 
 # go2-zenoh-motion with the time-critical half lifted off the laptop. The three modules
 # below are ABSENT here because they run on the robot as one baked host
-# (`docs/platforms/quadruped/go2/motion-deployment.md`):
+# (`dimos/navigation/motion/deploy/deploy.sh`):
 #
 #     motion_planner -> trajectory_follower -> cmd_vel_mux
 #
