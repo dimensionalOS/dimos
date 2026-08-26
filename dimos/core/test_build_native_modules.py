@@ -199,6 +199,40 @@ def test_manifest_is_deterministic() -> None:
     assert len([line for line in lines if line.startswith("module ")]) == len(modules)
 
 
+def test_dynamic_path_composition_is_caught(tmp_path: Path) -> None:
+    """A relative path continued with `+ var` or `${…}` builds the real
+    reference at eval time; hashing just the literal prefix could cover a
+    sibling of the actual tree, so the parser must refuse instead of guessing."""
+    flake = tmp_path / "flake.nix"
+    for snippet in (
+        "livox-common = ../../common + suffix;",
+        "src = ./cpp + name;",
+        "src = ./modules/${variant};",
+        "src = ./mod${variant};",
+        "src = ../../common\n  + suffix;",
+    ):
+        flake.write_text(snippet + "\n")
+        with pytest.raises(SystemExit, match="dynamically composed"):
+            _SCRIPT._flake_refs(flake)
+
+
+def test_unanalyzable_references_are_caught(tmp_path: Path) -> None:
+    """`self` dereferences and builtins fetchers reach repo (or unpinned
+    remote) content without any relative-path token, so no textual scan can
+    map them to input trees — the parser must refuse rather than under-hash."""
+    flake = tmp_path / "flake.nix"
+    for snippet in (
+        'cmakeFlags = [ "-DX=${self}/native/cpp" ];',
+        'src = self + "/native";',
+        "p = self.outPath;",
+        "src = builtins.fetchGit ../../..;",
+        'src = builtins.fetchTarball { url = "https://example.org/x.tar"; };',
+    ):
+        flake.write_text(snippet + "\n")
+        with pytest.raises(SystemExit, match="cannot follow"):
+            _SCRIPT._flake_refs(flake)
+
+
 # Anything relative-path shaped, matched with no context: deliberately wider
 # than the script's parser so a reference form it misses still trips this.
 _RAW_REF = re.compile(r"(?P<scheme>git\+file:|path:)?(?P<path>\.{1,2}/[\w.@+/-]*)")
@@ -222,13 +256,19 @@ def test_flake_refs_resolve_and_are_covered() -> None:
                 continue  # plain source tree (e.g. native/cpp), nothing to sweep
             for match in _RAW_REF.finditer(flake.read_text()):
                 if match.group("scheme") == "git+file:":
+                    url = match.group("path").split("?", 1)[0]
                     lock = json.loads((flake.parent / "flake.lock").read_text())
                     assert any(
                         isinstance(node, dict)
                         and node.get("locked", {}).get("type") == "git"
+                        and node["locked"].get("url") == f"file:{url}"
                         and "rev" in node["locked"]
                         for node in lock["nodes"].values()
-                    ), f"{flake}: git+file: input is not rev-pinned in flake.lock"
+                    ), (
+                        f"{flake}: git+file:{url} has no rev-pinned flake.lock node — an"
+                        " unlocked self-input re-locks at HEAD on every build, changing the"
+                        " derivation on every commit behind the publish gate's back"
+                    )
                     continue
                 token = match.group("path").split("?", 1)[0]
                 target = os.path.relpath(os.path.normpath(flake.parent / token), DIMOS_PROJECT_ROOT)

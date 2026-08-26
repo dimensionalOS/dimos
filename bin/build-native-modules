@@ -249,6 +249,47 @@ def _resolve_ref(flake: Path, token: str) -> str:
     return PurePosixPath(rel).as_posix()
 
 
+# Ways a flake can reach repo (or unpinned remote) content with no relative
+# path token for _FLAKE_REF to see: interpolating or dereferencing `self` (for
+# a git-tree flake that is the whole repo), and builtins fetchers. No textual
+# scan can map these to input trees, so they are refused outright.
+_UNANALYZABLE_REFS = (
+    ("${self} interpolation", re.compile(r"\$\{\s*self\s*\}")),
+    ("self.outPath", re.compile(r"(?<![\w.])self\s*\.\s*outPath\b")),
+    ("path arithmetic on self", re.compile(r"(?<![\w.])self\s*\+")),
+    ("a builtins fetcher", re.compile(r"(?<![\w.])builtins\s*\.\s*fetch\w+")),
+)
+
+
+def _flake_refs(flake: Path) -> tuple[set[str], set[str]]:
+    """One flake's (literal paths, `path:` input dirs), repo-relative."""
+    text = _strip_nix_comments(flake.read_text())
+    for what, pattern in _UNANALYZABLE_REFS:
+        if pattern.search(text):
+            raise SystemExit(
+                f"{os.path.relpath(flake, REPO_ROOT)}: {what} reaches content the inputs hash"
+                " cannot follow; use a relative path literal or a locked flake input instead"
+            )
+    literals: set[str] = set()
+    path_inputs: set[str] = set()
+    for match in _FLAKE_REF.finditer(text):
+        if match.group("scheme") == "git+file:":
+            continue  # rev+narHash-pinned in flake.lock, which the build-dir tree covers
+        after = text[match.end() :]
+        if after.startswith("${") or re.match(r"\s*\+", after):
+            # `./cpp + name` / `./mod${variant}` build the real reference at
+            # eval time; hashing just the literal prefix could cover a sibling
+            # of the actual tree, silently exempting it from the publish gate.
+            raise SystemExit(
+                f"{os.path.relpath(flake, REPO_ROOT)}: dynamically composed path near"
+                f" {match.group('path')!r} — the inputs hash can only follow static path"
+                " literals; reference a plain literal (a parent directory is fine) instead"
+            )
+        rel = _resolve_ref(flake, match.group("path"))
+        (path_inputs if match.group("scheme") == "path:" else literals).add(rel)
+    return literals, path_inputs
+
+
 def _collect_input_paths(module: DiscoveredModule) -> set[str]:
     """Repo paths whose content can reach this module's derivation."""
     paths = {module.build_dir}
@@ -265,16 +306,14 @@ def _collect_input_paths(module: DiscoveredModule) -> set[str]:
         if flake in seen:
             continue
         seen.add(flake)
-        for match in _FLAKE_REF.finditer(_strip_nix_comments(flake.read_text())):
-            if match.group("scheme") == "git+file:":
-                continue  # rev+narHash-pinned in flake.lock, which the build-dir tree covers
-            rel = _resolve_ref(flake, match.group("path"))
+        literals, path_inputs = _flake_refs(flake)
+        paths |= literals
+        for rel in path_inputs:
             paths.add(rel)
-            if match.group("scheme") == "path:":
-                sub = REPO_ROOT / rel / "flake.nix"
-                if not sub.is_file():
-                    raise SystemExit(f"path: input {rel!r} of {flake} has no flake.nix")
-                queue.append(sub)  # a path: input is a flake — its refs count too
+            sub = REPO_ROOT / rel / "flake.nix"
+            if not sub.is_file():
+                raise SystemExit(f"path: input {rel!r} of {flake} has no flake.nix")
+            queue.append(sub)  # a path: input is a flake — its refs count too
     return paths
 
 
