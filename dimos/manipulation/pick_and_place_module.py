@@ -23,17 +23,24 @@ Extends ManipulationModule with perception integration and long-horizon skills:
 from __future__ import annotations
 
 import math
-import time
 from typing import TYPE_CHECKING, Any
 
 from dimos.agents.annotation import skill
 from dimos.agents.skill_result import SkillResult
 from dimos.core.core import rpc
 from dimos.core.stream import In
+from dimos.manipulation.grasp_verification import (
+    GraspVerificationConfig,
+    GripperSettle,
+    await_gripper_settle,
+    grasp_failure,
+    open_failure,
+)
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationModuleConfig,
 )
+from dimos.manipulation.manipulation_spec import CommandResult, CommandStatus
 from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.manipulation.skill_errors import ManipulationSkillError
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -345,6 +352,74 @@ class PickAndPlaceModule(ManipulationModule):
             return None
         return self._world_monitor.planning_groups.primary_pose_group_id_for_robot(robot[0])
 
+    def _read_gripper(self, robot_name: str | None) -> float | None:
+        """Measured normalized gripper opening, or None when unavailable.
+
+        Resolves the group the same way set_gripper_position does, so the
+        reading comes back from the gripper the command was sent to.
+        """
+        group = self._resolve_gripper_group(self._gripper_group_id(robot_name))
+        if isinstance(group, CommandResult):
+            return None
+        return self._get_group_gripper_position(group)
+
+    def _command_and_settle(
+        self, target: float, robot_name: str | None, config: GraspVerificationConfig
+    ) -> GripperSettle | None:
+        """Send one gripper command and poll the readback to rest.
+
+        Returns None when the command itself was refused, which the old
+        open-loop sleeps could not distinguish from a slow gripper.
+        """
+        command = self.set_gripper_position(target, self._gripper_group_id(robot_name))
+        if command.status is not CommandStatus.SUCCEEDED:
+            logger.error(f"Gripper command to {target:.2f} refused: {command.message}")
+            return None
+        return await_gripper_settle(lambda: self._read_gripper(robot_name), target, config)
+
+    def _open_gripper(
+        self, robot_name: str | None, config: GraspVerificationConfig, step: str
+    ) -> SkillResult[ManipulationSkillError]:
+        """Open the jaws and wait for them to reach the open position."""
+        settle = self._command_and_settle(config.open_position, robot_name, config)
+        if settle is None:
+            return SkillResult.fail("GRIPPER_FAILED", f"{step}: gripper command refused")
+        if settle.position is None:
+            # Nothing to synchronize on. The command was accepted, so carry on
+            # rather than failing a robot whose gripper reports no measurement.
+            logger.warning(f"{step}: gripper readback unavailable, cannot confirm the open")
+            return SkillResult.ok(f"{step}: gripper commanded open, readback unavailable")
+        failure = open_failure(settle, config)
+        if failure is not None:
+            logger.error(f"{step}: {failure}")
+            return SkillResult.fail("GRIPPER_FAILED", f"{step}: {failure}")
+        logger.info(f"{step}: gripper open at {settle.position:.3f} after {settle.elapsed:.2f}s")
+        return SkillResult.ok(f"{step}: gripper open at {settle.position:.3f}")
+
+    def _close_and_verify(
+        self, robot_name: str | None, config: GraspVerificationConfig
+    ) -> SkillResult[ManipulationSkillError]:
+        """Close the jaws, wait for them to stall, and read the stall as a grasp."""
+        settle = self._command_and_settle(config.closed_position, robot_name, config)
+        if settle is None:
+            return SkillResult.fail("GRIPPER_FAILED", "close: gripper command refused")
+
+        if not config.enabled:
+            logger.info(f"close: verification disabled, gripper at {settle.position}")
+            return SkillResult.ok("close: gripper commanded shut, verification disabled")
+
+        failure = grasp_failure(settle, config)
+        if failure is not None:
+            logger.error(f"Grasp verification failed: {failure}")
+            return SkillResult.fail("GRASP_VERIFICATION_FAILED", f"close: {failure}")
+        assert settle.position is not None
+        detail = (
+            f"object held — readback {settle.position:.3f} in band "
+            f"({config.held_low:.3f}, {config.held_high:.3f}) after {settle.elapsed:.2f}s"
+        )
+        logger.info(f"Grasp verified: {detail}")
+        return SkillResult.ok(detail)
+
     @skill
     def get_scene_info(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
         """Get current robot state, detected objects, and scene information.
@@ -508,6 +583,7 @@ then refreshes perception obstacles.
             return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
         rname, _, config = robot
         pre_grasp_offset = config.pre_grasp_offset
+        verification = config.grasp_verification
 
         # 1. Generate grasps (uses already-cached detections — call scan_objects first)
         logger.info(f"Generating grasp poses for '{object_name}'...")
@@ -539,8 +615,9 @@ then refreshes perception obstacles.
 
             # 3. Open gripper before approach
             logger.info("Opening gripper...")
-            self.set_gripper_position(1.0, self._gripper_group_id(rname))
-            time.sleep(0.5)
+            opened = self._open_gripper(rname, verification, "pre-grasp open")
+            if not opened.is_success():
+                return opened
 
             # 4. Execute approach to pre-grasp
             exec_result = self._preview_execute_wait(rname)
@@ -555,10 +632,11 @@ then refreshes perception obstacles.
             if not exec_result.is_success():
                 return exec_result
 
-            # 6. Close gripper
+            # 6. Close the gripper and confirm the jaws stalled on the object
             logger.info("Closing gripper...")
-            self.set_gripper_position(0.0, self._gripper_group_id(rname))
-            time.sleep(1.5)  # Wait for gripper to close
+            grasped = self._close_and_verify(rname, verification)
+            if not grasped.is_success():
+                return grasped
 
             # 7. Retract to pre-grasp
             logger.info("Retracting with object...")
@@ -648,8 +726,9 @@ then refreshes perception obstacles.
 
         # 3. Release
         logger.info("Releasing object...")
-        self.set_gripper_position(1.0, self._gripper_group_id(rname))
-        time.sleep(1.0)
+        released = self._open_gripper(rname, config.grasp_verification, "release")
+        if not released.is_success():
+            return released
 
         # 4. Retract
         logger.info("Retracting...")
