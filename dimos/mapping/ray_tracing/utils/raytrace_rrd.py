@@ -30,6 +30,7 @@ import numpy as np
 from numpy.typing import NDArray
 import typer
 
+from dimos.mapping.ray_tracing.module import TF_MATCH_TOLERANCE_S
 from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
@@ -38,10 +39,6 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import resolve_named_path
 
 TIMELINE = "ts"
-
-# Max stamp gap between a cloud and the transform used to register it (s),
-# matching the live module: one 30 Hz odometry period.
-TF_MATCH_TOLERANCE_S = 1.0 / 30.0
 
 # --voxel-size default, and the render size --render-voxel scales from when unset.
 DEFAULT_VOXEL_SIZE = 0.1
@@ -214,7 +211,7 @@ def main(
             if t is None:
                 dropped += 1
                 continue
-            x, y, z = (float(v) for v in t.to_matrix()[:3, 3])
+            x, y, z = float(t.translation.x), float(t.translation.y), float(t.translation.z)
             qx, qy, qz, qw = t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w
             # Sensor-frame cloud: the mapper registers it by the tf pose.
             raw = obs.data.points_f32()

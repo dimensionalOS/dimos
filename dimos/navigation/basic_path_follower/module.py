@@ -88,6 +88,9 @@ class BasicPathFollower(Module):
     @rpc
     def start(self) -> None:
         super().start()
+        # Build the buffer first so it is subscribed and warm before the first
+        # path arrives, else the cold-start miss arms a full retry backoff.
+        self.tfbuffer  # noqa: B018
         self.register_disposable(Disposable(self.path.subscribe(self._on_path)))
         if self.stop_movement.transport is not None:
             self.register_disposable(Disposable(self.stop_movement.subscribe(self._on_stop)))

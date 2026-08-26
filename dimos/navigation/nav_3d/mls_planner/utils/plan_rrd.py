@@ -27,6 +27,7 @@ import numpy as np
 from numpy.typing import NDArray
 import typer
 
+from dimos.mapping.ray_tracing.module import TF_MATCH_TOLERANCE_S
 from dimos.mapping.ray_tracing.transformer import RayTraceMap
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF, tf_stream
@@ -51,10 +52,6 @@ if TYPE_CHECKING:
     from dimos.memory.stream import Stream
 
 TIMELINE = "ts"
-
-# Max stamp gap between a cloud and the transform used to register it (s),
-# matching the live module: one 30 Hz odometry period.
-TF_MATCH_TOLERANCE_S = 1.0 / 30.0
 
 # --voxel-size default, and the render size --render-voxel scales from when unset.
 DEFAULT_VOXEL_SIZE = 0.08
@@ -662,7 +659,14 @@ def main(
                     continue
                 base: Transform | None = None
                 if base_reachable is not False:
-                    base = tf_lookup.get(world_frame, base_frame, time_point=ray_obs.ts)
+                    # Small tolerance keeps this lookup's ensure window inside
+                    # the pose lookups' cached span, avoiding a double reload.
+                    base = tf_lookup.get(
+                        world_frame,
+                        base_frame,
+                        time_point=ray_obs.ts,
+                        time_tolerance=TF_MATCH_TOLERANCE_S,
+                    )
                 if base_reachable is None:
                     base_reachable = base is not None
                     if not base_reachable:

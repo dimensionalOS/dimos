@@ -24,6 +24,10 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.spec import mapping
 
+# Max stamp gap between a cloud and the transform used to register it (s),
+# matching the native module: one 30 Hz odometry period.
+TF_MATCH_TOLERANCE_S = 1.0 / 30.0
+
 
 class RayTracingVoxelMapConfig(NativeModuleConfig):
     cwd: str | None = "rust"

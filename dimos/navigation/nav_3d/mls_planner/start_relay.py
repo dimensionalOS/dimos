@@ -43,7 +43,6 @@ class StartRelay(Module):
     tf: In[TFMessage]
 
     # TODO: Remove start pose once all planners and controllers use tfs
-    # just keeping this for now
     start_pose: Out[PoseStamped]
 
     def __init__(self, **kwargs: Any) -> None:

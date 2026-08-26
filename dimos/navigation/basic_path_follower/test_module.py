@@ -22,6 +22,30 @@ MOUNT_Z = 0.163
 
 
 class FakeTF(MultiTBuffer):
+    """In-memory tf with the dispose() hook and call counter the module tests need."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.gets = 0
+
+    def get(
+        self,
+        parent_frame: str,
+        child_frame: str,
+        time_point: float | None = None,
+        time_tolerance: float | None = None,
+        *,
+        forward_tolerance: float = 0.0,
+    ) -> Transform | None:
+        self.gets += 1
+        return super().get(
+            parent_frame,
+            child_frame,
+            time_point,
+            time_tolerance,
+            forward_tolerance=forward_tolerance,
+        )
+
     def dispose(self) -> None:
         pass
 
@@ -67,6 +91,22 @@ def test_lookup_pose_is_none_without_the_mount_tf() -> None:
     module._tf = tf
     try:
         assert module._lookup_pose() is None
+    finally:
+        module.stop()
+
+
+def test_lookup_retries_are_throttled_during_an_outage() -> None:
+    tf = FakeTF()
+    module = BasicPathFollower()
+    module._tf = tf
+    try:
+        assert module._lookup_pose() is None
+        assert module._lookup_pose() is None
+        assert tf.gets == 1
+        tf.receive_transform(_mount())
+        tf.receive_transform(_odom_edge())
+        module._next_lookup = 0.0
+        assert module._lookup_pose() is not None
     finally:
         module.stop()
 

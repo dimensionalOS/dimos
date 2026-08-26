@@ -64,9 +64,9 @@ def _mount() -> Transform:
     )
 
 
-def _odom_edge(z: float = 3.0) -> Transform:
+def _odom_edge() -> Transform:
     return Transform(
-        translation=Vector3(1.0, 2.0, z),
+        translation=Vector3(1.0, 2.0, 3.0),
         rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
         frame_id="odom",
         child_frame_id="mid360_link",
