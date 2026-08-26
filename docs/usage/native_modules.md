@@ -1,10 +1,8 @@
----
-title: "Native Modules"
----
+# Native Modules
 
 Prerequisite for this is to understand dimos [Modules](/docs/usage/modules.md) and [Blueprints](/docs/usage/blueprints.md).
 
-Native modules let you wrap **any executable** as a first-class DimOS module, given it speaks LCM.
+Native modules let you wrap **any executable** as a first-class dimOS module, given it speaks LCM.
 
 Python will handle blueprint wiring, lifecycle, and logging. Native binary handles the actual computation, publishing and subscribing directly on LCM.
 
@@ -38,7 +36,7 @@ class MyLidar(NativeModule):
 
 ```
 
-That's it. `MyLidar` is a full DimOS module. You can use it with `autoconnect`, blueprints, transport overrides, and specs. Once this module is started, your `./build/my_lidar` will get called with specific CLI args.
+That's it. `MyLidar` is a full dimOS module. You can use it with `autoconnect`, blueprints, transport overrides, and specs. Once this module is started, your `./build/my_lidar` will get called with specific CLI args.
 
 ## How it works
 
@@ -92,7 +90,7 @@ When `stop()` is called, the process receives SIGTERM. If it doesn't exit within
 
 ### Auto CLI arg generation
 
-Any field you add to your config subclass automatically becomes a `--name value` CLI arg. Fields from `NativeModuleConfig` itself (like `executable`, `extra_args`, `cwd`) are **not** passed — they're for Python-side orchestration only.
+Any field you add to your config subclass automatically becomes a `--name value` CLI arg. Fields from `NativeModuleConfig` itself (like `executable`, `extra_args`, `cwd`) are **not** passed. They're for Python-side orchestration only.
 
 ```python skip
 from pydantic import Field
@@ -228,7 +226,7 @@ A complete ping-pong pair lives at [/examples/native-modules/cpp/](/examples/nat
 
 ## Examples
 
-For language interop examples (subscribing to DimOS topics from C++, TypeScript, Lua), see [/examples/language-interop/](/examples/language-interop/README.md).
+For language interop examples (subscribing to dimOS topics from C++, TypeScript, Lua), see [/examples/language-interop/](/examples/language-interop/README.md).
 
 ### Livox Mid-360 Module
 
@@ -289,7 +287,9 @@ If the executable already exists, the build step is skipped entirely.
 
 ### Faster builds via the Cachix substituter
 
-CI pre-builds the `cmu_nav` native modules and pushes the Nix store paths to the `dimensionalos` Cachix cache. Opt in locally to skip cold compiles when the cache has them:
+Nix-built native modules can be substituted from the `dimensionalos` Cachix
+cache (the same substituter CI uses) instead of compiled from source. Opt in
+locally to skip cold compiles when the cache has them:
 
 ```
 # ~/.config/nix/nix.conf  (single-user)  or  /etc/nix/nix.conf  (multi-user)

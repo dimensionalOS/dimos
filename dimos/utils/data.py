@@ -154,8 +154,8 @@ def _get_lfs_dir() -> Path:
     return get_data_dir() / ".lfs"
 
 
-def _check_git_lfs_available() -> bool:
-    missing = []
+def _initialize_git_lfs(repo_root: Path) -> None:
+    missing: list[str] = []
 
     # Check if git is available
     try:
@@ -175,7 +175,13 @@ def _check_git_lfs_available() -> bool:
             "Git LFS installation instructions: https://git-lfs.github.io/"
         )
 
-    return True
+    subprocess.run(
+        ["git", "lfs", "install", "--local", "--skip-repo"],
+        cwd=repo_root,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
 
 
 def _is_lfs_pointer_file(file_path: Path) -> bool:
@@ -202,7 +208,9 @@ def _lfs_pull(file_path: Path, repo_root: Path, *, retries: int = 2) -> None:
     for attempt in range(1, retries + 2):  # retries + 1 total attempts
         try:
             subprocess.run(
-                ["git", "lfs", "pull", "--include", str(relative_path)],
+                # --exclude= overrides lfs.fetchexclude from .lfsconfig, which
+                # otherwise silently skips data/.lfs/* even when --include matches.
+                ["git", "lfs", "pull", "--include", str(relative_path), "--exclude="],
                 cwd=repo_root,
                 check=True,
                 env=env,
@@ -227,9 +235,6 @@ def _decompress_archive(filename: str | Path) -> Path:
 
 
 def _pull_lfs_archive(filename: str | Path) -> Path:
-    # Check Git LFS availability first
-    _check_git_lfs_available()
-
     # Find repository root
     repo_root = get_project_root()
 
@@ -245,6 +250,7 @@ def _pull_lfs_archive(filename: str | Path) -> Path:
 
     # If it's an LFS pointer file, ensure LFS is set up and pull the file
     if _is_lfs_pointer_file(file_path):
+        _initialize_git_lfs(repo_root)
         _lfs_pull(file_path, repo_root)
 
         # Verify the file was actually downloaded

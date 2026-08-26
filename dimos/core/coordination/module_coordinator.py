@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 import dataclasses
 import importlib
 import inspect
@@ -263,7 +264,9 @@ class ModuleCoordinator(Resource):
 
     def _instance_keys_of(self, module: type[ModuleBase]) -> list[str]:
         cls = self._resolve_class(module)
-        return [n for n, c in self._instance_classes.items() if self._resolve_class(c) is cls]
+        return [
+            n for n, c in self._instance_classes.items() if issubclass(self._resolve_class(c), cls)
+        ]
 
     def _resolve_instance_key(self, module: type[ModuleBase] | str) -> str:
         """Resolve a module class or instance name to the deployed instance name."""
@@ -322,7 +325,7 @@ class ModuleCoordinator(Resource):
                 instance = self.get_instance(instance_key)  # type: ignore[assignment]
                 instance.set_transport(original_name, transport)  # type: ignore[union-attr]
                 self._module_transports.setdefault(instance_key, {})[original_name] = transport
-                logger.info(
+                logger.debug(
                     "Transport",
                     name=remapped_name,
                     original_name=original_name,
@@ -360,12 +363,18 @@ class ModuleCoordinator(Resource):
         coordinator = cls(g=global_config)
         coordinator.start()
 
-        _deploy_all_modules(blueprint, coordinator, global_config, module_kwargs)
-        coordinator._connect_streams(blueprint, transports)
-        _connect_module_refs(blueprint, coordinator)
+        try:
+            _deploy_all_modules(blueprint, coordinator, global_config, module_kwargs)
+            coordinator._connect_streams(blueprint, transports)
+            _connect_module_refs(blueprint, coordinator)
 
-        coordinator.build_all_modules()
-        coordinator.start_all_modules()
+            coordinator.build_all_modules()
+            coordinator.start_all_modules()
+        except BaseException:
+            # The caller never gets a coordinator to stop, so stop it here.
+            with suppress(Exception):
+                coordinator.stop()
+            raise
 
         _log_blueprint_graph(blueprint, coordinator)
 
@@ -942,7 +951,12 @@ def _resolve_single_ref(
     is_class_ref = is_module_type(spec)
 
     def satisfies(cls: type) -> bool:
-        return cls is spec if is_class_ref else spec_structural_compliance(cls, spec)
+        # A subclass IS-A the declared provider, so a deployment that swaps in a
+        # subclass (extra ports, per-instance I/O) still satisfies the ref. Exact
+        # identity would resolve to None here, silently.
+        if is_class_ref:
+            return isinstance(cls, type) and issubclass(cls, spec)
+        return spec_structural_compliance(cls, spec)
 
     def module_of(candidate: Any) -> type[ModuleBase]:
         return candidate.module if isinstance(candidate, BlueprintAtom) else candidate

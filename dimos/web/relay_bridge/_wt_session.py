@@ -37,7 +37,7 @@ from aioquic.h3.events import (
     WebTransportStreamDataReceived,
 )
 from aioquic.quic.configuration import QuicConfiguration
-from aioquic.quic.events import ConnectionTerminated, QuicEvent
+from aioquic.quic.events import ConnectionTerminated, QuicEvent, StreamReset
 
 from dimos.utils.logging_config import setup_logger
 from dimos.web.relay_bridge.protocol import (
@@ -66,10 +66,12 @@ _FRAME_QUEUE_MAX_BYTES = 128 * 1024 * 1024
 # Realistic payload caps for channels whose encoding is known from the
 # watched robot's manifest (frames themselves carry no encoding);
 # MAX_DATA_FRAME_BYTES stays the outer bound for everything else. Generous:
-# a 4K quality-90 JPEG is ~4 MiB, a pose JSON object ~100 B.
+# a 4K quality-90 JPEG is ~4 MiB, a pose JSON object ~100 B, a compressed
+# long-run costmap ~10-30 KB (the cap leaves room for pathological grids).
 _MAX_PAYLOAD_BYTES = {
     "jpeg.v1": 8 * 1024 * 1024,
     "pose.json.v1": 64 * 1024,
+    "costmap.zlib.v1": 8 * 1024 * 1024,
 }
 
 # Relay-pushed control messages (subs snapshots, robots, manifest) waiting for
@@ -172,6 +174,12 @@ class SessionProtocol(QuicConnectionProtocol):
     def quic_event_received(self, event: QuicEvent) -> None:
         if isinstance(event, ConnectionTerminated):
             self.closed.set()
+        elif isinstance(event, StreamReset):
+            # aioquic's H3 layer ignores resets, and the relay ends every
+            # latest stream with one (reap, dispose, or teardown): without
+            # this pop the reader map grows by one entry per latest stream.
+            # A partial frame in that reader is stale by definition.
+            self._frame_readers.pop(event.stream_id, None)
         for h3_event in self.h3.handle_event(event):
             self._h3_event_received(h3_event)
 
@@ -205,8 +213,21 @@ class SessionProtocol(QuicConnectionProtocol):
             if waiter is not None and not waiter.done():
                 waiter.set_result(msg)
         else:
-            if isinstance(msg, Manifest):
-                self._encodings.update({c.ch: c.encoding for c in msg.channels})
+            if isinstance(msg, Manifest) and msg.manifest is not None:
+                # The nested manifest is an opaque raw record at this layer;
+                # pick the encodings out defensively (payload caps are a
+                # safety net, not a validator).
+                channels = msg.manifest.get("channels")
+                if isinstance(channels, list):
+                    self._encodings.update(
+                        {
+                            c["ch"]: c["encoding"]
+                            for c in channels
+                            if isinstance(c, dict)
+                            and isinstance(c.get("ch"), str)
+                            and isinstance(c.get("encoding"), str)
+                        }
+                    )
             # Session messages (subs snapshots, robots, manifest, ...) go to
             # the consumer queue; see RelayClient.control_messages().
             if self.control_msgs.full():

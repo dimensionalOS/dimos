@@ -12,17 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Assembly of the `dimos` CLI: the root typer app and every command registration.
+
+The commands themselves live in dimos.cli.commands; this module only wires them
+up, in the order that defines `dimos --help`.
+"""
+
 from __future__ import annotations
 
-from datetime import datetime, timezone
-import inspect
-import json
 import os
-from pathlib import Path
 import sys
-import time
-import types
-from typing import TYPE_CHECKING, Any, Literal, cast, get_args, get_origin
 
 # Native thread-pool hygiene. Every OpenMP/BLAS runtime sizes its pool to all
 # cores and spin-waits at barriers (libgomp: ~300k pause iterations per region;
@@ -45,32 +44,28 @@ os.environ.setdefault("NUMEXPR_NUM_THREADS", "2")
 os.environ.setdefault("OPENCV_FOR_THREADS_NUM", "2")
 
 from dotenv import load_dotenv
-import requests
 import typer
 
-from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
 from dimos.cli.cache import app as cache_app
+from dimos.cli.can import app as can_app
+from dimos.cli.cloud import login as cloud_login, logout as cloud_logout, whoami as cloud_whoami
+from dimos.cli.commands.apriltag import apriltag
+from dimos.cli.commands.bake import bake
+from dimos.cli.commands.cameracalibrate import cameracalibrate
+from dimos.cli.commands.dataprep import dataprep_app
+from dimos.cli.commands.docs import docs
+from dimos.cli.commands.global_options import create_dynamic_callback
+from dimos.cli.commands.info import list_blueprints, show_config
+from dimos.cli.commands.lifecycle import log_cmd, restart, run, status, stop
+from dimos.cli.commands.map import map_app
+from dimos.cli.commands.mcp import agent_send_cmd, mcp_app
+from dimos.cli.commands.rerun_bridge import rerun_bridge_cmd
+from dimos.cli.commands.topic import topic_app
+from dimos.cli.commands.tuis import agentspy, humancli, lcmspy, spy, top
 from dimos.cli.hardware_cli import app as hardware_app
 from dimos.cli.shell import shell
-from dimos.constants import CONFIG_DIR, LOG_DIR
-from dimos.core.daemon import daemonize, install_signal_handlers
-from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
-from dimos.mapping.cli.map import main as _map_main
-from dimos.mapping.cli.pose_fill import main as _map_pose_fill_main
-from dimos.mapping.cli.rename import main as _map_rename_main
-from dimos.mapping.cli.replay import main as _map_replay_main
-from dimos.mapping.cli.replay_marker import main as _map_replay_marker_main
-from dimos.robot.manipulators.piper.cli import app as piper_app
+from dimos.cli.vqa import app as vqa_app
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
-from dimos.utils.cache import cache_usage_locked
-from dimos.utils.logging_config import setup_logger
-from dimos.visualization.rerun.constants import RerunOpenOption
-
-if TYPE_CHECKING:
-    from dimos.core.coordination.blueprints import Blueprint
-
-logger = setup_logger()
 
 main = typer.Typer(
     help="Dimensional CLI",
@@ -100,902 +95,58 @@ def cli_main() -> None:
     main()
 
 
-def create_dynamic_callback():  # type: ignore[no-untyped-def]
-    fields = GlobalConfig.model_fields
-
-    # Build the function signature dynamically
-    params = [
-        inspect.Parameter("ctx", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=typer.Context),
-    ]
-
-    # Create parameters for each field in GlobalConfig
-    for field_name, field_info in fields.items():
-        field_type = field_info.annotation
-
-        # Container generics (e.g. `tuple[...]` fields) have no single-flag CLI
-        # representation; they're configured via environment variables or JSON.
-        if isinstance(field_type, types.GenericAlias):
-            continue
-
-        # Handle Optional types
-        # Check for Optional/Union with None
-        if get_origin(field_type) is type(str | None):
-            inner_types = get_args(field_type)
-            if len(inner_types) == 2 and type(None) in inner_types:
-                # It's Optional[T], get the actual type T
-                actual_type = next(t for t in inner_types if t != type(None))
-            else:
-                actual_type = field_type
-        else:
-            actual_type = field_type
-
-        # Convert field name from snake_case to kebab-case for CLI
-        cli_option_name = field_name.replace("_", "-")
-
-        # Special handling for boolean fields
-        if actual_type is bool:
-            # For boolean fields, create --flag/--no-flag pattern
-            param = inspect.Parameter(
-                field_name,
-                inspect.Parameter.KEYWORD_ONLY,
-                default=typer.Option(
-                    None,  # None means use the model's default if not provided
-                    f"--{cli_option_name}/--no-{cli_option_name}",
-                    help=f"Override {field_name} in GlobalConfig",
-                ),
-                annotation=bool | None,
-            )
-        else:
-            # For non-boolean fields, use regular option
-            param = inspect.Parameter(
-                field_name,
-                inspect.Parameter.KEYWORD_ONLY,
-                default=typer.Option(
-                    None,  # None means use the model's default if not provided
-                    f"--{cli_option_name}",
-                    help=f"Override {field_name} in GlobalConfig",
-                ),
-                annotation=actual_type | None,
-            )
-        params.append(param)
-
-    def callback(**kwargs) -> None:  # type: ignore[no-untyped-def]
-        ctx = kwargs.pop("ctx")
-        overrides = {k: v for k, v in kwargs.items() if v is not None}
-        ctx.obj = overrides
-        # Apply overrides (e.g. --transport, --viewer) to the process-global config
-        # up front so every subcommand honors flags given before the subcommand name.
-        global_config.update(**overrides)
-
-    callback.__signature__ = inspect.Signature(params)  # type: ignore[attr-defined]
-
-    return callback
-
-
 main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
-main.add_typer(go2tool_app, name="go2tool")
+hardware_app.add_typer(can_app, name="can")
 main.add_typer(hardware_app, name="hardware")
-main.add_typer(piper_app, name="piper")
+main.add_typer(go2tool_app, name="go2tool")
 main.command()(shell)
 main.add_typer(cache_app, name="cache")
-
-
-def _with_relay_bridge(blueprint: Blueprint) -> Blueprint:
-    """Append one relay bridge to an enabled CLI run after blueprint resolution."""
-    if not (global_config.local_relay or global_config.relay_url):
-        return blueprint
-
-    try:
-        from dimos.web.relay_bridge.relay_bridge_module import with_relay_bridge
-    except ImportError as e:
-        raise RuntimeError(
-            "--local-relay/--relay-url need the web extra: `uv sync --extra web --inexact`"
-        ) from e
-
-    return with_relay_bridge(blueprint)
-
-
-@main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
-@cache_usage_locked
-def run(
-    ctx: typer.Context,
-    robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
-    daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
-    disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
-    config_path: Path = typer.Option(
-        CONFIG_DIR / "dimos", "--config", "-c", help="Path to config file"
-    ),
-    local_relay: bool | None = typer.Option(
-        None,
-        "--local-relay/--no-local-relay",
-        help="Spawn a local cockpit relay and bridge this robot to it",
-    ),
-    relay_url: str | None = typer.Option(
-        None, "--relay-url", help="Bridge this robot to a running relay (wtUrl)"
-    ),
-    show_help: bool = typer.Option(False, "--help"),
-) -> None:
-    """Start a robot blueprint"""
-    from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
-    from dimos.core.coordination.blueprint_config.parser import (
-        BlueprintConfigParser,
-        split_run_arguments,
-    )
-    from dimos.core.coordination.blueprints import autoconnect
-    from dimos.core.coordination.module_coordinator import ModuleCoordinator
-    from dimos.core.coordination.process_lifecycle import (
-        DIMOS_RUN_ID_ENV,
-        spawn_watchdog,
-    )
-    from dimos.core.run_registry import (
-        RunEntry,
-        cleanup_stale,
-        generate_run_id,
-    )
-    from dimos.robot.get_all_blueprints import get_by_name_or_exit, get_module_by_name_or_exit
-    from dimos.utils.logging_config import set_run_log_dir, setup_exception_handler
-
-    setup_exception_handler()
-
-    try:
-        blueprint_names, config_tokens = split_run_arguments(robot_types)
-    except BlueprintConfigError as error:
-        typer.echo(f"Error: {error}", err=True)
-        raise typer.Exit(2) from error
-
-    global_option_overrides: dict[str, Any] = dict(ctx.obj or {})
-
-    # These flags are accepted on `run` itself, not just as global options.
-    run_overrides = {
-        name: value
-        for name, value in (("local_relay", local_relay), ("relay_url", relay_url))
-        if value is not None
-    }
-    if run_overrides:
-        global_option_overrides.update(run_overrides)
-
-    try:
-        preparsed_global_config = BlueprintConfigParser.preparse_global_config(
-            config_tokens,
-            config_path=config_path,
-            environ=os.environ,
-            global_overrides=global_option_overrides,
-        )
-    except BlueprintConfigError as error:
-        typer.echo(f"Error: {error}", err=True)
-        raise typer.Exit(2) from error
-    # Some blueprint modules select their composition at import time, so all
-    # global sources must be visible before resolving the requested names.
-    global_config.update(**preparsed_global_config)
-
-    blueprint = autoconnect(*map(get_by_name_or_exit, blueprint_names))
-
-    if disable:
-        disabled_classes = tuple(
-            get_module_by_name_or_exit(name).blueprints[0].module for name in disable
-        )
-        blueprint = blueprint.disabled_modules(*disabled_classes)
-
-    blueprint = _with_relay_bridge(blueprint)
-    parser = BlueprintConfigParser(blueprint)
-
-    if show_help:
-        reserved_options = {
-            option
-            for parameter in ctx.command.params
-            for option in (
-                *getattr(parameter, "opts", ()),
-                *getattr(parameter, "secondary_opts", ()),
-            )
-            if option.startswith("--")
-        }
-        typer.echo(ctx.get_help())
-        typer.echo()
-        typer.echo(parser.format_help(reserved_options))
-        return
-
-    try:
-        parsed_config = parser.parse(
-            config_tokens,
-            config_path=config_path,
-            environ=os.environ,
-            global_overrides=global_option_overrides,
-        )
-    except BlueprintConfigError as error:
-        typer.echo(f"Error: {error}", err=True)
-        raise typer.Exit(2) from error
-
-    logger.info("Starting DimOS")
-
-    # Clean stale registry entries only after the full command has validated.
-    stale = cleanup_stale()
-    if stale:
-        logger.info(f"Cleaned {stale} stale run entries")
-
-    blueprint_name = "-".join(blueprint_names)
-    run_id = generate_run_id(blueprint_name)
-    log_dir = LOG_DIR / run_id
-
-    # Tag every descendant with the run id so the watchdog and stale-run
-    # cleanup can identify them via os.environ after main dies.
-    os.environ[DIMOS_RUN_ID_ENV] = run_id
-
-    # Route structured logs (main.jsonl) to the per-run directory.
-    # Workers inherit DIMOS_RUN_LOG_DIR env var via forkserver.
-    set_run_log_dir(log_dir)
-
-    coordinator = ModuleCoordinator.build(blueprint, parsed_config)
-
-    if daemon:
-        # Health check before daemonizing — catch early crashes
-        if not coordinator.health_check():
-            typer.echo("Error: health check failed — a worker process died.", err=True)
-            coordinator.stop()
-            raise typer.Exit(1)
-
-        n_modules = coordinator.n_modules
-        typer.echo(f"✓ All modules started ({n_modules} modules)")
-        typer.echo("✓ Health check passed")
-        typer.echo("✓ DimOS running in background\n")
-        typer.echo(f"  Run ID:    {run_id}")
-        typer.echo(f"  Log:       {log_dir}")
-        typer.echo("  Stop:      dimos stop")
-        typer.echo("  Status:    dimos status")
-
-        coordinator.suppress_console()
-
-        daemonize(log_dir)
-
-        entry = RunEntry(
-            run_id=run_id,
-            pid=os.getpid(),
-            blueprint=blueprint_name,
-            started_at=datetime.now(timezone.utc).isoformat(),
-            log_dir=str(log_dir),
-            cli_args=list(blueprint_names),
-            config_overrides=global_option_overrides,
-            original_argv=sys.argv,
-        )
-        entry.save()
-        spawn_watchdog(run_id, log_dir=log_dir)
-        install_signal_handlers(entry, coordinator)
-        coordinator.loop()
-    else:
-        entry = RunEntry(
-            run_id=run_id,
-            pid=os.getpid(),
-            blueprint=blueprint_name,
-            started_at=datetime.now(timezone.utc).isoformat(),
-            log_dir=str(log_dir),
-            cli_args=list(blueprint_names),
-            config_overrides=global_option_overrides,
-            original_argv=sys.argv,
-        )
-        entry.save()
-        spawn_watchdog(run_id, log_dir=log_dir)
-        # Foreground: only SIGTERM goes through the handler. SIGINT stays at
-        # default so Ctrl+C raises KeyboardInterrupt and the try/finally below
-        # runs with a visible traceback.
-        install_signal_handlers(entry, coordinator, sigint=False)
-        try:
-            coordinator.loop()
-        finally:
-            entry.remove()
-
-
-@main.command()
-def status() -> None:
-    """Show the running DimOS instance."""
-    entry = get_most_recent(alive_only=True)
-    if not entry:
-        typer.echo("No running DimOS instance")
-        return
-
-    try:
-        started = datetime.fromisoformat(entry.started_at)
-        age = datetime.now(timezone.utc) - started
-        hours, remainder = divmod(int(age.total_seconds()), 3600)
-        minutes, seconds = divmod(remainder, 60)
-        uptime = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m {seconds}s"
-    except Exception:
-        uptime = "unknown"
-
-    typer.echo(f"  Run ID:    {entry.run_id}")
-    typer.echo(f"  PID:       {entry.pid}")
-    typer.echo(f"  Blueprint: {entry.blueprint}")
-    typer.echo(f"  Uptime:    {uptime}")
-    typer.echo(f"  Log:       {entry.log_dir}")
-
-
-@main.command()
-def stop(
-    force: bool = typer.Option(False, "--force", "-f", help="Force kill (SIGKILL)"),
-) -> None:
-    """Stop the running DimOS instance."""
-
-    entry = get_most_recent(alive_only=True)
-    if not entry:
-        typer.echo("No running DimOS instance", err=True)
-        raise typer.Exit(1)
-
-    sig_name = "SIGKILL" if force else "SIGTERM"
-    typer.echo(f"Stopping {entry.run_id} (PID {entry.pid}) with {sig_name}...")
-    msg, _ok = stop_entry(entry, force=force)
-    typer.echo(f"  {msg}")
-
-
-@main.command("log")
-def log_cmd(
-    follow: bool = typer.Option(False, "--follow", "-f", help="Follow log output"),
-    lines: int = typer.Option(50, "--lines", "-n", help="Number of lines to show"),
-    all_lines: bool = typer.Option(False, "--all", "-a", help="Show full log"),
-    json_output: bool = typer.Option(False, "--json", help="Raw JSONL output"),
-    run_id: str = typer.Option("", "--run", "-r", help="Specific run ID"),
-) -> None:
-    """View logs from a DimOS run."""
-    from dimos.core.log_viewer import follow_log, format_line, read_log, resolve_log_path
-
-    path = resolve_log_path(run_id)
-    if not path:
-        typer.echo("No log files found", err=True)
-        raise typer.Exit(1)
-
-    if follow:
-        import signal
-
-        _stop = False
-
-        def _on_sigint(_sig: int, _frame: object) -> None:
-            nonlocal _stop
-            _stop = True
-
-        prev = signal.signal(signal.SIGINT, _on_sigint)
-        try:
-            for line in follow_log(path, stop=lambda: _stop):
-                typer.echo(format_line(line, json_output=json_output))
-        finally:
-            signal.signal(signal.SIGINT, prev)
-    else:
-        count = None if all_lines else lines
-        for line in read_log(path, count):
-            typer.echo(format_line(line, json_output=json_output))
-
-
-mcp_app = typer.Typer(help="Interact with the running MCP server")
+main.command("login")(cloud_login)
+main.command("logout")(cloud_logout)
+main.command("whoami")(cloud_whoami)
+main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(run)
+main.command()(status)
+main.command()(stop)
+main.command("log")(log_cmd)
 main.add_typer(mcp_app, name="mcp")
-
-
-def _get_adapter() -> McpAdapter:
-    """Get an McpAdapter from the latest RunEntry or default URL."""
-    from dimos.agents.mcp.mcp_adapter import McpAdapter
-
-    return McpAdapter.from_run_entry()
-
-
-@mcp_app.command("list-tools")
-def mcp_list_tools() -> None:
-    """List available MCP tools (skills)."""
-    try:
-        tools = _get_adapter().list_tools()
-    except requests.ConnectionError:
-        typer.echo("Error: no running MCP server (is DimOS running?)", err=True)
-        raise typer.Exit(1)
-    except McpError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
-    typer.echo(json.dumps(tools, indent=2))
-
-
-def _parse_key_value_arg(value: str) -> tuple[str, Any]:
-    """Parse a KEY=VALUE argument, auto-converting JSON values."""
-    if "=" not in value:
-        raise ValueError(f"expected KEY=VALUE, got: {value}")
-    key, val = value.split("=", 1)
-    try:
-        return (key, json.loads(val))
-    except (json.JSONDecodeError, ValueError):
-        return (key, val)
-
-
-def _validate_key_value_args(values: list[str]) -> list[str]:
-    """Validate KEY=VALUE arguments during CLI parsing."""
-    for value in values:
-        if "=" not in value:
-            raise typer.BadParameter(f"expected KEY=VALUE, got: {value}")
-    return values
-
-
-@mcp_app.command("call")
-def mcp_call_tool(
-    tool_name: str = typer.Argument(..., help="Tool name to call"),
-    args: list[str] = typer.Option(
-        [], "--arg", "-a", callback=_validate_key_value_args, help="Arguments as key=value"
-    ),
-    json_args: str = typer.Option("", "--json-args", "-j", help="Arguments as JSON string"),
-) -> None:
-    """Call an MCP tool by name."""
-    arguments: dict[str, Any] = {}
-    if json_args:
-        try:
-            arguments = json.loads(json_args)
-        except json.JSONDecodeError as e:
-            typer.echo(f"Error: invalid JSON in --json-args: {e}", err=True)
-            raise typer.Exit(1)
-    else:
-        try:
-            arguments = dict(_parse_key_value_arg(arg) for arg in args)
-        except ValueError as e:
-            typer.echo(f"Error: invalid --arg: {e}", err=True)
-            raise typer.Exit(1)
-
-    try:
-        result = _get_adapter().call_tool(tool_name, arguments)
-    except requests.ConnectionError:
-        typer.echo("Error: no running MCP server (is DimOS running?)", err=True)
-        raise typer.Exit(1)
-    except McpError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
-
-    content = result.get("content", [])
-    if not content:
-        typer.echo("(no output)")
-        return
-    for item in content:
-        typer.echo(item.get("text", str(item)))
-
-
-@mcp_app.command("status")
-def mcp_status() -> None:
-    """Show MCP server status (modules, skills)."""
-    try:
-        data = _get_adapter().call_tool_text("server_status")
-    except requests.ConnectionError:
-        typer.echo("Error: no running MCP server (is DimOS running?)", err=True)
-        raise typer.Exit(1)
-    except McpError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
-    # server_status returns JSON string -- pretty-print it
-    try:
-        typer.echo(json.dumps(json.loads(data), indent=2))
-    except (json.JSONDecodeError, ValueError):
-        typer.echo(data)
-
-
-@mcp_app.command("modules")
-def mcp_modules() -> None:
-    """List deployed modules and their skills."""
-    try:
-        data = _get_adapter().call_tool_text("list_modules")
-    except requests.ConnectionError:
-        typer.echo("Error: no running MCP server (is DimOS running?)", err=True)
-        raise typer.Exit(1)
-    except McpError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
-    try:
-        typer.echo(json.dumps(json.loads(data), indent=2))
-    except (json.JSONDecodeError, ValueError):
-        typer.echo(data)
-
-
-@main.command("agent-send")
-def agent_send_cmd(
-    message: str = typer.Argument(..., help="Message to send to the running agent"),
-) -> None:
-    """Send a message to the running DimOS agent via MCP."""
-    try:
-        text = _get_adapter().call_tool_text("agent_send", {"message": message})
-    except requests.ConnectionError:
-        typer.echo("Error: no running MCP server (is DimOS running?)", err=True)
-        raise typer.Exit(1)
-    except McpError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
-    typer.echo(text)
-
-
-@main.command()
-def restart(
-    force: bool = typer.Option(False, "--force", "-f", help="Force kill before restarting"),
-) -> None:
-    """Restart the running DimOS instance with the same arguments."""
-    entry = get_most_recent(alive_only=True)
-    if not entry:
-        typer.echo("No running DimOS instance to restart", err=True)
-        raise typer.Exit(1)
-
-    if not entry.original_argv:
-        typer.echo("Cannot restart: run entry missing original command", err=True)
-        raise typer.Exit(1)
-
-    # Save argv and pid before stopping (stop removes the entry)
-    argv = entry.original_argv
-    old_pid = entry.pid
-
-    typer.echo(f"Restarting {entry.run_id} ({entry.blueprint})...")
-    msg, _ok = stop_entry(entry, force=force)
-    typer.echo(f"  {msg}")
-
-    # Wait for the old process to fully exit so ports are released.
-    for _ in range(20):  # up to 2s
-        if not is_pid_alive(old_pid):
-            break
-        time.sleep(0.1)
-
-    typer.echo(f"  Running: {' '.join(argv)}")
-    try:
-        os.execvp(argv[0], argv)
-    except OSError as exc:
-        typer.echo(f"Error: failed to restart — {exc}", err=True)
-        raise typer.Exit(1)
-
-
-@main.command()
-def show_config() -> None:
-    """Show current config settings and their values."""
-    for field_name, value in global_config.model_dump().items():
-        typer.echo(f"{field_name}: {value}")
-
-
-@main.command(name="list")
-def list_blueprints() -> None:
-    """List all available blueprints."""
-    from dimos.robot.all_blueprints import all_blueprints
-    from dimos.robot.external_blueprints import (
-        ExternalBlueprintError,
-        list_external_blueprint_names,
-    )
-
-    blueprints = [name for name in all_blueprints.keys() if not name.startswith("demo-")]
-    typer.echo("Built-in blueprints:")
-    for blueprint_name in sorted(blueprints):
-        typer.echo(f"  {blueprint_name}")
-
-    try:
-        external_blueprints = list_external_blueprint_names()
-    except ExternalBlueprintError as exc:
-        typer.echo(typer.style(str(exc), fg=typer.colors.RED), err=True)
-        raise typer.Exit(1) from exc
-
-    if external_blueprints:
-        typer.echo("")
-        typer.echo("External blueprints:")
-        for blueprint_name in external_blueprints:
-            typer.echo(f"  {blueprint_name}")
-
-
-@main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
-def spy(ctx: typer.Context) -> None:
-    """Universal transport spy: topics, rates, sizes across all pubsub transports."""
-    # A root-level `--transport` (before the subcommand) sets the stack's pubsub
-    # backend — which single transport dimos processes participate on. The spy is an
-    # observer: it watches every transport and takes its own repeatable `--transport`
-    # filter *after* the subcommand. The two look alike but mean different things, so
-    # reject the root placement rather than silently ignoring the requested filter.
-    if (ctx.obj or {}).get("transport") is not None:
-        typer.echo(
-            "Error: `--transport` before `spy` sets the stack backend, which the spy "
-            "ignores. Put the filter after the subcommand: `dimos spy --transport <name>`.",
-            err=True,
-        )
-        raise typer.Exit(2)
-    from dimos.cli.spy.run_spy import main as spy_main
-
-    sys.argv = ["spy", *ctx.args]
-    spy_main()
-
-
-@main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
-def lcmspy(ctx: typer.Context) -> None:
-    """Alias for `dimos spy --transport lcm`."""
-    from dimos.cli.spy.run_spy import lcm_only_argv, main as spy_main
-
-    sys.argv = lcm_only_argv(list(ctx.args))
-    spy_main()
-
-
-@main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
-def agentspy(ctx: typer.Context) -> None:
-    """Agent spy tool for monitoring agents."""
-    from dimos.cli.agentspy.agentspy import main as agentspy_main
-
-    sys.argv = ["agentspy", *ctx.args]
-    agentspy_main()
-
-
-@main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
-def humancli(ctx: typer.Context) -> None:
-    """Interface interacting with agents."""
-    from dimos.cli.human.humanclianim import main as humancli_main
-
-    sys.argv = ["humancli", *ctx.args]
-    humancli_main()
-
-
-@main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
-def top(ctx: typer.Context) -> None:
-    """Live resource monitor TUI."""
-    from dimos.cli.dtop import main as dtop_main
-
-    sys.argv = ["dtop", *ctx.args]
-    dtop_main()
-
-
-topic_app = typer.Typer(help="Topic commands for pub/sub")
+main.command("agent-send")(agent_send_cmd)
+main.command()(restart)
+main.command()(show_config)
+main.command(
+    context_settings={
+        "allow_extra_args": True,
+        "ignore_unknown_options": True,
+        # let --help through to the bake command itself
+        "help_option_names": [],
+    }
+)(bake)
+main.command(name="list")(list_blueprints)
+main.command()(docs)
+main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(spy)
+main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(lcmspy)
+main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(agentspy)
+main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(humancli)
+main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(top)
 main.add_typer(topic_app, name="topic")
-
-
-@topic_app.command()
-def echo(
-    topic: str = typer.Argument(..., help="Topic name to listen on (e.g., /goal_request)"),
-    type_name: str | None = typer.Argument(
-        None,
-        help="Optional message type (e.g., PoseStamped). If omitted, infer from '/topic#pkg.Msg'.",
-    ),
-) -> None:
-    from dimos.cli.topic import topic_echo
-
-    topic_echo(topic, type_name)
-
-
-@topic_app.command()
-def send(
-    topic: str = typer.Argument(..., help="Topic name to send to (e.g., /goal_request)"),
-    message_expr: str = typer.Argument(..., help="Python expression for the message"),
-) -> None:
-    from dimos.cli.topic import topic_send
-
-    topic_send(topic, message_expr)
-
-
-map_app = typer.Typer(help="Voxel-map tools over recorded sqlite datasets")
 main.add_typer(map_app, name="map")
-map_app.command("global")(_map_main)
 
+from dimos.navigation.nav_3d.evaluator.cli import app as nav_eval_app
 
-dataprep_app = typer.Typer(help="Build and inspect learning datasets from recordings")
+main.add_typer(nav_eval_app, name="nav-eval")
 main.add_typer(dataprep_app, name="dataprep")
 
-
-@dataprep_app.command("build")
-def dataprep_build(
-    source: Path | None = typer.Option(None, "--source", "-s", help="Recording .db to read"),
-    output: Path | None = typer.Option(None, "--output", help="Dataset output directory"),
-    output_format: str = typer.Option(None, "--format", "-f", help="Output format: lerobot | hdf5"),
-    config_path: Path | None = typer.Option(
-        None, "--config", "-c", help="JSON DataPrepConfig (needed for obs/action stream maps)"
-    ),
-) -> None:
-    """Build a dataset from a recording (lerobot/hdf5 + dimos_meta.json)."""
-    from dimos.imitation.dataprep.cli import build
-
-    build(config_path, source, output, cast("Literal['lerobot', 'hdf5'] | None", output_format))
-
-
-@dataprep_app.command("inspect")
-def dataprep_inspect(
-    dataset: Path | None = typer.Argument(
-        None, help="Built dataset: a .hdf5 file or a lerobot directory"
-    ),
-    output_format: str = typer.Option(
-        None, "--format", "-f", help="lerobot | hdf5 (auto-detected from the path if omitted)"
-    ),
-) -> None:
-    """Summarize a built dataset: features, shapes, episode/frame counts, uniformity."""
-    from dimos.imitation.dataprep.cli import inspect
-
-    inspect(dataset, cast("Literal['lerobot', 'hdf5'] | None", output_format))
-
-
-map_app.command("rename")(_map_rename_main)
-map_app.command("pose-fill")(_map_pose_fill_main)
-map_app.command("replay")(_map_replay_main)
-map_app.command("replay-marker")(_map_replay_marker_main)
-
-from dimos.memory2.cli.app import mem_app
+from dimos.memory.cli.app import mem_app
 
 main.add_typer(mem_app, name="mem")
 
+from dimos.evals.cli import app as evals_app
 
-@main.command()
-def cameracalibrate(
-    source: str = typer.Option(..., "--source", help="Frame source: webcam, folder, or topic"),
-    device_index: int = typer.Option(0, "--device-index", help="Webcam device index"),
-    images: Path | None = typer.Option(
-        None, "--images", help="Directory of calibration images for --source folder"
-    ),
-    topic: str | None = typer.Option(
-        None,
-        "--topic",
-        help=(
-            "Pubsub URI for --source topic (proto:channel), "
-            "e.g. 'jpeg_lcm:/color_image' or 'pshm:color_image'."
-        ),
-    ),
-    topic_timeout_sec: float = typer.Option(
-        60.0,
-        "--topic-timeout-sec",
-        help="Abort --source topic if no frames arrive within this many seconds.",
-    ),
-    cols: int = typer.Option(..., "--cols", help="Inner chessboard corner columns"),
-    rows: int = typer.Option(..., "--rows", help="Inner chessboard corner rows"),
-    square_size_m: float = typer.Option(
-        ..., "--square-size-m", help="Chessboard square size in meters"
-    ),
-    out: Path | None = typer.Option(None, "--out", help="Optional ROS CameraInfo YAML output path"),
-    preview_out: Path | None = typer.Argument(
-        None, help="Optional preview PNG output path. Requires --out."
-    ),
-    camera_name: str = typer.Option("webcam", "--camera-name", help="Camera name in YAML"),
-    target_count: int = typer.Option(20, "--target-count", help="Accepted webcam frame count"),
-    no_display: bool = typer.Option(False, "--no-display", help="Disable OpenCV preview windows"),
-    distortion_model: str = typer.Option(
-        "plumb_bob",
-        "--distortion-model",
-        help=(
-            "Lens model: 'plumb_bob' (5 coeffs, near-pinhole) or 'fisheye' "
-            "(4 coeffs, wide-angle / fisheye; written as ROS 'equidistant')."
-        ),
-    ),
-) -> None:
-    """Calibrate camera intrinsics and write ROS CameraInfo YAML."""
-    from dimos.cli.cameracalibrate.cameracalibrate import run_calibration
+evals_app.add_typer(vqa_app, name="vqa")
+main.add_typer(evals_app, name="evals")
 
-    if preview_out is not None and out is None:
-        raise typer.BadParameter("preview output requires --out")
-
-    try:
-        result = run_calibration(
-            source=source,
-            device_index=device_index,
-            images=images,
-            topic=topic,
-            topic_timeout_sec=topic_timeout_sec,
-            cols=cols,
-            rows=rows,
-            square_size_m=square_size_m,
-            out=out,
-            preview_out=preview_out,
-            camera_name=camera_name,
-            target_count=target_count,
-            no_display=no_display,
-            distortion_model=distortion_model,
-        )
-    except (ValueError, RuntimeError) as exc:
-        raise typer.BadParameter(str(exc)) from exc
-
-    typer.echo(f"RMS: {float(result['rms']):.6f} px ({int(result['n_used'])} frame(s) used)")
-    typer.echo(
-        f"Detected pattern: {tuple(result.get('pattern_size', (cols, rows)))} "
-        f"({result.get('pattern_label', 'requested inner corners')})"
-    )
-    if out is not None:
-        typer.echo(f"Wrote camera info YAML to {out}")
-    if preview_out is not None:
-        typer.echo(f"Wrote preview overlay PNG to {preview_out}")
-
-
-@main.command()
-def apriltag(
-    out: Path = typer.Option(Path("apriltags.pdf"), "--out", "-o", help="Output PDF path"),
-    ids: str = typer.Option("0-11", "--ids", help="ID spec, e.g. '0-49' or '0,1,5,10-20'"),
-    size_mm: float = typer.Option(
-        50.0, "--size-mm", "-s", help="Tag black-border edge size in mm (typical: 50 or 100)"
-    ),
-    page_size: str = typer.Option(
-        "a4", "--page-size", "-p", help="Page size: a0..a8 (ISO A series) or letter"
-    ),
-    pack: bool = typer.Option(
-        True, "--pack/--no-pack", help="Pack as many tags per page as fit (vs one per page)"
-    ),
-    family: str = typer.Option(
-        "tag36h11",
-        "--family",
-        help=(
-            "Tag family: AprilTag (tag36h11, tag25h9, tag16h5) or "
-            "ArUco (aruco_original, aruco_mip_36h12, aruco_{4x4,5x5,6x6,7x7}_{50,100,250,1000})"
-        ),
-    ),
-    three_d: bool = typer.Option(
-        False,
-        "--3d/--no-3d",
-        help="Also emit 3D-printable STL pairs + colored 3MF per tag (into a directory)",
-    ),
-    thickness_mm: float = typer.Option(3.0, "--thickness-mm", help="[3d] Plate thickness in mm"),
-    marker_mm: float = typer.Option(
-        0.8, "--marker-mm", help="[3d] Depth of the dark top layer in mm (filament swap height)"
-    ),
-    margin_cells: float = typer.Option(
-        1.0,
-        "--margin-cells",
-        help="[3d] Light quiet-zone border around the tag, in tag cells",
-    ),
-    holes: bool = typer.Option(
-        True, "--holes/--no-holes", help="[3d] Corner mounting holes through the plate"
-    ),
-    hole_dia_mm: float = typer.Option(
-        3.4, "--hole-dia-mm", help="[3d] Mounting hole diameter in mm (3.4 = M3 clearance)"
-    ),
-    back_text: bool = typer.Option(
-        True, "--back-text/--no-back-text", help="[3d] Engrave family + ID on the back"
-    ),
-    text_inlay: bool = typer.Option(
-        True,
-        "--text-inlay/--no-text-inlay",
-        help="[3d] Fill the back engraving with a colored solid (off = bare engraving)",
-    ),
-    legs: float = typer.Option(
-        0.0,
-        "--legs",
-        metavar="HEIGHT_MM",
-        help=(
-            "[3d] Also generate a flat-printable T-footed leg. HEIGHT_MM is floor to TAG CENTER "
-            "(the tag's pose origin). Implies --holes"
-        ),
-    ),
-    leg_thickness_mm: float = typer.Option(
-        6.0, "--leg-thickness-mm", help="[3d] Leg column thickness in mm"
-    ),
-    leg_brace: bool = typer.Option(
-        True, "--leg-brace/--no-leg-brace", help="[3d] Gusset up the back of the leg column"
-    ),
-) -> None:
-    """Generate a printable AprilTag/ArUco PDF, optionally with 3D-printable STLs."""
-    from dimos.cli.apriltag import TagRequest, parse_id_spec
-
-    try:
-        request = TagRequest(
-            ids=parse_id_spec(ids),
-            out=out,
-            id_spec=ids,
-            family=family,
-            size_mm=size_mm,
-            page_size=page_size,
-            pack=pack,
-            three_d=three_d,
-            thickness_mm=thickness_mm,
-            marker_mm=marker_mm,
-            margin_cells=margin_cells,
-            holes=holes,
-            hole_dia_mm=hole_dia_mm,
-            back_text=back_text,
-            text_inlay=text_inlay,
-            legs_mm=legs,
-            leg_thickness_mm=leg_thickness_mm,
-            leg_brace=leg_brace,
-        )
-        typer.echo("apriltag")
-        for key, value in request.describe():
-            typer.echo(f"  {key:<10} {value}")
-        typer.echo("")
-        written = request.render()
-    except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-
-    for line in request.summary(written):
-        typer.echo(line)
-
-
-@main.command(name="rerun-bridge")
-def rerun_bridge_cmd(
-    memory_limit: str = typer.Option(
-        "25%", help="Memory limit for Rerun viewer (e.g., '4GB', '16GB', '25%')"
-    ),
-    rerun_open: str = typer.Option("native", help="How to open Rerun: native, web, both, none"),
-    rerun_web: bool = typer.Option(
-        True, "--rerun-web/--no-rerun-web", help="Enable/Disable Rerun web server"
-    ),
-) -> None:
-    """Launch the Rerun visualization bridge."""
-    from dimos.visualization.rerun.bridge import run_bridge
-
-    run_bridge(
-        memory_limit=memory_limit,
-        rerun_open=cast("RerunOpenOption", rerun_open),
-        rerun_web=rerun_web,
-    )
+main.command()(cameracalibrate)
+main.command()(apriltag)
+main.command(name="rerun-bridge")(rerun_bridge_cmd)
 
 
 if __name__ == "__main__":

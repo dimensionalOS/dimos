@@ -22,6 +22,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place import PickAndPlaceModule
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -45,8 +46,10 @@ xarm_perception = autoconnect(
             )
         ],
         planning_timeout=10.0,
+        visualization={"backend": "viser"},
         floor_z=-0.02,
     ),
+    ManipulationSkills.blueprint(instance_name="manipulation_skills"),
     PickAndPlaceModule.blueprint(instance_name="pick_and_place"),
     HeuristicGraspModule.blueprint(instance_name="heuristic_grasp"),
     RealSenseCamera.blueprint(

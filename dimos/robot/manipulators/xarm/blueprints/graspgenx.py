@@ -22,6 +22,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.grasping.grasp_gen_x import GraspGenXModule
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place import PickAndPlaceModule
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.xarm.blueprints.perception import XARM_PERCEPTION_CAMERA_TRANSFORM
@@ -43,6 +44,7 @@ xarm_graspgenx = autoconnect(
         planning_timeout=10.0,
         floor_z=-0.02,
     ),
+    ManipulationSkills.blueprint(instance_name="manipulation_skills"),
     PickAndPlaceModule.blueprint(
         instance_name="pick_and_place",
         grasp="graspgenx",

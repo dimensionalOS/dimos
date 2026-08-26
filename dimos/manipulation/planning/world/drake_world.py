@@ -51,6 +51,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.robot.assets.model import LoadedRobotModel
 
 if TYPE_CHECKING:
     from dimos.manipulation.planning.spec.models import (
@@ -217,7 +218,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
     def add_robot(self, config: RobotModelConfig) -> WorldRobotID:
         """Add a robot to the world. Returns robot_id.
 
-        Same model_path + base_pose reuses the model instance (e.g. two arms in one URDF).
+        Same urdf_path + base_pose reuses the model instance (e.g. two arms in one URDF).
         """
         if self._finalized:
             raise RuntimeError("Cannot add robot after world is finalized")
@@ -266,47 +267,35 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             return robot_id
 
     def _load_model(self, config: RobotModelConfig) -> Any:
-        """Load robot model (URDF/xacro/MJCF) and return model instance."""
-        original_path = config.model_path.resolve()
-        if not original_path.exists():
-            raise FileNotFoundError(f"Robot model not found: {original_path}")
+        """Load a URDF or Xacro robot model and return its model instance."""
+        description = config.model.load()
+        description = prepare_urdf_for_drake(
+            description,
+            convert_meshes=config.auto_convert_meshes,
+        )
+        description = self._strip_world_base_joint(description, config)
 
-        if original_path.suffix == ".xml":
-            # MJCF — pass directly to Drake (detects format from .xml extension)
-            prepared_path_obj = original_path
+        if description.package_paths:
+            for pkg_name, pkg_path in description.package_paths.items():
+                self._parser.package_map().Add(pkg_name, pkg_path)
         else:
-            # URDF/xacro — preprocess (xacro expansion, mesh conversion, package URI resolution)
-            prepared_path = prepare_urdf_for_drake(
-                urdf_path=original_path,
-                package_paths=config.package_paths,
-                xacro_args=config.xacro_args,
-                convert_meshes=config.auto_convert_meshes,
+            self._parser.package_map().Add(
+                f"{config.name}_description", description.source_path.parent
             )
-            prepared_path_obj = self._strip_world_base_joint(Path(prepared_path), config)
 
-            # Register package paths (not applicable to MJCF)
-            if config.package_paths:
-                for pkg_name, pkg_path in config.package_paths.items():
-                    self._parser.package_map().Add(pkg_name, Path(pkg_path))
-            else:
-                self._parser.package_map().Add(
-                    f"{config.name}_description", prepared_path_obj.parent
-                )
+        logger.info(f"Using in-memory model from: {description.source_path}")
+        model_instances = self._parser.AddModelsFromString(description.xml, "urdf")
 
-        logger.info(f"Using prepared model: {prepared_path_obj}")
-
-        model_instances = self._parser.AddModels(prepared_path_obj)
         if not model_instances:
-            raise ValueError(f"Failed to parse model: {prepared_path_obj}")
+            raise ValueError(f"Failed to parse model: {description.source_path}")
         return model_instances[0]
 
     @staticmethod
-    def _strip_world_base_joint(model_path: Path, config: RobotModelConfig) -> Path:
-        if model_path.suffix != ".urdf":
-            return model_path
-
-        tree = ET.parse(model_path)
-        root = tree.getroot()
+    def _strip_world_base_joint(
+        description: LoadedRobotModel,
+        config: RobotModelConfig,
+    ) -> LoadedRobotModel:
+        root = ET.fromstring(description.xml)
         joints = root.findall("joint")
         joints_to_remove = [
             joint
@@ -319,7 +308,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         ]
 
         if not joints_to_remove:
-            return model_path
+            return description
 
         for joint in joints_to_remove:
             root.remove(joint)
@@ -333,11 +322,11 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                 if link.get("name") == "world":
                     root.remove(link)
 
-        stripped_path = model_path.with_name(
-            f"{model_path.stem}_config_base_pose{model_path.suffix}"
+        return LoadedRobotModel(
+            xml=ET.tostring(root, encoding="unicode"),
+            source_path=description.source_path,
+            package_paths=description.package_paths,
         )
-        tree.write(stripped_path, encoding="utf-8", xml_declaration=True)
-        return stripped_path
 
     def _weld_base_if_needed(self, config: RobotModelConfig, model_instance: Any) -> None:
         """Weld robot base to world if not already welded in URDF."""

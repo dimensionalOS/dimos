@@ -29,6 +29,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.assets.model import RobotModel
 
 
 def _pose(x: float = 0.0) -> PoseStamped:
@@ -57,7 +58,7 @@ class _World:
         self.legacy_jacobian_calls = 0
         self.config = RobotModelConfig(
             name="arm",
-            model_path=Path("robot.urdf"),
+            model=RobotModel.from_file(Path("robot.urdf")),
             base_pose=_pose(),
             joint_names=["joint_a", "joint_b", "gripper"],
             base_link="base",

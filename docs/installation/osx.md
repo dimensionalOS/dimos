@@ -1,4 +1,4 @@
-## macOS Install (12.6 or newer)
+# macOS Install (12.6 or newer)
 
 ```sh skip
 # install homebrew
@@ -10,7 +10,7 @@ brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python pre-commit
 curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
 ```
 
-## Using DimOS as a library
+## Using dimOS as a library
 
 ```sh skip
 mkdir myproject && cd myproject
@@ -23,7 +23,7 @@ source .venv/bin/activate
 uv pip install 'dimos[misc,sim,visualization,agents,web,perception,unitree,manipulation,cpu]'
 ```
 
-## Developing on DimOS
+## Developing on dimOS
 
 ```sh skip
 # this allows getting large files on-demand (and not pulling all immediately)
@@ -44,7 +44,7 @@ uv run pytest --numprocesses=auto dimos
 
 ## Transport note for macOS
 
-LCM over UDP can be unreliable on macOS for large or high-rate replay workloads. DimOS defaults the global stream transport to **Zenoh** on macOS, so you usually do not need `--transport=zenoh`. Use `--transport=lcm` if you need to force the legacy multicast path.
+LCM over UDP can be unreliable on macOS for large or high-rate replay workloads. dimOS defaults the global stream transport to **Zenoh** on macOS, so you usually do not need `--transport=zenoh`. Use `--transport=lcm` if you need to force the legacy multicast path.
 
 See the [Zenoh quickstart](/docs/usage/transports/index.md#zenoh-quickstart) for install, Linux versus macOS defaults, and `DIMOS_TRANSPORT`.
 

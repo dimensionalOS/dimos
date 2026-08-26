@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Open a Go2 DDS mcap directly as a read-only memory2 store.
+"""Open a Go2 DDS mcap directly as a read-only memory store.
 
     from dimos.robot.unitree.go2.dds.store import Go2McapStore
 
@@ -21,7 +21,7 @@
     for obs in store.streams.lidar.limit(5):
         print(obs.ts, obs.data)         # obs.data is a dimos PointCloud2
 
-Thin Go2 wiring over the generic :class:`dimos.memory2.store.mcap.McapStore`:
+Thin Go2 wiring over the generic :class:`dimos.memory.store.mcap.McapStore`:
 supplies the Go2 codec set and stream-name map, and resolves the path through
 the repo data dir / LFS.
 """
@@ -30,11 +30,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from dimos.memory2.store.mcap import McapStore
+from dimos.memory.store.mcap import McapStore
 from dimos.robot.unitree.go2.dds.codec import GO2_CODECS
 from dimos.utils.data import resolve_named_path
 
-# memory2 stream name -> Go2 DDS topic.
+# memory stream name -> Go2 DDS topic.
 STREAMS: dict[str, str] = {
     "lidar": "rt/utlidar/cloud",
     "lidar_deskewed": "rt/utlidar/cloud_deskewed",

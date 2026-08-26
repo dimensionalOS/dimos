@@ -1,27 +1,45 @@
-# Manipulation Planning
+# DimOS Robotics
 
-This context describes requests for planning robot motion through joint and Cartesian spaces.
+Canonical language for robot capabilities and operator interaction in DimOS.
 
-## Language
+## Teleoperation
 
-**Cartesian Waypoint**:
-One absolute TCP pose or relative rigid displacement within a Cartesian target.
+**Quest arm teleoperation**:
+Arm teleoperation in which tracked Quest controllers provide clutched, relative Cartesian pose commands and gripper input.
+_Avoid_: Keyboard teleoperation, leader-follower teleoperation
 
-**Cartesian Target**:
-An ordered, homogeneous sequence of Cartesian waypoints for one planning group, including its starting waypoint. An absolute target contains only `PoseStamped` waypoints and starts at the current TCP pose. A relative target contains only `Transform` waypoints, starts with the identity transform, and measures every waypoint from the planning-start TCP pose.
-_Avoid_: Cartesian track
+**Operator hand**:
+The left or right Quest controller as a source of teleoperation intent, independent of the robot arm it controls.
+_Avoid_: Hand, side
 
-**Cartesian Path Configuration**:
-Per-planning-call policy that selects how Cartesian waypoints are connected and constrains that operation. It is independent of the startup configuration that selects and constructs a planner backend.
+**Mixed-arm setup**:
+Two independent manipulators teleoperated through separate control tasks, even when presented in one operator session.
+_Avoid_: Bimanual robot, dual-arm robot
 
-**Standard Cartesian Planning**:
-Cartesian waypoint planning through a backend's supported serializable options. For RoboPlan, this includes multi-waypoint and simultaneous multi-end-effector paths, bounded and time-optimal speed modes, tracking tolerances, and solver tuning.
+**Bimanual robot**:
+One coupled robot with two manipulator groups represented by a single kinematic model and controlled by one bimanual task.
+_Avoid_: Mixed-arm setup
 
-**Bounded Speed Mode**:
-A Cartesian timing policy that treats configured tool speeds and accelerations as maxima and slows the motion further when required by tracking or joint limits.
+**Bimanual engagement**:
+A two-hand deadman condition in which a bimanual teleoperation task is active only while both operator hands are engaged; releasing either hand disengages the whole task.
+_Avoid_: Partial engagement, independent hand engagement
 
-**Time-Optimal Speed Mode**:
-A Cartesian timing policy that resolves the requested path into joint space and retimes it against joint limits, optionally blending intermediate corners.
+## Joint-limit safety
 
-**Custom Planner Components**:
-Backend-native solver tasks, constraints, and barriers injected as live objects. These are outside standard Cartesian planning and require a separate constrained-IK interface.
+**Feedback limit tolerance**:
+The bounded discrepancy beyond a nominal joint limit that is accepted only when interpreting measured hardware state.
+_Avoid_: Command tolerance, expanded joint limit
+
+**Command limit margin**:
+The inward distance from each nominal joint limit within which generated position commands must remain.
+_Avoid_: Feedback tolerance, relaxed joint limit
+
+## Inverse kinematics
+
+**Pink task stack**:
+The ordered, named set of kinematic objectives used by Pink to produce a robot command. Its structure is composed once per IK control context; reserved frame objectives ensure every commanded end effector participates, while subclasses may compose or replace named auxiliary objectives.
+_Avoid_: Teleoperation behavior, solver implementation
+
+**IK control context**:
+The persistent inverse-kinematics state owned by one control-task instance for one robot model, controlled-joint selection, and target-frame selection, including its Pink task stack. Stateful Pink tasks are never shared between control-task instances.
+_Avoid_: Planning group, teleoperation session

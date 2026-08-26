@@ -49,6 +49,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.assets.model import RobotModel
 from dimos.utils.transform_utils import pose_to_matrix
 
 
@@ -103,24 +104,6 @@ class FakeCartesianPlannerOptions:
         self.group_name = ""
         self.speed_mode = FakeCartesianSpeedMode.TimeOptimal
         self.dt = 0.01
-        self.max_linear_speed = 0.1
-        self.max_angular_speed = 0.5
-        self.max_linear_acceleration = 0.5
-        self.max_angular_acceleration = 2.5
-        self.max_position_error = 0.005
-        self.max_orientation_error = 0.01
-        self.position_cost = 1.0
-        self.orientation_cost = 1.0
-        self.task_gain = 1.0
-        self.lm_damping = 0.01
-        self.regularization = 1e-6
-        self.config_task_weight = 0.05
-        self.velocity_scale = 1.0
-        self.acceleration_scale = 1.0
-        self.limit_ratio_tolerance = 1.05
-        self.toppra_blend_deviation = 0.05
-        self.position_limit_gain = 1.0
-        self.max_attempts_per_step = 16
 
 
 class FakeCartesianPathPlanner:
@@ -181,6 +164,8 @@ class FakeScene:
     joint_group_joint_names: ClassVar[list[str] | None] = None
     position_limits_lower: ClassVar[list[float]] = [-1.0, -2.0]
     position_limits_upper: ClassVar[list[float]] = [1.0, 2.0]
+    full_position_limits_lower: ClassVar[list[float]] = [-1.0, -2.0, -3.0]
+    full_position_limits_upper: ClassVar[list[float]] = [1.0, 2.0, 3.0]
     valid_frames: ClassVar[set[str]] = {"dimos_world"}
 
     def __init__(
@@ -236,6 +221,12 @@ class FakeScene:
     def getPositionLimitVectors(
         self, group_name: str = "", collapsed: bool = False
     ) -> tuple[np.ndarray, np.ndarray]:
+        if not group_name:
+            robot_count = len(self.native_joint_names) // len(self.full_position_limits_lower)
+            return (
+                np.tile(self.full_position_limits_lower, robot_count),
+                np.tile(self.full_position_limits_upper, robot_count),
+            )
         return np.asarray(self.position_limits_lower), np.asarray(self.position_limits_upper)
 
     def getJointGroupInfo(self, name: str) -> FakeJointGroupInfo:
@@ -465,7 +456,7 @@ def robot_config(tmp_path: Path) -> RobotModelConfig:
     )
     return RobotModelConfig(
         name="arm",
-        model_path=model_path,
+        model=RobotModel.from_file(model_path),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
         joint_names=["joint1", "joint2"],
         base_link="base",
@@ -670,6 +661,35 @@ def test_context_cloning_and_joint_state_round_trip(
 
     live_round_trip = world.get_joint_state(world.get_live_context(), robot_id)
     assert live_round_trip.position == [0.1, 0.2]
+
+
+def test_full_scene_state_preserves_backend_default_for_unconfigured_joint(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_q: np.ndarray | None = None
+
+    def capture_jacobian_q(
+        scene: FakeScene,
+        q: np.ndarray,
+        frame_name: str,
+        local: bool = True,
+    ) -> np.ndarray:
+        nonlocal captured_q
+        captured_q = q.copy()
+        return np.ones((6, len(scene.native_joint_names)))
+
+    monkeypatch.setattr(FakeScene, "computeFrameJacobian", capture_jacobian_q)
+    world, _ = _make_world(fake_roboplan, robot_config)
+
+    world.get_group_jacobian(
+        world.get_live_context(),
+        "arm/manipulator",
+    )
+
+    assert captured_q is not None
+    np.testing.assert_allclose(captured_q, [0.0, 0.0, 0.0])
 
 
 def test_joint_name_mapping_is_applied_to_input_states(
@@ -1663,7 +1683,44 @@ def test_native_selected_planner_accepts_local_joint_names(
     assert result.path[-1].position == [0.2, 0.4]
 
 
-def test_native_selected_planner_rejects_multi_group_selection(
+def test_native_selected_planner_uses_explicit_start_after_live_state_advances(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    mocker: MockerFixture,
+) -> None:
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    selection = _selection((robot_config,), "arm/manipulator")
+    observed_scene_start: list[float] = []
+    native_plan = FakeRRT.plan
+
+    def capture_scene_start(
+        planner: FakeRRT,
+        q_start: FakeJointConfiguration,
+        q_goal: FakeJointConfiguration,
+    ) -> FakeJointPath:
+        observed_scene_start.extend(planner.scene.current_positions.tolist())
+        return native_plan(planner, q_start, q_goal)
+
+    mocker.patch.object(FakeRRT, "plan", autospec=True, side_effect=capture_scene_start)
+    start = JointState(name=list(selection.joint_names), position=[0.1, -0.1])
+    world.sync_from_joint_state(
+        robot_id,
+        JointState(name=["joint1", "joint2"], position=[0.3, 0.2]),
+    )
+
+    result = _planner_for(world).plan_selected_joint_path(
+        world,
+        selection,
+        start,
+        JointState(name=list(selection.joint_names), position=[0.4, 0.2]),
+    )
+
+    assert result.status == PlanningStatus.SUCCESS
+    assert result.path[0].position == pytest.approx(start.position)
+    assert observed_scene_start[:2] == pytest.approx(start.position)
+
+
+def test_native_selected_planner_preserves_disjoint_group_selection_order(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
     config = robot_config.model_copy(
@@ -1675,17 +1732,52 @@ def test_native_selected_planner_rejects_multi_group_selection(
         }
     )
     world, _ = _make_world(fake_roboplan, config)
-    selection = _selection((config,), "arm/left", "arm/right")
+    selection = _selection((config,), "arm/right", "arm/left")
 
     result = _planner_for(world).plan_selected_joint_path(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
-        JointState(name=list(selection.joint_names), position=[0.1, 0.1]),
+        JointState(name=list(selection.joint_names), position=[0.1, 0.2]),
     )
 
-    assert result.status == PlanningStatus.UNSUPPORTED
-    assert "no generated group" in result.message
+    assert result.status == PlanningStatus.SUCCESS
+    assert [state.name for state in result.path] == [list(selection.joint_names)] * 3
+    assert result.path[-1].position == [0.1, 0.2]
+
+
+def test_overlapping_group_selection_rejected_before_planning(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    config = robot_config.model_copy(
+        update={
+            "planning_groups": [
+                PlanningGroupDefinition("left", ("joint1", "joint2"), "base", "left_tip"),
+                PlanningGroupDefinition("right", ("joint2",), "base", "right_tip"),
+            ]
+        }
+    )
+    _make_world(fake_roboplan, config)
+
+    with pytest.raises(ValueError, match="overlap"):
+        _selection((config,), "arm/left", "arm/right")
+
+
+def test_overlapping_group_selection_rejected_before_planning(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    config = robot_config.model_copy(
+        update={
+            "planning_groups": [
+                PlanningGroupDefinition("left", ("joint1", "joint2"), "base", "left_tip"),
+                PlanningGroupDefinition("right", ("joint2",), "base", "right_tip"),
+            ]
+        }
+    )
+    _make_world(fake_roboplan, config)
+
+    with pytest.raises(ValueError, match="overlap"):
+        _selection((config,), "arm/left", "arm/right")
 
 
 def test_native_planner_coordinates_groups_across_two_robots(
@@ -1706,41 +1798,15 @@ def test_native_planner_coordinates_groups_across_two_robots(
     )
 
     assert result.status == PlanningStatus.SUCCESS
-    assert result.path[-1].name == [
-        "arm/joint1",
-        "arm/joint2",
-        "right/joint1",
-        "right/joint2",
-    ]
-    assert result.path[-1].position == [0.1, 0.3, 0.4, 0.2]
+    assert result.path[-1].name == list(selection.joint_names)
+    assert result.path[-1].position == [0.4, 0.2, 0.1, 0.3]
 
 
-def test_cartesian_planner_returns_timed_global_joint_states_and_options(
+def test_cartesian_planner_returns_timed_global_joint_states(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
     world, _ = _make_world(fake_roboplan, robot_config)
     selection = _selection((robot_config,), "arm/manipulator")
-    option_overrides = {
-        "dt": 0.02,
-        "max_linear_speed": 0.2,
-        "max_angular_speed": 0.6,
-        "max_linear_acceleration": 0.7,
-        "max_angular_acceleration": 2.0,
-        "max_position_error": 0.006,
-        "max_orientation_error": 0.02,
-        "position_cost": 2.0,
-        "orientation_cost": 3.0,
-        "task_gain": 0.8,
-        "lm_damping": 0.02,
-        "regularization": 2e-6,
-        "config_task_weight": 0.1,
-        "velocity_scale": 0.9,
-        "acceleration_scale": 0.8,
-        "limit_ratio_tolerance": 1.02,
-        "toppra_blend_deviation": 0.0,
-        "position_limit_gain": 0.7,
-        "max_attempts_per_step": 8,
-    }
 
     result = _planner_for(world).plan_cartesian_path(
         world,
@@ -1754,10 +1820,7 @@ def test_cartesian_planner_returns_timed_global_joint_states_and_options(
                 )
             )
         },
-        RoboPlanCartesianPathConfig(
-            speed_mode="time_optimal",
-            **option_overrides,
-        ),
+        RoboPlanCartesianPathConfig(speed_mode="time_optimal", dt=0.02),
     )
 
     assert result.status == PlanningStatus.SUCCESS
@@ -1767,8 +1830,6 @@ def test_cartesian_planner_returns_timed_global_joint_states_and_options(
     assert result.path[1].velocity == pytest.approx([0.5, 0.5])
     planner = FakeCartesianPathPlanner.instances[-1]
     assert planner.options.speed_mode == FakeCartesianSpeedMode.TimeOptimal
-    for field_name, expected in option_overrides.items():
-        assert getattr(planner.options, field_name) == pytest.approx(expected)
     assert planner.paths[0].base_frames == ["dimos_world"]
     np.testing.assert_allclose(planner.paths[0].tforms[0][0], np.eye(4), atol=1e-12)
     expected_rotation = np.array(
@@ -1931,22 +1992,29 @@ def test_cartesian_rejects_invalid_requests(
     assert result.path == []
 
 
-def test_cartesian_rejects_start_that_differs_from_scene(
+def test_cartesian_uses_explicit_start_after_live_state_advances(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
-    world, _ = _make_world(fake_roboplan, robot_config)
+    world, robot_id = _make_world(fake_roboplan, robot_config)
     selection = _selection((robot_config,), "arm/manipulator")
+    start = JointState(name=list(selection.joint_names), position=[0.1, 0.0])
+    world.sync_from_joint_state(
+        robot_id,
+        JointState(name=["joint1", "joint2"], position=[0.3, 0.2]),
+    )
 
     result = _planner_for(world).plan_cartesian_path(
         world,
         selection,
-        JointState(name=list(selection.joint_names), position=[0.1, 0.0]),
+        start,
         {"arm/manipulator": _relative_target(Transform(translation=Vector3(0.1, 0.0, 0.0)))},
         RoboPlanCartesianPathConfig(),
     )
 
-    assert result.status == PlanningStatus.INVALID_START
-    assert "does not match current scene state" in result.message
+    assert result.status == PlanningStatus.SUCCESS
+    assert result.path[0].position == pytest.approx(start.position)
+    start_pose = FakeCartesianPathPlanner.instances[-1].paths[0].tforms[0][0]
+    assert start_pose[0, 3] == pytest.approx(sum(start.position))
 
 
 def test_cartesian_rejects_official_planner_failure(
@@ -2065,6 +2133,32 @@ def test_cartesian_postvalidation_checks_between_waypoints(
     assert result.status == PlanningStatus.NO_SOLUTION
     assert result.path == []
     assert "collision post-validation" in result.message
+
+
+def test_cartesian_can_skip_collision_postvalidation(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    mocker: MockerFixture,
+) -> None:
+    world, _ = _make_world(fake_roboplan, robot_config)
+    selection = _selection((robot_config,), "arm/manipulator")
+    collision_check = mocker.patch.object(
+        world,
+        "is_collision_free",
+        side_effect=AssertionError("collision checking must be skipped"),
+    )
+
+    result = _planner_for(world).plan_cartesian_path(
+        world,
+        selection,
+        JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
+        {"arm/manipulator": _relative_target(Transform(translation=Vector3(0.05, 0.0, 0.0)))},
+        RoboPlanCartesianPathConfig(),
+        check_collision=False,
+    )
+
+    assert result.status == PlanningStatus.SUCCESS
+    collision_check.assert_not_called()
 
 
 def test_native_planner_preserves_other_robot_and_auxiliary_joint_state(
@@ -2197,6 +2291,31 @@ def test_scene_receives_generated_model_contents_inline(
     assert urdf.tag == "robot"
     assert srdf.tag == "robot"
     assert world._scene.constructor_kwargs["package_paths"] == []
+
+
+def test_composed_model_fills_only_missing_acceleration_limits(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    source_path = Path(robot_config.model.source_path)
+    tree = ET.parse(source_path)
+    authored = tree.find("./joint[@name='joint1']/limit")
+    assert authored is not None
+    authored.set("acceleration", "3.5")
+    tree.write(source_path)
+
+    world, _ = _make_world(fake_roboplan, robot_config)
+
+    urdf = ET.fromstring(world._scene.constructor_kwargs["urdf"])
+    acceleration_by_joint = {
+        joint.get("name"): limit.get("acceleration")
+        for joint in urdf.findall("./joint")
+        if (limit := joint.find("./limit")) is not None
+    }
+    assert acceleration_by_joint == {
+        "joint1": "3.5",
+        "joint2": "2.0",
+        "joint3": "2.0",
+    }
 
 
 def test_base_pose_is_written_to_composed_model(

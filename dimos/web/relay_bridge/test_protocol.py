@@ -25,17 +25,17 @@ from dimos.web.relay_bridge.protocol import (
     MAX_DATA_FRAME_BYTES,
     MAX_HEADER_LEN,
     PROTOCOL_VERSION,
-    ChannelSpec,
     ControlFrameReader,
     DataFrameStreamError,
     DataFrameStreamReader,
     FrameHeader,
     Hello,
+    Manifest,
     Ping,
     ProtocolError,
     RobotInfo,
-    RobotManifest,
     Robots,
+    TeleopStop,
     decode_data_frame,
     decode_datagram,
     encode_control_frame,
@@ -65,9 +65,10 @@ def _header(d):
 
 
 def test_protocol_version():
-    # v2: reliable frames pack onto one persistent stream per channel (v1
-    # carried one frame per stream); a v1 peer must fail the handshake.
-    assert PROTOCOL_VERSION == 2
+    # v4: the twist datagram gains vy, the teleop lease messages enter the
+    # control plane, and robot-bound teleop messages carry the relay-stamped
+    # lease generation; a v3 peer must fail the handshake.
+    assert PROTOCOL_VERSION == 4
 
 
 @pytest.mark.parametrize("vector", CONTROL, ids=[v["name"] for v in CONTROL])
@@ -241,6 +242,9 @@ def test_msg_from_dict_validates_types():
         msg_from_dict({"t": "bogus"})  # unknown type
     with pytest.raises(ProtocolError):
         msg_from_dict({"t": "ping", "n": True, "ts": 2.5})  # bool is not a number
+    with pytest.raises(ProtocolError):
+        # v3-era twist without vy: an old peer must fail loudly, not default.
+        msg_from_dict({"t": "twist", "vx": 0.5, "wz": -0.25, "seq": 12, "ts": 2.5})
     # Mirrored-validator parity: protocol.ts must also reject prototype-chain
     # keys instead of resolving them through Object.prototype (protocol_test.ts
     # asserts the same three).
@@ -255,44 +259,72 @@ def test_msg_from_dict_validates_types():
 def test_msg_from_dict_validates_nested_session_shapes():
     robot = {"id": "go2-lab", "name": "Go2 Lab", "model": "unitree-go2"}
     spec = {"ch": "odom", "encoding": "pose.json.v1", "delivery": "reliable", "maxHz": 20.5}
-    full = {"t": "hello", "v": 1, "role": "robot", "robot": robot, "manifest": {"channels": [spec]}}
+    manifest = {"version": 1, "channels": [spec]}
+    full = {"t": "hello", "v": 1, "role": "robot", "robot": robot, "manifest": manifest}
     assert msg_from_dict(full) == Hello(
         v=1,
         role="robot",
         robot=RobotInfo(id="go2-lab", name="Go2 Lab", model="unitree-go2"),
-        manifest=RobotManifest(
-            channels=[
-                ChannelSpec(ch="odom", encoding="pose.json.v1", delivery="reliable", maxHz=20.5)
-            ]
-        ),
+        manifest=manifest,
     )
     # hello stays valid without the optional robot/manifest (viewer form).
     assert msg_from_dict({"t": "hello", "v": 1, "role": "viewer"}) == Hello(v=1, role="viewer")
+    # The manifest is opaque at the transport layer: any record passes here
+    # (structure is parse_manifest's job, so a garbage manifest gets a proper
+    # invalid_manifest reply instead of a silent drop), but null and
+    # non-records are still protocol violations.
+    garbage = {**full, "manifest": {"channels": "garbage"}}
+    assert msg_from_dict(garbage).manifest == {"channels": "garbage"}
+    # ManifestMsg nests the manifest; bare = manifest-less robot.
+    assert msg_from_dict({"t": "manifest", "robotId": "r"}) == Manifest(robotId="r")
+    assert msg_from_dict({"t": "manifest", "robotId": "r", "manifest": manifest}) == Manifest(
+        robotId="r", manifest=manifest
+    )
     bad = [
         # Optional means absent-or-valid: explicit null is rejected on the
         # wire (local construction with robot=None stays fine: absent).
         {"t": "hello", "v": 1, "role": "robot", "robot": None},
         {**full, "robot": {"id": 5, "name": "x", "model": "m"}},
-        {**full, "manifest": {"channels": [{**spec, "maxHz": "20"}]}},
-        {**full, "manifest": {"channels": [{**spec, "delivery": "bogus"}]}},
-        {**full, "manifest": {"channels": robot}},
+        {**full, "manifest": None},
+        {**full, "manifest": 5},
+        {**full, "manifest": [spec]},
+        {"t": "manifest", "robotId": "r", "manifest": None},
+        {"t": "manifest", "robotId": "r", "manifest": 7},
         {"t": "robots", "robots": {}},
         {"t": "robots", "robots": [{"id": "a", "name": "b"}]},
         {"t": "robots"},
-        {"t": "manifest", "channels": [spec]},
+        {"t": "manifest", "manifest": manifest},
         {"t": "watch"},
         {"t": "subs", "chs": ["a", 5], "n": 1},
         {"t": "subs", "chs": ["a"]},
+        # Teleop gen mirrors hello.robot: absent ok, null/non-number rejected.
+        {"t": "twist", "vx": 0.5, "vy": 0.0, "wz": 0.0, "seq": 1, "ts": 2.5, "gen": None},
+        {"t": "twist", "vx": 0.5, "vy": 0.0, "wz": 0.0, "seq": 1, "ts": 2.5, "gen": "1"},
+        {"t": "twist", "vx": 0.5, "vy": 0.0, "wz": 0.0, "seq": 1, "ts": 2.5, "gen": True},
+        {"t": "teleop_stop", "gen": None},
     ]
     for data in bad:
         with pytest.raises(ProtocolError):
             msg_from_dict(data)
 
 
+def test_manifest_dict_roundtrips_verbatim():
+    # The opaque manifest is carried untouched: exclude_none must not strip
+    # None values inside it (a layout-less manifest legitimately carries
+    # "layout": null, which parse peers accept as absent).
+    manifest = {"version": 1, "channels": [], "panels": [], "layout": None, "pages": []}
+    raw = encode_datagram(Hello(v=PROTOCOL_VERSION, role="robot", manifest=manifest))
+    assert b'"layout":null' in raw
+    decoded = decode_datagram(raw)
+    assert isinstance(decoded, Hello) and decoded.manifest == manifest
+
+
 def test_encode_omits_absent_optional_fields():
     # A viewer hello must stay byte-identical to its T1 wire form: no
     # "robot":null / "manifest":null keys (JSON.stringify omits undefined).
     assert encode_datagram(Hello(v=1, role="viewer")) == b'{"t":"hello","v":1,"role":"viewer"}'
+    # Same for teleop gen: viewer-authored messages carry no "gen":null key.
+    assert encode_datagram(TeleopStop()) == b'{"t":"teleop_stop"}'
 
 
 def test_nested_roundtrip_returns_models():
@@ -322,6 +354,20 @@ def test_data_frame_header_rejects_non_finite():
     hdr = b'{"ch":"c","seq":1,"ts":1e999,"delivery":"latest"}'
     with pytest.raises(ProtocolError):
         decode_data_frame(_raw_data_frame(hdr))
+
+
+def test_data_frame_header_bounds_ch_length():
+    # ch is bounded like manifest channel ids (64, mirrored in protocol.ts):
+    # oversize undeclared names are dropped before routing, and local
+    # construction fails fast too.
+    def hdr(ch):
+        return json.dumps({"ch": ch, "seq": 1, "ts": 1.0, "delivery": "latest"}).encode()
+
+    assert decode_data_frame(_raw_data_frame(hdr("c" * 64))).header.ch == "c" * 64
+    with pytest.raises(ProtocolError):
+        decode_data_frame(_raw_data_frame(hdr("c" * 65)))
+    with pytest.raises(ValueError):
+        FrameHeader(ch="c" * 65, seq=1, ts=1.0, delivery="latest")
 
 
 def test_huge_int_is_a_valid_number():

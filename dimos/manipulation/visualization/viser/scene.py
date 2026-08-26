@@ -18,11 +18,8 @@ from collections.abc import Callable, Sequence
 from copy import deepcopy
 from dataclasses import replace
 from enum import StrEnum
-import hashlib
+from io import BytesIO
 import math
-import os
-from pathlib import Path
-import tempfile
 from threading import RLock
 import time
 from typing import Any, Protocol, TypeAlias, cast
@@ -33,7 +30,6 @@ from numpy.typing import NDArray
 import trimesh
 from yourdfpy import URDF  # type: ignore[import-untyped]
 
-from dimos.constants import CACHE_DIR
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import DEFAULT_OBSTACLE_RGBA, Obstacle
@@ -57,7 +53,7 @@ from dimos.manipulation.visualization.viser.runtime import (
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.model_parser import parse_model
+from dimos.robot.assets.model import LoadedRobotModel
 from dimos.utils.logging_config import setup_logger
 
 try:
@@ -86,8 +82,6 @@ except ImportError as e:
     raise ModuleNotFoundError(VISER_URDF_INSTALL_HINT) from e
 
 logger = setup_logger()
-
-_VISER_URDF_CACHE_DIR = CACHE_DIR / "viser_urdf"
 
 GOAL_ROBOT_FEASIBLE_COLOR = (255, 122, 0)
 GOAL_ROBOT_INFEASIBLE_COLOR = (255, 30, 30)
@@ -546,8 +540,10 @@ class ViserManipulationScene:
         return collision_scene is not None and bool(getattr(collision_scene, "geometry", True))
 
     def _load_robot_model(self, config: RobotModelConfig) -> URDF:
+        description = self.loaded_robot_description(config)
         return URDF.load(
-            self.prepared_urdf_path(config),
+            BytesIO(description.xml.encode()),
+            mesh_dir=str(description.source_path.parent),
             build_scene_graph=True,
             build_collision_scene_graph=True,
             load_meshes=True,
@@ -569,7 +565,7 @@ class ViserManipulationScene:
         self._animation_generations.setdefault(robot_id, 0)
         self._target_active.setdefault(robot_id, False)
         self._target_tracks_current.setdefault(robot_id, True)
-        if config.model_path and robot_id not in self._models_by_id:
+        if robot_id not in self._models_by_id:
             self._models_by_id[robot_id] = self._load_robot_model(config)
         self._ensure_robot_urdfs(robot_id, config)
 
@@ -833,8 +829,6 @@ class ViserManipulationScene:
             self._robot_display_mode = RobotDisplayMode.VISUAL
 
     def _ensure_robot_urdfs(self, robot_id: str, config: RobotModelConfig) -> None:
-        if not config.model_path:
-            return
         model = self._models_by_id.get(robot_id)
         if model is None:
             return
@@ -942,30 +936,27 @@ class ViserManipulationScene:
                 mode in {RobotDisplayMode.COLLISION, RobotDisplayMode.BOTH},
             )
 
-    def prepared_urdf_path(self, config: RobotModelConfig) -> Path:
-        package_paths = {package: Path(path) for package, path in config.package_paths.items()}
-        prepared_path = Path(
-            prepare_urdf_for_drake(
-                Path(str(config.model_path)),
-                package_paths=package_paths,
-                xacro_args={str(key): str(value) for key, value in config.xacro_args.items()},
-                convert_meshes=bool(config.auto_convert_meshes),
-            )
+    def loaded_robot_description(self, config: RobotModelConfig) -> LoadedRobotModel:
+        description = config.model.load()
+        description = prepare_urdf_for_drake(
+            description,
+            convert_meshes=bool(config.auto_convert_meshes),
         )
-        prepared_path = self._strip_visualization_world_root_attachment(config, prepared_path)
-        self._assert_base_link_is_urdf_root(config, prepared_path)
-        return prepared_path
+        description = self._strip_visualization_world_root_attachment(config, description)
+        self._assert_base_link_is_urdf_root(config, description)
+        return description
 
     @staticmethod
     def _strip_visualization_world_root_attachment(
-        config: RobotModelConfig, prepared_path: Path
-    ) -> Path:
+        config: RobotModelConfig,
+        description: LoadedRobotModel,
+    ) -> LoadedRobotModel:
         """Detach a model-owned world root only for Viser base-pose rendering."""
-        urdf_content = prepared_path.read_text()
+        urdf_content = description.xml
         try:
             root = ET.fromstring(urdf_content)
         except ET.ParseError:
-            return prepared_path
+            return description
 
         attachments = [
             joint
@@ -977,7 +968,7 @@ class ViserManipulationScene:
             and child.attrib.get("link") == config.base_link
         ]
         if len(attachments) != 1:
-            return prepared_path
+            return description
 
         root.remove(attachments[0])
         referenced_links = {
@@ -987,41 +978,32 @@ class ViserManipulationScene:
             if (link := element.get("link") if element is not None else None) is not None
         }
         if "world" in referenced_links:
-            return prepared_path
+            return description
         world_links = [link for link in root.findall("link") if link.attrib.get("name") == "world"]
         if len(world_links) != 1:
-            return prepared_path
+            return description
         root.remove(world_links[0])
 
-        stripped_content = ET.tostring(root, encoding="unicode")
-        digest = hashlib.sha256(
-            f"viser-world-root-v1\0{config.base_link}\0{urdf_content}".encode()
-        ).hexdigest()
-        cache_path = _VISER_URDF_CACHE_DIR / f"{digest}.urdf"
-        if cache_path.exists():
-            return cache_path
-        _VISER_URDF_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        temporary_path: Path | None = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                encoding="utf-8",
-                dir=_VISER_URDF_CACHE_DIR,
-                prefix=f".{digest}.",
-                suffix=".tmp",
-                delete=False,
-            ) as temporary_file:
-                temporary_file.write(stripped_content)
-                temporary_path = Path(temporary_file.name)
-            os.replace(temporary_path, cache_path)
-        finally:
-            if temporary_path is not None:
-                temporary_path.unlink(missing_ok=True)
-        return cache_path
+        return LoadedRobotModel(
+            xml=ET.tostring(root, encoding="unicode"),
+            source_path=description.source_path,
+            package_paths=description.package_paths,
+        )
 
     @staticmethod
-    def _assert_base_link_is_urdf_root(config: RobotModelConfig, prepared_path: Path) -> None:
-        root_link = parse_model(prepared_path).root_link
+    def _assert_base_link_is_urdf_root(
+        config: RobotModelConfig,
+        description: LoadedRobotModel,
+    ) -> None:
+        root = ET.fromstring(description.xml)
+        links = {link.get("name") for link in root.findall("link")}
+        child_links = {
+            child.get("link")
+            for joint in root.findall("joint")
+            if (child := joint.find("child")) is not None
+        }
+        root_links = links - child_links
+        root_link = next(iter(root_links)) if len(root_links) == 1 else ""
         if root_link == config.base_link:
             return
         raise ValueError(

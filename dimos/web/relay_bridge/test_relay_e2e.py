@@ -30,7 +30,6 @@ import pytest
 
 from dimos.web.relay_bridge.e2e_support import attach_viewer, collect_until, wait_subs
 from dimos.web.relay_bridge.protocol import (
-    ChannelSpec,
     DataFrame,
     FrameHeader,
     Hello,
@@ -132,12 +131,15 @@ async def test_previous_protocol_version_is_rejected(relay: RelayReadyInfo) -> N
 
 
 async def test_invalid_manifest_hello_is_rejected(relay: RelayReadyInfo) -> None:
-    duplicated = RobotManifest(
-        channels=[
-            ChannelSpec(ch="odom", encoding="pose.json.v1", delivery="reliable", maxHz=20.0),
-            ChannelSpec(ch="odom", encoding="jpeg.v1", delivery="latest", maxHz=15.0),
-        ]
-    )
+    # version: 1 on purpose, so this keeps pinning the duplicate-channel rule
+    # rather than the version gate.
+    duplicated: RobotManifest = {
+        "version": 1,
+        "channels": [
+            {"ch": "odom", "encoding": "pose.json.v1", "delivery": "reliable", "maxHz": 20.0},
+            {"ch": "odom", "encoding": "jpeg.v1", "delivery": "latest", "maxHz": 15.0},
+        ],
+    }
     async with await RelayClient.connect(relay.wt_url, "robot") as robot:
         with pytest.raises(RelayRejectedError) as exc_info:
             await robot.hello(robot=ROBOT, manifest=duplicated)
@@ -266,8 +268,20 @@ async def test_stats_reflect_traffic(
     assert {"id": ROBOT.id, "name": ROBOT.name, "model": ROBOT.model} in stats["robots"]
     assert stats["viewers"] >= 1
     assert stats["perRobot"][ROBOT.id]["subs"] == ["odom"]
-    assert stats["perRobot"][ROBOT.id]["channels"]["odom"]["framesIn"] >= 1
-    assert stats["perRobot"][ROBOT.id]["channels"]["odom"]["delivery"] == "reliable"
+    # This module's robot declares no manifest, so its traffic lands in the
+    # one aggregate bucket: per-channel ingress stats exist only for declared
+    # channels (arbitrary ch strings must not grow the map).
+    assert stats["perRobot"][ROBOT.id]["channels"] == {}
+    undeclared = stats["perRobot"][ROBOT.id]["undeclared"]
+    assert undeclared["framesIn"] >= 1
+    assert undeclared["bytesIn"] >= 2
+    assert isinstance(undeclared["fps"], (int, float))
+    viewer_stats = next(v for v in stats["perViewer"] if v["watched"] == ROBOT.id)
+    odom = viewer_stats["channels"]["odom"]
+    assert odom["sent"] >= 1
+    assert odom["bytesOut"] >= 2
+    # A healthy reliable channel never resets anything.
+    assert (odom["aborted"], odom["expired"], odom["inflight"]) == (0, 0, 0)
 
 
 async def test_duplicate_robot_id_is_terminal_until_first_disconnects(

@@ -39,6 +39,8 @@ _MAX_COMPOSITE_GROUPS = 64
 _ROOT_LINK = ROBOPLAN_WORLD_FRAME
 _ROOT_JOINT = "dimos_world_joint"
 _FREE_ROOTS = {"world", "map", _ROOT_LINK}
+# TODO: Remove this global fallback when formal per-joint acceleration overrides are available.
+_DEFAULT_ACCELERATION_LIMIT = 2.0
 _REFERENCE_ATTRIBUTES = (
     "reference",
     "frame",
@@ -121,27 +123,26 @@ def build_roboplan_model(
     """Build one composite scene transactionally."""
     if not robots:
         raise ValueError("RoboPlanWorld requires at least one robot")
-    prepared = [
+    loaded = [
         (
             robot,
-            Path(
-                prepare_urdf_for_drake(
-                    robot.config.model_path,
-                    package_paths=robot.config.package_paths,
-                    xacro_args=robot.config.xacro_args,
-                    convert_meshes=robot.config.auto_convert_meshes,
-                )
+            prepare_urdf_for_drake(
+                robot.config.model.load(),
+                convert_meshes=robot.config.auto_convert_meshes,
             ),
         )
         for robot in robots
     ]
+    prepared = [(robot, description.xml) for robot, description in loaded]
     composite = len(robots) > 1
     composed = _compose(prepared, composite)
     groups, legacy_ids, all_group = _groups(robots, registry, composed.maps, composite)
     model_name = "dimos_composite" if composite else robots[0].config.name
     srdf = _srdf(model_name, robots, groups, composed)
     package_paths = list(
-        dict.fromkeys(str(path) for robot in robots for path in robot.config.package_paths.values())
+        dict.fromkeys(
+            str(path) for _, description in loaded for path in description.package_paths.values()
+        )
     )
     scene = scene_factory(
         name=model_name,
@@ -167,7 +168,7 @@ def build_roboplan_model(
     )
 
 
-def _compose(prepared: Sequence[tuple[_BuildRobot, Path]], composite: bool) -> _Composed:
+def _compose(prepared: Sequence[tuple[_BuildRobot, str]], composite: bool) -> _Composed:
     result = ET.Element(
         "robot",
         {"name": "dimos_composite" if composite else prepared[0][0].config.name},
@@ -175,11 +176,12 @@ def _compose(prepared: Sequence[tuple[_BuildRobot, Path]], composite: bool) -> _
     ET.SubElement(result, "link", {"name": _ROOT_LINK})
     maps: dict[RobotName, _NameMap] = {}
     used_names: set[str] = {_ROOT_LINK}
-    for robot, path in prepared:
+    for robot, urdf_xml in prepared:
         config = robot.config
-        root = ET.parse(path).getroot()
+        root = ET.fromstring(urdf_xml)
         if _tag(root.tag) != "robot":
             raise ValueError(f"Prepared model for '{config.name}' is not a URDF robot")
+        _add_missing_acceleration_limits(root)
         mapping = _name_map(root, config.name, composite)
         mapped_names = {
             value
@@ -234,6 +236,15 @@ def _compose(prepared: Sequence[tuple[_BuildRobot, Path]], composite: bool) -> _
         maps,
         tuple(adjacent),
     )
+
+
+def _add_missing_acceleration_limits(root: ET.Element) -> None:
+    for joint in root.iter():
+        if _tag(joint.tag) != "joint" or joint.get("type") == "fixed":
+            continue
+        limit = next((child for child in joint if _tag(child.tag) == "limit"), None)
+        if limit is not None and limit.get("acceleration") is None:
+            limit.set("acceleration", str(_DEFAULT_ACCELERATION_LIMIT))
 
 
 def _name_map(root: ET.Element, robot_name: RobotName, prefix: bool) -> _NameMap:
@@ -325,8 +336,6 @@ def _groups(
     generated = 0
     for size in range(2, len(configured) + 1):
         for selected in combinations(configured, size):
-            if len({group.robot_name for group in selected}) < 2:
-                continue
             if len({name for group in selected for name in group.joint_names}) != sum(
                 len(group.joint_names) for group in selected
             ):

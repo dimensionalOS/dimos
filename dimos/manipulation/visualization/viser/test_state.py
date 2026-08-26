@@ -30,7 +30,7 @@ from dimos.manipulation.visualization.viser.state import (
 )
 
 
-def test_panel_cannot_plan_from_fault_without_explicit_reset() -> None:
+def test_panel_cannot_plan_while_backend_reports_fault() -> None:
     state = PanelState(
         selected_robot="arm",
         selected_group_ids=(PlanningGroupID("arm/manipulator"),),

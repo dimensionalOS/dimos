@@ -213,7 +213,7 @@ class ResourceSpyApp(App[None]):
         autoconf(check_only=True)
 
         if db_path is not None:
-            from dimos.memory2.store.sqlite import SqliteStore
+            from dimos.memory.store.sqlite import SqliteStore
 
             self._store: SqliteStore | None = SqliteStore(path=db_path)
             self._store.start()
@@ -565,7 +565,7 @@ def main() -> None:
     parser.add_argument(
         "--log",
         action="store_true",
-        help="Log stats to a memory2 SQLite database (dtop_{timestamp}.ignore.db).",
+        help="Log stats to a memory SQLite database (dtop_{timestamp}.ignore.db).",
     )
     args = parser.parse_args()
 

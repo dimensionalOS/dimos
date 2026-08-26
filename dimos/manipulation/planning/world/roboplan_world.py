@@ -24,7 +24,6 @@ from __future__ import annotations
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from pathlib import Path
 from threading import RLock
 from typing import TYPE_CHECKING, Any
 
@@ -102,6 +101,7 @@ class RoboPlanWorld:
         self._finalized = False
         self._usable = True
         self._live_context = RoboPlanContext()
+        self._state_lock = RLock()
         self._lock = RLock()
 
     # Robot Management
@@ -110,8 +110,7 @@ class RoboPlanWorld:
         """Register a robot for the scene built by :meth:`finalize`."""
         if self._finalized:
             raise RuntimeError("Cannot add robot after world is finalized")
-        if not Path(config.model_path).exists():
-            raise FileNotFoundError(f"Robot model not found: {Path(config.model_path).resolve()}")
+        config.model.load()
         if any(data.config.name == config.name for data in self._robots.values()):
             raise ValueError(f"Robot name '{config.name}' is already registered")
         self._validate_planning_group_config(config)
@@ -270,18 +269,23 @@ class RoboPlanWorld:
     @contextmanager
     def scratch_context(self) -> Generator[RoboPlanContext, None, None]:
         """Create a per-consumer context with independent collision scratch."""
-        self._require_finalized()
-        ctx = RoboPlanContext(
-            q_by_robot={robot_id: q.copy() for robot_id, q in self._live_context.q_by_robot.items()}
-        )
+        with self._state_lock:
+            self._require_finalized()
+            ctx = RoboPlanContext(
+                q_by_robot={
+                    robot_id: q.copy() for robot_id, q in self._live_context.q_by_robot.items()
+                }
+            )
         yield ctx
 
     def sync_from_joint_state(self, robot_id: WorldRobotID, joint_state: JointState) -> None:
         """Sync live context from a driver joint-state message."""
         if not self._finalized:
             return
-        self.set_joint_state(self._live_context, robot_id, joint_state)
-        self._authoritative_robot_ids.add(robot_id)
+        q = self._joint_state_to_q(robot_id, joint_state)
+        with self._state_lock:
+            self._live_context.q_by_robot[robot_id] = q
+            self._authoritative_robot_ids.add(robot_id)
 
     # State Operations
 
@@ -507,16 +511,26 @@ class RoboPlanWorld:
             raise RuntimeError("RoboPlan model is not initialized; finalize the world first")
         return self._model
 
+    @contextmanager
+    def parametrization_model(self) -> Generator[RoboPlanModel, None, None]:
+        """Yield the finalized trajectory model under the world scene lock."""
+        with self._lock:
+            yield self._require_model()
+
     def _full_scene_q(
         self,
         ctx: RoboPlanContext,
         overlay: tuple[WorldRobotID, NDArray[np.float64]] | None = None,
     ) -> NDArray[np.float64]:
         scene = self._require_scene()
-        group = self._require_model().all_group
+        model = self._require_model()
+        group = model.all_group
         positions = self._current_global_positions(ctx, overlay)
         q = np.asarray([positions[name] for name in group.public_names], dtype=np.float64)
-        return np.asarray(scene.toFullJointPositions(group.name, q), dtype=np.float64)
+        return np.asarray(
+            scene.toFullJointPositions(group.name, q),
+            dtype=np.float64,
+        )
 
     def _current_global_positions(
         self,
@@ -641,4 +655,5 @@ class RoboPlanWorld:
         return model.groups[frozenset((group_id,))]
 
     def _is_ready(self) -> bool:
-        return bool(self._robots) and self._authoritative_robot_ids == set(self._robots)
+        with self._state_lock:
+            return bool(self._robots) and self._authoritative_robot_ids == set(self._robots)

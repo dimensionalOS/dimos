@@ -16,7 +16,8 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import TaskConfig
+from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.a1z.config import (
@@ -28,6 +29,9 @@ from dimos.robot.manipulators.common.blueprints import (
     teleop_ik_task,
     trajectory_task,
 )
+from dimos.robot.manipulators.common.coordinators import (
+    ArmTwistCoordinator,
+)
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 _a1z_keyboard_hw = a1z_hardware("arm")
@@ -35,7 +39,8 @@ _a1z_model = make_a1z_model_config()
 
 keyboard_teleop_a1z = autoconnect(
     KeyboardTeleopModule.blueprint(),
-    ControlCoordinator.blueprint(
+    ArmTwistCoordinator.blueprint(
+        instance_name="ControlCoordinator",
         hardware=[_a1z_keyboard_hw],
         tasks=[
             eef_twist_task(
@@ -43,11 +48,10 @@ keyboard_teleop_a1z = autoconnect(
                 robot_model=_a1z_model,
             ),
             TaskConfig(
-                name="servo_gripper",
-                type="servo",
+                name="arm_gripper",
+                type="gripper",
                 joint_names=["arm/gripper"],
                 priority=20,
-                params={"timeout": 0.0, "default_positions": [0.0]},
             ),
             trajectory_task(_a1z_keyboard_hw, priority=20),
         ],
@@ -63,21 +67,29 @@ _a1z_quest_hw = a1z_hardware("arm")
 _a1z_quest_model = make_a1z_model_config()
 
 coordinator_teleop_a1z = autoconnect(
-    ControlCoordinator.blueprint(
+    TeleopControlCoordinator.blueprint(
+        instance_name="ControlCoordinator",
         hardware=[_a1z_quest_hw],
         tasks=[
             teleop_ik_task(
                 _a1z_quest_hw,
-                hand="left",
                 name="teleop_a1z",
                 robot_model=_a1z_quest_model,
-                control_ik={"max_velocity": 2.0},
+                bindings=[
+                    {
+                        "hand": "left",
+                        "target_frame": _a1z_quest_model.end_effector_link,
+                    }
+                ],
                 priority=20,
-                params={
-                    "gripper_joint": _a1z_quest_hw.gripper_joints[0],
-                    "gripper_open_pos": 1.0,
-                    "gripper_closed_pos": 0.0,
-                },
+                params={"max_joint_velocity_rad_s": 2.0},
+            ),
+            TaskConfig(
+                name="arm_gripper",
+                type="gripper",
+                joint_names=["arm/gripper"],
+                priority=20,
+                stream_bind={"gripper_command": "left_gripper_command"},
             ),
             trajectory_task(_a1z_quest_hw),
         ],

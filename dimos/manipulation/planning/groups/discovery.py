@@ -21,7 +21,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
-from dimos.robot.model_parser import JointDescription, ModelDescription
+from dimos.robot.assets.model import JointDescription, LoadedRobotModel
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -36,8 +36,7 @@ class PlanningGroupDiscoveryError(ValueError):
 def discover_planning_group_definitions(
     *,
     robot_name: str,
-    model_path: Path,
-    model: ModelDescription,
+    model: LoadedRobotModel,
     controllable_joint_names: list[str],
     srdf_path: Path | None = None,
 ) -> list[PlanningGroupDefinition]:
@@ -46,7 +45,7 @@ def discover_planning_group_definitions(
     Precedence is explicit SRDF path, conservative auto-discovery with warning,
     then fallback generation from the controllable joint set.
     """
-    resolved_srdf_path = _resolve_srdf_path(model_path, srdf_path)
+    resolved_srdf_path = _resolve_srdf_path(model.source_path, srdf_path)
     if resolved_srdf_path is not None:
         groups = parse_srdf_planning_groups(
             resolved_srdf_path,
@@ -71,7 +70,7 @@ def discover_planning_group_definitions(
 def parse_srdf_planning_groups(
     srdf_path: Path,
     *,
-    model: ModelDescription,
+    model: LoadedRobotModel,
     controllable_joint_names: list[str],
 ) -> list[PlanningGroupDefinition]:
     """Extract supported SRDF planning group definitions.
@@ -128,7 +127,7 @@ def parse_srdf_planning_groups(
 
 def generate_fallback_planning_group(
     *,
-    model: ModelDescription,
+    model: LoadedRobotModel,
     controllable_joint_names: list[str],
 ) -> PlanningGroupDefinition:
     """Generate one conservative fallback planning group named ``manipulator``."""
@@ -172,7 +171,7 @@ def _parse_chain_group(
     group_name: str,
     chain_elem: ET.Element,
     *,
-    model: ModelDescription,
+    model: LoadedRobotModel,
     controllable_joint_names: list[str],
     srdf_path: Path,
 ) -> PlanningGroupDefinition | None:
@@ -205,7 +204,7 @@ def _parse_joint_list_group(
     group_name: str,
     joint_children: list[ET.Element],
     *,
-    model: ModelDescription,
+    model: LoadedRobotModel,
     controllable_joint_names: list[str],
     srdf_path: Path,
 ) -> PlanningGroupDefinition | None:
@@ -231,7 +230,7 @@ def _parse_joint_list_group(
 
 
 def _ordered_joints_between_links(
-    model: ModelDescription,
+    model: LoadedRobotModel,
     base_link: str,
     tip_link: str,
 ) -> list[JointDescription]:
@@ -259,7 +258,7 @@ def _ordered_joints_between_links(
 
 
 def _validate_ordered_serial_joints(
-    model: ModelDescription,
+    model: LoadedRobotModel,
     joint_names: list[str],
 ) -> list[JointDescription]:
     ordered_joints: list[JointDescription] = []
@@ -283,7 +282,7 @@ def _validate_ordered_serial_joints(
 
 
 def _validate_and_order_serial_joints(
-    model: ModelDescription,
+    model: LoadedRobotModel,
     joint_names: list[str],
 ) -> list[JointDescription]:
     if not joint_names:

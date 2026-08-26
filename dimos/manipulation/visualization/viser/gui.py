@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, MutableMapping, Sequence
+import math
 from typing import TypeAlias, cast
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
@@ -78,6 +79,7 @@ PanelHandle: TypeAlias = (
     | GuiDropdownHandle[str]
     | GuiButtonHandle
     | GuiCheckboxHandle
+    | GuiSliderHandle[float]
     | TransformControlsHandle
 )
 
@@ -252,9 +254,6 @@ class ViserPanelGui:
     def get_error(self) -> str:
         return self.operator.status().error
 
-    def reset(self) -> bool:
-        return self.operator.reset()
-
     def evaluate_joint_target_set(
         self, group_ids: Sequence[PlanningGroupID], targets: Mapping[PlanningGroupID, JointState]
     ) -> TargetEvaluationResult:
@@ -327,7 +326,11 @@ class ViserPanelGui:
         plan = self.operator.plan_cartesian(
             CartesianTargetRequest(
                 stamped,
-                RoboPlanCartesianPathConfig(),
+                RoboPlanCartesianPathConfig(
+                    speed_mode="time_optimal",
+                    # The coordinator interpolates between trajectory points at control rate.
+                    dt=0.05,
+                ),
                 tuple(auxiliary_group_ids),
             )
         )
@@ -394,6 +397,7 @@ class ViserPanelGui:
         self._handles["preset"] = preset_dropdown
         self._handles["target_summary"] = gui.add_markdown("Feasibility: `unknown`")
         self._handles["actions_heading"] = gui.add_markdown("### Actions")
+        self._build_motion_settings(gui)
         planning_mode = gui.add_dropdown(
             "Planning mode",
             options=list(PLANNING_MODES_BY_LABEL),
@@ -420,6 +424,43 @@ class ViserPanelGui:
         joint_controls = gui.add_folder("Joint Control", expand_by_default=False)
         self._handles["joint_control_folder"] = joint_controls
         self._build_joint_sliders()
+
+    def _build_motion_settings(self, gui: GuiApi) -> None:
+        """Build controls that affect trajectories generated in the future."""
+        speed_slider = gui.add_slider(
+            "Next plan speed",
+            min=0.05,
+            max=1.0,
+            step=0.05,
+            initial_value=self._motion_speed_scale_for_slider(),
+        )
+        speed_slider.on_update(lambda event: self._set_next_plan_speed(event.target.value))
+        self._handles["next_plan_speed"] = speed_slider
+
+    def _motion_speed_scale_for_slider(self) -> float:
+        """Return the module's speed setting bounded to the slider range."""
+        try:
+            speed_scale = float(self.operator.get_motion_speed())
+        except Exception:
+            logger.warning("Could not read manipulation motion speed", exc_info=True)
+            return 1.0
+        if not math.isfinite(speed_scale) or speed_scale <= 0.0:
+            return 1.0
+        return min(max(speed_scale, 0.05), 1.0)
+
+    def _set_next_plan_speed(self, speed_scale: float) -> None:
+        """Update future-plan speed without invalidating the accepted plan."""
+        if self._closed:
+            return
+        if self.state.action_status != ActionStatus.IDLE:
+            self._set_recoverable_error(
+                "Cannot change next-plan speed while an operation is active"
+            )
+            return
+        if not self.operator.set_motion_speed(float(speed_scale)):
+            self._set_error(self.get_error() or "Invalid next-plan speed")
+            return
+        self.refresh()
 
     def _sync_group_selector(self, groups: list[PlanningGroup]) -> None:
         """Render source-order group toggle buttons without a robot dropdown."""
@@ -969,7 +1010,9 @@ class ViserPanelGui:
             current = self.get_current_joint_state(robot_name)
             if config is None or current is None:
                 continue
-            values = self._local_values_for_robot(robot_name, current)
+            values = merged.get(robot_name)
+            if values is None:
+                values = self._local_values_for_robot(robot_name, current)
             target_raw = self._state_values_by_local_name(target)
             for local_name, global_name in zip(
                 group.local_joint_names, group.joint_names, strict=True
@@ -1119,6 +1162,7 @@ class ViserPanelGui:
         )
 
     def _update_control_state(self) -> None:
+        self._set_disabled("next_plan_speed", self.state.action_status != ActionStatus.IDLE)
         self._set_disabled("plan", not self.state.can_plan())
         self._set_disabled("preview", not self.state.can_preview())
         self._set_disabled(
@@ -1463,7 +1507,7 @@ class ViserPanelGui:
 
     def _set_disabled(self, key: str, disabled: bool) -> None:
         handle = self._handles.get(key)
-        if isinstance(handle, GuiButtonHandle):
+        if handle is not None and hasattr(handle, "disabled"):
             self._set_optional_handle_attr(handle, "disabled", disabled)
 
     def _set_visible(self, key: str, visible: bool) -> None:

@@ -40,6 +40,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     TypeAdapter,
@@ -53,14 +54,27 @@ from dimos.utils.logging_config import setup_logger
 # Channel/manifest domain types live in manifest.py; re-exported here (the
 # redundant aliases mark them as such for mypy) so protocol consumers keep a
 # single import surface, mirroring protocol.ts.
-from dimos.web.relay_bridge.manifest import ChannelSpec as ChannelSpec, Delivery as Delivery
+from dimos.web.relay_bridge.manifest import (
+    MAX_MANIFEST_ID_LEN,
+    ChannelSpec as ChannelSpec,
+    Delivery as Delivery,
+    Dir as Dir,
+    PanelSpec as PanelSpec,
+)
 
 logger = setup_logger()
 
-# v2: a reliable channel packs all its frames onto one persistent stream (v1
-# carried one frame per stream), which a v1 receiver would misread as a
-# single frame. Bump on any change an old peer would silently misparse.
-PROTOCOL_VERSION = 2
+# v4: the twist datagram gains vy (strafe) and the teleop lease messages
+# (teleop_start/teleop_started/teleop_stop) enter the control plane;
+# robot-bound twist/stop/teleop_start/teleop_stop carry the relay-stamped
+# lease generation `gen` (amended into v4 pre-release: an older v4 peer
+# without gen gets dead teleop, never unsafe motion). v3: the
+# manifest travels as one opaque record nested in hello/manifest messages
+# (v2 carried flat channels/panels fields, which a v2 peer would silently
+# misread in both directions). v2: a reliable channel packs all its frames
+# onto one persistent stream. Bump on any change an old peer would silently
+# misparse.
+PROTOCOL_VERSION = 4
 
 # Reject absurd header lengths before allocating (mirrors protocol.ts).
 MAX_HEADER_LEN = 65536
@@ -95,8 +109,13 @@ class RobotInfo(_WireModel):
     model: str
 
 
-class RobotManifest(_WireModel):
-    channels: list[ChannelSpec]
+# The manifest rides the wire as one opaque record: the transport checks
+# only record-ness, and parse_manifest (manifest.py) is the single owner of
+# its structure. Additive manifest changes therefore never touch the
+# protocol or the relay, and a structurally-alien future manifest still
+# reaches the domain parser (which reports unsupported_version) instead of
+# being silently dropped here.
+RobotManifest = dict[str, Any]
 
 
 # Sentinel validation context passed by every wire-decode path: lets Hello
@@ -161,7 +180,15 @@ class Watch(_WireModel):
 class Manifest(_WireModel):
     t: Literal["manifest"] = "manifest"
     robotId: str
-    channels: list[ChannelSpec]
+    # Absent = the robot registered without a manifest.
+    manifest: RobotManifest | None = None
+
+    @field_validator("manifest", mode="before")
+    @classmethod
+    def _reject_wire_null(cls, value: Any, info: ValidationInfo) -> Any:
+        if value is None and info.context is _WIRE_CTX:
+            raise ValueError("explicit null (absent optional fields are omitted)")
+        return value
 
 
 class Sub(_WireModel):
@@ -187,20 +214,59 @@ class Subs(_WireModel):
     n: int | float
 
 
-# Teleop datagrams (carried from T6 on; declared so the wire format is pinned
-# by fixtures from day one).
+# Teleop (T6). twist/stop ride datagrams viewer->relay->robot (loss-tolerant:
+# commands repeat and the bridge deadman covers silence). The lease messages
+# ride the viewer's control stream so they are ordered after watch:
+# teleop_start requests the per-robot exclusive lease (relay acks with
+# teleop_started, or replies error code "teleop_held"), teleop_stop releases
+# it. Robot-bound teleop messages are datagrams stamped with `gen`, the
+# relay-issued lease generation: teleop_start announces a granted lease,
+# teleop_stop means "the lease ended" (holder gone), twist/stop are the
+# forwarded holder commands. The bridge permanently rejects generations
+# below its floor, so a released holder's delayed datagrams cannot move the
+# robot after a stop. Viewer-authored messages never carry gen.
+
+
+def _gen_reject_wire_null(value: Any, info: ValidationInfo) -> Any:
+    if value is None and info.context is _WIRE_CTX:
+        raise ValueError("explicit null (absent optional fields are omitted)")
+    return value
+
+
+# The relay-stamped lease generation: optional (viewer-authored messages omit
+# it), never null on the wire (mirrors genAbsentOrNumber in protocol.ts).
+_WireGen = Annotated[int | float | None, BeforeValidator(_gen_reject_wire_null)]
+
+
 class Twist(_WireModel):
     t: Literal["twist"] = "twist"
     vx: int | float
+    vy: int | float
     wz: int | float
     seq: int | float
     ts: int | float
+    gen: _WireGen = None
 
 
 class Stop(_WireModel):
     t: Literal["stop"] = "stop"
     seq: int | float
     ts: int | float
+    gen: _WireGen = None
+
+
+class TeleopStart(_WireModel):
+    t: Literal["teleop_start"] = "teleop_start"
+    gen: _WireGen = None
+
+
+class TeleopStarted(_WireModel):
+    t: Literal["teleop_started"] = "teleop_started"
+
+
+class TeleopStop(_WireModel):
+    t: Literal["teleop_stop"] = "teleop_stop"
+    gen: _WireGen = None
 
 
 Msg = (
@@ -217,6 +283,9 @@ Msg = (
     | Subs
     | Twist
     | Stop
+    | TeleopStart
+    | TeleopStarted
+    | TeleopStop
 )
 
 # One pydantic-core pass takes raw peer bytes to a validated message: UTF-8
@@ -232,7 +301,10 @@ class FrameHeader(_WireModel):
     `meta` carries encoding-specific extras.
     """
 
-    ch: str
+    # Bounded like manifest channel ids: the relay drops frames with oversize
+    # undeclared names, so local construction fails fast instead of emitting
+    # a frame the relay cannot route (the file's encode-fail-fast policy).
+    ch: str = Field(max_length=MAX_MANIFEST_ID_LEN)
     seq: int | float
     ts: int | float
     delivery: Delivery

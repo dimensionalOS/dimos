@@ -16,25 +16,23 @@
 
 from __future__ import annotations
 
-from typing import cast
-
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.core.stream import Out
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.common.blueprints import (
-    GripperTaskOverrides,
     eef_twist_task,
     teleop_ik_task,
     trajectory_task,
+)
+from dimos.robot.manipulators.common.coordinators import (
+    ArmTwistCoordinator,
 )
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.xarm.config import (
     XARM6_SIM_PATH,
     XARM7_SIM_PATH,
-    XARM_GRIPPER_PARAMS,
     make_xarm6_model_config,
     make_xarm7_model_config,
     make_xarm_hardware,
@@ -47,11 +45,11 @@ _xarm6_hw = xarm6_hardware("arm", gripper=True, mock_without_address=True)
 _xarm7_hw = xarm7_hardware("arm", gripper=True, mock_without_address=True)
 _xarm6_control_model = make_xarm6_model_config(add_gripper=False)
 _xarm7_control_model = make_xarm7_model_config(add_gripper=False)
-_xarm_gripper_params = cast("GripperTaskOverrides", XARM_GRIPPER_PARAMS)
 
 keyboard_teleop_xarm6 = autoconnect(
     KeyboardTeleopModule.blueprint(),
-    ControlCoordinator.blueprint(
+    ArmTwistCoordinator.blueprint(
+        instance_name="ControlCoordinator",
         tick_rate=100.0,
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
@@ -61,8 +59,13 @@ keyboard_teleop_xarm6 = autoconnect(
                 _xarm6_hw,
                 robot_model=_xarm6_control_model,
                 timeout=0.0,
-                params=_xarm_gripper_params,
-            )
+            ),
+            TaskConfig(
+                name="arm_gripper",
+                type="gripper",
+                joint_names=["arm/gripper"],
+                priority=20,
+            ),
         ],
     ),
     ManipulationModule.blueprint(
@@ -73,7 +76,8 @@ keyboard_teleop_xarm6 = autoconnect(
 
 keyboard_teleop_xarm7 = autoconnect(
     KeyboardTeleopModule.blueprint(),
-    ControlCoordinator.blueprint(
+    ArmTwistCoordinator.blueprint(
+        instance_name="ControlCoordinator",
         tick_rate=100.0,
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
@@ -83,8 +87,13 @@ keyboard_teleop_xarm7 = autoconnect(
                 _xarm7_hw,
                 robot_model=_xarm7_control_model,
                 timeout=0.0,
-                params=_xarm_gripper_params,
-            )
+            ),
+            TaskConfig(
+                name="arm_gripper",
+                type="gripper",
+                joint_names=["arm/gripper"],
+                priority=20,
+            ),
         ],
     ),
     ManipulationModule.blueprint(
@@ -146,50 +155,50 @@ coordinator_combined_xarm6 = ControlCoordinator.blueprint(
 _xarm7_teleop_hw = xarm7_hardware(
     "arm",
     gripper=True,
-    gripper_open_position=0.85,
-    gripper_closed_position=0.0,
     mock_without_address=True,
 )
 _xarm6_teleop_hw = xarm6_hardware(
     "arm",
     gripper=True,
-    gripper_open_position=0.85,
-    gripper_closed_position=0.0,
     mock_without_address=True,
 )
-_xarm7_teleop_model = make_xarm7_model_config(add_gripper=True)
 _xarm6_teleop_model = make_xarm6_model_config(add_gripper=True)
+_xarm7_teleop_model = make_xarm7_model_config(add_gripper=True)
 
 # Dual-input arm: VR (teleop_ik) preempts browser keyboard (eef_twist) via
 # higher priority; when VR is idle the always-active eef_twist holds/drives.
-# While engaged, VR also owns the gripper joint (trigger), so the browser
-# gripper toggle only takes effect when VR is disengaged.
-
-
-class _XArm7TeleopCoordinator(ControlCoordinator):
-    arm_joints: Out[JointState]
+# The dedicated gripper task consumes normalized trigger commands independently.
 
 
 coordinator_teleop_xarm7 = autoconnect(
-    _XArm7TeleopCoordinator.blueprint(
+    TeleopControlCoordinator.blueprint(
         instance_name="ControlCoordinator",
-        publish_robot_joint_states=True,
         hardware=[_xarm7_teleop_hw],
         tasks=[
             teleop_ik_task(
                 _xarm7_teleop_hw,
-                hand="right",
+                robot_model=_xarm7_teleop_model,
+                bindings=[
+                    {
+                        "hand": "right",
+                        "target_frame": "link_tcp",
+                    }
+                ],
                 name="teleop_xarm",
-                robot_model=_xarm7_control_model,
                 priority=20,
-                params=_xarm_gripper_params,
             ),
             eef_twist_task(
                 _xarm7_teleop_hw,
                 robot_model=_xarm7_control_model,
                 priority=10,
                 timeout=0.0,
-                params=_xarm_gripper_params,
+            ),
+            TaskConfig(
+                name="arm_gripper",
+                type="gripper",
+                joint_names=["arm/gripper"],
+                priority=20,
+                stream_bind={"gripper_command": "right_gripper_command"},
             ),
             trajectory_task(_xarm7_teleop_hw),
         ],
@@ -202,23 +211,33 @@ coordinator_teleop_xarm7 = autoconnect(
 )
 
 coordinator_teleop_xarm6 = autoconnect(
-    ControlCoordinator.blueprint(
+    TeleopControlCoordinator.blueprint(
         hardware=[_xarm6_teleop_hw],
         tasks=[
             teleop_ik_task(
                 _xarm6_teleop_hw,
-                hand="right",
+                robot_model=_xarm6_teleop_model,
+                bindings=[
+                    {
+                        "hand": "right",
+                        "target_frame": "link_tcp",
+                    }
+                ],
                 name="teleop_xarm",
-                robot_model=_xarm6_control_model,
                 priority=20,
-                params=_xarm_gripper_params,
             ),
             eef_twist_task(
                 _xarm6_teleop_hw,
                 robot_model=_xarm6_control_model,
                 priority=10,
                 timeout=0.0,
-                params=_xarm_gripper_params,
+            ),
+            TaskConfig(
+                name="arm_gripper",
+                type="gripper",
+                joint_names=["arm/gripper"],
+                priority=20,
+                stream_bind={"gripper_command": "right_gripper_command"},
             ),
             trajectory_task(_xarm6_teleop_hw),
         ],

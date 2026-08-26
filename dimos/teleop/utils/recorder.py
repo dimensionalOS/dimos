@@ -27,8 +27,8 @@ from pathlib import Path
 from dimos.constants import STATE_DIR
 from dimos.core.core import rpc
 from dimos.core.stream import In
-from dimos.memory2.module import Recorder, RecorderConfig
-from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory.module import Recorder, RecorderConfig
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.teleop.quest.quest_types import Buttons

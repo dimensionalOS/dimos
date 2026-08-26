@@ -116,7 +116,6 @@ class SpatialMemory(Module):
             # Clean up existing DB if creating new memory
             if self.config.new_memory and os.path.exists(self.db_path):
                 try:
-                    logger.info("Creating new ChromaDB database (new_memory=True)")
                     # Try to delete any existing database files
                     import shutil
 
@@ -141,16 +140,13 @@ class SpatialMemory(Module):
         self._visual_memory = self.config.visual_memory
         if self._visual_memory is None:
             if self.config.new_memory or not os.path.exists(self.visual_memory_path or ""):
-                logger.info("Creating new visual memory")
                 self._visual_memory = VisualMemory(output_dir=self.config.output_dir)
             else:
                 try:
-                    logger.info(f"Loading existing visual memory from {self.visual_memory_path}...")
                     self._visual_memory = VisualMemory.load(
                         self.visual_memory_path,  # type: ignore[arg-type]
                         output_dir=self.config.output_dir,
                     )
-                    logger.info(f"Loaded {self._visual_memory.count()} images from previous runs")
                 except Exception as e:
                     logger.error(f"Error loading visual memory: {e}")
                     self._visual_memory = VisualMemory(output_dir=self.config.output_dir)
@@ -178,8 +174,6 @@ class SpatialMemory(Module):
         # Track latest data for processing
         self._latest_video_frame: np.ndarray | None = None
         self._process_interval = 1
-
-        logger.info(f"SpatialMemory initialized with model {self.embedding_model}")
 
     @rpc
     def start(self) -> None:
@@ -216,7 +210,7 @@ class SpatialMemory(Module):
 
     def _process_frame(self) -> None:
         """Process the latest frame with pose data if available."""
-        tf = self.tfbuffer.get("world", "base_link")
+        tf = self.tfbuffer.get("world", "base_link", warn=False)
 
         if tf is None:
             return
@@ -241,18 +235,12 @@ class SpatialMemory(Module):
                     ]
                 )
                 if distance_moved < self.min_distance_threshold:
-                    logger.debug(
-                        f"Position has not moved enough: {distance_moved:.4f}m < {self.min_distance_threshold}m, skipping frame"
-                    )
                     return
 
             # Check time constraint
             if self.last_record_time is not None:
                 time_elapsed = time.time() - self.last_record_time
                 if time_elapsed < self.min_time_threshold:
-                    logger.debug(
-                        f"Time since last record too short: {time_elapsed:.2f}s < {self.min_time_threshold}s, skipping frame"
-                    )
                     return
 
             current_time = time.time()
@@ -302,24 +290,6 @@ class SpatialMemory(Module):
 
         except Exception as e:
             logger.error(f"Error processing frame: {e}")
-
-    @rpc
-    def query_by_location(
-        self, x: float, y: float, radius: float = 2.0, limit: int = 5
-    ) -> list[dict]:  # type: ignore[type-arg]
-        """
-        Query the vector database for images near the specified location.
-
-        Args:
-            x: X coordinate
-            y: Y coordinate
-            radius: Search radius in meters
-            limit: Maximum number of results to return
-
-        Returns:
-            List of results, each containing the image and its metadata
-        """
-        return self.vector_db.query_by_location(x, y, radius, limit)
 
     @rpc
     def save(self) -> bool:

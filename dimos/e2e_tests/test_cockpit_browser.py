@@ -12,32 +12,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Cockpit browser e2e (the T3 acceptance demo, in CI).
+"""Cockpit browser e2e (the T3 + T5 acceptance demos, in CI).
 
 Starts `dimos --robot-ip fake run unitree-go2-basic --local-relay` (the go2
 blueprint on the go2_short replay dataset: real recorded odom + camera, no
 MuJoCo and no hardware) and drives the served Cockpit with a real headless
-browser: live odom must tick, the session must stay connected (Firefox's
-tight QUIC stream credit found the relay's stream-per-frame overflow the
-first time), and killing + restarting the dimos process must take the page
-through reconnecting and back to live data without a reload.
+browser: live odom must tick, the video panel must decode real camera frames
+at rate, the session must stay connected (Firefox's tight QUIC stream credit
+found the relay's stream-per-frame overflow the first time; T5's video load
+is exactly the traffic that pressures it), and killing + restarting the
+dimos process must take the page through reconnecting and back to live data
+without a reload.
 
 Runs in both Chromium and Firefox: their WebTransport implementations differ
 enough that one browser staying green says little about the other.
 
 Marked web_browser: excluded from the default suite (needs the
-`browser-tests` dependency group, Playwright browsers and the LFS dataset);
-the CI `web` job runs it against a freshly-built cockpit dist. Locally:
+`browser-tests` dependency group and the LFS dataset; the browser binaries
+auto-install on first run); the CI `web` job runs it against a
+freshly-built cockpit dist. Locally:
 `uv run --group browser-tests pytest -m web_browser dimos/e2e_tests/test_cockpit_browser.py`.
 """
 
 from collections.abc import Callable, Iterator
-import time
 
 import pytest
-import requests
 
-from dimos.e2e_tests.dimos_cli_call import DimosCliCall
+from dimos.e2e_tests.dimos_cli_call import DimosCliCall, wait_for_http
 
 # Playwright lives in the `browser-tests` dependency group, which only the CI
 # web job installs; collection elsewhere must skip, not fail.
@@ -79,7 +80,7 @@ def start_go2_replay() -> Iterator[Callable[[], DimosCliCall]]:
 
 
 @pytest.fixture(params=["chromium", "firefox"])
-def page(request: pytest.FixtureRequest) -> Iterator[Page]:
+def page(request: pytest.FixtureRequest, playwright_browsers: None) -> Iterator[Page]:
     with sync_playwright() as p:
         browser = getattr(p, request.param).launch()
         try:
@@ -89,18 +90,7 @@ def page(request: pytest.FixtureRequest) -> Iterator[Page]:
 
 
 def _wait_for_relay(call: DimosCliCall, timeout_s: float) -> None:
-    deadline = time.monotonic() + timeout_s
-    while True:
-        try:
-            requests.get(f"{COCKPIT_URL}api/info", timeout=2).raise_for_status()
-            return
-        except requests.RequestException:
-            assert call.process is not None and call.process.poll() is None, (
-                f"dimos exited with {call.process and call.process.returncode} before the relay came up"
-            )
-            if time.monotonic() > deadline:
-                raise TimeoutError(f"relay not reachable after {timeout_s} s") from None
-            time.sleep(0.5)
+    wait_for_http(call, f"{COCKPIT_URL}api/info", timeout_s)
 
 
 def _assert_odom_ticks(page: Page) -> None:
@@ -109,6 +99,38 @@ def _assert_odom_ticks(page: Page) -> None:
     first = seq.inner_text()
     expect(seq).not_to_have_text(first, timeout=30_000)
     expect(page.get_by_test_id("ch-odom-value")).to_contain_text("yaw")
+
+
+def _assert_video_plays(page: Page) -> None:
+    # The manifest-driven video panel is live: the badge reporting an fps
+    # proves frames arrive, the canvas leaving its 300 px HTML default width
+    # proves one frame decoded, and two successive pixel changes prove frames
+    # keep drawing (the replay dataset has genuinely varying content).
+    expect(page.get_by_test_id("video-color_image-badge")).to_contain_text("fps", timeout=60_000)
+    page.wait_for_function(
+        """() => {
+          const canvas = document.querySelector('[data-testid="video-color_image-canvas"]');
+          return canvas !== null && canvas.width !== 300;
+        }""",
+        timeout=30_000,
+    )
+
+    def wait_pixels_change() -> None:
+        baseline = page.evaluate(
+            """() =>
+              document.querySelector('[data-testid="video-color_image-canvas"]').toDataURL()"""
+        )
+        page.wait_for_function(
+            """(baseline) => {
+              const canvas = document.querySelector('[data-testid="video-color_image-canvas"]');
+              return canvas.toDataURL() !== baseline;
+            }""",
+            arg=baseline,
+            timeout=30_000,
+        )
+
+    wait_pixels_change()
+    wait_pixels_change()
 
 
 def test_cockpit_live_data_and_reconnect(
@@ -122,6 +144,7 @@ def test_cockpit_live_data_and_reconnect(
     expect(status).to_have_attribute("data-phase", "connected", timeout=120_000)
     expect(page.get_by_test_id("robot")).not_to_have_text("no robot", timeout=30_000)
     _assert_odom_ticks(page)
+    _assert_video_plays(page)
 
     # Stability: record every phase change and require none for the window.
     page.evaluate("""() => {
@@ -134,6 +157,7 @@ def test_cockpit_live_data_and_reconnect(
     flaps = page.evaluate("() => window.__phases")
     assert flaps == [], f"session flapped during the stability window: {flaps}"
     _assert_odom_ticks(page)
+    _assert_video_plays(page)
 
     # Kill dimos (relay dies with it): the page must notice on its own.
     call.stop()
@@ -144,3 +168,4 @@ def test_cockpit_live_data_and_reconnect(
     _wait_for_relay(restarted, START_TIMEOUT_S)
     expect(status).to_have_attribute("data-phase", "connected", timeout=120_000)
     _assert_odom_ticks(page)
+    _assert_video_plays(page)

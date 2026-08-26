@@ -64,8 +64,9 @@ def test_real_roboplan_plans_fixed_orientation_cartesian_path(
     roboplan_types: tuple[type[Any], type[Any]],
 ) -> None:
     config = make_xarm6_model_config(name="arm")
-    if not Path(config.model_path).exists():
-        pytest.skip(f"xArm model is unavailable: {config.model_path}")
+    source_path = Path(config.model.source_path)
+    if not source_path.exists():
+        pytest.skip(f"xArm model is unavailable: {source_path}")
 
     world_type, planner_type = roboplan_types
     world = world_type()
@@ -118,8 +119,9 @@ def test_real_roboplan_synchronizes_different_length_dual_arm_targets(
 ) -> None:
     left_config = make_xarm6_model_config(name="left_arm", y_offset=0.3)
     right_config = make_xarm6_model_config(name="right_arm", y_offset=-0.3)
-    if not Path(left_config.model_path).exists():
-        pytest.skip(f"xArm model is unavailable: {left_config.model_path}")
+    source_path = Path(left_config.model.source_path)
+    if not source_path.exists():
+        pytest.skip(f"xArm model is unavailable: {source_path}")
 
     world_type, planner_type = roboplan_types
     world = world_type()

@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.manipulation.planning.spec.models import (
         CartesianTarget,
+        GeneratedPlan,
         IKResult,
         Obstacle,
         PlanningGroupID,
@@ -297,6 +298,11 @@ class PlannerSpec(Protocol):
     They use WorldSpec for collision checking and are stateless.
     All planners are backend-agnostic - they only use WorldSpec methods.
 
+    The supplied ``start`` is the authoritative state snapshot for a planning
+    request. Implementations must not replace it with, or compare it against,
+    a later sample from the live world. Trajectory execution is responsible
+    for rejecting a path when the robot has moved too far from its start.
+
     Implementations:
         - RRTConnectPlanner: Bi-directional RRT-Connect planner
         - RRTStarPlanner: RRT* planner (asymptotically optimal)
@@ -334,10 +340,26 @@ class PlannerSpec(Protocol):
         config: CartesianPathConfig,
         *,
         auxiliary_groups: Sequence[PlanningGroupID] = (),
+        check_collision: bool = True,
     ) -> PlanningResult:
         """Plan synchronized TCP waypoint paths for an ordered group selection."""
         ...
 
     def get_name(self) -> str:
         """Get planner name."""
+        ...
+
+
+@runtime_checkable
+class TrajectoryParametrizerSpec(Protocol):
+    """Convert successful planning output into one canonical generated plan."""
+
+    def materialize_plan(
+        self,
+        world: WorldSpec,
+        selection: PlanningGroupSelection,
+        result: PlanningResult,
+        speed_scale: float = 1.0,
+    ) -> GeneratedPlan:
+        """Preserve timed output or parametrize an untimed path, then validate it."""
         ...

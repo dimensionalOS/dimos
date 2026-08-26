@@ -16,16 +16,23 @@
 // must never kill a session. Framing-level corruption (absurd length
 // prefixes) throws and kills only the affected stream.
 
-import { type ChannelSpec, type Delivery, isChannelSpec } from "./manifest.ts";
+import { type Delivery, MAX_MANIFEST_ID_LEN } from "./manifest.ts";
 
 // Channel/manifest domain types live in manifest.ts; re-exported so protocol
 // consumers keep a single import surface.
-export type { ChannelSpec, Delivery } from "./manifest.ts";
+export type { ChannelSpec, Delivery, Dir, PanelSpec } from "./manifest.ts";
 
-// v2: a reliable channel packs all its frames onto one persistent stream (v1
-// carried one frame per stream), which a v1 receiver would misread as a
-// single frame. Bump on any change an old peer would silently misparse.
-export const PROTOCOL_VERSION = 2;
+// v4: the twist datagram gains vy (strafe) and the teleop lease messages
+// (teleop_start/teleop_started/teleop_stop) enter the control plane;
+// robot-bound twist/stop/teleop_start/teleop_stop carry the relay-stamped
+// lease generation `gen` (amended into v4 pre-release: an older v4 peer
+// without gen gets dead teleop, never unsafe motion). v3: the
+// manifest travels as one opaque record nested in hello/manifest messages
+// (v2 carried flat channels/panels fields, which a v2 peer would silently
+// misread in both directions). v2: a reliable channel packs all its frames
+// onto one persistent stream. Bump on any change an old peer would silently
+// misparse.
+export const PROTOCOL_VERSION = 4;
 
 // Reject absurd header lengths before allocating.
 export const MAX_HEADER_LEN = 65536;
@@ -42,9 +49,13 @@ export interface RobotInfo {
   model: string;
 }
 
-export interface RobotManifest {
-  channels: ChannelSpec[];
-}
+// The manifest rides the wire as one opaque record: the transport checks
+// only record-ness, and parseManifest (manifest.ts) is the single owner of
+// its structure. Additive manifest changes therefore never touch the
+// protocol or the relay, and a structurally-alien future manifest still
+// reaches the domain parser (which reports unsupported_version) instead of
+// being silently dropped here.
+export type RobotManifest = Record<string, unknown>;
 
 export interface HelloMsg {
   t: "hello";
@@ -93,7 +104,8 @@ export interface WatchMsg {
 export interface ManifestMsg {
   t: "manifest";
   robotId: string;
-  channels: ChannelSpec[];
+  // Absent = the robot registered without a manifest.
+  manifest?: RobotManifest;
 }
 
 export interface SubMsg {
@@ -116,25 +128,51 @@ export interface SubsMsg {
   n: number;
 }
 
-// Teleop datagrams (carried from T6 on; declared here so the wire format is
-// pinned by fixtures from day one).
+// Teleop (T6). twist/stop ride datagrams viewer->relay->robot (loss-tolerant:
+// commands repeat and the bridge deadman covers silence). The lease messages
+// ride the viewer's control stream so they are ordered after watch:
+// teleop_start requests the per-robot exclusive lease (relay acks with
+// teleop_started, or replies error code "teleop_held"), teleop_stop releases
+// it. Robot-bound teleop messages are datagrams stamped with `gen`, the
+// relay-issued lease generation: teleop_start announces a granted lease,
+// teleop_stop means "the lease ended" (holder gone), twist/stop are the
+// forwarded holder commands. The bridge permanently rejects generations
+// below its floor, so a released holder's delayed datagrams cannot move the
+// robot after a stop. Viewer-authored messages never carry gen.
 export interface TwistMsg {
   t: "twist";
   vx: number;
+  vy: number;
   wz: number;
   seq: number;
   ts: number;
+  gen?: number;
 }
 
 export interface StopMsg {
   t: "stop";
   seq: number;
   ts: number;
+  gen?: number;
+}
+
+export interface TeleopStartMsg {
+  t: "teleop_start";
+  gen?: number;
+}
+
+export interface TeleopStartedMsg {
+  t: "teleop_started";
+}
+
+export interface TeleopStopMsg {
+  t: "teleop_stop";
+  gen?: number;
 }
 
 export type ControlMsg = HelloMsg | WelcomeMsg | PingMsg | PongMsg | ErrorMsg;
 export type SessionMsg = RobotsMsg | WatchMsg | ManifestMsg | SubMsg | UnsubMsg | SubsMsg;
-export type TeleopMsg = TwistMsg | StopMsg;
+export type TeleopMsg = TwistMsg | StopMsg | TeleopStartMsg | TeleopStartedMsg | TeleopStopMsg;
 export type Msg = ControlMsg | SessionMsg | TeleopMsg;
 
 // Data-plane frame header. `delivery` tells the relay how to forward frames
@@ -175,8 +213,11 @@ const MSG_FIELDS: Record<string, Record<string, "string" | "number">> = {
   sub: { ch: "string" },
   unsub: { ch: "string" },
   subs: { n: "number" },
-  twist: { vx: "number", wz: "number", seq: "number", ts: "number" },
+  twist: { vx: "number", vy: "number", wz: "number", seq: "number", ts: "number" },
   stop: { seq: "number", ts: "number" },
+  teleop_start: {},
+  teleop_started: {},
+  teleop_stop: {},
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -193,18 +234,23 @@ function isRobotInfo(value: unknown): value is RobotInfo {
 }
 
 // Structural checks for nested fields, run after the flat MSG_FIELDS pass.
-// Optional fields (hello.robot/manifest) accept absent but reject null: JSON
-// encoders on both sides omit absent fields and never emit null.
+// Optional fields (hello.robot, hello/manifest.manifest, teleop gen) accept
+// absent but reject null: JSON encoders on both sides omit absent fields and
+// never emit null. The manifest is only checked for record-ness here -- its
+// structure belongs to parseManifest (see RobotManifest above).
+const genAbsentOrNumber = (v: Record<string, unknown>) =>
+  v.gen === undefined || typeof v.gen === "number";
 const MSG_VALIDATORS: Record<string, (value: Record<string, unknown>) => boolean> = {
   hello: (v) =>
     (v.robot === undefined || isRobotInfo(v.robot)) &&
-    (v.manifest === undefined ||
-      (isRecord(v.manifest) &&
-        Array.isArray(v.manifest.channels) &&
-        v.manifest.channels.every(isChannelSpec))),
+    (v.manifest === undefined || isRecord(v.manifest)),
   robots: (v) => Array.isArray(v.robots) && v.robots.every(isRobotInfo),
-  manifest: (v) => Array.isArray(v.channels) && v.channels.every(isChannelSpec),
+  manifest: (v) => v.manifest === undefined || isRecord(v.manifest),
   subs: (v) => Array.isArray(v.chs) && v.chs.every((c) => typeof c === "string"),
+  twist: genAbsentOrNumber,
+  stop: genAbsentOrNumber,
+  teleop_start: genAbsentOrNumber,
+  teleop_stop: genAbsentOrNumber,
 };
 
 /** Validated message from parsed JSON; null for unknown or malformed ones. */
@@ -226,6 +272,10 @@ export function frameHeaderFromUnknown(value: unknown): FrameHeader | null {
   if (
     isRecord(value) &&
     typeof value.ch === "string" &&
+    // Declared channels are already bounded to this by manifest validation,
+    // so only unroutable undeclared names are dropped (they count
+    // framesDropped at the relay).
+    value.ch.length <= MAX_MANIFEST_ID_LEN &&
     typeof value.seq === "number" &&
     typeof value.ts === "number" &&
     (value.delivery === "latest" || value.delivery === "reliable") &&

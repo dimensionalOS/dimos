@@ -56,14 +56,16 @@ class JointState:
 class HardwareComponent:
     """Configuration for a hardware component.
 
+    ``joints`` is the adapter's complete array order. Joint semantics
+    belong to tasks and concrete adapters, not this shared component model.
+
     Attributes:
         hardware_id: Unique identifier, also used as joint name prefix
         hardware_type: Type of hardware (MANIPULATOR, BASE)
-        joints: List of joint names (e.g., ["arm/joint1", "arm/joint2", ...])
+        joints: Every joint name in adapter order.
         adapter_type: Adapter type ("mock", "xarm", "piper")
         address: Connection address - IP for TCP, port for CAN
         auto_enable: Whether to auto-enable servos
-        gripper_joints: Joints that use adapter gripper methods (separate from joints).
         domain_id: DDS domain ID for adapters that use DDS transport
             (e.g. Unitree G1). Real robot uses 0; unitree_mujoco sim
             defaults to 1. Ignored by non-DDS adapters.
@@ -74,12 +76,6 @@ class HardwareComponent:
             on hardware_type=WHOLE_BODY components.  Keeps WB-only knobs
             off the generic HardwareComponent shared by manipulators,
             bases, and grippers.
-        gripper_open_position: Adapter-native open endpoint used when
-            normalized gripper commands are mapped. These are not universally
-            meters: Piper uses 0.07, while the existing XArm adapter path
-            uses its parent-native 0.85 endpoint.
-        gripper_closed_position: Adapter-native closed endpoint; typically
-            0.0 for Piper and XArm.
     """
 
     hardware_id: HardwareId
@@ -88,31 +84,9 @@ class HardwareComponent:
     adapter_type: str = "mock"
     address: str | Path | None = None
     auto_enable: bool = True
-    gripper_joints: list[JointName] = field(default_factory=list)
     domain_id: int = 0
     adapter_kwargs: dict[str, Any] = field(default_factory=dict)
     wb_config: WholeBodyConfig | None = None
-    # Optional mapping for normalized gripper commands. Endpoints are
-    # adapter-native command units, not a universal unit such as meters.
-    gripper_open_position: float | None = None
-    gripper_closed_position: float | None = None
-
-    @property
-    def all_joints(self) -> list[JointName]:
-        """All joints: arm joints + gripper joints."""
-        return self.joints + self.gripper_joints
-
-
-def make_gripper_joints(hardware_id: HardwareId) -> list[JointName]:
-    """Create gripper joint names for a hardware device.
-
-    Args:
-        hardware_id: The hardware identifier (e.g., "arm")
-
-    Returns:
-        List of joint names like ["arm/gripper"]
-    """
-    return [f"{hardware_id}/gripper"]
 
 
 def make_joints(hardware_id: HardwareId, dof: int) -> list[JointName]:

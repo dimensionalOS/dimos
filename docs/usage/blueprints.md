@@ -1,4 +1,4 @@
-## Blueprints
+# Blueprints
 
 Blueprints (`BlueprintAtom`) are instructions for how to initialize a `Module`.
 
@@ -86,7 +86,7 @@ Blueprints are frozen data classes, and `autoconnect()` always constructs an exp
 
 ## Publishing external blueprints
 
-DimOS can discover runnable blueprints from installed Python packages. External
+dimOS can discover runnable blueprints from installed Python packages. External
 packages declare entry points in the `dimos.blueprints` group:
 
 ```toml
@@ -98,7 +98,7 @@ go2 = "my_robot_stack.go2:go2_blueprint"
 keyboard-teleop = "my_robot_stack.teleop:KeyboardTeleop"
 ```
 
-After the package is installed in the same Python environment as DimOS, users can run
+After the package is installed in the same Python environment as dimOS, users can run
 those blueprints by fully qualified name:
 
 ```bash
@@ -108,7 +108,7 @@ dimos run unitree-go2 my-robot-stack.keyboard-teleop
 
 External names are always `<canonical-distribution-namespace>.<external-local-blueprint-name>`:
 
-- The namespace comes from the installed distribution name. DimOS lowercases it and
+- The namespace comes from the installed distribution name. dimOS lowercases it and
   collapses runs of `-`, `_`, and `.` into `-`, so `My_Robot.Stack` becomes
   `my-robot-stack`.
 - The local blueprint name is the entry point name. It must be lowercase kebab-case
@@ -117,7 +117,7 @@ External names are always `<canonical-distribution-namespace>.<external-local-bl
 Entry point targets may be either:
 
 - a `Blueprint` object, such as a module-level `go2_blueprint`; or
-- a DimOS `Module` class, such as `KeyboardTeleop`, which DimOS converts with
+- a dimOS `Module` class, such as `KeyboardTeleop`, which dimOS converts with
   `.blueprint()`.
 
 `dimos list` includes external names from package metadata without importing the target
@@ -427,7 +427,7 @@ class HelperModule(Module):
 
 And you want to call `Drone.get_time` in `HelperModule.set_alarm_clock`.
 
-To do this, you can request a module reference. Annotate an attribute with the module class and DimOS will inject a proxy for the running module at build time. Calling `get_time()` on it performs the RPC call.
+To do this, you can request a module reference. Annotate an attribute with the module class and dimOS will inject a proxy for the running module at build time. Calling `get_time()` on it performs the RPC call.
 
 ```python session=blueprint-ex3
 from dimos.core.module import Module

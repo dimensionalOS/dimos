@@ -36,12 +36,12 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
-from dimos.memory2.transform import Transformer
+from dimos.memory.transform import Transformer
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.robot.unitree.go2.dds.msgs.CompressedVideo import CompressedVideo
 
 if TYPE_CHECKING:
-    from dimos.memory2.type.observation import Observation
+    from dimos.memory.type.observation import Observation
 
 
 class H264Decoder(Transformer[CompressedVideo, Image]):

@@ -21,6 +21,7 @@ from pathlib import Path
 import sys
 from types import ModuleType
 from typing import Any
+from unittest.mock import ANY
 
 import pytest
 from pytest_mock import MockerFixture
@@ -29,6 +30,7 @@ from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.factory import (
     create_kinematics,
     create_planner,
+    create_planning_specs,
     create_planning_stack,
     create_world,
     validate_backend_combination,
@@ -43,9 +45,14 @@ from dimos.manipulation.planning.planners.config import RRTConnectPlannerConfig
 from dimos.manipulation.planning.planners.roboplan_config import RoboPlanPlannerConfig
 from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.trajectory_generator.config import (
+    SimpleTrapezoidParametrizationConfig,
+    TrajectoryParametrizationConfig,
+)
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.robot.assets.model import RobotModel
 
 
 @pytest.fixture
@@ -67,7 +74,7 @@ def make_module() -> Generator[Callable[..., ManipulationModule], None, None]:
 def robot_config() -> RobotModelConfig:
     return RobotModelConfig(
         name="arm",
-        model_path=Path("/path/to/robot.urdf"),
+        model=RobotModel.from_file(Path("/path/to/robot.urdf")),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
         joint_names=["joint1", "joint2"],
         planning_groups=[
@@ -121,6 +128,64 @@ def test_validate_backend_combination_rejects_invalid_combinations() -> None:
         ValueError, match='kinematics_name="drake_optimization" requires world_backend="drake"'
     ):
         validate_backend_combination(world_backend="roboplan", kinematics_name="drake_optimization")
+
+    with pytest.raises(
+        ValueError,
+        match='trajectory_parametrization.backend="roboplan_toppra" requires',
+    ):
+        validate_backend_combination(
+            world_backend="drake",
+            planner_backend="rrt_connect",
+            trajectory_parametrization_backend="roboplan_toppra",
+        )
+
+
+@pytest.mark.parametrize(
+    ("world_backend", "planner", "configured", "expected_backend"),
+    [
+        ("roboplan", RoboPlanPlannerConfig(), None, "roboplan_toppra"),
+        ("drake", RRTConnectPlannerConfig(), None, "simple_trapezoid"),
+        (
+            "roboplan",
+            RoboPlanPlannerConfig(),
+            SimpleTrapezoidParametrizationConfig(),
+            "simple_trapezoid",
+        ),
+    ],
+)
+def test_create_planning_specs_selects_world_default_unless_overridden(
+    mocker: MockerFixture,
+    world_backend: str,
+    planner: RoboPlanPlannerConfig | RRTConnectPlannerConfig,
+    configured: TrajectoryParametrizationConfig | None,
+    expected_backend: str,
+) -> None:
+    world = mocker.MagicMock()
+    trajectory_parametrizer = mocker.MagicMock()
+    mocker.patch(
+        "dimos.manipulation.planning.factory.create_kinematics",
+        return_value=mocker.MagicMock(),
+    )
+    mocker.patch(
+        "dimos.manipulation.planning.factory.create_planner",
+        return_value=mocker.MagicMock(),
+    )
+    create_parametrizer = mocker.patch(
+        "dimos.manipulation.planning.factory.create_trajectory_parametrizer",
+        return_value=trajectory_parametrizer,
+    )
+
+    result = create_planning_specs(
+        world=world,
+        world_backend=world_backend,
+        planner=planner,
+        trajectory_parametrization=configured,
+    )
+
+    selected = create_parametrizer.call_args.args[0]
+    assert selected.backend == expected_backend
+    create_parametrizer.assert_called_once_with(selected, world_backend=world_backend)
+    assert result.trajectory_parametrizer is trajectory_parametrizer
 
 
 def test_create_planner_binds_distinct_roboplan_planner_to_world(
@@ -215,6 +280,10 @@ def test_create_planning_stack_defaults_to_roboplan(
         "dimos.manipulation.planning.factory.create_planner",
         return_value=planner,
     )
+    mocker.patch(
+        "dimos.manipulation.planning.factory.create_trajectory_parametrizer",
+        return_value=mocker.MagicMock(name="trajectory_parametrizer"),
+    )
 
     result = create_planning_stack(robot_config)
 
@@ -267,6 +336,7 @@ def test_start_uses_configured_planner_and_kinematics(
         world_monitor=world_monitor,
         planner=planner,
         kinematics=kinematics,
+        trajectory_parametrizer=mocker.MagicMock(name="trajectory_parametrizer"),
     )
     create_world_mock = mocker.patch(
         "dimos.manipulation.manipulation_module.create_world", return_value=world
@@ -275,7 +345,6 @@ def test_start_uses_configured_planner_and_kinematics(
         "dimos.manipulation.manipulation_module.create_planning_specs",
         return_value=planning_specs,
     )
-
     module._initialize_planning()
 
     create_world_mock.assert_called_once_with(
@@ -287,6 +356,7 @@ def test_start_uses_configured_planner_and_kinematics(
         planner=planner_config,
         kinematics_name=None,
         kinematics=module.config.kinematics,
+        trajectory_parametrization=ANY,
     )
     assert module._planner is planner
     assert module._kinematics is kinematics

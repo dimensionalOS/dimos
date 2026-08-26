@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""RelayProcess cockpit serving and the ensure_cockpit_dist build policy."""
+"""RelayProcess serving and the ensure_web_dist build policy."""
 
 import json
 import os
@@ -31,10 +31,11 @@ from dimos.web.relay_bridge.locate import (
     WEB_DIR_BUILD_ENV_VAR,
     WEB_DIR_ENV_VAR,
     find_cockpit_dist,
+    find_sdk_dist,
     relay_run_cmd,
 )
 from dimos.web.relay_bridge.protocol import PROTOCOL_VERSION
-from dimos.web.relay_bridge.relay_process import RelayProcess, ensure_cockpit_dist
+from dimos.web.relay_bridge.relay_process import RelayProcess, ensure_web_dist
 
 
 def _fetch(url: str) -> tuple[int, bytes]:
@@ -53,7 +54,14 @@ def _make_fake_dist(root: Path) -> Path:
     return dist
 
 
-def test_relay_run_cmd_cockpit_flags() -> None:
+def _make_fake_sdk_dist(root: Path) -> Path:
+    dist = root / "dist"
+    dist.mkdir(parents=True)
+    (dist / "sdk.js").write_text("// fake sdk bundle")
+    return dist
+
+
+def test_relay_run_cmd_dir_flags() -> None:
     cmd = relay_run_cmd("deno", Path("/web"), "--port", "0")
     assert "--node-modules-dir=none" in cmd
     assert "--allow-read=/web" in cmd
@@ -62,6 +70,17 @@ def test_relay_run_cmd_cockpit_flags() -> None:
     cmd = relay_run_cmd("deno", Path("/web"), "--port", "0", cockpit_dir=Path("/elsewhere/dist"))
     assert "--allow-read=/web,/elsewhere/dist" in cmd
     assert cmd[cmd.index("--cockpit-dir") + 1] == "/elsewhere/dist"
+
+    cmd = relay_run_cmd(
+        "deno",
+        Path("/web"),
+        cockpit_dir=Path("/elsewhere/dist"),
+        sdk_dir=Path("/sdk/dist"),
+        serve_dir=Path("/my/ui"),
+    )
+    assert "--allow-read=/web,/elsewhere/dist,/sdk/dist,/my/ui" in cmd
+    assert cmd[cmd.index("--sdk-dir") + 1] == "/sdk/dist"
+    assert cmd[cmd.index("--serve-dir") + 1] == "/my/ui"
 
 
 def test_relay_run_cmd_resolves_symlinked_dirs(tmp_path: Path) -> None:
@@ -85,9 +104,6 @@ def test_relay_serves_cockpit_dist(tmp_path: Path) -> None:
         assert status == 200 and b"fake cockpit index" in index
         status, asset = _fetch(f"{info.open_url}assets/app.js")
         assert status == 200 and b"console.log" in asset
-        # The debug page still resolves from relay/static/ behind the cockpit.
-        status, debug = _fetch(info.debug_url)
-        assert status == 200 and b"DimOS relay debug" in debug
 
         status, body = _fetch(f"{info.open_url}api/info")
         assert status == 200
@@ -97,37 +113,82 @@ def test_relay_serves_cockpit_dist(tmp_path: Path) -> None:
         assert api_info["certHash"] == info.cert_hash
 
 
-def test_relay_without_cockpit_serves_debug(monkeypatch: pytest.MonkeyPatch) -> None:
-    # The checkout may have a built dist; force the "not built" path.
+def test_relay_serves_sdk_and_serve_dir(tmp_path: Path) -> None:
+    cockpit_dist = _make_fake_dist(tmp_path / "cockpit")
+    sdk_dist = _make_fake_sdk_dist(tmp_path / "sdk")
+    user_dir = tmp_path / "my-ui"
+    user_dir.mkdir()
+    (user_dir / "index.html").write_text("<html><body>fake user index</body></html>")
+    (user_dir / "data.txt").write_text("user data")
+    (tmp_path / "outside.txt").write_text("must never be served")
+    (user_dir / "escape.txt").symlink_to(tmp_path / "outside.txt")
+
+    with RelayProcess(
+        port=0, cockpit_dir=cockpit_dist, sdk_dir=sdk_dist, serve_dir=user_dir
+    ) as info:
+        # The user directory replaces the cockpit at /.
+        status, index = _fetch(info.open_url)
+        assert status == 200 and b"fake user index" in index
+        status, data = _fetch(f"{info.open_url}data.txt")
+        assert status == 200 and data == b"user data"
+
+        # /sdk.js and /api/* keep precedence over the user root, and /sdk.js
+        # carries the local CORS wildcard plus no-cache.
+        with urllib.request.urlopen(f"{info.open_url}sdk.js") as response:
+            assert response.headers["Access-Control-Allow-Origin"] == "*"
+            assert response.headers["Cache-Control"] == "no-cache"
+            assert response.read() == b"// fake sdk bundle"
+        status, body = _fetch(f"{info.open_url}api/info")
+        assert status == 200 and json.loads(body)["v"] == PROTOCOL_VERSION
+
+        # The traversal and symlink-escape guards apply to the user root.
+        status, _ = _fetch(f"http://127.0.0.1:{info.http_port}//etc/passwd")
+        assert status == 400
+        status, body = _fetch(f"{info.open_url}escape.txt")
+        assert status == 400 and b"never be served" not in body
+
+
+def test_relay_without_cockpit_serves_build_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The checkout may have built dists; force the "not built" path.
     monkeypatch.setattr(relay_process, "find_cockpit_dist", lambda _: None)
+    monkeypatch.setattr(relay_process, "find_sdk_dist", lambda _: None)
     with RelayProcess(port=0) as info:
         assert info.cockpit is False
-        assert info.open_url == info.debug_url
-        status, index = _fetch(f"http://127.0.0.1:{info.http_port}/")
-        assert status == 200 and b"DimOS relay debug" in index
+        status, index = _fetch(info.open_url)
+        assert status == 404 and b"cockpit dist not built" in index
+        status, sdk = _fetch(f"{info.open_url}sdk.js")
+        assert status == 404 and b"sdk bundle not built" in sdk
 
 
 class _FakeBuild:
-    """Stands in for _run_build; writes a dist into the --outDir on success."""
+    """Stands in for _run_build; writes a per-package dist into the --outDir.
 
-    def __init__(self, ok: bool = True) -> None:
-        self.ok = ok
+    `fail` names the package (by directory name) whose build fails; every
+    other package builds successfully.
+    """
+
+    def __init__(self, fail: str | None = None) -> None:
+        self.fail = fail
         self.calls: list[Path] = []
 
     def __call__(self, cmd: list[str], cwd: Path, deadline: float, cancel: threading.Event) -> bool:
         assert cmd[-2] == "--outDir"
         self.calls.append(Path(cwd))
-        if self.ok:
-            out_dir = Path(cmd[-1])
+        if cwd.name == self.fail:
+            return False
+        out_dir = Path(cmd[-1])
+        if cwd.name == "sdk":
+            (out_dir / "sdk.js").write_text("// fake sdk bundle")
+        else:
             (out_dir / "assets").mkdir()
             (out_dir / "index.html").write_text("<html><body>fake cockpit index</body></html>")
             (out_dir / "assets" / "app.js").write_text("console.log('fake');")
-        return self.ok
+        return True
 
 
 @pytest.fixture
 def fake_web(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A fake checkout web/ tree with cockpit sources and no build tools."""
+    """A fake checkout web/ tree with cockpit+sdk sources and no build tools."""
     (tmp_path / "deno.json").write_text("{}")
     (tmp_path / "deno.lock").write_text("lock-v1")
     (tmp_path / "cockpit" / "src").mkdir(parents=True)
@@ -135,119 +196,189 @@ def fake_web(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (tmp_path / "cockpit" / "package.json").write_text("{}")
     (tmp_path / "shared").mkdir()
     (tmp_path / "shared" / "protocol.ts").write_text("code")
+    (tmp_path / "sdk" / "src").mkdir(parents=True)
+    (tmp_path / "sdk" / "src" / "index.ts").write_text("code")
     monkeypatch.setattr(relay_process, "ensure_deno", lambda: "deno")
     monkeypatch.delenv(WEB_DIR_ENV_VAR, raising=False)
     monkeypatch.delenv(WEB_DIR_BUILD_ENV_VAR, raising=False)
     return tmp_path
 
 
-def test_ensure_cockpit_dist_builds_when_missing(
+def _dists(web_dir: Path) -> tuple[Path | None, Path | None]:
+    return find_sdk_dist(web_dir), find_cockpit_dist(web_dir)
+
+
+def test_ensure_web_dist_builds_both_when_missing(
     fake_web: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     build = _FakeBuild()
     monkeypatch.setattr(relay_process, "_run_build", build)
-    dist = ensure_cockpit_dist(fake_web)
-    assert build.calls == [fake_web / "cockpit"]
-    assert dist == (fake_web / "cockpit" / "dist").resolve()
-    assert (dist / relay_process._STAMP_NAME).is_file()
-    # The temp build dir was published (renamed), not left behind.
+    ensure_web_dist(fake_web)
+    assert build.calls == [fake_web / "sdk", fake_web / "cockpit"]
+    sdk_dist, cockpit_dist = _dists(fake_web)
+    assert sdk_dist == (fake_web / "sdk" / "dist").resolve()
+    assert cockpit_dist == (fake_web / "cockpit" / "dist").resolve()
+    # One shared stamp in both dists; the temp build dirs were published
+    # (renamed), not left behind.
+    stamps = {relay_process._read_stamp(dist) for dist in (sdk_dist, cockpit_dist)}
+    assert len(stamps) == 1 and None not in stamps
+    assert list((fake_web / "sdk").glob(".dist-*")) == []
     assert list((fake_web / "cockpit").glob(".dist-*")) == []
 
 
-def test_ensure_cockpit_dist_skips_fresh_dist(
+def test_ensure_web_dist_skips_fresh_dists(fake_web: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    build = _FakeBuild()
+    monkeypatch.setattr(relay_process, "_run_build", build)
+    ensure_web_dist(fake_web)
+    ensure_web_dist(fake_web)
+    assert len(build.calls) == 2
+
+
+def test_ensure_web_dist_rebuilds_when_one_dist_missing(
     fake_web: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     build = _FakeBuild()
     monkeypatch.setattr(relay_process, "_run_build", build)
-    ensure_cockpit_dist(fake_web)
-    assert ensure_cockpit_dist(fake_web) == (fake_web / "cockpit" / "dist").resolve()
-    assert len(build.calls) == 1
+    ensure_web_dist(fake_web)
+    shutil.rmtree(fake_web / "sdk" / "dist")
+    ensure_web_dist(fake_web)
+    assert len(build.calls) == 4
+    assert None not in _dists(fake_web)
 
 
-def test_ensure_cockpit_dist_rebuilds_on_source_change(
+def test_ensure_web_dist_rebuilds_on_source_change(
     fake_web: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     build = _FakeBuild()
     monkeypatch.setattr(relay_process, "_run_build", build)
-    ensure_cockpit_dist(fake_web)
+    ensure_web_dist(fake_web)
     source = fake_web / "cockpit" / "src" / "main.tsx"
     stat = source.stat()
     source.write_text("edited")
     os.utime(source, (stat.st_atime, stat.st_mtime))  # content, not mtime, decides
-    ensure_cockpit_dist(fake_web)
-    assert len(build.calls) == 2
+    ensure_web_dist(fake_web)
+    assert len(build.calls) == 4
 
 
-def test_ensure_cockpit_dist_rebuilds_on_source_deletion(
+def test_ensure_web_dist_rebuilds_on_sdk_change(
+    fake_web: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The cockpit bundles the SDK sources, so an sdk/ edit must invalidate
+    # the stamp too.
+    build = _FakeBuild()
+    monkeypatch.setattr(relay_process, "_run_build", build)
+    ensure_web_dist(fake_web)
+    source = fake_web / "sdk" / "src" / "index.ts"
+    stat = source.stat()
+    source.write_text("edited")
+    os.utime(source, (stat.st_atime, stat.st_mtime))  # content, not mtime, decides
+    ensure_web_dist(fake_web)
+    assert len(build.calls) == 4
+
+
+def test_ensure_web_dist_rebuilds_on_source_deletion(
     fake_web: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     extra = fake_web / "cockpit" / "src" / "Extra.tsx"
     extra.write_text("code")
     build = _FakeBuild()
     monkeypatch.setattr(relay_process, "_run_build", build)
-    ensure_cockpit_dist(fake_web)
+    ensure_web_dist(fake_web)
     extra.unlink()
-    ensure_cockpit_dist(fake_web)
-    assert len(build.calls) == 2
+    ensure_web_dist(fake_web)
+    assert len(build.calls) == 4
 
 
-def test_ensure_cockpit_dist_rebuilds_on_lockfile_change(
+def test_ensure_web_dist_rebuilds_on_lockfile_change(
     fake_web: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     build = _FakeBuild()
     monkeypatch.setattr(relay_process, "_run_build", build)
-    ensure_cockpit_dist(fake_web)
+    ensure_web_dist(fake_web)
     (fake_web / "deno.lock").write_text("lock-v2")
-    ensure_cockpit_dist(fake_web)
-    assert len(build.calls) == 2
+    ensure_web_dist(fake_web)
+    assert len(build.calls) == 4
 
 
-def test_ensure_cockpit_dist_ignores_test_and_hidden_files(
+def test_ensure_web_dist_ignores_test_and_hidden_files(
     fake_web: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     build = _FakeBuild()
     monkeypatch.setattr(relay_process, "_run_build", build)
-    ensure_cockpit_dist(fake_web)
+    ensure_web_dist(fake_web)
     (fake_web / "cockpit" / "src" / "App.test.tsx").write_text("test code")
     (fake_web / "shared" / "protocol_test.ts").write_text("test code")
     (fake_web / "cockpit" / ".env.local").write_text("hidden")
-    ensure_cockpit_dist(fake_web)
-    assert len(build.calls) == 1
+    ensure_web_dist(fake_web)
+    assert len(build.calls) == 2
 
 
-def test_ensure_cockpit_dist_failed_build_keeps_served_dist(
+def test_ensure_web_dist_failed_sdk_build_keeps_both_dists(
     fake_web: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(relay_process, "_run_build", _FakeBuild())
-    dist = ensure_cockpit_dist(fake_web)
-    assert dist is not None
-    index_before = (dist / "index.html").read_bytes()
+    ensure_web_dist(fake_web)
+    sdk_dist, cockpit_dist = _dists(fake_web)
+    assert sdk_dist is not None and cockpit_dist is not None
+    sdk_before = (sdk_dist / "sdk.js").read_bytes()
+    index_before = (cockpit_dist / "index.html").read_bytes()
 
-    (fake_web / "cockpit" / "src" / "main.tsx").write_text("edited")
-    monkeypatch.setattr(relay_process, "_run_build", _FakeBuild(ok=False))
-    assert ensure_cockpit_dist(fake_web) == dist  # stale but present beats nothing
-    assert (dist / "index.html").read_bytes() == index_before  # never clobbered
+    (fake_web / "sdk" / "src" / "index.ts").write_text("edited")
+    failing = _FakeBuild(fail="sdk")
+    monkeypatch.setattr(relay_process, "_run_build", failing)
+    ensure_web_dist(fake_web)
+    # The cockpit build was not even attempted after the sdk failure, and
+    # neither previously valid dist was touched (stale but present beats
+    # nothing).
+    assert failing.calls == [fake_web / "sdk"]
+    assert (sdk_dist / "sdk.js").read_bytes() == sdk_before
+    assert (cockpit_dist / "index.html").read_bytes() == index_before
 
-    shutil.rmtree(dist)
-    assert ensure_cockpit_dist(fake_web) is None
+
+def test_ensure_web_dist_failed_cockpit_build_keeps_both_dists(
+    fake_web: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(relay_process, "_run_build", _FakeBuild())
+    ensure_web_dist(fake_web)
+    sdk_dist, cockpit_dist = _dists(fake_web)
+    assert sdk_dist is not None and cockpit_dist is not None
+    sdk_before = (sdk_dist / "sdk.js").read_bytes()
+    index_before = (cockpit_dist / "index.html").read_bytes()
+
+    (fake_web / "sdk" / "src" / "index.ts").write_text("edited")
+    monkeypatch.setattr(relay_process, "_run_build", _FakeBuild(fail="cockpit"))
+    ensure_web_dist(fake_web)
+    # The successful sdk temp build was not swapped in: both or neither.
+    assert (sdk_dist / "sdk.js").read_bytes() == sdk_before
+    assert (cockpit_dist / "index.html").read_bytes() == index_before
+    assert list((fake_web / "sdk").glob(".dist-*")) == []
+
+    shutil.rmtree(cockpit_dist)
+    ensure_web_dist(fake_web)
+    assert find_cockpit_dist(fake_web) is None  # still failing; nothing appears
 
 
-def test_ensure_cockpit_dist_wheel_shape_never_builds(
+def test_ensure_web_dist_wheel_shape_never_builds(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A wheel ships cockpit/dist but no cockpit/src: return the dist as-is.
-    dist = _make_fake_dist(tmp_path / "cockpit")
+    # A wheel ships both dists but no src trees: serve them as-is.
+    _make_fake_dist(tmp_path / "cockpit")
+    _make_fake_sdk_dist(tmp_path / "sdk")
     build = _FakeBuild()
     monkeypatch.setattr(relay_process, "_run_build", build)
-    assert ensure_cockpit_dist(tmp_path) == dist.resolve()
+    ensure_web_dist(tmp_path)
     assert build.calls == []
     # No lock or stamp writes either: site-packages may be read-only.
-    assert not (tmp_path / "cockpit" / ".build.lock").exists()
-    # And a wheel without a cockpit at all yields None.
-    assert ensure_cockpit_dist(tmp_path / "nowhere") is None
+    assert not (tmp_path / ".build.lock").exists()
+    # A tree with only one src dir cannot build both products: also as-is.
+    (tmp_path / "sdk" / "src").mkdir()
+    ensure_web_dist(tmp_path)
+    assert build.calls == []
+    # And a wheel without any web tree is a no-op.
+    ensure_web_dist(tmp_path / "nowhere")
 
 
-def test_ensure_cockpit_dist_env_tree_requires_opt_in(
+def test_ensure_web_dist_env_tree_requires_opt_in(
     fake_web: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A tree picked via DIMOS_WEB_DIR is served as-is: its build tooling runs
@@ -255,14 +386,14 @@ def test_ensure_cockpit_dist_env_tree_requires_opt_in(
     build = _FakeBuild()
     monkeypatch.setattr(relay_process, "_run_build", build)
     monkeypatch.setenv(WEB_DIR_ENV_VAR, str(fake_web))
-    assert ensure_cockpit_dist(fake_web) is None
+    ensure_web_dist(fake_web)
     assert build.calls == []
     monkeypatch.setenv(WEB_DIR_BUILD_ENV_VAR, "1")
-    assert ensure_cockpit_dist(fake_web) == (fake_web / "cockpit" / "dist").resolve()
-    assert len(build.calls) == 1
+    ensure_web_dist(fake_web)
+    assert build.calls == [fake_web / "sdk", fake_web / "cockpit"]
 
 
-def test_ensure_cockpit_dist_serializes_concurrent_builds(
+def test_ensure_web_dist_serializes_concurrent_builds(
     fake_web: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     build = _FakeBuild()
@@ -283,18 +414,15 @@ def test_ensure_cockpit_dist_serializes_concurrent_builds(
                 active -= 1
 
     monkeypatch.setattr(relay_process, "_run_build", slow_build)
-    results: list[Path | None] = []
-    threads = [
-        threading.Thread(target=lambda: results.append(ensure_cockpit_dist(fake_web)))
-        for _ in range(2)
-    ]
+    threads = [threading.Thread(target=lambda: ensure_web_dist(fake_web)) for _ in range(2)]
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join(timeout=30)
     assert peak == 1  # the flock serialized the builders
-    assert build.calls == [fake_web / "cockpit"]  # the loser re-checked and found it fresh
-    assert results == [(fake_web / "cockpit" / "dist").resolve()] * 2
+    # The loser re-checked and found both dists fresh.
+    assert build.calls == [fake_web / "sdk", fake_web / "cockpit"]
+    assert None not in _dists(fake_web)
 
 
 def test_run_build_cancel_kills_child_group(tmp_path: Path) -> None:
@@ -344,6 +472,14 @@ def test_find_cockpit_dist_requires_index(tmp_path: Path) -> None:
     assert find_cockpit_dist(tmp_path) is None
     (tmp_path / "cockpit" / "dist" / "index.html").write_text("x")
     assert find_cockpit_dist(tmp_path) == (tmp_path / "cockpit" / "dist").resolve()
+
+
+def test_find_sdk_dist_requires_bundle(tmp_path: Path) -> None:
+    assert find_sdk_dist(tmp_path) is None
+    (tmp_path / "sdk" / "dist").mkdir(parents=True)
+    assert find_sdk_dist(tmp_path) is None
+    (tmp_path / "sdk" / "dist" / "sdk.js").write_text("x")
+    assert find_sdk_dist(tmp_path) == (tmp_path / "sdk" / "dist").resolve()
 
 
 def test_find_cockpit_dist_resolves_symlinks(tmp_path: Path) -> None:

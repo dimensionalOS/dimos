@@ -7,7 +7,7 @@
     # Relative git+file: will be deprecated (nix#12281) but there's no
     # viable alternative for reaching local path deps outside the flake dir currently
     # presumably an alternative will be added before this is removed.
-    dimos-repo = { url = "git+file:../../../..?ref=main"; flake = false; };
+    dimos-repo = { url = "git+file:../../../.."; flake = false; };
   };
 
   outputs = { self, nixpkgs, flake-utils, dimos-repo }:
@@ -34,7 +34,7 @@
           cargoRoot = "dimos/mapping/ray_tracing/rust";
           buildAndTestSubdir = "dimos/mapping/ray_tracing/rust";
 
-          cargoHash = "sha256-6a8GHRSKI6mjg9HNbrestCud8xZtF8HaD0bWVMbl7N8=";
+          cargoHash = "sha256-ZZi/zOD4iWkJKTmUA+aU7qkP2CRrY+q9eb8oBJXheOk=";
 
           meta.mainProgram = "voxel_ray_tracing";
         };

@@ -40,6 +40,8 @@ from dimos.manipulation.planning.spec.models import (
     Obstacle,
 )
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -716,14 +718,25 @@ class WorldObstacleMonitor:
 
                 points, _ = obj.pointcloud.as_numpy()
                 if points is not None and points.shape[0] >= 4:
-                    mesh_path = pointcloud_to_convex_hull_obj(points)
-                    if mesh_path is not None:
+                    # Keyed on the object's stable unique id: rescans overwrite
+                    # in place, and no two objects share a file.
+                    hull = pointcloud_to_convex_hull_obj(points, cache_key=name)
+                    if hull is not None:
+                        # The hull is world-axis-aligned about its own centroid,
+                        # so that is the only pose that leaves it on its points.
+                        # obj.pose carries the bbox center and the oriented-box
+                        # rotation, neither of which the vertices were built from.
                         return Obstacle(
                             name=name,
                             obstacle_type=ObstacleType.MESH,
-                            pose=obj.pose,
+                            pose=PoseStamped(
+                                ts=obj.pose.ts,
+                                frame_id=obj.pose.frame_id,
+                                position=Vector3(hull.centroid),
+                                orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                            ),
                             color=(0.2, 0.8, 0.2, 0.6),
-                            mesh_path=mesh_path,
+                            mesh_path=hull.path,
                         )
             except Exception as e:
                 logger.debug(f"Convex hull failed for {name}, falling back to box: {e}")

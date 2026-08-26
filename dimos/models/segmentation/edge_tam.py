@@ -13,11 +13,12 @@
 # limitations under the License.
 
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
+from functools import lru_cache
 from pathlib import Path
 import shutil
 import tempfile
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
 from hydra.utils import instantiate
 import numpy as np
@@ -26,6 +27,7 @@ from omegaconf import OmegaConf
 from PIL import Image as PILImage
 import torch
 
+from dimos.models.base import default_torch_device
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.detectors.base import Detector
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
@@ -40,6 +42,20 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
+# Hole/sprinkle cleanup in SAM2 needs the optional CUDA extension sam2._C.
+# Requesting it without _C triggers a per-call UserWarning and then skips.
+_FILL_HOLE_AREA = 8
+_MIN_MASK_REGION_AREA = 150
+
+
+@lru_cache(maxsize=1)
+def _sam2_cuda_postprocess_available() -> bool:
+    try:
+        from sam2 import _C  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
 
 class SAM2InferenceState(TypedDict):
     images: list[torch.Tensor | None]
@@ -48,23 +64,25 @@ class SAM2InferenceState(TypedDict):
 
 
 def _build_model() -> "SAM2VideoPredictor":
-    """Build the EdgeTAM SAM2 model from the local config and checkpoint."""
+    """Build the EdgeTAM SAM2 model from the local config + checkpoint."""
     local_config_path = Path(__file__).parent / "configs" / "edgetam.yaml"
 
     if not local_config_path.exists():
         raise FileNotFoundError(f"EdgeTAM config not found at {local_config_path}")
 
-    if not torch.cuda.is_available():
-        raise RuntimeError("EdgeTAM requires a CUDA-capable GPU")
+    device = default_torch_device()
+    if device == "cpu":
+        raise RuntimeError("EdgeTAM requires a CUDA or MPS device")
 
     cfg = OmegaConf.load(local_config_path)
 
+    fill_hole_area = _FILL_HOLE_AREA if _sam2_cuda_postprocess_available() else 0
     overrides = {
         "model.sam_mask_decoder_extra_args.dynamic_multimask_via_stability": True,
         "model.sam_mask_decoder_extra_args.dynamic_multimask_stability_delta": 0.05,
         "model.sam_mask_decoder_extra_args.dynamic_multimask_stability_thresh": 0.98,
         "model.binarize_mask_from_pts_for_mem_enc": True,
-        "model.fill_hole_area": 8,
+        "model.fill_hole_area": fill_hole_area,
     }
 
     for key, value in overrides.items():
@@ -76,59 +94,128 @@ def _build_model() -> "SAM2VideoPredictor":
 
     predictor: SAM2VideoPredictor = instantiate(cfg.model, _recursive_=True)
 
-    # Suppress the per-frame "propagate in video" tqdm bar from sam2.
+    # Suppress the per-frame "propagate in video" tqdm bar from sam2
     import sam2.sam2_video_predictor as _svp
 
-    _svp.tqdm = lambda iterable, *args, **kwargs: iterable
+    _svp.tqdm = lambda iterable, *a, **kw: iterable
 
-    checkpoint = get_data("models_edgetam") / "edgetam.pt"
-    state_dict = torch.load(checkpoint, map_location="cpu", weights_only=True)["model"]
-    missing_keys, unexpected_keys = predictor.load_state_dict(state_dict)
+    ckpt_path = str(get_data("models_edgetam") / "edgetam.pt")
+
+    sd = torch.load(ckpt_path, map_location="cpu", weights_only=True)["model"]
+    missing_keys, unexpected_keys = predictor.load_state_dict(sd)
     if missing_keys:
-        raise RuntimeError("Missing keys in EdgeTAM checkpoint")
+        raise RuntimeError("Missing keys in checkpoint")
     if unexpected_keys:
-        raise RuntimeError("Unexpected keys in EdgeTAM checkpoint")
+        raise RuntimeError("Unexpected keys in checkpoint")
 
-    return predictor.to("cuda").eval()
+    predictor = predictor.to(device)
+    predictor.eval()
+    return predictor
+
+
+class EdgeTAMImageSegmenterCompatible(Protocol):
+    """Box-prompted image segmentation interface implemented by EdgeTAM."""
+
+    def segment(
+        self, detections: ImageDetections2D[Detection2DBBox]
+    ) -> ImageDetections2D[Detection2DSeg]: ...
 
 
 class EdgeTAMImageSegmenter:
-    """Refine detector boxes into single-image EdgeTAM masks."""
+    """Box-prompted single-image segmentation using the EdgeTAM checkpoint."""
 
     def __init__(self) -> None:
         from sam2.sam2_image_predictor import SAM2ImagePredictor
 
         self._predictor = SAM2ImagePredictor(_build_model())
+        self._mask_generators: dict[int, Any] = {}
+
+    def propose_all(
+        self,
+        image: Image,
+        points_per_side: int = 24,
+        pred_iou_thresh: float = 0.55,
+        stability_score_thresh: float = 0.85,
+        min_mask_region_area: int = _MIN_MASK_REGION_AREA,
+    ) -> ImageDetections2D:
+        """Class-agnostic mask proposals over the whole image, no vocabulary.
+
+        Wraps ``SAM2AutomaticMaskGenerator`` on the shared EdgeTAM model.
+        Proposals carry no names ("proposal") and ``confidence`` is the
+        predicted mask IoU.
+        """
+        import cv2
+        from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
+
+        if not _sam2_cuda_postprocess_available():
+            min_mask_region_area = 0
+
+        generator = self._mask_generators.get(points_per_side)
+        if generator is None:
+            generator = SAM2AutomaticMaskGenerator(
+                model=self._predictor.model,
+                points_per_side=points_per_side,
+                pred_iou_thresh=pred_iou_thresh,
+                stability_score_thresh=stability_score_thresh,
+                min_mask_region_area=min_mask_region_area,
+            )
+            self._mask_generators[points_per_side] = generator
+
+        rgb = cv2.cvtColor(image.to_opencv(), cv2.COLOR_BGR2RGB)
+        amp = (
+            torch.autocast("cuda", dtype=torch.bfloat16)
+            if self._predictor.device.type == "cuda"
+            else nullcontext()
+        )
+        with torch.no_grad(), amp:
+            proposals = generator.generate(rgb)
+
+        detections: list[Detection2DBBox] = [
+            Detection2DSeg.from_sam2_result(
+                proposal["segmentation"],
+                i,
+                image,
+                name="proposal",
+                confidence=float(proposal.get("predicted_iou", 1.0)),
+            )
+            for i, proposal in enumerate(proposals)
+        ]
+        return ImageDetections2D(image, [det for det in detections if det.is_valid()])
 
     def segment(
         self, detections: ImageDetections2D[Detection2DBBox]
     ) -> ImageDetections2D[Detection2DSeg]:
-        """Return masks that preserve each input detection's metadata."""
+        """Refine box detections into mask detections (Detection2DSeg)."""
         import cv2
 
-        if not detections.detections:
+        if not len(detections):
             return ImageDetections2D(detections.image, [])
 
         image = detections.image
         rgb = cv2.cvtColor(image.to_opencv(), cv2.COLOR_BGR2RGB)
-        boxes = np.asarray(
-            [detection.bbox for detection in detections.detections], dtype=np.float32
+
+        # bfloat16 autocast is CUDA-only; MPS runs in float32
+        amp = (
+            torch.autocast("cuda", dtype=torch.bfloat16)
+            if self._predictor.device.type == "cuda"
+            else nullcontext()
         )
-        with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+        with torch.no_grad(), amp:
             self._predictor.set_image(rgb)
+            boxes = np.array([det.bbox for det in detections], dtype=np.float32)
             masks, _, _ = self._predictor.predict(box=boxes, multimask_output=False)
 
-        masks = masks.reshape(-1, *masks.shape[-2:])
-        segmented = [
+        masks = masks.reshape(-1, *masks.shape[-2:])  # (N, H, W) regardless of batch dim
+        segmented: list[Detection2DSeg] = [
             Detection2DSeg.from_sam2_result(
                 mask,
-                detection.track_id,
+                det.track_id,
                 image,
-                class_id=detection.class_id,
-                name=detection.name,
-                confidence=detection.confidence,
+                class_id=det.class_id,
+                name=det.name,
+                confidence=det.confidence,
             )
-            for detection, mask in zip(detections.detections, masks, strict=True)
+            for det, mask in zip(detections, masks, strict=False)
         ]
         return ImageDetections2D(image, segmented)
 
@@ -168,7 +255,7 @@ class EdgeTAMProcessor(Detector):
         img_np /= img_std
 
         img_tensor = torch.from_numpy(img_np).permute(2, 0, 1).float()
-        img_tensor = img_tensor.cuda()
+        img_tensor = img_tensor.to(self._predictor.device)
 
         return img_tensor
 

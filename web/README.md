@@ -1,18 +1,63 @@
 # DimOS web
 
 Deno workspace for the robot web stack. `shared/` holds the wire protocol and its golden vectors;
-`relay/` is the WebTransport relay; `cockpit/` is the browser app (Vite + React + TS). The Python
-mirror + WebTransport client live in `dimos/web/relay_bridge/`.
+`relay/` is the WebTransport relay; `sdk/` is the viewer SDK (`@dimos/sdk`: transport, session,
+stores, decoders, React hooks); `cockpit/` is the browser app (Vite + React + TS) built on the SDK.
+The Python mirror + WebTransport client live in `dimos/web/relay_bridge/`.
 
 Everything runs on Deno 2.6.10, pinned in `dimos/utils/deno.py` (CI reads the pin from there). No
 node/npm anywhere: vite, vitest, and tsc run as npm packages under Deno (`nodeModulesDir: auto`),
 and `dimos --local-relay` auto-downloads Deno via `ensure_deno()`.
 
 ```bash
-deno task dev            # relay on http://127.0.0.1:7780 (debug page at /debug.html)
+deno task dev            # relay on http://127.0.0.1:7780 (add --cockpit-dir cockpit/dist for the UI,
+                         # --sdk-dir sdk/dist for /sdk.js, --serve-dir DIR for a custom page at /)
 deno task test           # relay + shared tests (unit + loopback e2e)
 deno task check          # type-check relay + shared; deno fmt + deno lint for style (all of web/)
 ```
+
+The local relay deliberately answers `/api/info`, `/api/stats`, `/sdk.js`, and served JavaScript
+modules with wildcard CORS so any local origin (a Vite dev server, a `file:` page) can bootstrap
+against it; a remotely reachable relay is a different, fail-closed mode (W10) and must not inherit
+that. For the same reason `startRelay` refuses to bind a non-loopback host unless
+`--unsafe-non-loopback` explicitly acknowledges it (only sensible behind your own TLS and access
+control).
+
+## SDK
+
+`sdk/` is the read-only viewer library the cockpit is built on: reconnecting WebTransport, session
+state, channel/status stores, per-session decoder registries, refcounted subscriptions (`connect`,
+`Session.watch/subscribe/close`), and React hooks on the `@dimos/sdk/react` subpath (the root entry
+is React-free). The SDK subscribes to nothing by itself; the cockpit's panel policy lives in
+`cockpit/src/subscriptions.ts`.
+
+```bash
+cd sdk
+deno task test           # vitest
+deno task check          # tsc --noEmit
+deno task build          # dist/sdk.js, the zero-build ESM bundle the relay serves at /sdk.js
+deno task fixture        # demo consumer on http://localhost:5174 (run a relay first)
+```
+
+`fixture/` is a minimal non-cockpit consumer: it lists robots, auto-watches the lone robot, and
+subscribes to `odom` by hand. Run `dimos run <bp> --local-relay` and `deno task fixture` side by
+side; like the cockpit dev server it proxies `/api` to the relay on `:7780`.
+
+### Zero-build page
+
+`examples/minimal/` is a single HTML file importing `/sdk.js` - no bundler, no npm. Serve it from
+the relay itself:
+
+```bash
+dimos run <bp> --local-relay --serve-dir web/examples/minimal
+```
+
+`--serve-dir` replaces the cockpit at `/` with the given directory (`/api/*` and `/sdk.js` keep
+precedence, and the relay's traversal/symlink guards apply); it needs the spawned local relay and is
+rejected with `--relay-url`. A page can also import the absolute `http://127.0.0.1:7780/sdk.js` and
+pass that base to `connect({url})` - from another local origin or straight from a `file:` page (both
+supported browsers permit WebTransport there; `dimos/e2e_tests/test_sdk_browser.py` pins all three
+forms).
 
 ## Cockpit
 
@@ -28,27 +73,54 @@ Dev workflow: run the relay (`deno task dev` in `web/`, or just `dimos run <bp> 
 the vite server side by side. `localhost:5173` is a secure context; vite proxies `/api` to the relay
 on `:7780` and the WebTransport connection goes straight to the advertised `wtUrl`.
 
-Without vite, `--local-relay` serves the built `cockpit/dist` at `/`, building it first when it is
-missing or older than the sources (`ensure_cockpit_dist` in `relay_process.py`). Release wheels ship
-a pre-built dist inside `_relay_dist` (built by the release workflow; see `setup.py`), so a
+Without vite, `--local-relay` serves the built `cockpit/dist` at `/` and `sdk/dist/sdk.js` at
+`/sdk.js`, building both first when either is missing or older than the sources (`ensure_web_dist`
+in `relay_process.py`; one stamp, both products swapped together). Release wheels ship both
+pre-built dists inside `_relay_dist` (built by the release workflow; see `setup.py`), so a
 pip-installed dimos never builds or downloads npm packages.
 
-After changing cockpit dependencies run `deno install` in `web/` and commit the `deno.lock` update;
-CI validates it with `deno install --frozen`. If vitest ever misbehaves under a new Deno, the
-fallback ladder is `--no-file-parallelism`, then `--pool=threads`, then pinning a different vitest
-minor.
+After changing cockpit or sdk dependencies run `deno install` in `web/` and commit the `deno.lock`
+update; CI validates it with `deno install --frozen`. If vitest ever misbehaves under a new Deno,
+the fallback ladder is `--no-file-parallelism`, then `--pool=threads`, then pinning a different
+vitest minor.
 
-The cockpit browser e2e (`dimos/e2e_tests/test_cockpit_browser.py`, marker `web_browser`) drives the
-whole stack against the go2 replay dataset in both Playwright Chromium and Firefox (their
-WebTransport stacks differ; see bug 11). The CI `web` job runs it; locally it needs
-`uv run playwright install chromium firefox` once.
+The browser e2e (`dimos/e2e_tests/test_cockpit_browser.py` for the cockpit, `test_sdk_browser.py`
+for the SDK's zero-build/cross-origin/file: pages; marker `web_browser`) drives the whole stack
+against the go2 replay dataset in both Playwright Chromium and Firefox (their WebTransport stacks
+differ; see bug 11). The CI `web` job runs them; the pinned browser builds auto-install on first
+run.
+
+## Teleop safety chain
+
+Keyboard teleop (the `teleop` panel; WASD drive, Q/E strafe, Shift boost, Space e-stop, key
+semantics from `dimos/robot/unitree/keyboard_teleop.py`) sends `twist` datagrams cockpit -> relay ->
+bridge, which publishes on `tele_cmd_vel`. Driving needs the per-robot exclusive lease
+(`teleop_start` on the control stream, acked with `teleop_started`; a second viewer gets error
+`teleop_held`); the relay forwards twist/stop datagrams robot-ward only from the lease holder.
+Datagram loss is fine: commands repeat at the channel's `maxHz` and silence trips the bridge
+deadman. Each hop covers the failure of the previous one:
+
+1. The cockpit zeroes on every disarm trigger: last key release (zero + two repeats over 200 ms),
+   Esc, focus loss, window blur, hidden tab, unmount, disconnect. Armed only while the panel has
+   focus. Space is the e-stop: a `stop` burst on datagrams plus one on the control stream, which the
+   bridge publishes as an unconditional zero (it also cancels an autonomous nav goal).
+2. The relay releases the lease and sends `teleop_stop` robot-ward when the holder disconnects or
+   watches away. It stamps every robot-bound teleop message with the lease generation `gen` (bumped
+   per grant, announced with a robot-ward `teleop_start`).
+3. The bridge watchdog is authoritative: it publishes `Twist.zero()` on stop, `teleop_stop`, session
+   loss, or `watchdogMs` (default 300 ms) of twist silence - so a SIGKILLed relay stops the robot
+   without any goodbye reaching either end. Older generations are rejected permanently and the seq
+   high-water mark survives silence, so a released holder's delayed datagrams cannot restart motion
+   after a stop. Zeros are edge-gated (only after a nonzero twist): MovementManager cancels the nav
+   goal on every teleop message, so idle zeros must never repeat.
 
 ## Protocol shape, and why it is odd
 
 The framing is defined once in `shared/protocol.ts`, mirrored in Python, and pinned by golden
 vectors in `shared/fixtures/` (regenerate via
 `deno run --allow-write=shared/fixtures shared/fixtures/gen.ts`; tested from both `deno test` and
-pytest).
+pytest). The one exception is `costmap_frames.json`: its payloads pin the Python encoder's zlib
+bytes, so it is generated by `uv run python -m dimos.web.relay_bridge.gen_costmap_fixtures`.
 
 Several choices are workarounds for upstream bugs, verified 2026-07-10..15 on Deno 2.6.10 + aioquic
 1.3 (details and probes in the spike branch `paul/experiment/webtransport`):
@@ -91,8 +163,30 @@ Several choices are workarounds for upstream bugs, verified 2026-07-10..15 on De
     FIN goes out lazily (bug 2), so with stream-per-frame the relay's
     `createUnidirectionalStream({waitUntilAvailable})` hangs after ~100 frames, the reliable FIFO
     overflows, and the relay kicks the viewer every ~8 s. Chromium's much larger window masks this.
-    Latest channels keep per-frame streams (their reset semantics need them) and are the known
-    remaining credit pressure for T5 video under Firefox.
+    Latest channels keep per-frame streams (their reset semantics need them); bug 12 is what keeps
+    their credit pressure bounded.
+12. **Relay->viewer latest streams are never FIN'd: every one ends in a RESET.** JS WebTransport
+    exposes no delivery signal (`getStats()` is a zeros stub in Deno 2.6.10) and quinn buffers
+    writes without bound, so "write accepted" says nothing about delivery - and a closed
+    WritableStream can no longer be aborted. The relay therefore keeps each latest stream open and
+    reaps it: streams older than `LATEST_STALE_MS` (500 ms, matching the Python leg's `stale_after`)
+    are reset, discarding buffered-but-undelivered bytes on both ends and returning Firefox's stream
+    credit far faster than the lazy FIN would. Reaping fires from newer offers AND from a periodic
+    reap every `LATEST_STALE_MS`: an idle input stops offering and would otherwise leave up to about
+    100 open streams pinning Firefox's uni-stream credit. The one send still wedged in
+    `createUnidirectionalStream` is never reset - resets do not replenish stream credit while the
+    viewer's application is not reading (verified against Deno's client; a frozen tab behaves the
+    same) - instead newer offers supersede its payload in place (the payload binds only when the
+    write starts), so a resuming viewer receives the newest frame with zero stream churn. Once the
+    write has started the payload can no longer change, so a newer offer resets a write-wedged
+    carrier once it is `LATEST_STALE_MS` old and resends the newest on a fresh stream - bounded to
+    one reset per stale window, and once stream credit runs out the wedge moves back to creation,
+    where superseding is churn-free. In `/api/stats`, `aborted` counts backpressure resets - stale
+    accepted streams reaped while the newest send is unaccepted, plus stale write-wedged carriers
+    (the suspended-viewer signal; 0 when healthy); `expired` counts routine end-of-life resets (~=
+    `sent` on a healthy latest channel); superseded and displaced payloads count as `dropped`.
+    Receivers dispatch frames on byte count (bug 2) and treat the reset as end-of-stream; a reset
+    mid-frame drops a stale partial by design.
 
 Latest streams deliver out of order by design; consumers keep the newest frame by `seq` (a reliable
 channel's persistent stream is ordered) and loss metrics are span-based

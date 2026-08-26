@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import threading
 from types import SimpleNamespace
@@ -61,6 +61,7 @@ from dimos.manipulation.visualization.viser.scene import (
     ViserManipulationScene,
 )
 from dimos.manipulation.visualization.viser.state import (
+    ActionStatus,
     PanelPlanState,
     PlanningMode,
     PlanStatus,
@@ -74,6 +75,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
 @dataclass
@@ -174,18 +176,12 @@ class Config:
     home_joints: list[float] | None
     base_link: str = "base"
     end_effector_link: str = "tool"
-    model_path: Path | str = "robot.urdf"
-    package_paths: dict[str, str] | None = None
-    xacro_args: dict[str, str] | None = None
+    model: RobotModel = field(default_factory=lambda: RobotModel.from_file("robot.urdf"))
     auto_convert_meshes: bool = False
     max_velocity: float = 1.0
     max_acceleration: float = 1.0
     joint_name_mapping: dict[str, str] | None = None
     pre_grasp_offset: float = 0.0
-
-    def __post_init__(self) -> None:
-        if isinstance(self.model_path, str):
-            self.model_path = Path(self.model_path)
 
 
 def group(robot: str, name: str, joints: tuple[str, ...], *, pose: bool = False) -> PlanningGroup:
@@ -217,6 +213,8 @@ class Module:
         self.cancelled = 0
         self.cleared = 0
         self.last_plan: GeneratedPlan | None = None
+        self.motion_speed = 1.0
+        self.motion_speed_updates: list[float] = []
 
     def make_plan(self, group_ids: tuple[str, ...]) -> GeneratedPlan:
         names = [
@@ -263,8 +261,13 @@ class Module:
     def get_error(self) -> str:
         return self.error
 
-    def reset(self) -> SimpleNamespace:
-        return SimpleNamespace(is_success=lambda: True)
+    def get_motion_speed(self) -> float:
+        return self.motion_speed
+
+    def set_motion_speed(self, speed_scale: float) -> bool:
+        self.motion_speed = float(speed_scale)
+        self.motion_speed_updates.append(float(speed_scale))
+        return True
 
     def plan_to_joint_targets(self, targets: dict[str, JointState]) -> bool:
         self.plans.append((tuple(targets), targets))
@@ -320,6 +323,12 @@ class Operator:
             error=self.module.get_error(),
             has_plan=True,
         )
+
+    def get_motion_speed(self) -> float:
+        return self.module.get_motion_speed()
+
+    def set_motion_speed(self, speed_scale: float) -> bool:
+        return self.module.set_motion_speed(speed_scale)
 
     def get_init_joints(self, robot_name: str) -> JointState | None:
         return self.module.get_init_joints(robot_name)
@@ -409,10 +418,6 @@ class Operator:
 
     def clear_plan(self) -> bool:
         return self.module.clear_planned_path()
-
-    def reset(self) -> bool:
-        result = self.module.reset()
-        return result.is_success()
 
 
 def session_inputs(module: Module) -> tuple[PlanningSceneInfo, Operator, dict[str, JointState]]:
@@ -514,11 +519,17 @@ def test_panel_contract_group_order_defaults_and_controls(
     assert server.gui.dropdowns[0].options == ["Select preset...", "Init", "Current", "Home"]
     assert server.gui.dropdowns[1].options == ["Joint space", "Cartesian space"]
     assert [
-        (slider.label, slider.min, slider.max, slider.value) for slider in server.gui.sliders
+        (slider.label, slider.min, slider.max, slider.value)
+        for slider in server.gui.sliders
+        if slider.label != "Next plan speed"
     ] == [("arm/manipulator/j1", -1.0, 1.0, 0.1)]
     server.gui.buttons[1].callback(SimpleNamespace())
     assert gui.state.selected_group_ids == ("arm/manipulator", "arm/gripper")
-    assert [slider.label for slider in server.gui.sliders if not slider.removed] == [
+    assert [
+        slider.label
+        for slider in server.gui.sliders
+        if not slider.removed and slider.label != "Next plan speed"
+    ] == [
         "arm/manipulator/j1",
         "arm/gripper/j2",
     ]
@@ -592,7 +603,7 @@ def test_plan_target_sequence_invalidation_and_unfiltered_all_robot_execute(
     assert module.executions == 1
 
 
-def test_cartesian_space_mode_plans_absolute_pose_targets_with_auxiliary_groups(
+def test_cartesian_space_mode_requests_sparse_time_optimal_trajectory(
     panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -617,7 +628,8 @@ def test_cartesian_space_mode_plans_absolute_pose_targets_with_auxiliary_groups(
     targets, config, auxiliary_ids = module.cartesian_plans[0]
     assert tuple(targets) == (pose_group.id,)
     assert targets[pose_group.id].frame_id == "world"
-    assert config.speed_mode == "bounded"  # type: ignore[attr-defined]
+    assert config.speed_mode == "time_optimal"  # type: ignore[attr-defined]
+    assert config.dt == 0.05  # type: ignore[attr-defined]
     assert auxiliary_ids == (auxiliary_group.id,)
     assert gui.state.plan_state.status == PlanStatus.FRESH
     assert gui.state.last_result == "plan_cartesian_space=True"
@@ -704,13 +716,19 @@ def test_valid_init_preset_builds_sliders_after_incomplete_initial_telemetry(
     )
 
     assert gui.state.group_joint_targets == {}
-    assert server.gui.sliders == []
+    assert [
+        slider.label for slider in server.gui.sliders if slider.label != "Next plan speed"
+    ] == []
 
     module.configs["arm"].home_joints = [-0.5, -1.0]
     gui._apply_preset("Init")
 
     assert gui.state.group_joint_targets[selected.id].position == [-0.5, -1.0]
-    assert [slider.label for slider in server.gui.sliders if not slider.removed] == [
+    assert [
+        slider.label
+        for slider in server.gui.sliders
+        if not slider.removed and slider.label != "Next plan speed"
+    ] == [
         "arm/manipulator/j1",
         "arm/manipulator/j2",
     ]
@@ -795,6 +813,15 @@ class Urdf:
 @pytest.fixture(autouse=True)
 def fake_yourdfpy_loader(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
+        RobotModel,
+        "load",
+        lambda _self: LoadedRobotModel(
+            xml='<robot name="test"><link name="base"/></robot>',
+            source_path=Path("robot.urdf"),
+            package_paths={},
+        ),
+    )
+    monkeypatch.setattr(
         scene_module.URDF,
         "load",
         lambda *_args, **_kwargs: SimpleNamespace(
@@ -812,7 +839,6 @@ def test_scene_active_only_ghosts_group_gizmos_feasibility_and_shared_ticks(
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
     server.scene.add_transform_controls = lambda *_args, **_kwargs: Handle()
     scene = ViserManipulationScene(server, Urdf)
-    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
     config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
     scene.register_robot("id-arm", config)
     scene.set_target_active("id-arm", False)
@@ -894,6 +920,7 @@ def test_panel_preset_defaults_and_joint_slider_limits(
     assert [
         (slider.label, slider.min, slider.max, slider.step, slider.value)
         for slider in server.gui.sliders
+        if slider.label != "Next plan speed"
     ] == [
         ("arm/manipulator/j1", -1.0, 1.0, 0.001, 0.1),
         ("arm/manipulator/j2", -2.0, 2.0, 0.001, 0.2),
@@ -966,6 +993,42 @@ def test_panel_action_controls_are_present_in_source_order(
     ]
 
 
+def test_next_plan_speed_slider_updates_future_speed_without_staling_plan(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
+) -> None:
+    selected = group("arm", "manipulator", ("j1",), pose=True)
+    gui, module, server = panel([selected], states("arm"))
+    accepted = module.make_plan((selected.id,))
+    gui.state.plan_state = PanelPlanState(status=PlanStatus.FRESH, plan=accepted)
+    speed_slider = next(
+        slider for slider in server.gui.sliders if slider.label == "Next plan speed"
+    )
+    speed_slider.value = 0.5
+    assert speed_slider.callback is not None
+
+    speed_slider.callback(SimpleNamespace(target=speed_slider))
+
+    assert module.motion_speed_updates == [0.5]
+    assert module.last_plan is accepted
+    assert gui.state.plan_state.plan is accepted
+    assert gui.state.plan_state.status == PlanStatus.FRESH
+
+
+def test_next_plan_speed_slider_is_disabled_during_panel_operation(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
+) -> None:
+    selected = group("arm", "manipulator", ("j1",), pose=True)
+    gui, _module, server = panel([selected], states("arm"))
+    speed_slider = next(
+        slider for slider in server.gui.sliders if slider.label == "Next plan speed"
+    )
+
+    gui.state.action_status = ActionStatus.RUNNING
+    gui.refresh()
+
+    assert speed_slider.disabled is True
+
+
 def test_target_callbacks_require_current_target_identity(
     panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
 ) -> None:
@@ -990,7 +1053,6 @@ def test_scene_target_ghost_tracks_current_only_until_explicit_target() -> None:
     server = Server()
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
     scene = ViserManipulationScene(server, Urdf)
-    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
     config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
     scene.register_robot("id-arm", config)
 
@@ -1007,7 +1069,6 @@ def test_scene_target_feasibility_colors_ghost_and_gizmo() -> None:
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
     server.scene.add_transform_controls = lambda *_args, **_kwargs: Handle()
     scene = ViserManipulationScene(server, Urdf)
-    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
     config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
     scene.register_robot("id-arm", config)
     scene.ensure_target_controls("id-arm", lambda _target: None)
@@ -1029,7 +1090,6 @@ def test_panel_feasibility_colors_group_controls_and_deduplicated_robot_ghosts()
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
     server.scene.add_transform_controls = lambda *_args, **_kwargs: Handle()
     scene = ViserManipulationScene(server, Urdf)
-    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
     scene.register_robot("id-arm", module.configs["arm"])
     scene.register_robot("id-other", module.configs["other"])
     gui = scene_gui(module, server, scene)
@@ -1098,7 +1158,6 @@ def test_scene_shared_clock_uses_stored_unequal_robot_frames(
     server = Server()
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
     scene = ViserManipulationScene(server, Urdf)
-    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
     config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
     scene.register_robot("left", config)
     scene.register_robot("right", config)
@@ -1199,7 +1258,6 @@ def test_scene_cancel_generation_hides_preview_and_rejects_old_animation() -> No
     server = Server()
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
     scene = ViserManipulationScene(server, Urdf)
-    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
     config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
     scene.register_robot("id-arm", config)
     scene._preview_visible["id-arm"] = True
@@ -1215,13 +1273,15 @@ def test_scene_base_pose_requires_urdf_root_to_match(monkeypatch: pytest.MonkeyP
     server = Server()
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
     scene = ViserManipulationScene(server, Urdf)
-    monkeypatch.setattr(
-        "dimos.manipulation.visualization.viser.scene.parse_model",
-        lambda _path: SimpleNamespace(root_link="world"),
-    )
-
     with pytest.raises(ValueError, match="base_link 'base'.*URDF root 'world'"):
-        scene._assert_base_link_is_urdf_root(SimpleNamespace(base_link="base"), "robot.urdf")
+        scene._assert_base_link_is_urdf_root(
+            SimpleNamespace(base_link="base"),
+            LoadedRobotModel(
+                xml='<robot name="test"><link name="world"/></robot>',
+                source_path=Path("robot.urdf"),
+                package_paths={},
+            ),
+        )
 
 
 def test_scene_detects_non_identity_base_pose() -> None:
@@ -1242,7 +1302,6 @@ def test_scene_display_mode_survives_primary_recreation_and_keeps_ghosts_unchang
 ) -> None:
     server = Server()
     scene = ViserManipulationScene(server, Urdf)
-    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
     config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
     scene.register_robot("id-arm", config)
     current = scene._urdfs["id-arm:current"]
@@ -1292,7 +1351,6 @@ def test_panel_robot_display_selector_and_collision_warning_use_session_scene(
     # The panel fixture intentionally uses a session without a scene; attach the
     # already-created scene controls through the normal panel API contract.
     scene = ViserManipulationScene(server, Urdf)
-    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
     scene.register_robot(
         "id-arm", Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
     )
@@ -1315,7 +1373,6 @@ def test_scene_inflight_preview_never_updates_after_generation_replacement(
     server = Server()
     server.scene.add_grid = lambda *_args, **_kwargs: Handle()
     scene = ViserManipulationScene(server, Urdf)
-    scene.prepared_urdf_path = lambda _config: "robot.urdf"  # type: ignore[method-assign]
     config = Config("arm", ["j1", "j2"], [-1.0, -2.0], [1.0, 2.0], [0.0, 0.0])
     scene.register_robot("id-arm", config)
     first_tick, release = threading.Event(), threading.Event()

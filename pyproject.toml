@@ -104,6 +104,7 @@ dependencies = [
     "eclipse-zenoh>=1.9.0,<2.0",
     "PyTurboJPEG==1.8.2",
     "imagecodecs>=2024.6.1", # JPEG-XL for CompressedImage
+    "jsonlines>=4,<5",
     # Core
     "numpy>=1.26.4",
     "scipy>=1.15.1",
@@ -113,15 +114,15 @@ dependencies = [
     "cmeel-tinyxml2>=11,<12", # Pinocchio 4.1 requires the v11 ABI.
     "reactivex",
     "sortedcontainers==2.4.0",
-    "attrs>=25.4.0",
     "pydantic",
     "python-dotenv",
     "packaging>=24.0",
-    "filelock>=3.16,<4",
+    "filelock>=3.20,<4",
     "annotation-protocol>=1.4.0",
     "lazy_loader",
     "typing_extensions>=4.7; python_version < '3.13'",
     "plum-dispatch==2.5.7",
+    "GitPython>=3.1.45",
     # Logging
     "structlog>=25.5.0,<26",
     # Core Msgs
@@ -137,6 +138,7 @@ dependencies = [
     "textual-serve>=1.1.1,<2",
     "terminaltexteffects==0.12.2",
     "typer>=0.19.2,<1",
+    "keyring>=25,<26",
     "ipython",
     "plotext==5.3.2",
     # Used for calculating the occupancy map.
@@ -186,7 +188,7 @@ misc = [
 
     # Perception Dependencies
     "timm>=1.0.15",  # runtime backbone for the EdgeTAM/sam2 segmentation config
-    "edgetam-dimos",
+    "edgetam-dimos>=1.0.1",
 
     # embedding models
     "open_clip_torch==3.2.0",
@@ -202,6 +204,12 @@ misc = [
     # Hardware SDKs
     "xarm-python-sdk>=1.17.0",
     "portal",
+]
+
+spot = [
+    "bosdyn-client>=4.0.0",
+    "bosdyn-api>=4.0.0",
+    "bosdyn-core>=4.0.0",
 ]
 
 visualization = [
@@ -226,6 +234,7 @@ agents = [
     "langchain-huggingface>=1,<2",
     "langchain-ollama>=1,<2",
     "ollama>=0.6.0",
+    "openevals>=0.1",  # eval scorers (LLM-as-judge etc.) — dimos/evals
 
     # Audio
     "openai",
@@ -255,6 +264,9 @@ perception = [
     "omegaconf>=2.3.0",
     "hydra-core>=1.3.0",
     "chromadb>=1.0.0",  # spatial-memory vector store (dimos/perception/spatial_*)
+    # SigLIP tokenizer (SiglipProcessor) requires SentencePiece; not captured by
+    # transformers package metadata for google/siglip-base-patch16-224.
+    "sentencepiece>=0.2.0",
 ]
 
 unitree = [
@@ -280,11 +292,14 @@ manipulation = [
     "xarm-python-sdk>=1.17.0",
     "a750-control; sys_platform == 'linux' and platform_machine == 'x86_64'",
 
+    "can-motor-control>=0.0.7; sys_platform == 'linux'",
+
     # Mesh conversion (STL/DAE → OBJ for Drake collision geometry)
     "trimesh",
     "pycollada",
 
     # Visualization (Optional)
+    "pygame>=2.6.1",
     "viser[urdf]>=1.0.29",
     "yourdfpy>=0.0.60",
     "xacro",
@@ -292,7 +307,7 @@ manipulation = [
     # Other
     "matplotlib>=3.7.1",
     "pyyaml>=6.0",
-    "roboplan>=0.5.1",
+    "roboplan>=0.6.0,<0.7.0",
 ]
 
 cpu = [
@@ -313,7 +328,7 @@ sim = [
 ]
 
 mapping = [
-    # PGO for reloc premap + cmu_nav experiments
+    # PGO for reloc premap
     # Jeff's https://github.com/jeff-hykin/gtsam-extended
     "gtsam-extended>=4.3a1.post1",
 ]
@@ -384,12 +399,15 @@ autofix = ["ruff==0.14.3"]
 # Project deps shared by `tests` and `lint`.
 project-deps = [
     "dimos[web,visualization,webrtc]",
-    "torch",
+    # Blackwell (sm_120) needs torch 2.7 from pytorch-cu128. Cap below 2.8.
+    "torch>=2.1,<2.8",
+    "torchvision>=0.16,<0.23",
     "langchain==1.2.3",
     "langchain-core==1.3.3",
     "googlemaps>=4.10.0",
     "transformers[torch]==4.53.3",
     "einops>=0.8.1",         # Florence2 trust_remote_code dep (see perception extra)
+    "sentencepiece>=0.2.0",  # SigLIP tokenizer dep (see perception extra)
     "ultralytics>=8.3.70",
     "hydra-core>=1.3.0",
     "open_clip_torch==3.2.0",
@@ -403,6 +421,8 @@ project-deps = [
     "lap>=0.5.12",
     "langchain-openai>=1,<2",
     "ollama>=0.6.0",
+    # The generic Damiao whole-body adapter imports upstream types directly.
+    "can-motor-control>=0.0.7; sys_platform == 'linux'",
 ]
 
 tests = [
@@ -465,7 +485,7 @@ lint = [
     "pytest==8.3.5",
     "python-can>=4",
     "python-socketio>=5.16.1",
-    "roboplan>=0.5.1",
+    "roboplan>=0.6.0,<0.7.0",
     "sounddevice>=0.5.5",
     "trimesh>=4.12",
     "watchdog>=3.0.0",
@@ -492,12 +512,19 @@ tests-self-hosted = [
     # Needed to compile the in-tree extensions.
     "pybind11>=2.12",
 ]
+docs = [
+    "mkdocs-awesome-nav>=3.3.0",
+    "mkdocs-glightbox>=0.5.2",
+    "mkdocs-material>=9.7.7",
+    "mkdocs-minify-plugin>=0.8.0",
+    "mkdocs-redirects>=1.2.3",
+]
 
 [tool.uv]
 required-version = ">=0.9.17"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, md-babel-py = false }
+exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false }
 override-dependencies = [
     # ultralytics, unitree-sdk2py-dimos and unitree-webrtc-connect depend on
     # opencv-python, which ships the same cv2/ tree as our opencv-contrib-python
@@ -523,10 +550,26 @@ override-dependencies = [
     "huggingface-hub>=0.30,<1",
     "diffusers>=0.29",
     "pyopengl>=3.1.5",
+    # Force the torch 2.7 line even if a transitive dep asks for newer.
+    "torch>=2.1,<2.8",
+    "torchvision>=0.16,<0.23",
 ]
 
 [tool.uv.sources]
 graspgenx = { git = "https://github.com/NVlabs/GraspGenX.git", rev = "b9429097728cb1c430dd78b92edf17ba318aad03" }
+# CUDA builds are not published for macOS or non-x86_64 Linux. Those platforms
+# fall back to PyPI.
+torch = [
+    { index = "pytorch-cu128", marker = "(sys_platform == 'linux' and platform_machine == 'x86_64') or sys_platform == 'win32'" },
+]
+torchvision = [
+    { index = "pytorch-cu128", marker = "(sys_platform == 'linux' and platform_machine == 'x86_64') or sys_platform == 'win32'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
 
 [tool.ruff]
 line-length = 100
@@ -594,6 +637,8 @@ exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/tool_.|.*/conftest.py*"
 module = [
     "a750_control",
     "a750_control.*",
+    "bosdyn",
+    "bosdyn.*",
     "cyclonedds",
     "cyclonedds.*",
     "dimos_lcm.*",
@@ -612,6 +657,7 @@ module = [
     "mujoco_playground.*",
     "nav_msgs.*",
     "open_clip",
+    "openevals.*",
     "pinocchio",
     "pink",
     "pink.*",
@@ -678,7 +724,7 @@ env = [
   "GOOGLE_MAPS_API_KEY=AIzafake_google_key",
   "PYTHONWARNINGS=ignore:cupyx.jit.rawkernel is experimental:FutureWarning",
 ]
-addopts = "--dist=loadfile --durations=10 --timeout=600 --timeout-method=thread -v -ra --showlocals --cov-report=xml -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (self_hosted or mujoco or self_hosted_large or web_browser)'"
+addopts = "--dist=loadfile --durations=10 --timeout=600 --timeout-method=thread -v -ra --showlocals --cov-report=xml -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e)'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 

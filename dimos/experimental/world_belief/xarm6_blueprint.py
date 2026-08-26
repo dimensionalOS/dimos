@@ -21,9 +21,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.constants import STATE_DIR
-from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.stream import Out
 from dimos.experimental.world_belief.worldbelief_module import (
     WorldBeliefModule,
 )
@@ -35,7 +33,6 @@ from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import make_xarm6_model_config, xarm6_hardware
 from dimos.visualization.rerun.bridge import RerunBridgeModule
@@ -81,11 +78,6 @@ def _rerun_blueprint() -> rrb.Blueprint:
 
 _hw = xarm6_hardware("arm")
 _hw.auto_enable = True
-
-
-class _XArm6WorldBeliefCoordinator(ControlCoordinator):
-    arm_joints: Out[JointState]
-
 
 xarm6_worldbelief = autoconnect(
     # Provides wrist-camera FK/TF.
@@ -139,17 +131,7 @@ xarm6_worldbelief = autoconnect(
     ),
     McpServer.blueprint(),
     coordinator(
-        cls=_XArm6WorldBeliefCoordinator,
-        instance_name="ControlCoordinator",
-        publish_robot_joint_states=True,
         hardware=[_hw],
         tasks=[trajectory_task(_hw)],
     ),
-)
-
-# Wiring-only remap: a Recorder names its db streams after its ports, so the
-# recording still holds "coordinator_joint_state" (and the recorder's
-# @pose_setter_for keeps matching).
-xarm6_worldbelief = xarm6_worldbelief.remappings(
-    [(WorldBeliefRecorder, "coordinator_joint_state", "arm_joints")]
 ).global_config(n_workers=8)
