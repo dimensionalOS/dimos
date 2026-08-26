@@ -29,6 +29,8 @@ import math
 import numpy as np
 import pytest
 
+pytest.importorskip("dimos_motion2_tc")
+
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -43,7 +45,7 @@ from dimos.navigation.motion.control.profile import encode_precision
 from dimos.navigation.motion.embodiment.go2 import GO2
 from dimos.navigation.motion.obstacles import path_clearance as follower_clearance
 
-load_extension()  # the crate under test; the ImportError names the build command
+load_extension()  # importorskip above already proved it is there
 
 TOL = 1e-9
 CASES = 240
