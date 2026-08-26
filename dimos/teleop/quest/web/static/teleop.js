@@ -474,13 +474,6 @@ function processTracking(frame) {
     }
     lastSendTime = now;
 
-    // Humanoid retargeting needs the headset pose in the same reference space
-    // as both hands. Other teleop modules ignore the "head" frame.
-    const viewerPose = frame.getViewerPose(xrRefSpace);
-    if (viewerPose) {
-        sendPose('head', viewerPose);
-    }
-
     // Process controller and hand input sources.
     for (const inputSource of frame.session.inputSources) {
         const handedness = inputSource.handedness;
