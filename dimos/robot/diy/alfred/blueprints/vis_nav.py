@@ -70,6 +70,14 @@ def _ir_pinhole(msg: Any) -> Any:
     return _pinhole_at(msg, entity_path) if entity_path else None
 
 
+GLOBAL_PATH_PURPLE = (170, 60, 220)
+"""The MLS planner path; the local planner's path keeps the stock green."""
+
+
+def _path_colored(msg: Any, color: tuple[int, int, int]) -> Any:
+    return msg.to_rerun(color=color)
+
+
 def _rerun_blueprint() -> Any:
     """The stock bridge blueprint is 3D only, so no image view exists to render into."""
     import rerun as rr
@@ -202,6 +210,7 @@ _vis_nav = autoconnect(
             },
             # An image only renders if it shares an entity with its Pinhole.
             "visual_override": {
+                "world/planner_path": partial(_path_colored, color=GLOBAL_PATH_PURPLE),
                 "world/color_image": partial(_image_at, entity_path=f"{CAMERA_RERUN_ROOT}/color"),
                 "world/color_camera_info": partial(
                     _pinhole_at, entity_path=f"{CAMERA_RERUN_ROOT}/color"
