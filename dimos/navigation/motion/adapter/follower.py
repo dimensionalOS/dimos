@@ -33,6 +33,7 @@ import time
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 from reactivex.disposable import Disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -53,31 +54,16 @@ from dimos.navigation.motion.control.tracks import TRACKS
 from dimos.navigation.motion.embodiment.base import Embodiment
 from dimos.navigation.motion.embodiment.go2 import GO2
 from dimos.navigation.motion.loader import load
-from dimos.navigation.motion.obstacles import ObstacleModel, hard_points, load as load_model
+from dimos.navigation.motion.obstacles import (
+    ObstacleModel,
+    hard_points,
+    load as load_model,
+    path_clearance,
+)
 from dimos.navigation.tf_pose import OdomBasePose
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
-
-
-def path_clearance(xy: np.ndarray, points: np.ndarray, half_width: float) -> np.ndarray:
-    """Per-waypoint room hint (m): nearest obstacle minus the half-width.
-
-    A speed hint for the controller, not a safety contract. Nothing to hit or
-    an empty path = infinite room. `points` is an obstacle model's hard set
-    (motion/obstacles.py) — every row is something the body can hit, and z
-    rides along unread. Deciding that again here would price a different world
-    than the plan was made for, and would truncate any body taller than
-    whatever band this function happened to carry.
-    """
-    xy = np.asarray(xy, dtype=float).reshape(-1, 2)
-    band = np.asarray(points, dtype=np.float32).reshape(-1, 3)[:, :2]
-    if not len(band) or not len(xy):
-        return np.full(len(xy), np.inf)
-    from scipy.spatial import cKDTree
-
-    d, _ = cKDTree(band).query(xy)
-    return np.asarray(d, dtype=float) - half_width
 
 
 class GoalLatch:
@@ -130,9 +116,8 @@ class TrajectoryFollowerConfig(ModuleConfig):
     # body the plan was made for, or the governor creeps through gaps the plan
     # calls fine.
     body_dilate_m: float = 0.0
-    # Odometry is stamped at the SENSOR (mid360_link on the go2), so the pose it
-    # carries is the lidar's, not the robot's -- 0.30 m ahead and 0.16 m above on
-    # this rig. tf resolves it into the body; ticks are dropped until it can.
+    # Odometry is stamped at the sensor; tf resolves it into the body
+    # (MotionPlannerConfig.base_frame).
     base_frame: str = "base_link"
     # Which returns are obstacles (motion/obstacles.py). It has to be the
     # planner's model, or the room hint measured here is a different world than
@@ -171,7 +156,7 @@ class TrajectoryFollower(Module):
         self._path: Path | None = None
         self._path_at: float | None = None
         self._cloud: PointCloud2 | None = None
-        self._clearance: np.ndarray | None = None
+        self._clearance: NDArray[np.float64] | None = None
         # The very (path, cloud) the hint was measured from, held rather than
         # keyed by id(): CPython recycles addresses, so a cache that remembers
         # only an id compares equal to a NEW path that landed in the freed one's
@@ -273,10 +258,7 @@ class TrajectoryFollower(Module):
         # is refreshing is a coincidence, not an arrival.
         if age > self.config.max_path_age_s:
             self.nav_cmd_vel.publish(Twist())
-            self._stall.blocked(
-                f"the planner: the path is {age:.1f} s old "
-                f"(max_path_age_s={self.config.max_path_age_s}), holding"
-            )
+            self._stall.blocked("the planner: the path is older than max_path_age_s, holding")
             return
         xy = (pose.position.x, pose.position.y)
         with self._lock:
@@ -284,7 +266,7 @@ class TrajectoryFollower(Module):
         if arrived:
             self.nav_cmd_vel.publish(Twist())
             self.goal_reached.publish(Bool(True))
-            logger.info("Goal reached")
+            logger.info("goal reached", x=round(xy[0], 2), y=round(xy[1], 2))
             return
         if reached:
             self.nav_cmd_vel.publish(Twist())
@@ -305,13 +287,13 @@ class TrajectoryFollower(Module):
                 )
             else:
                 self._stall.blocked(
-                    f"nothing -- the law commands ~0 on a {len(path.poses)}-waypoint plan "
-                    f"(track={self.config.track}); suspect the speed governor or the gait envelope"
+                    "nothing -- the law commands ~0 on a real plan; "
+                    "suspect the speed governor or the gait envelope"
                 )
         else:
-            self._stall.ok(f"driving: |v|={speed:.2f} m/s wz={tw.angular.z:+.2f} rad/s")
+            self._stall.ok("driving")
 
-    def _clearance_for(self, path: Path, pose: PoseStamped) -> np.ndarray | None:
+    def _clearance_for(self, path: Path, pose: PoseStamped) -> NDArray[np.float64] | None:
         if not self._track.annotate_clearance:
             # the blind track: the law reads the path's own stamps instead
             return None

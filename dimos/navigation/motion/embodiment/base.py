@@ -21,10 +21,11 @@ module. The deployed adapters are configured with one to configure a live robot.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import math
 
 import numpy as np
+from numpy.typing import NDArray
 
 from dimos.navigation.motion.control.controller import ControllerConfig
 
@@ -40,7 +41,6 @@ class Embodiment:
     below it is fiction, planning it is planning a contact).
     """
 
-    tag: str
     # Moving-body envelope, measured: the union of all robot geometry over a
     # command sweep, in the yaw-aligned base frame. It is the fallback wherever
     # a body has no per-heading `envelope`, so it has to stay conservative.
@@ -77,7 +77,7 @@ class Embodiment:
     base_height: float
     # The follower tuning searched on this body -- fitted, where everything
     # above is measured. Nested so the line between the two stays visible.
-    control: ControllerConfig
+    control: ControllerConfig = field(hash=False)
     center_off: float = 0.0  # body center relative to the pose point
     # Motion-conditioned envelope, one row per |drift| angle in degrees:
     # (deg, length, width, off_x, off_y). 0 = nose-first, 90 = strafe,
@@ -113,16 +113,9 @@ class Embodiment:
         return self.envelope_at(drift)
 
     def dilated(self, by: float = 0.0, precision: float | None = None) -> Embodiment:
-        """This body with every box grown by `by` PER SIDE, and an optional
-        clearance floor.
-
-        Negative shrinks it. The table's own numbers are measured -- the union
-        and the per-heading rows are where the legs actually swing -- so this is
-        the one place a deployment says "plan me tighter than measured" and owns
-        the consequence. `precision` is the hard fits/does-not-fit margin the
-        search tests against, so a gap has to be `width + 2 * precision` wide
-        before a route through it exists at all.
-        """
+        """This body with every box grown by `by` PER SIDE (negative shrinks; the
+        boxes are measured, so a deployment that shrinks them owns it), and an
+        optional clearance floor."""
         pad = 2.0 * by
         rows = tuple((a, ln + pad, w + pad, ox, oy) for a, ln, w, ox, oy in self.envelope)
         return replace(
@@ -134,17 +127,9 @@ class Embodiment:
         )
 
     def stand_box(self) -> tuple[float, float, float, float]:
-        """The STANDING body: the largest box nested in every envelope row.
-
-        Standing is not the union of the swept walking boxes — it is the static
-        body, and every gait's sweep contains it. The rows are intersected in
-        BOTH drift signs, exactly as `envelope_at` mirrors them, so the result
-        is nested in whatever shape an edge may actually have been cleared by:
-        a pose whose row clears the margin clears this too, which is what makes
-        replanning from a route this planner emitted unable to refuse. No
-        measured envelope means no rows to intersect and the union is all there
-        is — nothing changes for those bodies.
-        """
+        """The STANDING body: the largest box nested in every envelope row, both
+        drift signs, so a pose any edge was cleared by clears this too and a
+        replan from this planner's own route cannot refuse."""
         if not self.envelope:
             return self.length, self.width, self.center_off, 0.0
         lo = max(r[3] - r[1] / 2.0 for r in self.envelope)
@@ -153,7 +138,7 @@ class Embodiment:
         half_w = min(r[2] / 2.0 - abs(r[4]) for r in self.envelope)
         return hi - lo, 2.0 * half_w, (lo + hi) / 2.0, 0.0
 
-    def offsets(self, step: float = 0.05, drift: float | None = None) -> np.ndarray:
+    def offsets(self, step: float = 0.05, drift: float | None = None) -> NDArray[np.float64]:
         """Footprint sample points, dense enough that thin slats can't slip.
 
         ``drift`` None asks for the all-gait union; a body-frame drift angle
@@ -162,7 +147,7 @@ class Embodiment:
         return box_offsets(self.box(drift), step)
 
 
-def box_offsets(box: tuple[float, float, float, float], step: float = 0.05) -> np.ndarray:
+def box_offsets(box: tuple[float, float, float, float], step: float = 0.05) -> NDArray[np.float64]:
     """Footprint sample points of one swept box `(length, width, off_x, off_y)`."""
     length, width, off_x, off_y = box
     hl, hw = length / 2.0, width / 2.0

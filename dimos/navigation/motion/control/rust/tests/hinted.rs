@@ -518,9 +518,7 @@ fn a_curve_under_the_classifier_is_untouched_in_open_room() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Tangent feedforward: the chord is gone
-// ---------------------------------------------------------------------------
 
 /// A right-angle corner, 8 cm waypoint spacing: the case the seed cut.
 fn right_angle() -> Vec<[f64; 3]> {
@@ -605,12 +603,10 @@ fn curve_tracking_error_decays_to_zero() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // The command ramp. `Law` is the stateful wrapper around `update`: it exists
 // because the plant applies its own per-axis rate limit to whatever the law
 // asks for, so a law that steps faster than the ramp is not commanding the
 // robot, it is commanding the ramp.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn ramp_respects_the_plant_slew_on_every_axis() {

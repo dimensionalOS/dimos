@@ -69,7 +69,7 @@ class StallReporter:
         self._clear()
         if self._healthy != detail:
             self._healthy = detail
-            logger.info(f"{self.stage}: {detail}")
+            logger.info("running", stage=self.stage, detail=detail)
 
     def blocked(self, reason: str) -> None:
         """Blocked for a reason that is not a missing input."""
@@ -80,18 +80,17 @@ class StallReporter:
         self._healthy = None
         if reason != self._blocked_on:
             self._blocked_on, self._since, self._last_said = reason, now, now
-            logger.warning(f"{self.stage}: waiting on {reason}")
+            logger.warning("waiting", stage=self.stage, on=reason)
             return
         if now - self._last_said >= self.heartbeat_s:
             self._last_said = now
             waited = now - (self._since or now)
-            logger.warning(f"{self.stage}: still waiting on {reason}", waited_s=round(waited, 1))
+            logger.warning("still waiting", stage=self.stage, on=reason, waited_s=round(waited, 1))
 
     def _clear(self) -> None:
         if self._blocked_on is not None:
             waited = time.monotonic() - (self._since or 0.0)
             logger.info(
-                f"{self.stage}: {self._blocked_on} arrived, resuming",
-                blocked_s=round(waited, 1),
+                "resuming", stage=self.stage, arrived=self._blocked_on, blocked_s=round(waited, 1)
             )
             self._blocked_on, self._since = None, None

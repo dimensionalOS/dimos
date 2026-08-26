@@ -27,9 +27,8 @@ from dimos.navigation.motion.adapter.follower import (
     GoalLatch,
     TrajectoryFollower,
     TrajectoryFollowerConfig,
-    path_clearance,
 )
-from dimos.navigation.motion.obstacles import hard_points
+from dimos.navigation.motion.obstacles import hard_points, path_clearance
 
 # Followers built by the helper below. The real constructor stands up the module's
 # LCM RPC transport (a run_forever + _lcm_loop daemon pair per instance); these

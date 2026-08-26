@@ -236,9 +236,7 @@ fn stateless_and_deterministic() {
     assert_eq!(a.2.to_bits(), b.2.to_bits());
 }
 
-// ---------------------------------------------------------------------------
 // Constant time headway.
-// ---------------------------------------------------------------------------
 
 /// The carrot shortens with the governed speed. Behaviourally: on a curving
 /// plan, a governed-down follower cuts less of the corner -- and the corner it
@@ -293,9 +291,7 @@ fn headway_never_reduces_the_commanded_speed() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // The stamped precision profile (the blind-track governor channel).
-// ---------------------------------------------------------------------------
 
 /// `profile.governor_speed`, transcribed: clearance (m) -> speed ceiling (m/s).
 fn governor_speed(clearance: f64) -> f64 {

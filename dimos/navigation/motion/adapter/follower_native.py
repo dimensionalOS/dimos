@@ -80,9 +80,7 @@ class TrajectoryFollowerNative(NativeModule):
     odometry: In[Odometry]
     local_map: In[PointCloud2]
     stop_movement: In[Bool]
-    # IO, not In: `#[tf]` both subscribes and publishes, and the rust side
-    # refuses to start unless the topic map matches the ports it claims.
-    tf: IO[TFMessage]
+    tf: IO[TFMessage]  # IO, not In: see planner_native.py
 
     nav_cmd_vel: Out[Twist]
     goal_reached: Out[Bool]

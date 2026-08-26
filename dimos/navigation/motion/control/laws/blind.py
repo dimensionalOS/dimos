@@ -36,6 +36,7 @@ import math
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -92,7 +93,7 @@ class BlindPursuitController:
         pass
 
     def update(
-        self, pose: PoseStamped, path: Path, t: float, clearance: np.ndarray | None = None
+        self, pose: PoseStamped, path: Path, t: float, clearance: NDArray[np.float64] | None = None
     ) -> Twist:
         cfg, emb = self.config, self.emb
         if len(path) < 2:
@@ -204,8 +205,12 @@ class BlindPursuitController:
 
 
 def _carrot_lerp(
-    xy: np.ndarray, yaws: np.ndarray, arcs: np.ndarray, i: int, look: float
-) -> tuple[np.ndarray, float]:
+    xy: NDArray[np.float64],
+    yaws: NDArray[np.float64],
+    arcs: NDArray[np.float64],
+    i: int,
+    look: float,
+) -> tuple[NDArray[np.float64], float]:
     """The point at exactly ``arcs[i] + look``, interpolated within its segment.
 
     The plan is discretised at 0.1 m — fine noise against a 0.35 m carrot, but
@@ -247,7 +252,7 @@ class RustBlindPursuitController:
         pass
 
     def update(
-        self, pose: PoseStamped, path: Path, t: float, clearance: np.ndarray | None = None
+        self, pose: PoseStamped, path: Path, t: float, clearance: NDArray[np.float64] | None = None
     ) -> Twist:
         clr = None if clearance is None else np.ascontiguousarray(clearance, dtype=np.float64)
         # The path's own per-waypoint stamps. Unlike the clearance argument,

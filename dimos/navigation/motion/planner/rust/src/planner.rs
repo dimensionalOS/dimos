@@ -144,7 +144,6 @@ pub struct Tuning {
 /// configured with, deserialised straight from its config.
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub struct Emb {
-    pub tag: String,
     pub length: f64,
     pub width: f64,
     pub center_off: f64,

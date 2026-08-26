@@ -352,7 +352,7 @@ _go2_zenoh_motion_base = autoconnect(
 # the room hint has to be measured off the slice the plan was priced in.
 go2_zenoh_motion = autoconnect(
     _go2_zenoh_motion_base,
-    TrajectoryFollower.blueprint(track="hinted", body_dilate_m=MOTION_BODY_DILATE_M),
+    TrajectoryFollower.blueprint(body_dilate_m=MOTION_BODY_DILATE_M),
 ).global_config(transport="zenoh", n_workers=9, robot_model="unitree_go2")
 
 # blind: the same graph with the clearance hint withheld. The law recovers the required

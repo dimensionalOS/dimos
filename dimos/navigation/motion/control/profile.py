@@ -30,7 +30,10 @@ carry dt = yaw span / max yaw rate so the timeline stays monotone.
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
+from numpy.typing import NDArray
 
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.motion.embodiment.base import Embodiment
@@ -41,7 +44,7 @@ from dimos.navigation.motion.embodiment.base import Embodiment
 _FAN_EPS = 1e-6  # segment shorter than this is a rotation, not a move
 
 
-def governor_speed(clearance: np.ndarray, emb: Embodiment) -> np.ndarray:
+def governor_speed(clearance: NDArray[np.floating[Any]], emb: Embodiment) -> NDArray[np.float64]:
     """Clearance (m) -> speed ceiling (m/s): creep at the floor, cruise with room."""
     frac = (np.asarray(clearance, dtype=float) - emb.precision) / (
         emb.speed_clearance - emb.precision
@@ -49,13 +52,15 @@ def governor_speed(clearance: np.ndarray, emb: Embodiment) -> np.ndarray:
     return emb.min_speed + (emb.max_speed - emb.min_speed) * np.clip(frac, 0.0, 1.0)
 
 
-def _segments(path: Path) -> tuple[np.ndarray, np.ndarray]:
+def _segments(path: Path) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     xy = np.array([[p.position.x, p.position.y] for p in path.poses]).reshape(-1, 2)
     yaws = np.array([p.yaw for p in path.poses])
     return xy, yaws
 
 
-def encode_precision(path: Path, clearance: np.ndarray, emb: Embodiment, t0: float = 0.0) -> Path:
+def encode_precision(
+    path: Path, clearance: NDArray[np.float64], emb: Embodiment, t0: float = 0.0
+) -> Path:
     """Stamp the path in place: ts[i+1]-ts[i] = seg length / governor speed.
 
     ``clearance`` is per waypoint; a segment uses the tighter of its two
@@ -80,7 +85,7 @@ def encode_precision(path: Path, clearance: np.ndarray, emb: Embodiment, t0: flo
     return path
 
 
-def decode_ceilings(path: Path, lo: float, hi: float) -> np.ndarray | None:
+def decode_ceilings(path: Path, lo: float, hi: float) -> NDArray[np.float64] | None:
     """Per-waypoint speed ceiling (m/s) from the stamps; None if unstamped.
 
     Unstamped = flat or non-monotone ts (a plain path from a producer that
@@ -120,7 +125,7 @@ def decode_ceilings(path: Path, lo: float, hi: float) -> np.ndarray | None:
     return out
 
 
-def ceilings_to_clearance(ceilings: np.ndarray, emb: Embodiment) -> np.ndarray:
+def ceilings_to_clearance(ceilings: NDArray[np.float64], emb: Embodiment) -> NDArray[np.float64]:
     """Speed ceilings -> the clearance that reproduces them under the governor.
 
     Exact linear inverse on [min_speed, max_speed]; lets a stamped path feed

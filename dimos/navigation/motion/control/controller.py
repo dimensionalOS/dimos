@@ -29,6 +29,8 @@ import math
 from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
+from numpy.typing import NDArray
+from pydantic import TypeAdapter
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -84,7 +86,7 @@ class TrajectoryController(Protocol):
     def reset(self) -> None: ...
 
     def update(
-        self, pose: PoseStamped, path: Path, t: float, clearance: np.ndarray | None = None
+        self, pose: PoseStamped, path: Path, t: float, clearance: NDArray[np.float64] | None = None
     ) -> Twist: ...
 
 
@@ -104,14 +106,12 @@ def load_extension() -> Any:
 
 def emb_json(emb: Embodiment) -> str:
     """The body as the rust laws take it: the same JSON dict the planner crate reads."""
-    from pydantic import TypeAdapter
-
-    from dimos.navigation.motion.embodiment.base import Embodiment
+    from dimos.navigation.motion.embodiment.base import Embodiment  # cyclic at import time
 
     return TypeAdapter(Embodiment).dump_json(emb).decode()
 
 
-def path_xy_yaw(path: Path) -> np.ndarray:
+def path_xy_yaw(path: Path) -> NDArray[np.float64]:
     """The plan as a contiguous (N, 3) float64 array, the rust marshalling."""
     return np.ascontiguousarray(
         np.array(

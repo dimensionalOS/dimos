@@ -36,6 +36,7 @@ import math
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -68,8 +69,8 @@ def make_rust(emb: Embodiment = GO2) -> RustHintedController:
 
 
 def _project_onto(
-    xy: np.ndarray, arcs: np.ndarray, px: float, py: float
-) -> tuple[np.ndarray, float]:
+    xy: NDArray[np.float64], arcs: NDArray[np.float64], px: float, py: float
+) -> tuple[NDArray[np.float64], float]:
     """Foot of the perpendicular onto the polyline, and its arc length.
 
     Where on the LINE the body is, rather than which waypoint it is nearest:
@@ -92,7 +93,7 @@ def _project_onto(
     return foot, s_star
 
 
-def _point_at(xy: np.ndarray, arcs: np.ndarray, s: float) -> np.ndarray:
+def _point_at(xy: NDArray[np.float64], arcs: NDArray[np.float64], s: float) -> NDArray[np.float64]:
     """Point on the polyline at arc ``s``, clamped to its ends."""
     n = len(xy)
     if s <= 0.0:
@@ -105,7 +106,9 @@ def _point_at(xy: np.ndarray, arcs: np.ndarray, s: float) -> np.ndarray:
     return np.asarray(xy[k - 1] + u * (xy[k] - xy[k - 1]))
 
 
-def _tangent_at(xy: np.ndarray, arcs: np.ndarray, s: float, preview: float) -> tuple[float, float]:
+def _tangent_at(
+    xy: NDArray[np.float64], arcs: NDArray[np.float64], s: float, preview: float
+) -> tuple[float, float]:
     """Unit direction of travel at ``s``: a chord across a CENTRED window.
 
     Centred, not forward-looking, and that is the whole design of it. A forward
@@ -130,7 +133,7 @@ def _tangent_at(xy: np.ndarray, arcs: np.ndarray, s: float, preview: float) -> t
 
 
 def update(
-    pose: PoseStamped, path: Path, emb: Embodiment, clearance: np.ndarray | None = None
+    pose: PoseStamped, path: Path, emb: Embodiment, clearance: NDArray[np.float64] | None = None
 ) -> tuple[float, float, float]:
     """The pure law, before the rate limiter.
 
@@ -301,17 +304,8 @@ def update(
 
 
 class HintedController:
-    """The hinted law plus the only state it keeps: its own previous command.
-
-    Rate limiting and a pure transport delay COMMUTE, and the plant's limiter is
-    idempotent on a stream that already satisfies it, so feeding it a
-    slew-compliant stream leaves what the policy sees unchanged to one ulp. What
-    this buys is not a quieter loop but an honest one: the request the law signs
-    its name to is the request the robot executes. It is not anti-churn
-    reasoning — churn was measured to ANTI-predict failure here (rank-AUC 0.373)
-    — and nothing treats a fast command as dangerous. The claim is narrower: a
-    command the plant cannot deliver is not a command.
-    """
+    """The hinted law plus the only state it keeps: its own previous command,
+    so the request it signs its name to is one the plant can execute."""
 
     config: ControllerConfig
 
@@ -326,7 +320,7 @@ class HintedController:
         self._last_t: float | None = None
 
     def update(
-        self, pose: PoseStamped, path: Path, t: float, clearance: np.ndarray | None = None
+        self, pose: PoseStamped, path: Path, t: float, clearance: NDArray[np.float64] | None = None
     ) -> Twist:
         emb = self.emb
         raw = update(pose, path, emb, clearance)
@@ -385,7 +379,7 @@ class RustHintedController:
         self._law.reset()
 
     def update(
-        self, pose: PoseStamped, path: Path, t: float, clearance: np.ndarray | None = None
+        self, pose: PoseStamped, path: Path, t: float, clearance: NDArray[np.float64] | None = None
     ) -> Twist:
         clr = None if clearance is None else np.ascontiguousarray(clearance, dtype=np.float64)
         vx, vy, wz = self._law.step(

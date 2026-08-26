@@ -33,6 +33,7 @@ from dataclasses import dataclass, field as dc_field
 from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
+from scipy.spatial import cKDTree
 
 from dimos.navigation.motion.planner.planners.se2 import VOXEL
 
@@ -106,3 +107,21 @@ def hard_points(
     """The obstacles this model sees -- the cloud the search plans on."""
     pts = referenced(cloud, ground_z)
     return np.ascontiguousarray(pts[model.field(pts).hard])
+
+
+def path_clearance(
+    xy: NDArray[np.float64], points: NDArray[np.float32], half_width: float
+) -> NDArray[np.float64]:
+    """Per-waypoint room hint (m): nearest obstacle minus the half-width.
+
+    A speed hint for the controller, not a safety contract. Nothing to hit or
+    an empty path = infinite room. `points` is a model's hard set: every row is
+    something the body can hit, and z rides along unread -- deciding that again
+    here would price a different world than the plan was made for.
+    """
+    xy = np.asarray(xy, dtype=np.float64).reshape(-1, 2)
+    band = np.asarray(points, dtype=np.float32).reshape(-1, 3)[:, :2]
+    if not len(band) or not len(xy):
+        return np.full(len(xy), np.inf)
+    d, _ = cKDTree(band).query(xy)
+    return np.asarray(d, dtype=np.float64) - half_width

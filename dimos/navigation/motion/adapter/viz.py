@@ -37,6 +37,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from numpy.typing import NDArray
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
@@ -63,7 +64,7 @@ def _body_centre(pose: PoseStamped, center_off: float) -> tuple[float, float]:
     )
 
 
-def plan_clearance(msg: Path, emb: Embodiment) -> np.ndarray | None:
+def plan_clearance(msg: Path, emb: Embodiment) -> NDArray[np.float64] | None:
     """Per-waypoint room (m) recovered from the plan's stamps, or None.
 
     A path from a producer that does not speak the precision dialect decodes to
@@ -77,7 +78,6 @@ def plan_clearance(msg: Path, emb: Embodiment) -> np.ndarray | None:
 def render_plan_body(
     msg: Path,
     emb: Embodiment = GO2,
-    height: float = 0.32,
     stride_m: float = 0.35,
     line_radius: float = 0.012,
 ) -> Archetype | None:
@@ -93,9 +93,10 @@ def render_plan_body(
     there to show. ``line_radius`` is the wireframe's own thickness in metres
     -- thin edges disappear against a dense point cloud at any useful zoom.
     """
-    import rerun as rr
+    import rerun as rr  # heavy, optional: only the viewer process pays for it
 
     length, width, center_off, _ = emb.box(0.0)
+    height = emb.height
 
     n = len(msg.poses)
     if n == 0:

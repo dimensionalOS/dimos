@@ -67,7 +67,6 @@ mod tests {
         let e = Emb::go2();
         let back: Emb = serde_json::from_str(&serde_json::to_string(&e).unwrap()).unwrap();
         assert_eq!(back.envelope, e.envelope);
-        assert_eq!(back.tag, "go2");
         assert_eq!(governor(&back), governor(&e));
     }
 }

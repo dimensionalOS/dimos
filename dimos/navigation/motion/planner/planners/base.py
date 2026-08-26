@@ -38,9 +38,10 @@ from __future__ import annotations
 from collections.abc import Callable
 import itertools
 import math
-from typing import Protocol
+from typing import Any, Protocol
 
 import numpy as np
+from numpy.typing import NDArray
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -49,6 +50,11 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path
 
 RESOLUTION = 0.1  # waypoint spacing of the published route (m)
+# Largest yaw change one published waypoint may command (rad). A consumer that
+# stations the body along the route sweeps the yaw entering each station, and a
+# station spans several waypoints, so this sits well under any sweep threshold
+# a station is judged at (the rust planner's YAW_STEP is the same number).
+YAW_STEP = 0.045
 
 
 class PlannerEpisode(Protocol):
@@ -56,7 +62,7 @@ class PlannerEpisode(Protocol):
 
     def plan(
         self,
-        obstacles: np.ndarray,
+        obstacles: NDArray[np.floating[Any]],
         pose: Pose,
         goal: Pose,
         incumbent: Path | None = None,
@@ -68,7 +74,7 @@ PlannerFactory = Callable[..., PlannerEpisode]
 
 # Path <-> states, shared by every candidate: the search speaks (x, y, yaw)
 # rows, the caller speaks nav_msgs Path, and only these three convert.
-def states_of(path: Path | None) -> np.ndarray | None:
+def states_of(path: Path | None) -> NDArray[np.float64] | None:
     """A published path back as the (N, 3) SE(2) the search speaks."""
     if path is None or not path.poses:
         return None
@@ -77,7 +83,7 @@ def states_of(path: Path | None) -> np.ndarray | None:
     ).reshape(-1, 3)
 
 
-def densify_states(states: np.ndarray, res: float) -> list[np.ndarray]:
+def densify_states(states: NDArray[np.float64], res: float) -> list[NDArray[np.float64]]:
     """Interpolate sparse SE(2) vertices to path resolution (yaw = shortest arc)."""
     dense = [states[0]]
     for a, b in itertools.pairwise(states):
@@ -85,21 +91,7 @@ def densify_states(states: np.ndarray, res: float) -> list[np.ndarray]:
         n = max(
             1,
             int(math.hypot(b[0] - a[0], b[1] - a[1]) / res),
-            # CEIL, not int. The judge scores a station with the body swept
-            # over all yaw entering it, and swaps the box for its
-            # circumscribing cylinder above turn_yaw_eps (0.5 rad). One
-            # lattice bin is 2*pi/16 = 0.3927 rad, and int(0.3927 / 0.15) = 2
-            # published 0.196 rad per waypoint -- over sweep_yaw_step (0.15),
-            # which this very term meant to stay under. Stations then
-            # accumulated up to 0.511 rad and scored as the cylinder (radius
-            # ~0.452 m vs a 0.155 m body half-width), which is what made
-            # `--planner gold` veto its own path on gen028.
-            # 0.045, not 0.15: a station spans several waypoints, so publishing
-            # exactly at sweep_yaw_step still lets a station accumulate past
-            # it. This keeps per-station yaw-in well under the threshold, which
-            # is what makes scored clearance track truth instead of merely
-            # clearing the veto.
-            math.ceil(abs(dyaw) / 0.045),
+            math.ceil(abs(dyaw) / YAW_STEP),  # ceil: a waypoint never exceeds YAW_STEP
         )
         for t in np.linspace(1.0 / n, 1.0, n):
             dense.append(

@@ -16,6 +16,7 @@ from dataclasses import replace
 import math
 
 import numpy as np
+from numpy.typing import NDArray
 import pytest
 
 from dimos.core.module import ModuleConfig
@@ -216,7 +217,7 @@ def _model_planner(**config):
     return _planner(**config)
 
 
-def _room(floor_z: float, n: int = 400) -> np.ndarray:
+def _room(floor_z: float, n: int = 400) -> NDArray[np.float64]:
     """A floor slab at `floor_z` with clutter 0.2..0.4 m above it."""
     a = np.arange(n) / n * 2 * math.pi
     slab = np.column_stack([np.cos(a), np.sin(a), np.full(n, floor_z)])
@@ -250,7 +251,7 @@ def test_the_default_model_is_the_body_band():
     assert planner.config.obstacle_model == "body_band"
 
 
-def _wall_over(ground_z: float, height: float) -> np.ndarray:
+def _wall_over(ground_z: float, height: float) -> NDArray[np.float64]:
     """A wall across the route at `height` over the ground, and nothing else."""
     ys = np.arange(-1.0, 1.0 + 1e-9, 0.05)
     return np.column_stack([np.full(len(ys), 1.5), ys, np.full(len(ys), ground_z + height)]).astype(
@@ -258,7 +259,7 @@ def _wall_over(ground_z: float, height: float) -> np.ndarray:
     )
 
 
-def _detour(emb: Embodiment, cloud: np.ndarray, ground_z: float) -> float:
+def _detour(emb: Embodiment, cloud: NDArray[np.float64], ground_z: float) -> float:
     """How far off the straight line the plan goes, planning the way the module does."""
     hard = hard_points(load_model("body_band", emb), cloud, ground_z)
     episode = make_py(emb)
@@ -277,7 +278,7 @@ def test_a_tall_body_plans_around_what_the_old_band_cut_off():
     points the model had correctly kept, and drove straight through them.
     """
     wall = _wall_over(0.0, 0.55)
-    tall = replace(GO2, tag="tall", height=0.60)
+    tall = replace(GO2, height=0.60)
     assert _detour(tall, wall, 0.0) > 0.8, "the tall body drove through its own obstacle"
     # and the control: the same wall IS over a go2's belly, so it is not a wall
     assert not len(hard_points(load_model("body_band", GO2), wall, 0.0))

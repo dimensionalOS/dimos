@@ -31,7 +31,6 @@ from dimos.navigation.motion.control.controller import ControllerConfig
 from .base import Embodiment
 
 GO2 = Embodiment(
-    tag="go2",
     # Moving-body union over a command sweep: the swinging legs, not the 0.31 m
     # trunk, set the width.
     length=0.883,
@@ -92,7 +91,6 @@ GO2 = Embodiment(
 # No measured envelope of its own: it falls back to the union everywhere.
 GO2_PAYLOAD = replace(
     GO2,
-    tag="go2-payload",
     length=0.963,
     center_off=0.042,
     comfort=0.5,

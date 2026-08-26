@@ -24,6 +24,7 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 from pydantic import TypeAdapter
 
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -52,7 +53,7 @@ class TargetEpisode:
 
     def plan(
         self,
-        obstacles: np.ndarray,
+        obstacles: NDArray[np.floating[Any]],
         pose: Pose,
         goal: Pose,
         incumbent: Path | None = None,
@@ -102,7 +103,7 @@ class RustTargetEpisode:
 
     def plan(
         self,
-        obstacles: np.ndarray,
+        obstacles: NDArray[np.floating[Any]],
         pose: Pose,
         goal: Pose,
         incumbent: Path | None = None,

@@ -33,7 +33,6 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path
-from dimos.navigation.motion.adapter.follower import path_clearance as follower_clearance
 from dimos.navigation.motion.control.controller import (
     ControllerConfig,
     emb_json,
@@ -46,6 +45,7 @@ from dimos.navigation.motion.control.profile import (
     encode_precision,
 )
 from dimos.navigation.motion.embodiment.go2 import GO2
+from dimos.navigation.motion.obstacles import path_clearance as follower_clearance
 
 # The crate under test. Skipped rather than failed when it is not built, the way
 # ray_tracing and mls_planner do it: `uv run maturin develop --uv --release -m

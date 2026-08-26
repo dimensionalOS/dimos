@@ -25,6 +25,7 @@ import math
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -69,7 +70,7 @@ class PursuitController:
         self._goal_reached = False
 
     def update(
-        self, pose: PoseStamped, path: Path, t: float, clearance: np.ndarray | None = None
+        self, pose: PoseStamped, path: Path, t: float, clearance: NDArray[np.float64] | None = None
     ) -> Twist:
         cfg, emb = self.config, self.emb
         if len(path) < 2:
@@ -151,7 +152,7 @@ class RustPursuitController:
         pass
 
     def update(
-        self, pose: PoseStamped, path: Path, t: float, clearance: np.ndarray | None = None
+        self, pose: PoseStamped, path: Path, t: float, clearance: NDArray[np.float64] | None = None
     ) -> Twist:
         clr = None if clearance is None else np.ascontiguousarray(clearance, dtype=np.float64)
         vx, vy, wz = self._mod.update_seed(

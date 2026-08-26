@@ -87,9 +87,7 @@ pub struct Config {
     /// A carrot that jumped this far is a different task, and the route this
     /// module is holding on to is about the old one -- so it is dropped and the
     /// next search starts from nothing. Republish noise moves the carrot ~0 m; a
-    /// real reroute moved it 4.6 m in the door recording. The python twin of
-    /// this field used to stop at the module boundary, back when the search
-    /// itself was stateless; the incumbent is an input now, so it crosses.
+    /// real reroute moves it metres.
     #[validate(range(min = 0.0))]
     pub reset_carrot_m: f64,
     /// What counts as an obstacle (`obstacles.rs`). "body_band" reads the cloud

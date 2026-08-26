@@ -23,8 +23,6 @@ from .go2 import GO2
 
 # Go2 plant and tuning under a different footprint: what the planner is
 # conditioned on, nothing the follower has been searched for.
-SLIM = replace(GO2, tag="slim", length=2.0, width=0.24, comfort=0.3, envelope=(), arc_inflate=0.0)
+SLIM = replace(GO2, length=2.0, width=0.24, comfort=0.3, envelope=(), arc_inflate=0.0)
 # cannot crab, and has no legs to step over anything with
-DIFFDRIVE = replace(
-    GO2, tag="diffdrive", strafe=50.0, reverse=3.0, steppable=0.0, envelope=(), arc_inflate=0.0
-)
+DIFFDRIVE = replace(GO2, strafe=50.0, reverse=3.0, steppable=0.0, envelope=(), arc_inflate=0.0)

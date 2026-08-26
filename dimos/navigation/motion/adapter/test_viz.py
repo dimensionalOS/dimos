@@ -19,6 +19,7 @@ import math
 from types import SimpleNamespace
 
 import numpy as np
+from numpy.typing import NDArray
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -46,7 +47,7 @@ def _plan(n: int = 40, yaw: float = 0.0) -> Path:
     return Path(frame_id="odom", poses=[_pose(k * 0.1, 0.0, yaw) for k in range(n)])
 
 
-def _rgba(boxes) -> np.ndarray:  # type: ignore[no-untyped-def]
+def _rgba(boxes) -> NDArray[np.float64]:  # type: ignore[no-untyped-def]
     """rerun packs colors as u32 0xRRGGBBAA, not as rows."""
     packed = np.asarray(boxes.colors.pa_array.to_pylist(), dtype=np.uint32)
     return np.column_stack(
@@ -108,9 +109,7 @@ def test_the_veto_stub_is_drawn_rather_than_blanked() -> None:
 
 def test_the_box_sits_on_the_body_not_on_the_pose_point() -> None:
     """center_off is along the pose's own heading, so yaw has to rotate it."""
-    facing_y = render_plan_body(
-        _plan(yaw=math.pi / 2), replace(GO2, tag="t", center_off=-0.10, envelope=())
-    )
+    facing_y = render_plan_body(_plan(yaw=math.pi / 2), replace(GO2, center_off=-0.10, envelope=()))
     cx, cy, _ = facing_y.centers.pa_array.to_pylist()[0]
     # the yaw round-trips through a float32 quaternion, so this is not exact
     assert abs(cx - 0.0) < 1e-6, "offset leaked into x while facing +y"
@@ -127,10 +126,11 @@ def _said(monkeypatch) -> list[str]:  # type: ignore[no-untyped-def]
     from dimos.navigation.motion.adapter import diagnostics
 
     lines: list[str] = []
-    sink = SimpleNamespace(
-        info=lambda msg, **kw: lines.append(msg),
-        warning=lambda msg, **kw: lines.append(msg),
-    )
+
+    def said(msg: str, **kw: object) -> None:
+        lines.append(f"{kw.pop('stage', '')}: {msg} {kw}")
+
+    sink = SimpleNamespace(info=said, warning=said)
     monkeypatch.setattr(diagnostics, "logger", sink)
     return lines
 
@@ -150,7 +150,7 @@ def test_stall_reporter_is_edge_triggered(monkeypatch) -> None:  # type: ignore[
     r = StallReporter("Stage", heartbeat_s=100.0)
     for _ in range(20):
         r.check({"odometry": False})
-    assert sum("waiting on odometry" in ln for ln in lines) == 1
+    assert sum(": waiting {'on': 'odometry'}" in ln for ln in lines) == 1
     # and recovery is announced, so the log says when it started working
     lines.clear()
     r.check({"odometry": True})

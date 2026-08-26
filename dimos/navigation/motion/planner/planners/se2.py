@@ -22,10 +22,14 @@ against.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import heapq
 import itertools
 import math
+from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
+from scipy.spatial import cKDTree
 
 # The search prices an edge by the time the FOLLOWER's governor will take over
 # it, so it reads that law from the one place it is defined rather than keeping
@@ -36,7 +40,7 @@ from dimos.navigation.motion.control.profile import governor_speed
 from dimos.navigation.motion.embodiment.base import Embodiment, box_offsets
 
 # (N, 3) rows of (x, y, yaw): the state the search speaks, and the rust boundary's.
-States = np.ndarray
+States = NDArray[np.float64]
 Pose2 = tuple[float, float, float]  # x, y, yaw
 
 
@@ -55,13 +59,10 @@ CELL = 0.12  # 3 * FINE
 PERIOD = 0.24  # 2 * CELL == 3 * VOXEL == 6 * FINE
 
 # How much cheaper a challenger route has to be before the planner abandons the
-# one it already published, in open-space metres (`path_cost`'s unit).
-#
-# MEASURED, not tuned, and it has to cover every way a route's price can move
-# while the world stands still. Two such ways were measured, and the constant is
-# their sum plus headroom.
-# One copy: the rust candidate is handed this very value across the extension
-# boundary.
+# one it already published, in open-space metres (`path_cost`'s unit). Measured:
+# it covers every way a route's price can move while the world stands still
+# (the seed snap and the incumbent's re-densification), plus headroom. One copy:
+# the rust candidate is handed this value across the extension boundary.
 COMMIT_MARGIN = 1.50
 
 
@@ -72,15 +73,16 @@ class SdfGrid:
     x0: float
     y0: float
     pitch: float
-    d: np.ndarray
+    d: NDArray[np.float64]
 
     @classmethod
     def from_obstacles(
-        cls, bounds: tuple[float, float, float, float], obstacles: np.ndarray, pitch: float = FINE
+        cls,
+        bounds: tuple[float, float, float, float],
+        obstacles: NDArray[np.float64],
+        pitch: float = FINE,
     ) -> SdfGrid:
         """Distance to the nearest of (N, 2) obstacle xy, sampled over `bounds` (x0, y0, x1, y1)."""
-        from scipy.spatial import cKDTree
-
         x0, y0, x1, y1 = bounds
         xs, ys = np.arange(x0, x1, pitch), np.arange(y0, y1, pitch)
         if not len(obstacles):
@@ -89,13 +91,13 @@ class SdfGrid:
         d, _ = cKDTree(obstacles).query(np.column_stack([X.ravel(), Y.ravel()]))
         return cls(x0, y0, pitch, d.reshape(len(xs), len(ys)))
 
-    def ix(self, x: np.ndarray | float) -> np.ndarray:
+    def ix(self, x: NDArray[np.floating[Any]] | float) -> NDArray[np.intp]:
         return np.clip(np.round((x - self.x0) / self.pitch).astype(np.intp), 0, self.d.shape[0] - 1)
 
-    def iy(self, y: np.ndarray | float) -> np.ndarray:
+    def iy(self, y: NDArray[np.floating[Any]] | float) -> NDArray[np.intp]:
         return np.clip(np.round((y - self.y0) / self.pitch).astype(np.intp), 0, self.d.shape[1] - 1)
 
-    def lookup(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    def lookup(self, x: NDArray[np.float64], y: NDArray[np.float64]) -> NDArray[np.float64]:
         """Nearest-sample clearance at each (x, y), metres."""
         return np.asarray(self.d[self.ix(x), self.iy(y)])
 
@@ -131,7 +133,9 @@ def path_cost(grid: SdfGrid, states: States, emb: Embodiment, step: float = COST
         return 0.0
     off = box_offsets(emb.box(None))
 
-    def tight(px: np.ndarray, py: np.ndarray, th: np.ndarray) -> np.ndarray:
+    def tight(
+        px: NDArray[np.float64], py: NDArray[np.float64], th: NDArray[np.float64]
+    ) -> NDArray[np.float64]:
         """max_speed/governor(clearance): what a metre here costs in metres."""
         c_, s_ = np.cos(th)[:, None], np.sin(th)[:, None]
         wx = px[:, None] + c_ * off[None, :, 0] - s_ * off[None, :, 1]
@@ -244,7 +248,7 @@ def se2_search(
     # handful of distinct boxes, so they are interned by geometry: the
     # clearance stack is built once per box, not once per edge.
     fp_ids: dict[tuple[float, ...], int] = {}
-    fp_offsets: list[np.ndarray] = []
+    fp_offsets: list[NDArray[np.float64]] = []
 
     def footprint(box: tuple[float, float, float, float]) -> int:
         key = tuple(round(v, 9) for v in box)
@@ -302,8 +306,6 @@ def se2_search(
             clr[bi, fp] = clear
     free = clr > margin
 
-    import heapq
-
     def pose_clear(x: float, y: float, th: float, fp: int = UNION) -> float:
         """Clearance of the body at an exact pose — no lattice snap anywhere."""
         off = fp_offsets[fp]
@@ -326,7 +328,7 @@ def se2_search(
     # a gap the lattice just proved the body walks down nose-first. Both the
     # smoother and the incumbent's re-validation ask exactly this question, so
     # there is one copy of it.
-    def seg_free(a: np.ndarray, b: np.ndarray, floor: float) -> bool:
+    def seg_free(a: NDArray[np.float64], b: NDArray[np.float64], floor: float) -> bool:
         dyaw = math.remainder(b[2] - a[2], 2 * math.pi)
         dx, dy = b[0] - a[0], b[1] - a[1]
         span = math.hypot(dx, dy)
@@ -342,24 +344,18 @@ def se2_search(
 
     # A pose the robot actually occupies may always be departed. The seed's
     # feasibility is therefore read at the TRUE start pose, not at the cell it
-    # snaps to: the snap moves the body by up to half a cell diagonal (~85 mm),
-    # and a start whose real pose clears the margin can land in a cell that
-    # does not (door_side: 0.083 true, 0.043 snapped, margin 0.05). The cell
-    # still NAMES the seed node; it just no longer decides whether the robot is
-    # allowed to be where it already is. Standing has no direction of travel,
-    # and the shape it occupies is the STATIC BODY, not the union of every
-    # swept walking box: the intersection of the envelope's rows, which is
-    # nested in each of them, so a pose that any edge was cleared by clears the
-    # witness too and replanning from this planner's own emitted route can
-    # never refuse. On the union it did -- the route threads a gap only a drift
-    # row fits, the robot walks in, and the next replan from mid-gap refuses
-    # forever (gen000 froze at union +0.033 against a 0.05 margin while the
-    # nose row read +0.121). A start genuinely inside an obstacle still reads
-    # negative and still refuses. Interned HERE rather than up with the moving
-    # rows: it is read at one exact pose, so it never wants a clearance plane.
+    # snaps to (the snap moves the body up to half a cell diagonal, ~85 mm);
+    # the cell still NAMES the seed node. Standing has no direction of travel,
+    # and the shape it occupies is the STATIC BODY -- the intersection of the
+    # envelope's rows, nested in each of them -- so a pose any edge was cleared
+    # by clears the witness too, and a replan from this planner's own route can
+    # never refuse (on the union it did: a gap only a drift row fits refuses
+    # forever once the robot is inside it). A start genuinely inside an
+    # obstacle still reads negative and still refuses. Interned here, not with
+    # the moving rows: it is read at one exact pose and never wants a plane.
     STAND = footprint(emb.stand_box())
 
-    def solve(seed: tuple[float, float, float]) -> np.ndarray | None:
+    def solve(seed: tuple[float, float, float]) -> NDArray[np.float64] | None:
         """The search proper, from one seed pose to the fixed goal.
 
         Named rather than inlined because the incumbent's extension asks the
@@ -487,7 +483,7 @@ def se2_search(
     if incumbent is None:
         return result
 
-    def committed() -> np.ndarray | None:
+    def committed() -> NDArray[np.float64] | None:
         """The published route, trimmed to here and carried to the goal —
         or None when this map no longer lets the body walk it.
 
@@ -527,7 +523,7 @@ def se2_search(
         # fresh search nor the carried incumbent has anywhere to go.
         return route
 
-    def priced(p: np.ndarray) -> np.ndarray:
+    def priced(p: NDArray[np.float64]) -> NDArray[np.float64]:
         """Both routes are priced from where the robot actually IS — the fresh
         answer opens at the cell its seed snapped to, up to half a cell diagonal
         away, and that walk is real."""

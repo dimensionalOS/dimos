@@ -31,6 +31,7 @@ import time
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 from reactivex.disposable import Disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -46,12 +47,16 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.motion.adapter.diagnostics import StallReporter
-from dimos.navigation.motion.adapter.follower import path_clearance
 from dimos.navigation.motion.control.profile import encode_precision
 from dimos.navigation.motion.embodiment.base import Embodiment
 from dimos.navigation.motion.embodiment.go2 import GO2
 from dimos.navigation.motion.loader import load
-from dimos.navigation.motion.obstacles import ObstacleModel, hard_points, load as load_model
+from dimos.navigation.motion.obstacles import (
+    ObstacleModel,
+    hard_points,
+    load as load_model,
+    path_clearance,
+)
 from dimos.navigation.motion.planner.planners.base import PlannerEpisode
 from dimos.navigation.tf_pose import OdomBasePose
 from dimos.utils.logging_config import setup_logger
@@ -61,7 +66,7 @@ logger = setup_logger()
 
 def annotate(
     ref: Path,
-    obstacles: np.ndarray,
+    obstacles: NDArray[np.float32],
     emb: Embodiment,
     ts: float,
     frame_id: str,
@@ -99,7 +104,7 @@ def stamped(ref: Path, ts: float = 0.0, frame_id: str = "odom", ground_z: float 
 
 
 def carrot_along(
-    path_xy: np.ndarray, robot_xy: tuple[float, float], lookahead: float
+    path_xy: NDArray[np.float64], robot_xy: tuple[float, float], lookahead: float
 ) -> tuple[float, float]:
     """`lookahead` metres of arc along the path from the waypoint closest to
     the robot, clamped to the path end."""
@@ -157,21 +162,15 @@ class MotionPlannerConfig(ModuleConfig):
     # `float | None` cannot cross into the native twin, and one knob that both
     # halves carry beats two that drift.
     body_dilate_m: float = 0.0
-    # Plan when an input that MATTERS changed — a new local map, or a carrot
-    # that moved — rather than on every tick of the clock. The planner ticks at
-    # 5 Hz over a 1 Hz map, so four ticks in five re-solve an unchanged world;
-    # between maps the plan is stable to 0.15 m, so those four are work whose
-    # only output is jitter. The follower tracks the published path as the robot
-    # moves and needs no republish to do it. False replans every tick.
+    # Plan when an input that MATTERS changed -- a new local map, or a carrot
+    # that moved by `replan_carrot_m` -- rather than on every tick of the clock
+    # (`replan_due`). The follower tracks the published path as the robot moves
+    # and needs no republish to do it. False replans every tick.
     replan_on_change: bool = True
-    # How far the carrot has to move to be worth re-solving for. The route the
-    # carrot rides on is republished at ~1 Hz with its head trimmed to the robot
-    # and its tail re-solved, so the waypoints move every time and the carrot
-    # does not — gating on the array would dedup nothing.
     replan_carrot_m: float = REPLAN_CARROT_M
     # A carrot that jumped this far is a different task, and the episode's warm
     # start and hysteresis are about the old one. Republish noise moves it ~0 m;
-    # a real reroute moved it 4.6 m in the door recording.
+    # a real reroute moves it metres.
     reset_carrot_m: float = RESET_CARROT_M
     # Odometry is stamped at the SENSOR (mid360_link on the go2), so the pose it
     # carries is the lidar's, not the robot's -- 0.30 m ahead and 0.16 m above on
@@ -228,7 +227,7 @@ class MotionPlanner(Module):
         # the scene: the base rides emb.base_height above it.
         self._ground_z: float | None = None
         self._base_pose: OdomBasePose | None = None
-        self._global_xy: np.ndarray | None = None
+        self._global_xy: NDArray[np.float64] | None = None
         self._emb = self.config.embodiment.dilated(by=self.config.body_dilate_m)
         self._model: ObstacleModel = load_model(self.config.obstacle_model, self._emb)
         self._episode: PlannerEpisode = load(self.config.planner)(self._emb)
@@ -392,7 +391,7 @@ class MotionPlanner(Module):
             ground_z=ground_z,
         )
         self.path.publish(plan)
-        self._stall.ok(f"planning: {len(plan.poses)} waypoints")
+        self._stall.ok("planning")
         self._publish_viz(plan)
         return True
 
