@@ -51,8 +51,8 @@ from dimos.utils.reactive import backpressure
 
 logger = setup_logger()
 
-MOTION_MODULE_NAME = "Motion Module"
-IMU_CLOCK_WINDOW_SECONDS = 30
+REALSENSE_MOTION_MODULE_NAME = "Motion Module"
+IMU_CLOCK_WINDOW_SECONDS = 30  # seconds (super generous)
 
 
 def ms_to_s(milliseconds: float) -> float:
@@ -65,31 +65,18 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-def default_base_transform() -> Transform:
-    """Default identity transform for camera mounting."""
-    return Transform(
-        translation=Vector3(0.0, 0.0, 0.0),
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-    )
-
-
-def default_imu_info() -> ImuInfo:
-    """D455 IMU noise model, measured by the kalibr run in datasets/d455."""
-    return ImuInfo(
-        gyro_noise_density=2.0e-4,
-        gyro_random_walk=1.0e-5,
-        accel_noise_density=1.8e-3,
-        accel_random_walk=1.0e-4,
-    )
-
-
 class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     width: int = 848
     height: int = 480
     fps: int = 15
     camera_name: str = "camera"
     base_frame_id: str = "base_link"
-    base_transform: Transform | None = Field(default_factory=default_base_transform)
+    base_transform: Transform | None = Field(
+        default_factory=lambda: Transform(
+            translation=Vector3(0.0, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        )
+    )
     align_depth_to_color: bool = True
     enable_depth: bool = True
     enable_color: bool = True
@@ -102,8 +89,15 @@ class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     enable_imu: bool = False
     # Gyro rate, and so the Imu output rate.
     imu_hz: int = 400
-    # Noise model published on ``imu_info``; the driver stamps frame and rate itself.
-    imu_info: ImuInfo | None = Field(default_factory=default_imu_info)
+    imu_info: ImuInfo | None = Field(
+        # default value based on a d455, but this should be measured for every physical camera (every d455,d435,etc)
+        default_factory=lambda: ImuInfo(
+            gyro_noise_density=2.0e-4,
+            gyro_random_walk=1.0e-5,
+            accel_noise_density=1.8e-3,
+            accel_random_walk=1.0e-4,
+        )
+    )
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0
     serial_number: str | None = None
@@ -322,7 +316,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         # The option only reaches the sensor object owned by the pipeline that opened it, so
         # this has to go through imu_profile rather than any other device handle.
         for sensor in imu_profile.get_device().query_sensors():
-            if sensor.get_info(rs.camera_info.name) == MOTION_MODULE_NAME:
+            if sensor.get_info(rs.camera_info.name) == REALSENSE_MOTION_MODULE_NAME:
                 sensor.set_option(rs.option.global_time_enabled, 0.0)
 
     def _stream_rates(self, stream_type: rs.stream) -> list[int]:
@@ -347,7 +341,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         if self._profile is None:
             return
         for sensor in self._profile.get_device().query_sensors():
-            if sensor.get_info(rs.camera_info.name) == MOTION_MODULE_NAME:
+            if sensor.get_info(rs.camera_info.name) == REALSENSE_MOTION_MODULE_NAME:
                 continue  # _start_imu deliberately keeps it on the hardware clock
             if not sensor.supports(rs.option.global_time_enabled):
                 logger.warning(
