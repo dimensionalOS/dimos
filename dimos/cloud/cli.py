@@ -74,6 +74,7 @@ def _bar(name: str) -> Callable[[str, int, int], None]:
 
 def ls() -> None:
     from rich.console import Console
+    from rich.filesize import decimal
     from rich.table import Table
 
     try:
@@ -87,7 +88,7 @@ def ls() -> None:
             u["filename"],
             u.get("kind", ""),
             u.get("robot_id") or "—",
-            str(u["size"]),
+            decimal(u["size"]),
             u["state"],
         )
     Console().print(table)

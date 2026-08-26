@@ -98,7 +98,7 @@ class MultipartBackend:
         with self._staging(path) as tmp:
             if self.codec_id and path.suffix != codecs.suffix(self.codec_id):
                 artifact = Path(tmp) / (path.name + codecs.suffix(self.codec_id))
-                tick("compress", 0, path.stat().st_size)
+                tick("compress", 0, 0)
                 codecs.compress(self.codec_id, path, artifact)
             else:
                 artifact = path
