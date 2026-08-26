@@ -14,17 +14,15 @@
 
 from typing import Any
 
-from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.navigation.nav_3d.mls_planner.goal_relay import GoalRelay
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.navigation.nav_3d.mls_planner.start_relay import StartRelay
 from dimos.protocol.tf.tf import MultiTBuffer
 
 MOUNT_Z = 0.163
-LIDAR_HEIGHT = 0.45
 
 
 class FakeTF(MultiTBuffer):
@@ -66,80 +64,58 @@ def _mount() -> Transform:
     )
 
 
-def _odom(z: float = 3.0) -> Odometry:
-    return Odometry(
-        ts=1.0,
+def _odom_edge() -> Transform:
+    return Transform(
+        translation=Vector3(1.0, 2.0, 3.0),
+        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
         frame_id="odom",
         child_frame_id="mid360_link",
-        pose=Pose(Vector3(1.0, 2.0, z), Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ts=2.0,
     )
 
 
-def _relay(tf: FakeTF, **config: Any) -> tuple[GoalRelay, list[PoseStamped]]:
-    module = GoalRelay(**config)
+def _relay(tf: FakeTF, **config: Any) -> tuple[StartRelay, list[PoseStamped]]:
+    module = StartRelay(**config)
     module._tf = tf
     captured: list[PoseStamped] = []
     module.start_pose.subscribe(captured.append)
     return module, captured
 
 
-def test_start_pose_is_ground_projected() -> None:
+def test_start_pose_is_the_tf_base_pose() -> None:
     tf = FakeTF()
     tf.receive_transform(_mount())
-    module, captured = _relay(tf, lidar_height=LIDAR_HEIGHT)
-    try:
-        module._on_odometry(_odom())
-        # Base sits MOUNT_Z below the sensor, then drops by the base's height
-        # above ground (0.45 - MOUNT_Z): together exactly the lidar height.
-        assert len(captured) == 1
-        assert abs(captured[0].position.z - (3.0 - LIDAR_HEIGHT)) < 1e-9
-    finally:
-        module.stop()
-
-
-def test_drops_frames_without_the_mount_tf() -> None:
-    module, captured = _relay(FakeTF(), lidar_height=LIDAR_HEIGHT)
-    try:
-        module._on_odometry(_odom())
-        assert captured == []
-    finally:
-        module.stop()
-
-
-def test_base_frame_odometry_is_dropped_rather_than_over_projected() -> None:
-    tf = FakeTF()
-    tf.receive_transform(_mount())
-    module, captured = _relay(tf, lidar_height=LIDAR_HEIGHT)
-    try:
-        odom = _odom()
-        odom.child_frame_id = "base_link"
-        module._on_odometry(odom)
-        assert captured == []
-    finally:
-        module.stop()
-
-
-def test_no_lidar_height_skips_the_ground_correction() -> None:
-    tf = FakeTF()
-    tf.receive_transform(_mount())
+    tf.receive_transform(_odom_edge())
     module, captured = _relay(tf)
     try:
-        module._on_odometry(_odom())
+        module._on_tf(TFMessage())
+        # The base sits MOUNT_Z below the sensor along the mount leg.
         assert len(captured) == 1
+        assert abs(captured[0].position.x - 1.0) < 1e-9
+        assert abs(captured[0].position.y - 2.0) < 1e-9
         assert abs(captured[0].position.z - (3.0 - MOUNT_Z)) < 1e-9
     finally:
         module.stop()
 
 
-def test_mount_is_looked_up_once() -> None:
+def test_nothing_published_while_the_chain_is_incomplete() -> None:
     tf = FakeTF()
     tf.receive_transform(_mount())
-    module, captured = _relay(tf, lidar_height=LIDAR_HEIGHT)
+    module, captured = _relay(tf)
     try:
-        module._on_odometry(_odom())
-        module._on_odometry(_odom(z=4.0))
-        assert len(captured) == 2
-        assert abs(captured[1].position.z - (4.0 - LIDAR_HEIGHT)) < 1e-9
+        module._on_tf(TFMessage())
+        assert captured == []
+    finally:
+        module.stop()
+
+
+def test_lookup_retries_are_throttled_during_an_outage() -> None:
+    tf = FakeTF()
+    module, captured = _relay(tf)
+    try:
+        module._on_tf(TFMessage())
+        module._on_tf(TFMessage())
+        assert captured == []
         assert tf.gets == 1
     finally:
         module.stop()

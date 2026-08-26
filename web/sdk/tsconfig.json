@@ -26,5 +26,5 @@
       "@dimos/shared/manifest": ["../shared/manifest.ts"]
     }
   },
-  "include": ["src", "fixture", "vitest.config.ts"]
+  "include": ["src", "fixture", "vitest.config.ts", "vite.config.ts"]
 }

@@ -22,12 +22,14 @@
     "lineWidth": 100,
     "exclude": [
       "shared/fixtures/*.json",
-      "cockpit/dist/"
+      "cockpit/dist/",
+      "sdk/dist/"
     ]
   },
   "lint": {
     "exclude": [
-      "cockpit/dist/"
+      "cockpit/dist/",
+      "sdk/dist/"
     ],
     "rules": {
       "tags": [
