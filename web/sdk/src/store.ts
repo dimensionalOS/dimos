@@ -14,6 +14,7 @@
 
 import type { FrameHeader, RobotInfo } from "@dimos/shared";
 import type { Manifest } from "@dimos/shared/manifest";
+import type { SessionError } from "./errors.ts";
 import type { TransportPhase } from "./transport.ts";
 
 /** Latest successfully decoded frame of one channel (latest-wins by header seq). */
@@ -95,6 +96,19 @@ interface ChannelState {
   snapshot: ChannelSnapshot;
   direct: Set<() => void>;
   ui: Set<() => void>;
+}
+
+/** Notify every subscriber, isolating failures: one throwing callback must
+ * not silence the rest, and an exception must never travel up into the
+ * ingest path (a reliable stream's reader would abandon the stream). */
+function notifyAll(cbs: Set<() => void>): void {
+  for (const cb of cbs) {
+    try {
+      cb();
+    } catch (e) {
+      console.error("channel store subscriber threw", e);
+    }
+  }
 }
 
 function rateSlot(bucket: number): number {
@@ -198,7 +212,7 @@ export class ChannelStore {
         ts: header.ts,
         version: (prev?.version ?? 0) + 1,
       };
-      for (const cb of state.direct) cb();
+      notifyAll(state.direct);
     }
   }
 
@@ -260,7 +274,7 @@ export class ChannelStore {
           decodeFailing: state.decodeFailing,
         },
       };
-      for (const cb of state.ui) cb();
+      notifyAll(state.ui);
     }
   }
 
@@ -295,30 +309,31 @@ export class ChannelStore {
       state.dirty = false;
       state.ageBucket = -1;
       state.snapshot = EMPTY_SNAPSHOT;
-      for (const cb of state.direct) cb();
-      for (const cb of state.ui) cb();
+      notifyAll(state.direct);
+      notifyAll(state.ui);
     }
   }
 }
 
 export interface SessionStatus {
   transport: TransportPhase;
-  robot: RobotInfo | null;
-  robotCount: number;
+  /** Every robot the relay announced, watched or not. */
+  robots: RobotInfo[];
+  watchedRobot: RobotInfo | null;
   /** The adopted (normalized) manifest; null until a watch is confirmed. */
   manifest: Manifest | null;
   /** True when the robot's manifest version is newer than this build parses;
    * the App shows a polite update notice instead of panels. */
   manifestUnsupported: boolean;
   epoch: number;
-  lastError: string | null;
+  lastError: SessionError | null;
 }
 
 export class StatusStore {
   #status: SessionStatus = {
     transport: { phase: "connecting", attempt: 1 },
-    robot: null,
-    robotCount: 0,
+    robots: [],
+    watchedRobot: null,
     manifest: null,
     manifestUnsupported: false,
     epoch: 0,
