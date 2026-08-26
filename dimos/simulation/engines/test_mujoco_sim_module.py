@@ -24,6 +24,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
 
@@ -468,3 +469,98 @@ def test_engine_request_reset_to_applies_pose_in_sim_loop(freejoint_engine: Mujo
         [0.0, 0.0, np.sin(0.15), np.cos(0.15)],
         atol=1e-8,
     )
+
+
+class _FakeCameraEngine:
+    """Serves a fixed list of frame timestamps, then stops the publish loop."""
+
+    connected = True
+
+    def __init__(self, timestamps: list[float], stop_event: threading.Event) -> None:
+        self._timestamps = list(timestamps)
+        self._stop_event = stop_event
+
+    def read_camera(self, camera_name: str) -> CameraFrame | None:
+        if not self._timestamps:
+            self._stop_event.set()
+            return None
+        return CameraFrame(
+            rgb=np.zeros((1, 1, 3), dtype=np.uint8),
+            depth=np.ones((1, 1), dtype=np.float32),
+            cam_pos=np.array([1.0, 2.0, 3.0]),
+            cam_mat=np.eye(3),
+            fovy=60.0,
+            timestamp=self._timestamps.pop(0),
+            base_pos=np.array([1.0, 2.0, 2.0]),
+            base_mat=np.eye(3),
+        )
+
+    def disconnect(self) -> None:
+        pass
+
+
+def _run_publish_loop(module: MujocoSimModule, timestamps: list[float]) -> None:
+    module._engine = _FakeCameraEngine(timestamps, module._stop_event)
+    module._publish_loop()
+
+
+def test_publish_loop_stamps_messages_with_frame_timestamp() -> None:
+    # Sim time far from wall clock, so a wall-clock stamp cannot pass by accident.
+    frame_ts = [1_000_000.0, 1_000_000.5]
+    module = MujocoSimModule()
+    try:
+        module.config = MujocoSimModuleConfig(fps=1000)
+        module._camera_info_base = CameraInfo.from_intrinsics(
+            width=1, height=1, fx=1.0, fy=1.0, cx=0.5, cy=0.5, frame_id="wrist_camera_color_frame"
+        )
+        color: list[Any] = []
+        depth: list[Any] = []
+        tf: list[Any] = []
+        info: list[Any] = []
+        module.color_image.subscribe(color.append)
+        module.depth_image.subscribe(depth.append)
+        module.tf.subscribe(tf.append)
+        module.camera_info.subscribe(info.append)
+
+        _run_publish_loop(module, frame_ts)
+        module._publish_camera_info()
+
+        assert [img.ts for img in color] == frame_ts
+        assert [img.ts for img in depth] == frame_ts
+        assert [msg.transforms[0].ts for msg in tf] == frame_ts
+        # camera_info rides the latest frame's sim clock, not wall time.
+        assert info[-1].ts == frame_ts[-1]
+        assert module.get_color_camera_info().ts == frame_ts[-1]
+        assert module.get_depth_camera_info().ts == frame_ts[-1]
+    finally:
+        module.stop()
+
+
+def test_camera_info_falls_back_to_wall_clock_before_first_frame() -> None:
+    module = MujocoSimModule()
+    try:
+        module.config = MujocoSimModuleConfig()
+        module._camera_info_base = CameraInfo.from_intrinsics(
+            width=1, height=1, fx=1.0, fy=1.0, cx=0.5, cy=0.5, frame_id="wrist_camera_color_frame"
+        )
+        assert module._latest_frame_ts is None
+        assert module._camera_info_ts() == pytest.approx(time.time(), abs=5.0)
+    finally:
+        module.stop()
+
+
+@pytest.mark.parametrize("base_ts", [0.05, 1_000_000.0])
+def test_publish_loop_pacing_is_independent_of_frame_timestamp_magnitude(base_ts: float) -> None:
+    # Pacing must come from the wall clock, not from (wall - sim), which is a huge
+    # positive number for any realistic sim clock and drops the loop to render rate.
+    fps = 100
+    frame_ts = [base_ts + i * 0.05 for i in range(5)]
+    module = MujocoSimModule()
+    try:
+        module.config = MujocoSimModuleConfig(fps=fps)
+        start = time.monotonic()
+        _run_publish_loop(module, frame_ts)
+        elapsed = time.monotonic() - start
+        assert elapsed >= (len(frame_ts) - 1) / fps
+    finally:
+        module.stop()
