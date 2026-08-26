@@ -33,56 +33,54 @@ invariants (`planner/rust/tests/invariants.rs`): routes an open world, refuses
 a sealed box, never hops a thin wall, answers the same way every call,
 memoizes nothing across calls.
 
-Oneliners for everything: [tools.md](tools.md). Setting up a Go2:
+[tools.md](tools.md). Setting up a Go2:
 [docs/platforms/quadruped/go2/motion.md](../../../docs/platforms/quadruped/go2/motion.md);
+
 why the time-critical half runs on the robot:
 [motion-deployment.md](../../../docs/platforms/quadruped/go2/motion-deployment.md).
 
-## I/O — everything is stock dimos msgs
+## I/O
 
-**MotionPlanner** (adapter)
+Stock dimos msgs; the port declarations are the spec:
 
-- in: `local_map: sensor_msgs.PointCloud2` — the raycaster's accumulated cloud
-  around the robot
-- in: `odometry: nav_msgs.Odometry` — own pose (pointlio, `odom` frame),
-  resolved into `base_link` off tf
-- in: `planner_path: nav_msgs.Path` — global path; the goal is a carrot along it
-- out: `path: nav_msgs.Path` — the local plan. Per-waypoint `ts` deltas encode
-  required precision (`dt = segment / governor_speed(clearance)`, see
-  `control/profile.py`); a single-pose path means "hold, no safe route"
+```python
+from typing import get_args, get_origin, get_type_hints
+from dimos.core.stream import In, Out
+from dimos.navigation.motion.adapter.follower import TrajectoryFollower
+from dimos.navigation.motion.adapter.planner import MotionPlanner
 
-**TrajectoryFollower** (adapter)
-
-- in: `path: nav_msgs.Path` — stamped or plain (flat `ts` just disables the hint)
-- in: `odometry: nav_msgs.Odometry`
-- in: `local_map: sensor_msgs.PointCloud2` — optional, richer clearance hint;
-  without it the follower decodes the path stamps instead
-- in: `stop_movement: std_msgs.Bool`
-- out: `nav_cmd_vel: geometry_msgs.Twist` — body-frame (vx, vy, wz) into the
-  walking policy
-- out: `goal_reached: std_msgs.Bool` — latched arrival
-
-**Inner follower law** (in-process, python and rust produce identical bits):
-
-```
-update(pose: PoseStamped, path: Path, t, clearance: ndarray | None) -> Twist
+for module in (MotionPlanner, TrajectoryFollower):
+    print(module.__name__)
+    for name, hint in get_type_hints(module).items():
+        if get_origin(hint) in (In, Out):
+            print(f"  {get_origin(hint).__name__:<4} {name:<14} {get_args(hint)[0].__name__}")
 ```
 
-One law per *track* — the input regime the follower runs under. `hinted` gets
-the clearance array, `blind` does not and recovers the same profile from the
-path's own stamps; `control/tracks.py` is the only place that maps a track to
-its law, so the follower config and the blueprints never name a law directly.
+```results
+MotionPlanner
+  In   local_map      PointCloud2
+  In   odometry       Odometry
+  In   planner_path   Path
+  In   tf             TFMessage
+  Out  path           Path
+  Out  plan_body      Path
+TrajectoryFollower
+  In   path           Path
+  In   odometry       Odometry
+  In   local_map      PointCloud2
+  In   stop_movement  Bool
+  In   tf             TFMessage
+  Out  nav_cmd_vel    Twist
+  Out  goal_reached   Bool
+```
 
-The path timestamps are NOT a schedule — only their deltas carry information
-(slow segment = tight segment = track carefully), a follower must never chase
-the clock, and running slower than the encoding is always legal. Third-party
-Path producers/consumers interoperate; they just don't get the precision hint.
-Because the encoding rides on the path itself it survives the blind track,
-which is what makes blind a real deployment case rather than a handicap.
+Rules the ports carry:
 
-## Not on this branch
-
-Everything that trains, searches or simulates — the matched Go2 MuJoCo env,
-the planner's SE(2) gold oracle and judge, the closed-loop follower referee,
-and the autoresearch labs — lives on `ivan/feat/trajectory_ctrl`. Every speed,
-envelope and slip constant quoted here was measured there; re-measure there.
+- `path` timestamps are not a schedule: only their deltas carry information
+  (`dt = segment / governor_speed(clearance)`, `control/profile.py`), so slow
+  segment = tight segment. Running slower than the encoding is always legal;
+  a plain-`ts` path just loses the hint, and third-party producers interoperate.
+- a single-pose `path` means "hold, no safe route".
+- `local_map` into the follower is optional: with it the room is measured;
+  without it the follower decodes the path stamps (the `blind` track).
+- one law per *track* (`control/tracks.py`), never named by config or blueprint.
