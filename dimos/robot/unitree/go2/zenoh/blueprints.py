@@ -311,9 +311,10 @@ _mls_planner_motion = MLSPlannerNative.blueprint(
 # MLS stays the global planner but its path moves to planner_path and becomes a carrot
 # source -- the evolved local planner replans to a point ~5 m of arc along it over the
 # raycaster's local map, and the pursuit follower tracks the local plan with the
-# clearance-governed speed. Both resolve the sensor odometry into base_link off tf, which
-# GO2Zenoh publishes -- the mount is a rotation AND a lever arm, and a stack that skips it
-# plans for a body 0.30 m ahead of the robot and 0.16 m above it.
+# clearance-governed speed. Both read the body pose off tf (`odom -> base_link`, per tick)
+# rather than off odometry: GO2Zenoh publishes the odometry edge and the mount, and the
+# mount is a rotation AND a lever arm -- a stack that skips it plans for a body 0.30 m
+# ahead of the robot and 0.16 m above it.
 #
 # SPEEDS ARE SIM-CALIBRATED. Each law's envelope was measured against the freewalk_mcf
 # policy in the matched MuJoCo env, NOT against the gait the robot actually runs:
@@ -387,11 +388,11 @@ go2_zenoh_motion_blind = autoconnect(
 # odometry comes from, and it keeps the 30 Hz stream off the wifi); it listens on nothing.
 # The laptop dials the same router once: --robot-ip <robot>.
 #
-# tf is robot-local here: go2_tf is baked into the host and publishes the mount tree
-# there, so the base_link <- mid360_link leg no longer depends on the laptop being up.
-# Both baked modules hold their pose until that leg arrives on tf -- planning nothing
-# rather than planning off-heading -- and say so with one "dropping odometry" line per
-# outage.
+# tf is robot-local here: go2_tf is baked into the host and publishes the odometry edge
+# and the mount tree there, so the odom -> base_link pose the planner and follower read
+# never depends on the laptop being up. Both wait until that edge resolves on tf --
+# planning nothing rather than planning off-heading -- and treat one whose stamp has
+# stopped advancing for their deadman as missing again.
 #
 # cmd_vel still crosses back to the laptop, because GO2Zenoh is what talks to the go2web
 # bridge. This cut buys jitter immunity on the control loop, not fewer wire crossings.

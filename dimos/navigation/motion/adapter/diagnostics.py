@@ -27,7 +27,7 @@ Two rules, both about not drowning the useful line:
   heartbeat, because a message you scrolled past ten minutes ago is not an
   answer to "why is it stuck NOW".
 * THE FIRST MISSING INPUT IS THE ANSWER. These are ordered dependencies: with
-  no odometry the planner cannot use a map it does have, so reporting both is
+  no pose the planner cannot use a map it does have, so reporting both is
   reporting one cause and one symptom.
 """
 

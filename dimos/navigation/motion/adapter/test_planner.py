@@ -23,6 +23,7 @@ from dimos.core.module import ModuleConfig
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -40,6 +41,8 @@ from dimos.navigation.motion.embodiment.go2 import GO2
 from dimos.navigation.motion.obstacles import hard_points, load as load_model
 from dimos.navigation.motion.planner.planners.base import pose_stamped
 from dimos.navigation.motion.planner.planners.target import make_py
+from dimos.navigation.tf_pose import TfPose
+from dimos.protocol.tf.tf import MultiTBuffer
 
 # Modules built by the helpers below. The real constructor stands up the module's
 # LCM RPC transport (a run_forever + _lcm_loop daemon pair per instance); these
@@ -153,6 +156,47 @@ def test_hold_draws_the_veto_so_it_is_not_mistaken_for_a_dead_module():
     assert len(drawn) == 1
     assert drawn[0] is published[0]
     assert len(drawn[0].poses) == 1
+
+
+class _Clock:
+    t = 100.0
+
+    def __call__(self) -> float:
+        return self.t
+
+
+def test_a_stale_pose_is_a_missing_pose(monkeypatch):
+    # the pose is the world_frame -> base_frame edge on tf, read per tick; an
+    # edge whose stamp stopped advancing is no pose at all, and the tick says so
+    waiting = []
+    monkeypatch.setattr(
+        "dimos.navigation.motion.adapter.diagnostics.logger.warning",
+        lambda msg, **kw: waiting.append(kw.get("on", "")),
+        raising=False,
+    )
+    planner, published, _drawn = _holding_planner()
+    tf, clock = MultiTBuffer(), _Clock()
+    planner._pose_src = TfPose(tf, "base_link", planner.config.max_map_age_s, clock=clock)
+    tf.receive_transform(
+        Transform(
+            translation=Vector3(0.0, 0.0, 0.3),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id="odom",
+            child_frame_id="base_link",
+            ts=5.0,
+        )
+    )
+    planner._on_local_map(PointCloud2.from_numpy(np.zeros((0, 3), np.float32), frame_id="odom"))
+    planner._on_planner_path(
+        Path(frame_id="odom", poses=[pose_stamped(0.0, 0.0, 0.0), pose_stamped(3.0, 0.0, 0.0)])
+    )
+    planner.tick()
+    assert len(published) == 1
+    clock.t += planner.config.max_map_age_s + 0.1
+    planner._cloud_at = clock.t  # the map is live; only the pose is not
+    planner.tick()
+    assert len(published) == 1, "a stale pose plans nothing, exactly as no pose"
+    assert waiting and "pose" in waiting[-1]
 
 
 # --- the replan gate

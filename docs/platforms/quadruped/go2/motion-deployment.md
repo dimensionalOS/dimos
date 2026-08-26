@@ -21,7 +21,8 @@ What the cut has to handle:
 
 - **Staleness**: the link is no longer the deadman. Planner holds on stale
   `local_map` (`max_map_age_s`), follower zeroes on stale path
-  (`max_path_age_s`), mux zeroes on stale `nav_cmd_vel` (`nav_stale_s`);
+  (`max_path_age_s`), both treat a tf pose whose stamp stopped advancing for
+  that same age as missing, mux zeroes on stale `nav_cmd_vel` (`nav_stale_s`);
   all measured from arrival, not `msg.ts`.
 - **Stop lands on both sides**: `CmdVelMux` on the robot preempts `cmd_vel`;
   `MovementManager` on the laptop cancels the goal. Both read `tele_cmd_vel`.

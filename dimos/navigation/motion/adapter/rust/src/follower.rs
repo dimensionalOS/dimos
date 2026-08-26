@@ -17,7 +17,9 @@
 //! A port of `adapter/follower.py`, which is the specification. The law is a
 //! pure pose+path -> twist function in `dimos_motion2_tc`, parity-locked to its
 //! python twin; this module owns the subscriptions, the control clock, the
-//! on-robot clearance annotation, goal arrival and the deadman.
+//! on-robot clearance annotation, goal arrival and the deadman. The pose is
+//! the `path.frame_id -> base_frame` edge on tf, read per tick (`tf_pose.rs`),
+//! so the law controls in the frame the plan is expressed in.
 //!
 //! CONFIG NAMES A TRACK, NEVER A LAW. `control/tracks.py` is the one map from
 //! track to law, and folding in a research generation is a one-line change
@@ -26,7 +28,8 @@
 //! THE DEADMAN. `max_path_age_s`, measured from ARRIVAL, zeroes the twist
 //! once the held path is that old: it guards a planner that stopped speaking,
 //! alive-and-failing included. The planner's own hold stub covers a stale
-//! map; this covers the planner itself.
+//! map; this covers the planner itself. The same age on the pose's tf stamp
+//! zeroes it too: a plan with no live pose under it is not driven.
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -38,7 +41,7 @@ use dimos_motion2_tc::laws::blind::update as blind_update;
 use dimos_motion2_tc::laws::hinted::Law as HintedLaw;
 use dimos_motion2_tc::{clearance, stamps};
 use lcm_msgs::geometry_msgs::Twist;
-use lcm_msgs::nav_msgs::{Odometry, Path};
+use lcm_msgs::nav_msgs::Path;
 use lcm_msgs::sensor_msgs::PointCloud2;
 use lcm_msgs::std_msgs::Bool;
 // serde derives come in through #[native_config]
@@ -48,7 +51,7 @@ use validator::ValidationError;
 use crate::emb;
 use crate::msg::{self, State};
 use crate::obstacles::{self, ObstacleModel};
-use crate::tf_pose::OdomBasePose;
+use crate::tf_pose::PoseWatch;
 
 /// The input regime the follower runs under. `control/tracks.py` is the source
 /// of truth; this is that map, and the only place in this crate that knows
@@ -97,9 +100,9 @@ pub struct Config {
     /// hint has to price the body the plan was made for, or the governor creeps
     /// through gaps the plan calls fine.
     pub body_dilate_m: f64,
-    /// Odometry is stamped at the SENSOR, so the pose it carries is the
-    /// lidar's, not the robot's. tf resolves it into the body; messages are
-    /// dropped until the mount leg arrives.
+    /// The pose is the `path.frame_id -> base_frame` edge on tf, read each
+    /// tick. Ticks wait until it resolves, and once its stamp stops advancing
+    /// for `max_path_age_s` it counts as missing again.
     pub base_frame: String,
     /// The planner's obstacle model (`obstacles.rs`), because the room hint has
     /// to be measured off the slice the plan was priced in.
@@ -191,10 +194,6 @@ pub fn goal_of(path: &Path) -> Option<(f64, f64)> {
 /// Everything the handlers record and the worker reads.
 #[derive(Default)]
 struct Shared {
-    pose: Option<(f64, f64, f64)>,
-    /// Where the surface under the robot is, off the BODY rather than off the
-    /// scene: the base rides `Emb::base_height` above it.
-    ground_z: Option<f64>,
     path: Option<Arc<Path>>,
     /// ARRIVAL, not `msg.ts`: what this guards is how long since the planner
     /// was last heard from.
@@ -217,9 +216,6 @@ pub struct TrajectoryFollower {
     #[input(decode = Path::decode, handler = on_path)]
     path: Input<Path>,
 
-    #[input(decode = Odometry::decode, handler = on_odometry)]
-    odometry: Input<Odometry>,
-
     #[input(decode = PointCloud2::decode, handler = on_local_map)]
     local_map: Input<PointCloud2>,
 
@@ -238,9 +234,6 @@ pub struct TrajectoryFollower {
     #[tf]
     tf: Tf,
 
-    /// Built on the first odometry message: `Tf` is only handed over at build
-    /// time, and the base frame is config the constructor does not see.
-    base_pose: Option<OdomBasePose>,
     shared: Arc<Mutex<Shared>>,
     worker: Option<tokio::task::JoinHandle<()>>,
 }
@@ -258,6 +251,7 @@ impl TrajectoryFollower {
             config: self.config.clone(),
             nav_cmd_vel: self.nav_cmd_vel.clone(),
             goal_reached: self.goal_reached.clone(),
+            tf: self.tf.clone(),
         };
         self.worker = Some(tokio::spawn(worker.run()));
     }
@@ -280,20 +274,6 @@ impl TrajectoryFollower {
         if let Some(goal) = goal {
             s.goals.push(goal);
         }
-    }
-
-    async fn on_odometry(&mut self, msg: Odometry) {
-        let resolver = self
-            .base_pose
-            .get_or_insert_with(|| OdomBasePose::new(self.tf.clone(), &self.config.base_frame));
-        let Some(iso) = resolver.resolve_iso(&msg) else {
-            return;
-        };
-        let pose = crate::tf_pose::state_of(&iso);
-        let base_height = self.config.embodiment.base_height;
-        let mut s = self.shared.lock().expect("shared mutex");
-        s.pose = Some((pose[0], pose[1], pose[2]));
-        s.ground_z = Some(iso.translation.z - base_height);
     }
 
     async fn on_local_map(&mut self, msg: PointCloud2) {
@@ -435,11 +415,10 @@ struct Worker {
     model: Box<dyn ObstacleModel>,
     nav_cmd_vel: Output<Twist>,
     goal_reached: Output<Bool>,
+    tf: Tf,
 }
 
 struct Snapshot {
-    pose: Option<(f64, f64, f64)>,
-    ground_z: Option<f64>,
     path: Option<Arc<Path>>,
     path_seq: u64,
     age_s: Option<f64>,
@@ -460,6 +439,7 @@ impl Worker {
         let mut law = HintedLaw::new();
         let mut latch = GoalLatch::new(self.config.goal_tolerance);
         let mut stale = Gate::default();
+        let mut watch = PoseWatch::new(self.config.max_path_age_s);
         let mut cache = Cache::default();
         let mut epoch = 0u64;
         let started = Instant::now();
@@ -476,18 +456,31 @@ impl Worker {
                 law.reset();
             }
 
-            match decide(
-                snap.pose,
-                snap.age_s,
-                self.config.max_path_age_s,
-                &mut latch,
-            ) {
-                Tick::Idle => warn_throttled!(
-                    Duration::from_secs(3),
-                    odometry = snap.pose.is_some(),
-                    path = snap.path.is_some(),
-                    "not driving: odometry or a local plan has not arrived",
-                ),
+            // the pose is read here, on the tick, off tf in the frame the plan
+            // is expressed in -- so there is none to read before a plan
+            let pose = snap.path.as_ref().and_then(|path| {
+                watch.get(
+                    &self.tf,
+                    &path.header.frame_id,
+                    &self.config.base_frame,
+                    now,
+                )
+            });
+            let ground_z = pose.map(|p| p.z - self.config.embodiment.base_height);
+            let pose = pose.map(|p| (p.state[0], p.state[1], p.state[2]));
+            match decide(pose, snap.age_s, self.config.max_path_age_s, &mut latch) {
+                Tick::Idle => {
+                    if snap.path.is_some() {
+                        // a plan with no live pose under it: the deadman on the pose
+                        self.publish_twist(0.0, 0.0, 0.0).await;
+                    }
+                    warn_throttled!(
+                        Duration::from_secs(3),
+                        path = snap.path.is_some(),
+                        pose = pose.is_some(),
+                        "not driving: a local plan or its pose on tf is missing",
+                    )
+                }
                 Tick::Stale { age_s } => {
                     if stale.enter() {
                         tracing::warn!(
@@ -514,12 +507,13 @@ impl Worker {
                     if stale.recover() {
                         info!("path is live again, resuming");
                     }
-                    let pose = snap.pose.expect("Drive implies a pose");
+                    let pose = pose.expect("Drive implies a pose");
                     let path = snap.path.clone().expect("Drive implies a path");
                     let states = msg::path_states(&path);
                     let ts = msg::path_stamps(&path);
-                    let room =
-                        tokio::task::block_in_place(|| self.room(&snap, &states, &ts, &mut cache));
+                    let room = tokio::task::block_in_place(|| {
+                        self.room(&snap, ground_z.unwrap_or(0.0), &states, &ts, &mut cache)
+                    });
                     let t = started.elapsed().as_secs_f64();
                     let (vx, vy, wz) = match self.track {
                         Track::Hinted => law.step(
@@ -543,8 +537,6 @@ impl Worker {
     fn snapshot(&self, now: Instant) -> Snapshot {
         let mut s = self.shared.lock().expect("shared mutex");
         Snapshot {
-            pose: s.pose,
-            ground_z: s.ground_z,
             path: s.path.clone(),
             path_seq: s.path_seq,
             age_s: s.path_at.map(|t| now.duration_since(t).as_secs_f64()),
@@ -560,6 +552,7 @@ impl Worker {
     fn room(
         &self,
         snap: &Snapshot,
+        ground_z: f64,
         states: &[State],
         ts: &[f64],
         cache: &mut Cache,
@@ -603,7 +596,7 @@ impl Worker {
         let room = Arc::new(measure_room(
             self.model.as_ref(),
             &points,
-            snap.ground_z.unwrap_or(0.0),
+            ground_z,
             states,
             self.half_width,
         ));

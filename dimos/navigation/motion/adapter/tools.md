@@ -23,9 +23,11 @@ planner replans to the carrot at `replan_hz` over the raycaster's `local_map`;
 a refusal is a single-pose stub the follower holds on while MLS reroutes. The
 follower annotates the path with clearance from the local map (computed
 on-robot, off the planner's own obstacle model) and stops
-through a goal latch that ignores sub-tolerance carrot jitter. Both modules take odometry as LIO stamps it — at
-the sensor — and resolve it into `base_link` off tf (`navigation/tf_pose.py`),
-dropping messages until the mount leg arrives.
+through a goal latch that ignores sub-tolerance carrot jitter. Neither module
+reads odometry: the pose is the `world -> base_link` edge on tf, looked up per
+tick (`navigation/tf_pose.py::TfPose`) — go2_tf publishes it off odometry
+through the mount. A tick waits until it resolves, and an edge whose stamp
+stopped advancing for the module's deadman counts as missing.
 
 The controller stays a pure pose+path -> twist law behind the
 `TrajectoryController` protocol (`control/controller.py`) — that object, not the

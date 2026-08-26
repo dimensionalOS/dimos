@@ -30,7 +30,6 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
-from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -79,7 +78,6 @@ class MotionPlannerNative(NativeModule):
     config: MotionPlannerNativeConfig
 
     local_map: In[PointCloud2]
-    odometry: In[Odometry]
     planner_path: In[Path]
     # IO, not In: `#[tf]` both subscribes and publishes, and the rust side
     # refuses to start unless the topic map matches the ports it claims.

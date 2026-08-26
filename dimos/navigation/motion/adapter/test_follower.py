@@ -19,6 +19,8 @@ import pytest
 
 from dimos.core.module import ModuleConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -31,6 +33,8 @@ from dimos.navigation.motion.adapter.follower import (
 from dimos.navigation.motion.adapter.follower_native import TrajectoryFollowerNativeConfig
 from dimos.navigation.motion.embodiment.go2 import GO2
 from dimos.navigation.motion.obstacles import hard_points, load as load_model, path_clearance
+from dimos.navigation.tf_pose import TfPose
+from dimos.protocol.tf.tf import MultiTBuffer
 
 # Followers built by the helper below. The real constructor stands up the module's
 # LCM RPC transport (a run_forever + _lcm_loop daemon pair per instance); these
@@ -169,7 +173,7 @@ class _Heard(list):
     """The module logger does not propagate, so caplog cannot see it."""
 
     def warning(self, msg, **kw):
-        self.append(msg)
+        self.append((msg, kw))
 
     def info(self, msg, **kw):
         pass
@@ -179,6 +183,7 @@ class _Heard(list):
 def heard(monkeypatch):
     said = _Heard()
     monkeypatch.setattr("dimos.navigation.motion.adapter.follower.logger", said)
+    monkeypatch.setattr("dimos.navigation.motion.adapter.diagnostics.logger", said)
     return said
 
 
@@ -190,7 +195,7 @@ def test_the_lost_room_hint_warns_once_per_outage(heard):
     pose, path = _base_at(0.01), _straight_path()
     for _ in range(10):
         follower.clearance_for(path, pose)
-    assert len([m for m in heard if "no local_map" in m]) == 1
+    assert len([m for m in heard if "no local_map" in m[0]]) == 1
 
     # and it re-arms, so a second outage is heard too
     heard.clear()
@@ -198,14 +203,14 @@ def test_the_lost_room_hint_warns_once_per_outage(heard):
     follower.clearance_for(path, pose)
     follower._cloud = None  # the map going away has no handler to drive
     follower.clearance_for(path, pose)
-    assert len([m for m in heard if "no local_map" in m]) == 1
+    assert len([m for m in heard if "no local_map" in m[0]]) == 1
 
 
 def test_the_blind_track_never_warns_about_the_map_it_does_not_read(heard):
     follower = _room_follower(track="blind")
     for _ in range(10):
         follower.clearance_for(_straight_path(), _base_at(0.01))
-    assert not [m for m in heard if "no local_map" in m]
+    assert not [m for m in heard if "no local_map" in m[0]]
 
 
 # --- the deadman and preemption (follower.rs is the twin)
@@ -247,6 +252,56 @@ def test_a_stale_path_outranks_an_arrival():
     # ...and the same tick against a fresh path IS the arrival
     follower.step(at_goal, path, age=0.0)
     assert [m.data for m in reached] == [True]
+
+
+class _Clock:
+    t = 100.0
+
+    def __call__(self) -> float:
+        return self.t
+
+
+def _on_tf(follower: TrajectoryFollower, frame: str = "odom") -> tuple[MultiTBuffer, _Clock]:
+    """A tf buffer and a clock in the follower's hands, with one live edge on it."""
+    tf, clock = MultiTBuffer(), _Clock()
+    follower._pose_src = TfPose(tf, "base_link", follower.config.max_path_age_s, clock=clock)
+    tf.receive_transform(
+        Transform(
+            translation=Vector3(0.0, 0.0, 0.01),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id=frame,
+            child_frame_id="base_link",
+            ts=5.0,
+        )
+    )
+    return tf, clock
+
+
+def test_the_pose_comes_off_tf_in_the_path_frame(heard):
+    follower = _room_follower()
+    out = _driven(follower)
+    _, clock = _on_tf(follower, frame="map")
+    follower._on_path(_straight_path(5.0))  # an odom plan; the edge on tf is map -> base_link
+    follower.tick()
+    assert (out[-1].linear.x, out[-1].linear.y, out[-1].angular.z) == (0.0, 0.0, 0.0)
+    assert any("pose" in str(m) for m in heard)
+    follower._on_path(Path(ts=0.0, frame_id="map", poses=_straight_path(5.0).poses))
+    clock.t += TfPose.RETRY_PERIOD_S  # the miss parked lookups for a period
+    follower.tick()
+    assert out[-1].linear.x > 0.0
+
+
+def test_a_stale_pose_zeroes_the_twist_and_names_itself(heard):
+    follower = _room_follower()
+    out = _driven(follower)
+    _, clock = _on_tf(follower)
+    follower._on_path(_straight_path(5.0))
+    follower.tick()
+    assert out[-1].linear.x > 0.0
+    clock.t += follower.config.max_path_age_s + 0.1
+    follower.tick()
+    assert (out[-1].linear.x, out[-1].linear.y, out[-1].angular.z) == (0.0, 0.0, 0.0)
+    assert any("pose" in str(m) for m in heard)
 
 
 def test_stop_movement_forgets_the_slew_history():

@@ -33,7 +33,6 @@ from typing import TYPE_CHECKING, Any
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool
@@ -77,7 +76,6 @@ class TrajectoryFollowerNative(NativeModule):
     config: TrajectoryFollowerNativeConfig
 
     path: In[Path]
-    odometry: In[Odometry]
     local_map: In[PointCloud2]
     stop_movement: In[Bool]
     tf: IO[TFMessage]  # IO, not In: see planner_native.py

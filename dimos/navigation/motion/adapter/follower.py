@@ -44,7 +44,6 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool
@@ -61,7 +60,7 @@ from dimos.navigation.motion.obstacles import (
     load as load_model,
     path_clearance,
 )
-from dimos.navigation.tf_pose import OdomBasePose
+from dimos.navigation.tf_pose import TfPose
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -119,8 +118,10 @@ class TrajectoryFollowerConfig(ModuleConfig):
     # body the plan was made for, or the governor creeps through gaps the plan
     # calls fine.
     body_dilate_m: float = 0.0
-    # Odometry is stamped at the sensor; tf resolves it into the body
-    # (MotionPlannerConfig.base_frame).
+    # The pose is read off tf each tick: `path.frame_id -> base_frame`, so the
+    # law controls in the frame the plan is expressed in. Ticks wait until it
+    # resolves, and zero the twist once its stamp stops advancing for
+    # max_path_age_s.
     base_frame: str = "base_link"
     # Which returns are obstacles (motion/obstacles.py). It has to be the
     # planner's model, or the room hint measured here is a different world than
@@ -143,7 +144,6 @@ class TrajectoryFollower(Module):
     config: TrajectoryFollowerConfig
 
     path: In[Path]
-    odometry: In[Odometry]
     local_map: In[PointCloud2]
     stop_movement: In[Bool]
     tf: In[TFMessage]
@@ -154,8 +154,8 @@ class TrajectoryFollower(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._lock = RLock()
-        self._pose: PoseStamped | None = None
-        self._base_pose: OdomBasePose | None = None
+        # Built in start(): the tf buffer needs the port's transport.
+        self._pose_src: TfPose | None = None
         self._path: Path | None = None
         self._path_at: float | None = None
         self._cloud: PointCloud2 | None = None
@@ -187,8 +187,8 @@ class TrajectoryFollower(Module):
     def start(self) -> None:
         super().start()
         self._controller.reset()
+        self._pose_src = TfPose(self.tfbuffer, self.config.base_frame, self.config.max_path_age_s)
         self.register_disposable(Disposable(self.path.subscribe(self._on_path)))
-        self.register_disposable(Disposable(self.odometry.subscribe(self._on_odometry)))
         self.register_disposable(Disposable(self.local_map.subscribe(self._on_local_map)))
         if self.stop_movement.transport is not None:
             self.register_disposable(Disposable(self.stop_movement.subscribe(self._on_stop)))
@@ -212,17 +212,6 @@ class TrajectoryFollower(Module):
                 # never an arrival target
                 self._latch.set_goal((msg.poses[-1].position.x, msg.poses[-1].position.y))
 
-    def _on_odometry(self, msg: Odometry) -> None:
-        with self._lock:
-            if self._base_pose is None:
-                self._base_pose = OdomBasePose(self.tfbuffer, self.config.base_frame)
-            resolver = self._base_pose
-        pose = resolver.resolve(msg)
-        if pose is None:
-            return
-        with self._lock:
-            self._pose = pose
-
     def _on_local_map(self, msg: PointCloud2) -> None:
         with self._lock:
             self._cloud = msg
@@ -240,20 +229,34 @@ class TrajectoryFollower(Module):
         period = 1.0 / self.config.control_frequency
         while not self._stop_event.is_set():
             started = time.perf_counter()
-            now = time.monotonic()
-            with self._lock:
-                pose, path = self._pose, self._path
-                age = None if self._path_at is None else now - self._path_at
-            # A follower with no pose or no plan is not "not moving", it is not
-            # RUNNING, and those want different fixes. `path` going None is also
-            # how stop_movement lands here, so it is named as such.
-            if self._stall.check(
-                {"odometry": pose is not None, "path (local plan)": path is not None}
-            ):
-                assert pose is not None and path is not None and age is not None
-                self.step(pose, path, age)
+            self.tick()
             elapsed = time.perf_counter() - started
             self._stop_event.wait(max(0.0, period - elapsed))
+
+    def tick(self) -> None:
+        """One control tick: step, or zero the twist and say what is missing."""
+        now = time.monotonic()
+        with self._lock:
+            path = self._path
+            age = None if self._path_at is None else now - self._path_at
+        # the pose is read here, on the tick thread, in the frame the plan is in
+        pose = None
+        if path is not None and self._pose_src is not None:
+            pose = self._pose_src.get(path.frame_id)
+        # A follower with no plan or no pose is not "not moving", it is not
+        # RUNNING, and those want different fixes. `path` going None is also
+        # how stop_movement lands here, so it is named as such.
+        if self._stall.check(
+            {
+                "path (local plan)": path is not None,
+                "pose (path frame -> base_frame on tf)": pose is not None,
+            }
+        ):
+            assert pose is not None and path is not None and age is not None
+            self.step(pose, path, age)
+        elif path is not None:
+            # a plan with no live pose under it: the deadman on the pose
+            self.nav_cmd_vel.publish(Twist())
 
     def step(self, pose: PoseStamped, path: Path, age: float) -> None:
         """One control tick against a path that arrived `age` seconds ago."""

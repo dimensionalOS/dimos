@@ -15,8 +15,8 @@
 //! `motion_planner`: the SE(2) local planner as a robot-side module.
 //!
 //! A port of `adapter/planner.py`, which is the specification. The raycaster's
-//! `local_map` is the cloud, leveled body odometry is the pose, and the goal is
-//! a carrot -- `goal_lookahead_m` of arc along the MLS global route
+//! `local_map` is the cloud, the `world_frame -> base_frame` edge on tf is the
+//! pose (read per tick, `tf_pose.rs`), and the goal is a carrot -- `goal_lookahead_m` of arc along the MLS global route
 //! (`planner_path`), clamped to its end. A spawned worker ticks on a fixed
 //! cadence but replans only when an input that matters has changed, and
 //! publishes the result as a stamped nav Path.
@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 use dimos_module::{native_config, warn_throttled, Input, Module, Output, Tf};
 use dimos_motion2_target::planner::{plan, Emb, COMMIT_MARGIN};
 use dimos_motion2_tc::{clearance, stamps};
-use lcm_msgs::nav_msgs::{Odometry, Path};
+use lcm_msgs::nav_msgs::Path;
 use lcm_msgs::sensor_msgs::PointCloud2;
 use tracing::{debug, info, warn};
 use validator::ValidationError;
@@ -41,7 +41,7 @@ use validator::ValidationError;
 use crate::emb;
 use crate::msg;
 use crate::obstacles::{self, ObstacleModel};
-use crate::tf_pose::OdomBasePose;
+use crate::tf_pose::PoseWatch;
 
 /// Mirrors `MotionPlannerConfig` (adapter/planner.py). The python `planner`
 /// registry field deliberately does not cross: this module IS the rust target
@@ -66,10 +66,10 @@ pub struct Config {
     /// Carrot arc along the global route.
     #[validate(range(exclusive_min = 0.0))]
     pub goal_lookahead_m: f64,
+    /// The pose is the `world_frame -> base_frame` edge on tf, read each tick.
+    /// Ticks wait until it resolves, and once its stamp stops advancing for
+    /// `max_map_age_s` it counts as missing again.
     pub world_frame: String,
-    /// Odometry is stamped at the SENSOR, so the pose it carries is the
-    /// lidar's, not the robot's. tf resolves it into the body; messages are
-    /// dropped until the mount leg arrives.
     pub base_frame: String,
     /// Plan when an input that MATTERS changed -- a new local map, or a carrot
     /// that moved -- rather than on every tick of the clock. The planner ticks
@@ -121,10 +121,6 @@ struct Shared {
     /// ARRIVAL, not `msg.ts`: the mapper's clock is not the robot's, and what
     /// this guards is how long since the mapper was last heard from.
     cloud_at: Option<Instant>,
-    pose: Option<(f64, f64, f64)>,
-    /// Where the surface under the robot is, off the BODY rather than off the
-    /// scene: the base rides `Emb::base_height` above it.
-    ground_z: Option<f64>,
     global_xy: Option<Vec<[f64; 2]>>,
 }
 
@@ -133,9 +129,6 @@ struct Shared {
 pub struct MotionPlanner {
     #[input(decode = PointCloud2::decode, handler = on_local_map)]
     local_map: Input<PointCloud2>,
-
-    #[input(decode = Odometry::decode, handler = on_odometry)]
-    odometry: Input<Odometry>,
 
     #[input(decode = Path::decode, handler = on_planner_path)]
     planner_path: Input<Path>,
@@ -153,9 +146,6 @@ pub struct MotionPlanner {
     #[tf]
     tf: Tf,
 
-    /// Built on the first odometry message: `Tf` is only handed over at build
-    /// time, and the base frame is config the constructor does not see.
-    base_pose: Option<OdomBasePose>,
     shared: Arc<Mutex<Shared>>,
     worker: Option<tokio::task::JoinHandle<()>>,
 }
@@ -172,6 +162,7 @@ impl MotionPlanner {
             model,
             path: self.path.clone(),
             plan_body: self.plan_body.clone(),
+            tf: self.tf.clone(),
         };
         self.worker = Some(tokio::spawn(worker.run()));
     }
@@ -190,20 +181,6 @@ impl MotionPlanner {
         s.cloud = Some(Arc::new(msg));
         s.cloud_seq = s.cloud_seq.wrapping_add(1);
         s.cloud_at = Some(Instant::now());
-    }
-
-    async fn on_odometry(&mut self, msg: Odometry) {
-        let resolver = self
-            .base_pose
-            .get_or_insert_with(|| OdomBasePose::new(self.tf.clone(), &self.config.base_frame));
-        let Some(iso) = resolver.resolve_iso(&msg) else {
-            return;
-        };
-        let pose = crate::tf_pose::state_of(&iso);
-        let base_height = self.config.embodiment.base_height;
-        let mut s = self.shared.lock().expect("shared mutex");
-        s.pose = Some((pose[0], pose[1], pose[2]));
-        s.ground_z = Some(iso.translation.z - base_height);
     }
 
     /// MLS emits an empty path when it finds no route: no carrot, so hold the
@@ -417,6 +394,7 @@ struct Worker {
     model: Box<dyn ObstacleModel>,
     path: Output<Path>,
     plan_body: Output<Path>,
+    tf: Tf,
 }
 
 /// The handlers' snapshot, taken once per tick under one lock.
@@ -424,8 +402,6 @@ struct Snapshot {
     cloud: Option<Arc<PointCloud2>>,
     cloud_seq: u64,
     age_s: Option<f64>,
-    pose: Option<(f64, f64, f64)>,
-    ground_z: Option<f64>,
     route: Option<Vec<[f64; 2]>>,
 }
 
@@ -439,6 +415,7 @@ impl Worker {
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         let mut gate = StaleGate::default();
+        let mut watch = PoseWatch::new(self.config.max_map_age_s);
         let mut viz = RateCap::new(self.config.viz_publish_hz);
         let mut points: Option<(u64, Arc<Vec<[f32; 3]>>)> = None;
         // The (cloud, carrot) the published plan was made from.
@@ -452,8 +429,19 @@ impl Worker {
             ticker.tick().await;
             let now = Instant::now();
             let snap = self.snapshot(now);
+            // the pose is read here, on the tick, straight off tf
+            let pose = watch.get(
+                &self.tf,
+                &self.config.world_frame,
+                &self.config.base_frame,
+                now,
+            );
+            // the surface under the robot, off the BODY rather than off the
+            // scene: the base rides `Emb::base_height` above it
+            let ground_z = pose.map(|p| p.z - self.config.embodiment.base_height);
+            let pose = pose.map(|p| (p.state[0], p.state[1], p.state[2]));
             match decide(
-                snap.pose.is_some(),
+                pose.is_some(),
                 snap.age_s,
                 snap.route.is_some(),
                 self.config.max_map_age_s,
@@ -473,12 +461,12 @@ impl Worker {
                     // link is a route nothing has re-validated.
                     planned = None;
                     incumbent = None;
-                    let pose = snap.pose.expect("Hold implies a pose");
+                    let pose = pose.expect("Hold implies a pose");
                     let held = hold_stub(
                         pose,
                         &self.config.world_frame,
                         msg::now_secs(),
-                        snap.ground_z.unwrap_or(0.0),
+                        ground_z.unwrap_or(0.0),
                     );
                     self.publish(&held, now, &mut viz).await;
                 }
@@ -486,7 +474,7 @@ impl Worker {
                     if gate.recover() {
                         info!("local_map is live again, resuming planning");
                     }
-                    let pose = snap.pose.expect("Plan implies a pose");
+                    let pose = pose.expect("Plan implies a pose");
                     let route = snap.route.expect("Plan implies a route");
                     // the carrot is the whole of the route the plan consumes,
                     // so it is taken every tick and the gate reads it
@@ -524,7 +512,7 @@ impl Worker {
                             &pts,
                             pose,
                             goal,
-                            snap.ground_z.unwrap_or(0.0),
+                            ground_z.unwrap_or(0.0),
                             incumbent.as_deref(),
                         ))
                     });
@@ -537,7 +525,7 @@ impl Worker {
                 Tick::Wait => warn_throttled!(
                     Duration::from_secs(3),
                     local_map = snap.cloud.is_some(),
-                    odometry = snap.pose.is_some(),
+                    pose = pose.is_some(),
                     planner_path = snap.route.is_some(),
                     "nothing planned: an input the planner needs has not arrived",
                 ),
@@ -551,8 +539,6 @@ impl Worker {
             cloud: s.cloud.clone(),
             cloud_seq: s.cloud_seq,
             age_s: s.cloud_at.map(|t| now.duration_since(t).as_secs_f64()),
-            pose: s.pose,
-            ground_z: s.ground_z,
             route: s.global_xy.clone(),
         }
     }

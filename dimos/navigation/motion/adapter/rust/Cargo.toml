@@ -42,7 +42,6 @@ threads = 2
 # the honest shape. The rust side still claims it through `#[tf]`.
 [package.metadata.dimos.module.motion_planner.inputs]
 local_map = "sensor_msgs.PointCloud2"
-odometry = "nav_msgs.Odometry"
 planner_path = "nav_msgs.Path"
 tf = "tf2_msgs.TFMessage"
 
@@ -57,7 +56,6 @@ threads = 2
 
 [package.metadata.dimos.module.trajectory_follower.inputs]
 path = "nav_msgs.Path"
-odometry = "nav_msgs.Odometry"
 local_map = "sensor_msgs.PointCloud2"
 stop_movement = "std_msgs.Bool"
 tf = "tf2_msgs.TFMessage"

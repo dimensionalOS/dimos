@@ -17,7 +17,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.navigation.tf_pose import OdomBasePose, base_height_above_ground
+from dimos.navigation.tf_pose import OdomBasePose, TfPose, base_height_above_ground
 from dimos.protocol.tf.tf import MultiTBuffer
 
 IDENTITY = Quaternion(0.0, 0.0, 0.0, 1.0)
@@ -137,3 +137,64 @@ def test_base_frame_odometry_passes_through() -> None:
 
 def test_base_height_above_ground() -> None:
     assert abs(base_height_above_ground(LIDAR_HEIGHT, _mount()) - (LIDAR_HEIGHT - MOUNT_Z)) < 1e-9
+
+
+# --- TfPose: the live base pose off tf, with the deadman on OUR clock
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.t = 100.0
+
+    def __call__(self) -> float:
+        return self.t
+
+
+def _body_at(x: float, ts: float) -> Transform:
+    return Transform(
+        translation=Vector3(x, 0.0, 0.3),
+        rotation=IDENTITY,
+        frame_id="odom",
+        child_frame_id="base_link",
+        ts=ts,
+    )
+
+
+def test_tf_pose_is_the_world_to_base_edge():
+    tf, clock = MultiTBuffer(), _Clock()
+    tf.receive_transform(_body_at(1.0, ts=5.0))
+    pose = TfPose(tf, "base_link", max_age_s=2.5, clock=clock).get("odom")
+    assert pose is not None
+    assert (pose.position.x, pose.position.z, pose.ts, pose.frame_id) == (1.0, 0.3, 5.0, "odom")
+
+
+def test_tf_pose_goes_stale_when_the_stamp_stops_advancing():
+    tf, clock = MultiTBuffer(), _Clock()
+    src = TfPose(tf, "base_link", max_age_s=2.5, clock=clock)
+    tf.receive_transform(_body_at(1.0, ts=5.0))
+    assert src.get("odom") is not None
+    clock.t += 2.5
+    assert src.get("odom") is not None, "the boundary is exclusive"
+    clock.t += 0.1
+    assert src.get("odom") is None
+    # a fresh stamp is a live edge again, whatever the robot's clock says
+    tf.receive_transform(_body_at(2.0, ts=5.1))
+    assert src.get("odom") is not None
+
+
+def test_tf_pose_measures_age_on_its_own_clock_not_the_stamp():
+    tf, clock = MultiTBuffer(), _Clock()
+    src = TfPose(tf, "base_link", max_age_s=2.5, clock=clock)
+    tf.receive_transform(_body_at(1.0, ts=0.0))  # a robot clock nowhere near ours
+    assert src.get("odom") is not None
+
+
+def test_tf_pose_retries_a_missing_edge_once_per_period():
+    tf, clock = CountingTF(), _Clock()
+    src = TfPose(tf, "base_link", max_age_s=2.5, clock=clock)
+    for _ in range(5):
+        assert src.get("odom") is None
+    assert tf.gets == 1
+    clock.t += TfPose.RETRY_PERIOD_S
+    assert src.get("odom") is None
+    assert tf.gets == 2

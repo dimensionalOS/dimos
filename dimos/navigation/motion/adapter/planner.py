@@ -15,8 +15,8 @@
 """MotionPlanner: the SE(2) local planner as a dimos module.
 
 Bridges the ``PlannerEpisode`` protocol onto module streams:
-the raycaster's ``local_map`` is the cloud, leveled body odometry is the
-pose, and the goal is a carrot — ``goal_lookahead_m`` of arc along the MLS
+the raycaster's ``local_map`` is the cloud, the ``world_frame -> base_frame``
+edge on tf is the pose, and the goal is a carrot — ``goal_lookahead_m`` of arc along the MLS
 global path (``planner_path``), clamped to its end. Ticks on a fixed cadence
 but replans only when an input that matters has changed, and publishes the
 result as a nav Path. A refusal comes out as the planner made it — a
@@ -44,7 +44,6 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -59,7 +58,7 @@ from dimos.navigation.motion.obstacles import (
     path_clearance,
 )
 from dimos.navigation.motion.planner.planners.base import PlannerEpisode
-from dimos.navigation.tf_pose import OdomBasePose
+from dimos.navigation.tf_pose import TfPose
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -184,13 +183,13 @@ class MotionPlannerConfig(ModuleConfig):
     # start and hysteresis are about the old one. Republish noise moves it ~0 m;
     # a real reroute moves it metres.
     reset_carrot_m: float = RESET_CARROT_M
-    # Odometry is stamped at the SENSOR (mid360_link on the go2), so the pose it
-    # carries is the lidar's, not the robot's -- 0.30 m ahead and 0.16 m above on
-    # this rig. tf resolves it into the body; ticks are dropped until it can.
+    # The pose is the `world_frame -> base_frame` edge on tf, read each tick
+    # (go2_tf publishes it off odometry at odometry rate). Ticks wait until
+    # it resolves, and hold once its stamp stops advancing for max_map_age_s.
+    world_frame: str = "odom"
     base_frame: str = "base_link"
     replan_hz: float = 5.0
     goal_lookahead_m: float = 5.0  # carrot arc along the global path
-    world_frame: str = "odom"
     # What counts as an obstacle (motion/obstacles.py). "body_band" reads the
     # cloud against the surface the feet stand on, which the embodiment knows
     # the base's height above.
@@ -213,7 +212,6 @@ class MotionPlanner(Module):
     config: MotionPlannerConfig
 
     local_map: In[PointCloud2]
-    odometry: In[Odometry]
     planner_path: In[Path]
     tf: In[TFMessage]
 
@@ -234,11 +232,8 @@ class MotionPlanner(Module):
         # published unless a fresh one earns the switch, and this module is
         # where that memory lives: the shell owns it, the planner judges it.
         self._incumbent: Path | None = None
-        self._pose: PoseStamped | None = None
-        # Where the surface under the robot is, off the body rather than off
-        # the scene: the base rides emb.base_height above it.
-        self._ground_z: float | None = None
-        self._base_pose: OdomBasePose | None = None
+        # Built in start(): the tf buffer needs the port's transport.
+        self._pose_src: TfPose | None = None
         self._global_xy: NDArray[np.float64] | None = None
         self._emb = self.config.embodiment.dilated(by=self.config.body_dilate_m)
         self._model: ObstacleModel = load_model(self.config.obstacle_model, self._emb)
@@ -252,8 +247,8 @@ class MotionPlanner(Module):
     def start(self) -> None:
         super().start()
         self._episode.reset()
+        self._pose_src = TfPose(self.tfbuffer, self.config.base_frame, self.config.max_map_age_s)
         self.register_disposable(Disposable(self.local_map.subscribe(self._on_local_map)))
-        self.register_disposable(Disposable(self.odometry.subscribe(self._on_odometry)))
         self.register_disposable(Disposable(self.planner_path.subscribe(self._on_planner_path)))
         self._thread = Thread(target=self._plan_loop, daemon=True)
         self._thread.start()
@@ -273,18 +268,6 @@ class MotionPlanner(Module):
             # what this guards is "how long since the mapper was heard from"
             self._cloud_at = time.monotonic()
 
-    def _on_odometry(self, msg: Odometry) -> None:
-        with self._lock:
-            if self._base_pose is None:
-                self._base_pose = OdomBasePose(self.tfbuffer, self.config.base_frame)
-            resolver = self._base_pose
-        pose = resolver.resolve(msg)
-        if pose is None:
-            return
-        with self._lock:
-            self._pose = pose
-            self._ground_z = pose.position.z - self._emb.base_height
-
     def _on_planner_path(self, msg: Path) -> None:
         # MLS emits an empty path when it finds no route: no carrot, hold the
         # last local plan rather than chase a stale one.
@@ -296,49 +279,57 @@ class MotionPlanner(Module):
         period = 1.0 / self.config.replan_hz
         while not self._stop_event.is_set():
             started = time.perf_counter()
-            with self._lock:
-                cloud, pose, global_xy = self._cloud, self._pose, self._global_xy
-                cloud_at, ground_z = self._cloud_at, self._ground_z
-                cloud_seq = self._cloud_seq
-            age = None if cloud_at is None else time.monotonic() - cloud_at
-            # Why a tick did nothing, in the planner's own words. Silence here
-            # is the failure that looks like "the robot will not move" from the
-            # outside, and it is the one a log has to be able to answer.
-            self._stall.check(
-                {
-                    "local_map": cloud is not None,
-                    "odometry": pose is not None,
-                    "planner_path (global route/goal)": global_xy is not None,
-                }
-            )
-            if pose is not None and age is not None and age > self.config.max_map_age_s:
-                # A hold is not gated: it is a statement about the CLOCK, and
-                # nothing arriving is exactly the case it fires on. Forget what
-                # was planned so the first live tick plans again -- and what was
-                # published with it: a route held across a dead link is a route
-                # nothing has re-validated.
-                self._planned = None
-                self._incumbent = None
-                self.hold(pose, age)
-            elif cloud is not None and pose is not None and global_xy is not None:
-                if self._stale:
-                    self._stale = False
-                    logger.info("local_map is live again, resuming planning")
-                # the carrot is the whole of the route the plan consumes, so it
-                # is computed every tick and the gate reads it, not the array
-                goal = carrot_along(global_xy, (pose.x, pose.y), self.config.goal_lookahead_m)
-                if self.due(cloud_seq, goal):
-                    if self.retask(goal):
-                        # a new task: warm starts, hysteresis and the route
-                        # being held are all about the old one
-                        self._episode.reset()
-                        self._incumbent = None
-                    # a pose implies a ground reference: both come off the same
-                    # tf-resolved base, so this cannot be None here
-                    if self.plan_once(cloud, pose, goal, 0.0 if ground_z is None else ground_z):
-                        self._planned = (cloud_seq, goal)
+            self.tick()
             elapsed = time.perf_counter() - started
             self._stop_event.wait(max(0.0, period - elapsed))
+
+    def tick(self) -> None:
+        """One replan tick: plan, hold, or say what is missing."""
+        # the pose is read here, on the tick thread, straight off tf
+        pose = None if self._pose_src is None else self._pose_src.get(self.config.world_frame)
+        with self._lock:
+            cloud, global_xy = self._cloud, self._global_xy
+            cloud_at, cloud_seq = self._cloud_at, self._cloud_seq
+        age = None if cloud_at is None else time.monotonic() - cloud_at
+        # Why a tick did nothing, in the planner's own words. Silence here
+        # is the failure that looks like "the robot will not move" from the
+        # outside, and it is the one a log has to be able to answer.
+        self._stall.check(
+            {
+                "local_map": cloud is not None,
+                "pose (world_frame -> base_frame on tf)": pose is not None,
+                "planner_path (global route/goal)": global_xy is not None,
+            }
+        )
+        if pose is None:
+            return
+        if age is not None and age > self.config.max_map_age_s:
+            # A hold is not gated: it is a statement about the CLOCK, and
+            # nothing arriving is exactly the case it fires on. Forget what
+            # was planned so the first live tick plans again -- and what was
+            # published with it: a route held across a dead link is a route
+            # nothing has re-validated.
+            self._planned = None
+            self._incumbent = None
+            self.hold(pose, age)
+        elif cloud is not None and global_xy is not None:
+            if self._stale:
+                self._stale = False
+                logger.info("local_map is live again, resuming planning")
+            # the carrot is the whole of the route the plan consumes, so it
+            # is computed every tick and the gate reads it, not the array
+            goal = carrot_along(global_xy, (pose.x, pose.y), self.config.goal_lookahead_m)
+            if self.due(cloud_seq, goal):
+                if self.retask(goal):
+                    # a new task: warm starts, hysteresis and the route
+                    # being held are all about the old one
+                    self._episode.reset()
+                    self._incumbent = None
+                # the surface under the robot, off the body: the base rides
+                # emb.base_height above it
+                ground_z = pose.position.z - self._emb.base_height
+                if self.plan_once(cloud, pose, goal, ground_z):
+                    self._planned = (cloud_seq, goal)
 
     def due(self, cloud_seq: int, carrot: tuple[float, float]) -> bool:
         """Has an input the plan depends on moved since the plan was made?"""
