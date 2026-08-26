@@ -54,8 +54,8 @@ class ControllerConfig(BaseConfig):
     # while a fan segment is being executed, hold position and rotate until
     # the yaw error drops under this (rad)
     fan_yaw_done: float = 0.25
-    # speed governor over the optional clearance annotation, mirroring the
-    # planner-side AvoidanceConfig semantics: cruise at max_speed with
+    # speed governor over the optional clearance annotation, the curve of
+    # profile.py: cruise at max_speed with
     # speed_clearance of room, creep at min_speed at the precision floor,
     # linear between; judged over the next speed_lookahead metres of path
     min_speed: float = 0.2

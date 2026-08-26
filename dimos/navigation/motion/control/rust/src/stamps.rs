@@ -38,8 +38,7 @@ pub const FAN_EPS: f64 = 1e-6;
 /// whatever config the planner process happened to hold, two robots with
 /// different controller tuning would stamp the same path differently. The
 /// python keeps these as module constants for the same reason, and notes that
-/// they are held in step with `AvoidanceConfig` and `ControllerConfig` by
-/// hand.
+/// they are held in step with `ControllerConfig` by hand.
 pub const MAX_SPEED: f64 = 0.5;
 pub const MIN_SPEED: f64 = 0.2;
 pub const SPEED_CLEARANCE: f64 = 0.35;

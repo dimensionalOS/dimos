@@ -34,8 +34,8 @@ import numpy as np
 
 from dimos.msgs.nav_msgs.Path import Path
 
-# The one governor curve (mirrors planner-side AvoidanceConfig semantics and
-# ControllerConfig defaults; keep the three in step deliberately).
+# The one governor curve. ControllerConfig and rust stamps.rs carry the same
+# numbers; keep them in step deliberately.
 MAX_SPEED = 0.5
 MIN_SPEED = 0.2
 SPEED_CLEARANCE = 0.35  # room at which full speed is granted (m)

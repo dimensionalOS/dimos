@@ -58,7 +58,7 @@ pub struct Config {
     /// legs. A gap admits a route when it is `box_width + 2 * precision` wide.
     pub body_dilate_m: f64,
     /// Plan discretisation (m). The python takes it from
-    /// `AvoidanceConfig().resolution`; here it crosses explicitly.
+    /// `planners/base.py RESOLUTION`; here it crosses explicitly.
     #[validate(range(exclusive_min = 0.0))]
     pub resolution: f64,
     #[validate(range(exclusive_min = 0.0))]
