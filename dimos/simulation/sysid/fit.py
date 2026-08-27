@@ -319,7 +319,9 @@ def run_study(
     import optuna
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
-    start = {k: float(base[k]) for k in plan.searched}
+    # The incumbent, clipped into the searched range: a stock plant carries
+    # actuator_tau = 0, which a log-scaled knob cannot start from.
+    start = {k: float(min(knob.hi, max(knob.lo, base[k]))) for k, knob in plan.searched.items()}
     records: list[tuple[float, dict[str, float], tuple[float, ...]]] = []
 
     def objective_fn(trial: optuna.Trial) -> float:
