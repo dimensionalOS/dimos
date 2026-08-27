@@ -51,7 +51,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.teleop.quest.quest_types import Buttons
+from dimos.teleop.webxr.controller_types import Buttons
 
 ARM_JOINTS = ["arm/joint1", "arm/joint2"]
 
@@ -224,7 +224,7 @@ class SingleArmControlCoordinator(ControlCoordinator):
 
 
 class DualArmControlCoordinator(ControlCoordinator):
-    """One cartesian port per arm, as in the dual-arm quest teleop."""
+    """One cartesian port per arm, as in the dual-arm webxr teleop."""
 
     left_cartesian: In[PoseStamped]
     right_cartesian: In[PoseStamped]

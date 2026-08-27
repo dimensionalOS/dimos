@@ -166,7 +166,7 @@ def _nonnegative_finite(
 
 @attrs.frozen(slots=False)
 class PoseTargetIKTaskConfig:
-    """Configuration shared by absolute and Quest pose-target tasks."""
+    """Configuration shared by absolute and WebXR pose-target tasks."""
 
     joint_names: tuple[str, ...] = attrs.field(
         converter=string_tuple_converter,

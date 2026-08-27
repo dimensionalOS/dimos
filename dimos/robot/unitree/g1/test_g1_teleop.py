@@ -44,7 +44,7 @@ from dimos.robot.unitree.g1.manip_config import (
     g1_upper_body_model_config,
 )
 from dimos.robot.unitree.g1.teleop_ik import G1PinkPoseTargetSolver
-from dimos.teleop.quest.quest_extensions import MobileVideoArmTeleopModule
+from dimos.teleop.webxr.extensions import MobileVideoArmTeleopModule
 
 
 def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Construction and component tests for safe OpenArm Quest teleoperation."""
+"""Construction and component tests for safe OpenArm WebXR teleoperation."""
 
 from typing import Any, cast
 
@@ -33,10 +33,10 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.robot.manipulators.openarm.blueprints.basic import openarm_planner_coordinator
 from dimos.robot.manipulators.openarm.blueprints.teleop import (
-    OPENARM_QUEST_TASK_NAME,
+    OPENARM_WEBXR_TASK_NAME,
     OpenArmTeleopCoordinator,
     _OpenArmManipulationModule,
-    teleop_quest_openarm,
+    teleop_webxr_openarm,
 )
 from dimos.robot.manipulators.openarm.config import (
     OPENARM_ARM_JOINTS,
@@ -46,8 +46,8 @@ from dimos.robot.manipulators.openarm.config import (
     openarm_bimanual_model_config,
 )
 from dimos.robot.manipulators.openarm.teleop_ik import OpenArmPinkPoseTargetSolver
-from dimos.teleop.quest.quest_extensions import ArmTeleopModule
-from dimos.teleop.quest.quest_types import Buttons
+from dimos.teleop.webxr.controller_types import Buttons
+from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 
 def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
@@ -74,10 +74,10 @@ def test_openarm_model_uses_canonical_zero_start() -> None:
     assert OPENARM_HOME_JOINTS == [0.0] * len(OPENARM_ARM_JOINTS)
 
 
-def test_openarm_quest_blueprint_has_one_bimanual_mock_task() -> None:
-    coordinator_kwargs = _module_kwargs(teleop_quest_openarm, OpenArmTeleopCoordinator)
-    teleop_kwargs = _module_kwargs(teleop_quest_openarm, ArmTeleopModule)
-    manipulation_kwargs = _module_kwargs(teleop_quest_openarm, _OpenArmManipulationModule)
+def test_openarm_webxr_blueprint_has_one_bimanual_mock_task() -> None:
+    coordinator_kwargs = _module_kwargs(teleop_webxr_openarm, OpenArmTeleopCoordinator)
+    teleop_kwargs = _module_kwargs(teleop_webxr_openarm, ArmTeleopModule)
+    manipulation_kwargs = _module_kwargs(teleop_webxr_openarm, _OpenArmManipulationModule)
     tasks = coordinator_kwargs["tasks"]
 
     assert "hardware" not in coordinator_kwargs
@@ -89,7 +89,7 @@ def test_openarm_quest_blueprint_has_one_bimanual_mock_task() -> None:
     trajectory = next(task for task in tasks if task.type == "trajectory")
     grippers = [task for task in tasks if task.type == "gripper"]
     bindings = task.params["bindings"]
-    assert task.name == OPENARM_QUEST_TASK_NAME
+    assert task.name == OPENARM_WEBXR_TASK_NAME
     assert task.type == "teleop_ik"
     assert task.joint_names == OPENARM_ARM_JOINTS
     assert {binding["hand"] for binding in bindings} == {"left", "right"}
@@ -132,7 +132,7 @@ def test_openarm_quest_blueprint_has_one_bimanual_mock_task() -> None:
     assert manipulation_kwargs["kinematics"] == task.params["pink"]
     assert manipulation_kwargs["visualization"] == {"backend": "viser"}
     assert teleop_kwargs == {}
-    assert teleop_quest_openarm.remapping_map == {
+    assert teleop_webxr_openarm.remapping_map == {
         (ArmTeleopModule.name, "left_controller_output"): "left_cartesian_command",
         (ArmTeleopModule.name, "left_gripper_command"): "left_gripper_command",
         (ArmTeleopModule.name, "right_controller_output"): "right_cartesian_command",
@@ -141,7 +141,7 @@ def test_openarm_quest_blueprint_has_one_bimanual_mock_task() -> None:
 
 
 def test_openarm_can_ports_are_blueprint_cli_options() -> None:
-    for blueprint in (teleop_quest_openarm, openarm_planner_coordinator):
+    for blueprint in (teleop_webxr_openarm, openarm_planner_coordinator):
         parsed = BlueprintConfigParser(blueprint).parse(
             ["--left-can-port", "can1", "--right-can-port", "can0"],
             environ={},
@@ -152,10 +152,10 @@ def test_openarm_can_ports_are_blueprint_cli_options() -> None:
         assert coordinator["right_can_port"] == "can0"
 
 
-def test_openarm_quest_commands_both_arms_and_grippers_through_coordinator(
+def test_openarm_webxr_commands_both_arms_and_grippers_through_coordinator(
     mocker: MockerFixture,
 ) -> None:
-    coordinator_kwargs = _module_kwargs(teleop_quest_openarm, OpenArmTeleopCoordinator)
+    coordinator_kwargs = _module_kwargs(teleop_webxr_openarm, OpenArmTeleopCoordinator)
     mocker.patch.object(OpenArmPinkPoseTargetSolver, "_validate_frame_targets")
     frame_poses = mocker.patch.object(
         OpenArmPinkPoseTargetSolver,
@@ -178,7 +178,7 @@ def test_openarm_quest_commands_both_arms_and_grippers_through_coordinator(
 
     try:
         coordinator.start()
-        task = cast("TeleopIKTask", coordinator._tasks[OPENARM_QUEST_TASK_NAME])
+        task = cast("TeleopIKTask", coordinator._tasks[OPENARM_WEBXR_TASK_NAME])
         assert task._teleop_config.robot_model.name == "openarm"
         assert task._teleop_config.max_joint_velocity_rad_s == 2.0
         assert task._teleop_config.joint_velocity_limits_rad_s == {
@@ -200,11 +200,11 @@ def test_openarm_quest_commands_both_arms_and_grippers_through_coordinator(
         coordinator._dispatch("right_gripper_command", Float32(data=0.25))
         coordinator._dispatch(
             "left_cartesian_command",
-            PoseStamped(frame_id=OPENARM_QUEST_TASK_NAME, position=[1.0, 0.0, 0.0]),
+            PoseStamped(frame_id=OPENARM_WEBXR_TASK_NAME, position=[1.0, 0.0, 0.0]),
         )
         coordinator._dispatch(
             "right_cartesian_command",
-            PoseStamped(frame_id=OPENARM_QUEST_TASK_NAME, position=[-1.0, 0.0, 0.0]),
+            PoseStamped(frame_id=OPENARM_WEBXR_TASK_NAME, position=[-1.0, 0.0, 0.0]),
         )
 
         assert coordinator._tick_loop is not None

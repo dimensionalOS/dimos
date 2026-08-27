@@ -33,16 +33,18 @@ from dimos.robot.manipulators.xarm.blueprints.teleop import (
     coordinator_teleop_xarm7,
 )
 from dimos.robot.unitree.go2.connection import GO2Connection
-from dimos.teleop.quest.quest_extensions import (
+from dimos.teleop.webxr.body_tracking_monitor import BodyTrackingMonitor
+from dimos.teleop.webxr.extensions import (
     ArmTeleopModule,
     Go2TeleopModule,
     HandTeleopModule,
     VideoArmTeleopModule,
 )
+from dimos.teleop.webxr.module import WebXRTeleopModule
 from dimos.visualization.vis_module import vis_module
 
 # Arm teleop with press-and-hold engage (has rerun viz)
-teleop_quest_rerun = autoconnect(
+teleop_webxr_rerun = autoconnect(
     ArmTeleopModule.blueprint(),
     vis_module("rerun"),
 ).transports(
@@ -54,7 +56,7 @@ teleop_quest_rerun = autoconnect(
 
 
 # XArm7 teleop (sim with --simulation, real otherwise): right controller -> xarm7
-teleop_quest_xarm7 = autoconnect(
+teleop_webxr_xarm7 = autoconnect(
     ArmTeleopModule.blueprint(),
     coordinator_teleop_xarm7,
 ).remappings(
@@ -66,7 +68,7 @@ teleop_quest_xarm7 = autoconnect(
 
 
 # XArm7 hand teleop: thumb-and-index pinch toggles tracking for each hand.
-teleop_quest_hand_xarm7 = autoconnect(
+teleop_webxr_hand_xarm7 = autoconnect(
     HandTeleopModule.blueprint(),
     coordinator_teleop_xarm7,
 ).remappings(
@@ -77,8 +79,8 @@ teleop_quest_hand_xarm7 = autoconnect(
 )
 
 
-# XArm7 teleop + camera streaming into the Quest scene as a panel.
-teleop_quest_xarm7_video = (
+# XArm7 teleop + camera streaming into the WebXR scene as a panel.
+teleop_webxr_xarm7_video = (
     autoconnect(
         VideoArmTeleopModule.blueprint(),
         coordinator_teleop_xarm7,
@@ -98,7 +100,7 @@ teleop_quest_xarm7_video = (
 
 
 # Piper teleop (sim with --simulation, real otherwise): left controller -> piper arm
-teleop_quest_piper = autoconnect(
+teleop_webxr_piper = autoconnect(
     ArmTeleopModule.blueprint(),
     coordinator_teleop_piper,
 ).remappings(
@@ -110,7 +112,7 @@ teleop_quest_piper = autoconnect(
 
 
 # A1Z mock teleop: left controller -> A1Z arm
-teleop_quest_a1z = autoconnect(
+teleop_webxr_a1z = autoconnect(
     ArmTeleopModule.blueprint(),
     coordinator_teleop_a1z,
 ).remappings(
@@ -122,7 +124,7 @@ teleop_quest_a1z = autoconnect(
 
 
 # XArm6 teleop (sim with --simulation, real otherwise): right controller -> xarm6
-teleop_quest_xarm6 = autoconnect(
+teleop_webxr_xarm6 = autoconnect(
     ArmTeleopModule.blueprint(),
     coordinator_teleop_xarm6,
 ).remappings(
@@ -133,8 +135,8 @@ teleop_quest_xarm6 = autoconnect(
 )
 
 
-# Dual arm teleop: right -> piper, left -> xarm6 (two independent Quest IK tasks)
-teleop_quest_dual = autoconnect(
+# Dual arm teleop: right -> piper, left -> xarm6 (two independent teleop IK tasks)
+teleop_webxr_dual = autoconnect(
     ArmTeleopModule.blueprint(),
     coordinator_teleop_dual,
 ).remappings(
@@ -148,7 +150,7 @@ teleop_quest_dual = autoconnect(
 
 
 # Go2 quadruped: thumbstick velocity teleop + camera streamed to the headset.
-teleop_quest_go2 = (
+teleop_webxr_go2 = (
     autoconnect(
         Go2TeleopModule.blueprint(),
         GO2Connection.blueprint(),
@@ -162,4 +164,11 @@ teleop_quest_go2 = (
         }
     )
     .global_config(robot_model="unitree_go2")
+)
+
+
+# PICO 4 Ultra WebXR API test: require body tracking and report every usable joint.
+demo_pico_body_tracking = autoconnect(
+    WebXRTeleopModule.blueprint(body_tracking_mode="required"),
+    BodyTrackingMonitor.blueprint(),
 )

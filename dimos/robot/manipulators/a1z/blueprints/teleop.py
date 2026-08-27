@@ -63,22 +63,22 @@ keyboard_teleop_a1z = autoconnect(
 )
 
 
-_a1z_quest_hw = a1z_hardware("arm")
-_a1z_quest_model = make_a1z_model_config()
+_a1z_webxr_hw = a1z_hardware("arm")
+_a1z_webxr_model = make_a1z_model_config()
 
 coordinator_teleop_a1z = autoconnect(
     TeleopControlCoordinator.blueprint(
         instance_name="ControlCoordinator",
-        hardware=[_a1z_quest_hw],
+        hardware=[_a1z_webxr_hw],
         tasks=[
             teleop_ik_task(
-                _a1z_quest_hw,
+                _a1z_webxr_hw,
                 name="teleop_a1z",
-                robot_model=_a1z_quest_model,
+                robot_model=_a1z_webxr_model,
                 bindings=[
                     {
                         "hand": "left",
-                        "target_frame": _a1z_quest_model.end_effector_link,
+                        "target_frame": _a1z_webxr_model.end_effector_link,
                     }
                 ],
                 priority=20,
@@ -91,11 +91,11 @@ coordinator_teleop_a1z = autoconnect(
                 priority=20,
                 stream_bind={"gripper_command": "left_gripper_command"},
             ),
-            trajectory_task(_a1z_quest_hw),
+            trajectory_task(_a1z_webxr_hw),
         ],
     ),
     ManipulationModule.blueprint(
-        robots=[_a1z_quest_model],
+        robots=[_a1z_webxr_model],
         visualization={"backend": "viser"},
     ),
 )
