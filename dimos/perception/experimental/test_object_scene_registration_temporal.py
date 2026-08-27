@@ -17,14 +17,17 @@ from __future__ import annotations
 from collections.abc import Iterator
 import sys
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 import numpy as np
 import pytest
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
+from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
+from dimos.spec.utils import spec_annotation_compliance
 
 
 class _FakeTF:
@@ -143,3 +146,95 @@ def test_full_scene_pointcloud_uses_one_coherent_scene_snapshot(
 
     module.get_full_scene_pointcloud()
     result.transform.assert_called_once_with(transform)
+
+
+def test_osr_implements_request_driven_scan_spec(module: ObjectSceneRegistrationModule) -> None:
+    assert spec_annotation_compliance(module, ObjectSceneRegistrationSpec)
+
+
+def test_owlv2_prompts_are_text_only() -> None:
+    module = ObjectSceneRegistrationModule(detector_backend="owlv2")
+    try:
+        module.set_prompts(text=["mug"])
+        assert module._owlv2_prompts == ["mug"]
+        with pytest.raises(ValueError, match="text prompts"):
+            module.set_prompts(bboxes=np.zeros((1, 4)))
+    finally:
+        module.stop()
+
+
+def test_owlv2_queries_configured_prompts(monkeypatch: Any) -> None:
+    module = ObjectSceneRegistrationModule(detector_backend="owlv2")
+    module._camera_info = MagicMock()
+    module._detector = MagicMock()
+    module._owlv2_prompts = ["mug"]
+    module.detections_2d = MagicMock()
+    color = Image(
+        data=np.zeros((2, 2, 3), dtype=np.uint8),
+        format=ImageFormat.BGR,
+        frame_id="camera",
+        ts=4.0,
+    )
+    detections = ImageDetections2D(color, [])
+    module._detector.query_detections.return_value = detections
+    process_3d = MagicMock()
+    monkeypatch.setattr(module, "_process_3d_detections", process_3d)
+
+    module._process_images(color, _image(4.0))
+
+    module._detector.query_detections.assert_called_once_with(color, ["mug"], threshold=0.6)
+    process_3d.assert_called_once_with(detections, color, ANY)
+    module.stop()
+
+
+def test_edgetam_refines_detector_output(monkeypatch: Any) -> None:
+    module = ObjectSceneRegistrationModule(segmentation_backend="edgetam")
+    module._camera_info = MagicMock()
+    color = Image(
+        data=np.zeros((2, 2, 3), dtype=np.uint8),
+        format=ImageFormat.BGR,
+        frame_id="camera",
+        ts=4.0,
+    )
+    raw_detections = ImageDetections2D(color, [])
+    segmented_detections = ImageDetections2D(color, [])
+    module._segmenter = MagicMock()
+    module._segmenter.segment.return_value = segmented_detections
+    module._detector = MagicMock()
+    module._detector.process_image.return_value = raw_detections
+    module.detections_2d = MagicMock()
+    process_3d = MagicMock()
+    monkeypatch.setattr(module, "_process_3d_detections", process_3d)
+
+    module._process_images(color, _image(4.0))
+
+    module._segmenter.segment.assert_called_once_with(raw_detections)
+    process_3d.assert_called_once_with(segmented_detections, color, ANY)
+    module.stop()
+
+
+def test_request_driven_scan_processes_latest_aligned_frame(monkeypatch: Any) -> None:
+    module = ObjectSceneRegistrationModule(target_frame="camera", detect_on_request=True)
+    color = Image(
+        data=np.zeros((2, 2, 3), dtype=np.uint8),
+        format=ImageFormat.BGR,
+        frame_id="camera",
+        ts=4.0,
+    )
+    depth = _image(4.0)
+    module._on_aligned_frames((color, depth))
+    output = MagicMock()
+    result = MagicMock(spec=Detection3DArray)
+
+    def process_images(got_color: Image, got_depth: Image) -> None:
+        assert (got_color, got_depth) == (color, depth)
+        module._latest_output_objects = (output,)
+
+    monkeypatch.setattr(module, "_process_images", process_images)
+    monkeypatch.setattr(
+        "dimos.perception.experimental.object_scene_registration.to_detection3d_array",
+        lambda objects, **kwargs: result,
+    )
+
+    assert module.scan_scene() is result
+    module.stop()

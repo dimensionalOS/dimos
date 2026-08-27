@@ -15,10 +15,13 @@
 from typing import Protocol
 
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.spec.utils import Spec
 
 
 class ObjectSceneRegistrationSpec(Spec, Protocol):
+    def set_prompts(self, text: list[str] | None = None) -> None: ...
+    def scan_scene(self) -> Detection3DArray: ...
     def get_object_pointcloud_by_name(self, name: str) -> PointCloud2 | None: ...
     def get_object_pointcloud_by_object_id(self, object_id: str) -> PointCloud2 | None: ...
     def get_full_scene_pointcloud(

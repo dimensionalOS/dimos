@@ -13,14 +13,14 @@
 # limitations under the License.
 
 import time
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from numpy.typing import NDArray
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -46,6 +46,20 @@ from dimos.utils.reactive import backpressure
 logger = setup_logger()
 
 
+class ObjectSceneRegistrationConfig(ModuleConfig):
+    target_frame: str = "map"
+    prompt_mode: YoloePromptMode = YoloePromptMode.LRPC
+    distance_threshold: float = 0.2
+    min_detections_for_permanent: int = 6
+    detector_backend: Literal["yoloe", "owlv2"] = "yoloe"
+    segmentation_backend: Literal["yolo", "edgetam"] = "yolo"
+    detector_confidence: float = 0.6
+    detect_on_request: bool = False
+    max_distance: float = 0.0
+    use_aabb: bool = False
+    max_obstacle_width: float = 0.0
+
+
 class ObjectSceneRegistrationModule(Module):
     """Module for detecting objects in camera images using YOLO-E with 2D and 3D detection."""
 
@@ -59,50 +73,59 @@ class ObjectSceneRegistrationModule(Module):
     objects: Out[list[DetObject]]
     pointcloud: Out[PointCloud2]
 
-    _detector: Yoloe2DDetector | None = None
+    _detector: Any | None = None
+    _segmenter: Any | None = None
     _camera_info: CameraInfo | None = None
     _object_db: ObjectDB
+    _owlv2_prompts: list[str]
+    _latest_aligned_frames: tuple[Image, Image] | None = None
+    _latest_output_objects: tuple[DetObject, ...] = ()
     # A tuple assignment/read is atomic, so depth and its transform cannot be
     # observed from different frames by get_full_scene_pointcloud().
     _latest_scene_snapshot: tuple[Image, Transform | None] | None = None
 
-    def __init__(
-        self,
-        target_frame: str = "map",
-        prompt_mode: YoloePromptMode = YoloePromptMode.LRPC,
-        # ObjectDB tuning
-        distance_threshold: float = 0.2,
-        min_detections_for_permanent: int = 6,
-        # Object 3D reconstruction tuning
-        max_distance: float = 0.0,
-        use_aabb: bool = False,
-        max_obstacle_width: float = 0.0,
-        **kwargs: Any,
-    ) -> None:
+    config: ObjectSceneRegistrationConfig
+
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._target_frame = target_frame
-        self._prompt_mode = prompt_mode
+        self._target_frame = self.config.target_frame
+        self._prompt_mode = self.config.prompt_mode
+        self._detector_backend = self.config.detector_backend
+        self._segmentation_backend = self.config.segmentation_backend
+        self._detector_confidence = self.config.detector_confidence
+        self._detect_on_request = self.config.detect_on_request
         self._object_db = ObjectDB(
-            distance_threshold=distance_threshold,
-            min_detections_for_permanent=min_detections_for_permanent,
+            distance_threshold=self.config.distance_threshold,
+            min_detections_for_permanent=self.config.min_detections_for_permanent,
         )
-        self._max_distance = max_distance
-        self._use_aabb = use_aabb
-        self._max_obstacle_width = max_obstacle_width
+        self._owlv2_prompts = []
+        self._max_distance = self.config.max_distance
+        self._use_aabb = self.config.use_aabb
+        self._max_obstacle_width = self.config.max_obstacle_width
 
     @rpc
     def start(self) -> None:
         super().start()
 
-        if self._prompt_mode == YoloePromptMode.LRPC:
-            model_name = "yoloe-11l-seg-pf.pt"
-        else:
-            model_name = "yoloe-11l-seg.pt"
+        if self._detector_backend == "owlv2":
+            from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
 
-        self._detector = Yoloe2DDetector(
-            model_name=model_name,
-            prompt_mode=self._prompt_mode,
-        )
+            self._detector = Owlv2Detector()
+        else:
+            if self._prompt_mode == YoloePromptMode.LRPC:
+                model_name = "yoloe-11l-seg-pf.pt"
+            else:
+                model_name = "yoloe-11l-seg.pt"
+            self._detector = Yoloe2DDetector(
+                model_name=model_name,
+                prompt_mode=self._prompt_mode,
+                conf=self._detector_confidence,
+            )
+
+        if self._segmentation_backend == "edgetam":
+            from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
+
+            self._segmenter = EdgeTAMImageSegmenter()
 
         self.camera_info.subscribe(lambda msg: setattr(self, "_camera_info", msg))
 
@@ -121,8 +144,11 @@ class ObjectSceneRegistrationModule(Module):
         if self._detector:
             self._detector.stop()
             self._detector = None
+        self._segmenter = None
 
         self._object_db.clear()
+        self._latest_aligned_frames = None
+        self._latest_output_objects = ()
 
         logger.info("ObjectSceneRegistrationModule stopped")
         super().stop()
@@ -134,8 +160,25 @@ class ObjectSceneRegistrationModule(Module):
         bboxes: NDArray[np.float64] | None = None,
     ) -> None:
         """Set prompts for detection. Provide either text or bboxes, not both."""
-        if self._detector is not None:
+        if self._detector_backend == "owlv2":
+            if bboxes is not None:
+                raise ValueError("OWLv2 supports text prompts only")
+            self._owlv2_prompts = text or []
+        elif self._detector is not None:
             self._detector.set_prompts(text=text, bboxes=bboxes)
+
+    @rpc
+    def scan_scene(self) -> Detection3DArray:
+        frames = self._latest_aligned_frames
+        if frames is None:
+            return to_detection3d_array([], frame_id=self._target_frame)
+        self._latest_output_objects = ()
+        self._process_images(*frames)
+        return to_detection3d_array(
+            list(self._latest_output_objects),
+            frame_id=self._target_frame,
+            ts=frames[0].ts,
+        )
 
     @rpc
     def select_object(self, track_id: int) -> dict[str, Any] | None:
@@ -266,7 +309,7 @@ class ObjectSceneRegistrationModule(Module):
         if self._detector is None:
             return "Detector not initialized."
 
-        self._detector.set_prompts(text=list(prompts))
+        self.set_prompts(text=list(prompts))
         time.sleep(2.0)
 
         detected = self.get_detected_objects()
@@ -290,6 +333,9 @@ class ObjectSceneRegistrationModule(Module):
 
     def _on_aligned_frames(self, frames) -> None:  # type: ignore[no-untyped-def]
         color_msg, depth_msg = frames
+        self._latest_aligned_frames = (color_msg, depth_msg)
+        if self._detect_on_request:
+            return
         self._process_images(color_msg, depth_msg)
 
     def _process_images(self, color_msg: Image, depth_msg: Image) -> None:
@@ -308,8 +354,20 @@ class ObjectSceneRegistrationModule(Module):
             data=depth_cv, format=ImageFormat.DEPTH, frame_id=depth_msg.frame_id, ts=depth_msg.ts
         )
 
-        # Run 2D detection
-        detections_2d: ImageDetections2D[Any] = self._detector.process_image(color_image)
+        if self._detector_backend == "owlv2":
+            if not self._owlv2_prompts:
+                detections_2d = ImageDetections2D(color_image, [])
+            else:
+                detections_2d = self._detector.query_detections(
+                    color_image,
+                    self._owlv2_prompts,
+                    threshold=self._detector_confidence,
+                )
+        else:
+            detections_2d = self._detector.process_image(color_image)
+
+        if self._segmenter is not None:
+            detections_2d = self._segmenter.segment(detections_2d)
 
         detections_2d_msg = Detection2DArray(
             detections_length=len(detections_2d.detections),
@@ -359,6 +417,7 @@ class ObjectSceneRegistrationModule(Module):
             max_obstacle_width=self._max_obstacle_width,
         )
         if not objects:
+            self._latest_output_objects = ()
             return
 
         # Add objects to spatial memory database
@@ -367,6 +426,7 @@ class ObjectSceneRegistrationModule(Module):
         # Publish ALL permanent objects so downstream consumers get the full set,
         # not just this frame's batch (which may be a subset of what's on the table).
         all_permanent = self._object_db.get_objects()
+        self._latest_output_objects = tuple(all_permanent)
 
         detections_3d = to_detection3d_array(all_permanent)
         self.detections_3d.publish(detections_3d)
