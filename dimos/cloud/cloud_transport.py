@@ -24,7 +24,7 @@ import urllib.error
 import urllib.request
 
 
-class Transport(Protocol):
+class CloudTransport(Protocol):
     def request(
         self, method: str, path: str, body: dict[str, Any] | None = None
     ) -> dict[str, Any]: ...
@@ -32,7 +32,7 @@ class Transport(Protocol):
     def download(self, url: str, dst: Path) -> None: ...
 
 
-class HttpTransport:
+class HttpCloudTransport:
     """urllib + Bearer key. 401 and network faults surface as RuntimeError with a
     message the CLI can print verbatim."""
 

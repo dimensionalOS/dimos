@@ -22,18 +22,18 @@ import importlib
 from pathlib import Path
 import shutil
 
-from dimos.core.global_config import global_config
+from dimos.constants import CODEC_LIBS
 
 
 def _lib(codec_id: str):  # type: ignore[no-untyped-def]
-    libs = global_config.dimos_codec_libs
+    libs = CODEC_LIBS
     if codec_id not in libs:
         raise ValueError(f"unknown codec {codec_id!r}; known: {sorted(libs)}")
     return importlib.import_module(libs[codec_id][0])
 
 
 def suffix(codec_id: str) -> str:
-    return global_config.dimos_codec_libs[codec_id][1] if codec_id else ""
+    return CODEC_LIBS[codec_id][1] if codec_id else ""
 
 
 def compress(codec_id: str, src: Path, dst: Path) -> None:

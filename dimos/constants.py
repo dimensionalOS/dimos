@@ -63,3 +63,11 @@ LCM_MAX_CHANNEL_NAME_LENGTH = 63
 DEFAULT_THREAD_JOIN_TIMEOUT = 2.0
 
 DEFAULT_BUILD_NATIVE = False
+
+# streaming compression libraries sharing the open(path, mode) API: id -> (module, suffix)
+CODEC_LIBS = {
+    "lz4": ("lz4.frame", ".lz4"),
+    "gzip": ("gzip", ".gz"),
+    "bz2": ("bz2", ".bz2"),
+    "xz": ("lzma", ".xz"),
+}

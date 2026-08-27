@@ -24,6 +24,7 @@ from collections.abc import Callable
 import functools
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import sqlite3
@@ -33,7 +34,7 @@ from typing import Any, Protocol
 
 from dimos.cli.cloud import api_key
 from dimos.cloud import codecs
-from dimos.cloud.http_transport import HttpTransport, Transport
+from dimos.cloud.cloud_transport import CloudTransport, HttpCloudTransport
 from dimos.constants import RECORDINGS_DIR
 from dimos.core.global_config import global_config
 
@@ -61,7 +62,7 @@ class DataApi:
 
     PREFIX = "/v1/data"
 
-    def __init__(self, transport: Transport) -> None:
+    def __init__(self, transport: CloudTransport) -> None:
         self.t = transport
 
     def create(self, **spec: Any) -> dict[str, Any]:
@@ -210,7 +211,7 @@ class CloudData:
             key = global_config.dimos_api_key or api_key()
             if not key:
                 raise RuntimeError("not logged in — run `dimos login`")
-            transport = HttpTransport(
+            transport = HttpCloudTransport(
                 global_config.dimos_cloud_url, key, global_config.dimos_http_timeout
             )
             backend = BACKENDS[global_config.dimos_cloud_backend](
@@ -300,9 +301,10 @@ def _move_into_place(src: Path, out: Path) -> None:
     try:
         src.replace(out)
     except OSError:
-        part = out.with_name(out.name + ".part")
-        shutil.move(str(src), part)
-        part.replace(out)
+        fd, tmp = tempfile.mkstemp(prefix=out.name + ".", dir=out.parent)
+        os.close(fd)
+        shutil.move(str(src), tmp)
+        Path(tmp).replace(out)
 
 
 def _is_sidecar(path: Path) -> bool:

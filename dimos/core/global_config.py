@@ -128,12 +128,6 @@ class GlobalConfig(BaseSettings):
     dimos_upload_retries: int = 2
     dimos_upload_chunk_mb: int | None = None
     dimos_upload_quiet_s: float = 30.0
-    dimos_codec_libs: dict[str, tuple[str, str]] = {
-        "lz4": ("lz4.frame", ".lz4"),
-        "gzip": ("gzip", ".gz"),
-        "bz2": ("bz2", ".bz2"),
-        "xz": ("lzma", ".xz"),
-    }
     dimos_http_timeout: float = 60.0
     dimos_staging_dir: Path | None = None
 
