@@ -20,6 +20,7 @@ import asyncio
 from dataclasses import dataclass
 from functools import partial
 from io import BytesIO
+from typing import Any
 
 import numpy as np
 from pydantic import Field
@@ -70,7 +71,7 @@ class PointCloudSelfFilter(Module):
     clear it - so the mask says outright which cells are free.
     """
 
-    config: PointCloudSelfFilterConfig  # type: ignore[assignment]
+    config: PointCloudSelfFilterConfig
 
     pointcloud: In[PointCloud2]
     tf: In[TFMessage]
@@ -238,33 +239,33 @@ class PointCloudSelfFilter(Module):
 
 
 def _geometry_mesh(
-    geometry: object,
-    resolve: object,
+    geometry: Any,
+    resolve: Any,
 ) -> tuple[trimesh.Trimesh, str, tuple[float, ...]] | None:
-    if geometry.box is not None:  # type: ignore[attr-defined]
-        size = tuple(float(value) for value in geometry.box.size)  # type: ignore[attr-defined]
+    if geometry.box is not None:
+        size = tuple(float(value) for value in geometry.box.size)
         return trimesh.creation.box(extents=size), "box", size
-    if geometry.sphere is not None:  # type: ignore[attr-defined]
-        radius = float(geometry.sphere.radius)  # type: ignore[attr-defined]
+    if geometry.sphere is not None:
+        radius = float(geometry.sphere.radius)
         return trimesh.creation.icosphere(radius=radius), "sphere", (radius,)
-    if geometry.cylinder is not None:  # type: ignore[attr-defined]
-        radius = float(geometry.cylinder.radius)  # type: ignore[attr-defined]
-        length = float(geometry.cylinder.length)  # type: ignore[attr-defined]
+    if geometry.cylinder is not None:
+        radius = float(geometry.cylinder.radius)
+        length = float(geometry.cylinder.length)
         return (
             trimesh.creation.cylinder(radius=radius, height=length),
             "cylinder",
             (radius, length),
         )
-    if geometry.mesh is None:  # type: ignore[attr-defined]
+    if geometry.mesh is None:
         return None
-    filename = resolve(geometry.mesh.filename)  # type: ignore[operator, attr-defined]
+    filename = resolve(geometry.mesh.filename)
     loaded = trimesh.load_mesh(filename, force="mesh")
     if not isinstance(loaded, trimesh.Trimesh):
         raise ValueError(f"Collision mesh is not a single mesh: {filename}")
     mesh = loaded.copy()
-    if geometry.mesh.scale is not None:  # type: ignore[attr-defined]
+    if geometry.mesh.scale is not None:
         mesh.apply_scale(  # type: ignore[no-untyped-call]
-            np.asarray(geometry.mesh.scale, dtype=np.float64)  # type: ignore[attr-defined]
+            np.asarray(geometry.mesh.scale, dtype=np.float64)
         )
     return mesh, "mesh", ()
 
