@@ -60,7 +60,7 @@ class GlobalConfig(BaseSettings):
     simulation: str = ""
     replay: bool = False
     replay_db: str = "go2_short"
-    # --record [sqlite]: every published topic -> recordings/<run-id>/memory-<pid>.db
+    # --record [sqlite]: every bus topic -> recordings/<run-id>/memory.db
     record: Literal["", "sqlite"] = ""
     record_topics: str = "*"  # comma-separated globs on the topic slug (/a/b -> a_b)
     new_memory: bool = False

@@ -12,66 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 from pathlib import Path
 
-import pytest
-
-from dimos.core.global_config import global_config
-from dimos.core.stream import Out
-from dimos.memory import tap
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.tap import BusRecorder
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.protocol.pubsub.impl.lcmpubsub import Topic
 
 
-class _Topic:
-    def __init__(self, topic: str) -> None:
-        self.topic = topic
+def test_records_matching_dimos_topics(tmp_path: Path) -> None:
+    path = tmp_path / "memory.db"
+    store = SqliteStore(path=str(path))
+    store.start()
+    rec = BusRecorder(store, topics="world_odom,lidar")
+    rec.on_message(PoseStamped(ts=1.0), Topic("/world/odom", PoseStamped))
+    rec.on_message(PoseStamped(ts=2.0), Topic("/world/odom", PoseStamped))
+    rec.on_message(PoseStamped(ts=3.0), Topic("/goal", PoseStamped))  # filtered out
+    rec.on_message(b"raw", Topic("/lidar"))  # no dimos type: skipped
+    store.stop()
 
-    def __str__(self) -> str:
-        return f"{self.topic}#some.Type"
-
-
-class _Transport:
-    def __init__(self, topic: str) -> None:
-        self.topic = _Topic(topic)
-        self.sent: list[object] = []
-
-    def broadcast(self, _: object, msg: object) -> None:
-        self.sent.append(msg)
-
-
-@pytest.fixture
-def recording(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setattr(tap, "RECORDINGS_DIR", tmp_path)
-    monkeypatch.setattr(tap, "_store", None)
-    monkeypatch.setattr(tap, "_streams", {})
-    monkeypatch.setenv("DIMOS_RUN_ID", "run1")
-    monkeypatch.setattr(global_config, "record", "sqlite")
-    monkeypatch.setattr(global_config, "record_topics", "world_odom,lidar")
-    return tmp_path / "run1" / f"memory-{os.getpid()}.db"
-
-
-def test_publish_records_matching_topics(recording: Path) -> None:
-    odom: Out[PoseStamped] = Out(PoseStamped, "odom", transport=_Transport("/world/odom"))
-    other: Out[PoseStamped] = Out(PoseStamped, "goal", transport=_Transport("/goal"))
-    odom.publish(PoseStamped(ts=1.0))
-    odom.publish(PoseStamped(ts=2.0))
-    other.publish(PoseStamped(ts=3.0))
-    raw: Out[dict[str, str]] = Out(dict, "lidar", transport=_Transport("/lidar"))
-    raw.publish({"not": "a message"})
-    assert tap._store is not None
-    tap._store.stop()
-
-    store = SqliteStore(path=str(recording), must_exist=True)
+    store = SqliteStore(path=str(path), must_exist=True)
     store.start()
     assert store.list_streams() == ["world_odom"]
     assert [o.ts for o in store.stream("world_odom", PoseStamped)] == [1.0, 2.0]
     store.stop()
-
-
-def test_off_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(tap, "RECORDINGS_DIR", tmp_path)
-    monkeypatch.setattr(tap, "_store", None)
-    Out(PoseStamped, "odom", transport=_Transport("/world/odom")).publish(PoseStamped())
-    assert tap._store is None and not list(tmp_path.iterdir())

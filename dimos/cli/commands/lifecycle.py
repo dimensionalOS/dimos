@@ -117,6 +117,7 @@ def run(
         cleanup_stale,
         generate_run_id,
     )
+    from dimos.memory.tap import recording
     from dimos.robot.get_all_blueprints import get_by_name_or_exit, get_module_by_name_or_exit
     from dimos.utils.logging_config import set_run_log_dir, setup_exception_handler
 
@@ -284,7 +285,7 @@ def run(
         os.close(status_fd)
         # The launcher's exit released the pre-fork cache-usage marker (shared
         # flock); hold a fresh one for the daemon's lifetime.
-        with cache_usage_guard():
+        with cache_usage_guard(), recording():
             coordinator.loop()
     else:
         coordinator = ModuleCoordinator.build(blueprint, parsed_config)
@@ -305,7 +306,8 @@ def run(
         # runs with a visible traceback.
         install_signal_handlers(entry, coordinator, sigint=False)
         try:
-            coordinator.loop()
+            with recording():
+                coordinator.loop()
         finally:
             entry.remove()
 

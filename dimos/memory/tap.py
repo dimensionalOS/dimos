@@ -12,40 +12,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""``--record``: every ``Out.publish`` in this process is appended to a memory store.
+"""``--record``: subscribe to every topic on the transport bus and write one store.
 
-One store per process: ``recordings/<run-id>/memory-<pid>.db``. Streams are named by
-topic (``/lidar`` -> ``lidar``). Poses are not resolved here; ``tf`` is recorded like
-any other topic and ``dimos map pose-fill`` derives poses on read.
+Runs in the ``dimos run`` process, like the Rerun bridge: one ``memory.db`` per run
+at ``recordings/<run-id>/``. Streams are named by topic (``/lidar`` -> ``lidar``).
+Poses are not resolved here; ``tf`` is recorded like any other topic and
+``dimos map pose-fill`` derives poses on read.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 import fnmatch
 import os
 from pathlib import Path
 import re
 import threading
 import time
-from typing import TYPE_CHECKING, TypeVar, cast
+from typing import TYPE_CHECKING, Any
 
 from dimos.constants import RECORDINGS_DIR
 from dimos.core.global_config import global_config
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.memory.store.sqlite import SqliteStore
     from dimos.memory.stream import Stream
     from dimos.msgs.protocol import DimosMsg
 
 logger = setup_logger()
-
-T = TypeVar("T")
-
-_lock = threading.Lock()
-_store: SqliteStore | None = None
-# topic -> stream, or None when filtered out / not a dimos message type.
-_streams: dict[str, Stream[DimosMsg] | None] = {}
 
 
 def recording_dir() -> Path:
@@ -54,40 +50,66 @@ def recording_dir() -> Path:
     return RECORDINGS_DIR / run_id
 
 
-def _stream(topic: str, payload_type: type[T]) -> Stream[DimosMsg] | None:
-    global _store
-    if topic in _streams:
-        return _streams[topic]
-    name = re.sub(r"\W", "_", topic.strip("/"))
-    if not any(fnmatch.fnmatch(name, p) for p in global_config.record_topics.split(",")):
-        _streams[topic] = None
-        return None
-    if not hasattr(payload_type, "lcm_encode"):  # same test as blueprints.py transport pick
-        logger.warning(
-            "--record: %s (%s) is not a dimos message type, skipped", topic, payload_type
-        )
-        _streams[topic] = None
-        return None
-    if _store is None:
-        from dimos.memory.store.sqlite import SqliteStore
+class BusRecorder:
+    """Appends every decoded bus message to ``store``, one stream per topic."""
 
-        path = recording_dir() / f"memory-{os.getpid()}.db"
-        _store = SqliteStore(path=str(path))
-        _store.start()
-    _streams[topic] = _store.stream(name, cast("type[DimosMsg]", payload_type))
-    return _streams[topic]
+    def __init__(self, store: SqliteStore, topics: str = "*") -> None:
+        self.store = store
+        self._globs = topics.split(",")
+        self._lock = threading.Lock()
+        # topic -> stream, or None when filtered out / not a dimos message type.
+        self._streams: dict[str, Stream[DimosMsg] | None] = {}
+
+    def _stream(self, topic: Any) -> Stream[DimosMsg] | None:
+        key = topic.topic
+        if key in self._streams:
+            return self._streams[key]
+        name = re.sub(r"\W", "_", key.strip("/"))
+        wanted = any(fnmatch.fnmatch(name, g) for g in self._globs)
+        if not wanted or topic.lcm_type is None:
+            self._streams[key] = None
+            return None
+        self._streams[key] = self.store.stream(name, topic.lcm_type)
+        logger.info("Recording %s -> %s (%s)", key, name, topic.lcm_type.__name__)
+        return self._streams[key]
+
+    def on_message(self, msg: Any, topic: Any) -> None:
+        # ponytail: one lock per recorder; per-stream locks if inserts contend.
+        with self._lock:
+            stream = self._stream(topic)
+            if stream is not None:
+                stream.append(msg, ts=getattr(msg, "ts", None) or time.time())
 
 
-def record(topic: str, payload_type: type[T], msg: T) -> None:
-    """Append *msg* under *topic* when ``--record`` is on. No-op otherwise.
+def _bus() -> Any:
+    """Same backend selection as the Rerun bridge: the active transport's pubsub."""
+    if global_config.transport == "zenoh":
+        from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
 
-    Only dimos message types (``lcm_encode``/``lcm_decode``, i.e. what a transport
-    can carry) are recorded.
-    """
+        return Zenoh()
+    from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+
+    return LCM()
+
+
+@contextmanager
+def recording() -> Iterator[None]:
+    """Record the bus for the duration of the block when ``--record`` is set."""
     if not global_config.record or global_config.replay:
+        yield
         return
-    # ponytail: one lock per process; per-stream locks if publish contention shows up.
-    with _lock:
-        stream = _stream(topic, payload_type)
-        if stream is not None:
-            stream.append(cast("DimosMsg", msg), ts=getattr(msg, "ts", None) or time.time())
+    path = recording_dir() / "memory.db"
+    store = SqliteStore(path=str(path))
+    store.start()
+    bus = _bus()
+    bus.start()
+    unsubscribe: Callable[[], None] = bus.subscribe_all(
+        BusRecorder(store, global_config.record_topics).on_message
+    )
+    logger.info("Recording to %s", path)
+    try:
+        yield
+    finally:
+        unsubscribe()
+        bus.stop()
+        store.stop()

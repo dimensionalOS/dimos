@@ -183,10 +183,6 @@ class Out(Stream[T], ObservableMixin[T]):
     def publish(self, msg: T) -> None:
         if hasattr(self, "_transport") and self._transport is not None:
             self._transport.broadcast(self, msg)
-            from dimos.memory.tap import record  # --record hook; lazy: memory imports core
-
-            topic = getattr(self._transport, "topic", self.name)
-            record(str(getattr(topic, "topic", topic)), self.type, msg)
         for cb in self._subscribers:
             cb(msg)
 
