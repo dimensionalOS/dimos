@@ -94,8 +94,45 @@ def driver_library_dir() -> Path | None:
     return _DRIVER_LINK_DIR
 
 
-def driver_cuda_major() -> int:
-    """0 if there is no driver."""
+Hardware = Literal[
+    "thor",
+    "orin",
+    "xavier",
+    "nano",
+    "linux-x86-nvidia",
+    "linux-x86-no-nvidia",
+    "linux-arm-no-nvidia",
+    "darwin-apple-silicon",
+    "darwin-intel",
+]
+
+
+def detect_hardware() -> Hardware:
+    if sys.platform == "darwin":
+        if platform.machine() == "arm64":
+            return "darwin-apple-silicon"
+        return "darwin-intel"
+    if platform.machine() == "aarch64":
+        compatible = Path("/proc/device-tree/compatible")
+        chip = compatible.read_bytes() if compatible.exists() else b""
+        if b"tegra264" in chip:
+            return "thor"
+        if b"tegra234" in chip:
+            return "orin"
+        if b"tegra194" in chip:
+            return "xavier"
+        if b"tegra210" in chip:
+            return "nano"
+        return "linux-arm-no-nvidia"
+    if detect_cuda_major() > 0:
+        return "linux-x86-nvidia"
+    return "linux-x86-no-nvidia"
+
+
+def detect_cuda_major() -> int:
+    """0 when there is no NVIDIA driver (always on darwin)."""
+    if sys.platform == "darwin":
+        return 0
     candidates = ["libcuda.so.1"] + [
         str(directory / "libcuda.so.1")
         for directory in (*_DRIVER_ONLY_LIB_DIRS, *_HOST_LIB_DIRS)
@@ -116,17 +153,27 @@ def sdk_variant() -> str:
     """Nix cannot see the installed driver (cuda12 vs cuda13) or /proc/device-tree
     (orin vs thor), so the flake's default package cannot make this choice.
     """
-    if sys.platform == "darwin":
+    hardware = detect_hardware()
+    if hardware in ("thor", "orin"):
+        return hardware
+    if hardware == "darwin-apple-silicon":
         return "metal"
-    if platform.machine() == "aarch64":
-        compatible = Path("/proc/device-tree/compatible")
-        chip = compatible.read_bytes() if compatible.exists() else b""
-        return "thor" if b"tegra264" in chip else "orin"
-    major = driver_cuda_major()
-    if 0 < major < 12:
+    if hardware == "darwin-intel":
+        raise RuntimeError("cuVSLAM has no Intel-mac build; it needs Apple silicon.")
+    # cu_vslam_rs carries no CPU-fallback variant for these, so there is nothing to build.
+    if hardware in ("xavier", "nano"):
+        raise RuntimeError(f"cuVSLAM ships no JetPack 4/5 build, so {hardware} is unsupported.")
+    if hardware == "linux-arm-no-nvidia":
+        raise RuntimeError("cuVSLAM ships no build for non-Jetson ARM.")
+    if hardware == "linux-x86-no-nvidia":
+        # fork-built with ENFORCE_GPU=OFF, so it runs without a driver
+        logger.warning("No NVIDIA driver found; only use_gpu=False will work.")
+        return "x86_64-cuda12"
+    major = detect_cuda_major()
+    if major < 12:
         logger.warning(
-            "This NVIDIA driver supports CUDA %d and cuVSLAM ships nothing older "
-            "than 12; the build will not run until the driver is upgraded.",
+            "This NVIDIA driver supports CUDA %d and the GPU path needs 12+; "
+            "only use_gpu=False will work until the driver is upgraded.",
             major,
         )
     return "x86_64-cuda13" if major >= 13 else "x86_64-cuda12"
