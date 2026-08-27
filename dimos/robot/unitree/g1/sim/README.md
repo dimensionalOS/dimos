@@ -113,9 +113,35 @@ For comparison only: the fork `aaryan/g1-groot-characterization` fitted
 damping 5.6e-4 / armature 0.0138 / frictionloss 3.25 on this same
 recording by a different method. Not used here.
 
-What this does NOT say: the plant has not been graded closed loop (no
-Mode B yet), and one recording on one undeclared floor with nothing
-weighed anchors none of the pinned values.
+**Loop 2, 2026-08-28** (`sysid/ground.py`, `presets/loop2.plant.json`): by
+decision the fit moved to the closed loop. GR00T drives the plant from the
+measured mid-walk state (its six-frame history teacher-forced from the
+recording) on the recorded velocity commands; the loss is the tracking
+area against Point-LIO (along/cross in the real heading frame, yaw),
+normalised by stock, 8 windows x 10 s, 3 studies x 40 trials. Point =
+median of the top 12 trials: armature 0.0049, frictionloss 5.38,
+actuator_tau 1.8 ms, foot_solref_time 7.4 ms, foot_solref_damp 1.52.
+In sample: stock 1.00 -> 0.57.
+
+Graded on FRESH windows (seed 1, 3 perturbed replicates; the chaos floor is
+~0.002 in every term, so the ordering is real):
+
+| plant | along (m) | cross (m) | yaw (rad) |
+|---|---:|---:|---:|
+| stock | 0.120 | 0.104 | 0.214 |
+| measured (loop 1) | 0.118 | 0.117 | 0.163 |
+| loop2 | 0.117 | 0.104 | **0.114** |
+
+The in-sample position gain (-39% along) did not transfer: it was the fit
+windows'. The yaw gain (-47%) did. Position tracking is not reachable with
+these five knobs, on either loop; what closes it is a capture or a
+contact-model question, not a search. This is the anti-transfer pattern
+go2sim measured, one storey up: fitting through the controller finds what
+the controller lets it find.
+
+What this does NOT say: one recording on one undeclared floor with nothing
+weighed anchors none of the pinned values, and the replicate floor is the
+sim against itself, not the robot against itself.
 
 ## 6. Owed
 
