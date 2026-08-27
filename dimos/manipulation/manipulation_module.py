@@ -1427,10 +1427,18 @@ class ManipulationModule(Module):
             octree_resolution=self.config.voxel_map_resolution,
         )
         try:
-            if not self._world_monitor.update_obstacle(obstacle):
+            installed = self._world_monitor.update_obstacle(obstacle) or bool(
                 self._world_monitor.add_obstacle(obstacle)
+            )
         except ValueError:
-            logger.exception("Rejected voxel map; the previous one still stands")
+            logger.exception("Rejected voxel map; planning continues on the previous one")
+            return
+        if not installed:
+            # Silence here would leave the planner checking against a map that
+            # no longer describes the workspace, with nothing to say so.
+            logger.warning(
+                "Planning world refused the voxel map; planning continues on the previous one"
+            )
 
     @rpc
     def update_obstacle_pose(self, name: str, pose: Pose) -> bool:

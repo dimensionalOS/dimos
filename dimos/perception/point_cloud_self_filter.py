@@ -101,7 +101,7 @@ class PointCloudSelfFilter(Module):
 
     def filter_cloud(self, cloud: PointCloud2) -> tuple[PointCloud2, PointCloud2] | None:
         """Filter one capture and build the matching world-frame clear mask."""
-        config = self.filter_config
+        config = self.config
         points = cloud.points_f32()
         keep = np.ones(len(points), dtype=bool)
         current_clear_keys: set[tuple[int, int, int]] = set()
@@ -151,7 +151,7 @@ class PointCloudSelfFilter(Module):
         return filtered, clear_mask
 
     def _lookup(self, parent_frame: str, child_frame: str, stamp: float) -> Transform | None:
-        config = self.filter_config
+        config = self.config
         return self.tfbuffer.get(
             parent_frame,
             child_frame,
@@ -172,7 +172,7 @@ class PointCloudSelfFilter(Module):
         self.filtered_pointcloud.publish(filtered)
 
     def _load_collision_geometry(self) -> list[_CollisionGeometry]:
-        config = self.filter_config.robot_model
+        config = self.config.robot_model
         description = prepare_urdf_for_drake(
             config.model.load(),
             convert_meshes=bool(config.auto_convert_meshes),
@@ -215,8 +215,8 @@ class PointCloudSelfFilter(Module):
         A cell whose center is outside the mesh can still be occupied by it, so
         the margin reaches out by half a cell diagonal.
         """
-        pitch = self.filter_config.voxel_size
-        margin = self.filter_config.padding_m + (np.sqrt(3.0) * pitch / 2.0)
+        pitch = self.config.voxel_size
+        margin = self.config.padding_m + (np.sqrt(3.0) * pitch / 2.0)
         lower = np.floor((mesh.bounds[0] - margin) / pitch).astype(int)
         upper = np.ceil((mesh.bounds[1] + margin) / pitch).astype(int)
         axes = [
@@ -228,10 +228,6 @@ class PointCloudSelfFilter(Module):
             mesh, grid
         )
         return np.asarray(grid[signed_distance >= -margin], dtype=np.float64)
-
-    @property
-    def filter_config(self) -> PointCloudSelfFilterConfig:
-        return self.config  # type: ignore[return-value]
 
 
 def _geometry_mesh(
