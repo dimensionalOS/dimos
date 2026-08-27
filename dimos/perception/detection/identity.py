@@ -61,7 +61,7 @@ def spatial(radius: float = 0.1) -> Callable[[Detection3DPC, Detection3DPC], boo
 
 def fused(voxel: float) -> Callable[[Detection3DPC, Detection3DPC], Detection3DPC]:
     """Merges two detections by combining their point clouds. For each grid cell of size *voxel* meters,
-    it keeps the mean position of all points grouped in that cell. 
+    it keeps the mean position of all points grouped in that cell.
     The weight of each fused point is the number of raw points that contributed to it.
     """
     weights: dict[int, np.ndarray[Any, Any]] = {}
