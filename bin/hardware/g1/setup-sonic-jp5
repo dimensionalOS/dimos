@@ -181,6 +181,7 @@ if [[ ${#WHEELS[@]} -eq 0 ]]; then
             --cudnn_home /usr \
             --cmake_extra_defines \
                 CMAKE_CUDA_ARCHITECTURES=87 \
+                CMAKE_DISABLE_FIND_PACKAGE_Eigen3=ON \
                 onnxruntime_BUILD_UNIT_TESTS=OFF
     )
     cp "$ORT_SOURCE"/build/Linux/Release/dist/onnxruntime_gpu-"$ORT_VERSION"-*.whl \
