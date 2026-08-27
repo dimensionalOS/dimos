@@ -43,6 +43,4 @@ ahash = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 validator = { version = "0.20", features = ["derive"] }
-image = { version = "0.25", default-features = false }
-imageproc = { version = "0.25", default-features = false }
 rayon = "1"
