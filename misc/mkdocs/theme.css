@@ -490,6 +490,68 @@
   opacity: 1;
 }
 
+/* The page as markdown: a menu beside the edit button, for readers that
+ * would rather copy the page into an agent than read it here. The markup
+ * is overrides/main.html; the markdown it offers is written by hooks.py. */
+.dim-markdown {
+  position: relative;
+}
+
+.dim-markdown__toggle {
+  display: flex;
+  align-items: center;
+  color: inherit;
+  cursor: pointer;
+  transition: color 120ms;
+}
+
+.dim-markdown__toggle:hover,
+.dim-markdown--open .dim-markdown__toggle {
+  color: var(--md-accent-fg-color);
+}
+
+/* The chevron is a hint that this one opens, not a second icon. */
+.dim-markdown__toggle svg:last-child {
+  width: 0.8rem;
+  height: 0.8rem;
+  margin-left: -0.1rem;
+}
+
+.dim-markdown__menu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 3;
+  margin-top: 0.3rem;
+  padding: 0.25rem;
+  border: 1px solid var(--dim-hairline);
+  border-radius: var(--dim-radius);
+  background-color: var(--md-default-bg-color--light);
+}
+
+.dim-markdown--open .dim-markdown__menu {
+  display: block;
+}
+
+.dim-markdown__menu > :is(a, button) {
+  display: block;
+  width: 100%;
+  padding: 0.35rem 0.7rem;
+  border-radius: var(--dim-radius-sm);
+  color: var(--md-default-fg-color);
+  font-size: 0.68rem;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms, color 120ms;
+}
+
+.dim-markdown__menu > :is(a, button):hover {
+  background-color: color-mix(in srgb, var(--md-default-fg-color) 7%, transparent);
+  color: var(--md-accent-fg-color);
+}
+
 /* Tabs, when a site turns them on, read as pills rather than underlines. */
 .md-tabs__link {
   border-radius: var(--dim-radius-pill);

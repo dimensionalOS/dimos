@@ -17,7 +17,7 @@ Don't use decorative section dividers or box comments.
 # Section name
 # -------------------------------------------------------------------
 
-# GOOD — just use a plain comment if a section heading is needed
+# GOOD: just use a plain comment if a section heading is needed
 # Basic iteration
 ```
 
@@ -36,16 +36,16 @@ something/
 
 ## No `__init__.py` re-exports
 
-Never add imports to `__init__.py` files. Re-exporting from `__init__.py` makes imports too wide and slow — importing one symbol pulls in the entire package tree.
+Never add imports to `__init__.py` files. Re-exporting from `__init__.py` makes imports too wide and slow. Importing one symbol pulls in the entire package tree.
 
 ```python skip
-# BAD — dimos/memory/__init__.py
+# BAD: dimos/memory/__init__.py
 from dimos.memory.store import Store, SqliteStore
 from dimos.memory.stream import Stream
 ```
 
 ```python
-# GOOD — import directly from the module
+# GOOD: import directly from the module
 from dimos.memory.store.base import Store
 from dimos.memory.stream import Stream
 ```

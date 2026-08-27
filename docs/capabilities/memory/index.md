@@ -27,10 +27,10 @@ for name, stream in store.streams.items():
 ```
 
 ```results
-Stream("color_image"): 4164 items, 2025-12-26 11:09:08 — 2025-12-26 11:14:00 (292.5s, 14.23 Hz, 133.76 MiB)
-Stream("color_image_embedded"): 267 items, 2025-12-26 11:09:12 — 2025-12-26 11:14:00 (288.4s, 0.92 Hz, 12.14 MiB)
-Stream("lidar"): 2251 items, 2025-12-26 11:09:08 — 2025-12-26 11:14:00 (292.3s, 7.70 Hz, 320.76 MiB)
-Stream("odom"): 5465 items, 2025-12-26 11:09:08 — 2025-12-26 11:14:00 (292.5s, 18.68 Hz, 458.97 KiB)
+Stream("color_image"): 4164 items, 2025-12-26 11:09:08 to 2025-12-26 11:14:00 (292.5s, 14.23 Hz, 133.76 MiB)
+Stream("color_image_embedded"): 267 items, 2025-12-26 11:09:12 to 2025-12-26 11:14:00 (288.4s, 0.92 Hz, 12.14 MiB)
+Stream("lidar"): 2251 items, 2025-12-26 11:09:08 to 2025-12-26 11:14:00 (292.3s, 7.70 Hz, 320.76 MiB)
+Stream("odom"): 5465 items, 2025-12-26 11:09:08 to 2025-12-26 11:14:00 (292.5s, 18.68 Hz, 458.97 KiB)
 ```
 
 Any stream is drawable
