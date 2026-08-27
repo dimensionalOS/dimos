@@ -110,6 +110,16 @@ class SerializedStartRealSense(RealSenseCamera):
                         # fine); back off and re-roll instead of killing the
                         # whole launch.
                         last = e
+                        # A failed start may leave a half-started pipeline
+                        # holding the device; release it or every retry finds
+                        # the camera "gone" (held by our own first attempt).
+                        pipe = getattr(self, "_pipeline", None)
+                        if pipe is not None:
+                            try:
+                                pipe.stop()
+                            except Exception:
+                                pass
+                            self._pipeline = None
                         logger.warning(
                             "RealSense open failed (attempt %d/%d): %s",
                             attempt,
