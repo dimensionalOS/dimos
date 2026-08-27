@@ -71,7 +71,8 @@ dimos run xarm7-planner-coordinator \
   --kinematics.dt=0.02
 ```
 
-The same nested shorthand applies to blueprints that instantiate
+The same nested shorthand applies to every blueprint that instantiates
+`ManipulationModule`, including the perception stacks where it is composed with
 `PickAndPlaceModule`:
 
 ```bash
@@ -98,8 +99,7 @@ Manipulation planning separates the world backend from the planner algorithm:
 
 - `world_backend` selects the robot/world/collision representation.
 - `planner.backend` selects the path-planning algorithm.
-- `kinematics.backend` selects the IK backend. The legacy `kinematics_name`
-  field remains available as a compatibility shim.
+- `kinematics.backend` selects the IK backend.
 
 
 ```bash

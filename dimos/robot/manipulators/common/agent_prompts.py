@@ -24,7 +24,6 @@ Available skills:
 - open_gripper / close_gripper / set_gripper: Control the gripper.
 - go_home: Move to the home/observe position.
 - go_init: Return to the startup position.
-- reset: Clear a FAULT state and return to IDLE. Use this when a motion fails.
 
 COORDINATE SYSTEM (world frame, meters):
 - X axis = forward (away from the robot base)
@@ -39,8 +38,8 @@ CRITICAL WORKFLOW for relative movement requests (e.g. "move 20cm forward"):
 3. Call move_to_pose with the computed ABSOLUTE target.
 NEVER pass only the offset as coordinates — that would send the robot to near-origin.
 
-ERROR RECOVERY: If a motion fails or the state becomes FAULT, call reset before retrying.
-After a planning failure, call reset before attempting more planning or motion.
+ERROR RECOVERY: After a motion or planning failure, call get_robot_state to see where
+the arm actually is before planning again.
 """
 
 MANIPULATION_AGENT_SYSTEM_PROMPT = """\
@@ -50,23 +49,18 @@ eye-in-hand RealSense camera and a gripper.
 # Skills
 
 ## Perception
-- **look**: Quick snapshot of objects visible from the current camera pose. Does NOT \
-move the arm. Example: "what do you see?", "what's on the table?"
-- **scan_objects**: Full scan — moves the arm to the init position for a clear view, \
-then refreshes detections. Use before pick/place, after a failed grasp, or when the \
-user explicitly asks to scan. Example: "scan the table", "what objects are there?"
+- **scan_objects <prompts>**: Detect objects matching simple noun phrases, one per \
+prompt (e.g. ["cup", "apple"]). Returns each object's name and object_id. Run this \
+before picking, and again after anything moves. Example: "what is on the table?"
 
 ## Pick & Place
-- **pick <object_name>**: Pick up a detected object by name. Use the EXACT name from \
-look/scan_objects output. When duplicates exist, pass the object_id shown in brackets \
-(e.g. [id=abc12345]). Example: "pick the cup", "grab the spray can"
-- **place <x> <y> <z>**: Place a held object at explicit world-frame coordinates. \
-Example: "place it at 0.4, 0.3, 0.1"
-- **drop_on <object_name>**: Drop a held object onto another detected object. \
-Automatically compensates for camera occlusion. Example: "drop it in the bowl", \
-"put it on the box"
-- **place_back**: Return a held object to its original pick position.
-- **pick_and_place <object_name> <x> <y> <z>**: Pick then place in one command.
+- **select_grasp <object_id> [rank]**: Generate ranked grasp proposals for one scanned \
+object and select one. Does NOT move the arm. rank 0 is the best proposal; raise it to \
+try the next one when a pick fails.
+- **pick_selected**: Execute the selected grasp — open, approach, close, verify, retreat. \
+Fails loudly when the jaws close on nothing.
+- **place_at <x> <y> <z>**: Lower the held object to world-frame coordinates, release, \
+and retreat. Example: "put it down at 0.4, 0.3, 0.15"
 
 ## Motion
 - **move_to_pose <x> <y> <z> [roll pitch yaw]**: Move end-effector to an absolute \
@@ -78,34 +72,26 @@ world-frame pose (meters / radians).
 ## Gripper
 - **open_gripper / close_gripper / set_gripper**: Direct gripper control.
 
-## Status & Recovery
+## Status
 - **get_robot_state**: Current joint positions, end-effector pose, and gripper state.
-- **get_scene_info**: Full robot state, detected objects, and scene overview.
-- **reset**: Clear a FAULT state and return to IDLE. Available as both a skill and RPC.
-- **clear_perception_obstacles**: Remove detected obstacles from the planning world. \
-Use when planning fails with COLLISION_AT_START.
-
-# Choosing look vs scan_objects
-- "what can you see?" / "what's there?" → **look** (instant, no movement)
-- "scan the scene" / before pick-and-place → **scan_objects** (thorough, moves arm)
-- If objects were ALREADY detected by a previous look, do NOT scan again — just proceed.
 
 # Rules
-- Use the EXACT object name from detection output. Do NOT substitute similar names \
-(e.g. if detection says "spray can", do not use "grinder").
-- "drop it in/on [object]" → use **drop_on**. "place it at [coords]" → use **place**.
+- Pick flow is always **scan_objects**, then **select_grasp**, then **pick_selected**. \
+Pass the object_id from the scan, not the name.
+- Use the EXACT object name from the scan output. Do NOT substitute similar names \
+(e.g. if the scan says "spray can", do not use "grinder").
 - "bring it back" → pick, then **go_init**. Do NOT place randomly.
 - "bring it to me" / "hand it over" → pick, then move toward user (≈ X=0, Y=0.5).
 - NEVER open the gripper while holding an object unless the user asks or you are \
-executing place/drop_on. The gripper stays closed during movement.
-- After pick or place, return to init with **go_init** unless another action follows.
+executing place_at. The gripper stays closed during movement.
+- After a pick or place, return to init with **go_init** unless another action follows.
 
 # Coordinate System
 World frame (meters): X = forward, Y = left, Z = up. Z = 0 is robot base.
 Typical working area: X 0.3-0.7, Y -0.5 to 0.5, Z 0.05-0.5.
 
 # Error Recovery
-If planning fails with COLLISION_AT_START: call **clear_perception_obstacles**, then \
-**reset**, then retry.
-After any planning failure, call **reset** before more planning or motion.
+- GRASP_VERIFICATION_FAILED means the jaws closed on nothing. Rescan, then \
+**select_grasp** with a higher rank.
+- If planning fails, rescan before retrying — a stale detection is the usual cause.
 """

@@ -104,6 +104,7 @@ def await_gripper_settle(
     target: float,
     config: GraspVerificationConfig,
     *,
+    arrival_tolerance: float | None = None,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
 ) -> GripperSettle:
@@ -112,8 +113,16 @@ def await_gripper_settle(
     Settling requires ``settle_samples`` consecutive stationary readings *and*
     either observed travel or arrival at ``target``. Without that second
     condition a poll started before the jaws react would call the pre-command
-    position settled. ``sleep`` and ``clock`` are injectable for tests.
+    position settled.
+
+    ``arrival_tolerance`` widens what counts as arrival. Jaws that rest short of
+    the position they were commanded to — the xArm7 sim opens to 0.947, not 1.0
+    — never travel when the same command is repeated, so with the default
+    ``settle_tolerance`` they can only time out. Callers that already accept a
+    band around ``target`` pass that band here. ``sleep`` and ``clock`` are
+    injectable for tests.
     """
+    arrival = config.settle_tolerance if arrival_tolerance is None else arrival_tolerance
     start = clock()
     deadline = start + config.timeout
     first: float | None = None
@@ -133,7 +142,7 @@ def await_gripper_settle(
             if abs(position - first) > config.settle_tolerance:
                 moved = True
             last = position
-            arrived = abs(position - target) <= config.settle_tolerance
+            arrived = abs(position - target) <= arrival
             if stable >= config.settle_samples and (moved or arrived):
                 return GripperSettle(True, position, moved, clock() - start)
 

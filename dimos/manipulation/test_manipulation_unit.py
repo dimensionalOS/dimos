@@ -377,6 +377,7 @@ class TestPlanningInitialization:
     ) -> None:
         module = ManipulationModule(model=robot_config)
         module.coordinator_joint_state = None
+        module.objects = None
         initialize_planning = mocker.patch.object(module, "_initialize_planning")
         initialize_execution = mocker.patch.object(module, "_initialize_execution")
 
@@ -387,6 +388,7 @@ class TestPlanningInitialization:
     def test_start_is_idempotent(self, mocker: MockerFixture, robot_config) -> None:
         module = ManipulationModule(model=robot_config)
         module.coordinator_joint_state = None
+        module.objects = None
         initialize_planning = mocker.patch.object(module, "_initialize_planning")
         initialize_execution = mocker.patch.object(module, "_initialize_execution")
 
@@ -407,6 +409,7 @@ class TestPlanningInitialization:
         module = ManipulationModule(model=robot_config)
         module._control_coordinator = _control_coordinator()
         module.coordinator_joint_state = None
+        module.objects = None
         observed_status: list[ExecutionStatus] = []
 
         def observe_state() -> None:

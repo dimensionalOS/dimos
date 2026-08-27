@@ -29,7 +29,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
-from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+from dimos.manipulation.pick_and_place import PickAndPlaceModule
 from dimos.manipulation.planning.factory import (
     create_kinematics,
     create_planner,

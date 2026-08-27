@@ -14,12 +14,10 @@
 
 """Manipulation Module - Motion planning with ControlCoordinator execution.
 
-Base module providing core manipulation infrastructure:
-- @rpc: Low-level building blocks (plan_to_pose, plan_to_joints, preview_plan, execute)
-- @skill (short-horizon): Single-step actions (move_to_pose, open_gripper, go_home, go_init)
-
-Subclass PickAndPlaceModule (pick_and_place_module.py) adds perception integration
-(scan_objects, get_scene_info) and long-horizon skills (pick, place, pick_and_place).
+Primitive manipulation RPCs: plan, execute, inverse kinematics, obstacles, and
+the gripper. Agent skills live in adapter modules that compose this one through
+a Spec — ``ManipulationSkills`` for single-step motion, ``PickAndPlaceModule``
+for the pick-and-place workflow.
 """
 
 from __future__ import annotations
@@ -41,6 +39,13 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.manipulation.execution_manager import PlanExecutionManager
+from dimos.manipulation.grasp_verification import (
+    GraspVerificationConfig,
+    GripperSettle,
+    await_gripper_settle,
+    grasp_failure,
+    open_failure,
+)
 from dimos.manipulation.manipulation_spec import (
     CommandResult,
     CommandStatus,
@@ -105,6 +110,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.perception.experimental.object import Object as DetObject
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -162,12 +168,10 @@ class ManipulationModuleConfig(ModuleConfig):
 
 
 class ManipulationModule(Module):
-    """Base motion planning module with ControlCoordinator execution.
+    """Primitive motion-planning RPCs with ControlCoordinator execution.
 
-    - @rpc: Low-level building blocks (plan, execute, gripper)
-    - @skill (short-horizon): Single-step actions (move_to_pose, open_gripper, go_home)
-
-    Subclass PickAndPlaceModule adds perception integration and long-horizon skills.
+    Owns the planning world, so perception objects are folded into the collision
+    world here rather than in the skill adapters that consume this module.
     """
 
     config: ManipulationModuleConfig
@@ -175,6 +179,8 @@ class ManipulationModule(Module):
 
     # Input: Joint state from coordinator (for world sync)
     coordinator_joint_state: In[JointState]
+    # Input: Detected objects, folded into the planning world as obstacles.
+    objects: In[list[DetObject]]
     tf: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -225,6 +231,15 @@ class ManipulationModule(Module):
             if self.coordinator_joint_state is not None:
                 self.coordinator_joint_state.subscribe(self._on_joint_state)
                 logger.info("Subscribed to coordinator_joint_state port")
+            if self.objects is not None:
+                # Raw subscribe: the callback only refreshes the obstacle
+                # monitor's cache, so it is cheap enough for the shared port
+                # thread. Turning detections into geometry happens later, in
+                # refresh_obstacles.
+                self.objects.subscribe(self._on_objects)
+                logger.info("Subscribed to objects port")
+            if self._world_monitor is not None:
+                self._world_monitor.start_obstacle_monitor()
             logger.info("ManipulationModule started")
         except BaseException:
             self._started = False
@@ -1141,6 +1156,11 @@ class ManipulationModule(Module):
             else None,
         }
 
+    @rpc
+    def get_pre_grasp_offset(self) -> float:
+        """Standoff distance along the approach axis for this robot, in metres."""
+        return self.config.model.pre_grasp_offset
+
     def get_model_config(self) -> RobotModelConfig:
         """Return the configured model for in-process visualization adapters."""
         return self.config.model
@@ -1302,6 +1322,54 @@ class ManipulationModule(Module):
         """Access the world monitor for advanced obstacle/world operations."""
         return self._world_monitor
 
+    def _on_objects(self, objects: list[DetObject]) -> None:
+        """Feed detections to the obstacle monitor (runs on the RxPY thread pool)."""
+        if self._world_monitor is None:
+            return
+        try:
+            self._world_monitor.on_objects(objects)
+        except Exception as exc:
+            logger.error(f"Exception handling detected objects: {exc}")
+
+    @rpc
+    def refresh_obstacles(self, min_duration: float = 0.0) -> list[dict[str, Any]]:
+        """Fold cached detections into the planning world. Returns those added.
+
+        Args:
+            min_duration: Minimum time an object must have been seen to qualify.
+        """
+        if self._world_monitor is None:
+            return []
+        return self._world_monitor.refresh_obstacles(min_duration)
+
+    @rpc
+    def get_detected_obstacles(self) -> list[DetObject]:
+        """Detections the obstacle monitor has cached, newest geometry per object."""
+        if self._world_monitor is None:
+            return []
+        return self._world_monitor.get_cached_objects()
+
+    @rpc
+    def get_perception_status(self) -> dict[str, int]:
+        """Cached-detection and added-obstacle counts."""
+        if self._world_monitor is None:
+            return {"cached": 0, "added": 0}
+        return self._world_monitor.get_perception_status()
+
+    @rpc
+    def list_added_obstacles(self) -> list[dict[str, Any]]:
+        """Perception obstacles currently installed in the planning world."""
+        if self._world_monitor is None:
+            return []
+        return self._world_monitor.list_added_obstacles()
+
+    @rpc
+    def clear_perception_obstacles(self) -> int:
+        """Remove every perception obstacle from the planning world."""
+        if self._world_monitor is None:
+            return 0
+        return self._world_monitor.clear_perception_obstacles()
+
     @rpc
     def add_obstacle(
         self,
@@ -1412,6 +1480,96 @@ class ManipulationModule(Module):
             return CommandResult(CommandStatus.SUCCEEDED, f"Gripper set to {position:.0%} open")
         return CommandResult(CommandStatus.FAILED, "Failed to set gripper position")
 
+    def _read_gripper(self, planning_group: PlanningGroupID | None) -> float | None:
+        """Measured normalized opening, read from the gripper the command went to."""
+        group = self._resolve_gripper_group(planning_group)
+        if isinstance(group, CommandResult):
+            return None
+        return self._get_group_gripper_position(group)
+
+    def _command_and_settle(
+        self,
+        target: float,
+        planning_group: PlanningGroupID | None,
+        config: GraspVerificationConfig,
+        arrival_tolerance: float | None = None,
+    ) -> GripperSettle | None:
+        """Send one gripper command and poll the readback to rest.
+
+        Returns None when the command itself was refused, which an open-loop
+        wait cannot distinguish from a slow gripper.
+        """
+        command = self.set_gripper_position(target, planning_group)
+        if command.status is not CommandStatus.SUCCEEDED:
+            logger.error(f"Gripper command to {target:.2f} refused: {command.message}")
+            return None
+        return await_gripper_settle(
+            lambda: self._read_gripper(planning_group),
+            target,
+            config,
+            arrival_tolerance=arrival_tolerance,
+        )
+
+    @rpc
+    def open_gripper_and_settle(
+        self, planning_group: PlanningGroupID | None = None
+    ) -> CommandResult:
+        """Open the jaws and wait for them to reach the open position.
+
+        Args:
+            planning_group: Opaque planning-group ID. Omit when only one gripper exists.
+        """
+        config = self.config.model.grasp_verification
+        # Jaws already at rest never travel, and the xArm7 sim rests at 0.947
+        # rather than the commanded 1.0, so arrival has to use the same band
+        # open_failure calls open.
+        settle = self._command_and_settle(
+            config.open_position, planning_group, config, config.open_tolerance
+        )
+        if settle is None:
+            return CommandResult(CommandStatus.FAILED, "gripper open command refused")
+        if settle.position is None:
+            # The command was accepted; carry on rather than failing a robot
+            # whose gripper reports no measurement at all.
+            logger.warning("gripper readback unavailable, cannot confirm the open")
+            return CommandResult(CommandStatus.SUCCEEDED, "gripper commanded open, no readback")
+        failure = open_failure(settle, config)
+        if failure is not None:
+            logger.error(f"Gripper open failed: {failure}")
+            return CommandResult(CommandStatus.FAILED, failure)
+        logger.info(f"Gripper open at {settle.position:.3f} after {settle.elapsed:.2f}s")
+        return CommandResult(CommandStatus.SUCCEEDED, f"gripper open at {settle.position:.3f}")
+
+    @rpc
+    def close_gripper_and_verify(
+        self, planning_group: PlanningGroupID | None = None
+    ) -> CommandResult:
+        """Close the jaws, wait for them to stall, and read the stall as a grasp.
+
+        Args:
+            planning_group: Opaque planning-group ID. Omit when only one gripper exists.
+        """
+        config = self.config.model.grasp_verification
+        settle = self._command_and_settle(config.closed_position, planning_group, config)
+        if settle is None:
+            return CommandResult(CommandStatus.FAILED, "gripper close command refused")
+        if not config.enabled:
+            logger.info(f"Grasp verification disabled, gripper at {settle.position}")
+            return CommandResult(
+                CommandStatus.SUCCEEDED, "gripper commanded shut, verification disabled"
+            )
+        failure = grasp_failure(settle, config)
+        if failure is not None:
+            logger.error(f"Grasp verification failed: {failure}")
+            return CommandResult(CommandStatus.FAILED, failure)
+        assert settle.position is not None
+        detail = (
+            f"object held — readback {settle.position:.3f} in band "
+            f"({config.held_low:.3f}, {config.held_high:.3f}) after {settle.elapsed:.2f}s"
+        )
+        logger.info(f"Grasp verified: {detail}")
+        return CommandResult(CommandStatus.SUCCEEDED, detail)
+
     def _resolve_pose_group(
         self, planning_group: PlanningGroupID | None
     ) -> PlanningGroup | CommandResult:
@@ -1455,6 +1613,24 @@ class ManipulationModule(Module):
                 f"Expected one {capability}-capable planning group, found {len(candidates)}",
             )
         return candidates[0]
+
+    @rpc
+    def lift_if_low(
+        self, min_z: float = 0.05, planning_group: PlanningGroupID | None = None
+    ) -> CommandResult:
+        """Raise the end effector to clear *min_z* when it is resting below it.
+
+        A pick planned from a start state at table height reports
+        COLLISION_AT_START; lifting first is what makes the approach plannable.
+
+        Args:
+            min_z: Height below which the end effector is lifted, in metres.
+            planning_group: Opaque planning-group ID. Omit when only one arm exists.
+        """
+        lift = self._lift_if_low(planning_group, min_z)
+        if lift.is_success():
+            return CommandResult(CommandStatus.SUCCEEDED, lift.message or "")
+        return CommandResult(CommandStatus.FAILED, lift.message or "lift failed")
 
     def _lift_if_low(
         self, group_id: PlanningGroupID | None = None, min_z: float = 0.05

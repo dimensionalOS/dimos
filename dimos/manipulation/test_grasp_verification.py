@@ -52,11 +52,16 @@ def reader(values):
     return read
 
 
-def settle(values, target=0.0, clock=None, **overrides):
+def settle(values, target=0.0, clock=None, arrival_tolerance=None, **overrides):
     config = GraspVerificationConfig(**overrides)
     clock = clock or FakeClock()
     return await_gripper_settle(
-        reader(values), target, config, sleep=clock.sleep, clock=clock
+        reader(values),
+        target,
+        config,
+        arrival_tolerance=arrival_tolerance,
+        sleep=clock.sleep,
+        clock=clock,
     ), config
 
 
@@ -98,6 +103,29 @@ def test_open_command_settles_immediately_when_already_open():
     assert result.settled
     assert not result.moved
     assert clock.now < config.timeout
+
+
+def test_reopening_jaws_already_at_their_rest_position_times_out_without_a_wider_arrival():
+    """The measured 0.947 rest is neither travel nor arrival at the commanded 1.0."""
+    clock = FakeClock()
+    result, config = settle([0.9468] * 200, target=1.0, clock=clock)
+    assert not result.settled
+    assert not result.moved
+    assert clock.now == pytest.approx(config.timeout, abs=0.02)
+    assert open_failure(result, config) is not None
+
+
+def test_arrival_tolerance_accepts_the_rest_position_the_jaws_actually_reach():
+    """open_tolerance already calls 0.947 open, so the poll must not time out on it."""
+    clock = FakeClock()
+    config = GraspVerificationConfig()
+    result, _ = settle(
+        [0.9468] * 200, target=1.0, clock=clock, arrival_tolerance=config.open_tolerance
+    )
+    assert result.settled
+    assert not result.moved
+    assert clock.now < config.timeout
+    assert open_failure(result, config) is None
 
 
 def test_a_gripper_that_never_stops_moving_times_out():

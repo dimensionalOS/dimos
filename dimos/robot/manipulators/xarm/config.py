@@ -64,12 +64,17 @@ XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": _XARM_REPO / "xarm_de
 XARM6_SIM_PATH = LfsPath("xarm6/scene.xml")
 XARM7_SIM_PATH = LfsPath("xarm7/scene.xml")
 XARM7_SIM_HOME = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
+# The sim scene stands the arm on a pedestal: xarm7.xml mounts link_base at
+# z=0.12. Without the same offset here the planner solves poses 12cm below the
+# arm it is driving, and every grasp closes on air.
+XARM7_SIM_BASE_Z = 0.12
 
 
 def make_xarm7_sim_robot_config() -> RobotModelConfig:
     return make_xarm7_model_config(
         add_gripper=True,
         gripper_hardware_id="arm",
+        z_offset=XARM7_SIM_BASE_Z,
         tf_extra_links=["link7"],
         home_joints=XARM7_SIM_HOME,
         pre_grasp_offset=0.05,

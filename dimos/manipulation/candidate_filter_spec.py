@@ -12,19 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Planner contract used to reject unreachable grasp proposals."""
+
 from typing import Protocol
 
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.manipulation.planning.spec.models import IKResult, PlanningGroupID
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.spec.utils import Spec
 
 
-class ObjectSceneRegistrationSpec(Spec, Protocol):
-    def set_prompts(self, text: list[str] | None = None) -> None: ...
-    def get_object_pointcloud_by_name(self, name: str) -> PointCloud2 | None: ...
-    def get_object_pointcloud_by_object_id(self, object_id: str) -> PointCloud2 | None: ...
-    def get_full_scene_pointcloud(
+class GraspCandidateFilterSpec(Spec, Protocol):
+    def inverse_kinematics_single(
         self,
-        exclude_object_id: str | None = None,
-        depth_trunc: float = 2.0,
-        voxel_size: float = 0.01,
-    ) -> PointCloud2 | None: ...
+        pose: Pose,
+        group_id: PlanningGroupID | None = None,
+        seed: JointState | None = None,
+        check_collision: bool = True,
+    ) -> IKResult: ...

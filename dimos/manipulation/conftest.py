@@ -76,6 +76,7 @@ def module_factory(mocker: MockerFixture) -> Iterator[ModuleFactory]:
             coordinator if coordinator is not None else _mock_control_coordinator()
         )
         cast("Any", module).coordinator_joint_state = None
+        cast("Any", module).objects = None
         mocker.patch.object(module, "_initialize_planning")
         module.start()
         return module
