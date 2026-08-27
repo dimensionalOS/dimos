@@ -91,7 +91,7 @@ def recording() -> Iterator[None]:
     store = SqliteStore(path=str(path))
     store.start()
     bus = pubsub_backend()
-    if hasattr(bus, "start"):  # as the Rerun bridge does; the protocol has no lifecycle
+    if hasattr(bus, "start"):
         bus.start()
     unsubscribe: Callable[[], None] = bus.subscribe_all(
         BusRecorder(store, global_config.record_topics).on_message
