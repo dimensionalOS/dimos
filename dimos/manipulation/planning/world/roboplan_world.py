@@ -611,6 +611,15 @@ class RoboPlanWorld:
                 color,
             )
             return
+        if obstacle.obstacle_type == ObstacleType.OCTREE:
+            scene.addOcTreeGeometry(
+                obstacle_id,
+                ROBOPLAN_WORLD_FRAME,
+                _octree(obstacle),
+                matrix,
+                color,
+            )
+            return
         raise ValueError(f"Unsupported obstacle type: {obstacle.obstacle_type}")
 
     def _validate_obstacle(self, obstacle: Obstacle, *, allow_empty_name: bool = False) -> None:
@@ -624,3 +633,19 @@ class RoboPlanWorld:
                 f"{obstacle.obstacle_type.name} obstacle requires {n_dims} dimensions, "
                 f"got {len(obstacle.dimensions)}"
             )
+
+
+def _octree(obstacle: Obstacle) -> Any:
+    """Build a roboplan octree from an obstacle's occupied cell centers.
+
+    Coal describes an octree cell as six numbers: center, edge length, cost and
+    occupancy threshold. Every cell is occupied here, so cost is 1.0 against the
+    default 0.5 threshold.
+    """
+    if obstacle.octree_resolution is None:
+        raise ValueError("OCTREE obstacle requires octree_resolution")
+    resolution = float(obstacle.octree_resolution)
+    boxes = [
+        np.array((x, y, z, resolution, 1.0, 0.5), dtype=np.float64) for x, y, z in obstacle.points
+    ]
+    return roboplan_core.OcTree(boxes, resolution)
