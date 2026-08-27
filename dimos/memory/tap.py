@@ -95,6 +95,8 @@ class TransportRecorder:
                 self._queue.put_nowait((stream, msg, getattr(msg, "ts", None) or time.time()))
             except queue.Full:
                 self.dropped += 1
+                if self.dropped % 1000 == 1:
+                    logger.warning("--record: writer queue full, %d dropped so far", self.dropped)
 
         logger.info("Recording %s (%s) via %s", name, stream_type.__name__, transport)
         return transport.subscribe(on_msg)

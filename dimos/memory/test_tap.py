@@ -16,14 +16,16 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from dimos.core.stream import Transport
+from dimos.memory import tap
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import TransportRecorder
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
-class _Transport:
-    """Any dimos Transport: subscribe(callback) -> unsubscribe."""
-
+class _Transport(Transport[Any]):
     def __init__(self) -> None:
         self.callbacks: list[Callable[[Any], None]] = []
 
@@ -33,7 +35,13 @@ class _Transport:
         self.callbacks.append(callback)
         return lambda: self.callbacks.remove(callback)
 
-    def publish(self, msg: Any) -> None:
+    def start(self) -> None:
+        pass
+
+    def stop(self) -> None:
+        pass
+
+    def broadcast(self, selfstream: Any, msg: Any) -> None:
         for cb in self.callbacks:
             cb(msg)
 
@@ -63,7 +71,9 @@ def test_taps_matching_dimos_streams(tmp_path: Path) -> None:
     store.stop()
 
 
-def test_full_queue_drops_and_counts(tmp_path: Path) -> None:
+def test_full_queue_drops_and_counts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    warnings: list[str] = []
+    monkeypatch.setattr(tap.logger, "warning", lambda msg, *args: warnings.append(msg % args))
     store = SqliteStore(path=str(tmp_path / "memory.db"))
     store.start()
     rec = TransportRecorder(store, queue_size=1)
@@ -73,5 +83,7 @@ def test_full_queue_drops_and_counts(tmp_path: Path) -> None:
     rec.tap("odom", PoseStamped, odom)
     odom.publish(PoseStamped(ts=1.0))
     odom.publish(PoseStamped(ts=2.0))
-    assert rec.dropped == 1
+    odom.publish(PoseStamped(ts=3.0))
+    assert rec.dropped == 2
+    assert len(warnings) == 1
     store.stop()

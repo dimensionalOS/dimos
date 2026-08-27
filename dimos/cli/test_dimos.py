@@ -77,7 +77,7 @@ class RunModuleB(Module):
         (["dimos", "run", "go2"], ["dimos", "run", "go2"]),
     ],
 )
-def test_normalize_argv(argv: list[str], expected: list[str]):
+def test_normalize_argv(argv: list[str], expected: list[str]) -> None:
     assert normalize_argv(argv) == expected
 
 
