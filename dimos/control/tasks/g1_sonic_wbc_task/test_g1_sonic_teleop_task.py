@@ -78,10 +78,8 @@ def _state(t_now: float, dt: float = 0.02) -> CoordinatorState:
     return CoordinatorState(joints=joints, imu={"g1": IMUState()}, t_now=t_now, dt=dt)
 
 
-def _start_session(task: G1SonicTeleopTask) -> None:
+def _prime_pose_stream(task: G1SonicTeleopTask) -> None:
     task.on_body_tracking(_body_snapshot(), t_now=1.0)
-    task.on_teleop_buttons(_buttons(a=True, b=True, x=True, y=True), t_now=1.0)
-    task.on_teleop_buttons(_buttons(), t_now=1.001)
 
 
 def _fill_pose_buffer(task: G1SonicTeleopTask) -> None:
@@ -94,7 +92,7 @@ def _fill_pose_buffer(task: G1SonicTeleopTask) -> None:
 
 
 def _enter_pose(task: G1SonicTeleopTask) -> None:
-    _start_session(task)
+    _prime_pose_stream(task)
     _fill_pose_buffer(task)
     task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.19)
 
@@ -129,13 +127,10 @@ def task_and_pipeline(mocker: Any) -> Iterator[tuple[G1SonicTeleopTask, Any]]:
     task.stop()
 
 
-def test_start_combo_enters_planner_and_has_priority_over_ax(
+def test_live_policy_enters_planner_without_controller_buttons(
     task_and_pipeline: tuple[Any, Any],
 ) -> None:
     task, pipeline = task_and_pipeline
-    task.on_body_tracking(_body_snapshot(), t_now=1.0)
-
-    task.on_teleop_buttons(_buttons(a=True, b=True, x=True, y=True), t_now=1.0)
 
     teleop = task.state_snapshot()["webxr_teleop"]
     assert teleop["mode"] == "planner"
@@ -144,8 +139,21 @@ def test_start_combo_enters_planner_and_has_priority_over_ax(
     pipeline.apply_pose_message.assert_not_called()
 
 
-def test_ax_is_ignored_while_teleop_is_off(task_and_pipeline: tuple[Any, Any]) -> None:
+def test_dry_run_owns_webxr_off_and_live_output_owns_planner(
+    task_and_pipeline: tuple[Any, Any],
+) -> None:
+    task, _ = task_and_pipeline
+
+    task.set_dry_run(True)
+    assert task.state_snapshot()["webxr_teleop"]["mode"] == "off"
+
+    task.set_dry_run(False)
+    assert task.state_snapshot()["webxr_teleop"]["mode"] == "planner"
+
+
+def test_ax_is_ignored_while_policy_is_unarmed(task_and_pipeline: tuple[Any, Any]) -> None:
     task, pipeline = task_and_pipeline
+    assert task.disarm()
     task.on_body_tracking(_body_snapshot(), t_now=1.0)
 
     task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.0)
@@ -156,7 +164,7 @@ def test_ax_is_ignored_while_teleop_is_off(task_and_pipeline: tuple[Any, Any]) -
 
 def test_pose_requires_complete_ten_frame_buffer(task_and_pipeline: tuple[Any, Any]) -> None:
     task, pipeline = task_and_pipeline
-    _start_session(task)
+    _prime_pose_stream(task)
 
     task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.01)
 
@@ -190,7 +198,7 @@ def test_low_latency_pipeline_requires_two_frames_and_is_reported(mocker: Any) -
         task.start()
         task.compute(_state(0.5))
         task.compute(_state(0.52))
-        _start_session(task)
+        _prime_pose_stream(task)
         task.on_body_tracking(_body_snapshot(capture_time_s=1.02), t_now=1.02)
         task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.03)
 
@@ -208,7 +216,7 @@ def test_pose_data_is_applied_before_stream_source_is_selected(
     task_and_pipeline: tuple[Any, Any],
 ) -> None:
     task, pipeline = task_and_pipeline
-    _start_session(task)
+    _prime_pose_stream(task)
     _fill_pose_buffer(task)
     pipeline.reset_mock()
     pipeline.apply_pose_message.return_value = {"frames": 10, "encode_mode": 2}
@@ -274,22 +282,40 @@ def test_ax_toggles_pose_back_to_balancing_planner(
     pipeline.stop_clip.assert_called()
 
 
-def test_start_combo_stops_teleop_without_disarming_policy(
+def test_abxy_does_not_change_pose_mode(
     task_and_pipeline: tuple[Any, Any],
 ) -> None:
     task, pipeline = task_and_pipeline
     _enter_pose(task)
     task.on_teleop_buttons(_buttons(), t_now=1.20)
+    pipeline.stop_clip.reset_mock()
 
     task.on_teleop_buttons(_buttons(a=True, b=True, x=True, y=True), t_now=1.21)
 
     assert task.control_state is SonicControlState.CONTROL
+    assert task.state_snapshot()["webxr_teleop"]["mode"] == "pose"
+    assert task.state_snapshot()["reference_source"] == "webxr_pose"
+    pipeline.stop_clip.assert_not_called()
+
+
+def test_dry_run_from_pose_clears_reference_and_enters_off(
+    task_and_pipeline: tuple[Any, Any], mocker: Any
+) -> None:
+    task, pipeline = task_and_pipeline
+    publish = mocker.Mock()
+    task.set_pose_reference_publisher(publish)
+    _enter_pose(task)
+    publish.reset_mock()
+
+    task.set_dry_run(True)
+
     assert task.state_snapshot()["webxr_teleop"]["mode"] == "off"
     assert task.state_snapshot()["reference_source"] == "planner"
+    assert publish.call_args.args[0].active is False
     pipeline.stop_clip.assert_called()
 
 
-def test_webxr_cannot_start_while_policy_is_unarmed(
+def test_webxr_stays_off_while_policy_is_unarmed(
     task_and_pipeline: tuple[Any, Any],
 ) -> None:
     task, pipeline = task_and_pipeline
@@ -297,11 +323,10 @@ def test_webxr_cannot_start_while_policy_is_unarmed(
     pipeline.apply_pose_message.reset_mock()
     task.on_body_tracking(_body_snapshot(), t_now=1.0)
 
-    task.on_teleop_buttons(_buttons(a=True, b=True, x=True, y=True), t_now=1.0)
+    task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.0)
 
     assert task.control_state is SonicControlState.UNARMED
     assert task.state_snapshot()["webxr_teleop"]["mode"] == "off"
-    assert task.state_snapshot()["webxr_teleop"]["last_transition_reason"] == "policy_inactive"
     pipeline.apply_pose_message.assert_not_called()
 
 
@@ -318,7 +343,7 @@ def test_tracking_loss_in_pose_returns_to_planner(
     pipeline.stop_clip.assert_called()
 
 
-def test_tracking_reference_change_invalidates_session(
+def test_tracking_reference_change_returns_to_planner(
     task_and_pipeline: tuple[Any, Any],
 ) -> None:
     task, _ = task_and_pipeline
@@ -330,7 +355,7 @@ def test_tracking_reference_change_invalidates_session(
     )
 
     teleop = task.state_snapshot()["webxr_teleop"]
-    assert teleop["mode"] == "off"
+    assert teleop["mode"] == "planner"
     assert teleop["last_transition_reason"] == "tracking_reference_changed"
 
 

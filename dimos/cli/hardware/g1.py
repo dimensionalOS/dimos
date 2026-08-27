@@ -238,7 +238,13 @@ def status() -> None:
             typer.echo(f"reference:   {state['reference_source']}")
         webxr = state.get("webxr_teleop")
         if isinstance(webxr, dict):
-            typer.echo(f"webxr:       {'engaged' if webxr.get('engaged') else 'disengaged'}")
+            typer.echo(f"webxr:       {webxr.get('mode', 'unknown')}")
+            typer.echo(f"pipeline:    {webxr.get('sonic_pipeline', 'unknown')}")
+            buffered = webxr.get("buffered_frames", 0)
+            required = webxr.get("pose_window_frames", 0)
+            readiness = "ready" if webxr.get("stream_ready") else "waiting"
+            typer.echo(f"pose_buffer: {buffered}/{required} ({readiness})")
+            typer.echo(f"transition:  {webxr.get('last_transition_reason', 'unknown')}")
         typer.echo(f"trajectory:  {trajectory}")
         typer.echo(f"manipulation: {', '.join(group_ids) if group_ids else 'unavailable'}")
     except (AttributeError, KeyError, RuntimeError) as exc:

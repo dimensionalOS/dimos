@@ -157,36 +157,31 @@ tracked leg can command an unsafe whole-body reference. Wear close-fitting
 pants, keep at least 3 m of clear space around the robot, and do not proceed if
 tracking latency is above 30 ms or any body joint is unstable.
 
-DimOS keeps the robot-policy and headset lifecycles separate:
+DimOS uses the robot-policy lifecycle to gate the WebXR reference:
 
 ```text
-Robot policy (terminal)                 WebXR reference (PICO)
-
 UNARMED/current hold
         |
         | dimos hardware g1 arm
         v
-CONTROL/dry-run, SONIC planner
+CONTROL/dry-run, WebXR OFF
         |
         | dimos hardware g1 enable
         v
-CONTROL/live, SONIC planner  <--------- OFF
-        |                                |
-        |                       A+B+X+Y  | start session
-        |                                v
-        +--------------------------- PLANNER
-                                         |
-                                align operator with robot
-                                         |
-                                      A+X| toggle
-                                         v
-                                       POSE
+CONTROL/live, WebXR PLANNER
+        |
+        | align operator with robot
+        |
+     A+X| toggle
+        v
+CONTROL/live, WebXR POSE
 ```
 
 Run `status`, `arm`, `status`, `enable`, and `status` as separate commands so
-the team can inspect the robot between transitions. Before starting the
-headset session, stand upright with feet together, look forward, keep the upper
-arms down, bend the forearms 90 degrees forward, and point the palms inward.
+the team can inspect the robot between transitions. `enable` enters WebXR
+`PLANNER`; it does not apply the tracked body pose. Before pressing A+X, stand
+upright with feet together, look forward, keep the upper arms down, bend the
+forearms 90 degrees forward, and point the palms inward.
 
 Select the WebXR pose window when launching the blueprint. Both options use the
 same SONIC v1.1 ONNX models:
@@ -209,23 +204,33 @@ uv run dimos --simulation mujoco run unitree-g1-sonic-webxr-teleop \
 The selection is fixed for the process lifetime; restart the blueprint to
 change it.
 
-The controller sequence matches NVIDIA's official full-body process:
+MuJoCo keeps its existing fast iteration lifecycle: the simulated policy
+auto-arms with no ramp or dry-run and enters WebXR `PLANNER` as soon as control
+starts. Wait for the pose buffer, then press A+X. Real hardware instead starts
+unarmed in dry-run and requires the CLI `arm` and `enable` sequence above. To
+rehearse that sequence against a running simulation, first run `dimos hardware
+g1 disable`, then use the same `arm`, `status`, and `enable` commands as on the
+robot.
 
-1. With SONIC balancing in planner mode, press **A+B+X+Y** once. DimOS enters
-   WebXR `PLANNER` and begins building the selected 50 Hz pose window without
-   moving the robot from its planner reference.
-2. Physically align the operator's body and heading with the standing robot,
-   then remain aligned until the selected pose window is ready: about 200 ms
-   for `sonic-v1.1` or 40 ms for `sonic-low-latency`.
+Use the CLI and controller in this order:
+
+1. Run `dimos hardware g1 enable`. DimOS enters WebXR `PLANNER` and begins
+   building the selected 50 Hz pose window when complete PICO tracking arrives,
+   without moving the robot from its planner reference.
+2. Run `dimos hardware g1 status` and confirm `webxr: planner`, then physically
+   align the operator's body and heading with the standing robot. Remain aligned
+   until `pose_buffer` reports `ready`: about 200 ms for `sonic-v1.1` or 40 ms
+   for `sonic-low-latency` after complete tracking begins.
 3. Press **A+X** once to enter `POSE`. Do not press it from a mismatched pose;
    the policy will immediately track the new whole-body reference.
 4. Press **A+X** again to return to the balancing planner.
-5. Press **A+B+X+Y** from either active mode to turn WebXR teleoperation off.
+5. Finish routine operation with `dimos hardware g1 disable`, followed by
+   `dimos stop`.
 
-The four-button headset stop only removes the WebXR reference. It deliberately
-does not disable the balancing policy and is not an emergency stop. Use the
-Unitree physical stop for emergencies. Finish routine operation with `dimos
-hardware g1 disable`, followed by `dimos stop`.
+ABXY has no SONIC teleoperation action. The terminal owns live policy output,
+while the PICO wearer owns only the `PLANNER`/`POSE` tracking toggle. Neither
+software control is an emergency stop; use the Unitree physical stop for
+emergencies.
 
 ### Inspecting the SONIC pose reference
 
@@ -247,10 +252,10 @@ teleoperation leaves `POSE`, so a visible skeleton is never stale data from
 input with approximately 200 ms of deliberate reference latency; the
 `sonic-low-latency` option reduces that window to approximately 40 ms.
 
-For the first hardware run, exercise this complete button sequence in
-`CONTROL/dry-run` and inspect `dimos hardware g1 status` before enabling live
-commands. Tracking loss returns POSE to PLANNER; a WebXR reference-space change
-turns the teleop session off and requires the four-button start sequence again.
+For the first hardware run, rehearse the complete lifecycle in simulation and
+inspect `dimos hardware g1 status` before every real transition. Tracking loss
+or a WebXR reference-space change returns `POSE` to `PLANNER`, clears the old
+reference, and rebuilds the pose buffer before A+X can enter `POSE` again.
 
 ## 5. Legacy navigation viewer example
 

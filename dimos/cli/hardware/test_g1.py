@@ -95,10 +95,17 @@ def test_status_discovers_sonic_lifecycle_task(mocker) -> None:
     coordinator = _coordinator("sonic_teleop")
     coordinator.task_invoke.side_effect = [
         {
-            **_state(armed=False, dry_run=True),
-            "control_state": "unarmed",
+            **_state(armed=True, dry_run=False),
+            "control_state": "control",
             "reference_source": "planner",
-            "webxr_teleop": {"engaged": False},
+            "webxr_teleop": {
+                "mode": "planner",
+                "sonic_pipeline": "sonic-v1.1",
+                "pose_window_frames": 10,
+                "buffered_frames": 7,
+                "stream_ready": False,
+                "last_transition_reason": "pose_buffer_not_ready",
+            },
         },
         {"state": "idle"},
     ]
@@ -109,8 +116,11 @@ def test_status_discovers_sonic_lifecycle_task(mocker) -> None:
 
     assert result.exit_code == 0, result.output
     assert "controller:  sonic_teleop" in result.output
-    assert "control:     unarmed" in result.output
-    assert "webxr:       disengaged" in result.output
+    assert "control:     control" in result.output
+    assert "webxr:       planner" in result.output
+    assert "pipeline:    sonic-v1.1" in result.output
+    assert "pose_buffer: 7/10 (waiting)" in result.output
+    assert "transition:  pose_buffer_not_ready" in result.output
     coordinator.task_invoke.assert_any_call("sonic_teleop", "state_snapshot", {})
 
 

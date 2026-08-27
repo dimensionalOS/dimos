@@ -57,10 +57,9 @@ class SonicTeleopMode(str, Enum):
 class G1SonicTeleopTask(G1SonicWBCTask):
     """Run NVIDIA's OFF -> PLANNER -> POSE WebXR teleoperation workflow.
 
-    A+B+X+Y starts and stops the teleop session. A+X toggles between the
-    balancing planner and the configured full-body POSE stream. The headset
-    does not own the DimOS policy lifecycle; arm/enable/disable remain CLI
-    actions.
+    The DimOS policy lifecycle owns OFF -> PLANNER: live policy output enters
+    the balancing planner, while dry-run or disarm enters OFF. Exact A+X
+    toggles between the planner and the configured full-body POSE stream.
     """
 
     def __init__(
@@ -78,7 +77,6 @@ class G1SonicTeleopTask(G1SonicWBCTask):
         self._latest_complete_time = 0.0
         self._tracking_frame_id: str | None = None
         self._mode = SonicTeleopMode.OFF
-        self._previous_start_combo = False
         self._previous_ax_combo = False
         self._applied_generation = 0
         self._last_transition_reason = "not_started"
@@ -113,7 +111,7 @@ class G1SonicTeleopTask(G1SonicWBCTask):
             ):
                 self._latest_complete = msg
                 self._latest_complete_time = t_now
-                self._enter_off_locked("tracking_reference_changed")
+                self._enter_planner_locked("tracking_reference_changed")
                 return
 
             self._latest_complete = msg
@@ -136,23 +134,15 @@ class G1SonicTeleopTask(G1SonicWBCTask):
                     self._clear_pose_stream_locked("invalid_body_pose")
 
     def on_teleop_buttons(self, msg: Buttons, t_now: float) -> None:
-        start_combo = bool(
-            msg.left_primary and msg.left_secondary and msg.right_primary and msg.right_secondary
+        ax_combo = bool(
+            msg.left_primary
+            and msg.right_primary
+            and not msg.left_secondary
+            and not msg.right_secondary
         )
-        ax_combo = bool(msg.left_primary and msg.right_primary)
         with self._teleop_lock:
-            start_edge = start_combo and not self._previous_start_combo
             ax_edge = ax_combo and not self._previous_ax_combo
-            self._previous_start_combo = start_combo
             self._previous_ax_combo = ax_combo
-
-            # The start combo contains A+X, so it always owns this button edge.
-            if start_edge:
-                if self._mode is SonicTeleopMode.OFF:
-                    self._start_session_locked(t_now)
-                else:
-                    self._enter_off_locked("operator_stop")
-                return
 
             if not ax_edge:
                 return
@@ -171,11 +161,12 @@ class G1SonicTeleopTask(G1SonicWBCTask):
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
         with self._teleop_lock:
-            if not self.policy_active and self._mode is not SonicTeleopMode.OFF:
-                self._enter_off_locked("policy_inactive")
-            elif self.policy_active:
+            self._sync_policy_lifecycle_locked()
+            if self.policy_active and not self._dry_run:
                 self._prepare_teleop_locked(state.t_now, state.dt)
-            return super().compute(state)
+            output = super().compute(state)
+            self._sync_policy_lifecycle_locked()
+            return output
 
     def start(self) -> None:
         with self._teleop_lock:
@@ -190,18 +181,23 @@ class G1SonicTeleopTask(G1SonicWBCTask):
 
     def stop(self) -> None:
         with self._teleop_lock:
-            self._reset_teleop_locked()
+            self._reset_teleop_locked("task_stopped")
         super().stop()
 
     def disarm(self) -> bool:
         with self._teleop_lock:
-            self._reset_teleop_locked()
+            self._reset_teleop_locked("policy_disarmed")
         return super().disarm()
 
     def reset_runtime_state(self, reactivate: bool | None = None) -> bool:
         with self._teleop_lock:
-            self._reset_teleop_locked()
+            self._reset_teleop_locked("runtime_reset")
         return super().reset_runtime_state(reactivate)
+
+    def set_dry_run(self, enabled: bool) -> None:
+        with self._teleop_lock:
+            super().set_dry_run(enabled)
+            self._sync_policy_lifecycle_locked()
 
     def state_snapshot(self) -> dict[str, Any]:
         with self._teleop_lock:
@@ -224,40 +220,8 @@ class G1SonicTeleopTask(G1SonicWBCTask):
             )
             return snapshot
 
-    def _start_session_locked(self, t_now: float) -> None:
-        if not self.policy_active:
-            self._last_transition_reason = "policy_inactive"
-            logger.warning(
-                "G1 SONIC WebXR start rejected", task=self._name, reason="policy_inactive"
-            )
-            return
-        if (
-            self._latest_complete is None
-            or (t_now - self._latest_complete_time) > _BODY_HOLD_SECONDS
-        ):
-            self._last_transition_reason = "body_tracking_stale"
-            logger.warning(
-                "G1 SONIC WebXR start rejected",
-                task=self._name,
-                reason="body_tracking_stale",
-            )
-            return
-
-        self._mode = SonicTeleopMode.PLANNER
-        self._tracking_frame_id = self._latest_complete.frame_id
-        self._pose_stream.reset()
-        self._applied_generation = 0
-        self._last_transition_reason = "operator_start"
-        self._return_to_planner_reference()
-        self.set_velocity_command(0.0, 0.0, 0.0)
-        try:
-            self._pose_stream.push(self._latest_complete, t_now=t_now)
-        except (IncompleteBodyPoseError, PoseStreamError):
-            self._clear_pose_stream_locked("invalid_body_pose")
-        logger.info("G1 SONIC WebXR mode", task=self._name, mode=self._mode.value)
-
     def _enter_pose_locked(self, t_now: float) -> None:
-        if not self.policy_active:
+        if not self.policy_active or self._dry_run:
             self._enter_off_locked("policy_inactive")
             return
         if (
@@ -306,7 +270,9 @@ class G1SonicTeleopTask(G1SonicWBCTask):
             self.set_velocity_command(0.0, 0.0, 0.0)
         self._pose_stream.reset()
         self._applied_generation = 0
+        self._tracking_frame_id = None
         if self._latest_complete is not None:
+            self._tracking_frame_id = self._latest_complete.frame_id
             try:
                 self._pose_stream.push(self._latest_complete, t_now=self._latest_complete_time)
             except (IncompleteBodyPoseError, PoseStreamError):
@@ -343,6 +309,16 @@ class G1SonicTeleopTask(G1SonicWBCTask):
         self._pose_stream.reset()
         self._applied_generation = 0
         self._last_transition_reason = reason
+
+    def _sync_policy_lifecycle_locked(self) -> None:
+        policy_live = self.policy_active and not self._dry_run
+        if not policy_live:
+            if self._mode is not SonicTeleopMode.OFF:
+                reason = "dry_run_enabled" if self.policy_active else "policy_inactive"
+                self._enter_off_locked(reason)
+            return
+        if self._mode is SonicTeleopMode.OFF:
+            self._enter_planner_locked("live_policy_enabled")
 
     def _prepare_teleop_locked(self, t_now: float, dt: float) -> None:
         if self._mode is SonicTeleopMode.OFF:
@@ -406,7 +382,7 @@ class G1SonicTeleopTask(G1SonicWBCTask):
         if self._pose_reference_visible:
             self._publish_pose_reference_locked(SonicPoseReference.clear())
 
-    def _reset_teleop_locked(self) -> None:
+    def _reset_teleop_locked(self, reason: str = "not_started") -> None:
         self._clear_pose_reference_locked()
         if self._mode is SonicTeleopMode.POSE:
             self._pipeline.clear_vr_3point()
@@ -416,10 +392,9 @@ class G1SonicTeleopTask(G1SonicWBCTask):
         self._latest_complete_time = 0.0
         self._tracking_frame_id = None
         self._mode = SonicTeleopMode.OFF
-        self._previous_start_combo = False
         self._previous_ax_combo = False
         self._applied_generation = 0
-        self._last_transition_reason = "not_started"
+        self._last_transition_reason = reason
         self._yaw_rate = 0.0
         self._last_yaw_time = 0.0
         self._pose_stream.reset()
