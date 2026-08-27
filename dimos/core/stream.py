@@ -185,7 +185,8 @@ class Out(Stream[T], ObservableMixin[T]):
             self._transport.broadcast(self, msg)
             from dimos.memory.tap import record  # --record hook; lazy: memory imports core
 
-            record(str(getattr(self._transport, "topic", self.name)), self.type, msg)
+            topic = getattr(self._transport, "topic", self.name)
+            record(str(getattr(topic, "topic", topic)), self.type, msg)
         for cb in self._subscribers:
             cb(msg)
 
