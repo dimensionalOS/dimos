@@ -21,6 +21,7 @@ from pathlib import Path
 from pydantic import Field
 
 from dimos.core.module import ModuleConfig
+from dimos.manipulation.grasp_verification import GraspVerificationConfig
 from dimos.manipulation.planning.groups.identifiers import (
     assert_local_joint_names,
     assert_valid_robot_name,
@@ -81,6 +82,8 @@ class RobotModelConfig(ModuleConfig):
     home_joints: list[float] | None = None
     # Pre-grasp offset distance in meters (along approach direction)
     pre_grasp_offset: float = 0.10
+    # Gripper feedback thresholds for pick/place.
+    grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
 
     def model_post_init(self, __context: object) -> None:
         """Validate robot naming and description format constraints."""
