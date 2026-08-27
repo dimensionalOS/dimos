@@ -25,7 +25,7 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--memory-limit` | TEXT | `auto` | Rerun viewer memory limit |
 | `--mcp-port` | INT | `9990` | MCP server port |
 | `--mcp-host` | TEXT | `127.0.0.1` | MCP server bind address |
-| `--transport` | `lcm\|zenoh` | platform-dependent | Transport backend for streams, RPC, and TF. Defaults to `zenoh` on macOS, otherwise `lcm`. Set `DIMOS_TRANSPORT` (env var or `.env`) to switch every process at once. Standalone CLIs like `humancli`, `agentspy`, and `dtop`, which also accept `--transport`. |
+| `--transport` | `lcm\|zenoh` | `zenoh` | Transport backend for streams, RPC, and TF. Zenoh is the default on every platform and is pinned to localhost until you pass `--robot-ip` or enable scouting. Set `DIMOS_TRANSPORT` (env var or `.env`) to switch every process at once. Standalone CLIs like `humancli`, `agentspy`, and `dtop`, which also accept `--transport`. |
 | `--dtop` / `--no-dtop` | bool | `False` | Enable live resource monitor overlay |
 | `--obstacle-avoidance` / `--no-obstacle-avoidance` | bool | `True` | Enable obstacle avoidance |
 | `--detection-model` | `qwen\|moondream` | `moondream` | Vision model for object detection |
@@ -92,7 +92,7 @@ dimos run unitree-go2-agentic --daemon
 # Replay with Rerun viewer
 dimos --replay --viewer rerun run unitree-go2
 
-# Replay Big Office (on Linux use --transport=zenoh; on macOS Zenoh is default when installed)
+# Replay Big Office (Zenoh is the default transport)
 dimos --transport=zenoh --dtop --replay --replay-db=go2_bigoffice run unitree-go2
 
 # Real robot
@@ -120,7 +120,7 @@ derived from the installed Python distribution name by lowercasing it and collap
 runs of `-`, `_`, and `.` into `-`. The local blueprint name is the entry point name
 and must be lowercase kebab-case, for example `keyboard-teleop`.
 
-On macOS, heavy replay workloads can be unreliable over LCM UDP, so the default transport resolves to `zenoh`; you can still force either path explicitly with `--transport=lcm` or `--transport=zenoh`.
+Heavy replay workloads can be unreliable over LCM UDP, which is one reason `zenoh` is the default transport; you can still force either path explicitly with `--transport=lcm` or `--transport=zenoh`.
 
 When `--daemon` is used, the process:
 1. Builds and starts all modules (foreground, so you see errors)
