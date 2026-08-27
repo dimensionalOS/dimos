@@ -32,7 +32,7 @@ def path_at_true_height(path: Path) -> Any:
     return path.to_rerun(z_offset=0.0, radii=0.02)
 
 
-class OdometryPathConfig(ModuleConfig):
+class OdometryHistConfig(ModuleConfig):
     # Empty follows the odometry's frame_id.
     frame_id: str = ""
     min_step_meters: float = 0.02
@@ -40,12 +40,12 @@ class OdometryPathConfig(ModuleConfig):
     min_publish_interval_seconds: float = 0.1
 
 
-class OdometryPath(Module):
-    config: OdometryPathConfig
+class OdometryHist(Module):
+    config: OdometryHistConfig
 
     odometry: In[Odometry]
 
-    path: Out[Path]
+    odom_hist: Out[Path]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -83,4 +83,4 @@ class OdometryPath(Module):
                 return
         self._last_publish_ts = msg.ts
         self._unpublished = False
-        self.path.publish(Path(ts=msg.ts, frame_id=frame_id, poses=list(self._poses)))
+        self.odom_hist.publish(Path(ts=msg.ts, frame_id=frame_id, poses=list(self._poses)))
