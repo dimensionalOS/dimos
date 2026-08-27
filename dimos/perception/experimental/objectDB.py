@@ -218,6 +218,7 @@ class ObjectDB:
     def _insert_pending(self, obj: Object, now: float) -> Object:
         if not obj.ts:
             obj.ts = now
+        obj.last_seen_ts = now
         self._pending_objects[obj.object_id] = obj
         if obj.track_id >= 0:
             self._track_id_map[obj.track_id] = obj.object_id
@@ -227,6 +228,7 @@ class ObjectDB:
     def _update_existing(self, existing: Object, obj: Object, now: float) -> None:
         existing.update_object(obj)
         existing.ts = obj.ts or now
+        existing.last_seen_ts = now
         if obj.track_id >= 0:
             self._track_id_map[obj.track_id] = existing.object_id
 
@@ -248,7 +250,7 @@ class ObjectDB:
             del self._track_id_map[track_id]
             return None
 
-        last_seen = obj.ts if obj.ts else now
+        last_seen = obj.last_seen_ts if obj.last_seen_ts is not None else now
         if now - last_seen > self._track_id_ttl_s:
             del self._track_id_map[track_id]
             return None
@@ -284,7 +286,9 @@ class ObjectDB:
             return
         cutoff = now - self._pending_ttl_s
         stale_ids = [
-            obj_id for obj_id, obj in self._pending_objects.items() if (obj.ts or now) < cutoff
+            obj_id
+            for obj_id, obj in self._pending_objects.items()
+            if (obj.last_seen_ts if obj.last_seen_ts is not None else now) < cutoff
         ]
         for obj_id in stale_ids:
             del self._pending_objects[obj_id]

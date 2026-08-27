@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 import sys
+from threading import Event, Thread
 from typing import Any
 from unittest.mock import ANY, MagicMock
 
@@ -27,6 +28,7 @@ from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
+from dimos.perception.experimental.objectDB import ObjectDB
 from dimos.spec.utils import spec_annotation_compliance
 
 
@@ -214,7 +216,10 @@ def test_edgetam_refines_detector_output(monkeypatch: Any) -> None:
 
 
 def test_request_driven_scan_processes_latest_aligned_frame(monkeypatch: Any) -> None:
-    module = ObjectSceneRegistrationModule(target_frame="camera", detect_on_request=True)
+    module = ObjectSceneRegistrationModule(
+        target_frame="camera", detector_backend="owlv2", detect_on_request=True
+    )
+    module._object_db = MagicMock()
     color = Image(
         data=np.zeros((2, 2, 3), dtype=np.uint8),
         format=ImageFormat.BGR,
@@ -226,9 +231,9 @@ def test_request_driven_scan_processes_latest_aligned_frame(monkeypatch: Any) ->
     output = MagicMock()
     result = MagicMock(spec=Detection3DArray)
 
-    def process_images(got_color: Image, got_depth: Image) -> None:
+    def process_images(got_color: Image, got_depth: Image) -> list[MagicMock]:
         assert (got_color, got_depth) == (color, depth)
-        module._latest_output_objects = (output,)
+        return [output]
 
     monkeypatch.setattr(module, "_process_images", process_images)
     monkeypatch.setattr(
@@ -236,20 +241,23 @@ def test_request_driven_scan_processes_latest_aligned_frame(monkeypatch: Any) ->
         lambda objects, **kwargs: result,
     )
 
-    assert module.scan_scene() is result
+    assert module.scan_scene(text=["mug"]) is result
+    assert module._owlv2_prompts == ["mug"]
     module.stop()
 
 
 def test_request_driven_detect_triggers_scan(monkeypatch: Any) -> None:
     module = ObjectSceneRegistrationModule(detector_backend="owlv2", detect_on_request=True)
     module._detector = MagicMock()
-    scan_scene = MagicMock()
-    monkeypatch.setattr(module, "scan_scene", scan_scene)
-    monkeypatch.setattr(module, "get_detected_objects", lambda: [])
+    current_object = MagicMock()
+    current_object.agent_encode.return_value = {"name": "mug", "object_id": "current"}
+    scan_objects = MagicMock(return_value=[current_object])
+    monkeypatch.setattr(module, "_scan_scene_objects", scan_objects)
+    monkeypatch.setattr(module, "get_detected_objects", lambda: pytest.fail("read stale database"))
 
-    assert module.detect("mug") == "No objects detected."
+    assert module.detect("mug") == "Detected 1 object(s):\n  - mug (object_id='current')"
     assert module._owlv2_prompts == ["mug"]
-    scan_scene.assert_called_once_with()
+    scan_objects.assert_called_once_with()
     module.stop()
 
 
@@ -261,6 +269,7 @@ def test_scan_output_includes_pending_objects(monkeypatch: Any) -> None:
     permanent = MagicMock()
     module._object_db.get_all_objects.return_value = [pending, permanent]
     module._object_db.get_objects.return_value = [permanent]
+    module._object_db.add_objects.return_value = [pending]
     module.detections_3d = MagicMock()
     module.objects = MagicMock()
     module.pointcloud = MagicMock()
@@ -277,12 +286,80 @@ def test_scan_output_includes_pending_objects(monkeypatch: Any) -> None:
         MagicMock(),
     )
 
-    ObjectSceneRegistrationModule._process_3d_detections(
+    observed = ObjectSceneRegistrationModule._process_3d_detections(
         module,
         MagicMock(spec=ImageDetections2D),
         _image(4.0),
         _image(4.0),
     )
 
-    assert module._latest_output_objects == (pending, permanent)
+    assert observed == [pending]
     module.stop()
+
+
+def test_concurrent_request_scans_do_not_overlap(monkeypatch: Any) -> None:
+    module = ObjectSceneRegistrationModule(
+        target_frame="camera", detector_backend="owlv2", detect_on_request=True
+    )
+    module._object_db = MagicMock()
+    color = Image(
+        data=np.zeros((2, 2, 3), dtype=np.uint8),
+        format=ImageFormat.BGR,
+        frame_id="camera",
+        ts=4.0,
+    )
+    module._on_aligned_frames((color, _image(4.0)))
+    first_started = Event()
+    release_first = Event()
+    second_started = Event()
+    seen_prompts: list[list[str]] = []
+
+    def process_images(_: Image, __: Image) -> list[MagicMock]:
+        seen_prompts.append(list(module._owlv2_prompts))
+        if len(seen_prompts) == 1:
+            first_started.set()
+            assert release_first.wait(timeout=1.0)
+        else:
+            second_started.set()
+        return []
+
+    monkeypatch.setattr(module, "_process_images", process_images)
+    monkeypatch.setattr(
+        "dimos.perception.experimental.object_scene_registration.to_detection3d_array",
+        MagicMock(),
+    )
+    first = Thread(target=lambda: module.scan_scene(text=["cup"]))
+    second = Thread(target=lambda: module.scan_scene(text=["mug"]))
+    first.start()
+    assert first_started.wait(timeout=1.0)
+    second.start()
+    assert not second_started.wait(timeout=0.05)
+    release_first.set()
+    first.join(timeout=1.0)
+    second.join(timeout=1.0)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert seen_prompts == [["cup"], ["mug"]]
+    module.stop()
+
+
+def test_object_db_uses_wall_clock_for_pending_ttl(monkeypatch: Any) -> None:
+    object_db = ObjectDB(pending_ttl_s=5.0)
+    detected = MagicMock()
+    detected.object_id = "stable-id"
+    detected.track_id = -1
+    detected.ts = 4.0  # Hardware timestamps are relative to camera boot.
+    detected.last_seen_ts = None
+    detected.center = None
+    now = [1000.0]
+    monkeypatch.setattr("dimos.perception.experimental.objectDB.time.time", lambda: now[0])
+
+    object_db.add_objects([detected])
+    assert detected.last_seen_ts == 1000.0
+    now[0] = 1004.0
+    object_db.add_objects([])
+    assert object_db.find_by_object_id("stable-id") is detected
+    now[0] = 1006.0
+    object_db.add_objects([])
+    assert object_db.find_by_object_id("stable-id") is None

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import threading
 import time
 from typing import Any, Literal
 
@@ -47,17 +48,10 @@ logger = setup_logger()
 
 
 class ObjectSceneRegistrationConfig(ModuleConfig):
-    target_frame: str = "map"
     prompt_mode: YoloePromptMode = YoloePromptMode.LRPC
-    distance_threshold: float = 0.2
-    min_detections_for_permanent: int = 6
     detector_backend: Literal["yoloe", "owlv2"] = "yoloe"
     segmentation_backend: Literal["yolo", "edgetam"] = "yolo"
-    detector_confidence: float = 0.6
     detect_on_request: bool = False
-    max_distance: float = 0.0
-    use_aabb: bool = False
-    max_obstacle_width: float = 0.0
 
 
 class ObjectSceneRegistrationModule(Module):
@@ -79,29 +73,39 @@ class ObjectSceneRegistrationModule(Module):
     _object_db: ObjectDB
     _owlv2_prompts: list[str]
     _latest_aligned_frames: tuple[Image, Image] | None = None
-    _latest_output_objects: tuple[DetObject, ...] = ()
+    _processing_lock: threading.RLock
     # A tuple assignment/read is atomic, so depth and its transform cannot be
     # observed from different frames by get_full_scene_pointcloud().
     _latest_scene_snapshot: tuple[Image, Transform | None] | None = None
 
     config: ObjectSceneRegistrationConfig
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        target_frame: str = "map",
+        distance_threshold: float = 0.2,
+        min_detections_for_permanent: int = 6,
+        max_distance: float = 0.0,
+        use_aabb: bool = False,
+        max_obstacle_width: float = 0.0,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
-        self._target_frame = self.config.target_frame
+        self._target_frame = target_frame
         self._prompt_mode = self.config.prompt_mode
         self._detector_backend = self.config.detector_backend
         self._segmentation_backend = self.config.segmentation_backend
-        self._detector_confidence = self.config.detector_confidence
+        self._detector_confidence = 0.6
         self._detect_on_request = self.config.detect_on_request
         self._object_db = ObjectDB(
-            distance_threshold=self.config.distance_threshold,
-            min_detections_for_permanent=self.config.min_detections_for_permanent,
+            distance_threshold=distance_threshold,
+            min_detections_for_permanent=min_detections_for_permanent,
         )
+        self._processing_lock = threading.RLock()
         self._owlv2_prompts = []
-        self._max_distance = self.config.max_distance
-        self._use_aabb = self.config.use_aabb
-        self._max_obstacle_width = self.config.max_obstacle_width
+        self._max_distance = max_distance
+        self._use_aabb = use_aabb
+        self._max_obstacle_width = max_obstacle_width
 
     @rpc
     def start(self) -> None:
@@ -141,14 +145,14 @@ class ObjectSceneRegistrationModule(Module):
     def stop(self) -> None:
         """Stop the module and clean up resources."""
 
-        if self._detector:
-            self._detector.stop()
-            self._detector = None
-        self._segmenter = None
+        with self._processing_lock:
+            if self._detector:
+                self._detector.stop()
+                self._detector = None
+            self._segmenter = None
 
-        self._object_db.clear()
-        self._latest_aligned_frames = None
-        self._latest_output_objects = ()
+            self._object_db.clear()
+            self._latest_aligned_frames = None
 
         logger.info("ObjectSceneRegistrationModule stopped")
         super().stop()
@@ -160,6 +164,14 @@ class ObjectSceneRegistrationModule(Module):
         bboxes: NDArray[np.float64] | None = None,
     ) -> None:
         """Set prompts for detection. Provide either text or bboxes, not both."""
+        with self._processing_lock:
+            self._set_prompts(text=text, bboxes=bboxes)
+
+    def _set_prompts(
+        self,
+        text: list[str] | None = None,
+        bboxes: NDArray[np.float64] | None = None,
+    ) -> None:
         if self._detector_backend == "owlv2":
             if bboxes is not None:
                 raise ValueError("OWLv2 supports text prompts only")
@@ -168,17 +180,27 @@ class ObjectSceneRegistrationModule(Module):
             self._detector.set_prompts(text=text, bboxes=bboxes)
 
     @rpc
-    def scan_scene(self) -> Detection3DArray:
-        frames = self._latest_aligned_frames
+    def scan_scene(self, text: list[str] | None = None) -> Detection3DArray:
+        """Run one serialized detection pass over the latest aligned RGB-D frame."""
+        with self._processing_lock:
+            if text is not None:
+                self._set_prompts(text=text)
+            frames = self._latest_aligned_frames
+            if frames is None:
+                return to_detection3d_array([], frame_id=self._target_frame)
+            objects = self._scan_scene_objects(frames)
+            return to_detection3d_array(
+                objects,
+                frame_id=self._target_frame,
+                ts=frames[0].ts,
+            )
+
+    def _scan_scene_objects(self, frames: tuple[Image, Image] | None = None) -> list[DetObject]:
+        """Process one frame and return only objects observed during this scan."""
+        frames = frames or self._latest_aligned_frames
         if frames is None:
-            return to_detection3d_array([], frame_id=self._target_frame)
-        self._latest_output_objects = ()
-        self._process_images(*frames)
-        return to_detection3d_array(
-            list(self._latest_output_objects),
-            frame_id=self._target_frame,
-            ts=frames[0].ts,
-        )
+            return []
+        return self._process_images(*frames)
 
     @rpc
     def select_object(self, track_id: int) -> dict[str, Any] | None:
@@ -306,16 +328,17 @@ class ObjectSceneRegistrationModule(Module):
         """
         if not prompts:
             return "No prompts provided."
-        if self._detector is None:
-            return "Detector not initialized."
-
-        self.set_prompts(text=list(prompts))
-        if self._detect_on_request:
-            self.scan_scene()
-        else:
+        with self._processing_lock:
+            if self._detector is None:
+                return "Detector not initialized."
+            self._set_prompts(text=list(prompts))
+            if self._detect_on_request:
+                detected = [obj.agent_encode() for obj in self._scan_scene_objects()]
+            else:
+                detected = None
+        if detected is None:
             time.sleep(2.0)
-
-        detected = self.get_detected_objects()
+            detected = self.get_detected_objects()
         if not detected:
             return "No objects detected."
 
@@ -339,12 +362,13 @@ class ObjectSceneRegistrationModule(Module):
         self._latest_aligned_frames = (color_msg, depth_msg)
         if self._detect_on_request:
             return
-        self._process_images(color_msg, depth_msg)
+        with self._processing_lock:
+            self._process_images(color_msg, depth_msg)
 
-    def _process_images(self, color_msg: Image, depth_msg: Image) -> None:
+    def _process_images(self, color_msg: Image, depth_msg: Image) -> list[DetObject]:
         """Process synchronized color and depth images (runs in background thread)."""
         if not self._detector or not self._camera_info:
-            return
+            return []
 
         color_image = color_msg
         # Convert depth to meters (float32)
@@ -380,17 +404,17 @@ class ObjectSceneRegistrationModule(Module):
         self.detections_2d.publish(detections_2d_msg)
 
         # Process 3D detections
-        self._process_3d_detections(detections_2d, color_image, depth_image)
+        return self._process_3d_detections(detections_2d, color_image, depth_image)
 
     def _process_3d_detections(
         self,
         detections_2d: ImageDetections2D[Any],
         color_image: Image,
         depth_image: Image,
-    ) -> None:
+    ) -> list[DetObject]:
         """Convert 2D detections to 3D and publish."""
         if self._camera_info is None:
-            return
+            return []
 
         # Look up transform from camera frame to target frame (e.g., map)
         camera_transform = None
@@ -404,7 +428,7 @@ class ObjectSceneRegistrationModule(Module):
             )
             if camera_transform is None:
                 logger.info("Failed to lookup transform from camera frame to target frame")
-                return
+                return []
 
         # Cache depth and transform together, only after the lookup succeeds.
         self._latest_scene_snapshot = (depth_image, camera_transform)
@@ -420,16 +444,14 @@ class ObjectSceneRegistrationModule(Module):
             max_obstacle_width=self._max_obstacle_width,
         )
         if not objects:
-            self._latest_output_objects = ()
-            return
+            return []
 
         # Add objects to spatial memory database
-        self._object_db.add_objects(objects)
+        observed_objects = self._object_db.add_objects(objects)
 
         # Publish ALL permanent objects so downstream consumers get the full set,
         # not just this frame's batch (which may be a subset of what's on the table).
         all_permanent = self._object_db.get_objects()
-        self._latest_output_objects = tuple(self._object_db.get_all_objects())
 
         detections_3d = to_detection3d_array(all_permanent)
         self.detections_3d.publish(detections_3d)
@@ -438,4 +460,4 @@ class ObjectSceneRegistrationModule(Module):
         objects_for_pc = all_permanent
         aggregated_pc = aggregate_pointclouds(objects_for_pc)
         self.pointcloud.publish(aggregated_pc)
-        return
+        return observed_objects
