@@ -113,10 +113,13 @@ class SerializedStartRealSense(RealSenseCamera):
         logger.warning("Device %s not enumerated after %ss; trying anyway",
                        self.config.serial_number, self._ENUM_WAIT_S)
 
+    # Serialization NOTE: an exclusive flock here guaranteed camera 2 always
+    # opened against a fully-streaming camera 1 — the exact RSUSB-hostile
+    # pattern. Historical concurrent opens (no lock) succeeded; keep opens
+    # concurrent and rely on per-attempt reset+enum-wait for recovery.
     @rpc
     def start(self) -> None:
-        with open(self._START_LOCK, "w") as lockfile:
-            fcntl.flock(lockfile, fcntl.LOCK_EX)
+        if True:
             try:
                 last: Exception | None = None
                 for attempt in range(1, self._START_ATTEMPTS + 1):
@@ -166,10 +169,8 @@ class SerializedStartRealSense(RealSenseCamera):
                         time.sleep(self._RETRY_DELAY_S)
                 else:
                     raise last if last else RuntimeError("RealSense start failed")
-                # Let the pipeline settle before the peer starts its open.
-                time.sleep(4.0)
             finally:
-                fcntl.flock(lockfile, fcntl.LOCK_UN)
+                pass
 
 
 def _rig_realsense(prefix: str, serial: str) -> object:
