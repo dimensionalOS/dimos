@@ -128,17 +128,18 @@ def sidecar_path(recording: str | Path) -> Path:
 
 def read_declarations(path: str | Path) -> Declarations:
     path = Path(path)
-    from mcap.reader import make_reader
+    if path.suffix == ".mcap":
+        from mcap.reader import make_reader
 
-    with path.open("rb") as f:
-        for md in make_reader(f).iter_metadata():
-            if md.name != METADATA_KEY:
-                continue
-            kv = dict(md.metadata)
-            return Declarations(
-                suspended=json.loads(kv["suspended"]) if "suspended" in kv else None,
-                floor=kv.get("floor"),
-            )
+        with path.open("rb") as f:
+            for md in make_reader(f).iter_metadata():
+                if md.name != METADATA_KEY:
+                    continue
+                kv = dict(md.metadata)
+                return Declarations(
+                    suspended=json.loads(kv["suspended"]) if "suspended" in kv else None,
+                    floor=kv.get("floor"),
+                )
     side = sidecar_path(path)
     if side.is_file():
         d = json.loads(side.read_text())

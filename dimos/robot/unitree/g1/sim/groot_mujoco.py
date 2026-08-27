@@ -19,7 +19,7 @@ commands recorded on hardware, and draws a green transparent box at the
 Point-LIO pelvis pose so sim body motion can be eyeballed against the real
 robot's.
 
-    .venv/bin/python -m dimos.robot.unitree.g1.sysid.groot_mujoco \
+    .venv/bin/python -m dimos.robot.unitree.g1.sim.groot_mujoco \
         data/g1_groot_characterization_2026-08-27.db
 
 The box starts welded to the robot: Point-LIO poses are taken relative to
@@ -32,7 +32,7 @@ import argparse
 import bisect
 from pathlib import Path
 import time
-from typing import Any, Protocol
+from typing import Any
 
 import mujoco
 import mujoco.viewer
@@ -46,36 +46,11 @@ from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
     G1_GROOT_KP,
 )
 from dimos.memory.cli.dataset import open_store
+from dimos.robot.unitree.g1.sim import model as g1_model
+from dimos.robot.unitree.g1.sim.sysid.ingest import world_T_pelvis
 from dimos.utils.data import LfsPath
 
-ROBOT_MJCF = Path(__file__).resolve().parents[1] / "assets" / "g1_29dof.xml"
-
-
-class Mid360Odometry(Protocol):
-    x: float
-    y: float
-    z: float
-
-    @property
-    def orientation(self) -> Any: ...
-
-
-# The Mid-360 is mounted rolled 180 deg relative to the URDF convention.
-_MID360_MOUNT_UNROLL = np.diag([1.0, -1.0, -1.0])
-
-
-def world_T_pelvis(odom: Mid360Odometry) -> NDArray[np.float64]:
-    """Point-LIO mid360 odometry -> world_T_pelvis, at the zero waist pose."""
-    from dimos.robot.unitree.g1.g1_tf_publisher import base_to_torso, torso_to_mid360
-
-    pelvis_T_physical = (base_to_torso(0.0, 0.0, 0.0) + torso_to_mid360()).to_matrix()
-    pelvis_T_mid360 = np.asarray(pelvis_T_physical, dtype=np.float64).copy()
-    pelvis_T_mid360[:3, :3] = pelvis_T_physical[:3, :3] @ _MID360_MOUNT_UNROLL
-
-    world_T_mid360 = np.eye(4, dtype=np.float64)
-    world_T_mid360[:3, :3] = odom.orientation.to_rotation_matrix() @ _MID360_MOUNT_UNROLL
-    world_T_mid360[:3, 3] = (odom.x, odom.y, odom.z)
-    return world_T_mid360 @ np.linalg.inv(pelvis_T_mid360)
+ROBOT_MJCF = g1_model.ROBOT_MJCF
 
 
 # Policy contract (see G1GrootWBCTask docstring). Changing these drifts the
@@ -107,27 +82,8 @@ def name2id(model: mujoco.MjModel, objtype: int, name: str) -> int:
 
 
 def build_model(ghost: bool, mjcf: Path = ROBOT_MJCF) -> mujoco.MjModel:
-    """The blueprint's own empty scene + robot MJCF + a green mocap ghost box."""
-    spec = mujoco.MjSpec.from_file(str(LfsPath("mujoco_sim/scene_empty.xml")))
-    robot = mujoco.MjSpec.from_file(str(mjcf))
-    robot.meshdir = str(LfsPath("g1_urdf/meshes"))
-    spec.option.timestep = robot.option.timestep
-    # prefix="" keeps MJCF names unprefixed so name lookups below stay valid.
-    spec.attach(robot, frame=spec.worldbody.add_frame(), prefix="")
-
-    if ghost:
-        body = spec.worldbody.add_body()
-        body.name = "ghost"
-        body.mocap = True
-        geom = body.add_geom()
-        geom.name = "ghost_box"
-        geom.type = mujoco.mjtGeom.mjGEOM_BOX
-        geom.size = [0.13, 0.11, 0.30]
-        geom.pos = [0.0, 0.0, 0.18]
-        geom.rgba = [0.1, 1.0, 0.2, 0.28]
-        geom.contype = 0  # visual only: never collides, never adds mass
-        geom.conaffinity = 0
-    return spec.compile()
+    """The G1 plant's compiled scene, with the viewer's ghost box when asked."""
+    return g1_model.load(ghost=ghost, mjcf=mjcf)[0]
 
 
 def touchdown_z(model: mujoco.MjModel, data: mujoco.MjData) -> float:

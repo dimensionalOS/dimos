@@ -18,14 +18,14 @@ import mujoco
 import numpy as np
 import pytest
 
-from dimos.robot.unitree.g1.sysid.groot_mujoco import (
+from dimos.robot.unitree.g1.sim.groot_mujoco import (
     DEFAULT_29,
     NUM_MOTORS,
     build_model,
     name2id,
     touchdown_z,
-    world_T_pelvis,
 )
+from dimos.robot.unitree.g1.sim.sysid.ingest import world_T_pelvis
 
 
 @pytest.fixture(scope="module")
@@ -51,9 +51,10 @@ def test_names_survive_scene_attach(model: mujoco.MjModel) -> None:
 
 
 def test_ghost_is_visual_only(model: mujoco.MjModel) -> None:
-    gid = name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "ghost_box")
-    assert model.geom_contype[gid] == 0
-    assert model.geom_conaffinity[gid] == 0
+    bid = name2id(model, mujoco.mjtObj.mjOBJ_BODY, "ghost")
+    for gid in range(model.body_geomadr[bid], model.body_geomadr[bid] + model.body_geomnum[bid]):
+        assert model.geom_contype[gid] == 0
+        assert model.geom_conaffinity[gid] == 0
     assert model.nmocap == 1
 
 

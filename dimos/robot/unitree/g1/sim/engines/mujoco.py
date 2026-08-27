@@ -11,3 +11,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+"""The G1 behind the seam: the shared CPU engine on the G1 plant."""
+
+from __future__ import annotations
+
+from typing import ClassVar, cast
+
+from dimos.robot.unitree.g1.sim import model as g1_model
+from dimos.simulation.sysid.engines.model import Plant
+from dimos.simulation.sysid.engines.mujoco import MujocoBackend as _MujocoBackend
+
+
+class MujocoBackend(_MujocoBackend):
+    """The G1 plant module on the shared MuJoCo engine."""
+
+    plant: ClassVar[Plant] = cast("Plant", g1_model)  # a module satisfies the protocol
