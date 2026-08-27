@@ -92,7 +92,7 @@ class ManipulationOperator:
     def status(self) -> OperatorStatus:
         """Return compact dynamic state without topology or joint telemetry."""
         return OperatorStatus(
-            state=self._module.get_state().operation_status.name,
+            state=self._module.get_operation_status().name,
             error=self._module.get_error(),
             has_plan=self._module.has_planned_path(),
         )

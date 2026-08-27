@@ -106,13 +106,14 @@ def openarm_hardware(
 
     adapter_type = "openarm_damiao" if left_can_port is not None else "mock_whole_body"
     adapter_kwargs: dict[str, object] = {}
+    limits: JointLimits | None = None
     if left_can_port is not None and right_can_port is not None:
         adapter_kwargs["runtime_config"] = DamiaoRuntimeConfig(
             bus_addresses={"left": left_can_port, "right": right_can_port},
             gravity_comp=True,
         )
     else:
-        adapter_kwargs["limits"] = JointLimits(
+        limits = JointLimits(
             position_lower=[*([None] * len(OPENARM_ARM_JOINTS)), 0.0, 0.0],
             position_upper=[*([None] * len(OPENARM_ARM_JOINTS)), 1.0, 1.0],
             velocity_max=[None] * len(OPENARM_JOINTS),
@@ -123,6 +124,7 @@ def openarm_hardware(
         joints=list(OPENARM_JOINTS),
         adapter_type=adapter_type,
         auto_enable=True,
+        limits=limits,
         adapter_kwargs=adapter_kwargs,
         wb_config=WholeBodyConfig(
             kp=(*_ARM_KP, *_ARM_KP, 0.0, 0.0),

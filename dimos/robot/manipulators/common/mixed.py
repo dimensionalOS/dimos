@@ -70,7 +70,7 @@ coordinator_teleop_dual = TeleopControlCoordinator.blueprint(
         teleop_ik_task(
             _xarm6_teleop_hw,
             name="teleop_xarm",
-            robot_model=make_xarm6_model_config("xarm_arm"),
+            robot_model=make_xarm6_model_config("xarm_arm", gripper_hardware_id="xarm_arm"),
             bindings=[{"hand": "left", "target_frame": "link_tcp"}],
             priority=10,
         ),

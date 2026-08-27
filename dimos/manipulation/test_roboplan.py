@@ -498,6 +498,48 @@ def _make_world(
     return world, robot_id
 
 
+def test_roboplan_loads_canonical_slash_names_natively(
+    fake_roboplan: None,
+    tmp_path: Path,
+) -> None:
+    model_path = tmp_path / "canonical.urdf"
+    model_path.write_text(
+        """
+<robot name="canonical">
+  <link name="world"/><link name="left/base"/><link name="left/tool"/>
+  <joint name="left/mount" type="fixed">
+    <parent link="world"/><child link="left/base"/>
+  </joint>
+  <joint name="left/j1" type="revolute">
+    <parent link="left/base"/><child link="left/tool"/>
+    <limit lower="-1" upper="1" effort="1" velocity="1"/>
+  </joint>
+</robot>
+"""
+    )
+    config = RobotModelConfig(
+        name="robot",
+        model=RobotModel.from_file(model_path),
+        joint_names=["left/j1"],
+        base_link="world",
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="left_arm",
+                joint_names=("left/j1",),
+                base_link="left/base",
+                tip_link="left/tool",
+            )
+        ],
+        joint_limits_lower=[-1.0],
+        joint_limits_upper=[1.0],
+    )
+
+    world, robot_id = _make_world(fake_roboplan, config)
+
+    assert world.get_robot_config(robot_id).joint_names == ["left/j1"]
+    assert "left/j1" in world._scene.constructor_kwargs["urdf"]
+
+
 def _make_two_robot_world(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> tuple[Any, str, str, RobotModelConfig]:
@@ -1347,10 +1389,10 @@ def test_legacy_kinematics_wrappers_require_unique_pose_group(
         update={
             "planning_groups": [
                 PlanningGroupDefinition(
-                    name="a", joint_names=("joint1",), base_link="base", tip_link="a_tip"
+                    name="a", joint_names=("joint1",), base_link="base", tip_link="tcp"
                 ),
                 PlanningGroupDefinition(
-                    name="b", joint_names=("joint2",), base_link="base", tip_link="b_tip"
+                    name="b", joint_names=("joint2",), base_link="base", tip_link="tcp"
                 ),
             ]
         }
@@ -1726,8 +1768,8 @@ def test_native_selected_planner_preserves_disjoint_group_selection_order(
     config = robot_config.model_copy(
         update={
             "planning_groups": [
-                PlanningGroupDefinition("left", ("joint1",), "base", "left_tip"),
-                PlanningGroupDefinition("right", ("joint2",), "base", "right_tip"),
+                PlanningGroupDefinition("left", ("joint1",), "base", "tcp"),
+                PlanningGroupDefinition("right", ("joint2",), "base", "tcp"),
             ]
         }
     )
@@ -1752,25 +1794,8 @@ def test_overlapping_group_selection_rejected_before_planning(
     config = robot_config.model_copy(
         update={
             "planning_groups": [
-                PlanningGroupDefinition("left", ("joint1", "joint2"), "base", "left_tip"),
-                PlanningGroupDefinition("right", ("joint2",), "base", "right_tip"),
-            ]
-        }
-    )
-    _make_world(fake_roboplan, config)
-
-    with pytest.raises(ValueError, match="overlap"):
-        _selection((config,), "arm/left", "arm/right")
-
-
-def test_overlapping_group_selection_rejected_before_planning(
-    fake_roboplan: None, robot_config: RobotModelConfig
-) -> None:
-    config = robot_config.model_copy(
-        update={
-            "planning_groups": [
-                PlanningGroupDefinition("left", ("joint1", "joint2"), "base", "left_tip"),
-                PlanningGroupDefinition("right", ("joint2",), "base", "right_tip"),
+                PlanningGroupDefinition("left", ("joint1", "joint2"), "base", "tcp"),
+                PlanningGroupDefinition("right", ("joint2",), "base", "tcp"),
             ]
         }
     )

@@ -48,8 +48,9 @@ def openyam_hardware() -> HardwareComponent:
     """Select the physical or in-memory whole-body adapter for OpenYAM."""
     adapter_type = "mock_whole_body" if global_config.simulation else "openyam_damiao"
     adapter_kwargs: dict[str, object] = {}
+    limits: JointLimits | None = None
     if global_config.simulation:
-        adapter_kwargs["limits"] = JointLimits(
+        limits = JointLimits(
             position_lower=[*([None] * OPENYAM_DOF), 0.0],
             position_upper=[*([None] * OPENYAM_DOF), 1.0],
             velocity_max=[None] * len(OPENYAM_JOINTS),
@@ -65,6 +66,7 @@ def openyam_hardware() -> HardwareComponent:
         joints=list(OPENYAM_JOINTS),
         adapter_type=adapter_type,
         auto_enable=True,
+        limits=limits,
         adapter_kwargs=adapter_kwargs,
         wb_config=WholeBodyConfig(
             kp=(80.0, 80.0, 80.0, 10.0, 10.0, 10.0, 0.0),

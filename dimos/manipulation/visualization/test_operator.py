@@ -123,8 +123,10 @@ class FakeModule:
         self.clear_success = True
         self.topology_calls = 0
         self.telemetry_calls = 0
+        self.snapshot_calls = 0
 
     def get_state(self) -> ManipulationSnapshot:
+        self.snapshot_calls += 1
         return ManipulationSnapshot(
             timestamp=0.0,
             operation_status=OperationStatus[self.state],
@@ -133,6 +135,9 @@ class FakeModule:
             execution_status=ExecutionStatus.IDLE,
             groups={},
         )
+
+    def get_operation_status(self) -> OperationStatus:
+        return OperationStatus[self.state]
 
     def get_error(self) -> str:
         return self.error
@@ -287,6 +292,7 @@ def test_status_is_compact_and_does_not_read_topology_or_telemetry() -> None:
     assert status.state == "COMPLETED"
     assert status.error == ""
     assert status.has_plan is True
+    assert module.snapshot_calls == 0
     assert module.topology_calls == 0
     assert module.telemetry_calls == 0
     assert monitor.telemetry_calls == 0

@@ -406,12 +406,17 @@ class ManipulationModule(Module):
                     break
                 transforms: list[Transform] = []
                 for robot_id, config in self._robots.values():
-                    # Publish world → EE
-                    ee_pose = self._world_monitor.get_ee_pose(robot_id)
-                    if ee_pose is not None:
-                        ee_tf = Transform.from_pose(config.end_effector_link, ee_pose)
-                        ee_tf.frame_id = "world"
-                        transforms.append(ee_tf)
+                    # Publish world → the unique pose-target group tip, when one exists.
+                    group_id = self._world_monitor.planning_groups.primary_pose_group_id_for_robot(
+                        config.name
+                    )
+                    if group_id is not None:
+                        group = self._world_monitor.planning_groups.get(group_id)
+                        ee_pose = self._world_monitor.get_ee_pose(robot_id)
+                        if ee_pose is not None and group.tip_link is not None:
+                            ee_tf = Transform.from_pose(group.tip_link, ee_pose)
+                            ee_tf.frame_id = "world"
+                            transforms.append(ee_tf)
 
                     # Publish world → each extra link
                     for link_name in config.tf_extra_links:
@@ -464,6 +469,11 @@ class ManipulationModule(Module):
             execution_status=self._execution_manager.status,
             groups=groups,
         )
+
+    def get_operation_status(self) -> OperationStatus:
+        """Return the current operation status without collecting telemetry."""
+        with self._lock:
+            return OperationStatus[self._state.name]
 
     def get_error(self) -> str:
         """Get last error message.
@@ -1272,10 +1282,12 @@ class ManipulationModule(Module):
             if self._world_monitor is not None
             else []
         )
-        try:
-            end_effector_link = config.end_effector_link
-        except ValueError:
-            end_effector_link = None
+        pose_tip_links = [
+            group.tip_link
+            for group in planning_groups
+            if group.has_pose_target and group.tip_link is not None
+        ]
+        end_effector_link = pose_tip_links[0] if len(pose_tip_links) == 1 else None
 
         return {
             "name": config.name,

@@ -46,6 +46,7 @@ keyboard_teleop_a1z = autoconnect(
             eef_twist_task(
                 _a1z_keyboard_hw,
                 robot_model=_a1z_model,
+                target_frame="gripper_eef_link",
             ),
             TaskConfig(
                 name="arm_gripper",
@@ -78,7 +79,7 @@ coordinator_teleop_a1z = autoconnect(
                 bindings=[
                     {
                         "hand": "left",
-                        "target_frame": _a1z_quest_model.end_effector_link,
+                        "target_frame": "gripper_eef_link",
                     }
                 ],
                 priority=20,

@@ -38,7 +38,10 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import Obstacle, PlanningGroupID, WorldRobotID
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec, WorldSpec
-from dimos.manipulation.planning.spec.validation import validate_obstacle
+from dimos.manipulation.planning.spec.validation import (
+    validate_obstacle,
+    validate_robot_model_config,
+)
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.utils.logging_config import setup_logger
 
@@ -225,6 +228,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         with self._lock:
             if any(data.config.name == config.name for data in self._robots.values()):
                 raise ValueError(f"Robot name '{config.name}' is already registered")
+            validate_robot_model_config(config)
             self._validate_planning_group_config(config)
 
             self._robot_counter += 1

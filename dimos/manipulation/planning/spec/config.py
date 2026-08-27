@@ -22,10 +22,7 @@ from pydantic import Field
 
 from dimos.core.module import ModuleConfig
 from dimos.manipulation.grasp_verification import GraspVerificationConfig
-from dimos.manipulation.planning.groups.identifiers import (
-    assert_local_joint_names,
-    assert_valid_robot_name,
-)
+from dimos.manipulation.planning.groups.identifiers import assert_valid_robot_name
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.assets.model import RobotModel
@@ -53,7 +50,7 @@ class RobotModelConfig(ModuleConfig):
             links may legitimately overlap (e.g., mimic joints).
         max_velocity: Maximum joint velocity for trajectory generation (rad/s)
         max_acceleration: Maximum joint acceleration for trajectory generation (rad/s^2)
-        joint_name_mapping: Maps coordinator joint names to local model joint names.
+        joint_name_mapping: Maps coordinator joint names to model joint names.
             This is retained for current coordinator/monitor integrations while planning
             APIs move toward globally scoped joint names.
     """
@@ -86,34 +83,14 @@ class RobotModelConfig(ModuleConfig):
     grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
 
     def model_post_init(self, __context: object) -> None:
-        """Validate robot naming and description format constraints."""
+        """Validate robot naming and canonical joint-name constraints."""
         assert_valid_robot_name(self.name)
-        assert_local_joint_names(self.joint_names)
-
-    @property
-    def end_effector_link(self) -> str:
-        """Compatibility pose target frame derived from planning groups.
-
-        Current world, IK, and visualization layers still ask robot configs for
-        one end-effector link. The planning-group model stores that frame as a
-        group ``tip_link``; this shim keeps those layers working until they are
-        migrated to explicit planning-group IDs.
-        """
-        pose_tip_links = [
-            group.tip_link for group in self.planning_groups if group.tip_link is not None
-        ]
-        if not pose_tip_links:
+        if any(not name for name in self.joint_names):
+            raise ValueError("RobotModelConfig.joint_names must contain non-empty names")
+        if len(self.joint_names) != len(set(self.joint_names)):
             raise ValueError(
-                f"RobotModelConfig '{self.name}' has no pose-target planning group; "
-                "define PlanningGroupDefinition.tip_link"
+                f"RobotModelConfig '{self.name}' contains duplicate canonical joint names"
             )
-        unique_tip_links = list(dict.fromkeys(pose_tip_links))
-        if len(unique_tip_links) > 1:
-            raise ValueError(
-                f"RobotModelConfig '{self.name}' has multiple pose-target planning groups; "
-                "use an explicit planning group ID"
-            )
-        return unique_tip_links[0]
 
     def get_urdf_joint_name(self, coordinator_name: str) -> str:
         """Translate coordinator joint name to local model joint name."""

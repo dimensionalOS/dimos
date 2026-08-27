@@ -61,6 +61,8 @@ XARM_ROS2_REPO = "https://github.com/xArm-Developer/xarm_ros2"
 XARM_ROS2_REF = "5bb832f72ca665f1236a9d8ed1c3a82f308db489"
 _XARM_REPO = RobotDescriptionSource(url=XARM_ROS2_REPO, ref=XARM_ROS2_REF)
 XARM_MODEL_PATH = _XARM_REPO / "xarm_description" / "urdf" / "xarm_device.urdf.xacro"
+XARM_DUAL_MODEL_PATH = _XARM_REPO / "xarm_description" / "urdf" / "dual_xarm_device.urdf.xacro"
+XARM_DUAL_SRDF_PATH = Path(__file__).with_name("dual_xarm6.srdf")
 XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": _XARM_REPO / "xarm_description"}
 XARM6_SIM_PATH = LfsPath("xarm6/scene.xml")
 XARM7_SIM_PATH = LfsPath("xarm7/scene.xml")
@@ -71,9 +73,55 @@ def make_xarm7_sim_robot_config() -> RobotModelConfig:
     return make_xarm7_model_config(
         name="arm",
         add_gripper=True,
+        gripper_hardware_id="arm",
         tf_extra_links=["link7"],
         home_joints=XARM7_SIM_HOME,
         pre_grasp_offset=0.05,
+    )
+
+
+def make_dual_xarm6_model_config(name: str = "robot") -> RobotModelConfig:
+    """Return one statically authored model containing two canonical xArm6 chains."""
+    left_joints = joint_names(6, prefix="left/joint")
+    right_joints = joint_names(6, prefix="right/joint")
+    canonical_joints = [*left_joints, *right_joints]
+    return RobotModelConfig(
+        name=name,
+        model=RobotModel.from_file(
+            XARM_DUAL_MODEL_PATH,
+            package_paths=XARM_PACKAGE_PATHS,
+            xacro_args={
+                "prefix_1": "left/",
+                "prefix_2": "right/",
+                "dof_1": "6",
+                "dof_2": "6",
+                "limited": "true",
+            },
+        ),
+        srdf_path=XARM_DUAL_SRDF_PATH,
+        joint_names=canonical_joints,
+        base_link="world",
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="left_arm",
+                joint_names=tuple(left_joints),
+                base_link="left/link_base",
+                tip_link="left/link6",
+            ),
+            PlanningGroupDefinition(
+                name="right_arm",
+                joint_names=tuple(right_joints),
+                base_link="right/link_base",
+                tip_link="right/link6",
+            ),
+            PlanningGroupDefinition(
+                name="both_arms",
+                joint_names=tuple(canonical_joints),
+                base_link="world",
+            ),
+        ],
+        auto_convert_meshes=True,
+        home_joints=[0.0] * 12,
     )
 
 
@@ -125,8 +173,9 @@ def make_xarm_hardware(
     initial_positions = kwargs.get("initial_positions")
     if gripper and isinstance(initial_positions, list):
         kwargs["initial_positions"] = [*initial_positions, 0.0]
+    limits: JointLimits | None = None
     if adapter_type == "mock":
-        kwargs["limits"] = JointLimits(
+        limits = JointLimits(
             position_lower=[*([-2 * math.pi] * dof), *([0.0] * len(gripper_joints))],
             position_upper=[*([2 * math.pi] * dof), *([850.0] * len(gripper_joints))],
             velocity_max=[*([math.pi] * dof), *([0.0] * len(gripper_joints))],
@@ -138,6 +187,7 @@ def make_xarm_hardware(
         adapter_type=adapter_type,
         address=address,
         auto_enable=auto_enable,
+        limits=limits,
         adapter_kwargs=kwargs,
     )
 
@@ -215,6 +265,7 @@ def make_xarm_model_config(
     dof: int,
     *,
     add_gripper: bool = True,
+    gripper_hardware_id: str | None = None,
     x_offset: float = 0.0,
     y_offset: float = 0.0,
     z_offset: float = 0.0,
@@ -260,7 +311,7 @@ def make_xarm_model_config(
             dof,
             joint_prefix=joint_prefix,
         ),
-        gripper_hardware_id=name if add_gripper else None,
+        gripper_hardware_id=gripper_hardware_id,
         tf_extra_links=tf_extra_links or [],
         home_joints=home_joints or [0.0] * dof,
         pre_grasp_offset=pre_grasp_offset,

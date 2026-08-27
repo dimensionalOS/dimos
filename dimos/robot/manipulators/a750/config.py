@@ -79,8 +79,9 @@ def make_a750_hardware(
     gripper_joints = [f"{hw_id}/finger"] if gripper else []
     initial_positions = [*(home_joints or A750_HOME_JOINTS), *([0.0] * len(gripper_joints))]
     adapter_kwargs: dict[str, object] = {"initial_positions": initial_positions}
+    limits: JointLimits | None = None
     if adapter_type == "mock":
-        adapter_kwargs["limits"] = JointLimits(
+        limits = JointLimits(
             position_lower=[*([-math.pi] * 6), *([0.0] * len(gripper_joints))],
             position_upper=[*([math.pi] * 6), *([0.06] * len(gripper_joints))],
             velocity_max=[*([math.pi] * 6), *([0.0] * len(gripper_joints))],
@@ -92,6 +93,7 @@ def make_a750_hardware(
         adapter_type=adapter_type,
         address=address,
         auto_enable=auto_enable,
+        limits=limits,
         adapter_kwargs=adapter_kwargs,
     )
 

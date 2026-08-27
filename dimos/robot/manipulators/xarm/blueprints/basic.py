@@ -37,8 +37,8 @@ _mock_right_xarm6_hw = make_xarm_hardware("right_arm", 6)
 dual_xarm6_planner_coordinator = autoconnect(
     planner(
         robots=[
-            make_xarm6_model_config(name="left_arm", y_offset=0.5),
-            make_xarm6_model_config(name="right_arm", y_offset=-0.5),
+            make_xarm6_model_config(name="left_arm", add_gripper=True, y_offset=0.5),
+            make_xarm6_model_config(name="right_arm", add_gripper=True, y_offset=-0.5),
         ],
         visualization={"backend": "viser"},
     ),
@@ -49,7 +49,7 @@ dual_xarm6_planner_coordinator = autoconnect(
 )
 
 _xarm7_hw = xarm7_hardware("arm", gripper=True, mock_without_address=True)
-_xarm7_model = make_xarm7_model_config(name="arm", add_gripper=True)
+_xarm7_model = make_xarm7_model_config(name="arm", add_gripper=True, gripper_hardware_id="arm")
 
 xarm7_planner_coordinator = autoconnect(
     planner(robots=[_xarm7_model]),

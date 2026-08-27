@@ -58,6 +58,7 @@ keyboard_teleop_xarm6 = autoconnect(
             eef_twist_task(
                 _xarm6_hw,
                 robot_model=_xarm6_control_model,
+                target_frame="link6",
                 timeout=0.0,
             ),
             TaskConfig(
@@ -69,7 +70,7 @@ keyboard_teleop_xarm6 = autoconnect(
         ],
     ),
     ManipulationModule.blueprint(
-        robots=[make_xarm6_model_config(add_gripper=True)],
+        robots=[make_xarm6_model_config(add_gripper=True, gripper_hardware_id="arm")],
         visualization={"backend": "viser"},
     ),
 )
@@ -86,6 +87,7 @@ keyboard_teleop_xarm7 = autoconnect(
             eef_twist_task(
                 _xarm7_hw,
                 robot_model=_xarm7_control_model,
+                target_frame="link7",
                 timeout=0.0,
             ),
             TaskConfig(
@@ -97,7 +99,7 @@ keyboard_teleop_xarm7 = autoconnect(
         ],
     ),
     ManipulationModule.blueprint(
-        robots=[make_xarm7_model_config(add_gripper=True)],
+        robots=[make_xarm7_model_config(add_gripper=True, gripper_hardware_id="arm")],
         visualization={"backend": "viser"},
     ),
 )
@@ -162,8 +164,8 @@ _xarm6_teleop_hw = xarm6_hardware(
     gripper=True,
     mock_without_address=True,
 )
-_xarm6_teleop_model = make_xarm6_model_config(add_gripper=True)
-_xarm7_teleop_model = make_xarm7_model_config(add_gripper=True)
+_xarm6_teleop_model = make_xarm6_model_config(add_gripper=True, gripper_hardware_id="arm")
+_xarm7_teleop_model = make_xarm7_model_config(add_gripper=True, gripper_hardware_id="arm")
 
 # Dual-input arm: VR (teleop_ik) preempts browser keyboard (eef_twist) via
 # higher priority; when VR is idle the always-active eef_twist holds/drives.
@@ -190,6 +192,7 @@ coordinator_teleop_xarm7 = autoconnect(
             eef_twist_task(
                 _xarm7_teleop_hw,
                 robot_model=_xarm7_control_model,
+                target_frame="link7",
                 priority=10,
                 timeout=0.0,
             ),
@@ -229,6 +232,7 @@ coordinator_teleop_xarm6 = autoconnect(
             eef_twist_task(
                 _xarm6_teleop_hw,
                 robot_model=_xarm6_control_model,
+                target_frame="link6",
                 priority=10,
                 timeout=0.0,
             ),

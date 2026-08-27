@@ -37,7 +37,7 @@ class RobotInfo(TypedDict):
     name: RobotName
     world_robot_id: WorldRobotID
     joint_names: list[str]
-    end_effector_link: str
+    end_effector_link: str | None
     base_link: str
     max_velocity: float
     max_acceleration: float

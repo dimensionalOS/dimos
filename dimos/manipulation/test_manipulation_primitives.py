@@ -141,6 +141,20 @@ def test_get_state_returns_every_group_with_presets(module_factory) -> None:
     )
 
 
+def test_get_state_skips_gripper_telemetry_without_control_hardware(module_factory) -> None:
+    module = module_factory()
+    _set_groups(module, _robot(gripper=False))
+    module._world_monitor.current_group_joint_state.return_value = JointState(
+        name=["arm/j0"], position=[0.1]
+    )
+    module._world_monitor.get_group_ee_pose.return_value = None
+
+    snapshot = module.get_state()
+
+    assert snapshot.groups["arm/tool"].gripper_position is None
+    module._control_coordinator.task_invoke.assert_not_called()
+
+
 def test_set_gripper_position_routes_normalized_command(module_factory) -> None:
     module = module_factory()
     _set_groups(module, _robot(gripper=True))

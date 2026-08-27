@@ -104,7 +104,8 @@ def test_openarm_hardware_defaults_to_mock_without_can_ports() -> None:
         HardwareType.WHOLE_BODY,
         "mock_whole_body",
     )
-    limits = hardware.adapter_kwargs["limits"]
+    limits = hardware.limits
+    assert limits is not None
     assert limits.position_lower == [*([None] * len(OPENARM_ARM_JOINTS)), 0.0, 0.0]
     assert limits.position_upper == [*([None] * len(OPENARM_ARM_JOINTS)), 1.0, 1.0]
     assert limits.velocity_max == [None] * len(OPENARM_JOINTS)

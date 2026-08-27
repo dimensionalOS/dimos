@@ -73,6 +73,23 @@ def _write_urdf(path: Path) -> None:
     )
 
 
+def _write_canonical_urdf(path: Path) -> None:
+    path.write_text(
+        """
+<robot name="canonical">
+  <link name="world"/><link name="left/base"/><link name="left/tool"/>
+  <joint name="left/mount" type="fixed">
+    <parent link="world"/><child link="left/base"/>
+  </joint>
+  <joint name="left/j1" type="revolute">
+    <parent link="left/base"/><child link="left/tool"/>
+    <axis xyz="0 0 1"/><limit lower="-1" upper="1" effort="1" velocity="1"/>
+  </joint>
+</robot>
+"""
+    )
+
+
 def _write_urdf_with_world_base_joint(path: Path) -> None:
     path.write_text(
         """
@@ -119,6 +136,32 @@ def _arm_group(
     return PlanningGroupDefinition(
         name=name, joint_names=joint_names, base_link="base_link", tip_link=tip_link
     )
+
+
+@requires_drake
+def test_drake_loads_canonical_slash_names_natively(tmp_path: Path) -> None:
+    urdf = tmp_path / "canonical.urdf"
+    _write_canonical_urdf(urdf)
+    config = RobotModelConfig(
+        name="robot",
+        model=RobotModel.from_file(urdf),
+        joint_names=["left/j1"],
+        base_link="left/base",
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="left_arm",
+                joint_names=("left/j1",),
+                base_link="left/base",
+                tip_link="left/tool",
+            )
+        ],
+    )
+    world = DrakeWorld()
+
+    robot_id = world.add_robot(config)
+    world.finalize()
+
+    assert world.get_robot_config(robot_id).joint_names == ["left/j1"]
 
 
 def test_drake_config_group_helpers_resolve_groups_without_drake_runtime(tmp_path: Path) -> None:
@@ -355,15 +398,16 @@ def test_drake_legacy_wrappers_fail_at_call_time_for_no_or_ambiguous_pose(tmp_pa
 
 
 @requires_drake
-def test_drake_group_jacobian_rejects_non_controllable_group_joints(tmp_path: Path) -> None:
+def test_drake_rejects_non_controllable_group_joints_before_world_mutation(
+    tmp_path: Path,
+) -> None:
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
     world = DrakeWorld()
-    world.add_robot(_config(urdf, [_arm_group("joint1", "joint2")], joints=["joint1"]))
-    world.finalize()
+    with pytest.raises(ValueError, match="outside the controllable model set"):
+        world.add_robot(_config(urdf, [_arm_group("joint1", "joint2")], joints=["joint1"]))
 
-    with pytest.raises(ValueError, match="non-controllable"):
-        world.get_group_jacobian(world.get_live_context(), "arm/arm")
+    assert world.get_robot_ids() == []
 
 
 @requires_drake
