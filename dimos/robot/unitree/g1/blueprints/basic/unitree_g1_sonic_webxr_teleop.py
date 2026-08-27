@@ -12,28 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PICO WebXR full-body teleoperation of SONIC G1 in MuJoCo.
+"""PICO WebXR full-body teleoperation of SONIC G1.
 
 Run with:
 
     dimos --simulation mujoco run unitree-g1-sonic-webxr-teleop
+    dimos --viewer none run unitree-g1-sonic-webxr-teleop --network-interface <robot-nic>
 
 Hold X on the left controller and A on the right controller to engage.
 """
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.global_config import global_config
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_sonic_wbc import (
     _g1_sonic_control_blueprint,
     _g1_sonic_visualization,
 )
 from dimos.teleop.webxr.extensions import MobileVideoArmTeleopModule
-
-if global_config.simulation != "mujoco":
-    raise ValueError(
-        "unitree-g1-sonic-webxr-teleop is simulation-only; run with --simulation mujoco"
-    )
-
 
 unitree_g1_sonic_webxr_teleop = autoconnect(
     MobileVideoArmTeleopModule.blueprint(body_tracking_mode="required"),

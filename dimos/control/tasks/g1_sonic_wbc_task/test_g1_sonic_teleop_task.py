@@ -90,8 +90,8 @@ def task_and_pipeline(mocker: Any) -> Iterator[tuple[G1SonicTeleopTask, Any]]:
         decoder_onnx=Path("decoder.onnx"),
         planner_onnx=Path("planner.onnx"),
         joint_names=_JOINT_NAMES,
-        auto_start_policy=True,
-        initialization_seconds=0.0,
+        auto_arm=True,
+        default_ramp_seconds=0.0,
         zmq_enabled=False,
     )
     task = G1SonicTeleopTask("sonic_teleop", config, adapter)
@@ -115,6 +115,37 @@ def test_deadman_engages_full_body_stream(task_and_pipeline: tuple[Any, Any]) ->
     assert pose_fields["smpl_joints"].shape == (1, 24, 3)
     pipeline.set_source_stream.assert_called_with(True)
     assert task.state_snapshot()["webxr_teleop"]["engaged"] is True
+
+
+def test_webxr_cannot_engage_while_policy_is_unarmed(
+    task_and_pipeline: tuple[Any, Any],
+) -> None:
+    task, pipeline = task_and_pipeline
+    assert task.disarm()
+    pipeline.apply_pose_message.reset_mock()
+
+    task.on_body_tracking(_body_snapshot(), t_now=1.0)
+    task.on_teleop_buttons(_deadman(True), t_now=1.0)
+    task.compute(_state(1.01))
+
+    assert task.control_state is SonicControlState.UNARMED
+    assert task.state_snapshot()["webxr_teleop"]["engaged"] is False
+    pipeline.apply_pose_message.assert_not_called()
+
+
+def test_disarm_clears_webxr_engagement(task_and_pipeline: tuple[Any, Any]) -> None:
+    task, pipeline = task_and_pipeline
+    task.on_body_tracking(_body_snapshot(), t_now=1.0)
+    task.on_teleop_buttons(_deadman(True), t_now=1.0)
+    task.compute(_state(1.01))
+
+    assert task.disarm()
+
+    teleop = task.state_snapshot()["webxr_teleop"]
+    assert teleop["engaged"] is False
+    assert teleop["deadman_held"] is False
+    assert task.state_snapshot()["reference_source"] == "planner"
+    pipeline.stop_clip.assert_called()
 
 
 def test_deadman_release_returns_to_planner_without_stopping_policy(

@@ -164,9 +164,9 @@ if global_config.simulation == "mujoco":
     _adapter_type = "sim_mujoco_g1"
     _adapter_address = _MJCF_PATH
     _tick_rate = 50.0
-    _auto_start_policy = True
+    _auto_arm = True
     _auto_dry_run = False
-    _initialization_seconds = 0.0
+    _default_ramp_seconds = 0.0
     _decimation = 1
     _n_workers = 2
     _nav_stack = autoconnect(
@@ -193,9 +193,9 @@ else:
     _adapter_type = "transport_lcm"
     _adapter_address = ""
     _tick_rate = 100.0
-    _auto_start_policy = False
+    _auto_arm = False
     _auto_dry_run = True
-    _initialization_seconds = 3.0
+    _default_ramp_seconds = 3.0
     _decimation = 2  # 100 Hz tick / 2 = 50 Hz policy
     _n_workers = 10
     from dimos.hardware.sensors.lidar.pointlio.module import PointLio
@@ -265,9 +265,9 @@ def _g1_sonic_coordinator(
                     "decoder_onnx": str(_SONIC_RELEASE_DIR / "model_decoder.onnx"),
                     "planner_onnx": str(_SONIC_PLANNER_PATH),
                     "hardware_id": "g1",
-                    "auto_start_policy": _auto_start_policy,
+                    "auto_arm": _auto_arm,
                     "auto_dry_run": _auto_dry_run,
-                    "initialization_seconds": _initialization_seconds,
+                    "default_ramp_seconds": _default_ramp_seconds,
                     "decimation": _decimation,
                     "zmq_enabled": zmq_enabled,
                 },

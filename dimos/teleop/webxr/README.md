@@ -38,9 +38,9 @@ dimos --can-port a1zcan run teleop-webxr-a1z
 Open `https://<host-ip>:8443/teleop` in a WebXR-capable headset browser. Accept
 the certificate, then tap Connect.
 
-### G1 SONIC full-body simulation
+### G1 SONIC full-body teleoperation
 
-Calibrate the PICO Motion Trackers, then start the MuJoCo blueprint:
+Calibrate the PICO Motion Trackers, then test the complete workflow in MuJoCo:
 
 ```bash
 dimos --simulation mujoco run unitree-g1-sonic-webxr-teleop
@@ -57,6 +57,56 @@ adjust heading.
 
 Tracking loss ends engagement. After tracking returns, release and hold X+A
 again. Partial body frames keep the last complete pose for at most 150 ms.
+
+The same blueprint controls a 29-DoF G1 EDU on hardware. The first hardware
+session requires the official overhead gantry, with the robot loosely
+supported and both feet touching the floor. Use three people: a robot operator
+with the Unitree remote and physical stop, a headset operator, and a computer
+operator. Do not attempt an untethered or free-floor session during this first
+test.
+
+Only DimOS may own the G1 low-level command channel. Stop the native
+`g1_deploy_onnx_ref` SONIC process before starting this blueprint. On the robot
+computer, select the network interface connected to the G1:
+
+```bash
+uv run dimos --viewer none run unitree-g1-sonic-webxr-teleop \
+  --network-interface <robot-nic>
+```
+
+The controller starts unarmed and holds the measured joint pose. In a second
+terminal, inspect and activate it through the same G1 lifecycle CLI used by
+GR00T:
+
+```bash
+uv run dimos hardware g1 status
+uv run dimos hardware g1 arm
+uv run dimos hardware g1 status
+uv run dimos hardware g1 enable
+uv run dimos hardware g1 status
+```
+
+`arm` moves from the measured pose to SONIC's default pose over three seconds,
+then runs the balancing policy with learned-policy output in dry-run. The pose
+ramp itself is a real motor command. Before `enable`, the robot operator must
+verify body alignment, foot contact, gantry support, and immediate access to
+the physical stop.
+
+Open `https://<g1-computer-ip>:8443/teleop` on the PICO, connect, and only then
+hold X+A. Releasing either button returns SONIC to planner control; it is a
+teleoperation deadman, not an emergency stop. The Unitree physical stop remains
+the authoritative emergency control.
+
+Shut down in this order:
+
+```bash
+uv run dimos hardware g1 disable
+uv run dimos stop
+```
+
+`disable` cancels trajectories, selects dry-run, and disarms SONIC into
+current-pose hold. It does not stop low-level motor commands; `dimos stop`
+performs that final step.
 
 For hand teleop, remove the controllers. Pinch the thumb and index finger on
 the selected hand to engage it, move the wrist to control the arm, then pinch

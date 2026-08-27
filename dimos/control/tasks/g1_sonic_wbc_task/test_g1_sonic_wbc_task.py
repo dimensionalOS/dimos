@@ -51,14 +51,20 @@ def make_task(mocker: Any):
     pipeline.step.return_value = np.zeros(29, dtype=np.float32)
     pipeline.snapshot.return_value = {"stream_active": False}
 
-    def factory(*, auto_start: bool, initialization_seconds: float) -> G1SonicWBCTask:
+    def factory(
+        *,
+        auto_arm: bool,
+        default_ramp_seconds: float,
+        auto_dry_run: bool = False,
+    ) -> G1SonicWBCTask:
         config = G1SonicWBCTaskConfig(
             encoder_onnx=Path("encoder.onnx"),
             decoder_onnx=Path("decoder.onnx"),
             planner_onnx=Path("planner.onnx"),
             joint_names=_JOINT_NAMES,
-            auto_start_policy=auto_start,
-            initialization_seconds=initialization_seconds,
+            auto_arm=auto_arm,
+            auto_dry_run=auto_dry_run,
+            default_ramp_seconds=default_ramp_seconds,
             zmq_enabled=False,
         )
         return G1SonicWBCTask("sonic", config, mocker.MagicMock())
@@ -66,9 +72,9 @@ def make_task(mocker: Any):
     return factory, pipeline
 
 
-def test_auto_start_finishes_initialization_before_first_policy_step(make_task: Any) -> None:
+def test_auto_arm_finishes_ramp_before_first_policy_step(make_task: Any) -> None:
     factory, pipeline = make_task
-    task = factory(auto_start=True, initialization_seconds=0.0)
+    task = factory(auto_arm=True, default_ramp_seconds=0.0)
     task.start()
 
     initialization_output = task.compute(_state(1.0))
@@ -83,30 +89,53 @@ def test_auto_start_finishes_initialization_before_first_policy_step(make_task: 
     pipeline.step.assert_called_once()
 
 
-def test_initialization_ramps_before_latched_start_enters_control(make_task: Any) -> None:
+def test_start_without_auto_arm_holds_measured_pose(make_task: Any) -> None:
     factory, pipeline = make_task
-    task = factory(auto_start=True, initialization_seconds=3.0)
+    task = factory(auto_arm=False, default_ramp_seconds=3.0)
     task.start()
 
-    first = task.compute(_state(10.0))
-    halfway = task.compute(_state(11.5))
-    complete = task.compute(_state(13.0))
+    output = task.compute(_state(10.0, positions=0.25))
 
-    assert first is not None and first.positions == pytest.approx([0.0] * 29)
+    assert task.control_state is SonicControlState.UNARMED
+    assert output is not None and output.positions == pytest.approx([0.25] * 29)
+    snapshot = task.state_snapshot()
+    assert snapshot["active"] is True
+    assert snapshot["armed"] is False
+    assert snapshot["arming"] is False
+    assert snapshot["arm_pending"] is False
+    assert snapshot["dry_run"] is False
+    assert snapshot["arming_duration"] == 3.0
+    pipeline.step.assert_not_called()
+
+
+def test_arm_snapshots_current_pose_then_ramps_to_default(make_task: Any) -> None:
+    factory, pipeline = make_task
+    task = factory(auto_arm=False, default_ramp_seconds=3.0)
+    task.start()
+    task.compute(_state(9.0, positions=0.25))
+    assert task.arm()
+    assert task.state_snapshot()["arm_pending"] is True
+
+    first = task.compute(_state(10.0, positions=0.25))
+    halfway = task.compute(_state(11.5, positions=0.25))
+    complete = task.compute(_state(13.0, positions=0.25))
+
+    assert first is not None and first.positions == pytest.approx([0.25] * 29)
     assert halfway is not None
-    assert halfway.positions == pytest.approx((DEFAULT_ANGLES_DDS * 0.5).tolist())
+    expected_halfway = 0.25 + 0.5 * (DEFAULT_ANGLES_DDS - 0.25)
+    assert halfway.positions == pytest.approx(expected_halfway.tolist())
     assert complete is not None and complete.positions == pytest.approx(DEFAULT_ANGLES_DDS.tolist())
     assert task.control_state is SonicControlState.CONTROL
     pipeline.step.assert_not_called()
 
 
-def test_manual_arm_starts_policy_only_after_ready(make_task: Any) -> None:
+def test_manual_arm_starts_policy_only_after_ramp(make_task: Any) -> None:
     factory, pipeline = make_task
-    task = factory(auto_start=False, initialization_seconds=0.0)
+    task = factory(auto_arm=False, default_ramp_seconds=0.0)
     task.start()
     task.compute(_state(1.0))
 
-    assert task.control_state is SonicControlState.READY
+    assert task.control_state is SonicControlState.UNARMED
     assert task.arm()
 
     task.compute(_state(1.02))
@@ -117,31 +146,46 @@ def test_manual_arm_starts_policy_only_after_ready(make_task: Any) -> None:
     pipeline.step.assert_called_once()
 
 
-def test_disarm_returns_to_ready_and_planner_without_reinitializing(make_task: Any) -> None:
+def test_disarm_returns_to_measured_pose_hold_and_planner(make_task: Any) -> None:
     factory, pipeline = make_task
-    task = factory(auto_start=True, initialization_seconds=0.0)
+    task = factory(auto_arm=True, default_ramp_seconds=0.0)
     task.start()
     task.compute(_state(1.0))
     task.compute(_state(1.02))
     task._select_stream_reference(True)
 
     assert task.disarm()
+    hold = task.compute(_state(2.0, positions=0.3))
 
     snapshot = task.state_snapshot()
-    assert snapshot["control_state"] == "ready"
+    assert snapshot["control_state"] == "unarmed"
+    assert snapshot["armed"] is False
     assert snapshot["reference_source"] == "planner"
-    assert not snapshot["policy_start_requested"]
+    assert hold is not None and hold.positions == pytest.approx([0.3] * 29)
     pipeline.reset.assert_called()
 
 
-def test_reset_reactivate_replays_initialization(make_task: Any) -> None:
+def test_reset_reactivate_replays_arm_ramp(make_task: Any) -> None:
     factory, _pipeline = make_task
-    task = factory(auto_start=True, initialization_seconds=0.0)
+    task = factory(auto_arm=True, default_ramp_seconds=0.0)
     task.start()
     task.compute(_state(1.0))
 
     assert task.reset_runtime_state(reactivate=True)
 
     snapshot = task.state_snapshot()
-    assert snapshot["control_state"] == "initializing"
-    assert snapshot["policy_start_requested"] is True
+    assert snapshot["control_state"] == "unarmed"
+    assert snapshot["arm_pending"] is True
+
+
+def test_dry_run_outputs_arm_ramp_but_suppresses_policy_output(make_task: Any) -> None:
+    factory, pipeline = make_task
+    task = factory(auto_arm=True, default_ramp_seconds=0.0, auto_dry_run=True)
+    task.start()
+
+    ramp_output = task.compute(_state(1.0))
+    policy_output = task.compute(_state(1.02))
+
+    assert ramp_output is not None
+    assert policy_output is None
+    pipeline.step.assert_called_once()
