@@ -5,6 +5,7 @@
   ],
   "listen": [],
   "multicast": true,
+  "scout_addr": "",
   "gossip": false,
   "interface": "lo",
   "connect_timeout_ms": 2000
