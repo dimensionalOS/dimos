@@ -19,7 +19,9 @@ Run with:
     dimos --simulation mujoco run unitree-g1-sonic-webxr-teleop
     dimos --viewer none run unitree-g1-sonic-webxr-teleop --network-interface <robot-nic>
 
-Hold X on the left controller and A on the right controller to engage.
+Press A+B+X+Y to start in planner mode, then A+X to toggle full-body POSE.
+Press A+B+X+Y again to stop the teleop session without disabling SONIC.
+Accepted POSE chunks appear under world/sonic_reference when Rerun is enabled.
 """
 
 from dimos.core.coordination.blueprints import autoconnect

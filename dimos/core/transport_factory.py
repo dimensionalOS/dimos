@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from dimos.protocol.rpc.spec import RPCSpec
 
 
-def transport_topic(name: str, g: GlobalConfig = global_config) -> str:
+def transport_topic(name: str, g: GlobalConfig | SessionConfig = global_config) -> str:
     """Map a logical channel name to the active backend's topic string.
 
     LCM channels are leading-slash paths (`/foo`).
