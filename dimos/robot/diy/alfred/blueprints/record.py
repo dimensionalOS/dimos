@@ -51,8 +51,8 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.diy.alfred.blueprints.alfred import alfred
 
 # Physical camera identity on the Alfred rig (orin-nx-7837), by USB serial.
-FRONT_REALSENSE_SERIAL = "260843060204"  # D455, front-facing
-BACK_REALSENSE_SERIAL = "349643060044"  # D435if, back-facing
+FRONT_REALSENSE_SERIAL = "260922302422"  # D455, front-facing (librealsense serial)
+BACK_REALSENSE_SERIAL = "327122071721"  # D435if, back-facing (librealsense serial)
 
 # Highest resolution both models stream color AND aligned depth at together.
 _CAM_WIDTH, _CAM_HEIGHT, _CAM_FPS = 1280, 720, 15
