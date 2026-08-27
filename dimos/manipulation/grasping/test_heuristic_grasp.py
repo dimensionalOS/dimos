@@ -88,6 +88,21 @@ def test_heuristic_grasp_aligns_jaw_axis_with_narrow_axis(module: HeuristicGrasp
     assert jaw_axis.z == pytest.approx(0.0, abs=1e-6)
 
 
+def test_heuristic_grasp_canonicalizes_pca_eigenvector_sign(
+    module: HeuristicGraspModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    values = np.asarray([1.0, 4.0])
+    same_axis = np.asarray([[1.0, 0.0], [0.0, 1.0]])
+    opposite_axis = np.asarray([[-1.0, 0.0], [0.0, 1.0]])
+
+    monkeypatch.setattr(np.linalg, "eigh", lambda _: (values, same_axis))
+    positive_yaw = module._narrow_axis_yaw(np.zeros((3, 2), dtype=np.float32))
+    monkeypatch.setattr(np.linalg, "eigh", lambda _: (values, opposite_axis))
+    negative_yaw = module._narrow_axis_yaw(np.zeros((3, 2), dtype=np.float32))
+
+    assert negative_yaw == pytest.approx(positive_yaw)
+
+
 @pytest.mark.parametrize(
     "points, frame_id, timestamp, error",
     [
@@ -100,6 +115,8 @@ def test_heuristic_grasp_aligns_jaw_axis_with_narrow_axis(module: HeuristicGrasp
         (np.asarray([[0.0, 0.0, math.nan]] * 3), "world", 1.0, "finite"),
         (np.zeros((3, 3)), "", 1.0, "frame_id"),
         (np.zeros((3, 3)), "world", None, "timestamp"),
+        (np.zeros((3, 3)), "world", math.nan, "finite timestamp"),
+        (np.zeros((3, 3)), "world", math.inf, "finite timestamp"),
     ],
 )
 def test_heuristic_grasp_rejects_invalid_pointclouds(
