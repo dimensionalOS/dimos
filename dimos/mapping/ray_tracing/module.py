@@ -80,6 +80,10 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
     config: RayTracingVoxelMapConfig
 
     lidar: In[PointCloud2]
+    # World-frame points a sensor knows to be empty. Their voxels are deleted
+    # outright, reaching space ray tracing cannot clear: a wrist camera's own
+    # arm occludes the volume behind it, so no ray ever misses through it.
+    voxel_clear_mask: In[PointCloud2]
     tf: In[TFMessage]
     global_map: Out[PointCloud2]
     local_map: Out[PointCloud2]

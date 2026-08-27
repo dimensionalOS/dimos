@@ -42,10 +42,9 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 pytestmark = [pytest.mark.self_hosted_large]
 
 JOINT_STATE_TOPIC = "/coordinator_joint_state#sensor_msgs.JointState"
-# OpenArm defaults to the in-memory whole-body adapter when --can-port is absent.
-BLUEPRINT = "openarm-planner-coordinator"
-LEFT_GROUP_ID = "openarm/left_manipulator"
-RIGHT_GROUP_ID = "openarm/right_manipulator"
+BLUEPRINT = "openarm-mock-planner-coordinator"
+LEFT_GROUP_ID = "left_arm"
+RIGHT_GROUP_ID = "right_arm"
 
 
 def _wait_for_groups(
