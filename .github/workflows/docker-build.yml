@@ -82,6 +82,7 @@ jobs:
     needs: [check-changes]
     if: needs.check-changes.outputs.ros == 'true'
     uses: ./.github/workflows/_docker-build-template.yml
+    secrets: inherit
     with:
       should-run: true
       from-image: ubuntu:24.04
@@ -92,6 +93,7 @@ jobs:
     needs: [check-changes, ros]
     if: always()
     uses: ./.github/workflows/_docker-build-template.yml
+    secrets: inherit
     with:
       should-run: ${{
         needs.check-changes.outputs.python == 'true' &&
@@ -107,6 +109,7 @@ jobs:
     needs: [check-changes]
     if: needs.check-changes.outputs.python == 'true'
     uses: ./.github/workflows/_docker-build-template.yml
+    secrets: inherit
     with:
       should-run: true
       dockerfile:  python
@@ -118,6 +121,7 @@ jobs:
     if: always()
 
     uses: ./.github/workflows/_docker-build-template.yml
+    secrets: inherit
     with:
       should-run: ${{
         needs.check-changes.result == 'success' &&
@@ -132,6 +136,7 @@ jobs:
     needs: [check-changes, ros-python]
     if: always()
     uses: ./.github/workflows/_docker-build-template.yml
+    secrets: inherit
     with:
       should-run: ${{
         needs.check-changes.result == 'success' &&
