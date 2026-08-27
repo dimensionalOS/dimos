@@ -24,6 +24,7 @@ Subclass PickAndPlaceModule (pick_and_place_module.py) adds perception integrati
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping, Sequence
 from enum import Enum
 import math
@@ -32,6 +33,7 @@ import time
 import traceback
 from typing import Any, Literal, TypeAlias, cast
 
+import numpy as np
 from pydantic import Field
 
 from dimos.agents.skill_result import SkillResult
@@ -104,6 +106,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
@@ -115,6 +118,10 @@ ModelInfoValue: TypeAlias = (
 ModelInfoPayload: TypeAlias = dict[str, ModelInfoValue]
 
 ObstacleShape: TypeAlias = Literal["box", "sphere", "cylinder", "mesh"]
+
+# One stable id for the mapped workspace: every map message is complete, so it
+# replaces this obstacle rather than adding another.
+VOXEL_MAP_OBSTACLE_ID = "mapping/voxel-map"
 
 _SHAPE_TO_OBSTACLE_TYPE: dict[str, ObstacleType] = {
     "box": ObstacleType.BOX,
@@ -156,6 +163,12 @@ class ManipulationModuleConfig(ModuleConfig):
     # to prevent the planner from routing trajectories below this height.
     # Set to None to disable.
     floor_z: float | None = None
+    # Frame the voxel_map port's clouds must already be expressed in. Must match
+    # the mapper's world_frame.
+    voxel_map_frame: str = "world"
+    # Edge length of a voxel_map cell (meters). Must match the mapper's
+    # voxel_size, or the octree will not line up with what was mapped.
+    voxel_map_resolution: float = Field(default=0.05, gt=0.0)
     default_speed_scale: float = Field(default=1.0, gt=0.0, le=1.0)
     linear_speed_scale: float = Field(default=0.5, gt=0.0, le=1.0)
     execution_timeout: float = Field(default=60.0, gt=0.0)
@@ -175,6 +188,9 @@ class ManipulationModule(Module):
 
     # Input: Joint state from coordinator (for world sync)
     coordinator_joint_state: In[JointState]
+    # Input: occupied cells of a mapped workspace, in the planning frame. Each
+    # message is a complete map, so it replaces the obstacle rather than adding.
+    voxel_map: In[PointCloud2]
     tf: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -1370,35 +1386,51 @@ class ManipulationModule(Module):
         )
         return self._world_monitor.update_obstacle(obstacle)
 
-    @rpc
-    def set_voxel_obstacle(
-        self,
-        name: str,
-        points: Sequence[Sequence[float]],
-        resolution: float,
-        frame_id: str = "world",
-    ) -> bool:
-        """Replace a whole occupancy map, held as one octree obstacle.
+    async def handle_voxel_map(self, cloud: PointCloud2) -> None:
+        """Replace the mapped workspace, held as one octree obstacle.
 
-        The shape-string obstacle RPCs cannot carry a map, so mapping publishers
-        use this instead. An empty point list removes the obstacle, which is how
-        a mapper says the space it owns is now clear.
+        Building the octree and handing it to the planning world takes the world
+        lock, so it runs off the transport thread. The port dispatcher keeps only
+        the newest map, which is what we want: each message is a complete map,
+        and a stale one has nothing to contribute.
         """
+        await asyncio.to_thread(self._apply_voxel_map, cloud)
+
+    def _apply_voxel_map(self, cloud: PointCloud2) -> None:
         if self._world_monitor is None:
-            return False
-        if not points:
-            return self._world_monitor.remove_obstacle(name)
+            return
+        frame = self.config.voxel_map_frame
+        if cloud.frame_id != frame:
+            # The points are metric positions in the planning frame. Registering
+            # them through a guessed transform would invent geometry.
+            logger.warning(
+                "Voxel map is in frame '%s', not the planning frame '%s'; dropped a map.",
+                cloud.frame_id,
+                frame,
+            )
+            return
+
+        points = cloud.points_f32()
+        if not len(points):
+            # An empty map is how a mapper says the space it owns is now clear.
+            self._world_monitor.remove_obstacle(VOXEL_MAP_OBSTACLE_ID)
+            return
+        if not np.isfinite(points).all():
+            logger.warning("Voxel map contains non-finite points; dropped a map.")
+            return
 
         obstacle = Obstacle(
-            name=name,
+            name=VOXEL_MAP_OBSTACLE_ID,
             obstacle_type=ObstacleType.OCTREE,
-            pose=PoseStamped(frame_id=frame_id),
-            points=tuple((float(x), float(y), float(z)) for x, y, z in points),
-            octree_resolution=float(resolution),
+            pose=PoseStamped(frame_id=frame),
+            points=tuple(map(tuple, points.tolist())),
+            octree_resolution=self.config.voxel_map_resolution,
         )
-        if self._world_monitor.update_obstacle(obstacle):
-            return True
-        return bool(self._world_monitor.add_obstacle(obstacle))
+        try:
+            if not self._world_monitor.update_obstacle(obstacle):
+                self._world_monitor.add_obstacle(obstacle)
+        except ValueError:
+            logger.exception("Rejected voxel map; the previous one still stands")
 
     @rpc
     def update_obstacle_pose(self, name: str, pose: Pose) -> bool:
