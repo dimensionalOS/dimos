@@ -25,8 +25,10 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.spec.utils import spec_annotation_compliance
 
 
-def _cloud(points: np.ndarray) -> PointCloud2:
-    return PointCloud2.from_numpy(points.astype(np.float32), frame_id="world", timestamp=1.0)
+def _cloud(
+    points: np.ndarray, *, frame_id: str = "world", timestamp: float | None = 1.0
+) -> PointCloud2:
+    return PointCloud2.from_numpy(points.astype(np.float32), frame_id=frame_id, timestamp=timestamp)
 
 
 @pytest.fixture
@@ -66,15 +68,44 @@ def test_heuristic_grasp_proposes_centered_top_down_pose(module: HeuristicGraspM
     assert proposals.candidates[0].score == pytest.approx(1.0)
 
 
+def test_heuristic_grasp_aligns_yaw_with_narrow_axis(module: HeuristicGraspModule) -> None:
+    proposals = module.propose_grasps(
+        _cloud(
+            np.asarray(
+                [
+                    [-0.02, -0.10, 0.10],
+                    [0.02, -0.10, 0.10],
+                    [-0.02, 0.10, 0.20],
+                    [0.02, 0.10, 0.20],
+                ]
+            )
+        )
+    )
+
+    yaw = proposals.candidates[0].pose.orientation.to_euler().z
+    assert abs(math.sin(yaw)) == pytest.approx(1.0)
+
+
 @pytest.mark.parametrize(
-    "points, error",
+    "points, frame_id, timestamp, error",
     [
-        (np.asarray([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]]), "at least three"),
-        (np.asarray([[0.0, 0.0, math.nan]] * 3), "finite"),
+        (
+            np.asarray([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]]),
+            "world",
+            1.0,
+            "at least three",
+        ),
+        (np.asarray([[0.0, 0.0, math.nan]] * 3), "world", 1.0, "finite"),
+        (np.zeros((3, 3)), "", 1.0, "frame_id"),
+        (np.zeros((3, 3)), "world", None, "timestamp"),
     ],
 )
 def test_heuristic_grasp_rejects_invalid_pointclouds(
-    module: HeuristicGraspModule, points: np.ndarray, error: str
+    module: HeuristicGraspModule,
+    points: np.ndarray,
+    frame_id: str,
+    timestamp: float | None,
+    error: str,
 ) -> None:
     with pytest.raises(ValueError, match=error):
-        module.propose_grasps(_cloud(points))
+        module.propose_grasps(_cloud(points, frame_id=frame_id, timestamp=timestamp))
