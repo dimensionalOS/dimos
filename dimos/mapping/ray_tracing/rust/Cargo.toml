@@ -24,11 +24,12 @@ threads = 2
 
 [package.metadata.dimos.module.ray_tracing.inputs]
 lidar = "sensor_msgs.PointCloud2"
-odometry = "nav_msgs.Odometry"
+tf = "tf2_msgs.TFMessage"
 
 [package.metadata.dimos.module.ray_tracing.outputs]
 global_map = "sensor_msgs.PointCloud2"
 local_map = "sensor_msgs.PointCloud2"
+local_map_fine = "sensor_msgs.PointCloud2"
 region_bounds = "geometry_msgs.PoseStamped"
 
 [features]

@@ -2,16 +2,16 @@
 
 ## The Problem: Everything Measures from Its Own Perspective
 
-Imagine your robot has an RGB-D camera—a camera that captures both color images and depth (distance to each pixel). These are common in robotics: Intel RealSense, Microsoft Kinect, and similar sensors.
+Imagine your robot has an RGB-D camera, which captures both color images and depth (distance to each pixel). These are common in robotics: Intel RealSense, Microsoft Kinect, and similar sensors.
 
-The camera spots a coffee mug at pixel (320, 240), and the depth sensor says it's 1.2 meters away. You want the robot arm to pick it up—but the arm doesn't understand pixels or camera-relative distances. It needs coordinates in its own workspace: "move to position (0.8, 0.3, 0.1) meters from my base."
+The camera spots a coffee mug at pixel (320, 240), and the depth sensor says it's 1.2 meters away. You want the robot arm to pick it up. But the arm doesn't understand pixels or camera-relative distances. It needs coordinates in its own workspace: "move to position (0.8, 0.3, 0.1) meters from my base."
 
 To convert camera measurements to arm coordinates, you need to know:
 - The camera's intrinsic parameters (focal length, sensor size) to convert pixels to a 3D direction
 - The depth value to get the full 3D position relative to the camera
 - Where the camera is mounted relative to the arm, and at what angle
 
-This chain of conversions—(pixels + depth) → 3D point in camera frame → robot coordinates—is what **transforms** handle.
+This chain of conversions is what **transforms** handle: (pixels + depth) → 3D point in camera frame → robot coordinates.
 
 <details>
 <summary>diagram source</summary>
@@ -48,7 +48,7 @@ Each arrow in this tree is a transform. To get the mug's position in gripper coo
 
 ## What's a Coordinate Frame?
 
-A **coordinate frame** is simply a point of view—an origin point and a set of axes (X, Y, Z) from which you measure positions and orientations.
+A **coordinate frame** is simply a point of view: an origin point and a set of axes (X, Y, Z) from which you measure positions and orientations.
 
 Think of it like giving directions:
 - **GPS** says you're at 37.7749° N, 122.4194° W
@@ -196,13 +196,13 @@ With prefix: robot1/sensor_link
 
 Transforms travel on an ordinary stream named `tf` carrying [`TFMessage`](/dimos/msgs/tf2_msgs/TFMessage.py)s. A module declares the port like any other stream, choosing the direction it actually uses:
 
-- `tf: Out[TFMessage]` — publishes transforms
-- `tf: In[TFMessage]` — consumes transforms
-- `tf: IO[TFMessage]` — both, on the same topic
+- `tf: Out[TFMessage]`: publishes transforms
+- `tf: In[TFMessage]`: consumes transforms
+- `tf: IO[TFMessage]`: both, on the same topic
 
 The coordinator wires every port named `tf` onto one shared `/tf` transport, so all modules see one transform tree.
 
-For lookups, use `self.tfbuffer` — a lazy [`TF`](/dimos/protocol/tf/tf.py) buffer view over the module's `tf` port that subscribes to the stream, buffers what it sees, and answers `get()` queries (including chained and inverse lookups). It is built on first touch and disposed with the module. Outside modules, construct the view explicitly: `TF(stream)` accepts any port or raw transport.
+For lookups, use `self.tfbuffer`, a lazy [`TF`](/dimos/protocol/tf/tf.py) buffer view over the module's `tf` port that subscribes to the stream, buffers what it sees, and answers `get()` queries (including chained and inverse lookups). It is built on first touch and disposed with the module. Outside modules, construct the view explicitly: `TF(stream)` accepts any port or raw transport.
 
 ### Multi-Module Transform Example
 

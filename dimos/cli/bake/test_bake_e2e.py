@@ -32,8 +32,8 @@ import pytest
 
 from dimos.core.global_config import global_config
 from dimos.core.transport_factory import make_transport
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 pytestmark = pytest.mark.bake_e2e
@@ -152,18 +152,23 @@ def test_the_host_publishes_its_outputs_and_hides_the_suppressed_hop(baked, zeno
             transports.append(transport)
 
         lidar = make_transport("lidar", PointCloud2)
-        odom = make_transport("odometry", Odometry)
-        transports += [lidar, odom]
+        tf = make_transport("tf", Transform)
+        transports += [lidar, tf]
         lidar.start()
-        odom.start()
+        tf.start()
 
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline and "surface_map" not in seen:
-            # Same stamp on both: the mapper drops a cloud it has no pose for.
+            # Same stamp on both: the mapper drops a cloud it has no transform for.
             ts = time.time()
-            odom.broadcast(
+            tf.broadcast(
                 None,
-                Odometry(ts=ts, frame_id="world", pose=Pose(0.0, 0.0, SENSOR_Z)),
+                Transform(
+                    translation=Vector3(0.0, 0.0, SENSOR_Z),
+                    frame_id="odom",
+                    child_frame_id="lidar",
+                    ts=ts,
+                ),
             )
             time.sleep(0.05)
             lidar.broadcast(None, ground_patch(ts))

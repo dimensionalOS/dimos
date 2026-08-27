@@ -25,26 +25,37 @@ app = typer.Typer(help="Generate and evaluate standalone visual question-answeri
 
 @app.command("generate")
 def generate(
-    dataset: str = typer.Argument(help="Memory dataset name or .db/.mcap path"),
+    dataset: str = typer.Argument(
+        help="Memory dataset with color_image, camera_info, tf, and pointlio_lidar/lidar streams"
+    ),
     image_index: int | None = typer.Option(None, min=0, help="Process one color_image index"),
     start: int | None = typer.Option(None, min=0, help="First color_image index in range mode"),
     stop: int | None = typer.Option(None, min=1, help="Exclusive color_image stop index"),
     stride: int | None = typer.Option(None, min=1, help="Frame stride in range mode"),
-    output: Path | None = typer.Option(None, help="Override the generated dataset directory"),
+    output: Path | None = typer.Option(
+        None,
+        help="Destination directory; must be absent or empty",
+    ),
 ) -> None:
     """Generate questions for one image or an indexed image range."""
     # Keep generation's optional model stack out of global CLI startup.
-    from dimos.evals.vqa.generate import GenerationRequest, generate_dataset
-
-    request = GenerationRequest(
-        dataset=dataset,
-        output=output,
-        image_index=image_index,
-        start=start,
-        stop=stop,
-        stride=stride,
+    from dimos.evals.vqa.generate import (
+        GenerationRequest,
+        generate_dataset,
     )
-    result = generate_dataset(request)
+
+    try:
+        request = GenerationRequest(
+            dataset=dataset,
+            output=output,
+            image_index=image_index,
+            start=start,
+            stop=stop,
+            stride=stride,
+        )
+        result = generate_dataset(request)
+    except (ValueError, IndexError, OSError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
     typer.echo(f"Generated {len(result.cases)} VQA case(s) in {result.output}")
 
 
@@ -62,7 +73,10 @@ def run(
     if model:
         overrides["model"] = model
     runner = EvalRunner(**overrides)
-    results = runner.run(load_suite(dataset))
+    try:
+        results = runner.run(load_suite(dataset))
+    except (ValueError, OSError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
     for result in results:
         status = "ERROR" if result.error else ("PASS" if result.passed else "fail")
         detail = result.error or f"answer={result.outputs[:60]!r}"

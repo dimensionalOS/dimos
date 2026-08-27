@@ -20,9 +20,14 @@ from typing import TYPE_CHECKING
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.spec import mapping
+
+# Max stamp gap between a cloud and the transform used to register it (s).
+# One LIO scan period, so any cloud stamped within a pose sample's period
+# can register against it.
+TF_MATCH_TOLERANCE_S = 0.1
 
 
 class RayTracingVoxelMapConfig(NativeModuleConfig):
@@ -32,6 +37,9 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     stdin_config: bool = True
 
     voxel_size: float = 0.1
+    # Fine cells per voxel edge for the local_map_fine output: fine cell size is
+    # voxel_size / fine_divisor. Zero disables the fine layer.
+    fine_divisor: int = 0
     # Maximum range for ray tracing
     max_range: float = 30.0
     # Proportion of points that are ray traced
@@ -50,12 +58,20 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     # Occupied neighbors a surface voxel needs to appear in the local map. Zero
     # emits all. Higher drops isolated returns. The global map is unfiltered.
     support_min: int = 4
-    # Publish the accumulated local map and region bounds every Nth frame. Zero disables them.
+    # Publish the accumulated local maps and region bounds every Nth frame.
+    # Zero disables them.
     emit_every: int = 1
     # Publish the global map every Nth frame. Zero disables it.
     global_emit_every: int = 1
     # Size the local region to this percentile of batch point distances.
     region_percentile: float = 95.0
+    # Fixed frame clouds are registered and published in. Each cloud is placed
+    # by the tf lookup world_frame -> cloud frame_id at the cloud stamp.
+    world_frame: str = "odom"
+    # Max stamp gap between a cloud and the transform used to register it (s).
+    tf_match_tolerance_s: float = TF_MATCH_TOLERANCE_S
+    # Worker threads for parallel map work.
+    worker_threads: int = 4
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
@@ -64,9 +80,10 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
     config: RayTracingVoxelMapConfig
 
     lidar: In[PointCloud2]
-    odometry: In[Odometry]
+    tf: In[TFMessage]
     global_map: Out[PointCloud2]
     local_map: Out[PointCloud2]
+    local_map_fine: Out[PointCloud2]
     region_bounds: Out[PoseStamped]
 
 

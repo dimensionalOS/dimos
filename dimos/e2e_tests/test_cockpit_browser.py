@@ -28,18 +28,17 @@ Runs in both Chromium and Firefox: their WebTransport implementations differ
 enough that one browser staying green says little about the other.
 
 Marked web_browser: excluded from the default suite (needs the
-`browser-tests` dependency group, Playwright browsers and the LFS dataset);
-the CI `web` job runs it against a freshly-built cockpit dist. Locally:
+`browser-tests` dependency group and the LFS dataset; the browser binaries
+auto-install on first run); the CI `web` job runs it against a
+freshly-built cockpit dist. Locally:
 `uv run --group browser-tests pytest -m web_browser dimos/e2e_tests/test_cockpit_browser.py`.
 """
 
 from collections.abc import Callable, Iterator
-import time
 
 import pytest
-import requests
 
-from dimos.e2e_tests.dimos_cli_call import DimosCliCall
+from dimos.e2e_tests.dimos_cli_call import DimosCliCall, wait_for_http
 
 # Playwright lives in the `browser-tests` dependency group, which only the CI
 # web job installs; collection elsewhere must skip, not fail.
@@ -81,7 +80,7 @@ def start_go2_replay() -> Iterator[Callable[[], DimosCliCall]]:
 
 
 @pytest.fixture(params=["chromium", "firefox"])
-def page(request: pytest.FixtureRequest) -> Iterator[Page]:
+def page(request: pytest.FixtureRequest, playwright_browsers: None) -> Iterator[Page]:
     with sync_playwright() as p:
         browser = getattr(p, request.param).launch()
         try:
@@ -91,18 +90,7 @@ def page(request: pytest.FixtureRequest) -> Iterator[Page]:
 
 
 def _wait_for_relay(call: DimosCliCall, timeout_s: float) -> None:
-    deadline = time.monotonic() + timeout_s
-    while True:
-        try:
-            requests.get(f"{COCKPIT_URL}api/info", timeout=2).raise_for_status()
-            return
-        except requests.RequestException:
-            assert call.process is not None and call.process.poll() is None, (
-                f"dimos exited with {call.process and call.process.returncode} before the relay came up"
-            )
-            if time.monotonic() > deadline:
-                raise TimeoutError(f"relay not reachable after {timeout_s} s") from None
-            time.sleep(0.5)
+    wait_for_http(call, f"{COCKPIT_URL}api/info", timeout_s)
 
 
 def _assert_odom_ticks(page: Page) -> None:

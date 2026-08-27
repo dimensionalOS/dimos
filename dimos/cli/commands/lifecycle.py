@@ -95,6 +95,10 @@ def run(
     show_help: bool = typer.Option(False, "--help"),
 ) -> None:
     """Start a robot blueprint"""
+
+    # Log this at the start so that people get immediate feedback that the program has started.
+    logger.info("Starting DimOS")
+
     if config_path == DEFAULT_CONFIG_PATH:
         _reject_legacy_config()
     from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
@@ -185,8 +189,6 @@ def run(
     except BlueprintConfigError as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
-
-    logger.info("Starting DimOS")
 
     # Clean stale registry entries only after the full command has validated.
     stale = cleanup_stale()

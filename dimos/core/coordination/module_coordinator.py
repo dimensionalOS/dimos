@@ -325,7 +325,7 @@ class ModuleCoordinator(Resource):
                 instance = self.get_instance(instance_key)  # type: ignore[assignment]
                 instance.set_transport(original_name, transport)  # type: ignore[union-attr]
                 self._module_transports.setdefault(instance_key, {})[original_name] = transport
-                logger.info(
+                logger.debug(
                     "Transport",
                     name=remapped_name,
                     original_name=original_name,
