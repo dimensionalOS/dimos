@@ -23,8 +23,9 @@ Two independent axes generalize the perception stack beyond one robot:
   unprojected per detection mask, or from a world-frame pointcloud stream
   (a registered lidar), projected through the camera per detection mask.
   The cloud at a timestamp merges the scans in a short window around it:
-  sparse continuous scans concatenate whole, rolling-map snapshots merge
-  nearest-first with cleared cells honored (see ``Rig.cloud_at``).
+  fresh scans concatenate whole; snapshots re-reporting each other's exact
+  points (a rolling map) merge nearest-first with cleared cells honored
+  (see ``Rig.cloud_at``).
 
 ``Rig.from_store`` recognizes both recording shapes; every field can also
 be supplied directly for live stores whose streams are still filling.
@@ -385,7 +386,7 @@ class Rig:
     scene_gate: bool = True
     embed_hz: float = EMBED_HZ
     mobile: bool = False  # camera rides a mobile base: room-scale policies
-    # (ts, merged cloud, the window's measured lattice quantum)
+    # (ts, merged cloud, the rolling map's pitch; None for scan sources)
     _cloud_memo: tuple[float, PointCloud2, float | None] | None = field(
         default=None, repr=False, init=False
     )
@@ -755,14 +756,16 @@ class Rig:
         """World-frame geometry at ts: the window's scans merged.
 
         The merge rule follows the source's shape, measured per window from
-        the points themselves. A grid-quantized stream is a rolling
-        occupancy map: each snapshot is already temporally integrated over
-        the area it covers and the map clears what moved away, so snapshots
-        merge nearest-ts first, a farther snapshot contributing only cells
+        the points themselves. A stream whose next snapshot re-reports the
+        majority of the nearest one's exact points is a rolling occupancy
+        map: each snapshot is already temporally integrated over the area
+        it covers and the map clears what moved away, so snapshots merge
+        nearest-ts first, a farther snapshot contributing only cells
         outside the XY coverage of every nearer one - plain accumulation
-        would resurrect every moved object's trail. Continuous scans are
-        sparse and the scene static in world frame, so they accumulate
-        whole.
+        would resurrect every moved object's trail. Scans that never repeat
+        are fresh samples of a scene static in world frame, so they
+        accumulate whole; coordinate quantization alone proves nothing, a
+        mm-integer wire format grids a scan without making it a map.
         """
         if self._cloud_memo is not None and self._cloud_memo[0] == ts:
             return self._cloud_memo[1]
@@ -776,15 +779,21 @@ class Rig:
         ]
         if not pairs:
             return None
-        nearest = min(pairs, key=lambda pair: abs(pair[0] - ts))[1]
-        quantum = lattice_quantum(nearest)
-        if len(pairs) == 1:
-            points = pairs[0][1]
+        ordered = sorted(pairs, key=lambda pair: abs(pair[0] - ts))
+        nearest = ordered[0][1]
+        quantum = None
+        if len(ordered) > 1:
+            rows = np.dtype((np.void, nearest.dtype.itemsize * nearest.shape[1]))
+            near_rows = np.ascontiguousarray(nearest).view(rows).ravel()
+            next_rows = np.ascontiguousarray(ordered[1][1]).view(rows).ravel()
+            if np.isin(next_rows, near_rows).mean() > 0.5:
+                quantum = lattice_quantum(nearest)
+        if len(ordered) == 1:
+            points = nearest
         elif quantum is None:
             points = np.vstack([p for _t, p in pairs])
         else:
             anchor = nearest[0, :2]
-            ordered = sorted(pairs, key=lambda pair: abs(pair[0] - ts))
             cells = [
                 np.round((part[:, :2] - anchor) / quantum).astype(np.int64) for _t, part in ordered
             ]

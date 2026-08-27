@@ -42,9 +42,9 @@ if TYPE_CHECKING:
 def lattice_quantum(points: np.ndarray) -> float | None:
     """The grid pitch when coordinates lie on a lattice; None for continuous scans.
 
-    Grid-quantized sources (an occupancy map streamed as clouds) carry their
-    pitch in the data itself; it decides cell dedup, snapshot merging and the
-    projection splat. Continuous scans never collide and skip all of it.
+    Grid-quantized sources carry their pitch in the data itself; it sizes
+    merge cells and the projection splat. Quantization does not classify the
+    source - a mm-integer wire format grids a scan without making it a map.
     """
     sample = points[:2048]
     x = np.unique(sample[:, 0])
