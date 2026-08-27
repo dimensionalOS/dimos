@@ -30,8 +30,8 @@ from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.dannav.holonomic_tc.module import DanHolonomicTC
 from dimos.navigation.dannav.local_planner.module import DanLocalPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.nav_3d.mls_planner.goal_relay import GoalRelay
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
+from dimos.navigation.nav_3d.mls_planner.start_relay import StartRelay
 from dimos.robot.diy.alfred.config import ALFRED_URDF
 from dimos.visualization.rerun.urdf_robot import UrdfRobotStaticRerunFactory
 from dimos.visualization.vis_module import vis_module
@@ -180,15 +180,13 @@ _vis_nav = autoconnect(
         robot_height=ALFRED_BODY_HEIGHT_METERS,
         wall_clearance_m=0.2,
         step_penalty_weight=1.0,
-    ).remappings(
-        [
-            (MLSPlannerNative, "path", "planner_path"),
-            (MLSPlannerNative, "start_pose", "odom"),
-        ]
+    ).remappings([(MLSPlannerNative, "path", "planner_path")]),
+    # Solely the tf-driven start_pose source for the dannav odom remaps below.
+    StartRelay.blueprint(),
+    DanLocalPlanner.blueprint(resample_spacing_m=0.1).remappings(
+        [(DanLocalPlanner, "odom", "start_pose")]
     ),
-    GoalRelay.blueprint().remappings([(GoalRelay, "start_pose", "odom")]),
-    DanLocalPlanner.blueprint(resample_spacing_m=0.1),
-    DanHolonomicTC.blueprint(),
+    DanHolonomicTC.blueprint().remappings([(DanHolonomicTC, "odom", "start_pose")]),
     MovementManager.blueprint(),
     vis_module(
         global_config.viewer,
