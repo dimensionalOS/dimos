@@ -68,7 +68,7 @@ def test_heuristic_grasp_proposes_centered_top_down_pose(module: HeuristicGraspM
     assert proposals.candidates[0].score == pytest.approx(1.0)
 
 
-def test_heuristic_grasp_aligns_yaw_with_narrow_axis(module: HeuristicGraspModule) -> None:
+def test_heuristic_grasp_aligns_jaw_axis_with_narrow_axis(module: HeuristicGraspModule) -> None:
     proposals = module.propose_grasps(
         _cloud(
             np.asarray(
@@ -82,8 +82,10 @@ def test_heuristic_grasp_aligns_yaw_with_narrow_axis(module: HeuristicGraspModul
         )
     )
 
-    yaw = proposals.candidates[0].pose.orientation.to_euler().z
-    assert abs(math.sin(yaw)) == pytest.approx(1.0)
+    jaw_axis = proposals.candidates[0].pose.orientation.rotate_vector(Vector3(0.0, 1.0, 0.0))
+    assert abs(jaw_axis.x) == pytest.approx(1.0)
+    assert jaw_axis.y == pytest.approx(0.0, abs=1e-6)
+    assert jaw_axis.z == pytest.approx(0.0, abs=1e-6)
 
 
 @pytest.mark.parametrize(
