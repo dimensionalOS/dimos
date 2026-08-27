@@ -18,8 +18,8 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use validator::Validate;
 
-use crate::mapper::{Mapper, Pose};
-use crate::voxel_ray_tracer::{iter_global_normals, Config, LocalBounds};
+use dimos_voxel_ray_tracing::mapper::{Mapper, Pose};
+use dimos_voxel_ray_tracing::voxel_ray_tracer::{iter_global_normals, Config, LocalBounds};
 
 fn extract_tuples(arr: &Bound<'_, PyAny>, name: &str) -> PyResult<Vec<(f32, f32, f32)>> {
     let arr: PyReadonlyArray2<'_, f32> = arr.extract().map_err(|_| {
@@ -311,8 +311,8 @@ impl VoxelRayMapper {
     }
 }
 
-#[pymodule]
-fn dimos_voxel_ray_tracing(m: &Bound<'_, PyModule>) -> PyResult<()> {
+#[pymodule(name = "dimos_voxel_ray_tracing")]
+fn dimos_voxel_ray_tracing_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<VoxelRayMapper>()?;
     Ok(())
 }

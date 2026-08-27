@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -32,8 +33,9 @@ TF_MATCH_TOLERANCE_S = 0.1
 
 class RayTracingVoxelMapConfig(NativeModuleConfig):
     cwd: str | None = "rust"
-    executable: str = "result/bin/voxel_ray_tracing"
-    build_command: str | None = "nix build -L path:."
+    # The crate is a workspace member, so cargo builds into the repo-root target dir.
+    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "voxel_ray_tracing")
+    build_command: str | None = "cargo build --release"
     stdin_config: bool = True
 
     voxel_size: float = 0.1
