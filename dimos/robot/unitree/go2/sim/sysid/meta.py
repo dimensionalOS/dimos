@@ -66,15 +66,7 @@ import numpy as np
 
 from dimos.robot.unitree.go2.sim.policy import FreePolicy
 from dimos.robot.unitree.go2.sim.ranges import Preset, load_preset
-from dimos.robot.unitree.go2.sim.sysid.fit import (
-    FitResult,
-    Objective,
-    PooledObjective,
-    base_values,
-    default_plan,
-    fit,
-    merged,
-)
+from dimos.robot.unitree.go2.sim.sysid.fit import base_values, default_plan
 from dimos.robot.unitree.go2.sim.sysid.ground import (
     ObsNoise,
     Report,
@@ -93,6 +85,7 @@ from dimos.robot.unitree.go2.sim.sysid.probe import FOCUS, Probe, Spectrum, spec
 from dimos.robot.unitree.go2.sim.sysid.real import real_summary, robot_noise
 from dimos.robot.unitree.go2.sim.sysid.stats import Summary
 from dimos.simulation.sysid.backend import ClosedLoopBackend
+from dimos.simulation.sysid.fit import FitResult, Objective, PooledObjective, fit, merged
 from dimos.simulation.sysid.recording import Streams, read_declarations
 from dimos.simulation.sysid.regimes import regimes, sample_segments
 from dimos.simulation.sysid.rollouts import Rollouts

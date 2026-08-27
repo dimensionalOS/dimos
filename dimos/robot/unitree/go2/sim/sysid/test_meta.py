@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import pytest
 
-from dimos.robot.unitree.go2.sim.sysid.fit import Objective, PooledObjective
 from dimos.robot.unitree.go2.sim.sysid.meta import (
     DEFAULT_POINT,
     INCUMBENT_POINT,
@@ -28,6 +27,7 @@ from dimos.robot.unitree.go2.sim.sysid.meta import (
 )
 from dimos.robot.unitree.go2.sim.sysid.test_score import _result
 from dimos.simulation.sysid.backend import CHANNELS
+from dimos.simulation.sysid.fit import Objective, PooledObjective
 from dimos.simulation.sysid.regimes import Segment, Span
 
 

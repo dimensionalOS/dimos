@@ -116,7 +116,8 @@ def test_a_parallel_fit_is_the_serial_fit_bit_for_bit():
     agree exactly between one process and a worker pool."""
     pytest.importorskip("optuna")
     from dimos.robot.unitree.go2.sim.ranges import KNOBS
-    from dimos.robot.unitree.go2.sim.sysid.fit import Objective, base_values, default_plan, fit
+    from dimos.robot.unitree.go2.sim.sysid.fit import base_values, default_plan
+    from dimos.simulation.sysid.fit import Objective, fit
     from dimos.simulation.sysid.recording import read_declarations
     from dimos.simulation.sysid.regimes import regimes, sample_segments
     from dimos.simulation.sysid.rollouts import Rollouts

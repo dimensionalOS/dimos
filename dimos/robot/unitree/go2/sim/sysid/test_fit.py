@@ -22,16 +22,14 @@ import numpy as np
 import pytest
 
 from dimos.robot.unitree.go2.sim.ranges import KNOBS, Knob
-from dimos.robot.unitree.go2.sim.sysid.fit import (
-    DEFAULT_SEARCH,
+from dimos.robot.unitree.go2.sim.sysid.fit import DEFAULT_SEARCH, base_values, default_plan
+from dimos.simulation.sysid.fit import (
     FitResult,
     KnobPlan,
     Pin,
     StudyOutcome,
     _out_file,
     _overlap_seconds,
-    base_values,
-    default_plan,
     fit,
     format_report,
     load_knob_plan,
