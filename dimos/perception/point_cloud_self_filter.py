@@ -301,5 +301,3 @@ def _transform_points(points: np.ndarray, transform: np.ndarray) -> np.ndarray:
     translation = transform[:3, 3]
     return np.asarray(points @ rotation.T + translation, dtype=np.float64)
 
-
-point_cloud_self_filter = PointCloudSelfFilter.blueprint
