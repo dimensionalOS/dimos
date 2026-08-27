@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -502,6 +503,24 @@ def test_blueprint_pinned_arbitrary_value_survives_filtering() -> None:
     parsed = BlueprintConfigParser(ArbitraryModule.blueprint(scaling=Anchor())).parse(environ={})
 
     assert isinstance(parsed.module_kwargs("arbitrarymodule")["scaling"], Anchor)
+
+
+def test_blueprint_pinned_callable_dataclass_survives_validation() -> None:
+    @dataclass
+    class CallableHandler:
+        label: str
+
+        def __call__(self, value: Any) -> str:
+            return f"{self.label}: {value}"
+
+    handler = CallableHandler(label="rerun")
+    parsed = BlueprintConfigParser(
+        ArbitraryModule.blueprint(handlers={"world/robot": handler})
+    ).parse(environ={})
+
+    parsed_handler = parsed.module_kwargs("arbitrarymodule")["handlers"]["world/robot"]
+    assert isinstance(parsed_handler, CallableHandler)
+    assert parsed_handler("ready") == "rerun: ready"
 
 
 def test_format_help_uses_nested_parent_default_instance() -> None:

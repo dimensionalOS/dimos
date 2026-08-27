@@ -205,7 +205,13 @@ class ControlCoordinator(Module):
         logger.info(f"ControlCoordinator initialized at {self.config.tick_rate}Hz")
 
     def _setup_from_config(self) -> None:
-        """Create hardware and tasks from config (called on start)."""
+        """Create hardware and tasks, then hand control to prepared adapters.
+
+        Connecting hardware is intentionally separate from activating it.  Task
+        construction can load large policy models; enabling actuators before
+        that work completes leaves a robot without a command producer during
+        the most vulnerable part of startup.
+        """
         hardware_added: list[str] = []
         tasks_added: list[TaskName] = []
 
@@ -221,6 +227,10 @@ class ControlCoordinator(Module):
                 if task_cfg.auto_start:
                     self.task_invoke(task.name, "start")
 
+            for component in self.config.hardware:
+                if component.auto_enable:
+                    self._activate_hardware(component.hardware_id)
+
         except Exception:
             # Roll back everything this call added, tasks first: an active task
             # blocks removal of the hardware whose joints it claims.
@@ -233,7 +243,7 @@ class ControlCoordinator(Module):
             raise
 
     def _setup_hardware(self, component: HardwareComponent) -> None:
-        """Connect and add a single hardware adapter."""
+        """Connect and register an adapter without enabling actuation."""
         adapter: ManipulatorAdapter | TwistBaseAdapter | WholeBodyAdapter
         if component.hardware_type == HardwareType.WHOLE_BODY:
             adapter = self._create_whole_body_adapter(component)
@@ -246,18 +256,21 @@ class ControlCoordinator(Module):
             raise RuntimeError(f"Failed to connect to {component.adapter_type} adapter")
 
         try:
-            if component.auto_enable:
-                activate = getattr(adapter, "activate", None)
-                if callable(activate):
-                    if activate() is False:
-                        raise RuntimeError(f"Failed to activate hardware {component.hardware_id}")
-                elif hasattr(adapter, "write_enable"):
-                    adapter.write_enable(True)
-
             self.add_hardware(adapter, component)
         except Exception:
             adapter.disconnect()
             raise
+
+    def _activate_hardware(self, hardware_id: HardwareId) -> None:
+        interface = self._hardware[hardware_id]
+        adapter = interface.adapter
+        activate = getattr(adapter, "activate", None)
+        if callable(activate):
+            if activate() is False:
+                raise RuntimeError(f"Failed to activate hardware {hardware_id}")
+            return
+        if hasattr(adapter, "write_enable"):
+            adapter.write_enable(True)
 
     def _create_adapter(self, component: HardwareComponent) -> ManipulatorAdapter:
         """Create a manipulator adapter from component config."""
@@ -961,7 +974,7 @@ class ControlCoordinator(Module):
         with self._hardware_lock:
             for hw_id, interface in self._hardware.items():
                 deactivate = getattr(interface.adapter, "deactivate", None)
-                if not callable(deactivate):
+                if not callable(deactivate) or not interface.adapter.is_connected():
                     continue
                 try:
                     if deactivate() is False:
@@ -972,6 +985,8 @@ class ControlCoordinator(Module):
         # Disconnect all hardware adapters
         with self._hardware_lock:
             for hw_id, interface in self._hardware.items():
+                if not interface.adapter.is_connected():
+                    continue
                 try:
                     interface.disconnect()
                     logger.info(f"Disconnected hardware {hw_id}")

@@ -79,7 +79,7 @@ def leaf_fields(
                 continue
         if _contains_runtime_type(info.annotation):
             continue
-        if not _is_cli_settable(info.annotation):
+        if not is_cli_settable(info.annotation):
             continue
         leaves[path] = info.annotation
     return list(leaves.items())
@@ -129,7 +129,7 @@ def scalar_annotation_types(annotation: Any) -> set[Any]:
     }
 
 
-def _is_cli_settable(annotation: Any) -> bool:
+def is_cli_settable(annotation: Any) -> bool:
     """Whether pydantic can build some union member from CLI-provided data.
 
     Arbitrary classes (permitted via ``arbitrary_types_allowed``) validate by

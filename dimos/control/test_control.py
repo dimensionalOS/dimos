@@ -424,20 +424,42 @@ class TestControlCoordinatorLifecycle:
                 super().disconnect()
 
         adapter_registry.register("lifecycle_test", LifecycleAdapter)
+
+        class OrderedCoordinator(ControlCoordinator):
+            def _create_task_from_config(self, config: TaskConfig):
+                LifecycleAdapter.events.append("task_created")
+                return super()._create_task_from_config(config)
+
         component = HardwareComponent(
             hardware_id="arm",
             hardware_type=HardwareType.MANIPULATOR,
             joints=make_joints("arm", 6),
             adapter_type="lifecycle_test",
         )
-        coordinator = ControlCoordinator(publish_joint_state=False, hardware=[component])
+        task = TaskConfig(
+            name=JOINT_TRAJECTORY_TASK_NAME,
+            type="trajectory",
+            joint_names=make_joints("arm", 6),
+        )
+        coordinator = OrderedCoordinator(
+            publish_joint_state=False,
+            hardware=[component],
+            tasks=[task],
+        )
 
         try:
             coordinator.start()
         finally:
             coordinator.stop()
+            coordinator.stop()
 
-        assert LifecycleAdapter.events == ["connect", "activate", "deactivate", "disconnect"]
+        assert LifecycleAdapter.events == [
+            "connect",
+            "task_created",
+            "activate",
+            "deactivate",
+            "disconnect",
+        ]
 
     def test_start_stop_with_adapter_without_lifecycle_methods(self):
         """Adapters without activate/deactivate (e.g. twist bases) start and stop cleanly."""

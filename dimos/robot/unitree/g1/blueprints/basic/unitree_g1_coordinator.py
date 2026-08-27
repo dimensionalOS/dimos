@@ -44,7 +44,6 @@ class _G1Coordinator(ControlCoordinator):
 unitree_g1_coordinator = (
     autoconnect(
         G1WholeBodyConnection.blueprint(
-            release_sport_mode=True,
             network_interface=os.getenv("ROBOT_INTERFACE", ""),
         ),
         _G1Coordinator.blueprint(

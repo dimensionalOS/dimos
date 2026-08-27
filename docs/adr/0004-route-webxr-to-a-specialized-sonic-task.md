@@ -1,0 +1,3 @@
+# Route WebXR directly to a specialized SONIC task
+
+The WebXR teleoperation blueprint will use one `G1SonicTeleopTask` that extends `G1SonicWBCTask` and replaces the base task in that blueprint. The coordinator will route body snapshots, controller buttons, and twist input directly to the specialized task; deterministic retargeting remains a pure helper owned by the task. The existing non-teleoperation blueprint continues to use the base task. This avoids loading two whole-body policies, conflicting 29-joint claims, an adapter worker, an intermediate transport type, and an internal ZMQ round trip.

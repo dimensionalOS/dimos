@@ -37,6 +37,7 @@ class MockWholeBodyAdapter:
         self._states = [MotorState(q=position) for position in positions]
         self._limits = limits
         self._connected = False
+        self._active = False
 
     def connect(self) -> bool:
         self._connected = True
@@ -44,15 +45,20 @@ class MockWholeBodyAdapter:
 
     def disconnect(self) -> None:
         self._connected = False
+        self._active = False
 
     def is_connected(self) -> bool:
         return self._connected
 
     def activate(self) -> bool:
-        return self._connected
+        self._active = self._connected
+        return self._active
 
     def deactivate(self) -> bool:
-        return self._connected
+        if not self._connected:
+            return False
+        self._active = False
+        return True
 
     def read_motor_states(self) -> list[MotorState]:
         return list(self._states)
@@ -67,7 +73,7 @@ class MockWholeBodyAdapter:
         return self._limits
 
     def write_motor_commands(self, commands: list[MotorCommand]) -> bool:
-        if not self._connected or len(commands) != len(self._states):
+        if not self._active or len(commands) != len(self._states):
             return False
         self._states = [
             MotorState(q=command.q, dq=command.dq, tau=command.tau) for command in commands

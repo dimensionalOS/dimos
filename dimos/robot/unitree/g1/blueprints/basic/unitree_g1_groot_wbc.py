@@ -316,7 +316,7 @@ else:
     from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
 
     # Real-hw backend: DDS connection module + transport_lcm adapter.
-    _backend = G1WholeBodyConnection.blueprint(release_sport_mode=True)
+    _backend = G1WholeBodyConnection.blueprint()
     _adapter_type = "transport_lcm"
     _adapter_address = ""
     # The onboard Jetson can't sustain a 500 Hz tick; it collapses to ~90 Hz

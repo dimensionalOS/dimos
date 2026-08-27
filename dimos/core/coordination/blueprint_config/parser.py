@@ -38,6 +38,7 @@ from dimos.core.coordination.blueprint_config.fields import (
     display_annotation,
     field_has_required_parent,
     field_is_required,
+    is_cli_settable,
     leaf_fields,
     module_config_cls,
     nested_get,
@@ -422,6 +423,13 @@ class BlueprintConfigParser:
                     format_validation_error(module.atom.name, error)
                 ) from error
             dumped = model.model_dump(mode="python", exclude_unset=True)
+            # Pydantic serializes callable dataclass instances as dictionaries.
+            # Runtime-only fields cannot be populated by config sources, so retain
+            # their validated Python objects from blueprint-pinned kwargs.
+            for name in model.model_fields_set:
+                field = module.config_cls.model_fields[name]
+                if not is_cli_settable(field.annotation):
+                    dumped[name] = getattr(model, name)
             dumped.pop("g", None)
             dumped.pop("instance_name", None)
             parsed[module.atom.name] = dumped

@@ -46,6 +46,7 @@ logger = setup_logger()
 
 # Step hook signature: called with the engine instance inside the sim thread.
 StepHook = Callable[["MujocoEngine"], None]
+StepGate = Callable[[], bool]
 
 _MJJNT_FREE = int(mujoco.mjtJoint.mjJNT_FREE)  # type: ignore[attr-defined]
 _RESET_WAIT_TIMEOUT_S = 5.0
@@ -161,6 +162,7 @@ class MujocoEngine(SimulationEngine):
         raycast_lidars: list[RaycastLidarConfig] | None = None,
         on_before_step: StepHook | None = None,
         on_after_step: StepHook | None = None,
+        should_step: StepGate | None = None,
         assets: dict[str, bytes] | None = None,
         model: mujoco.MjModel | None = None,
         robot_sim_spec: RobotSimSpec | None = None,
@@ -172,6 +174,7 @@ class MujocoEngine(SimulationEngine):
         super().__init__(config_path=config_path, headless=headless)
         self._on_before_step: StepHook | None = on_before_step
         self._on_after_step: StepHook | None = on_after_step
+        self._should_step: StepGate | None = should_step
         self._spawn_xy = spawn_xy
         self._spawn_z = spawn_z
         self._spawn_yaw = spawn_yaw
@@ -250,6 +253,7 @@ class MujocoEngine(SimulationEngine):
         self,
         before: StepHook | None = None,
         after: StepHook | None = None,
+        should_step: StepGate | None = None,
     ) -> None:
         """Install pre/post step hooks after construction.
 
@@ -258,6 +262,7 @@ class MujocoEngine(SimulationEngine):
         """
         self._on_before_step = before
         self._on_after_step = after
+        self._should_step = should_step
 
     def _resolve_model_path(self, config_path: Path) -> Path:
         if config_path is None:
@@ -621,8 +626,9 @@ class MujocoEngine(SimulationEngine):
                     self._on_before_step(self)
                 except Exception as exc:
                     logger.error("on_before_step failed", error=str(exc))
-            self._apply_control()
-            mujoco.mj_step(self._model, self._data)
+            if self._should_step is None or self._should_step():
+                self._apply_control()
+                mujoco.mj_step(self._model, self._data)
             if sync_viewer:
                 m_viewer.sync()
             self._update_joint_state()

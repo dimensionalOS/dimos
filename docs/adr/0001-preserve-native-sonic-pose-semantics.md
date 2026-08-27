@@ -1,0 +1,3 @@
+# Preserve native SONIC pose semantics for WebXR teleoperation
+
+The first simulator milestone will convert WebXR tracking into a native-equivalent SONIC pose instead of populating only the fields currently read by the Python policy. This requires more conversion work up front, but it keeps dimOS behavior comparable with the native PICO sender and avoids defining an integration contract around incidental details of the current encoder implementation. Internal typed streams may replace the native ZMQ transport, but the pose semantics must remain equivalent; articulated fingers are outside this decision's scope.
