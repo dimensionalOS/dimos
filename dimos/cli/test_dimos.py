@@ -238,7 +238,9 @@ def stubbed_run(
 
 
 def test_run_rejects_record_topics_matching_nothing(stubbed_run: dict[str, Any]) -> None:
-    result = CliRunner().invoke(main, ["--record", "--record-topics", "nope", "run", "alpha"])
+    result = CliRunner().invoke(
+        main, ["--record", "sqlite", "--record-topics", "nope", "run", "alpha"]
+    )
 
     assert result.exit_code == 2
     assert "matched none of" in result.output
