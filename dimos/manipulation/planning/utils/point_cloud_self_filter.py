@@ -30,11 +30,10 @@ import yourdfpy  # type: ignore[import-untyped]
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -51,7 +50,7 @@ class _CollisionGeometry:
 
 
 class PointCloudSelfFilterConfig(ModuleConfig):
-    robot_model: RobotModelConfig
+    model: RobotModel
     padding_m: float = Field(default=0.01, ge=0.0)
     # Must match the mapper's voxel_size, or the mask names cells the map does
     # not hold and clears nothing.
@@ -180,11 +179,9 @@ class PointCloudSelfFilter(Module):
         self.filtered_pointcloud.publish(filtered)
 
     def _load_collision_geometry(self) -> list[_CollisionGeometry]:
-        config = self.config.robot_model
-        description = prepare_urdf_for_drake(
-            config.model.load(),
-            convert_meshes=bool(config.auto_convert_meshes),
-        )
+        # The URDF is read as-is: yourdfpy tolerates what Drake needs stripped,
+        # and trimesh loads DAE and STL without conversion.
+        description = self.config.model.load()
         mesh_dir = str(description.source_path.parent)
         robot = yourdfpy.URDF.load(
             BytesIO(description.xml.encode()),

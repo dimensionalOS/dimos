@@ -21,7 +21,6 @@ from typing import Any, cast
 import numpy as np
 import pytest
 
-from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.utils.point_cloud_self_filter import PointCloudSelfFilter
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -52,11 +51,7 @@ def make_filter(tmp_path: Path) -> Iterator[Callable[..., PointCloudSelfFilter]]
 
     def make(**overrides: Any) -> PointCloudSelfFilter:
         settings: dict[str, Any] = {
-            "robot_model": RobotModelConfig(
-                model=RobotModel.from_file(urdf),
-                joint_names=[],
-                base_link="base",
-            ),
+            "model": RobotModel.from_file(urdf),
             "padding_m": 0.01,
             "voxel_size": 0.05,
             "tf_tolerance_s": 0.001,
