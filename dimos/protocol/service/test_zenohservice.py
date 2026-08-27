@@ -14,12 +14,16 @@
 
 from __future__ import annotations
 
+import json
 import os
+import pickle
 from typing import Any
 
 import pytest
 import zenoh
 
+from dimos.protocol.pubsub.impl.zenohpubsub import ZenohPubSubBase
+from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.protocol.service import zenohservice
 from dimos.protocol.service.zenohservice import ZenohConfig, ZenohService, ZenohSessionPool
 
@@ -116,7 +120,6 @@ def test_shared_memory_stays_on() -> None:
 
     Zenoh enables it by default; a wheel built without the feature drops the key.
     """
-    import json
 
     config = json.loads(str(zenohservice._zenoh_config(ZenohConfig())))
     assert config["transport"]["shared_memory"]["enabled"] is True
@@ -130,7 +133,6 @@ def test_different_modes_produce_different_keys() -> None:
 
 def test_pickle_round_trip_sheds_the_session(session_pool) -> None:
     """A module travels to its worker by pickle and re-acquires on the far side."""
-    import pickle
 
     svc = ZenohService(session_pool=session_pool)
     svc.start()
@@ -146,11 +148,6 @@ def test_pickle_round_trip_sheds_the_session(session_pool) -> None:
 
 
 def test_pickled_pubsub_and_rpc_rebuild_their_runtime(session_pool) -> None:
-    import pickle
-
-    from dimos.protocol.pubsub.impl.zenohpubsub import ZenohPubSubBase
-    from dimos.protocol.rpc.zenohrpc import ZenohRPC
-
     pubsub = pickle.loads(pickle.dumps(ZenohPubSubBase(session_pool=session_pool)))
     assert pubsub._publishers == {}
     assert pubsub._subscribers == []
