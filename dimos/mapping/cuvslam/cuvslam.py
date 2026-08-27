@@ -22,7 +22,7 @@ import sys
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from dimos.constants import CACHE_DIR
 from dimos.core.native_module import NativeModule, NativeModuleConfig
@@ -145,60 +145,72 @@ class CuvslamConfig(NativeModuleConfig):
     cwd: str | None = "."
     executable: str = "result/bin/cuvslam_odometry"
     build_command: str | None = Field(
-        default_factory=lambda: f"nix build github:dimensionalOS/dimSLAM/v0.2.0#{sdk_variant()}"
+        default_factory=lambda: f"nix build github:dimensionalOS/dimSLAM/v0.3.0#{sdk_variant()}"
     )
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
 
-    # "mono" is accurate up to scale.
-    camera_mode: Literal["stereo", "mono", "rgbd"] = "stereo"
-    # Empty: auto-discover from camera_info.
-    camera_frames: list[str] = Field(default_factory=list)
-    # Asserted, not performed.
-    rectified: bool = True
-    # Off needs a libcuvslam built with ENFORCE_GPU=OFF; the stock SDK is GPU-only.
-    use_gpu: bool = True
-
-    map_frame: str = "map"
-    odom_frame: str = "odom"
-    base_frame: str = "base_link"
-    # Frame the cuVSLAM rig is built in. Empty means base_frame.
-    rig_frame: str = ""
-    # Only read when Slam is off, where map->odom can only be identity.
-    publish_map_to_odom: bool = True
-
-    enable_slam: bool = True
-    # Slam's GetPose() carries no timestamp, so a thread running behind cannot be matched
-    # to the odometry pose it corrects.
-    slam_async: bool = False
-    # Poses in the pose graph, not a distance. 0 is unlimited.
-    slam_max_poses: int = 300
-    slam_throttling_ms: int = 0
-    # On, the tracker waits for the noise model on ``imu_info`` before building the rig.
-    enable_imu: bool = False
-    # Translation std (m) above which the frame's motion is dropped and the path rebased;
-    # 0 disables. Well-constrained frames report 0.01-0.3 m, degenerate bursts 5-330 m.
-    covariance_gate_translation_std: float = 1.0
-    # Frame-to-frame m/s and rad/s, catching teleports the covariance gate misses; 0 disables.
+    # no default: this choice changes what inputs are required
+    camera_mode: Literal["mono", "stereo", "rgbd"]
+    # reject way-too-fast movements, like moving a large box that takes up 90% of the camera view
     speed_gate_max_linear: float = 5.0
     speed_gate_max_angular: float = 12.0
-    # rgbd only: raw depth units per metre; cuVSLAM assumes 1 and depth is 16-bit millimetres.
-    depth_units_per_meter: float = 1000.0
+    # "reject movements that cuVSLAM is not confident about"
+    # good movements usually have a confidence of around 0.01-0.3, degenerate ones are 5-330
+    # units = standard deviations of translation in meters
+    # 0 disables
+    covariance_gate_translation_std: float = 1.0
+
+    # note: this is auto detected (including left/right via tf),
+    # only use this list to switch  you need a subset of cameras
+    # (ex: testing rgbd vs stereo IR vs mono rgb)
+    # for all stereo pairs, first=left side, second=right side, for others order doesn't matter
+    # E.g. if you flip a camera upside down this value doesn't change!
+    # left/right are relative to camera, not relative to base_link
+    camera_frames: list[str] = Field(default_factory=list)
+    # have the images been pre-un-distorted (ideally yes, the sensor or API should un-distort)
+    rectified: bool = True
+    # works with MacOS Metal (apple silicon only) and Nvidia
+    use_gpu: bool = True
+    # rgbd only, required: raw depth units per metre keyed by depth image frame_id
+    # (e.g. {"d455_color_optical_frame": 1000.0} for 16-bit millimetre depth)
+    depth_units_per_meter: dict[str, float] = Field(default_factory=dict)
+
+    map_frame_id: str = "map"
+    odom_frame_id: str = "odom"
+    output_frame_id: str = "base_link"
+    # rig_frame_id will default to output_frame_id, which is right 99% of the time
+    # sometimes this will need to be the head-frame rather than chest/base_link (ex: X2)
+    rig_frame_id: str = ""
+
+    enable_loop_closure: bool = True
+    publish_map_to_odom: bool = True
+    slam_async: bool = False
+    # 0 = unlimited
+    slam_max_poses: int = 300
+    slam_throttling_ms: int = 0
+    # unless you have a REALLY good IMU keep this off
+    enable_imu: bool = False
+
+    @model_validator(mode="after")
+    def _rgbd_needs_depth_units(self) -> CuvslamConfig:
+        if self.camera_mode == "rgbd" and not self.depth_units_per_meter:
+            raise ValueError(
+                "camera_mode='rgbd' requires depth_units_per_meter, "
+                'e.g. {"d455_color_optical_frame": 1000.0}'
+            )
+        return self
 
 
 class CuvslamOdometry(NativeModule):
     """Visual odometry on one to thirty-two cameras.
 
-    Every camera publishes onto the same ``image`` and ``camera_info`` streams and is
-    told apart by ``frame_id``; ``camera_frames`` fixes which frames are on the rig and
-    in what order. Extrinsics come from tf against ``rig_frame``. ``rgbd`` pairs one
-    camera with ``depth_image``, reprojected onto the rig camera through
-    ``depth_camera_info`` and tf when the depth sensor differs.
-
-    ``odometry`` is one continuous ``odom`` -> ``base_link`` path, rebased onto the last
-    published pose after a tracking loss. ``corrected_odometry`` is the pose-graph
-    ``map`` -> ``base_link`` and jumps at loop closures. ``tf`` carries
-    ``odom`` -> ``base_link`` and ``map`` -> ``odom``.
+    Usage
+    1. Funnel all ir and rgb camera images to ``image``
+    2. Funnel their respective camera info's to ``camera_info``
+    3. Make sure all of those^ have correct frame_id's
+    4. Publish static tf's to relate all those frame_id's
+    5. Set `camera_mode` to mono/stereo/depth
     """
 
     config: CuvslamConfig
