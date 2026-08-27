@@ -163,9 +163,8 @@ class ManipulationModuleConfig(ModuleConfig):
     # to prevent the planner from routing trajectories below this height.
     # Set to None to disable.
     floor_z: float | None = None
-    # Frame the voxel_map port's clouds must already be expressed in. Must match
-    # the mapper's world_frame.
-    voxel_map_frame: str = "world"
+    # Frame the voxel_map port's clouds must already be expressed in.
+    world_frame: str = "world"
     # Edge length of a voxel_map cell (meters). Must match the mapper's
     # voxel_size, or the octree will not line up with what was mapped.
     voxel_map_resolution: float = Field(default=0.05, gt=0.0)
@@ -1399,7 +1398,7 @@ class ManipulationModule(Module):
     def _apply_voxel_map(self, cloud: PointCloud2) -> None:
         if self._world_monitor is None:
             return
-        frame = self.config.voxel_map_frame
+        frame = self.config.world_frame
         if cloud.frame_id != frame:
             # The points are metric positions in the planning frame. Registering
             # them through a guessed transform would invent geometry.

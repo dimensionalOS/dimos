@@ -55,7 +55,7 @@ class PointCloudSelfFilterConfig(ModuleConfig):
     # Must match the mapper's voxel_size, or the mask names cells the map does
     # not hold and clears nothing.
     voxel_size: float = Field(default=0.05, gt=0.0)
-    planning_frame: str = "world"
+    world_frame: str = "world"
     tf_tolerance_s: float = Field(default=0.02, ge=0.0)
     tf_forward_tolerance_s: float = Field(default=0.05, ge=0.0)
 
@@ -109,7 +109,7 @@ class PointCloudSelfFilter(Module):
 
         for geometry in self._collision_geometry:
             sensor_from_link = self._lookup(cloud.frame_id, geometry.link, cloud.ts)
-            world_from_link = self._lookup(config.planning_frame, geometry.link, cloud.ts)
+            world_from_link = self._lookup(config.world_frame, geometry.link, cloud.ts)
             if sensor_from_link is None or world_from_link is None:
                 logger.warning(
                     "Dropping cloud: capture-time TF unavailable for robot link %s", geometry.link
@@ -141,7 +141,7 @@ class PointCloudSelfFilter(Module):
         ) * config.voxel_size
         clear_mask = PointCloud2.from_numpy(
             clear_points,
-            frame_id=config.planning_frame,
+            frame_id=config.world_frame,
             timestamp=cloud.ts,
         )
 
