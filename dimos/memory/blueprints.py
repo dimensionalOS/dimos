@@ -15,6 +15,7 @@
 """``dimos replay <memory.db>``: the recording's streams back on the bus, with the viewer."""
 
 import os
+from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
@@ -25,10 +26,12 @@ _DATASET = os.environ.get("REPLAY_DB", "")
 
 Replay = replay_module(_DATASET, os.environ.get("REPLAY_TOPICS", "*"))
 
+
+def _layout() -> Any:
+    return rerun_layout(Replay.stream_types)
+
+
 replay = autoconnect(
-    vis_module(
-        global_config.viewer,
-        rerun_config={"blueprint": lambda: rerun_layout(Replay.stream_types)},
-    ),
+    vis_module(global_config.viewer, rerun_config={"blueprint": _layout}),
     Replay.blueprint(dataset=_DATASET),
 )
