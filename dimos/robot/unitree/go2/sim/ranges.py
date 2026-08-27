@@ -36,7 +36,11 @@ from __future__ import annotations
 
 from dimos.robot.unitree.go2.sim.anchors import RobotSpec, derive
 from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
-from dimos.simulation.sysid.presets import Knob, Preset, load_preset as _load_preset
+from dimos.simulation.sysid.presets import (
+    Knob as Knob,
+    Preset as Preset,
+    load_preset as _load_preset,
+)
 
 # The MuJoCo knob set. Ranges come from ~/recordings/DR_RANGES.md: cross-regime
 # fit disagreement plus the measured 4-seed procedure variance.

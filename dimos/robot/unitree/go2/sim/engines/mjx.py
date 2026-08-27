@@ -54,7 +54,7 @@ import mujoco
 import numpy as np
 
 from dimos.robot.unitree.go2.sim.engines import model as go2_model
-from dimos.robot.unitree.go2.sim.plant import TORQUE_LIMITS, TorqueEnvelope
+from dimos.robot.unitree.go2.sim.plant import TORQUE_LIMITS
 from dimos.robot.unitree.go2.sim.ranges import KNOBS, PHYSICS_KEYS, Knob
 from dimos.simulation.sysid.backend import (
     CHANNELS,
@@ -64,6 +64,7 @@ from dimos.simulation.sysid.backend import (
     RolloutPlan,
     State,
 )
+from dimos.simulation.sysid.plant import TorqueEnvelope
 from dimos.simulation.sysid.rotations import mat_to_quat, quat_to_mat
 
 if TYPE_CHECKING:

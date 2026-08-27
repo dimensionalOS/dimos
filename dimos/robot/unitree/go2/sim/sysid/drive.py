@@ -69,11 +69,8 @@ from pathlib import Path
 
 import numpy as np
 
-from dimos.robot.unitree.go2.sim.plant import (
-    MUJOCO_ACTUATOR_NAMES,
-    TORQUE_LIMITS,
-    pd_torque,
-)
+from dimos.robot.unitree.go2.sim.plant import MUJOCO_ACTUATOR_NAMES, TORQUE_LIMITS
+from dimos.simulation.sysid.plant import pd_torque
 from dimos.simulation.sysid.recording import Streams
 
 # hip / thigh / calf per leg, MuJoCo actuator order.

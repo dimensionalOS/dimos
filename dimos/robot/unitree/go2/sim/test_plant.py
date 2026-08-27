@@ -19,13 +19,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from dimos.robot.unitree.go2.sim.plant import (
-    TORQUE_ENVELOPES,
-    TORQUE_LIMITS,
-    TorqueEnvelope,
-    actuator_step,
-    pd_torque,
-)
+from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES, TORQUE_LIMITS
+from dimos.simulation.sysid.plant import TorqueEnvelope, actuator_step, pd_torque
 
 
 def test_dq_des_is_part_of_the_pd_law_not_an_assumed_zero():

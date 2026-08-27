@@ -44,8 +44,9 @@ import mujoco
 import numpy as np
 
 from dimos.robot.unitree.go2.sim.engines import mjx as go2_mjx, model as go2_model
-from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES, TORQUE_LIMITS, TorqueEnvelope
+from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES, TORQUE_LIMITS
 from dimos.robot.unitree.go2.sim.ranges import Preset, load_preset
+from dimos.simulation.sysid.plant import TorqueEnvelope
 
 STAND_Q = np.tile([0.0, 0.9, -1.8], 4)
 KP, KD = 40.0, 2.0

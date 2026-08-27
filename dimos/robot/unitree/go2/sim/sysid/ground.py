@@ -74,12 +74,7 @@ from dataclasses import dataclass, field, replace
 
 import numpy as np
 
-from dimos.robot.unitree.go2.sim.plant import (
-    TORQUE_ENVELOPES,
-    TORQUE_LIMITS,
-    TorqueEnvelope,
-    actuator_step,
-)
+from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES, TORQUE_LIMITS
 from dimos.robot.unitree.go2.sim.policy import FreePolicy
 from dimos.robot.unitree.go2.sim.ranges import DEFAULT_PRESET, Preset, load_preset
 from dimos.robot.unitree.go2.sim.sysid.gait import strides
@@ -96,6 +91,7 @@ from dimos.robot.unitree.go2.sim.sysid.stats import (
     yaw_of,
 )
 from dimos.simulation.sysid.backend import ClosedLoopBackend, GhostTrack, State
+from dimos.simulation.sysid.plant import TorqueEnvelope, actuator_step
 from dimos.simulation.sysid.recording import Streams
 from dimos.simulation.sysid.rotations import mat_to_quat, quat_to_mat
 

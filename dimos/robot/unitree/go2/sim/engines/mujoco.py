@@ -38,7 +38,7 @@ from dimos.robot.unitree.go2.sim.engines.model import (
     GHOST_BODY,
     IMU_SITE,
 )
-from dimos.robot.unitree.go2.sim.plant import TORQUE_LIMITS, TorqueEnvelope, actuator_step
+from dimos.robot.unitree.go2.sim.plant import TORQUE_LIMITS
 from dimos.robot.unitree.go2.sim.ranges import KNOBS, PHYSICS_KEYS, Knob
 from dimos.simulation.sysid.backend import (
     CHANNELS,
@@ -49,6 +49,7 @@ from dimos.simulation.sysid.backend import (
     RolloutPlan,
     State,
 )
+from dimos.simulation.sysid.plant import TorqueEnvelope, actuator_step
 from dimos.simulation.sysid.rotations import mat_to_quat, quat_to_mat
 
 
