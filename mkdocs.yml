@@ -2,7 +2,7 @@ site_name: Dimensional
 site_description: >-
   Official documentation for Dimensional (dimOS) — the modern operating system
   for generalist robotics: Python-first, agent-native, and hardware-agnostic.
-site_url: https://dimensionalos.github.io/
+site_url: https://docs.dimensional.org/
 repo_url: https://github.com/dimensionalOS/dimos
 repo_name: dimensionalOS/dimos
 edit_uri: edit/main/docs/
@@ -37,6 +37,9 @@ watch:
 
 theme:
   name: material
+  custom_dir: misc/mkdocs/overrides
+  static_templates:
+    - llms.txt
   favicon: assets/favicon.png
   logo: assets/dimensional-logo-master-transparent.png
   font:

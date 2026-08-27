@@ -35,7 +35,6 @@ from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 pytestmark = pytest.mark.bake_e2e
 
@@ -153,25 +152,22 @@ def test_the_host_publishes_its_outputs_and_hides_the_suppressed_hop(baked, zeno
             transports.append(transport)
 
         lidar = make_transport("lidar", PointCloud2)
-        tf = make_transport("tf", TFMessage)
+        tf = make_transport("tf", Transform)
         transports += [lidar, tf]
         lidar.start()
         tf.start()
 
-        output_frame = config["modules"]["ray_tracing"]["config"]["output_frame"]
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline and "surface_map" not in seen:
             # Same stamp on both: the mapper drops a cloud it has no transform for.
             ts = time.time()
             tf.broadcast(
                 None,
-                TFMessage(
-                    Transform(
-                        translation=Vector3(0.0, 0.0, SENSOR_Z),
-                        frame_id=output_frame,
-                        child_frame_id="lidar",
-                        ts=ts,
-                    )
+                Transform(
+                    translation=Vector3(0.0, 0.0, SENSOR_Z),
+                    frame_id="odom",
+                    child_frame_id="lidar",
+                    ts=ts,
                 ),
             )
             time.sleep(0.05)

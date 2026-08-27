@@ -57,12 +57,12 @@ jobs:
           app-id: ${{ vars.DOCS_BOT_APP_ID }}
           private-key: ${{ secrets.DOCS_BOT_APP_PRIVATE_KEY }}
           owner: dimensionalOS
-          repositories: dimensionalOS.github.io
+          repositories: docs
 
       - name: Check out the pages repo
         uses: actions/checkout@v7
         with:
-          repository: dimensionalOS/dimensionalOS.github.io
+          repository: dimensionalOS/docs
           path: pages
           token: ${{ steps.pages-token.outputs.token }}
 

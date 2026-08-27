@@ -2,13 +2,15 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { ChannelStore, type Session, StatusStore } from "@dimos/sdk";
+import { registerTeleopHooks } from "@dimos/sdk/internal/teleop";
 import type { ChannelSpec, PanelSpec } from "@dimos/shared";
 import type { Manifest } from "@dimos/shared/manifest";
 import { App } from "./App.tsx";
-import type { SessionHandle } from "./session/session.ts";
-import { ChannelStore, StatusStore } from "./session/store.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+const ROBOT = { id: "a", name: "A", model: "go2" };
 
 const ODOM: ChannelSpec = {
   ch: "odom",
@@ -36,7 +38,7 @@ describe("App session states", () => {
   let root: Root;
   let status: StatusStore;
   let channels: ChannelStore;
-  let session: SessionHandle;
+  let session: Session;
 
   beforeEach(() => {
     container = document.createElement("div");
@@ -46,10 +48,17 @@ describe("App session states", () => {
     channels = new ChannelStore();
     session = {
       status,
-      channels,
-      teleop: { control: () => {}, datagram: () => {}, onMsg: () => () => {}, status },
-      stop: () => {},
+      store: channels,
+      watch: () => new Promise(() => {}),
+      subscribe: () => () => {},
+      close: () => {},
     };
+    registerTeleopHooks(session, {
+      control: () => {},
+      datagram: () => {},
+      onMsg: () => () => {},
+      status,
+    });
     act(() => root.render(<App session={session} />));
   });
 
@@ -62,7 +71,7 @@ describe("App session states", () => {
     expect(container.textContent).toContain("Waiting for a robot");
 
     act(() => {
-      status.update({ robot: { id: "a", name: "A", model: "go2" }, robotCount: 1 });
+      status.update({ watchedRobot: ROBOT, robots: [ROBOT] });
       status.update({ manifest: mf([ODOM]) });
       channels.ingest(
         "odom",
@@ -82,7 +91,7 @@ describe("App session states", () => {
     // list must unmount instead of keeping stale rows.
     act(() => {
       channels.reset();
-      status.update({ robot: null, robotCount: 0, manifest: null, epoch: 1 });
+      status.update({ watchedRobot: null, robots: [], manifest: null, epoch: 1 });
     });
     expect(container.querySelector('[data-testid="ch-odom-seq"]')).toBeNull();
     expect(container.textContent).toContain("Waiting for a robot");
@@ -90,7 +99,7 @@ describe("App session states", () => {
 
   it("keeps the last good frame on decode failures and flags them visibly", () => {
     act(() => {
-      status.update({ robot: { id: "a", name: "A", model: "go2" }, robotCount: 1 });
+      status.update({ watchedRobot: ROBOT, robots: [ROBOT] });
       status.update({ manifest: mf([ODOM]) });
       channels.ingest(
         "odom",
@@ -140,8 +149,8 @@ describe("App session states", () => {
   it("marks the jpeg channel unsubscribed until a video panel binds it", () => {
     act(() => {
       status.update({
-        robot: { id: "a", name: "A", model: "go2" },
-        robotCount: 1,
+        watchedRobot: ROBOT,
+        robots: [ROBOT],
         manifest: mf([ODOM, IMAGE]),
       });
     });
@@ -160,15 +169,15 @@ describe("App session states", () => {
   });
 
   it("shows the multi-robot notice instead of channels", () => {
-    act(() => status.update({ robotCount: 2 }));
+    act(() => status.update({ robots: [ROBOT, { id: "b", name: "B", model: "go2" }] }));
     expect(container.textContent).toContain("2 robots connected");
   });
 
   it("shows the polite notice on an unsupported manifest version", () => {
     act(() => {
       status.update({
-        robot: { id: "a", name: "A", model: "go2" },
-        robotCount: 1,
+        watchedRobot: ROBOT,
+        robots: [ROBOT],
         manifestUnsupported: true,
       });
     });

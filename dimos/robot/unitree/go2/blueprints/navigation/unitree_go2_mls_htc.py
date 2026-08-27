@@ -26,7 +26,6 @@ from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.navigation.dannav.holonomic_tc.module import DanHolonomicTC
 from dimos.navigation.dannav.local_planner.module import DanLocalPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.nav_3d.mls_planner.goal_relay import GoalRelay
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.nav_3d.mls_planner.viz import planner_visual_override
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
@@ -82,7 +81,6 @@ unitree_go2_mls_htc = autoconnect(
         output_frame="world",
         voxel_size=voxel_size,
         robot_height=go2_lidar_height,
-        # The start pose is raw go2 odometry, so the planner ground-projects it.
         start_z_offset_m=go2_lidar_height,
         wall_clearance_m=0.2,
         wall_buffer_m=0.75,
@@ -90,14 +88,7 @@ unitree_go2_mls_htc = autoconnect(
         step_threshold_m=0.16,
         step_penalty_weight=1.0,
         viz_publish_hz=planner_viz_hz,
-    ).remappings(
-        [
-            (MLSPlannerNative, "path", "planner_path"),
-            # The planner's start pose is the robot's odom pose
-            (MLSPlannerNative, "start_pose", "odom"),
-        ]
-    ),
-    GoalRelay.blueprint(),
+    ).remappings([(MLSPlannerNative, "path", "planner_path")]),
     # Setting resample_spacing_m to > 0.0 will smooth out jagged paths retunned my MLSP
     DanLocalPlanner.blueprint(resample_spacing_m=0.1),
     DanHolonomicTC.blueprint(run_profile="walk"),

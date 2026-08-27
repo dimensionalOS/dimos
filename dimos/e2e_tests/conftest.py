@@ -13,6 +13,8 @@
 # limitations under the License.
 
 from collections.abc import Callable, Generator, Iterator
+import subprocess
+import sys
 import threading
 import time
 
@@ -29,6 +31,13 @@ from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.simulation.mujoco.direct_cmd_vel_explorer import DirectCmdVelExplorer
 from dimos.simulation.mujoco.person_on_track import PersonTrackPublisher
+
+
+@pytest.fixture(scope="session")
+def playwright_browsers() -> None:
+    subprocess.run(
+        [sys.executable, "-m", "playwright", "install", "chromium", "firefox"], check=True
+    )
 
 
 def _pose(x: float, y: float, theta: float) -> PoseStamped:

@@ -24,16 +24,22 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.spec import mapping
 
+# Max stamp gap between a cloud and the transform used to register it (s).
+# One LIO scan period, so any cloud stamped within a pose sample's period
+# can register against it.
+TF_MATCH_TOLERANCE_S = 0.1
+
 
 class RayTracingVoxelMapConfig(NativeModuleConfig):
     cwd: str | None = "rust"
     executable: str = "result/bin/voxel_ray_tracing"
-    # Writing flake.lock dirties the tree, so the locked dimos-repo NAR hash never matches
-    # the next build.
-    build_command: str | None = "nix build -L --no-write-lock-file path:."
+    build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
 
     voxel_size: float = 0.1
+    # Fine cells per voxel edge for the local_map_fine output: fine cell size is
+    # voxel_size / fine_divisor. Zero disables the fine layer.
+    fine_divisor: int = 0
     # Maximum range for ray tracing
     max_range: float = 30.0
     # Proportion of points that are ray traced
@@ -52,16 +58,20 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     # Occupied neighbors a surface voxel needs to appear in the local map. Zero
     # emits all. Higher drops isolated returns. The global map is unfiltered.
     support_min: int = 4
-    # Publish the accumulated local map and region bounds every Nth frame. Zero disables them.
+    # Publish the accumulated local maps and region bounds every Nth frame.
+    # Zero disables them.
     emit_every: int = 1
     # Publish the global map every Nth frame. Zero disables it.
     global_emit_every: int = 1
     # Size the local region to this percentile of batch point distances.
     region_percentile: float = 95.0
-    # Clouds are transformed into this from their own frame_id.
-    output_frame: str = "odom"
-    tf_match_tolerance_s: float = 0.1
-    tf_wait_timeout_s: float = 0.1
+    # Fixed frame clouds are registered and published in. Each cloud is placed
+    # by the tf lookup world_frame -> cloud frame_id at the cloud stamp.
+    world_frame: str = "odom"
+    # Max stamp gap between a cloud and the transform used to register it (s).
+    tf_match_tolerance_s: float = TF_MATCH_TOLERANCE_S
+    # Worker threads for parallel map work.
+    worker_threads: int = 4
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
@@ -73,6 +83,7 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
     tf: In[TFMessage]
     global_map: Out[PointCloud2]
     local_map: Out[PointCloud2]
+    local_map_fine: Out[PointCloud2]
     region_bounds: Out[PoseStamped]
 
 

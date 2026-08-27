@@ -15,9 +15,6 @@
       let
         pkgs = import nixpkgs { inherit system; };
 
-        # Own store paths so an unrelated repo commit does not invalidate the build cache.
-        crate = name: builtins.path { inherit name; path = "${dimos-repo}/native/rust/${name}"; };
-
         src = pkgs.runCommand "voxel-ray-tracing-src" {} ''
           mkdir -p $out/dimos/mapping/ray_tracing/rust
           cp -r ${./src} $out/dimos/mapping/ray_tracing/rust/src
@@ -25,8 +22,8 @@
           cp ${./Cargo.lock} $out/dimos/mapping/ray_tracing/rust/Cargo.lock
 
           mkdir -p $out/native/rust
-          cp -r ${crate "dimos-module"} $out/native/rust/dimos-module
-          cp -r ${crate "dimos-module-macros"} $out/native/rust/dimos-module-macros
+          cp -r ${dimos-repo}/native/rust/dimos-module $out/native/rust/dimos-module
+          cp -r ${dimos-repo}/native/rust/dimos-module-macros $out/native/rust/dimos-module-macros
         '';
       in {
         packages.default = pkgs.rustPlatform.buildRustPackage {
@@ -37,11 +34,7 @@
           cargoRoot = "dimos/mapping/ray_tracing/rust";
           buildAndTestSubdir = "dimos/mapping/ray_tracing/rust";
 
-          cargoHash = "sha256-ZeqoeD3QeuqtjNB6dO5eTDngVCY31oCjng9UVD86CIk=";
-
-          # The python cdylib fails to link libpython on darwin.
-          buildNoDefaultFeatures = true;
-          cargoBuildFlags = [ "--bin" "voxel_ray_tracing" ];
+          cargoHash = "sha256-ZZi/zOD4iWkJKTmUA+aU7qkP2CRrY+q9eb8oBJXheOk=";
 
           meta.mainProgram = "voxel_ray_tracing";
         };
