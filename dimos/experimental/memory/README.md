@@ -5,6 +5,25 @@ Memory2 recorder. It remains compatible with the existing Python readers while
 its API and operational behavior are evaluated. Experimental imports may change
 without compatibility aliases.
 
+## Build and runtime packaging
+
+The recorder is built as a locked Nix package. Nix supplies Rust, CMake, NASM,
+SQLite, and the native libraries used by TurboJPEG, so none of those tools or
+development packages need to be installed on the host.
+
+The Python module builds the package automatically on first use. To build it
+ahead of time, run:
+
+```bash
+cd native/rust
+nix --extra-experimental-features 'nix-command flakes' \
+  build -L .#dimos-memory-recorder
+```
+
+The resulting executable is available at
+`native/rust/result/bin/dimos-memory-recorder`. The global `--build-native`
+flag forces a rebuild through Nix.
+
 ## SQLite
 
 Declare inputs as on the Python recorder. `encoding_threads` sizes the native
