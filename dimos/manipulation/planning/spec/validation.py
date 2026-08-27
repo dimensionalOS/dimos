@@ -38,6 +38,12 @@ _EXPECTED_DIMENSIONS = {
     ObstacleType.CYLINDER: 2,
 }
 
+# An octree obstacle carries one point per occupied cell across worker RPC, where
+# every point is a pickled tuple. A wrist workspace at 5 cm sits in the low
+# thousands; this is the ceiling that keeps a misaimed room-scale map from
+# quietly stalling the pipe.
+MAX_OCTREE_POINTS = 200_000
+
 
 def validate_robot_model_config(config: RobotModelConfig) -> LoadedRobotModel:
     """Validate one prepared robot model and its canonical planning groups."""
@@ -150,6 +156,8 @@ def validate_obstacle(
     elif obstacle.obstacle_type == ObstacleType.MESH:
         if not obstacle.mesh_path:
             raise ValueError("MESH obstacle requires mesh_path")
+    elif obstacle.obstacle_type == ObstacleType.OCTREE:
+        _validate_octree(obstacle)
     else:
         raise ValueError(f"Unsupported obstacle type: {obstacle.obstacle_type}")
     color = np.asarray(obstacle.color, dtype=np.float64)
@@ -157,3 +165,21 @@ def validate_obstacle(
         raise ValueError("Obstacle color must contain four finite values")
     if not np.isfinite(pose_matrix).all():
         raise ValueError("Obstacle pose must contain only finite values")
+
+
+def _validate_octree(obstacle: Obstacle) -> None:
+    if obstacle.octree_resolution is None or not obstacle.octree_resolution > 0.0:
+        raise ValueError("OCTREE obstacle requires a positive octree_resolution")
+    if not obstacle.points:
+        raise ValueError("OCTREE obstacle requires at least one point")
+    if len(obstacle.points) > MAX_OCTREE_POINTS:
+        raise ValueError(
+            f"OCTREE obstacle has {len(obstacle.points)} points, over the "
+            f"{MAX_OCTREE_POINTS} limit. Each one crosses worker RPC as a pickled "
+            f"tuple, so an unbounded map stalls the pipe."
+        )
+    points = np.asarray(obstacle.points, dtype=np.float64)
+    if points.ndim != 2 or points.shape[1] != 3:
+        raise ValueError("OCTREE obstacle points must each hold three coordinates")
+    if not np.isfinite(points).all():
+        raise ValueError("OCTREE obstacle points must be finite")

@@ -19,6 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import ANY, MagicMock, call
 
+import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
@@ -30,6 +31,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
 )
 from dimos.manipulation.manipulation_module import (
+    VOXEL_MAP_OBSTACLE_ID,
     ManipulationModule,
     ManipulationModuleConfig,
     ManipulationState,
@@ -57,6 +59,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
@@ -191,6 +194,89 @@ def _enable_simple_parametrization(module: ManipulationModule) -> None:
     module._trajectory_parametrizer = SimpleTrapezoidParametrizer(
         SimpleTrapezoidParametrizationConfig()
     )
+
+
+class TestVoxelMap:
+    """The mapped workspace arrives on a port, as one replaceable octree."""
+
+    @staticmethod
+    def _cloud(points: list[list[float]], frame_id: str = "world") -> PointCloud2:
+        return PointCloud2.from_numpy(
+            np.asarray(points, dtype=np.float32).reshape((-1, 3)),
+            frame_id=frame_id,
+            timestamp=1.0,
+        )
+
+    def test_a_map_becomes_one_octree_obstacle(self, module_factory) -> None:
+        module = module_factory()
+        module._world_monitor = MagicMock(spec=WorldMonitor)
+        module._world_monitor.update_obstacle.return_value = True
+
+        module._apply_voxel_map(self._cloud([[0.0, 0.0, 0.0], [0.05, 0.0, 0.0]]))
+
+        obstacle = module._world_monitor.update_obstacle.call_args.args[0]
+        assert obstacle.name == VOXEL_MAP_OBSTACLE_ID
+        assert obstacle.obstacle_type == ObstacleType.OCTREE
+        assert obstacle.octree_resolution == module.config.voxel_map_resolution
+        np.testing.assert_allclose(obstacle.points, [(0.0, 0.0, 0.0), (0.05, 0.0, 0.0)], atol=1e-7)
+
+    def test_a_later_map_replaces_the_obstacle_rather_than_adding(self, module_factory) -> None:
+        # The mapper republishes a complete map, so an accumulating pile of
+        # obstacles would wall the arm in with everything it has ever seen.
+        module = module_factory()
+        module._world_monitor = MagicMock(spec=WorldMonitor)
+        module._world_monitor.update_obstacle.return_value = True
+
+        module._apply_voxel_map(self._cloud([[0.0, 0.0, 0.0]]))
+        module._apply_voxel_map(self._cloud([[1.0, 0.0, 0.0]]))
+
+        assert module._world_monitor.add_obstacle.call_count == 0
+        assert module._world_monitor.update_obstacle.call_count == 2
+
+    def test_the_first_map_is_added_when_there_is_nothing_to_replace(self, module_factory) -> None:
+        module = module_factory()
+        module._world_monitor = MagicMock(spec=WorldMonitor)
+        module._world_monitor.update_obstacle.return_value = False
+
+        module._apply_voxel_map(self._cloud([[0.0, 0.0, 0.0]]))
+
+        assert module._world_monitor.add_obstacle.call_count == 1
+
+    def test_an_empty_map_clears_the_obstacle(self, module_factory) -> None:
+        module = module_factory()
+        module._world_monitor = MagicMock(spec=WorldMonitor)
+
+        module._apply_voxel_map(self._cloud([]))
+
+        module._world_monitor.remove_obstacle.assert_called_once_with(VOXEL_MAP_OBSTACLE_ID)
+
+    def test_a_map_in_the_wrong_frame_is_dropped_not_reinterpreted(self, module_factory) -> None:
+        # The points are metric positions. Registering them through a guessed
+        # transform would invent geometry that was never observed.
+        module = module_factory()
+        module._world_monitor = MagicMock(spec=WorldMonitor)
+
+        module._apply_voxel_map(self._cloud([[0.0, 0.0, 0.0]], frame_id="odom"))
+
+        assert module._world_monitor.update_obstacle.call_count == 0
+        assert module._world_monitor.add_obstacle.call_count == 0
+
+    def test_a_non_finite_map_is_dropped(self, module_factory) -> None:
+        module = module_factory()
+        module._world_monitor = MagicMock(spec=WorldMonitor)
+
+        module._apply_voxel_map(self._cloud([[0.0, 0.0, float("inf")]]))
+
+        assert module._world_monitor.update_obstacle.call_count == 0
+
+    def test_a_rejected_map_leaves_the_previous_one_standing(self, module_factory) -> None:
+        module = module_factory()
+        module._world_monitor = MagicMock(spec=WorldMonitor)
+        module._world_monitor.update_obstacle.side_effect = ValueError("too many cells")
+
+        module._apply_voxel_map(self._cloud([[0.0, 0.0, 0.0]]))
+
+        assert module._world_monitor.add_obstacle.call_count == 0
 
 
 class TestObstacleUpdates:
@@ -377,6 +463,7 @@ class TestPlanningInitialization:
     ) -> None:
         module = ManipulationModule(model=robot_config)
         module.coordinator_joint_state = None
+        module.voxel_map = None
         initialize_planning = mocker.patch.object(module, "_initialize_planning")
         initialize_execution = mocker.patch.object(module, "_initialize_execution")
 
@@ -387,6 +474,7 @@ class TestPlanningInitialization:
     def test_start_is_idempotent(self, mocker: MockerFixture, robot_config) -> None:
         module = ManipulationModule(model=robot_config)
         module.coordinator_joint_state = None
+        module.voxel_map = None
         initialize_planning = mocker.patch.object(module, "_initialize_planning")
         initialize_execution = mocker.patch.object(module, "_initialize_execution")
 
@@ -407,6 +495,7 @@ class TestPlanningInitialization:
         module = ManipulationModule(model=robot_config)
         module._control_coordinator = _control_coordinator()
         module.coordinator_joint_state = None
+        module.voxel_map = None
         observed_status: list[ExecutionStatus] = []
 
         def observe_state() -> None:
