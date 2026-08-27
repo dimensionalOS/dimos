@@ -86,7 +86,7 @@ world-frame pose (meters / radians).
 - "bring it back" → pick, then **go_init**. Do NOT place randomly.
 - "bring it to me" / "hand it over" → pick, then move toward user (≈ X=0, Y=0.5).
 - NEVER open the gripper while holding an object unless the user asks or you are \
-executing place/drop_on. The gripper stays closed during movement.
+executing place_at. The gripper stays closed during movement.
 - After pick or place, return to init with **go_init** unless another action follows.
 
 # Coordinate System
