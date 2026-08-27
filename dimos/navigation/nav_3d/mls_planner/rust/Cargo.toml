@@ -25,8 +25,8 @@ threads = 2
 global_map = "sensor_msgs.PointCloud2"
 local_map = "sensor_msgs.PointCloud2"
 region_bounds = "geometry_msgs.PoseStamped"
-start_pose = "geometry_msgs.PoseStamped"
-goal_pose = "geometry_msgs.PoseStamped"
+goal = "geometry_msgs.PointStamped"
+tf = "tf2_msgs.TFMessage"
 
 [package.metadata.dimos.module.mls_planner.outputs]
 surface_map = "sensor_msgs.PointCloud2"

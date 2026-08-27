@@ -85,6 +85,7 @@ impl MLSPlanner {
     ) -> PyResult<Self> {
         let config = Config {
             world_frame: String::new(),
+            base_frame: String::new(),
             voxel_size,
             robot_height,
             // Unused here. Only the binary's replan loop projects the start.

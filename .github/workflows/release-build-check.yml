@@ -15,6 +15,7 @@ on:
       - setup.py
       - MANIFEST.in
       - web/cockpit/**
+      - web/sdk/**
       - web/shared/**
       - web/deno.json
       - web/deno.lock

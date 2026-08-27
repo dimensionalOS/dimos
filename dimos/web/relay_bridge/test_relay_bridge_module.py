@@ -758,7 +758,10 @@ def test_failed_respawn_retries_until_success(bridge, monkeypatch) -> None:
     monkeypatch.setattr(relay_bridge_module, "_RECONNECT_PAUSE_S", 0.01)
     spawns: list[int] = []
 
-    def fake_spawn(open_browser: bool) -> str:
+    # No default on serve_dir: the fake must keep _spawn_relay's exact arity
+    # (a respawn-path call with the wrong arg count once turned into a silent
+    # retry loop in production; _blocking_call's *args hides it from mypy).
+    def fake_spawn(open_browser: bool, serve_dir: Path | None) -> str:
         spawns.append(1)
         if len(spawns) == 1:
             raise RuntimeError("ready-line timeout")
@@ -786,7 +789,7 @@ def test_stop_waits_for_in_flight_respawn_and_stops_spawned_child(monkeypatch) -
     stop_errors: list[BaseException] = []
     stop_returned_before_spawn: list[bool] = []
 
-    def blocking_spawn(open_browser: bool) -> str:
+    def blocking_spawn(open_browser: bool, serve_dir: Path | None) -> str:
         spawn_started.set()
         assert release_spawn.wait(timeout=5.0)
         module._relay = spawned_relay
@@ -1092,11 +1095,11 @@ def test_port_conflict_fails_before_build(monkeypatch) -> None:
     # must not touch the dist another running relay is serving.
     builds: list[int] = []
     monkeypatch.setattr(
-        relay_bridge_module, "ensure_cockpit_dist", lambda *args, **kwargs: builds.append(1)
+        relay_bridge_module, "ensure_web_dist", lambda *args, **kwargs: builds.append(1)
     )
     spawns: list[int] = []
     monkeypatch.setattr(
-        RelayBridgeModule, "_spawn_relay", lambda self, open_browser: spawns.append(1)
+        RelayBridgeModule, "_spawn_relay", lambda self, open_browser, serve_dir: spawns.append(1)
     )
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as blocker:
         blocker.bind(("127.0.0.1", 0))
@@ -1122,12 +1125,12 @@ def test_build_cancellation_is_bounded(monkeypatch) -> None:
         cancel.wait(timeout=30.0)
         finished.set()
 
-    monkeypatch.setattr(relay_bridge_module, "ensure_cockpit_dist", fake_ensure)
+    monkeypatch.setattr(relay_bridge_module, "ensure_web_dist", fake_ensure)
     monkeypatch.setattr(relay_bridge_module, "find_web_dir", lambda: Path("/nonexistent"))
     module = RelayBridgeModule(relay_url="https://127.0.0.1:1", open_browser=False)
     try:
         assert module._loop is not None
-        future = asyncio.run_coroutine_threadsafe(module._build_cockpit(), module._loop)
+        future = asyncio.run_coroutine_threadsafe(module._build_web_dist(), module._loop)
         assert started.wait(timeout=5.0)
         future.cancel()
         assert finished.wait(timeout=5.0)  # the cancel event reached the build
@@ -1146,6 +1149,37 @@ def test_close_cancels_in_flight_build() -> None:
     assert cancel.is_set()
 
 
+def test_serve_dir_rejected_with_relay_url(tmp_path: Path) -> None:
+    # serve_dir is a local-relay feature; silently ignoring it against an
+    # external relay would leave the user's page unserved.
+    module = RelayBridgeModule(
+        relay_url="https://127.0.0.1:1", serve_dir=str(tmp_path), open_browser=False
+    )
+    with pytest.raises(RuntimeError, match="serve_dir requires"):
+        module.start()
+    stop_module(module)
+
+
+def test_missing_serve_dir_fails_before_build_and_spawn(monkeypatch, tmp_path: Path) -> None:
+    # A typo'd directory must produce the labeled error, not a minute-long
+    # build followed by a relay child dying with a stderr dump.
+    builds: list[int] = []
+    monkeypatch.setattr(
+        relay_bridge_module, "ensure_web_dist", lambda *args, **kwargs: builds.append(1)
+    )
+    spawns: list[int] = []
+    monkeypatch.setattr(
+        RelayBridgeModule, "_spawn_relay", lambda self, open_browser, serve_dir: spawns.append(1)
+    )
+    module = RelayBridgeModule(
+        local_port=0, open_browser=False, serve_dir=str(tmp_path / "nope"), robot_id="unit-bot"
+    )
+    with pytest.raises(RuntimeError, match="serve_dir does not exist"):
+        module.start()
+    stop_module(module)
+    assert builds == [] and spawns == []
+
+
 def test_failed_start_stops_spawned_relay(monkeypatch) -> None:
     # First-connect failure after a successful spawn happens before main yields;
     # its unified finally must still reap the fresh child.
@@ -1153,14 +1187,14 @@ def test_failed_start_stops_spawned_relay(monkeypatch) -> None:
         raise OSError("connect refused")
 
     monkeypatch.setattr(relay_bridge_module, "connect_with_backoff", fail_connect)
-    # cockpit_build=False: the build now runs in main() before _spawn_relay,
+    # web_build=False: the build now runs in main() before _spawn_relay,
     # so the fake spawn below no longer shields this test from it.
     module = RelayBridgeModule(
-        local_port=0, open_browser=False, cockpit_build=False, robot_id="unit-bot"
+        local_port=0, open_browser=False, web_build=False, robot_id="unit-bot"
     )
     relay = FakeRelay(running=True)
 
-    def fake_spawn(open_browser: bool) -> str:
+    def fake_spawn(open_browser: bool, serve_dir: Path | None) -> str:
         module._relay = relay
         return "https://127.0.0.1:2"
 

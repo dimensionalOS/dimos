@@ -19,10 +19,12 @@ from __future__ import annotations
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
 class MLSPlannerNativeConfig(NativeModuleConfig):
@@ -32,12 +34,13 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     build_command: str | None = "cargo build --release"
     stdin_config: bool = True
 
-    world_frame: str = "map"
+    world_frame: str = "odom"
+    # Frame whose tf pose in the world frame is the planning start.
+    base_frame: str = "base_link"
     voxel_size: float = 0.08
     robot_height: float = 0.3
-    # Subtracted from the start pose z before snapping to a surface. Leave 0
-    # when the publisher already ground-projects via GoalRelay lidar_height.
-    # Set exactly one of the two: both set drops the start pose twice.
+    # Height of base_frame above the ground while standing. Subtracted from
+    # the start pose z before snapping to a surface.
     start_z_offset_m: float = 0.0
     max_overhead_m: float = 2.0
 
@@ -66,8 +69,8 @@ class MLSPlannerNative(NativeModule):
     global_map: In[PointCloud2]
     local_map: In[PointCloud2]
     region_bounds: In[PoseStamped]
-    start_pose: In[PoseStamped]
-    goal_pose: In[PoseStamped]
+    goal: In[PointStamped]
+    tf: In[TFMessage]
 
     path: Out[Path]
     surface_map: Out[PointCloud2]

@@ -324,6 +324,10 @@ jobs:
         working-directory: web/cockpit
         run: deno task test
 
+      - name: SDK bundle build
+        working-directory: web/sdk
+        run: deno task build
+
       - name: Cockpit build
         working-directory: web/cockpit
         run: deno task build
@@ -347,8 +351,10 @@ jobs:
         run: uv sync --group tests --group browser-tests --frozen
       - name: Install Playwright browsers  # the e2e runs in both engines
         run: uv run playwright install --with-deps chromium firefox
-      - name: Cockpit browser e2e
-        run: uv run pytest -m web_browser dimos/e2e_tests/test_cockpit_browser.py --no-cov
+      - name: Cockpit + SDK browser e2e
+        run: >-
+          uv run pytest -m web_browser dimos/e2e_tests/test_cockpit_browser.py
+          dimos/e2e_tests/test_sdk_browser.py --no-cov
 
   tests:
     timeout-minutes: 20

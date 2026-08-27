@@ -50,8 +50,8 @@ class OpenArmDamiaoAdapter(DamiaoWholeBodyAdapter):
     """Two OpenArm v2.0 arms with grippers, one CAN bus per arm."""
 
     arm_joints = {
-        "left_arm": tuple(f"left_arm/joint{index}" for index in range(1, 8)),
-        "right_arm": tuple(f"right_arm/joint{index}" for index in range(1, 8)),
+        "left_arm": tuple(f"openarm_left_joint{index}" for index in range(1, 8)),
+        "right_arm": tuple(f"openarm_right_joint{index}" for index in range(1, 8)),
     }
     gripper_joints = {
         "left_gripper": "left_arm/gripper",
@@ -60,10 +60,7 @@ class OpenArmDamiaoAdapter(DamiaoWholeBodyAdapter):
     # can0/can1 follow USB enumeration order; remap through
     # DamiaoRuntimeConfig.bus_addresses if the rig comes up swapped.
     bus_defaults = {"left": "can1", "right": "can0"}
-    kinematic_joint_names = (
-        *(f"openarm_left_joint{index}" for index in range(1, 8)),
-        *(f"openarm_right_joint{index}" for index in range(1, 8)),
-    )
+    kinematic_joint_names = (*arm_joints["left_arm"], *arm_joints["right_arm"])
 
     def get_limits(self) -> JointLimits:
         """Declare both grippers in their local normalized opening coordinate."""

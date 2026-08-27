@@ -10,10 +10,18 @@ node/npm anywhere: vite, vitest, and tsc run as npm packages under Deno (`nodeMo
 and `dimos --local-relay` auto-downloads Deno via `ensure_deno()`.
 
 ```bash
-deno task dev            # relay on http://127.0.0.1:7780 (add --cockpit-dir cockpit/dist for the UI)
+deno task dev            # relay on http://127.0.0.1:7780 (add --cockpit-dir cockpit/dist for the UI,
+                         # --sdk-dir sdk/dist for /sdk.js, --serve-dir DIR for a custom page at /)
 deno task test           # relay + shared tests (unit + loopback e2e)
 deno task check          # type-check relay + shared; deno fmt + deno lint for style (all of web/)
 ```
+
+The local relay deliberately answers `/api/info`, `/api/stats`, `/sdk.js`, and served JavaScript
+modules with wildcard CORS so any local origin (a Vite dev server, a `file:` page) can bootstrap
+against it; a remotely reachable relay is a different, fail-closed mode (W10) and must not inherit
+that. For the same reason `startRelay` refuses to bind a non-loopback host unless
+`--unsafe-non-loopback` explicitly acknowledges it (only sensible behind your own TLS and access
+control).
 
 ## SDK
 
@@ -27,12 +35,29 @@ is React-free). The SDK subscribes to nothing by itself; the cockpit's panel pol
 cd sdk
 deno task test           # vitest
 deno task check          # tsc --noEmit
+deno task build          # dist/sdk.js, the zero-build ESM bundle the relay serves at /sdk.js
 deno task fixture        # demo consumer on http://localhost:5174 (run a relay first)
 ```
 
 `fixture/` is a minimal non-cockpit consumer: it lists robots, auto-watches the lone robot, and
 subscribes to `odom` by hand. Run `dimos run <bp> --local-relay` and `deno task fixture` side by
 side; like the cockpit dev server it proxies `/api` to the relay on `:7780`.
+
+### Zero-build page
+
+`examples/minimal/` is a single HTML file importing `/sdk.js` - no bundler, no npm. Serve it from
+the relay itself:
+
+```bash
+dimos run <bp> --local-relay --serve-dir web/examples/minimal
+```
+
+`--serve-dir` replaces the cockpit at `/` with the given directory (`/api/*` and `/sdk.js` keep
+precedence, and the relay's traversal/symlink guards apply); it needs the spawned local relay and is
+rejected with `--relay-url`. A page can also import the absolute `http://127.0.0.1:7780/sdk.js` and
+pass that base to `connect({url})` - from another local origin or straight from a `file:` page (both
+supported browsers permit WebTransport there; `dimos/e2e_tests/test_sdk_browser.py` pins all three
+forms).
 
 ## Cockpit
 
@@ -48,9 +73,10 @@ Dev workflow: run the relay (`deno task dev` in `web/`, or just `dimos run <bp> 
 the vite server side by side. `localhost:5173` is a secure context; vite proxies `/api` to the relay
 on `:7780` and the WebTransport connection goes straight to the advertised `wtUrl`.
 
-Without vite, `--local-relay` serves the built `cockpit/dist` at `/`, building it first when it is
-missing or older than the sources (`ensure_cockpit_dist` in `relay_process.py`). Release wheels ship
-a pre-built dist inside `_relay_dist` (built by the release workflow; see `setup.py`), so a
+Without vite, `--local-relay` serves the built `cockpit/dist` at `/` and `sdk/dist/sdk.js` at
+`/sdk.js`, building both first when either is missing or older than the sources (`ensure_web_dist`
+in `relay_process.py`; one stamp, both products swapped together). Release wheels ship both
+pre-built dists inside `_relay_dist` (built by the release workflow; see `setup.py`), so a
 pip-installed dimos never builds or downloads npm packages.
 
 After changing cockpit or sdk dependencies run `deno install` in `web/` and commit the `deno.lock`
@@ -58,10 +84,11 @@ update; CI validates it with `deno install --frozen`. If vitest ever misbehaves 
 the fallback ladder is `--no-file-parallelism`, then `--pool=threads`, then pinning a different
 vitest minor.
 
-The cockpit browser e2e (`dimos/e2e_tests/test_cockpit_browser.py`, marker `web_browser`) drives the
-whole stack against the go2 replay dataset in both Playwright Chromium and Firefox (their
-WebTransport stacks differ; see bug 11). The CI `web` job runs it; the pinned browser builds
-auto-install on first run.
+The browser e2e (`dimos/e2e_tests/test_cockpit_browser.py` for the cockpit, `test_sdk_browser.py`
+for the SDK's zero-build/cross-origin/file: pages; marker `web_browser`) drives the whole stack
+against the go2 replay dataset in both Playwright Chromium and Firefox (their WebTransport stacks
+differ; see bug 11). The CI `web` job runs them; the pinned browser builds auto-install on first
+run.
 
 ## Teleop safety chain
 
