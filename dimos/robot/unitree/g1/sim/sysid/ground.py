@@ -254,15 +254,27 @@ def areas(c: dict[str, NDArray[Any]]) -> dict[str, float]:
 
 
 def windows(st: Streams, n: int, seconds: float, *, seed: int = 0) -> list[float]:
-    """``n`` start times inside walk segments long enough for the horizon."""
+    """``n`` start times across the commanded span, each window mostly walking.
+
+    The walk segments are short (the longest is ~9 s), so a window may cross a
+    stop and a restart, exactly as the robot did; a window is accepted when
+    the policy was in walk for at least half of it.
+    """
     rng = np.random.default_rng(seed)
-    walks = [(a, b) for _, m, a, b in st.segments() if m == "walk" and b - a > seconds + 1.0]
+    walks = [(a, b) for _, m, a, b in st.segments() if m == "walk"]
     if not walks:
-        raise ValueError(f"no walk segment longer than {seconds + 1:.0f} s")
-    out = []
-    for i in range(n):
-        a, b = walks[i % len(walks)]
-        out.append(float(rng.uniform(a + 0.5, b - seconds - 0.5)))
+        raise ValueError("no walk segment in this recording")
+    lo, hi = walks[0][0], float(st.wt[-1]) - seconds
+    out: list[float] = []
+    for _ in range(10_000):
+        t0 = float(rng.uniform(lo, hi))
+        walking = sum(max(0.0, min(b, t0 + seconds) - max(a, t0)) for a, b in walks)
+        if walking >= 0.5 * seconds:
+            out.append(t0)
+            if len(out) == n:
+                break
+    if len(out) < n:
+        raise ValueError(f"only {len(out)} of {n} windows of {seconds:.0f} s are half walking")
     return sorted(out)
 
 
