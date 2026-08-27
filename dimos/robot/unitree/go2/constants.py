@@ -19,6 +19,5 @@ ROBOT_LENGTH = 0.6858
 ROBOT_WIDTH = 0.3175
 # Ground to the tallest point.
 ROBOT_HEIGHT = 0.45
-
 # Ground to the base_link origin while standing.
 BASE_LINK_HEIGHT = 0.287

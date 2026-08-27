@@ -10,7 +10,7 @@ global path -> carrot -> local planner -> follower -> cmd_vel.
 dimos run go2-zenoh-motion
 
 # the rust planner must be built first
-uv run maturin develop --uv --release -m dimos/navigation/motion/planner/rust/Cargo.toml
+uv run maturin develop --uv --release -m dimos/navigation/motion/planner/rust/py/Cargo.toml
 
 # tests and types
 python -m pytest dimos/navigation/motion/adapter -q

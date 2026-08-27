@@ -72,7 +72,7 @@ class TrajectoryController(Protocol):
 
 
 BUILD_CMD = (
-    "uv run maturin develop --uv --release -m dimos/navigation/motion/control/rust/Cargo.toml"
+    "uv run maturin develop --uv --release -m dimos/navigation/motion/control/rust/py/Cargo.toml"
 )
 
 

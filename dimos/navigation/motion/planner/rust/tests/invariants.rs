@@ -18,8 +18,7 @@
 //! rewrite takes it, so the invariants that must survive a rewrite cannot
 //! live there.
 //!
-//! Run with `cargo test --release --no-default-features --test invariants`
-//! (no pyo3 link needed -- the crate exposes `planner` as an rlib).
+//! Run with `cargo test --release --test invariants -p dimos-motion2-target`.
 
 use std::time::Instant;
 

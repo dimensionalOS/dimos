@@ -12,8 +12,8 @@ uv run pytest dimos/navigation/motion/control -q
 uv run mypy dimos/navigation/motion/control
 
 # the rust laws (this is also the onboard build for the RK3588)
-uv run maturin develop --uv --release -m dimos/navigation/motion/control/rust/Cargo.toml
-cargo test --release --manifest-path dimos/navigation/motion/control/rust/Cargo.toml
+uv run maturin develop --uv --release -m dimos/navigation/motion/control/rust/py/Cargo.toml
+cargo test --release -p dimos-motion2-tc
 
 # on the robot the follower runs the same law (adapter/rust/src/follower.rs)
 dimos run go2-zenoh-motion

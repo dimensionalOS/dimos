@@ -45,6 +45,3 @@ pub mod emb;
 pub mod geom;
 pub mod laws;
 pub mod stamps;
-
-#[cfg(feature = "python")]
-mod python;

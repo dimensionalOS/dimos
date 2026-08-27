@@ -17,7 +17,7 @@ use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use crate::planner::{plan as plan_impl, Emb, COMMIT_MARGIN};
+use dimos_motion2_target::planner::{plan as plan_impl, Emb, COMMIT_MARGIN};
 
 /// One plan call. points: (N, 2) float64 obstacle xy in world frame -- every
 /// row is an obstacle, the caller's model already decided which (see
@@ -97,8 +97,8 @@ fn plan<'py>(
     }))
 }
 
-#[pymodule]
-fn dimos_motion2_target(m: &Bound<'_, PyModule>) -> PyResult<()> {
+#[pymodule(name = "dimos_motion2_target")]
+fn dimos_motion2_target_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(plan, m)?)?;
     Ok(())
 }

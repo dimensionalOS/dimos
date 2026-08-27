@@ -14,13 +14,10 @@ the module wiring. The benchmarks are not on this branch ([README.md](README.md)
 ```bash
 # the crate's behavioural invariants: routes an open world, refuses a sealed
 # box, never hops a thin wall, same answer every call, no cross-call memo.
-# --no-default-features drops pyo3, which the rlib these test does not need
-# (plain `cargo test` runs the doc-tests and nothing else).
-cargo test --release --no-default-features --test invariants \
-    --manifest-path dimos/navigation/motion/planner/rust/Cargo.toml
+cargo test --release --test invariants -p dimos-motion2-target
 
 # rebuild the extension after editing rust/
-uv run maturin develop --uv --release -m dimos/navigation/motion/planner/rust/Cargo.toml
+uv run maturin develop --uv --release -m dimos/navigation/motion/planner/rust/py/Cargo.toml
 ```
 
 ## control ([control/tools.md](control/tools.md))
@@ -30,7 +27,7 @@ uv run maturin develop --uv --release -m dimos/navigation/motion/planner/rust/Ca
 uv run pytest dimos/navigation/motion/control
 
 # rebuild the crate after editing rust/
-uv run maturin develop --uv --release -m dimos/navigation/motion/control/rust/Cargo.toml
+uv run maturin develop --uv --release -m dimos/navigation/motion/control/rust/py/Cargo.toml
 ```
 
 ## adapter ([adapter/tools.md](adapter/tools.md))

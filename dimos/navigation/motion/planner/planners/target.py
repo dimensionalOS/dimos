@@ -38,7 +38,7 @@ PAD = 1.5
 GRID_PAD = 3 * PERIOD
 
 BUILD_CMD = (
-    "uv run maturin develop --uv --release -m dimos/navigation/motion/planner/rust/Cargo.toml"
+    "uv run maturin develop --uv --release -m dimos/navigation/motion/planner/rust/py/Cargo.toml"
 )
 
 

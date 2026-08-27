@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
 from dimos.msgs.nav_msgs.Path import Path
@@ -45,7 +46,8 @@ def _default(field: str) -> Any:
 
 class MotionPlannerNativeConfig(NativeModuleConfig):
     cwd: str | None = "rust"
-    executable: str = "target/release/motion_planner"
+    # The crate is a workspace member, so cargo builds into the repo-root target dir.
+    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "motion_planner")
     build_command: str | None = "cargo build --release"
     stdin_config: bool = True
     cli_exclude: frozenset[str] = frozenset({"embodiment"})

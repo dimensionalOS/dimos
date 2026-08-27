@@ -23,11 +23,11 @@ use pyo3::prelude::*;
 
 use dimos_motion2_target::planner::Emb;
 
-use crate::clearance;
-use crate::emb::{base_params, governor, hinted_params};
-use crate::laws::hinted::update as hinted_impl;
-use crate::laws::seed::update as seed_impl;
-use crate::stamps;
+use dimos_motion2_tc::clearance;
+use dimos_motion2_tc::emb::{base_params, governor, hinted_params};
+use dimos_motion2_tc::laws::hinted::update as hinted_impl;
+use dimos_motion2_tc::laws::seed::update as seed_impl;
+use dimos_motion2_tc::stamps;
 
 /// The body as `Embodiment` dumps it: one JSON dict, the same string the
 /// planner crate and the native modules take.
@@ -151,8 +151,8 @@ fn path_clearance(
     Ok(py.allow_threads(|| clearance::path_clearance(&waypoints, &cloud, half_width)))
 }
 
-#[pymodule]
-fn dimos_motion2_tc(m: &Bound<'_, PyModule>) -> PyResult<()> {
+#[pymodule(name = "dimos_motion2_tc")]
+fn dimos_motion2_tc_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(path_clearance, m)?)?;
     m.add_function(wrap_pyfunction!(update_seed, m)?)?;
     m.add_function(wrap_pyfunction!(update_hinted, m)?)?;

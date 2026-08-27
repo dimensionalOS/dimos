@@ -41,7 +41,3 @@ serde = { version = "1", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 validator = { version = "0.20", features = ["derive"] }
-
-[profile.release]
-lto = "thin"
-codegen-units = 1

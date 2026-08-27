@@ -1,0 +1,10 @@
+[build-system]
+requires = ["maturin>=1,<2"]
+build-backend = "maturin"
+
+[project]
+name = "dimos-motion2-target"
+version = "0.1.0"
+
+[tool.maturin]
+module-name = "dimos_motion2_target"

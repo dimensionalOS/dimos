@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -47,7 +48,8 @@ def _default(field: str) -> Any:
 
 class TrajectoryFollowerNativeConfig(NativeModuleConfig):
     cwd: str | None = "rust"
-    executable: str = "target/release/trajectory_follower"
+    # The crate is a workspace member, so cargo builds into the repo-root target dir.
+    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "trajectory_follower")
     build_command: str | None = "cargo build --release"
     stdin_config: bool = True
     # argv is ignored by the rust side, which reads stdin; keeping a thirty-field

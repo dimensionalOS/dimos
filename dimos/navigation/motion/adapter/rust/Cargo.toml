@@ -63,10 +63,8 @@ goal_reached = "std_msgs.Bool"
 
 [dependencies]
 dimos-module = { path = "../../../../../native/rust/dimos-module" }
-# The two pure crates, with their python feature off: a baked host is linked
-# statically and must not drag libpython symbols in through a transitive pyo3.
-dimos-motion2-target = { path = "../../planner/rust", default-features = false }
-dimos-motion2-tc = { path = "../../control/rust", default-features = false }
+dimos-motion2-target = { path = "../../planner/rust" }
+dimos-motion2-tc = { path = "../../control/rust" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 serde = { version = "1", features = ["derive"] }
@@ -74,10 +72,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 validator = { version = "0.20", features = ["derive"] }
 
-[profile.release]
-lto = "thin"
-codegen-units = 1
 
 [dev-dependencies]
 serde_json = "1"
-dimos-motion2-target = { path = "../../planner/rust", default-features = false, features = ["test-bodies"] }
+dimos-motion2-target = { path = "../../planner/rust", features = ["test-bodies"] }

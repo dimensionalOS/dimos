@@ -20,8 +20,7 @@
 //! generation that wants different behaviour lands in `laws/hinted.rs` and
 //! brings its own test file (see `hinted.rs`).
 //!
-//! Run with `cargo test --release --no-default-features` to skip the pyo3
-//! link; the crate exposes the laws as an rlib.
+//! Run with `cargo test --release -p dimos-motion2-tc`.
 
 use std::f64::consts::PI;
 

@@ -30,7 +30,7 @@ class OpenYamDamiaoAdapter(DamiaoWholeBodyAdapter):
 
     bus_name = "openyam"
     arm_joints = {
-        "arm": tuple(f"arm/joint{index}" for index in range(1, 7)),
+        "arm": tuple(f"yam_joint{index}" for index in range(1, 7)),
     }
     gripper_joints = {"gripper": "arm/gripper"}
     bus_defaults = {bus_name: "can0"}

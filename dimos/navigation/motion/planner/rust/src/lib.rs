@@ -18,7 +18,7 @@
 //! reductions are order-dependent, so threads buy risk), and the deployment
 //! budget is one core on a shared RK3588. Keep dependencies to pyo3/numpy.
 //! Rewrite the ALGORITHM in planner.rs; the python-facing surface in
-//! python.rs stays stable.
+//! py/src/lib.rs stays stable.
 //!
 //! COUPLING NOTE. planner.rs's yaw publication (densify + the two-tier yaw
 //! gate) is derived from the station constants it declares (`YAW_STEP`,
@@ -27,6 +27,3 @@
 //! argument rests on them.
 
 pub mod planner;
-
-#[cfg(feature = "python")]
-mod python;

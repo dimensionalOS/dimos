@@ -751,6 +751,7 @@ ignore = [
     # an evolved planner: one generated rust file, not hand-edited source
     "dimos/navigation/motion/planner/rust/src/planner.rs",
     "*/package-lock.json",
+    "Cargo.lock",
     "*/Cargo.lock",
     "dimos/web/dimos_interface/themes.json",
     "dimos/manipulation/manipulation_module.py",

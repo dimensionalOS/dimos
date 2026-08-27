@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import Field
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -28,7 +29,8 @@ from dimos.msgs.std_msgs.Bool import Bool
 
 class CmdVelMuxNativeConfig(NativeModuleConfig):
     cwd: str | None = "rust"
-    executable: str = "target/release/cmd_vel_mux"
+    # The crate is a workspace member, so cargo builds into the repo-root target dir.
+    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "cmd_vel_mux")
     build_command: str | None = "cargo build --release"
     stdin_config: bool = True
 
