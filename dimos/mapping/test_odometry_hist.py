@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from dimos.mapping.odometry_path import OdometryPath
+from dimos.mapping.odometry_hist import OdometryHist
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -36,21 +36,21 @@ def odometry(ts: float, x: float, y: float = 0.0, frame_id: str = "odom") -> Odo
 
 @pytest.fixture()
 def module():
-    path_module = OdometryPath()
-    path_module.path = MagicMock()
+    path_module = OdometryHist()
+    path_module.odom_hist = MagicMock()
     try:
         yield path_module
     finally:
         path_module.stop()
 
 
-def feed(module: OdometryPath, *odometries: Odometry) -> None:
+def feed(module: OdometryHist, *odometries: Odometry) -> None:
     for msg in odometries:
         asyncio.run(module.handle_odometry(msg))
 
 
-def published_paths(module: OdometryPath) -> list:
-    return [call.args[0] for call in module.path.publish.call_args_list]
+def published_paths(module: OdometryHist) -> list:
+    return [call.args[0] for call in module.odom_hist.publish.call_args_list]
 
 
 def test_a_pose_closer_than_min_step_is_not_added_to_the_path(module):
