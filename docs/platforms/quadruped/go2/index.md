@@ -14,7 +14,7 @@
 | `dimos run unitree-go2-agentic-ollama` | Agent with local Ollama models |
 | `dimos run unitree-go2-spatial` | Navigation + spatial memory |
 | `dimos run unitree-go2-detection` | Navigation + object detection |
-| `dimos --record run unitree-go2` | Navigation, every topic recorded to `recordings/<run-id>/` |
+| `dimos run unitree-go2-memory` | Navigation + record `lidar`/`odom`/`color_image` to `.db` |
 | `dimos run unitree-go2-relocalization` | Navigation + align live scans to a saved `.pc2.lcm` premap |
 
 ## Deep Dive
