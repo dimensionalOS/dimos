@@ -70,7 +70,10 @@ class TransportRecorder:
     def _drain(self) -> None:
         while (item := self._queue.get()) is not None:
             stream, msg, ts = item
-            stream.append(msg, ts=ts)
+            try:
+                stream.append(msg, ts=ts)
+            except Exception:
+                logger.exception("--record: failed to append to %s", stream)
 
     def close(self) -> None:
         """Flush queued messages and stop the writer."""

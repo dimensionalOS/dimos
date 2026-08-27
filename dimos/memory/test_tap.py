@@ -87,3 +87,21 @@ def test_full_queue_drops_and_counts(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert rec.dropped == 2
     assert len(warnings) == 1
     store.stop()
+
+
+def test_append_failure_does_not_kill_writer(tmp_path: Path) -> None:
+    path = tmp_path / "memory.db"
+    store = SqliteStore(path=str(path))
+    store.start()
+    rec = TransportRecorder(store)
+    odom = _Transport()
+    rec.tap("odom", PoseStamped, odom)
+    odom.publish("not a PoseStamped")  # append raises TypeError inside the writer
+    odom.publish(PoseStamped(ts=2.0))
+    rec.close()  # returns: the writer is still draining
+    store.stop()
+
+    store = SqliteStore(path=str(path), must_exist=True)
+    store.start()
+    assert [o.ts for o in store.stream("odom", PoseStamped)] == [2.0]
+    store.stop()
