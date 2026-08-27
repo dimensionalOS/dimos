@@ -38,6 +38,7 @@ from pydantic import Field
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.stream import In
+from dimos.experimental.memory.rust_recorder import RustMcapStoreConfig, RustRecorder
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.hardware.sensors.lidar.livox.module import Mid360
 from dimos.memory.module import Recorder, RecorderConfig
@@ -48,6 +49,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.diy.alfred.blueprints.alfred import alfred
 
 # Physical camera identity on the Alfred rig (orin-nx-7837), by USB serial.
@@ -143,4 +145,60 @@ alfred_record = autoconnect(
         ]
     ),
     AlfredRecorder.blueprint(),
+).global_config(n_workers=10)
+
+
+class AlfredRustRecorder(RustRecorder):
+    """Native (Rust) recorder variant: same streams, mcap artifact.
+
+    High-throughput path for the full color+depth+IR configuration; see
+    dimos/experimental/memory/README.md (cc's PR #3615).
+    """
+
+    livox_lidar: In[PointCloud2]
+    livox_imu: In[Imu]
+
+    front_color_image: In[Image]
+    front_depth_image: In[Image]
+    front_camera_info: In[CameraInfo]
+    front_depth_camera_info: In[CameraInfo]
+
+    back_color_image: In[Image]
+    back_depth_image: In[Image]
+    back_camera_info: In[CameraInfo]
+    back_depth_camera_info: In[CameraInfo]
+
+    front_infrared_left: In[Image]
+    front_infrared_right: In[Image]
+    front_infrared_left_camera_info: In[CameraInfo]
+    front_infrared_right_camera_info: In[CameraInfo]
+    back_infrared_left: In[Image]
+    back_infrared_right: In[Image]
+    back_infrared_left_camera_info: In[CameraInfo]
+    back_infrared_right_camera_info: In[CameraInfo]
+
+    coordinator_joint_state: In[JointState]
+    wheel_odometry: In[Odometry]
+    cmd_vel: In[Twist]
+    tf: In[TFMessage]
+
+
+alfred_record_mcap = autoconnect(
+    alfred,
+    _rig_realsense("front", FRONT_REALSENSE_SERIAL),
+    _rig_realsense("back", BACK_REALSENSE_SERIAL),
+    Mid360.blueprint().remappings(
+        [
+            (Mid360, "lidar", "livox_lidar"),
+            (Mid360, "imu", "livox_imu"),
+        ]
+    ),
+    AlfredRustRecorder.blueprint(
+        store=RustMcapStoreConfig(path="alfred_record.mcap"),
+        encoding_threads=4,
+        stream_codecs={
+            "front_depth_image": "lz4+lcm",
+            "back_depth_image": "lz4+lcm",
+        },
+    ),
 ).global_config(n_workers=10)

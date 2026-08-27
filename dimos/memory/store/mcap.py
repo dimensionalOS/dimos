@@ -14,10 +14,11 @@
 
 """Read-only memory store backed by an mcap file.
 
-Generic and codec-injected — it knows nothing about any robot. The caller
-supplies ``codecs`` (DDS/wire topic -> codec that decodes a message's stored
-bytes) and an optional ``streams`` map (friendly stream name -> topic). See
-``dimos.robot.unitree.go2.dds.store.Go2McapStore`` for the Go2 wiring.
+Generic and robot-independent. Self-describing DimOS LCM channels declare their
+payload type in channel metadata and decode automatically. Other formats use a
+caller-supplied ``codecs`` map (wire topic -> codec), while ``streams`` may map
+friendly stream names to topics. See
+``dimos.robot.unitree.go2.dds.store.Go2McapStore`` for the Go2 DDS wiring.
 
 Read-only: no append, blobs, vectors, or embeddings. Payloads decode lazily on
 ``obs.data``; ts and counts are cheap (counts come from the mcap index).
@@ -28,10 +29,10 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from dataclasses import replace
 from functools import partial
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 from dimos.memory.backend import Backend
-from dimos.memory.codecs.base import codec_for
+from dimos.memory.codecs.base import codec_for, codec_from_id
 from dimos.memory.notifier.subject import SubjectNotifier
 from dimos.memory.observationstore.base import ObservationStore, ObservationStoreConfig
 from dimos.memory.store.base import Store, StoreConfig
@@ -59,6 +60,7 @@ class _BytesCodec:
 
 
 _BYTES_CODEC = _BytesCodec()
+_SELF_DESCRIBING_CODEC_IDS = {"jpeg", "lcm", "lz4+lcm"}
 
 
 def _slug(topic: str) -> str:
@@ -79,35 +81,55 @@ class McapObservationStore(ObservationStore[Any]):
 
     config: McapObservationStoreConfig
 
-    def __init__(self, *, name: str, path: str, topic: str, codec: StreamCodec, count: int) -> None:
+    def __init__(
+        self,
+        *,
+        name: str,
+        path: str,
+        topic: str,
+        codec: StreamCodec,
+        count: int,
+        observation_uses_publish_time: bool,
+    ) -> None:
         super().__init__(name=name)
         self._path = path
         self._topic = topic
         self._codec = codec
         self._count = count
+        # Immutable channel metadata: this store never writes and each iterator
+        # owns its own file reader, so timestamp selection has no async state.
+        self._observation_uses_publish_time = observation_uses_publish_time
 
     @property
     def name(self) -> str:
         return self.config.name
 
     def _iter(self, reverse: bool = False) -> Iterator[Observation[Any]]:
-        from mcap.reader import make_reader  # optional dep (go2/unitree extra)
+        from mcap.reader import make_reader  # optional mcap dependency
 
         decode, dtype, n = self._codec.decode, self._codec.payload_type, self._count
         with open(self._path, "rb") as f:
             msgs = make_reader(f).iter_messages(topics=[self._topic], reverse=reverse)
-            for i, (_s, _c, m) in enumerate(msgs):
+            for i, (_schema, _channel, message) in enumerate(msgs):
+                observation_time = (
+                    message.publish_time
+                    if self._observation_uses_publish_time
+                    else message.log_time
+                )
                 yield Observation(
                     id=(n - 1 - i) if reverse else i,
-                    ts=m.log_time / 1e9,
+                    ts=observation_time / 1e9,
                     data_type=dtype,
-                    _loader=partial(decode, m.data),
+                    _loader=partial(decode, message.data),
                 )
 
     def query(self, q: StreamQuery) -> Iterator[Observation[Any]]:
-        # mcap is natively log-time ordered (== ts == our id), so serve ts/id
-        # ordering by iterating forward/reverse instead of materializing + sorting.
-        if q.order_field in ("ts", "id"):
+        # MCAP is natively log-time ordered, so id ordering never needs a sort.
+        # Native DimOS recordings expose publish_time as observation ts; source
+        # time can differ from log/reception order and must use the generic sort.
+        if q.order_field == "id" or (
+            q.order_field == "ts" and not self._observation_uses_publish_time
+        ):
             it = self._iter(reverse=q.order_desc)
             q = replace(q, order_field=None, order_desc=False)
             return q.apply(it)
@@ -148,19 +170,20 @@ class McapStore(Store):
     def __init__(
         self,
         *,
-        codecs: Mapping[str, StreamCodec],
+        codecs: Mapping[str, StreamCodec] | None = None,
         streams: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> None:
-        from mcap.reader import make_reader  # optional dep (go2/unitree extra)
+        from mcap.reader import make_reader  # optional mcap dependency
 
         super().__init__(**kwargs)
-        self._codecs = codecs
+        self._codecs = dict(codecs or {})
         name_of = {topic: name for name, topic in (streams or {}).items()}  # topic -> override
         with open(self.config.path, "rb") as f:
             summary = make_reader(f).get_summary()
         self._stream_topic: dict[str, str] = {}  # stream name -> topic
         self._available: dict[str, int] = {}  # stream name -> message count
+        self._observation_uses_publish_time: dict[str, bool] = {}
         # Channels with no registered codec are still exposed, as Stream[bytes] via
         # _BYTES_CODEC — reachable but undecoded. _raw maps their stream name to the
         # source schema so summary() can flag them [raw bytes: <schema>].
@@ -169,8 +192,20 @@ class McapStore(Store):
             for cid, ch in summary.channels.items():
                 count = summary.statistics.channel_message_counts.get(cid, 0)
                 name = name_of.get(ch.topic) or _slug(ch.topic)
+                payload_module = ch.metadata.get("dimos.payload_type")
+                if (
+                    ch.topic not in self._codecs
+                    and ch.message_encoding in _SELF_DESCRIBING_CODEC_IDS
+                    and payload_module is not None
+                ):
+                    self._codecs[ch.topic] = cast(
+                        "StreamCodec", codec_from_id(ch.message_encoding, payload_module)
+                    )
                 self._stream_topic[name] = ch.topic
                 self._available[name] = count
+                self._observation_uses_publish_time[name] = (
+                    ch.metadata.get("dimos.observation_time") == "publish_time"
+                )
                 if ch.topic not in self._codecs:
                     sch = summary.schemas.get(ch.schema_id)
                     self._raw[name] = sch.name if sch else None
@@ -198,7 +233,12 @@ class McapStore(Store):
         codec = self._codecs.get(topic) or _BYTES_CODEC  # no codec -> Stream[bytes]
         ptype = codec.payload_type
         obs = McapObservationStore(
-            name=name, path=self.config.path, topic=topic, codec=codec, count=self._available[name]
+            name=name,
+            path=self.config.path,
+            topic=topic,
+            codec=codec,
+            count=self._available[name],
+            observation_uses_publish_time=self._observation_uses_publish_time[name],
         )
         return Backend(
             metadata_store=obs,
