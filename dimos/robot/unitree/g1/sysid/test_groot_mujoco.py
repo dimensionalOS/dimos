@@ -23,6 +23,7 @@ from dimos.robot.unitree.g1.sysid.groot_mujoco import (
     NUM_MOTORS,
     build_model,
     name2id,
+    touchdown_z,
     world_T_pelvis,
 )
 
@@ -74,3 +75,22 @@ def test_world_T_pelvis_is_rigid() -> None:
     assert np.allclose(T[:3, :3] @ T[:3, :3].T, np.eye(3), atol=1e-12)
     assert np.isclose(np.linalg.det(T[:3, :3]), 1.0)
     assert T[3, 3] == 1.0
+
+
+def test_touchdown_z_brackets_first_contact(model: mujoco.MjModel) -> None:
+    """Spawn height must be measured, not inherited from the MJCF: a plant with
+    different foot geometry would otherwise get a different landing transient."""
+    data = mujoco.MjData(model)
+    z = touchdown_z(model, data)
+    assert 0.6 < z < float(model.body_pos[1][2])
+
+    def ncon_at(height: float) -> int:
+        mujoco.mj_resetData(model, data)
+        data.qpos[7 : 7 + NUM_MOTORS] = DEFAULT_29
+        data.qpos[2] = height
+        mujoco.mj_forward(model, data)
+        return int(data.ncon)
+
+    assert ncon_at(z - 1e-3) > 0, "just below touchdown must touch the floor"
+    assert ncon_at(z + 1e-3) == 0, "just above touchdown must be clear"
+    assert ncon_at(z + 0.01) == 0, "the 1 cm drop must start in the air"

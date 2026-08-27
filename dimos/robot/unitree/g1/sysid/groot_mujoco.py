@@ -130,6 +130,33 @@ def build_model(ghost: bool, mjcf: Path = ROBOT_MJCF) -> mujoco.MjModel:
     return spec.compile()
 
 
+def touchdown_z(model: mujoco.MjModel, data: mujoco.MjData) -> float:
+    """Pelvis height at which the default pose first touches the floor.
+
+    Bisection on ncon rather than geom bounds: rbound is a bounding sphere and
+    overstates foot extent, so it would spawn the robot too high. Keeps the
+    drop identical across plants with different foot geometry.
+    """
+
+    def touches(z: float) -> bool:
+        mujoco.mj_resetData(model, data)  # type: ignore[attr-defined]
+        data.qpos[7 : 7 + NUM_MOTORS] = DEFAULT_29
+        data.qpos[2] = z
+        mujoco.mj_forward(model, data)
+        return bool(data.ncon)
+
+    lo, hi = 0.3, float(model.body_pos[1][2])
+    if touches(hi) or not touches(lo):
+        return hi  # nothing sane to bisect between; leave the MJCF height alone
+    for _ in range(40):
+        mid = 0.5 * (lo + hi)
+        if touches(mid):
+            lo = mid
+        else:
+            hi = mid
+    return lo
+
+
 class GrootPolicy:
     """Balance + walk ONNX pair behind one step() call."""
 
@@ -225,6 +252,7 @@ def main() -> None:
     ap.add_argument("--headless", action="store_true")
     ap.add_argument("--mjcf", type=Path, default=ROBOT_MJCF, help="plant under test")
     ap.add_argument("--trace-hz", type=float, default=0.0, help="print pelvis pose")
+    ap.add_argument("--drop-m", type=float, default=0.01, help="spawn height above touchdown")
     args = ap.parse_args()
 
     cmd_ts, cmds = load_commands(args.recording, args.stream)
@@ -237,10 +265,15 @@ def main() -> None:
     data = mujoco.MjData(model)
     policy = GrootPolicy(Path(str(LfsPath("groot"))))
 
-    # Stand at the policy's zero-offset pose.
+    # Stand at the policy's zero-offset pose, dropped from a fixed height so
+    # every plant gets the same landing transient instead of whatever clearance
+    # its MJCF happens to spawn with.
+    ground = touchdown_z(model, data)
     mujoco.mj_resetData(model, data)  # type: ignore[attr-defined]
     data.qpos[7 : 7 + NUM_MOTORS] = DEFAULT_29
+    data.qpos[2] = ground + args.drop_m
     mujoco.mj_forward(model, data)
+    print(f"touchdown z={ground:.4f} m, spawning at {data.qpos[2]:.4f} m")
 
     gyro_adr = model.sensor_adr[
         name2id(model, int(mujoco.mjtObj.mjOBJ_SENSOR), "imu-angular-velocity")  # type: ignore[attr-defined]
