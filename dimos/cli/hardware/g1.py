@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import importlib
 import time
 from typing import Any, NoReturn, Protocol, TypeGuard
 
@@ -202,6 +203,26 @@ def _execute_ready_pose(
     executed = manipulation.execute(blocking=True)
     if not executed.succeeded:
         _abort(f"ready-pose execution failed: {executed}")
+
+
+def _run_sonic_doctor() -> Any:
+    # ONNX Runtime is optional; load diagnostics only for this command so a
+    # minimal DimOS install can still use every unrelated CLI command.
+    diagnostics = importlib.import_module("dimos.control.tasks.g1_sonic_wbc_task.sonic_diagnostics")
+    return diagnostics.run_sonic_doctor()
+
+
+@app.command("sonic-doctor")
+def sonic_doctor() -> None:
+    """Validate the onboard SONIC GPU runtime without contacting the robot."""
+    report = _run_sonic_doctor()
+    for check in report.checks:
+        status = "PASS" if check.passed else "FAIL"
+        typer.echo(f"{status}  {check.name}: {check.detail}")
+    if not report.passed:
+        failures = sum(not check.passed for check in report.checks)
+        _abort(f"SONIC doctor found {failures} problem(s); do not enable real-robot control")
+    typer.echo("SONIC doctor passed; proceed to the MuJoCo soak test before real hardware.")
 
 
 @app.command()

@@ -40,6 +40,10 @@ import numpy as np
 from numpy.typing import NDArray
 import onnxruntime as ort  # type: ignore[import-untyped]
 
+from dimos.control.tasks.g1_sonic_wbc_task.sonic_onnx_runtime import (
+    create_sonic_session,
+    prepare_sonic_onnx_runtime,
+)
 from dimos.control.tasks.g1_sonic_wbc_task.streamed_motion import (
     StreamedMotion,
     StreamedMotionMerger,
@@ -47,8 +51,6 @@ from dimos.control.tasks.g1_sonic_wbc_task.streamed_motion import (
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
-
-CUDA_PROVIDER = "CUDAExecutionProvider"
 
 # ---------------------------------------------------------------------------
 # Motor constants (policy_parameters.hpp)
@@ -524,28 +526,13 @@ class SonicPipeline:
         decoder_path: str | Path,
         planner_path: str | Path,
     ) -> None:
-        available_providers = ort.get_available_providers()
-        if CUDA_PROVIDER not in available_providers:
-            raise RuntimeError(
-                "SONIC requires CUDAExecutionProvider; ONNX Runtime only exposes "
-                f"{available_providers}. Install the SONIC CUDA dependencies before "
-                "starting the control task."
-            )
-
-        # ONNX Runtime's CUDA wheel does not automatically expose CUDA/cuDNN
-        # libraries installed in Python site-packages to the dynamic loader.
-        # Preload them before creating any sessions. This lets a CUDA 12 ORT
-        # build use its Python-installed CUDA 12 runtime on a CUDA 13 host.
-        preload_dlls = getattr(ort, "preload_dlls", None)
-        if preload_dlls is None:
-            raise RuntimeError(
-                "SONIC requires an ONNX Runtime GPU build with preload_dlls() support"
-            )
-        preload_dlls()
-
-        self._encoder = self._create_cuda_session("encoder", encoder_path)
-        self._decoder = self._create_cuda_session("decoder", decoder_path)
-        self._planner = self._create_cuda_session("planner", planner_path)
+        prepare_sonic_onnx_runtime()
+        self._encoder = create_sonic_session("encoder", encoder_path, allow_cpu_shape_ops=False)
+        self._decoder = create_sonic_session("decoder", decoder_path, allow_cpu_shape_ops=False)
+        # The released planner contains a small set of shape/index operators
+        # unsupported by ORT 1.20's CUDA EP. sonic-doctor profiles and audits
+        # that partition before hardware use; the neural planner remains CUDA.
+        self._planner = create_sonic_session("planner", planner_path, allow_cpu_shape_ops=True)
         self._encoder_input = self._encoder.get_inputs()[0].name
         self._decoder_input = self._decoder.get_inputs()[0].name
         # Fail loudly on a mismatched checkpoint (e.g. the pre-v1.1 release,
@@ -559,6 +546,7 @@ class SonicPipeline:
             )
         logger.info(
             "SonicPipeline models loaded",
+            onnxruntime_version=getattr(ort, "__version__", "unknown"),
             encoder_providers=self._encoder.get_providers(),
             decoder_providers=self._decoder.get_providers(),
             planner_providers=self._planner.get_providers(),
@@ -621,22 +609,6 @@ class SonicPipeline:
         self._vr_pos: NDArray[Any] | None = None
         self._vr_orn: NDArray[Any] | None = None
         self._vr_time = 0.0
-
-    @staticmethod
-    def _create_cuda_session(
-        model_name: str, model_path: str | Path
-    ) -> ort.InferenceSession:
-        session = ort.InferenceSession(
-            str(model_path),
-            providers=[CUDA_PROVIDER],
-        )
-        active_providers = session.get_providers()
-        if not active_providers or active_providers[0] != CUDA_PROVIDER:
-            raise RuntimeError(
-                f"SONIC {model_name} did not activate CUDAExecutionProvider; "
-                f"active providers: {active_providers}. Refusing unsafe CPU inference."
-            )
-        return session
 
     # -- commands ---------------------------------------------------------
 

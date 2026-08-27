@@ -19,6 +19,10 @@ from typer.testing import CliRunner
 
 from dimos.cli import hardware_cli
 from dimos.cli.hardware import g1 as g1_cli
+from dimos.control.tasks.g1_sonic_wbc_task.sonic_diagnostics import (
+    SonicDiagnosticCheck,
+    SonicDiagnosticReport,
+)
 from dimos.robot.unitree.g1.manip_config import G1_READY_JOINTS, G1_READY_SPEED_SCALE
 
 runner = CliRunner()
@@ -75,8 +79,58 @@ def test_hardware_namespace_exposes_g1_operator_commands() -> None:
     result = runner.invoke(hardware_cli.app, ["g1", "--help"])
 
     assert result.exit_code == 0, result.output
-    for command in ("status", "arm", "enable", "activate", "ready", "disable"):
+    for command in (
+        "status",
+        "arm",
+        "enable",
+        "activate",
+        "ready",
+        "disable",
+        "sonic-doctor",
+    ):
         assert command in result.output
+
+
+def test_sonic_doctor_reports_all_checks_without_connecting_to_robot(mocker) -> None:
+    doctor = mocker.patch.object(
+        g1_cli,
+        "_run_sonic_doctor",
+        return_value=SonicDiagnosticReport(
+            (
+                SonicDiagnosticCheck("CUDA execution provider", True, "CUDA, CPU"),
+                SonicDiagnosticCheck("planner latency", True, "p95=40.00 ms"),
+            )
+        ),
+    )
+    connect = mocker.patch.object(g1_cli.Dimos, "connect")
+
+    result = runner.invoke(g1_cli.app, ["sonic-doctor"])
+
+    assert result.exit_code == 0, result.output
+    assert "PASS  CUDA execution provider: CUDA, CPU" in result.output
+    assert "PASS  planner latency: p95=40.00 ms" in result.output
+    assert "proceed to the MuJoCo soak test" in result.output
+    doctor.assert_called_once_with()
+    connect.assert_not_called()
+
+
+def test_sonic_doctor_fails_closed_before_real_robot_control(mocker) -> None:
+    mocker.patch.object(
+        g1_cli,
+        "_run_sonic_doctor",
+        return_value=SonicDiagnosticReport(
+            (
+                SonicDiagnosticCheck("ONNX Runtime", True, "1.20.1"),
+                SonicDiagnosticCheck("planner latency", False, "p95=180.00 ms"),
+            )
+        ),
+    )
+
+    result = runner.invoke(g1_cli.app, ["sonic-doctor"])
+
+    assert result.exit_code == 1
+    assert "FAIL  planner latency: p95=180.00 ms" in result.output
+    assert "do not enable real-robot control" in result.output
 
 
 def test_status_rejects_coordinator_without_required_rpcs(mocker) -> None:

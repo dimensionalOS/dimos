@@ -136,10 +136,68 @@ physical stop for emergencies and `dimos stop` for routine shutdown.
 ### SONIC full-body PICO teleoperation
 
 SONIC uses the same `dimos hardware g1` lifecycle commands, discovered from
-the running controller's task card. Start the real-hardware blueprint with:
+the running controller's task card.
+
+#### Experimental JetPack 5 / CUDA 11.8 runtime
+
+NVIDIA's supported onboard SONIC deployment uses JetPack 6 and TensorRT 10.7.
+DimOS also provides an experimental ONNX Runtime path for the original G1 PC2
+JetPack 5 image. It installs CUDA 11.8 alongside the existing CUDA 11.4 stack;
+it does not flash the robot or replace the Jetson Linux BSP. See NVIDIA's
+[Jetson CUDA upgrade
+guide](https://developer.nvidia.com/blog/simplifying-cuda-upgrades-for-nvidia-jetson-users/)
+and [official SONIC deployment
+requirements](https://nvlabs.github.io/GR00T-WholeBodyControl/getting_started/installation_deploy.html)
+before choosing this path.
+
+From NVIDIA's [CUDA 11.8
+archive](https://developer.nvidia.com/cuda-11-8-0-download-archive), select
+`Linux / aarch64-jetson / Ubuntu / 20.04 / deb`, run the generated repository
+setup commands, then install the versioned packages:
 
 ```bash
-uv run dimos --viewer none run unitree-g1-sonic-webxr-teleop \
+sudo apt-get update
+sudo apt-get install cuda-11-8 cuda-compat-11-8 gcc-10 g++-10
+```
+
+Build the pinned ONNX Runtime 1.20.1 wheel and run the offline safety gates:
+
+```bash
+cd ~/cc/dimos
+bin/hardware/g1/setup-sonic-jp5 --check
+bin/hardware/g1/setup-sonic-jp5
+
+export PATH=/usr/local/cuda-11.8/bin:$PATH
+export LD_LIBRARY_PATH=/usr/local/cuda-11.8/compat:/usr/local/cuda-11.8/lib64:/usr/lib/aarch64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+source .venv-sonic-jp5/bin/activate
+
+dimos hardware g1 sonic-doctor
+```
+
+`sonic-doctor` never contacts the robot. It validates the exact model hashes,
+CUDA execution partition, numerical output, and onboard latency. The encoder
+and decoder are forbidden from using CPU fallback. The planner may use CPU
+only for its audited shape/index operators; a larger or different partition
+fails the check. Do not continue if any check fails.
+
+Run the activated environment's `dimos` executable directly. Do not use
+`uv run`: dependency synchronization can reinstall the CPU-only
+`onnxruntime` package over the custom aarch64 GPU wheel.
+
+Rehearse the full stack in MuJoCo before connecting policy output to motors:
+
+```bash
+dimos --simulation mujoco --viewer none \
+  run unitree-g1-sonic-webxr-teleop \
+  --sonic-pipeline sonic-v1.1
+```
+
+Require ten minutes of stable planner balancing and repeat the
+`PLANNER -> POSE -> PLANNER` transition before proceeding. Then start the
+real-hardware blueprint with:
+
+```bash
+dimos --viewer none run unitree-g1-sonic-webxr-teleop \
   --network-interface <robot-nic>
 ```
 
@@ -326,6 +384,23 @@ See ONNX Runtime's [CUDA execution-provider requirements and preload
 API](https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html#preload-dlls).
 GLFW, Wayland, and `libdecor-gtk.so` warnings come from the MuJoCo viewer and do
 not cause ONNX Runtime to fall back to CPU.
+
+On the G1 JetPack 5 PC2, a CPU-only `onnxruntime` installation is not usable.
+Do not run the x86 CUDA-extra instructions above. Re-enter the isolated
+environment and validate its source-built CUDA 11.8 wheel:
+
+```bash
+export PATH=/usr/local/cuda-11.8/bin:$PATH
+export LD_LIBRARY_PATH=/usr/local/cuda-11.8/compat:/usr/local/cuda-11.8/lib64:/usr/lib/aarch64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+source .venv-sonic-jp5/bin/activate
+
+python -c 'import onnxruntime as ort; print(ort.__version__, ort.get_available_providers())'
+dimos hardware g1 sonic-doctor
+```
+
+The expected version is `1.20.1` with `CUDAExecutionProvider` listed first by
+the SONIC sessions. Rerun `bin/hardware/g1/setup-sonic-jp5` if the version is
+different or only `CPUExecutionProvider` is available.
 
 ### `libgomp.so.1: cannot allocate memory in static TLS block`
 

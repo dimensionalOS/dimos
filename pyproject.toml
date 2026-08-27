@@ -333,16 +333,6 @@ mapping = [
     "gtsam-extended>=4.3a1.post1",
 ]
 
-# NOTE: jetson-jp6-cuda126 extra is disabled due to 404 errors from wheel URLs
-# The pypi.jetson-ai-lab.io URLs are currently unavailable. Update with working URLs when available.
-# jetson-jp6-cuda126 = [
-#     # Jetson Jetpack 6.2 with CUDA 12.6 specific wheels (aarch64 Linux only)
-#     "torch @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/.../torch-2.8.0-cp310-cp310-linux_aarch64.whl ; platform_machine == 'aarch64' and sys_platform == 'linux'",
-#     "torchvision @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/.../torchvision-0.23.0-cp310-cp310-linux_aarch64.whl ; platform_machine == 'aarch64' and sys_platform == 'linux'",
-#     "onnxruntime-gpu @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/.../onnxruntime_gpu-1.23.0-cp310-cp310-linux_aarch64.whl ; platform_machine == 'aarch64' and sys_platform == 'linux'",
-#     "xformers @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/.../xformers-0.0.33-cp39-abi3-linux_aarch64.whl ; platform_machine == 'aarch64' and sys_platform == 'linux'",
-# ]
-
 drone = [
     "pymavlink"
 ]
