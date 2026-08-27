@@ -105,6 +105,31 @@ def test_engine_defaults_are_what_the_scene_compiles_to(model):
     assert np.allclose(model.geom_solimp[ids, 2], CONTACT_DEFAULTS["foot_solimp_width"])
 
 
+def test_applying_every_engine_default_changes_nothing():
+    """ENGINE_DEFAULTS is the complete stock knob vector: applying it must be a no-op."""
+    stock = g1_model.load()[0]
+    applied = g1_model.load()[0]
+    assert set(ENGINE_DEFAULTS) == set(KNOBS) - {"actuator_tau"}
+    g1_model.apply_physics(applied, dict(ENGINE_DEFAULTS))
+    for field in (
+        "dof_armature",
+        "dof_damping",
+        "dof_frictionloss",
+        "body_mass",
+        "body_inertia",
+        "body_ipos",
+        "geom_friction",
+        "geom_solref",
+        "geom_solimp",
+    ):
+        assert np.array_equal(getattr(stock, field), getattr(applied, field)), field
+    assert (applied.opt.iterations, applied.opt.ls_iterations, applied.opt.cone) == (
+        stock.opt.iterations,
+        stock.opt.ls_iterations,
+        stock.opt.cone,
+    )
+
+
 def test_every_knob_lands_where_it_says():
     m = g1_model.load()[0]
     trunk = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, g1_model.BASE_BODY)

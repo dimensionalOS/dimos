@@ -94,9 +94,26 @@ KNOBS: dict[str, Knob] = {
 
 # The values the compiled scene carries for every key a preset MAY carry:
 # an absent key is never written, so every preset that omits one reproduces
-# the stock physics for it bit-for-bit.
+# the stock physics for it bit-for-bit. Applying all of them is a no-op
+# (held by test_model), which is what lets `stock` be a complete start point
+# for identify and fit.
+JOINT_DEFAULTS: dict[str, float] = {
+    # g1_29dof.xml joint default class.
+    "armature": 0.01,
+    "damping": 0.001,
+    "frictionloss": 0.1,
+}
+MASS_DEFAULTS: dict[str, float] = {
+    "trunk_mass_scale": 1.0,
+    "trunk_inertia_scale": 1.0,
+    "trunk_com_x": 0.0,
+    "leg_mass_scale": 1.0,
+}
 CONTACT_DEFAULTS: dict[str, float] = {
-    # MuJoCo geom defaults: solref="0.02 1", solimp="0.9 0.95 0.001 0.5 2".
+    # MuJoCo geom defaults: friction="1 0.005 0.0001", solref="0.02 1",
+    # solimp="0.9 0.95 0.001 0.5 2".
+    "foot_friction": 1.0,
+    "foot_friction_torsional": 0.005,
     "foot_solref_time": 0.02,
     "foot_solref_damp": 1.0,
     "foot_solimp_dmin": 0.9,
@@ -108,7 +125,12 @@ SOLVER_DEFAULTS: dict[str, float] = {
     "solver_cone": 0.0,  # mjCONE_PYRAMIDAL
 }
 SOLVER_KEYS = frozenset(SOLVER_DEFAULTS)
-ENGINE_DEFAULTS: dict[str, float] = {**CONTACT_DEFAULTS, **SOLVER_DEFAULTS}
+ENGINE_DEFAULTS: dict[str, float] = {
+    **JOINT_DEFAULTS,
+    **MASS_DEFAULTS,
+    **CONTACT_DEFAULTS,
+    **SOLVER_DEFAULTS,
+}
 
 # Model-override keys apply_physics accepts: every knob except the actuator lag.
 PHYSICS_KEYS = frozenset(KNOBS) - {"actuator_tau"}
