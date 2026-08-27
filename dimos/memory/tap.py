@@ -31,7 +31,7 @@ from pathlib import Path
 import queue
 import threading
 import time
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 from dimos.constants import RECORDINGS_DIR
 from dimos.core.global_config import global_config
@@ -39,17 +39,10 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
+    from dimos.core.stream import Transport
     from dimos.memory.stream import Stream
 
 logger = setup_logger()
-
-
-class Subscribable(Protocol):
-    """What a dimos ``Transport`` offers a tap: ``subscribe(callback) -> unsubscribe``."""
-
-    def subscribe(
-        self, callback: Callable[[Any], None], selfstream: Any = None
-    ) -> Callable[[], None] | None: ...
 
 
 def recording_dir() -> Path:
@@ -87,7 +80,7 @@ class TransportRecorder:
             logger.warning("--record: dropped %d messages (writer queue full)", self.dropped)
 
     def tap(
-        self, name: str, stream_type: type, transport: Subscribable
+        self, name: str, stream_type: type, transport: Transport[Any]
     ) -> Callable[[], None] | None:
         """Subscribe *transport* and record into stream *name*; returns the unsubscribe."""
         if not any(fnmatch.fnmatch(name, g) for g in self._globs):
@@ -108,7 +101,7 @@ class TransportRecorder:
 
 
 @contextmanager
-def recording(transports: Mapping[tuple[str, type], Subscribable]) -> Iterator[None]:
+def recording(transports: Mapping[tuple[str, type], Transport[Any]]) -> Iterator[None]:
     """Record every stream in *transports* for the duration of the block when ``--record`` is set."""
     if not global_config.record or global_config.replay:
         yield
