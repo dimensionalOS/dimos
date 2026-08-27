@@ -93,6 +93,12 @@ def test_generate_crate_writes_the_blobs_the_host_includes(tmp_path: Path) -> No
     assert (crate / "Cargo.toml").exists()
 
 
+def test_generate_crate_seeds_the_workspace_lock(tmp_path: Path) -> None:
+    (tmp_path / "Cargo.lock").write_text('version = 4\n\n[[package]]\nname = "serde"\n')
+    crate = generate_crate("go2-nav", [MAPPER, PLANNER], GRAPH, tmp_path)
+    assert (crate / "Cargo.lock").read_text() == (tmp_path / "Cargo.lock").read_text()
+
+
 def test_generate_crate_is_idempotent(tmp_path: Path) -> None:
     first = generate_crate("go2-nav", [MAPPER, PLANNER], GRAPH, tmp_path)
     before = (first / "src" / "main.rs").read_text()

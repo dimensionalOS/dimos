@@ -149,6 +149,10 @@ def generate_crate(
     src.mkdir(parents=True, exist_ok=True)
 
     (directory / "Cargo.toml").write_text(render_cargo_toml(host, modules, root))
+    # Check for workspace lock so we resolve to same dependencies
+    root_lock = root / "Cargo.lock"
+    if root_lock.exists():
+        (directory / "Cargo.lock").write_text(root_lock.read_text())
     (src / "main.rs").write_text(render_main_rs(host, modules, graph))
     (src / "default_topics.json").write_text(json.dumps(graph.topics(), indent=2) + "\n")
     (src / "default_qos.json").write_text(json.dumps(graph.qos(), indent=2) + "\n")

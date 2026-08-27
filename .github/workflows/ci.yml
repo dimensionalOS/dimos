@@ -89,10 +89,6 @@ jobs:
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
         with:
-          # Keeps the bake e2e's generated Cargo.lock pinned. Outside target/
-          # because rust-cache prunes generated sources there.
-          cache-directories: build/dimos-bake
-          key: bake-e2e
           # Only main writes the cache, so a PR run cannot evict main's entry
           # from the repo's 10GB budget. PR runs still restore from it.
           save-if: ${{ github.ref == 'refs/heads/main' }}
