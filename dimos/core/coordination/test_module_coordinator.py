@@ -34,12 +34,12 @@ from dimos.core.coordination.blueprints import (
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.coordination.module_coordinator import (
     ModuleCoordinator,
-    _all_name_types,
     _check_requirements,
     _deploy_all_modules,
     _materialize_transports,
     _verify_no_conflicts_with_existing,
     _verify_no_name_conflicts,
+    stream_name_types,
 )
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.core import rpc
@@ -447,7 +447,7 @@ def test_remapping() -> None:
     assert blueprint_set.remapping_map[(SourceModule.name, "color_image")] == "remapped_data"
 
     # Verify that remapped names are used in name resolution
-    all_names = _all_name_types(blueprint_set)
+    all_names = stream_name_types(blueprint_set)
     assert ("remapped_data", Data1) in all_names
     # The original name shouldn't be in the name types since it's remapped
     assert ("color_image", Data1) not in all_names

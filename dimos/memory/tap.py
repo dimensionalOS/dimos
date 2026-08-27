@@ -23,7 +23,7 @@ Poses are not resolved here; ``tf`` is recorded like any other stream and
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 import fnmatch
 import os
@@ -51,6 +51,23 @@ def recording_dir() -> Path:
     return RECORDINGS_DIR / run_id
 
 
+def _globs(topics: str) -> list[str]:
+    return [g.strip().strip("/") for g in topics.split(",")]
+
+
+def matching(topics: str, names: Iterable[str]) -> set[str]:
+    """Stream *names* selected by the comma-separated ``--record-topics`` globs."""
+    globs = _globs(topics)
+    return {n for n in names if any(fnmatch.fnmatch(n, g) for g in globs)}
+
+
+def check_topics(topics: str, names: Iterable[str]) -> None:
+    """Raise ``ValueError`` when *topics* selects none of *names*."""
+    names = sorted(names)
+    if not matching(topics, names):
+        raise ValueError(f"--record-topics {topics!r} matched none of: {', '.join(names)}")
+
+
 class TransportRecorder:
     """Appends every message seen on a tapped transport to ``store``, one stream per name.
 
@@ -61,7 +78,7 @@ class TransportRecorder:
 
     def __init__(self, store: SqliteStore, topics: str = "*", queue_size: int = 1000) -> None:
         self.store = store
-        self._globs = [g.strip().strip("/") for g in topics.split(",")]
+        self._topics = topics
         self._queue: queue.Queue[tuple[Stream[Any], Any, float] | None] = queue.Queue(queue_size)
         self.dropped = 0
         self._writer = threading.Thread(target=self._drain, name="record-writer", daemon=True)
@@ -86,7 +103,7 @@ class TransportRecorder:
         self, name: str, stream_type: type, transport: Transport[Any]
     ) -> Callable[[], None] | None:
         """Subscribe *transport* and record into stream *name*; returns the unsubscribe."""
-        if not any(fnmatch.fnmatch(name, g) for g in self._globs):
+        if not matching(self._topics, [name]):
             return None
         if not hasattr(stream_type, "lcm_encode"):
             logger.info("--record: %s (%s) is not a dimos message type, skipped", name, stream_type)
@@ -111,6 +128,7 @@ def recording(transports: Mapping[tuple[str, type], Transport[Any]]) -> Iterator
     if not global_config.record or global_config.replay:
         yield
         return
+    check_topics(global_config.record_topics, {n for n, _ in transports})
     path = recording_dir() / "memory.db"
     store = SqliteStore(path=str(path))
     store.start()
@@ -118,14 +136,6 @@ def recording(transports: Mapping[tuple[str, type], Transport[Any]]) -> Iterator
     unsubscribes = [
         u for (name, t), tr in transports.items() if (u := recorder.tap(name, t, tr)) is not None
     ]
-    if not unsubscribes:
-        recorder.close()
-        store.stop()
-        path.unlink()
-        raise RuntimeError(
-            f"--record-topics {global_config.record_topics!r} matched none of: "
-            + ", ".join(sorted({n for n, _ in transports}))
-        )
     logger.info("Recording to %s", path)
     try:
         yield

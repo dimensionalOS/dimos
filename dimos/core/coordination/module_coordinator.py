@@ -670,7 +670,8 @@ def _rpc_name(instance_key: str, cls: type[ModuleBase]) -> str:
     return cls.__name__ if instance_key == cls.name else instance_key
 
 
-def _all_name_types(blueprint: Blueprint) -> set[tuple[str, type]]:
+def stream_name_types(blueprint: Blueprint) -> set[tuple[str, type]]:
+    """Every wired stream ``(name, type)`` in *blueprint*, remappings applied. No workers needed."""
     result = set()
     for bp in blueprint.active_blueprints:
         for conn in bp.streams:
@@ -681,7 +682,7 @@ def _all_name_types(blueprint: Blueprint) -> set[tuple[str, type]]:
 
 
 def _is_name_unique(blueprint: Blueprint, name: str) -> bool:
-    return sum(1 for n, _ in _all_name_types(blueprint) if n == name) == 1
+    return sum(1 for n, _ in stream_name_types(blueprint) if n == name) == 1
 
 
 def _get_transport_for(blueprint: Blueprint, name: str, stream_type: type) -> PubSubTransport[Any]:
