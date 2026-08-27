@@ -212,7 +212,7 @@ class Dimos:
 
         Returns a proxy that supports attribute access and pretty-printing::
 
-            app.skills.relative_move(forward=2.0)
+            app.skills.move_to(x=2.0, relative=True)
             print(app.skills)
         """
         with self._lock:

@@ -20,7 +20,7 @@ app = Dimos(n_workers=8)
 app.run("unitree-go2-agentic")
 
 # Call skills.
-app.skills.relative_move(forward=2.0)
+app.skills.move_to(x=2.0, relative=True)
 
 # List all available skills.
 print(app.skills)
@@ -132,7 +132,7 @@ app = Dimos.connect()
 # Everything works the same as local mode
 print(app)                     # <Dimos(remote=True, modules=[...])>
 print(app.skills)              # list all skills
-app.skills.relative_move(forward=2.0)
+app.skills.move_to(x=2.0, relative=True)
 app.stop()  # closes the connection (does NOT stop the remote process)
 ```
 
