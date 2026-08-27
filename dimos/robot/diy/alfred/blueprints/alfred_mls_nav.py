@@ -37,13 +37,12 @@ D455_SERIAL = "260922302422"
 """The mast D455. The rear D435i stays plugged in, so the device is pinned by serial."""
 
 D455_MOUNT = Transform(
-    translation=Vector3(0.29, 0.0475, 1.69),
-    rotation=Quaternion(0.0, 0.0871557, 0.0, 0.9961947),
+    translation=Vector3(0.2146, -0.0008, 1.5435),
+    rotation=Quaternion(0.0009818, 0.0723326, -0.0053295, 0.9973658),
 )
-"""base_link -> d455_link, mirroring the estimate recorded in alfred.urdf: on the
-mast with the housing dead center (the link is the left imager, hence y +0.0475),
-facing forward pitched 10 deg down. Photo-derived 2026-08-26, pending spin
-calibration."""
+"""base_link -> d455_link, mirroring the d455_joint origin in alfred.urdf. Solved from
+drive_2026-08-18_23-05-04 by registering D455 depth against the point-lio lidar map.
+Only z is tightly resolved; x and y are bounded to about +/-3 cm."""
 
 alfred_mls_nav = (
     autoconnect(
