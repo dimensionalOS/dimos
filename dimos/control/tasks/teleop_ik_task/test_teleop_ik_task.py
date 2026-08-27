@@ -41,13 +41,8 @@ from dimos.teleop.quest.quest_types import Buttons
 
 def _robot_model() -> RobotModelConfig:
     return RobotModelConfig(
-        name="robot",
         model=RobotModel.from_file(Path("fake.urdf")),
-        joint_names=["model_left", "model_right"],
-        joint_name_mapping={
-            "robot/left": "model_left",
-            "robot/right": "model_right",
-        },
+        joint_names=["robot/left", "robot/right"],
     )
 
 

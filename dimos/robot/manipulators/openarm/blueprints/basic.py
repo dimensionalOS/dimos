@@ -60,7 +60,7 @@ class _OpenArmCoordinator(ControlCoordinator):
 
 
 openarm_planner_coordinator = autoconnect(
-    planner(robots=[openarm_bimanual_model_config()]),
+    planner(model=openarm_bimanual_model_config()),
     _OpenArmCoordinator.blueprint(
         instance_name="ControlCoordinator",
         tasks=[_trajectory_task()],
