@@ -140,6 +140,20 @@ class SerializedStartRealSense(RealSenseCamera):
                             except Exception:
                                 pass
                             self._pipeline = None
+                        # pipeline.stop() does not always release RSUSB claims
+                        # (our own worker can hold /dev/bus/usb); a hardware
+                        # reset clears every stale claim, ours included.
+                        try:
+                            import pyrealsense2 as rs
+
+                            for dev in rs.context().query_devices():
+                                if (
+                                    dev.get_info(rs.camera_info.serial_number)
+                                    == self.config.serial_number
+                                ):
+                                    dev.hardware_reset()
+                        except Exception:
+                            pass
                         logger.warning(
                             "RealSense open failed (attempt %d/%d): %s",
                             attempt,
