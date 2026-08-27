@@ -42,6 +42,7 @@ from dimos.evals.types import (
     Suite,
 )
 from dimos.protocol.service.spec import BaseConfig, Configurable
+from dimos.sim2.evaluation import TrialIsolationMode
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -60,6 +61,11 @@ if TYPE_CHECKING:
         EpisodeEvaluationResult,
         EpisodeProvider,
         PreparedEpisode,
+    )
+    from dimos.sim2.scheduling import (
+        EpisodeScheduleResolver,
+        EpisodeTrialBatch,
+        PreparedEpisodeSchedule,
     )
 
 logger = setup_logger()
@@ -129,6 +135,8 @@ class EvalRunner(Configurable, CompositeResource):
         self._episode_activation: EpisodeActivationResult | None = None
         self._episode_boundary_sequence = 0
         self._process_trial_initial_sample_index: int | None = None
+        self._episode_schedule_resolver: EpisodeScheduleResolver | None = None
+        self._episode_schedule: PreparedEpisodeSchedule | None = None
         self._run_dir: Path | None = None
 
     # -- run lifecycle -----------------------------------------------------------
@@ -343,6 +351,13 @@ class EvalRunner(Configurable, CompositeResource):
 
         if case.episode is None:
             raise ValueError("repeated interactive trials require an episode provider")
+        schedule = self._prepare_episode_schedule(case)
+        if schedule is not None:
+            try:
+                return self._run_prepared_episode_schedule(case, schedule)
+            finally:
+                self._close_episode_schedule()
+
         trials: list[InteractiveTrialResult] = []
         if case.trial_isolation.value == "episode-boundary":
             self.setup_env(case)
@@ -360,6 +375,21 @@ class EvalRunner(Configurable, CompositeResource):
             finally:
                 self._process_trial_initial_sample_index = None
 
+        return self._aggregate_interactive_trials(
+            case,
+            tuple(trials),
+            episode_case_id=case.episode.case_id,
+        )
+
+    def _aggregate_interactive_trials(
+        self,
+        case: InteractiveEval,
+        trials: tuple[InteractiveTrialResult, ...],
+        *,
+        episode_case_id: str,
+    ) -> EvalResult:
+        if not trials:
+            raise RuntimeError("interactive evaluation produced no trial results")
         scores = [trial.score for trial in trials]
         errors = [trial.error for trial in trials if trial.error]
         metric_names = sorted({name for trial in trials for name in trial.metrics})
@@ -386,7 +416,7 @@ class EvalRunner(Configurable, CompositeResource):
             case_id=case.id,
             provider=case.provider_name,
             episode_id=first.episode_id,
-            episode_case_id=case.episode.case_id,
+            episode_case_id=episode_case_id,
             outputs=trials[-1].outputs,
             score=case.trial_aggregate(scores),
             error="; ".join(errors),
@@ -394,6 +424,124 @@ class EvalRunner(Configurable, CompositeResource):
             oracle=oracle,
             metrics=metrics,
         )
+
+    def _prepare_episode_schedule(
+        self,
+        case: InteractiveEval,
+    ) -> PreparedEpisodeSchedule | None:
+        """Resolve and materialize population trials before launching workers."""
+
+        from dimos.sim2.scheduling import (
+            ScheduledEpisodeRequestContract,
+            load_episode_schedule_resolver,
+        )
+
+        request = case.episode
+        if request is None or not isinstance(request, ScheduledEpisodeRequestContract):
+            return None
+        resolver = load_episode_schedule_resolver(request.provider_name)
+        self._episode_schedule_resolver = resolver
+        try:
+            if not resolver.supports(request):
+                raise TypeError(
+                    f"episode schedule resolver {request.provider_name!r} rejected "
+                    f"{type(request).__name__}"
+                )
+            schedule = resolver.prepare(
+                request,
+                trial_count=case.trials,
+                output_dir=self.run_dir / case.id / "schedule",
+            )
+        finally:
+            resolver.close()
+            self._episode_schedule_resolver = None
+        if schedule.request_case_id != request.case_id:
+            raise ValueError("prepared episode schedule belongs to another request")
+        if len(schedule.trials) != case.trials:
+            raise ValueError(
+                f"prepared episode schedule contains {len(schedule.trials)} trials; "
+                f"InteractiveEval requested {case.trials}"
+            )
+        self._episode_schedule = schedule
+        return schedule
+
+    def _run_prepared_episode_schedule(
+        self,
+        case: InteractiveEval,
+        schedule: PreparedEpisodeSchedule,
+    ) -> EvalResult:
+        """Execute topology batches while restoring statistical result order."""
+
+        results: list[InteractiveTrialResult] = []
+        for batch in schedule.batches:
+            try:
+                results.extend(self._run_scheduled_episode_batch(case, batch))
+            finally:
+                self.teardown_env()
+        ordered = tuple(sorted(results, key=lambda value: value.trial_index))
+        if tuple(value.trial_index for value in ordered) != tuple(range(case.trials)):
+            raise RuntimeError("population schedule did not return every statistical trial")
+        return self._aggregate_interactive_trials(
+            case,
+            ordered,
+            episode_case_id=schedule.request_case_id,
+        )
+
+    def _run_scheduled_episode_batch(
+        self,
+        case: InteractiveEval,
+        batch: EpisodeTrialBatch,
+    ) -> tuple[InteractiveTrialResult, ...]:
+        """Run one resident-topology batch through the ordinary episode provider."""
+
+        batch_case = replace(
+            case,
+            episode=batch.episode_request,
+            trials=len(batch.trials),
+            trial_isolation=TrialIsolationMode.EPISODE_BOUNDARY,
+        )
+        self.setup_env(batch_case)
+        results: list[InteractiveTrialResult] = []
+        for local_index, scheduled in enumerate(batch.trials):
+            result = self._run_interactive_trial(batch_case, local_index)
+            provenance = dict(result.provenance)
+            actual_record_id = provenance.get("record_id")
+            actual_record_digest = provenance.get("record_digest")
+            if actual_record_id != scheduled.record_id:
+                raise RuntimeError("provider activated another scheduled population record")
+            if actual_record_digest != scheduled.record_digest:
+                raise RuntimeError("provider activated a stale scheduled population record")
+            provenance.update(
+                {
+                    "population_id": scheduled.population_id,
+                    "population_revision": scheduled.population_revision,
+                    "population_manifest_digest": scheduled.population_manifest_digest,
+                    "population_shard_id": scheduled.shard_id,
+                    "population_trial_index": scheduled.trial_index,
+                    "population_execution_index": scheduled.execution_index,
+                    "topology_group_id": scheduled.topology_group_id,
+                    "record_id": scheduled.record_id,
+                    "record_digest": scheduled.record_digest,
+                }
+            )
+            results.append(
+                replace(
+                    result,
+                    trial_index=scheduled.trial_index,
+                    sample_index=scheduled.sample_index,
+                    provenance=provenance,
+                )
+            )
+        return tuple(results)
+
+    def _close_episode_schedule(self) -> None:
+        """Release authoring and schedule resources before ordinary teardown."""
+
+        resolver = self._episode_schedule_resolver
+        self._episode_schedule_resolver = None
+        self._episode_schedule = None
+        if resolver is not None:
+            resolver.close()
 
     def _run_interactive_trial(
         self,

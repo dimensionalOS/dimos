@@ -41,11 +41,22 @@ from dimos.sim2.evaluation import (
     EpisodeRequestContract,
     EpisodeUnavailableError,
     PreparedEpisode,
+    ProviderEpisodeRequestContract,
     TrialIsolationMode,
     load_episode_provider,
 )
+from dimos.sim2.scheduling import (
+    EPISODE_SCHEDULE_RESOLVER_ENTRY_POINT_GROUP,
+    EpisodeScheduleResolver,
+    EpisodeTrialBatch,
+    PreparedEpisodeSchedule,
+    ScheduledEpisodeRequestContract,
+    ScheduledEpisodeTrial,
+    load_episode_schedule_resolver,
+)
 
 __all__ = [
+    "EPISODE_SCHEDULE_RESOLVER_ENTRY_POINT_GROUP",
     "ContainmentTask",
     "DeviceTask",
     "EpisodeActivationResult",
@@ -54,6 +65,8 @@ __all__ = [
     "EpisodeEvaluationResult",
     "EpisodeProvider",
     "EpisodeRequestContract",
+    "EpisodeScheduleResolver",
+    "EpisodeTrialBatch",
     "EpisodeUnavailableError",
     "FixtureTask",
     "LiftTask",
@@ -63,6 +76,8 @@ __all__ = [
     "NavigationTask",
     "PlacementTask",
     "PreparedEpisode",
+    "PreparedEpisodeSchedule",
+    "ProviderEpisodeRequestContract",
     "PublicEpisodeContext",
     "PublicEpisodeDevice",
     "PublicEpisodeJoint",
@@ -70,6 +85,9 @@ __all__ = [
     "PublicEpisodeRole",
     "PublicEpisodeTarget",
     "PublicEpisodeTargetKind",
+    "ScheduledEpisodeRequestContract",
+    "ScheduledEpisodeTrial",
     "TrialIsolationMode",
     "load_episode_provider",
+    "load_episode_schedule_resolver",
 ]

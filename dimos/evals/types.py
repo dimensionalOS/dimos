@@ -380,7 +380,11 @@ class InteractiveEval(EvalCase):
         return "" if self.episode is None else self.episode.provider_name
 
     def evaluate(self, rig: EvalRig) -> EvalResult:
-        if self.trials > 1:
+        from dimos.sim2.scheduling import ScheduledEpisodeRequestContract
+
+        if self.trials > 1 or (
+            self.episode is not None and isinstance(self.episode, ScheduledEpisodeRequestContract)
+        ):
             return rig.run_interactive_trials(self)
 
         rig.setup_env(self)
