@@ -273,3 +273,32 @@ alfred_record_mcap = autoconnect(
         },
     ),
 ).global_config(n_workers=11)
+
+
+# Single-camera validation: the full front-D455 stream set (color+depth+stereo
+# IR+IMU) is rock solid alone; the dual-camera RSUSB races never trigger.
+alfred_record_front = autoconnect(
+    alfred,
+    _rig_realsense("front", FRONT_REALSENSE_SERIAL),
+    Mid360.blueprint().remappings(
+        [
+            (Mid360, "lidar", "livox_lidar"),
+            (Mid360, "imu", "livox_imu"),
+        ]
+    ),
+    PointLio.blueprint(frame_id="world").remappings(
+        [
+            (PointLio, "lidar", "pointlio_lidar"),
+            (PointLio, "odometry", "pointlio_odometry"),
+        ]
+    ),
+    AlfredRustRecorder.blueprint(
+        store=RustMcapStoreConfig(path="alfred_record.mcap"),
+        encoding_threads=4,
+        stream_codecs={
+            "front_depth_image": "lz4+lcm",
+            "front_infrared_left": "lz4+lcm",
+            "front_infrared_right": "lz4+lcm",
+        },
+    ),
+).global_config(n_workers=10)
