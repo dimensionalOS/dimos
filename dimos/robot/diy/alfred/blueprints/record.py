@@ -133,13 +133,14 @@ class SerializedStartRealSense(RealSenseCamera):
                         # A failed start may leave a half-started pipeline
                         # holding the device; release it or every retry finds
                         # the camera "gone" (held by our own first attempt).
-                        pipe = getattr(self, "_pipeline", None)
-                        if pipe is not None:
-                            try:
-                                pipe.stop()
-                            except Exception:
-                                pass
-                            self._pipeline = None
+                        for attr in ("_pipeline", "_imu_pipeline"):
+                            pipe = getattr(self, attr, None)
+                            if pipe is not None:
+                                try:
+                                    pipe.stop()
+                                except Exception:
+                                    pass
+                                setattr(self, attr, None)
                         # pipeline.stop() does not always release RSUSB claims
                         # (our own worker can hold /dev/bus/usb); a hardware
                         # reset clears every stale claim, ours included.
