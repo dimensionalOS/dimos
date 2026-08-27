@@ -23,7 +23,7 @@ from typer.testing import CliRunner
 
 import dimos.cli.commands.lifecycle as lifecycle
 from dimos.cli.commands.lifecycle import _with_relay_bridge
-from dimos.cli.dimos import _normalize_simulation_argv, main
+from dimos.cli.dimos import main, normalize_argv
 import dimos.cli.spy.run_spy as run_spy
 import dimos.core.coordination.module_coordinator as module_coordinator
 import dimos.core.coordination.process_lifecycle as process_lifecycle
@@ -77,8 +77,8 @@ class RunModuleB(Module):
         (["dimos", "run", "go2"], ["dimos", "run", "go2"]),
     ],
 )
-def test_normalize_simulation_argv(argv: list[str], expected: list[str]):
-    assert _normalize_simulation_argv(argv) == expected
+def testnormalize_argv(argv: list[str], expected: list[str]):
+    assert normalize_argv(argv) == expected
 
 
 def test_global_config_flag_applies_before_subcommand():

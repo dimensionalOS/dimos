@@ -75,23 +75,27 @@ main = typer.Typer(
 load_dotenv()
 
 SIMULATORS = ("mujoco", "dimsim")
-# Flags that take an optional value: bare `--flag` means the first choice.
-_OPTIONAL_VALUE = {"--simulation": SIMULATORS, "--record": ("sqlite",)}
+RECORDERS = ("sqlite",)
+
+# Flags with an optional value; bare `--flag` means the first choice.
+OPTIONAL_VALUE_FLAGS = {
+    "--simulation": SIMULATORS,
+    "--record": RECORDERS,
+}
 
 
-def _normalize_simulation_argv(argv: list[str]) -> list[str]:
-    """`--simulation` alone means `mujoco`, `--record` alone means `sqlite`."""
+def normalize_argv(argv: list[str]) -> list[str]:
     out: list[str] = []
     for arg, nxt in zip(argv, [*argv[1:], None], strict=False):
         out.append(arg)
-        choices = _OPTIONAL_VALUE.get(arg)
+        choices = OPTIONAL_VALUE_FLAGS.get(arg)
         if choices and nxt not in choices:
             out.append(choices[0])
     return out
 
 
 def cli_main() -> None:
-    sys.argv = _normalize_simulation_argv(sys.argv)
+    sys.argv = normalize_argv(sys.argv)
     main()
 
 
