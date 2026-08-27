@@ -126,9 +126,9 @@ def login() -> None:
 
 
 def logout() -> None:
-    """Forget the stored key. Revoke it fully at console.dimensional.org/keys."""
+    """Forget the stored key. The key itself stays valid until revoked in the console."""
     if _forget():
-        typer.echo("Logged out. Revoke the key at https://console.dimensional.org/keys.")
+        typer.echo("Logged out. The key stays valid until you revoke it in the console.")
     else:
         typer.echo("Not logged in.")
 
