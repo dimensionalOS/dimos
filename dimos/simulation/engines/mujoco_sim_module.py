@@ -714,6 +714,20 @@ class MujocoSimModule(
         return applied
 
     @rpc
+    def get_root_pose(self) -> list[float] | None:
+        """Floating-base pose [x, y, z, qw, qx, qy, qz] of the robot root."""
+        engine = self._engine
+        if engine is None:
+            return None
+        pose = engine.get_root_pose()
+        if pose is None:
+            return None
+        position, quat_xyzw = pose
+        x, y, z = (float(v) for v in position)
+        qx, qy, qz, qw = (float(v) for v in quat_xyzw)
+        return [x, y, z, qw, qx, qy, qz]
+
+    @rpc
     def respawn_at(
         self,
         x: float,
