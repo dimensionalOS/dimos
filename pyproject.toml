@@ -322,9 +322,42 @@ cuda = [
 
 sim = [
     # Simulation
-    "mujoco>=3.3.4",
+    "mujoco==3.10.0",
     "playground>=0.0.5",
     "pygame>=2.6.1",
+]
+
+# The measured Go2 plant and its identification pipeline
+# (dimos/robot/unitree/go2/sim). Deliberately NOT `sim`: that extra pulls in
+# `playground`, whose import chain reads an mjtEnableBit the pinned mujoco does
+# not define, and `pygame`, which this package has no use for. Everything here
+# is needed; nothing here is optional.
+go2sim = [
+    # Exact pin, not a range: the plant claims reproduction to rel=1e-9 while
+    # measuring 12-14 mm of contact creep, and contact-solver behaviour can
+    # change between mujoco minors. Bump = re-run the go2sim acceptance suite.
+    "mujoco==3.10.0",
+    "mcap>=1.1.1",
+    "optuna>=4.0",  # sysid.fit: seeded CMA-ES studies
+    "cmaes>=0.11",  # optuna's CmaEsSampler backend, not pulled in by default
+]
+
+# The batched engine: MJX compiles the SAME MjModel `go2sim` fits, so the
+# measured plant carries over and only the solver has to be re-verified
+# (dimos/robot/unitree/go2/sim/backend/mjx.py). Additive on `go2sim`, never a
+# replacement: the CPU backend stays the reference both loops are graded on.
+go2train = [
+    # Locked to the `go2sim` engine pin, and they move TOGETHER: mjx and
+    # mujoco are released in lockstep and a mismatch fails at import, not at
+    # runtime — `playground` in the `sim` extra is exactly that, reading an
+    # mjtEnableBit mujoco 3.10 does not define.
+    "mujoco-mjx==3.10.0",
+    # The CUDA build, behind three markers. linux/x86_64: ~2 GB of nvidia
+    # runtime macOS cannot use and the Jetson (aarch64) must not be handed.
+    # py>=3.11: jax dropped 3.10 at 0.9, and dimos still supports it. It also
+    # needs `nvidia-cudnn-cu12` overridden to coexist with torch — see
+    # `override-dependencies`.
+    "jax[cuda12]>=0.9; sys_platform == 'linux' and platform_machine == 'x86_64' and python_full_version >= '3.11'",
 ]
 
 mapping = [
@@ -458,7 +491,7 @@ tests = [
     # extra can't be included: usd-core ships no linux-aarch64 wheel.
     "coacd>=1.0.0",
     "trimesh>=4.0.0",
-    "mujoco>=3.3.4",
+    "mujoco==3.10.0",
     "pygame>=2.6.1",
     "python-can>=4",
     "unitree-webrtc-connect>=2.1.2",
@@ -541,6 +574,13 @@ override-dependencies = [
     # uv picks importlib-metadata>=9 and cascades the otel stack down to 1.11.1,
     # whose stale _pb2.py files crash with protobuf>=6.
     "importlib-metadata<8.8.0",
+    # torch 2.7.1+cu128 pins nvidia-cudnn-cu12==9.7.1.26; every jax cuda12
+    # plugin back to 0.7.2 requires >=9.8,<10. No version selection satisfies
+    # both, so the floor wins and torch is moved off its pin — cuDNN 9 is
+    # ABI-stable within its major. Not assumed, measured: on the resolved
+    # 9.24.0.43, torch 2.7.1+cu128 runs a cuDNN conv2d on sm_120 and jax
+    # reports CudaDevice(id=0). Re-measure both if this bound moves.
+    "nvidia-cudnn-cu12>=9.8,<10; sys_platform == 'linux'",
     # GraspGenX pins older versions that conflict with the current DimOS stack.
     # These versions were validated with the pinned GraspGenX source revision.
     "yourdfpy>=0.0.60",
