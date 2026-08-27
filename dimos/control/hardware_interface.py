@@ -34,6 +34,7 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from dimos.control.components import HardwareComponent, HardwareId, JointName, JointState
     from dimos.hardware.drive_trains.spec import TwistBaseAdapter
+    from dimos.hardware.spec import JointLimits
     from dimos.hardware.whole_body.spec import MotorCommand, WholeBodyAdapter
 
 logger = setup_logger()
@@ -97,6 +98,12 @@ class ConnectedHardware:
     def disconnect(self) -> None:
         """Disconnect the underlying adapter."""
         self._adapter.disconnect()
+
+    def get_limits(self) -> JointLimits | None:
+        """Return configured limits, or limits reported by the adapter."""
+        if self._component.limits is not None:
+            return self._component.limits
+        return self._adapter.get_limits()
 
     def read_state(self) -> dict[JointName, JointState]:
         """Read state as {joint_name: JointState}.
@@ -234,6 +241,10 @@ class ConnectedTwistBase(ConnectedHardware):
         """Disconnect the underlying adapter."""
         self._twist_adapter.disconnect()
 
+    def get_limits(self) -> JointLimits | None:
+        """Return configured limits without requiring base adapter support."""
+        return self._component.limits
+
     def read_state(self) -> dict[JointName, JointState]:
         """Read state as {joint_name: JointState}.
 
@@ -348,6 +359,12 @@ class ConnectedWholeBody(ConnectedHardware):
     def disconnect(self) -> None:
         """Disconnect the underlying adapter."""
         self._wb_adapter.disconnect()
+
+    def get_limits(self) -> JointLimits | None:
+        """Return configured limits, or limits reported by the adapter."""
+        if self._component.limits is not None:
+            return self._component.limits
+        return self._wb_adapter.get_limits()
 
     def read_state(self) -> dict[JointName, JointState]:
         """Read motor states as {joint_name: JointState}."""

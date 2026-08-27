@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeAlias
 
@@ -38,20 +38,11 @@ if TYPE_CHECKING:
     from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
 
-RobotName: TypeAlias = str
-"""User-facing robot name (e.g., 'left_arm', 'right_arm')"""
-
-WorldRobotID: TypeAlias = str
-"""Internal Drake world robot ID"""
-
 PlanningGroupID: TypeAlias = str
-"""Public planning group ID of the form {robot_name}/{group_name}."""
+"""Stable public planning-group name."""
 
-LocalModelJointName: TypeAlias = str
-"""Joint name as it appears in URDF/SRDF before world binding."""
-
-GlobalJointName: TypeAlias = str
-"""Public joint name of the form {robot_name}/{local_joint_name}."""
+JointName: TypeAlias = str
+"""Canonical joint name used by model, planning, state, and execution."""
 
 JointPath: TypeAlias = "list[JointState]"
 """List of joint states forming a path (each waypoint has names + positions)"""
@@ -72,8 +63,8 @@ class PlanningSceneInfo:
     backend handles, mutable world contexts, GUI state, or execution state.
     """
 
-    robots: Mapping[WorldRobotID, RobotModelConfig]
-    """Robot model configurations keyed by world robot ID."""
+    model: RobotModelConfig
+    """The configured logical robot model."""
 
     planning_groups: tuple[PlanningGroup, ...] = ()
     """Resolved immutable planning groups for the initialized scene."""
@@ -92,7 +83,7 @@ class VisualizationSession:
 class VisualizationStateFrame:
     """Pushed current joint states for visualization backends."""
 
-    joint_states: Mapping[WorldRobotID, JointState]
+    joint_state: JointState | None
 
 
 Jacobian: TypeAlias = "NDArray[np.float64]"
