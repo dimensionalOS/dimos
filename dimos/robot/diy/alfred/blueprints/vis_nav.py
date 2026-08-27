@@ -157,9 +157,9 @@ _vis_nav = autoconnect(
         replay_buffer_seconds=2.0,
         # Halves final drift on drive_2026-08-18_23-05-04.db: wheel alone ends 2.66 m out,
         # wheel + gyro 1.33 m, against a 0.59 m floor on the lidar reference's own heading.
-        # The mast D455 mount is photo-derived and uncalibrated; the last uncalibrated
-        # mount misaligned gravity by ~2.4 m/s^2 and diverged the fusion, so the IMU
-        # stays off until the spin calibration lands.
+        # The mast D455 mount is now the solved d455_joint origin rather than the photo
+        # estimate, but an uncalibrated mount once misaligned gravity by ~2.4 m/s^2 and
+        # diverged the fusion, so the IMU stays off until a replay run clears the new one.
         use_imu=False,
         # Bosch BMI055 datasheet figures, the part in the D455.
         imus={
