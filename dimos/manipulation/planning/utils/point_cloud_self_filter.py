@@ -88,9 +88,6 @@ class PointCloudSelfFilter(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        # tf is an ordinary input, so subscribe to it here rather than leaving
-        # the buffer to build itself on the first lookup, which would start cold
-        # exactly when the first cloud needs it.
         self._tf = TF(self.tf)
 
     @rpc
