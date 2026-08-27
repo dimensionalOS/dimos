@@ -310,7 +310,10 @@ class ObjectSceneRegistrationModule(Module):
             return "Detector not initialized."
 
         self.set_prompts(text=list(prompts))
-        time.sleep(2.0)
+        if self._detect_on_request:
+            self.scan_scene()
+        else:
+            time.sleep(2.0)
 
         detected = self.get_detected_objects()
         if not detected:
@@ -426,7 +429,7 @@ class ObjectSceneRegistrationModule(Module):
         # Publish ALL permanent objects so downstream consumers get the full set,
         # not just this frame's batch (which may be a subset of what's on the table).
         all_permanent = self._object_db.get_objects()
-        self._latest_output_objects = tuple(all_permanent)
+        self._latest_output_objects = tuple(self._object_db.get_all_objects())
 
         detections_3d = to_detection3d_array(all_permanent)
         self.detections_3d.publish(detections_3d)

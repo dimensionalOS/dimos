@@ -238,3 +238,51 @@ def test_request_driven_scan_processes_latest_aligned_frame(monkeypatch: Any) ->
 
     assert module.scan_scene() is result
     module.stop()
+
+
+def test_request_driven_detect_triggers_scan(monkeypatch: Any) -> None:
+    module = ObjectSceneRegistrationModule(detector_backend="owlv2", detect_on_request=True)
+    module._detector = MagicMock()
+    scan_scene = MagicMock()
+    monkeypatch.setattr(module, "scan_scene", scan_scene)
+    monkeypatch.setattr(module, "get_detected_objects", lambda: [])
+
+    assert module.detect("mug") == "No objects detected."
+    assert module._owlv2_prompts == ["mug"]
+    scan_scene.assert_called_once_with()
+    module.stop()
+
+
+def test_scan_output_includes_pending_objects(monkeypatch: Any) -> None:
+    module = ObjectSceneRegistrationModule(target_frame="camera")
+    module._camera_info = MagicMock()
+    module._object_db = MagicMock()
+    pending = MagicMock()
+    permanent = MagicMock()
+    module._object_db.get_all_objects.return_value = [pending, permanent]
+    module._object_db.get_objects.return_value = [permanent]
+    module.detections_3d = MagicMock()
+    module.objects = MagicMock()
+    module.pointcloud = MagicMock()
+    monkeypatch.setattr(
+        "dimos.perception.experimental.object_scene_registration.Object.from_2d_to_list",
+        lambda **_: [pending],
+    )
+    monkeypatch.setattr(
+        "dimos.perception.experimental.object_scene_registration.to_detection3d_array",
+        MagicMock(),
+    )
+    monkeypatch.setattr(
+        "dimos.perception.experimental.object_scene_registration.aggregate_pointclouds",
+        MagicMock(),
+    )
+
+    ObjectSceneRegistrationModule._process_3d_detections(
+        module,
+        MagicMock(spec=ImageDetections2D),
+        _image(4.0),
+        _image(4.0),
+    )
+
+    assert module._latest_output_objects == (pending, permanent)
+    module.stop()
