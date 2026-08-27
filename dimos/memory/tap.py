@@ -75,7 +75,6 @@ class BusRecorder:
         return self._streams[key]
 
     def on_message(self, msg: Any, topic: Any) -> None:
-        # ponytail: one lock per recorder; per-stream locks if inserts contend.
         with self._lock:
             stream = self._stream(topic)
             if stream is not None:
