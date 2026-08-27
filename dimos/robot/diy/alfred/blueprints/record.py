@@ -199,6 +199,11 @@ alfred_record_mcap = autoconnect(
         stream_codecs={
             "front_depth_image": "lz4+lcm",
             "back_depth_image": "lz4+lcm",
+            # IR must be lossless: JPEG artifacts corrupt feature tracking.
+            "front_infrared_left": "lz4+lcm",
+            "front_infrared_right": "lz4+lcm",
+            "back_infrared_left": "lz4+lcm",
+            "back_infrared_right": "lz4+lcm",
         },
     ),
 ).global_config(n_workers=10)
