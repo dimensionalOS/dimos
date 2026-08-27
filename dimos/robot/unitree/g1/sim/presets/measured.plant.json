@@ -1,0 +1,22 @@
+{
+  "name": "measured",
+  "physics": {
+    "armature": 0.01756149228582811,
+    "damping": 0.001,
+    "frictionloss": 6.582118989435054,
+    "trunk_mass_scale": 1.0,
+    "trunk_inertia_scale": 1.0,
+    "trunk_com_x": 0.0,
+    "leg_mass_scale": 1.0,
+    "foot_friction": 1.0,
+    "foot_friction_torsional": 0.005,
+    "foot_solref_time": 0.006732566509571869,
+    "foot_solref_damp": 1.2469639963773431,
+    "foot_solimp_dmin": 0.9,
+    "foot_solimp_width": 0.001,
+    "solver_iterations": 100.0,
+    "solver_ls_iterations": 50.0,
+    "solver_cone": 0.0
+  },
+  "actuator_tau": 0.002360108631305092
+}

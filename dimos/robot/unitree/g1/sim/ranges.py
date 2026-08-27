@@ -138,7 +138,46 @@ PHYSICS_KEYS = frozenset(KNOBS) - {"actuator_tau"}
 # Bare g1_29dof.xml: the experimental control every claim is comparative against.
 STOCK = Preset(name="stock", builtin=True)
 
-BUILTIN_PRESETS: dict[str, Preset] = {p.name: p for p in (STOCK,)}
+# The first fit (2026-08-28): 12 studies x 30 trials on t=20..150 s of the
+# 08-27 recording, the median of 14 pooled near-optimal trials. It hit the
+# study cap without stabilising: the region is wider than this data pins
+# (presets/measured.ranges.json carries the spread and the cloud), so every
+# fitted value is a CENTRE. Weighted score 0.816 -> 0.671 (-17.7%); every
+# channel improved, scored or not. Held-out on t=200..260 s: see README 5.
+_FIT = "fitted: 2026-08-28, median of the pooled region; p10..p90 in presets/measured.ranges.json"
+MEASURED = Preset(
+    name="measured",
+    builtin=True,
+    physics={
+        **ENGINE_DEFAULTS,
+        "armature": 0.01756149228582811,
+        "frictionloss": 6.582118989435054,
+        "foot_solref_time": 0.006732566509571869,
+        "foot_solref_damp": 1.2469639963773431,
+    },
+    actuator_tau=0.002360108631305092,
+    provenance={
+        "armature": _FIT + " (0.0063..0.0288)",
+        "frictionloss": _FIT + " (5.02..7.74; the upper bound 8.0 is near, widen before refitting)",
+        "actuator_tau": _FIT + " (0.0018..0.0054)",
+        "foot_solref_time": _FIT + " (0.0040..0.0121)",
+        "foot_solref_damp": _FIT + " (1.07..1.59)",
+        "damping": "declared: stock; only a hanging recording resolves it",
+        "trunk_mass_scale": "declared: not weighed (model mass 35.112 kg)",
+        "trunk_inertia_scale": "declared: not weighed",
+        "trunk_com_x": "declared: not weighed",
+        "leg_mass_scale": "declared: CAD masses from Unitree's URDF",
+        "foot_friction": "declared: a floor property; the recording's floor is undeclared",
+        "foot_friction_torsional": "declared: stock; meaningless for a four-sphere foot",
+        "foot_solimp_dmin": "declared: stock; contact shape not resolved by walking",
+        "foot_solimp_width": "declared: stock; contact shape not resolved by walking",
+        "solver_iterations": "declared: the scene's 100",
+        "solver_ls_iterations": "declared: the scene's 50",
+        "solver_cone": "declared: the scene's pyramidal cone",
+    },
+)
+
+BUILTIN_PRESETS: dict[str, Preset] = {p.name: p for p in (STOCK, MEASURED)}
 DEFAULT_PRESET = "stock"
 
 

@@ -80,7 +80,42 @@ joint-level knobs (go2sim §5, step 2).
 
 ## 5. Results
 
-(filled in by the first fit)
+**First fit, 2026-08-28** (`presets/measured.*`): stock as the incumbent,
+searched `armature, frictionloss, actuator_tau, foot_solref_time,
+foot_solref_damp`, everything else pinned as declared; 12 studies x 30
+trials on t=20..150 s, 8 segments, multiple shooting U(0.05, 0.8) s,
+weights joint .30 / dq .30 / tau .15. The shipped point is the median of the
+14 pooled near-optimal trials, never the best draw:
+
+| knob | stock | measured | p10 .. p90 | of range |
+|---|---:|---:|---:|---:|
+| armature (kg m^2) | 0.010 | 0.0176 | 0.0063 .. 0.0288 | 47% |
+| frictionloss (N m) | 0.10 | 6.58 | 5.02 .. 7.74 | 8.5% |
+| actuator_tau (s) | 0 | 0.00236 | 0.0018 .. 0.0054 | 30% |
+| foot_solref_time (s) | 0.020 | 0.0067 | 0.0040 .. 0.0121 | 41% |
+| foot_solref_damp | 1.0 | 1.25 | 1.07 .. 1.59 | 35% |
+
+The fit hit the study cap without the leave-one-out drift stabilising
+(0.20 at k=12): the region is wider than this data pins, which is the
+result, not a failure; the spread ships with the point. The frictionloss
+region sits near the range's upper bound (8.0): widen it before refitting.
+
+| window | stock | measured | change |
+|---|---:|---:|---:|
+| fit set, t=20..150 s | 0.816 | 0.671 | -17.7% |
+| held out, t=200..260 s (never fitted) | 0.797 | 0.630 | -21.0% |
+
+Every channel improved on both windows, scored or not (held out: joint
+0.046 -> 0.037 rad, dq 0.50 -> 0.37 rad/s, tau 4.22 -> 3.72 N m, accel
+2.13 -> 1.96 m/s^2, pos 0.071 -> 0.063 m, rot 0.157 -> 0.131 rad).
+
+For comparison only: the fork `aaryan/g1-groot-characterization` fitted
+damping 5.6e-4 / armature 0.0138 / frictionloss 3.25 on this same
+recording by a different method. Not used here.
+
+What this does NOT say: the plant has not been graded closed loop (no
+Mode B yet), and one recording on one undeclared floor with nothing
+weighed anchors none of the pinned values.
 
 ## 6. Owed
 
