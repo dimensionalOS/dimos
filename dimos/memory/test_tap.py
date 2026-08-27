@@ -16,6 +16,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from dimos.memory import tap
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import TransportRecorder
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -74,4 +77,21 @@ def test_full_queue_drops_and_counts(tmp_path: Path) -> None:
     odom.publish(PoseStamped(ts=1.0))
     odom.publish(PoseStamped(ts=2.0))
     assert rec.dropped == 1
+    store.stop()
+
+
+def test_first_drop_warns_then_throttles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    warnings: list[str] = []
+    monkeypatch.setattr(tap.logger, "warning", lambda msg, *args: warnings.append(msg % args))
+    store = SqliteStore(path=str(tmp_path / "memory.db"))
+    store.start()
+    rec = TransportRecorder(store, queue_size=1)
+    rec._queue.put(None)  # stop the writer so nothing drains
+    rec._writer.join()
+    odom = _Transport()
+    rec.tap("odom", PoseStamped, odom)
+    for ts in (1.0, 2.0, 3.0):
+        odom.publish(PoseStamped(ts=ts))
+    assert rec.dropped == 2
+    assert len(warnings) == 1  # the first drop warns; the second is inside the interval
     store.stop()

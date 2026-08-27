@@ -67,20 +67,24 @@ class TransportRecorder:
         self._globs = topics.split(",")
         self._queue: queue.Queue[tuple[Stream[Any], Any, float] | None] = queue.Queue(queue_size)
         self.dropped = 0
-        self._last_drop_warning = 0.0
+        self._drop_lock = threading.Lock()
+        self._last_drop_warning = float("-inf")
         self._writer = threading.Thread(target=self._drain, name="record-writer", daemon=True)
         self._writer.start()
 
     def _count_drop(self, name: str) -> None:
-        self.dropped += 1
-        now = time.monotonic()
-        if now - self._last_drop_warning < DROP_WARNING_INTERVAL_S:
-            return
-        self._last_drop_warning = now
+        """Count one dropped message; warn if the interval since the last warning has passed."""
+        with self._drop_lock:
+            self.dropped += 1
+            now = time.monotonic()
+            if now - self._last_drop_warning < DROP_WARNING_INTERVAL_S:
+                return
+            self._last_drop_warning = now
+            dropped = self.dropped
         logger.warning(
             "--record: writer queue full, dropping messages (%s); %d dropped so far",
             name,
-            self.dropped,
+            dropped,
         )
 
     def _drain(self) -> None:
