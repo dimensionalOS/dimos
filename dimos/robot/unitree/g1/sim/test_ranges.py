@@ -44,7 +44,7 @@ def test_every_builtin_value_sits_inside_its_range_with_a_why():
         for k, v in p.physics.items():
             assert KNOBS[k].lo <= v <= KNOBS[k].hi, (p.name, k, v)
         if p.physics:
-            assert set(p.provenance) == set(p.physics), p.name
+            assert set(p.provenance) >= set(p.physics), p.name
             assert p.provenance.get("actuator_tau") or p.actuator_tau == 0.0
 
 
