@@ -35,6 +35,7 @@ module env::
 from __future__ import annotations
 
 import fcntl
+import logging
 import time
 
 from pydantic import Field
@@ -58,6 +59,8 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.diy.alfred.blueprints.alfred import alfred
 
 # Physical camera identity on the Alfred rig (orin-nx-7837), by USB serial.
+logger = logging.getLogger(__name__)
+
 FRONT_REALSENSE_SERIAL = "260922302422"  # D455, front-facing (librealsense serial)
 BACK_REALSENSE_SERIAL = "327122071721"  # D435if, back-facing (librealsense serial)
 
@@ -88,14 +91,36 @@ class SerializedStartRealSense(RealSenseCamera):
 
     _START_LOCK = "/tmp/dimos_realsense_start.lock"
 
+    _START_ATTEMPTS = 4
+    _RETRY_DELAY_S = 6.0
+
     @rpc
     def start(self) -> None:
         with open(self._START_LOCK, "w") as lockfile:
             fcntl.flock(lockfile, fcntl.LOCK_EX)
             try:
-                super().start()
+                last: Exception | None = None
+                for attempt in range(1, self._START_ATTEMPTS + 1):
+                    try:
+                        super().start()
+                        break
+                    except RuntimeError as e:
+                        # librealsense multicam opens race non-deterministically
+                        # ("No device connected" while the device enumerates
+                        # fine); back off and re-roll instead of killing the
+                        # whole launch.
+                        last = e
+                        logger.warning(
+                            "RealSense open failed (attempt %d/%d): %s",
+                            attempt,
+                            self._START_ATTEMPTS,
+                            e,
+                        )
+                        time.sleep(self._RETRY_DELAY_S)
+                else:
+                    raise last if last else RuntimeError("RealSense start failed")
                 # Let the pipeline settle before the peer starts its open.
-                time.sleep(1.0)
+                time.sleep(4.0)
             finally:
                 fcntl.flock(lockfile, fcntl.LOCK_UN)
 
