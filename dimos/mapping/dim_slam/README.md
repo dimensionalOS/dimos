@@ -112,12 +112,12 @@ dimos run <your-blueprint> --viewer rerun --rerun-host 0.0.0.0 --g.rerun-open no
 ```
 
 `demo-cuvslam-realsense` is the smallest working example (camera + `DimSlam` +
-`OdometryPath`); `alfred-mls-nav` is a full robot.
+`OdometryHist`); `alfred-mls-nav` is a full robot.
 
 ### 6. Verify
 
 - `odometry` publishes at `publish_rate` and the pose moves when the robot moves.
-- Walk a closed loop and check `world/path` in rerun comes back to where it started.
+- Walk a closed loop and check `world/odom_hist` in rerun comes back to where it started.
 - Turn in place: pure rotation should not translate.
 - Cover the cameras — the pose should coast on the IMU and other sources, not jump.
 
