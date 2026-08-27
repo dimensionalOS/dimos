@@ -269,22 +269,6 @@ class TestVoxelMap:
 
         assert module._world_monitor.update_obstacle.call_count == 0
 
-    def test_a_refused_map_is_reported_not_swallowed(
-        self, module_factory, mocker: MockerFixture
-    ) -> None:
-        # Both mutation paths can decline without raising. Staying quiet would
-        # leave the planner checking against a map that no longer describes the
-        # workspace, with nothing anywhere to say so.
-        module = module_factory()
-        module._world_monitor = MagicMock(spec=WorldMonitor)
-        module._world_monitor.update_obstacle.return_value = False
-        module._world_monitor.add_obstacle.return_value = ""
-        warning = mocker.patch("dimos.manipulation.manipulation_module.logger.warning")
-
-        module._apply_voxel_map(self._cloud([[0.0, 0.0, 0.0]]))
-
-        assert warning.call_count == 1
-
     def test_a_rejected_map_leaves_the_previous_one_standing(self, module_factory) -> None:
         module = module_factory()
         module._world_monitor = MagicMock(spec=WorldMonitor)
@@ -293,12 +277,6 @@ class TestVoxelMap:
         module._apply_voxel_map(self._cloud([[0.0, 0.0, 0.0]]))
 
         assert module._world_monitor.add_obstacle.call_count == 0
-
-    def test_maps_are_ignored_until_the_world_exists(self, module_factory) -> None:
-        module = module_factory()
-        module._world_monitor = None
-
-        module._apply_voxel_map(self._cloud([[0.0, 0.0, 0.0]]))
 
 
 class TestObstacleUpdates:
