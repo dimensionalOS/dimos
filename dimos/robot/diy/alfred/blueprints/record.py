@@ -45,6 +45,7 @@ from dimos.core.stream import In
 from dimos.experimental.memory.rust_recorder import RustMcapStoreConfig, RustRecorder
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.hardware.sensors.lidar.livox.module import Mid360
+from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.memory.module import Recorder, RecorderConfig
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -64,6 +65,8 @@ BACK_REALSENSE_SERIAL = "327122071721"  # D435if, back-facing (librealsense seri
 _CAM_WIDTH, _CAM_HEIGHT, _CAM_FPS = 1280, 720, 15
 
 _CAMERA_PORTS = (
+    "imu",
+    "imu_info",
     "color_image",
     "depth_image",
     "camera_info",
@@ -203,6 +206,12 @@ class AlfredRustRecorder(RustRecorder):
     back_infrared_left_camera_info: In[CameraInfo]
     back_infrared_right_camera_info: In[CameraInfo]
 
+    front_imu: In[Imu]
+    back_imu: In[Imu]
+
+    pointlio_lidar: In[PointCloud2]
+    pointlio_odometry: In[Odometry]
+
     coordinator_joint_state: In[JointState]
     wheel_odometry: In[Odometry]
     cmd_vel: In[Twist]
@@ -219,6 +228,12 @@ alfred_record_mcap = autoconnect(
             (Mid360, "imu", "livox_imu"),
         ]
     ),
+    PointLio.blueprint(frame_id="world").remappings(
+        [
+            (PointLio, "lidar", "pointlio_lidar"),
+            (PointLio, "odometry", "pointlio_odometry"),
+        ]
+    ),
     AlfredRustRecorder.blueprint(
         store=RustMcapStoreConfig(path="alfred_record.mcap"),
         encoding_threads=4,
@@ -232,4 +247,4 @@ alfred_record_mcap = autoconnect(
             "back_infrared_right": "lz4+lcm",
         },
     ),
-).global_config(n_workers=10)
+).global_config(n_workers=11)
