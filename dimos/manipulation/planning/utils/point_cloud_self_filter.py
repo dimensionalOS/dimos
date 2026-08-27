@@ -33,6 +33,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.protocol.tf.tf import TF
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger
 
@@ -86,11 +87,11 @@ class PointCloudSelfFilter(Module):
 
     @rpc
     def start(self) -> None:
-        # Touch tfbuffer so it subscribes before clouds arrive. Filtering is
-        # dispatched off the transport thread so TF can keep filling while
-        # geometry work runs.
-        self.tfbuffer  # noqa: B018
         super().start()
+        # tf is an ordinary input, so subscribe to it here rather than leaving
+        # the buffer to build itself on the first lookup, which would start cold
+        # exactly when the first cloud needs it.
+        self._tf = TF(self.tf)
 
     @rpc
     def stop(self) -> None:
