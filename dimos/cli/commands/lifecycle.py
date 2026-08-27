@@ -285,7 +285,7 @@ def run(
         os.close(status_fd)
         # The launcher's exit released the pre-fork cache-usage marker (shared
         # flock); hold a fresh one for the daemon's lifetime.
-        with cache_usage_guard(), recording():
+        with cache_usage_guard(), recording(coordinator.transports):
             coordinator.loop()
     else:
         coordinator = ModuleCoordinator.build(blueprint, parsed_config)
@@ -306,7 +306,7 @@ def run(
         # runs with a visible traceback.
         install_signal_handlers(entry, coordinator, sigint=False)
         try:
-            with recording():
+            with recording(coordinator.transports):
                 coordinator.loop()
         finally:
             entry.remove()

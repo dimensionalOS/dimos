@@ -175,6 +175,7 @@ def stubbed_run(
 
     class FakeCoordinator:
         n_modules = 1
+        transports: dict[tuple[str, type], Any] = {}
 
         @classmethod
         def build(cls, blueprint: Any, parsed_config: Any = None) -> "FakeCoordinator":

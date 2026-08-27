@@ -12,37 +12,43 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""``--record``: subscribe to every topic on the transport bus and write one store.
+"""``--record``: subscribe to every stream transport in the blueprint and write one store.
 
-Runs in the ``dimos run`` process, like the Rerun bridge: one ``memory.db`` per run
-at ``recordings/<run-id>/``. Streams are named by topic (``/lidar`` -> ``lidar``).
-Poses are not resolved here; ``tf`` is recorded like any other topic and
+Runs in the ``dimos run`` process. Each stream is tapped on its own transport (LCM,
+Zenoh, SHM, ...), so whatever carries it is what gets recorded. One ``memory.db`` per
+run at ``recordings/<run-id>/``, streams named by their blueprint stream name.
+Poses are not resolved here; ``tf`` is recorded like any other stream and
 ``dimos map pose-fill`` derives poses on read.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 import fnmatch
 import os
 from pathlib import Path
-import re
 import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from dimos.constants import RECORDINGS_DIR
 from dimos.core.global_config import global_config
-from dimos.core.transport_factory import pubsub_backend
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.memory.stream import Stream
-    from dimos.msgs.protocol import DimosMsg
 
 logger = setup_logger()
+
+
+class Subscribable(Protocol):
+    """What a dimos ``Transport`` offers a tap: ``subscribe(callback) -> unsubscribe``."""
+
+    def subscribe(
+        self, callback: Callable[[Any], None], selfstream: Any = None
+    ) -> Callable[[], None] | None: ...
 
 
 def recording_dir() -> Path:
@@ -51,56 +57,50 @@ def recording_dir() -> Path:
     return RECORDINGS_DIR / run_id
 
 
-class BusRecorder:
-    """Appends every decoded bus message to ``store``, one stream per topic."""
+class TransportRecorder:
+    """Appends every message seen on a tapped transport to ``store``, one stream per name."""
 
     def __init__(self, store: SqliteStore, topics: str = "*") -> None:
         self.store = store
         self._globs = topics.split(",")
         self._lock = threading.Lock()
-        # topic -> stream, or None when filtered out / not a dimos message type.
-        self._streams: dict[str, Stream[DimosMsg] | None] = {}
 
-    def _stream(self, topic: Any) -> Stream[DimosMsg] | None:
-        key = topic.topic
-        if key in self._streams:
-            return self._streams[key]
-        name = re.sub(r"\W", "_", key.strip("/"))
-        wanted = any(fnmatch.fnmatch(name, g) for g in self._globs)
-        if not wanted or topic.lcm_type is None:
-            self._streams[key] = None
+    def tap(
+        self, name: str, stream_type: type, transport: Subscribable
+    ) -> Callable[[], None] | None:
+        """Subscribe *transport* and record into stream *name*; returns the unsubscribe."""
+        if not any(fnmatch.fnmatch(name, g) for g in self._globs):
             return None
-        self._streams[key] = self.store.stream(name, topic.lcm_type)
-        logger.info("Recording %s -> %s (%s)", key, name, topic.lcm_type.__name__)
-        return self._streams[key]
+        if not hasattr(stream_type, "lcm_encode"):
+            logger.info("--record: %s (%s) is not a dimos message type, skipped", name, stream_type)
+            return None
+        stream: Stream[Any] = self.store.stream(name, stream_type)
 
-    def on_message(self, msg: Any, topic: Any) -> None:
-        with self._lock:
-            stream = self._stream(topic)
-            if stream is not None:
+        def on_msg(msg: Any) -> None:
+            with self._lock:
                 stream.append(msg, ts=getattr(msg, "ts", None) or time.time())
+
+        logger.info("Recording %s (%s) via %s", name, stream_type.__name__, transport)
+        return transport.subscribe(on_msg)
 
 
 @contextmanager
-def recording() -> Iterator[None]:
-    """Record the bus for the duration of the block when ``--record`` is set."""
+def recording(transports: Mapping[tuple[str, type], Subscribable]) -> Iterator[None]:
+    """Record every stream in *transports* for the duration of the block when ``--record`` is set."""
     if not global_config.record or global_config.replay:
         yield
         return
     path = recording_dir() / "memory.db"
     store = SqliteStore(path=str(path))
     store.start()
-    bus = pubsub_backend()
-    if hasattr(bus, "start"):
-        bus.start()
-    unsubscribe: Callable[[], None] = bus.subscribe_all(
-        BusRecorder(store, global_config.record_topics).on_message
-    )
+    recorder = TransportRecorder(store, global_config.record_topics)
+    unsubscribes = [
+        u for (name, t), tr in transports.items() if (u := recorder.tap(name, t, tr)) is not None
+    ]
     logger.info("Recording to %s", path)
     try:
         yield
     finally:
-        unsubscribe()
-        if hasattr(bus, "stop"):
-            bus.stop()
+        for unsubscribe in unsubscribes:
+            unsubscribe()
         store.stop()

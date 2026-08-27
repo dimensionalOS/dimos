@@ -23,6 +23,7 @@ import inspect
 import shutil
 import sys
 import threading
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from dimos.core.coordination.blueprint_config.values import deep_merge, plain
@@ -294,6 +295,11 @@ class ModuleCoordinator(Resource):
                 f"({', '.join(sorted(names))}); pass the instance name."
             )
         return self._deployed_modules.get(names[0]) if names else None  # type: ignore[return-value]
+
+    @property
+    def transports(self) -> Mapping[tuple[str, type], Transport[Any]]:
+        """Every wired stream ``(name, type)`` and the transport carrying it."""
+        return MappingProxyType(self._transport_registry)
 
     def _send_on_system_modules(self) -> None:
         modules = list(self._deployed_modules.values())

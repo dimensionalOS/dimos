@@ -12,27 +12,51 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.tap import BusRecorder
+from dimos.memory.tap import TransportRecorder
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.protocol.pubsub.impl.lcmpubsub import Topic
 
 
-def test_records_matching_dimos_topics(tmp_path: Path) -> None:
+class _Transport:
+    """Any dimos Transport: subscribe(callback) -> unsubscribe."""
+
+    def __init__(self) -> None:
+        self.callbacks: list[Callable[[Any], None]] = []
+
+    def subscribe(
+        self, callback: Callable[[Any], None], selfstream: Any = None
+    ) -> Callable[[], None]:
+        self.callbacks.append(callback)
+        return lambda: self.callbacks.remove(callback)
+
+    def publish(self, msg: Any) -> None:
+        for cb in self.callbacks:
+            cb(msg)
+
+
+def test_taps_matching_dimos_streams(tmp_path: Path) -> None:
     path = tmp_path / "memory.db"
     store = SqliteStore(path=str(path))
     store.start()
-    rec = BusRecorder(store, topics="world_odom,lidar")
-    rec.on_message(PoseStamped(ts=1.0), Topic("/world/odom", PoseStamped))
-    rec.on_message(PoseStamped(ts=2.0), Topic("/world/odom", PoseStamped))
-    rec.on_message(PoseStamped(ts=3.0), Topic("/goal", PoseStamped))  # filtered out
-    rec.on_message(b"raw", Topic("/lidar"))  # no dimos type: skipped
+    rec = TransportRecorder(store, topics="odom,lidar")
+    odom, goal, raw = _Transport(), _Transport(), _Transport()
+    unsub = rec.tap("odom", PoseStamped, odom)
+    assert rec.tap("goal", PoseStamped, goal) is None  # filtered out
+    assert rec.tap("lidar", dict, raw) is None  # not a dimos message type
+    odom.publish(PoseStamped(ts=1.0))
+    odom.publish(PoseStamped(ts=2.0))
+    goal.publish(PoseStamped(ts=3.0))
+    assert unsub is not None
+    unsub()
+    odom.publish(PoseStamped(ts=4.0))
     store.stop()
 
     store = SqliteStore(path=str(path), must_exist=True)
     store.start()
-    assert store.list_streams() == ["world_odom"]
-    assert [o.ts for o in store.stream("world_odom", PoseStamped)] == [1.0, 2.0]
+    assert store.list_streams() == ["odom"]
+    assert [o.ts for o in store.stream("odom", PoseStamped)] == [1.0, 2.0]
     store.stop()
