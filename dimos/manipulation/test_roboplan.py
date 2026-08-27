@@ -743,7 +743,7 @@ def test_octree_obstacle_reaches_the_scene_as_occupied_cells(
     fake_roboplan: None,
     robot_config: RobotModelConfig,
 ) -> None:
-    world, _ = _make_world(fake_roboplan, robot_config)
+    world = _make_world(fake_roboplan, robot_config)
 
     obstacle = Obstacle(
         name="voxel-map",
@@ -772,7 +772,7 @@ def test_octree_obstacle_survives_the_deepcopy_and_equality_the_world_does(
     # The world snapshots obstacles with deepcopy and hands copies back out. A
     # raw ndarray field would make that snapshot uncomparable, so the points
     # stay plain tuples.
-    world, _ = _make_world(fake_roboplan, robot_config)
+    world = _make_world(fake_roboplan, robot_config)
     obstacle = Obstacle(
         name="voxel-map",
         obstacle_type=ObstacleType.OCTREE,
@@ -792,7 +792,7 @@ def test_octree_obstacle_rejects_geometry_it_cannot_build(
     fake_roboplan: None,
     robot_config: RobotModelConfig,
 ) -> None:
-    world, _ = _make_world(fake_roboplan, robot_config)
+    world = _make_world(fake_roboplan, robot_config)
 
     def octree(**kwargs: object) -> Obstacle:
         base: dict[str, object] = {

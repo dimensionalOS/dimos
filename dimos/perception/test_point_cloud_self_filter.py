@@ -53,7 +53,6 @@ def make_filter(tmp_path: Path) -> Iterator[Callable[..., PointCloudSelfFilter]]
     def make(**overrides: Any) -> PointCloudSelfFilter:
         settings: dict[str, Any] = {
             "robot_model": RobotModelConfig(
-                name="robot",
                 model=RobotModel.from_file(urdf),
                 joint_names=[],
                 base_link="base",
