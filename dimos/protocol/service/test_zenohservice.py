@@ -14,12 +14,16 @@
 
 from __future__ import annotations
 
+import json
 import os
+import pickle
 from typing import Any
 
 import pytest
 import zenoh
 
+from dimos.protocol.pubsub.impl.zenohpubsub import ZenohPubSubBase
+from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.protocol.service import zenohservice
 from dimos.protocol.service.zenohservice import ZenohConfig, ZenohService, ZenohSessionPool
 
@@ -111,10 +115,48 @@ def test_close_all_empties_the_pool_even_when_a_session_will_not_close(
     assert len(opens) == 2
 
 
+def test_shared_memory_stays_on() -> None:
+    """Local peers get zenoh's shared-memory path, which nothing here turns off.
+
+    Zenoh enables it by default; a wheel built without the feature drops the key.
+    """
+
+    config = json.loads(str(zenohservice._zenoh_config(ZenohConfig())))
+    assert config["transport"]["shared_memory"]["enabled"] is True
+
+
 def test_different_modes_produce_different_keys() -> None:
     peer = ZenohConfig(mode="peer")
     client = ZenohConfig(mode="client")
     assert peer.session_key != client.session_key
+
+
+def test_pickle_round_trip_sheds_the_session(session_pool) -> None:
+    """A module travels to its worker by pickle and re-acquires on the far side."""
+
+    svc = ZenohService(session_pool=session_pool)
+    svc.start()
+    clone = pickle.loads(pickle.dumps(svc))
+
+    assert clone._session is None
+    assert clone._session_pool is zenohservice.default_session_pool
+    assert clone.config.session_key == svc.config.session_key
+
+    clone.start()
+    assert clone.session is not None
+    clone.stop()
+
+
+def test_pickled_pubsub_and_rpc_rebuild_their_runtime(session_pool) -> None:
+    pubsub = pickle.loads(pickle.dumps(ZenohPubSubBase(session_pool=session_pool)))
+    assert pubsub._publishers == {}
+    assert pubsub._subscribers == []
+    assert pubsub._drain_stops == []
+
+    rpc = pickle.loads(pickle.dumps(ZenohRPC(session_pool=session_pool)))
+    assert rpc._pending == {}
+    assert rpc._queryables == []
+    assert rpc._call_thread_pool is None
 
 
 def test_start_creates_session(session_pool) -> None:
