@@ -29,11 +29,8 @@ So: treat the API as uniform, but pick a backend whose semantics match the task.
 
 ## Choosing a backend
 
-For most users, the important choice is between `lcm`, `zenoh`, and shared memory overrides:
-
-* `zenoh`: the default. Reliable delivery semantics and the same typed message model through `LCMEncoderMixin`.
+* `zenoh`: is our default. Reliable delivery and the same typed message model through `LCM` binary encoding of messages
 * `lcm`: the legacy path, opt-in. Fast and simple, but UDP multicast is best-effort.
-* shared memory (`pSHMTransport`, etc.): best for large local streams on a single machine.
 
 At the CLI level, you can select the stream transport globally with:
 
@@ -42,14 +39,9 @@ dimos --transport=lcm run unitree-go2
 dimos --transport=zenoh run unitree-go2
 ```
 
-Zenoh is the default on every platform. Pass `--transport=lcm` for the legacy multicast path.
+Generally LCM is legacy and we suggest using zenoh (the default) going forward
 
-## Zenoh quickstart
-
-Zenoh ships with dimOS by default (`eclipse-zenoh` is a base dependency), so there is nothing extra to install.
-
-Zenoh is the **default global stream transport** on every platform, so nothing below is
-needed to turn it on -- only to turn it off.
+## Zenoh
 
 ### What the default talks to
 
@@ -58,38 +50,49 @@ scouts for peers over loopback only, so sibling dimOS processes on this machine
 find each other and nothing on the LAN can link to them.
 
 Peers on this machine carry their data through shared memory, not the socket.
-Zenoh negotiates it per link at handshake, so it only ever applies where both
-ends map the same segment -- a remote peer keeps getting the payload over TCP.
+Zenoh negotiates it per link at handshake, a remote peer keeps getting the
+payload over TCP.
 
-Reaching off the machine is opt-in, and each way is independent:
+Reaching off the machine is opt-in
 
-| You want | Pass |
-|----------|------|
-| A robot, dialed directly | `--robot-ip 192.168.1.42` |
+| You want                                    | Pass                          |
+|---------------------------------------------|-------------------------------|
+| A robot, dialed directly                    | `--robot-ip 192.168.1.42`     |
 | Any other peer or a router, dialed directly | `ZENOH_CONNECT=tcp/host:7447` |
-| Peers discovered across the LAN | `ZENOH_SCOUTING=1` |
-| Scouting on one named interface | `ZENOH_INTERFACE=wlan0` |
+| Peers discovered across the LAN             | `ZENOH_SCOUTING=1`            |
+| Scouting on one named interface             | `ZENOH_INTERFACE=wlan0`       |
 
 Every one of these unpins the listener back to zenoh's all-interfaces default.
-For scouting, discovering the LAN and refusing links from it are contradictory.
-For dialing, gossip advertises this session's locator to the peers behind the
-dialed endpoint -- two machines dialing the same hub or robot router mesh by
-linking each other directly (a router never forwards between peers), which a
-loopback locator would silently break. An explicit `listen=[...]` on a session
-always wins.
 
 **Two ways to override for one run or for your shell:**
 
 1. **CLI:** `dimos --transport=zenoh ...` or `dimos --transport=lcm ...` (see [CLI](/docs/usage/cli.md) for precedence with `.env` and blueprints).
 2. **Environment:** `DIMOS_TRANSPORT=zenoh` or `DIMOS_TRANSPORT=lcm`.
 
-Typical **replay** (Zenoh is already the default, so no transport flag is required):
-
-```bash
-dimos --dtop --replay --replay-db=go2_bigoffice run unitree-go2
-```
 
 Architecture notes (Rerun bridge) live under [Zenoh](#zenoh) in PubSub transports below.
+
+### Per-topic QoS
+
+Zenoh publisher QoS lives on the Zenoh `Topic` object (see [`zenohpubsub.py`](/dimos/protocol/pubsub/impl/zenohpubsub.py#L27)):
+
+```python skip
+from dimos.core.transport import ZenohTransport
+from dimos.protocol.pubsub.impl.zenohpubsub import Topic, ZenohQoS
+
+blueprint = blueprint.transports(
+    {("image", CameraModule): ZenohTransport(Topic("dimos/image", Image, qos=ZenohQoS(reliability="best_effort", congestion_control="drop")))}
+)
+```
+
+When the factory builds transports from the global switch, it applies defaults (`default_zenoh_qos` in [`transport_factory.py`](/dimos/core/transport_factory.py#L65)):
+
+* The agent channels (`human_input`, `agent`, `agent_idle`): reliable, block under congestion (never drop).
+* `Image`/`PointCloud2` streams: best-effort, drop under congestion (latest wins).
+* Everything else: zenoh defaults (reliable, drop under congestion).
+
+The publisher for a key is declared with the first publish's QoS. LCM has no per-topic settings, so QoS only applies when `transport=zenoh`.
+
 
 ## Benchmarks
 
@@ -362,41 +365,6 @@ Received velocity: x=1.0, y=0.0, z=0.5
 ```
 
 ### Zenoh
-
-Zenoh provides network pubsub without relying on UDP multicast for the user-facing stream transport. In dimOS it carries the same typed messages by encoding them with `LCMEncoderMixin`, so existing `dimos.msgs.*` types still work.
-
-Use Zenoh when:
-
-* you want a transport that behaves better than UDP multicast on macOS
-* you are replaying large or high-rate data and want a more reliable network path
-* you want to keep the dimOS typed stream model while changing the transport backend
-
-At the stream level, the transport wrappers are `ZenohTransport` and `pZenohTransport`. Install, defaults, and CLI versus environment overrides are in the [Zenoh quickstart](#zenoh-quickstart) above.
-
-Performance note: zenoh's session-to-session path (modules in different processes, the common case) benchmarks faster than LCM for small messages and for >=2MiB ones. Delivery *within* one shared session (co-located modules in one worker) is its slow path for 256KiB-1MiB messages (a few GiB/s); pin shared memory transports for heavy co-located streams. The benchmark has both cases (`Zenoh` = shared session, `ZenohPeers` = separate sessions).
-
-The Rerun bridge also follows the global transport: all channels including TF flow over the active backend, and the bridge listens only on it. To additionally bridge external LCM publishers while running Zenoh, pass an explicit `pubsubs=[Zenoh(), LCM()]`.
-
-#### Per-topic QoS
-
-Zenoh publisher QoS lives on the Zenoh `Topic` object (see [`zenohpubsub.py`](/dimos/protocol/pubsub/impl/zenohpubsub.py#L27)):
-
-```python skip
-from dimos.core.transport import ZenohTransport
-from dimos.protocol.pubsub.impl.zenohpubsub import Topic, ZenohQoS
-
-blueprint = blueprint.transports(
-    {("image", CameraModule): ZenohTransport(Topic("dimos/image", Image, qos=ZenohQoS(reliability="best_effort", congestion_control="drop")))}
-)
-```
-
-When the factory builds transports from the global switch, it applies defaults (`default_zenoh_qos` in [`transport_factory.py`](/dimos/core/transport_factory.py#L65)):
-
-* The agent channels (`human_input`, `agent`, `agent_idle`): reliable, block under congestion (never drop).
-* `Image`/`PointCloud2` streams: best-effort, drop under congestion (latest wins).
-* Everything else: zenoh defaults (reliable, drop under congestion).
-
-The publisher for a key is declared with the first publish's QoS. LCM has no per-topic settings, so QoS only applies when `transport=zenoh`.
 
 ### Shared memory (IPC)
 
