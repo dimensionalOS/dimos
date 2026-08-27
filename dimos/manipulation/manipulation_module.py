@@ -1371,6 +1371,36 @@ class ManipulationModule(Module):
         return self._world_monitor.update_obstacle(obstacle)
 
     @rpc
+    def set_voxel_obstacle(
+        self,
+        name: str,
+        points: list[tuple[float, float, float]],
+        resolution: float,
+        frame_id: str = "world",
+    ) -> bool:
+        """Replace a whole occupancy map, held as one octree obstacle.
+
+        The shape-string obstacle RPCs cannot carry a map, so mapping publishers
+        use this instead. An empty point list removes the obstacle, which is how
+        a mapper says the space it owns is now clear.
+        """
+        if self._world_monitor is None:
+            return False
+        if not points:
+            return self._world_monitor.remove_obstacle(name)
+
+        obstacle = Obstacle(
+            name=name,
+            obstacle_type=ObstacleType.OCTREE,
+            pose=PoseStamped(frame_id=frame_id),
+            points=tuple((float(x), float(y), float(z)) for x, y, z in points),
+            octree_resolution=float(resolution),
+        )
+        if self._world_monitor.update_obstacle(obstacle):
+            return True
+        return bool(self._world_monitor.add_obstacle(obstacle))
+
+    @rpc
     def update_obstacle_pose(self, name: str, pose: Pose) -> bool:
         """Update only an obstacle pose while preserving all other properties."""
         if self._world_monitor is None:
