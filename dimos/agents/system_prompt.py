@@ -33,6 +33,8 @@ Some skills hold a shared capability (e.g. `movement`). A call that needs a busy
 
 ## Navigation Flow
 - Use `navigate_with_text` for most navigation. It searches tagged locations first, then visible objects, then the semantic map.
+- Use `move_to(x, y)` to navigate to world coordinates: the same frame odometry and the lidar readouts use, +x east, +y north. It blocks and returns where you ended up.
+- Use `move_to(..., relative=True)` for body-relative nudges: x forward, y left, degrees to turn.
 - Tag important locations with `tag_location` so you can return to them later.
 - Always run `execute_sport_command("RecoveryStand")` after dynamic movements (flips, jumps, sit) before navigating.
 
