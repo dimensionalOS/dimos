@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The seam stays engine-free — and a TEST holds it, not a convention.
+"""The seam stays engine-free, in every package that has one, and a TEST holds it.
 
 The seam has leaked before: loop 2 was once implemented directly against
 ``mujoco.mj_step`` inside an above-seam module, invisible to an import-time
@@ -20,80 +20,116 @@ check because the import hid inside a function. Two locks close both routes:
 
 * importing any above-seam module must not import an engine (clean
   interpreter, so no other test's imports mask it);
-* the engine's NAME may appear in above-seam source only inside a ``main()``
-  — the one place an entry point is allowed to choose its engine.
+* the engine's NAME may appear in above-seam source only inside a ``main()``,
+  the one place an entry point is allowed to choose its engine.
+
+Every package with a seam is listed in ``SEAMS``: the shared method, and each
+robot's plant package. A robot that adds a plant adds its entry here.
 """
 
 from __future__ import annotations
 
 import ast
+import importlib.util
 from pathlib import Path
 import subprocess
 import sys
 
-PACKAGE = "dimos.robot.unitree.go2.sim"
+import pytest
 
-# Everything above the seam: every module in the package except the engine
-# bindings, which live in `engines/`. A new module is above the seam by
-# default — it must be added HERE, not exempted.
-ABOVE_SEAM = (
-    "anchors",
-    "plant",
-    "policy",
-    "ranges",
-    "sysid.compliance",
-    "sysid.drive",
-    "sysid.fit",
-    "sysid.gait",
-    "sysid.ground",
-    "sysid.identify",
-    "sysid.ingest",
-    "sysid.loop",
-    "sysid.meta",
-    "sysid.probe",
-    "sysid.real",
-    "sysid.replay",
-    "sysid.select",
-    "sysid.stats",
-    "sysid.verify_net",
+# package -> (above the seam, below the seam). A new module is above the seam
+# by default: it must be added HERE, not exempted. Below the seam are the
+# engine bindings, the only modules allowed to import an engine.
+SEAMS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "dimos.simulation.sysid": (
+        (
+            "backend",
+            "fit",
+            "identify",
+            "plant",
+            "presets",
+            "recording",
+            "regimes",
+            "replay",
+            "rollouts",
+            "rotations",
+            "score",
+        ),
+        ("engines.model", "engines.mujoco"),
+    ),
+    "dimos.robot.unitree.go2.sim": (
+        (
+            "anchors",
+            "plant",
+            "policy",
+            "ranges",
+            "sysid.compliance",
+            "sysid.drive",
+            "sysid.fit",
+            "sysid.gait",
+            "sysid.ground",
+            "sysid.identify",
+            "sysid.ingest",
+            "sysid.loop",
+            "sysid.meta",
+            "sysid.probe",
+            "sysid.real",
+            "sysid.replay",
+            "sysid.select",
+            "sysid.stats",
+            "sysid.verify_net",
+        ),
+        ("engines.model", "engines.mujoco", "engines.mjx", "engines.bench"),
+    ),
+}
+
+# The engines themselves, and every below-seam module of every package: an
+# import of one above any seam is an engine import in disguise.
+ENGINE_MODULES = (
+    "mujoco",
+    "jax",
+    *(f"{pkg}.{m}" for pkg, (_, below) in SEAMS.items() for m in below),
 )
 
-# The engine bindings: the modules allowed to import an engine, and the
-# modules whose import above the seam is just an engine import in disguise.
-# `engines.model` compiles the MJCF both MuJoCo-family backends consume;
-# `engines.mujoco` and `engines.mjx` are the engines themselves.
-BELOW_SEAM = ("engines.model", "engines.mujoco", "engines.mjx", "engines.bench")
-ENGINE_MODULES = ("mujoco", "jax", *(f"{PACKAGE}.{m}" for m in BELOW_SEAM))
-
 HOW_TO_FIX = (
-    "Above the seam the engine arrives as an argument — a Backend, a "
-    "ClosedLoopBackend, a Rollouts built around one — never as an import. "
-    "Construct the engine in the CLI's main() (as fit/ground/replay do), or "
+    "Above the seam the engine arrives as an argument: a Backend, a "
+    "ClosedLoopBackend, a Rollouts built around one, never as an import. "
+    "Construct the engine in the CLI's main() (as the robot wrappers do), or "
     "put genuinely engine-specific code in engines/ behind the Backend or "
     "LoopSession protocol."
 )
 
 
-def test_every_module_is_listed():
+def _root(package: str) -> Path:
+    spec = importlib.util.find_spec(package)
+    assert spec is not None and spec.submodule_search_locations, package
+    return Path(next(iter(spec.submodule_search_locations)))
+
+
+@pytest.mark.parametrize("package", sorted(SEAMS))
+def test_every_module_is_listed(package: str):
     """A module this file does not know about is a hole in the lock."""
-    root = Path(__file__).parent
+    above, below = SEAMS[package]
+    root = _root(package)
     found = {
         str(p.relative_to(root))[: -len(".py")].replace("/", ".")
         for p in root.rglob("*.py")
         if not p.name.startswith("test_")
     }
-    assert found - set(BELOW_SEAM) == set(ABOVE_SEAM), (
-        f"module list out of date: unlisted {sorted(found - set(BELOW_SEAM) - set(ABOVE_SEAM))}, "
-        f"vanished {sorted(set(ABOVE_SEAM) - found)}. New modules are above the seam "
-        "by default: add them to ABOVE_SEAM."
+    assert found - set(below) == set(above), (
+        f"{package}: module list out of date: unlisted {sorted(found - set(below) - set(above))}, "
+        f"vanished {sorted(set(above) - found)}. New modules are above the seam "
+        "by default: add them to SEAMS."
     )
 
 
-def test_importing_the_seam_never_imports_an_engine():
+@pytest.mark.parametrize("package", sorted(SEAMS))
+def test_importing_the_seam_never_imports_an_engine(package: str):
     """With two backends installed, a seam that imports its engine makes using
-    either import both. A clean interpreter proves it — in-process, some other
+    either import both. A clean interpreter proves it; in-process, some other
     test has already imported mujoco and the check would be vacuous."""
-    imports = "\n".join(f"import {PACKAGE}.{m}" for m in ABOVE_SEAM)
+    above, _ = SEAMS[package]
+    imports = "\n".join(f"import {package}.{m}" for m in above)
     code = (
         "import sys\n"
         f"{imports}\n"
@@ -103,14 +139,16 @@ def test_importing_the_seam_never_imports_an_engine():
     subprocess.run([sys.executable, "-c", code], check=True)
 
 
-def test_engine_imports_hide_in_no_function_but_main():
+@pytest.mark.parametrize("package", sorted(SEAMS))
+def test_engine_imports_hide_in_no_function_but_main(package: str):
     """The leak the import check cannot see: ``import mujoco`` inside a
     function body defers the import past the check and couples the module
-    anyway — exactly how loop 2 originally leaked. Parse every above-seam
+    anyway, exactly how loop 2 originally leaked. Parse every above-seam
     module and allow engine imports ONLY inside a function named ``main``."""
-    root = Path(__file__).parent
+    above, _ = SEAMS[package]
+    root = _root(package)
     offences: list[str] = []
-    for mod in ABOVE_SEAM:
+    for mod in above:
         offences += _engine_imports_outside_main(root / (mod.replace(".", "/") + ".py"))
     assert not offences, f"engine import outside main(): {offences}. {HOW_TO_FIX}"
 

@@ -169,14 +169,22 @@ recordings ──► ingest ──► regimes ──► segments+clips ──►
                                                                      knobs
 ```
 
-The seam is a file the engines cannot reach into: `backend.py` carries the
-protocols and the plan/prediction types and imports no engine, while every
-engine lives in `engines/` — `engines/mujoco.py` today, `engines/mjx.py`
-next. `engines/model.py` sits between them: it vendors the scene and applies
-the knobs, and both MuJoCo-family backends compile the same `MjModel` from
-it, which is what makes "the same plant under two engines" structural rather
-than asserted. `test_seam.py` holds the split — a new module is above the
-seam by default and must be listed to be anything else.
+The seam and everything above it are robot-agnostic and live in
+`dimos/simulation/sysid/`: `backend.py` carries the protocols and the
+plan/prediction types and imports no engine; `recording`, `regimes`,
+`score`, `rollouts`, `replay`, `identify` and `fit` are the method; the CPU
+engine is `engines/mujoco.py`, reading the robot off a plant MODULE that
+satisfies `engines/model.py`'s `Plant` protocol (the pinned base model, the
+knob table, how the knobs land on the compiled model). This package is the
+Go2's side of that contract: `engines/model.py` vendors the scene and
+applies the knobs, `engines/mujoco.py` is a three-line subclass naming it,
+`ranges.py` is the knob table and the presets, `sysid/ingest.py` the reader,
+and the `sysid/{replay,identify,fit}.py` wrappers hand those pieces to the
+shared CLIs. `engines/mjx.py` compiles the same `MjModel` from the same
+plant module, which is what makes "the same plant under two engines"
+structural rather than asserted. `dimos/simulation/sysid/test_seam.py` holds
+the split for both packages: a new module is above the seam by default and
+must be listed to be anything else.
 
 ```python
 class Backend(Protocol):
