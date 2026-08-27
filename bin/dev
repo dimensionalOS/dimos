@@ -2,7 +2,6 @@
 REPO_ROOT=$(git rev-parse --show-toplevel)
 REL_PATH=$(realpath --relative-to="$REPO_ROOT" "$(pwd)")
 IMAGE="dimensional/ros-dev"
-IMAGE_TAG="$IMAGE:latest"
 
 image_exists() {
     docker image inspect "${IMAGE_TAG}" &>/dev/null
@@ -54,6 +53,8 @@ get_branch_tag() {
     esac
     echo "${image_tag}"
 }
+
+IMAGE_TAG="$IMAGE:$(get_branch_tag)"
 
 
 build_image() {
