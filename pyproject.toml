@@ -438,6 +438,9 @@ tests = [
     "pytest-rerunfailures>=15.0",
     "coverage>=7.0",
     "requests-mock==1.12.1",
+    # `--record mcap` round-trip test. Pure Python; the `unitree-dds` extra that
+    # otherwise carries it pulls cyclonedds, which these tests never need.
+    "mcap>=1.2.0",
 
     # Misc dev tools
     "pre_commit==4.2.0",
