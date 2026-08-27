@@ -37,8 +37,6 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-MODULE_DIR = Path(__file__).resolve().parent
-
 # The nix loader ignores ld.so.cache, so dlopen("libcuda.so.1") fails. Jetson needs the
 # whole directory: its libcuda.so.1 depends on its siblings.
 _DRIVER_ONLY_LIB_DIRS = (
@@ -144,7 +142,7 @@ def _driver_env() -> dict[str, str]:
 
 
 class CuvslamConfig(NativeModuleConfig):
-    cwd: str | None = str(MODULE_DIR)
+    cwd: str | None = "."
     executable: str = "result/bin/cuvslam_odometry"
     build_command: str | None = Field(
         default_factory=lambda: f"nix build github:dimensionalOS/dimSLAM/v0.2.0#{sdk_variant()}"
