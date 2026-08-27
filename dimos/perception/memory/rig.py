@@ -784,23 +784,22 @@ class Rig:
             points = np.vstack([p for _t, p in pairs])
         else:
             anchor = nearest[0, :2]
+            ordered = sorted(pairs, key=lambda pair: abs(pair[0] - ts))
+            cells = [
+                np.round((part[:, :2] - anchor) / quantum).astype(np.int64) for _t, part in ordered
+            ]
+            mins = [c.min(axis=0) for c in cells]
+            maxs = [c.max(axis=0) for c in cells]
+            base = np.minimum.reduce(mins)
+            covered = np.zeros(tuple(np.maximum.reduce(maxs) - base + 1), dtype=bool)
             kept: list[np.ndarray] = []
-            lows: list[np.ndarray] = []
-            highs: list[np.ndarray] = []
-            for _t, part in sorted(pairs, key=lambda pair: abs(pair[0] - ts)):
-                cells = np.round((part[:, :2] - anchor) / quantum).astype(np.int64)
-                if lows:
-                    lo, hi = np.stack(lows), np.stack(highs)
-                    covered = (
-                        (cells[:, None, :] >= lo[None]) & (cells[:, None, :] <= hi[None])
-                    ).all(axis=2)
-                    fresh = ~covered.any(axis=1)
-                    if fresh.any():
-                        kept.append(part[fresh])
-                else:
-                    kept.append(part)
-                lows.append(cells.min(axis=0))
-                highs.append(cells.max(axis=0))
+            for (_t, part), c, lo, hi in zip(ordered, cells, mins, maxs, strict=True):
+                fresh = ~covered[c[:, 0] - base[0], c[:, 1] - base[1]]
+                if fresh.any():
+                    kept.append(part[fresh])
+                covered[
+                    lo[0] - base[0] : hi[0] + 1 - base[0], lo[1] - base[1] : hi[1] + 1 - base[1]
+                ] = True
             points = np.vstack(kept)
         merged = PointCloud2.from_numpy(points, frame_id=self.world_frame, timestamp=ts)
         self._cloud_memo = (ts, merged, quantum)
