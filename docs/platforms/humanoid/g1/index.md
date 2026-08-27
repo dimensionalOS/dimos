@@ -188,12 +188,35 @@ the team can inspect the robot between transitions. Before starting the
 headset session, stand upright with feet together, look forward, keep the upper
 arms down, bend the forearms 90 degrees forward, and point the palms inward.
 
+Select the WebXR pose window when launching the blueprint. Both options use the
+same SONIC v1.1 ONNX models:
+
+| `--sonic-pipeline` | Pose window | Use when |
+|---|---:|---|
+| `sonic-v1.1` (default) | 10 frames / about 200 ms | Matching the official temporal input is more important than latency |
+| `sonic-low-latency` | 2 frames / about 40 ms | Responsiveness is more important; the newest frame fills the remaining encoder slots |
+
+```bash
+# Official ten-frame path (the flag may be omitted)
+uv run dimos --simulation mujoco run unitree-g1-sonic-webxr-teleop \
+  --sonic-pipeline sonic-v1.1
+
+# Two-frame low-latency path
+uv run dimos --simulation mujoco run unitree-g1-sonic-webxr-teleop \
+  --sonic-pipeline sonic-low-latency
+```
+
+The selection is fixed for the process lifetime; restart the blueprint to
+change it.
+
 The controller sequence matches NVIDIA's official full-body process:
 
 1. With SONIC balancing in planner mode, press **A+B+X+Y** once. DimOS enters
-   WebXR `PLANNER` and builds a fresh two-frame pose window without moving the
-   robot from its planner reference.
-2. Physically align the operator's body and heading with the standing robot.
+   WebXR `PLANNER` and begins building the selected 50 Hz pose window without
+   moving the robot from its planner reference.
+2. Physically align the operator's body and heading with the standing robot,
+   then remain aligned until the selected pose window is ready: about 200 ms
+   for `sonic-v1.1` or 40 ms for `sonic-low-latency`.
 3. Press **A+X** once to enter `POSE`. Do not press it from a mismatched pose;
    the policy will immediately track the new whole-body reference.
 4. Press **A+X** again to return to the balancing planner.
@@ -220,7 +243,9 @@ data when a browser connects or falls behind. The newest accepted skeleton is
 bright cyan, the preceding frame is a faint trail, and RGB axes show the
 separately sent root and wrist orientations. The layer is cleared when
 teleoperation leaves `POSE`, so a visible skeleton is never stale data from
-`PLANNER` or `OFF` mode.
+`PLANNER` or `OFF` mode. In `sonic-v1.1`, the robot follows the newest cyan
+input with approximately 200 ms of deliberate reference latency; the
+`sonic-low-latency` option reduces that window to approximately 40 ms.
 
 For the first hardware run, exercise this complete button sequence in
 `CONTROL/dry-run` and inspect `dimos hardware g1 status` before enabling live
@@ -265,6 +290,37 @@ uvx dimos-viewer --connect rerun+http://100.88.236.73:9877/proxy --ws-url ws://1
 The viewer should open up. It'll run in faster-than-real speed until its caught up with reality, then should show what's happening in real time.
 
 ## Troubleshooting
+
+### SONIC cannot activate `CUDAExecutionProvider`
+
+SONIC requires GPU inference for responsive and safe teleoperation. Startup
+fails instead of running the models on CPU if CUDA cannot be activated. If the
+error mentions `libcublasLt.so.12` on a CUDA 13 host, install the project's CUDA
+extra:
+
+```bash
+uv sync --extra all
+```
+
+DimOS uses ONNX Runtime's CUDA 12 build and preloads its CUDA 12/cuDNN 9
+libraries from the virtual environment. A CUDA 13 NVIDIA driver can run this
+CUDA 12 application; do not point `LD_LIBRARY_PATH` at CUDA 13 libraries to
+satisfy a `.so.12` dependency.
+
+On successful startup, the SONIC log lists `CUDAExecutionProvider` first for
+the encoder, decoder, and planner. ONNX Runtime may also list its automatically
+registered CPU provider; SONIC verifies that CUDA is active and never retries a
+failed model with CPU-only inference. To inspect the preloaded libraries
+independently:
+
+```bash
+uv run python -c 'import onnxruntime as ort; ort.preload_dlls(); ort.print_debug_info()'
+```
+
+See ONNX Runtime's [CUDA execution-provider requirements and preload
+API](https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html#preload-dlls).
+GLFW, Wayland, and `libdecor-gtk.so` warnings come from the MuJoCo viewer and do
+not cause ONNX Runtime to fall back to CPU.
 
 ### `libgomp.so.1: cannot allocate memory in static TLS block`
 

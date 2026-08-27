@@ -85,13 +85,18 @@ def _start_session(task: G1SonicTeleopTask) -> None:
 
 
 def _fill_pose_buffer(task: G1SonicTeleopTask) -> None:
-    task.on_body_tracking(_body_snapshot(capture_time_s=1.02), t_now=1.02)
+    for index in range(1, 10):
+        capture_time = 1.0 + 0.02 * index
+        task.on_body_tracking(
+            _body_snapshot(capture_time_s=capture_time),
+            t_now=capture_time,
+        )
 
 
 def _enter_pose(task: G1SonicTeleopTask) -> None:
     _start_session(task)
     _fill_pose_buffer(task)
-    task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.09)
+    task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.19)
 
 
 @pytest.fixture
@@ -100,7 +105,7 @@ def task_and_pipeline(mocker: Any) -> Iterator[tuple[G1SonicTeleopTask, Any]]:
         "dimos.control.tasks.g1_sonic_wbc_task.g1_sonic_wbc_task.SonicPipeline"
     )
     pipeline = pipeline_class.return_value
-    pipeline.apply_pose_message.return_value = {"frames": 2, "encode_mode": 2}
+    pipeline.apply_pose_message.return_value = {"frames": 10, "encode_mode": 2}
     pipeline.step.return_value = np.zeros(29, dtype=np.float32)
     pipeline.snapshot.return_value = {}
     adapter = mocker.MagicMock()
@@ -149,7 +154,7 @@ def test_ax_is_ignored_while_teleop_is_off(task_and_pipeline: tuple[Any, Any]) -
     pipeline.apply_pose_message.assert_not_called()
 
 
-def test_pose_requires_complete_two_frame_buffer(task_and_pipeline: tuple[Any, Any]) -> None:
+def test_pose_requires_complete_ten_frame_buffer(task_and_pipeline: tuple[Any, Any]) -> None:
     task, pipeline = task_and_pipeline
     _start_session(task)
 
@@ -161,6 +166,44 @@ def test_pose_requires_complete_two_frame_buffer(task_and_pipeline: tuple[Any, A
     pipeline.apply_pose_message.assert_not_called()
 
 
+def test_low_latency_pipeline_requires_two_frames_and_is_reported(mocker: Any) -> None:
+    pipeline_class = mocker.patch(
+        "dimos.control.tasks.g1_sonic_wbc_task.g1_sonic_wbc_task.SonicPipeline"
+    )
+    pipeline = pipeline_class.return_value
+    pipeline.snapshot.return_value = {}
+    pipeline.step.return_value = np.zeros(29, dtype=np.float32)
+    adapter = mocker.MagicMock()
+    adapter.read_imu.return_value = IMUState()
+    config = G1SonicWBCTaskConfig(
+        encoder_onnx=Path("encoder.onnx"),
+        decoder_onnx=Path("decoder.onnx"),
+        planner_onnx=Path("planner.onnx"),
+        joint_names=_JOINT_NAMES,
+        sonic_pipeline="sonic-low-latency",
+        auto_arm=True,
+        default_ramp_seconds=0.0,
+        zmq_enabled=False,
+    )
+    task = G1SonicTeleopTask("sonic_teleop", config, adapter)
+    try:
+        task.start()
+        task.compute(_state(0.5))
+        task.compute(_state(0.52))
+        _start_session(task)
+        task.on_body_tracking(_body_snapshot(capture_time_s=1.02), t_now=1.02)
+        task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.03)
+
+        teleop = task.state_snapshot()["webxr_teleop"]
+        fields = pipeline.apply_pose_message.call_args.args[0]
+        assert teleop["mode"] == "pose"
+        assert teleop["sonic_pipeline"] == "sonic-low-latency"
+        assert teleop["pose_window_frames"] == 2
+        assert fields["frame_index"].tolist() == [0, 1]
+    finally:
+        task.stop()
+
+
 def test_pose_data_is_applied_before_stream_source_is_selected(
     task_and_pipeline: tuple[Any, Any],
 ) -> None:
@@ -168,13 +211,13 @@ def test_pose_data_is_applied_before_stream_source_is_selected(
     _start_session(task)
     _fill_pose_buffer(task)
     pipeline.reset_mock()
-    pipeline.apply_pose_message.return_value = {"frames": 2, "encode_mode": 2}
+    pipeline.apply_pose_message.return_value = {"frames": 10, "encode_mode": 2}
 
-    task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.09)
+    task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.19)
 
     fields = pipeline.apply_pose_message.call_args.args[0]
-    assert fields["frame_index"].tolist() == [0, 1]
-    assert fields["smpl_joints"].shape == (2, 24, 3)
+    assert fields["frame_index"].tolist() == list(range(10))
+    assert fields["smpl_joints"].shape == (10, 24, 3)
     call_names = [call[0] for call in pipeline.method_calls]
     assert call_names.index("apply_pose_message") < call_names.index("set_source_stream")
     assert task.state_snapshot()["webxr_teleop"]["mode"] == "pose"
@@ -209,9 +252,9 @@ def test_leaving_pose_clears_sonic_reference(
     publish = mocker.Mock()
     task.set_pose_reference_publisher(publish)
     _enter_pose(task)
-    task.on_teleop_buttons(_buttons(), t_now=1.10)
+    task.on_teleop_buttons(_buttons(), t_now=1.20)
 
-    task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.11)
+    task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.21)
 
     assert publish.call_args.args[0].active is False
 
@@ -221,9 +264,9 @@ def test_ax_toggles_pose_back_to_balancing_planner(
 ) -> None:
     task, pipeline = task_and_pipeline
     _enter_pose(task)
-    task.on_teleop_buttons(_buttons(), t_now=1.10)
+    task.on_teleop_buttons(_buttons(), t_now=1.20)
 
-    task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.11)
+    task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.21)
 
     assert task.control_state is SonicControlState.CONTROL
     assert task.state_snapshot()["webxr_teleop"]["mode"] == "planner"
@@ -236,9 +279,9 @@ def test_start_combo_stops_teleop_without_disarming_policy(
 ) -> None:
     task, pipeline = task_and_pipeline
     _enter_pose(task)
-    task.on_teleop_buttons(_buttons(), t_now=1.10)
+    task.on_teleop_buttons(_buttons(), t_now=1.20)
 
-    task.on_teleop_buttons(_buttons(a=True, b=True, x=True, y=True), t_now=1.11)
+    task.on_teleop_buttons(_buttons(a=True, b=True, x=True, y=True), t_now=1.21)
 
     assert task.control_state is SonicControlState.CONTROL
     assert task.state_snapshot()["webxr_teleop"]["mode"] == "off"
@@ -268,7 +311,7 @@ def test_tracking_loss_in_pose_returns_to_planner(
     task, pipeline = task_and_pipeline
     _enter_pose(task)
 
-    task.on_body_tracking(_body_snapshot(available=False), t_now=1.10)
+    task.on_body_tracking(_body_snapshot(available=False), t_now=1.20)
 
     assert task.state_snapshot()["webxr_teleop"]["mode"] == "planner"
     assert task.state_snapshot()["webxr_teleop"]["stream_ready"] is False
@@ -281,7 +324,10 @@ def test_tracking_reference_change_invalidates_session(
     task, _ = task_and_pipeline
     _enter_pose(task)
 
-    task.on_body_tracking(_body_snapshot(capture_time_s=1.1, frame_id="bounded-floor"), t_now=1.10)
+    task.on_body_tracking(
+        _body_snapshot(capture_time_s=1.20, frame_id="bounded-floor"),
+        t_now=1.20,
+    )
 
     teleop = task.state_snapshot()["webxr_teleop"]
     assert teleop["mode"] == "off"
@@ -294,7 +340,7 @@ def test_stale_tracking_in_pose_returns_to_planner(
     task, pipeline = task_and_pipeline
     _enter_pose(task)
 
-    task.compute(_state(1.24))
+    task.compute(_state(1.34))
 
     assert task.state_snapshot()["webxr_teleop"]["mode"] == "planner"
     assert task.state_snapshot()["webxr_teleop"]["last_transition_reason"] == (
@@ -310,10 +356,10 @@ def test_pose_twist_ignores_translation_and_applies_yaw(
     _enter_pose(task)
     task.on_twist_command(
         Twist(linear=Vector3(1.0, 2.0, 0.0), angular=Vector3(0.0, 0.0, 0.5)),
-        t_now=1.09,
+        t_now=1.19,
     )
 
-    task.compute(_state(1.10, dt=0.02))
+    task.compute(_state(1.20, dt=0.02))
 
     pipeline.set_velocity.assert_called_with(0.0, 0.0, 0.0)
     pipeline.apply_heading_increment.assert_called_once_with(0.01)

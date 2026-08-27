@@ -42,7 +42,7 @@ from dimos.robot.get_all_blueprints import get_blueprint_by_name
 blueprint = get_blueprint_by_name("unitree-g1-sonic-webxr-teleop")
 atoms = blueprint.blueprints
 assert any(atom.module.__name__ == {backend!r} for atom in atoms)
-coordinator = next(atom for atom in atoms if atom.module.__name__ == "_G1SonicCoordinator")
+coordinator = next(atom for atom in atoms if atom.module.__name__ == "_G1SonicTeleopCoordinator")
 task = coordinator.kwargs["tasks"][0]
 assert task.name == "sonic_teleop"
 assert task.type == "g1_sonic_teleop"
@@ -51,6 +51,42 @@ assert task.params["auto_dry_run"] is {auto_dry_run!r}
 assert task.params["default_ramp_seconds"] == {ramp_seconds!r}
 assert task.params["decimation"] == {decimation!r}
 assert task.params["zmq_enabled"] is False
+"""
+    subprocess.run([sys.executable, "-c", code], check=True)
+
+
+@pytest.mark.self_hosted
+def test_webxr_blueprint_cli_selects_low_latency_pipeline() -> None:
+    code = """
+from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.global_config import global_config
+global_config.update(simulation="mujoco", viewer="none")
+from dimos.robot.get_all_blueprints import get_blueprint_by_name
+from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_sonic_wbc import (
+    _G1SonicTeleopCoordinatorConfig,
+    _configure_sonic_teleop_tasks,
+)
+
+blueprint = get_blueprint_by_name("unitree-g1-sonic-webxr-teleop")
+parser = BlueprintConfigParser(blueprint)
+assert parser.parse().module_kwargs("ControlCoordinator")["sonic_pipeline"] == "sonic-v1.1"
+parsed = parser.parse(
+    cli_tokens=["--sonic-pipeline", "sonic-low-latency"]
+)
+assert parsed.module_kwargs("ControlCoordinator")["sonic_pipeline"] == "sonic-low-latency"
+coordinator = parsed.module_kwargs("ControlCoordinator")
+coordinator_config = _G1SonicTeleopCoordinatorConfig(**coordinator)
+configured_tasks = _configure_sonic_teleop_tasks(
+    coordinator_config.tasks, coordinator_config.sonic_pipeline
+)
+assert configured_tasks[0].params["sonic_pipeline"] == "sonic-low-latency"
+try:
+    parser.parse(cli_tokens=["--sonic-pipeline", "unknown"])
+except BlueprintConfigError:
+    pass
+else:
+    raise AssertionError("invalid SONIC pipeline was accepted")
 """
     subprocess.run([sys.executable, "-c", code], check=True)
 
