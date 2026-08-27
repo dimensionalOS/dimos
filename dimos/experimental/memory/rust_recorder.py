@@ -37,7 +37,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 _RUST_WORKSPACE = DIMOS_PROJECT_ROOT / "native" / "rust"
-_EXECUTABLE = _RUST_WORKSPACE / "target" / "release" / "dimos-memory-recorder"
+_EXECUTABLE = _RUST_WORKSPACE / "result" / "bin" / "dimos-memory-recorder"
 _SUPPORTED_NATIVE_CODECS = {"lcm", "jpeg", "lz4+lcm"}
 
 
@@ -96,7 +96,9 @@ class RustRecorderConfig(NativeModuleConfig):
     """
 
     executable: str = str(_EXECUTABLE)
-    build_command: str = "cargo build --release -p dimos-memory-recorder"
+    build_command: str = (
+        "nix --extra-experimental-features 'nix-command flakes' build -L .#dimos-memory-recorder"
+    )
     cwd: str = str(_RUST_WORKSPACE)
     stdin_config: bool = True
 
