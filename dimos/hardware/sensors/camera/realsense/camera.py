@@ -51,6 +51,9 @@ from dimos.utils.reactive import backpressure
 
 logger = setup_logger()
 
+REALSENSE_MOTION_MODULE_NAME = "Motion Module"
+IMU_CLOCK_WINDOW_SECONDS = 30  # seconds (super generous)
+
 
 def ms_to_s(milliseconds: float) -> float:
     return milliseconds / 1000.0
@@ -60,31 +63,18 @@ if TYPE_CHECKING:
     import pyrealsense2 as rs  # type: ignore[import-not-found,import-untyped]
 
 
-def default_base_transform() -> Transform:
-    """Default identity transform for camera mounting."""
-    return Transform(
-        translation=Vector3(0.0, 0.0, 0.0),
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-    )
-
-
-def default_imu_info() -> ImuInfo:
-    """D455 IMU noise model, measured by the kalibr run in datasets/d455."""
-    return ImuInfo(
-        gyro_noise_density=2.0e-4,
-        gyro_random_walk=1.0e-5,
-        accel_noise_density=1.8e-3,
-        accel_random_walk=1.0e-4,
-    )
-
-
 class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     width: int = 848
     height: int = 480
     fps: int = 15
     camera_name: str = "camera"
     base_frame_id: str = "base_link"
-    base_transform: Transform | None = Field(default_factory=default_base_transform)
+    base_transform: Transform | None = Field(
+        default_factory=lambda: Transform(
+            translation=Vector3(0.0, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        )
+    )
     align_depth_to_color: bool = True
     enable_depth: bool = True
     enable_color: bool = True
@@ -97,8 +87,15 @@ class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     enable_imu: bool = False
     # Gyro rate, and so the Imu output rate.
     imu_hz: int = 400
-    # Noise model published on ``imu_info``; the driver stamps frame and rate itself.
-    imu_info: ImuInfo | None = Field(default_factory=default_imu_info)
+    imu_info: ImuInfo | None = Field(
+        # default value based on a d455, but this should be measured for every physical camera (every d455,d435,etc)
+        default_factory=lambda: ImuInfo(
+            gyro_noise_density=2.0e-4,
+            gyro_random_walk=1.0e-5,
+            accel_noise_density=1.8e-3,
+            accel_random_walk=1.0e-4,
+        )
+    )
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0
     serial_number: str | None = None
@@ -171,6 +168,8 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._imu_pipeline: rs.pipeline | None = None
         self._accel_history: deque[tuple[float, tuple[float, float, float]]] = deque(maxlen=2)
         self._pending_gyro: deque[tuple[float, tuple[float, float, float]]] = deque(maxlen=16)
+        self._imu_offsets: deque[tuple[int, float]] = deque()
+        self._imu_offset: float = 0.0
         self._align: rs.align | None = None
         self._mount_edges: list[tuple[str, str, Vector3, Quaternion]] = []
         self._running = False
@@ -192,6 +191,11 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
     @rpc
     def start(self) -> None:
         import pyrealsense2 as rs
+
+        # The motion module refuses to open ("No device connected") once the
+        # video pipeline holds the device, so the IMU pipeline must start first.
+        if self.config.enable_imu:
+            self._start_imu()
 
         self._pipeline = rs.pipeline()
         config = rs.config()
@@ -262,9 +266,6 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._thread.start()
 
-        if self.config.enable_imu:
-            self._start_imu()
-
         if self.config.enable_pointcloud and self.config.enable_depth:
             interval_sec = 1.0 / self.config.pointcloud_fps
             self.register_disposable(
@@ -300,15 +301,27 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         imu_config.enable_stream(rs.stream.gyro, rs.format.motion_xyz32f, self.config.imu_hz)
 
         self._imu_pipeline = rs.pipeline()
-        self._imu_pipeline.start(imu_config, self._on_motion_frame)
+        imu_profile = self._imu_pipeline.start(imu_config, self._on_motion_frame)
+
+        # librealsense has a bug where, once the camera bus is full, the timing for IMU gets screwed
+        # Intel's own standing advice, and the fix for the fit is unreleased:
+        # https://github.com/IntelRealSense/librealsense/pull/15360
+        # https://github.com/IntelRealSense/librealsense/issues/9131
+        # The raw hardware clock is stable, so take it and re-anchor it in _to_host_time.
+        for sensor in imu_profile.get_device().query_sensors():
+            if sensor.get_info(rs.camera_info.name) == REALSENSE_MOTION_MODULE_NAME:
+                sensor.set_option(rs.option.global_time_enabled, 0.0)
 
     def _stream_rates(self, stream_type: rs.stream) -> list[int]:
         """Every rate the device offers for a stream."""
-        if self._profile is None:
-            return []
+        import pyrealsense2 as rs
+
         rates = {
             profile.fps()
-            for sensor in self._profile.get_device().query_sensors()
+            for device in rs.context().query_devices()
+            if not self.config.serial_number
+            or device.get_info(rs.camera_info.serial_number) == self.config.serial_number
+            for sensor in device.query_sensors()
             for profile in sensor.get_stream_profiles()
             if profile.stream_type() == stream_type
         }
@@ -321,6 +334,8 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         if self._profile is None:
             return
         for sensor in self._profile.get_device().query_sensors():
+            if sensor.get_info(rs.camera_info.name) == REALSENSE_MOTION_MODULE_NAME:
+                continue  # _start_imu deliberately keeps it on the hardware clock
             if not sensor.supports(rs.option.global_time_enabled):
                 logger.warning(
                     "RealSense %s has no global timestamps, so its stream is on the "
@@ -337,14 +352,32 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         if not motion:
             return
         data = motion.get_motion_data()
-        # Hardware capture time, not host time.
-        ts = ms_to_s(motion.get_timestamp())
+        ts = self._to_host_time(ms_to_s(motion.get_timestamp()))
         stream = motion.get_profile().stream_type()
         if stream == rs.stream.accel:
             self._accel_history.append((ts, (data.x, data.y, data.z)))
         elif stream == rs.stream.gyro:
             self._pending_gyro.append((ts, (data.x, data.y, data.z)))
         self._publish_paired_imu()
+
+    def _to_host_time(self, device_ts: float) -> float:
+        """Map a motion-module hardware stamp onto the host clock.
+
+        Delivery latency only ever pushes an arrival later, so the smallest offset seen
+        recently is the closest estimate of the true one. Keeping one minimum per second
+        lets the estimate follow the device's slow drift without rescanning every sample.
+        """
+        now = time.time()
+        offset = now - device_ts
+        current_second = int(now)
+        if self._imu_offsets and self._imu_offsets[-1][0] == current_second:
+            self._imu_offsets[-1] = (current_second, min(self._imu_offsets[-1][1], offset))
+        else:
+            self._imu_offsets.append((current_second, offset))
+            while self._imu_offsets[0][0] < current_second - IMU_CLOCK_WINDOW_SECONDS:
+                self._imu_offsets.popleft()
+            self._imu_offset = min(seen for _, seen in self._imu_offsets)
+        return device_ts + self._imu_offset
 
     def _publish_paired_imu(self) -> None:
         """Emit one Imu per gyro sample, with the accelerometer read at that instant.
