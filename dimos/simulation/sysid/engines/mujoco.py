@@ -49,7 +49,7 @@ from dimos.simulation.sysid.backend import (
 from dimos.simulation.sysid.engines.model import ANCHOR_BODY, GHOST_BODY, Plant, mocap_index
 from dimos.simulation.sysid.plant import TorqueEnvelope, actuator_step
 from dimos.simulation.sysid.presets import Knob
-from dimos.simulation.sysid.rotations import mat_to_quat, quat_to_mat
+from dimos.simulation.sysid.rotations import mat_to_quat, quat_to_mat, yaw_anchor
 
 
 def _check_layout(model: mujoco.MjModel) -> None:
@@ -319,7 +319,7 @@ class MujocoBackend:
                 j = int(
                     np.clip(np.searchsorted(ghost.t, state.t, "right") - 1, 0, len(ghost.t) - 1)
                 )
-                g_anchor_r = quat_to_mat(data.qpos[3:7].copy()) @ ghost.rot[j].T
+                g_anchor_r = yaw_anchor(quat_to_mat(data.qpos[3:7].copy()), ghost.rot[j])
                 g_anchor_p = data.qpos[0:3].copy() - g_anchor_r @ ghost.pos[j]
 
         snap(reinit[0])

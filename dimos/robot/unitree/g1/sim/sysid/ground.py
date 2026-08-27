@@ -62,7 +62,7 @@ from dimos.simulation.sysid.plant import actuator_step
 from dimos.simulation.sysid.presets import Preset
 from dimos.simulation.sysid.recording import Streams
 from dimos.simulation.sysid.replay import measured_state
-from dimos.simulation.sysid.rotations import mat_to_quat, quat_to_mat, yaw_of
+from dimos.simulation.sysid.rotations import mat_to_quat, quat_to_mat, yaw_anchor, yaw_of
 from dimos.utils.data import LfsPath
 
 TERMS = ("along", "cross", "yaw")
@@ -167,8 +167,9 @@ def rollout(
         from dimos.simulation.sysid.engines.model import GHOST_BODY, mocap_index
 
         ghost_id = mocap_index(model, GHOST_BODY)
-        a_r = quat_to_mat(data.qpos[3:7].copy()) @ base_r[int(np.searchsorted(st.vt, start))].T
-        a_p = data.qpos[0:3].copy() - a_r @ base_p[int(np.searchsorted(st.vt, start))]
+        j0 = int(np.searchsorted(st.vt, start))
+        a_r = yaw_anchor(quat_to_mat(data.qpos[3:7].copy()), base_r[j0])
+        a_p = data.qpos[0:3].copy() - a_r @ base_p[j0]
 
     target = DEFAULT_29[:NUM_ACTIONS].copy()
     desired = DEFAULT_29.astype(np.float64).copy()

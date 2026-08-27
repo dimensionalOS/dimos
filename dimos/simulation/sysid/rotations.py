@@ -102,3 +102,15 @@ def pitch_roll_of(quat: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     pitch = -np.arcsin(np.clip(2 * (x * z - w * y), -1.0, 1.0))
     roll = np.arctan2(2 * (y * z + w * x), 1 - 2 * (x * x + y * y))
     return pitch, roll
+
+
+def yaw_anchor(sim_rot: np.ndarray, real_rot: np.ndarray) -> np.ndarray:
+    """The pure-yaw rotation taking a recorded pose into the sim's world.
+
+    Room and sim share gravity, so a ghost anchor must never carry pitch or
+    roll: with ``sim @ real.T`` the instruments' few degrees of attitude
+    disagreement tilt the WORLD, and the ghost climbs or sinks along its path.
+    """
+    d = float(np.arctan2(sim_rot[1, 0], sim_rot[0, 0]) - np.arctan2(real_rot[1, 0], real_rot[0, 0]))
+    c, s_ = np.cos(d), np.sin(d)
+    return np.array([[c, -s_, 0.0], [s_, c, 0.0], [0.0, 0.0, 1.0]])
