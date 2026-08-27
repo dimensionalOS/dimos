@@ -374,6 +374,11 @@ class PinkIK(_PinkSolverCore):
     ) -> IKResult:
         robot_context = targets[0][0]
         configuration, tasks = self._configuration_and_tasks(targets, seed_q)
+        constraints = self._locked_joint_constraints(
+            robot_context,
+            seed_q,
+            locked_joint_positions,
+        )
         final_position_error = float("inf")
         final_orientation_error = float("inf")
         for iteration in range(self.config.max_iterations):
@@ -395,11 +400,10 @@ class PinkIK(_PinkSolverCore):
                     iteration + 1,
                 )
             self._step_configuration(
-                robot_context=robot_context,
                 configuration=configuration,
                 tasks=tasks,
                 dt=self.config.dt,
-                locked_joint_positions=locked_joint_positions,
+                constraints=constraints,
             )
             joint_positions = self._q_to_dimos_positions(robot_context, configuration.q)
             if not _within_limits(joint_positions, lower_limits, upper_limits):

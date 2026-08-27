@@ -1,4 +1,4 @@
-# Copyright 2025-2026 Dimensional Inc.
+# Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-TASK_FACTORIES = {
-    "servo": "dimos.control.tasks.servo_task.servo_task:create_task",
-}
+from pathlib import Path
 
-TASK_CONSUMES = {
-    "servo": {"joint_command": ("on_joint_command", "claim_overlap")},
-}
+from dimos.hardware.whole_body.spec import WholeBodyAdapter
+from dimos.simulation.adapters.whole_body.g1 import SimMujocoG1WholeBodyAdapter
 
-TASK_EXPOSES = {
-    "servo": ["start"],
-}
+
+def test_sim_g1_adapter_satisfies_whole_body_protocol() -> None:
+    adapter = SimMujocoG1WholeBodyAdapter(address=Path("unused.xml"))
+
+    assert isinstance(adapter, WholeBodyAdapter)
+    assert adapter.get_limits() is None

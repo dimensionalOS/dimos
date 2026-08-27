@@ -336,12 +336,11 @@ class TestDescribeTask:
         assert desc["commands"]["cancel"]["params"] == []
         assert desc["streams"] == []
 
-    def test_reports_stream_routes(self, coordinator):
-        # servo declares no commands but consumes joint_command.
-        task = CommandRecordingTask("servo1")
-        coordinator.add_task(task, task_type="servo")
+    def test_reports_velocity_stream_route(self, coordinator):
+        task = CommandRecordingTask("velocity1")
+        coordinator.add_task(task, task_type="velocity")
 
-        desc = coordinator.describe_task("servo1")
+        desc = coordinator.describe_task("velocity1")
 
         assert desc["commands"] == {}
         assert desc["streams"] == [("joint_command", "claim_overlap")]

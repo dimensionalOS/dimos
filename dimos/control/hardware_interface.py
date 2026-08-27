@@ -98,6 +98,10 @@ class ConnectedHardware:
         """Disconnect the underlying adapter."""
         self._adapter.disconnect()
 
+    def ready_for_control(self) -> bool:
+        """Whether state is available and control commands may be sent."""
+        return True
+
     def read_state(self) -> dict[JointName, JointState]:
         """Read state as {joint_name: JointState}.
 
@@ -348,6 +352,10 @@ class ConnectedWholeBody(ConnectedHardware):
     def disconnect(self) -> None:
         """Disconnect the underlying adapter."""
         self._wb_adapter.disconnect()
+
+    def ready_for_control(self) -> bool:
+        """Wait for real motor feedback before exposing state or accepting commands."""
+        return self._wb_adapter.has_motor_states()
 
     def read_state(self) -> dict[JointName, JointState]:
         """Read motor states as {joint_name: JointState}."""

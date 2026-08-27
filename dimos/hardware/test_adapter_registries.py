@@ -140,7 +140,7 @@ def test_every_sim_whole_body_module_is_declared() -> None:
     declared_modules = {path.split(":", 1)[0] for path in manifest.ADAPTER_FACTORIES.values()}
     for root in pkg.__path__:
         for mod_file in sorted(Path(root).glob("*.py")):
-            if mod_file.name.startswith(("_", ".")):
+            if mod_file.name.startswith(("_", ".", "test_")):
                 continue
             mod_name = f"dimos.simulation.adapters.whole_body.{mod_file.stem}"
             assert mod_name in declared_modules, (

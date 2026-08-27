@@ -60,8 +60,29 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
+from dimos.utils.transform_utils import matrix_to_pose
 
 _TRACKING_ERROR_RAD = np.deg2rad(10.0)
+
+_LOCKED_WAIST_CHAIN_URDF = """\
+<robot name="locked_waist_chain">
+  <link name="pelvis"/><link name="waist_yaw_link"/><link name="waist_roll_link"/>
+  <link name="torso_link"/><link name="shoulder_pitch_link"/><link name="shoulder_roll_link"/>
+  <link name="shoulder_yaw_link"/><link name="elbow_link"/><link name="wrist_roll_link"/>
+  <link name="wrist_pitch_link"/><link name="wrist_yaw_link"/><link name="tool"/>
+  <joint name="waist_yaw" type="revolute"><origin xyz="0 0 0"/><parent link="pelvis"/><child link="waist_yaw_link"/><axis xyz="0 0 1"/><limit lower="-2.618" upper="2.618" effort="1" velocity="1"/></joint>
+  <joint name="waist_roll" type="revolute"><origin xyz="-0.0039635 0 0.044"/><parent link="waist_yaw_link"/><child link="waist_roll_link"/><axis xyz="1 0 0"/><limit lower="-0.52" upper="0.52" effort="1" velocity="1"/></joint>
+  <joint name="waist_pitch" type="revolute"><origin xyz="0 0 0"/><parent link="waist_roll_link"/><child link="torso_link"/><axis xyz="0 1 0"/><limit lower="-0.52" upper="0.52" effort="1" velocity="1"/></joint>
+  <joint name="shoulder_pitch" type="revolute"><origin xyz="0.0039563 0.10022 0.24778" rpy="0.27931 0.000054949 -0.00019159"/><parent link="torso_link"/><child link="shoulder_pitch_link"/><axis xyz="0 1 0"/><limit lower="-3.0892" upper="2.6704" effort="1" velocity="1"/></joint>
+  <joint name="shoulder_roll" type="revolute"><origin xyz="0 0.038 -0.013831" rpy="-0.27925 0 0"/><parent link="shoulder_pitch_link"/><child link="shoulder_roll_link"/><axis xyz="1 0 0"/><limit lower="-1.5882" upper="2.2515" effort="1" velocity="1"/></joint>
+  <joint name="shoulder_yaw" type="revolute"><origin xyz="0 0.00624 -0.1032"/><parent link="shoulder_roll_link"/><child link="shoulder_yaw_link"/><axis xyz="0 0 1"/><limit lower="-2.618" upper="2.618" effort="1" velocity="1"/></joint>
+  <joint name="elbow" type="revolute"><origin xyz="0.015783 0 -0.080518"/><parent link="shoulder_yaw_link"/><child link="elbow_link"/><axis xyz="0 1 0"/><limit lower="-1.0472" upper="2.0944" effort="1" velocity="1"/></joint>
+  <joint name="wrist_roll" type="revolute"><origin xyz="0.100 0.00188791 -0.010"/><parent link="elbow_link"/><child link="wrist_roll_link"/><axis xyz="1 0 0"/><limit lower="-1.9722" upper="1.9722" effort="1" velocity="1"/></joint>
+  <joint name="wrist_pitch" type="revolute"><origin xyz="0.038 0 0"/><parent link="wrist_roll_link"/><child link="wrist_pitch_link"/><axis xyz="0 1 0"/><limit lower="-1.6144" upper="1.6144" effort="1" velocity="1"/></joint>
+  <joint name="wrist_yaw" type="revolute"><origin xyz="0.046 0 0"/><parent link="wrist_pitch_link"/><child link="wrist_yaw_link"/><axis xyz="0 0 1"/><limit lower="-1.6144" upper="1.6144" effort="1" velocity="1"/></joint>
+  <joint name="tool_fixed" type="fixed"><origin xyz="0.0415 0.003 0"/><parent link="wrist_yaw_link"/><child link="tool"/></joint>
+</robot>
+"""
 
 
 class _StreamingTestPinkIK(PinkPoseTargetSolver):
@@ -218,6 +239,13 @@ class _FakePostureTask:
         self.target = configuration.q.copy()
 
 
+class _FakeLinearHolonomicTask:
+    def __init__(self, A: np.ndarray, b: np.ndarray, q_0: np.ndarray) -> None:
+        self.A = A
+        self.b = b
+        self.q_0 = q_0
+
+
 class _AuxiliaryTask:
     def __init__(self, value: float) -> None:
         self.value = value
@@ -302,7 +330,11 @@ def _fake_modules(converge: bool = True) -> _FakeModules:
 
     pink = ModuleType("pink")
     pink.Configuration = _FakeConfiguration  # type: ignore[attr-defined]
-    pink.tasks = SimpleNamespace(FrameTask=_FakeFrameTask, PostureTask=_FakePostureTask)
+    pink.tasks = SimpleNamespace(
+        FrameTask=_FakeFrameTask,
+        LinearHolonomicTask=_FakeLinearHolonomicTask,
+        PostureTask=_FakePostureTask,
+    )
 
     def solve_ik(
         configuration: _FakeConfiguration,
@@ -1172,6 +1204,105 @@ def test_solve_targets_reports_non_convergence(mocker: MockerFixture) -> None:
 
     assert result.status == IKStatus.NO_SOLUTION
     assert "did not converge" in result.message
+
+
+def test_pose_target_solve_constrains_joints_outside_planning_group(tmp_path: Path) -> None:
+    model_path = tmp_path / "locked_waist_chain.urdf"
+    model_path.write_text(_LOCKED_WAIST_CHAIN_URDF)
+    joint_names = [
+        "waist_yaw",
+        "waist_roll",
+        "waist_pitch",
+        "shoulder_pitch",
+        "shoulder_roll",
+        "shoulder_yaw",
+        "elbow",
+        "wrist_roll",
+        "wrist_pitch",
+        "wrist_yaw",
+    ]
+    arm_names = joint_names[3:]
+    config = RobotModelConfig(
+        name="chain",
+        model=RobotModel.from_file(model_path),
+        joint_names=joint_names,
+        base_link="pelvis",
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="arm",
+                joint_names=tuple(arm_names),
+                base_link="pelvis",
+                tip_link="tool",
+            )
+        ],
+    )
+    group = PlanningGroup(
+        id="chain/arm",
+        robot_name="chain",
+        group_name="arm",
+        joint_names=tuple(f"chain/{name}" for name in arm_names),
+        local_joint_names=tuple(arm_names),
+        base_link="pelvis",
+        tip_link="tool",
+    )
+    seed_positions = np.array([0.0, 0.0, 0.0, -0.4, 0.2, 0.0, 1.2, 0.0, 0.0, 0.0])
+    seed = JointState(name=joint_names, position=seed_positions.tolist())
+    lower_limits = np.array(
+        [-2.618, -0.52, -0.52, -3.0892, -1.5882, -2.618, -1.0472, -1.9722, -1.6144, -1.6144]
+    )
+    upper_limits = np.array(
+        [2.618, 0.52, 0.52, 2.6704, 2.2515, 2.618, 2.0944, 1.9722, 1.6144, 1.6144]
+    )
+
+    class World:
+        is_finalized = True
+
+        def get_robot_ids(self) -> list[str]:
+            return ["robot"]
+
+        def get_robot_config(self, robot_id: str) -> RobotModelConfig:
+            return config
+
+        def get_joint_limits(self, robot_id: str) -> tuple[np.ndarray, np.ndarray]:
+            return lower_limits, upper_limits
+
+        def scratch_context(self) -> nullcontext[None]:
+            return nullcontext(None)
+
+        def get_joint_state(self, ctx: object, robot_id: str) -> JointState:
+            return seed
+
+        def check_config_collision_free(self, robot_id: str, joint_state: JointState) -> bool:
+            return True
+
+        def set_joint_state(self, ctx: object, robot_id: str, joint_state: JointState) -> None:
+            pass
+
+        def is_collision_free(self, ctx: object, robot_id: str) -> bool:
+            return True
+
+    ik = PinkIK(PinkIKConfig(max_iterations=100))
+    context = ik._build_robot_context(config, "tool")
+    target_positions = seed_positions.copy()
+    target_positions[3:] += np.array(
+        [0.05003819, 0.15888552, 0.11027428, -0.10991712, -0.07993349, 0.14942138, -0.19789388]
+    )
+    target_q = ik._q_from_dimos_positions(context, target_positions)
+    target_pose = matrix_to_pose(ik._current_frame_matrix(context, target_q))
+
+    result = ik.solve_pose_targets(
+        cast("Any", World()),
+        {group: PoseStamped(position=target_pose.position, orientation=target_pose.orientation)},
+        seed=seed,
+        check_collision=False,
+        max_attempts=1,
+    )
+
+    assert result.status == IKStatus.SUCCESS
+    assert result.joint_state is not None
+    assert result.joint_state.name == [f"chain/{name}" for name in arm_names]
+    assert result.position_error <= 0.001
+    assert result.orientation_error <= 0.01
 
 
 def test_solve_rejects_collision_candidate(mocker: MockerFixture) -> None:
