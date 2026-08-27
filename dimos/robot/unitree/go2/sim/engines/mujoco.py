@@ -32,12 +32,7 @@ import numpy as np
 # The plant arrives as a MODULE, not as unbound names: a test that zeroes
 # gravity patches `model.load`, and a name imported here would not see it.
 from dimos.robot.unitree.go2.sim.engines import model as go2_model
-from dimos.robot.unitree.go2.sim.engines.model import (
-    ANCHOR_BODY,
-    FOOT_RADIUS,
-    GHOST_BODY,
-    IMU_SITE,
-)
+from dimos.robot.unitree.go2.sim.engines.model import FOOT_RADIUS, IMU_SITE
 from dimos.robot.unitree.go2.sim.plant import TORQUE_LIMITS
 from dimos.robot.unitree.go2.sim.ranges import KNOBS, PHYSICS_KEYS, Knob
 from dimos.simulation.sysid.backend import (
@@ -49,6 +44,7 @@ from dimos.simulation.sysid.backend import (
     RolloutPlan,
     State,
 )
+from dimos.simulation.sysid.engines.model import ANCHOR_BODY, GHOST_BODY, mocap_index
 from dimos.simulation.sysid.plant import TorqueEnvelope, actuator_step
 from dimos.simulation.sysid.rotations import mat_to_quat, quat_to_mat
 
@@ -74,7 +70,7 @@ class MujocoSession:
         self._model = model
         self._data = data
         self._feet = go2_model.foot_geom_ids(model)
-        self._gi = go2_model.mocap_index(model, GHOST_BODY) if ghost else -1
+        self._gi = mocap_index(model, GHOST_BODY) if ghost else -1
         self._speed = view_speed
         self._wall: float | None = None
         self._viewer_cm = None
@@ -251,8 +247,8 @@ class MujocoBackend:
         dt = float(model.opt.timestep)
         feet = go2_model.foot_geom_ids(model)
         track = plan.base_track if pinned else None
-        ai = go2_model.mocap_index(model, ANCHOR_BODY) if pinned else -1
-        gi = go2_model.mocap_index(model, GHOST_BODY) if ghost is not None else -1
+        ai = mocap_index(model, ANCHOR_BODY) if pinned else -1
+        gi = mocap_index(model, GHOST_BODY) if ghost is not None else -1
         # Rigid map from the ghost's room frame into this rollout's world,
         # recomputed at every snap — the same convention the scorer uses:
         # open-loop drift is only defined relative to the pose a clip

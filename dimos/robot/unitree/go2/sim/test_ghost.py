@@ -30,7 +30,8 @@ pytestmark = [pytest.mark.go2sim]
 def test_the_ghost_geom_can_touch_nothing():
     import mujoco
 
-    from dimos.robot.unitree.go2.sim.engines.model import GHOST_BODY, load, mocap_index
+    from dimos.robot.unitree.go2.sim.engines.model import load
+    from dimos.simulation.sysid.engines.model import GHOST_BODY, mocap_index
 
     model, _data = load(ghost=True)
     gi = mocap_index(model, GHOST_BODY)
@@ -46,7 +47,8 @@ def test_stepping_with_and_without_the_ghost_is_bit_identical():
     """The viewer invariant, mechanically: what you watch is what is scored."""
     import mujoco
 
-    from dimos.robot.unitree.go2.sim.engines.model import GHOST_BODY, load, mocap_index
+    from dimos.robot.unitree.go2.sim.engines.model import load
+    from dimos.simulation.sysid.engines.model import GHOST_BODY, mocap_index
 
     def run(ghost: bool) -> np.ndarray:
         model, data = load(ghost=ghost)

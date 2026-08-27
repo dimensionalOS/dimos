@@ -30,7 +30,11 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-from dimos.robot.unitree.go2.sim.ranges import PHYSICS_KEYS
+from dimos.robot.unitree.go2.sim.plant import TORQUE_LIMITS
+from dimos.robot.unitree.go2.sim.ranges import KNOBS, PHYSICS_KEYS
+from dimos.simulation.sysid.engines.model import add_rig
+
+__all__ = ["KNOBS", "PHYSICS_KEYS", "TORQUE_LIMITS"]  # the Plant contract's tables
 
 # The base model this package's fitted knobs are DELTAS on: the menagerie Go2
 # at this exact commit, vendored byte-identical under `data/go2_menagerie`
@@ -54,22 +58,14 @@ IMU_SITE = "imu"
 FOOT_GEOMS = ("FL", "FR", "RL", "RR")
 FOOT_RADIUS = 0.022
 
+# The trunk: welded to the rope when suspended, the IMU's fallback frame.
+BASE_BODY = "base"
+
+# The ghost box: the URDF base collision box, centred on the base origin.
+GHOST_BOX = ((0.1881, 0.04675, 0.057), (0.0, 0.0, 0.0))
+
 # Leg dofs in qvel/dof indexing: 6 free-joint dofs, then the twelve joints.
 LEG_DOFS = slice(6, 18)
-
-# The rope, as MuJoCo can express it: a mocap body welded to the trunk, so the
-# trunk is held DURING mj_step and gravity loads the legs. (A post-step snap
-# lets the whole robot free-fall within the step and the legs end up in a
-# weightless plant — see BaseCondition.PINNED.) Stiff on purpose: with these
-# values the hold error is sub-micrometre / sub-microradian over seconds, so
-# the weld is a rigid grip on the measured pose, not a spring to identify.
-ANCHOR_BODY = "trunk_anchor"
-WELD_SOLREF = (0.004, 1.0)  # timeconst = 2 * the scene's 2 ms step, critical damping
-WELD_SOLIMP = (0.999, 0.9999, 0.001, 0.5, 2.0)
-
-# The recorded pose drawn beside the sim under --view. Visual only: its geom
-# collides with nothing, so the watched physics is the scored physics.
-GHOST_BODY = "ghost"
 
 
 def scene_path(menagerie: Path | None = None) -> Path:
@@ -120,36 +116,9 @@ def load(
         model = mujoco.MjModel.from_xml_path(str(scene_path(menagerie)))
         return model, mujoco.MjData(model)
     spec = mujoco.MjSpec.from_file(str(scene_path(menagerie)))
-    if pinned:
-        spec.worldbody.add_body(name=ANCHOR_BODY, mocap=True)
-        weld = spec.add_equality()
-        weld.type = mujoco.mjtEq.mjEQ_WELD  # type: ignore[attr-defined]  # absent from the bundled stubs
-        weld.objtype = mujoco.mjtObj.mjOBJ_BODY
-        weld.name1 = ANCHOR_BODY
-        weld.name2 = "base"
-        weld.data[:] = 0.0
-        weld.data[6] = 1.0  # relpose quat = identity: base coincides with the anchor
-        weld.data[10] = 1.0  # torquescale: the rope reacts torque, not just force
-        weld.solref = WELD_SOLREF
-        weld.solimp = WELD_SOLIMP
-    if ghost:
-        body = spec.worldbody.add_body(name=GHOST_BODY, mocap=True)
-        geom = body.add_geom()
-        geom.type = mujoco.mjtGeom.mjGEOM_BOX
-        geom.size = [0.1881, 0.04675, 0.057]  # the URDF base collision box
-        geom.rgba = [0.2, 1.0, 0.2, 0.35]
-        geom.contype = 0
-        geom.conaffinity = 0
+    add_rig(spec, pinned=pinned, ghost=ghost, base_body=BASE_BODY, ghost_box=GHOST_BOX)
     model = spec.compile()
     return model, mujoco.MjData(model)
-
-
-def mocap_index(model: mujoco.MjModel, name: str) -> int:
-    """The mocap slot of a named mocap body — never assume it is 0."""
-    bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
-    if bid < 0:
-        raise KeyError(f"no body named {name!r} in this model")
-    return int(model.body_mocapid[bid])
 
 
 def apply_physics(model: mujoco.MjModel, overrides: dict[str, float]) -> None:
@@ -172,18 +141,18 @@ def apply_physics(model: mujoco.MjModel, overrides: dict[str, float]) -> None:
     # opt.ls_iterations and opt.cone from it verbatim). Integer-valued and
     # rounded, so a preset JSON's 1.0 and an int 1 mean the same solver.
     if "solver_iterations" in overrides:
-        model.opt.iterations = int(round(overrides["solver_iterations"]))
+        model.opt.iterations = round(overrides["solver_iterations"])
     if "solver_ls_iterations" in overrides:
-        model.opt.ls_iterations = int(round(overrides["solver_ls_iterations"]))
+        model.opt.ls_iterations = round(overrides["solver_ls_iterations"])
     if "solver_cone" in overrides:
-        model.opt.cone = int(round(overrides["solver_cone"]))
+        model.opt.cone = round(overrides["solver_cone"])
     if "armature" in overrides:
         model.dof_armature[LEG_DOFS] = overrides["armature"]
     if "damping" in overrides:
         model.dof_damping[LEG_DOFS] = overrides["damping"]
     if "frictionloss" in overrides:
         model.dof_frictionloss[LEG_DOFS] = overrides["frictionloss"]
-    trunk = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base")
+    trunk = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, BASE_BODY)
     if "trunk_mass_scale" in overrides:
         model.body_mass[trunk] *= overrides["trunk_mass_scale"]
     if "trunk_inertia_scale" in overrides:
