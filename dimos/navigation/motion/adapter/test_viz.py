@@ -118,13 +118,13 @@ def test_the_box_sits_on_the_body_not_on_the_pose_point() -> None:
     assert abs(cy - (-0.10)) < 1e-6
 
 
-def test_the_plan_draws_its_line_and_its_body_off_the_one_path_topic() -> None:
+def test_the_plan_pins_its_frame_and_draws_its_body_off_the_one_path_topic() -> None:
     import rerun as rr
 
     drawn = render_plan(_plan())
     assert drawn is not None
     by_entity = {e: type(a) for e, a in drawn}
-    assert by_entity == {"world/path": rr.LineStrips3D, "world/path/body": rr.Boxes3D}
+    assert by_entity == {"world/path": rr.Transform3D, "world/path/body": rr.Boxes3D}
     assert drawn[0] == ("world/path", rr.Transform3D(parent_frame="tf#/odom"))
     # a refusal stub is drawn too, so it is not mistaken for a dead module
     veto = render_plan(Path(frame_id="odom", poses=[_pose(1.0, 2.0)]))
