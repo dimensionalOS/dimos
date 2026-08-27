@@ -37,10 +37,10 @@ def test_render_graph_resolves_blueprint_and_calls_existing_renderer(
     )
     render = mocker.patch.object(graph_command, "render_svg")
 
-    graph_command._render_graph("alpha", output)
+    graph_command._render_graph("alpha", output, include_rpc=False)
 
     resolve.assert_called_once_with("alpha")
-    render.assert_called_once_with(blueprint, str(output))
+    render.assert_called_once_with(blueprint, str(output), include_rpc=False)
 
 
 def test_graph_command_uses_default_svg_path(
@@ -55,8 +55,23 @@ def test_graph_command_uses_default_svg_path(
 
     expected = (tmp_path / "alpha.svg").resolve()
     assert result.exit_code == 0, result.output
-    render.assert_called_once_with("alpha", expected)
+    render.assert_called_once_with("alpha", expected, include_rpc=False)
     assert result.output == f"Blueprint graph written to {expected}\n"
+
+
+def test_graph_command_includes_rpc_when_requested(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    render = mocker.patch.object(graph_command, "_render_in_subprocess")
+
+    result = CliRunner().invoke(main, ["graph", "alpha", "--rpc"])
+
+    expected = (tmp_path / "alpha.svg").resolve()
+    assert result.exit_code == 0, result.output
+    render.assert_called_once_with("alpha", expected, include_rpc=True)
 
 
 def test_graph_command_creates_output_parent(
@@ -70,7 +85,7 @@ def test_graph_command_creates_output_parent(
 
     assert result.exit_code == 0, result.output
     assert output.parent.is_dir()
-    render.assert_called_once_with("alpha", output.resolve())
+    render.assert_called_once_with("alpha", output.resolve(), include_rpc=False)
 
 
 def test_graph_command_rejects_non_svg_output(
@@ -116,7 +131,7 @@ def test_graph_subprocess_uses_static_transport_environment(
     )
     output = tmp_path / "alpha.svg"
 
-    graph_command._render_in_subprocess("alpha", output)
+    graph_command._render_in_subprocess("alpha", output, include_rpc=False)
 
     run.assert_called_once()
     args, kwargs = run.call_args
@@ -131,3 +146,54 @@ def test_graph_subprocess_uses_static_transport_environment(
     assert kwargs["env"]["viewer"] == "none"
     assert kwargs["text"] is True
     assert kwargs["capture_output"] is True
+
+
+def test_graph_subprocess_forwards_rpc_flag(
+    tmp_path: Path,
+    mocker: MockerFixture,
+) -> None:
+    run = mocker.patch.object(
+        graph_command.subprocess,
+        "run",
+        return_value=subprocess.CompletedProcess(args=[], returncode=0),
+    )
+    output = tmp_path / "alpha.svg"
+
+    graph_command._render_in_subprocess("alpha", output, include_rpc=True)
+
+    args, _kwargs = run.call_args
+    assert args[0] == [
+        sys.executable,
+        "-m",
+        "dimos.cli.commands.graph",
+        "alpha",
+        str(output),
+        "--rpc",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("extra_args", "include_rpc"),
+    [
+        ([], False),
+        (["--rpc"], True),
+    ],
+)
+def test_graph_worker_forwards_rpc_choice_to_renderer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+    extra_args: list[str],
+    include_rpc: bool,
+) -> None:
+    output = tmp_path / "alpha.svg"
+    monkeypatch.setattr(
+        graph_command.sys,
+        "argv",
+        ["dimos.cli.commands.graph", "alpha", str(output), *extra_args],
+    )
+    render = mocker.patch.object(graph_command, "_render_graph")
+
+    graph_command._worker_main()
+
+    render.assert_called_once_with("alpha", output, include_rpc=include_rpc)

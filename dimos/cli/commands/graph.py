@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Render Blueprint stream and RPC relationships as a Graphviz SVG."""
+"""Render Blueprint relationships as a Graphviz SVG."""
 
 import os
 from pathlib import Path
@@ -29,20 +29,24 @@ class GraphRenderError(RuntimeError):
     """Raised when the isolated Graphviz renderer cannot produce the SVG."""
 
 
-def _render_graph(blueprint_name: str, output: Path) -> None:
+def _render_graph(blueprint_name: str, output: Path, *, include_rpc: bool) -> None:
     blueprint = get_all_blueprints.get_by_name(blueprint_name)
-    render_svg(blueprint, str(output))
+    render_svg(blueprint, str(output), include_rpc=include_rpc)
 
 
-def _render_in_subprocess(blueprint_name: str, output: Path) -> None:
+def _render_in_subprocess(blueprint_name: str, output: Path, *, include_rpc: bool) -> None:
     """Import and render a Blueprint without opening its runtime transports."""
     env = os.environ.copy()
     env["LCM_DEFAULT_URL"] = "memq://"
     env["viewer"] = "none"
     env.setdefault("PYTHONWARNINGS", "ignore")
 
+    command = [sys.executable, "-m", __name__, blueprint_name, str(output)]
+    if include_rpc:
+        command.append("--rpc")
+
     result = subprocess.run(
-        [sys.executable, "-m", __name__, blueprint_name, str(output)],
+        command,
         env=env,
         text=True,
         capture_output=True,
@@ -60,15 +64,20 @@ def graph(
         "-o",
         help="SVG output path. Defaults to <blueprint>.svg.",
     ),
+    rpc: bool = typer.Option(
+        False,
+        "--rpc",
+        help="Include RPC contracts and relationships.",
+    ),
 ) -> None:
-    """Render a Blueprint's stream and RPC relationships as a Graphviz SVG."""
+    """Render a Blueprint's relationships as a Graphviz SVG."""
     output_path = (output or Path(f"{blueprint}.svg")).expanduser().resolve()
     if output_path.suffix.lower() != ".svg":
         raise typer.BadParameter("output path must end in .svg", param_hint="--output")
 
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        _render_in_subprocess(blueprint, output_path)
+        _render_in_subprocess(blueprint, output_path, include_rpc=rpc)
     except (GraphRenderError, OSError) as exc:
         typer.echo(typer.style(str(exc), fg=typer.colors.RED), err=True)
         raise typer.Exit(1) from exc
@@ -77,11 +86,15 @@ def graph(
 
 
 def _worker_main() -> None:
-    if len(sys.argv) != 3:
-        raise SystemExit("usage: python -m dimos.cli.commands.graph BLUEPRINT OUTPUT.svg")
+    args = sys.argv[1:]
+    include_rpc = args[-1:] == ["--rpc"]
+    if include_rpc:
+        args.pop()
+    if len(args) != 2:
+        raise SystemExit("usage: python -m dimos.cli.commands.graph BLUEPRINT OUTPUT.svg [--rpc]")
 
     try:
-        _render_graph(sys.argv[1], Path(sys.argv[2]))
+        _render_graph(args[0], Path(args[1]), include_rpc=include_rpc)
     except Exception as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(1) from exc

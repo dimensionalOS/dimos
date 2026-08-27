@@ -120,6 +120,7 @@ def render(
     layout: set[LayoutAlgo] | None = None,
     ignored_streams: set[tuple[str, str]] | None = None,
     ignored_modules: set[str] | None = None,
+    include_rpc: bool = True,
 ) -> str:
     """Generate a stream and RPC relationship graph from a Blueprint.
 
@@ -132,6 +133,7 @@ def render(
         layout: Set of layout algorithms to apply. Default is none (let graphviz decide).
         ignored_streams: Set of (name, type_name) tuples to ignore.
         ignored_modules: Set of module names to ignore.
+        include_rpc: Whether to include RPC contracts and relationships.
 
     Returns:
         A DOT graph containing modules, stream channels, and RPC contracts.
@@ -143,7 +145,7 @@ def render(
     if ignored_modules is None:
         ignored_modules = DEFAULT_IGNORED_MODULES
 
-    rpc_connections = _resolve_rpc_connections(blueprint_set)
+    rpc_connections = _resolve_rpc_connections(blueprint_set) if include_rpc else []
 
     # Collect all outputs: (name, type) -> list of producer modules
     producers: dict[tuple[str, type], list[type[ModuleBase]]] = defaultdict(list)
@@ -322,6 +324,7 @@ def render_svg(
     output_path: str,
     *,
     layout: set[LayoutAlgo] | None = None,
+    include_rpc: bool = True,
 ) -> None:
     """Generate an SVG file from a Blueprint using graphviz.
 
@@ -329,13 +332,14 @@ def render_svg(
         blueprint_set: The blueprint set to visualize.
         output_path: Path to write the SVG file.
         layout: Set of layout algorithms to apply.
+        include_rpc: Whether to include RPC contracts and relationships.
     """
     import subprocess
 
     if layout is None:
         layout = set()
 
-    dot_code = render(blueprint_set, layout=layout)
+    dot_code = render(blueprint_set, layout=layout, include_rpc=include_rpc)
     engine = "fdp" if LayoutAlgo.FDP in layout else "dot"
     result = subprocess.run(
         [engine, "-Tsvg", "-o", output_path],
