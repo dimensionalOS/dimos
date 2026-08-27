@@ -14,7 +14,7 @@
 
 """Dimensional cloud auth: `dimos login` / `dimos logout` / `dimos whoami`.
 
-Device-code flow (RFC 8628 shaped) against login.dimensional.org — built for robots:
+Device-code flow (RFC 8628 shaped) against api.dimensional.org — built for robots:
 no browser or clipboard needed on this machine. The CLI prints an 8-character code,
 you approve it from any signed-in browser (laptop, phone), and the minted API key is
 stored in the system keyring, falling back to a plain-text 0600 file
@@ -126,9 +126,9 @@ def login() -> None:
 
 
 def logout() -> None:
-    """Forget the stored key. Revoke it fully at login.dimensional.org/keys."""
+    """Forget the stored key. Revoke it fully at console.dimensional.org/keys."""
     if _forget():
-        typer.echo(f"Logged out. Revoke the key at {_base()}/keys.")
+        typer.echo("Logged out. Revoke the key at https://console.dimensional.org/keys.")
     else:
         typer.echo("Not logged in.")
 
