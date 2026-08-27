@@ -78,7 +78,7 @@ unitree_go2_mls_htc = autoconnect(
         emit_every=1,
     ),
     MLSPlannerNative.blueprint(
-        output_frame="world",
+        world_frame="world",
         voxel_size=voxel_size,
         robot_height=go2_lidar_height,
         start_z_offset_m=go2_lidar_height,

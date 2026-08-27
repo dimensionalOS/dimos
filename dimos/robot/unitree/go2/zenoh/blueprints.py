@@ -165,6 +165,7 @@ go2_zenoh_basic = autoconnect(
 # global_map is remapped off so the planner runs purely on the
 # incremental local_map + region_bounds pair.
 mls_planner_config = MLSPlannerNativeConfig(
+    world_frame="odom",
     voxel_size=voxel_size,
     robot_height=ROBOT_HEIGHT,
     start_z_offset_m=BASE_LINK_HEIGHT,
