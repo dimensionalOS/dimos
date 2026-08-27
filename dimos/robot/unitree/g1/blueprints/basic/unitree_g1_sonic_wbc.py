@@ -38,6 +38,7 @@ from typing import Any, cast
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import g1_joints
+from dimos.control.tasks.g1_sonic_wbc_task.g1_sonic_teleop_task import G1SonicTeleopTask
 from dimos.control.tasks.g1_sonic_wbc_task.sonic_pipeline import (
     DEFAULT_ANGLES_DDS,
     SONIC_KD,
@@ -54,14 +55,10 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.msgs.visualization_msgs.SonicPoseReference import SonicPoseReference
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.unitree.g1.config import G1
-from dimos.robot.unitree.g1.g1_rerun import (
-    G1_RERUN_ROOT,
-    g1_urdf_joint_state,
-    g1_urdf_static_robot,
-)
 from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
 from dimos.teleop.webxr.controller_types import Buttons
 from dimos.utils.data import LfsPath
@@ -229,8 +226,15 @@ else:
 
 class _G1SonicCoordinator(ControlCoordinator):
     g1_joints: Out[JointState]
+    sonic_pose_reference: Out[SonicPoseReference]
     body_tracking: In[BodyTrackingSnapshot]
     teleop_buttons: In[Buttons]
+
+    def _setup_from_config(self) -> None:
+        super()._setup_from_config()
+        for task in self._tasks.values():
+            if isinstance(task, G1SonicTeleopTask):
+                task.set_pose_reference_publisher(self.sonic_pose_reference.publish)
 
 
 def _g1_sonic_coordinator(
@@ -310,9 +314,6 @@ def _g1_sonic_control_blueprint(
     )
 
 
-_G1_JOINTS_ENTITY = "world/g1_joints"
-
-
 def _g1_sonic_rerun_blueprint() -> Any:
     import rerun as rr
     import rerun.blueprint as rrb
@@ -332,26 +333,23 @@ def _g1_sonic_rerun_blueprint() -> Any:
 
 _rerun_config: dict[str, Any] = {
     "blueprint": _g1_sonic_rerun_blueprint,
-    "visual_override": {
-        "world/color_image": None,
-        "world/camera_info": None,
-        "world/depth_image": None,
-        "world/depth_camera_info": None,
-        _G1_JOINTS_ENTITY: g1_urdf_joint_state(root_path=G1_RERUN_ROOT),
-    },
-    "max_hz": {
-        _G1_JOINTS_ENTITY: 25.0,
-        "world/g1/imu": 10.0,
-        "world/odometry": 15.0,
-    },
-    "static": {G1_RERUN_ROOT: g1_urdf_static_robot(root_path=G1_RERUN_ROOT)},
+    "topics": {"sonic_pose_reference": SonicPoseReference.msg_name},
+    "latest_only": True,
+    "newest_first": True,
+    "memory_limit": "32MB",
+    "max_hz": {"world/sonic_pose_reference": 30.0},
 }
 
 
 def _g1_sonic_visualization() -> Any:
+    rerun_config = dict(_rerun_config)
+    if global_config.transport == "zenoh":
+        # Callable blueprint factories do not survive the Zenoh deploy path.
+        # The live topic config is plain data and works on both transports.
+        rerun_config.pop("blueprint")
     return vis_module(
         viewer_backend=global_config.viewer,
-        rerun_config=None if global_config.transport == "zenoh" else _rerun_config,
+        rerun_config=rerun_config,
     )
 
 
@@ -363,8 +361,6 @@ unitree_g1_sonic_wbc = (
             zmq_enabled=True,
         ),
         _nav_stack,
-        # rerun_config with callable factories does not survive the zenoh
-        # deploy path (msgpack turns them into dicts); pass it only under LCM.
         _g1_sonic_visualization(),
     )
     .remappings(cast("Any", _nav_remap))

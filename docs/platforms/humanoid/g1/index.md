@@ -149,17 +149,83 @@ physical stop, one wearing the PICO, and one at the DimOS terminal. Do not run
 the native `g1_deploy_onnx_ref` process at the same time, and do not attempt
 untethered walking during the first session.
 
-The startup sequence is:
+Follow NVIDIA's [whole-body teleoperation safety
+guide](https://nvlabs.github.io/GR00T-WholeBodyControl/user_guide/teleoperation.html)
+and [PICO workflow](https://nvlabs.github.io/GR00T-WholeBodyControl/tutorials/vr_wholebody_teleop.html).
+Full-body tracking includes the operator's feet, so an occluded or incorrectly
+tracked leg can command an unsafe whole-body reference. Wear close-fitting
+pants, keep at least 3 m of clear space around the robot, and do not proceed if
+tracking latency is above 30 ms or any body joint is unstable.
+
+DimOS keeps the robot-policy and headset lifecycles separate:
 
 ```text
-UNARMED/current hold -> arm/default-pose ramp -> CONTROL/dry-run
-                       -> enable/live policy -> hold X+A/WebXR reference
+Robot policy (terminal)                 WebXR reference (PICO)
+
+UNARMED/current hold
+        |
+        | dimos hardware g1 arm
+        v
+CONTROL/dry-run, SONIC planner
+        |
+        | dimos hardware g1 enable
+        v
+CONTROL/live, SONIC planner  <--------- OFF
+        |                                |
+        |                       A+B+X+Y  | start session
+        |                                v
+        +--------------------------- PLANNER
+                                         |
+                                align operator with robot
+                                         |
+                                      A+X| toggle
+                                         v
+                                       POSE
 ```
 
 Run `status`, `arm`, `status`, `enable`, and `status` as separate commands so
-the team can inspect the robot between transitions. X+A only gates the WebXR
-reference and is not an emergency stop. Finish with `dimos hardware g1
-disable`, followed by `dimos stop`.
+the team can inspect the robot between transitions. Before starting the
+headset session, stand upright with feet together, look forward, keep the upper
+arms down, bend the forearms 90 degrees forward, and point the palms inward.
+
+The controller sequence matches NVIDIA's official full-body process:
+
+1. With SONIC balancing in planner mode, press **A+B+X+Y** once. DimOS enters
+   WebXR `PLANNER` and builds a fresh two-frame pose window without moving the
+   robot from its planner reference.
+2. Physically align the operator's body and heading with the standing robot.
+3. Press **A+X** once to enter `POSE`. Do not press it from a mismatched pose;
+   the policy will immediately track the new whole-body reference.
+4. Press **A+X** again to return to the balancing planner.
+5. Press **A+B+X+Y** from either active mode to turn WebXR teleoperation off.
+
+The four-button headset stop only removes the WebXR reference. It deliberately
+does not disable the balancing policy and is not an emergency stop. Use the
+Unitree physical stop for emergencies. Finish routine operation with `dimos
+hardware g1 disable`, followed by `dimos stop`.
+
+### Inspecting the SONIC pose reference
+
+Launch the Rerun viewer when testing teleoperation:
+
+```bash
+uv run dimos --simulation mujoco --viewer rerun --rerun-open web run unitree-g1-sonic-webxr-teleop
+```
+
+The browser opens the direct Rerun Web viewer at `http://localhost:9878`.
+This blueprint sends only the `world/sonic_reference` layer to Rerun; it does
+not stream the G1 model, sensors, or other DimOS topics. The bridge retains only
+the newest pending reference, displays it at up to 30 Hz, and prioritizes live
+data when a browser connects or falls behind. The newest accepted skeleton is
+bright cyan, the preceding frame is a faint trail, and RGB axes show the
+separately sent root and wrist orientations. The layer is cleared when
+teleoperation leaves `POSE`, so a visible skeleton is never stale data from
+`PLANNER` or `OFF` mode.
+
+For the first hardware run, exercise this complete button sequence in
+`CONTROL/dry-run` and inspect `dimos hardware g1 status` before enabling live
+commands. Tracking loss returns POSE to PLANNER; a WebXR reference-space change
+turns the teleop session off and requires the four-button start sequence again.
 
 ## 5. Legacy navigation viewer example
 

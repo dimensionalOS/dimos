@@ -42,8 +42,10 @@ from toolz import pipe  # type: ignore[import-untyped]
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.transport_factory import transport_topic
+from dimos.msgs.helpers import resolve_msg_type
 from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
 from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
@@ -85,6 +87,135 @@ logger = setup_logger()
 
 RerunMulti: TypeAlias = "list[tuple[str, Archetype]]"
 RerunData: TypeAlias = "Archetype | RerunMulti"
+
+
+class _LatestOnlyDispatcher:
+    """Drain at most the newest pending message for each topic."""
+
+    def __init__(
+        self,
+        callback: Callable[[Any, Any], None],
+        min_interval: Callable[[Any], float] | None = None,
+    ) -> None:
+        self._callback = callback
+        self._min_interval = min_interval or (lambda topic: 0.0)
+        self._latest: dict[str, tuple[Any, Any]] = {}
+        self._last_dispatch: dict[str, float] = {}
+        self._lock = threading.Lock()
+        self._wake = threading.Event()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=self._drain,
+            name="rerun-latest-only",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def submit(self, msg: Any, topic: Any) -> None:
+        with self._lock:
+            self._latest[str(topic)] = (msg, topic)
+        self._wake.set()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._wake.set()
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout=2.0)
+        self._thread = None
+        with self._lock:
+            self._latest.clear()
+            self._last_dispatch.clear()
+
+    def _drain(self) -> None:
+        while True:
+            if self._stop.is_set():
+                return
+            with self._lock:
+                now = time.monotonic()
+                ready_keys = [
+                    key
+                    for key, (_, topic) in self._latest.items()
+                    if now - self._last_dispatch.get(key, 0.0) >= self._min_interval(topic)
+                ]
+                batch = [(key, self._latest.pop(key)) for key in ready_keys]
+                due_times = [
+                    self._last_dispatch.get(key, 0.0) + self._min_interval(topic)
+                    for key, (_, topic) in self._latest.items()
+                ]
+
+            if batch:
+                for key, (msg, topic) in batch:
+                    self._last_dispatch[key] = time.monotonic()
+                    try:
+                        self._callback(msg, topic)
+                    except Exception:
+                        logger.error("Error in latest-only Rerun callback", exc_info=True)
+                continue
+
+            timeout = None
+            if due_times:
+                timeout = max(0.0, min(due_times) - time.monotonic())
+            self._wake.wait(timeout)
+            self._wake.clear()
+            if self._stop.is_set():
+                return
+
+
+def _pubsub_topic(
+    pubsub: Any,
+    name: str,
+    msg_name: str,
+    *,
+    latest_only: bool,
+) -> Topic:
+    msg_type = resolve_msg_type(msg_name)
+    if msg_type is None:
+        raise ValueError(f"Unknown Rerun topic message type {msg_name!r} for {name!r}")
+
+    pubsub_config = getattr(pubsub, "config", None)
+    if pubsub_config is None:
+        raise TypeError(f"Rerun pubsub for {name!r} has no transport config")
+    backend = getattr(pubsub_config, "transport", None)
+    topic_name = transport_topic(name, pubsub_config)
+    queue_capacity = 1 if latest_only else 10000
+    if backend == "zenoh":
+        from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
+
+        return ZenohTopic(
+            topic=topic_name,
+            lcm_type=msg_type,
+            queue_capacity=queue_capacity,
+        )
+    return Topic(
+        topic=topic_name,
+        lcm_type=msg_type,
+        queue_capacity=queue_capacity,
+    )
+
+
+def _subscribe_topics(
+    pubsub: Any,
+    topics: dict[str, str] | None,
+    callback: Callable[[Any, Any], None],
+    *,
+    latest_only: bool,
+) -> list[Callable[[], None]]:
+    if topics is None:
+        return [pubsub.subscribe_all(callback)]
+    return [
+        pubsub.subscribe(
+            _pubsub_topic(pubsub, name, msg_name, latest_only=latest_only),
+            callback,
+        )
+        for name, msg_name in topics.items()
+    ]
 
 if TYPE_CHECKING:
     BlueprintFactory: TypeAlias = Callable[[], "Blueprint"]
@@ -191,6 +322,11 @@ def _resolve_pubsubs(config: Any) -> list[SubscribeAllCapable[Any, Any]]:
 class Config(ModuleConfig):
     """Configuration for RerunBridgeModule.
 
+    ``topics`` maps logical channel names to DimOS message type names. When it
+    is set, the bridge subscribes only to those typed channels; ``None`` keeps
+    the general-purpose all-topic bridge behavior. ``latest_only`` bounds each
+    configured channel to its newest pending message before Rerun conversion.
+
     The pubsubs field is accepted for backwards compatibility. The legacy
     ``[LCM()]`` value is treated as the old default and replaced by the
     transport-driven runtime default. Explicit non-default overrides are still
@@ -198,6 +334,8 @@ class Config(ModuleConfig):
     """
 
     pubsubs: list[SubscribeAllCapable[Any, Any]] = field(default_factory=lambda: [LCM()])
+    topics: dict[str, str] | None = None
+    latest_only: bool = False
 
     visual_override: dict[Glob | str, VisualOverride | None] = field(default_factory=dict)
     static: dict[str, Callable[[Any], Any]] = field(default_factory=dict)
@@ -209,6 +347,7 @@ class Config(ModuleConfig):
     topic_to_entity: Callable[[Any], str] | None = None
     connect_url: str | None = None
     memory_limit: str = "25%"
+    newest_first: bool = False
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
     rerun_web: bool = RERUN_ENABLE_WEB
     web_port: int = RERUN_WEB_VIEWER_PORT
@@ -322,14 +461,14 @@ class RerunBridgeModule(Module):
             topic_str = "/" + topic_str.removeprefix("dimos/")
         return f"{self.config.entity_prefix}{topic_str}"
 
-    def _on_message(self, msg: Any, topic: Any) -> None:
+    def _on_message(self, msg: Any, topic: Any, *, throttle: bool = True) -> None:
         """Handle incoming message - log to rerun."""
         import rerun as rr
 
         entity_path: str = self._get_entity_path(topic)
 
         # Throttle entities with a max_hz limit
-        if entity_path in self._min_intervals:
+        if throttle and entity_path in self._min_intervals:
             now = time.monotonic()
             if now - self._last_log.get(entity_path, 0.0) < self._min_intervals[entity_path]:
                 return
@@ -384,6 +523,7 @@ class RerunBridgeModule(Module):
             grpc_config={
                 "connect_url": connect_url,
                 "server_memory_limit": self.config.memory_limit,
+                "newest_first": self.config.newest_first,
             },
         )
         assert server_uri is not None  # start_grpc=True guarantees a URI
@@ -455,18 +595,41 @@ class RerunBridgeModule(Module):
         # updated config, passed via the worker kwargs.
         pubsubs = _resolve_pubsubs(self.config)
 
-        # Start pubsubs and subscribe to all messages
+        dispatcher: _LatestOnlyDispatcher | None = None
+        callback: Callable[[Any, Any], None] = self._on_message
+        if self.config.latest_only:
+            def log_latest(msg: Any, topic: Any) -> None:
+                self._on_message(msg, topic, throttle=False)
+
+            dispatcher = _LatestOnlyDispatcher(
+                log_latest,
+                min_interval=lambda topic: self._min_intervals.get(
+                    self._get_entity_path(topic), 0.0
+                ),
+            )
+            dispatcher.start()
+            callback = dispatcher.submit
+
+        # Start pubsubs and subscribe to either configured topics or all messages.
         for pubsub in pubsubs:
             logger.info(f"bridge listening on {pubsub.__class__.__name__}")
             if hasattr(pubsub, "start"):
                 pubsub.start()
-            unsub = pubsub.subscribe_all(self._on_message)
-            self.register_disposable(Disposable(unsub))
+            for unsubscribe in _subscribe_topics(
+                pubsub,
+                self.config.topics,
+                callback,
+                latest_only=self.config.latest_only,
+            ):
+                self.register_disposable(Disposable(unsubscribe))
 
         # Add pubsub stop as disposable
         for pubsub in pubsubs:
             if hasattr(pubsub, "stop"):
                 self.register_disposable(Disposable(pubsub.stop))  # type: ignore[union-attr]
+
+        if dispatcher is not None:
+            self.register_disposable(Disposable(dispatcher.stop))
 
         self._log_static()
 

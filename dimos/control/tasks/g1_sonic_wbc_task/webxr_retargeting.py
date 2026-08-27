@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Deterministic WebXR body-skeleton conversion for SONIC SMPL mode."""
+"""Tracked WebXR body-skeleton conversion for SONIC SMPL mode."""
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
-from typing import Any, Final
+from typing import Any, Final, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -28,10 +29,10 @@ from dimos.control.tasks.g1_sonic_wbc_task.sonic_pipeline import (
     NUM_JOINTS,
     WRIST_ONNX_INDICES,
 )
+from dimos.msgs.visualization_msgs.SonicPoseReference import SMPL_PARENTS
 from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
 
-# Standard SMPL 24-joint order. The PICO body role order follows the same
-# skeleton; the WebXR names are the device-neutral boundary exposed by DimOS.
+# Standard SMPL body order plus the terminal hand points used by SONIC.
 SMPL_WEBXR_JOINTS: Final[tuple[str, ...]] = (
     "hips",
     "left-upper-leg",
@@ -59,64 +60,12 @@ SMPL_WEBXR_JOINTS: Final[tuple[str, ...]] = (
     "right-hand-palm",
 )
 
-SMPL_PARENTS: Final[tuple[int, ...]] = (
-    -1,
-    0,
-    0,
-    0,
-    1,
-    2,
-    3,
-    4,
-    5,
-    6,
-    7,
-    8,
-    9,
-    9,
-    9,
-    12,
-    13,
-    14,
-    16,
-    17,
-    18,
-    19,
-    20,
-    21,
-)
-
-# Per-role rotation from the WebXR joint frame to the corresponding SMPL
-# joint frame, aligned with SMPL_WEBXR_JOINTS. PICO's standardized body roles
-# currently expose the same rest axes, so every correction is identity. Keep
-# the table explicit: a headset/runtime-specific axis change belongs here,
-# rather than in the live retargeting logic.
+# PICO's standardized WebXR roles currently expose the same rest axes as the
+# corresponding SMPL roles. Keep this explicit so a runtime-specific axis
+# correction cannot accidentally leak into the live conversion code.
 SMPL_REST_BASIS_XYZW: Final[tuple[tuple[float, float, float, float], ...]] = (
-    (0.0, 0.0, 0.0, 1.0),  # hips
-    (0.0, 0.0, 0.0, 1.0),  # left-upper-leg
-    (0.0, 0.0, 0.0, 1.0),  # right-upper-leg
-    (0.0, 0.0, 0.0, 1.0),  # spine-lower
-    (0.0, 0.0, 0.0, 1.0),  # left-lower-leg
-    (0.0, 0.0, 0.0, 1.0),  # right-lower-leg
-    (0.0, 0.0, 0.0, 1.0),  # spine-middle
-    (0.0, 0.0, 0.0, 1.0),  # left-foot-ankle
-    (0.0, 0.0, 0.0, 1.0),  # right-foot-ankle
-    (0.0, 0.0, 0.0, 1.0),  # spine-upper
-    (0.0, 0.0, 0.0, 1.0),  # left-foot-ball
-    (0.0, 0.0, 0.0, 1.0),  # right-foot-ball
-    (0.0, 0.0, 0.0, 1.0),  # neck
-    (0.0, 0.0, 0.0, 1.0),  # left-shoulder
-    (0.0, 0.0, 0.0, 1.0),  # right-shoulder
-    (0.0, 0.0, 0.0, 1.0),  # head
-    (0.0, 0.0, 0.0, 1.0),  # left-arm-upper
-    (0.0, 0.0, 0.0, 1.0),  # right-arm-upper
-    (0.0, 0.0, 0.0, 1.0),  # left-arm-lower
-    (0.0, 0.0, 0.0, 1.0),  # right-arm-lower
-    (0.0, 0.0, 0.0, 1.0),  # left-hand-wrist
-    (0.0, 0.0, 0.0, 1.0),  # right-hand-wrist
-    (0.0, 0.0, 0.0, 1.0),  # left-hand-palm
-    (0.0, 0.0, 0.0, 1.0),  # right-hand-palm
-)
+    (0.0, 0.0, 0.0, 1.0),
+) * 24
 
 # WebXR: +X right, +Y up, -Z forward. SONIC: +X forward, +Y left, +Z up.
 WEBXR_TO_SONIC: Final[NDArray[np.float64]] = np.array(
@@ -125,21 +74,36 @@ WEBXR_TO_SONIC: Final[NDArray[np.float64]] = np.array(
 )
 
 _WRIST_LIMITS: Final[NDArray[np.float64]] = np.array([1.972, 1.615, 1.615], dtype=np.float64)
+POSE_TARGET_FPS: Final[float] = 50.0
+POSE_WINDOW_FRAMES: Final[int] = 2
+POSE_MAX_GAP_SECONDS: Final[float] = 0.15
 
 
 class IncompleteBodyPoseError(ValueError):
     """A WebXR snapshot cannot produce a complete SONIC reference."""
 
 
+class PoseStreamError(ValueError):
+    """Tracked pose timing cannot extend the current SONIC stream."""
+
+
 @dataclass(frozen=True)
 class RetargetedSonicFrame:
-    """One packed-message-equivalent SONIC protocol-v3 frame."""
+    """One or more packed-message-equivalent SONIC protocol-v3 frames."""
 
     fields: dict[str, NDArray[Any]]
 
 
+def _direct_wrist_targets(body_pose: NDArray[np.float64]) -> NDArray[np.float32]:
+    left_wrist_euler = Rotation.from_rotvec(body_pose[19]).as_euler("XYZ")
+    right_wrist_euler = Rotation.from_rotvec(body_pose[20]).as_euler("XYZ")
+    left = np.clip(left_wrist_euler, -_WRIST_LIMITS, _WRIST_LIMITS)
+    right = np.clip(right_wrist_euler, -_WRIST_LIMITS, _WRIST_LIMITS)
+    return np.asarray([left[0], right[0], left[1], right[1], left[2], right[2]], dtype=np.float32)
+
+
 class WebXRSonicRetargeter:
-    """Convert complete WebXR snapshots into root-local SONIC SMPL frames."""
+    """Convert complete WebXR snapshots into tracked root-local SMPL frames."""
 
     def __init__(self) -> None:
         self._previous_joint_pos: NDArray[np.float32] | None = None
@@ -181,8 +145,7 @@ class WebXRSonicRetargeter:
             norm = float(np.linalg.norm(quaternion))
             if not np.isfinite(position).all() or not np.isfinite(quaternion).all() or norm < 1e-8:
                 raise IncompleteBodyPoseError(f"invalid WebXR body pose for {name!r}")
-            quaternion /= norm
-            webxr_rotation = Rotation.from_quat(quaternion)
+            webxr_rotation = Rotation.from_quat(quaternion / norm)
             sonic_matrix = (
                 WEBXR_TO_SONIC
                 @ webxr_rotation.as_matrix()
@@ -199,31 +162,14 @@ class WebXRSonicRetargeter:
         heading_inverse = Rotation.from_euler("z", -heading)
         root_local_positions = heading_inverse.apply(positions - root_position)
 
-        # SONIC's native message carries 21 SMPL body rotations: all joints
-        # after the root through the wrists, excluding the two terminal hands.
         body_pose = np.empty((21, 3), dtype=np.float64)
-        local_rotations: list[Rotation] = [Rotation.identity()]
         for index in range(1, 24):
-            parent_rotation = world_rotations[SMPL_PARENTS[index]]
-            local_rotation = parent_rotation.inv() * world_rotations[index]
-            local_rotations.append(local_rotation)
+            local_rotation = world_rotations[SMPL_PARENTS[index]].inv() * world_rotations[index]
             if index <= 21:
                 body_pose[index - 1] = local_rotation.as_rotvec()
 
-        left_wrist = np.clip(local_rotations[20].as_euler("XYZ"), -_WRIST_LIMITS, _WRIST_LIMITS)
-        right_wrist = np.clip(local_rotations[21].as_euler("XYZ"), -_WRIST_LIMITS, _WRIST_LIMITS)
         joint_pos = DEFAULT_ANGLES_ONNX.astype(np.float32, copy=True)
-        joint_pos[WRIST_ONNX_INDICES] = np.asarray(
-            [
-                left_wrist[0],
-                right_wrist[0],
-                left_wrist[1],
-                right_wrist[1],
-                left_wrist[2],
-                right_wrist[2],
-            ],
-            dtype=np.float32,
-        )
+        joint_pos[WRIST_ONNX_INDICES] = _direct_wrist_targets(body_pose)
         joint_vel = np.zeros(NUM_JOINTS, dtype=np.float32)
         if self._previous_joint_pos is not None and self._previous_time is not None:
             dt = t_now - self._previous_time
@@ -244,3 +190,133 @@ class WebXRSonicRetargeter:
             "smpl_pose": body_pose.astype(np.float32).reshape(1, 21, 3),
         }
         return RetargetedSonicFrame(fields=fields)
+
+
+def _interpolate_rotvecs(
+    left: NDArray[np.float32], right: NDArray[np.float32], alpha: float
+) -> NDArray[np.float32]:
+    left_rotation = Rotation.from_rotvec(left.reshape(-1, 3))
+    right_rotation = Rotation.from_rotvec(right.reshape(-1, 3))
+    delta = left_rotation.inv() * right_rotation
+    result = left_rotation * Rotation.from_rotvec(delta.as_rotvec() * alpha)
+    return cast("NDArray[np.float32]", result.as_rotvec().astype(np.float32).reshape(left.shape))
+
+
+def _interpolate_quaternion_wxyz(
+    left: NDArray[np.float32], right: NDArray[np.float32], alpha: float
+) -> NDArray[np.float32]:
+    right_value = right.copy()
+    if float(np.dot(left, right_value)) < 0.0:
+        right_value *= -1.0
+    result = (1.0 - alpha) * left + alpha * right_value
+    norm = float(np.linalg.norm(result))
+    if norm < 1e-8:
+        raise PoseStreamError("interpolated root quaternion is invalid")
+    return (result / norm).astype(np.float32)
+
+
+class WebXRSonicPoseStream:
+    """Resample WebXR poses to a low-latency rolling two-frame, 50 Hz stream."""
+
+    def __init__(self) -> None:
+        self._retargeter = WebXRSonicRetargeter()
+        self._frames: deque[dict[str, NDArray[Any]]] = deque(maxlen=POSE_WINDOW_FRAMES)
+        self._previous_time: float | None = None
+        self._previous_fields: dict[str, NDArray[Any]] | None = None
+        self._next_target_time: float | None = None
+        self._next_frame_index = 0
+        self._generation = 0
+
+    @property
+    def buffered_frames(self) -> int:
+        return len(self._frames)
+
+    @property
+    def ready(self) -> bool:
+        return len(self._frames) == POSE_WINDOW_FRAMES
+
+    @property
+    def generation(self) -> int:
+        return self._generation
+
+    def reset(self) -> None:
+        self._retargeter.reset()
+        self._frames.clear()
+        self._previous_time = None
+        self._previous_fields = None
+        self._next_target_time = None
+        self._next_frame_index = 0
+        self._generation = 0
+
+    def push(self, snapshot: BodyTrackingSnapshot, *, t_now: float) -> int:
+        current = self._retargeter.retarget(snapshot, frame_index=0, t_now=t_now).fields
+        capture_time = float(snapshot.capture_time_s)
+        if not np.isfinite(capture_time):
+            raise PoseStreamError("body capture time is invalid")
+
+        if self._previous_time is None or self._previous_fields is None:
+            self._prime(capture_time, current)
+            return 0
+
+        delta = capture_time - self._previous_time
+        if delta <= 0.0:
+            self.reset()
+            self._prime(capture_time, current)
+            raise PoseStreamError("body capture time did not increase")
+        if delta > POSE_MAX_GAP_SECONDS:
+            self.reset()
+            self._prime(capture_time, current)
+            raise PoseStreamError("body capture time gap exceeded 150 ms")
+
+        assert self._next_target_time is not None
+        emitted = 0
+        step = 1.0 / POSE_TARGET_FPS
+        while self._next_target_time <= capture_time + 1e-9:
+            alpha = (self._next_target_time - self._previous_time) / delta
+            alpha = min(1.0, max(0.0, alpha))
+            self._frames.append(self._interpolate(self._previous_fields, current, alpha))
+            self._next_frame_index += 1
+            self._next_target_time += step
+            self._generation += 1
+            emitted += 1
+
+        self._previous_time = capture_time
+        self._previous_fields = current
+        return emitted
+
+    def fields(self) -> dict[str, NDArray[Any]]:
+        if not self.ready:
+            raise PoseStreamError(
+                f"pose stream needs {POSE_WINDOW_FRAMES} frames, has {len(self._frames)}"
+            )
+        keys = self._frames[0].keys()
+        return {key: np.concatenate([frame[key] for frame in self._frames], axis=0) for key in keys}
+
+    def _prime(self, capture_time: float, fields: dict[str, NDArray[Any]]) -> None:
+        self._previous_time = capture_time
+        self._previous_fields = fields
+        self._next_target_time = capture_time
+
+    def _interpolate(
+        self,
+        left: dict[str, NDArray[Any]],
+        right: dict[str, NDArray[Any]],
+        alpha: float,
+    ) -> dict[str, NDArray[Any]]:
+        pose = _interpolate_rotvecs(left["smpl_pose"], right["smpl_pose"], alpha)
+        joint_pos = DEFAULT_ANGLES_ONNX.astype(np.float32, copy=True).reshape(1, NUM_JOINTS)
+        joint_pos[0, WRIST_ONNX_INDICES] = _direct_wrist_targets(pose[0])
+        return {
+            "frame_index": np.array([self._next_frame_index], dtype=np.int64),
+            "joint_pos": joint_pos,
+            "joint_vel": ((1.0 - alpha) * left["joint_vel"] + alpha * right["joint_vel"]).astype(
+                np.float32
+            ),
+            "body_quat_w": _interpolate_quaternion_wxyz(
+                left["body_quat_w"][0], right["body_quat_w"][0], alpha
+            ).reshape(1, 4),
+            "smpl_joints": (
+                (1.0 - alpha) * left["smpl_joints"] + alpha * right["smpl_joints"]
+            ).astype(np.float32),
+            "smpl_pose": pose,
+        }

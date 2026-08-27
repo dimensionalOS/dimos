@@ -25,6 +25,7 @@ from dimos.control.tasks.g1_sonic_wbc_task.g1_sonic_wbc_task import (
     G1SonicWBCTaskConfig,
     SonicControlState,
 )
+from dimos.control.tasks.g1_sonic_wbc_task.sonic_pipeline import WRIST_ONNX_INDICES
 from dimos.control.tasks.g1_sonic_wbc_task.webxr_retargeting import SMPL_WEBXR_JOINTS
 from dimos.hardware.whole_body.spec import IMUState
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -37,6 +38,7 @@ _JOINT_NAMES = [f"joint_{index}" for index in range(29)]
 
 def _body_snapshot(
     *,
+    capture_time_s: float = 1.0,
     frame_id: str = "local-floor",
     omitted: frozenset[str] = frozenset(),
     available: bool = True,
@@ -53,16 +55,18 @@ def _body_snapshot(
         }
     return BodyTrackingSnapshot(
         type="body_tracking_snapshot",
-        capture_time_s=1.0,
+        capture_time_s=capture_time_s,
         frame_id=frame_id,
         joints=joints,
     )
 
 
-def _deadman(held: bool) -> Buttons:
+def _buttons(*, a: bool = False, b: bool = False, x: bool = False, y: bool = False) -> Buttons:
     buttons = Buttons()
-    buttons.left_primary = held
-    buttons.right_primary = held
+    buttons.right_primary = a
+    buttons.right_secondary = b
+    buttons.left_primary = x
+    buttons.left_secondary = y
     return buttons
 
 
@@ -74,13 +78,29 @@ def _state(t_now: float, dt: float = 0.02) -> CoordinatorState:
     return CoordinatorState(joints=joints, imu={"g1": IMUState()}, t_now=t_now, dt=dt)
 
 
+def _start_session(task: G1SonicTeleopTask) -> None:
+    task.on_body_tracking(_body_snapshot(), t_now=1.0)
+    task.on_teleop_buttons(_buttons(a=True, b=True, x=True, y=True), t_now=1.0)
+    task.on_teleop_buttons(_buttons(), t_now=1.001)
+
+
+def _fill_pose_buffer(task: G1SonicTeleopTask) -> None:
+    task.on_body_tracking(_body_snapshot(capture_time_s=1.02), t_now=1.02)
+
+
+def _enter_pose(task: G1SonicTeleopTask) -> None:
+    _start_session(task)
+    _fill_pose_buffer(task)
+    task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.09)
+
+
 @pytest.fixture
 def task_and_pipeline(mocker: Any) -> Iterator[tuple[G1SonicTeleopTask, Any]]:
     pipeline_class = mocker.patch(
         "dimos.control.tasks.g1_sonic_wbc_task.g1_sonic_wbc_task.SonicPipeline"
     )
     pipeline = pipeline_class.return_value
-    pipeline.apply_pose_message.return_value = {"frames": 1, "encode_mode": 2}
+    pipeline.apply_pose_message.return_value = {"frames": 2, "encode_mode": 2}
     pipeline.step.return_value = np.zeros(29, dtype=np.float32)
     pipeline.snapshot.return_value = {}
     adapter = mocker.MagicMock()
@@ -104,149 +124,196 @@ def task_and_pipeline(mocker: Any) -> Iterator[tuple[G1SonicTeleopTask, Any]]:
     task.stop()
 
 
-def test_deadman_engages_full_body_stream(task_and_pipeline: tuple[Any, Any]) -> None:
+def test_start_combo_enters_planner_and_has_priority_over_ax(
+    task_and_pipeline: tuple[Any, Any],
+) -> None:
     task, pipeline = task_and_pipeline
     task.on_body_tracking(_body_snapshot(), t_now=1.0)
-    task.on_teleop_buttons(_deadman(True), t_now=1.0)
 
-    task.compute(_state(1.01))
+    task.on_teleop_buttons(_buttons(a=True, b=True, x=True, y=True), t_now=1.0)
 
-    pose_fields = pipeline.apply_pose_message.call_args.args[0]
-    assert pose_fields["smpl_joints"].shape == (1, 24, 3)
-    pipeline.set_source_stream.assert_called_with(True)
-    assert task.state_snapshot()["webxr_teleop"]["engaged"] is True
+    teleop = task.state_snapshot()["webxr_teleop"]
+    assert teleop["mode"] == "planner"
+    assert teleop["buffered_frames"] == 0
+    assert task.state_snapshot()["reference_source"] == "planner"
+    pipeline.apply_pose_message.assert_not_called()
 
 
-def test_webxr_cannot_engage_while_policy_is_unarmed(
+def test_ax_is_ignored_while_teleop_is_off(task_and_pipeline: tuple[Any, Any]) -> None:
+    task, pipeline = task_and_pipeline
+    task.on_body_tracking(_body_snapshot(), t_now=1.0)
+
+    task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.0)
+
+    assert task.state_snapshot()["webxr_teleop"]["mode"] == "off"
+    pipeline.apply_pose_message.assert_not_called()
+
+
+def test_pose_requires_complete_two_frame_buffer(task_and_pipeline: tuple[Any, Any]) -> None:
+    task, pipeline = task_and_pipeline
+    _start_session(task)
+
+    task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.01)
+
+    teleop = task.state_snapshot()["webxr_teleop"]
+    assert teleop["mode"] == "planner"
+    assert teleop["last_transition_reason"] == "pose_buffer_not_ready"
+    pipeline.apply_pose_message.assert_not_called()
+
+
+def test_pose_data_is_applied_before_stream_source_is_selected(
+    task_and_pipeline: tuple[Any, Any],
+) -> None:
+    task, pipeline = task_and_pipeline
+    _start_session(task)
+    _fill_pose_buffer(task)
+    pipeline.reset_mock()
+    pipeline.apply_pose_message.return_value = {"frames": 2, "encode_mode": 2}
+
+    task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.09)
+
+    fields = pipeline.apply_pose_message.call_args.args[0]
+    assert fields["frame_index"].tolist() == [0, 1]
+    assert fields["smpl_joints"].shape == (2, 24, 3)
+    call_names = [call[0] for call in pipeline.method_calls]
+    assert call_names.index("apply_pose_message") < call_names.index("set_source_stream")
+    assert task.state_snapshot()["webxr_teleop"]["mode"] == "pose"
+
+
+def test_accepted_pose_publishes_exact_sonic_reference(
+    task_and_pipeline: tuple[Any, Any], mocker: Any
+) -> None:
+    task, pipeline = task_and_pipeline
+    publish = mocker.Mock()
+    task.set_pose_reference_publisher(publish)
+    publish.reset_mock()
+
+    _enter_pose(task)
+
+    fields = pipeline.apply_pose_message.call_args.args[0]
+    reference = publish.call_args.args[0]
+    assert reference.active is True
+    np.testing.assert_array_equal(reference.frame_indices, fields["frame_index"])
+    np.testing.assert_array_equal(reference.smpl_joints, fields["smpl_joints"])
+    np.testing.assert_array_equal(reference.body_quat_w, fields["body_quat_w"])
+    np.testing.assert_array_equal(
+        reference.wrist_joint_pos,
+        fields["joint_pos"][:, WRIST_ONNX_INDICES],
+    )
+
+
+def test_leaving_pose_clears_sonic_reference(
+    task_and_pipeline: tuple[Any, Any], mocker: Any
+) -> None:
+    task, _ = task_and_pipeline
+    publish = mocker.Mock()
+    task.set_pose_reference_publisher(publish)
+    _enter_pose(task)
+    task.on_teleop_buttons(_buttons(), t_now=1.10)
+
+    task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.11)
+
+    assert publish.call_args.args[0].active is False
+
+
+def test_ax_toggles_pose_back_to_balancing_planner(
+    task_and_pipeline: tuple[Any, Any],
+) -> None:
+    task, pipeline = task_and_pipeline
+    _enter_pose(task)
+    task.on_teleop_buttons(_buttons(), t_now=1.10)
+
+    task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.11)
+
+    assert task.control_state is SonicControlState.CONTROL
+    assert task.state_snapshot()["webxr_teleop"]["mode"] == "planner"
+    assert task.state_snapshot()["reference_source"] == "planner"
+    pipeline.stop_clip.assert_called()
+
+
+def test_start_combo_stops_teleop_without_disarming_policy(
+    task_and_pipeline: tuple[Any, Any],
+) -> None:
+    task, pipeline = task_and_pipeline
+    _enter_pose(task)
+    task.on_teleop_buttons(_buttons(), t_now=1.10)
+
+    task.on_teleop_buttons(_buttons(a=True, b=True, x=True, y=True), t_now=1.11)
+
+    assert task.control_state is SonicControlState.CONTROL
+    assert task.state_snapshot()["webxr_teleop"]["mode"] == "off"
+    assert task.state_snapshot()["reference_source"] == "planner"
+    pipeline.stop_clip.assert_called()
+
+
+def test_webxr_cannot_start_while_policy_is_unarmed(
     task_and_pipeline: tuple[Any, Any],
 ) -> None:
     task, pipeline = task_and_pipeline
     assert task.disarm()
     pipeline.apply_pose_message.reset_mock()
-
     task.on_body_tracking(_body_snapshot(), t_now=1.0)
-    task.on_teleop_buttons(_deadman(True), t_now=1.0)
-    task.compute(_state(1.01))
+
+    task.on_teleop_buttons(_buttons(a=True, b=True, x=True, y=True), t_now=1.0)
 
     assert task.control_state is SonicControlState.UNARMED
-    assert task.state_snapshot()["webxr_teleop"]["engaged"] is False
+    assert task.state_snapshot()["webxr_teleop"]["mode"] == "off"
+    assert task.state_snapshot()["webxr_teleop"]["last_transition_reason"] == "policy_inactive"
     pipeline.apply_pose_message.assert_not_called()
 
 
-def test_disarm_clears_webxr_engagement(task_and_pipeline: tuple[Any, Any]) -> None:
+def test_tracking_loss_in_pose_returns_to_planner(
+    task_and_pipeline: tuple[Any, Any],
+) -> None:
     task, pipeline = task_and_pipeline
-    task.on_body_tracking(_body_snapshot(), t_now=1.0)
-    task.on_teleop_buttons(_deadman(True), t_now=1.0)
-    task.compute(_state(1.01))
+    _enter_pose(task)
 
-    assert task.disarm()
+    task.on_body_tracking(_body_snapshot(available=False), t_now=1.10)
 
-    teleop = task.state_snapshot()["webxr_teleop"]
-    assert teleop["engaged"] is False
-    assert teleop["deadman_held"] is False
-    assert task.state_snapshot()["reference_source"] == "planner"
+    assert task.state_snapshot()["webxr_teleop"]["mode"] == "planner"
+    assert task.state_snapshot()["webxr_teleop"]["stream_ready"] is False
     pipeline.stop_clip.assert_called()
 
 
-def test_deadman_release_returns_to_planner_without_stopping_policy(
+def test_tracking_reference_change_invalidates_session(
+    task_and_pipeline: tuple[Any, Any],
+) -> None:
+    task, _ = task_and_pipeline
+    _enter_pose(task)
+
+    task.on_body_tracking(_body_snapshot(capture_time_s=1.1, frame_id="bounded-floor"), t_now=1.10)
+
+    teleop = task.state_snapshot()["webxr_teleop"]
+    assert teleop["mode"] == "off"
+    assert teleop["last_transition_reason"] == "tracking_reference_changed"
+
+
+def test_stale_tracking_in_pose_returns_to_planner(
     task_and_pipeline: tuple[Any, Any],
 ) -> None:
     task, pipeline = task_and_pipeline
-    task.on_body_tracking(_body_snapshot(), t_now=1.0)
-    task.on_teleop_buttons(_deadman(True), t_now=1.0)
-    task.compute(_state(1.01))
-    policy_steps_before_release = pipeline.step.call_count
+    _enter_pose(task)
 
-    task.on_teleop_buttons(_deadman(False), t_now=1.02)
-    task.compute(_state(1.03))
+    task.compute(_state(1.24))
 
-    assert task.control_state is SonicControlState.CONTROL
-    assert pipeline.step.call_count == policy_steps_before_release + 1
-    pipeline.stop_clip.assert_called_once_with()
-    assert task.state_snapshot()["reference_source"] == "planner"
+    assert task.state_snapshot()["webxr_teleop"]["mode"] == "planner"
+    assert task.state_snapshot()["webxr_teleop"]["last_transition_reason"] == (
+        "body_tracking_stale"
+    )
+    pipeline.stop_clip.assert_called()
 
 
-def test_engaged_twist_ignores_translation_and_applies_yaw(
+def test_pose_twist_ignores_translation_and_applies_yaw(
     task_and_pipeline: tuple[Any, Any],
 ) -> None:
     task, pipeline = task_and_pipeline
-    task.on_body_tracking(_body_snapshot(), t_now=1.0)
-    task.on_teleop_buttons(_deadman(True), t_now=1.0)
+    _enter_pose(task)
     task.on_twist_command(
         Twist(linear=Vector3(1.0, 2.0, 0.0), angular=Vector3(0.0, 0.0, 0.5)),
-        t_now=1.0,
+        t_now=1.09,
     )
 
-    task.compute(_state(1.01, dt=0.02))
+    task.compute(_state(1.10, dt=0.02))
 
     pipeline.set_velocity.assert_called_with(0.0, 0.0, 0.0)
     pipeline.apply_heading_increment.assert_called_once_with(0.01)
-
-
-def test_partial_frame_holds_last_complete_pose_for_150ms(
-    task_and_pipeline: tuple[Any, Any],
-) -> None:
-    task, pipeline = task_and_pipeline
-    task.on_body_tracking(_body_snapshot(), t_now=1.0)
-    task.on_teleop_buttons(_deadman(True), t_now=1.0)
-    task.compute(_state(1.01))
-    task.on_body_tracking(_body_snapshot(omitted=frozenset({"head"})), t_now=1.05)
-
-    task.compute(_state(1.14))
-
-    assert pipeline.apply_pose_message.call_count == 1
-    assert task.state_snapshot()["webxr_teleop"]["engaged"] is True
-
-
-def test_stale_body_disengages_and_requires_deadman_repress(
-    task_and_pipeline: tuple[Any, Any],
-) -> None:
-    task, pipeline = task_and_pipeline
-    task.on_body_tracking(_body_snapshot(), t_now=1.0)
-    task.on_teleop_buttons(_deadman(True), t_now=1.0)
-    task.compute(_state(1.01))
-
-    task.compute(_state(1.16))
-    task.on_body_tracking(_body_snapshot(), t_now=1.17)
-
-    teleop = task.state_snapshot()["webxr_teleop"]
-    assert teleop["engaged"] is False
-    assert teleop["blocked_until_release"] is True
-    pipeline.stop_clip.assert_called_once_with()
-
-
-def test_tracking_unavailable_disengages_immediately(
-    task_and_pipeline: tuple[Any, Any],
-) -> None:
-    task, pipeline = task_and_pipeline
-    task.on_body_tracking(_body_snapshot(), t_now=1.0)
-    task.on_teleop_buttons(_deadman(True), t_now=1.0)
-    task.compute(_state(1.01))
-
-    task.on_body_tracking(_body_snapshot(available=False), t_now=1.02)
-
-    assert task.state_snapshot()["webxr_teleop"]["engaged"] is False
-    pipeline.stop_clip.assert_called_once_with()
-
-
-def test_invalid_complete_pose_disengages_instead_of_crashing_tick(
-    task_and_pipeline: tuple[Any, Any],
-) -> None:
-    task, pipeline = task_and_pipeline
-    snapshot = _body_snapshot()
-    assert snapshot.joints is not None
-    joints = dict(snapshot.joints)
-    joints["head"] = BodyJointPose(
-        position=joints["head"].position,
-        orientation=(0.0, 0.0, 0.0, 0.0),
-    )
-    invalid = snapshot.model_copy(update={"joints": joints})
-    task.on_body_tracking(invalid, t_now=1.0)
-    task.on_teleop_buttons(_deadman(True), t_now=1.0)
-
-    task.compute(_state(1.01))
-
-    teleop = task.state_snapshot()["webxr_teleop"]
-    assert teleop["engaged"] is False
-    assert teleop["last_disengage_reason"] == "invalid_body_pose"
-    pipeline.stop_clip.assert_called_once_with()

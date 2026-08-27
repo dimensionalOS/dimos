@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from enum import Enum
 import threading
 from typing import TYPE_CHECKING, Any, cast
 
@@ -25,10 +27,14 @@ from dimos.control.tasks.g1_sonic_wbc_task.g1_sonic_wbc_task import (
     G1SonicWBCTaskConfig,
     _create_task,
 )
+from dimos.control.tasks.g1_sonic_wbc_task.sonic_pipeline import WRIST_ONNX_INDICES
 from dimos.control.tasks.g1_sonic_wbc_task.webxr_retargeting import (
     IncompleteBodyPoseError,
+    PoseStreamError,
+    WebXRSonicPoseStream,
     WebXRSonicRetargeter,
 )
+from dimos.msgs.visualization_msgs.SonicPoseReference import SonicPoseReference
 from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
 from dimos.teleop.webxr.controller_types import Buttons
 from dimos.utils.logging_config import setup_logger
@@ -42,12 +48,18 @@ logger = setup_logger()
 _BODY_HOLD_SECONDS = 0.15
 
 
-class G1SonicTeleopTask(G1SonicWBCTask):
-    """Drive SONIC from complete WebXR body frames while X+A are held.
+class SonicTeleopMode(str, Enum):
+    OFF = "off"
+    PLANNER = "planner"
+    POSE = "pose"
 
-    Partial body frames retain the last complete pose for 150 ms. Tracking
-    loss, a changed WebXR reference space, a stale complete pose, or release
-    of either deadman button returns SONIC to its planner source.
+
+class G1SonicTeleopTask(G1SonicWBCTask):
+    """Run NVIDIA's OFF -> PLANNER -> POSE WebXR teleoperation workflow.
+
+    A+B+X+Y starts and stops the teleop session. A+X toggles between the
+    balancing planner and a two-frame full-body POSE stream. The headset does
+    not own the DimOS policy lifecycle; arm/enable/disable remain CLI actions.
     """
 
     def __init__(
@@ -60,51 +72,97 @@ class G1SonicTeleopTask(G1SonicWBCTask):
         # ZMQ command handling runs inside compute() and can synchronously
         # invoke disarm(), so lifecycle cleanup must be re-entrant here.
         self._teleop_lock = threading.RLock()
-        self._retargeter = WebXRSonicRetargeter()
+        self._pose_stream = WebXRSonicPoseStream()
         self._latest_complete: BodyTrackingSnapshot | None = None
         self._latest_complete_time = 0.0
-        self._latest_sequence = 0
-        self._applied_sequence = 0
-        self._stream_frame_index = 0
         self._tracking_frame_id: str | None = None
-        self._deadman_held = False
-        self._engaged = False
-        self._blocked_until_release = False
-        self._last_disengage_reason = "not_engaged"
+        self._mode = SonicTeleopMode.OFF
+        self._previous_start_combo = False
+        self._previous_ax_combo = False
+        self._applied_generation = 0
+        self._last_transition_reason = "not_started"
         self._yaw_rate = 0.0
         self._last_yaw_time = 0.0
+        self._pose_reference_publisher: Callable[[SonicPoseReference], None] | None = None
+        self._pose_reference_visible = False
+
+    def set_pose_reference_publisher(self, publisher: Callable[[SonicPoseReference], None]) -> None:
+        """Attach the coordinator-owned diagnostic stream publisher."""
+        with self._teleop_lock:
+            self._pose_reference_publisher = publisher
+            self._publish_pose_reference_locked(SonicPoseReference.clear())
 
     def on_body_tracking(self, msg: BodyTrackingSnapshot, t_now: float) -> None:
         with self._teleop_lock:
             if msg.joints is None:
-                self._disengage_locked("body_tracking_unavailable", require_release=True)
                 self._latest_complete = None
+                if self._mode is SonicTeleopMode.POSE:
+                    self._enter_planner_locked("body_tracking_unavailable")
+                elif self._mode is SonicTeleopMode.PLANNER:
+                    self._clear_pose_stream_locked("body_tracking_unavailable")
                 return
 
-            if not self._retargeter.is_complete(msg):
+            if not WebXRSonicRetargeter.is_complete(msg):
                 return
 
-            if self._tracking_frame_id is not None and msg.frame_id != self._tracking_frame_id:
-                self._disengage_locked("tracking_reference_changed", require_release=True)
-            self._tracking_frame_id = msg.frame_id
+            if (
+                self._mode is not SonicTeleopMode.OFF
+                and self._tracking_frame_id is not None
+                and msg.frame_id != self._tracking_frame_id
+            ):
+                self._latest_complete = msg
+                self._latest_complete_time = t_now
+                self._enter_off_locked("tracking_reference_changed")
+                return
+
             self._latest_complete = msg
             self._latest_complete_time = t_now
-            self._latest_sequence += 1
-            self._try_engage_locked(t_now)
+            if self._mode is SonicTeleopMode.OFF:
+                return
+
+            self._tracking_frame_id = msg.frame_id
+            try:
+                self._pose_stream.push(msg, t_now=t_now)
+            except (IncompleteBodyPoseError, PoseStreamError) as exc:
+                logger.warning(
+                    "G1 SONIC WebXR pose stream reset",
+                    task=self._name,
+                    error=str(exc),
+                )
+                if self._mode is SonicTeleopMode.POSE:
+                    self._enter_planner_locked("invalid_body_pose")
+                else:
+                    self._clear_pose_stream_locked("invalid_body_pose")
 
     def on_teleop_buttons(self, msg: Buttons, t_now: float) -> None:
-        held = bool(msg.left_primary and msg.right_primary)
+        start_combo = bool(
+            msg.left_primary and msg.left_secondary and msg.right_primary and msg.right_secondary
+        )
+        ax_combo = bool(msg.left_primary and msg.right_primary)
         with self._teleop_lock:
-            self._deadman_held = held
-            if not held:
-                self._blocked_until_release = False
-                self._disengage_locked("deadman_released", require_release=False)
+            start_edge = start_combo and not self._previous_start_combo
+            ax_edge = ax_combo and not self._previous_ax_combo
+            self._previous_start_combo = start_combo
+            self._previous_ax_combo = ax_combo
+
+            # The start combo contains A+X, so it always owns this button edge.
+            if start_edge:
+                if self._mode is SonicTeleopMode.OFF:
+                    self._start_session_locked(t_now)
+                else:
+                    self._enter_off_locked("operator_stop")
                 return
-            self._try_engage_locked(t_now)
+
+            if not ax_edge:
+                return
+            if self._mode is SonicTeleopMode.PLANNER:
+                self._enter_pose_locked(t_now)
+            elif self._mode is SonicTeleopMode.POSE:
+                self._enter_planner_locked("operator_planner_toggle")
 
     def on_twist_command(self, msg: Twist, t_now: float) -> None:
         with self._teleop_lock:
-            if self._engaged:
+            if self._mode is SonicTeleopMode.POSE:
                 self._yaw_rate = float(msg.angular.z)
                 self._last_yaw_time = t_now
                 return
@@ -112,15 +170,11 @@ class G1SonicTeleopTask(G1SonicWBCTask):
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
         with self._teleop_lock:
-            if self.policy_active:
-                self._try_engage_locked(state.t_now)
-                self._prepare_teleop_frame_locked(state.t_now, state.dt)
-            output = super().compute(state)
-            # Initialization may have entered CONTROL in this tick. Select
-            # WebXR now so the next policy inference sees the pose reference.
-            if self.policy_active:
-                self._try_engage_locked(state.t_now)
-            return output
+            if not self.policy_active and self._mode is not SonicTeleopMode.OFF:
+                self._enter_off_locked("policy_inactive")
+            elif self.policy_active:
+                self._prepare_teleop_locked(state.t_now, state.dt)
+            return super().compute(state)
 
     def start(self) -> None:
         with self._teleop_lock:
@@ -149,103 +203,217 @@ class G1SonicTeleopTask(G1SonicWBCTask):
             if self._latest_complete is not None:
                 last_complete_received_at = self._latest_complete_time
             snapshot["webxr_teleop"] = {
-                "engaged": self._engaged,
-                "deadman_held": self._deadman_held,
-                "blocked_until_release": self._blocked_until_release,
+                "mode": self._mode.value,
+                "stream_ready": self._pose_stream.ready,
+                "buffered_frames": self._pose_stream.buffered_frames,
                 "tracking_frame_id": self._tracking_frame_id,
                 "last_complete_received_at": last_complete_received_at,
-                "last_disengage_reason": self._last_disengage_reason,
+                "last_transition_reason": self._last_transition_reason,
             }
-            snapshot["reference_source"] = "webxr_pose" if self._engaged else "planner"
-        return snapshot
+            snapshot["reference_source"] = (
+                "webxr_pose" if self._mode is SonicTeleopMode.POSE else "planner"
+            )
+            return snapshot
 
-    def _try_engage_locked(self, t_now: float) -> None:
-        if (
-            self._engaged
-            or not self.policy_active
-            or not self._deadman_held
-            or self._blocked_until_release
-            or self._latest_complete is None
-            or (t_now - self._latest_complete_time) > _BODY_HOLD_SECONDS
-        ):
-            return
-        self._engaged = True
-        self._last_disengage_reason = ""
-        self._retargeter.reset()
-        self._select_stream_reference(True)
-        self.set_velocity_command(0.0, 0.0, 0.0)
-        logger.info("G1 SONIC WebXR teleop engaged", task=self._name)
-
-    def _prepare_teleop_frame_locked(self, t_now: float, dt: float) -> None:
-        if not self._engaged:
+    def _start_session_locked(self, t_now: float) -> None:
+        if not self.policy_active:
+            self._last_transition_reason = "policy_inactive"
+            logger.warning(
+                "G1 SONIC WebXR start rejected", task=self._name, reason="policy_inactive"
+            )
             return
         if (
             self._latest_complete is None
             or (t_now - self._latest_complete_time) > _BODY_HOLD_SECONDS
         ):
-            self._disengage_locked("body_tracking_stale", require_release=True)
+            self._last_transition_reason = "body_tracking_stale"
+            logger.warning(
+                "G1 SONIC WebXR start rejected",
+                task=self._name,
+                reason="body_tracking_stale",
+            )
             return
 
-        if self._latest_sequence != self._applied_sequence:
+        self._mode = SonicTeleopMode.PLANNER
+        self._tracking_frame_id = self._latest_complete.frame_id
+        self._pose_stream.reset()
+        self._applied_generation = 0
+        self._last_transition_reason = "operator_start"
+        self._return_to_planner_reference()
+        self.set_velocity_command(0.0, 0.0, 0.0)
+        try:
+            self._pose_stream.push(self._latest_complete, t_now=t_now)
+        except (IncompleteBodyPoseError, PoseStreamError):
+            self._clear_pose_stream_locked("invalid_body_pose")
+        logger.info("G1 SONIC WebXR mode", task=self._name, mode=self._mode.value)
+
+    def _enter_pose_locked(self, t_now: float) -> None:
+        if not self.policy_active:
+            self._enter_off_locked("policy_inactive")
+            return
+        if (
+            self._latest_complete is None
+            or (t_now - self._latest_complete_time) > _BODY_HOLD_SECONDS
+        ):
+            self._last_transition_reason = "body_tracking_stale"
+            return
+        if not self._pose_stream.ready:
+            self._last_transition_reason = "pose_buffer_not_ready"
+            logger.warning(
+                "G1 SONIC WebXR POSE rejected",
+                task=self._name,
+                buffered_frames=self._pose_stream.buffered_frames,
+            )
+            return
+
+        # Match the native manager's ordering: pose data reaches SONIC before
+        # the planner flag changes, so no empty or previous-session stream can
+        # become the active reference.
+        self._return_to_planner_reference()
+        result = self._apply_pose_stream_locked()
+        if "error" in result:
+            self._last_transition_reason = "sonic_pose_rejected"
+            self._pose_stream.reset()
+            return
+        self._applied_generation = self._pose_stream.generation
+        self._select_stream_reference(True)
+        self.set_velocity_command(0.0, 0.0, 0.0)
+        self._yaw_rate = 0.0
+        self._last_yaw_time = 0.0
+        self._mode = SonicTeleopMode.POSE
+        self._last_transition_reason = "operator_pose_toggle"
+        logger.info("G1 SONIC WebXR mode", task=self._name, mode=self._mode.value)
+
+    def _enter_planner_locked(self, reason: str) -> None:
+        was_pose = self._mode is SonicTeleopMode.POSE
+        self._clear_pose_reference_locked()
+        self._mode = SonicTeleopMode.PLANNER
+        self._last_transition_reason = reason
+        self._yaw_rate = 0.0
+        self._last_yaw_time = 0.0
+        self._pipeline.clear_vr_3point()
+        if was_pose:
+            self._return_to_planner_reference()
+            self.set_velocity_command(0.0, 0.0, 0.0)
+        self._pose_stream.reset()
+        self._applied_generation = 0
+        if self._latest_complete is not None:
             try:
-                frame = self._retargeter.retarget(
-                    self._latest_complete,
-                    frame_index=self._stream_frame_index,
-                    t_now=t_now,
-                )
-            except IncompleteBodyPoseError:
-                self._disengage_locked("invalid_body_pose", require_release=True)
-                return
-            self._select_stream_reference(True)
-            result = self._pipeline.apply_pose_message(frame.fields)
+                self._pose_stream.push(self._latest_complete, t_now=self._latest_complete_time)
+            except (IncompleteBodyPoseError, PoseStreamError):
+                pass
+        logger.info(
+            "G1 SONIC WebXR mode",
+            task=self._name,
+            mode=self._mode.value,
+            reason=reason,
+        )
+
+    def _enter_off_locked(self, reason: str) -> None:
+        was_pose = self._mode is SonicTeleopMode.POSE
+        self._clear_pose_reference_locked()
+        self._mode = SonicTeleopMode.OFF
+        self._last_transition_reason = reason
+        self._tracking_frame_id = None
+        self._yaw_rate = 0.0
+        self._last_yaw_time = 0.0
+        self._pipeline.clear_vr_3point()
+        if was_pose:
+            self._return_to_planner_reference()
+            self.set_velocity_command(0.0, 0.0, 0.0)
+        self._pose_stream.reset()
+        self._applied_generation = 0
+        logger.info(
+            "G1 SONIC WebXR mode",
+            task=self._name,
+            mode=self._mode.value,
+            reason=reason,
+        )
+
+    def _clear_pose_stream_locked(self, reason: str) -> None:
+        self._pose_stream.reset()
+        self._applied_generation = 0
+        self._last_transition_reason = reason
+
+    def _prepare_teleop_locked(self, t_now: float, dt: float) -> None:
+        if self._mode is SonicTeleopMode.OFF:
+            return
+        if (
+            self._latest_complete is None
+            or (t_now - self._latest_complete_time) > _BODY_HOLD_SECONDS
+        ):
+            if self._mode is SonicTeleopMode.POSE:
+                self._enter_planner_locked("body_tracking_stale")
+            else:
+                self._clear_pose_stream_locked("body_tracking_stale")
+            return
+
+        if (
+            self._mode is SonicTeleopMode.POSE
+            and self._pose_stream.ready
+            and self._pose_stream.generation != self._applied_generation
+        ):
+            result = self._apply_pose_stream_locked()
             if "error" in result:
-                self._disengage_locked("sonic_pose_rejected", require_release=True)
+                self._enter_planner_locked("sonic_pose_rejected")
                 return
-            self._stream_frame_index += 1
-            self._applied_sequence = self._latest_sequence
+            self._applied_generation = self._pose_stream.generation
 
         yaw_is_fresh = self._last_yaw_time > 0.0 and (
             self._config.timeout <= 0.0 or (t_now - self._last_yaw_time) <= self._config.timeout
         )
-        if yaw_is_fresh:
+        if self._mode is SonicTeleopMode.POSE and yaw_is_fresh:
             self._pipeline.apply_heading_increment(self._yaw_rate * dt)
 
-    def _disengage_locked(self, reason: str, *, require_release: bool) -> None:
-        was_engaged = self._engaged
-        self._engaged = False
-        self._blocked_until_release = self._blocked_until_release or require_release
-        self._last_disengage_reason = reason
-        self._yaw_rate = 0.0
-        self._last_yaw_time = 0.0
-        if was_engaged:
-            self._retargeter.reset()
-            self._pipeline.clear_vr_3point()
-            self._return_to_planner_reference()
-            self.set_velocity_command(0.0, 0.0, 0.0)
-            logger.info(
-                "G1 SONIC WebXR teleop disengaged",
-                task=self._name,
-                reason=reason,
+    def _apply_pose_stream_locked(self) -> dict[str, Any]:
+        fields = self._pose_stream.fields()
+        result = self._pipeline.apply_pose_message(fields)
+        if "error" not in result:
+            self._publish_pose_reference_locked(
+                SonicPoseReference.from_arrays(
+                    frame_indices=fields["frame_index"],
+                    smpl_joints=fields["smpl_joints"],
+                    body_quat_w=fields["body_quat_w"],
+                    wrist_joint_pos=fields["joint_pos"][:, WRIST_ONNX_INDICES],
+                )
             )
+        return result
+
+    def _publish_pose_reference_locked(self, reference: SonicPoseReference) -> None:
+        if self._pose_reference_publisher is None:
+            return
+        try:
+            self._pose_reference_publisher(reference)
+        except Exception:
+            logger.warning(
+                "G1 SONIC reference visualization publish failed",
+                task=self._name,
+                exc_info=True,
+            )
+            return
+        self._pose_reference_visible = reference.active
+
+    def _clear_pose_reference_locked(self) -> None:
+        if self._pose_reference_visible:
+            self._publish_pose_reference_locked(SonicPoseReference.clear())
 
     def _reset_teleop_locked(self) -> None:
-        if self._engaged:
+        self._clear_pose_reference_locked()
+        if self._mode is SonicTeleopMode.POSE:
             self._pipeline.clear_vr_3point()
             self._return_to_planner_reference()
             self.set_velocity_command(0.0, 0.0, 0.0)
         self._latest_complete = None
         self._latest_complete_time = 0.0
-        self._latest_sequence = 0
-        self._applied_sequence = 0
-        self._stream_frame_index = 0
         self._tracking_frame_id = None
-        self._deadman_held = False
-        self._engaged = False
-        self._blocked_until_release = False
-        self._last_disengage_reason = "not_engaged"
+        self._mode = SonicTeleopMode.OFF
+        self._previous_start_combo = False
+        self._previous_ax_combo = False
+        self._applied_generation = 0
+        self._last_transition_reason = "not_started"
         self._yaw_rate = 0.0
         self._last_yaw_time = 0.0
-        self._retargeter.reset()
+        self._pose_stream.reset()
 
 
 def create_task(cfg: Any, hardware: Any) -> G1SonicTeleopTask:

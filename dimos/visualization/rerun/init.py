@@ -50,14 +50,17 @@ def rerun_init(
             not isinstance(grpc_config, dict)
             or not isinstance(grpc_config.get("connect_url"), str)
             or not isinstance(grpc_config.get("server_memory_limit"), str)
+            or not isinstance(grpc_config.get("newest_first", False), bool)
         ):
             raise TypeError(
                 "rerun_init(start_grpc=True) requires grpc_config to be a dict with "
-                "'connect_url' (str) and 'server_memory_limit' (str)"
+                "'connect_url' (str), 'server_memory_limit' (str), and optional "
+                "'newest_first' (bool)"
             )
 
         connect_url = grpc_config["connect_url"]
         server_memory_limit = grpc_config["server_memory_limit"]
+        newest_first = grpc_config.get("newest_first", False)
         parsed = urlparse(connect_url.replace("rerun+", "", 1))
         grpc_port = parsed.port or RERUN_GRPC_PORT
         grpc_host = parsed.hostname or "127.0.0.1"
@@ -74,6 +77,7 @@ def rerun_init(
             server_uri = rr.serve_grpc(
                 grpc_port=grpc_port,
                 server_memory_limit=server_memory_limit,
+                newest_first=newest_first,
             )
             logger.info(f"Rerun gRPC server ready at {server_uri}")
 

@@ -25,7 +25,10 @@ from dimos.control.tasks.g1_sonic_wbc_task.webxr_retargeting import (
     SMPL_WEBXR_JOINTS,
     WEBXR_TO_SONIC,
     IncompleteBodyPoseError,
+    PoseStreamError,
+    WebXRSonicPoseStream,
     WebXRSonicRetargeter,
+    _interpolate_quaternion_wxyz,
 )
 from dimos.teleop.webxr.body_tracking import BodyJointPose, BodyTrackingSnapshot
 
@@ -37,13 +40,19 @@ def _webxr_quaternion_for_sonic_rotation(rotation: Rotation) -> tuple[float, ...
 
 def _snapshot(
     *,
-    overrides: dict[str, Rotation] | None = None,
+    capture_time_s: float = 10.0,
+    rotations: dict[str, Rotation] | None = None,
+    position_scale: float = 1.0,
     omitted: frozenset[str] = frozenset(),
 ) -> BodyTrackingSnapshot:
-    rotations = overrides or {}
+    rotations = rotations or {}
     joints = {
         name: BodyJointPose(
-            position=(float(index), float(2 * index), float(-3 * index)),
+            position=(
+                position_scale * float(index),
+                position_scale * float(2 * index),
+                position_scale * float(-3 * index),
+            ),
             orientation=_webxr_quaternion_for_sonic_rotation(
                 rotations.get(name, Rotation.identity())
             ),
@@ -53,13 +62,13 @@ def _snapshot(
     }
     return BodyTrackingSnapshot(
         type="body_tracking_snapshot",
-        capture_time_s=10.0,
+        capture_time_s=capture_time_s,
         frame_id="local-floor",
         joints=joints,
     )
 
 
-def test_retarget_produces_protocol_v3_full_body_frame() -> None:
+def test_retarget_uses_tracked_root_local_skeleton() -> None:
     frame = WebXRSonicRetargeter().retarget(_snapshot(), frame_index=7, t_now=1.0).fields
 
     assert frame["frame_index"].tolist() == [7]
@@ -79,16 +88,80 @@ def test_retarget_produces_protocol_v3_full_body_frame() -> None:
     assert merged.motion.encode_mode == 2
 
 
-def test_retarget_derives_wrist_targets_and_velocity() -> None:
+def test_retarget_preserves_operator_bone_lengths() -> None:
+    retargeter = WebXRSonicRetargeter()
+
+    normal = retargeter.retarget(_snapshot(position_scale=1.0), frame_index=0, t_now=1.0)
+    tall = retargeter.retarget(_snapshot(position_scale=2.0), frame_index=1, t_now=1.1)
+
+    np.testing.assert_allclose(tall.fields["smpl_joints"], 2.0 * normal.fields["smpl_joints"])
+
+
+def test_retarget_derives_direct_wrist_targets_and_velocity() -> None:
     retargeter = WebXRSonicRetargeter()
     retargeter.retarget(_snapshot(), frame_index=0, t_now=1.0)
-    moved = _snapshot(overrides={"left-hand-wrist": Rotation.from_euler("x", 0.3)})
+    rotations = {
+        "left-hand-wrist": Rotation.from_euler("x", 0.3),
+        "right-hand-wrist": Rotation.from_euler("x", 0.3),
+    }
 
-    frame = retargeter.retarget(moved, frame_index=1, t_now=1.1).fields
+    frame = retargeter.retarget(_snapshot(rotations=rotations), frame_index=1, t_now=1.1).fields
 
     assert frame["joint_pos"][0, WRIST_ONNX_INDICES[0]] == pytest.approx(0.3)
+    assert frame["joint_pos"][0, WRIST_ONNX_INDICES[1]] == pytest.approx(0.3)
     assert frame["joint_vel"][0, WRIST_ONNX_INDICES[0]] == pytest.approx(3.0)
-    np.testing.assert_allclose(frame["joint_pos"][0, WRIST_ONNX_INDICES[1:]], 0.0)
+    assert frame["joint_vel"][0, WRIST_ONNX_INDICES[1]] == pytest.approx(3.0)
+    expected = DEFAULT_ANGLES_ONNX.copy()
+    expected[WRIST_ONNX_INDICES[:2]] = 0.3
+    np.testing.assert_allclose(frame["joint_pos"][0], expected, atol=1e-7)
+
+
+def test_pose_stream_waits_for_two_resampled_frames() -> None:
+    stream = WebXRSonicPoseStream()
+
+    for index in range(2):
+        rotations = {"left-hand-wrist": Rotation.from_euler("x", 0.3)} if index == 1 else None
+        stream.push(
+            _snapshot(capture_time_s=10.0 + 0.02 * index, rotations=rotations),
+            t_now=1.0 + 0.02 * index,
+        )
+
+    assert stream.ready is True
+    assert stream.buffered_frames == 2
+    assert stream.generation == 2
+    fields = stream.fields()
+    assert fields["frame_index"].tolist() == [0, 1]
+    assert fields["smpl_joints"].shape == (2, 24, 3)
+    assert fields["smpl_pose"].shape == (2, 21, 3)
+    np.testing.assert_allclose(fields["smpl_joints"][:, 0], 0.0)
+    np.testing.assert_allclose(fields["smpl_joints"][:, 1], [[3.0, -1.0, 2.0]] * 2)
+    expected_joint_pos = np.stack([DEFAULT_ANGLES_ONNX, DEFAULT_ANGLES_ONNX])
+    expected_joint_pos[1, WRIST_ONNX_INDICES[0]] = 0.3
+    np.testing.assert_allclose(fields["joint_pos"], expected_joint_pos, atol=1e-7)
+    assert fields["joint_vel"][1, WRIST_ONNX_INDICES[0]] == pytest.approx(15.0)
+
+
+def test_pose_stream_interpolates_root_by_shortest_quaternion_path() -> None:
+    left_xyzw = Rotation.from_euler("z", 170, degrees=True).as_quat()
+    right_xyzw = Rotation.from_euler("z", -170, degrees=True).as_quat()
+    left_wxyz = np.array([left_xyzw[3], *left_xyzw[:3]], dtype=np.float32)
+    right_wxyz = np.array([right_xyzw[3], *right_xyzw[:3]], dtype=np.float32)
+
+    middle_wxyz = _interpolate_quaternion_wxyz(left_wxyz, right_wxyz, 0.5)
+    middle_xyzw = np.array([*middle_wxyz[1:], middle_wxyz[0]])
+    middle_yaw = Rotation.from_quat(middle_xyzw).as_euler("xyz", degrees=True)[2]
+    assert abs(middle_yaw) == pytest.approx(180.0)
+
+
+def test_pose_stream_rejects_non_monotonic_capture_time_and_resets() -> None:
+    stream = WebXRSonicPoseStream()
+    stream.push(_snapshot(capture_time_s=10.0), t_now=1.0)
+
+    with pytest.raises(PoseStreamError, match="did not increase"):
+        stream.push(_snapshot(capture_time_s=10.0), t_now=1.01)
+
+    assert stream.ready is False
+    assert stream.buffered_frames == 0
 
 
 def test_retarget_rejects_incomplete_body_frame() -> None:
