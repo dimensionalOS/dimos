@@ -12,156 +12,136 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for PickAndPlaceModule pure logic (no Drake required)."""
-
-from __future__ import annotations
-
 from collections.abc import Iterator
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import MagicMock
 
-import open3d as o3d
 import pytest
 
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
-from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.perception.experimental.object import Object as DetObject
-from dimos.robot.assets.model import RobotModel
-
-
-def _make_det_object(
-    name: str = "cup",
-    object_id: str = "abc12345",
-    center: tuple[float, float, float] = (0.5, 0.0, 0.3),
-    size: tuple[float, float, float] = (0.05, 0.05, 0.10),
-) -> DetObject:
-    """Create a DetObject with the given attributes and sensible defaults."""
-    return DetObject(
-        name=name,
-        object_id=object_id,
-        center=Vector3(x=center[0], y=center[1], z=center[2]),
-        size=Vector3(x=size[0], y=size[1], z=size[2]),
-        pose=PoseStamped(),
-        pointcloud=PointCloud2(o3d.geometry.PointCloud()),
-        bbox=(0.0, 0.0, 1.0, 1.0),
-        track_id=0,
-        class_id=0,
-        confidence=1.0,
-        ts=0.0,
-        image=Image(),
-    )
+from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
+from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
+from dimos.msgs.std_msgs.Header import Header
 
 
 @pytest.fixture
 def module() -> Iterator[PickAndPlaceModule]:
-    """Create an unstarted PickAndPlaceModule for pure-logic tests."""
-    instance = PickAndPlaceModule(
-        model=RobotModelConfig(
-            model=RobotModel.from_file("unused.urdf"),
-            joint_names=[],
-        )
+    instance = PickAndPlaceModule()
+    instance._scene = MagicMock()
+    instance._grasp_generator = MagicMock()
+    instance._manipulation = MagicMock()
+    instance._manipulation.list_planning_groups.return_value = [
+        SimpleNamespace(id="arm/tool", has_gripper=True)
+    ]
+    instance._manipulation.get_state.return_value = SimpleNamespace(
+        groups={
+            "arm/tool": SimpleNamespace(
+                gripper_position=0.5,
+                end_effector_pose=PoseStamped(
+                    frame_id="world", orientation=Quaternion.from_euler(Vector3(0, 0, 0.7))
+                ),
+            )
+        }
+    )
+    instance._manipulation.plan_to_poses.return_value = SimpleNamespace(succeeded=True, message="")
+    instance._manipulation.execute.return_value = SimpleNamespace(succeeded=True, message="")
+    instance._manipulation.set_gripper_position.return_value = SimpleNamespace(
+        succeeded=True, message=""
     )
     yield instance
     instance.stop()
 
 
-class TestFindObjectInDetections:
-    """Test object lookup logic in detection snapshot."""
-
-    def test_find_by_exact_name(self, module):
-        det = _make_det_object(name="cup")
-        module._detection_snapshot = [det]
-
-        result = module._find_object_in_detections("cup")
-        assert result is det
-
-    def test_find_by_partial_name(self, module):
-        det = _make_det_object(name="red cup")
-        module._detection_snapshot = [det]
-
-        result = module._find_object_in_detections("cup")
-        assert result is det
-
-    def test_find_by_object_id(self, module):
-        det = _make_det_object(object_id="abc12345")
-        module._detection_snapshot = [det]
-
-        # Truncated prefix match
-        result = module._find_object_in_detections("anything", object_id="abc1")
-        assert result is det
-
-    def test_find_by_object_id_ambiguous_returns_none(self, module):
-        det1 = _make_det_object(object_id="abc12345")
-        det2 = _make_det_object(object_id="abc19999")
-        module._detection_snapshot = [det1, det2]
-
-        result = module._find_object_in_detections("anything", object_id="abc1")
-        assert result is None
-
-    def test_find_missing_returns_none(self, module):
-        module._detection_snapshot = [_make_det_object(name="bottle")]
-
-        result = module._find_object_in_detections("keyboard")
-        assert result is None
-
-    def test_empty_snapshot_returns_none(self, module):
-        module._detection_snapshot = []
-
-        result = module._find_object_in_detections("cup")
-        assert result is None
+def _candidate(x: float, score: float = 1.0) -> GraspCandidate:
+    return GraspCandidate(
+        Pose(Vector3(x, 0.0, 0.2), Quaternion.from_euler(Vector3(-3.141592653589793, 0.0, 0.0))),
+        score,
+    )
 
 
-class TestGraspHeuristics:
-    """Test grasp orientation and occlusion offset static methods."""
+def test_scan_objects_uses_stable_ids(module: PickAndPlaceModule) -> None:
+    scene: Any = module._scene
+    scene.scan_scene.return_value = SimpleNamespace(detections_length=1)
+    scene.get_detected_objects.return_value = [
+        {"object_id": "cup-1", "name": "cup", "confidence": 0.9}
+    ]
 
-    def test_occlusion_offset_toward_robot(self):
-        center = Vector3(x=0.5, y=0.0, z=0.3)
-        size = Vector3(x=0.1, y=0.1, z=0.1)
+    result = module.scan_objects([" cup "])
 
-        ox, oy = PickAndPlaceModule._occlusion_offset(center, size)
-        # Offset should shift x closer to robot origin (smaller x)
-        assert ox < center.x
-        assert abs(oy - center.y) < 1e-6  # y should stay ~0
-
-    def test_occlusion_offset_at_origin(self):
-        center = Vector3(x=0.0, y=0.0, z=0.3)
-        size = Vector3(x=0.1, y=0.1, z=0.1)
-
-        ox, oy = PickAndPlaceModule._occlusion_offset(center, size)
-        # At origin, no shift should occur (division-by-zero guard)
-        assert abs(ox) < 1e-3
-        assert abs(oy) < 1e-3
-
-    def test_grasp_orientation_near_is_top_down(self):
-        q = PickAndPlaceModule._grasp_orientation(gx=0.3, gy=0.0, xy_dist=0.3)
-        # Near object: pitch = 180° (top-down), tilt = 0, yaw = 0
-        # RPY(0, π, 0) → quaternion (x=0, y=1, z=0, w=0)
-        assert abs(q.x) < 0.01
-        assert abs(q.y - 1.0) < 0.01
-        assert abs(q.z) < 0.01
-        assert abs(q.w) < 0.01
-
-    def test_grasp_orientation_far_differs_from_near(self):
-        q_near = PickAndPlaceModule._grasp_orientation(gx=0.3, gy=0.0, xy_dist=0.3)
-        q_far = PickAndPlaceModule._grasp_orientation(gx=1.0, gy=0.0, xy_dist=1.0)
-        # Far object should have different orientation (tilted)
-        assert not (
-            abs(q_near.x - q_far.x) < 0.01
-            and abs(q_near.y - q_far.y) < 0.01
-            and abs(q_near.z - q_far.z) < 0.01
-            and abs(q_near.w - q_far.w) < 0.01
-        )
+    assert result.is_success()
+    assert module.get_object("cup-1") == {"object_id": "cup-1", "name": "cup", "confidence": 0.9}
+    scene.set_prompts.assert_called_once_with(["cup"])
 
 
-class TestPlaceBack:
-    """Test place_back guard logic."""
+def test_select_grasp_preserves_provider_order_and_offsets_locally(
+    module: PickAndPlaceModule,
+) -> None:
+    scene: Any = module._scene
+    grasp_generator: Any = module._grasp_generator
+    module._objects = {"cup-1": {"object_id": "cup-1"}}
+    scene.get_object_pointcloud_by_object_id.return_value = MagicMock()
+    first, second = _candidate(0.1, 0.1), _candidate(0.2, 0.9)
+    grasp_generator.propose_grasps.return_value = GraspCandidateArray(
+        Header(1.0, "world"), [first, second]
+    )
 
-    def test_place_back_no_pick_pose_errors(self, module):
-        module._last_pick_pose = None
+    result = module.select_grasp("cup-1", rank=1)
 
-        result = module.place_back()
-        assert not result.is_success()
-        assert result.error_code == "NO_PRIOR_POSE"
-        assert "pick" in result.message.lower()
+    assert result.is_success()
+    assert module.get_grasp_candidates().candidates == [first, second]
+    assert module._selected_grasp is not None
+    assert module._selected_grasp.position.x == pytest.approx(0.2)
+    assert module._selected_pregrasp is not None
+    assert module._selected_pregrasp.position.z == pytest.approx(0.3)
+
+
+def test_select_grasp_rejects_non_planning_frame(module: PickAndPlaceModule) -> None:
+    scene: Any = module._scene
+    grasp_generator: Any = module._grasp_generator
+    module._objects = {"cup-1": {"object_id": "cup-1"}}
+    scene.get_object_pointcloud_by_object_id.return_value = MagicMock()
+    grasp_generator.propose_grasps.return_value = GraspCandidateArray(
+        Header(1.0, "camera"), [_candidate(0.1)]
+    )
+
+    result = module.select_grasp("cup-1")
+
+    assert not result.is_success()
+    assert result.error_code == "GRASP_FRAME_MISMATCH"
+
+
+def test_pick_preserves_current_yaw_when_configured(module: PickAndPlaceModule) -> None:
+    module.config.yaw_policy = "preserve_current"
+    module._selected_grasp = PoseStamped(
+        frame_id="world",
+        position=Vector3(0.1, 0.0, 0.2),
+        orientation=Quaternion.from_euler(Vector3(-3.141592653589793, 0.0, 0.1)),
+    )
+
+    result = module.pick_selected()
+
+    assert result.is_success()
+    assert module._selected_grasp is not None
+    assert module._selected_grasp.orientation.to_euler().z == pytest.approx(0.7)
+    assert module._holding_object
+
+
+def test_place_uses_local_axis_and_clears_held_state(module: PickAndPlaceModule) -> None:
+    manipulation: Any = module._manipulation
+    module._selected_grasp = PoseStamped(
+        frame_id="world",
+        orientation=Quaternion.from_euler(Vector3(-3.141592653589793, 0.0, 0.0)),
+    )
+    module._holding_object = True
+
+    result = module.place_at(0.4, 0.0, 0.2)
+
+    assert result.is_success()
+    preplace = manipulation.plan_to_poses.call_args_list[0].args[0]["arm/tool"]
+    assert preplace.position.z == pytest.approx(0.3)
+    assert not module._holding_object
