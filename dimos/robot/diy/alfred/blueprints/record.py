@@ -34,9 +34,13 @@ module env::
 
 from __future__ import annotations
 
+import fcntl
+import time
+
 from pydantic import Field
 
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.core import rpc
 from dimos.core.stream import In
 from dimos.experimental.memory.rust_recorder import RustMcapStoreConfig, RustRecorder
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
@@ -71,16 +75,38 @@ _CAMERA_PORTS = (
 )
 
 
+class SerializedStartRealSense(RealSenseCamera):
+    """RealSense whose pipeline open is serialized across processes.
+
+    Two processes calling rs.pipeline.start() concurrently deadlock
+    librealsense on this platform (the second start blocks forever, observed
+    via py-spy at camera.py start). A shared flock makes the opens take turns.
+    """
+
+    _START_LOCK = "/tmp/dimos_realsense_start.lock"
+
+    @rpc
+    def start(self) -> None:
+        with open(self._START_LOCK, "w") as lockfile:
+            fcntl.flock(lockfile, fcntl.LOCK_EX)
+            try:
+                super().start()
+                # Let the pipeline settle before the peer starts its open.
+                time.sleep(1.0)
+            finally:
+                fcntl.flock(lockfile, fcntl.LOCK_UN)
+
+
 def _rig_realsense(prefix: str, serial: str) -> object:
     """One serial-bound RealSense with its streams namespaced ``<prefix>_*``."""
-    return RealSenseCamera.blueprint(
+    return SerializedStartRealSense.blueprint(
         instance_name=f"realsense_{prefix}",
         camera_name=f"{prefix}_realsense",
         serial_number=serial,
         width=_CAM_WIDTH,
         height=_CAM_HEIGHT,
         fps=_CAM_FPS,
-    ).remappings([(RealSenseCamera, port, f"{prefix}_{port}") for port in _CAMERA_PORTS])
+    ).remappings([(SerializedStartRealSense, port, f"{prefix}_{port}") for port in _CAMERA_PORTS])
 
 
 class AlfredRecorderConfig(RecorderConfig):
