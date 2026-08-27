@@ -47,7 +47,10 @@ from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
 )
 from dimos.memory.cli.dataset import open_store
 from dimos.robot.unitree.g1.sim import model as g1_model
+from dimos.robot.unitree.g1.sim.plant import TORQUE_LIMITS
+from dimos.robot.unitree.g1.sim.ranges import load_preset
 from dimos.robot.unitree.g1.sim.sysid.ingest import world_T_pelvis
+from dimos.simulation.sysid.plant import actuator_step
 from dimos.utils.data import LfsPath
 
 ROBOT_MJCF = g1_model.ROBOT_MJCF
@@ -207,6 +210,9 @@ def main() -> None:
     ap.add_argument("--no-ghost", action="store_true")
     ap.add_argument("--headless", action="store_true")
     ap.add_argument("--mjcf", type=Path, default=ROBOT_MJCF, help="plant under test")
+    ap.add_argument(
+        "--preset", default="stock", help="plant preset name or JSON: knobs + actuator lag"
+    )
     ap.add_argument("--trace-hz", type=float, default=0.0, help="print pelvis pose")
     ap.add_argument("--drop-m", type=float, default=0.01, help="spawn height above touchdown")
     args = ap.parse_args()
@@ -218,6 +224,10 @@ def main() -> None:
     print(f"{len(cmd_ts)} twists on {args.stream}, {len(ghost_ts)} Point-LIO poses")
 
     model = build_model(ghost=not args.no_ghost and len(ghost_ts) > 0, mjcf=args.mjcf)
+    preset = load_preset(args.preset)
+    if preset.physics:
+        g1_model.apply_physics(model, preset.physics)
+    print(f"preset {preset.name}: actuator_tau {preset.actuator_tau * 1e3:.2f} ms")
     data = mujoco.MjData(model)
     policy = GrootPolicy(Path(str(LfsPath("groot"))))
 
@@ -254,6 +264,7 @@ def main() -> None:
     end_t = (cmd_ts[-1] - t0) if args.duration_s is None else args.duration_s
     target = DEFAULT_29[:NUM_ACTIONS].copy()
     ctrl = np.zeros(NUM_MOTORS)
+    applied = np.zeros(NUM_MOTORS)
     step_i = 0
     wall0 = time.time()
 
@@ -282,8 +293,10 @@ def main() -> None:
             dq = data.qvel[6 : 6 + NUM_MOTORS]
             desired = DEFAULT_29.astype(np.float64).copy()
             desired[:NUM_ACTIONS] = target
-            ctrl[:] = KP * (desired - q) - KD * dq
-            data.ctrl[:] = ctrl
+            # The same chain the fit ran: PD -> clip -> first-order lag.
+            ctrl[:] = np.clip(KP * (desired - q) - KD * dq, -TORQUE_LIMITS, TORQUE_LIMITS)
+            applied = actuator_step(applied, ctrl, model.opt.timestep, preset.actuator_tau, dq=dq)
+            data.ctrl[:] = applied
 
             if ghost_id >= 0:
                 i = at(ghost_ts, now)
