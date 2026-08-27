@@ -86,9 +86,10 @@ class PointCloudSelfFilter(Module):
 
     @rpc
     def start(self) -> None:
-        # Subscribe to TF before accepting clouds. Filtering is dispatched off
-        # the transport thread so TF can keep filling while geometry work runs.
-        _ = self.tfbuffer
+        # Touch tfbuffer so it subscribes before clouds arrive. Filtering is
+        # dispatched off the transport thread so TF can keep filling while
+        # geometry work runs.
+        self.tfbuffer  # noqa: B018
         super().start()
 
     @rpc
@@ -118,7 +119,13 @@ class PointCloudSelfFilter(Module):
             if len(points):
                 sensor_from_geometry = sensor_from_link.to_matrix() @ geometry.link_from_geometry
                 local = _transform_points(points, np.linalg.inv(sensor_from_geometry))
-                keep &= ~_points_inside_geometry(local, geometry, config.padding_m)
+                keep &= ~_points_inside(
+                    local,
+                    geometry.shape,
+                    geometry.dimensions,
+                    geometry.mesh,
+                    config.padding_m,
+                )
 
             world_from_geometry = world_from_link.to_matrix() @ geometry.link_from_geometry
             world_samples = _transform_points(geometry.clear_samples, world_from_geometry)
@@ -204,15 +211,17 @@ class PointCloudSelfFilter(Module):
                         mesh=mesh,
                         shape=shape_name,
                         dimensions=dimensions,
-                        clear_samples=self._clear_samples(mesh),
+                        clear_samples=self._clear_samples(mesh, shape_name, dimensions),
                     )
                 )
         return result
 
-    def _clear_samples(self, mesh: trimesh.Trimesh) -> np.ndarray:
+    def _clear_samples(
+        self, mesh: trimesh.Trimesh, shape: str, dimensions: tuple[float, ...]
+    ) -> np.ndarray:
         """Grid points covering the geometry, at map resolution.
 
-        A cell whose center is outside the mesh can still be occupied by it, so
+        A cell whose center is outside the shape can still be occupied by it, so
         the margin reaches out by half a cell diagonal.
         """
         pitch = self.config.voxel_size
@@ -224,10 +233,8 @@ class PointCloudSelfFilter(Module):
             for lo, hi in zip(lower, upper, strict=True)
         ]
         grid = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1).reshape((-1, 3))
-        signed_distance = trimesh.proximity.signed_distance(  # type: ignore[no-untyped-call]
-            mesh, grid
-        )
-        return np.asarray(grid[signed_distance >= -margin], dtype=np.float64)
+        inside = _points_inside(grid, shape, dimensions, mesh, margin)
+        return np.asarray(grid[inside], dtype=np.float64)
 
 
 def _geometry_mesh(
@@ -262,17 +269,26 @@ def _geometry_mesh(
     return mesh, "mesh", ()
 
 
-def _points_inside_geometry(
-    points: np.ndarray, geometry: _CollisionGeometry, padding: float
+def _points_inside(
+    points: np.ndarray,
+    shape: str,
+    dimensions: tuple[float, ...],
+    mesh: trimesh.Trimesh,
+    padding: float,
 ) -> np.ndarray:
-    if geometry.shape == "box":
-        half_size = np.asarray(geometry.dimensions, dtype=np.float64) / 2.0
+    """Mask of points within `padding` of the shape, in its own frame.
+
+    Primitives answer analytically. Only a real mesh falls through to
+    trimesh.proximity, which needs rtree.
+    """
+    if shape == "box":
+        half_size = np.asarray(dimensions, dtype=np.float64) / 2.0
         return np.asarray(np.all(np.abs(points) <= half_size + padding, axis=1))
-    if geometry.shape == "sphere":
-        radius = geometry.dimensions[0] + padding
+    if shape == "sphere":
+        radius = dimensions[0] + padding
         return np.asarray(np.einsum("ij,ij->i", points, points) <= radius**2)
-    if geometry.shape == "cylinder":
-        radius, length = geometry.dimensions
+    if shape == "cylinder":
+        radius, length = dimensions
         radial_sq = np.einsum("ij,ij->i", points[:, :2], points[:, :2])
         return np.asarray(
             (radial_sq <= (radius + padding) ** 2)
@@ -282,13 +298,13 @@ def _points_inside_geometry(
     # Exact mesh distance is expensive for a full RGB-D cloud. Reject points
     # outside the padded mesh bounds first; robot links occupy only a small
     # fraction of the camera view.
-    padded_lower = geometry.mesh.bounds[0] - padding
-    padded_upper = geometry.mesh.bounds[1] + padding
+    padded_lower = mesh.bounds[0] - padding
+    padded_upper = mesh.bounds[1] + padding
     candidates = np.all((points >= padded_lower) & (points <= padded_upper), axis=1)
     inside = np.zeros(len(points), dtype=bool)
     if np.any(candidates):
         signed_distance = trimesh.proximity.signed_distance(  # type: ignore[no-untyped-call]
-            geometry.mesh, points[candidates]
+            mesh, points[candidates]
         )
         inside[candidates] = signed_distance >= -padding
     return inside
