@@ -36,9 +36,50 @@ pub struct LcmTransport {
     runtime: tokio::runtime::Handle,
 }
 
+/// liblcm reads this, so python modules follow it and native ones have to as well or the
+/// two halves of a pipeline end up on different buses. Format: `udpm://group:port?ttl=n`.
+fn options_from_env() -> LcmOptions {
+    match std::env::var("LCM_DEFAULT_URL") {
+        Ok(url) => options_from_url(&url),
+        Err(_) => LcmOptions::default(),
+    }
+}
+
+fn options_from_url(url: &str) -> LcmOptions {
+    let mut options = LcmOptions::default();
+    let Some(rest) = url.strip_prefix("udpm://") else {
+        tracing::warn!(
+            url,
+            "LCM_DEFAULT_URL is not a udpm:// url; using the defaults"
+        );
+        return options;
+    };
+    let (address, query) = rest.split_once('?').unwrap_or((rest, ""));
+    if let Some((group, port)) = address.rsplit_once(':') {
+        match (group.parse(), port.parse()) {
+            (Ok(group), Ok(port)) => {
+                options.multicast_group = group;
+                options.port = port;
+            }
+            _ => tracing::warn!(
+                url,
+                "LCM_DEFAULT_URL has no parsable group:port; using the defaults"
+            ),
+        }
+    }
+    for (key, value) in query.split('&').filter_map(|pair| pair.split_once('=')) {
+        if key == "ttl" {
+            if let Ok(ttl) = value.parse() {
+                options.ttl = ttl;
+            }
+        }
+    }
+    options
+}
+
 impl LcmTransport {
     pub async fn new() -> io::Result<Self> {
-        Ok(Self::wrap(Lcm::new().await?))
+        Self::with_options(options_from_env()).await
     }
 
     pub async fn with_options(opts: LcmOptions) -> io::Result<Self> {
@@ -116,6 +157,41 @@ impl Transport for LcmTransport {
                 channels = ?suppressed,
                 "LCM cannot suppress a topic; these stay visible on the multicast bus",
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::options_from_url;
+    use std::net::Ipv4Addr;
+
+    #[test]
+    fn reads_group_port_and_ttl() {
+        let options = options_from_url("udpm://239.255.76.67:7712?ttl=0");
+        assert_eq!(options.multicast_group, Ipv4Addr::new(239, 255, 76, 67));
+        assert_eq!(options.port, 7712);
+        assert_eq!(options.ttl, 0);
+    }
+
+    #[test]
+    fn ttl_is_optional() {
+        let options = options_from_url("udpm://239.255.76.67:7712");
+        assert_eq!(options.port, 7712);
+        assert_eq!(options.ttl, dimos_lcm::LcmOptions::default().ttl);
+    }
+
+    #[test]
+    fn an_unusable_url_leaves_the_defaults() {
+        let defaults = dimos_lcm::LcmOptions::default();
+        for url in [
+            "tcp://127.0.0.1:7667",
+            "udpm://not-an-ip:7667",
+            "udpm://239.255.76.67",
+        ] {
+            let options = options_from_url(url);
+            assert_eq!(options.multicast_group, defaults.multicast_group, "{url}");
+            assert_eq!(options.port, defaults.port, "{url}");
         }
     }
 }
