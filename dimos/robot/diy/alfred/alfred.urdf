@@ -194,12 +194,9 @@
   </joint>
 
   <!-- RealSense D455 on the mast, centered left-right, facing forward, pitched
-       10 deg down. MEASURED 2026-08-26 from the side photo scaled by the FLOW
-       base height: camera center 1.69 m above floor (0.32 m below the mast top),
-       bracket standing it ~3 cm proud of the mast front face (0.26 + 0.03).
-       Frame prefix d455 so it can coexist with the rear D435i (camera_*); run
-       the driver with camera_name="d455". Child offsets are nominal D455 values
-       (95 mm IR baseline); needs a spin calibration. -->
+       down. Frame prefix d455 so it can coexist with the rear D435i (camera_*);
+       run the driver with camera_name="d455". Child offsets are nominal D455
+       values (95 mm IR baseline). -->
   <link name="d455_link">
     <!-- The link sits at the left IR imager (RealSense convention), ~15 mm from
          the left end of the 124 mm housing, so the box is offset along -y. -->
@@ -209,10 +206,13 @@
       <material name="sensor"/>
     </visual>
   </link>
-  <!-- y +0.0475 puts the HOUSING dead center; the link itself is the left imager. -->
+  <!-- Solved from drive_2026-08-18_23-05-04 by registering D455 depth against the
+       point-lio lidar map (median error 5.6 -> 3.1 cm, inliers 44% -> 78%). Only z
+       is tightly resolved; x and y are bounded to about +/-3 cm, so treat them as a
+       best estimate rather than a measurement. -->
   <joint name="d455_joint" type="fixed">
     <parent link="base_link"/><child link="d455_link"/>
-    <origin xyz="0.29 0.0475 1.69" rpy="0 0.1745329 0"/>
+    <origin xyz="0.2146 -0.0008 1.5435" rpy="0.0012 0.1448 -0.0106"/>
   </joint>
 
   <link name="d455_depth_frame"/>
