@@ -17,7 +17,7 @@ use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use crate::planner::{plan as plan_impl, Emb, COMMIT_MARGIN};
+use crate::planner::{plan_explored as plan_impl, Emb, COMMIT_MARGIN};
 
 /// One plan call. points: (N, 2) float64 obstacle xy in world frame -- every
 /// row is an obstacle, the caller's model already decided which (see
@@ -28,9 +28,11 @@ use crate::planner::{plan as plan_impl, Emb, COMMIT_MARGIN};
 /// published, or None on the first plan and after a reset; `commit_margin` is
 /// `se2.COMMIT_MARGIN`, which python owns and hands over here the way it hands
 /// over the body. Returns an (M, 3) array of (x, y, yaw) at
-/// `resolution`, or None to refuse.
+/// `resolution`, or None to refuse. `ground` is the (N, 2) floor the cloud saw;
+/// `unseen_cost` > 1 prices every metre over a cell with no floor under it
+/// that many times higher (`planner.rs::plan_explored`).
 #[pyfunction]
-#[pyo3(signature = (points, pose, goal, emb, resolution, incumbent=None, commit_margin=COMMIT_MARGIN))]
+#[pyo3(signature = (points, pose, goal, emb, resolution, incumbent=None, commit_margin=COMMIT_MARGIN, ground=None, unseen_cost=1.0))]
 // The argument list IS the boundary, and it is the spec: every one of these is
 // a thing python owns and the crate is handed. Bundling them into a struct
 // would only move the same seven names one indirection away from the call.
@@ -44,6 +46,8 @@ fn plan<'py>(
     resolution: f64,
     incumbent: Option<PyReadonlyArray2<'py, f64>>,
     commit_margin: f64,
+    ground: Option<PyReadonlyArray2<'py, f64>>,
+    unseen_cost: f64,
 ) -> PyResult<Option<Bound<'py, PyArray2<f64>>>> {
     if points.shape()[1] != 2 {
         return Err(PyValueError::new_err(format!(
@@ -68,16 +72,21 @@ fn plan<'py>(
             )
         }
     };
-    let view = points.as_array();
-    let pts: Vec<[f64; 2]> = (0..view.shape()[0])
-        .map(|k| [view[[k, 0]], view[[k, 1]]])
-        .collect();
+    let xy = |a: &PyReadonlyArray2<'py, f64>| -> Vec<[f64; 2]> {
+        let v = a.as_array();
+        (0..v.shape()[0]).map(|k| [v[[k, 0]], v[[k, 1]]]).collect()
+    };
+    let pts = xy(&points);
+    // (N, 2) ground returns; a cell with none under it prices at `unseen_cost`.
+    let gnd = ground.as_ref().map(xy).unwrap_or_default();
     // the body as `Embodiment` dumps it: one dict, the native modules' own
     let emb: Emb = serde_json::from_str(emb)
         .map_err(|e| PyValueError::new_err(format!("emb is not an Embodiment: {e}")))?;
     let out = py.allow_threads(|| {
         plan_impl(
             &pts,
+            &gnd,
+            unseen_cost,
             pose,
             goal,
             &emb,

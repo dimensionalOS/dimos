@@ -53,6 +53,7 @@ from dimos.navigation.motion.embodiment.base import Embodiment
 from dimos.navigation.motion.embodiment.go2 import GO2
 from dimos.navigation.motion.obstacles import (
     ObstacleModel,
+    ground_points,
     hard_points,
     load as load_model,
     path_clearance,
@@ -121,7 +122,7 @@ def carrot_along(
     return (float(xy[-1][0]), float(xy[-1][1]))
 
 
-REPLAN_CARROT_M = 0.2  # carrot move that earns a replan
+REPLAN_CARROT_M = 0.3  # carrot move that earns a replan
 RESET_CARROT_M = 1.0  # carrot jump that means a different task
 
 
@@ -173,6 +174,10 @@ class MotionPlannerConfig(ModuleConfig):
     # `float | None` cannot cross into the native twin, and one knob that both
     # halves carry beats two that drift.
     body_dilate_m: float = 0.0
+    # Price multiplier per metre over a lattice cell the cloud saw no floor
+    # under: the search skirts unexplored terrain rather than crossing it, and
+    # still crosses it when nothing else reaches the goal. <= 1 turns it off.
+    unseen_cost: float = 5.0
     # Plan when an input that MATTERS changed -- a new local map, or a carrot
     # that moved by `replan_carrot_m` -- rather than on every tick of the clock
     # (`replan_due`). The follower tracks the published path as the robot moves
@@ -370,9 +375,17 @@ class MotionPlanner(Module):
         # with. The follower's room hint is measured off the very same points,
         # so the governor and the stamped profile cannot be pricing different
         # worlds.
-        pts = hard_points(self._model, cloud.points_f32(), ground_z)
+        raw = cloud.points_f32()
+        pts = hard_points(self._model, raw, ground_z)
         try:
-            ref = self._episode.plan(pts[:, :2], pose, Pose(goal[0], goal[1], 0.0), self._incumbent)
+            ref = self._episode.plan(
+                pts[:, :2],
+                pose,
+                Pose(goal[0], goal[1], 0.0),
+                self._incumbent,
+                ground=ground_points(raw, ground_z),
+                unseen_cost=self.config.unseen_cost,
+            )
         except Exception:
             logger.exception("planner failed; keeping the last published path")
             return False

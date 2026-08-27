@@ -63,7 +63,7 @@ PERIOD = 0.24  # 2 * CELL == 3 * VOXEL == 6 * FINE
 # it covers every way a route's price can move while the world stands still
 # (the seed snap and the incumbent's re-densification), plus headroom. One copy:
 # the rust candidate is handed this value across the extension boundary.
-COMMIT_MARGIN = 1.50
+COMMIT_MARGIN = 3.0
 
 
 @dataclass(frozen=True)
@@ -511,7 +511,11 @@ def se2_search(
                 if tail is None:
                     return None
                 route = np.vstack([route, tail])
-        if any(not seg_free(a, b, margin) for a, b in itertools.pairwise(route)):
+        # The route already published is re-validated COLLISION-free, not at
+        # the planning margin: a map that nibbles a few cm off a corridor the
+        # robot is already walking is not a reason to hand it a new route.
+        # New geometry (the carry above, the fresh search) keeps the margin.
+        if any(not seg_free(a, b, 0.0) for a, b in itertools.pairwise(route)):
             return None
         return route
 

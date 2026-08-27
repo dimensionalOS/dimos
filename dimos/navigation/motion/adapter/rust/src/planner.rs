@@ -31,7 +31,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use dimos_module::{native_config, warn_throttled, Input, Module, Output, Tf};
-use dimos_motion2_target::planner::{plan, Emb, COMMIT_MARGIN};
+use dimos_motion2_target::planner::{plan_explored, Emb, COMMIT_MARGIN};
 use dimos_motion2_tc::{clearance, stamps};
 use lcm_msgs::nav_msgs::Path;
 use lcm_msgs::sensor_msgs::PointCloud2;
@@ -57,6 +57,10 @@ pub struct Config {
     /// which is how a deployment asks for a tighter plan than the measured
     /// legs. A gap admits a route when it is `box_width + 2 * precision` wide.
     pub body_dilate_m: f64,
+    /// Price multiplier per metre over a lattice cell no floor return was seen
+    /// under: the search skirts unexplored terrain rather than crossing it, and
+    /// still crosses it when nothing else reaches the goal. <= 1 turns it off.
+    pub unseen_cost: f64,
     /// Plan discretisation (m). The python takes it from
     /// `planners/base.py RESOLUTION`; here it crosses explicitly.
     #[validate(range(exclusive_min = 0.0))]
@@ -320,10 +324,13 @@ pub fn plan_once(
     // with. The follower's room hint is measured off the very same points, so
     // the governor and the stamped profile cannot be pricing different worlds.
     let hard = obstacles::hard_points(model, points, ground_z);
+    let ground = obstacles::ground_points(points, ground_z);
     let points: &[[f32; 3]] = &hard;
     let cloud: Vec<[f64; 2]> = points.iter().map(|p| [p[0] as f64, p[1] as f64]).collect();
-    let states = match plan(
+    let states = match plan_explored(
         &cloud,
+        &ground,
+        config.unseen_cost,
         pose,
         goal,
         emb,
@@ -680,6 +687,7 @@ mod tests {
         Config {
             embodiment: Emb::fixture(),
             body_dilate_m: 0.0,
+            unseen_cost: 1.0,
             resolution: 0.1,
             replan_hz: 5.0,
             goal_lookahead_m: 5.0,

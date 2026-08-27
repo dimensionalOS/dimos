@@ -101,6 +101,12 @@ def referenced(cloud: NDArray[np.float32], ground_z: float) -> NDArray[np.float3
     return pts - np.array([0.0, 0.0, ground_z], dtype=np.float32)
 
 
+def ground_points(cloud: NDArray[np.float32], ground_z: float) -> NDArray[np.float64]:
+    """The floor the cloud saw, as (N, 2) xy: returns at or under the band."""
+    pts = referenced(cloud, ground_z)
+    return np.ascontiguousarray(pts[pts[:, 2] <= LOW][:, :2], dtype=np.float64)
+
+
 def hard_points(
     model: ObstacleModel, cloud: NDArray[np.float32], ground_z: float
 ) -> NDArray[np.float32]:

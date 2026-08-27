@@ -57,6 +57,7 @@ class MotionPlannerNativeConfig(NativeModuleConfig):
     # (test_planner.py asserts it).
     embodiment: Embodiment = _default("embodiment")
     body_dilate_m: float = _default("body_dilate_m")
+    unseen_cost: float = _default("unseen_cost")
     # planners/base.py RESOLUTION; here it crosses explicitly, because the rust
     # planner has no python default to read.
     resolution: float = RESOLUTION

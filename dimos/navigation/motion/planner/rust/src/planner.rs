@@ -84,7 +84,7 @@ const COST_STEP: f64 = FINE;
 /// Python owns the number and hands it to `plan` on every call, exactly as it
 /// hands over the envelope: a measured constant may not have a second
 /// definition that can drift away from it.
-pub const COMMIT_MARGIN: f64 = 1.50;
+pub const COMMIT_MARGIN: f64 = 3.0;
 
 /// The governor curve, read off the embodiment (`Emb::governor`).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -660,9 +660,35 @@ struct World {
     /// Absolute LATTICE index of the working area's low corner, the same way.
     pub kx: i64,
     pub ky: i64,
+    /// Lattice dims, and the price multiplier per lattice cell: 1.0 where a
+    /// ground return was seen (or in a neighbouring cell), `unseen_cost`
+    /// elsewhere. Empty = every cell explored.
+    nlx: usize,
+    nly: usize,
+    unseen: Vec<f64>,
 }
 
 impl World {
+    /// The unexplored-terrain multiplier at lattice cell (i, j).
+    #[inline]
+    fn mult(&self, i: usize, j: usize) -> f64 {
+        if self.unseen.is_empty() {
+            1.0
+        } else {
+            self.unseen[i * self.nly + j]
+        }
+    }
+
+    /// `mult` at a world position, snapped the way the lattice is.
+    fn mult_at(&self, x: f64, y: f64) -> f64 {
+        if self.unseen.is_empty() {
+            return 1.0;
+        }
+        let i = ((x / CELL).round_even_i64() - self.kx).clamp(0, self.nlx as i64 - 1) as usize;
+        let j = ((y / CELL).round_even_i64() - self.ky).clamp(0, self.nly as i64 - 1) as usize;
+        self.unseen[i * self.nly + j]
+    }
+
     #[inline]
     /// Value at fine cell (i, j), whose flat index the caller already has.
     /// `at` for a caller that holds only the flat index. The clearance scan
@@ -723,7 +749,23 @@ impl World {
     }
 }
 
+#[cfg(test)]
 fn build_world(points: &[[f64; 2]], pose: (f64, f64, f64), goal: (f64, f64), cap: f64) -> World {
+    build_world_explored(points, &[], 1.0, pose, goal, cap)
+}
+
+/// `build_world` with the explored set: `ground` is every ground return, as
+/// xy, and a lattice cell with none under it or its 8 neighbours prices every
+/// metre at `unseen_cost` times the governor's price. `unseen_cost <= 1.0`
+/// turns the layer off.
+fn build_world_explored(
+    points: &[[f64; 2]],
+    ground: &[[f64; 2]],
+    unseen_cost: f64,
+    pose: (f64, f64, f64),
+    goal: (f64, f64),
+    cap: f64,
+) -> World {
     let band: Vec<(f64, f64)> = points.iter().map(|p| (p[0], p[1])).collect();
     // The working area is taken over {pose, goal, cloud} padded by `PAD`, and
     // its LOW corner is then snapped down onto the world frame's own absolute
@@ -769,6 +811,29 @@ fn build_world(points: &[[f64; 2]], pose: (f64, f64, f64), goal: (f64, f64), cap
     } else {
         (vec![-1.0; ncells], Some(PointBuckets::new(&band)))
     };
+    let (kx, ky) = (px * 2, py * 2);
+    let nlx = arange_len(x0, x1 + CELL, CELL);
+    let nly = arange_len(y0, y1 + CELL, CELL);
+    let unseen = if unseen_cost <= 1.0 {
+        Vec::new()
+    } else {
+        let mut u = vec![unseen_cost; nlx * nly];
+        // ponytail: one-cell dilation so a voxel-sparse floor does not flicker
+        // holes into the explored set; a proper coverage estimate if it does.
+        for g in ground {
+            let i = (g[0] / CELL).round_even_i64() - kx;
+            let j = (g[1] / CELL).round_even_i64() - ky;
+            for di in -1..=1 {
+                for dj in -1..=1 {
+                    let (a, b) = (i + di, j + dj);
+                    if a >= 0 && b >= 0 && a < nlx as i64 && b < nly as i64 {
+                        u[a as usize * nly + b as usize] = 1.0;
+                    }
+                }
+            }
+        }
+        u
+    };
     World {
         fkx,
         fky,
@@ -778,8 +843,11 @@ fn build_world(points: &[[f64; 2]], pose: (f64, f64, f64), goal: (f64, f64), cap
         pts,
         cap,
         bounds: (x0, y0, x1, y1),
-        kx: px * 2,
-        ky: py * 2,
+        kx,
+        ky,
+        nlx,
+        nly,
+        unseen,
     }
 }
 
@@ -1137,6 +1205,24 @@ fn pose_clear(w: &mut World, offs: &[(f64, f64)], x: f64, y: f64, th: f64) -> f6
 /// its own drift row, which turns with the interpolated yaw, widened by its own
 /// curvature. Judging it against the union instead would forbid every shortcut
 /// through a gap the lattice just proved the body walks down nose-first.
+/// Metres of segment `a -> b` over unexplored lattice cells, sampled at half a
+/// cell. Zero when the layer is off.
+fn dark_len(w: &World, a: &[f64; 3], b: &[f64; 3]) -> f64 {
+    if w.unseen.is_empty() {
+        return 0.0;
+    }
+    let len = (b[0] - a[0]).hypot(b[1] - a[1]);
+    let n = ((len / (0.5 * CELL)).ceil() as usize).max(1);
+    let h = len / n as f64;
+    (0..n)
+        .filter(|&q| {
+            let t = (q as f64 + 0.5) / n as f64;
+            w.mult_at(a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])) > 1.0
+        })
+        .count() as f64
+        * h
+}
+
 fn seg_free(w: &mut World, fps: &Fps, emb: &Emb, a: &[f64; 3], b: &[f64; 3], floor: f64) -> bool {
     let dyaw = rem_2pi(b[2] - a[2]);
     let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
@@ -1676,7 +1762,7 @@ fn se2_search_in(
                 let k = kbase as usize;
                 let uv = cl.clear_at(k, nb, i, j);
                 if uv > 0.0 {
-                    let yc = yaw_cost * cl.price(uv);
+                    let yc = yaw_cost * cl.price(uv) * cl.w.mult(i, j);
                     if d + yc < dist[k] {
                         dist[k] = d + yc;
                         prev[k] = from + 1;
@@ -1718,7 +1804,7 @@ fn se2_search_in(
                 // judged at the yaw it arrives in and pays the splay one bin of
                 // turn costs over its own length.
                 let uv = cl.clear_at(k, nb, ni, nj);
-                let c = cmin * cl.price(uv);
+                let c = cmin * cl.price(uv) * cl.w.mult(ni, nj);
                 if d + c >= dist[k] {
                     continue;
                 }
@@ -1890,16 +1976,24 @@ fn se2_search_in(
     // consume none of the retreat -- deliberately: they are exactly the states a
     // replan does not reproduce.
     let mut arc = vec![0.0f64; raw.len()];
+    // ...and the unexplored part of it: a chord may not add dark metres beyond
+    // what the raw span it replaces already walked, or smoothing re-cuts
+    // across the terrain the search paid to skirt.
+    let mut dark = vec![0.0f64; raw.len()];
     for m in 1..raw.len() {
         arc[m] = arc[m - 1] + (raw[m][0] - raw[m - 1][0]).hypot(raw[m][1] - raw[m - 1][1]);
+        dark[m] = dark[m - 1] + dark_len(w, &raw[m - 1], &raw[m]);
     }
+    let chord_dark = |w: &World, j: usize, k: usize| -> bool {
+        dark_len(w, &raw[j], &raw[k]) <= dark[k] - dark[j] + CELL
+    };
     let mut keep = vec![raw.len() - 1];
     while *keep.last().unwrap() > 0 {
         let k = *keep.last().unwrap();
         let mut j = 0usize;
         while j + 1 < k {
             let floor = chord_floor(&raw_clear, j, k);
-            if seg_free(w, fps, emb, &raw[j], &raw[k], floor) {
+            if chord_dark(w, j, k) && seg_free(w, fps, emb, &raw[j], &raw[k], floor) {
                 break;
             }
             j += 1;
@@ -1928,7 +2022,7 @@ fn se2_search_in(
         }
         while r > j {
             let floor = chord_floor(&raw_clear, r, k);
-            if seg_free(w, fps, emb, &raw[r], &raw[k], floor) {
+            if chord_dark(w, r, k) && seg_free(w, fps, emb, &raw[r], &raw[k], floor) {
                 break;
             }
             r -= 1;
@@ -1955,7 +2049,7 @@ fn se2_search_in(
         let mut f = hi;
         while f > lo {
             let floor = chord_floor(&raw_clear, 0, f);
-            if seg_free(w, fps, emb, &raw[0], &raw[f], floor) {
+            if chord_dark(w, 0, f) && seg_free(w, fps, emb, &raw[0], &raw[f], floor) {
                 break;
             }
             f -= 1;
@@ -2171,7 +2265,10 @@ fn path_cost(w: &mut World, offs: &[(f64, f64)], emb: &Emb, states: &[[f64; 3]])
             // A rotation in place carries no arc, so it is priced here rather
             // than in the integral below, which is parameterised by arc alone.
             let th = a[2] + 0.5 * dyaw[m];
-            total += emb.yaw_w * dyaw[m].abs() * gov.tight(pose_clear(w, offs, a[0], a[1], th));
+            total += emb.yaw_w
+                * dyaw[m].abs()
+                * gov.tight(pose_clear(w, offs, a[0], a[1], th))
+                * w.mult_at(a[0], a[1]);
         }
     }
     let mv: Vec<usize> = (0..n).filter(|&m| span[m] > 1e-9).collect();
@@ -2206,7 +2303,7 @@ fn path_cost(w: &mut World, offs: &[(f64, f64)], emb: &Emb, states: &[[f64; 3]])
         let turn = 0.5 * emb.yaw_w * dyaw[m].abs() / span[m];
         let x = a[0] + t * (b[0] - a[0]);
         let y = a[1] + t * (b[1] - a[1]);
-        total += (gait + turn) * h * gov.tight(pose_clear(w, offs, x, y, th));
+        total += (gait + turn) * h * gov.tight(pose_clear(w, offs, x, y, th)) * w.mult_at(x, y);
     }
     total
 }
@@ -2265,8 +2362,11 @@ fn committed(
     // would have found -- and the extension is a full lattice search, so asking
     // in this order is the difference between 0.1 ms and 200 ms on the tick
     // where the map closed the corridor the robot was walking down.
+    // COLLISION-free, not the planning margin: a map that nibbles a few cm
+    // off a corridor the robot is already walking is not a reason to hand it
+    // a new route. New geometry (the carry below) keeps the margin.
     for pair in route.windows(2) {
-        if !seg_free(cl.w, fps, emb, &pair[0], &pair[1], margin) {
+        if !seg_free(cl.w, fps, emb, &pair[0], &pair[1], 0.0) {
             return None;
         }
     }
@@ -2299,7 +2399,7 @@ fn committed(
                 margin,
             )?);
             for pair in route[join..].windows(2) {
-                if !seg_free(cl.w, fps, emb, &pair[0], &pair[1], margin) {
+                if !seg_free(cl.w, fps, emb, &pair[0], &pair[1], 0.0) {
                     return None;
                 }
             }
@@ -2342,6 +2442,25 @@ pub fn plan(
     incumbent: Option<&[[f64; 3]]>,
     commit_margin: f64,
 ) -> Option<Vec<[f64; 3]>> {
+    plan_explored(points, &[], 1.0, pose, goal, emb, resolution, incumbent, commit_margin)
+}
+
+/// `plan`, pricing unexplored terrain: a lattice cell with no `ground` return
+/// under it costs `unseen_cost` times as much per metre (see
+/// `build_world_explored`). The heuristic never sees the multiplier, so it
+/// stays a lower bound and the search stays exact.
+#[allow(clippy::too_many_arguments)]
+pub fn plan_explored(
+    points: &[[f64; 2]],
+    ground: &[[f64; 2]],
+    unseen_cost: f64,
+    pose: (f64, f64, f64),
+    goal: (f64, f64),
+    emb: &Emb,
+    resolution: f64,
+    incumbent: Option<&[[f64; 3]]>,
+    commit_margin: f64,
+) -> Option<Vec<[f64; 3]>> {
     let fps = Fps::new(emb);
     let offs = fps.union().to_vec();
     let reach = reach_of(&offs);
@@ -2349,7 +2468,7 @@ pub fn plan(
     // clearance certificate (which stops caring above `speed_clearance`) and the
     // smoothing floor (capped at `comfort`).
     let cap = emb.comfort.max(emb.speed_clearance) + reach + SNAP;
-    let mut w = build_world(points, pose, goal, cap);
+    let mut w = build_world_explored(points, ground, unseen_cost, pose, goal, cap);
     let margin = emb.precision;
     // The world is built from {pose, goal, cloud} and never from the incumbent:
     // the fresh search has to answer the same question whether or not anything
@@ -2404,6 +2523,37 @@ pub fn plan(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Unexplored terrain is priced, not forbidden: with the floor seen only
+    /// along a side corridor the route bends into it, and with the layer off
+    /// it goes straight.
+    #[test]
+    fn unexplored_terrain_is_detoured_not_crossed() {
+        let emb = Emb::fixture();
+        let mut ground = Vec::new();
+        let mut y = 1.0;
+        while y <= 2.0 {
+            let mut x = -1.0;
+            while x <= 5.0 {
+                ground.push([x, y]);
+                x += 0.1;
+            }
+            y += 0.1;
+        }
+        // The endpoints themselves are seen, so start and goal cells are cheap.
+        for c in [[0.0, 0.0], [4.0, 0.0]] {
+            ground.push(c);
+        }
+        let run = |cost: f64| {
+            let p = plan_explored(&[], &ground, cost, (0.0, 0.0, 0.0), (4.0, 0.0), &emb, 0.1, None, COMMIT_MARGIN)
+                .expect("open world routes");
+            p.iter().map(|s| s[1]).fold(0.0f64, f64::max)
+        };
+        assert!(run(1.0) < 0.2, "straight without the layer");
+        assert!(run(5.0) > 0.8, "bends into the seen corridor");
+        // Forbidding is not the contract: a goal in the dark is still reached.
+        assert!(plan_explored(&[], &[[0.0, 0.0]], 5.0, (0.0, 0.0, 0.0), (4.0, 0.0), &emb, 0.1, None, COMMIT_MARGIN).is_some());
+    }
 
     /// Ring of obstacle points (square outline), spacing `step`, half-size `h`.
     fn ring(cx: f64, cy: f64, h: f64, step: f64) -> Vec<[f64; 2]> {

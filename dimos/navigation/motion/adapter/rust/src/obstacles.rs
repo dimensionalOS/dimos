@@ -92,6 +92,18 @@ pub fn referenced(points: &[[f32; 3]], ground_z: f64) -> Vec<[f32; 3]> {
     points.iter().map(|p| [p[0], p[1], p[2] - ground]).collect()
 }
 
+/// The floor the cloud saw, as xy: returns at or under the band. Where the
+/// planner's lattice has none of these it is planning across terrain nobody
+/// has looked at, and prices it so (`Config::unseen_cost`).
+pub fn ground_points(points: &[[f32; 3]], ground_z: f64) -> Vec<[f64; 2]> {
+    let ground = ground_z as f32;
+    points
+        .iter()
+        .filter(|p| p[2] - ground <= LOW as f32)
+        .map(|p| [p[0] as f64, p[1] as f64])
+        .collect()
+}
+
 /// The obstacles this model sees -- the cloud the search plans on.
 pub fn hard_points(model: &dyn ObstacleModel, points: &[[f32; 3]], ground_z: f64) -> Vec<[f32; 3]> {
     let pts = referenced(points, ground_z);

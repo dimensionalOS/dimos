@@ -56,7 +56,11 @@ class TargetEpisode:
         pose: Pose,
         goal: Pose,
         incumbent: Path | None = None,
+        ground: NDArray[np.floating[Any]] | None = None,
+        unseen_cost: float = 1.0,
     ) -> Path:
+        # ponytail: the python port has no explored layer yet; the crate is
+        # what ships. Port se2.py when parity on it is wanted.
         band = np.asarray(obstacles, dtype=float).reshape(-1, 2)
 
         xs = [pose.x, goal.x] + ([] if not len(band) else [band[:, 0].min(), band[:, 0].max()])
@@ -106,6 +110,8 @@ class RustTargetEpisode:
         pose: Pose,
         goal: Pose,
         incumbent: Path | None = None,
+        ground: NDArray[np.floating[Any]] | None = None,
+        unseen_cost: float = 1.0,
     ) -> Path:
         pts = np.ascontiguousarray(np.asarray(obstacles, dtype=np.float64).reshape(-1, 2))
         inc = states_of(incumbent)
@@ -119,6 +125,10 @@ class RustTargetEpisode:
             # One copy of the constant, crossing the boundary the way the
             # envelope does: python owns it, the crate is handed it.
             COMMIT_MARGIN,
+            None
+            if ground is None
+            else np.ascontiguousarray(np.asarray(ground, dtype=np.float64).reshape(-1, 2)),
+            unseen_cost,
         )
         if out is None or not len(out):
             return Path(ts=0.0, frame_id="world", poses=[pose_stamped(pose.x, pose.y, pose.yaw)])

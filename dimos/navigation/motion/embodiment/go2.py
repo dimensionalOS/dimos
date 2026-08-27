@@ -28,7 +28,7 @@ GO2 = Embodiment(
     # trunk, set the width.
     length=0.883,
     width=0.593,
-    center_off=0.002,  # body center relative to the pose point
+    center_off=0,  # body center relative to the pose point
     comfort=0.4,  # obstacles-we-care-about radius (m)
     precision=0.05,  # local control tracking accuracy; the clearance floor (m)
     max_speed=0.5,  # cruise, granted at speed_clearance of room (m/s)
@@ -40,9 +40,9 @@ GO2 = Embodiment(
     walk_gain=0.964,  # ground speed ~= walk_gain * cmd - walk_slip, probed open loop
     walk_slip=0.132,
     walk_slip_ramp=0.08,  # below this intended speed the slip inverse fades to identity
-    strafe=1.8,  # planner cost of a metre sideways, forward = 1
-    reverse=1.5,  # ...and backwards
-    yaw_w=0.25,  # planner cost per rad of rotation
+    strafe=1.3,  # planner cost of a metre sideways, forward = 1
+    reverse=1.8,  # ...and backwards
+    yaw_w=0.15,  # planner cost per rad of rotation
     steppable=0.20,  # legs negotiate obstacles below this (m) - at a cost (TODO)
     height=0.45,  # above this the body passes underneath; not an obstacle (m)
     base_height=0.29,  # base origin above support; frame plumbing, not semantics (m)

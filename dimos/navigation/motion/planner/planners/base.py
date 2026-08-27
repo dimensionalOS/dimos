@@ -66,6 +66,8 @@ class PlannerEpisode(Protocol):
         pose: Pose,
         goal: Pose,
         incumbent: Path | None = None,
+        ground: NDArray[np.floating[Any]] | None = None,
+        unseen_cost: float = 1.0,
     ) -> Path: ...
 
 

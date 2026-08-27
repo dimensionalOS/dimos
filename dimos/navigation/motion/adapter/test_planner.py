@@ -198,7 +198,7 @@ def test_the_gate_is_the_one_the_diagnosis_replays():
     # MLS trims the route head to the robot and re-solves the tail on every
     # ~1 Hz republish: the waypoints move, the carrot does not
     assert not planner_module.replan_due((7, (2.0, 0.0)), 7, (2.02, -0.01))
-    assert not planner_module.replan_due((7, (2.0, 0.0)), 7, (2.1, 0.0))
+    assert not planner_module.replan_due((7, (2.0, 0.0)), 7, (2.2, 0.0))
     assert planner_module.replan_due((7, (2.0, 0.0)), 7, (2.4, 0.0))
     assert planner_module.replan_due((7, (2.0, 0.0)), 8, (2.0, 0.0))
 
