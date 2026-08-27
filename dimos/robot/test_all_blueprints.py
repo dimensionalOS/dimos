@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import subprocess
-import sys
-
 import pytest
 
 from dimos.core.coordination.blueprints import Blueprint
@@ -69,6 +66,7 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
         "teleop-webxr-xarm7",
         "teleop-webxr-xarm7-video",
         "unitree-g1-sonic-wbc",
+        "unitree-g1-sonic-webxr-teleop",
         "xarm-perception",
         "xarm-perception-agent",
         "xarm-perception-sim",
@@ -78,17 +76,8 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
     }
 )
 
-SIMULATION_ONLY_SELF_HOSTED_BLUEPRINTS = frozenset(
-    {
-        "unitree-g1-sonic-webxr-teleop",
-    }
-)
-
-UBUNTU_BLUEPRINTS = sorted(
-    set(all_blueprints) - SELF_HOSTED_BLUEPRINTS - SIMULATION_ONLY_SELF_HOSTED_BLUEPRINTS
-)
+UBUNTU_BLUEPRINTS = sorted(set(all_blueprints) - SELF_HOSTED_BLUEPRINTS)
 SELF_HOSTED_BLUEPRINTS = sorted(SELF_HOSTED_BLUEPRINTS)
-SIMULATION_ONLY_SELF_HOSTED_BLUEPRINTS = sorted(SIMULATION_ONLY_SELF_HOSTED_BLUEPRINTS)
 
 
 def _check_blueprint(blueprint_name: str) -> None:
@@ -110,8 +99,7 @@ def _check_blueprint(blueprint_name: str) -> None:
 
 def test_old_self_hosted_blueprints() -> None:
     """Validate no non-existent name in SELF_HOSTED_BLUEPRINTS."""
-    expected = set(SELF_HOSTED_BLUEPRINTS) | set(SIMULATION_ONLY_SELF_HOSTED_BLUEPRINTS)
-    unused_names = expected - set(all_blueprints)
+    unused_names = set(SELF_HOSTED_BLUEPRINTS) - set(all_blueprints)
     assert not unused_names
 
 
@@ -126,19 +114,3 @@ def test_blueprint_is_valid(blueprint_name: str) -> None:
 def test_self_hosted_blueprint_is_valid(blueprint_name: str) -> None:
     """Validate blueprints that need heavy deps or LFS — self-hosted runner only."""
     _check_blueprint(blueprint_name)
-
-
-@pytest.mark.self_hosted
-@pytest.mark.parametrize("blueprint_name", SIMULATION_ONLY_SELF_HOSTED_BLUEPRINTS)
-def test_simulation_only_self_hosted_blueprint_is_valid(blueprint_name: str) -> None:
-    """Import simulation-only blueprints in a fresh MuJoCo-configured process."""
-    code = (
-        "from dimos.core.global_config import global_config; "
-        'global_config.update(simulation="mujoco", viewer="none"); '
-        "from dimos.robot.get_all_blueprints import get_blueprint_by_name; "
-        "from dimos.core.coordination.blueprints import Blueprint; "
-        f'blueprint = get_blueprint_by_name("{blueprint_name}"); '
-        "assert isinstance(blueprint, Blueprint)"
-    )
-
-    subprocess.run([sys.executable, "-c", code], check=True)

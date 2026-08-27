@@ -52,6 +52,25 @@ def _state(*, armed: bool, dry_run: bool, arming: bool = False) -> dict[str, obj
     }
 
 
+def _coordinator(task_name: str = "groot_wbc") -> Mock:
+    coordinator = Mock()
+    coordinator.list_tasks.return_value = [task_name, "joint_trajectory"]
+    coordinator.describe_task.side_effect = lambda name: {
+        "task": name,
+        "commands": (
+            {
+                "arm": {},
+                "disarm": {},
+                "set_dry_run": {},
+                "state_snapshot": {},
+            }
+            if name == task_name
+            else {"get_status": {}}
+        ),
+    }
+    return coordinator
+
+
 def test_hardware_namespace_exposes_g1_operator_commands() -> None:
     result = runner.invoke(hardware_cli.app, ["g1", "--help"])
 
@@ -72,8 +91,67 @@ def test_status_rejects_coordinator_without_required_rpcs(mocker) -> None:
     assert client.stopped
 
 
+def test_status_discovers_sonic_lifecycle_task(mocker) -> None:
+    coordinator = _coordinator("sonic_teleop")
+    coordinator.task_invoke.side_effect = [
+        {
+            **_state(armed=False, dry_run=True),
+            "control_state": "unarmed",
+            "reference_source": "planner",
+            "webxr_teleop": {"engaged": False},
+        },
+        {"state": "idle"},
+    ]
+    client = _Client(coordinator)
+    mocker.patch.object(g1_cli.Dimos, "connect", return_value=client)
+
+    result = runner.invoke(g1_cli.app, ["status"])
+
+    assert result.exit_code == 0, result.output
+    assert "controller:  sonic_teleop" in result.output
+    assert "control:     unarmed" in result.output
+    assert "webxr:       disengaged" in result.output
+    coordinator.task_invoke.assert_any_call("sonic_teleop", "state_snapshot", {})
+
+
+def test_arm_rejects_stack_without_lifecycle_task(mocker) -> None:
+    coordinator = _coordinator()
+    coordinator.list_tasks.return_value = ["joint_trajectory"]
+    client = _Client(coordinator)
+    mocker.patch.object(g1_cli.Dimos, "connect", return_value=client)
+
+    result = runner.invoke(g1_cli.app, ["arm"])
+
+    assert result.exit_code == 1
+    assert "no G1 policy task" in result.output
+    coordinator.set_activated.assert_not_called()
+
+
+def test_arm_rejects_multiple_lifecycle_tasks(mocker) -> None:
+    coordinator = _coordinator()
+    coordinator.list_tasks.return_value = ["groot_wbc", "sonic_teleop"]
+    lifecycle = {
+        "arm": {},
+        "disarm": {},
+        "set_dry_run": {},
+        "state_snapshot": {},
+    }
+    coordinator.describe_task.side_effect = lambda name: {
+        "task": name,
+        "commands": lifecycle,
+    }
+    client = _Client(coordinator)
+    mocker.patch.object(g1_cli.Dimos, "connect", return_value=client)
+
+    result = runner.invoke(g1_cli.app, ["arm"])
+
+    assert result.exit_code == 1
+    assert "multiple G1 policy lifecycle tasks" in result.output
+    coordinator.set_activated.assert_not_called()
+
+
 def test_arm_forces_dry_run_before_activation_and_waits_for_armed(mocker) -> None:
-    coordinator = Mock()
+    coordinator = _coordinator()
     coordinator.task_invoke.return_value = _state(armed=True, dry_run=True)
     client = _Client(coordinator)
     mocker.patch.object(g1_cli.Dimos, "connect", return_value=client)
@@ -81,16 +159,15 @@ def test_arm_forces_dry_run_before_activation_and_waits_for_armed(mocker) -> Non
     result = runner.invoke(g1_cli.app, ["arm"])
 
     assert result.exit_code == 0, result.output
-    assert coordinator.method_calls[:2] == [
-        mocker.call.set_dry_run(True),
-        mocker.call.set_activated(True),
-    ]
+    assert coordinator.method_calls.index(mocker.call.set_dry_run(True)) < (
+        coordinator.method_calls.index(mocker.call.set_activated(True))
+    )
     assert "armed in dry-run" in result.output
     assert client.stopped
 
 
 def test_enable_rejects_robot_that_has_not_completed_arming(mocker) -> None:
-    coordinator = Mock()
+    coordinator = _coordinator()
     coordinator.task_invoke.return_value = _state(armed=False, dry_run=True, arming=True)
     client = _Client(coordinator)
     mocker.patch.object(g1_cli.Dimos, "connect", return_value=client)
@@ -103,7 +180,7 @@ def test_enable_rejects_robot_that_has_not_completed_arming(mocker) -> None:
 
 
 def test_activate_arms_confirms_and_enables_in_order(mocker) -> None:
-    coordinator = Mock()
+    coordinator = _coordinator()
     coordinator.task_invoke.side_effect = [
         _state(armed=False, dry_run=True),
         _state(armed=True, dry_run=True),
@@ -116,7 +193,18 @@ def test_activate_arms_confirms_and_enables_in_order(mocker) -> None:
     result = runner.invoke(g1_cli.app, ["activate"])
 
     assert result.exit_code == 0, result.output
-    assert coordinator.method_calls == [
+    lifecycle_calls = [
+        call
+        for call in coordinator.method_calls
+        if call
+        in (
+            mocker.call.task_invoke("groot_wbc", "state_snapshot", {}),
+            mocker.call.set_dry_run(True),
+            mocker.call.set_activated(True),
+            mocker.call.set_dry_run(False),
+        )
+    ]
+    assert lifecycle_calls == [
         mocker.call.task_invoke("groot_wbc", "state_snapshot", {}),
         mocker.call.set_dry_run(True),
         mocker.call.set_activated(True),
@@ -124,13 +212,13 @@ def test_activate_arms_confirms_and_enables_in_order(mocker) -> None:
         mocker.call.set_dry_run(False),
         mocker.call.task_invoke("groot_wbc", "state_snapshot", {}),
     ]
-    confirm.assert_called_once_with("Enable live GR00T motor output?", default=False)
+    confirm.assert_called_once_with("Enable live G1 policy motor output?", default=False)
     assert "G1 activated" in result.output
     assert client.stopped
 
 
 def test_activate_decline_leaves_robot_armed_in_dry_run(mocker) -> None:
-    coordinator = Mock()
+    coordinator = _coordinator()
     coordinator.task_invoke.side_effect = [
         _state(armed=False, dry_run=True),
         _state(armed=True, dry_run=True),
@@ -148,7 +236,7 @@ def test_activate_decline_leaves_robot_armed_in_dry_run(mocker) -> None:
 
 
 def test_activate_unavailable_confirmation_leaves_dry_run_enabled(mocker) -> None:
-    coordinator = Mock()
+    coordinator = _coordinator()
     coordinator.task_invoke.return_value = _state(armed=True, dry_run=True)
     client = _Client(coordinator)
     mocker.patch.object(g1_cli.Dimos, "connect", return_value=client)
@@ -162,7 +250,7 @@ def test_activate_unavailable_confirmation_leaves_dry_run_enabled(mocker) -> Non
 
 
 def test_activate_timeout_never_confirms_or_enables(mocker) -> None:
-    coordinator = Mock()
+    coordinator = _coordinator()
     coordinator.task_invoke.return_value = _state(armed=False, dry_run=True, arming=True)
     client = _Client(coordinator)
     mocker.patch.object(g1_cli.Dimos, "connect", return_value=client)
@@ -179,7 +267,7 @@ def test_activate_timeout_never_confirms_or_enables(mocker) -> None:
 
 
 def test_activate_already_enabled_skips_arm_and_confirmation(mocker) -> None:
-    coordinator = Mock()
+    coordinator = _coordinator()
     coordinator.task_invoke.return_value = _state(armed=True, dry_run=False)
     client = _Client(coordinator)
     mocker.patch.object(g1_cli.Dimos, "connect", return_value=client)
@@ -195,7 +283,7 @@ def test_activate_already_enabled_skips_arm_and_confirmation(mocker) -> None:
 
 
 def test_ready_plans_both_arms_at_conservative_speed(mocker) -> None:
-    coordinator = Mock()
+    coordinator = _coordinator()
     coordinator.task_invoke.return_value = _state(armed=True, dry_run=False)
     coordinator.get_active_tasks.return_value = ["groot_wbc"]
     manipulation = Mock()
@@ -216,7 +304,7 @@ def test_ready_plans_both_arms_at_conservative_speed(mocker) -> None:
 
 
 def test_activate_ready_enables_before_moving_arms(mocker) -> None:
-    coordinator = Mock()
+    coordinator = _coordinator()
     coordinator.task_invoke.side_effect = [
         _state(armed=True, dry_run=True),
         _state(armed=True, dry_run=False),
@@ -235,13 +323,27 @@ def test_activate_ready_enables_before_moving_arms(mocker) -> None:
     assert result.exit_code == 0, result.output
     coordinator.set_dry_run.assert_called_once_with(False)
     manipulation.execute.assert_called_once_with(blocking=True)
-    assert result.output.index("G1 motor output enabled") < result.output.index(
+    assert result.output.index("G1 live policy output enabled") < result.output.index(
         "G1 reached the ready pose"
     )
 
 
+def test_activate_ready_requires_manipulation_before_enabling(mocker) -> None:
+    coordinator = _coordinator("sonic_teleop")
+    client = _Client(coordinator)
+    mocker.patch.object(g1_cli.Dimos, "connect", return_value=client)
+
+    result = runner.invoke(g1_cli.app, ["activate", "--ready"])
+
+    assert result.exit_code == 1
+    assert "required G1 manipulation RPCs" in result.output
+    coordinator.task_invoke.assert_not_called()
+    coordinator.set_dry_run.assert_not_called()
+    coordinator.set_activated.assert_not_called()
+
+
 def test_activate_ready_failure_reports_that_motor_output_remains_enabled(mocker) -> None:
-    coordinator = Mock()
+    coordinator = _coordinator()
     coordinator.task_invoke.side_effect = [
         _state(armed=True, dry_run=True),
         _state(armed=True, dry_run=False),
@@ -257,12 +359,12 @@ def test_activate_ready_failure_reports_that_motor_output_remains_enabled(mocker
     result = runner.invoke(g1_cli.app, ["activate", "--ready"])
 
     assert result.exit_code == 1
-    assert "GR00T motor output remains enabled" in result.output
+    assert "G1 policy motor output remains enabled" in result.output
     manipulation.execute.assert_not_called()
 
 
 def test_ready_rejects_active_teleoperation_before_planning(mocker) -> None:
-    coordinator = Mock()
+    coordinator = _coordinator()
     coordinator.task_invoke.return_value = _state(armed=True, dry_run=False)
     coordinator.get_active_tasks.return_value = ["groot_wbc", "teleop_g1"]
     manipulation = Mock()
@@ -277,7 +379,7 @@ def test_ready_rejects_active_teleoperation_before_planning(mocker) -> None:
 
 
 def test_disable_attempts_every_safety_action(mocker) -> None:
-    coordinator = Mock()
+    coordinator = _coordinator()
     client = _Client(coordinator)
     mocker.patch.object(g1_cli.Dimos, "connect", return_value=client)
 

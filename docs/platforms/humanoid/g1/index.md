@@ -126,7 +126,40 @@ When finished, cancel arm motion, enter dry-run, and disarm:
 
 ```bash
 uv run dimos hardware g1 disable
+uv run dimos stop
 ```
+
+`disable` is a soft policy disarm into current-pose hold. It is not an
+emergency stop and does not terminate low-level commands; use the Unitree
+physical stop for emergencies and `dimos stop` for routine shutdown.
+
+### SONIC full-body PICO teleoperation
+
+SONIC uses the same `dimos hardware g1` lifecycle commands, discovered from
+the running controller's task card. Start the real-hardware blueprint with:
+
+```bash
+uv run dimos --viewer none run unitree-g1-sonic-webxr-teleop \
+  --network-interface <robot-nic>
+```
+
+The first hardware test requires the official overhead gantry, both feet in
+contact with the floor, and three operators: one at the Unitree remote and
+physical stop, one wearing the PICO, and one at the DimOS terminal. Do not run
+the native `g1_deploy_onnx_ref` process at the same time, and do not attempt
+untethered walking during the first session.
+
+The startup sequence is:
+
+```text
+UNARMED/current hold -> arm/default-pose ramp -> CONTROL/dry-run
+                       -> enable/live policy -> hold X+A/WebXR reference
+```
+
+Run `status`, `arm`, `status`, `enable`, and `status` as separate commands so
+the team can inspect the robot between transitions. X+A only gates the WebXR
+reference and is not an emergency stop. Finish with `dimos hardware g1
+disable`, followed by `dimos stop`.
 
 ## 5. Legacy navigation viewer example
 

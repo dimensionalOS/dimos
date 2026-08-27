@@ -57,7 +57,9 @@ class G1SonicTeleopTask(G1SonicWBCTask):
         adapter: WholeBodyAdapter,
     ) -> None:
         super().__init__(name, config, adapter)
-        self._teleop_lock = threading.Lock()
+        # ZMQ command handling runs inside compute() and can synchronously
+        # invoke disarm(), so lifecycle cleanup must be re-entrant here.
+        self._teleop_lock = threading.RLock()
         self._retargeter = WebXRSonicRetargeter()
         self._latest_complete: BodyTrackingSnapshot | None = None
         self._latest_complete_time = 0.0
@@ -129,6 +131,11 @@ class G1SonicTeleopTask(G1SonicWBCTask):
         with self._teleop_lock:
             self._reset_teleop_locked()
         super().stop()
+
+    def disarm(self) -> bool:
+        with self._teleop_lock:
+            self._reset_teleop_locked()
+        return super().disarm()
 
     def reset_runtime_state(self, reactivate: bool | None = None) -> bool:
         with self._teleop_lock:
@@ -222,6 +229,10 @@ class G1SonicTeleopTask(G1SonicWBCTask):
             )
 
     def _reset_teleop_locked(self) -> None:
+        if self._engaged:
+            self._pipeline.clear_vr_3point()
+            self._return_to_planner_reference()
+            self.set_velocity_command(0.0, 0.0, 0.0)
         self._latest_complete = None
         self._latest_complete_time = 0.0
         self._latest_sequence = 0

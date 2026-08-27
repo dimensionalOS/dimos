@@ -87,13 +87,14 @@ class G1SonicWBCTaskConfig:
     zmq_enabled: bool = True
     zmq_sub_endpoint: str = "tcp://127.0.0.1:5556"
     zmq_pub_endpoint: str = "tcp://*:5557"
-    auto_start_policy: bool = False
+    auto_arm: bool = False
     auto_dry_run: bool = False
-    initialization_seconds: float = 3.0
+    default_ramp_seconds: float = 3.0
 
 
 class SonicControlState(str, Enum):
     STOPPED = "stopped"
+    UNARMED = "unarmed"
     INITIALIZING = "initializing"
     READY = "ready"
     CONTROL = "control"
@@ -102,8 +103,8 @@ class SonicControlState(str, Enum):
 class G1SonicWBCTask(BaseControlTask):
     """GEAR-SONIC unified 29-DOF whole-body policy as a coordinator task.
 
-    The task mirrors SONIC's native controller lifecycle: initialize to the
-    default pose, wait ready, then run the balancing policy continuously.
+    Startup holds the measured pose. arm() snapshots that pose on the next
+    control tick, ramps to SONIC's default, then runs the balancing policy.
     """
 
     def __init__(
@@ -146,9 +147,9 @@ class G1SonicWBCTask(BaseControlTask):
 
         self._active = False
         self._control_state = SonicControlState.STOPPED
-        self._start_requested = False
+        self._arm_pending = False
         self._dry_run = bool(config.auto_dry_run)
-        self._initialization_duration = max(0.0, float(config.initialization_seconds))
+        self._arming_duration = max(0.0, float(config.default_ramp_seconds))
         self._initialization_start_t = 0.0
         self._initialization_started = False
         self._ramp_start: NDArray[np.float32] | None = None
@@ -223,6 +224,17 @@ class G1SonicWBCTask(BaseControlTask):
 
         current_29 = self._cached_q_29.copy()
 
+        if self._control_state is SonicControlState.UNARMED:
+            if not self._arm_pending:
+                self._last_targets = current_29.tolist()
+                return JointCommandOutput(
+                    joint_names=self._joint_names_list,
+                    positions=self._last_targets,
+                    mode=ControlMode.SERVO_POSITION,
+                )
+            self._arm_pending = False
+            self._control_state = SonicControlState.INITIALIZING
+
         if self._control_state is SonicControlState.INITIALIZING:
             if not self._initialization_started:
                 self._initialization_started = True
@@ -231,15 +243,13 @@ class G1SonicWBCTask(BaseControlTask):
                 logger.info(
                     "G1SonicWBCTask initializing to SONIC default pose",
                     task=self._name,
-                    initialization_seconds=self._initialization_duration,
+                    ramp_seconds=self._arming_duration,
                 )
 
             assert self._ramp_start is not None
             elapsed = state.t_now - self._initialization_start_t
             alpha = (
-                1.0
-                if self._initialization_duration <= 0.0
-                else min(1.0, elapsed / self._initialization_duration)
+                1.0 if self._arming_duration <= 0.0 else min(1.0, elapsed / self._arming_duration)
             )
             target = self._ramp_start + alpha * (self._default_29 - self._ramp_start)
             self._last_targets = target.tolist()
@@ -247,8 +257,7 @@ class G1SonicWBCTask(BaseControlTask):
                 self._control_state = SonicControlState.READY
                 self._reset_policy_state()
                 logger.info("G1SonicWBCTask initialization complete", task=self._name)
-                if self._start_requested:
-                    self._enter_control()
+                self._enter_control()
             return JointCommandOutput(
                 joint_names=self._joint_names_list,
                 positions=self._last_targets,
@@ -257,8 +266,7 @@ class G1SonicWBCTask(BaseControlTask):
 
         if self._control_state is SonicControlState.READY:
             self._last_targets = self._default_29.tolist()
-            if self._start_requested:
-                self._enter_control()
+            self._enter_control()
             return JointCommandOutput(
                 joint_names=self._joint_names_list,
                 positions=self._last_targets,
@@ -620,10 +628,10 @@ class G1SonicWBCTask(BaseControlTask):
 
     def start(self) -> None:
         self._active = True
-        self._control_state = SonicControlState.INITIALIZING
-        self._start_requested = bool(self._config.auto_start_policy)
+        self._control_state = SonicControlState.UNARMED
+        self._arm_pending = False
         self._dry_run = bool(self._config.auto_dry_run)
-        self._initialization_duration = max(0.0, float(self._config.initialization_seconds))
+        self._arming_duration = max(0.0, float(self._config.default_ramp_seconds))
         self._initialization_start_t = 0.0
         self._initialization_started = False
         self._ramp_start = None
@@ -634,18 +642,20 @@ class G1SonicWBCTask(BaseControlTask):
         with self._cmd_lock:
             self._cmd[:] = 0.0
             self._last_cmd_time = 0.0
+        if self._config.auto_arm:
+            self.arm()
         logger.info(
             "G1SonicWBCTask started",
             task=self._name,
             control_state=self._control_state.value,
-            auto_start_policy=self._start_requested,
+            auto_arm=self._config.auto_arm,
             dry_run=self._dry_run,
         )
 
     def stop(self) -> None:
         self._active = False
         self._control_state = SonicControlState.STOPPED
-        self._start_requested = False
+        self._arm_pending = False
         self._initialization_started = False
         self._ramp_start = None
         self._stream_source_requested = False
@@ -656,33 +666,42 @@ class G1SonicWBCTask(BaseControlTask):
         if not self._active:
             logger.warning("G1SonicWBCTask arm() before start(); ignoring", task=self._name)
             return False
-        if self._control_state is SonicControlState.CONTROL or self._start_requested:
+        if (
+            self._control_state
+            in (
+                SonicControlState.INITIALIZING,
+                SonicControlState.READY,
+                SonicControlState.CONTROL,
+            )
+            or self._arm_pending
+        ):
             return False
         if ramp_seconds is not None:
-            if self._initialization_started:
-                logger.warning(
-                    "Ignoring initialization override after ramp started",
-                    task=self._name,
-                    ramp_seconds=ramp_seconds,
-                )
-            else:
-                self._initialization_duration = max(0.0, float(ramp_seconds))
-        self._start_requested = True
+            self._arming_duration = max(0.0, float(ramp_seconds))
+        else:
+            self._arming_duration = max(0.0, float(self._config.default_ramp_seconds))
+        self._arm_pending = True
         logger.info(
-            "G1SonicWBCTask policy start requested",
+            "G1SonicWBCTask arm requested",
             task=self._name,
             control_state=self._control_state.value,
         )
         return True
 
     def disarm(self) -> bool:
-        if not self._start_requested and self._control_state is not SonicControlState.CONTROL:
+        if not self._arm_pending and self._control_state not in (
+            SonicControlState.INITIALIZING,
+            SonicControlState.READY,
+            SonicControlState.CONTROL,
+        ):
             return False
-        self._start_requested = False
+        self._arm_pending = False
         self._stream_source_requested = False
-        if self._control_state is SonicControlState.CONTROL:
-            self._control_state = SonicControlState.READY
-            self._reset_policy_state()
+        self._control_state = SonicControlState.UNARMED
+        self._initialization_started = False
+        self._ramp_start = None
+        self._last_targets = None
+        self._reset_policy_state()
         logger.info(
             "G1SonicWBCTask policy stopped",
             task=self._name,
@@ -691,13 +710,17 @@ class G1SonicWBCTask(BaseControlTask):
         return True
 
     def reset_runtime_state(self, reactivate: bool | None = None) -> bool:
-        was_requested = self._start_requested or self._control_state is SonicControlState.CONTROL
-        should_reactivate = was_requested if reactivate is None else bool(reactivate)
+        was_armed = self._arm_pending or self._control_state in (
+            SonicControlState.INITIALIZING,
+            SonicControlState.READY,
+            SonicControlState.CONTROL,
+        )
+        should_reactivate = was_armed if reactivate is None else bool(reactivate)
 
         self._control_state = (
-            SonicControlState.INITIALIZING if self._active else SonicControlState.STOPPED
+            SonicControlState.UNARMED if self._active else SonicControlState.STOPPED
         )
-        self._start_requested = self._active and should_reactivate
+        self._arm_pending = self._active and should_reactivate
         self._ramp_start = None
         self._initialization_start_t = 0.0
         self._initialization_started = False
@@ -729,10 +752,12 @@ class G1SonicWBCTask(BaseControlTask):
     def state_snapshot(self) -> dict[str, Any]:
         snap: dict[str, Any] = {
             "active": self._active,
+            "armed": self._control_state is SonicControlState.CONTROL,
+            "arming": self._control_state is SonicControlState.INITIALIZING,
+            "arm_pending": self._arm_pending,
+            "arming_duration": self._arming_duration,
             "control_state": self._control_state.value,
-            "policy_start_requested": self._start_requested,
             "dry_run": self._dry_run,
-            "initialization_seconds": self._initialization_duration,
         }
         snap.update(self._pipeline.snapshot())
         snap["reference_source"] = "stream" if snap.get("stream_active") else "planner"
@@ -787,9 +812,9 @@ class G1SonicWBCTaskParams(BaseConfig):
     decoder_onnx: str | Path
     planner_onnx: str | Path
     hardware_id: str
-    auto_start_policy: bool = False
+    auto_arm: bool = False
     auto_dry_run: bool = False
-    initialization_seconds: float = 3.0
+    default_ramp_seconds: float = 3.0
     decimation: int | None = None
     zmq_enabled: bool = True
 
@@ -819,9 +844,9 @@ def _create_task(
         planner_onnx=params.planner_onnx,
         joint_names=cfg.joint_names,
         priority=cfg.priority,
-        auto_start_policy=params.auto_start_policy,
+        auto_arm=params.auto_arm,
         auto_dry_run=params.auto_dry_run,
-        initialization_seconds=params.initialization_seconds,
+        default_ramp_seconds=params.default_ramp_seconds,
         zmq_enabled=params.zmq_enabled,
     )
     if params.decimation is not None:
