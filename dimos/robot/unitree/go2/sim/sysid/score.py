@@ -25,7 +25,7 @@ would. (The noise floor replaces the baseline RMS once a repeat recording
 exists.)
 
 Scoring compares the INTERSECTION of what the recording has, what the backend
-predicts (:meth:`~dimos.robot.unitree.go2.sim.backend.Backend.channels`), and
+predicts (:meth:`~dimos.simulation.sysid.backend.Backend.channels`), and
 what the regime permits. No tracker → ``pos``/``rot`` are absent and the rest
 proceeds. A suspended recording has a held trunk, so every trunk-frame signal
 is an echo of the boundary condition and drops out. Adding a tracker adds a
@@ -43,10 +43,10 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from dimos.robot.unitree.go2.sim.backend import CHANNELS
-from dimos.robot.unitree.go2.sim.rotations import rotation_angle
-from dimos.robot.unitree.go2.sim.sysid.regimes import Span
 from dimos.robot.unitree.go2.sim.sysid.replay import ReplayResult
+from dimos.simulation.sysid.backend import CHANNELS
+from dimos.simulation.sysid.regimes import Span
+from dimos.simulation.sysid.rotations import rotation_angle
 
 # One (channel, regime) weight vector. Keys are (channel, span kind).
 WeightVector = Mapping[tuple[str, str], float]

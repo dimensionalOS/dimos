@@ -51,8 +51,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from dimos.robot.unitree.go2.sim.rotations import quat_to_mat
 from dimos.robot.unitree.go2.sim.sysid.gait import LEGS, foot_base
+from dimos.simulation.sysid.rotations import quat_to_mat
 
 DWELL_MM = 15.0  # a foot within this of its height floor is treated as grounded
 SMOOTH_S = 0.05  # velocity smoothing, seconds — same on 500 Hz and 50 Hz data

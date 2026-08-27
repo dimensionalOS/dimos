@@ -45,7 +45,7 @@ clip boundaries would move between columns and the differences would measure
 the schedule instead of the physics.
 
 The recording is SAMPLED, not sliced: N seeded segments spread across it
-(:func:`~dimos.robot.unitree.go2.sim.sysid.regimes.sample_segments`), because
+(:func:`~dimos.simulation.sysid.regimes.sample_segments`), because
 the information is concentrated — one contiguous window swung a resolution
 number 10x depending on where it ended — and the report says per segment
 where the resolving power came from, so a recording that resolves 7 of 14
@@ -64,19 +64,19 @@ from typing import Any
 
 import numpy as np
 
-from dimos.robot.unitree.go2.sim.backend import CHANNELS, Backend
 from dimos.robot.unitree.go2.sim.ranges import ENGINE_DEFAULTS, SOLVER_KEYS, Knob, load_preset
 from dimos.robot.unitree.go2.sim.sysid.ingest import read_streams
-from dimos.robot.unitree.go2.sim.sysid.recording import Streams, read_declarations
-from dimos.robot.unitree.go2.sim.sysid.regimes import (
+from dimos.robot.unitree.go2.sim.sysid.replay import ReplayResult, replay
+from dimos.robot.unitree.go2.sim.sysid.rollouts import Rollouts, RolloutSpec
+from dimos.robot.unitree.go2.sim.sysid.score import predicted, residual as channel_residual
+from dimos.simulation.sysid.backend import CHANNELS, Backend
+from dimos.simulation.sysid.recording import Streams, read_declarations
+from dimos.simulation.sysid.regimes import (
     Segment,
     protected,
     regimes,
     sample_segments,
 )
-from dimos.robot.unitree.go2.sim.sysid.replay import ReplayResult, replay
-from dimos.robot.unitree.go2.sim.sysid.rollouts import Rollouts, RolloutSpec
-from dimos.robot.unitree.go2.sim.sysid.score import predicted, residual as channel_residual
 
 
 def nudge(

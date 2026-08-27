@@ -79,7 +79,7 @@ def test_pauses_do_not_read_as_strides() -> None:
 def test_real_summary_scores_the_stride_pair() -> None:
     """The referee's cadence claim comes from the legs, end to end."""
     from dimos.robot.unitree.go2.sim.sysid.real import real_summary
-    from dimos.robot.unitree.go2.sim.sysid.recording import Streams
+    from dimos.simulation.sysid.recording import Streams
 
     f, v = 1.8, 0.5
     t, q, quat, planar = _synthetic_gait(f, v, seconds=30.0)

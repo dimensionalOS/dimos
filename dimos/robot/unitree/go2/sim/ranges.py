@@ -21,7 +21,7 @@ at import, never copied: the discarded early plant shipped a torsional
 friction implying mu = 0.349 against its own declared 0.635, a stale copy
 nobody could have caught by reading either number alone. The knob SET is
 data, not code: a backend exposes its own (see
-:mod:`~dimos.robot.unitree.go2.sim.backend`), and these are the MuJoCo ones.
+:mod:`~dimos.simulation.sysid.backend`), and these are the MuJoCo ones.
 
 The single most important finding about fitting this plant: the data
 localises it to a REGION, not a point. Four fits differing only in seed
@@ -34,41 +34,9 @@ the old 4-seed table belonged to a discarded fit and is gone with it.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-import json
-import math
-from pathlib import Path
-
 from dimos.robot.unitree.go2.sim.anchors import RobotSpec, derive
 from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
-
-
-@dataclass(frozen=True)
-class Knob:
-    """One engine parameter's declared range, judged in its OWN metric."""
-
-    lo: float
-    hi: float
-    log: bool = False  # bounds are judged in the knob's own metric
-    unit: str = ""
-    why: str = ""  # where the range came from; required for anything shipped
-
-    def position(self, v: float) -> float:
-        """Where ``v`` sits in [0, 1] across the range, in the knob's metric.
-
-        A linear test on a log-scaled range produced four false "at bound"
-        warnings, one of which was used to argue a fit had not converged —
-        which is why this is a method on the type and not arithmetic at call
-        sites.
-        """
-        if self.log:
-            return (math.log(v) - math.log(self.lo)) / (math.log(self.hi) - math.log(self.lo))
-        return (v - self.lo) / (self.hi - self.lo)
-
-    def at_bound(self, v: float, tol: float = 0.02) -> bool:
-        p = self.position(v)
-        return p < tol or p > 1.0 - tol
-
+from dimos.simulation.sysid.presets import Knob, Preset, load_preset as _load_preset
 
 # The MuJoCo knob set. Ranges come from ~/recordings/DR_RANGES.md: cross-regime
 # fit disagreement plus the measured 4-seed procedure variance.
@@ -207,71 +175,6 @@ ENGINE_DEFAULTS: dict[str, float] = {**CONTACT_DEFAULTS, **SOLVER_DEFAULTS}
 PHYSICS_KEYS = frozenset(KNOBS) - {"actuator_tau"}
 
 
-@dataclass(frozen=True)
-class Preset:
-    """A named physics configuration: everything a rollout needs to be reproducible.
-
-    Built-ins are immutable; a fit writes its winner to JSON under a NEW name
-    (:meth:`save` refuses built-in names), so a refit against messy data can
-    never cost a validated tune.
-
-    ``envelope`` names the torque envelope the plant was FITTED under
-    (:data:`~dimos.robot.unitree.go2.sim.plant.TORQUE_ENVELOPES`), or ``None``
-    for the ideal actuator. It travels with the preset because the two are one
-    claim: knobs fitted with the envelope on absorb a different share of the
-    drive, and running such a plant without its envelope silently changes the
-    physics (README 9: the reverse mistake — stacking the envelope on knobs
-    fitted without it — double-counts). Every built-in carries ``None`` except
-    ``measured``, whose envelope IS the claim (README 9).
-    """
-
-    name: str
-    physics: dict[str, float] = field(default_factory=dict)
-    actuator_tau: float = 0.0
-    envelope: str | None = None
-    # Per-value origin, one line each: "fitted: ...", "derived: ...",
-    # "declared: ...", "measured: ...". README 3a's "everything is a knob;
-    # only the provenance differs", carried in the data instead of in prose.
-    provenance: dict[str, str] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        if self.envelope is not None and self.envelope not in TORQUE_ENVELOPES:
-            raise ValueError(
-                f"{self.name!r}: unknown envelope {self.envelope!r}; "
-                f"expected one of {sorted(TORQUE_ENVELOPES)}"
-            )
-
-    def save(self, path: str | Path) -> Path:
-        if self.name in BUILTIN_PRESETS:
-            raise ValueError(
-                f"{self.name!r} is a built-in preset and cannot be overwritten; "
-                "name the result something new"
-            )
-        out = Path(path)
-        d: dict[str, object] = {
-            "name": self.name,
-            "physics": self.physics,
-            "actuator_tau": self.actuator_tau,
-        }
-        if self.envelope is not None:
-            d["envelope"] = self.envelope
-        if self.provenance:
-            d["provenance"] = self.provenance
-        out.write_text(json.dumps(d, indent=2))
-        return out
-
-    @classmethod
-    def load(cls, path: str | Path) -> Preset:
-        d = json.loads(Path(path).read_text())
-        return cls(
-            name=d.get("name", Path(path).stem),
-            physics=dict(d.get("physics", {})),
-            actuator_tau=float(d.get("actuator_tau", 0.0)),
-            envelope=d.get("envelope"),
-            provenance=dict(d.get("provenance", {})),
-        )
-
-
 # The robot the shipped plant is derived for: weighed 16.500 kg on a kitchen
 # scale, 2026-08-16 — an anchor no amount of fitting ever found (the model
 # was 1.3 kg light). Change the robot, change THIS, and every derived anchor
@@ -327,9 +230,10 @@ MEASURED_ACTUATOR_TAU = 0.005010955656476395
 # stock-vs-tuned by design. Delete this and the claim becomes unverifiable.
 # Since the assets were vendored (model.MENAGERIE_COMMIT), "bare menagerie"
 # is a fixed object: stock = the pinned scene, untouched.
-STOCK = Preset(name="stock")
+STOCK = Preset(name="stock", builtin=True)
 
 MEASURED = Preset(
+    builtin=True,
     name="measured",
     physics=dict(MEASURED_PHYSICS),
     actuator_tau=MEASURED_ACTUATOR_TAU,
@@ -382,6 +286,7 @@ FAST_REFIT: dict[str, float] = {
 }
 
 FAST = Preset(
+    builtin=True,
     name="fast",
     physics={**MEASURED_PHYSICS, **FAST_REFIT},
     actuator_tau=MEASURED_ACTUATOR_TAU,
@@ -407,17 +312,13 @@ DEFAULT_PRESET = "measured"
 
 
 def load_preset(name: str | None = None) -> Preset:
-    """A preset by built-in name, or from a JSON file a fit wrote."""
-    if name is None:
-        name = DEFAULT_PRESET
-    if name in BUILTIN_PRESETS:
-        return BUILTIN_PRESETS[name]
-    path = Path(name)
-    if path.is_file():
-        return Preset.load(path)
-    raise ValueError(
-        f"unknown preset {name!r}: expected one of {sorted(BUILTIN_PRESETS)} or a JSON path"
-    )
+    """A built-in Go2 preset by name, or a JSON file a fit wrote."""
+    p = _load_preset(DEFAULT_PRESET if name is None else name, BUILTIN_PRESETS)
+    if p.envelope is not None and p.envelope not in TORQUE_ENVELOPES:
+        raise ValueError(
+            f"{p.name!r}: unknown envelope {p.envelope!r}; expected one of {sorted(TORQUE_ENVELOPES)}"
+        )
+    return p
 
 
 # Measured or derived, never randomized: randomizing a measurement adds

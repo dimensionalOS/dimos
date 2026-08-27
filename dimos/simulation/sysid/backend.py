@@ -51,7 +51,7 @@ from typing import Protocol
 
 import numpy as np
 
-from dimos.robot.unitree.go2.sim.ranges import Knob
+from dimos.simulation.sysid.presets import Knob
 
 # The canonical channel names — everything the ROBOT measures, so everything a
 # prediction could be scored against. The set a given backend can PREDICT is

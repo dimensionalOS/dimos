@@ -29,7 +29,7 @@ from typing import Literal
 
 import numpy as np
 
-from dimos.robot.unitree.go2.sim.sysid.recording import Declarations, Streams
+from dimos.simulation.sysid.recording import Declarations, Streams
 
 SpanKind = Literal["floor", "flight", "suspended", "contaminated"]
 

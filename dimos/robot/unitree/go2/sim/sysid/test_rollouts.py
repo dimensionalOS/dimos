@@ -83,8 +83,8 @@ def test_the_parallel_jacobian_is_the_serial_jacobian():
     from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
     from dimos.robot.unitree.go2.sim.ranges import MEASURED
     from dimos.robot.unitree.go2.sim.sysid.identify import jacobian
-    from dimos.robot.unitree.go2.sim.sysid.regimes import sample_segments
     from dimos.robot.unitree.go2.sim.sysid.rollouts import Rollouts
+    from dimos.simulation.sysid.regimes import sample_segments
 
     values = {**MEASURED.physics, "actuator_tau": MEASURED.actuator_tau}
     with Rollouts(HARD, MujocoBackend(), workers=3) as rollouts:
@@ -105,9 +105,9 @@ def test_a_parallel_fit_is_the_serial_fit_bit_for_bit():
     pytest.importorskip("optuna")
     from dimos.robot.unitree.go2.sim.ranges import KNOBS
     from dimos.robot.unitree.go2.sim.sysid.fit import Objective, base_values, default_plan, fit
-    from dimos.robot.unitree.go2.sim.sysid.recording import read_declarations
-    from dimos.robot.unitree.go2.sim.sysid.regimes import regimes, sample_segments
     from dimos.robot.unitree.go2.sim.sysid.rollouts import Rollouts
+    from dimos.simulation.sysid.recording import read_declarations
+    from dimos.simulation.sysid.regimes import regimes, sample_segments
 
     plan = default_plan(KNOBS, search=("armature", "actuator_tau"))
     base = base_values("measured")

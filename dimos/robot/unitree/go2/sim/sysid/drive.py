@@ -74,7 +74,7 @@ from dimos.robot.unitree.go2.sim.plant import (
     TORQUE_LIMITS,
     pd_torque,
 )
-from dimos.robot.unitree.go2.sim.sysid.recording import Streams
+from dimos.simulation.sysid.recording import Streams
 
 # hip / thigh / calf per leg, MuJoCo actuator order.
 JOINT_TYPES: tuple[str, ...] = tuple(n.split("_")[1] for n in MUJOCO_ACTUATOR_NAMES)

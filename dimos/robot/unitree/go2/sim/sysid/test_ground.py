@@ -158,9 +158,9 @@ def _static_streams(seconds: float = 12.0) -> Streams:
     the constant tracker-IMU yaw offset the window anchor must absorb is
     genuinely non-zero here.
     """
-    from dimos.robot.unitree.go2.sim.rotations import mat_to_quat
     from dimos.robot.unitree.go2.sim.sysid.ingest import TRACKER_Z, mount_matrix
-    from dimos.robot.unitree.go2.sim.sysid.recording import Streams
+    from dimos.simulation.sysid.recording import Streams
+    from dimos.simulation.sysid.rotations import mat_to_quat
 
     lt = np.arange(0.0, seconds, 0.01)
     n = len(lt)

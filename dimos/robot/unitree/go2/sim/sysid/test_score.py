@@ -19,8 +19,6 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from dimos.robot.unitree.go2.sim.backend import CHANNELS, Prediction
-from dimos.robot.unitree.go2.sim.sysid.regimes import Span
 from dimos.robot.unitree.go2.sim.sysid.replay import ReplayResult
 from dimos.robot.unitree.go2.sim.sysid.score import (
     PERMITTED,
@@ -29,6 +27,8 @@ from dimos.robot.unitree.go2.sim.sysid.score import (
     score_terms,
     segment_terms,
 )
+from dimos.simulation.sysid.backend import CHANNELS, Prediction
+from dimos.simulation.sysid.regimes import Span
 
 
 def _result(

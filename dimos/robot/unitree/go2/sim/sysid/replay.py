@@ -19,7 +19,7 @@ recorded and simulated policies are the same net; replaying the policy's
 OUTPUT (the joint targets it actually sent) removes the policy from the loop,
 so every span is plant-excitation data whatever was driving. The cost is
 feedback — the replay diverges — hence multiple shooting with short clips
-(:func:`~dimos.robot.unitree.go2.sim.sysid.regimes.clip_schedule`).
+(:func:`~dimos.simulation.sysid.regimes.clip_schedule`).
 
 Everything here is simulator-agnostic: it builds a :class:`RolloutPlan` from
 measured streams, hands it to a :class:`Backend`, and differences the
@@ -32,7 +32,9 @@ from dataclasses import dataclass, field as dataclasses_field
 
 import numpy as np
 
-from dimos.robot.unitree.go2.sim.backend import (
+from dimos.robot.unitree.go2.sim.ranges import Preset
+from dimos.robot.unitree.go2.sim.sysid.ingest import TRACKER_Z, mount_matrix
+from dimos.simulation.sysid.backend import (
     Backend,
     BaseCondition,
     BaseTrack,
@@ -42,11 +44,9 @@ from dimos.robot.unitree.go2.sim.backend import (
     RolloutPlan,
     State,
 )
-from dimos.robot.unitree.go2.sim.ranges import Preset
-from dimos.robot.unitree.go2.sim.rotations import quat_to_mat, rotation_angle, strip_yaw
-from dimos.robot.unitree.go2.sim.sysid.ingest import TRACKER_Z, mount_matrix
-from dimos.robot.unitree.go2.sim.sysid.recording import Streams
-from dimos.robot.unitree.go2.sim.sysid.regimes import clip_schedule
+from dimos.simulation.sysid.recording import Streams
+from dimos.simulation.sysid.regimes import clip_schedule
+from dimos.simulation.sysid.rotations import quat_to_mat, rotation_angle, strip_yaw
 
 
 def _step_quantized(t0: float, duration: float, schedule: np.ndarray, dt: float) -> list[float]:
@@ -118,7 +118,7 @@ def build_plan(
     """A fully determined rollout: commands, reinit states, base condition.
 
     ``schedule`` are the mid-run snap times (absolute, from
-    :func:`~dimos.robot.unitree.go2.sim.sysid.regimes.clip_schedule`); the
+    :func:`~dimos.simulation.sysid.regimes.clip_schedule`); the
     state at ``t0`` is always prepended.
 
     Snap times are quantized to the backend's step grid (``dt``) FIRST, and
@@ -333,8 +333,8 @@ def main() -> None:
 
     from dimos.robot.unitree.go2.sim.ranges import load_preset
     from dimos.robot.unitree.go2.sim.sysid.ingest import read_streams
-    from dimos.robot.unitree.go2.sim.sysid.recording import read_declarations
-    from dimos.robot.unitree.go2.sim.sysid.regimes import protected, regimes
+    from dimos.simulation.sysid.recording import read_declarations
+    from dimos.simulation.sysid.regimes import protected, regimes
 
     st = read_streams(args.recording)
     if args.list or args.segment is not None:

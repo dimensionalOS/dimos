@@ -38,11 +38,9 @@ PACKAGE = "dimos.robot.unitree.go2.sim"
 # default — it must be added HERE, not exempted.
 ABOVE_SEAM = (
     "anchors",
-    "backend",
     "plant",
     "policy",
     "ranges",
-    "rotations",
     "sysid.compliance",
     "sysid.drive",
     "sysid.fit",
@@ -54,8 +52,6 @@ ABOVE_SEAM = (
     "sysid.meta",
     "sysid.probe",
     "sysid.real",
-    "sysid.recording",
-    "sysid.regimes",
     "sysid.replay",
     "sysid.rollouts",
     "sysid.score",

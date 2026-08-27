@@ -36,7 +36,7 @@ from typing import Protocol
 
 import numpy as np
 
-from dimos.robot.unitree.go2.sim.rotations import quat_to_mat
+from dimos.simulation.sysid.rotations import quat_to_mat
 
 # The MCAP file-level metadata record declarations are read from.
 METADATA_KEY = "go2sim"

@@ -20,11 +20,11 @@ import mujoco
 import numpy as np
 import pytest
 
-from dimos.robot.unitree.go2.sim.backend import BaseCondition, Commands, RolloutPlan, State
 from dimos.robot.unitree.go2.sim.engines import mjx as go2_mjx, model as go2_model
 from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
 from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
 from dimos.robot.unitree.go2.sim.ranges import MEASURED
+from dimos.simulation.sysid.backend import BaseCondition, Commands, RolloutPlan, State
 
 pytestmark = [pytest.mark.go2sim]
 
@@ -197,7 +197,6 @@ def test_mjx_hosts_the_closed_loop_and_snaps_where_the_cpu_does():
     must place the robot identically, since it is measured state and forward
     kinematics with no engine in it."""
     pytest.importorskip("jax")
-    from dimos.robot.unitree.go2.sim.ranges import FAST
 
     state = State(
         t=0.0,

@@ -29,11 +29,11 @@ from dataclasses import replace
 
 import numpy as np
 
-from dimos.robot.unitree.go2.sim.rotations import mat_to_quat
 from dimos.robot.unitree.go2.sim.sysid.gait import real_strides
 from dimos.robot.unitree.go2.sim.sysid.ingest import TRACKER_Z, mount_matrix
-from dimos.robot.unitree.go2.sim.sysid.recording import Streams
 from dimos.robot.unitree.go2.sim.sysid.stats import Summary, spread_of, summarize
+from dimos.simulation.sysid.recording import Streams
+from dimos.simulation.sysid.rotations import mat_to_quat
 
 
 def cmd_at(st: Streams, t_abs: np.ndarray) -> np.ndarray:

@@ -53,7 +53,10 @@ from typing import TYPE_CHECKING, Any
 import mujoco
 import numpy as np
 
-from dimos.robot.unitree.go2.sim.backend import (
+from dimos.robot.unitree.go2.sim.engines import model as go2_model
+from dimos.robot.unitree.go2.sim.plant import TORQUE_LIMITS, TorqueEnvelope
+from dimos.robot.unitree.go2.sim.ranges import KNOBS, PHYSICS_KEYS, Knob
+from dimos.simulation.sysid.backend import (
     CHANNELS,
     BaseCondition,
     LoopState,
@@ -61,10 +64,7 @@ from dimos.robot.unitree.go2.sim.backend import (
     RolloutPlan,
     State,
 )
-from dimos.robot.unitree.go2.sim.engines import model as go2_model
-from dimos.robot.unitree.go2.sim.plant import TORQUE_LIMITS, TorqueEnvelope
-from dimos.robot.unitree.go2.sim.ranges import KNOBS, PHYSICS_KEYS, Knob
-from dimos.robot.unitree.go2.sim.rotations import mat_to_quat, quat_to_mat
+from dimos.simulation.sysid.rotations import mat_to_quat, quat_to_mat
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -232,7 +232,7 @@ def _jitted_step() -> Any:
     import jax
     from mujoco import mjx  # type: ignore[attr-defined]
 
-    key = bool(getattr(jax.config, "jax_enable_x64"))
+    key = bool(jax.config.jax_enable_x64)
     if key not in _STEP_CACHE:
         _STEP_CACHE[key] = jax.jit(mjx.step)
     return _STEP_CACHE[key]

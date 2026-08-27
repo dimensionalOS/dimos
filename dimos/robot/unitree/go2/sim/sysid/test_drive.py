@@ -28,7 +28,7 @@ from dimos.robot.unitree.go2.sim.sysid.drive import (
     demanded_torque,
     residual_shift_sweep,
 )
-from dimos.robot.unitree.go2.sim.sysid.recording import Streams
+from dimos.simulation.sysid.recording import Streams
 
 FS = 500.0
 

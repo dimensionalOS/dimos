@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import pytest
 
-from dimos.robot.unitree.go2.sim.backend import CHANNELS
 from dimos.robot.unitree.go2.sim.sysid.fit import Objective, PooledObjective
 from dimos.robot.unitree.go2.sim.sysid.meta import (
     DEFAULT_POINT,
@@ -27,8 +26,9 @@ from dimos.robot.unitree.go2.sim.sysid.meta import (
     OuterPoint,
     second_dr_component,
 )
-from dimos.robot.unitree.go2.sim.sysid.regimes import Segment, Span
 from dimos.robot.unitree.go2.sim.sysid.test_score import _result
+from dimos.simulation.sysid.backend import CHANNELS
+from dimos.simulation.sysid.regimes import Segment, Span
 
 
 def test_the_outer_point_is_four_decisions_and_no_more():

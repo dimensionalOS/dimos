@@ -30,7 +30,7 @@ from dimos.robot.unitree.go2.sim.sysid.identify import (
     nudge,
     resolution,
 )
-from dimos.robot.unitree.go2.sim.sysid.regimes import Segment, sample_segments
+from dimos.simulation.sysid.regimes import Segment, sample_segments
 
 # ---------------------------------------------------------------- nudge
 
@@ -183,7 +183,7 @@ def test_bad_segment_arguments_raise():
 def test_the_segment_report_names_where_the_information_came_from():
     """A user whose recording resolves 7 of 14 needs to know it is because the
     robot never did anything hard, not because the method failed."""
-    from dimos.robot.unitree.go2.sim.sysid.recording import Streams
+    from dimos.simulation.sysid.recording import Streams
 
     n = 200
     t = np.linspace(0.0, 20.0, n)
@@ -254,7 +254,7 @@ def test_the_jacobian_is_deterministic_and_shares_its_schedules(mixed_streams):
     from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
     from dimos.robot.unitree.go2.sim.ranges import MEASURED
     from dimos.robot.unitree.go2.sim.sysid.identify import jacobian
-    from dimos.robot.unitree.go2.sim.sysid.regimes import sample_segments
+    from dimos.simulation.sysid.regimes import sample_segments
 
     st = mixed_streams
     t_lo = max(float(st.lt[0]), float(st.ct[0]))
@@ -277,7 +277,6 @@ def test_the_jacobian_is_deterministic_and_shares_its_schedules(mixed_streams):
 @needs_rig
 @pytest.mark.go2sim
 def test_every_channel_produces_a_scorable_jacobian(mixed_streams):
-    from dimos.robot.unitree.go2.sim.backend import CHANNELS
     from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
     from dimos.robot.unitree.go2.sim.ranges import MEASURED
     from dimos.robot.unitree.go2.sim.sysid.identify import (
@@ -288,7 +287,8 @@ def test_every_channel_produces_a_scorable_jacobian(mixed_streams):
         jacobian,
         resolution,
     )
-    from dimos.robot.unitree.go2.sim.sysid.regimes import sample_segments
+    from dimos.simulation.sysid.backend import CHANNELS
+    from dimos.simulation.sysid.regimes import sample_segments
 
     st = mixed_streams
     t_lo = max(float(st.lt[0]), float(st.ct[0]))

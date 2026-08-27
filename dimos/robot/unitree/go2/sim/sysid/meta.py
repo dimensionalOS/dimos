@@ -64,7 +64,6 @@ from pathlib import Path
 
 import numpy as np
 
-from dimos.robot.unitree.go2.sim.backend import ClosedLoopBackend
 from dimos.robot.unitree.go2.sim.policy import FreePolicy
 from dimos.robot.unitree.go2.sim.ranges import Preset, load_preset
 from dimos.robot.unitree.go2.sim.sysid.fit import (
@@ -92,10 +91,11 @@ from dimos.robot.unitree.go2.sim.sysid.loop import (
 )
 from dimos.robot.unitree.go2.sim.sysid.probe import FOCUS, Probe, Spectrum, spectrum
 from dimos.robot.unitree.go2.sim.sysid.real import real_summary, robot_noise
-from dimos.robot.unitree.go2.sim.sysid.recording import Streams, read_declarations
-from dimos.robot.unitree.go2.sim.sysid.regimes import regimes, sample_segments
 from dimos.robot.unitree.go2.sim.sysid.rollouts import Rollouts
 from dimos.robot.unitree.go2.sim.sysid.stats import Summary
+from dimos.simulation.sysid.backend import ClosedLoopBackend
+from dimos.simulation.sysid.recording import Streams, read_declarations
+from dimos.simulation.sysid.regimes import regimes, sample_segments
 
 # Loop 2's minimum detectable differences (README 8, bootstrap, 95%),
 # re-measured 2026-08-17 on the CURRENT loss and loop (tracking areas,

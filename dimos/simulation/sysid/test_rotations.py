@@ -17,7 +17,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from dimos.robot.unitree.go2.sim.rotations import (
+from dimos.simulation.sysid.rotations import (
     mat_to_quat,
     quat_to_mat,
     rotation_angle,

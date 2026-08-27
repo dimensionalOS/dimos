@@ -27,7 +27,7 @@ restart-and-median argument rests on.
 Serial and parallel are BIT-IDENTICAL by construction: both paths run
 :func:`_eval`, byte for byte — a worker differs only in which process the pure
 function runs in. Workers receive the CONFIGURED BACKEND itself, pickled
-(a seam requirement — see :class:`~dimos.robot.unitree.go2.sim.backend
+(a seam requirement — see :class:`~dimos.simulation.sysid.backend
 .Backend`), so no engine is named here and a different simulator
 parallelises by construction. MuJoCo is not thread-safe on shared
 ``MjData``, hence processes, each compiling its own model (which
@@ -46,14 +46,14 @@ import threading
 
 import numpy as np
 
-from dimos.robot.unitree.go2.sim.backend import Backend
 from dimos.robot.unitree.go2.sim.sysid.ingest import GO2_READER
-from dimos.robot.unitree.go2.sim.sysid.recording import (
+from dimos.robot.unitree.go2.sim.sysid.replay import ReplayResult, replay
+from dimos.simulation.sysid.backend import Backend
+from dimos.simulation.sysid.recording import (
     RecordingReader,
     Streams,
     read_recording,
 )
-from dimos.robot.unitree.go2.sim.sysid.replay import ReplayResult, replay
 
 
 @dataclass(frozen=True)

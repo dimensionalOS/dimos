@@ -217,6 +217,7 @@ def test_a_preset_round_trips_its_provenance(tmp_path):
     assert got == p and got.provenance["armature"] == "fitted: test"
 
 
-def test_an_unknown_envelope_name_is_rejected_at_construction():
+def test_an_unknown_envelope_name_is_rejected_when_loaded(tmp_path):
+    path = Preset(name="typo", envelope="centrall").save(tmp_path / "typo.json")
     with pytest.raises(ValueError, match="envelope"):
-        Preset(name="typo", envelope="centrall")
+        load_preset(str(path))

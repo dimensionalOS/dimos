@@ -42,13 +42,13 @@ from pathlib import Path
 import time
 from typing import Any
 
-from dimos.robot.unitree.go2.sim.backend import ClosedLoopBackend
 from dimos.robot.unitree.go2.sim.policy import FreePolicy
 from dimos.robot.unitree.go2.sim.ranges import Preset, load_preset
 from dimos.robot.unitree.go2.sim.sysid.fit import base_values
 from dimos.robot.unitree.go2.sim.sysid.ground import Report, ground
 from dimos.robot.unitree.go2.sim.sysid.ingest import read_streams
 from dimos.robot.unitree.go2.sim.sysid.meta import MDD_N16, shared_floor
+from dimos.simulation.sysid.backend import ClosedLoopBackend
 
 
 @dataclass(frozen=True)
@@ -153,12 +153,8 @@ def ranking_table(results: list[tuple[Draw | None, Report]], mdd: float) -> str:
         lo, hi = rep.loss_range()
         n, of = rep.n_matched()
         name = "incumbent" if dr is None else f"draw{dr.index:03d}"
-        lines.append(
-            f"{rank:>4} {name:<12} {rep.loss():7.2f} {lo:6.2f}-{hi:<6.2f} {n:>3} of {of}"
-        )
-    lines.append(
-        f"  Losses within the MDD ({mdd:.2f} at these replicates) of each other are TIES."
-    )
+        lines.append(f"{rank:>4} {name:<12} {rep.loss():7.2f} {lo:6.2f}-{hi:<6.2f} {n:>3} of {of}")
+    lines.append(f"  Losses within the MDD ({mdd:.2f} at these replicates) of each other are TIES.")
     return "\n".join(lines)
 
 

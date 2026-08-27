@@ -52,7 +52,7 @@ The REAL side of the comparison (:mod:`~dimos.robot.unitree.go2.sim.sysid
 .real`) is pure recording processing and lives outside this module —
 position from the tracker, attitude from the IMU (README 6). The SIM side
 is engine-free too: :func:`rollout_policy` is a generic closed-loop driver
-over the :class:`~dimos.robot.unitree.go2.sim.backend.LoopSession` seam,
+over the :class:`~dimos.simulation.sysid.backend.LoopSession` seam,
 and the engine enters only through the ``backend`` argument.
 
 A well-stabilised policy can drive a floor to ~0, sending that SNR to
@@ -74,7 +74,6 @@ from dataclasses import dataclass, field, replace
 
 import numpy as np
 
-from dimos.robot.unitree.go2.sim.backend import ClosedLoopBackend, GhostTrack, State
 from dimos.robot.unitree.go2.sim.plant import (
     TORQUE_ENVELOPES,
     TORQUE_LIMITS,
@@ -83,11 +82,9 @@ from dimos.robot.unitree.go2.sim.plant import (
 )
 from dimos.robot.unitree.go2.sim.policy import FreePolicy
 from dimos.robot.unitree.go2.sim.ranges import DEFAULT_PRESET, Preset, load_preset
-from dimos.robot.unitree.go2.sim.rotations import mat_to_quat, quat_to_mat
 from dimos.robot.unitree.go2.sim.sysid.gait import strides
 from dimos.robot.unitree.go2.sim.sysid.ingest import TRACKER_Z, mount_matrix, read_streams
 from dimos.robot.unitree.go2.sim.sysid.real import cmd_at, real_summary, robot_noise
-from dimos.robot.unitree.go2.sim.sysid.recording import Streams
 from dimos.robot.unitree.go2.sim.sysid.replay import ghost_track, measured_state
 from dimos.robot.unitree.go2.sim.sysid.stats import (
     NOT_COMPARABLE,
@@ -98,6 +95,9 @@ from dimos.robot.unitree.go2.sim.sysid.stats import (
     summarize,
     yaw_of,
 )
+from dimos.simulation.sysid.backend import ClosedLoopBackend, GhostTrack, State
+from dimos.simulation.sysid.recording import Streams
+from dimos.simulation.sysid.rotations import mat_to_quat, quat_to_mat
 
 CONTROL_DT = 0.02  # 50 Hz policy rate; not stored in the blob
 
@@ -201,7 +201,7 @@ def rollout_policy(
     sits INSIDE the physics step loop. The seam is a stepping primitive
     instead — this driver owns the policy, the observation build, the
     command slew and every loop mechanism, and asks the ``backend`` for a
-    :class:`~dimos.robot.unitree.go2.sim.backend.LoopSession` that only
+    :class:`~dimos.simulation.sysid.backend.LoopSession` that only
     steps physics and reports state. A second backend implements the
     session and inherits this whole loop.
 

@@ -52,11 +52,11 @@ from pathlib import Path
 
 import numpy as np
 
-from dimos.robot.unitree.go2.sim.backend import Backend
 from dimos.robot.unitree.go2.sim.ranges import Preset
 from dimos.robot.unitree.go2.sim.sysid.ground import ObsNoise
 from dimos.robot.unitree.go2.sim.sysid.ingest import command_coverage
-from dimos.robot.unitree.go2.sim.sysid.recording import Streams
+from dimos.simulation.sysid.backend import Backend
+from dimos.simulation.sysid.recording import Streams
 
 # The band every gait harmonic stays under; noise is what lives above it.
 NOISE_HIGHPASS_HZ = 20.0

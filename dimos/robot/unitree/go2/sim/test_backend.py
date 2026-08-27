@@ -30,9 +30,9 @@ mujoco = pytest.importorskip("mujoco")
 pytestmark = [pytest.mark.go2sim]
 
 from dimos.robot.unitree.go2.sim import anchors
-from dimos.robot.unitree.go2.sim.backend import BaseCondition, Commands, RolloutPlan, State
 from dimos.robot.unitree.go2.sim.engines import model as go2_model
 from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
+from dimos.simulation.sysid.backend import BaseCondition, Commands, RolloutPlan, State
 
 STAND_Q = np.tile([0.0, 0.9, -1.8], 4)
 
@@ -309,7 +309,7 @@ def test_a_suspended_clip_repins_to_the_measured_orientation_not_t0s():
     """The robot hung 70-85 deg off level and MOVED while hanging: each clip
     must pin the trunk to the pose measured at ITS start. Holding t0's pose
     points gravity the wrong way through every leg for the rest of the file."""
-    from dimos.robot.unitree.go2.sim.rotations import quat_to_mat
+    from dimos.simulation.sysid.rotations import quat_to_mat
 
     tilted = quat_to_mat(np.array([np.cos(0.6), np.sin(0.6), 0.0, 0.0]))  # 68.7 deg roll
     plan = RolloutPlan(
@@ -333,8 +333,8 @@ def test_a_pinned_base_follows_the_measured_attitude_track():
     a 0.4 s clip, p90 26 deg on the hanging recording — so the weld target
     follows the measured attitude every step instead of freezing the pose the
     clip started from."""
-    from dimos.robot.unitree.go2.sim.backend import BaseTrack
-    from dimos.robot.unitree.go2.sim.rotations import quat_to_mat
+    from dimos.simulation.sysid.backend import BaseTrack
+    from dimos.simulation.sysid.rotations import quat_to_mat
 
     tt = np.arange(0.0, 0.32, 0.002)
     roll = np.minimum(tt / 0.3, 1.0) * 0.5  # ramp to 0.5 rad over the clip

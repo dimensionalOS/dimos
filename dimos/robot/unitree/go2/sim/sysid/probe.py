@@ -57,7 +57,6 @@ from pathlib import Path
 
 import numpy as np
 
-from dimos.robot.unitree.go2.sim.backend import ClosedLoopBackend
 from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
 from dimos.robot.unitree.go2.sim.policy import FreePolicy
 from dimos.robot.unitree.go2.sim.ranges import DEFAULT_PRESET, KNOBS, Preset, load_preset
@@ -71,8 +70,9 @@ from dimos.robot.unitree.go2.sim.sysid.ground import (
 )
 from dimos.robot.unitree.go2.sim.sysid.ingest import read_streams
 from dimos.robot.unitree.go2.sim.sysid.real import cmd_at, real_summary
-from dimos.robot.unitree.go2.sim.sysid.recording import Streams
 from dimos.robot.unitree.go2.sim.sysid.stats import Summary
+from dimos.simulation.sysid.backend import ClosedLoopBackend
+from dimos.simulation.sysid.recording import Streams
 
 # The probed statistics: the 5b oscillation family, then the 5g speed family
 # measured by the stride instrument (`gait_hz` was retired from scoring — it

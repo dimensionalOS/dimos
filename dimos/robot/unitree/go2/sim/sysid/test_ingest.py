@@ -26,7 +26,7 @@ from dimos.robot.unitree.go2.sim.sysid.ingest import (
     command_coverage,
     mount_matrix,
 )
-from dimos.robot.unitree.go2.sim.sysid.recording import (
+from dimos.simulation.sysid.recording import (
     Declarations,
     read_declarations,
     sidecar_path,

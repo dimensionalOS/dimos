@@ -52,7 +52,7 @@ from dimos.robot.unitree.go2.sim.sysid.ground import (
     projected_gravity,
 )
 from dimos.robot.unitree.go2.sim.sysid.ingest import read_streams
-from dimos.robot.unitree.go2.sim.sysid.recording import Streams
+from dimos.simulation.sysid.recording import Streams
 
 
 def slewed_commands(st: Streams, ticks: np.ndarray) -> np.ndarray:

@@ -59,14 +59,6 @@ import numpy as np
 from dimos.robot.unitree.go2.sim.anchors import RobotSpec, derive
 from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
 from dimos.robot.unitree.go2.sim.ranges import ENGINE_DEFAULTS, Knob, Preset, load_preset
-from dimos.robot.unitree.go2.sim.sysid.recording import read_declarations
-from dimos.robot.unitree.go2.sim.sysid.regimes import (
-    Segment,
-    Span,
-    protected,
-    regimes,
-    sample_segments,
-)
 from dimos.robot.unitree.go2.sim.sysid.rollouts import Rollouts, RolloutSpec
 from dimos.robot.unitree.go2.sim.sysid.score import (
     DEFAULT_WEIGHTS,
@@ -77,6 +69,14 @@ from dimos.robot.unitree.go2.sim.sysid.score import (
     scales_from,
     score_terms,
     segment_terms,
+)
+from dimos.simulation.sysid.recording import read_declarations
+from dimos.simulation.sysid.regimes import (
+    Segment,
+    Span,
+    protected,
+    regimes,
+    sample_segments,
 )
 
 # Natural units per channel, for the judgement tables. `rot` entries move

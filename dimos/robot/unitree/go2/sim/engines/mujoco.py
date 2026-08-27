@@ -17,8 +17,8 @@
 The plant itself is :mod:`~dimos.robot.unitree.go2.sim.engines.model` — the
 vendored scene and the knob application, shared with every other MuJoCo-family
 backend. What lives here is the engine binding: one ``mj_step`` per tick, and
-the rollout that turns a :class:`~dimos.robot.unitree.go2.sim.backend.RolloutPlan`
-into a :class:`~dimos.robot.unitree.go2.sim.backend.Prediction`.
+the rollout that turns a :class:`~dimos.simulation.sysid.backend.RolloutPlan`
+into a :class:`~dimos.simulation.sysid.backend.Prediction`.
 """
 
 from __future__ import annotations
@@ -28,16 +28,6 @@ from pathlib import Path
 
 import mujoco
 import numpy as np
-
-from dimos.robot.unitree.go2.sim.backend import (
-    CHANNELS,
-    BaseCondition,
-    GhostTrack,
-    LoopState,
-    Prediction,
-    RolloutPlan,
-    State,
-)
 
 # The plant arrives as a MODULE, not as unbound names: a test that zeroes
 # gravity patches `model.load`, and a name imported here would not see it.
@@ -50,7 +40,16 @@ from dimos.robot.unitree.go2.sim.engines.model import (
 )
 from dimos.robot.unitree.go2.sim.plant import TORQUE_LIMITS, TorqueEnvelope, actuator_step
 from dimos.robot.unitree.go2.sim.ranges import KNOBS, PHYSICS_KEYS, Knob
-from dimos.robot.unitree.go2.sim.rotations import mat_to_quat, quat_to_mat
+from dimos.simulation.sysid.backend import (
+    CHANNELS,
+    BaseCondition,
+    GhostTrack,
+    LoopState,
+    Prediction,
+    RolloutPlan,
+    State,
+)
+from dimos.simulation.sysid.rotations import mat_to_quat, quat_to_mat
 
 
 class MujocoSession:
