@@ -17,6 +17,8 @@
 Run with:
 
     dimos --simulation mujoco run unitree-g1-sonic-webxr-teleop
+    dimos --simulation mujoco run unitree-g1-sonic-webxr-teleop \
+        --sonic-pipeline sonic-low-latency
     dimos --viewer none run unitree-g1-sonic-webxr-teleop --network-interface <robot-nic>
 
 Press A+B+X+Y to start in planner mode, then A+X to toggle full-body POSE.

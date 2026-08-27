@@ -31,18 +31,23 @@ g1_deploy_onnx_ref binary owns rt/lowcmd.
 
 from __future__ import annotations
 
+from dataclasses import replace
 import os
 from pathlib import Path
 from typing import Any, cast
 
 from dimos.control.components import HardwareComponent, HardwareType
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig, TaskConfig
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import g1_joints
 from dimos.control.tasks.g1_sonic_wbc_task.g1_sonic_teleop_task import G1SonicTeleopTask
 from dimos.control.tasks.g1_sonic_wbc_task.sonic_pipeline import (
     DEFAULT_ANGLES_DDS,
     SONIC_KD,
     SONIC_KP,
+)
+from dimos.control.tasks.g1_sonic_wbc_task.webxr_retargeting import (
+    SONIC_V1_1_PIPELINE,
+    SonicTeleopPipeline,
 )
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
@@ -237,13 +242,54 @@ class _G1SonicCoordinator(ControlCoordinator):
                 task.set_pose_reference_publisher(self.sonic_pose_reference.publish)
 
 
+class _G1SonicTeleopCoordinatorConfig(ControlCoordinatorConfig):
+    """Startup selection for the WebXR pose-window behavior."""
+
+    sonic_pipeline: SonicTeleopPipeline = SONIC_V1_1_PIPELINE
+
+
+def _configure_sonic_teleop_tasks(
+    tasks: list[TaskConfig],
+    sonic_pipeline: SonicTeleopPipeline,
+) -> list[TaskConfig]:
+    return [
+        replace(
+            task,
+            params={
+                **task.params,
+                "sonic_pipeline": sonic_pipeline,
+            },
+        )
+        if task.type == "g1_sonic_teleop"
+        else task
+        for task in tasks
+    ]
+
+
+class _G1SonicTeleopCoordinator(_G1SonicCoordinator):
+    config: _G1SonicTeleopCoordinatorConfig
+
+    def _setup_from_config(self) -> None:
+        self.config.tasks = _configure_sonic_teleop_tasks(
+            self.config.tasks,
+            self.config.sonic_pipeline,
+        )
+        super()._setup_from_config()
+
+
 def _g1_sonic_coordinator(
     *,
     task_type: str,
     task_name: str,
     zmq_enabled: bool,
 ) -> Any:
-    coordinator = _G1SonicCoordinator.blueprint(
+    coordinator_type = (
+        _G1SonicTeleopCoordinator if task_type == "g1_sonic_teleop" else _G1SonicCoordinator
+    )
+    teleop_config = (
+        {"sonic_pipeline": SONIC_V1_1_PIPELINE} if task_type == "g1_sonic_teleop" else {}
+    )
+    coordinator = coordinator_type.blueprint(
         instance_name="ControlCoordinator",
         publish_robot_joint_states=True,
         tick_rate=_tick_rate,
@@ -277,6 +323,7 @@ def _g1_sonic_coordinator(
                 },
             ),
         ],
+        **teleop_config,
     )
 
     # Real hardware speaks LCM to G1WholeBodyConnection on fixed topics. In
@@ -310,7 +357,7 @@ def _g1_sonic_control_blueprint(
         zmq_enabled=zmq_enabled,
     )
     return autoconnect(_backend, coordinator).remappings(
-        cast("Any", [(_G1SonicCoordinator, "twist_command", "cmd_vel")])
+        cast("Any", [("ControlCoordinator", "twist_command", "cmd_vel")])
     )
 
 

@@ -58,8 +58,9 @@ class G1SonicTeleopTask(G1SonicWBCTask):
     """Run NVIDIA's OFF -> PLANNER -> POSE WebXR teleoperation workflow.
 
     A+B+X+Y starts and stops the teleop session. A+X toggles between the
-    balancing planner and a two-frame full-body POSE stream. The headset does
-    not own the DimOS policy lifecycle; arm/enable/disable remain CLI actions.
+    balancing planner and the configured full-body POSE stream. The headset
+    does not own the DimOS policy lifecycle; arm/enable/disable remain CLI
+    actions.
     """
 
     def __init__(
@@ -72,7 +73,7 @@ class G1SonicTeleopTask(G1SonicWBCTask):
         # ZMQ command handling runs inside compute() and can synchronously
         # invoke disarm(), so lifecycle cleanup must be re-entrant here.
         self._teleop_lock = threading.RLock()
-        self._pose_stream = WebXRSonicPoseStream()
+        self._pose_stream = WebXRSonicPoseStream(config.sonic_pipeline)
         self._latest_complete: BodyTrackingSnapshot | None = None
         self._latest_complete_time = 0.0
         self._tracking_frame_id: str | None = None
@@ -180,6 +181,12 @@ class G1SonicTeleopTask(G1SonicWBCTask):
         with self._teleop_lock:
             self._reset_teleop_locked()
         super().start()
+        logger.info(
+            "G1 SONIC WebXR pipeline configured",
+            task=self._name,
+            sonic_pipeline=self._pose_stream.sonic_pipeline,
+            pose_window_frames=self._pose_stream.window_frames,
+        )
 
     def stop(self) -> None:
         with self._teleop_lock:
@@ -204,6 +211,8 @@ class G1SonicTeleopTask(G1SonicWBCTask):
                 last_complete_received_at = self._latest_complete_time
             snapshot["webxr_teleop"] = {
                 "mode": self._mode.value,
+                "sonic_pipeline": self._pose_stream.sonic_pipeline,
+                "pose_window_frames": self._pose_stream.window_frames,
                 "stream_ready": self._pose_stream.ready,
                 "buffered_frames": self._pose_stream.buffered_frames,
                 "tracking_frame_id": self._tracking_frame_id,

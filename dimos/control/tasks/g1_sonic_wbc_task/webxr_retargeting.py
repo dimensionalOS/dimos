@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Final, cast
+from typing import Any, Final, Literal, TypeAlias, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -75,8 +75,15 @@ WEBXR_TO_SONIC: Final[NDArray[np.float64]] = np.array(
 
 _WRIST_LIMITS: Final[NDArray[np.float64]] = np.array([1.972, 1.615, 1.615], dtype=np.float64)
 POSE_TARGET_FPS: Final[float] = 50.0
-POSE_WINDOW_FRAMES: Final[int] = 2
 POSE_MAX_GAP_SECONDS: Final[float] = 0.15
+
+SonicTeleopPipeline: TypeAlias = Literal["sonic-v1.1", "sonic-low-latency"]
+SONIC_V1_1_PIPELINE: Final[SonicTeleopPipeline] = "sonic-v1.1"
+SONIC_LOW_LATENCY_PIPELINE: Final[SonicTeleopPipeline] = "sonic-low-latency"
+SONIC_PIPELINE_WINDOW_FRAMES: Final[dict[SonicTeleopPipeline, int]] = {
+    SONIC_V1_1_PIPELINE: 10,
+    SONIC_LOW_LATENCY_PIPELINE: 2,
+}
 
 
 class IncompleteBodyPoseError(ValueError):
@@ -216,11 +223,16 @@ def _interpolate_quaternion_wxyz(
 
 
 class WebXRSonicPoseStream:
-    """Resample WebXR poses to a low-latency rolling two-frame, 50 Hz stream."""
+    """Resample WebXR poses to a selected rolling 50 Hz SONIC stream."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        sonic_pipeline: SonicTeleopPipeline = SONIC_V1_1_PIPELINE,
+    ) -> None:
+        self._sonic_pipeline = sonic_pipeline
+        self._window_frames = SONIC_PIPELINE_WINDOW_FRAMES[sonic_pipeline]
         self._retargeter = WebXRSonicRetargeter()
-        self._frames: deque[dict[str, NDArray[Any]]] = deque(maxlen=POSE_WINDOW_FRAMES)
+        self._frames: deque[dict[str, NDArray[Any]]] = deque(maxlen=self._window_frames)
         self._previous_time: float | None = None
         self._previous_fields: dict[str, NDArray[Any]] | None = None
         self._next_target_time: float | None = None
@@ -232,8 +244,16 @@ class WebXRSonicPoseStream:
         return len(self._frames)
 
     @property
+    def sonic_pipeline(self) -> SonicTeleopPipeline:
+        return self._sonic_pipeline
+
+    @property
+    def window_frames(self) -> int:
+        return self._window_frames
+
+    @property
     def ready(self) -> bool:
-        return len(self._frames) == POSE_WINDOW_FRAMES
+        return len(self._frames) == self._window_frames
 
     @property
     def generation(self) -> int:
@@ -287,7 +307,7 @@ class WebXRSonicPoseStream:
     def fields(self) -> dict[str, NDArray[Any]]:
         if not self.ready:
             raise PoseStreamError(
-                f"pose stream needs {POSE_WINDOW_FRAMES} frames, has {len(self._frames)}"
+                f"pose stream needs {self._window_frames} frames, has {len(self._frames)}"
             )
         keys = self._frames[0].keys()
         return {key: np.concatenate([frame[key] for frame in self._frames], axis=0) for key in keys}

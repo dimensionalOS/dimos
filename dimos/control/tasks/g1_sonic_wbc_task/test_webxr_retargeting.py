@@ -116,29 +116,64 @@ def test_retarget_derives_direct_wrist_targets_and_velocity() -> None:
     np.testing.assert_allclose(frame["joint_pos"][0], expected, atol=1e-7)
 
 
-def test_pose_stream_waits_for_two_resampled_frames() -> None:
+def test_pose_stream_waits_for_ten_chronological_resampled_frames() -> None:
     stream = WebXRSonicPoseStream()
 
-    for index in range(2):
-        rotations = {"left-hand-wrist": Rotation.from_euler("x", 0.3)} if index == 1 else None
+    for index in range(9):
         stream.push(
-            _snapshot(capture_time_s=10.0 + 0.02 * index, rotations=rotations),
+            _snapshot(capture_time_s=10.0 + 0.02 * index, position_scale=1.0 + 0.1 * index),
             t_now=1.0 + 0.02 * index,
         )
 
+    assert stream.ready is False
+    assert stream.buffered_frames == 9
+
+    stream.push(
+        _snapshot(capture_time_s=10.18, position_scale=1.9),
+        t_now=1.18,
+    )
+
     assert stream.ready is True
-    assert stream.buffered_frames == 2
-    assert stream.generation == 2
+    assert stream.buffered_frames == 10
+    assert stream.generation == 10
     fields = stream.fields()
-    assert fields["frame_index"].tolist() == [0, 1]
-    assert fields["smpl_joints"].shape == (2, 24, 3)
-    assert fields["smpl_pose"].shape == (2, 21, 3)
+    assert fields["frame_index"].tolist() == list(range(10))
+    assert fields["smpl_joints"].shape == (10, 24, 3)
+    assert fields["smpl_pose"].shape == (10, 21, 3)
     np.testing.assert_allclose(fields["smpl_joints"][:, 0], 0.0)
-    np.testing.assert_allclose(fields["smpl_joints"][:, 1], [[3.0, -1.0, 2.0]] * 2)
-    expected_joint_pos = np.stack([DEFAULT_ANGLES_ONNX, DEFAULT_ANGLES_ONNX])
-    expected_joint_pos[1, WRIST_ONNX_INDICES[0]] = 0.3
-    np.testing.assert_allclose(fields["joint_pos"], expected_joint_pos, atol=1e-7)
-    assert fields["joint_vel"][1, WRIST_ONNX_INDICES[0]] == pytest.approx(15.0)
+    expected_scales = 1.0 + 0.1 * np.arange(10)
+    expected_joint = expected_scales[:, np.newaxis] * np.array([3.0, -1.0, 2.0])
+    np.testing.assert_allclose(fields["smpl_joints"][:, 1], expected_joint, atol=1e-6)
+
+    stream.push(
+        _snapshot(capture_time_s=10.20, position_scale=2.0),
+        t_now=1.20,
+    )
+
+    assert stream.buffered_frames == 10
+    assert stream.generation == 11
+    assert stream.fields()["frame_index"].tolist() == list(range(1, 11))
+
+
+def test_low_latency_pose_stream_uses_two_frame_rolling_window() -> None:
+    stream = WebXRSonicPoseStream(sonic_pipeline="sonic-low-latency")
+
+    stream.push(_snapshot(capture_time_s=10.0), t_now=1.0)
+
+    assert stream.ready is False
+    assert stream.buffered_frames == 0
+
+    stream.push(_snapshot(capture_time_s=10.02), t_now=1.02)
+
+    assert stream.ready is True
+    assert stream.sonic_pipeline == "sonic-low-latency"
+    assert stream.window_frames == 2
+    assert stream.fields()["frame_index"].tolist() == [0, 1]
+
+    stream.push(_snapshot(capture_time_s=10.04), t_now=1.04)
+
+    assert stream.buffered_frames == 2
+    assert stream.fields()["frame_index"].tolist() == [1, 2]
 
 
 def test_pose_stream_interpolates_root_by_shortest_quaternion_path() -> None:

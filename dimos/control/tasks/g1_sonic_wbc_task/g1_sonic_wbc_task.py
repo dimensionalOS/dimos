@@ -54,6 +54,10 @@ from dimos.control.tasks.g1_sonic_wbc_task.sonic_pipeline import (
     NUM_JOINTS,
     SonicPipeline,
 )
+from dimos.control.tasks.g1_sonic_wbc_task.webxr_retargeting import (
+    SONIC_V1_1_PIPELINE,
+    SonicTeleopPipeline,
+)
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
@@ -82,6 +86,7 @@ class G1SonicWBCTaskConfig:
     auto_arm: bool = False
     auto_dry_run: bool = False
     default_ramp_seconds: float = 3.0
+    sonic_pipeline: SonicTeleopPipeline = SONIC_V1_1_PIPELINE
 
 
 class SonicControlState(str, Enum):
@@ -639,6 +644,7 @@ class G1SonicWBCTaskParams(BaseConfig):
     default_ramp_seconds: float = 3.0
     decimation: int | None = None
     zmq_enabled: bool = True
+    sonic_pipeline: SonicTeleopPipeline = SONIC_V1_1_PIPELINE
 
 
 def _create_task(
@@ -670,6 +676,7 @@ def _create_task(
         auto_dry_run=params.auto_dry_run,
         default_ramp_seconds=params.default_ramp_seconds,
         zmq_enabled=params.zmq_enabled,
+        sonic_pipeline=params.sonic_pipeline,
     )
     if params.decimation is not None:
         kwargs["decimation"] = params.decimation
