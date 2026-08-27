@@ -31,6 +31,7 @@ fn basic_config() -> Config {
         region_percentile: 95.0,
         world_frame: "world".to_string(),
         tf_match_tolerance_s: 0.1,
+        tf_wait_timeout_s: 0.1,
         worker_threads: 4,
     }
 }
@@ -304,6 +305,7 @@ fn ground_clipping_single_ray() {
         region_percentile: 95.0,
         world_frame: "world".to_string(),
         tf_match_tolerance_s: 0.1,
+        tf_wait_timeout_s: 0.1,
         worker_threads: 4,
     };
     // Build the floor over a y band so it is a 2d plane, not a wire.
@@ -460,6 +462,7 @@ fn stair_clipping_ray_fan() {
         region_percentile: 95.0,
         world_frame: "world".to_string(),
         tf_match_tolerance_s: 0.1,
+        tf_wait_timeout_s: 0.1,
         worker_threads: 4,
     };
 
@@ -538,6 +541,7 @@ fn landing_floor_ray_fan() {
         region_percentile: 95.0,
         world_frame: "world".to_string(),
         tf_match_tolerance_s: 0.1,
+        tf_wait_timeout_s: 0.1,
         worker_threads: 4,
     };
 
@@ -604,6 +608,7 @@ fn landing_grazed_from_below() {
         region_percentile: 95.0,
         world_frame: "world".to_string(),
         tf_match_tolerance_s: 0.1,
+        tf_wait_timeout_s: 0.1,
         worker_threads: 4,
     };
 
@@ -739,6 +744,7 @@ fn grazing_ray_spares_planar_floor() {
         region_percentile: 95.0,
         world_frame: "world".to_string(),
         tf_match_tolerance_s: 0.1,
+        tf_wait_timeout_s: 0.1,
         worker_threads: 4,
     };
     let (mut map, _) = build_surface(&floor, voxel_size, cfg.max_health);

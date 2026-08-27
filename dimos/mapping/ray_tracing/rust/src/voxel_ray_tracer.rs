@@ -96,6 +96,9 @@ pub struct Config {
     /// Max stamp gap between a cloud and the transform used to register it (s).
     #[validate(range(exclusive_min = 0.0))]
     pub tf_match_tolerance_s: f64,
+    /// How long to wait for a late transform before dropping a cloud (s).
+    #[validate(range(min = 0.0))]
+    pub tf_wait_timeout_s: f64,
     /// Worker threads for parallel map work.
     #[validate(range(min = 1))]
     pub worker_threads: u32,

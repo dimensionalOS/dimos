@@ -425,6 +425,16 @@ impl Lookup<'_> {
             .get(self.parent, self.child, self.time, self.tolerance)
     }
 
+    fn no_sample_can_still_arrive(&self) -> bool {
+        let (Some(time), Some(tolerance)) = (self.time, self.tolerance) else {
+            return false;
+        };
+        self.tf
+            .graph
+            .get(self.parent, self.child, None, None)
+            .is_some_and(|latest| latest.ts > time + tolerance)
+    }
+
     // A lookup that resolves to nothing is otherwise invisible: the caller sees
     // None and the buffer says nothing about which frames or stamp missed.
     fn warn_unresolved(&self) {
@@ -470,6 +480,12 @@ impl Lookup<'_> {
 
             if let Some(transform) = self.resolve() {
                 return Some(transform);
+            }
+            // Edges only append forward in time, so once the stalest edge on the
+            // path has passed the requested stamp no sample can still arrive.
+            if self.no_sample_can_still_arrive() {
+                self.warn_unresolved();
+                return None;
             }
             // Only the deadline warns. An intermediate miss is the normal state
             // of a wait, not a failure.
