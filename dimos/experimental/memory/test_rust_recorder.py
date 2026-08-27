@@ -19,6 +19,7 @@ from typing import Any, TypeVar
 
 import pytest
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.stream import In
 from dimos.experimental.memory.rust_recorder import (
     RustMcapStoreConfig,
@@ -181,6 +182,17 @@ def test_default_store_path_is_resolved_from_the_project_root() -> None:
 
     assert Path(config.store.path).is_absolute()
     assert Path(config.store.path).name == "recording.db"
+
+
+def test_native_recorder_is_built_and_run_from_the_nix_package() -> None:
+    config = RustRecorderConfig()
+    rust_workspace = DIMOS_PROJECT_ROOT / "native" / "rust"
+
+    assert config.cwd == str(rust_workspace)
+    assert config.build_command == (
+        "nix --extra-experimental-features 'nix-command flakes' build -L .#dimos-memory-recorder"
+    )
+    assert config.executable == str(rust_workspace / "result" / "bin" / "dimos-memory-recorder")
 
 
 def test_invalid_codec_fails_during_preflight(tmp_path: Path, make_recorder: Any) -> None:
