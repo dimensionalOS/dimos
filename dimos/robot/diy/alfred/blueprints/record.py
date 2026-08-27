@@ -16,16 +16,17 @@
 cameras, the Mid-360 lidar, and a memory recorder.
 
 Records into a memory SQLite db: front (D455) and back (D435if) color + aligned
-depth + camera infos, Point-LIO odom + lidar (trajectory baked into
-``pointlio_lidar`` via the inherited pose setters), the coordinator's aggregate
-joint state, FlowBase wheel odometry, and operator ``cmd_vel``. The wrist
-fisheye USB cameras are intentionally NOT recorded.
+depth + camera infos, the raw Mid-360 lidar + IMU streams (Point-LIO is not run
+online — this worktree has no native binary; the raw streams support offline
+LIO/mapping afterwards), the coordinator's aggregate joint state, FlowBase wheel
+odometry, and operator ``cmd_vel``. The wrist fisheye USB cameras are
+intentionally NOT recorded.
 
 The two RealSense modules are bound to their physical cameras by serial number,
-so front/back never depend on USB enumeration order. Lidar IPs come from the
-module envs::
+so front/back never depend on USB enumeration order. The lidar IP comes from the
+module env::
 
-    export DIMOS_MID360_LIDAR_IP=192.168.1.189 DIMOS_POINTLIO_LIDAR_IP=192.168.1.189
+    export DIMOS_MID360_LIDAR_IP=192.168.1.189
     dimos run alfred-record --left-can-port can2 --right-can-port can3 \
         --device-path /dev/serial/by-id/<nano> \
         --rerun-host <bot-ip> --rerun-open none --visualization.host <bot-ip>
@@ -39,16 +40,14 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.stream import In
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.hardware.sensors.lidar.livox.module import Mid360
-from dimos.hardware.sensors.lidar.pointlio.module import PointLio
-from dimos.hardware.sensors.lidar.pointlio.recorder import (
-    PointlioRecorder,
-    PointlioRecorderConfig,
-)
+from dimos.memory.module import Recorder, RecorderConfig
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.diy.alfred.blueprints.alfred import alfred
 
 # Physical camera identity on the Alfred rig (orin-nx-7837), by USB serial.
@@ -73,15 +72,15 @@ def _rig_realsense(prefix: str, serial: str) -> object:
     ).remappings([(RealSenseCamera, port, f"{prefix}_{port}") for port in _CAMERA_PORTS])
 
 
-class AlfredRecorderConfig(PointlioRecorderConfig):
-    # No static mount frames are published for the cameras yet, and the command/
-    # state streams inherently have no pose: record them poseless rather than
-    # flooding the log with failed world<-frame tf lookups.
+class AlfredRecorderConfig(RecorderConfig):
+    # No static mount frames are published for the cameras or lidar yet, and the
+    # command/state streams inherently have no pose: record them poseless rather
+    # than flooding the log with failed world<-frame tf lookups.
     poseless_streams: list[str] = Field(
         default_factory=lambda: [
             f"{prefix}_{port}" for prefix in ("front", "back") for port in _CAMERA_PORTS
         ]
-        + ["coordinator_joint_state", "wheel_odometry", "cmd_vel"]
+        + ["livox_lidar", "livox_imu", "coordinator_joint_state", "wheel_odometry", "cmd_vel"]
     )
     # Depth must round-trip losslessly; JPEG would corrupt the 16-bit range.
     stream_codecs: dict[str, str] = Field(
@@ -92,10 +91,13 @@ class AlfredRecorderConfig(PointlioRecorderConfig):
     )
 
 
-class AlfredRecorder(PointlioRecorder):
-    """Records the Alfred rig streams; pointlio odom/lidar come from the base."""
+class AlfredRecorder(Recorder):
+    """Records the Alfred office-teleop rig streams into a memory db."""
 
     config: AlfredRecorderConfig
+
+    livox_lidar: In[PointCloud2]
+    livox_imu: In[Imu]
 
     front_color_image: In[Image]
     front_depth_image: In[Image]
@@ -122,11 +124,5 @@ alfred_record = autoconnect(
             (Mid360, "imu", "livox_imu"),
         ]
     ),
-    PointLio.blueprint(frame_id="world").remappings(
-        [
-            (PointLio, "lidar", "pointlio_lidar"),
-            (PointLio, "odometry", "pointlio_odometry"),
-        ]
-    ),
     AlfredRecorder.blueprint(),
-).global_config(n_workers=11)
+).global_config(n_workers=10)
