@@ -88,8 +88,45 @@ def driver_library_dir() -> Path | None:
     return _DRIVER_LINK_DIR
 
 
-def driver_cuda_major() -> int:
-    """0 if there is no driver."""
+Hardware = Literal[
+    "thor",
+    "orin",
+    "xavier",
+    "nano",
+    "linux-x86-nvidia",
+    "linux-x86-no-nvidia",
+    "linux-arm-no-nvidia",
+    "darwin-apple-silicon",
+    "darwin-intel",
+]
+
+
+def detect_hardware() -> Hardware:
+    if sys.platform == "darwin":
+        if platform.machine() == "arm64":
+            return "darwin-apple-silicon"
+        return "darwin-intel"
+    if platform.machine() == "aarch64":
+        compatible = Path("/proc/device-tree/compatible")
+        chip = compatible.read_bytes() if compatible.exists() else b""
+        if b"tegra264" in chip:
+            return "thor"
+        if b"tegra234" in chip:
+            return "orin"
+        if b"tegra194" in chip:
+            return "xavier"
+        if b"tegra210" in chip:
+            return "nano"
+        return "linux-arm-no-nvidia"
+    if detect_cuda_major() > 0:
+        return "linux-x86-nvidia"
+    return "linux-x86-no-nvidia"
+
+
+def detect_cuda_major() -> int:
+    """0 when there is no NVIDIA driver (always on darwin)."""
+    if sys.platform == "darwin":
+        return 0
     candidates = ["libcuda.so.1"] + [
         str(directory / "libcuda.so.1")
         for directory in (*_DRIVER_ONLY_LIB_DIRS, *_HOST_LIB_DIRS)
@@ -110,20 +147,33 @@ def sdk_variant() -> str:
     """Nix cannot see the installed driver (cuda12 vs cuda13) or /proc/device-tree
     (orin vs thor), so the flake's default package cannot make this choice.
     """
-    if sys.platform == "darwin":
+    hardware = detect_hardware()
+    if hardware in ("thor", "orin"):
+        return hardware
+    if hardware in ("xavier", "nano"):
+        # cuVSLAM ships no JetPack 4/5 build, so their GPUs are unusable here
+        logger.warning("cuVSLAM has no %s GPU build; only use_gpu=False will work.", hardware)
+        return "aarch64"
+    if hardware == "darwin-apple-silicon":
         return "metal"
-    if platform.machine() == "aarch64":
-        compatible = Path("/proc/device-tree/compatible")
-        chip = compatible.read_bytes() if compatible.exists() else b""
-        return "thor" if b"tegra264" in chip else "orin"
-    major = driver_cuda_major()
-    if 0 < major < 12:
+    if hardware == "darwin-intel":
+        raise RuntimeError("cuVSLAM has no Intel-mac build; it needs Apple silicon.")
+    if hardware == "linux-arm-no-nvidia":
+        # non-Jetson ARM: the CPU-fallback build
+        return "aarch64"
+    if hardware == "linux-x86-no-nvidia":
+        # same derivation as x86_64-cuda12 (ENFORCE_GPU=OFF, so it runs without a
+        # driver); the alias exists so the choice reads as deliberate
+        logger.warning("No NVIDIA driver found; only use_gpu=False will work.")
+        return "x86_64"
+    major = detect_cuda_major()
+    if major < 12:
         logger.warning(
-            "This NVIDIA driver supports CUDA %d and cuVSLAM ships nothing older "
-            "than 12; the build will not run until the driver is upgraded.",
+            "This NVIDIA driver supports CUDA %d and the GPU path needs 12+; "
+            "only use_gpu=False will work until the driver is upgraded.",
             major,
         )
-    return "x86_64-cuda13" if major >= 13 else "x86_64-cuda12"
+    return f"x86_64-cuda{major}"
 
 
 def _driver_env() -> dict[str, str]:
@@ -145,13 +195,15 @@ class CuvslamConfig(NativeModuleConfig):
     cwd: str | None = "."
     executable: str = "result/bin/cuvslam_odometry"
     build_command: str | None = Field(
-        default_factory=lambda: f"nix build github:dimensionalOS/dimSLAM/v0.3.0#{sdk_variant()}"
+        default_factory=lambda: f"nix build github:dimensionalOS/dimSLAM/v0.3.2#{sdk_variant()}"
     )
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
 
     # no default: this choice changes what inputs are required
-    camera_mode: Literal["mono", "stereo", "rgbd"]
+    # multisensor (experimental in cuVSLAM): any mix of RGB and RGB-D cameras, optional IMU;
+    # cameras listed in frame_id_to_depth_units_per_meter are the depth-providing ones
+    camera_mode: Literal["mono", "stereo", "rgbd", "multisensor"]
     # reject way-too-fast movements, like moving a large box that takes up 90% of the camera view
     speed_gate_max_linear: float = 5.0  # meters per sec
     speed_gate_max_angular: float = 12.0  # radians per sec
@@ -162,19 +214,18 @@ class CuvslamConfig(NativeModuleConfig):
     covariance_gate_translation_std: float = 1.0
 
     # note: this is auto detected (including left/right via tf),
-    # only use this list to switch  you need a subset of cameras
-    # (ex: testing rgbd vs stereo IR vs mono rgb)
-    # for all stereo pairs, first=left side, second=right side, for others order doesn't matter
-    # E.g. if you flip a camera upside down this value doesn't change!
-    # left/right are relative to camera, not relative to base_link
+    # basically only use this for multi-cam setups, or for selecting a subset of cameras by frame_id
+    # if in stereo mode, first=left side, second=right side
+    # and left/right means relative to the camera
+    # e.g. flipping a camera upside down should not change the order here
     camera_frames: list[str] = Field(default_factory=list)
     # have the images been pre-un-distorted (ideally yes, the sensor or API should un-distort)
     rectified: bool = True
     # works with MacOS Metal (apple silicon only) and Nvidia
     use_gpu: bool = True
-    # rgbd only, required: raw depth units per metre keyed by depth image frame_id
+    # rgbd (required) and multisensor: raw depth units per metre keyed by depth image frame_id
     # (e.g. {"d455_color_optical_frame": 1000.0} for 16-bit millimetre depth)
-    depth_units_per_meter: dict[str, float] = Field(default_factory=dict)
+    frame_id_to_depth_units_per_meter: dict[str, float] = Field(default_factory=dict)
 
     map_frame_id: str = "map"
     odom_frame_id: str = "odom"
@@ -193,11 +244,21 @@ class CuvslamConfig(NativeModuleConfig):
     enable_imu: bool = False
 
     @model_validator(mode="after")
-    def _rgbd_needs_depth_units(self) -> CuvslamConfig:
-        if self.camera_mode == "rgbd" and not self.depth_units_per_meter:
+    def _check_mode_combinations(self) -> CuvslamConfig:
+        if self.camera_mode == "rgbd" and not self.frame_id_to_depth_units_per_meter:
             raise ValueError(
-                "camera_mode='rgbd' requires depth_units_per_meter, "
+                "camera_mode='rgbd' requires frame_id_to_depth_units_per_meter, "
                 'e.g. {"d455_color_optical_frame": 1000.0}'
+            )
+        if self.enable_imu and self.camera_mode not in ("stereo", "multisensor"):
+            raise ValueError(
+                "enable_imu requires camera_mode='stereo' or 'multisensor'; "
+                "cuVSLAM has no inertial mono or rgbd mode"
+            )
+        if self.camera_mode == "multisensor" and not self.camera_frames:
+            raise ValueError(
+                "camera_mode='multisensor' requires camera_frames; "
+                "auto-discovery cannot know how many cameras the rig has"
             )
         return self
 
@@ -210,7 +271,7 @@ class CuvslamOdometry(NativeModule):
     2. Funnel their respective camera info's to ``camera_info``
     3. Make sure all of those^ have correct frame_id's
     4. Publish static tf's to relate all those frame_id's
-    5. Set `camera_mode` to mono/stereo/depth
+    5. Set `camera_mode` to mono/stereo/rgbd
     """
 
     config: CuvslamConfig
