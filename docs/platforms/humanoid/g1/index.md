@@ -408,6 +408,12 @@ The expected version is `1.20.1` with `CUDAExecutionProvider` listed first by
 the SONIC sessions. Rerun `bin/hardware/g1/setup-sonic-jp5` if the version is
 different or only `CPUExecutionProvider` is available.
 
+If an interrupted source build failed in `EigenNonBlockingThreadPool.h` with
+`MaxSizeVector` errors, update the checkout and rerun the setup script. The
+script disables discovery of JetPack's old system Eigen so ONNX Runtime uses
+the Eigen revision pinned by its own build. The existing build directory is
+reconfigured and reused.
+
 ### `libgomp.so.1: cannot allocate memory in static TLS block`
 
 RoboPlan 0.6.0's aarch64 wheel bundles a renamed private `libgomp`, while
