@@ -23,8 +23,10 @@ the base through MovementManager's teleop/nav mux.
 from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.transport import JpegLcmTransport
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.diy.alfred.blueprints.alfred_mls_nav import D455_MOUNT, D455_SERIAL
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
@@ -36,22 +38,35 @@ RealSenseCamera.dedicated_worker = True
 MID360_IP = "192.168.1.189"
 """Alfred's Mid-360, on the Jetson's wired 192.168.1.100/24 link."""
 
-alfred_keyboard_teleop = autoconnect(
-    RealSenseCamera.blueprint(
-        fps=30,
-        enable_imu=True,
-        camera_name="d455",
-        serial_number=D455_SERIAL,
-        base_transform=D455_MOUNT,
-    ),
-    # No raw Mid360 module: the lidar streams to a single host endpoint, and the
-    # Point-LIO native owns it, so a second Livox SDK connection gets no data.
-    PointLio.blueprint(lidar_ip=MID360_IP).remappings(
-        [
-            (PointLio, "lidar", "pointlio_lidar"),
-            (PointLio, "odometry", "pointlio_odometry"),
-        ]
-    ),
-    MovementManager.blueprint(),
-    AlfredHighLevel.blueprint(),
-).global_config(n_workers=6, robot_model="alfred")
+alfred_keyboard_teleop = (
+    autoconnect(
+        RealSenseCamera.blueprint(
+            fps=30,
+            # Nothing in this stack consumes depth, and raw depth is ~24 MB/s of
+            # multicast that every worker's kernel socket has to swallow.
+            enable_depth=False,
+            enable_imu=True,
+            camera_name="d455",
+            serial_number=D455_SERIAL,
+            base_transform=D455_MOUNT,
+        ),
+        # No raw Mid360 module: the lidar streams to a single host endpoint, and the
+        # Point-LIO native owns it, so a second Livox SDK connection gets no data.
+        PointLio.blueprint(lidar_ip=MID360_IP).remappings(
+            [
+                (PointLio, "lidar", "pointlio_lidar"),
+                (PointLio, "odometry", "pointlio_odometry"),
+            ]
+        ),
+        MovementManager.blueprint(),
+        AlfredHighLevel.blueprint(),
+    )
+    .transports(
+        {
+            # Raw colour is ~37 MB/s (~27k UDP fragments/s) that lagged the whole
+            # Jetson; pay a JPEG encode to buy back the bus and the CPU.
+            ("color_image", Image): JpegLcmTransport("/color_image", Image),
+        }
+    )
+    .global_config(n_workers=6, robot_model="alfred")
+)
