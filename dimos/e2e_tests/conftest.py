@@ -13,6 +13,8 @@
 # limitations under the License.
 
 from collections.abc import Callable, Generator, Iterator
+import subprocess
+import sys
 import threading
 import time
 
@@ -43,6 +45,13 @@ def _pin_to_lcm(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setenv("DIMOS_TRANSPORT", "lcm")
     monkeypatch.setattr(global_config, "transport", "lcm")
+
+
+@pytest.fixture(scope="session")
+def playwright_browsers() -> None:
+    subprocess.run(
+        [sys.executable, "-m", "playwright", "install", "chromium", "firefox"], check=True
+    )
 
 
 def _pose(x: float, y: float, theta: float) -> PoseStamped:

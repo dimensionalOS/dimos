@@ -12,16 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::VecDeque;
 use std::time::Duration;
 
 use crate::mapper::{Mapper, Pose};
 use crate::voxel_ray_tracer::Config;
-use dimos_module::{error_throttled, warn_throttled, Input, Module, Output};
+use dimos_module::{error_throttled, warn_throttled, Input, Module, Output, Tf};
 use lcm_msgs::geometry_msgs::{Point, Pose as PoseMsg, PoseStamped, Quaternion};
-use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
+use tracing::warn;
 
 #[derive(Module)]
 #[module(name = "ray_tracing", setup = init_mapper)]
@@ -29,8 +28,13 @@ pub struct RayTracingVoxelMap {
     #[input(decode = PointCloud2::decode, handler = on_lidar)]
     lidar: Input<PointCloud2>,
 
-    #[input(decode = Odometry::decode, handler = on_odometry)]
-    odometry: Input<Odometry>,
+    // World-frame points a sensor knows to be empty. Their voxels are deleted
+    // outright, reaching space ray tracing cannot clear.
+    #[input(decode = PointCloud2::decode, handler = on_voxel_clear_mask)]
+    voxel_clear_mask: Input<PointCloud2>,
+
+    #[tf]
+    tf: Tf,
 
     #[output(encode = PointCloud2::encode)]
     global_map: Output<PointCloud2>,
@@ -51,7 +55,10 @@ pub struct RayTracingVoxelMap {
 
     // Built once at startup by init_mapper. All mapping state lives inside.
     mapper: Option<Mapper>,
-    poses: VecDeque<(f64, Pose)>,
+
+    // Stamp of the last applied clear mask, so a late one cannot erase voxels a
+    // newer mask already accounted for.
+    last_clear_mask_stamp: f64,
 }
 
 impl RayTracingVoxelMap {
@@ -59,39 +66,36 @@ impl RayTracingVoxelMap {
         self.mapper = Some(Mapper::new(self.config.clone()));
     }
 
-    async fn on_odometry(&mut self, msg: Odometry) {
-        let p = &msg.pose.pose.position;
-        let q = &msg.pose.pose.orientation;
-        push_pose(
-            &mut self.poses,
-            (
-                time_secs(&msg.header.stamp),
-                Pose {
-                    position: (p.x as f32, p.y as f32, p.z as f32),
-                    orientation: (q.x as f32, q.y as f32, q.z as f32, q.w as f32),
-                },
-            ),
-        );
-    }
-
     async fn on_lidar(&mut self, msg: PointCloud2) {
-        // Register with the pose nearest the cloud stamp, never a stale one.
+        // Register with the transform nearest the cloud stamp, waiting briefly
+        // for one still in flight rather than dropping the cloud.
         let stamp = time_secs(&msg.header.stamp);
-        let Some(pose) = nearest_pose(&self.poses, stamp) else {
-            // An empty buffer means no odometry is arriving at all; a large gap
-            // means it is arriving but cannot be paired.
-            let gap = self
-                .poses
-                .iter()
-                .map(|&(t, ..)| (t - stamp).abs())
-                .fold(f64::INFINITY, f64::min);
-            warn_throttled!(
-                Duration::from_secs(1),
-                poses = self.poses.len(),
-                gap_s = gap,
-                "No odometry within tolerance of the cloud stamp, dropped a cloud.",
+        let Some(tf_pose) = self
+            .tf
+            .lookup(&self.config.world_frame, &msg.header.frame_id)
+            .at(stamp)
+            .tolerance(self.config.tf_match_tolerance_s)
+            .within(TF_WAIT_TIMEOUT)
+            .await
+        else {
+            warn!(
+                stamp,
+                world_frame = %self.config.world_frame,
+                cloud_frame = %msg.header.frame_id,
+                "No transform within tolerance of the cloud stamp, dropped a cloud.",
             );
             return;
+        };
+        let translation = tf_pose.translation().cast::<f32>();
+        let rotation = tf_pose.rotation().cast::<f32>();
+        let pose = Pose {
+            position: (translation.x, translation.y, translation.z),
+            orientation: (
+                rotation.coords.x,
+                rotation.coords.y,
+                rotation.coords.z,
+                rotation.coords.w,
+            ),
         };
 
         let points = match extract_xyz(&msg) {
@@ -119,7 +123,7 @@ impl RayTracingVoxelMap {
         let local_points = cylinder.as_ref().map(|cyl| mapper.local_points(cyl));
         let fine_points = cylinder.as_ref().and_then(|cyl| mapper.fine_points(cyl));
 
-        let out_frame_id = "world";
+        let out_frame_id = self.config.world_frame.as_str();
         let stamp = msg.header.stamp;
 
         // Bounds pair with local_map by stamp, so publish them on its cadence.
@@ -166,42 +170,63 @@ impl RayTracingVoxelMap {
             publish_cloud(&self.local_map_fine, &fine).await;
         }
     }
+
+    /// Delete the voxels covering a cloud of world-frame points a sensor knows
+    /// to be empty.
+    ///
+    /// Ray tracing only clears what a ray passes through, so a sensor that
+    /// occludes itself - a wrist camera staring past its own arm - can never
+    /// clear the volume its arm hides. It deposits voxels of itself there and
+    /// walls itself in. A publisher that knows those points are free says so
+    /// here.
+    async fn on_voxel_clear_mask(&mut self, msg: PointCloud2) {
+        let stamp = time_secs(&msg.header.stamp);
+        if stamp < self.last_clear_mask_stamp {
+            warn_throttled!(
+                Duration::from_secs(1),
+                stamp,
+                last_stamp = self.last_clear_mask_stamp,
+                "Out-of-order voxel clear mask dropped",
+            );
+            return;
+        }
+        // The keys are metric positions, so the cloud must already be in the
+        // world frame. Registering it would need a pose this node has no reason
+        // to trust for a mask.
+        if msg.header.frame_id != self.config.world_frame {
+            warn_throttled!(
+                Duration::from_secs(1),
+                frame = %msg.header.frame_id,
+                expected = %self.config.world_frame,
+                "Voxel clear mask is not in the world frame, dropped a mask.",
+            );
+            return;
+        }
+        let points = match extract_xyz(&msg) {
+            Ok(p) => p,
+            Err(e) => {
+                warn_throttled!(
+                    Duration::from_secs(1),
+                    error = %e,
+                    "Failed to get clear mask points, dropped a mask.",
+                );
+                return;
+            }
+        };
+        self.last_clear_mask_stamp = stamp;
+        if points.is_empty() {
+            return;
+        }
+        let mapper = self.mapper.as_mut().expect("built in setup");
+        mapper.clear_metric(points);
+    }
 }
 
-/// Odometry samples kept for cloud-stamp matching.
-const POSE_BUFFER_LEN: usize = 256;
-
-/// Max stamp gap between a cloud and the pose used to register it (s).
-const POSE_MATCH_TOLERANCE_S: f64 = 0.1;
+/// How long to wait for a late transform before dropping a cloud.
+const TF_WAIT_TIMEOUT: Duration = Duration::from_millis(50);
 
 fn time_secs(t: &Time) -> f64 {
     t.sec as f64 + t.nsec as f64 * 1e-9
-}
-
-/// Append a pose sample, evicting the oldest to keep the buffer bounded.
-fn push_pose(poses: &mut VecDeque<(f64, Pose)>, sample: (f64, Pose)) {
-    poses.push_back(sample);
-    if poses.len() > POSE_BUFFER_LEN {
-        poses.pop_front();
-    }
-}
-
-/// The buffered pose with the stamp nearest the cloud stamp, within tolerance.
-fn nearest_pose(poses: &VecDeque<(f64, Pose)>, stamp: f64) -> Option<Pose> {
-    let mut best_gap = f64::INFINITY;
-    let mut best = None;
-    for &(t, pose) in poses {
-        let gap = (t - stamp).abs();
-        if gap < best_gap {
-            best_gap = gap;
-            best = Some(pose);
-        }
-    }
-    if best_gap <= POSE_MATCH_TOLERANCE_S {
-        best
-    } else {
-        None
-    }
 }
 
 struct ExtractError(&'static str);
@@ -331,7 +356,9 @@ async fn publish_cloud(out: &Output<PointCloud2>, cloud: &PointCloud2) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::voxel_ray_tracer::{emit_points, update_map, LocalBounds, VoxelKey, VoxelMap};
+    use crate::voxel_ray_tracer::{
+        emit_points, metric_voxel_keys, update_map, LocalBounds, VoxelKey, VoxelMap,
+    };
     use ahash::AHashSet;
 
     /// Build a map whose listed voxels are healthy, through the public API.
@@ -350,6 +377,8 @@ mod tests {
             emit_every: 1,
             global_emit_every: 1,
             region_percentile: 95.0,
+            world_frame: "world".to_string(),
+            tf_match_tolerance_s: 0.1,
             worker_threads: 4,
         };
         let mut map = VoxelMap::default();
@@ -359,43 +388,6 @@ mod tests {
             .collect();
         update_map(&mut map, (0.25, 0.25, 0.25), &pts, &cfg);
         map
-    }
-
-    fn pose_at(x: f32) -> Pose {
-        Pose {
-            position: (x, 0.0, 0.0),
-            orientation: (0.0, 0.0, 0.0, 1.0),
-        }
-    }
-
-    #[test]
-    fn nearest_pose_picks_by_stamp_and_gates_on_tolerance() {
-        let mut poses: VecDeque<(f64, Pose)> = VecDeque::new();
-        for (t, x) in [(1.0, 1.0f32), (2.0, 2.0), (3.0, 3.0)] {
-            poses.push_back((t, pose_at(x)));
-        }
-        let pose = nearest_pose(&poses, 2.04).expect("within tolerance");
-        assert_eq!(pose.position.0, 2.0, "nearest stamp wins, not the latest");
-        assert!(
-            nearest_pose(&poses, 3.5).is_none(),
-            "stale poses must not register a cloud"
-        );
-        assert!(nearest_pose(&VecDeque::new(), 1.0).is_none());
-    }
-
-    #[test]
-    fn push_pose_evicts_oldest_beyond_capacity() {
-        let mut poses: VecDeque<(f64, Pose)> = VecDeque::new();
-        for i in 0..(POSE_BUFFER_LEN + 10) {
-            push_pose(&mut poses, (i as f64, pose_at(0.0)));
-        }
-        assert_eq!(
-            poses.len(),
-            POSE_BUFFER_LEN,
-            "buffer capped at POSE_BUFFER_LEN"
-        );
-        assert_eq!(poses.front().unwrap().0, 10.0, "oldest 10 evicted");
-        assert_eq!(poses.back().unwrap().0, (POSE_BUFFER_LEN + 9) as f64);
     }
 
     fn cloud_points(c: &PointCloud2) -> AHashSet<(u32, u32, u32)> {
@@ -417,6 +409,26 @@ mod tests {
             (ky as f32 + 0.5).to_bits(),
             (kz as f32 + 0.5).to_bits(),
         )
+    }
+
+    /// The clear-mask handler names voxels by decoding a cloud and quantizing
+    /// it. Both halves have to agree with how returns were quantized on the way
+    /// in, or a mask silently clears nothing.
+    #[test]
+    fn clear_mask_cloud_round_trips_to_the_voxels_it_covers() {
+        let map = map_with_healthy(&[(3, -2, 1)]);
+        let occupied: Vec<VoxelKey> = map.voxels.keys().copied().collect();
+        assert_eq!(occupied, vec![(3, -2, 1)]);
+
+        // A mask cloud naming that voxel's center, encoded and decoded exactly
+        // as the port would.
+        let cloud = points_to_cloud(&[3.5, -1.5, 1.5], "world", Time::default());
+        let Ok(points) = extract_xyz(&cloud) else {
+            panic!("clear mask cloud must decode");
+        };
+        let keys: Vec<VoxelKey> = metric_voxel_keys(points, 1.0).collect();
+
+        assert_eq!(keys, occupied);
     }
 
     #[test]
