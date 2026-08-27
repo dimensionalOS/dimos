@@ -44,6 +44,7 @@ from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
 from dimos.manipulation.planning.spec.models import Obstacle
+from dimos.manipulation.planning.spec.validation import MAX_OCTREE_POINTS
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -173,6 +174,12 @@ class FakeMesh:
         self.filename = filename
 
 
+class FakeOcTree:
+    def __init__(self, boxes: list[np.ndarray], resolution: float) -> None:
+        self.boxes = [np.asarray(box, dtype=np.float64) for box in boxes]
+        self.resolution = resolution
+
+
 class FakeJointGroupInfo:
     def __init__(self, joint_names: list[str]) -> None:
         self.joint_names = joint_names
@@ -295,6 +302,18 @@ class FakeScene:
         self.geometry[obstacle_id] = matrix
         self.geometry_shapes[obstacle_id] = cylinder
 
+    def addOcTreeGeometry(
+        self,
+        obstacle_id: str,
+        parent_frame: str,
+        octree: FakeOcTree,
+        matrix: np.ndarray,
+        color: np.ndarray,
+    ) -> None:
+        self._require_frame(parent_frame)
+        self.geometry[obstacle_id] = matrix
+        self.geometry_shapes[obstacle_id] = octree
+
     def addMeshGeometry(
         self,
         obstacle_id: str,
@@ -395,6 +414,7 @@ def _install_fake_roboplan(monkeypatch: pytest.MonkeyPatch) -> None:
     core.Sphere = FakeSphere  # type: ignore[attr-defined]
     core.Cylinder = FakeCylinder  # type: ignore[attr-defined]
     core.Mesh = FakeMesh  # type: ignore[attr-defined]
+    core.OcTree = FakeOcTree  # type: ignore[attr-defined]
 
     def has_collisions_along_path(
         scene: FakeScene,
@@ -716,6 +736,84 @@ def test_obstacle_mutation_updates_scene_and_stored_pose(
     np.testing.assert_allclose(world._scene.geometry["box"], pose_to_matrix(updated_pose))
     assert world.add_obstacle(obstacle) is None
     assert world.remove_obstacle("box")
+    assert world.get_obstacles() == []
+
+
+def test_octree_obstacle_reaches_the_scene_as_occupied_cells(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+) -> None:
+    world = _make_world(fake_roboplan, robot_config)
+
+    obstacle = Obstacle(
+        name="voxel-map",
+        obstacle_type=ObstacleType.OCTREE,
+        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        points=((0.0, 0.0, 0.0), (0.05, 0.0, 0.0)),
+        octree_resolution=0.05,
+    )
+    assert world.add_obstacle(obstacle) == "voxel-map"
+
+    octree = world._scene.geometry_shapes["voxel-map"]
+    assert octree.resolution == 0.05
+    # Coal reads a cell as center, edge, cost, occupancy threshold. Every cell
+    # here is occupied, so cost must clear the 0.5 default threshold.
+    np.testing.assert_allclose(octree.boxes[0], (0.0, 0.0, 0.0, 0.05, 1.0, 0.5))
+    np.testing.assert_allclose(octree.boxes[1], (0.05, 0.0, 0.0, 0.05, 1.0, 0.5))
+
+    assert world.remove_obstacle("voxel-map")
+    assert world.get_obstacles() == []
+
+
+def test_octree_obstacle_survives_the_deepcopy_and_equality_the_world_does(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+) -> None:
+    # The world snapshots obstacles with deepcopy and hands copies back out. A
+    # raw ndarray field would make that snapshot uncomparable, so the points
+    # stay plain tuples.
+    world = _make_world(fake_roboplan, robot_config)
+    obstacle = Obstacle(
+        name="voxel-map",
+        obstacle_type=ObstacleType.OCTREE,
+        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        points=((0.0, 0.0, 0.0),),
+        octree_resolution=0.05,
+    )
+    assert world.add_obstacle(obstacle) == "voxel-map"
+
+    stored = world.get_obstacles()[0]
+    assert stored == world.get_obstacles()[0]
+    assert stored.points == ((0.0, 0.0, 0.0),)
+    assert stored.octree_resolution == 0.05
+
+
+def test_octree_obstacle_rejects_geometry_it_cannot_build(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+) -> None:
+    world = _make_world(fake_roboplan, robot_config)
+
+    def octree(**kwargs: object) -> Obstacle:
+        base: dict[str, object] = {
+            "name": "voxel-map",
+            "obstacle_type": ObstacleType.OCTREE,
+            "pose": PoseStamped(position=Vector3(), orientation=Quaternion()),
+            "points": ((0.0, 0.0, 0.0),),
+            "octree_resolution": 0.05,
+        }
+        base.update(kwargs)
+        return Obstacle(**base)  # type: ignore[arg-type]
+
+    for bad in (
+        octree(points=()),
+        octree(octree_resolution=None),
+        octree(octree_resolution=0.0),
+        octree(points=((0.0, 0.0, float("nan")),)),
+        octree(points=tuple((float(i), 0.0, 0.0) for i in range(MAX_OCTREE_POINTS + 1))),
+    ):
+        with pytest.raises(ValueError):
+            world.add_obstacle(bad)
     assert world.get_obstacles() == []
 
 
