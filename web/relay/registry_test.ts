@@ -6,6 +6,7 @@ import {
   type ChannelSpec,
   encodeDataFrame,
   type FrameHeader,
+  type JsonValue,
   type ManifestMsg,
   type Msg,
   PROTOCOL_VERSION,
@@ -23,7 +24,7 @@ import {
   ReliableChannel,
   type ViewerSink,
 } from "./forward.ts";
-import { Registry, type RobotPeer, type ViewerPeer } from "./registry.ts";
+import { PUBLISH_TIMEOUT_MS, Registry, type RobotPeer, type ViewerPeer } from "./registry.ts";
 
 class FakeSink implements ViewerSink {
   sent: Uint8Array[] = [];
@@ -91,6 +92,8 @@ class FakeRobot implements RobotPeer {
   msgs: Msg[] = [];
   /** Robot control carrier messages (subs snapshots). */
   control: Msg[] = [];
+  /** Forwarded publishes (tx data frames on the carrier). */
+  pubs: { ch: string; payload: Uint8Array; meta: Record<string, unknown> }[] = [];
   closed: string | null = null;
 
   constructor(id: string, channels: ChannelSpec[] = [], manifest: RobotManifest | null = null) {
@@ -105,6 +108,10 @@ class FakeRobot implements RobotPeer {
 
   sendControl(msg: Msg): void {
     this.control.push(msg);
+  }
+
+  sendPub(ch: string, payload: Uint8Array, meta: Record<string, unknown>): void {
+    this.pubs.push({ ch, payload, meta });
   }
 
   carrierStats(): CarrierStats {
@@ -161,9 +168,22 @@ function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function rxSpec(ch: string, encoding: string, delivery: "latest" | "reliable"): ChannelSpec {
+  return {
+    ch,
+    dir: "rx",
+    encoding,
+    delivery,
+    maxHz: 15,
+    params: {},
+    publish: "none",
+    requiredScope: null,
+  };
+}
+
 const SPECS: ChannelSpec[] = [
-  { ch: "color_image", dir: "rx", encoding: "jpeg.v1", delivery: "latest", maxHz: 15, params: {} },
-  { ch: "odom", dir: "rx", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20, params: {} },
+  rxSpec("color_image", "jpeg.v1", "latest"),
+  rxSpec("odom", "pose.json.v1", "reliable"),
 ];
 
 Deno.test("snapshots fire on 0->1 and ->0, not on redundant subs", () => {
@@ -233,17 +253,25 @@ Deno.test("re-watching the same robot keeps subscriptions", () => {
 });
 
 Deno.test("duplicate live robot id is rejected; reconnect works after close", () => {
-  const reg = new Registry();
-  const first = new FakeRobot("r1", SPECS);
+  const reg = new Registry(() => 0);
+  const first = new FakeRobot("r1", [...SPECS, pubSpec("chat", 1)]);
   assertEquals(reg.registerRobot(first), true);
   const watcher = attach(reg, "r1", ["odom"]);
 
-  const second = new FakeRobot("r1", SPECS);
+  const second = new FakeRobot("r1", [...SPECS, pubSpec("chat", 100)]);
   assertEquals(reg.registerRobot(second), false);
   assertEquals(first.closed, null);
   assertEquals(second.subs(), []);
   assertEquals(watcher.pushed, []);
   assertEquals((reg.robotsMsg() as { robots: RobotInfo[] }).robots, [first.info!]);
+
+  // A publisher empties its 1 Hz chat bucket against the first registration
+  // (capacity 1, zero refill under the frozen clock).
+  const publisher = attach(reg, "r1", []);
+  pub(reg, publisher, "p-1", "chat", 1.5);
+  assertEquals(first.pubs.length, 1);
+  pub(reg, publisher, "p-2", "chat", 1.5);
+  assertEquals(lastError(publisher).code, "rate_limited");
 
   reg.robotClosed(first);
   assertEquals(reg.registerRobot(second), true);
@@ -254,6 +282,13 @@ Deno.test("duplicate live robot id is rejected; reconnect works after close", ()
     { t: "robots", robots: [second.info!] },
   ]);
   assertEquals(second.lastSubs(), { t: "subs", chs: ["odom"], n: 1 });
+
+  // The restart raised chat's maxHz 1 -> 100: the surviving viewer's stale
+  // (empty) bucket must be rebuilt at the new rate, not keep limiting at the
+  // dead registration's 1 Hz.
+  for (let i = 0; i < 5; i++) pub(reg, publisher, `q${i}`, "chat", 1.5);
+  assertEquals(second.pubs.length, 5);
+  assertEquals(pubStats(reg).rejected.rate_limited, 1); // only the p-2 probe
 });
 
 Deno.test("hello replies welcome + robots; register/close push robots", () => {
@@ -496,10 +531,7 @@ Deno.test("sub while the watched robot is offline is rejected", () => {
 
 Deno.test("reconnect-stale sub is filtered from snapshots, frames fall back to header delivery", () => {
   const reg = new Registry();
-  const withMystery: ChannelSpec[] = [
-    ...SPECS,
-    { ch: "mystery", dir: "rx", encoding: "x", delivery: "latest", maxHz: 1, params: {} },
-  ];
+  const withMystery: ChannelSpec[] = [...SPECS, rxSpec("mystery", "x", "latest")];
   const first = new FakeRobot("r1", withMystery);
   reg.registerRobot(first);
   const viewer = attach(reg, "r1", ["mystery"]);
@@ -826,4 +858,354 @@ Deno.test("stats expose the lease holder", () => {
   send(reg, holder, { t: "teleop_start" });
   stats = reg.stats() as typeof stats;
   assertEquals(stats.perRobot.r1.teleop, holder.id);
+});
+
+// ---------- generic publish (W7) ----------
+
+function pubSpec(ch: string, maxHz = 5): ChannelSpec {
+  return {
+    ch,
+    dir: "tx",
+    encoding: "text.json.v1",
+    delivery: "reliable",
+    maxHz,
+    params: {},
+    publish: "shared",
+    requiredScope: null,
+  };
+}
+
+function pub(reg: Registry, viewer: FakeViewer, id: string, ch: string, data: JsonValue): void {
+  send(reg, viewer, { t: "pub", id, ch, data });
+}
+
+function lastError(viewer: FakeViewer): { code: string; requestId?: string } {
+  const last = viewer.replies.at(-1) as { t: string; code: string; requestId?: string };
+  assertEquals(last.t, "error");
+  return last;
+}
+
+function pubStats(reg: Registry): {
+  accepted: number;
+  acked: number;
+  timedOut: number;
+  lateAcks: number;
+  pending: number;
+  rejected: Record<string, number>;
+} {
+  return (reg.stats() as { pub: ReturnType<typeof pubStats> }).pub;
+}
+
+Deno.test("pub forwards with stamped meta and routes exactly one ack", () => {
+  const now = 10_000;
+  const reg = new Registry(() => now);
+  const robot = new FakeRobot("r1", [...SPECS, pubSpec("human_input")]);
+  reg.registerRobot(robot);
+  const sender = attach(reg, "r1", []);
+  const bystander = attach(reg, "r1", []);
+  send(reg, sender, {
+    t: "pub",
+    id: "v-1",
+    ch: "human_input",
+    data: { text: "salut β" },
+    clientTs: 9.5,
+  });
+  assertEquals(robot.pubs.length, 1);
+  const { ch, payload, meta } = robot.pubs[0];
+  assertEquals(ch, "human_input");
+  assertEquals(JSON.parse(new TextDecoder().decode(payload)), { text: "salut β" });
+  // Relay-authored token, never the viewer's id; the synthetic local
+  // principal marks the no-auth relay.
+  assertEquals(meta, { id: "p1", principal: "local", relayTs: now / 1000, clientTs: 9.5 });
+  assertEquals(pubStats(reg).pending, 1);
+
+  reg.onRobotPubResult(robot, {
+    t: "pub_ack",
+    id: "p1",
+    ch: "human_input",
+    relayTs: 10,
+    bridgeTs: 10.5,
+  });
+  // The ack restores the viewer's own request id and reaches only its sender.
+  assertEquals(sender.pushed.at(-1), {
+    t: "pub_ack",
+    id: "v-1",
+    ch: "human_input",
+    relayTs: 10,
+    bridgeTs: 10.5,
+  });
+  assertEquals(bystander.pushed.filter((m) => m.t === "pub_ack"), []);
+  const stats = pubStats(reg);
+  assertEquals([stats.accepted, stats.acked, stats.pending], [1, 1, 0]);
+  // clientTs is optional and never stamped as undefined/null.
+  pub(reg, sender, "v-2", "human_input", 1.5);
+  assertEquals("clientTs" in robot.pubs[1].meta, false);
+  assertEquals(robot.pubs[1].meta.id, "p2");
+  // null is a publishable value: it forwards as the literal JSON "null".
+  pub(reg, sender, "v-3", "human_input", null);
+  assertEquals(new TextDecoder().decode(robot.pubs[2].payload), "null");
+});
+
+Deno.test("pub validation failures reply correlated errors", () => {
+  const reg = new Registry(() => 0);
+  const robot = new FakeRobot("r1", [
+    ...SPECS,
+    pubSpec("human_input"),
+    { ...pubSpec("goal"), publish: "exclusive" },
+    // The teleop shape: tx but publish="none".
+    { ...pubSpec("tele_cmd_vel"), encoding: "twist.json.v1", delivery: "latest", publish: "none" },
+  ]);
+  reg.registerRobot(robot);
+
+  const unwatched = new FakeViewer();
+  reg.addViewer(unwatched);
+  send(reg, unwatched, { t: "hello", v: PROTOCOL_VERSION, role: "viewer" });
+  pub(reg, unwatched, "a", "human_input", 1.5);
+  assertEquals(
+    lastError(unwatched),
+    {
+      t: "error",
+      code: "no_watch",
+      message: "watch a robot before publishing",
+      requestId: "a",
+    } as never,
+  );
+
+  const viewer = attach(reg, "r1", []);
+  pub(reg, viewer, "b", "nope", 1.5);
+  assertEquals(lastError(viewer).code, "unknown_channel");
+  pub(reg, viewer, "c", "odom", 1.5); // rx channel
+  assertEquals(lastError(viewer).code, "not_publishable");
+  pub(reg, viewer, "d", "goal", 1.5); // exclusive until W8
+  assertEquals(lastError(viewer).code, "not_publishable");
+  pub(reg, viewer, "e", "tele_cmd_vel", 1.5); // specialized tx
+  assertEquals(lastError(viewer).code, "not_publishable");
+  pub(reg, viewer, "f", "human_input", "x".repeat(33 * 1024));
+  assertEquals(lastError(viewer).code, "publish_too_large");
+
+  // Duplicate ids are per-viewer and only while pending: settling frees the id.
+  pub(reg, viewer, "g", "human_input", 1.5);
+  pub(reg, viewer, "g", "human_input", 2.5);
+  assertEquals(lastError(viewer).code, "duplicate_request");
+  assertEquals(lastError(viewer).requestId, "g");
+  reg.onRobotPubResult(robot, {
+    t: "pub_ack",
+    id: "p1",
+    ch: "human_input",
+    relayTs: 1,
+    bridgeTs: 2,
+  });
+  pub(reg, viewer, "g", "human_input", 2.5);
+  assertEquals(robot.pubs.length, 2);
+
+  // A manifest-less robot declared no publishable channels either.
+  const bare = new FakeRobot("r2", []);
+  reg.registerRobot(bare);
+  const bareViewer = attach(reg, "r2", []);
+  pub(reg, bareViewer, "h", "human_input", 1.5);
+  assertEquals(lastError(bareViewer).code, "unknown_channel");
+
+  const rejected = pubStats(reg).rejected;
+  assertEquals(rejected.no_watch, 1);
+  assertEquals(rejected.unknown_channel, 2);
+  assertEquals(rejected.not_publishable, 3);
+  assertEquals(rejected.publish_too_large, 1);
+  assertEquals(rejected.duplicate_request, 1);
+});
+
+Deno.test("pub rate limits: per-viewer bucket, then the aggregate across viewers", () => {
+  let now = 0;
+  const reg = new Registry(() => now);
+  const robot = new FakeRobot("r1", [pubSpec("human_input", 2)]); // capacity 2
+  reg.registerRobot(robot);
+  const a = attach(reg, "r1", []);
+  const b = attach(reg, "r1", []);
+
+  pub(reg, a, "a1", "human_input", 1.5);
+  pub(reg, a, "a2", "human_input", 1.5);
+  pub(reg, a, "a3", "human_input", 1.5);
+  assertEquals(lastError(a).code, "rate_limited");
+  assertEquals(robot.pubs.length, 2);
+
+  // Viewer B has fresh per-viewer tokens, but the aggregate is exhausted:
+  // more sessions cannot multiply the accepted robot/channel rate.
+  pub(reg, b, "b1", "human_input", 1.5);
+  assertEquals(lastError(b).code, "rate_limited");
+  assertEquals(robot.pubs.length, 2);
+
+  // Refill at 2/s: half a second buys one token (viewer and aggregate).
+  now += 500;
+  pub(reg, a, "a4", "human_input", 1.5);
+  assertEquals(robot.pubs.length, 3);
+});
+
+Deno.test("pub pending caps bound per-viewer and per-robot state", () => {
+  const reg = new Registry(() => 0);
+  const robot = new FakeRobot("r1", [pubSpec("human_input", 10_000)]);
+  reg.registerRobot(robot);
+  const first = attach(reg, "r1", []);
+  for (let i = 0; i < 16; i++) pub(reg, first, `f${i}`, "human_input", 1.5);
+  assertEquals(robot.pubs.length, 16);
+  pub(reg, first, "f16", "human_input", 1.5);
+  assertEquals(lastError(first).code, "pending_limit");
+
+  // Three more viewers reach the 64-entry robot cap; a fresh fifth viewer
+  // then fails on the robot budget, not its own.
+  for (let v = 0; v < 3; v++) {
+    const viewer = attach(reg, "r1", []);
+    for (let i = 0; i < 16; i++) pub(reg, viewer, `x${i}`, "human_input", 1.5);
+  }
+  assertEquals(robot.pubs.length, 64);
+  const fresh = attach(reg, "r1", []);
+  pub(reg, fresh, "y0", "human_input", 1.5);
+  assertEquals(lastError(fresh).code, "pending_limit");
+  assertEquals(pubStats(reg).pending, 64);
+});
+
+Deno.test("pending-capped publishes do not drain the aggregate pub bucket", () => {
+  const reg = new Registry(() => 0);
+  // Capacity ceil(32) with zero refill under the frozen clock: if rejected
+  // requests spent tokens, 16 accepted + 16 pending_limit rejections would
+  // empty the aggregate and starve the second viewer.
+  const robot = new FakeRobot("r1", [pubSpec("human_input", 32)]);
+  reg.registerRobot(robot);
+  const capped = attach(reg, "r1", []);
+  for (let i = 0; i < 16; i++) pub(reg, capped, `a${i}`, "human_input", 1.5);
+  assertEquals(robot.pubs.length, 16);
+  for (let i = 16; i < 32; i++) {
+    pub(reg, capped, `a${i}`, "human_input", 1.5);
+    assertEquals(lastError(capped).code, "pending_limit");
+  }
+  const other = attach(reg, "r1", []);
+  pub(reg, other, "b0", "human_input", 1.5);
+  assertEquals(robot.pubs.length, 17);
+  assertEquals(pubStats(reg).rejected.rate_limited, undefined);
+});
+
+Deno.test("pub byte budget bounds pending payload volume per viewer", () => {
+  const reg = new Registry(() => 0);
+  const robot = new FakeRobot("r1", [pubSpec("human_input", 10_000)]);
+  reg.registerRobot(robot);
+  const viewer = attach(reg, "r1", []);
+  // 30 KiB serialized each: the 9th crosses the 256 KiB viewer byte budget
+  // well before the 16-entry count cap.
+  const big = "x".repeat(30 * 1024);
+  for (let i = 0; i < 8; i++) pub(reg, viewer, `b${i}`, "human_input", big);
+  assertEquals(robot.pubs.length, 8);
+  pub(reg, viewer, "b8", "human_input", big);
+  assertEquals(lastError(viewer).code, "pending_limit");
+});
+
+Deno.test("pub timeout settles pending with publish_timeout; a late ack is dropped", () => {
+  let now = 0;
+  const reg = new Registry(() => now);
+  const robot = new FakeRobot("r1", [pubSpec("human_input")]);
+  reg.registerRobot(robot);
+  const viewer = attach(reg, "r1", []);
+  pub(reg, viewer, "v-1", "human_input", 1.5);
+  now += PUBLISH_TIMEOUT_MS - 1;
+  reg.reapAll(now);
+  assertEquals(pubStats(reg).pending, 1);
+  now += 1;
+  reg.reapAll(now);
+  assertEquals(viewer.pushed.at(-1), {
+    t: "error",
+    code: "publish_timeout",
+    message: `no bridge acknowledgement within ${PUBLISH_TIMEOUT_MS} ms`,
+    requestId: "v-1",
+  });
+  const stats = pubStats(reg);
+  assertEquals([stats.timedOut, stats.pending], [1, 0]);
+  // The bridge's ack arriving after the timeout is counted, not routed.
+  reg.onRobotPubResult(robot, {
+    t: "pub_ack",
+    id: "p1",
+    ch: "human_input",
+    relayTs: 1,
+    bridgeTs: 2,
+  });
+  assertEquals(pubStats(reg).lateAcks, 1);
+  assertEquals(viewer.pushed.filter((m) => m.t === "pub_ack"), []);
+});
+
+Deno.test("viewer disconnect releases its pending publishes", () => {
+  const reg = new Registry(() => 0);
+  const robot = new FakeRobot("r1", [pubSpec("human_input")]);
+  reg.registerRobot(robot);
+  const viewer = attach(reg, "r1", []);
+  pub(reg, viewer, "v-1", "human_input", 1.5);
+  reg.viewerClosed(viewer);
+  assertEquals(pubStats(reg).pending, 0);
+  reg.onRobotPubResult(robot, {
+    t: "pub_ack",
+    id: "p1",
+    ch: "human_input",
+    relayTs: 1,
+    bridgeTs: 2,
+  });
+  assertEquals(pubStats(reg).lateAcks, 1);
+});
+
+Deno.test("robot disconnect fails pending publishes to live viewers", () => {
+  const reg = new Registry(() => 0);
+  const robot = new FakeRobot("r1", [pubSpec("human_input")]);
+  reg.registerRobot(robot);
+  const viewer = attach(reg, "r1", []);
+  pub(reg, viewer, "v-1", "human_input", 1.5);
+  reg.robotClosed(robot);
+  // The error precedes the robots-update push that closes out robotClosed.
+  assertEquals(viewer.pushed.filter((m) => m.t === "error"), [{
+    t: "error",
+    code: "robot_disconnected",
+    message: "robot r1 disconnected before acknowledging the publish",
+    requestId: "v-1",
+  }]);
+  assertEquals(pubStats(reg).pending, 0);
+});
+
+Deno.test("pub_nack maps to a correlated error with a clamped message", () => {
+  const reg = new Registry(() => 0);
+  const robot = new FakeRobot("r1", [pubSpec("human_input")]);
+  reg.registerRobot(robot);
+  const viewer = attach(reg, "r1", []);
+  pub(reg, viewer, "v-1", "human_input", 1.5);
+  reg.onRobotPubResult(robot, {
+    t: "pub_nack",
+    id: "p1",
+    code: "decode_failed",
+    message: "x".repeat(400),
+  });
+  const err = viewer.pushed.at(-1) as { code: string; message: string; requestId: string };
+  assertEquals(err.code, "decode_failed");
+  assertEquals(err.message.length, 256);
+  assertEquals(err.requestId, "v-1");
+  assertEquals(pubStats(reg).rejected.decode_failed, 1);
+});
+
+Deno.test("watch switch clears pub buckets but keeps pending routable", () => {
+  const reg = new Registry(() => 0);
+  const robotA = new FakeRobot("ra", [pubSpec("human_input", 1)]); // capacity 1
+  const robotB = new FakeRobot("rb", [pubSpec("human_input", 1)]);
+  reg.registerRobot(robotA);
+  reg.registerRobot(robotB);
+  const viewer = attach(reg, "ra", []);
+  pub(reg, viewer, "v-1", "human_input", 1.5); // pending on A; bucket empty
+  pub(reg, viewer, "v-2", "human_input", 1.5);
+  assertEquals(lastError(viewer).code, "rate_limited");
+  send(reg, viewer, { t: "watch", robotId: "rb" });
+  // Fresh per-viewer bucket for the new robot (the aggregate is per robot).
+  pub(reg, viewer, "v-3", "human_input", 1.5);
+  assertEquals(robotB.pubs.length, 1);
+  // The pending publish on A still routes its ack to the live viewer.
+  reg.onRobotPubResult(robotA, {
+    t: "pub_ack",
+    id: "p1",
+    ch: "human_input",
+    relayTs: 1,
+    bridgeTs: 2,
+  });
+  assertEquals(
+    viewer.pushed.filter((m) => m.t === "pub_ack").map((m) => (m as { id: string }).id),
+    ["v-1"],
+  );
 });

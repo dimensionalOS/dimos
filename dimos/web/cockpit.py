@@ -46,6 +46,7 @@ from dimos.web.relay_bridge.manifest import (
     RESERVED_CHANNEL_PREFIX,
     Delivery,
     Dir,
+    Publish,
     parse_manifest,
 )
 
@@ -136,6 +137,8 @@ class ChannelRequest:
     max_hz: float
     params: Mapping[str, Any] = field(default_factory=dict)
     delivery: Delivery = field(default="reliable", kw_only=True)
+    publish: Publish = field(default="none", kw_only=True)
+    required_scope: str | None = field(default=None, kw_only=True)
 
 
 @dataclass(frozen=True)
@@ -149,8 +152,16 @@ class Channel:
 
     `encoding` names a codec: a registered @web_encoder (dimos.web.codecs)
     whose message type must match `message_type`, or the generic "json.v1"
-    for JSON-shaped types and dataclasses. dir/publish/required_scope beyond
-    the rx defaults arrive with the publish ticket (W7).
+    for JSON-shaped types and dataclasses (rx) / JSON scalars, lists and
+    dicts (tx decode).
+
+    A dir="tx" channel is a generic browser publish input: it must declare
+    publish="shared" (any authorized viewer may publish; the bridge decodes
+    with the registered @web_decoder and publishes on a generated Out port).
+    publish="none" tx streams stay reserved for specialized protocol paths
+    (the teleop panel); publish="exclusive" arrives with the lease ticket
+    (W8). `required_scope` names the operator scope a remote relay demands
+    (the local relay never checks scopes).
     """
 
     stream: str
@@ -178,11 +189,6 @@ class Channel:
             raise TypeError(f"message_type must be a class, got {self.message_type!r}")
         if self.dir not in ("rx", "tx"):
             raise ValueError(f"dir must be 'rx' or 'tx', got {self.dir!r}")
-        if self.dir == "tx":
-            raise ValueError(
-                'dir="tx" channels are not available yet: generic browser-to-robot '
-                "publish is enabled by the publish ticket (W7)"
-            )
         if not isinstance(self.encoding, str) or not 1 <= len(self.encoding) <= MAX_MANIFEST_ID_LEN:
             raise ValueError(
                 f"encoding must be 1..{MAX_MANIFEST_ID_LEN} chars, got {self.encoding!r}"
@@ -194,12 +200,33 @@ class Channel:
             raise ValueError(
                 f"publish must be 'none', 'shared', or 'exclusive', got {self.publish!r}"
             )
-        if self.publish != "none":
-            raise ValueError("rx channels must use publish='none' (generic publish is tx-only, W7)")
-        if self.required_scope is not None:
+        if self.publish == "exclusive":
             raise ValueError(
-                "rx channels cannot set required_scope (reserved for tx publish channels, W7)"
+                "publish='exclusive' channels are enabled by the exclusive publisher "
+                "lease ticket (W8); use publish='shared' for interleavable input"
             )
+        if self.dir == "rx" and self.publish != "none":
+            raise ValueError("rx channels must use publish='none'")
+        if self.dir == "tx" and self.publish == "none":
+            raise ValueError(
+                'dir="tx" channels must declare publish="shared": publish="none" tx '
+                "streams are reserved for specialized protocol paths (the teleop panel)"
+            )
+        if self.publish != "none" and self.delivery != "reliable":
+            raise ValueError(
+                f"publish channels must use delivery='reliable', got {self.delivery!r}"
+            )
+        if self.required_scope is not None:
+            if self.publish == "none":
+                raise ValueError("required_scope needs a publish policy (publish='shared')")
+            if (
+                not isinstance(self.required_scope, str)
+                or not 1 <= len(self.required_scope) <= MAX_MANIFEST_ID_LEN
+            ):
+                raise ValueError(
+                    f"required_scope must be 1..{MAX_MANIFEST_ID_LEN} chars, "
+                    f"got {self.required_scope!r}"
+                )
         if self.params is not None and not isinstance(self.params, Mapping):
             raise ValueError(f"params must be a mapping or None, got {self.params!r}")
         params = {} if self.params is None else dict(self.params)
@@ -408,8 +435,9 @@ def build_manifest_data(
     requested the stream.
 
     Advertisement order: rx built-ins in registry order, then rx customs in
-    first-declaration order, then tx in tx_registry order - so manifests
-    without custom channels keep their historical channel order.
+    first-declaration order, then tx in tx_registry order, then declared
+    publish tx channels in first-declaration order - so manifests without
+    custom channels keep their historical channel order.
     """
     tx_registry = {} if tx_registry is None else tx_registry
     merged: dict[str, ChannelRequest] = {}
@@ -420,11 +448,20 @@ def build_manifest_data(
         if previous is None:
             merged[request.stream] = request
             return
-        same = (previous.dir, previous.encoding, previous.delivery, dict(previous.params)) == (
+        same = (
+            previous.dir,
+            previous.encoding,
+            previous.delivery,
+            dict(previous.params),
+            previous.publish,
+            previous.required_scope,
+        ) == (
             request.dir,
             request.encoding,
             request.delivery,
             dict(request.params),
+            request.publish,
+            request.required_scope,
         )
         if not same:
             raise ValueError(
@@ -491,6 +528,14 @@ def build_manifest_data(
                     f"unknown stream {stream!r}; this robot bridge supports: "
                     f"{', '.join(sorted(set(registry) | declared))}"
                 )
+        elif request.publish != "none":
+            # Generic-publish channels are declaration-driven: cockpit()
+            # generates their Out port and resolves their decoder, so the
+            # static tx tables have nothing to cross-check.
+            if stream not in declared:
+                raise ValueError(
+                    f"unknown publish stream {stream!r}; declare it in cockpit(channels=[...])"
+                )
         else:
             if stream not in tx_streams:
                 raise ValueError(
@@ -524,6 +569,14 @@ def build_manifest_data(
         if request.dir == "rx" and stream not in registry
     ]
     ordered += [merged[stream] for stream in tx_registry if stream in merged]
+    ordered += [
+        request
+        for stream, request in merged.items()
+        if request.dir == "tx" and stream not in tx_registry
+    ]
+    # Fully explicit (normalized) emission, publish/requiredScope included:
+    # parse_manifest(emitted).model_dump() == emitted must hold (idempotence),
+    # and plain model_dump() always carries every field.
     return {
         "version": MANIFEST_VERSION,
         "channels": [
@@ -534,6 +587,8 @@ def build_manifest_data(
                 "delivery": request.delivery,
                 "maxHz": request.max_hz,
                 "params": dict(request.params),
+                "publish": request.publish,
+                "requiredScope": request.required_scope,
             }
             for request in ordered
         ],
@@ -553,13 +608,14 @@ def cockpit(
 
     Walks the tree, merges panel requests with the `channels` declarations,
     compiles the manifest, validates it eagerly, resolves every rx channel's
-    codec, and returns a relay bridge blueprint carrying it all; compose
-    onto a robot with `autoconnect(robot_blueprint, cockpit(...))`. Channels
-    whose stream is not a built-in bridge port get a generated
-    RelayBridgeModule subclass with matching typed ports (autoconnected by
-    name + message type). Streams whose producer never publishes are still
-    advertised: their panels show "waiting for data" (no runtime stream
-    probing).
+    encoder and every publish tx channel's decoder, and returns a relay
+    bridge blueprint carrying it all; compose onto a robot with
+    `autoconnect(robot_blueprint, cockpit(...))`. Channels whose stream is
+    not a built-in bridge port get a generated RelayBridgeModule subclass
+    with matching typed ports (In for rx, Out for publish tx, autoconnected
+    by name + message type). Streams whose producer never publishes are
+    still advertised: their panels show "waiting for data" (no runtime
+    stream probing).
 
     The default preset layout applies only when neither a layout nor
     channels are given; cockpit(channels=[...]) alone compiles with no
@@ -585,7 +641,7 @@ def cockpit(
             "the cockpit blueprint needs the web extra: `uv sync --extra web --inexact`"
         ) from e
     from dimos.core.coordination.blueprints import autoconnect
-    from dimos.web.codecs import resolve_encoder
+    from dimos.web.codecs import resolve_decoder, resolve_encoder
 
     atom = RelayBridgeModule.blueprint().blueprints[0]
     port_types = {s.name: s.type for s in atom.streams}
@@ -606,6 +662,8 @@ def cockpit(
                 # (frozen) authoring record's nested values.
                 _thaw_params(c.params or {}),
                 delivery=c.delivery,
+                publish=c.publish,
+                required_scope=c.required_scope,
             )
             for c in declared.values()
         ),
@@ -617,10 +675,33 @@ def cockpit(
     specs: list[RuntimeChannelSpec] = []
     ports: list[DynamicPortSpec] = []
     for wire in data["channels"]:
-        if wire["dir"] != "rx":
-            continue
         ch = wire["ch"]
         explicit = declared.get(ch)
+        if wire["dir"] != "rx":
+            if wire["publish"] == "none":
+                continue  # specialized tx (teleop): no runtime spec, no decoder
+            assert explicit is not None  # build_manifest_data rejected the rest
+            ports.append(DynamicPortSpec(ch, explicit.message_type, "tx"))
+            try:
+                decoder = resolve_decoder(wire["encoding"], explicit.message_type)
+            except ValueError as e:
+                raise ValueError(f"channel {ch!r}: {e}") from e
+            specs.append(
+                RuntimeChannelSpec(
+                    ch=ch,
+                    message_type=explicit.message_type,
+                    dir="tx",
+                    encoding=wire["encoding"],
+                    delivery=wire["delivery"],
+                    max_hz=float(wire["maxHz"]),
+                    params=dict(wire["params"]),
+                    publish=wire["publish"],
+                    required_scope=wire["requiredScope"],
+                    decoder=decoder.decode,
+                    decoder_takes_context=decoder.takes_context,
+                )
+            )
+            continue
         builtin = builtin_by_ch.get(ch)
         if builtin is not None:
             message_type = port_types[ch]

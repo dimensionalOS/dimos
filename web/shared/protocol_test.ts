@@ -14,6 +14,8 @@ import {
   frameHeaderFromUnknown,
   MAX_DATA_FRAME_BYTES,
   MAX_HEADER_LEN,
+  MAX_PUB_DATA_BYTES,
+  MAX_REQUEST_ID_LEN,
   type Msg,
   msgFromUnknown,
   peekDataFrameLengths,
@@ -291,6 +293,39 @@ Deno.test("msgFromUnknown validates nested session-message shapes", () => {
   assertEquals(msgFromUnknown({ ...twist, gen: "1" }), null);
   assertEquals(msgFromUnknown({ t: "teleop_start", gen: 3 }) !== null, true);
   assertEquals(msgFromUnknown({ t: "teleop_stop", gen: null }), null);
+});
+
+Deno.test("msgFromUnknown validates publish-message shapes", () => {
+  // Also pins the pub bounds against the Python mirror (test_protocol.py).
+  assertEquals(MAX_PUB_DATA_BYTES, 32 * 1024);
+  assertEquals(MAX_REQUEST_ID_LEN, 64);
+  const ok = { t: "pub", id: "a", ch: "chat", data: { x: 1.5 } };
+  assertEquals(msgFromUnknown(ok) !== null, true);
+  // data is required and spans all of JSON, null included; only an absent
+  // data field is invalid.
+  assertEquals(msgFromUnknown({ t: "pub", id: "a", ch: "chat" }), null);
+  assertEquals(msgFromUnknown({ t: "pub", id: "a", ch: "chat", data: null }) !== null, true);
+  assertEquals(msgFromUnknown({ t: "pub", id: "", ch: "chat", data: 1.5 }), null);
+  const longId = "x".repeat(MAX_REQUEST_ID_LEN + 1);
+  assertEquals(msgFromUnknown({ t: "pub", id: longId, ch: "chat", data: 1.5 }), null);
+  assertEquals(msgFromUnknown({ t: "pub", id: 7, ch: "chat", data: 1.5 }), null);
+  assertEquals(msgFromUnknown({ ...ok, clientTs: null }), null);
+  assertEquals(msgFromUnknown({ ...ok, clientTs: "1" }), null);
+  assertEquals(msgFromUnknown({ ...ok, clientTs: true }), null);
+  const ack = { t: "pub_ack", id: "a", ch: "chat", relayTs: 1.5, bridgeTs: 2.5 };
+  assertEquals(msgFromUnknown(ack) !== null, true);
+  assertEquals(msgFromUnknown({ ...ack, id: "" }), null);
+  assertEquals(msgFromUnknown({ t: "pub_nack", id: "p1", code: "c", message: "m" }) !== null, true);
+  assertEquals(msgFromUnknown({ t: "pub_nack", id: longId, code: "c", message: "m" }), null);
+  // error.requestId: absent for session-level errors, bounded, never null.
+  assertEquals(msgFromUnknown({ t: "error", code: "c", message: "m" }) !== null, true);
+  assertEquals(
+    msgFromUnknown({ t: "error", code: "c", message: "m", requestId: "r-1" }) !== null,
+    true,
+  );
+  assertEquals(msgFromUnknown({ t: "error", code: "c", message: "m", requestId: null }), null);
+  assertEquals(msgFromUnknown({ t: "error", code: "c", message: "m", requestId: "" }), null);
+  assertEquals(msgFromUnknown({ t: "error", code: "c", message: "m", requestId: longId }), null);
 });
 
 Deno.test("frameHeaderFromUnknown validates the header shape", () => {

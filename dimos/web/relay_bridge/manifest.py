@@ -28,6 +28,7 @@ Breaking changes bump `version`, and the Cockpit refuses politely
 """
 
 import json
+import re
 import sys
 from typing import Any, Literal
 
@@ -37,6 +38,12 @@ Delivery = Literal["latest", "reliable"]
 # Flow direction seen from the viewer: rx = robot->viewer; tx (teleop, chat)
 # arrives with later tickets.
 Dir = Literal["rx", "tx"]
+# Generic-publish policy for a tx channel: "none" (default; specialized
+# protocol paths like teleop only), "shared" (any authorized viewer may
+# publish), "exclusive" (requires the per-robot publisher lease, W8).
+# Transport delivery and publish authorization are independent: reliable
+# does not imply publishable.
+Publish = Literal["none", "shared", "exclusive"]
 
 # The only manifest version this build understands.
 MANIFEST_VERSION = 1
@@ -68,7 +75,10 @@ class ChannelSpec(_ManifestModel):
 
     Field names and order are the wire names/order, hence the camelCase.
     `params` carries encoder settings (e.g. jpeg quality); absent fields
-    normalize to their defaults.
+    normalize to their defaults. publish/requiredScope gate generic
+    publishing (W7); requiredScope accepts explicit null so a normalized
+    manifest parses idempotently, while a null publish is a shape error
+    (like dir).
     """
 
     ch: str
@@ -77,6 +87,8 @@ class ChannelSpec(_ManifestModel):
     delivery: Delivery
     maxHz: int | float
     params: dict[str, Any] = Field(default_factory=dict)
+    publish: Publish = "none"
+    requiredScope: str | None = None
 
 
 class PanelSpec(_ManifestModel):
@@ -114,6 +126,12 @@ _MANIFEST_TA: TypeAdapter[Manifest] = TypeAdapter(Manifest)
 
 def _bounded_id(s: str) -> bool:
     return 1 <= len(s) <= MAX_MANIFEST_ID_LEN
+
+
+# "Supported JSON encoding" for generic publish is the family-name rule
+# (json.v1, text.json.v1, ...): the manifest layer cannot see the codec
+# registries, so real decodability is enforced at authoring time.
+_JSON_ENCODING_RE = re.compile(r"(^|\.)json\.v[0-9]+$")
 
 
 def _validate_layout_node(node: Any, panel_ids: set[str], seen: set[str]) -> Any:
@@ -219,6 +237,24 @@ def parse_manifest(data: Any) -> Manifest:
         # (and isfinite() would raise OverflowError on huge ints).
         if not 0 < spec.maxHz <= sys.float_info.max:
             raise ManifestError("invalid_max_hz", f"maxHz for {spec.ch} must be a positive number")
+        # Generic-publish rules. The manifest layer accepts "exclusive" (only
+        # authoring and the bridge reject it until the lease ticket, W8).
+        if spec.dir == "rx" and spec.publish != "none":
+            raise ManifestError("invalid_publish", f"rx channel {spec.ch} cannot declare publish")
+        if spec.publish != "none" and spec.delivery != "reliable":
+            raise ManifestError("invalid_publish", f"publish channel {spec.ch} must be reliable")
+        if spec.publish != "none" and not _JSON_ENCODING_RE.search(spec.encoding):
+            raise ManifestError(
+                "invalid_publish", f"publish channel {spec.ch} needs a JSON encoding"
+            )
+        if spec.requiredScope is not None and spec.publish == "none":
+            raise ManifestError(
+                "invalid_scope", f"channel {spec.ch} scope requires a publish policy"
+            )
+        if spec.requiredScope is not None and not _bounded_id(spec.requiredScope):
+            raise ManifestError(
+                "invalid_scope", f"scope for {spec.ch} must be 1..{MAX_MANIFEST_ID_LEN} chars"
+            )
 
     panel_ids: set[str] = set()
     for panel in manifest.panels:

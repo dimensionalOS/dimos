@@ -55,8 +55,8 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 # forever, so a datagram that cannot fit one packet (~1165 B encoded) wedges
 # every datagram queued behind it - hello resends, pings, all send_control.
 # Refuse to queue one; 1100 keeps margin under the real cliff. Robot hellos
-# left datagrams in v5; this guards the (tiny) viewer hello.
-_HELLO_DATAGRAM_MAX_BYTES = 1100
+# left datagrams in v5; this guards the viewer hello and send_control.
+_DATAGRAM_MAX_BYTES = 1100
 
 
 class RelayRejectedError(ProtocolError):
@@ -197,9 +197,9 @@ class RelayClient:
                 )
         else:
             size = len(encode_datagram(msg))
-            if size > _HELLO_DATAGRAM_MAX_BYTES:
+            if size > _DATAGRAM_MAX_BYTES:
                 raise ProtocolError(
-                    f"hello datagram is {size} B (limit {_HELLO_DATAGRAM_MAX_BYTES}); an "
+                    f"hello datagram is {size} B (limit {_DATAGRAM_MAX_BYTES}); an "
                     "oversized datagram wedges aioquic's whole datagram queue"
                 )
         deadline = time.monotonic() + timeout
@@ -241,8 +241,32 @@ class RelayClient:
             retire_hello_stream()
 
     def send_control(self, msg: Msg) -> None:
-        """Send one control message to the relay (datagram: lossy, ordered-less)."""
+        """Send one control message to the relay (datagram: lossy, ordered-less).
+
+        Refuses a datagram over the packet-size cliff: aioquic would retry it
+        forever and wedge every datagram queued behind it (the hello guard's
+        rule, applied to the test viewer's whole control plane).
+        """
+        size = len(encode_datagram(msg))
+        if size > _DATAGRAM_MAX_BYTES:
+            raise ProtocolError(
+                f"control datagram is {size} B (limit {_DATAGRAM_MAX_BYTES}); an "
+                "oversized datagram wedges aioquic's whole datagram queue"
+            )
         self._session.send_msg(msg)
+
+    def send_control_frame(self, msg: Msg) -> int:
+        """Send one @control frame on a fresh one-shot bidi stream: the
+        reliable robot->relay control path (publish acks; hello wraps the
+        same framing in its own retry/retire loop). Returns the stream id;
+        raises ProtocolError past the control payload cap.
+        """
+        payload = encode_datagram(msg)
+        if len(payload) > MAX_CONTROL_PAYLOAD_BYTES:
+            raise ProtocolError(
+                f"@control payload is {len(payload)} B (limit {MAX_CONTROL_PAYLOAD_BYTES})"
+            )
+        return self.send_frame(CONTROL_CHANNEL, payload)
 
     async def ping(self, timeout: float = 5.0) -> float:
         """Datagram ping; returns the round-trip time in seconds."""
@@ -320,14 +344,15 @@ class RelayClient:
         finally:
             closed.cancel()
 
-    async def control_messages(self) -> AsyncIterator[Msg]:
+    async def control_messages(self) -> AsyncIterator[Msg | DataFrame]:
         """Control messages pushed by the relay (subs snapshots, robots, ...).
 
-        Fed by relay datagrams and, on the robot leg, by @control frames from
-        the relay-opened control carrier. Same contract as :meth:`frames`:
-        buffered messages drain before the close is honored, and cancelling
-        the consumer never orphans the queue getter. Ends when the session
-        closes.
+        Fed by relay datagrams and, on the robot leg, by the relay-opened
+        control carrier: @control frames arrive decoded as messages, and
+        forwarded publishes (tx channel data) arrive as raw DataFrames in the
+        same order. Same contract as :meth:`frames`: buffered messages drain
+        before the close is honored, and cancelling the consumer never
+        orphans the queue getter. Ends when the session closes.
         """
         closed = asyncio.ensure_future(self._session.wait_closed())
         try:

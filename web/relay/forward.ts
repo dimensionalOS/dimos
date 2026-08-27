@@ -150,6 +150,36 @@ export class Rate {
   }
 }
 
+/**
+ * Publish-rate limiter: `capacity` tokens refilled continuously at
+ * `ratePerSec`, so a short burst up to the capacity passes and the sustained
+ * rate converges on ratePerSec. take() consumes one token when available.
+ * No clock inside: callers pass nowMs (tests fabricate time).
+ */
+export class TokenBucket {
+  #tokens: number;
+  #lastMs: number | null = null;
+
+  constructor(
+    readonly ratePerSec: number,
+    readonly capacity: number = Math.max(1, Math.ceil(ratePerSec)),
+  ) {
+    this.#tokens = this.capacity;
+  }
+
+  take(nowMs: number): boolean {
+    if (this.#lastMs !== null) {
+      // max(0, ...): clock wobble must not drain tokens.
+      const refill = (Math.max(0, nowMs - this.#lastMs) / 1000) * this.ratePerSec;
+      this.#tokens = Math.min(this.capacity, this.#tokens + refill);
+    }
+    this.#lastMs = nowMs;
+    if (this.#tokens < 1) return false;
+    this.#tokens -= 1;
+    return true;
+  }
+}
+
 interface OutstandingSend {
   send: FrameSend;
   at: number;

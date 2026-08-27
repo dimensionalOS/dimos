@@ -283,3 +283,31 @@ Decoder notes:
 - Each session owns its registry (`connect({decoders})`), so two apps on one page cannot clobber each other. Registering a taken encoding throws unless you pass `{replace: true}`.
 - An encoding with no decoder is not an error. The channel still counts frames and renders as unsupported. A throwing decoder bumps `decodeErrors` and keeps the last good value.
 - Decoders run on the ingest path, so keep them synchronous and cheap. Heavy work (inflate, draw) belongs in the consumer.
+
+## Publishing to the robot
+
+A `dir="tx"` channel with `publish="shared"` is a browser input: any viewer may publish, the bridge decodes the JSON value with the matching `@web_decoder` and publishes it on a typed `Out` port, and your modules consume it like any other stream.
+
+```python
+cockpit(channels=[
+    Channel("human_input", str, dir="tx", encoding="text.json.v1", publish="shared"),
+])
+```
+
+```js
+try {
+  const receipt = await session.publish("human_input", "hello robot");
+  // The bridge decoded the value and published it on the dimOS stream.
+} catch (e) {
+  // e.outcome === "rejected": it definitively did not happen (e.code says why).
+  // e.outcome === "unknown": the connection died before the ack - it MAY have
+  // been published. Never auto-resend an "unknown" command.
+}
+```
+
+Publish notes:
+
+- Only reliable JSON-encoded tx channels declared `publish="shared"` accept `publish()`; everything else (rx channels, teleop) rejects locally with a stable code. Values are any JSON value (`null` included), at most 32 KiB serialized and at most 100 nesting levels deep.
+- The relay rate-limits per viewer and per robot at the channel's `max_hz`, so extra open tabs never multiply the accepted rate.
+- `text.json.v1` (strings) is built in; other encodings need an `@web_decoder` whose return annotation matches the channel's `message_type`. An optional second `PublishContext` parameter carries provenance (request id, principal, relay/client timestamps).
+- `web/examples/chat-input/` in the repository is a minimal publish page.

@@ -32,9 +32,11 @@ from dimos.web.codecs import (
     EncodedPayload,
     EncoderDef,
     PublishContext,
+    decode_json_v1,
     decoder_definition,
     encode_json_v1,
     encoder_definition,
+    resolve_decoder,
     resolve_encoder,
     web_decoder,
     web_encoder,
@@ -331,6 +333,35 @@ def test_resolve_rechecks_pickle_by_reference(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.delattr(sys.modules[__name__], "_enc_ok")
     with pytest.raises(ValueError, match="cannot be pickled by reference"):
         resolve_encoder("t.enc.unref.v1", _Point)
+
+
+def test_resolve_decoder_registered_and_generic() -> None:
+    web_decoder("t.dec.res.v1")(_dec_ok)
+    definition = resolve_decoder("t.dec.res.v1", _Point)
+    assert definition.decode is _dec_ok and definition.takes_context is False
+    for message_type in (dict, list, str, int, float, bool):
+        generic = resolve_decoder("json.v1", message_type)
+        assert generic.decode is decode_json_v1 and generic.takes_context is False
+    assert decode_json_v1({"a": [1, None]}) == {"a": [1, None]}
+
+
+def test_resolve_decoder_rejections() -> None:
+    web_decoder("t.dec.resbad.v1")(_dec_ok)
+    with pytest.raises(ValueError, match="decodes to _Point, not dict"):
+        resolve_decoder("t.dec.resbad.v1", dict)
+    with pytest.raises(ValueError, match="no decoder registered for encoding 'nope.dec.v1'"):
+        resolve_decoder("nope.dec.v1", dict)
+    # Dataclasses are excluded from generic decode on purpose: reconstructing
+    # one from untrusted browser JSON needs an explicit decoder.
+    with pytest.raises(ValueError, match="register an explicit decoder"):
+        resolve_decoder("json.v1", _Point)
+
+
+def test_resolve_decoder_rechecks_pickle_by_reference(monkeypatch: pytest.MonkeyPatch) -> None:
+    web_decoder("t.dec.unref.v1")(_dec_ok)
+    monkeypatch.delattr(sys.modules[__name__], "_dec_ok")
+    with pytest.raises(ValueError, match="cannot be pickled by reference"):
+        resolve_decoder("t.dec.unref.v1", _Point)
 
 
 def test_encoded_payload_normalizes_bytes_like() -> None:

@@ -112,6 +112,10 @@ export class RobotSession implements RobotPeer {
     this.#carrier.sendControl(msg);
   }
 
+  sendPub(ch: string, payload: Uint8Array, meta: Record<string, unknown>): void {
+    this.#carrier.sendFrame(ch, payload, meta);
+  }
+
   carrierStats(): CarrierStats {
     return this.#carrier.stats();
   }
@@ -176,28 +180,35 @@ export class RobotSession implements RobotPeer {
   /** One @-channel frame (header null = the raw header named a reserved
    * channel but failed validation). Only a well-formed @control hello is
    * legal before registration; violations reject the session (error
-   * datagram + close). After registration, unknown control is dropped - a
-   * registered peer's bytes must not kill its live session. */
+   * datagram + close). After registration, publish acks route to the
+   * registry and other unknown control is dropped - a registered peer's
+   * bytes must not kill its live session. */
   #onControlFrame(header: FrameHeader | null, bytes: Uint8Array): void {
     // Control payloads reuse the datagram encoding; bytes are a complete
     // frame, so the lengths peek cannot fail.
     const lens = peekDataFrameLengths(bytes)!;
     const msg = header === null ? null : decodeDatagram(bytes.subarray(8 + lens.headerLen));
-    if (header === null || header.ch !== CONTROL_CHANNEL || msg === null || msg.t !== "hello") {
-      if (this.info === null) {
-        this.#reject(
-          "invalid_control",
-          "only a hello @control frame is accepted before registration",
-          "invalid control frame",
-        );
-      } else {
-        console.log(
-          `[relay] dropping unknown robot control frame (ch ${header?.ch ?? "invalid header"})`,
-        );
+    if (header !== null && header.ch === CONTROL_CHANNEL && msg !== null) {
+      if (msg.t === "hello") {
+        this.#onHello(msg);
+        return;
       }
-      return;
+      if (this.info !== null && (msg.t === "pub_ack" || msg.t === "pub_nack")) {
+        this.#registry.onRobotPubResult(this, msg);
+        return;
+      }
     }
-    this.#onHello(msg);
+    if (this.info === null) {
+      this.#reject(
+        "invalid_control",
+        "only a hello @control frame is accepted before registration",
+        "invalid control frame",
+      );
+    } else {
+      console.log(
+        `[relay] dropping unknown robot control frame (ch ${header?.ch ?? "invalid header"})`,
+      );
+    }
   }
 
   /** Hello validation, identical to the v4 datagram path, plus the v5
