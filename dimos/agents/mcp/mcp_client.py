@@ -18,6 +18,14 @@ from threading import Event, RLock, Thread
 import time
 from typing import Any
 import uuid
+import warnings
+
+from langchain_core._api.deprecation import LangChainPendingDeprecationWarning
+
+# Importing langchain_core un-mutes its pending-deprecation warnings, so this ignore
+# must be registered after that import to take precedence. It silences the noisy
+# `allowed_objects` warning emitted when langchain.agents pulls in langgraph.checkpoint.
+warnings.filterwarnings("ignore", category=LangChainPendingDeprecationWarning)
 
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model

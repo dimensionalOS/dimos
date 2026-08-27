@@ -14,6 +14,7 @@
 
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
+from dimos.agents.skills.observe_skill import ObserveSkill
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import Webcam
@@ -33,6 +34,7 @@ def _create_webcam() -> Webcam:
 demo_agent_camera = autoconnect(
     McpServer.blueprint(),
     McpClient.blueprint(),
+    ObserveSkill.blueprint(),
     CameraModule.blueprint(
         hardware=_create_webcam,
     ),
