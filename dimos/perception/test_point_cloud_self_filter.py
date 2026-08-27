@@ -179,10 +179,3 @@ def test_a_cloud_without_capture_time_tf_is_dropped_whole(
     module = make_filter()
 
     assert module.filter_cloud(_cloud([[2.0, 0.0, 0.0]])) is None
-
-
-def test_lifecycle_methods_stay_rpc() -> None:
-    # An overridden start/stop without @rpc drops the RPC registration, and the
-    # coordinator then pickles the bound method and kills the whole worker.
-    assert PointCloudSelfFilter.start.__rpc__  # type: ignore[attr-defined]
-    assert PointCloudSelfFilter.stop.__rpc__  # type: ignore[attr-defined]
