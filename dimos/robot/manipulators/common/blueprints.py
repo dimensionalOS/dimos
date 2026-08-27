@@ -35,7 +35,7 @@ from dimos.robot.manipulators.common.topics import (
 
 
 class TeleopBinding(TypedDict):
-    """Declarative mapping from an operator hand to one robot target."""
+    """Declarative mapping from an operator hand to one model target."""
 
     hand: str
     target_frame: str
@@ -59,9 +59,9 @@ def _model_joint_names(
     hardware: HardwareComponent,
     robot_model: RobotModelConfig,
 ) -> list[str]:
-    joint_names = robot_model.get_coordinator_joint_names()
+    joint_names = list(robot_model.joint_names)
     if not set(joint_names) <= set(hardware.joints):
-        raise ValueError("hardware joints must contain RobotModelConfig coordinator joints")
+        raise ValueError("hardware joints must contain RobotModelConfig joints")
     return joint_names
 
 
@@ -96,11 +96,11 @@ def eef_twist_task(
 ) -> TaskConfig:
     task_params: dict[str, Any] = {
         "robot_model": robot_model,
+        "target_frame": target_frame,
         "timeout": timeout,
         "max_joint_velocity_rad_s": max_joint_velocity_rad_s,
         "max_command_tracking_error_deg": max_command_tracking_error_deg,
     }
-    task_params["target_frame"] = target_frame
     if pink is not None:
         task_params["pink"] = pink
     return TaskConfig(
@@ -169,13 +169,13 @@ def coordinator(
 
 def planner(
     *,
-    robots: Sequence[RobotModelConfig],
+    model: RobotModelConfig,
     planning_timeout: float = 10.0,
     visualization: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> Blueprint:
     module_kwargs: dict[str, Any] = {
-        "robots": list(robots),
+        "model": model,
         "planning_timeout": planning_timeout,
         **kwargs,
     }

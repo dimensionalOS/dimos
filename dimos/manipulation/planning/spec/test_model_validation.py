@@ -61,7 +61,6 @@ def _write_slash_model(path: Path) -> None:
 
 def _config(path: Path) -> RobotModelConfig:
     return RobotModelConfig(
-        name="robot",
         model=RobotModel.from_file(path),
         joint_names=["left/j1", "right/j1"],
         base_link="world",
@@ -149,8 +148,11 @@ def test_prepared_model_validation_identifies_invalid_configuration(
 ) -> None:
     urdf = tmp_path / "canonical.urdf"
     _write_slash_model(urdf)
+    values = _config(urdf).model_dump()
+    values.update(replacement)
+
     with pytest.raises(ValueError, match=message):
-        validate_robot_model_config(_config(urdf).model_copy(update=replacement))
+        validate_robot_model_config(RobotModelConfig.model_validate(values))
 
 
 def test_prepared_model_validation_wraps_malformed_asset(tmp_path: Path) -> None:

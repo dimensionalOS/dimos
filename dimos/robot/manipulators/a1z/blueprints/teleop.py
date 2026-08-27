@@ -58,7 +58,7 @@ keyboard_teleop_a1z = autoconnect(
         ],
     ),
     ManipulationModule.blueprint(
-        robots=[_a1z_model],
+        model=_a1z_model,
         visualization={"backend": "viser"},
     ),
 )
@@ -96,7 +96,7 @@ coordinator_teleop_a1z = autoconnect(
         ],
     ),
     ManipulationModule.blueprint(
-        robots=[_a1z_quest_model],
+        model=_a1z_quest_model,
         visualization={"backend": "viser"},
     ),
 )

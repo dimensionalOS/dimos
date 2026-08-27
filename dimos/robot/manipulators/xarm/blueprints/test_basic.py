@@ -12,11 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
+
 from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.hardware.spec import JointLimits
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
 from dimos.robot.manipulators.xarm.blueprints.basic import dual_xarm6_planner_coordinator
+
+pytestmark = pytest.mark.self_hosted
 
 
 def test_dual_xarm_mock_limits_survive_blueprint_config_parsing() -> None:
@@ -45,10 +49,10 @@ def test_dual_xarm_models_grippers_without_control_tasks() -> None:
     parsed = BlueprintConfigParser(dual_xarm6_planner_coordinator).parse(environ={})
     config = ManipulationModuleConfig.model_validate(parsed.module_kwargs(manipulation_atom.name))
 
-    assert [robot.gripper_hardware_id for robot in config.robots] == [None, None]
-    assert [robot.planning_groups[0].tip_link for robot in config.robots] == [
-        "link_tcp",
-        "link_tcp",
+    assert config.model.gripper_hardware_id is None
+    assert [group.tip_link for group in config.model.planning_groups[:2]] == [
+        "left/link_tcp",
+        "right/link_tcp",
     ]
 
     coordinator_atom = next(

@@ -34,15 +34,12 @@ XARM_PERCEPTION_CAMERA_TRANSFORM = Transform(
 
 xarm_perception = autoconnect(
     PickAndPlaceModule.blueprint(
-        robots=[
-            make_xarm7_model_config(
-                name="arm",
-                add_gripper=True,
-                gripper_hardware_id="arm",
-                pitch=math.radians(45),
-                tf_extra_links=["link7"],
-            )
-        ],
+        model=make_xarm7_model_config(
+            add_gripper=True,
+            gripper_hardware_id="arm",
+            pitch=math.radians(45),
+            tf_extra_links=["link7"],
+        ),
         planning_timeout=10.0,
         visualization={"backend": "viser"},
         floor_z=-0.02,

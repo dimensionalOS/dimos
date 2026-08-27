@@ -62,8 +62,8 @@ OPENARM_HARDWARE_ID = "openarm"
 OPENARM_SIDES = ("left", "right")
 # Order must match OpenArmDamiaoAdapter.joint_names: all arm groups in
 # declaration order (left then right), then all grippers.
-OPENARM_LEFT_ARM_JOINTS = [f"left_arm/joint{i}" for i in range(1, OPENARM_DOF + 1)]
-OPENARM_RIGHT_ARM_JOINTS = [f"right_arm/joint{i}" for i in range(1, OPENARM_DOF + 1)]
+OPENARM_LEFT_ARM_JOINTS = [f"openarm_left_joint{i}" for i in range(1, OPENARM_DOF + 1)]
+OPENARM_RIGHT_ARM_JOINTS = [f"openarm_right_joint{i}" for i in range(1, OPENARM_DOF + 1)]
 OPENARM_ARM_JOINTS = [*OPENARM_LEFT_ARM_JOINTS, *OPENARM_RIGHT_ARM_JOINTS]
 OPENARM_GRIPPER_JOINTS = ["left_arm/gripper", "right_arm/gripper"]
 OPENARM_JOINTS = [*OPENARM_ARM_JOINTS, *OPENARM_GRIPPER_JOINTS]
@@ -133,42 +133,39 @@ def openarm_hardware(
     )
 
 
-def openarm_bimanual_model_config(name: str = OPENARM_HARDWARE_ID) -> RobotModelConfig:
+def openarm_bimanual_model_config() -> RobotModelConfig:
     """Build the single fourteen-joint planning model with one group per arm.
 
     Collision exclusions cannot span robots, so both arms plan as one robot.
     """
-    local_joint_names = [*openarm_urdf_joints("left"), *openarm_urdf_joints("right")]
+    canonical_joint_names = [*openarm_urdf_joints("left"), *openarm_urdf_joints("right")]
     return RobotModelConfig(
-        name=name,
         model=OPENARM_BIMANUAL_MODEL,
         base_pose=base_pose(),
-        joint_names=local_joint_names,
+        joint_names=canonical_joint_names,
         base_link="openarm_body_link0",
         planning_groups=[
             PlanningGroupDefinition(
-                name="left_manipulator",
+                name="left_arm",
                 joint_names=tuple(openarm_urdf_joints("left")),
                 base_link="openarm_body_link0",
                 tip_link="openarm_left_grasp_frame",
             ),
             PlanningGroupDefinition(
-                name="right_manipulator",
+                name="right_arm",
                 joint_names=tuple(openarm_urdf_joints("right")),
                 base_link="openarm_body_link0",
                 tip_link="openarm_right_grasp_frame",
+            ),
+            PlanningGroupDefinition(
+                name="both_arms",
+                joint_names=tuple(canonical_joint_names),
+                base_link="openarm_body_link0",
             ),
         ],
         collision_exclusion_pairs=OPENARM_GRIPPER_COLLISION_EXCLUSIONS,
         auto_convert_meshes=True,
         max_velocity=0.5,
         max_acceleration=1.0,
-        joint_name_mapping={
-            coordinator_name: urdf_name
-            for side in OPENARM_SIDES
-            for coordinator_name, urdf_name in zip(
-                openarm_arm_joints(side), openarm_urdf_joints(side), strict=True
-            )
-        },
         home_joints=list(OPENARM_HOME_JOINTS),
     )

@@ -14,8 +14,11 @@
 
 """xArm prepared-model configuration tests."""
 
+import pytest
+
 from dimos.manipulation.planning.spec.validation import validate_robot_model_config
 from dimos.robot.manipulators.xarm.config import (
+    XARM_GRIPPER_COLLISION_EXCLUSIONS,
     make_dual_xarm6_model_config,
     make_xarm6_model_config,
 )
@@ -34,17 +37,46 @@ def test_xarm_gripper_geometry_does_not_imply_control_hardware() -> None:
     assert controlled.gripper_hardware_id == "arm"
 
 
-def test_dual_xarm6_is_one_prepared_model_with_canonical_groups() -> None:
+def test_dual_xarm6_configures_canonical_groups() -> None:
     config = make_dual_xarm6_model_config()
 
+    assert [
+        (group.name, group.joint_names, group.base_link, group.tip_link)
+        for group in config.planning_groups
+    ] == [
+        ("left_arm", tuple(config.joint_names[:6]), "left/link_base", "left/link_tcp"),
+        ("right_arm", tuple(config.joint_names[6:]), "right/link_base", "right/link_tcp"),
+        ("both_arms", tuple(config.joint_names), "world", None),
+    ]
+    assert config.collision_exclusion_pairs == [
+        (f"{prefix}{left}", f"{prefix}{right}")
+        for prefix in ("left/", "right/")
+        for left, right in XARM_GRIPPER_COLLISION_EXCLUSIONS
+    ]
+
+
+@pytest.mark.self_hosted
+def test_dual_xarm6_model_contains_canonical_joint_topology() -> None:
+    config = make_dual_xarm6_model_config()
     model = validate_robot_model_config(config)
 
     assert model.root_link == "world"
+    assert [joint.name for joint in model.joints if joint.name in config.joint_names] == (
+        config.joint_names
+    )
+    assert {"left/drive_joint", "right/drive_joint"} <= {joint.name for joint in model.joints}
+
+
+def test_prefixed_xarm_model_config_uses_coordinator_facing_names() -> None:
+    config = make_xarm6_model_config(add_gripper=False, prefix="xarm_arm/")
+
+    assert config.joint_names == [f"xarm_arm/joint{i}" for i in range(1, 7)]
+    assert config.planning_groups[0].tip_link == "xarm_arm/link6"
+
+
+@pytest.mark.self_hosted
+def test_prefixed_xarm_model_asset_uses_coordinator_facing_names() -> None:
+    config = make_xarm6_model_config(add_gripper=False, prefix="xarm_arm/")
+    model = validate_robot_model_config(config)
+
     assert [joint.name for joint in model.joints if joint.type != "fixed"] == config.joint_names
-    assert [group.name for group in config.planning_groups] == [
-        "left_arm",
-        "right_arm",
-        "both_arms",
-    ]
-    assert config.planning_groups[0].joint_names == tuple(config.joint_names[:6])
-    assert config.planning_groups[1].joint_names == tuple(config.joint_names[6:])
