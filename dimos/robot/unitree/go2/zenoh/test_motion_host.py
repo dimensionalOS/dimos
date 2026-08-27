@@ -17,6 +17,7 @@ import pytest
 from dimos.cli.bake.cli import emit_config
 from dimos.cli.bake.discovery import discover_modules, select_modules
 from dimos.cli.bake.graph import build_graph
+from dimos.core.global_config import global_config
 from dimos.navigation.motion.adapter.follower_native import TrajectoryFollowerNativeConfig
 from dimos.navigation.motion.adapter.planner_native import MotionPlannerNativeConfig
 from dimos.navigation.movement_manager.cmd_vel_mux_native import CmdVelMuxNativeConfig
@@ -68,6 +69,8 @@ def test_the_session_is_a_loopback_client_of_the_router(blob):
         "connect": ["tcp/127.0.0.1:7447"],
         "listen": [],
         "multicast": False,
+        # Not pinned: the test harness moves scouting onto a private bus.
+        "scout_addr": global_config.zenoh_scout_addr,
         "gossip": True,
         "interface": "lo",
         "connect_timeout_ms": 3000,
