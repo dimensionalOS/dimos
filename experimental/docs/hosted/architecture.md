@@ -1,7 +1,5 @@
 # Distributed Host Architecture
 
-Language: English | [简体中文](/experimental/docs/hosted/architecture_CN.md)
-
 Status: Draft proposal
 
 Scope: Discovery and constraint-based placement MVP
@@ -130,21 +128,21 @@ local runtime.
 
 ## Terminology
 
-| Term | Meaning |
-| --- | --- |
-| Application | One logical blueprint graph that may span several Hosts. |
-| Controller | The `dimos run` process that compiles, places, and coordinates an application. |
-| Host | One advertised execution service. Usually one per machine, although several may sit behind one router or even share a machine. |
-| Host ID | A stable, opaque, automatically generated identity used in protocol keys and run records. |
-| Host name | A discoverable, human-readable label, defaulting to the machine hostname and optionally overridden. It is not a network address. |
-| Host tags | User- or provider-supplied labels such as `gpu`, `g1`, or `warehouse-a` used as placement constraints. |
-| Host descriptor | The Host's identity, tags, capabilities, resources, compatibility, load, and availability. |
-| Placement constraint | An exact Host selector and/or required tag set attached to blueprint metadata. |
-| Placement unit | A set of modules that must be deployed together on one Host. |
-| Host fragment | The modules and local connections assigned to one Host for one run. |
-| Local coordinator | The existing `ModuleCoordinator` used to run one Host fragment. |
-| Boundary stream | A stream whose publisher and subscriber are placed on different Hosts. |
-| Module reference | A typed `Spec`/module dependency wired as an RPC proxy by the coordinator. |
+| Term                 | Meaning                                                                                                                          |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Application          | One logical blueprint graph that may span several Hosts.                                                                         |
+| Controller           | The `dimos run` process that compiles, places, and coordinates an application.                                                   |
+| Host                 | One advertised execution service. Usually one per machine, although several may sit behind one router or even share a machine.   |
+| Host ID              | A stable, opaque, automatically generated identity used in protocol keys and run records.                                        |
+| Host name            | A discoverable, human-readable label, defaulting to the machine hostname and optionally overridden. It is not a network address. |
+| Host tags            | User- or provider-supplied labels such as `gpu`, `g1`, or `warehouse-a` used as placement constraints.                           |
+| Host descriptor      | The Host's identity, tags, capabilities, resources, compatibility, load, and availability.                                       |
+| Placement constraint | An exact Host selector and/or required tag set attached to blueprint metadata.                                                   |
+| Placement unit       | A set of modules that must be deployed together on one Host.                                                                     |
+| Host fragment        | The modules and local connections assigned to one Host for one run.                                                              |
+| Local coordinator    | The existing `ModuleCoordinator` used to run one Host fragment.                                                                  |
+| Boundary stream      | A stream whose publisher and subscriber are placed on different Hosts.                                                           |
+| Module reference     | A typed `Spec`/module dependency wired as an RPC proxy by the coordinator.                                                       |
 
 Network location and execution identity are separate. A locator such as
 `tcp/some_host:7447` determines how the controller joins a Zenoh fabric.
@@ -256,12 +254,12 @@ Host.
 The discovery and control protocol uses Zenoh liveliness for presence and
 Zenoh RPC queryables for Host operations. The MVP reserves these namespaces:
 
-| Purpose | Zenoh key expression |
-| --- | --- |
-| Host presence | `dimos/hosts/<host-id>/live` |
-| Host control RPC | `dimos/rpc/hosts/<host-id>/<operation>` |
-| Application stream | `dimos/runs/<run-id>/streams/<logical-stream>/<message-type>` |
-| Module RPC | `dimos/rpc/runs/<run-id>/hosts/<host-id>/modules/<module>/<method>` |
+| Purpose            | Zenoh key expression                                                |
+| ------------------ | ------------------------------------------------------------------- |
+| Host presence      | `dimos/hosts/<host-id>/live`                                        |
+| Host control RPC   | `dimos/rpc/hosts/<host-id>/<operation>`                             |
+| Application stream | `dimos/runs/<run-id>/streams/<logical-stream>/<message-type>`       |
+| Module RPC         | `dimos/rpc/runs/<run-id>/hosts/<host-id>/modules/<module>/<method>` |
 
 The namespace has these required properties:
 
@@ -281,16 +279,16 @@ live Host's query response and successful prepare lease are authoritative.
 
 A minimal Host descriptor contains:
 
-| Field | Purpose |
-| --- | --- |
-| `host_id`, `name`, `epoch` | Stable identity, display, and current process incarnation. |
-| `tags` | Opaque placement labels configured by the user or a capability provider. |
-| `capabilities` | Structured hardware facts, such as robot model/serial, GPU type, architecture, and attached devices. |
-| `resources_total`, `resources_available` | CPU, memory, accelerators, deployment slots, and other schedulable capacity. |
-| `protocol_version`, `plan_schema_version` | Control and deployment-plan compatibility. |
-| `dimos_version`, `application_revision` | Runtime and code compatibility. |
-| `active_runs`, `leases` | Current occupancy and pending reservations. |
-| `health`, `last_error` | Whether the Host can accept work and why not. |
+| Field                                     | Purpose                                                                                              |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `host_id`, `name`, `epoch`                | Stable identity, display, and current process incarnation.                                           |
+| `tags`                                    | Opaque placement labels configured by the user or a capability provider.                             |
+| `capabilities`                            | Structured hardware facts, such as robot model/serial, GPU type, architecture, and attached devices. |
+| `resources_total`, `resources_available`  | CPU, memory, accelerators, deployment slots, and other schedulable capacity.                         |
+| `protocol_version`, `plan_schema_version` | Control and deployment-plan compatibility.                                                           |
+| `dimos_version`, `application_revision`   | Runtime and code compatibility.                                                                      |
+| `active_runs`, `leases`                   | Current occupancy and pending reservations.                                                          |
+| `health`, `last_error`                    | Whether the Host can accept work and why not.                                                        |
 
 Tags stay simple in the MVP. Structured capabilities prevent an eventual
 vocabulary such as robot serial numbers or GPU memory from being flattened into
@@ -456,14 +454,14 @@ For the MVP, a distributed run requires Zenoh as its shared transport backend.
 LCM remains supported for existing single-machine runs, but is rejected once a
 blueprint resolves onto more than one Host.
 
-| Connection | MVP rule |
-| --- | --- |
-| Local stream using Zenoh | Supported. |
-| Cross-Host stream using Zenoh | Supported. |
-| Any stream using LCM in a multi-Host run | Rejected. |
-| Local stream using shared memory | Supported when explicitly configured. |
-| Cross-Host stream using shared memory | Rejected. |
-| Other machine-local transports | Supported only when both endpoints are on the same Host. |
+| Connection                               | MVP rule                                                 |
+| ---------------------------------------- | -------------------------------------------------------- |
+| Local stream using Zenoh                 | Supported.                                               |
+| Cross-Host stream using Zenoh            | Supported.                                               |
+| Any stream using LCM in a multi-Host run | Rejected.                                                |
+| Local stream using shared memory         | Supported when explicitly configured.                    |
+| Cross-Host stream using shared memory    | Rejected.                                                |
+| Other machine-local transports           | Supported only when both endpoints are on the same Host. |
 
 Keeping explicit shared memory for local image or point-cloud paths avoids a
 performance regression. The compiler must fail before deployment if an
@@ -520,14 +518,14 @@ API change. Cross-Host references are outside the MVP.
 
 The protocol should be small and versioned. A minimal logical API is:
 
-| Operation | Purpose |
-| --- | --- |
-| `describe` | Return the current Host descriptor. |
-| `prepare` | Revalidate constraints, acquire a bounded lease, and stage a resolved fragment. |
-| `start` | Build and start the staged local deployment. |
-| `status` | Return deployment state, lease state, and module summaries. |
-| `stop` | Gracefully stop a run, escalating according to existing local policy. |
-| `logs` | Return log metadata or a bounded stream for one run. |
+| Operation  | Purpose                                                                         |
+| ---------- | ------------------------------------------------------------------------------- |
+| `describe` | Return the current Host descriptor.                                             |
+| `prepare`  | Revalidate constraints, acquire a bounded lease, and stage a resolved fragment. |
+| `start`    | Build and start the staged local deployment.                                    |
+| `status`   | Return deployment state, lease state, and module summaries.                     |
+| `stop`     | Gracefully stop a run, escalating according to existing local policy.           |
+| `logs`     | Return log metadata or a bounded stream for one run.                            |
 
 Every mutating request must include at least:
 
@@ -591,16 +589,16 @@ silently imply buffering or replay that the transport does not provide.
 
 The distributed run has an aggregate state derived from its Hosts:
 
-| State | Meaning |
-| --- | --- |
-| `placing` | Discovery or constraint resolution is in progress. |
-| `preparing` | At least one Host is leasing, validating, or staging its fragment. |
-| `starting` | All Hosts prepared and at least one is starting. |
-| `running` | Every required Host reports its local deployment running. |
-| `degraded` | The application started, but a Host or required module was later lost. |
-| `stopping` | A coordinated stop is in progress. |
-| `stopped` | Every reachable Host has stopped the run. |
-| `failed` | Placement or startup failed, or the application cannot satisfy a required constraint. |
+| State       | Meaning                                                                               |
+| ----------- | ------------------------------------------------------------------------------------- |
+| `placing`   | Discovery or constraint resolution is in progress.                                    |
+| `preparing` | At least one Host is leasing, validating, or staging its fragment.                    |
+| `starting`  | All Hosts prepared and at least one is starting.                                      |
+| `running`   | Every required Host reports its local deployment running.                             |
+| `degraded`  | The application started, but a Host or required module was later lost.                |
+| `stopping`  | A coordinated stop is in progress.                                                    |
+| `stopped`   | Every reachable Host has stopped the run.                                             |
+| `failed`    | Placement or startup failed, or the application cannot satisfy a required constraint. |
 
 MVP failure behavior is intentionally conservative:
 
