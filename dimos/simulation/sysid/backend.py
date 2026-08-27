@@ -136,7 +136,7 @@ class GhostTrack:
 
     Where a tracker exists the ghost is the measurement; where none exists the
     ghost is ABSENT rather than faked — build one with
-    :func:`~dimos.robot.unitree.go2.sim.sysid.replay.ghost_track`, which
+    :func:`~dimos.simulation.sysid.replay.ghost_track`, which
     returns ``None`` for a tracker-less recording. Viewer bookkeeping only:
     nothing scored reads it.
     """

@@ -54,7 +54,7 @@ def test_the_incumbents_objective_is_reachable_exactly():
 
 
 def test_the_default_point_matches_the_shipped_default_weights():
-    from dimos.robot.unitree.go2.sim.sysid.score import DEFAULT_WEIGHTS
+    from dimos.simulation.sysid.score import DEFAULT_WEIGHTS
 
     w = DEFAULT_POINT.weights()
     # same RATIOS as score.DEFAULT_WEIGHTS (the score renormalises, so only

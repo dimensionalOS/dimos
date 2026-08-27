@@ -40,8 +40,8 @@ from dimos.robot.unitree.go2.sim.sysid.fit import (
     point_and_spread,
     pooled_cloud,
 )
-from dimos.robot.unitree.go2.sim.sysid.score import Score
 from dimos.simulation.sysid.regimes import Segment
+from dimos.simulation.sysid.score import Score
 
 # ---------------------------------------------------------------- knob plan
 

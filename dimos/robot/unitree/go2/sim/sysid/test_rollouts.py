@@ -29,6 +29,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from dimos.robot.unitree.go2.sim.ranges import SOLVER_KEYS
+from dimos.robot.unitree.go2.sim.sysid.ingest import GO2_READER
+
 pytest.importorskip("mujoco")
 pytest.importorskip("mcap")
 
@@ -56,7 +59,7 @@ def _equal_results(a, b) -> None:
 def test_worker_processes_reproduce_the_serial_rollouts_bit_for_bit():
     from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
     from dimos.robot.unitree.go2.sim.ranges import MEASURED
-    from dimos.robot.unitree.go2.sim.sysid.rollouts import Rollouts, RolloutSpec
+    from dimos.simulation.sysid.rollouts import Rollouts, RolloutSpec
 
     values = {**MEASURED.physics, "actuator_tau": MEASURED.actuator_tau}
 
@@ -68,10 +71,10 @@ def test_worker_processes_reproduce_the_serial_rollouts_bit_for_bit():
             for i in range(3)
         ]
 
-    with Rollouts(HARD, MujocoBackend(), workers=1) as serial:
+    with Rollouts(HARD, MujocoBackend(), reader=GO2_READER, workers=1) as serial:
         specs = make_specs(serial)
         got_serial = serial.run(specs)
-    with Rollouts(HARD, MujocoBackend(), workers=3) as parallel:
+    with Rollouts(HARD, MujocoBackend(), reader=GO2_READER, workers=3) as parallel:
         got_parallel = parallel.run(specs)
     assert len(got_serial) == len(got_parallel) == 3
     for a, b in zip(got_serial, got_parallel, strict=True):
@@ -82,18 +85,27 @@ def test_worker_processes_reproduce_the_serial_rollouts_bit_for_bit():
 def test_the_parallel_jacobian_is_the_serial_jacobian():
     from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
     from dimos.robot.unitree.go2.sim.ranges import MEASURED
-    from dimos.robot.unitree.go2.sim.sysid.identify import jacobian
-    from dimos.robot.unitree.go2.sim.sysid.rollouts import Rollouts
+    from dimos.simulation.sysid.identify import jacobian
     from dimos.simulation.sysid.regimes import sample_segments
+    from dimos.simulation.sysid.rollouts import Rollouts
 
     values = {**MEASURED.physics, "actuator_tau": MEASURED.actuator_tau}
-    with Rollouts(HARD, MujocoBackend(), workers=3) as rollouts:
+    with Rollouts(HARD, MujocoBackend(), reader=GO2_READER, workers=3) as rollouts:
         st = rollouts.streams
         t_lo = max(float(st.lt[0]), float(st.ct[0]))
         segs = sample_segments(t_lo, t_lo + 12.0, n=2, length=(1.5, 2.5), seed=0)
         kw = dict(frac=0.05, window=0.4, seed=0, params=("armature", "actuator_tau"))
-        a = jacobian(st, segs, MujocoBackend(), values, channel="accel", **kw)
-        b = jacobian(st, segs, MujocoBackend(), values, channel="accel", rollouts=rollouts, **kw)
+        a = jacobian(st, segs, MujocoBackend(), values, channel="accel", exclude=SOLVER_KEYS, **kw)
+        b = jacobian(
+            st,
+            segs,
+            MujocoBackend(),
+            values,
+            channel="accel",
+            rollouts=rollouts,
+            exclude=SOLVER_KEYS,
+            **kw,
+        )
     assert np.array_equal(a.J, b.J)
     assert np.array_equal(a.residual, b.residual)
 
@@ -105,9 +117,9 @@ def test_a_parallel_fit_is_the_serial_fit_bit_for_bit():
     pytest.importorskip("optuna")
     from dimos.robot.unitree.go2.sim.ranges import KNOBS
     from dimos.robot.unitree.go2.sim.sysid.fit import Objective, base_values, default_plan, fit
-    from dimos.robot.unitree.go2.sim.sysid.rollouts import Rollouts
     from dimos.simulation.sysid.recording import read_declarations
     from dimos.simulation.sysid.regimes import regimes, sample_segments
+    from dimos.simulation.sysid.rollouts import Rollouts
 
     plan = default_plan(KNOBS, search=("armature", "actuator_tau"))
     base = base_values("measured")
@@ -115,7 +127,7 @@ def test_a_parallel_fit_is_the_serial_fit_bit_for_bit():
     from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
 
     def run_fit(workers: int):
-        with Rollouts(HARD, MujocoBackend(), workers=workers) as rollouts:
+        with Rollouts(HARD, MujocoBackend(), reader=GO2_READER, workers=workers) as rollouts:
             st = rollouts.streams
             spans = regimes(st, read_declarations(HARD))
             t_lo = max(float(st.lt[0]), float(st.ct[0]))

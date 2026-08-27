@@ -77,6 +77,12 @@ class Streams:
     # Gait-height slider; empty when never touched.
     ght: np.ndarray = field(default_factory=lambda: np.zeros(0))
     gh: np.ndarray = field(default_factory=lambda: np.zeros(0))
+    # The tracker rig, set by the reader: ``mount`` maps base-frame vectors
+    # into the tracker frame, ``lever`` is the tracker's offset from the base
+    # origin in the base frame. Identity/zero when the reader already
+    # delivers a base pose.
+    mount: np.ndarray = field(default_factory=lambda: np.eye(3))
+    lever: np.ndarray = field(default_factory=lambda: np.zeros(3))
 
     @property
     def has_markers(self) -> bool:
@@ -92,17 +98,11 @@ class Streams:
             out.append((i, mode, max(a, float(self.ct[0])), min(b, end)))
         return out
 
-    def base_pose_room(self, mount: np.ndarray, tracker_z: float) -> tuple[np.ndarray, np.ndarray]:
-        """Measured base position and rotation in the ROOM frame, from the tracker.
-
-        ``mount`` maps base-frame vectors into the tracker frame and
-        ``tracker_z`` is the mount's vertical lever arm — both properties of
-        the rig, supplied by the robot's side (Go2:
-        :func:`~dimos.robot.unitree.go2.sim.sysid.ingest.mount_matrix`).
-        """
+    def base_pose_room(self) -> tuple[np.ndarray, np.ndarray]:
+        """Measured base position and rotation in the ROOM frame, from the tracker."""
         rot = quat_to_mat(self.vq)  # tracker -> room
-        base_r = np.einsum("nij,jk->nik", rot, mount.T)  # base -> room
-        base_p = self.vp - base_r @ np.array([0.0, 0.0, tracker_z])
+        base_r = np.einsum("nij,jk->nik", rot, self.mount.T)  # base -> room
+        base_p = self.vp - base_r @ self.lever
         return base_p, base_r
 
 
@@ -162,14 +162,14 @@ class RecordingReader(Protocol):
 
 
 def _cache_path(path: Path, tag: str) -> Path:
-    d = Path.home() / ".cache" / "dimos_go2sim"
+    d = Path.home() / ".cache" / "dimos_sysid"
     d.mkdir(parents=True, exist_ok=True)
     stat = path.stat()
     return d / f"{path.stem}.{tag}.{int(stat.st_mtime)}.{stat.st_size}.npz"
 
 
 def read_recording(path: str | Path, reader: RecordingReader, *, cache: bool = True) -> Streams:
-    """One recording through ``reader``, cached under ``~/.cache/dimos_go2sim``.
+    """One recording through ``reader``, cached under ``~/.cache/dimos_sysid``.
 
     The cache is keyed by path, mtime, size and the reader's
     :attr:`~RecordingReader.cache_tag`, and stores the PARSED streams — so

@@ -405,7 +405,7 @@ def command_shift_sweep(
     obs->policy->cmd legs — there is no policy in the loop — and the ingest
     clock rebase absorbs constant one-way transports.
     """
-    from dimos.robot.unitree.go2.sim.sysid.replay import replay
+    from dimos.simulation.sysid.replay import replay
 
     out = []
     for ms in shifts_ms:

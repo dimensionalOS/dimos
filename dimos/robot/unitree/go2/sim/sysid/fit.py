@@ -35,7 +35,7 @@ objective that moved between candidates would be compared as much as the
 physics (changing only which window was scored once swung a headline 10x).
 
 Parallelism: segments fan out across worker processes
-(:mod:`~dimos.robot.unitree.go2.sim.sysid.rollouts`), studies run in batches
+(:mod:`~dimos.simulation.sysid.rollouts`), studies run in batches
 sized to the core budget, and trials within a study stay SEQUENTIAL — CMA-ES
 learns from its history, and parallel trials would stop a study being
 reproducible from its seed.
@@ -59,8 +59,17 @@ import numpy as np
 from dimos.robot.unitree.go2.sim.anchors import RobotSpec, derive
 from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
 from dimos.robot.unitree.go2.sim.ranges import ENGINE_DEFAULTS, Knob, Preset, load_preset
-from dimos.robot.unitree.go2.sim.sysid.rollouts import Rollouts, RolloutSpec
-from dimos.robot.unitree.go2.sim.sysid.score import (
+from dimos.robot.unitree.go2.sim.sysid.ingest import GO2_READER
+from dimos.simulation.sysid.recording import read_declarations
+from dimos.simulation.sysid.regimes import (
+    Segment,
+    Span,
+    protected,
+    regimes,
+    sample_segments,
+)
+from dimos.simulation.sysid.rollouts import Rollouts, RolloutSpec
+from dimos.simulation.sysid.score import (
     DEFAULT_WEIGHTS,
     SUSPENDED_WEIGHTS,
     Score,
@@ -69,14 +78,6 @@ from dimos.robot.unitree.go2.sim.sysid.score import (
     scales_from,
     score_terms,
     segment_terms,
-)
-from dimos.simulation.sysid.recording import read_declarations
-from dimos.simulation.sysid.regimes import (
-    Segment,
-    Span,
-    protected,
-    regimes,
-    sample_segments,
 )
 
 # Natural units per channel, for the judgement tables. `rot` entries move
@@ -866,7 +867,9 @@ def main() -> None:
     with ExitStack() as stack:
         for idx, (rec, declared) in enumerate(zip(args.recordings, declarations, strict=True)):
             suspended = bool(declared.suspended)
-            rollouts = stack.enter_context(Rollouts(rec, backend, workers=part_workers))
+            rollouts = stack.enter_context(
+                Rollouts(rec, backend, reader=GO2_READER, workers=part_workers)
+            )
             st = rollouts.streams
             spans = regimes(st, declared)
             t_lo = max(float(st.lt[0]), float(st.ct[0]))
@@ -1011,7 +1014,7 @@ def _held_out(
     comparison is honest because BOTH plants see the identical objective.
     """
     declared = read_declarations(args.held_out)
-    ho = Rollouts(args.held_out, backend, workers=args.workers)
+    ho = Rollouts(args.held_out, backend, reader=GO2_READER, workers=args.workers)
     with ho:
         st = ho.streams
         spans = regimes(st, declared)

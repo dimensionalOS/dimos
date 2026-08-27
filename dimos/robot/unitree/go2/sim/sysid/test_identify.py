@@ -19,8 +19,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from dimos.robot.unitree.go2.sim.ranges import CONTACT_DEFAULTS, KNOBS
-from dimos.robot.unitree.go2.sim.sysid.identify import (
+from dimos.robot.unitree.go2.sim.ranges import CONTACT_DEFAULTS, ENGINE_DEFAULTS, KNOBS, SOLVER_KEYS
+from dimos.simulation.sysid.identify import (
     SegmentRows,
     Sensitivity,
     analyse,
@@ -63,11 +63,13 @@ def test_an_absent_contact_knob_centres_on_the_menagerie_default():
     """No early preset carries a contact value — the centre of the difference
     is the engine default, which is what keeps old rollouts identical."""
     knob = KNOBS["foot_solimp_dmin"]
-    got = nudge({}, "foot_solimp_dmin", knob, 0.05, +1)
+    got = nudge({}, "foot_solimp_dmin", knob, 0.05, +1, defaults=ENGINE_DEFAULTS)
     assert got["foot_solimp_dmin"] > CONTACT_DEFAULTS["foot_solimp_dmin"]
     # and one default sits exactly AT its range top: the up-nudge clamps there,
     # the central difference lives off the down side alone
-    got = nudge({}, "foot_solref_time", KNOBS["foot_solref_time"], 0.05, +1)
+    got = nudge(
+        {}, "foot_solref_time", KNOBS["foot_solref_time"], 0.05, +1, defaults=ENGINE_DEFAULTS
+    )
     assert got["foot_solref_time"] == KNOBS["foot_solref_time"].hi
 
 
@@ -253,7 +255,7 @@ def test_the_jacobian_is_deterministic_and_shares_its_schedules(mixed_streams):
     deterministic, so any drift here means a rollout leaked state."""
     from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
     from dimos.robot.unitree.go2.sim.ranges import MEASURED
-    from dimos.robot.unitree.go2.sim.sysid.identify import jacobian
+    from dimos.simulation.sysid.identify import jacobian
     from dimos.simulation.sysid.regimes import sample_segments
 
     st = mixed_streams
@@ -261,8 +263,8 @@ def test_the_jacobian_is_deterministic_and_shares_its_schedules(mixed_streams):
     segs = sample_segments(t_lo, t_lo + 12.0, n=2, length=(1.5, 2.5), seed=0)
     values = {**MEASURED.physics, "actuator_tau": MEASURED.actuator_tau}
     kw = dict(frac=0.05, window=0.4, seed=0, params=("armature", "trunk_mass_scale"))
-    a = jacobian(st, segs, MujocoBackend(), values, channel="joint", **kw)
-    b = jacobian(st, segs, MujocoBackend(), values, channel="joint", **kw)
+    a = jacobian(st, segs, MujocoBackend(), values, channel="joint", exclude=SOLVER_KEYS, **kw)
+    b = jacobian(st, segs, MujocoBackend(), values, channel="joint", exclude=SOLVER_KEYS, **kw)
     assert np.array_equal(a.J, b.J)
     assert np.array_equal(a.residual, b.residual)
     assert a.names == ["armature", "trunk_mass_scale"]
@@ -279,7 +281,8 @@ def test_the_jacobian_is_deterministic_and_shares_its_schedules(mixed_streams):
 def test_every_channel_produces_a_scorable_jacobian(mixed_streams):
     from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
     from dimos.robot.unitree.go2.sim.ranges import MEASURED
-    from dimos.robot.unitree.go2.sim.sysid.identify import (
+    from dimos.simulation.sysid.backend import CHANNELS
+    from dimos.simulation.sysid.identify import (
         analyse,
         format_report,
         format_resolution,
@@ -287,7 +290,6 @@ def test_every_channel_produces_a_scorable_jacobian(mixed_streams):
         jacobian,
         resolution,
     )
-    from dimos.simulation.sysid.backend import CHANNELS
     from dimos.simulation.sysid.regimes import sample_segments
 
     st = mixed_streams

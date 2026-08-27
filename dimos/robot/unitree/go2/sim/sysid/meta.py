@@ -82,7 +82,7 @@ from dimos.robot.unitree.go2.sim.sysid.ground import (
     sim_noise,
     usable_floor,
 )
-from dimos.robot.unitree.go2.sim.sysid.ingest import read_streams
+from dimos.robot.unitree.go2.sim.sysid.ingest import GO2_READER, read_streams
 from dimos.robot.unitree.go2.sim.sysid.loop import (
     LATENCY_BAND_S,
     sensor_noise,
@@ -91,11 +91,11 @@ from dimos.robot.unitree.go2.sim.sysid.loop import (
 )
 from dimos.robot.unitree.go2.sim.sysid.probe import FOCUS, Probe, Spectrum, spectrum
 from dimos.robot.unitree.go2.sim.sysid.real import real_summary, robot_noise
-from dimos.robot.unitree.go2.sim.sysid.rollouts import Rollouts
 from dimos.robot.unitree.go2.sim.sysid.stats import Summary
 from dimos.simulation.sysid.backend import ClosedLoopBackend
 from dimos.simulation.sysid.recording import Streams, read_declarations
 from dimos.simulation.sysid.regimes import regimes, sample_segments
+from dimos.simulation.sysid.rollouts import Rollouts
 
 # Loop 2's minimum detectable differences (README 8, bootstrap, 95%),
 # re-measured 2026-08-17 on the CURRENT loss and loop (tracking areas,
@@ -182,7 +182,9 @@ def inner_fit(
     with ExitStack() as stack:
         for idx, rec in enumerate(recordings):
             declared = read_declarations(rec)
-            rollouts = stack.enter_context(Rollouts(rec, backend, workers=part_workers))
+            rollouts = stack.enter_context(
+                Rollouts(rec, backend, reader=GO2_READER, workers=part_workers)
+            )
             st = rollouts.streams
             spans = regimes(st, declared)
             t_lo = max(float(st.lt[0]), float(st.ct[0]))

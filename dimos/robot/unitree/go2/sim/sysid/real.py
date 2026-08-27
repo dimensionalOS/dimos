@@ -30,7 +30,6 @@ from dataclasses import replace
 import numpy as np
 
 from dimos.robot.unitree.go2.sim.sysid.gait import real_strides
-from dimos.robot.unitree.go2.sim.sysid.ingest import TRACKER_Z, mount_matrix
 from dimos.robot.unitree.go2.sim.sysid.stats import Summary, spread_of, summarize
 from dimos.simulation.sysid.recording import Streams
 from dimos.simulation.sysid.rotations import mat_to_quat
@@ -74,7 +73,7 @@ def real_summary(st: Streams, *, start: float, seconds: float, attitude: str = "
         return replace(
             s, stride_hz=g.stride_hz, stride_len=g.stride_len, source="att:imu (no tracker)"
         )
-    base_p, base_r = st.base_pose_room(mount_matrix(), TRACKER_Z)
+    base_p, base_r = st.base_pose_room()
     sel = (st.vt >= start) & (st.vt < start + seconds)
     p = base_p[sel].copy()
     p[:, 2] = st.vp[sel][:, 2]  # sensor-space height; see ground.sim_summary

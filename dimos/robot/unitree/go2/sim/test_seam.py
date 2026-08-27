@@ -53,8 +53,6 @@ ABOVE_SEAM = (
     "sysid.probe",
     "sysid.real",
     "sysid.replay",
-    "sysid.rollouts",
-    "sysid.score",
     "sysid.select",
     "sysid.stats",
     "sysid.verify_net",

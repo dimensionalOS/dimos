@@ -208,7 +208,7 @@ def report(results: list[LegResult]) -> str:
 
 
 def main() -> None:
-    from dimos.robot.unitree.go2.sim.sysid.ingest import TRACKER_Z, mount_matrix, read_streams
+    from dimos.robot.unitree.go2.sim.sysid.ingest import read_streams
     from dimos.robot.unitree.go2.sim.sysid.real import cmd_at
 
     ap = argparse.ArgumentParser(prog="go2.sim.sysid.compliance")
@@ -220,7 +220,7 @@ def main() -> None:
     sel = (st.lt >= args.start) & (st.lt < args.start + span)
     t = st.lt[sel]
     moving = np.linalg.norm(cmd_at(st, t)[:, :2], axis=1) > 0.25
-    base_p, _ = st.base_pose_room(mount_matrix(), TRACKER_Z)
+    base_p, _ = st.base_pose_room()
     pos = np.stack([np.interp(t, st.vt, base_p[:, k]) for k in range(3)], 1)
     res = measure(t, st.lq[sel], st.lquat[sel], pos[:, :2], pos[:, 2], st.ltau[sel], moving)
     print(report(res))

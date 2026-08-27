@@ -96,7 +96,7 @@ def _velocity_command(d: Mapping[str, Any]) -> tuple[float, float, float] | None
 # The parse version half of the cache tag: bumped whenever the cached field
 # set OR the parse changes — a stale cache would otherwise hide this file's
 # fixes behind a v2 npz. v3 = velocity_input.
-_CACHE_VERSION = 3
+_CACHE_VERSION = 4
 
 
 @dataclass(frozen=True)
@@ -244,6 +244,8 @@ def _read_streams_uncached(path: Path) -> Streams:
         wcmd=np.array([w[1:] for w in walk]) if walk else np.zeros((0, 3)),
         ght=(np.array([g[0] for g in gait]) - first_walk) if gait else np.zeros(0),
         gh=np.array([g[1] for g in gait]) if gait else np.zeros(0),
+        mount=mount_matrix(),
+        lever=np.array([0.0, 0.0, TRACKER_Z]),
     )
     if viv:
         V = np.array(viv)

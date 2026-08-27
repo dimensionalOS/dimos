@@ -43,9 +43,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from dimos.robot.unitree.go2.sim.sysid.replay import ReplayResult
 from dimos.simulation.sysid.backend import CHANNELS
 from dimos.simulation.sysid.regimes import Span
+from dimos.simulation.sysid.replay import ReplayResult
 from dimos.simulation.sysid.rotations import rotation_angle
 
 # One (channel, regime) weight vector. Keys are (channel, span kind).
@@ -152,7 +152,7 @@ def sample_errors(r: ReplayResult, channel: str) -> tuple[np.ndarray, np.ndarray
     Vector channels reduce to a per-sample root-mean-square across components,
     so every channel's error is one number per sample in its own unit; ``pos``
     is the planar error and ``rot`` the rotation angle, the conventions
-    :meth:`~dimos.robot.unitree.go2.sim.sysid.replay.ReplayResult.body_err`
+    :meth:`~dimos.simulation.sysid.replay.ReplayResult.body_err`
     already uses.
     """
     p = r.prediction

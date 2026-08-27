@@ -172,7 +172,6 @@ def real_strides(st: Streams, *, start: float = 6.0, seconds: float | None = Non
 
     Tracker-less recordings measure the cadence only (lengths NaN).
     """
-    from dimos.robot.unitree.go2.sim.sysid.ingest import TRACKER_Z, mount_matrix
     from dimos.robot.unitree.go2.sim.sysid.real import cmd_at
 
     seconds = float(st.wt[-1]) - start if seconds is None else seconds
@@ -181,6 +180,6 @@ def real_strides(st: Streams, *, start: float = 6.0, seconds: float | None = Non
     moving = np.linalg.norm(cmd_at(st, t)[:, :2], axis=1) > 0.25
     planar = None
     if st.has_markers:
-        base_p, _ = st.base_pose_room(mount_matrix(), TRACKER_Z)
+        base_p, _ = st.base_pose_room()
         planar = np.stack([np.interp(t, st.vt, base_p[:, k]) for k in range(2)], 1)
     return strides(t, q, quat, planar, moving)

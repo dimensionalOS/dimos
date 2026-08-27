@@ -107,7 +107,7 @@ def test_segment_4_reproduces_the_shipped_plants_numbers(mixed_streams):
     tightens the joint residual). Same bit-identical discipline forward."""
     from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
     from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
-    from dimos.robot.unitree.go2.sim.sysid.replay import replay
+    from dimos.simulation.sysid.replay import replay
 
     st = mixed_streams
     _i, mode, a, b = st.segments()[4]
@@ -141,7 +141,7 @@ def test_a_suspended_recording_replays_with_the_trunk_pinned(hanging_streams):
     and the trunk stays pinned to the measured pose, clear of any floor."""
     from dimos.robot.unitree.go2.sim.engines.mujoco import MujocoBackend
     from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
-    from dimos.robot.unitree.go2.sim.sysid.replay import replay
+    from dimos.simulation.sysid.replay import replay
 
     st = hanging_streams
     plant = acceptance_plant()

@@ -78,9 +78,8 @@ from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES, TORQUE_LIMITS
 from dimos.robot.unitree.go2.sim.policy import FreePolicy
 from dimos.robot.unitree.go2.sim.ranges import DEFAULT_PRESET, Preset, load_preset
 from dimos.robot.unitree.go2.sim.sysid.gait import strides
-from dimos.robot.unitree.go2.sim.sysid.ingest import TRACKER_Z, mount_matrix, read_streams
+from dimos.robot.unitree.go2.sim.sysid.ingest import TRACKER_Z, read_streams
 from dimos.robot.unitree.go2.sim.sysid.real import cmd_at, real_summary, robot_noise
-from dimos.robot.unitree.go2.sim.sysid.replay import ghost_track, measured_state
 from dimos.robot.unitree.go2.sim.sysid.stats import (
     NOT_COMPARABLE,
     Summary,
@@ -93,6 +92,7 @@ from dimos.robot.unitree.go2.sim.sysid.stats import (
 from dimos.simulation.sysid.backend import ClosedLoopBackend, GhostTrack, State
 from dimos.simulation.sysid.plant import TorqueEnvelope, actuator_step
 from dimos.simulation.sysid.recording import Streams
+from dimos.simulation.sysid.replay import ghost_track, measured_state
 from dimos.simulation.sysid.rotations import mat_to_quat, quat_to_mat
 
 CONTROL_DT = 0.02  # 50 Hz policy rate; not stored in the blob
@@ -273,7 +273,7 @@ def rollout_policy(
     # verdict perturbation applies on top of the measured joints.
     base_p = base_r = None
     if st.has_markers:
-        base_p, base_r = st.base_pose_room(mount_matrix(), TRACKER_Z)
+        base_p, base_r = st.base_pose_room()
     seed_state = measured_state(st, start, base_p=base_p, base_r=base_r)
     if perturb is not None:
         seed_state = replace(seed_state, q=seed_state.q + perturb)
@@ -540,7 +540,7 @@ def tracking_curves(run: PolicyRun, st: Streams, *, start: float) -> dict[str, n
     """
     if not st.has_markers or len(run.t) == 0:
         return {}
-    base_p, base_r = st.base_pose_room(mount_matrix(), TRACKER_Z)
+    base_p, base_r = st.base_pose_room()
     rq = np.stack([mat_to_quat(r) for r in base_r])
     yaw_room = np.unwrap(yaw_of(rq))
     pitch_t, roll_t = pitch_roll_of(rq)
@@ -706,7 +706,7 @@ def reinit_schedule(
     """
     base_p = base_r = None
     if st.has_markers:
-        base_p, base_r = st.base_pose_room(mount_matrix(), TRACKER_Z)
+        base_p, base_r = st.base_pose_room()
     times = np.arange(start + settle, start + seconds - 1e-9, T)
     return [measured_state(st, float(t), base_p=base_p, base_r=base_r) for t in times]
 
@@ -750,7 +750,7 @@ def window_curves(run: PolicyRun, st: Streams, *, start: float) -> dict[str, np.
     snap_yaw = yaw_of(run.reinit_quat)
     has_pos = st.has_markers
     if has_pos:
-        base_p, base_r = st.base_pose_room(mount_matrix(), TRACKER_Z)
+        base_p, base_r = st.base_pose_room()
         rq = np.stack([mat_to_quat(r) for r in base_r])
         yaw_room = np.unwrap(yaw_of(rq))
         pitch_t, roll_t = pitch_roll_of(rq)

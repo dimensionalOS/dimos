@@ -46,14 +46,13 @@ import threading
 
 import numpy as np
 
-from dimos.robot.unitree.go2.sim.sysid.ingest import GO2_READER
-from dimos.robot.unitree.go2.sim.sysid.replay import ReplayResult, replay
 from dimos.simulation.sysid.backend import Backend
 from dimos.simulation.sysid.recording import (
     RecordingReader,
     Streams,
     read_recording,
 )
+from dimos.simulation.sysid.replay import ReplayResult, replay
 
 
 @dataclass(frozen=True)
@@ -112,10 +111,8 @@ def _eval_in_worker(spec: RolloutSpec) -> ReplayResult:
 class Rollouts:
     """Evaluates rollout specs against one recording, serially or across processes.
 
-    ``backend`` is the configured engine — an envelope-carrying
-    :class:`~dimos.robot.unitree.go2.sim.engines.mujoco.MujocoBackend`, an Isaac
-    backend, anything behind the seam. ``reader`` is the recording format
-    (default: the Go2 DDS reader), pickled to workers exactly like the
+    ``backend`` is the configured engine, anything behind the seam;
+    ``reader`` is the recording format, pickled to workers exactly like the
     backend. ``workers <= 1`` runs in-process;
     more spawns that many worker processes (spawned, not forked — a forked
     MuJoCo is a bug that looks like a speedup), each receiving the SAME
@@ -127,12 +124,12 @@ class Rollouts:
         recording: str | Path,
         backend: Backend,
         *,
+        reader: RecordingReader,
         workers: int = 1,
-        reader: RecordingReader | None = None,
     ) -> None:
         self.recording = Path(recording)
         self.workers = workers
-        self._reader = GO2_READER if reader is None else reader
+        self._reader = reader
         self.streams = read_recording(self.recording, self._reader)  # warms the worker cache
         self._backend = backend
         self._pool: concurrent.futures.ProcessPoolExecutor | None = None

@@ -17,7 +17,7 @@
     python -m dimos.robot.unitree.go2.sim.sysid.probe REC.mcap NET.bin \
         --preset measured --workers 16
 
-:mod:`~dimos.robot.unitree.go2.sim.sysid.identify` asks what a recording
+:mod:`~dimos.simulation.sysid.identify` asks what a recording
 resolves through Mode-A replay channels. This asks the closed-loop version of
 the same prior question: push each knob to the ENDS of its admissible range,
 roll the real policy, and see which grounding statistics move — judged
