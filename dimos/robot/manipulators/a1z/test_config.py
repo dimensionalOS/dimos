@@ -37,11 +37,11 @@ def test_flange_model_uses_native_flange_tip() -> None:
 def test_gripper_model_contains_configured_end_effector_frame() -> None:
     config = make_a1z_model_config(has_gripper=True)
     root = ET.fromstring(config.model.load().xml)
-    joint = root.find("joint[@name='gripper_eef_joint']")
+    joint = root.find("joint[@name='gripper_eef_link_joint']")
 
     assert root.find("link[@name='gripper_eef_link']") is not None
     assert joint is not None
-    assert joint.attrib == {"name": "gripper_eef_joint", "type": "fixed"}
+    assert joint.attrib == {"name": "gripper_eef_link_joint", "type": "fixed"}
     assert joint.find("parent").attrib == {"link": "arm_link6"}
     assert joint.find("child").attrib == {"link": "gripper_eef_link"}
     origin = joint.find("origin")
