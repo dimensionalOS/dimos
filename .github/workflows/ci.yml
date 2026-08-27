@@ -520,7 +520,7 @@ jobs:
           - os: Linux
             # GitHub Actions only honours `container:` on Linux runners.
             container:
-              image: ghcr.io/dimensionalos/ros-dev@${{ needs.compute-ros-pin.outputs.digest }}
+              image: dimensional/ros-dev@${{ needs.compute-ros-pin.outputs.digest }}
               # Hard-cap container RAM so a runaway test OOMs inside the container, not
               # as a host global-OOM that takes out sshd/tmux.
               options: --memory=6g --memory-swap=6g
@@ -540,7 +540,6 @@ jobs:
     continue-on-error: ${{ matrix.experimental }}
     permissions:
       contents: read  # For checkout
-      packages: read  # For pulling the ros-dev container from ghcr.io
       id-token: write  # For codecov-action's OIDC upload
     container: ${{ matrix.container }}
 
@@ -676,7 +675,6 @@ jobs:
     runs-on: [self-hosted, Linux, large]
     permissions:
       contents: read  # For checkout
-      packages: read  # For pulling the ros-dev container from ghcr.io
       id-token: write  # For codecov-action's OIDC upload
 
     steps:

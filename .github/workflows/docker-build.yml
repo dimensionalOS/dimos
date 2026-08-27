@@ -1,7 +1,5 @@
 name: docker-build
 on:
-  # TEMPORARY (revert before merge): seed Docker Hub from the migration PR
-  pull_request:
   push:
     branches: [main]
     paths:
@@ -35,8 +33,7 @@ jobs:
       - name: Check if full rebuild
         id: force
         run: |
-          # TEMPORARY (revert before merge): pull_request also forces a full rebuild
-          if [[ "${{ github.event_name }}" == "schedule" || "${{ github.event_name }}" == "workflow_dispatch" || "${{ github.event_name }}" == "pull_request" ]]; then
+          if [[ "${{ github.event_name }}" == "schedule" || "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             echo "force=true" >> "$GITHUB_OUTPUT"
           else
             echo "force=false" >> "$GITHUB_OUTPUT"
@@ -66,8 +63,6 @@ jobs:
         run: |
           case "${GITHUB_REF_NAME}" in
             main) branch_tag="latest" ;;
-            # TEMPORARY (revert before merge): PR merge ref (NN/merge) → latest
-            */merge) branch_tag="latest" ;;
             *)
               branch_tag=$(echo "${GITHUB_REF_NAME}" \
                   | tr '[:upper:]' '[:lower:]' \

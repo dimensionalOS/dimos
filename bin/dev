@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 REPO_ROOT=$(git rev-parse --show-toplevel)
 REL_PATH=$(realpath --relative-to="$REPO_ROOT" "$(pwd)")
-IMAGE="ghcr.io/dimensionalos/ros-dev"
-IMAGE_TAG="$IMAGE:dev"
+IMAGE="dimensional/ros-dev"
+IMAGE_TAG="$IMAGE:latest"
 
 image_exists() {
     docker image inspect "${IMAGE_TAG}" &>/dev/null
@@ -63,7 +63,7 @@ build_image() {
     docker build \
         --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) \
         --build-arg GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD) \
-        -t "ghcr.io/dimensionalos/ros-dev:${image_tag}" -f docker/dev/Dockerfile .
+        -t "dimensional/ros-dev:${image_tag}" -f docker/dev/Dockerfile .
 }
 
 remove_image() {
