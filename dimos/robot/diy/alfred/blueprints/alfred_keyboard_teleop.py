@@ -42,9 +42,6 @@ alfred_keyboard_teleop = (
     autoconnect(
         RealSenseCamera.blueprint(
             fps=30,
-            # Nothing in this stack consumes depth, and raw depth is ~24 MB/s of
-            # multicast that every worker's kernel socket has to swallow.
-            enable_depth=False,
             enable_imu=True,
             camera_name="d455",
             serial_number=D455_SERIAL,
