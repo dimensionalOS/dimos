@@ -24,7 +24,6 @@ from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.hardware.sensors.lidar.livox.module import Mid360
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.diy.alfred.blueprints.alfred_mls_nav import D455_MOUNT, D455_SERIAL
@@ -45,12 +44,8 @@ alfred_keyboard_teleop = autoconnect(
         serial_number=D455_SERIAL,
         base_transform=D455_MOUNT,
     ),
-    Mid360.blueprint(lidar_ip=MID360_IP, frame_id="mid360_link").remappings(
-        [
-            (Mid360, "lidar", "livox_lidar"),
-            (Mid360, "imu", "livox_imu"),
-        ]
-    ),
+    # No raw Mid360 module: the lidar streams to a single host endpoint, and the
+    # Point-LIO native owns it, so a second Livox SDK connection gets no data.
     PointLio.blueprint(lidar_ip=MID360_IP).remappings(
         [
             (PointLio, "lidar", "pointlio_lidar"),
