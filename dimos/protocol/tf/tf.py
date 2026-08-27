@@ -48,6 +48,8 @@ class TFLookup(Protocol):
         child_frame: str,
         time_point: float | None = None,
         time_tolerance: float | None = None,
+        *,
+        forward_tolerance: float = 0.0,
     ) -> Transform | None: ...
 
 
