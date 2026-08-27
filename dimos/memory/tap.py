@@ -28,6 +28,7 @@ from contextlib import contextmanager
 import fnmatch
 import os
 from pathlib import Path
+import queue
 import threading
 import time
 from typing import TYPE_CHECKING, Any, Protocol
@@ -58,12 +59,32 @@ def recording_dir() -> Path:
 
 
 class TransportRecorder:
-    """Appends every message seen on a tapped transport to ``store``, one stream per name."""
+    """Appends every message seen on a tapped transport to ``store``, one stream per name.
 
-    def __init__(self, store: SqliteStore, topics: str = "*") -> None:
+    Transport callbacks only enqueue; one writer thread does the encoding and SQLite
+    work, so a slow append never stalls a transport's handler thread. When the queue
+    is full the message is dropped and counted.
+    """
+
+    def __init__(self, store: SqliteStore, topics: str = "*", queue_size: int = 1000) -> None:
         self.store = store
         self._globs = topics.split(",")
-        self._lock = threading.Lock()
+        self._queue: queue.Queue[tuple[Stream[Any], Any, float] | None] = queue.Queue(queue_size)
+        self.dropped = 0
+        self._writer = threading.Thread(target=self._drain, name="record-writer", daemon=True)
+        self._writer.start()
+
+    def _drain(self) -> None:
+        while (item := self._queue.get()) is not None:
+            stream, msg, ts = item
+            stream.append(msg, ts=ts)
+
+    def close(self) -> None:
+        """Flush queued messages and stop the writer."""
+        self._queue.put(None)
+        self._writer.join()
+        if self.dropped:
+            logger.warning("--record: dropped %d messages (writer queue full)", self.dropped)
 
     def tap(
         self, name: str, stream_type: type, transport: Subscribable
@@ -77,8 +98,10 @@ class TransportRecorder:
         stream: Stream[Any] = self.store.stream(name, stream_type)
 
         def on_msg(msg: Any) -> None:
-            with self._lock:
-                stream.append(msg, ts=getattr(msg, "ts", None) or time.time())
+            try:
+                self._queue.put_nowait((stream, msg, getattr(msg, "ts", None) or time.time()))
+            except queue.Full:
+                self.dropped += 1
 
         logger.info("Recording %s (%s) via %s", name, stream_type.__name__, transport)
         return transport.subscribe(on_msg)
@@ -103,4 +126,5 @@ def recording(transports: Mapping[tuple[str, type], Subscribable]) -> Iterator[N
     finally:
         for unsubscribe in unsubscribes:
             unsubscribe()
+        recorder.close()
         store.stop()

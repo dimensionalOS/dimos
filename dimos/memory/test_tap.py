@@ -53,10 +53,25 @@ def test_taps_matching_dimos_streams(tmp_path: Path) -> None:
     assert unsub is not None
     unsub()
     odom.publish(PoseStamped(ts=4.0))
+    rec.close()
     store.stop()
 
     store = SqliteStore(path=str(path), must_exist=True)
     store.start()
     assert store.list_streams() == ["odom"]
     assert [o.ts for o in store.stream("odom", PoseStamped)] == [1.0, 2.0]
+    store.stop()
+
+
+def test_full_queue_drops_and_counts(tmp_path: Path) -> None:
+    store = SqliteStore(path=str(tmp_path / "memory.db"))
+    store.start()
+    rec = TransportRecorder(store, queue_size=1)
+    rec._queue.put(None)  # stop the writer so nothing drains
+    rec._writer.join()
+    odom = _Transport()
+    rec.tap("odom", PoseStamped, odom)
+    odom.publish(PoseStamped(ts=1.0))
+    odom.publish(PoseStamped(ts=2.0))
+    assert rec.dropped == 1
     store.stop()
