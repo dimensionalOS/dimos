@@ -153,8 +153,8 @@ class CuvslamConfig(NativeModuleConfig):
     # no default: this choice changes what inputs are required
     camera_mode: Literal["mono", "stereo", "rgbd"]
     # reject way-too-fast movements, like moving a large box that takes up 90% of the camera view
-    speed_gate_max_linear: float = 5.0
-    speed_gate_max_angular: float = 12.0
+    speed_gate_max_linear: float = 5.0  # meters per sec
+    speed_gate_max_angular: float = 12.0  # radians per sec
     # "reject movements that cuVSLAM is not confident about"
     # good movements usually have a confidence of around 0.01-0.3, degenerate ones are 5-330
     # units = standard deviations of translation in meters
