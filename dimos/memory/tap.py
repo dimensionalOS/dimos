@@ -119,10 +119,12 @@ def recording(transports: Mapping[tuple[str, type], Transport[Any]]) -> Iterator
         u for (name, t), tr in transports.items() if (u := recorder.tap(name, t, tr)) is not None
     ]
     if not unsubscribes:
-        logger.warning(
-            "--record-topics %r matched none of: %s",
-            global_config.record_topics,
-            ", ".join(sorted({n for n, _ in transports})),
+        recorder.close()
+        store.stop()
+        path.unlink()
+        raise RuntimeError(
+            f"--record-topics {global_config.record_topics!r} matched none of: "
+            + ", ".join(sorted({n for n, _ in transports}))
         )
     logger.info("Recording to %s", path)
     try:

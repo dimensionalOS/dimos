@@ -18,6 +18,7 @@ from typing import Any
 
 import pytest
 
+from dimos.core.global_config import global_config
 from dimos.core.stream import Transport
 from dimos.memory import tap
 from dimos.memory.store.sqlite import SqliteStore
@@ -105,3 +106,17 @@ def test_append_failure_does_not_kill_writer(tmp_path: Path) -> None:
     store.start()
     assert [o.ts for o in store.stream("odom", PoseStamped)] == [2.0]
     store.stop()
+
+
+def test_recording_fails_loudly_when_no_stream_matches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tap, "RECORDINGS_DIR", tmp_path)
+    monkeypatch.setattr(global_config, "record", "sqlite")
+    monkeypatch.setattr(global_config, "record_topics", "color_image2")
+    with pytest.raises(RuntimeError, match="matched none of: lidar, odom"):
+        with tap.recording(
+            {("odom", PoseStamped): _Transport(), ("lidar", PoseStamped): _Transport()}
+        ):
+            pass
+    assert not any(tmp_path.rglob("memory.db"))
