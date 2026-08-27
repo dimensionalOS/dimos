@@ -82,9 +82,17 @@ SEAMS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ("engines.model", "engines.mujoco", "engines.mjx", "engines.bench"),
     ),
     "dimos.robot.unitree.g1.sim": (
-        ("plant", "ranges", "sysid.fit", "sysid.identify", "sysid.ingest", "sysid.replay"),
-        # groot_mujoco is the closed-loop viewer script: an engine script by nature.
-        ("engines.mujoco", "groot_mujoco", "model"),
+        (
+            "plant",
+            "policy",
+            "ranges",
+            "sysid.fit",
+            "sysid.identify",
+            "sysid.ingest",
+            "sysid.replay",
+        ),
+        # groot_mujoco and sysid.ground drive MjData directly: engine scripts by nature.
+        ("engines.mujoco", "groot_mujoco", "model", "sysid.ground"),
     ),
 }
 

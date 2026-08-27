@@ -41,6 +41,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from dimos.simulation.sysid.rotations import pitch_roll_of as pitch_roll_of, yaw_of as yaw_of
+
 RESAMPLE_HZ = 100.0
 VELOCITY_WINDOW_S = 0.4
 
@@ -88,27 +90,6 @@ def velocity(
     grid, p = resample(t, pos, rate)
     p = _moving_average(p, max(2, round(window_s * rate)))
     return grid, np.gradient(p, 1.0 / rate, axis=0)
-
-
-def yaw_of(quat: np.ndarray) -> np.ndarray:
-    """Heading angle from (n, 4) wxyz quaternions."""
-    w, x, y, z = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
-    yaw: np.ndarray = np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
-    return yaw
-
-
-def pitch_roll_of(quat: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Pitch and roll from (n, 4) wxyz quaternions, ZYX convention.
-
-    Only their *std* is comparable sim-to-real: a constant error in the room
-    calibration or the mount shifts the mean but not the spread. Unlike
-    anything derived from position, these are immune to the tracker
-    translation — rotation carries no lever arm.
-    """
-    w, x, y, z = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
-    pitch = -np.arcsin(np.clip(2 * (x * z - w * y), -1.0, 1.0))
-    roll = np.arctan2(2 * (y * z + w * x), 1 - 2 * (x * x + y * y))
-    return pitch, roll
 
 
 # A candidate first peak yields to a peak this much stronger (normalised-ac

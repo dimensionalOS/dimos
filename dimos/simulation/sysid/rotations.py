@@ -81,3 +81,24 @@ def rotation_angle(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     cos = np.clip((np.trace(rel, axis1=1, axis2=2) - 1) / 2, -1, 1)
     out: np.ndarray = np.arccos(cos)
     return out
+
+
+def yaw_of(quat: np.ndarray) -> np.ndarray:
+    """Heading angle from (n, 4) wxyz quaternions."""
+    w, x, y, z = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
+    yaw: np.ndarray = np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+    return yaw
+
+
+def pitch_roll_of(quat: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Pitch and roll from (n, 4) wxyz quaternions, ZYX convention.
+
+    Only their *std* is comparable sim-to-real: a constant error in the room
+    calibration or the mount shifts the mean but not the spread. Unlike
+    anything derived from position, these are immune to the tracker
+    translation — rotation carries no lever arm.
+    """
+    w, x, y, z = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
+    pitch = -np.arcsin(np.clip(2 * (x * z - w * y), -1.0, 1.0))
+    roll = np.arctan2(2 * (y * z + w * x), 1 - 2 * (x * x + y * y))
+    return pitch, roll

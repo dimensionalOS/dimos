@@ -38,16 +38,21 @@ import mujoco
 import mujoco.viewer
 import numpy as np
 from numpy.typing import NDArray
-import onnxruntime as ort
 
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
-    _DEFAULT_POSITIONS_29,
     G1_GROOT_KD,
     G1_GROOT_KP,
 )
 from dimos.memory.cli.dataset import open_store
 from dimos.robot.unitree.g1.sim import model as g1_model
 from dimos.robot.unitree.g1.sim.plant import TORQUE_LIMITS
+from dimos.robot.unitree.g1.sim.policy import (
+    DEFAULT_29,
+    NUM_ACTIONS,
+    NUM_MOTORS,
+    POLICY_HZ,
+    GrootPolicy,
+)
 from dimos.robot.unitree.g1.sim.ranges import load_preset
 from dimos.robot.unitree.g1.sim.sysid.ingest import world_T_pelvis
 from dimos.simulation.sysid.plant import actuator_step
@@ -56,22 +61,6 @@ from dimos.utils.data import LfsPath
 ROBOT_MJCF = g1_model.ROBOT_MJCF
 
 
-# Policy contract (see G1GrootWBCTask docstring). Changing these drifts the
-# policy away from what it was trained for.
-OBS_DIM = 86
-OBS_HISTORY = 6
-NUM_ACTIONS = 15
-NUM_MOTORS = 29
-ACTION_SCALE = 0.25
-ANG_VEL_SCALE = 0.5
-DOF_POS_SCALE = 1.0
-DOF_VEL_SCALE = 0.05
-CMD_SCALE = np.array([2.0, 2.0, 0.5], dtype=np.float32)
-CMD_NORM_THRESHOLD = 0.05
-HEIGHT_CMD = 0.74
-POLICY_HZ = 50.0
-
-DEFAULT_29 = np.asarray(_DEFAULT_POSITIONS_29, dtype=np.float32)
 KP = np.asarray(G1_GROOT_KP, dtype=np.float64)
 KD = np.asarray(G1_GROOT_KD, dtype=np.float64)
 
@@ -114,64 +103,6 @@ def touchdown_z(model: mujoco.MjModel, data: mujoco.MjData) -> float:
         else:
             hi = mid
     return lo
-
-
-class GrootPolicy:
-    """Balance + walk ONNX pair behind one step() call."""
-
-    def __init__(self, model_dir: Path) -> None:
-        providers = ["CPUExecutionProvider"]
-        if "CUDAExecutionProvider" in ort.get_available_providers():
-            providers.insert(0, "CUDAExecutionProvider")
-        self._balance = ort.InferenceSession(str(model_dir / "balance.onnx"), providers=providers)
-        self._walk = ort.InferenceSession(str(model_dir / "walk.onnx"), providers=providers)
-        self._balance_in = self._balance.get_inputs()[0].name
-        self._walk_in = self._walk.get_inputs()[0].name
-        self._last_action = np.zeros(NUM_ACTIONS, dtype=np.float32)
-        self._buf = np.zeros((1, OBS_DIM * OBS_HISTORY), dtype=np.float32)
-        self._first = True
-
-    def step(
-        self,
-        cmd: NDArray[np.float32],
-        gyro: NDArray[np.float32],
-        quat_wxyz: NDArray[np.float64],
-        q29: NDArray[np.float32],
-        dq29: NDArray[np.float32],
-    ) -> NDArray[np.float32]:
-        w, x, y, z = quat_wxyz
-        gravity = np.array(
-            [
-                2.0 * (-x * z + w * y),
-                2.0 * (-y * z - w * x),
-                -(w * w - x * x - y * y + z * z),
-            ],
-            dtype=np.float32,
-        )
-
-        obs: NDArray[np.float32] = np.zeros(OBS_DIM, dtype=np.float32)
-        obs[0:3] = cmd * CMD_SCALE
-        obs[3] = HEIGHT_CMD
-        obs[7:10] = gyro * ANG_VEL_SCALE
-        obs[10:13] = gravity
-        obs[13:42] = (q29 - DEFAULT_29) * DOF_POS_SCALE
-        obs[42:71] = dq29 * DOF_VEL_SCALE
-        obs[71:86] = self._last_action
-
-        if self._first:
-            self._buf[0, :] = np.tile(obs, OBS_HISTORY)
-            self._first = False
-        else:
-            self._buf[0, : OBS_DIM * (OBS_HISTORY - 1)] = self._buf[0, OBS_DIM:]
-            self._buf[0, OBS_DIM * (OBS_HISTORY - 1) :] = obs
-
-        if float(np.linalg.norm(cmd)) <= CMD_NORM_THRESHOLD:
-            raw = self._balance.run(None, {self._balance_in: self._buf})[0]
-        else:
-            raw = self._walk.run(None, {self._walk_in: self._buf})[0]
-
-        self._last_action[:] = raw[0, :NUM_ACTIONS].astype(np.float32)
-        return self._last_action * ACTION_SCALE + DEFAULT_29[:NUM_ACTIONS]
 
 
 def load_commands(db: Path, stream: str) -> tuple[list[float], NDArray[np.float32]]:
