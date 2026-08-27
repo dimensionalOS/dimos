@@ -69,6 +69,7 @@ class RunModuleB(Module):
         (["dimos", "--simulation"], ["dimos", "--simulation", "mujoco"]),
         (["dimos", "--record", "run", "go2"], ["dimos", "--record", "sqlite", "run", "go2"]),
         (["dimos", "--record", "sqlite", "run"], ["dimos", "--record", "sqlite", "run"]),
+        (["dimos", "--record", "mcap", "run"], ["dimos", "--record", "mcap", "run"]),
         # Explicit simulator — left untouched.
         (["dimos", "--simulation", "mujoco", "run"], ["dimos", "--simulation", "mujoco", "run"]),
         (["dimos", "--simulation", "dimsim", "run"], ["dimos", "--simulation", "dimsim", "run"]),

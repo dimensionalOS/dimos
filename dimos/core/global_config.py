@@ -60,7 +60,7 @@ class GlobalConfig(BaseSettings):
     simulation: str = ""
     replay: bool = False
     replay_db: str = "go2_short"
-    record: Literal["", "sqlite"] = ""
+    record: Literal["", "sqlite", "mcap"] = ""
     record_topics: str = "*"  # comma-separated globs on the topic slug (/a/b -> a_b)
     new_memory: bool = False
     # How every zenoh session this process opens joins the network.

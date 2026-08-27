@@ -16,8 +16,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.tap import TransportRecorder
+from dimos.memory.tap import TransportRecorder, open_record_store
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
@@ -61,6 +63,29 @@ def test_taps_matching_dimos_streams(tmp_path: Path) -> None:
     assert store.list_streams() == ["odom"]
     assert [o.ts for o in store.stream("odom", PoseStamped)] == [1.0, 2.0]
     store.stop()
+
+
+def test_mcap_recording_round_trips(tmp_path: Path) -> None:
+    pytest.importorskip("mcap")
+    from dimos.memory.store.mcap import McapStore
+
+    store, path = open_record_store(tmp_path, "mcap")
+    store.start()
+    rec = TransportRecorder(store)
+    odom = _Transport()
+    rec.tap("odom", PoseStamped, odom)
+    odom.publish(PoseStamped(ts=1.0))
+    odom.publish(PoseStamped(ts=2.0))
+    rec.close()
+    store.stop()
+
+    # No codec map: the schema name written by McapWriteStore is enough to decode.
+    read = McapStore(path=str(path), codecs={})
+    assert read.list_streams() == ["odom"]
+    observations = list(read.stream("odom"))
+    assert [o.ts for o in observations] == [1.0, 2.0]
+    assert all(isinstance(o.data, PoseStamped) for o in observations)
+    read.stop()
 
 
 def test_full_queue_drops_and_counts(tmp_path: Path) -> None:

@@ -75,7 +75,7 @@ main = typer.Typer(
 load_dotenv()
 
 SIMULATORS = ("mujoco", "dimsim")
-RECORDERS = ("sqlite",)
+RECORDERS = ("sqlite", "mcap")
 
 # Flags with an optional value; bare `--flag` means the first choice.
 OPTIONAL_VALUE_FLAGS = {

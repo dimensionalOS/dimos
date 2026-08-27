@@ -15,8 +15,9 @@
 """``--record``: subscribe to every stream transport in the blueprint and write one store.
 
 Runs in the ``dimos run`` process. Each stream is tapped on its own transport (LCM,
-Zenoh, SHM, ...), so whatever carries it is what gets recorded. One ``memory.db`` per
-run at ``recordings/<run-id>/``, streams named by their blueprint stream name.
+Zenoh, SHM, ...), so whatever carries it is what gets recorded. One store per run at
+``recordings/<run-id>/`` — ``memory.db`` for ``--record sqlite``, ``memory.mcap`` for
+``--record mcap`` — streams named by their blueprint stream name.
 Poses are not resolved here; ``tf`` is recorded like any other stream and
 ``dimos map pose-fill`` derives poses on read.
 """
@@ -35,11 +36,11 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.constants import RECORDINGS_DIR
 from dimos.core.global_config import global_config
-from dimos.memory.store.sqlite import SqliteStore
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.core.stream import Transport
+    from dimos.memory.store.base import Store
     from dimos.memory.stream import Stream
 
 logger = setup_logger()
@@ -62,7 +63,7 @@ class TransportRecorder:
     ``DROP_WARNING_INTERVAL_S`` so a lossy recording is visible while it is running.
     """
 
-    def __init__(self, store: SqliteStore, topics: str = "*", queue_size: int = 1000) -> None:
+    def __init__(self, store: Store, topics: str = "*", queue_size: int = 1000) -> None:
         self.store = store
         self._globs = topics.split(",")
         self._queue: queue.Queue[tuple[Stream[Any], Any, float] | None] = queue.Queue(queue_size)
@@ -116,14 +117,28 @@ class TransportRecorder:
         return transport.subscribe(on_msg)
 
 
+def open_record_store(directory: Path, record_format: str) -> tuple[Store, Path]:
+    """Open the store ``--record <record_format>`` writes into *directory*."""
+    if record_format == "mcap":
+        from dimos.memory.store.mcap import McapWriteStore
+
+        path = directory / "memory.mcap"
+        return McapWriteStore(path=str(path)), path
+    if record_format == "sqlite":
+        from dimos.memory.store.sqlite import SqliteStore
+
+        path = directory / "memory.db"
+        return SqliteStore(path=str(path)), path
+    raise ValueError(f"unknown --record format {record_format!r}")
+
+
 @contextmanager
 def recording(transports: Mapping[tuple[str, type], Transport[Any]]) -> Iterator[None]:
     """Record every stream in *transports* for the duration of the block when ``--record`` is set."""
     if not global_config.record or global_config.replay:
         yield
         return
-    path = recording_dir() / "memory.db"
-    store = SqliteStore(path=str(path))
+    store, path = open_record_store(recording_dir(), global_config.record)
     store.start()
     recorder = TransportRecorder(store, global_config.record_topics)
     unsubscribes = [
