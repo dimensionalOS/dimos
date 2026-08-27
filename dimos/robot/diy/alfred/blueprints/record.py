@@ -91,8 +91,27 @@ class SerializedStartRealSense(RealSenseCamera):
 
     _START_LOCK = "/tmp/dimos_realsense_start.lock"
 
-    _START_ATTEMPTS = 4
-    _RETRY_DELAY_S = 6.0
+    _START_ATTEMPTS = 5
+    _RETRY_DELAY_S = 15.0
+    _ENUM_WAIT_S = 30.0
+
+    def _wait_for_device(self) -> None:
+        """Block until our serial is enumerated; RSUSB opens reset the device
+        and it takes ~10s to come back, so opening blind fails spuriously."""
+        import pyrealsense2 as rs
+
+        deadline = time.monotonic() + self._ENUM_WAIT_S
+        while time.monotonic() < deadline:
+            serials = [
+                d.get_info(rs.camera_info.serial_number)
+                for d in rs.context().query_devices()
+            ]
+            if self.config.serial_number in serials:
+                time.sleep(2.0)  # let the fresh enumeration settle
+                return
+            time.sleep(1.0)
+        logger.warning("Device %s not enumerated after %ss; trying anyway",
+                       self.config.serial_number, self._ENUM_WAIT_S)
 
     @rpc
     def start(self) -> None:
@@ -102,6 +121,7 @@ class SerializedStartRealSense(RealSenseCamera):
                 last: Exception | None = None
                 for attempt in range(1, self._START_ATTEMPTS + 1):
                     try:
+                        self._wait_for_device()
                         super().start()
                         break
                     except RuntimeError as e:
