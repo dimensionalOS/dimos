@@ -50,7 +50,7 @@ def test_taps_matching_dimos_streams(tmp_path: Path) -> None:
     path = tmp_path / "memory.db"
     store = SqliteStore(path=str(path))
     store.start()
-    rec = TransportRecorder(store, topics="odom,lidar")
+    rec = TransportRecorder(store, topics="/odom, lidar")
     odom, goal, raw = _Transport(), _Transport(), _Transport()
     unsub = rec.tap("odom", PoseStamped, odom)
     assert rec.tap("goal", PoseStamped, goal) is None  # filtered out

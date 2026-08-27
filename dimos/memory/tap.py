@@ -61,7 +61,7 @@ class TransportRecorder:
 
     def __init__(self, store: SqliteStore, topics: str = "*", queue_size: int = 1000) -> None:
         self.store = store
-        self._globs = topics.split(",")
+        self._globs = [g.strip().strip("/") for g in topics.split(",")]
         self._queue: queue.Queue[tuple[Stream[Any], Any, float] | None] = queue.Queue(queue_size)
         self.dropped = 0
         self._writer = threading.Thread(target=self._drain, name="record-writer", daemon=True)
@@ -118,6 +118,12 @@ def recording(transports: Mapping[tuple[str, type], Transport[Any]]) -> Iterator
     unsubscribes = [
         u for (name, t), tr in transports.items() if (u := recorder.tap(name, t, tr)) is not None
     ]
+    if not unsubscribes:
+        logger.warning(
+            "--record-topics %r matched none of: %s",
+            global_config.record_topics,
+            ", ".join(sorted({n for n, _ in transports})),
+        )
     logger.info("Recording to %s", path)
     try:
         yield
