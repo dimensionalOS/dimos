@@ -61,7 +61,7 @@ demo_cuvslam_realsense = (
             enable_color=False,
             enable_depth=False,
         ),
-        DimSlam.blueprint(),
+        DimSlam.blueprint(camera_mode="stereo"),
         OdometryHist.blueprint(),
         vis_module(
             global_config.viewer,

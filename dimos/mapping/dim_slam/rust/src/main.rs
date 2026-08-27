@@ -18,7 +18,7 @@
 mod imu_info;
 mod msg_convert;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use dim_slam::nalgebra::Isometry3;
 use dim_slam::{
@@ -41,20 +41,21 @@ struct DimSlamConfig {
     rectified: bool,
     use_gpu: bool,
     /// Fused as a drifting source, so it must also appear in source_frames.
-    visual_odom_frame: String,
-    rig_frame: String,
+    visual_odom_frame_id: String,
+    rig_frame_id: String,
+    map_frame_id: String,
     covariance_gate_translation_std: f64,
     speed_gate_max_linear: f64,
     speed_gate_max_angular: f64,
     /// cuVSLAM's own inertial mode, separate from the filter's use_imu.
     cuvslam_enable_imu: bool,
-    depth_units_per_meter: f64,
+    frame_id_to_depth_units_per_meter: HashMap<String, f64>,
     depth_cloud_min_range: f64,
     depth_cloud_max_range: f64,
     depth_cloud_decimation: i64,
 
-    odom_frame: String,
-    base_frame: String,
+    odom_frame_id: String,
+    output_frame_id: String,
     publish_tf: bool,
     publish_rate: f64,
     replay_buffer_seconds: f64,
@@ -150,26 +151,31 @@ struct DimSlam {
 
 impl DimSlam {
     async fn init(&mut self) {
-        self.vo = Some(CuvslamCore::new(CuvslamOdometryConfig {
+        let vo = CuvslamCore::new(CuvslamOdometryConfig {
             camera_mode: self.config.camera_mode.clone(),
             camera_frames: self.config.camera_frames.clone(),
             rectified: self.config.rectified,
             use_gpu: self.config.use_gpu,
-            odom_frame: self.config.visual_odom_frame.clone(),
-            base_frame: self.config.base_frame.clone(),
-            rig_frame: self.config.rig_frame.clone(),
+            odom_frame_id: self.config.visual_odom_frame_id.clone(),
+            output_frame_id: self.config.output_frame_id.clone(),
+            rig_frame_id: self.config.rig_frame_id.clone(),
+            map_frame_id: self.config.map_frame_id.clone(),
             covariance_gate_translation_std: self.config.covariance_gate_translation_std,
             speed_gate_max_linear: self.config.speed_gate_max_linear,
             speed_gate_max_angular: self.config.speed_gate_max_angular,
             enable_imu: self.config.cuvslam_enable_imu,
-            depth_units_per_meter: self.config.depth_units_per_meter,
+            frame_id_to_depth_units_per_meter: self
+                .config
+                .frame_id_to_depth_units_per_meter
+                .clone(),
             depth_cloud_min_range: self.config.depth_cloud_min_range,
             depth_cloud_max_range: self.config.depth_cloud_max_range,
             depth_cloud_decimation: self.config.depth_cloud_decimation,
-        }));
+        });
+        self.vo = Some(vo.unwrap_or_else(|error| panic!("{error}")));
         self.fusion = Some(FusionCore::new(OdometryFusionConfig {
-            odom_frame: self.config.odom_frame.clone(),
-            base_frame: self.config.base_frame.clone(),
+            odom_frame: self.config.odom_frame_id.clone(),
+            base_frame: self.config.output_frame_id.clone(),
             publish_rate: self.config.publish_rate,
             replay_buffer_seconds: self.config.replay_buffer_seconds,
             mahalanobis_gate: self.config.mahalanobis_gate,
@@ -243,7 +249,7 @@ impl DimSlam {
         }
         let Some(base_from_imu) = self
             .tf
-            .get_latest(&self.config.base_frame, &msg.header.frame_id)
+            .get_latest(&self.config.output_frame_id, &msg.header.frame_id)
         else {
             warn_throttled!(
                 std::time::Duration::from_secs(10),

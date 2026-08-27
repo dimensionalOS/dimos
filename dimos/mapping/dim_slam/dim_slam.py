@@ -203,7 +203,8 @@ class DimSlamConfig(NativeModuleConfig):
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
 
-    camera_mode: Literal["stereo", "mono", "rgbd"] = "stereo"
+    # no default: this choice changes what inputs are required
+    camera_mode: Literal["mono", "stereo", "rgbd"]
     # Empty: auto-discover from camera_info.
     camera_frames: list[str] = Field(default_factory=list)
     # Asserted, not performed.
@@ -214,9 +215,11 @@ class DimSlamConfig(NativeModuleConfig):
 
     # The tracker's own world frame, drifting freely; the filter fuses it as a
     # drifting source, so it must appear in source_frames.
-    visual_odom_frame: str = "visual_odom"
-    # Frame the cuVSLAM rig is built in. Empty means base_frame.
-    rig_frame: str = ""
+    visual_odom_frame_id: str = "visual_odom"
+    # Frame the cuVSLAM rig is built in. Empty means output_frame_id.
+    rig_frame_id: str = ""
+    # Carried for whatever consumes the loop-closed pose; nothing here publishes map -> odom.
+    map_frame_id: str = "map"
 
     # cuVSLAM's Inertial mode: the stereo pair plus one IMU. The noise model and frame
     # come from the imu_info stream. Separate from use_imu, which feeds the fusion
@@ -228,8 +231,10 @@ class DimSlamConfig(NativeModuleConfig):
     # Frame-to-frame m/s and rad/s, catching teleports the covariance gate misses; 0 disables.
     speed_gate_max_linear: float = 5.0
     speed_gate_max_angular: float = 12.0
-    # Raw depth units per metre; cuVSLAM assumes 1 and depth images are 16-bit millimetres.
-    depth_units_per_meter: float = 1000.0
+    # Raw depth units per metre, keyed by the depth image's frame_id; 16-bit millimetre
+    # depth is 1000. Scaling one camera's depth by another's factor yields a
+    # plausible-looking wrong map, so an unlisted frame is dropped rather than guessed at.
+    frame_id_to_depth_units_per_meter: dict[str, float] = Field(default_factory=dict)
     # Range gate on the published depth_cloud, metres. Stereo depth error grows as range
     # squared, so the far gate decides whether the cloud is worth mapping with; 0 leaves
     # it open.
@@ -238,12 +243,9 @@ class DimSlamConfig(NativeModuleConfig):
     # One point per k x k depth block (median of in-gate depths). <= 1 emits every pixel.
     depth_cloud_decimation: int = 1
 
-    map_frame: str = "map"
-    odom_frame: str = "odom"
-    base_frame: str = "base_link"
-    # map->odom can only be identity: this module carries no map correction yet.
-    publish_map_to_odom: bool = True
-    # Off when something downstream owns odom -> base_frame.
+    odom_frame_id: str = "odom"
+    output_frame_id: str = "base_link"
+    # Off when something downstream owns odom -> output_frame_id.
     publish_tf: bool = True
 
     # The filter itself steps at the IMU rate; this is only how often it emits.
@@ -278,7 +280,7 @@ class DimSlamConfig(NativeModuleConfig):
     initial_bias_std: float = 0.05
 
     # One entry per source, matched against each message's header.frame_id. A source
-    # whose frame is odom_frame is fused absolutely; anything else is fused as
+    # whose frame is odom_frame_id is fused absolutely; anything else is fused as
     # filter-anchored deltas, since its own pose has drifted.
     source_frames: list[str] = Field(default_factory=lambda: ["visual_odom"])
     # 6 per source, [x y z roll pitch yaw] then [vx vy vz wx wy wz]: below zero takes the
@@ -308,17 +310,65 @@ class DimSlamConfig(NativeModuleConfig):
             raise ValueError(f"use_imu needs the IMU's noise figures: {', '.join(missing)}")
         return self
 
+    @model_validator(mode="after")
+    def _mode_combinations(self) -> DimSlamConfig:
+        # cuVSLAM has no inertial mono or rgbd, so the flag would be dropped on the floor.
+        if self.cuvslam_enable_imu and self.camera_mode != "stereo":
+            raise ValueError(
+                f"cuvslam_enable_imu needs camera_mode='stereo', not {self.camera_mode!r}"
+            )
+        # cuVSLAM carries a single global depth scale, so rgbd can serve only one stream;
+        # a second entry would be applied to the wrong camera.
+        if self.camera_mode == "rgbd" and len(self.frame_id_to_depth_units_per_meter) != 1:
+            raise ValueError(
+                "camera_mode='rgbd' needs exactly one frame_id_to_depth_units_per_meter "
+                f"entry, got {self.frame_id_to_depth_units_per_meter}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _sources_are_fusable(self) -> DimSlamConfig:
+        # The tracker's pose only reaches the filter as a source under this frame.
+        if self.visual_odom_frame_id not in self.source_frames:
+            raise ValueError(
+                f"visual_odom_frame_id {self.visual_odom_frame_id!r} is missing from source_frames "
+                f"{self.source_frames}, so the visual odometry would never be fused"
+            )
+        # The native asserts these lengths; catching it here names the offender.
+        for name in ("source_pose_variances", "source_twist_variances"):
+            values = getattr(self, name)
+            if len(values) != len(self.source_frames) * 6:
+                raise ValueError(
+                    f"{name} needs 6 entries per source frame: expected "
+                    f"{len(self.source_frames) * 6} for {self.source_frames}, got {len(values)}"
+                )
+        if len(self.constraint_twist_variances) != 6:
+            raise ValueError(
+                "constraint_twist_variances needs 6 entries, got "
+                f"{len(self.constraint_twist_variances)}"
+            )
+        # Zero drops a dimension, so an all-zero source is fused in no dimension at all.
+        for index, frame in enumerate(self.source_frames):
+            pose = self.source_pose_variances[index * 6 : index * 6 + 6]
+            twist = self.source_twist_variances[index * 6 : index * 6 + 6]
+            if not any(pose) and not any(twist):
+                raise ValueError(
+                    f"source {frame!r} has every pose and twist variance at zero, "
+                    "which fuses nothing; use a positive variance or drop the source"
+                )
+        return self
+
 
 class DimSlam(NativeModule):
     """Every camera publishes onto the same ``image`` and ``camera_info`` streams and is
     told apart by ``frame_id``; ``camera_frames`` fixes which frames are on the rig and
-    in what order. Extrinsics come from tf against ``rig_frame``. ``depth_image`` feeds
+    in what order. Extrinsics come from tf against ``rig_frame_id``. ``depth_image`` feeds
     ``depth_cloud`` in every mode, and is additionally tracked against in ``rgbd``,
     reprojected onto the rig camera through ``depth_camera_info`` and tf when the depth
     sensor differs.
 
     The tracker's pose stream never touches the wire: it enters the filter as a
-    drifting source under ``visual_odom_frame``. Any number of external sources
+    drifting source under ``visual_odom_frame_id``. Any number of external sources
     (wheel odometry, ...) publish onto ``sources`` and are told apart by
     ``header.frame_id``. Late messages roll the filter back to their own slot and replay
     everything after.
