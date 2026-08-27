@@ -156,7 +156,9 @@ class SerializedStartRealSense(RealSenseCamera):
                         except Exception:
                             pass
                         logger.warning(
-                            "RealSense open failed (attempt %d/%d): %s",
+                            "RealSense %s (%s) open failed (attempt %d/%d): %s",
+                            self.config.camera_name,
+                            self.config.serial_number,
                             attempt,
                             self._START_ATTEMPTS,
                             e,
