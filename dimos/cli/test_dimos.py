@@ -67,6 +67,8 @@ class RunModuleB(Module):
         # Bare `--simulation` followed by another option, or nothing.
         (["dimos", "--simulation", "-d", "run"], ["dimos", "--simulation", "mujoco", "-d", "run"]),
         (["dimos", "--simulation"], ["dimos", "--simulation", "mujoco"]),
+        (["dimos", "--record", "run", "go2"], ["dimos", "--record", "sqlite", "run", "go2"]),
+        (["dimos", "--record", "sqlite", "run"], ["dimos", "--record", "sqlite", "run"]),
         # Explicit simulator — left untouched.
         (["dimos", "--simulation", "mujoco", "run"], ["dimos", "--simulation", "mujoco", "run"]),
         (["dimos", "--simulation", "dimsim", "run"], ["dimos", "--simulation", "dimsim", "run"]),

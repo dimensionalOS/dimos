@@ -13,19 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.stream import In
 from dimos.core.transport import LCMTransport
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.relocalization.module import RelocalizationModule
 from dimos.mapping.voxels.module import VoxelGridMapper
-from dimos.memory.module import Recorder, RecorderConfig, pose_setter_for
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
@@ -47,31 +40,6 @@ unitree_go2 = autoconnect(
     PatrollingModule.blueprint(),
     MovementManager.blueprint(),
 ).global_config(n_workers=10, robot_model="unitree_go2")
-
-
-class Go2MemoryConfig(RecorderConfig):
-    db_path: str | Path = "recording_go2.db"
-
-
-class Go2Memory(Recorder):
-    color_image: In[Image]
-    lidar: In[PointCloud2]
-    odom: In[PoseStamped]
-    config: Go2MemoryConfig
-
-    _last_odom_pose: Pose | None = None
-
-    @pose_setter_for("odom")
-    async def _odom_pose(self, msg: PoseStamped) -> Pose | None:
-        self._last_odom_pose = msg
-        return self._last_odom_pose
-
-    @pose_setter_for("lidar")
-    async def _lidar_pose(self, msg: PointCloud2) -> Pose | None:
-        # Yes, it doesn't make sense to register lidar at the odom pose because the
-        # go2 lidar is in the world frame, but map.py (for now) needs this.
-        # TODO: fix map.py to use a transform frame
-        return getattr(self, "_last_odom_pose", None)
 
 
 unitree_go2_markers = (
@@ -98,8 +66,3 @@ unitree_go2_relocalization = autoconnect(
     unitree_go2,
     RelocalizationModule.blueprint(),
 ).global_config(n_workers=11)
-
-unitree_go2_memory = autoconnect(
-    unitree_go2,
-    Go2Memory.blueprint(),
-).global_config(n_workers=12)

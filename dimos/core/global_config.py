@@ -60,6 +60,9 @@ class GlobalConfig(BaseSettings):
     simulation: str = ""
     replay: bool = False
     replay_db: str = "go2_short"
+    # --record [sqlite]: every published topic -> recordings/<run-id>/memory-<pid>.db
+    record: Literal["", "sqlite"] = ""
+    record_topics: str = "*"  # comma-separated globs on the topic slug (/a/b -> a_b)
     new_memory: bool = False
     # How every zenoh session this process opens joins the network.
     zenoh_mode: ZenohProcessMode = "peer"
