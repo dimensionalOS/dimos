@@ -211,9 +211,7 @@ class Backend(CompositeResource, Generic[T]):
                 continue
             if not all(f.matches(match) for f in query.filters):
                 continue
-            ranked.append(
-                match.derive(data=match.data, embedding=query.search_vec, similarity=sim)
-            )
+            ranked.append(match.derive(data=match.data, embedding=query.search_vec, similarity=sim))
 
         # Apply remaining query ops (filters already applied; skip vector search)
         rest = replace(query, search_vec=None, search_k=None, filters=())

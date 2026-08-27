@@ -270,13 +270,15 @@ class Detection3DPC(Detection3D):
         # points past the corner's angle (or past the first fold) are
         # unmappable.
         corners = np.array(
-            [[0, 0], [camera_info.width, 0], [0, camera_info.height],
-             [camera_info.width, camera_info.height]],
+            [
+                [0, 0],
+                [camera_info.width, 0],
+                [0, camera_info.height],
+                [camera_info.width, camera_info.height],
+            ],
             dtype=np.float64,
         )
-        corner_limit = float(
-            np.hypot((corners[:, 0] - cx) / fx, (corners[:, 1] - cy) / fy).max()
-        )
+        corner_limit = float(np.hypot((corners[:, 0] - cx) / fx, (corners[:, 1] - cy) / fy).max())
         theta = np.linspace(0.0, np.pi / 2 * 0.99, 2048)
         if fisheye:
             k = np.zeros(4)
