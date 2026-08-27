@@ -199,7 +199,9 @@ def _heading_series(rig: Rig, spans: list[tuple[float, float]]) -> tuple[np.ndar
         for obs in rig.poses.after(spans[0][0]).before(spans[-1][1]):
             q = obs.pose_stamped.orientation
             times.append(obs.ts)
-            headings.append(np.arctan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z)))
+            headings.append(
+                np.arctan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+            )
     else:
         for lo, hi in spans:
             frame_ts = [obs.ts for obs in rig.color.after(lo).before(hi)]
@@ -253,7 +255,9 @@ def estimate_color_delay(rig: Rig) -> float:
         for obs in rig.color.after(lo).before(hi):
             frame = obs.data.to_opencv()
             scale = 640 / frame.shape[1]
-            gray = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (640, int(frame.shape[0] * scale)))
+            gray = cv2.resize(
+                cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (640, int(frame.shape[0] * scale))
+            )
             if previous is not None and obs.ts > previous_ts:
                 corners = cv2.goodFeaturesToTrack(previous, 150, 0.01, 12)
                 if corners is not None:
