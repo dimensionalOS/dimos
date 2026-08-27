@@ -166,6 +166,9 @@ def pytest_configure(config):
     )
     config.addinivalue_line("markers", "mujoco: tests which open mujoco")
     config.addinivalue_line(
+        "markers", "go2sim: the measured Go2 plant; needs the vendored menagerie and recordings"
+    )
+    config.addinivalue_line(
         "markers", "self_hosted_large: tests that need a high-memory self-hosted runner"
     )
     config.addinivalue_line(
