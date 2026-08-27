@@ -19,6 +19,7 @@ all_blueprints = {
     "a1z-planner-coordinator": "dimos.robot.manipulators.a1z.blueprints.basic:a1z_planner_coordinator",
     "alfred": "dimos.robot.diy.alfred.blueprints.alfred:alfred",
     "alfred-pillar": "dimos.robot.diy.alfred.blueprints.pillar:alfred_pillar",
+    "alfred-record": "dimos.robot.diy.alfred.blueprints.record:alfred_record",
     "coordinator-a1z": "dimos.robot.manipulators.a1z.blueprints.basic:coordinator_a1z",
     "coordinator-basic": "dimos.control.blueprints.basic:coordinator_basic",
     "coordinator-cartesian-ik-mock": "dimos.robot.manipulators.piper.blueprints.teleop:coordinator_cartesian_ik_mock",
