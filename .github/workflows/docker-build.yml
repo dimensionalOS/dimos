@@ -1,5 +1,7 @@
 name: docker-build
 on:
+  # TEMPORARY (revert before merge): seed Docker Hub from the migration PR
+  pull_request:
   push:
     branches: [main]
     paths:
@@ -12,7 +14,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   check-changes:
@@ -34,7 +35,8 @@ jobs:
       - name: Check if full rebuild
         id: force
         run: |
-          if [[ "${{ github.event_name }}" == "schedule" || "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          # TEMPORARY (revert before merge): pull_request also forces a full rebuild
+          if [[ "${{ github.event_name }}" == "schedule" || "${{ github.event_name }}" == "workflow_dispatch" || "${{ github.event_name }}" == "pull_request" ]]; then
             echo "force=true" >> "$GITHUB_OUTPUT"
           else
             echo "force=false" >> "$GITHUB_OUTPUT"
@@ -64,6 +66,8 @@ jobs:
         run: |
           case "${GITHUB_REF_NAME}" in
             main) branch_tag="latest" ;;
+            # TEMPORARY (revert before merge): PR merge ref (NN/merge) → latest
+            */merge) branch_tag="latest" ;;
             *)
               branch_tag=$(echo "${GITHUB_REF_NAME}" \
                   | tr '[:upper:]' '[:lower:]' \
@@ -81,7 +85,7 @@ jobs:
     with:
       should-run: true
       from-image: ubuntu:24.04
-      to-image: ghcr.io/dimensionalos/ros:${{ needs.check-changes.outputs.branch-tag }}
+      to-image: dimensional/ros:${{ needs.check-changes.outputs.branch-tag }}
       dockerfile:  ros
 
   ros-python:
@@ -95,8 +99,8 @@ jobs:
         needs.ros.result != 'error'
         }}
 
-      from-image: ghcr.io/dimensionalos/ros:${{ needs.ros.result == 'success' && needs.check-changes.outputs.branch-tag || 'latest' }}
-      to-image: ghcr.io/dimensionalos/ros-python:${{ needs.check-changes.outputs.branch-tag }}
+      from-image: dimensional/ros:${{ needs.ros.result == 'success' && needs.check-changes.outputs.branch-tag || 'latest' }}
+      to-image: dimensional/ros-python:${{ needs.check-changes.outputs.branch-tag }}
       dockerfile:  python
 
   python:
@@ -107,7 +111,7 @@ jobs:
       should-run: true
       dockerfile:  python
       from-image: ubuntu:22.04
-      to-image: ghcr.io/dimensionalos/python:${{ needs.check-changes.outputs.branch-tag }}
+      to-image: dimensional/python:${{ needs.check-changes.outputs.branch-tag }}
 
   dev:
     needs: [check-changes, python]
@@ -120,8 +124,8 @@ jobs:
         ((needs.python.result == 'success') ||
         (needs.python.result == 'skipped' &&
         needs.check-changes.outputs.dev == 'true')) }}
-      from-image: ghcr.io/dimensionalos/python:${{ needs.python.result == 'success' && needs.check-changes.outputs.branch-tag || 'latest' }}
-      to-image: ghcr.io/dimensionalos/dev:${{ needs.check-changes.outputs.branch-tag }}
+      from-image: dimensional/python:${{ needs.python.result == 'success' && needs.check-changes.outputs.branch-tag || 'latest' }}
+      to-image: dimensional/dev:${{ needs.check-changes.outputs.branch-tag }}
       dockerfile: dev
 
   ros-dev:
@@ -134,8 +138,8 @@ jobs:
         (needs.check-changes.outputs.dev == 'true' ||
          (needs.ros-python.result == 'success' && (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.ros == 'true')))
         }}
-      from-image: ghcr.io/dimensionalos/ros-python:${{ needs.ros-python.result == 'success' && needs.check-changes.outputs.branch-tag || 'latest' }}
-      to-image: ghcr.io/dimensionalos/ros-dev:${{ needs.check-changes.outputs.branch-tag }}
+      from-image: dimensional/ros-python:${{ needs.ros-python.result == 'success' && needs.check-changes.outputs.branch-tag || 'latest' }}
+      to-image: dimensional/ros-dev:${{ needs.check-changes.outputs.branch-tag }}
       dockerfile: dev
 
   build-complete:
