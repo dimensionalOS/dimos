@@ -57,7 +57,16 @@ BACK_REALSENSE_SERIAL = "327122071721"  # D435if, back-facing (librealsense seri
 # Highest resolution both models stream color AND aligned depth at together.
 _CAM_WIDTH, _CAM_HEIGHT, _CAM_FPS = 1280, 720, 15
 
-_CAMERA_PORTS = ("color_image", "depth_image", "camera_info", "depth_camera_info")
+_CAMERA_PORTS = (
+    "color_image",
+    "depth_image",
+    "camera_info",
+    "depth_camera_info",
+    "infrared_left",
+    "infrared_right",
+    "infrared_left_camera_info",
+    "infrared_right_camera_info",
+)
 
 
 def _rig_realsense(prefix: str, serial: str) -> object:
@@ -108,6 +117,15 @@ class AlfredRecorder(Recorder):
     back_depth_image: In[Image]
     back_camera_info: In[CameraInfo]
     back_depth_camera_info: In[CameraInfo]
+
+    front_infrared_left: In[Image]
+    front_infrared_right: In[Image]
+    front_infrared_left_camera_info: In[CameraInfo]
+    front_infrared_right_camera_info: In[CameraInfo]
+    back_infrared_left: In[Image]
+    back_infrared_right: In[Image]
+    back_infrared_left_camera_info: In[CameraInfo]
+    back_infrared_right_camera_info: In[CameraInfo]
 
     coordinator_joint_state: In[JointState]
     wheel_odometry: In[Odometry]
