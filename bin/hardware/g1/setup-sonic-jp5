@@ -19,6 +19,7 @@ set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 CUDA_HOME_JP5=/usr/local/cuda-11.8
 SONIC_VENV="$REPO_ROOT/.venv-sonic-jp5"
+SONIC_PYTHON_VERSION=3.10
 ORT_VERSION=1.20.1
 ORT_COMMIT=5c1b7ccbff7e5141c1da7a9d963d660e5741c319
 TASK_CACHE_HOME=${XDG_CACHE_HOME:-$HOME/.cache}/dimos/sonic-jp5
@@ -131,15 +132,19 @@ if [[ "$ACTUAL_ORT_COMMIT" != "$ORT_COMMIT" ]]; then
     exit 1
 fi
 
-if [[ ! -x "$SONIC_VENV/bin/python" ]]; then
-    uv venv --python 3.10 "$SONIC_VENV"
+if [[ ! -x "$SONIC_VENV/bin/python" ]] \
+    || [[ $("$SONIC_VENV/bin/python" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")') != "$SONIC_PYTHON_VERSION" ]]; then
+    uv venv --clear --python "$SONIC_PYTHON_VERSION" "$SONIC_VENV"
 fi
 DIMOS_ALLOW_MISSING_COCKPIT=1 VIRTUAL_ENV="$SONIC_VENV" uv sync \
     --active \
+    --python "$SONIC_VENV/bin/python" \
     --locked \
+    --no-default-groups \
     --extra unitree-dds \
-    --extra sim \
-    --inexact
+    --inexact \
+    --no-install-package gtsam-extended \
+    --no-install-package onnxruntime
 uv pip install \
     --python "$SONIC_VENV/bin/python" \
     "cmake>=3.28,<4" \

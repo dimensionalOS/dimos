@@ -174,6 +174,12 @@ source .venv-sonic-jp5/bin/activate
 dimos hardware g1 sonic-doctor
 ```
 
+The JetPack 5 environment contains the real-hardware SONIC stack, not the
+development-only simulation and test dependency groups. Those groups contain
+prebuilt ARM64 packages that require a newer glibc than Ubuntu 20.04. Rehearse
+the simulation on the development workstation, then use this environment for
+the onboard diagnostic and real-hardware launch.
+
 `sonic-doctor` never contacts the robot. It validates the exact model hashes,
 CUDA execution partition, numerical output, and onboard latency. The encoder
 and decoder are forbidden from using CPU fallback. The planner may use CPU
