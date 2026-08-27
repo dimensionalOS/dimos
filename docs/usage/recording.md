@@ -57,7 +57,7 @@ Replay memory from DB:
 dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2
 ```
 
-`--replay` swaps the robot connection for the recording; it needs `lidar`, `odom`, and `color_image`, so record all streams (the default) if you intend to replay. Poses are not stored per frame; `tf` is recorded like any other stream and `dimos map pose-fill` derives poses from it.
+`--replay` swaps the robot connection for the recording; it needs `lidar`, `odom`, and `color_image`, so record all streams (the default) if you intend to replay. Poses are not stored per frame; `tf` is recorded like any other stream and `dimos map global` uses it to register clouds. `dimos map pose-fill` instead derives poses from `odom` by default.
 
 ## Behavior
 
