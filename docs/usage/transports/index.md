@@ -91,9 +91,6 @@ When the factory builds transports from the global switch, it applies defaults (
 * `Image`/`PointCloud2` streams: best-effort, drop under congestion (latest wins).
 * Everything else: zenoh defaults (reliable, drop under congestion).
 
-The publisher for a key is declared with the first publish's QoS. LCM has no per-topic settings, so QoS only applies when `transport=zenoh`.
-
-
 ## Benchmarks
 
 Quick view on performance of our pubsub backends:
