@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from typing import Protocol
 
 import numpy as np
@@ -32,7 +33,6 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 GLOBAL_MAP_OBSTACLE_ID = "mapping/global-voxel-map"
-_RETRY_DELAY_S = 1.0
 
 
 class VoxelObstacleSpec(Spec, Protocol):
@@ -41,7 +41,7 @@ class VoxelObstacleSpec(Spec, Protocol):
     def set_voxel_obstacle(
         self,
         name: str,
-        points: list[tuple[float, float, float]],
+        points: Sequence[Sequence[float]],
         resolution: float,
         frame_id: str = "world",
     ) -> bool: ...
@@ -61,20 +61,22 @@ class GlobalMapObstacleBridge(Module):
     _planning: VoxelObstacleSpec
 
     async def handle_global_map(self, cloud: PointCloud2) -> None:
-        """Apply the newest complete map; the module dispatcher coalesces backlog."""
-        while True:
-            try:
-                await asyncio.to_thread(self._reconcile, cloud)
-                return
-            except ValueError:
-                logger.exception("Rejected invalid global map at stamp %.6f", cloud.ts)
-                return
-            except Exception:
-                logger.exception(
-                    "Failed to reconcile global map obstacle at stamp %.6f; retrying",
-                    cloud.ts,
-                )
-                await asyncio.sleep(_RETRY_DELAY_S)
+        """Apply this snapshot, once.
+
+        The mapper republishes a complete map, so a failed snapshot is already
+        superseded by the time it could be retried. The module dispatcher is a
+        single-slot latest mailbox: retrying here would hold the newer map out
+        of the planner and then install a stale one on success.
+        """
+        try:
+            await asyncio.to_thread(self._reconcile, cloud)
+        except ValueError:
+            logger.exception("Rejected invalid global map at stamp %.6f", cloud.ts)
+        except Exception:
+            logger.exception(
+                "Dropped global map at stamp %.6f; the next snapshot supersedes it",
+                cloud.ts,
+            )
 
     def _reconcile(self, cloud: PointCloud2) -> None:
         config = self.bridge_config
@@ -95,9 +97,11 @@ class GlobalMapObstacleBridge(Module):
                 f"{config.max_points}. Shrink the mapped region or coarsen voxel_size."
             )
 
+        # tolist() drops to C rather than building a tuple per point in python,
+        # and this runs at map cadence.
         self._planning.set_voxel_obstacle(
             GLOBAL_MAP_OBSTACLE_ID,
-            [(float(x), float(y), float(z)) for x, y, z in points],
+            points.tolist(),
             config.resolution,
             config.planning_frame,
         )

@@ -1374,7 +1374,7 @@ class ManipulationModule(Module):
     def set_voxel_obstacle(
         self,
         name: str,
-        points: list[tuple[float, float, float]],
+        points: Sequence[Sequence[float]],
         resolution: float,
         frame_id: str = "world",
     ) -> bool:

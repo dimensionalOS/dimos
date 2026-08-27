@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import cast
 
@@ -32,15 +32,13 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 @dataclass
 class _Planning:
-    calls: list[tuple[str, list[tuple[float, float, float]], float, str]] = field(
-        default_factory=list
-    )
+    calls: list[tuple[str, Sequence[Sequence[float]], float, str]] = field(default_factory=list)
     fail_times: int = 0
 
     def set_voxel_obstacle(
         self,
         name: str,
-        points: list[tuple[float, float, float]],
+        points: Sequence[Sequence[float]],
         resolution: float,
         frame_id: str = "world",
     ) -> bool:
@@ -104,6 +102,7 @@ def test_an_empty_map_clears_the_obstacle(
     asyncio.run(module.handle_global_map(_cloud([])))
 
     assert planning.calls == [(GLOBAL_MAP_OBSTACLE_ID, [], 0.05, "world")]
+    # An empty snapshot is how a mapper says the space it owns is now clear.
 
 
 def test_a_cloud_in_the_wrong_frame_is_rejected_not_reinterpreted(
@@ -142,16 +141,17 @@ def test_an_oversized_map_is_dropped_rather_than_pushed_through_rpc() -> None:
         module.dispose()
 
 
-def test_a_transient_planning_failure_is_retried(
+def test_a_failed_snapshot_is_dropped_not_retried(
     bridge: tuple[GlobalMapObstacleBridge, _Planning],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # The dispatcher is a single-slot latest mailbox, so retrying would hold the
+    # newer map out of the planner and then install this stale one on success.
+    # A complete map arrives every frame; dropping costs one frame.
     module, planning = bridge
-    planning.fail_times = 2
-    monkeypatch.setattr(
-        "dimos.manipulation.planning.global_map_obstacle_bridge._RETRY_DELAY_S", 0.0
-    )
+    planning.fail_times = 1
 
     asyncio.run(module.handle_global_map(_cloud([[0.0, 0.0, 0.0]])))
+    assert planning.calls == []
 
-    assert len(planning.calls) == 1
+    asyncio.run(module.handle_global_map(_cloud([[1.0, 0.0, 0.0]])))
+    np.testing.assert_allclose(planning.calls[0][1], [(1.0, 0.0, 0.0)], atol=1e-7)
