@@ -19,9 +19,10 @@ from dimos.hardware.whole_body.mock.adapter import MockWholeBodyAdapter
 from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
 
 
-def test_write_motor_commands_connected_adapter_applies_ordered_commands() -> None:
+def test_write_motor_commands_active_adapter_applies_ordered_commands() -> None:
     adapter = MockWholeBodyAdapter(dof=2, initial_positions=[0.1, 0.2])
     assert adapter.connect()
+    assert adapter.activate()
 
     assert adapter.write_motor_commands(
         [
@@ -40,6 +41,7 @@ def test_write_motor_commands_connected_adapter_applies_ordered_commands() -> No
 def test_write_motor_commands_wrong_command_count_rejects_without_state_change() -> None:
     adapter = MockWholeBodyAdapter(dof=2)
     assert adapter.connect()
+    assert adapter.activate()
 
     assert not adapter.write_motor_commands([MotorCommand(q=0.3)])
     assert adapter.read_motor_states() == [MotorState(), MotorState()]

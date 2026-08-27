@@ -84,7 +84,6 @@ def _imu_from_unitree_wxyz(
 
 class G1WholeBodyConnectionConfig(ModuleConfig):
     network_interface: str = Field(default="")
-    release_sport_mode: bool = True
     publish_rate_hz: float = 500.0
     frame_id: str = "g1_pelvis"
     mode_machine: int = _MODE_MACHINE_G1
@@ -146,6 +145,8 @@ class G1WholeBodyConnection(Module):
         # Soft-start clock, armed by the first motor command after start().
         self._soft_start_t0: float | None = None
         self._soft_start_done = False
+        self._handoff_lock = threading.Lock()
+        self._sport_mode_released = False
 
     @rpc
     def start(self) -> None:
@@ -198,13 +199,11 @@ class G1WholeBodyConnection(Module):
 
         self._crc = CRC()
 
-        if self.config.release_sport_mode:
-            logger.info("Releasing sport mode...")
-            self._release_sport_mode()
-        else:
-            logger.info("Skipping sport mode release (release_sport_mode=False)")
-
-        logger.info("G1WholeBodyConnection connected", mode_machine=self._mode_machine)
+        self._sport_mode_released = False
+        logger.info(
+            "G1WholeBodyConnection connected; sport-mode handoff deferred until first command",
+            mode_machine=self._mode_machine,
+        )
 
         # Fresh soft-start every time control is (re)acquired.
         self._soft_start_t0 = None
@@ -399,6 +398,8 @@ class G1WholeBodyConnection(Module):
         if msg.num_joints != _NUM_MOTORS:
             logger.warning(f"Expected {_NUM_MOTORS} motor commands, got {msg.num_joints}; ignoring")
             return
+        if not self._ensure_low_level_control():
+            return
 
         with self._lock:
             if (
@@ -427,6 +428,23 @@ class G1WholeBodyConnection(Module):
 
             self._low_cmd.crc = self._crc.Crc(self._low_cmd)
             self._publisher.Write(self._low_cmd)
+
+    def _ensure_low_level_control(self) -> bool:
+        """Release the native controller exactly once, when commands are ready."""
+        if self._sport_mode_released:
+            return True
+        with self._handoff_lock:
+            if self._sport_mode_released:
+                return True
+            try:
+                logger.info("First prepared command received; releasing sport mode...")
+                self._release_sport_mode()
+            except Exception:
+                logger.exception("Failed to release sport mode; dropping motor command")
+                return False
+            self._sport_mode_released = True
+            logger.info("Sport-mode handoff complete")
+            return True
 
     def _release_sport_mode(self) -> None:
         """Loop ReleaseMode until MotionSwitcher reports no active controller.

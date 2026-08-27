@@ -64,6 +64,7 @@ def _wire(connection, soft_start_seconds):
     )
     connection._crc = SimpleNamespace(Crc=lambda _cmd: 0)
     connection._mode_machine = 5
+    connection._sport_mode_released = True
     return connection._publisher
 
 
@@ -121,6 +122,24 @@ def test_wrong_joint_count_is_dropped(connection: G1WholeBodyConnection):
     connection._on_motor_command(MotorCommandArray(q=[0.0] * 5))
 
     assert publisher.frames == []
+
+
+def test_sport_mode_handoff_waits_for_first_complete_command(
+    connection: G1WholeBodyConnection,
+    mocker,
+):
+    publisher = _wire(connection, soft_start_seconds=0.0)
+    release = mocker.patch.object(connection, "_release_sport_mode")
+    connection._sport_mode_released = False
+
+    connection._on_motor_command(MotorCommandArray(q=[0.0] * 5))
+    release.assert_not_called()
+
+    connection._on_motor_command(_command())
+    connection._on_motor_command(_command())
+
+    release.assert_called_once_with()
+    assert len(publisher.frames) == 2
 
 
 @pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])

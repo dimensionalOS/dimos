@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 import inspect
+import subprocess
+import sys
 from typing import Any, get_type_hints
 
 from pydantic import BaseModel
@@ -28,6 +30,7 @@ from dimos.robot.test_all_blueprints import (
     OPTIONAL_DEPENDENCIES,
     OPTIONAL_ERROR_SUBSTRINGS,
     SELF_HOSTED_BLUEPRINTS,
+    SIMULATION_ONLY_SELF_HOSTED_BLUEPRINTS,
 )
 
 
@@ -78,16 +81,14 @@ def _allowed_kwarg_names(module: type[ModuleBase]) -> set[str]:
 
 
 def _blueprint_params() -> list[str | pytest.ParameterSet]:
-    self_hosted = set(SELF_HOSTED_BLUEPRINTS)
+    self_hosted = set(SELF_HOSTED_BLUEPRINTS) | set(SIMULATION_ONLY_SELF_HOSTED_BLUEPRINTS)
     return [
         pytest.param(name, marks=pytest.mark.self_hosted) if name in self_hosted else name
         for name in sorted(all_blueprints)
     ]
 
 
-@pytest.mark.parametrize("blueprint_name", _blueprint_params())
-def test_blueprint_atom_kwargs_match_module_config(blueprint_name: str) -> None:
-    """Fail when blueprint kwargs cannot be consumed by their target module."""
+def _assert_blueprint_atom_kwargs_match_module_config(blueprint_name: str) -> None:
     blueprint = _get_blueprint_or_skip(blueprint_name)
 
     violations: list[str] = []
@@ -107,3 +108,20 @@ def test_blueprint_atom_kwargs_match_module_config(blueprint_name: str) -> None:
             "for legacy modules with direct constructor parameters, use the declared "
             "`__init__` keyword names."
         )
+
+
+@pytest.mark.parametrize("blueprint_name", _blueprint_params())
+def test_blueprint_atom_kwargs_match_module_config(blueprint_name: str) -> None:
+    """Fail when blueprint kwargs cannot be consumed by their target module."""
+    if blueprint_name in SIMULATION_ONLY_SELF_HOSTED_BLUEPRINTS:
+        code = (
+            "from dimos.core.global_config import global_config; "
+            'global_config.update(simulation="mujoco", viewer="none"); '
+            "from dimos.codebase_checks.test_blueprint_kwargs import "
+            "_assert_blueprint_atom_kwargs_match_module_config; "
+            f'_assert_blueprint_atom_kwargs_match_module_config("{blueprint_name}")'
+        )
+        subprocess.run([sys.executable, "-c", code], check=True)
+        return
+
+    _assert_blueprint_atom_kwargs_match_module_config(blueprint_name)

@@ -14,30 +14,39 @@
 
 TASK_FACTORIES = {
     "g1_sonic_wbc": "dimos.control.tasks.g1_sonic_wbc_task.g1_sonic_wbc_task:create_task",
+    "g1_sonic_teleop": ("dimos.control.tasks.g1_sonic_wbc_task.g1_sonic_teleop_task:create_task"),
 }
 
 TASK_CONSUMES: dict[str, dict[str, tuple[str, str]]] = {
     "g1_sonic_wbc": {"twist_command": ("on_twist_command", "broadcast")},
+    "g1_sonic_teleop": {
+        "body_tracking": ("on_body_tracking", "direct"),
+        "teleop_buttons": ("on_teleop_buttons", "direct"),
+        "twist_command": ("on_twist_command", "broadcast"),
+    },
 }
 
+_SONIC_EXPOSES = [
+    "arm",
+    "disarm",
+    "set_dry_run",
+    "reset_runtime_state",
+    "start",
+    "set_velocity_command",
+    "set_locomotion_mode",
+    "list_locomotion_modes",
+    "set_base_height",
+    "set_upper_body",
+    "clear_upper_body",
+    "state_snapshot",
+    "play_motion_clip",
+    "set_vr_3point",
+    "clear_vr_3point",
+    "stop_motion_clip",
+    "list_motion_clips",
+]
+
 TASK_EXPOSES: dict[str, list[str]] = {
-    "g1_sonic_wbc": [
-        "arm",
-        "disarm",
-        "set_dry_run",
-        "reset_runtime_state",
-        "start",
-        "set_velocity_command",
-        "set_locomotion_mode",
-        "list_locomotion_modes",
-        "set_base_height",
-        "set_upper_body",
-        "clear_upper_body",
-        "state_snapshot",
-        "play_motion_clip",
-        "set_vr_3point",
-        "clear_vr_3point",
-        "stop_motion_clip",
-        "list_motion_clips",
-    ],
+    "g1_sonic_wbc": _SONIC_EXPOSES,
+    "g1_sonic_teleop": _SONIC_EXPOSES,
 }

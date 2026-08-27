@@ -38,10 +38,14 @@ from typing import Any, cast
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import g1_joints
-from dimos.control.tasks.g1_sonic_wbc_task.sonic_pipeline import SONIC_KD, SONIC_KP
+from dimos.control.tasks.g1_sonic_wbc_task.sonic_pipeline import (
+    DEFAULT_ANGLES_DDS,
+    SONIC_KD,
+    SONIC_KP,
+)
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.core.stream import Out
+from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.mapping.costmapper import CostMapper
@@ -58,6 +62,8 @@ from dimos.robot.unitree.g1.g1_rerun import (
     g1_urdf_joint_state,
     g1_urdf_static_robot,
 )
+from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
+from dimos.teleop.webxr.controller_types import Buttons
 from dimos.utils.data import LfsPath
 from dimos.visualization.vis_module import vis_module
 
@@ -144,18 +150,23 @@ if global_config.simulation == "mujoco":
 
     _backend = MujocoSimModule.blueprint(
         address=_MJCF_PATH,
-        headless=True,
+        # This simulation is an operator-facing teleop stack. Keep MuJoCo's
+        # native viewer attached to the live physics state; Rerun remains an
+        # independent optional visualization selected by --viewer.
+        headless=False,
         dof=_G1_NUM_MOTORS,
         inject_legacy_assets=True,
         robot_sim_spec=_g1_sim_spec,
+        reset_joint_positions=DEFAULT_ANGLES_DDS.tolist(),
+        wait_for_control_command=True,
         **_MUJOCO_LIDAR_KWARGS,
     )
     _adapter_type = "sim_mujoco_g1"
     _adapter_address = _MJCF_PATH
     _tick_rate = 50.0
-    _auto_arm = True
+    _auto_start_policy = True
     _auto_dry_run = False
-    _default_ramp_seconds = 0.0
+    _initialization_seconds = 0.0
     _decimation = 1
     _n_workers = 2
     _nav_stack = autoconnect(
@@ -178,13 +189,13 @@ if global_config.simulation == "mujoco":
 else:
     from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
 
-    _backend = G1WholeBodyConnection.blueprint(release_sport_mode=True)
+    _backend = G1WholeBodyConnection.blueprint()
     _adapter_type = "transport_lcm"
     _adapter_address = ""
     _tick_rate = 100.0
-    _auto_arm = False
+    _auto_start_policy = False
     _auto_dry_run = True
-    _default_ramp_seconds = 10.0
+    _initialization_seconds = 3.0
     _decimation = 2  # 100 Hz tick / 2 = 50 Hz policy
     _n_workers = 10
     from dimos.hardware.sensors.lidar.pointlio.module import PointLio
@@ -218,48 +229,58 @@ else:
 
 class _G1SonicCoordinator(ControlCoordinator):
     g1_joints: Out[JointState]
+    body_tracking: In[BodyTrackingSnapshot]
+    teleop_buttons: In[Buttons]
 
 
-_coordinator = _G1SonicCoordinator.blueprint(
-    instance_name="ControlCoordinator",
-    publish_robot_joint_states=True,
-    tick_rate=_tick_rate,
-    hardware=[
-        HardwareComponent(
-            hardware_id="g1",
-            hardware_type=HardwareType.WHOLE_BODY,
-            joints=g1_joints,
-            adapter_type=_adapter_type,
-            address=_adapter_address,
-            wb_config=WholeBodyConfig(kp=tuple(SONIC_KP), kd=tuple(SONIC_KD)),
-        ),
-    ],
-    tasks=[
-        TaskConfig(
-            name="sonic_wbc",
-            type="g1_sonic_wbc",
-            joint_names=g1_joints,
-            priority=50,
-            auto_start=True,
-            params={
-                "encoder_onnx": str(_SONIC_RELEASE_DIR / "model_encoder.onnx"),
-                "decoder_onnx": str(_SONIC_RELEASE_DIR / "model_decoder.onnx"),
-                "planner_onnx": str(_SONIC_PLANNER_PATH),
-                "hardware_id": "g1",
-                "auto_arm": _auto_arm,
-                "auto_dry_run": _auto_dry_run,
-                "default_ramp_seconds": _default_ramp_seconds,
-                "decimation": _decimation,
-            },
-        ),
-    ],
-)
+def _g1_sonic_coordinator(
+    *,
+    task_type: str,
+    task_name: str,
+    zmq_enabled: bool,
+) -> Any:
+    coordinator = _G1SonicCoordinator.blueprint(
+        instance_name="ControlCoordinator",
+        publish_robot_joint_states=True,
+        tick_rate=_tick_rate,
+        hardware=[
+            HardwareComponent(
+                hardware_id="g1",
+                hardware_type=HardwareType.WHOLE_BODY,
+                joints=g1_joints,
+                adapter_type=_adapter_type,
+                address=_adapter_address,
+                wb_config=WholeBodyConfig(kp=tuple(SONIC_KP), kd=tuple(SONIC_KD)),
+            ),
+        ],
+        tasks=[
+            TaskConfig(
+                name=task_name,
+                type=task_type,
+                joint_names=g1_joints,
+                priority=50,
+                auto_start=True,
+                params={
+                    "encoder_onnx": str(_SONIC_RELEASE_DIR / "model_encoder.onnx"),
+                    "decoder_onnx": str(_SONIC_RELEASE_DIR / "model_decoder.onnx"),
+                    "planner_onnx": str(_SONIC_PLANNER_PATH),
+                    "hardware_id": "g1",
+                    "auto_start_policy": _auto_start_policy,
+                    "auto_dry_run": _auto_dry_run,
+                    "initialization_seconds": _initialization_seconds,
+                    "decimation": _decimation,
+                    "zmq_enabled": zmq_enabled,
+                },
+            ),
+        ],
+    )
 
-# Real hardware speaks LCM to G1WholeBodyConnection on fixed topics. In sim,
-# leave transports to the runtime default (works under both lcm and zenoh);
-# pinning LCMTransport here would silently break under DIMOS_TRANSPORT=zenoh.
-if not global_config.simulation:
-    _coordinator = _coordinator.transports(
+    # Real hardware speaks LCM to G1WholeBodyConnection on fixed topics. In
+    # sim, leave transports to the runtime default (works under both lcm and
+    # zenoh); pinning LCM here would silently break zenoh.
+    if global_config.simulation:
+        return coordinator
+    return coordinator.transports(
         {
             ("joint_command", JointState): LCMTransport("/g1/joint_command", JointState),
             ("g1_joints", JointState): LCMTransport("/g1/joints", JointState),
@@ -269,8 +290,25 @@ if not global_config.simulation:
             ("motor_command", MotorCommandArray): LCMTransport(
                 "/g1/motor_command", MotorCommandArray
             ),
-        }
+        },
     )
+
+
+def _g1_sonic_control_blueprint(
+    *,
+    task_type: str,
+    task_name: str,
+    zmq_enabled: bool,
+) -> Any:
+    coordinator = _g1_sonic_coordinator(
+        task_type=task_type,
+        task_name=task_name,
+        zmq_enabled=zmq_enabled,
+    )
+    return autoconnect(_backend, coordinator).remappings(
+        cast("Any", [(_G1SonicCoordinator, "twist_command", "cmd_vel")])
+    )
+
 
 _G1_JOINTS_ENTITY = "world/g1_joints"
 
@@ -309,20 +347,26 @@ _rerun_config: dict[str, Any] = {
     "static": {G1_RERUN_ROOT: g1_urdf_static_robot(root_path=G1_RERUN_ROOT)},
 }
 
-_remappings = [*_nav_remap, (_G1SonicCoordinator, "twist_command", "cmd_vel")]
+
+def _g1_sonic_visualization() -> Any:
+    return vis_module(
+        viewer_backend=global_config.viewer,
+        rerun_config=None if global_config.transport == "zenoh" else _rerun_config,
+    )
+
 
 unitree_g1_sonic_wbc = (
     autoconnect(
-        _backend,
-        _coordinator,
+        _g1_sonic_control_blueprint(
+            task_type="g1_sonic_wbc",
+            task_name="sonic_wbc",
+            zmq_enabled=True,
+        ),
         _nav_stack,
         # rerun_config with callable factories does not survive the zenoh
         # deploy path (msgpack turns them into dicts); pass it only under LCM.
-        vis_module(
-            viewer_backend=global_config.viewer,
-            rerun_config=None if global_config.transport == "zenoh" else _rerun_config,
-        ),
+        _g1_sonic_visualization(),
     )
-    .remappings(cast("Any", _remappings))
+    .remappings(cast("Any", _nav_remap))
     .global_config(robot_model="unitree_g1", n_workers=_n_workers)
 )

@@ -38,6 +38,26 @@ dimos --can-port a1zcan run teleop-webxr-a1z
 Open `https://<host-ip>:8443/teleop` in a WebXR-capable headset browser. Accept
 the certificate, then tap Connect.
 
+### G1 SONIC full-body simulation
+
+Calibrate the PICO Motion Trackers, then start the MuJoCo blueprint:
+
+```bash
+dimos --simulation mujoco run unitree-g1-sonic-webxr-teleop
+```
+
+Use `--viewer none` to skip Rerun and inspect the live simulation in the
+native MuJoCo window.
+
+Open `https://<host-ip>:8443/teleop` on the PICO and tap Connect. Hold X and A
+together to guide the G1 with your body. Release either button to return SONIC
+to planner control. While engaged, body motion supplies the whole-body
+reference; the thumbsticks cannot command translation, but the right stick can
+adjust heading.
+
+Tracking loss ends engagement. After tracking returns, release and hold X+A
+again. Partial body frames keep the last complete pose for at most 150 ms.
+
 For hand teleop, remove the controllers. Pinch the thumb and index finger on
 the selected hand to engage it, move the wrist to control the arm, then pinch
 again to disengage. Pinch the thumb and middle finger to close the gripper;

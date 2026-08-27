@@ -59,6 +59,7 @@ class TransportWholeBodyAdapter:
         self._motor_states_unsub: Any = None
         self._imu_unsub: Any = None
         self._connected = False
+        self._active = False
 
     def connect(self) -> bool:
         ms_topic = f"/{self._prefix}/motor_states"
@@ -73,6 +74,7 @@ class TransportWholeBodyAdapter:
         self._imu_unsub = self._imu_transport.subscribe(self._on_imu)
 
         self._connected = True
+        self._active = False
         logger.info(
             f"TransportWholeBodyAdapter connected: motor_states={ms_topic}, "
             f"imu={imu_topic}, motor_command={cmd_topic}"
@@ -103,10 +105,23 @@ class TransportWholeBodyAdapter:
             self._latest_imu = None
 
         self._connected = False
+        self._active = False
         logger.info("TransportWholeBodyAdapter disconnected")
 
     def is_connected(self) -> bool:
         return self._connected
+
+    def activate(self) -> bool:
+        if not self._connected:
+            return False
+        self._active = True
+        return True
+
+    def deactivate(self) -> bool:
+        if not self._connected:
+            return False
+        self._active = False
+        return True
 
     def read_motor_states(self) -> list[MotorState]:
         with self._lock:
@@ -129,8 +144,8 @@ class TransportWholeBodyAdapter:
         return None
 
     def write_motor_commands(self, commands: list[MotorCommand]) -> bool:
-        if self._motor_command_transport is None:
-            logger.warning("write_motor_commands called before connect()")
+        if self._motor_command_transport is None or not self._active:
+            logger.warning("write_motor_commands called before activation")
             return False
 
         msg = MotorCommandArray(

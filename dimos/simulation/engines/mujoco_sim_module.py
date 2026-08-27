@@ -216,6 +216,14 @@ class _WholeBodySimHooks:
             if self._gripper_idx < len(positions):
                 shm.write_gripper_state(positions[self._gripper_idx])
 
+    def ready_for_physics(self) -> bool:
+        """Whether a complete whole-body command has been latched."""
+        return (
+            self._latest_pd_pos_target is not None
+            and self._latest_pd_kp is not None
+            and self._latest_pd_kd is not None
+        )
+
     def clear_latched_commands(self) -> None:
         self._latest_pd_pos_target = None
         self._latest_pd_kp = None
@@ -251,6 +259,7 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     spawn_z: float | None = None
     spawn_yaw: float | None = None
     reset_joint_positions: list[float] | None = None
+    wait_for_control_command: bool = False
     headless: bool = False
     dof: int = 7
 
@@ -562,6 +571,11 @@ class MujocoSimModule(
         self._engine.set_step_hooks(
             before=self._sim_hooks.pre_step,
             after=self._publish_shm_and_lcm,
+            should_step=(
+                self._sim_hooks.ready_for_physics
+                if self.config.wait_for_control_command
+                else None
+            ),
         )
 
         # Start physics (sim thread spawned inside engine.connect()).
