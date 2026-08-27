@@ -33,7 +33,6 @@ def test_robot_model_config_rejects_obsolete_description_fields(
     with pytest.raises(ValidationError):
         RobotModelConfig.model_validate(
             {
-                "name": "arm",
                 "model": RobotModel.from_file("robot.urdf"),
                 "joint_names": [],
                 obsolete_field: Path("obsolete.urdf"),
@@ -45,14 +44,13 @@ def test_robot_model_survives_blueprint_config_round_trip(tmp_path: Path) -> Non
     urdf = tmp_path / "robot.urdf"
     urdf.write_text("<robot name='arm'><link name='base'/></robot>")
     config = RobotModelConfig(
-        name="arm",
         model=RobotModel.from_file(urdf),
         joint_names=[],
     )
-    blueprint = ManipulationModule.blueprint(robots=[config])
+    blueprint = ManipulationModule.blueprint(model=config)
 
     parsed = BlueprintConfigParser(blueprint).parse(environ={})
 
     kwargs = parsed.module_kwargs(blueprint.blueprints[0].name)
-    assert kwargs["robots"][0]["model"]["_source_path"] == urdf
-    assert "_loaded" not in kwargs["robots"][0]["model"]
+    assert kwargs["model"]["model"]["_source_path"] == urdf
+    assert "_loaded" not in kwargs["model"]["model"]
