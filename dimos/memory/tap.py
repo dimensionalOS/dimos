@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.constants import RECORDINGS_DIR
 from dimos.core.global_config import global_config
+from dimos.core.transport_factory import pubsub_backend
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.utils.logging_config import setup_logger
 
@@ -81,17 +82,6 @@ class BusRecorder:
                 stream.append(msg, ts=getattr(msg, "ts", None) or time.time())
 
 
-def _bus() -> Any:
-    """Same backend selection as the Rerun bridge: the active transport's pubsub."""
-    if global_config.transport == "zenoh":
-        from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
-
-        return Zenoh()
-    from dimos.protocol.pubsub.impl.lcmpubsub import LCM
-
-    return LCM()
-
-
 @contextmanager
 def recording() -> Iterator[None]:
     """Record the bus for the duration of the block when ``--record`` is set."""
@@ -101,8 +91,9 @@ def recording() -> Iterator[None]:
     path = recording_dir() / "memory.db"
     store = SqliteStore(path=str(path))
     store.start()
-    bus = _bus()
-    bus.start()
+    bus = pubsub_backend()
+    if hasattr(bus, "start"):  # as the Rerun bridge does; the protocol has no lifecycle
+        bus.start()
     unsubscribe: Callable[[], None] = bus.subscribe_all(
         BusRecorder(store, global_config.record_topics).on_message
     )
@@ -111,5 +102,6 @@ def recording() -> Iterator[None]:
         yield
     finally:
         unsubscribe()
-        bus.stop()
+        if hasattr(bus, "stop"):
+            bus.stop()
         store.stop()

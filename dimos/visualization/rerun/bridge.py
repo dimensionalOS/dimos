@@ -42,9 +42,9 @@ from toolz import pipe  # type: ignore[import-untyped]
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.transport_factory import pubsub_backend
 from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
-from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
 from dimos.protocol.service.lcmservice import autoconf
@@ -163,10 +163,7 @@ def _default_pubsubs(config: Any = None) -> list[SubscribeAllCapable[Any, Any]]:
     listens only on that backend. To also bridge external LCM publishers while
     running Zenoh, pass an explicit ``pubsubs=[Zenoh(), LCM()]``.
     """
-    transport = getattr(config, "transport", None) or global_config.transport
-    if transport == "zenoh":
-        return [Zenoh()]
-    return [LCM()]
+    return [pubsub_backend(config if getattr(config, "transport", None) else global_config)]
 
 
 def _resolve_pubsubs(config: Any) -> list[SubscribeAllCapable[Any, Any]]:
@@ -218,17 +215,18 @@ class Config(ModuleConfig):
 class RerunBridgeModule(Module):
     """Bridge that logs messages from pubsubs to Rerun.
 
-    Spawns its own Rerun viewer and subscribes to all topics on each provided
-    pubsub. Any message that has a to_rerun() method is automatically logged.
+        Spawns its own Rerun viewer and subscribes to all topics on each provided
+        pubsub. Any message that has a to_rerun() method is automatically logged.
 
-    Example:
-        from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+        Example:
+            from dimos.core.transport_factory import pubsub_backend
+    from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 
-        lcm = LCM()
-        bridge = RerunBridgeModule(pubsubs=[lcm])
-        bridge.start()
-        # All messages with to_rerun() are now logged to Rerun
-        bridge.stop()
+            lcm = LCM()
+            bridge = RerunBridgeModule(pubsubs=[lcm])
+            bridge.start()
+            # All messages with to_rerun() are now logged to Rerun
+            bridge.stop()
     """
 
     config: Config

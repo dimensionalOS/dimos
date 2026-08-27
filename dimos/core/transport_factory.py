@@ -41,6 +41,7 @@ from dimos.protocol.service.zenohservice import ZenohConfig
 
 if TYPE_CHECKING:
     from dimos.core.transport import PubSubTransport
+    from dimos.protocol.pubsub.spec import SubscribeAllCapable
     from dimos.protocol.rpc.spec import RPCSpec
 
 
@@ -152,6 +153,14 @@ def apply_transport_arg(argv: list[str], *, g: GlobalConfig = global_config) -> 
 def rpc_backend(g: GlobalConfig = global_config) -> type[RPCSpec]:
     """Return the RPC class (`LCMRPC` or `ZenohRPC`) for the active backend."""
     return ZenohRPC if g.transport == "zenoh" else LCMRPC
+
+
+def pubsub_backend(g: GlobalConfig = global_config) -> SubscribeAllCapable[Any, Any]:
+    """A pubsub client on the active backend's bus (every dimos topic is visible on it)."""
+    from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+    from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
+
+    return Zenoh() if g.transport == "zenoh" else LCM()
 
 
 def session_config(g: GlobalConfig = global_config) -> SessionConfig:
