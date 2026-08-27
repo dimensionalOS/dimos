@@ -257,7 +257,7 @@ all_modules = {
     "person-tracker": "dimos.perception.detection.person_tracker.PersonTracker",
     "phone-teleop-module": "dimos.teleop.phone.phone_teleop_module.PhoneTeleopModule",
     "pick-and-place-module": "dimos.manipulation.pick_and_place_module.PickAndPlaceModule",
-    "point-cloud-self-filter": "dimos.perception.point_cloud_self_filter.PointCloudSelfFilter",
+    "point-cloud-self-filter": "dimos.manipulation.planning.utils.point_cloud_self_filter.PointCloudSelfFilter",
     "point-lio": "dimos.hardware.sensors.lidar.pointlio.module.PointLio",
     "pointlio-recorder": "dimos.hardware.sensors.lidar.pointlio.recorder.PointlioRecorder",
     "quest-teleop-module": "dimos.teleop.quest.quest_teleop_module.QuestTeleopModule",

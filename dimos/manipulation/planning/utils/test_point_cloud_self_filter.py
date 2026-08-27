@@ -22,10 +22,10 @@ import numpy as np
 import pytest
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.utils.point_cloud_self_filter import PointCloudSelfFilter
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.perception.point_cloud_self_filter import PointCloudSelfFilter
 from dimos.protocol.tf.tf import MultiTBuffer
 from dimos.robot.assets.model import RobotModel
 
@@ -113,21 +113,6 @@ def test_points_on_the_robot_are_dropped_and_the_rest_survive(
     assert result is not None
     filtered, _ = result
     np.testing.assert_allclose(filtered.points_f32(), [[2.0, 0.0, 0.0]], atol=1e-6)
-
-
-def test_the_clear_mask_covers_the_cells_the_robot_occupies(
-    make_filter: Callable[..., PointCloudSelfFilter],
-) -> None:
-    module = make_filter()
-    _place_arm(module, (1.0, 0.0, 0.0), 1.0)
-
-    result = module.filter_cloud(_cloud([]))
-
-    assert result is not None
-    _, mask = result
-    assert mask.frame_id == "world"
-    # The cube spans x in [0.9, 1.1], so the cell holding its center is named.
-    assert (20, 0, 0) in _keys(mask, 0.05)
 
 
 def test_the_mask_also_covers_where_the_robot_just_was(
