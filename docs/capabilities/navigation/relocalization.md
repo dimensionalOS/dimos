@@ -29,7 +29,7 @@ If `ROBOT_IP` is set in the environment or `.env`, you can omit `--robot-ip`:
 dimos run unitree-go2-memory
 ```
 
-This writes `recording_go2.db` to the repo root (`DIMOS_PROJECT_ROOT`) and records `lidar`, `odom`, and `color_image` plus the live TF tree. The recorder stamps lidar frames with the latest odom pose so `dimos map global` can reconstruct poses later- see [`Go2Memory`](/dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py).
+This writes `recording_go2.db` to the repo root (`DIMOS_PROJECT_ROOT`) and records `lidar`, `odom`, and `color_image` plus the live TF tree. `dimos --record run unitree-go2` records the same streams (and every other one) to `recordings/<run-id>/memory.db` instead; see [Recording](/docs/usage/recording.md). The recorder stamps lidar frames with the latest odom pose so `dimos map global` can reconstruct poses later- see [`Go2Memory`](/dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py).
 
 ### Quick validation (optional)
 
