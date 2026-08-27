@@ -106,10 +106,10 @@ def name2id(model: mujoco.MjModel, objtype: int, name: str) -> int:
     return i
 
 
-def build_model(ghost: bool) -> mujoco.MjModel:
+def build_model(ghost: bool, mjcf: Path = ROBOT_MJCF) -> mujoco.MjModel:
     """The blueprint's own empty scene + robot MJCF + a green mocap ghost box."""
     spec = mujoco.MjSpec.from_file(str(LfsPath("mujoco_sim/scene_empty.xml")))
-    robot = mujoco.MjSpec.from_file(str(ROBOT_MJCF))
+    robot = mujoco.MjSpec.from_file(str(mjcf))
     robot.meshdir = str(LfsPath("g1_urdf/meshes"))
     spec.option.timestep = robot.option.timestep
     # prefix="" keeps MJCF names unprefixed so name lookups below stay valid.
@@ -223,6 +223,8 @@ def main() -> None:
     ap.add_argument("--speed", type=float, default=1.0, help="0 = as fast as it computes")
     ap.add_argument("--no-ghost", action="store_true")
     ap.add_argument("--headless", action="store_true")
+    ap.add_argument("--mjcf", type=Path, default=ROBOT_MJCF, help="plant under test")
+    ap.add_argument("--trace-hz", type=float, default=0.0, help="print pelvis pose")
     args = ap.parse_args()
 
     cmd_ts, cmds = load_commands(args.recording, args.stream)
@@ -231,7 +233,7 @@ def main() -> None:
     )
     print(f"{len(cmd_ts)} twists on {args.stream}, {len(ghost_ts)} Point-LIO poses")
 
-    model = build_model(ghost=not args.no_ghost and len(ghost_ts) > 0)
+    model = build_model(ghost=not args.no_ghost and len(ghost_ts) > 0, mjcf=args.mjcf)
     data = mujoco.MjData(model)
     policy = GrootPolicy(Path(str(LfsPath("groot"))))
 
@@ -307,6 +309,16 @@ def main() -> None:
 
             mujoco.mj_step(model, data)
             step_i += 1
+
+            if (
+                args.trace_hz
+                and step_i % max(1, round(1 / (args.trace_hz * model.opt.timestep))) == 0
+            ):
+                print(
+                    f"t={data.time:6.2f}  x={data.qpos[0]:+.3f} y={data.qpos[1]:+.3f} "
+                    f"z={data.qpos[2]:.3f}",
+                    flush=True,
+                )
 
             if viewer is not None:
                 viewer.sync()
