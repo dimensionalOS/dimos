@@ -70,8 +70,11 @@ def pipeline(mocker: Any) -> Iterator[SonicPipeline]:
     try:
         preload_dlls.assert_called_once_with()
         assert inference_session.call_count == 3
-        for call in inference_session.call_args_list:
-            assert call.kwargs["providers"] == ["CUDAExecutionProvider"]
+        assert [call.kwargs["providers"] for call in inference_session.call_args_list] == [
+            ["CUDAExecutionProvider"],
+            ["CUDAExecutionProvider"],
+            ["CUDAExecutionProvider", "CPUExecutionProvider"],
+        ]
         yield instance
     finally:
         instance._planner_executor.shutdown(wait=True)
