@@ -44,6 +44,8 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
+DROP_WARNING_INTERVAL_S = 10.0
+
 
 def recording_dir() -> Path:
     """``recordings/<run-id>`` for this ``dimos run``; a timestamp when run outside it."""
@@ -56,7 +58,8 @@ class TransportRecorder:
 
     Transport callbacks only enqueue; one writer thread does the encoding and SQLite
     work, so a slow append never stalls a transport's handler thread. When the queue
-    is full the message is dropped and counted.
+    is full the message is dropped, counted, and warned about at most once every
+    ``DROP_WARNING_INTERVAL_S`` so a lossy recording is visible while it is running.
     """
 
     def __init__(self, store: SqliteStore, topics: str = "*", queue_size: int = 1000) -> None:
@@ -64,8 +67,21 @@ class TransportRecorder:
         self._globs = topics.split(",")
         self._queue: queue.Queue[tuple[Stream[Any], Any, float] | None] = queue.Queue(queue_size)
         self.dropped = 0
+        self._last_drop_warning = 0.0
         self._writer = threading.Thread(target=self._drain, name="record-writer", daemon=True)
         self._writer.start()
+
+    def _count_drop(self, name: str) -> None:
+        self.dropped += 1
+        now = time.monotonic()
+        if now - self._last_drop_warning < DROP_WARNING_INTERVAL_S:
+            return
+        self._last_drop_warning = now
+        logger.warning(
+            "--record: writer queue full, dropping messages (%s); %d dropped so far",
+            name,
+            self.dropped,
+        )
 
     def _drain(self) -> None:
         while (item := self._queue.get()) is not None:
@@ -94,7 +110,7 @@ class TransportRecorder:
             try:
                 self._queue.put_nowait((stream, msg, getattr(msg, "ts", None) or time.time()))
             except queue.Full:
-                self.dropped += 1
+                self._count_drop(name)
 
         logger.info("Recording %s (%s) via %s", name, stream_type.__name__, transport)
         return transport.subscribe(on_msg)
