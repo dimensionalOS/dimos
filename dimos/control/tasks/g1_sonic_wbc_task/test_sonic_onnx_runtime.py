@@ -21,6 +21,8 @@ from dimos.control.tasks.g1_sonic_wbc_task import sonic_onnx_runtime
 
 
 def test_system_linked_ort_does_not_require_preload_dlls(mocker: Any) -> None:
+    mocker.patch.object(sonic_onnx_runtime.platform, "machine", return_value="aarch64")
+    mocker.patch.object(ort, "__version__", "1.18.1")
     mocker.patch.object(
         ort,
         "get_available_providers",
@@ -46,7 +48,7 @@ def test_prepare_rejects_unvalidated_ort_version_on_jetson(mocker: Any) -> None:
     mocker.patch.object(sonic_onnx_runtime.platform, "machine", return_value="aarch64")
     mocker.patch.object(ort, "__version__", "1.24.1")
 
-    with pytest.raises(RuntimeError, match="requires validated ONNX Runtime 1.20.1"):
+    with pytest.raises(RuntimeError, match="requires validated ONNX Runtime 1.18.1"):
         sonic_onnx_runtime.prepare_sonic_onnx_runtime()
 
 

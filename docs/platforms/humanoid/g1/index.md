@@ -157,10 +157,11 @@ setup commands, then install the versioned packages:
 
 ```bash
 sudo apt-get update
-sudo apt-get install cuda-11-8 cuda-compat-11-8 gcc-10 g++-10
+sudo apt-get install cuda-runtime-11-8 cuda-compat-11-8
 ```
 
-Build the pinned ONNX Runtime 1.20.1 wheel and run the offline safety gates:
+Install the pinned JetPack 5 ONNX Runtime 1.18.1 wheel and run the offline
+safety gates:
 
 ```bash
 cd ~/cc/dimos
@@ -180,6 +181,13 @@ prebuilt ARM64 packages that require a newer glibc than Ubuntu 20.04. Rehearse
 the simulation on the development workstation, then use this environment for
 the onboard diagnostic and real-hardware launch.
 
+The setup script installs
+[`onnxruntime-gpu-extended-auto==1.23.3`](https://github.com/jeff-hykin/onnxruntime-gpu-extended-auto)
+with target-side package detection. CUDA 11 and cuDNN 8 resolve to the pinned
+`onnxruntime-gpu-extended==1.18.1.11.8` JetPack 5 wheel. The script bypasses
+the pip cache and verifies the dispatcher, distribution, runtime, and CUDA
+provider versions after installation.
+
 `sonic-doctor` never contacts the robot. It validates the exact model hashes,
 CUDA execution partition, numerical output, and onboard latency. The encoder
 and decoder are forbidden from using CPU fallback. The planner may use CPU
@@ -188,7 +196,7 @@ fails the check. Do not continue if any check fails.
 
 Run the activated environment's `dimos` executable directly. Do not use
 `uv run`: dependency synchronization can reinstall the CPU-only
-`onnxruntime` package over the custom aarch64 GPU wheel.
+`onnxruntime` package over the JetPack 5 GPU wheel.
 
 Rehearse the full stack in MuJoCo before connecting policy output to motors:
 
@@ -393,7 +401,7 @@ not cause ONNX Runtime to fall back to CPU.
 
 On the G1 JetPack 5 PC2, a CPU-only `onnxruntime` installation is not usable.
 Do not run the x86 CUDA-extra instructions above. Re-enter the isolated
-environment and validate its source-built CUDA 11.8 wheel:
+environment and validate its pinned CUDA 11 wheel:
 
 ```bash
 export PATH=/usr/local/cuda-11.8/bin:$PATH
@@ -404,17 +412,14 @@ python -c 'import onnxruntime as ort; print(ort.__version__, ort.get_available_p
 dimos hardware g1 sonic-doctor
 ```
 
-The expected version is `1.20.1` with `CUDAExecutionProvider` listed first by
+The expected version is `1.18.1` with `CUDAExecutionProvider` listed first by
 the SONIC sessions. Rerun `bin/hardware/g1/setup-sonic-jp5` if the version is
 different or only `CPUExecutionProvider` is available.
 
-If an interrupted source build failed in `EigenNonBlockingThreadPool.h` with
-`MaxSizeVector` errors, update the checkout and rerun the setup script. The
-script disables discovery of JetPack's old system Eigen so ONNX Runtime uses
-the Eigen revision pinned by its own build. The installer shallow-fetches and
-verifies the exact Eigen Git commit instead of relying on GitLab's generated
-archive, whose container hash can change. The existing build directory is
-reconfigured and reused.
+The auto dispatcher must run through the target environment's regular `pip`,
+not `uv pip`: its CUDA/cuDNN dependency is computed while building on the G1.
+The setup script handles this distinction and uses `--no-cache-dir` so a wheel
+selected on another JetPack release cannot be reused.
 
 ### `libgomp.so.1: cannot allocate memory in static TLS block`
 

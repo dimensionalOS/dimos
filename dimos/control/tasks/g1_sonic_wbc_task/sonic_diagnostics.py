@@ -111,7 +111,7 @@ def _sha256(path: Path) -> str:
 
 def _host_checks() -> tuple[_Check, ...]:
     compat_library = CUDA_HOME / "compat/libcuda.so"
-    nvcc = CUDA_HOME / "bin/nvcc"
+    cuda_runtime = CUDA_HOME / "lib64/libcudart.so.11.0"
     ort_version = str(getattr(ort, "__version__", "unknown"))
     return (
         (
@@ -123,7 +123,7 @@ def _host_checks() -> tuple[_Check, ...]:
             ),
         ),
         ("Jetson Linux", _verify_l4t),
-        ("CUDA 11.8 compiler", lambda: _require_path(nvcc)),
+        ("CUDA 11.8 runtime", lambda: _require_path(cuda_runtime)),
         ("CUDA 11.8 compatibility driver", lambda: _require_path(compat_library)),
         ("cuDNN 8", lambda: _require_path(CUDNN_LIBRARY)),
         (

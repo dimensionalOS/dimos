@@ -24,7 +24,7 @@ import onnxruntime as ort  # type: ignore[import-untyped]
 
 CUDA_PROVIDER = "CUDAExecutionProvider"
 CPU_PROVIDER = "CPUExecutionProvider"
-JETSON_ORT_VERSION = "1.20.1"
+JETSON_ORT_VERSION = "1.18.1"
 _DISABLE_CPU_FALLBACK = "session.disable_cpu_ep_fallback"
 
 
@@ -46,7 +46,7 @@ def prepare_sonic_onnx_runtime() -> None:
         )
 
     # Recent x86 wheels bundle CUDA/cuDNN libraries and expose preload_dlls().
-    # Jetson's source-built ORT 1.20 wheel instead links against system CUDA.
+    # Jetson's CUDA 11 wheel instead links against the system CUDA libraries.
     preload_dlls = getattr(ort, "preload_dlls", None)
     if preload_dlls is not None:
         preload_dlls()
