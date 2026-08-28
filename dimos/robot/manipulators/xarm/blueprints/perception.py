@@ -44,6 +44,8 @@ xarm_perception = autoconnect(
         visualization={"backend": "viser"},
         floor_z=-0.02,
     ),
+    # TODO: tf tree is broken here; RealSenseCamera no longer publishes its mount
+    # edge, so camera_link needs a parent (e.g. from the arm) to resolve into world.
     RealSenseCamera.blueprint(),
     ObjectSceneRegistrationModule.blueprint(
         target_frame="world",

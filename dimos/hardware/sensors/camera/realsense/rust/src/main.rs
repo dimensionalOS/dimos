@@ -17,10 +17,12 @@
 // here so the Python process never sees a frame.
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::io::Write;
+use std::os::raw::c_void;
+use std::ptr::{self, NonNull};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use dimos_module::nalgebra::{
@@ -41,10 +43,11 @@ use realsense_rust::kind::{
     Rs2CameraInfo, Rs2DistortionModel, Rs2Extension, Rs2Format, Rs2Option, Rs2ProductLine,
     Rs2StreamKind,
 };
-use realsense_rust::pipeline::{ActivePipeline, InactivePipeline};
+use realsense_rust::pipeline::{ActivePipeline, InactivePipeline, PipelineProfile};
 use realsense_rust::processing_blocks::align::Align;
 use realsense_rust::sensor::Sensor;
 use realsense_rust::stream_profile::StreamProfile;
+use realsense_sys as sys;
 use serde::{Deserialize, Serialize};
 use tokio::runtime::Handle;
 
@@ -293,7 +296,7 @@ impl RealSense {
         // device, and two contexts opening it at once segfault librealsense, so
         // the IMU pipeline is started here, before the capture thread exists.
         if cfg.enable_imu {
-            let pipeline = imu_open(&cfg);
+            let (pipeline, rx) = imu_open(&cfg);
             let (c, s, h, o) = (
                 cfg.clone(),
                 self.shared.clone(),
@@ -301,7 +304,7 @@ impl RealSense {
                 outs.clone(),
             );
             self.threads.push(std::thread::spawn(move || {
-                imu_thread(pipeline, &c, &s, &h, &o)
+                imu_thread(pipeline, rx, &c, &s, &h, &o)
             }));
         }
         let (c, s, h, o) = (
@@ -849,13 +852,12 @@ fn capture_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs) {
 
 // ---- camera_info ticker ----
 
-fn sleep_interval(hz: f64) {
-    std::thread::sleep(Duration::from_secs_f64(1.0 / hz));
-}
-
 fn camera_info_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs) {
+    let period = Duration::from_secs_f64(1.0 / cfg.camera_info_fps);
+    let mut tick = std::time::Instant::now();
     loop {
-        sleep_interval(cfg.camera_info_fps);
+        std::thread::sleep(period.saturating_sub(tick.elapsed()));
+        tick = std::time::Instant::now();
         if shared.stopped() {
             return;
         }
@@ -1069,43 +1071,6 @@ impl HostClock {
     }
 }
 
-/// The motion streams' frame-number gate: repeats skipped, gaps counted.
-struct MotionGate {
-    key: &'static str,
-    last: Option<u64>,
-    dropped: u64,
-}
-
-impl MotionGate {
-    fn new(key: &'static str) -> Self {
-        Self {
-            key,
-            last: None,
-            dropped: 0,
-        }
-    }
-
-    /// True if this frame is new; a gap since the last one is logged.
-    fn advance(&mut self, number: u64) -> bool {
-        if self.last == Some(number) {
-            return false;
-        }
-        if let Some(previous) = self.last {
-            if number > previous + 1 {
-                let missed = number - previous - 1;
-                self.dropped += missed;
-                tracing::warn!(
-                    "RealSense {} dropped {missed} frame(s) at {number} ({} total)",
-                    self.key,
-                    self.dropped
-                );
-            }
-        }
-        self.last = Some(number);
-        true
-    }
-}
-
 type Sample = (f64, [f32; 3]);
 
 /// One Imu per gyro sample, with the accelerometer read at that instant.
@@ -1206,7 +1171,83 @@ fn stream_rates(context: &Context, cfg: &Config, kind: Rs2StreamKind) -> BTreeSe
     rates
 }
 
-fn imu_open(cfg: &Config) -> ActivePipeline {
+// ---- IMU: librealsense's frame callback, so every sample arrives exactly once ----
+//
+// realsense-rust only wraps wait_for_frames, whose syncer hands back the latest
+// sample of each stream and so repeats or drops IMU samples. The callback start
+// is raw realsense-sys; the frames it yields are wrapped back into the crate's
+// types, which own and release them.
+
+enum Motion {
+    Accel(AccelFrame),
+    Gyro(GyroFrame),
+}
+
+struct ImuPipeline {
+    pipe: *mut sys::rs2_pipeline,
+    config: *mut sys::rs2_config,
+    context: *mut sys::rs2_context,
+    sender: *mut mpsc::Sender<Motion>,
+}
+
+// Raw handles used from one thread at a time; librealsense itself is thread-safe.
+unsafe impl Send for ImuPipeline {}
+
+impl Drop for ImuPipeline {
+    fn drop(&mut self) {
+        unsafe {
+            // stop() joins the callback thread, so the sender is free afterwards.
+            sys::rs2_pipeline_stop(self.pipe, ptr::null_mut());
+            sys::rs2_delete_pipeline(self.pipe);
+            sys::rs2_delete_config(self.config);
+            sys::rs2_delete_context(self.context);
+            drop(Box::from_raw(self.sender));
+        }
+    }
+}
+
+/// Exits on a librealsense error, as `fail` does.
+unsafe fn rs_check(err: *mut sys::rs2_error, what: &str) {
+    if err.is_null() {
+        return;
+    }
+    let msg = CStr::from_ptr(sys::rs2_get_error_message(err))
+        .to_string_lossy()
+        .into_owned();
+    sys::rs2_free_error(err);
+    fail(what, msg);
+}
+
+unsafe fn frame_kind(frame: NonNull<sys::rs2_frame>) -> Option<Rs2StreamKind> {
+    let mut err = ptr::null_mut();
+    let profile = sys::rs2_get_frame_stream_profile(frame.as_ptr(), &mut err);
+    if !err.is_null() {
+        sys::rs2_free_error(err);
+        return None;
+    }
+    let profile = StreamProfile::try_from(NonNull::new(profile.cast_mut())?).ok()?;
+    Some(profile.kind())
+}
+
+/// `user` is the `Sender<Motion>` leaked by imu_open.
+unsafe extern "C" fn on_motion_frame(frame: *mut sys::rs2_frame, user: *mut c_void) {
+    let Some(ptr) = NonNull::new(frame) else {
+        return;
+    };
+    let motion = match frame_kind(ptr) {
+        Some(Rs2StreamKind::Accel) => AccelFrame::try_from(ptr).ok().map(Motion::Accel),
+        Some(Rs2StreamKind::Gyro) => GyroFrame::try_from(ptr).ok().map(Motion::Gyro),
+        _ => None,
+    };
+    match motion {
+        Some(motion) => {
+            let _ = (*user.cast::<mpsc::Sender<Motion>>()).send(motion);
+        }
+        None => sys::rs2_release_frame(frame),
+    }
+}
+
+fn imu_open(cfg: &Config) -> (ImuPipeline, mpsc::Receiver<Motion>) {
     let context = Context::new().unwrap_or_else(|e| fail("context", e));
     let offered = stream_rates(&context, cfg, Rs2StreamKind::Gyro);
     if !offered.contains(&cfg.imu_hz) {
@@ -1222,52 +1263,63 @@ fn imu_open(cfg: &Config) -> ActivePipeline {
         .into_iter()
         .max()
         .unwrap_or(cfg.imu_hz);
+    drop(context);
 
-    let mut config = RsConfig::new();
-    if let Some(serial) = cfg.serial() {
-        let serial = CString::new(serial).unwrap_or_else(|e| fail("serial_number", e));
-        config
-            .enable_device_from_serial(&serial)
-            .unwrap_or_else(|e| fail("enable_device", e));
-    }
-    config
-        .enable_stream(
-            Rs2StreamKind::Accel,
-            None,
-            0,
-            0,
-            Rs2Format::MotionXyz32F,
-            accel_hz as usize,
-        )
-        .unwrap_or_else(|e| fail("accel stream", e));
-    config
-        .enable_stream(
-            Rs2StreamKind::Gyro,
-            None,
-            0,
-            0,
-            Rs2Format::MotionXyz32F,
-            cfg.imu_hz as usize,
-        )
-        .unwrap_or_else(|e| fail("gyro stream", e));
-    let pipeline = InactivePipeline::try_from(&context).unwrap_or_else(|e| fail("imu pipeline", e));
-    let pipeline = pipeline
-        .start(Some(config))
-        .unwrap_or_else(|e| fail("imu start", e));
-
-    // librealsense's global-time fit for the IMU goes wrong once the camera bus is
-    // full (IntelRealSense/librealsense#9131, fix unreleased in #15360). The raw
-    // hardware clock is stable, so take it and re-anchor it in HostClock::host_time.
-    for mut sensor in pipeline.profile().device().sensors() {
-        if sensor_name(&sensor) == MOTION_MODULE_NAME {
-            let _ = sensor.set_option(Rs2Option::GlobalTimeEnabled, 0.0);
+    let (tx, rx) = mpsc::channel();
+    let sender = Box::into_raw(Box::new(tx));
+    let pipeline = unsafe {
+        let mut err = ptr::null_mut();
+        let context = sys::rs2_create_context(sys::RS2_API_VERSION as i32, &mut err);
+        rs_check(err, "imu context");
+        let config = sys::rs2_create_config(&mut err);
+        rs_check(err, "imu config");
+        if let Some(serial) = cfg.serial() {
+            let serial = CString::new(serial).unwrap_or_else(|e| fail("serial_number", e));
+            sys::rs2_config_enable_device(config, serial.as_ptr(), &mut err);
+            rs_check(err, "enable_device");
         }
-    }
-    pipeline
+        let motion = sys::rs2_format_RS2_FORMAT_MOTION_XYZ32F;
+        let accel = sys::rs2_stream_RS2_STREAM_ACCEL;
+        sys::rs2_config_enable_stream(config, accel, -1, 0, 0, motion, accel_hz, &mut err);
+        rs_check(err, "accel stream");
+        let gyro = sys::rs2_stream_RS2_STREAM_GYRO;
+        sys::rs2_config_enable_stream(config, gyro, -1, 0, 0, motion, cfg.imu_hz, &mut err);
+        rs_check(err, "gyro stream");
+        let pipe = sys::rs2_create_pipeline(context, &mut err);
+        rs_check(err, "imu pipeline");
+        let profile = sys::rs2_pipeline_start_with_config_and_callback(
+            pipe,
+            config,
+            Some(on_motion_frame),
+            sender.cast(),
+            &mut err,
+        );
+        rs_check(err, "imu start");
+        let pipeline = ImuPipeline {
+            pipe,
+            config,
+            context,
+            sender,
+        };
+
+        // librealsense's global-time fit for the IMU goes wrong once the camera bus is
+        // full (IntelRealSense/librealsense#9131, fix unreleased in #15360). The raw
+        // hardware clock is stable, so take it and re-anchor it in HostClock::host_time.
+        let profile = PipelineProfile::try_from(NonNull::new(profile).unwrap())
+            .unwrap_or_else(|e| fail("imu profile", e));
+        for mut sensor in profile.device().sensors() {
+            if sensor_name(&sensor) == MOTION_MODULE_NAME {
+                let _ = sensor.set_option(Rs2Option::GlobalTimeEnabled, 0.0);
+            }
+        }
+        pipeline
+    };
+    (pipeline, rx)
 }
 
 fn imu_thread(
-    mut pipeline: ActivePipeline,
+    pipeline: ImuPipeline,
+    rx: mpsc::Receiver<Motion>,
     cfg: &Config,
     shared: &Shared,
     handle: &Handle,
@@ -1276,33 +1328,27 @@ fn imu_thread(
     let frame_id = cfg.imu_optical_frame();
     let mut clock = HostClock::default();
     let mut pairer = ImuPairer::default();
-    // Each wait() carries the latest sample of both streams, so one gyro frame
-    // shows up again whenever only the accelerometer advanced, and a sample is
-    // lost whenever two of one stream land between waits.
-    let (mut accel_gate, mut gyro_gate) = (MotionGate::new("accel"), MotionGate::new("gyro"));
     while !shared.stopped() {
-        let Some(frames) = wait_frames(&mut pipeline, shared) else {
-            continue;
-        };
-        for frame in frames.frames_of_type::<AccelFrame>() {
-            if !accel_gate.advance(frame.frame_number()) {
+        match rx.recv_timeout(FRAME_TIMEOUT) {
+            Ok(Motion::Accel(f)) => {
+                pairer.accel((clock.host_time(f.timestamp() / 1000.0), *f.acceleration()))
+            }
+            Ok(Motion::Gyro(f)) => pairer.gyro((
+                clock.host_time(f.timestamp() / 1000.0),
+                *f.rotational_velocity(),
+            )),
+            Err(_) => {
+                if !shared.stopped() {
+                    tracing::warn!("RealSense: no IMU samples within 1s - retrying");
+                }
                 continue;
             }
-            let ts = clock.host_time(frame.timestamp() / 1000.0);
-            pairer.accel((ts, *frame.acceleration()));
-        }
-        for frame in frames.frames_of_type::<GyroFrame>() {
-            if !gyro_gate.advance(frame.frame_number()) {
-                continue;
-            }
-            let ts = clock.host_time(frame.timestamp() / 1000.0);
-            pairer.gyro((ts, *frame.rotational_velocity()));
         }
         while let Some(sample) = pairer.next() {
             let _ = handle.block_on(outs.imu.publish(&imu_message(&frame_id, sample)));
         }
     }
-    pipeline.stop();
+    drop(pipeline);
 }
 
 #[tokio::main]

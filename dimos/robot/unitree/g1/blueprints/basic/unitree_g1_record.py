@@ -113,7 +113,7 @@ unitree_g1_record = autoconnect(
             (PointLio, "odometry", "pointlio_odometry"),
         ]
     ),
-    RealSenseCamera.blueprint().remappings(
+    RealSenseCamera.blueprint(frame_id="d435").remappings(
         [
             (RealSenseCamera, "depth_image", "realsense_depth_image"),
             (RealSenseCamera, "camera_info", "realsense_camera_info"),
