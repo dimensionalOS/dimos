@@ -36,6 +36,8 @@ import os
 from pathlib import Path
 from typing import Any, cast
 
+from pydantic import Field
+
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig, TaskConfig
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import g1_joints
@@ -246,11 +248,13 @@ class _G1SonicTeleopCoordinatorConfig(ControlCoordinatorConfig):
     """Startup selection for the WebXR pose-window behavior."""
 
     sonic_pipeline: SonicTeleopPipeline = SONIC_V1_1_PIPELINE
+    pose_transition_seconds: float = Field(default=0.5, gt=0.0, allow_inf_nan=False)
 
 
 def _configure_sonic_teleop_tasks(
     tasks: list[TaskConfig],
     sonic_pipeline: SonicTeleopPipeline,
+    pose_transition_seconds: float,
 ) -> list[TaskConfig]:
     return [
         replace(
@@ -258,6 +262,7 @@ def _configure_sonic_teleop_tasks(
             params={
                 **task.params,
                 "sonic_pipeline": sonic_pipeline,
+                "pose_transition_seconds": pose_transition_seconds,
             },
         )
         if task.type == "g1_sonic_teleop"
@@ -273,6 +278,7 @@ class _G1SonicTeleopCoordinator(_G1SonicCoordinator):
         self.config.tasks = _configure_sonic_teleop_tasks(
             self.config.tasks,
             self.config.sonic_pipeline,
+            self.config.pose_transition_seconds,
         )
         super()._setup_from_config()
 
@@ -287,7 +293,12 @@ def _g1_sonic_coordinator(
         _G1SonicTeleopCoordinator if task_type == "g1_sonic_teleop" else _G1SonicCoordinator
     )
     teleop_config = (
-        {"sonic_pipeline": SONIC_V1_1_PIPELINE} if task_type == "g1_sonic_teleop" else {}
+        {
+            "sonic_pipeline": SONIC_V1_1_PIPELINE,
+            "pose_transition_seconds": 0.5,
+        }
+        if task_type == "g1_sonic_teleop"
+        else {}
     )
     coordinator = coordinator_type.blueprint(
         instance_name="ControlCoordinator",
