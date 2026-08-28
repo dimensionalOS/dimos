@@ -21,6 +21,7 @@ callers. Every knob lives on GlobalConfig; nothing here is hardcoded."""
 from __future__ import annotations
 
 from collections.abc import Callable
+import contextlib
 import functools
 import hashlib
 import json
@@ -114,7 +115,9 @@ class MultipartBackend:
                 time.sleep(attempt)
 
     def _staging(self, beside: Path) -> tempfile.TemporaryDirectory[str]:
-        return tempfile.TemporaryDirectory(dir=self.staging_dir or beside.parent)
+        parent = self.staging_dir or beside.parent
+        _reap_stale(parent)
+        return tempfile.TemporaryDirectory(prefix=".dimos-staging-", dir=parent)
 
     def upload(
         self,
@@ -295,6 +298,17 @@ def kind_of(path: Path) -> str:
     return "blob"
 
 
+def _reap_stale(parent: Path, max_age_s: float = 86400) -> None:
+    """A SIGKILL mid-transfer orphans the staging dir beside the file; nothing else
+    would ever remove it."""
+    for d in parent.glob(".dimos-staging-*"):
+        try:
+            if d.is_dir() and time.time() - d.stat().st_mtime > max_age_s:
+                shutil.rmtree(d, ignore_errors=True)
+        except FileNotFoundError:
+            continue
+
+
 def _move_into_place(src: Path, out: Path) -> None:
     """Atomic replace; a cross-filesystem staging dir falls back to copy-then-rename
     so the destination is still never left truncated."""
@@ -313,7 +327,9 @@ def _is_sidecar(path: Path) -> bool:
 
 def _manifest(db: Path) -> dict[str, Any] | None:
     try:
-        with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as conn:
+        with contextlib.closing(
+            sqlite3.connect(f"{db.absolute().as_uri()}?mode=ro", uri=True)
+        ) as conn:
             rows = conn.execute("SELECT name, config FROM _streams").fetchall()
         return {"streams": [{"name": n, **json.loads(c)} for n, c in rows]}
     except sqlite3.Error:
