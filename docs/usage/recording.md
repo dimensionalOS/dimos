@@ -63,4 +63,4 @@ dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2
 
 - Off unless `--record`; never active under `--replay`.
 - One writer thread; transport callbacks only enqueue. Queue holds 1000 messages, then drops and warns.
-- We also still have explicit recorder modules (`unitree-go2-memory`, `unitree-go2-mid360-record`, `unitree-g1-record`) that are unaffected and still record their own streams. These will be deprecated shortly. 
+- We also still have explicit recorder modules (`unitree-go2-memory`, `unitree-go2-mid360-record`, `unitree-g1-record`) that are unaffected and still record their own streams. These will be deprecated shortly.
