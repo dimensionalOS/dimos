@@ -95,7 +95,7 @@ class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     )
     pointcloud_fps: float = 5.0
     # Every n-th pixel goes into the cloud.
-    pointcloud_decimation: int = 1
+    pointcloud_decimation: int = 2
     camera_info_fps: float = 1.0
     serial_number: str | None = None
 
