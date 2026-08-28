@@ -15,6 +15,8 @@
 
 The APIs and some names below do not exist yet. This file only shows how we
 expect hosted placement to be used.
+
+This file is only for documentation purposes and is not meant to be executed.
 """
 
 from __future__ import annotations
@@ -102,13 +104,11 @@ class HostClient:
 
     def describe(self) -> HostDescriptor: ...
 
-    def prepare(self, run: HostedRun) -> str: ...
+    def start(self, fragment: HostFragment) -> DeploymentStatus: ...
 
-    def start(self, run_id: str, generation: int) -> str: ...
+    def status(self, run_id: str) -> DeploymentStatus: ...
 
-    def status(self, run_id: str) -> str: ...
-
-    def stop(self, run_id: str, generation: int) -> str: ...
+    def stop(self, run_id: str, generation: int, fragment_digest: str) -> DeploymentStatus: ...
 
 
 class HostServer:
@@ -124,27 +124,30 @@ class HostServer:
         self._name = name
         self._tags = tags
         self._epoch = uuid.uuid4().hex
-        self._current_run: HostedRun | None = None
+        self._current_fragment: HostFragment | None = None
 
     @rpc
     def describe(self) -> HostDescriptor: ...
 
     @rpc
-    def prepare(self, epoch: str, run: HostedRun) -> str: ...
+    def start(self, epoch: str, fragment: HostFragment) -> DeploymentStatus: ...
 
     @rpc
-    def start(self, epoch: str, run_id: str, generation: int) -> str: ...
+    def status(self, epoch: str, run_id: str) -> DeploymentStatus: ...
 
     @rpc
-    def status(self, run_id: str) -> str: ...
-
-    @rpc
-    def stop(self, epoch: str, run_id: str, generation: int) -> str: ...
+    def stop(
+        self,
+        epoch: str,
+        run_id: str,
+        generation: int,
+        fragment_digest: str,
+    ) -> DeploymentStatus: ...
 
 
 # Host process bootstrap registers HostServer under HOST_CONTROL_RPC_NAME.
 # DistributedRunner owns HostControl and creates HostClient instances only for
-# discovery, prepare, start, status, and stop. Once start succeeds, modules use
+# discovery, start, status, and stop. Once start succeeds, modules use
 # RUN_STREAM_KEY and RUN_MODULE_RPC_NAME directly over Zenoh; HostClient is not
 # part of the application data path.
 
