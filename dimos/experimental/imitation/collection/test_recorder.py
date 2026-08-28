@@ -24,7 +24,9 @@ from dimos.experimental.memory.rust_recorder import RustMcapStoreConfig
 
 @pytest.fixture
 def recorder(tmp_path: Path) -> Iterator[NativeCollectionRecorder]:
-    instance = NativeCollectionRecorder(store={"path": str(tmp_path / "collection.db")})
+    instance = NativeCollectionRecorder(
+        store={"kind": "sqlite", "path": str(tmp_path / "collection.db")}
+    )
     yield instance
     instance.stop()
 
@@ -53,9 +55,14 @@ def test_native_collection_profile_resolves_dataprep_codecs(
     assert "record_tf" not in recorder.config.to_config_dict()
 
 
-def test_native_collection_profile_rejects_non_sqlite_store(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="RustSqliteStoreConfig"):
-        NativeCollectionRecorder(store=RustMcapStoreConfig(path=str(tmp_path / "collection.mcap")))
+def test_native_collection_profile_accepts_mcap_store(tmp_path: Path) -> None:
+    recorder = NativeCollectionRecorder(
+        store=RustMcapStoreConfig(path=str(tmp_path / "collection.mcap"))
+    )
+
+    assert recorder.config.store.kind == "mcap"
+    assert recorder.config.store.path == str(tmp_path / "collection.mcap")
+    recorder.stop()
 
 
 @pytest.mark.parametrize(

@@ -42,10 +42,24 @@ from dimos.imitation.dataprep.core import (
     inspect_episodes,
     iter_episode_samples,
 )
-from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.store.base import Store
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+
+def _open_recording(path: str | Path) -> Store:
+    """Open a native collection artifact through its read-only Store interface."""
+    source = Path(path)
+    if source.suffix == ".db":
+        from dimos.memory.store.sqlite import SqliteStore
+
+        return SqliteStore(path=str(source), must_exist=True)
+    if source.suffix == ".mcap":
+        from dimos.memory.store.mcap import McapStore
+
+        return McapStore(path=str(source))
+    raise ValueError(f"Unsupported recording {str(source)!r}: expected a .db or .mcap artifact")
 
 
 def _write_dimos_meta(
@@ -106,7 +120,7 @@ def run_dataprep(config: DataPrepConfig, *, writer: Writer | None = None) -> Pat
         config.episodes.extractor,
         config.output.path,
     )
-    store = SqliteStore(path=config.source, must_exist=True)
+    store = _open_recording(config.source)
     try:
         logger.info("[dataprep] streams in source: %s", store.list_streams())
         all_eps = extract_episodes(store, config.episodes)
@@ -245,7 +259,7 @@ def inspect_recording(
 ) -> dict[str, Any]:
     """Summarize a source recording, including an episode left open at EOF."""
     p = Path(path)
-    store = SqliteStore(path=str(p), must_exist=True)
+    store = _open_recording(p)
     try:
         stream_names = store.list_streams()
         stream_counts = {name: store.stream(name).count() for name in stream_names}
@@ -288,7 +302,7 @@ def inspect_dataset(path: Path | str, fmt: str | None = None) -> dict[str, Any]:
     """
     p = Path(path)
     if fmt is None:
-        if p.suffix == ".db":
+        if p.suffix in {".db", ".mcap"}:
             return inspect_recording(p)
         if p.suffix in (".h5", ".hdf5"):
             fmt = "hdf5"
@@ -296,7 +310,8 @@ def inspect_dataset(path: Path | str, fmt: str | None = None) -> dict[str, Any]:
             fmt = "lerobot"
         else:
             raise ValueError(
-                f"Cannot detect data format at {p}: expected a recording .db, a .hdf5 file, "
+                f"Cannot detect data format at {p}: expected a recording .db/.mcap, "
+                f"a .hdf5 file, "
                 f"or a lerobot directory with meta/info.json. Pass --format explicitly."
             )
     return get_inspector(fmt)(p)

@@ -224,6 +224,7 @@ visualization = [
 
 learning = [
     # dimos.imitation.dataprep dataset writers (lazy-imported per format)
+    "mcap>=1.2",  # read native collection artifacts directly
     "pyarrow",  # LeRobot v3.0 data/episodes parquet
     "pandas",   # LeRobot v3.0 tasks.parquet (task-indexed)
     "h5py",     # HDF5 writer

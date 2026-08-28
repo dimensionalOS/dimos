@@ -1,11 +1,11 @@
 # Imitation Learning
 
 Collect demonstrations, build training datasets, and run trained policies in
-DimOS. Teleoperation records episodes to a session DB, and DataPrep converts
-that DB into a LeRobot or HDF5 dataset for imitation learning.
+DimOS. Teleoperation records episodes to a SQLite or MCAP artifact, and DataPrep
+converts that recording into a LeRobot or HDF5 dataset for imitation learning.
 
 ```
-teleop (Quest) ─▶ CollectionRecorder ─▶ session_<robot>_<ts>.db ─▶ dimos dataprep ─▶ dataset
+teleop (Quest) ─▶ CollectionRecorder ─▶ session_<robot>_<ts>.db/.mcap ─▶ dimos dataprep ─▶ dataset
 ```
 
 After training, use the production
@@ -56,8 +56,9 @@ prints one line per transition:
 ~/.local/state/dimos/recordings/session_<robot>_<YYYYMMDD_HHMMSS>.db
 ```
 
-A new timestamped file per run (nothing is overwritten). The native OpenYAM
-profile records `color_image`, `coordinator_joint_state`,
+A new timestamped SQLite file per run (nothing is overwritten). The native
+OpenYAM profile can instead write MCAP when selected through its module config.
+Both formats record `color_image`, `coordinator_joint_state`,
 `applied_joint_position_command`, and `status` (the episode
 start/save/discard markers).
 
@@ -67,7 +68,7 @@ The exact path is printed when the recorder starts — note it for the next step
 
 ## 2. Build a dataset
 
-DataPrep is an offline batch step that reads a session DB and writes a dataset.
+DataPrep is an offline batch step that reads a session `.db` or `.mcap` and writes a dataset.
 The obs/action stream mapping is nested, so it comes from a JSON config — start
 from [`dataprep/example_config.json`](dataprep/example_config.json) and edit the
 `source`/`output` to taste.
@@ -91,13 +92,28 @@ dimos --transport zenoh --can-port can0 \
 dimos dataprep build \
   --source <session_openyam.db> \
   --config dimos/imitation/dataprep/openyam_lerobot.json
+
+# Select MCAP for one native collection run
+dimos --transport zenoh --can-port can0 \
+  run learning-collect-quest-openyam-native \
+  --task "pick up the red block" \
+  --WristCamera.webcam.camera-index /dev/video0 \
+  --nativecollectionrecorder.store.kind mcap \
+  --nativecollectionrecorder.store.path data/recordings/session_openyam.mcap
+dimos dataprep build \
+  --source data/recordings/session_openyam.mcap \
+  --config dimos/imitation/dataprep/openyam_lerobot.json \
+  --output data/datasets/openyam-mcap
 ```
 
 The native OpenYAM blueprint is an explicit experiment; the command without
 `-native` keeps using the Python recorder and shared-memory camera transport.
 The native graph uses reliable Zenoh for all recorded streams. Override its
-session path with
-`--nativecollectionrecorder.store.path /path/to/session_openyam.db`.
+session backend and path with both
+`--nativecollectionrecorder.store.kind mcap` and
+`--nativecollectionrecorder.store.path /path/to/session_openyam.mcap`.
+SQLite remains the default. Stop collection gracefully so MCAP can finalize its
+summary and indexes; MCAP append mode is unsupported.
 
 `--source` / `--output` / `--format` override whatever the config specifies, so
 you can reuse one config across runs and just swap `--source`. The dataset is
@@ -113,6 +129,8 @@ dimos dataprep inspect data/datasets/session.hdf5  # HDF5 file
 # Validate saved recording episodes before conversion
 dimos dataprep inspect session_openyam.db \
   --config dimos/imitation/dataprep/openyam_lerobot.json
+dimos dataprep inspect session_openyam.mcap \
+  --config dimos/imitation/dataprep/openyam_lerobot.json
 ```
 
 Each dataset gets a `dimos_meta.json` sidecar recording exactly how it was built
@@ -126,7 +144,7 @@ fill reports).
 See [`dataprep/example_config.json`](dataprep/example_config.json) for a full,
 working example. The fields that matter:
 
-- **`source`** — the session `.db`.
+- **`source`** — the session `.db` or `.mcap`.
 - **`observation` / `action`** — map each final dataset feature name to an
   explicit `{stream, field, dtype, shape, names}` schema. OpenYAM actions come
   from the accepted `applied_joint_position_command`, not future feedback.
