@@ -72,10 +72,20 @@ from dimos.simulation.sysid.plant import TorqueEnvelope, actuator_step
 from dimos.simulation.sysid.presets import Knob, Preset
 from dimos.simulation.sysid.recording import Streams
 from dimos.simulation.sysid.replay import measured_state
-from dimos.simulation.sysid.rotations import mat_to_quat, quat_to_mat, yaw_anchor, yaw_of
+from dimos.simulation.sysid.rotations import (
+    mat_to_quat,
+    pitch_roll_of,
+    quat_to_mat,
+    yaw_anchor,
+    yaw_of,
+)
 from dimos.utils.data import LfsPath
 
-TERMS = ("along", "cross", "yaw")
+# along/cross/yaw are tracking areas; cadence is the relative error of the
+# sway frequency (the roll spectrum's peak in 0.5-4 Hz): a plant can buy
+# tracking area by striding slower, and only cadence sees it.
+TERMS = ("along", "cross", "yaw", "cadence")
+CADENCE_SCALE = 0.05  # a stock plant that already matches cadence must not make the term explode
 PERTURB_RAD = 0.005  # sim-perturb replicates: +-0.3 deg on the 12 seeded leg joints
 TRACKING_ANCHOR_S = 0.5  # where the free rollout is anchored to the room
 
@@ -104,6 +114,21 @@ LOOP_KNOBS: dict[str, Knob] = {
     "rig_dx": Knob(-0.1, 0.1, unit="m", why="Point-LIO -> pelvis lever-arm correction, pelvis x"),
     "rig_dy": Knob(-0.1, 0.1, unit="m", why="Point-LIO -> pelvis lever-arm correction, pelvis y"),
     "rig_dz": Knob(-0.1, 0.1, unit="m", why="Point-LIO -> pelvis lever-arm correction, pelvis z"),
+    "rig_dt": Knob(
+        -0.15,
+        0.15,
+        unit="s",
+        why="Point-LIO track latency vs the store clock. MEASURED 2026-08-28 by "
+        "cross-correlating IMU yaw/roll/pitch rate with the track's: +10 ms on every "
+        "axis (corr 0.7-0.84); pin it, do not search it",
+    ),
+    "cmd_dt": Knob(
+        -0.15,
+        0.15,
+        unit="s",
+        why="velocity-command clock vs the store clock: the payload stamps run ~50 ms "
+        "behind, so when the policy actually saw a command is unknown to that order",
+    ),
 }
 LOOP_DEFAULTS: dict[str, float] = {
     "envelope_gain": 1.0,
@@ -112,6 +137,8 @@ LOOP_DEFAULTS: dict[str, float] = {
     "rig_dx": 0.0,
     "rig_dy": 0.0,
     "rig_dz": 0.0,
+    "rig_dt": 0.01,
+    "cmd_dt": 0.0,
 }
 ALL_KNOBS: dict[str, Knob] = {**KNOBS, **LOOP_KNOBS}
 DEFAULT_SEARCH = (
@@ -132,6 +159,7 @@ DEFAULT_SEARCH = (
     "rig_dx",
     "rig_dy",
     "rig_dz",
+    "cmd_dt",
 )
 
 _POLICY: GrootPolicy | None = None
@@ -153,8 +181,9 @@ class PolicyRun:
     quat: NDArray[Any]
 
 
-def _cmd_at(st: Streams, t_abs: float) -> NDArray[Any]:
-    i = int(np.searchsorted(st.wt, t_abs, "right")) - 1
+def _cmd_at(st: Streams, t_abs: float, cmd_dt: float = 0.0) -> NDArray[Any]:
+    """The velocity command in force at ``t_abs``; ``cmd_dt`` shifts the command clock."""
+    i = int(np.searchsorted(st.wt + cmd_dt, t_abs, "right")) - 1
     return st.wcmd[i] if i >= 0 else np.zeros(3)
 
 
@@ -173,6 +202,12 @@ def base_pose(st: Streams, values: dict[str, float]) -> tuple[NDArray[Any], NDAr
     d = np.array([values.get(k, 0.0) for k in ("rig_dx", "rig_dy", "rig_dz")])
     if d.any():
         base_p = base_p + base_r @ d
+    # A track that lags the store clock by rig_dt is moved EARLIER by that
+    # much: whole grid samples, edge-held, so the grid itself stays put.
+    k = round(float(values.get("rig_dt", 0.0)) / float(np.median(np.diff(st.vt))))
+    if k:
+        idx = np.clip(np.arange(len(st.vt)) + k, 0, len(st.vt) - 1)
+        base_p, base_r = base_p[idx], base_r[idx]
     return base_p, base_r
 
 
@@ -190,6 +225,7 @@ def rollout(
     model, data = g1_model.load(ghost=view)
     g1_model.apply_physics(model, {k: v for k, v in values.items() if k in PHYSICS_KEYS})
     tau_lag = float(values.get("actuator_tau", 0.0))
+    cmd_dt = float(values.get("cmd_dt", 0.0))
     envelope = _envelope(values)
     delay = round(float(values.get("action_delay", 0.0)))
     dt = float(model.opt.timestep)
@@ -228,7 +264,7 @@ def rollout(
         ci = int(np.clip(np.searchsorted(st.ct, t_abs, "right") - 1, 0, len(st.ct) - 1))
         frames.append(
             observation(
-                _cmd_at(st, t_abs),
+                _cmd_at(st, t_abs, cmd_dt),
                 st.lgyro[li],
                 st.lquat[li],
                 st.lq[li],
@@ -267,7 +303,7 @@ def rollout(
             t = i * dt
             if i % decim == 0:
                 fresh = policy.step(
-                    _cmd_at(st, start + t),
+                    _cmd_at(st, start + t, cmd_dt),
                     data.sensordata[gyro_adr : gyro_adr + 3],
                     data.qpos[3:7],
                     data.qpos[7:],
@@ -331,11 +367,27 @@ def curves(
     h = yr + a_yaw
     u = np.stack([np.cos(h), np.sin(h)], 1)
     nrm = np.stack([-np.sin(h), np.cos(h)], 1)
+    _, roll_real = pitch_roll_of(np.stack([mat_to_quat(r) for r in base_r]))
+    m = (st.vt >= start) & (st.vt <= start + float(run.t[-1]))
+    _, roll_sim = pitch_roll_of(run.quat)
+    f_real = sway_hz(st.vt[m], roll_real[m])
+    f_sim = sway_hz(run.t, roll_sim)
     return {
         "along": np.sum(e * u, 1),
         "cross": np.sum(e * nrm, 1),
         "yaw": (yaw_s[i0:] - float(yaw_s[i0])) - (yr - float(np.interp(a0, st.vt, yaw_room))),
+        "cadence": np.array([(f_sim - f_real) / f_real]),
     }
+
+
+def sway_hz(t: NDArray[Any], roll: NDArray[Any]) -> float:
+    """The roll spectrum's peak in 0.5-4 Hz: the lateral sway, one per stride pair."""
+    x = roll - roll.mean()
+    dt = float(np.median(np.diff(t)))
+    f = np.fft.rfftfreq(len(x), dt)
+    p = np.abs(np.fft.rfft(x * np.hanning(len(x)))) ** 2
+    band = (f > 0.5) & (f < 4.0)
+    return float(f[band][np.argmax(p[band])])
 
 
 def areas(c: dict[str, NDArray[Any]]) -> dict[str, float]:
@@ -402,6 +454,7 @@ class Objective:
     def calibrate(self, values: dict[str, float]) -> list[dict[str, float]]:
         base = self.rollouts(values)
         self.scale = {t: float(np.mean([b[t] for b in base])) for t in TERMS}
+        self.scale["cadence"] = max(self.scale["cadence"], CADENCE_SCALE)
         return base
 
     def evaluate(self, values: dict[str, float]) -> float:
@@ -416,7 +469,8 @@ class Objective:
 def table(name: str, per: list[dict[str, float]]) -> str:
     m = {t: float(np.mean([p[t] for p in per])) for t in TERMS}
     return (
-        f"  {name:<10s} along {m['along']:.4f} m  cross {m['cross']:.4f} m  yaw {m['yaw']:.4f} rad"
+        f"  {name:<10s} along {m['along']:.4f} m  cross {m['cross']:.4f} m  "
+        f"yaw {m['yaw']:.4f} rad  cadence {100 * m['cadence']:.1f}%"
     )
 
 
