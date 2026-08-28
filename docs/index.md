@@ -2,11 +2,11 @@
 
 **dimOS** is an open source operating system for generalist robotics, built by Dimensional. Write one Python program and run it on a quadruped, a humanoid, a drone, or an arm.
 
-dimOS is agent native. Every skill a robot exposes is also an MCP tool. An LLM or a coding agent such as Claude Code discovers those tools and calls them directly, with no glue code to write.
+dimOS is also agent native. Every skill a robot exposes is also an MCP tool. An LLM coding agent can discover those tools and call them directly. 
 
 ## The problem
 
-Every robot ships its own SDK. Code written for one rarely survives the move to another. ROS is the usual way out, but you take on its build system and its runtime whole, before writing any behaviour of your own. Most of it also needs the hardware in front of you, so your work waits on a robot that is shared, remote, or still in a box.
+Every robot ships its own SDK and the  code written for one rarely survives the move to another. ROS is the usual way out, but you take on its build system and its runtime whole, before writing any behaviour of your own. Most of it also needs the hardware, so your work waits on a robot that is shared, remote, or still in a box.
 
 ## How dimOS solves it
 
