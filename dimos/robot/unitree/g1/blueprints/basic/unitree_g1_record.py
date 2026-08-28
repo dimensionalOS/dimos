@@ -113,10 +113,7 @@ unitree_g1_record = autoconnect(
             (PointLio, "odometry", "pointlio_odometry"),
         ]
     ),
-    # The camera anchors its optical tf subtree to the d435_link frame.
-    RealSenseCamera.blueprint(
-        base_frame_id="d435_link",
-    ).remappings(
+    RealSenseCamera.blueprint().remappings(
         [
             (RealSenseCamera, "depth_image", "realsense_depth_image"),
             (RealSenseCamera, "camera_info", "realsense_camera_info"),

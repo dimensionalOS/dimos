@@ -36,6 +36,7 @@ from typing import (
 )
 from urllib.parse import urlparse
 
+import numpy as np
 from reactivex.disposable import Disposable
 from toolz import pipe  # type: ignore[import-untyped]
 
@@ -585,7 +586,7 @@ class RerunBridgeModule(Module):
             rr.GraphNodes(
                 node_ids=node_ids,
                 labels=node_labels,
-                colors=node_colors,
+                colors=np.asarray(node_colors, dtype=np.uint32),
                 positions=positions,
                 radii=radii,
                 show_labels=True,

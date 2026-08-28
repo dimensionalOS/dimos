@@ -853,6 +853,8 @@ class PointCloud2(Timestamped):
         mode: str = "spheres",
         fill_mode: str = "solid",
         bottom_cutoff: float | None = None,
+        ui_radius: float = 2.0,
+        rgb: bool = True,
         **kwargs: object,
     ) -> Archetype:
         """Convert to Rerun archetype for visualization.
@@ -862,8 +864,13 @@ class PointCloud2(Timestamped):
             colors: Optional RGB color [r, g, b] for all points (0-255).
                 If None, uses height-based turbo colormap via class_ids
                 (requires register_colormap_annotation() called once).
-            mode: "points" for raw points, "boxes" for cubes (default), or "spheres" for sized spheres
+            mode: "points" for flat screen-space dots, "boxes" for cubes, or
+                "spheres" (default) for world-sized spheres. Only "points" holds a
+                constant on-screen size as you zoom; the others scale with voxel_size.
             fill_mode: Fill mode for boxes - "solid", "majorwireframe", or "densewireframe"
+            ui_radius: Dot radius in screen-space UI points; "points" mode only.
+            rgb: Paint with the cloud's own per-point colors when it has any (an
+                RGBD cloud); off, or on a colorless cloud, the height colormap.
             **kwargs: Additional args (ignored for compatibility)
 
         Returns:
@@ -883,16 +890,23 @@ class PointCloud2(Timestamped):
         # Use class_ids for height-based colormap (viewer resolves colors via AnnotationContext)
         # Fall back to explicit colors when provided
         class_ids = None
-        point_colors = None
+        point_colors: Any = None
         if colors is not None:
             point_colors = colors
+        elif rgb and self.pointcloud.has_colors():
+            own = np.asarray(self.pointcloud.colors)
+            if bottom_cutoff is not None:
+                own = own[np.asarray(self.pointcloud.points)[:, 2] >= bottom_cutoff]
+            point_colors = (own * 255).astype(np.uint8)
         else:
             z = points[:, 2]
             class_ids = ((z - z.min()) / (z.max() - z.min() + 1e-8) * 255).astype(np.uint8)
 
         if mode == "points":
+            # Negative radii are screen-space UI points in rerun. Without the sign
+            # this was a world-space radius, i.e. the exact spheres branch below.
             return rr.Points3D(
-                positions=points, colors=point_colors, class_ids=class_ids, radii=voxel_size / 2
+                positions=points, colors=point_colors, class_ids=class_ids, radii=-ui_radius
             )
         elif mode == "boxes":
             half = voxel_size / 2

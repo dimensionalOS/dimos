@@ -92,8 +92,6 @@ xarm6_worldbelief = autoconnect(
         width=640,
         height=480,
         fps=15,
-        base_frame_id="link6",
-        base_transform=XARM6_WORLDBELIEF_CAMERA_TRANSFORM,
     ),
     RerunBridgeModule.blueprint(
         blueprint=_rerun_blueprint,

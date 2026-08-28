@@ -44,10 +44,7 @@ xarm_perception = autoconnect(
         visualization={"backend": "viser"},
         floor_z=-0.02,
     ),
-    RealSenseCamera.blueprint(
-        base_frame_id="link7",
-        base_transform=XARM_PERCEPTION_CAMERA_TRANSFORM,
-    ),
+    RealSenseCamera.blueprint(),
     ObjectSceneRegistrationModule.blueprint(
         target_frame="world",
         distance_threshold=0.08,

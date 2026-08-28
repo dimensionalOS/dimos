@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import atexit
 from collections import deque
+from dataclasses import replace
 import threading
 import time
 from typing import TYPE_CHECKING
@@ -69,14 +70,8 @@ class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     width: int = 848
     height: int = 480
     fps: int = 15
-    camera_name: str = "camera"
-    base_frame_id: str = "base_link"
-    base_transform: Transform | None = Field(
-        default_factory=lambda: Transform(
-            translation=Vector3(0.0, 0.0, 0.0),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        )
-    )
+    # Frame stem: frames are <frame_id_prefix>/<frame_id>_<suffix>.
+    frame_id: str | None = "camera"
     align_depth_to_color: bool = True
     enable_depth: bool = True
     enable_color: bool = True
@@ -99,6 +94,8 @@ class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
         )
     )
     pointcloud_fps: float = 5.0
+    # Every n-th pixel goes into the cloud.
+    pointcloud_decimation: int = 1
     camera_info_fps: float = 1.0
     serial_number: str | None = None
 
@@ -120,48 +117,56 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
 
     @property
     def _camera_link(self) -> str:
-        return f"{self.config.camera_name}_link"
+        return f"{self.frame_id}_link"
+
+    @property
+    def _stream_color(self) -> bool:
+        return self.config.enable_color or self.config.enable_pointcloud
+
+    @property
+    def _stream_depth(self) -> bool:
+        return self.config.enable_depth or self.config.enable_pointcloud
 
     @property
     def _color_frame(self) -> str:
-        return f"{self.config.camera_name}_color_frame"
+        return f"{self.frame_id}_color_frame"
 
     @property
     def _color_optical_frame(self) -> str:
-        return f"{self.config.camera_name}_color_optical_frame"
+        return f"{self.frame_id}_color_optical_frame"
 
     @property
     def _depth_frame(self) -> str:
-        return f"{self.config.camera_name}_depth_frame"
+        return f"{self.frame_id}_depth_frame"
 
     @property
     def _depth_optical_frame(self) -> str:
-        return f"{self.config.camera_name}_depth_optical_frame"
+        return f"{self.frame_id}_depth_optical_frame"
 
     @property
     def _infra1_frame(self) -> str:
-        return f"{self.config.camera_name}_infra1_frame"
+        return f"{self.frame_id}_infra1_frame"
 
     @property
     def _infra1_optical_frame(self) -> str:
-        return f"{self.config.camera_name}_infra1_optical_frame"
+        return f"{self.frame_id}_infra1_optical_frame"
 
     @property
     def _infra2_frame(self) -> str:
-        return f"{self.config.camera_name}_infra2_frame"
+        return f"{self.frame_id}_infra2_frame"
 
     @property
     def _infra2_optical_frame(self) -> str:
-        return f"{self.config.camera_name}_infra2_optical_frame"
+        return f"{self.frame_id}_infra2_optical_frame"
 
     @property
     def _imu_frame(self) -> str:
-        return f"{self.config.camera_name}_accel_frame"
+        return f"{self.frame_id}_imu_frame"
 
     @property
     def _imu_optical_frame(self) -> str:
         # accel and gyro are co-located on the motion module.
-        return f"{self.config.camera_name}_accel_optical_frame"
+        return f"{self.frame_id}_imu_optical_frame"
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
@@ -205,7 +210,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         if self.config.serial_number:
             config.enable_device(self.config.serial_number)
 
-        if self.config.enable_color:
+        if self._stream_color:
             config.enable_stream(
                 rs.stream.color,
                 self.config.width,
@@ -214,7 +219,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 self.config.fps,
             )
 
-        if self.config.enable_depth:
+        if self._stream_depth:
             config.enable_stream(
                 rs.stream.depth,
                 self.config.width,
@@ -239,7 +244,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._require_global_time()
 
         # The IR imagers are the depth sensor, and it owns the emitter option.
-        if self.config.enable_depth or self.config.enable_infrared:
+        if self._stream_depth or self.config.enable_infrared:
             depth_sensor = self._profile.get_device().first_depth_sensor()
             self._depth_scale = depth_sensor.get_depth_scale()
             if depth_sensor.supports(rs.option.emitter_enabled):
@@ -247,7 +252,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                     rs.option.emitter_enabled, 1.0 if self.config.emitter_enabled else 0.0
                 )
 
-        if self.config.enable_color:
+        if self._stream_color:
             color_sensor = self._profile.get_device().first_color_sensor()
             if color_sensor.supports(rs.option.auto_exposure_priority):
                 color_sensor.set_option(
@@ -255,8 +260,8 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                     1.0 if self.config.color_auto_exposure_priority else 0.0,
                 )
 
-        if self.config.align_depth_to_color and self.config.enable_depth:
-            if self.config.enable_color:
+        if self.config.align_depth_to_color and self._stream_depth:
+            if self._stream_color:
                 self._align = rs.align(rs.stream.color)
             else:
                 logger.info("align_depth_to_color ignored: color stream is disabled")
@@ -268,7 +273,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._thread.start()
 
-        if self.config.enable_pointcloud and self.config.enable_depth:
+        if self.config.enable_pointcloud:
             interval_sec = 1.0 / self.config.pointcloud_fps
             self.register_disposable(
                 backpressure(rx.interval(interval_sec)).subscribe(
@@ -408,13 +413,13 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         ts = self._last_hardware_ts
         if ts is None or not self._running:
             return
-        for info, stream in (
-            (self._color_camera_info, self.camera_info),
-            (self._depth_camera_info, self.depth_camera_info),
-            (self._infra1_camera_info, self.infrared_left_camera_info),
-            (self._infra2_camera_info, self.infrared_right_camera_info),
+        for info, stream, enabled in (
+            (self._color_camera_info, self.camera_info, self.config.enable_color),
+            (self._depth_camera_info, self.depth_camera_info, self.config.enable_depth),
+            (self._infra1_camera_info, self.infrared_left_camera_info, True),
+            (self._infra2_camera_info, self.infrared_right_camera_info, True),
         ):
-            if info is not None:
+            if info is not None and enabled:
                 stream.publish(info.with_ts(ts))
         if self.config.enable_imu and self.config.imu_info is not None:
             imu_info = self.config.imu_info.with_ts(ts)
@@ -430,7 +435,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
 
         # Color camera info
         color_intrinsics = None
-        if self.config.enable_color:
+        if self._stream_color:
             color_stream = self._profile.get_stream(rs.stream.color).as_video_stream_profile()
             color_intrinsics = color_stream.get_intrinsics()
             self._color_camera_info = self._intrinsics_to_camera_info(
@@ -438,7 +443,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             )
 
         # Depth camera info
-        if self.config.enable_depth:
+        if self._stream_depth:
             if self.config.align_depth_to_color and color_intrinsics is not None:
                 # When aligned to color, depth uses color intrinsics and frame
                 self._depth_camera_info = self._intrinsics_to_camera_info(
@@ -516,7 +521,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         streams: list[tuple[str, rs.stream, int | None]] = [
             (self._depth_frame, rs.stream.depth, None)
         ]
-        if self.config.enable_color:
+        if self._stream_color:
             streams.append((self._color_frame, rs.stream.color, None))
         if self.config.enable_infrared:
             streams.append((self._infra1_frame, rs.stream.infrared, 1))
@@ -613,8 +618,8 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             if self._align is not None:
                 frames = self._align.process(frames)
 
-            color_frame = frames.get_color_frame() if self.config.enable_color else None
-            depth_frame = frames.get_depth_frame() if self.config.enable_depth else None
+            color_frame = frames.get_color_frame() if self._stream_color else None
+            depth_frame = frames.get_depth_frame() if self._stream_depth else None
 
             color_ts = self._fresh("color", color_frame)
             depth_ts = self._fresh("depth", depth_frame)
@@ -632,7 +637,8 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                     frame_id=self._color_optical_frame,
                     ts=color_ts,
                 )
-                self.color_image.publish(color_img)
+                if self.config.enable_color:
+                    self.color_image.publish(color_img)
 
             # Process depth
             depth_img = None
@@ -649,7 +655,8 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                     frame_id=depth_frame_id,
                     ts=depth_ts,
                 )
-                self.depth_image.publish(depth_img)
+                if self.config.enable_depth:
+                    self.depth_image.publish(depth_img)
 
             if infra1_frame and infra1_ts is not None:
                 self.infrared_left.publish(
@@ -684,17 +691,6 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
 
     def _publish_tf(self, ts: float) -> None:
         transforms = []
-
-        if self.config.base_transform is not None:
-            transforms.append(
-                Transform(
-                    translation=self.config.base_transform.translation,
-                    rotation=self.config.base_transform.rotation,
-                    frame_id=self.config.base_frame_id,
-                    child_frame_id=self._camera_link,
-                    ts=ts,
-                )
-            )
         for parent, child, translation, rotation in self._mount_edges:
             transforms.append(
                 Transform(
@@ -716,6 +712,11 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         if color_img is None or depth_img is None or self._color_camera_info is None:
             return
 
+        n = self.config.pointcloud_decimation
+        if n > 1:
+            # from_rgbd rescales the intrinsics to the smaller image itself.
+            color_img = replace(color_img, data=color_img.data[::n, ::n])
+            depth_img = replace(depth_img, data=depth_img.data[::n, ::n])
         try:
             pcd = PointCloud2.from_rgbd(
                 color_image=color_img,
@@ -723,7 +724,6 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 camera_info=self._color_camera_info,
                 depth_scale=self._depth_scale,
             )
-            pcd = pcd.voxel_downsample(0.005)
             self.pointcloud.publish(pcd)
         except Exception as error:
             logger.error("RealSense pointcloud generation failed: %s", error)
