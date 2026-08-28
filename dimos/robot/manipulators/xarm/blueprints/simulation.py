@@ -42,8 +42,8 @@ xarm_perception_sim = autoconnect(
         planning_timeout=10.0,
         visualization={"backend": "viser"},
     ),
-    ManipulationSkills.blueprint(instance_name="manipulation_skills"),
-    PickAndPlaceModule.blueprint(instance_name="pick_and_place"),
+    ManipulationSkills.blueprint(),
+    PickAndPlaceModule.blueprint(),
     HeuristicGraspModule.blueprint(instance_name="heuristic_grasp"),
     MujocoSimModule.blueprint(**make_xarm7_sim_module_kwargs(XARM7_SIM_PATH)),
     ObjectSceneRegistrationModule.blueprint(

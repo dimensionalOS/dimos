@@ -47,8 +47,8 @@ xarm_perception = autoconnect(
         visualization={"backend": "viser"},
         floor_z=-0.02,
     ),
-    ManipulationSkills.blueprint(instance_name="manipulation_skills"),
-    PickAndPlaceModule.blueprint(instance_name="pick_and_place"),
+    ManipulationSkills.blueprint(),
+    PickAndPlaceModule.blueprint(),
     HeuristicGraspModule.blueprint(instance_name="heuristic_grasp"),
     RealSenseCamera.blueprint(
         base_frame_id="link7",
