@@ -143,7 +143,16 @@ What this does NOT say: one recording on one undeclared floor with nothing
 weighed anchors none of the pinned values, and the replicate floor is the
 sim against itself, not the robot against itself.
 
-**Widened loop-2 search** (`ground.py`, not yet run): the five knobs above
+**Widened loop-2 search, 2026-08-28** (`presets/loop2b.*`): in sample the
+point reads 0.571, the same as the five-knob fit, but on FRESH windows it
+is the first plant to move position: along 0.120 -> 0.097 m (-19%, held
+out), cross unchanged, yaw 0.116 rad (as loop2). What carried it are the
+LOOP knobs, `envelope_gain` 0.63 reached at 6.9 rad/s and ~2 physics steps
+of `action_delay`: the sim's ideal actuator and zero-latency loop were the
+misspecification, the same speed-family story as the Go2. The rig knobs
+came back at ~0 with wide spread (the Point-LIO mount is fine, and the fit
+did not move the ruler) and the masses at ~1.0 (nothing to weigh for,
+yet). The search: the five knobs above
 move yaw, not position, so the search now also takes the unweighed masses
 (`trunk_mass_scale`, `trunk_com_x`, `leg_mass_scale`), the floor and the
 contact shape (`foot_friction`, `foot_solimp_dmin/width`), two LOOP knobs
