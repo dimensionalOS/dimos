@@ -55,6 +55,8 @@ class RealSenseCameraNativeConfig(NativeModuleConfig, NativeRealSenseCameraConfi
 
     def to_config_dict(self) -> dict[str, Any]:
         config = super().to_config_dict()
+        # Module.frame_id falls back to the class name; rust gets the same stem.
+        config["frame_id"] = self.frame_id or "RealSenseCameraNative"
         # The rust struct has every key; None crosses as an explicit null.
         config["serial_number"] = self.serial_number
         config["imu_info"] = (

@@ -84,7 +84,7 @@ struct Config {
     height: i32,
     #[validate(range(min = 1))]
     fps: i32,
-    frame_id: Nullable<String>,
+    frame_id: String,
     frame_id_prefix: Nullable<String>,
     align_depth_to_color: bool,
     enable_depth: bool,
@@ -115,7 +115,7 @@ impl Config {
     }
     /// `<frame_id_prefix>/<frame_id>_<suffix>`, as Module.frame_id composes it.
     fn frame(&self, suffix: &str) -> String {
-        let stem = self.frame_id.0.as_deref().unwrap_or("camera");
+        let stem = &self.frame_id;
         match self.frame_id_prefix.0.as_deref() {
             Some(prefix) if !prefix.is_empty() => format!("{prefix}/{stem}_{suffix}"),
             _ => format!("{stem}_{suffix}"),
@@ -424,12 +424,12 @@ fn optical_rotation() -> UnitQuaternion<f64> {
     UnitQuaternion::from_quaternion(Quaternion::new(w, x, y, z))
 }
 
-/// A librealsense extrinsic (optical axes) in body (REP-103) axes. The nine
-/// rotation floats are read row-major, as camera.py's numpy reshape does.
+/// A librealsense extrinsic (optical axes) in body (REP-103) axes.
 fn extrinsics_to_body(extrinsics: &Rs2Extrinsics) -> Isometry3<f64> {
     let body_from_optical = optical_rotation().to_rotation_matrix();
     let rotation: Vec<f64> = extrinsics.rotation().iter().map(|&v| v as f64).collect();
-    let optical_rotation = Matrix3::from_row_slice(&rotation);
+    // librealsense stores the rotation column-major.
+    let optical_rotation = Matrix3::from_column_slice(&rotation);
     let translation: Vec<f64> = extrinsics.translation().iter().map(|&v| v as f64).collect();
     let optical_translation = Vector3::from_column_slice(&translation);
 
@@ -922,11 +922,49 @@ fn pointcloud_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs
     }
 }
 
+fn empty_cloud(header: &Header) -> PointCloud2 {
+    let field = |name: &str, offset: i32| PointField {
+        name: name.to_string(),
+        offset,
+        datatype: PointField::FLOAT32 as u8,
+        count: 1,
+    };
+    PointCloud2 {
+        header: header.clone(),
+        height: 0,
+        width: 0,
+        fields: vec![
+            field("x", 0),
+            field("y", 4),
+            field("z", 8),
+            field("rgb", 12),
+        ],
+        is_bigendian: false,
+        point_step: 16,
+        row_step: 0,
+        data: Vec::new(),
+        is_dense: true,
+    }
+}
+
 fn rgbd_to_cloud(rgbd: &Rgbd, info: &CameraInfo, depth_scale: f32, stride: usize) -> PointCloud2 {
     let (fx, fy) = (info.K[0] as f32, info.K[4] as f32);
     let (cx, cy) = (info.K[2] as f32, info.K[5] as f32);
     let (w, h) = (rgbd.depth.width as usize, rgbd.depth.height as usize);
     let rgb = &rgbd.color.data;
+    if rgb.len() != w * h * 3 || rgbd.depth.data.len() != w * h * 2 {
+        // Unaligned depth, or streams at different resolutions.
+        static WARNED: AtomicBool = AtomicBool::new(false);
+        if !WARNED.swap(true, Ordering::Relaxed) {
+            tracing::warn!(
+                "RealSense pointcloud needs color and depth at one resolution; got color {} bytes, depth {}x{}",
+                rgb.len(),
+                rgbd.depth.width,
+                rgbd.depth.height
+            );
+        }
+        return empty_cloud(&rgbd.depth.header);
+    }
 
     // Every stride-th pixel, back-projected through the color pinhole. A dense
     // image-shaped cloud thins best in pixel space; a voxel hash costs 10x more
@@ -1024,6 +1062,43 @@ impl HostClock {
             }
         }
         device_ts + self.offset
+    }
+}
+
+/// The motion streams' frame-number gate: repeats skipped, gaps counted.
+struct MotionGate {
+    key: &'static str,
+    last: Option<u64>,
+    dropped: u64,
+}
+
+impl MotionGate {
+    fn new(key: &'static str) -> Self {
+        Self {
+            key,
+            last: None,
+            dropped: 0,
+        }
+    }
+
+    /// True if this frame is new; a gap since the last one is logged.
+    fn advance(&mut self, number: u64) -> bool {
+        if self.last == Some(number) {
+            return false;
+        }
+        if let Some(previous) = self.last {
+            if number > previous + 1 {
+                let missed = number - previous - 1;
+                self.dropped += missed;
+                tracing::warn!(
+                    "RealSense {} dropped {missed} frame(s) at {number} ({} total)",
+                    self.key,
+                    self.dropped
+                );
+            }
+        }
+        self.last = Some(number);
+        true
     }
 }
 
@@ -1198,21 +1273,22 @@ fn imu_thread(
     let mut clock = HostClock::default();
     let mut pairer = ImuPairer::default();
     // Each wait() carries the latest sample of both streams, so one gyro frame
-    // shows up again whenever only the accelerometer advanced.
-    let (mut last_accel, mut last_gyro) = (None, None);
+    // shows up again whenever only the accelerometer advanced, and a sample is
+    // lost whenever two of one stream land between waits.
+    let (mut accel_gate, mut gyro_gate) = (MotionGate::new("accel"), MotionGate::new("gyro"));
     while !shared.stopped() {
         let Some(frames) = wait_frames(&mut pipeline, shared) else {
             continue;
         };
         for frame in frames.frames_of_type::<AccelFrame>() {
-            if last_accel.replace(frame.frame_number()) == Some(frame.frame_number()) {
+            if !accel_gate.advance(frame.frame_number()) {
                 continue;
             }
             let ts = clock.host_time(frame.timestamp() / 1000.0);
             pairer.accel((ts, *frame.acceleration()));
         }
         for frame in frames.frames_of_type::<GyroFrame>() {
-            if last_gyro.replace(frame.frame_number()) == Some(frame.frame_number()) {
+            if !gyro_gate.advance(frame.frame_number()) {
                 continue;
             }
             let ts = clock.host_time(frame.timestamp() / 1000.0);

@@ -903,8 +903,7 @@ class PointCloud2(Timestamped):
             class_ids = ((z - z.min()) / (z.max() - z.min() + 1e-8) * 255).astype(np.uint8)
 
         if mode == "points":
-            # Negative radii are screen-space UI points in rerun. Without the sign
-            # this was a world-space radius, i.e. the exact spheres branch below.
+            # Negative radii are screen-space UI points in rerun.
             return rr.Points3D(
                 positions=points, colors=point_colors, class_ids=class_ids, radii=-ui_radius
             )

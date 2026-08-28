@@ -560,7 +560,8 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         ).as_matrix()
 
         optical = np.eye(4)
-        optical[:3, :3] = np.array(extrinsics.rotation).reshape(3, 3)
+        # librealsense stores the rotation column-major.
+        optical[:3, :3] = np.array(extrinsics.rotation).reshape(3, 3).T
         optical[:3, 3] = np.array(extrinsics.translation)
 
         body = body_from_optical @ optical @ body_from_optical.T
