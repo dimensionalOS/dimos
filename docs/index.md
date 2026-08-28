@@ -32,37 +32,37 @@ Real robots, running dimOS.
 
 <div class="grid cards dim-media" markdown>
 
--   [![Navigation and mapping](assets/readme/navigation.gif)](https://x.com/stash_pomichter/status/2010471593806545367)
+-   [![Navigation and mapping](/assets/readme/navigation.gif)](https://x.com/stash_pomichter/status/2010471593806545367)
 
     **[Navigation and mapping](/docs/capabilities/navigation/index.md)**
 
     SLAM, dynamic obstacle avoidance, route planning, and autonomous exploration.
 
--   [![Agentic control](assets/readme/agentic_control.gif)](https://x.com/stash_pomichter/status/2015912688854200322)
+-   [![Agentic control](/assets/readme/agentic_control.gif)](https://x.com/stash_pomichter/status/2015912688854200322)
 
     **[Agentic control and MCP](/docs/capabilities/agents/index.md)**
 
     Talk to the robot. Every skill is also exposed as an MCP tool.
 
--   [![Spatial memory](assets/readme/spatial_memory.gif)](https://x.com/stash_pomichter/status/1980741077205414328)
+-   [![Spatial memory](/assets/readme/spatial_memory.gif)](https://x.com/stash_pomichter/status/1980741077205414328)
 
     **[Spatial memory](/docs/capabilities/memory/index.md)**
 
     Spatio-temporal RAG, object localization, and permanence. Navigate back to what the robot saw.
 
--   <a href="https://x.com/dimensionalos/status/2077476353960722507"><video src="assets/readme/teleop.mp4" autoplay loop muted playsinline preload="metadata" aria-label="dimTELE: remote control any robot from anywhere in the world"></video></a>
+-   <a href="https://x.com/dimensionalos/status/2077476353960722507"><video src="/assets/readme/teleop.mp4" autoplay loop muted playsinline preload="metadata" aria-label="dimTELE: remote control any robot from anywhere in the world"></video></a>
 
     **[Remote teleoperation](/docs/capabilities/teleoperation/hosted.md)**
 
     **dimTELE** gives you remote control of any robot, from anywhere in the world, at ultra-low latency.
 
--   [![Perception](assets/readme/perception.png)](/docs/capabilities/perception/index.md)
+-   [![Perception](/assets/readme/perception.png)](/docs/capabilities/perception/index.md)
 
     **[Perception](/docs/capabilities/perception/index.md)**
 
     Detect objects in camera, place them in 3D, with VLMs and audio built in.
 
--   <a href="https://x.com/swstica/status/2092438167618261161"><video src="assets/readme/manipulation.mp4" autoplay loop muted playsinline preload="metadata" aria-label="A robot arm scanning a scene, planning a grasp, and dropping a bottle into a container on spoken instruction"></video></a>
+-   <a href="https://x.com/swstica/status/2092438167618261161"><video src="/assets/readme/manipulation.mp4" autoplay loop muted playsinline preload="metadata" aria-label="A robot arm scanning a scene, planning a grasp, and dropping a bottle into a container on spoken instruction"></video></a>
 
     **[Manipulation](/docs/capabilities/manipulation/index.md)**
 
