@@ -42,6 +42,8 @@ def _samples(n_episodes: int = 2, n_frames: int = 3) -> Iterator[Sample]:
                 episode_id=f"ep_{ep:06d}",
                 observation={"state": (np.arange(4, dtype=np.float32) + i)},
                 action={"action": np.full(2, float(i), dtype=np.float32)},
+                task_label=f"task {ep}",
+                complementary_info={"is_filled": np.asarray([i == 1], dtype=np.bool_)},
             )
 
 
@@ -66,6 +68,11 @@ def test_hdf5_roundtrip_counts_and_shapes(tmp_path: Path) -> None:
     assert info["shapes_uniform"] is True
     assert info["has_stats"] is True
     assert info["episode_lengths"] == {"min": 3, "max": 3, "mean": 3.0, "uniform": True}
+    with h5py.File(path, "r") as dataset:
+        np.testing.assert_array_equal(
+            dataset["episodes/episode_000000/complementary_info/is_filled"][:],
+            [[False], [True], [False]],
+        )
 
 
 def test_hdf5_extension_appended_when_missing(tmp_path: Path) -> None:

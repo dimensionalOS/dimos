@@ -56,8 +56,9 @@ prints one line per transition:
 ~/.local/state/dimos/recordings/session_<robot>_<YYYYMMDD_HHMMSS>.db
 ```
 
-A new timestamped file per run (nothing is overwritten). It records three
-streams: `color_image`, `coordinator_joint_state`, and `status` (the episode
+A new timestamped file per run (nothing is overwritten). The native OpenYAM
+profile records `color_image`, `coordinator_joint_state`,
+`applied_joint_position_command`, and `status` (the episode
 start/save/discard markers).
 
 The exact path is printed when the recorder starts — note it for the next step.
@@ -83,7 +84,10 @@ dimos dataprep build -s <session.db> -c <config.json> -f hdf5
 # Physical OpenYam + Quest + /dev/video0 wrist camera
 dimos run learning-collect-quest-openyam --can-port can0
 # Experimental native recorder over reliable Zenoh
-dimos run learning-collect-quest-openyam-native --can-port can0
+dimos --transport zenoh --can-port can0 \
+  run learning-collect-quest-openyam-native \
+  --task "pick up the red block" \
+  --WristCamera.webcam.camera-index /dev/video0
 dimos dataprep build \
   --source <session_openyam.db> \
   --config dimos/imitation/dataprep/openyam_lerobot.json
@@ -105,10 +109,15 @@ Inspect the result (features, shapes, dtypes, episode/frame counts):
 ```bash
 dimos dataprep inspect data/datasets/session       # LeRobot dir
 dimos dataprep inspect data/datasets/session.hdf5  # HDF5 file
+
+# Validate saved recording episodes before conversion
+dimos dataprep inspect session_openyam.db \
+  --config dimos/imitation/dataprep/openyam_lerobot.json
 ```
 
 Each dataset gets a `dimos_meta.json` sidecar recording exactly how it was built
-(source, sync, episodes).
+(source, schema, sync, quality settings, included episodes, and rejection or
+fill reports).
 
 ---
 
@@ -118,14 +127,17 @@ See [`dataprep/example_config.json`](dataprep/example_config.json) for a full,
 working example. The fields that matter:
 
 - **`source`** — the session `.db`.
-- **`observation` / `action`** — map a dataset feature name to a recorded
-  `{stream, field}`. Action defaults to the *next* frame's joint state (see
-  `action_shift`), giving a next-state behavioral-cloning target.
+- **`observation` / `action`** — map each final dataset feature name to an
+  explicit `{stream, field, dtype, shape, names}` schema. OpenYAM actions come
+  from the accepted `applied_joint_position_command`, not future feedback.
 - **`sync`** — resample everything onto one timeline: `anchor` stream,
-  `rate_hz`, nearest-match `tolerance_ms`, and `action_shift` (1 = next-state BC,
-  0 = action == state). `fps` is derived from `rate_hz` unless set explicitly.
+  `rate_hz`, and nearest-match `tolerance_ms`. `fps` is derived from `rate_hz`
+  unless set explicitly.
+- **`quality`** — `strict` excludes only invalid episodes; `fill` preserves the
+  fixed-rate grid with causal holds and marks filled frames in
+  `complementary_info.is_filled`. The build fails when no valid episode remains.
 - **`output`** — `format` (`lerobot` | `hdf5`), `path`, and `metadata`
-  (`robot`, `default_task_label`, …).
+  (`repo_id`, `robot_type`, …).
 
 ---
 
@@ -134,7 +146,5 @@ working example. The fields that matter:
 - **Sim vs real camera** — under `--simulation` the MuJoCo camera supplies
   `color_image`; on real hardware a RealSense does. The blueprint picks the
   right one automatically.
-- **"action" is the measured next joint state**, not a recorded command. For
-  true commanded actions you'd record `joint_command` and map `action` to it.
-- **Old vs new sessions** — recordings made before the `coordinator_joint_state`
-  rename use the old stream name; point a matching config at them, or re-record.
+- **"action" is an applied command** — it is published only after arbitration
+  and hardware acceptance. Rejected and non-position commands are not emitted.

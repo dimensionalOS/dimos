@@ -33,11 +33,13 @@ def samples() -> Iterator[Sample]:
                 ts=value,
                 episode_id=episode,
                 observation={
-                    "wrist": np.full((64, 64, 3), frame, dtype=np.uint8),
-                    "joints": np.full(7, value, dtype=np.float32),
+                    "observation.images.wrist": np.full((64, 64, 3), frame, dtype=np.uint8),
+                    "observation.state": np.full(7, value, dtype=np.float32),
+                    "observation.effort": np.full(7, value * 0.1, dtype=np.float32),
                 },
-                action={"next_joints": np.full(7, value + 1, dtype=np.float32)},
+                action={"action": np.full(7, value + 1, dtype=np.float32)},
                 task_label=task,
+                complementary_info={"complementary_info.is_filled": np.asarray([False])},
             )
 
 
@@ -47,9 +49,23 @@ def output(path: Path) -> OutputConfig:
         path=path,
         metadata={
             "repo_id": "local/openyam-test",
-            "fps": 15,
+            "fps": 30,
             "robot_type": "openyam",
-            "joint_names": JOINTS,
+            "feature_schema": {
+                "observation.images.wrist": {
+                    "dtype": "video",
+                    "shape": [64, 64, 3],
+                    "names": ["height", "width", "channels"],
+                },
+                "observation.state": {"dtype": "float32", "shape": [7], "names": JOINTS},
+                "observation.effort": {"dtype": "float32", "shape": [7], "names": JOINTS},
+                "action": {"dtype": "float32", "shape": [7], "names": JOINTS},
+                "complementary_info.is_filled": {
+                    "dtype": "bool",
+                    "shape": [1],
+                    "names": ["is_filled"],
+                },
+            },
         },
     )
 
@@ -60,18 +76,20 @@ def test_native_writer_creates_canonical_openyam_dataset(tmp_path: Path) -> None
     info = json.loads((root / "meta" / "info.json").read_text())
     assert info["total_episodes"] == 2
     assert info["total_frames"] == 6
-    assert info["fps"] == 15
+    assert info["fps"] == 30
     assert info["robot_type"] == "openyam"
     assert set(info["features"]) >= {
         "observation.images.wrist",
         "observation.state",
         "action",
+        "observation.effort",
+        "complementary_info.is_filled",
     }
     assert info["features"]["observation.state"]["names"] == JOINTS
 
 
 def test_native_writer_requires_repo_id(tmp_path: Path) -> None:
-    config = output(tmp_path / "dataset").model_copy(update={"metadata": {"fps": 15}})
+    config = output(tmp_path / "dataset").model_copy(update={"metadata": {"fps": 30}})
 
     with pytest.raises(ValueError, match="repo_id is required"):
         write(samples(), config)
