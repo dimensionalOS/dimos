@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use dimos_lcm::{Lcm, LcmOptions};
+use url::Url;
 
 use crate::transport::{Dispatch, Transport};
 
@@ -47,27 +48,29 @@ fn options_from_env() -> LcmOptions {
 
 fn options_from_url(url: &str) -> LcmOptions {
     let mut options = LcmOptions::default();
-    let Some(rest) = url.strip_prefix("udpm://") else {
-        tracing::warn!(
-            url,
-            "LCM_DEFAULT_URL is not a udpm:// url; using the defaults"
-        );
-        return options;
-    };
-    let (address, query) = rest.split_once('?').unwrap_or((rest, ""));
-    if let Some((group, port)) = address.rsplit_once(':') {
-        match (group.parse(), port.parse()) {
-            (Ok(group), Ok(port)) => {
-                options.multicast_group = group;
-                options.port = port;
-            }
-            _ => tracing::warn!(
+    let parsed = match Url::parse(url) {
+        Ok(parsed) if parsed.scheme() == "udpm" => parsed,
+        _ => {
+            tracing::warn!(
                 url,
-                "LCM_DEFAULT_URL has no parsable group:port; using the defaults"
-            ),
+                "LCM_DEFAULT_URL is not a udpm:// url; using the defaults"
+            );
+            return options;
         }
+    };
+    // udpm is not a special scheme, so the host stays an opaque string.
+    let group = parsed.host_str().and_then(|host| host.parse().ok());
+    match (group, parsed.port()) {
+        (Some(group), Some(port)) => {
+            options.multicast_group = group;
+            options.port = port;
+        }
+        _ => tracing::warn!(
+            url,
+            "LCM_DEFAULT_URL has no parsable group:port; using the defaults"
+        ),
     }
-    for (key, value) in query.split('&').filter_map(|pair| pair.split_once('=')) {
+    for (key, value) in parsed.query_pairs() {
         if key == "ttl" {
             if let Ok(ttl) = value.parse() {
                 options.ttl = ttl;
@@ -188,6 +191,7 @@ mod tests {
             "tcp://127.0.0.1:7667",
             "udpm://not-an-ip:7667",
             "udpm://239.255.76.67",
+            "239.255.76.67:7667",
         ] {
             let options = options_from_url(url);
             assert_eq!(options.multicast_group, defaults.multicast_group, "{url}");
