@@ -116,16 +116,24 @@ impl Config {
     fn stream_depth(&self) -> bool {
         self.enable_depth || self.enable_pointcloud
     }
-    /// `<frame_id_prefix>/<frame_id>_<suffix>`, as Module.frame_id composes it.
-    fn frame(&self, suffix: &str) -> String {
-        let stem = &self.frame_id;
+    /// `<frame_id_prefix>/<name>`, as Module.frame_id composes it.
+    fn namespaced(&self, name: &str) -> String {
         match self.frame_id_prefix.0.as_deref() {
-            Some(prefix) if !prefix.is_empty() => format!("{prefix}/{stem}_{suffix}"),
-            _ => format!("{stem}_{suffix}"),
+            Some(prefix) if !prefix.is_empty() => format!("{prefix}/{name}"),
+            _ => name.to_string(),
         }
     }
+    /// The imager frames hang off frame_id with its `_link` dropped:
+    /// `d435_link` -> `d435_color_optical_frame`.
+    fn frame(&self, suffix: &str) -> String {
+        let stem = self
+            .frame_id
+            .strip_suffix("_link")
+            .unwrap_or(&self.frame_id);
+        self.namespaced(&format!("{stem}_{suffix}"))
+    }
     fn camera_link(&self) -> String {
-        self.frame("link")
+        self.namespaced(&self.frame_id)
     }
     fn color_frame(&self) -> String {
         self.frame("color_frame")

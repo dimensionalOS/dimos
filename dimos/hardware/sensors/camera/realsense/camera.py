@@ -45,8 +45,9 @@ class RealSenseCameraConfig(NativeModuleConfig, DepthCameraConfig):
     width: int = 848
     height: int = 480
     fps: int = 15
-    # Frame stem: frames are <frame_id_prefix>/<frame_id>_<suffix>.
-    frame_id: str | None = "camera"
+    # The camera's tf link, what a mount edge points at. Imager frames hang off
+    # it with `_link` dropped: d435_link -> d435_color_optical_frame.
+    frame_id: str | None = "camera_link"
     align_depth_to_color: bool = True
     enable_depth: bool = True
     enable_color: bool = True
