@@ -24,6 +24,14 @@ Modes:
                  while the push daemon drains. cachix-action reports push
                  failures without failing the build, so CI must run this
                  before trusting a build enough to save the publish marker.
+  --record-links Print `result-symlink store-path` per built module. The
+                 publish job stores this in the marker cache entry so consumers
+                 can materialise binaries without evaluating anything.
+  --link-results FILE
+                 Recreate the symlinks a --record-links run captured. Store
+                 paths missing locally are fetched with `nix copy` by exact
+                 path — no evaluation — so NativeModule sees its executable
+                 and skips building at test time.
 
 Why git object hashes are sound gate keys: a nix sandbox only sees store paths,
 and for these flakes every store path copied out of the repo is some tracked
@@ -393,17 +401,48 @@ def _in_cachix_cache(cache: str, store_path: str) -> bool:
         return False
 
 
-def verify_published(modules: tuple[DiscoveredModule, ...]) -> None:
-    cache = os.environ.get("CACHIX_CACHE_NAME")
-    if not cache:
-        raise SystemExit("--verify-published needs CACHIX_CACHE_NAME set")
-    missing: dict[str, str] = {}  # store path -> module qualname, for the error message
+def _result_links(modules: tuple[DiscoveredModule, ...]) -> list[tuple[str, str]]:
+    """(repo-relative result symlink, store path) for every built module."""
+    entries = []
     for module in modules:
         links = sorted((REPO_ROOT / module.build_dir).glob("result*"))
         if not links:
             raise SystemExit(f"{module.build_dir}: no result symlink — run the build first")
         for link in links:
-            missing[os.readlink(link)] = module.qualname
+            entries.append((link.relative_to(REPO_ROOT).as_posix(), os.readlink(str(link))))
+    return entries
+
+
+def link_results(links_file: str) -> None:
+    """Recreate the result symlinks a publish recorded, fetching any store
+    paths the local store lacks by exact path — no nix evaluation at all."""
+    entries = [line.split(" ", 1) for line in Path(links_file).read_text().splitlines() if line]
+    if not entries:
+        raise SystemExit(f"{links_file}: no recorded result links")
+    missing = sorted({store for _, store in entries if not os.path.exists(store)})
+    if missing:
+        # nix-store -r substitutes each path's closure from every configured
+        # substituter: the module paths come from Cachix, but their nixpkgs
+        # runtime deps (glibc, pcl, openmp, …) exist only in cache.nixos.org —
+        # Cachix holds just the locally-built paths, so a single-store
+        # `nix copy --from` cannot materialise the closure.
+        _log(f"Substituting {len(missing)} store path(s)")
+        subprocess.run(["nix-store", "--realise", *missing], check=True)
+    for link, store in entries:
+        target = REPO_ROOT / link
+        if target.is_symlink() or target.exists():
+            target.unlink()
+        os.symlink(store, target)
+        _log(f"LINK:  {link} -> {store}")
+
+
+def verify_published(modules: tuple[DiscoveredModule, ...]) -> None:
+    cache = os.environ.get("CACHIX_CACHE_NAME")
+    if not cache:
+        raise SystemExit("--verify-published needs CACHIX_CACHE_NAME set")
+    missing: dict[str, str] = {}  # store path -> result link, for the error message
+    for link, store in _result_links(modules):
+        missing[store] = link
     _log(f"Verifying {len(missing)} out path(s) against {cache}.cachix.org")
     deadline = time.monotonic() + int(os.environ.get("PUSH_VERIFY_TIMEOUT") or 600)
     while True:
@@ -452,9 +491,27 @@ def main() -> None:
         action="store_true",
         help="check the built out paths are downloadable from the Cachix cache",
     )
+    mode.add_argument(
+        "--record-links",
+        action="store_true",
+        help="print each built module's result symlink and its store path",
+    )
+    mode.add_argument(
+        "--link-results",
+        metavar="FILE",
+        help="recreate the result symlinks a --record-links run captured,"
+        " nix-copying missing store paths by exact path (no evaluation)",
+    )
     args = parser.parse_args()
     modules = discover()
 
+    if args.link_results:
+        link_results(args.link_results)
+        return
+    if args.record_links:
+        for link, store in _result_links(modules):
+            print(f"{link} {store}")
+        return
     if args.verify_published:
         verify_published(modules)
         return
