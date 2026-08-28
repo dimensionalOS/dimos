@@ -50,3 +50,26 @@ def test_native_collection_profile_resolves_dataprep_codecs(
 def test_native_collection_profile_rejects_non_sqlite_store(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="RustSqliteStoreConfig"):
         NativeCollectionRecorder(store=RustMcapStoreConfig(path=str(tmp_path / "collection.mcap")))
+
+
+@pytest.mark.parametrize(
+    ("record_tf", "expected_ports"),
+    [
+        (False, {"color_image", "coordinator_joint_state", "status"}),
+        (True, {"color_image", "coordinator_joint_state", "status", "tf"}),
+    ],
+)
+def test_native_collection_forwards_only_enabled_stream_topics(
+    recorder: NativeCollectionRecorder,
+    mocker: pytest_mock.MockerFixture,
+    record_tf: bool,
+    expected_ports: set[str],
+) -> None:
+    recorder.config.record_tf = record_tf
+    for name in ("color_image", "coordinator_joint_state", "status", "tf"):
+        getattr(recorder, name).transport = mocker.MagicMock(channel=f"dimos/{name}")
+    recorder.config.streams = recorder._stream_specs()
+
+    topics = recorder._collect_topics()
+
+    assert topics == {name: f"dimos/{name}" for name in expected_ports}
