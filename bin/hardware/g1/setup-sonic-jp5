@@ -19,7 +19,7 @@ set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 CUDA_HOME_JP5=/usr/local/cuda-11.8
 SONIC_VENV="$REPO_ROOT/.venv-sonic-jp5"
-SONIC_PYTHON_VERSION=3.11
+SONIC_PYTHON_VERSION=3.10
 ORT_AUTO_VERSION=1.23.3
 ORT_DISTRIBUTION_VERSION=1.18.1.11.8
 ORT_VERSION=1.18.1
@@ -156,6 +156,25 @@ print(
     f"auto={actual_auto} distribution={actual_distribution} runtime={actual_runtime}"
 )
 print(f"PASS  execution providers: {providers}")
+PY
+
+"$SONIC_VENV/bin/python" - <<'PY'
+try:
+    import open3d
+except ImportError as exc:
+    msg = "JetPack-compatible Open3D is missing from the SONIC environment"
+    raise ImportError(msg) from exc
+import open3d
+
+from dimos.cli.dimos import cli_main
+from dimos.core.o3dpickle import register_picklers
+from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_sonic_webxr_teleop import (
+    unitree_g1_sonic_webxr_teleop,
+)
+
+register_picklers()
+print(f"PASS  Open3D: {open3d.__version__}")
+print("PASS  DimOS CLI and SONIC WebXR blueprint imports")
 PY
 
 cat <<EOF
