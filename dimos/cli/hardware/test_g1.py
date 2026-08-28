@@ -153,12 +153,14 @@ def test_status_discovers_sonic_lifecycle_task(mocker) -> None:
             "control_state": "control",
             "reference_source": "planner",
             "webxr_teleop": {
-                "mode": "planner",
+                "mode": "pose_transition",
                 "sonic_pipeline": "sonic-v1.1",
                 "pose_window_frames": 10,
                 "buffered_frames": 7,
                 "stream_ready": False,
-                "last_transition_reason": "pose_buffer_not_ready",
+                "pose_transition_progress": 0.4,
+                "pose_transition_seconds": 0.5,
+                "last_transition_reason": "operator_pose_toggle",
             },
         },
         {"state": "idle"},
@@ -171,10 +173,11 @@ def test_status_discovers_sonic_lifecycle_task(mocker) -> None:
     assert result.exit_code == 0, result.output
     assert "controller:  sonic_teleop" in result.output
     assert "control:     control" in result.output
-    assert "webxr:       planner" in result.output
+    assert "webxr:       pose_transition" in result.output
     assert "pipeline:    sonic-v1.1" in result.output
     assert "pose_buffer: 7/10 (waiting)" in result.output
-    assert "transition:  pose_buffer_not_ready" in result.output
+    assert "pose_handoff: 40% of 0.50s" in result.output
+    assert "transition:  operator_pose_toggle" in result.output
     coordinator.task_invoke.assert_any_call("sonic_teleop", "state_snapshot", {})
 
 

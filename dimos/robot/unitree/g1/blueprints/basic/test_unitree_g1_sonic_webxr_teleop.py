@@ -51,6 +51,7 @@ assert task.params["auto_dry_run"] is {auto_dry_run!r}
 assert task.params["default_ramp_seconds"] == {ramp_seconds!r}
 assert task.params["decimation"] == {decimation!r}
 assert task.params["zmq_enabled"] is False
+assert coordinator.kwargs["pose_transition_seconds"] == 0.5
 """
     subprocess.run([sys.executable, "-c", code], check=True)
 
@@ -72,21 +73,34 @@ blueprint = get_blueprint_by_name("unitree-g1-sonic-webxr-teleop")
 parser = BlueprintConfigParser(blueprint)
 assert parser.parse().module_kwargs("ControlCoordinator")["sonic_pipeline"] == "sonic-v1.1"
 parsed = parser.parse(
-    cli_tokens=["--sonic-pipeline", "sonic-low-latency"]
+    cli_tokens=[
+        "--sonic-pipeline", "sonic-low-latency",
+        "--pose-transition-seconds", "0.8",
+    ]
 )
 assert parsed.module_kwargs("ControlCoordinator")["sonic_pipeline"] == "sonic-low-latency"
+assert parsed.module_kwargs("ControlCoordinator")["pose_transition_seconds"] == 0.8
 coordinator = parsed.module_kwargs("ControlCoordinator")
 coordinator_config = _G1SonicTeleopCoordinatorConfig(**coordinator)
 configured_tasks = _configure_sonic_teleop_tasks(
-    coordinator_config.tasks, coordinator_config.sonic_pipeline
+    coordinator_config.tasks,
+    coordinator_config.sonic_pipeline,
+    coordinator_config.pose_transition_seconds,
 )
 assert configured_tasks[0].params["sonic_pipeline"] == "sonic-low-latency"
+assert configured_tasks[0].params["pose_transition_seconds"] == 0.8
 try:
     parser.parse(cli_tokens=["--sonic-pipeline", "unknown"])
 except BlueprintConfigError:
     pass
 else:
     raise AssertionError("invalid SONIC pipeline was accepted")
+try:
+    parser.parse(cli_tokens=["--pose-transition-seconds", "0"])
+except BlueprintConfigError:
+    pass
+else:
+    raise AssertionError("non-positive pose transition was accepted")
 """
     subprocess.run([sys.executable, "-c", code], check=True)
 

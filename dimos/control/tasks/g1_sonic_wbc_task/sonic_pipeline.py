@@ -591,12 +591,17 @@ class SonicPipeline:
         self._cur_q_dds = DEFAULT_ANGLES_DDS.copy()
         self._nan_reported = 0
         self._last_targets_dds = DEFAULT_ANGLES_DDS.copy()
+        self._last_reference_token: NDArray[Any] | None = None
+        self._last_token_was_stream = False
 
         # Streamed reference motion (ZMQ pose topic)
         self._merger = StreamedMotionMerger()
         self._streamed: StreamedMotion | None = None
         self._streamed_frame = 0
         self._use_stream = False
+        self._stream_transition_start_token: NDArray[Any] | None = None
+        self._stream_transition_step = 0
+        self._stream_transition_steps = 0
         # Direct planner command (ZMQ planner topic); None -> twist-derived
         self._planner_cmd: dict[str, Any] | None = None
         self._upper_vel_dds: NDArray[Any] | None = None
@@ -703,6 +708,7 @@ class SonicPipeline:
 
     def set_source_stream(self, use_stream: bool) -> None:
         """Command-topic planner-flag inverse: True -> pose-topic motion."""
+        self._clear_stream_transition()
         if use_stream != self._use_stream:
             self._needs_replan = not use_stream
             # Motion-source switch = heading re-anchor (C++ sets
@@ -712,6 +718,60 @@ class SonicPipeline:
             # mocap heading and the policy turns instead of tracking.
             self._reset_heading_alignment()
         self._use_stream = bool(use_stream)
+
+    @property
+    def stream_transition_active(self) -> bool:
+        """Whether a planner-to-stream encoder-token blend is in progress."""
+        return self._stream_transition_start_token is not None
+
+    @property
+    def stream_transition_progress(self) -> float:
+        """Completed fraction of the active planner-to-stream blend."""
+        if not self.stream_transition_active or self._stream_transition_steps <= 0:
+            return 0.0
+        return min(1.0, self._stream_transition_step / self._stream_transition_steps)
+
+    def begin_stream_transition(self, duration_seconds: float) -> bool:
+        """Blend from the last planner token to the live streamed reference.
+
+        The streamed motion must already be loaded. Returns ``False`` until
+        at least one planner policy step has produced a reference token.
+        """
+        if not math.isfinite(duration_seconds) or duration_seconds <= 0.0:
+            raise ValueError("stream transition duration must be positive and finite")
+        if (
+            self._use_stream
+            or self._streamed is None
+            or self._streamed.timesteps <= 0
+            or self._last_reference_token is None
+            or self._last_token_was_stream
+        ):
+            return False
+
+        start_token = self._last_reference_token.copy()
+        self.set_source_stream(True)
+        self._stream_transition_start_token = start_token
+        self._stream_transition_step = 0
+        self._stream_transition_steps = max(1, math.ceil(duration_seconds / POLICY_DT))
+        return True
+
+    def _clear_stream_transition(self) -> None:
+        self._stream_transition_start_token = None
+        self._stream_transition_step = 0
+        self._stream_transition_steps = 0
+
+    def _blend_stream_token(self, stream_token: NDArray[Any]) -> NDArray[Any]:
+        start_token = self._stream_transition_start_token
+        if start_token is None:
+            return stream_token
+
+        self._stream_transition_step = min(
+            self._stream_transition_step + 1,
+            self._stream_transition_steps,
+        )
+        linear = self._stream_transition_step / self._stream_transition_steps
+        alpha = linear * linear * (3.0 - 2.0 * linear)
+        return ((1.0 - alpha) * start_token + alpha * stream_token).astype(np.float32)
 
     def _reset_heading_alignment(self) -> None:
         self._heading_delta_quat = np.array([1, 0, 0, 0], dtype=np.float64)
@@ -756,6 +816,7 @@ class SonicPipeline:
         current heading (mirrors the C++ reference-motion switch)."""
         self._streamed = motion
         self._streamed_frame = 0
+        self._clear_stream_transition()
         self._use_stream = True
         self._reset_heading_alignment()
 
@@ -763,6 +824,7 @@ class SonicPipeline:
         """Back to planner-driven locomotion (heading re-anchors on the next
         planner trajectory - see set_source_stream)."""
         self._use_stream = False
+        self._clear_stream_transition()
         self._streamed = None
         self._streamed_frame = 0
         self._merger.reset()
@@ -813,6 +875,9 @@ class SonicPipeline:
         self._streamed = None
         self._streamed_frame = 0
         self._use_stream = False
+        self._clear_stream_transition()
+        self._last_reference_token = None
+        self._last_token_was_stream = False
         self._planner_cmd = None
         self._upper_vel_dds = None
         self._ub17_pos = None
@@ -1185,7 +1250,8 @@ class SonicPipeline:
                 )
                 self._heading_delta_quat = _quat_multiply(init_heading, init_ref_inv)
                 self._heading_initialized = True
-            token = self._run_encoder(self._build_streamed_encoder_obs(self._cur_quat))
+            stream_token = self._run_encoder(self._build_streamed_encoder_obs(self._cur_quat))
+            token = self._blend_stream_token(stream_token)
         elif self._vr_active() and self._trajectory is not None and self._trajectory.num_frames > 0:
             token = self._run_encoder(self._build_teleop_encoder_obs(self._cur_quat))
         elif self._trajectory is not None and self._trajectory.num_frames > 0:
@@ -1231,6 +1297,13 @@ class SonicPipeline:
         actions = out[0].squeeze()[:NUM_JOINTS].astype(np.float32)
         if self._nan_check("actions", actions):
             return self._last_targets_dds.copy()
+        self._last_reference_token = token.copy()
+        self._last_token_was_stream = self._use_stream
+        if (
+            self.stream_transition_active
+            and self._stream_transition_step >= self._stream_transition_steps
+        ):
+            self._clear_stream_transition()
         self._last_action = actions.copy()
 
         # All 29 decoder actions applied directly - no post-decoder override
@@ -1312,6 +1385,8 @@ class SonicPipeline:
             "stream_frames": self._streamed.timesteps if self._streamed else 0,
             "stream_frame": self._streamed_frame,
             "stream_encode_mode": self._streamed.encode_mode if self._streamed else -1,
+            "stream_transition_active": self.stream_transition_active,
+            "stream_transition_progress": self.stream_transition_progress,
             "vr_active": self._vr_active(),
             "vr_age_sec": (
                 round(time.perf_counter() - self._vr_time, 3) if self._vr_pos is not None else -1.0

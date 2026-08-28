@@ -21,6 +21,7 @@ import onnxruntime as ort  # type: ignore[import-untyped]
 import pytest
 
 from dimos.control.tasks.g1_sonic_wbc_task.sonic_pipeline import (
+    DEFAULT_ANGLES_DDS,
     ENCODER_OBS_DIM,
     NUM_JOINTS,
     SMPL_JOINTS_OFFSET,
@@ -28,6 +29,32 @@ from dimos.control.tasks.g1_sonic_wbc_task.sonic_pipeline import (
     WRISTS_OFFSET,
     SonicPipeline,
 )
+
+
+def _smpl_pose_fields(num_frames: int = 10) -> dict[str, np.ndarray[Any, Any]]:
+    joint_pos = np.zeros((num_frames, NUM_JOINTS), dtype=np.float32)
+    identity_quaternions = np.tile(
+        np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32),
+        (num_frames, 1),
+    )
+    return {
+        "frame_index": np.arange(num_frames, dtype=np.int64),
+        "joint_pos": joint_pos,
+        "joint_vel": np.zeros_like(joint_pos),
+        "body_quat_w": identity_quaternions,
+        "smpl_joints": np.zeros((num_frames, 24, 3), dtype=np.float32),
+        "smpl_pose": np.zeros((num_frames, 21, 3), dtype=np.float32),
+    }
+
+
+def _policy_step(pipeline: SonicPipeline) -> np.ndarray[Any, Any]:
+    return pipeline.step(
+        q_dds=DEFAULT_ANGLES_DDS,
+        dq_dds=np.zeros(NUM_JOINTS, dtype=np.float32),
+        base_quat_wxyz=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64),
+        gyro_body=np.zeros(3, dtype=np.float32),
+        gravity_body=np.array([0.0, 0.0, -1.0], dtype=np.float32),
+    )
 
 
 @pytest.fixture
@@ -214,3 +241,75 @@ def test_two_frame_pose_chunk_holds_newest_frame_across_encoder_window(
         encoded_wrists[2:],
         np.repeat(joint_pos[1:2, WRIST_ONNX_INDICES], 8, axis=0),
     )
+
+
+def test_stream_transition_blends_planner_token_to_each_live_pose_token(
+    pipeline: SonicPipeline,
+    mocker: Any,
+) -> None:
+    pipeline._needs_replan = False
+    pipeline._decoder.run.return_value = [np.zeros((1, NUM_JOINTS), dtype=np.float32)]
+    _policy_step(pipeline)
+    assert pipeline.apply_pose_message(_smpl_pose_fields()) == {
+        "frames": 10,
+        "encode_mode": 2,
+        "catchup": True,
+    }
+
+    encoder_run = mocker.patch.object(
+        pipeline._encoder,
+        "run",
+        side_effect=[
+            [np.ones((1, 64), dtype=np.float32)],
+            [np.full((1, 64), 2.0, dtype=np.float32)],
+        ],
+    )
+    decoded_tokens: list[np.ndarray[Any, Any]] = []
+
+    def decode(_outputs: Any, feeds: dict[str, np.ndarray[Any, Any]]) -> list[np.ndarray[Any, Any]]:
+        decoded_tokens.append(feeds[pipeline._decoder_input][0, :64].copy())
+        return [np.zeros((1, NUM_JOINTS), dtype=np.float32)]
+
+    decoder_run = mocker.patch.object(pipeline._decoder, "run", side_effect=decode)
+
+    assert pipeline.begin_stream_transition(0.04) is True
+    _policy_step(pipeline)
+    assert pipeline.stream_transition_progress == 0.5
+    _policy_step(pipeline)
+
+    assert pipeline.stream_transition_active is False
+    assert encoder_run.call_count == 2
+    assert decoder_run.call_count == 2
+    np.testing.assert_allclose(decoded_tokens[0], 0.5)
+    np.testing.assert_allclose(decoded_tokens[1], 2.0)
+
+
+def test_stream_transition_requires_a_previous_planner_token(
+    pipeline: SonicPipeline,
+) -> None:
+    pipeline.apply_pose_message(_smpl_pose_fields())
+
+    assert pipeline.begin_stream_transition(0.5) is False
+
+
+@pytest.mark.parametrize("duration", [0.0, -0.1, float("inf"), float("nan")])
+def test_stream_transition_rejects_invalid_duration(
+    pipeline: SonicPipeline,
+    duration: float,
+) -> None:
+    with pytest.raises(ValueError, match="positive and finite"):
+        pipeline.begin_stream_transition(duration)
+
+
+def test_returning_to_planner_cancels_stream_transition(pipeline: SonicPipeline) -> None:
+    pipeline._needs_replan = False
+    pipeline._decoder.run.return_value = [np.zeros((1, NUM_JOINTS), dtype=np.float32)]
+    _policy_step(pipeline)
+    pipeline.apply_pose_message(_smpl_pose_fields())
+    assert pipeline.begin_stream_transition(0.5) is True
+
+    pipeline.stop_clip()
+
+    assert pipeline.stream_transition_active is False
+    assert pipeline.stream_transition_progress == 0.0
+    assert pipeline.snapshot()["stream_active"] is False

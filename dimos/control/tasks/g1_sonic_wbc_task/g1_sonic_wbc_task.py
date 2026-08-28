@@ -32,6 +32,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import math
 from pathlib import Path
 import threading
 import time
@@ -39,6 +40,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numpy.typing import NDArray
+from pydantic import Field
 
 from dimos.control.hardware_interface import ConnectedWholeBody
 from dimos.control.task import (
@@ -95,6 +97,11 @@ class G1SonicWBCTaskConfig:
     auto_dry_run: bool = False
     default_ramp_seconds: float = 3.0
     sonic_pipeline: SonicTeleopPipeline = SONIC_V1_1_PIPELINE
+    pose_transition_seconds: float = 0.5
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.pose_transition_seconds) or self.pose_transition_seconds <= 0.0:
+            raise ValueError("pose transition duration must be positive and finite")
 
 
 class SonicControlState(str, Enum):
@@ -799,6 +806,13 @@ class G1SonicWBCTask(BaseControlTask):
         if self.policy_active:
             self._pipeline.set_source_stream(self._stream_source_requested)
 
+    def _begin_stream_reference_transition(self, duration_seconds: float) -> bool:
+        if not self.policy_active:
+            return False
+        started = self._pipeline.begin_stream_transition(duration_seconds)
+        self._stream_source_requested = started
+        return started
+
     def _return_to_planner_reference(self) -> None:
         self._stream_source_requested = False
         self._pipeline.stop_clip()
@@ -823,6 +837,7 @@ class G1SonicWBCTaskParams(BaseConfig):
     decimation: int | None = None
     zmq_enabled: bool = True
     sonic_pipeline: SonicTeleopPipeline = SONIC_V1_1_PIPELINE
+    pose_transition_seconds: float = Field(default=0.5, gt=0.0, allow_inf_nan=False)
 
 
 def _create_task(
@@ -855,6 +870,7 @@ def _create_task(
         default_ramp_seconds=params.default_ramp_seconds,
         zmq_enabled=params.zmq_enabled,
         sonic_pipeline=params.sonic_pipeline,
+        pose_transition_seconds=params.pose_transition_seconds,
     )
     if params.decimation is not None:
         kwargs["decimation"] = params.decimation
