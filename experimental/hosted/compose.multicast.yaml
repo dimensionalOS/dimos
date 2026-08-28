@@ -1,0 +1,43 @@
+name: dimos-host-discovery-multicast
+
+x-dimos-environment: &dimos-environment
+  ZENOH_MODE: peer
+  ZENOH_CONNECT: ""
+  ZENOH_CONNECT_TIMEOUT: "1"
+  ZENOH_SCOUTING: "true"
+  ZENOH_INTERFACE: eth0
+  ZENOH_MULTICAST: "true"
+  ZENOH_GOSSIP: "true"
+  DIMOS_ZENOH_MODE: peer
+  DIMOS_ZENOH_CONNECT: ""
+  DIMOS_ZENOH_CONNECT_TIMEOUT: "1"
+  DIMOS_ZENOH_SCOUTING: "true"
+  DIMOS_ZENOH_INTERFACE: eth0
+  DIMOS_ZENOH_MULTICAST: "true"
+  DIMOS_ZENOH_GOSSIP: "true"
+  DIMOS_LOG_LEVEL: WARNING
+  PYTHONUNBUFFERED: "1"
+
+services:
+  host:
+    image: dimos-host-discovery:compose
+    build:
+      context: ../..
+      dockerfile: experimental/hosted/Dockerfile
+    command: ["dimos", "host", "serve"]
+    environment: *dimos-environment
+    deploy:
+      replicas: 10
+    init: true
+    restart: on-failure
+    stop_grace_period: 10s
+
+  discovery:
+    image: dimos-host-discovery:compose
+    build:
+      context: ../..
+      dockerfile: experimental/hosted/Dockerfile
+    command: ["dimos", "host", "list", "--json", "--timeout", "8"]
+    environment: *dimos-environment
+    profiles:
+      - tools

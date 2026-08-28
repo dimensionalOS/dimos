@@ -1,0 +1,49 @@
+name: dimos-host-discovery-router
+
+x-dimos-environment: &dimos-environment
+  ZENOH_MODE: client
+  ZENOH_CONNECT: tcp/router:7447
+  ZENOH_CONNECT_TIMEOUT: "10"
+  ZENOH_SCOUTING: "false"
+  ZENOH_MULTICAST: "false"
+  ZENOH_GOSSIP: "false"
+  DIMOS_ZENOH_MODE: client
+  DIMOS_ZENOH_CONNECT: tcp/router:7447
+  DIMOS_ZENOH_CONNECT_TIMEOUT: "10"
+  DIMOS_ZENOH_SCOUTING: "false"
+  DIMOS_ZENOH_MULTICAST: "false"
+  DIMOS_ZENOH_GOSSIP: "false"
+  DIMOS_LOG_LEVEL: WARNING
+  PYTHONUNBUFFERED: "1"
+
+services:
+  router:
+    image: eclipse/zenoh:1.9.0
+    command: ["-l", "tcp/0.0.0.0:7447", "--no-multicast-scouting"]
+
+  host:
+    image: dimos-host-discovery:compose
+    build:
+      context: ../..
+      dockerfile: experimental/hosted/Dockerfile
+    command: ["dimos", "host", "serve"]
+    environment: *dimos-environment
+    depends_on:
+      - router
+    deploy:
+      replicas: 10
+    init: true
+    restart: on-failure
+    stop_grace_period: 10s
+
+  discovery:
+    image: dimos-host-discovery:compose
+    build:
+      context: ../..
+      dockerfile: experimental/hosted/Dockerfile
+    command: ["dimos", "host", "list", "--json", "--timeout", "5"]
+    environment: *dimos-environment
+    depends_on:
+      - router
+    profiles:
+      - tools
