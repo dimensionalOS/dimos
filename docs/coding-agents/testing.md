@@ -66,7 +66,7 @@ import tempfile
 
 import pytest
 
-from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.Image import Image
 
 
@@ -109,7 +109,7 @@ assert obj._disposables.is_disposed
 ## Print statements
 
 - **Unit tests**: no prints. Use assertions.
-- **`@pytest.mark.tool` tests** (integration/exploration): prints are fine for progress and inspection output.
+- **`tool_*.py` files** (integration/exploration tools): prints are fine for progress and inspection output.
 
 ## Avoid unnecessary sleeps
 

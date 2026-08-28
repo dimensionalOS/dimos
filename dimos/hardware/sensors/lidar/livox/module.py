@@ -28,7 +28,7 @@ Usage::
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field
 
@@ -56,13 +56,22 @@ from dimos.spec import perception
 class Mid360Config(NativeModuleConfig):
     cwd: str | None = "cpp"
     executable: str = "result/bin/mid360_native"
-    build_command: str | None = "nix build .#mid360_native"
+    build_command: str | None = "nix build -L .#mid360_native"
+    stdin_config: bool = True
+    base_fields: frozenset[str] = frozenset({"frame_id"})
     host_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_MID360_HOST_IP"))
     lidar_ip: str = Field(
         default_factory=lambda: os.environ.get("DIMOS_MID360_LIDAR_IP", "192.168.1.155")
     )
     frequency: float = 10.0
     enable_imu: bool = True
+    # Wire layout per point:
+    #   "minimal" x,y,z,offset_time                    — 16 B (default)
+    #   "full"    x,y,z,intensity,offset_time,tag,line — 22 B
+    #   "legacy"  x,y,z,intensity                      — 16 B
+    # Scan-undistorting estimators (FAST-LIVO2 etc.) need offset_time; no LIO in
+    # the stack reads intensity (it only feeds viz/map coloring).
+    point_format: Literal["full", "minimal", "legacy"] = "minimal"
     frame_id: str = "lidar_link"
     imu_frame_id: str = "imu_link"
 

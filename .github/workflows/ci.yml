@@ -3,6 +3,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  merge_group:
 
 concurrency:
   # Cancels runs from previous pushes in a PR.
@@ -27,7 +28,7 @@ jobs:
       digest: ${{ steps.read.outputs.digest }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - id: read
         run: |
           DIGEST=$(grep -oE 'sha256:[a-f0-9]{64}' docker/ros-dev-pin/Dockerfile)
@@ -45,45 +46,42 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
       - name: Install lint dependencies
         run: uv sync --only-group lint --frozen
       - name: Mypy
         run: uv run mypy
+
+      # The deno-fmt pre-commit hook needs deno on PATH.
+      - name: Extract Deno version
+        id: deno-version
+        run: echo "version=$(grep -oP 'DENO_VERSION = "\K[^"]+' dimos/utils/deno.py)" >> "$GITHUB_OUTPUT"
+
+      - name: Install Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: ${{ steps.deno-version.outputs.version }}
+          cache: true
+
       - name: Run pre-commit
         uses: pre-commit/action@v3.0.1
+        env:
+          # clippy and fmt are checked in the rust job, so we can skip them here
+          SKIP: cargo-fmt,cargo-clippy
 
   rust:
-    timeout-minutes: 20
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     permissions:
       contents: read  # For checkout
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
-      - name: Find Cargo workspace roots
-        id: find-crates
-        run: |
-          crates=$(find . -name Cargo.lock \
-            -not -path './target/*' \
-            -not -path './.venv/*' \
-            -not -path './node_modules/*' \
-            -not -path './.git/*' \
-            -printf '%h\n' \
-            | sed 's|^\./||' \
-            | sort)
-          echo "Found Rust workspace roots:"
-          echo "$crates"
-          {
-            echo "crates<<EOF"
-            echo "$crates"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+        uses: actions/checkout@v7
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -91,30 +89,17 @@ jobs:
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: ${{ steps.find-crates.outputs.crates }}
+          # Only main writes the cache, so a PR run cannot evict main's entry
+          # from the repo's 10GB budget. PR runs still restore from it.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: cargo fmt
-        env:
-          CRATES: ${{ steps.find-crates.outputs.crates }}
-        run: |
-          for crate in $CRATES; do
-            (cd "$crate" && cargo fmt --all -- --check)
-          done
+        run: cargo fmt --all -- --check
       - name: cargo clippy
-        env:
-          CRATES: ${{ steps.find-crates.outputs.crates }}
-        run: |
-          for crate in $CRATES; do
-            (cd "$crate" && cargo clippy --workspace --all-targets --all-features --locked -- -D warnings)
-          done
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: cargo test
-        env:
-          CRATES: ${{ steps.find-crates.outputs.crates }}
-        run: |
-          for crate in $CRATES; do
-            (cd "$crate" && cargo test --workspace --all-features --locked)
-          done
+        run: cargo test --workspace --all-features --locked
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
       - name: Install dependency for pyaudio
@@ -125,14 +110,93 @@ jobs:
         run: |
           uv sync --group tests --frozen
           source .venv/bin/activate
-          maturin develop -m dimos/mapping/ray_tracing/rust/Cargo.toml
-          maturin develop -m dimos/navigation/nav_3d/mls_planner/rust/Cargo.toml
+          maturin develop -m dimos/mapping/ray_tracing/rust/py/Cargo.toml
+          maturin develop -m dimos/navigation/nav_3d/mls_planner/rust/py/Cargo.toml
           python -c "import dimos_voxel_ray_tracing, dimos_mls_planner"
           python -m pytest -c /dev/null --rootdir . --noconftest --import-mode=importlib -p no:cacheprovider -v \
             dimos/mapping/ray_tracing/test_voxel_map.py \
             dimos/mapping/ray_tracing/test_transformer.py \
             dimos/navigation/nav_3d/mls_planner/test_mls_planner.py \
             dimos/navigation/nav_3d/mls_planner/test_transformer.py
+      - name: Bake e2e tests
+        run: uv run pytest -m bake_e2e dimos/cli/bake/test_bake_e2e.py --no-cov
+
+  cpp:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      # need liblcm installed for testing transport
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y liblcm-dev nlohmann-json3-dev
+      - name: Configure
+        run: cmake -S native/cpp -B build/native-cpp -DDIMOS_NATIVE_BUILD_TESTS=ON
+      - name: Build
+        run: cmake --build build/native-cpp -j
+      - name: Test
+        run: ctest --test-dir build/native-cpp --output-on-failure
+
+      - name: Find C++ native modules
+        id: find-modules
+        run: |
+          modules=$(find . -name flake.nix \
+            -not -path './.git/*' \
+            -not -path '*/build/*' \
+            -not -path '*/result/*' \
+            -printf '%h\n' \
+            | while read -r dir; do
+                [ -f "$dir/CMakeLists.txt" ] && echo "${dir#./}"
+              done \
+            | sort)
+          if [ -z "$modules" ]; then
+            echo "::error::No C++ native modules found - the discovery glob is wrong"
+            exit 1
+          fi
+          echo "Found C++ native modules:"
+          echo "$modules"
+          {
+            echo "modules<<EOF"
+            echo "$modules"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Free runner disk space
+        uses: BRAINSia/free-disk-space@v2.1.3
+      - name: Install Nix
+        # Substituting needs only the public key, so no auth token is used here
+        # and this stays safe on fork PRs.
+        env:
+          INPUT_EXTRA_NIX_CONFIG: |
+            extra-substituters = https://dimensionalos.cachix.org
+            extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
+          INPUT_SET_AS_TRUSTED_USER: "true"
+        run: bash docker/ros/install-nix.sh
+      # PCL, GTSAM and the SLAM cores come from each module's flake, not apt.
+      - name: Build C++ native modules
+        env:
+          MODULES: ${{ steps.find-modules.outputs.modules }}
+        run: |
+          for module in $MODULES; do
+            echo "::group::$module"
+            (cd "$module" && nix build --no-write-lock-file --print-build-logs)
+            echo "::endgroup::"
+          done
+      - name: Test C++ native modules
+        env:
+          MODULES: ${{ steps.find-modules.outputs.modules }}
+        run: |
+          for module in $MODULES; do
+            if grep -qE 'enable_testing|add_test' "$module/CMakeLists.txt"; then
+              echo "::group::ctest $module"
+              (cd "$module" && ctest --test-dir build --output-on-failure)
+              echo "::endgroup::"
+            fi
+          done
 
   md-babel:
     timeout-minutes: 15
@@ -141,26 +205,26 @@ jobs:
       contents: read  # For checkout
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Fetch LFS data needed by doc code blocks
-        run: git lfs pull --include="data/.lfs/go2_bigoffice.db.tar.gz,data/.lfs/unitree_go2_bigoffice_map.pickle.tar.gz"
+        run: git lfs pull --include="data/.lfs/go2_bigoffice.db.tar.gz,data/.lfs/unitree_go2_bigoffice_map.pickle.tar.gz" --exclude=""
       # Docs decode JPEG from SQLite via PyTurboJPEG; pyaudio needs portaudio.
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libturbojpeg portaudio19-dev
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 'lts/*'
       - name: Install Python dependencies
         run: uv sync --group tests --frozen
       - name: Restore Hugging Face model cache
         id: hf-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/huggingface
           # The docs determine which models get downloaded, so any docs
@@ -188,7 +252,7 @@ jobs:
         # Save right after the download (not in a post step) so a failure in
         # the doc blocks below doesn't throw away the downloaded models.
         if: steps.hf-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/.cache/huggingface
           key: hf-models-${{ hashFiles('docs/**/*.md') }}
@@ -200,34 +264,93 @@ jobs:
       - name: Execute documentation code blocks
         run: ./bin/run-doc-codeblocks --ci --no-cache
 
-  docs-validate:
-    timeout-minutes: 5
+  web:
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     permissions:
       contents: read  # For checkout
 
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Extract Deno version
+        id: deno-version
+        run: echo "version=$(grep -oP 'DENO_VERSION = "\K[^"]+' dimos/utils/deno.py)" >> "$GITHUB_OUTPUT"
+
+      - name: Install Deno
+        uses: denoland/setup-deno@v2
         with:
-          lfs: false
-          sparse-checkout: |
-            docs
+          deno-version: ${{ steps.deno-version.outputs.version }}
+          cache: true
 
-      - name: Pull docs LFS assets only
-        run: git lfs pull --include="docs/assets/**" --exclude=""
+      - name: Deno fmt
+        working-directory: web
+        run: deno fmt --check
 
-      - uses: actions/setup-node@v4
+      - name: Deno lint
+        working-directory: web
+        run: deno lint
+
+      - name: Deno install (validates deno.lock)
+        working-directory: web
+        run: deno install --frozen
+
+      - name: Deno check (relay + shared)
+        working-directory: web
+        run: deno task check
+
+      - name: Deno test (relay + shared)
+        working-directory: web
+        run: deno task test
+
+      - name: SDK type-check
+        working-directory: web/sdk
+        run: deno task check
+
+      - name: SDK vitest
+        working-directory: web/sdk
+        run: deno task test
+
+      - name: Cockpit type-check
+        working-directory: web/cockpit
+        run: deno task check
+
+      - name: Cockpit vitest
+        working-directory: web/cockpit
+        run: deno task test
+
+      - name: SDK bundle build
+        working-directory: web/sdk
+        run: deno task build
+
+      - name: Cockpit build
+        working-directory: web/cockpit
+        run: deno task build
+
+      # ---- Browser e2e: dimos run --local-relay + Playwright on the dist ----
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.3.2
         with:
-          node-version: '20'
-
-      - name: Install docs dependencies
-        working-directory: docs
-        run: npm ci
-
-      # Temporarily disabled — Mintlify validation blocking CI
-      # - name: Validate Mintlify docs
-      #   working-directory: docs
-      #   run: npm run validate
+          enable-cache: true
+      - name: Setup Python
+        uses: actions/setup-python@v6.3.0
+        with:
+          python-version: '3.12'
+      - name: Install native dependencies (pyaudio build, JPEG encoding)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y portaudio19-dev libturbojpeg
+      - name: Fetch the go2_short replay dataset
+        run: git lfs pull --include="data/.lfs/go2_short.db.tar.gz" --exclude=""
+      - name: Install dependencies
+        run: uv sync --group tests --group browser-tests --frozen
+      - name: Install Playwright browsers  # the e2e runs in both engines
+        run: uv run playwright install --with-deps chromium firefox
+      - name: Cockpit + SDK browser e2e
+        run: >-
+          uv run pytest -m web_browser dimos/e2e_tests/test_cockpit_browser.py
+          dimos/e2e_tests/test_sdk_browser.py --no-cov
 
   tests:
     timeout-minutes: 20
@@ -246,27 +369,42 @@ jobs:
       fail-fast: true
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.experimental }}
+    env:
+      # Arm faulthandler from interpreter start — before conftest is even
+      # imported — so import-time crashes are covered too. dimos/conftest.py
+      # redirects it to a per-process file under $RUNNER_TEMP/pytest-crash,
+      # which is what makes a crash legible under xdist (one file per worker).
+      PYTHONFAULTHANDLER: "1"
     permissions:
       contents: read  # For checkout
       id-token: write  # For codecov-action's OIDC upload
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v6.3.0
         with:
           allow-prereleases: true
           python-version: ${{ matrix.pyver }}
-      - name: Install dependency for pyaudio (Ubuntu)
+      - name: Extract Deno version
+        id: deno-version
+        run: echo "version=$(grep -oP 'DENO_VERSION = "\K[^"]+' dimos/utils/deno.py)" >> "$GITHUB_OUTPUT"
+      - name: Install Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: ${{ steps.deno-version.outputs.version }}
+          cache: true
+      # pyaudio needs portaudio; the relay bridge tests encode JPEG via PyTurboJPEG.
+      - name: Install system dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev
+          sudo apt-get install -y portaudio19-dev libturbojpeg
       - name: Install dependency for pyaudio (macOS)
         if: startsWith(matrix.os, 'macos')
         run: brew install portaudio
@@ -281,18 +419,28 @@ jobs:
       - name: Install dependencies
         run: uv sync --group tests --frozen
       - name: Run tests
-        run: uv run pytest --numprocesses=3 --cov=dimos/ --junitxml=junit.xml -m 'not (tool or self_hosted or mujoco or self_hosted_large)'
+        run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e)'
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf  -m 'not (tool or self_hosted or mujoco or self_hosted_large)' && exit 1
+          uv run pytest --no-cov -vvvvv --lf  -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e)' && exit 1
         shell: bash
+      - name: Print crash diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for f in "$RUNNER_TEMP"/pytest-crash/*.log; do
+            echo "::group::$(basename "$f")"
+            cat "$f"
+            echo "::endgroup::"
+          done
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
       - name: Upload coverage
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           disable_search: true
           fail_ci_if_error: true
@@ -307,7 +455,7 @@ jobs:
           version: "11.2.8"
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           report_type: test_results
           use_oidc: true
@@ -316,14 +464,19 @@ jobs:
           version: "11.2.8"
 
   self-hosted-tests:
-    # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
+    # Runs on push, merge_group (trusted — a maintainer must approve + queue the
+    # PR), and same-repo PRs. Skipped on fork PRs, which would expose the
+    # self-hosted runner to untrusted code from external contributors.
     if: |
-      github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
-    needs: compute-ros-pin
+      !cancelled() &&
+      (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)
+    needs: [compute-ros-pin]
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
+      # See the `tests` job for why this is set.
+      PYTHONFAULTHANDLER: "1"
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -333,12 +486,18 @@ jobs:
             # GitHub Actions only honours `container:` on Linux runners.
             container:
               image: ghcr.io/dimensionalos/ros-dev@${{ needs.compute-ros-pin.outputs.digest }}
+              # Hard-cap container RAM so a runaway test OOMs inside the container, not
+              # as a host global-OOM that takes out sshd/tmux.
+              options: --memory=6g --memory-swap=6g
+              volumes:
+                - /var/cache/dimos-root-cache:/root/.cache
             markers: "self_hosted or skipif_no_ros"
             experimental: false
-          - os: macOS
-            container: null  # run on host — `container:` is Linux-only
-            markers: "self_hosted"
-            experimental: true
+          # macOS runner disabled for now — we don't want Mac tests.
+          # - os: macOS
+          #   container: null  # run on host — `container:` is Linux-only
+          #   markers: "self_hosted"
+          #   experimental: true
     runs-on:
       - self-hosted
       - ${{ matrix.os }}
@@ -352,7 +511,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           clean: false
           # If we ever allow external PRs on custom runner, persisting credentials
@@ -362,10 +521,20 @@ jobs:
         run: |
           git config --global --add safe.directory '*'
           git clean -ffdx
+      - name: Point uv at a persistent cache on the workspace mount
+        # HOME in container jobs is an ephemeral /github/home, so uv's default
+        # cache would be dropped after every run. The workspace mount (/__w,
+        # the runner's _work dir) persists on the self-hosted runner, and
+        # unlike the /root/.cache volume it is the same mount as .venv:
+        # hardlinks across two docker bind mounts fail with EXDEV even on one
+        # filesystem, making uv fall back to a minutes-long full copy.
+        if: matrix.os == 'Linux'
+        run: echo "UV_CACHE_DIR=$(dirname "$RUNNER_WORKSPACE")/uv-cache" >> "$GITHUB_ENV"
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v8.3.2
         with:
-          enable-cache: true
+          # We persist on disk above, cache would clean some of this up.
+          enable-cache: false
       - name: Install codecov CLI
         # Self-hosted runners have no `pip` on PATH, so codecov-action's
         # use_pypi can't work here; pre-install the pinned CLI with uv and
@@ -397,18 +566,28 @@ jobs:
             echo "ROS_PYTHON_VERSION=$ROS_PYTHON_VERSION"
           } >> "$GITHUB_ENV"
       - name: Run tests
-        run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not (tool or mujoco)'
+        run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not mujoco'
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf  -m '(${{ matrix.markers }}) and not (tool or mujoco)' && exit 1
+          uv run pytest --no-cov -vvvvv --lf  -m '(${{ matrix.markers }}) and not mujoco' && exit 1
         shell: bash
+      - name: Print crash diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for f in "$RUNNER_TEMP"/pytest-crash/*.log; do
+            echo "::group::$(basename "$f")"
+            cat "$f"
+            echo "::endgroup::"
+          done
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
       - name: Upload coverage
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           disable_search: true
           fail_ci_if_error: true
@@ -421,7 +600,7 @@ jobs:
           binary: .codecov-venv/bin/codecovcli
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           report_type: test_results
           use_oidc: true
@@ -431,6 +610,21 @@ jobs:
         if: failure()
         run: |
           df -h
+      - name: Prune the persistent uv cache
+        # The cache persists on the runner (see "Point uv at a persistent
+        # cache" above), so lock bumps accumulate superseded wheels
+        # forever. Drop unreachable objects each run; past 25 GB, `--ci` also
+        # evicts pre-built wheels (re-downloaded on the next run) while keeping
+        # the expensive wheels built from source. uv has nothing age-based.
+        # Not always(): on a cancelled run, lingering test processes still
+        # hold the shared cache lock and prune would block on it until the
+        # job timeout.
+        if: ${{ !cancelled() && matrix.os == 'Linux' }}
+        run: |
+          uv cache prune
+          size_mb=$(du -sm "$UV_CACHE_DIR" | cut -f1)
+          echo "uv cache size: ${size_mb} MB"
+          if [ "$size_mb" -gt 25600 ]; then uv cache prune --ci; fi
 
   self-hosted-large-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
@@ -441,6 +635,8 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
       DIMSIM_RENDER: gpu
+      # See the `tests` job for why this is set.
+      PYTHONFAULTHANDLER: "1"
     timeout-minutes: 30
     runs-on: [self-hosted, Linux, large]
     permissions:
@@ -450,7 +646,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           clean: false
           # If we ever allow external PRs on custom runner, persisting credentials
@@ -460,10 +656,22 @@ jobs:
         run: |
           sudo git config --global --add safe.directory '*'
           sudo git clean -ffdx
+      - name: Fetch DimSim LFS assets only
+        # The checkout above doesn't fetch LFS, so the dimsim scene/embodiment
+        # glbs are pointer stubs and the browser sim fails to load them. Pull
+        # ONLY misc/DimSim assets — a full `lfs: true` would also drag in main's
+        # multi-GB data/.lfs/* objects (some missing on the server → 404).
+        # persist-credentials is false above, so supply the token for this pull.
+        run: |
+          git config --local http.https://github.com/.extraheader \
+            "AUTHORIZATION: basic $(printf 'x-access-token:%s' '${{ github.token }}' | base64 -w0)"
+          git lfs pull --include="misc/DimSim/**"
+          git config --local --unset-all http.https://github.com/.extraheader
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v8.3.2
         with:
-          enable-cache: true
+          # We persist on disk, cache would clean some of this up.
+          enable-cache: false
       - name: Install codecov CLI
         # Self-hosted runners have no `pip` on PATH, so codecov-action's
         # use_pypi can't work here; pre-install the pinned CLI with uv and
@@ -508,10 +716,20 @@ jobs:
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
           uv run pytest --no-cov -vvvvv --lf -m self_hosted_large && exit 1
         shell: bash
+      - name: Print crash diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for f in "$RUNNER_TEMP"/pytest-crash/*.log; do
+            echo "::group::$(basename "$f")"
+            cat "$f"
+            echo "::endgroup::"
+          done
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
       - name: Upload coverage
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           disable_search: true
           fail_ci_if_error: true
@@ -524,7 +742,7 @@ jobs:
           binary: .codecov-venv/bin/codecovcli
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           report_type: test_results
           use_oidc: true
@@ -534,6 +752,15 @@ jobs:
         if: failure()
         run: |
           df -h
+      - name: Prune the persistent uv cache
+        # See self-hosted-tests; UV_CACHE_DIR isn't set here, so resolve the
+        # default with `uv cache dir`.
+        if: ${{ !cancelled() }}
+        run: |
+          uv cache prune
+          size_mb=$(du -sm "$(uv cache dir)" | cut -f1)
+          echo "uv cache size: ${size_mb} MB"
+          if [ "$size_mb" -gt 25600 ]; then uv cache prune --ci; fi
 
   # Cross-job fail-fast: GitHub Actions only fail-fasts within a matrix,
   # not across sibling jobs. This watcher fires the moment `tests` fails
@@ -556,8 +783,9 @@ jobs:
     needs:
     - lint
     - rust
+    - cpp
     - md-babel
-    - docs-validate
+    - web
     - tests
     - self-hosted-tests
     #- self-hosted-large-tests
@@ -570,12 +798,10 @@ jobs:
     - name: Decide whether the needed jobs succeeded or failed
       uses: re-actors/alls-green@release/v1
       with:
-        allowed-skips: |
-          self-hosted-tests
-          self-hosted-large-tests
+        allowed-skips: self-hosted-tests, self-hosted-large-tests
         jobs: ${{ toJSON(needs) }}
     - name: Trigger Codecov notifications
-      uses: codecov/codecov-action@v6
+      uses: codecov/codecov-action@v7
       with:
         run_command: send-notifications
         use_oidc: true

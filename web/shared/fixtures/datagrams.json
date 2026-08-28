@@ -1,0 +1,293 @@
+{
+  "vectors": [
+    {
+      "name": "hello_robot",
+      "message": {
+        "t": "hello",
+        "v": 4,
+        "role": "robot",
+        "robot": {
+          "id": "go2-lab",
+          "name": "Go2 Laborator β",
+          "model": "unitree-go2"
+        },
+        "manifest": {
+          "version": 1,
+          "channels": [
+            {
+              "ch": "color_image",
+              "dir": "rx",
+              "encoding": "jpeg.v1",
+              "delivery": "latest",
+              "maxHz": 15.5,
+              "params": {
+                "quality": 75.5
+              }
+            },
+            {
+              "ch": "odom",
+              "dir": "rx",
+              "encoding": "pose.json.v1",
+              "delivery": "reliable",
+              "maxHz": 20.5,
+              "params": {}
+            }
+          ],
+          "panels": [
+            {
+              "id": "p0",
+              "kind": "video",
+              "title": "Camera β",
+              "channels": [
+                "color_image"
+              ],
+              "params": {}
+            }
+          ],
+          "layout": {
+            "row": [
+              "p0"
+            ]
+          },
+          "pages": []
+        }
+      },
+      "b64": "eyJ0IjoiaGVsbG8iLCJ2Ijo0LCJyb2xlIjoicm9ib3QiLCJyb2JvdCI6eyJpZCI6ImdvMi1sYWIiLCJuYW1lIjoiR28yIExhYm9yYXRvciDOsiIsIm1vZGVsIjoidW5pdHJlZS1nbzIifSwibWFuaWZlc3QiOnsidmVyc2lvbiI6MSwiY2hhbm5lbHMiOlt7ImNoIjoiY29sb3JfaW1hZ2UiLCJkaXIiOiJyeCIsImVuY29kaW5nIjoianBlZy52MSIsImRlbGl2ZXJ5IjoibGF0ZXN0IiwibWF4SHoiOjE1LjUsInBhcmFtcyI6eyJxdWFsaXR5Ijo3NS41fX0seyJjaCI6Im9kb20iLCJkaXIiOiJyeCIsImVuY29kaW5nIjoicG9zZS5qc29uLnYxIiwiZGVsaXZlcnkiOiJyZWxpYWJsZSIsIm1heEh6IjoyMC41LCJwYXJhbXMiOnt9fV0sInBhbmVscyI6W3siaWQiOiJwMCIsImtpbmQiOiJ2aWRlbyIsInRpdGxlIjoiQ2FtZXJhIM6yIiwiY2hhbm5lbHMiOlsiY29sb3JfaW1hZ2UiXSwicGFyYW1zIjp7fX1dLCJsYXlvdXQiOnsicm93IjpbInAwIl19LCJwYWdlcyI6W119fQ=="
+    },
+    {
+      "name": "hello_viewer",
+      "message": {
+        "t": "hello",
+        "v": 4,
+        "role": "viewer"
+      },
+      "b64": "eyJ0IjoiaGVsbG8iLCJ2Ijo0LCJyb2xlIjoidmlld2VyIn0="
+    },
+    {
+      "name": "welcome",
+      "message": {
+        "t": "welcome",
+        "v": 4
+      },
+      "b64": "eyJ0Ijoid2VsY29tZSIsInYiOjR9"
+    },
+    {
+      "name": "ping",
+      "message": {
+        "t": "ping",
+        "n": 7,
+        "ts": 1752576000.5
+      },
+      "b64": "eyJ0IjoicGluZyIsIm4iOjcsInRzIjoxNzUyNTc2MDAwLjV9"
+    },
+    {
+      "name": "pong",
+      "message": {
+        "t": "pong",
+        "n": 7,
+        "ts": 1752576000.5
+      },
+      "b64": "eyJ0IjoicG9uZyIsIm4iOjcsInRzIjoxNzUyNTc2MDAwLjV9"
+    },
+    {
+      "name": "error_version",
+      "message": {
+        "t": "error",
+        "code": "version_mismatch",
+        "message": "protocol v4 required, versiune neacceptată"
+      },
+      "b64": "eyJ0IjoiZXJyb3IiLCJjb2RlIjoidmVyc2lvbl9taXNtYXRjaCIsIm1lc3NhZ2UiOiJwcm90b2NvbCB2NCByZXF1aXJlZCwgdmVyc2l1bmUgbmVhY2NlcHRhdMSDIn0="
+    },
+    {
+      "name": "robots_two",
+      "message": {
+        "t": "robots",
+        "robots": [
+          {
+            "id": "go2-lab",
+            "name": "Go2 Laborator β",
+            "model": "unitree-go2"
+          },
+          {
+            "id": "arm-01",
+            "name": "Braț 01",
+            "model": "xarm7"
+          }
+        ]
+      },
+      "b64": "eyJ0Ijoicm9ib3RzIiwicm9ib3RzIjpbeyJpZCI6ImdvMi1sYWIiLCJuYW1lIjoiR28yIExhYm9yYXRvciDOsiIsIm1vZGVsIjoidW5pdHJlZS1nbzIifSx7ImlkIjoiYXJtLTAxIiwibmFtZSI6IkJyYcibIDAxIiwibW9kZWwiOiJ4YXJtNyJ9XX0="
+    },
+    {
+      "name": "robots_empty",
+      "message": {
+        "t": "robots",
+        "robots": []
+      },
+      "b64": "eyJ0Ijoicm9ib3RzIiwicm9ib3RzIjpbXX0="
+    },
+    {
+      "name": "watch",
+      "message": {
+        "t": "watch",
+        "robotId": "go2-lab"
+      },
+      "b64": "eyJ0Ijoid2F0Y2giLCJyb2JvdElkIjoiZ28yLWxhYiJ9"
+    },
+    {
+      "name": "manifest_reply",
+      "message": {
+        "t": "manifest",
+        "robotId": "go2-lab",
+        "manifest": {
+          "version": 1,
+          "channels": [
+            {
+              "ch": "odom",
+              "encoding": "pose.json.v1",
+              "delivery": "reliable",
+              "maxHz": 20.5
+            }
+          ],
+          "panels": [
+            {
+              "id": "pose",
+              "kind": "readout",
+              "title": "Poziție",
+              "channels": [
+                "odom"
+              ]
+            }
+          ],
+          "layout": "pose"
+        }
+      },
+      "b64": "eyJ0IjoibWFuaWZlc3QiLCJyb2JvdElkIjoiZ28yLWxhYiIsIm1hbmlmZXN0Ijp7InZlcnNpb24iOjEsImNoYW5uZWxzIjpbeyJjaCI6Im9kb20iLCJlbmNvZGluZyI6InBvc2UuanNvbi52MSIsImRlbGl2ZXJ5IjoicmVsaWFibGUiLCJtYXhIeiI6MjAuNX1dLCJwYW5lbHMiOlt7ImlkIjoicG9zZSIsImtpbmQiOiJyZWFkb3V0IiwidGl0bGUiOiJQb3ppyJtpZSIsImNoYW5uZWxzIjpbIm9kb20iXX1dLCJsYXlvdXQiOiJwb3NlIn19"
+    },
+    {
+      "name": "manifest_reply_bare",
+      "message": {
+        "t": "manifest",
+        "robotId": "arm-01"
+      },
+      "b64": "eyJ0IjoibWFuaWZlc3QiLCJyb2JvdElkIjoiYXJtLTAxIn0="
+    },
+    {
+      "name": "sub",
+      "message": {
+        "t": "sub",
+        "ch": "color_image"
+      },
+      "b64": "eyJ0Ijoic3ViIiwiY2giOiJjb2xvcl9pbWFnZSJ9"
+    },
+    {
+      "name": "unsub",
+      "message": {
+        "t": "unsub",
+        "ch": "color_image"
+      },
+      "b64": "eyJ0IjoidW5zdWIiLCJjaCI6ImNvbG9yX2ltYWdlIn0="
+    },
+    {
+      "name": "subs_snapshot",
+      "message": {
+        "t": "subs",
+        "chs": [
+          "color_image",
+          "odom"
+        ],
+        "n": 3
+      },
+      "b64": "eyJ0Ijoic3VicyIsImNocyI6WyJjb2xvcl9pbWFnZSIsIm9kb20iXSwibiI6M30="
+    },
+    {
+      "name": "subs_empty",
+      "message": {
+        "t": "subs",
+        "chs": [],
+        "n": 4
+      },
+      "b64": "eyJ0Ijoic3VicyIsImNocyI6W10sIm4iOjR9"
+    },
+    {
+      "name": "teleop_start",
+      "message": {
+        "t": "teleop_start"
+      },
+      "b64": "eyJ0IjoidGVsZW9wX3N0YXJ0In0="
+    },
+    {
+      "name": "teleop_started",
+      "message": {
+        "t": "teleop_started"
+      },
+      "b64": "eyJ0IjoidGVsZW9wX3N0YXJ0ZWQifQ=="
+    },
+    {
+      "name": "teleop_stop",
+      "message": {
+        "t": "teleop_stop"
+      },
+      "b64": "eyJ0IjoidGVsZW9wX3N0b3AifQ=="
+    },
+    {
+      "name": "twist",
+      "message": {
+        "t": "twist",
+        "vx": 0.5,
+        "vy": 0.25,
+        "wz": -0.25,
+        "seq": 12,
+        "ts": 1752576000.5
+      },
+      "b64": "eyJ0IjoidHdpc3QiLCJ2eCI6MC41LCJ2eSI6MC4yNSwid3oiOi0wLjI1LCJzZXEiOjEyLCJ0cyI6MTc1MjU3NjAwMC41fQ=="
+    },
+    {
+      "name": "stop",
+      "message": {
+        "t": "stop",
+        "seq": 13,
+        "ts": 1752576000.5
+      },
+      "b64": "eyJ0Ijoic3RvcCIsInNlcSI6MTMsInRzIjoxNzUyNTc2MDAwLjV9"
+    },
+    {
+      "name": "twist_gen",
+      "message": {
+        "t": "twist",
+        "vx": 0.5,
+        "vy": 0.25,
+        "wz": -0.25,
+        "seq": 12,
+        "ts": 1752576000.5,
+        "gen": 3
+      },
+      "b64": "eyJ0IjoidHdpc3QiLCJ2eCI6MC41LCJ2eSI6MC4yNSwid3oiOi0wLjI1LCJzZXEiOjEyLCJ0cyI6MTc1MjU3NjAwMC41LCJnZW4iOjN9"
+    },
+    {
+      "name": "stop_gen",
+      "message": {
+        "t": "stop",
+        "seq": 13,
+        "ts": 1752576000.5,
+        "gen": 3
+      },
+      "b64": "eyJ0Ijoic3RvcCIsInNlcSI6MTMsInRzIjoxNzUyNTc2MDAwLjUsImdlbiI6M30="
+    },
+    {
+      "name": "teleop_start_gen",
+      "message": {
+        "t": "teleop_start",
+        "gen": 3
+      },
+      "b64": "eyJ0IjoidGVsZW9wX3N0YXJ0IiwiZ2VuIjozfQ=="
+    },
+    {
+      "name": "teleop_stop_gen",
+      "message": {
+        "t": "teleop_stop",
+        "gen": 3
+      },
+      "b64": "eyJ0IjoidGVsZW9wX3N0b3AiLCJnZW4iOjN9"
+    }
+  ]
+}

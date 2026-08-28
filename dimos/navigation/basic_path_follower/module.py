@@ -31,8 +31,8 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.trigonometry import angle_diff
 
@@ -40,6 +40,8 @@ logger = setup_logger()
 
 
 class BasicPathFollowerConfig(ModuleConfig):
+    world_frame: str = "odom"
+    base_frame: str = "base_link"
     speed: float = 0.5
     control_frequency: float = 10.0
     goal_tolerance: float = 0.3
@@ -62,11 +64,15 @@ class BasicPathFollower(Module):
     goal_reached. stop_movement cancels the current path.
     """
 
+    # While the tf chain is incomplete, retry the lookup at most this often.
+    # The buffer warns on every miss, so per-tick retries would flood the log.
+    RETRY_PERIOD_S = 1.0
+
     config: BasicPathFollowerConfig
 
     path: In[Path]
-    odometry: In[Odometry]
     stop_movement: In[Bool]
+    tf: In[TFMessage]
 
     nav_cmd_vel: Out[Twist]
     goal_reached: Out[Bool]
@@ -74,7 +80,7 @@ class BasicPathFollower(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._lock = RLock()
-        self._current_odom: PoseStamped | None = None
+        self._next_lookup = 0.0
         self._waypoints: NDArray[np.float32] | None = None
         self._stop_event = Event()
         self._thread: Thread | None = None
@@ -82,7 +88,9 @@ class BasicPathFollower(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self.register_disposable(Disposable(self.odometry.subscribe(self._on_odometry)))
+        # Build the buffer first so it is subscribed and warm before the first
+        # path arrives, else the cold-start miss arms a full retry backoff.
+        self.tfbuffer  # noqa: B018
         self.register_disposable(Disposable(self.path.subscribe(self._on_path)))
         if self.stop_movement.transport is not None:
             self.register_disposable(Disposable(self.stop_movement.subscribe(self._on_stop)))
@@ -97,9 +105,13 @@ class BasicPathFollower(Module):
         self.nav_cmd_vel.publish(Twist())
         super().stop()
 
-    def _on_odometry(self, msg: Odometry) -> None:
-        with self._lock:
-            self._current_odom = msg.to_pose_stamped()
+    def _lookup_pose(self) -> PoseStamped | None:
+        if time.monotonic() < self._next_lookup:
+            return None
+        pose = self.tfbuffer.get_pose(self.config.world_frame, self.config.base_frame)
+        if pose is None:
+            self._next_lookup = time.monotonic() + self.RETRY_PERIOD_S
+        return pose
 
     def _on_path(self, path: Path) -> None:
         # The planner owns path safety: it sends the route as far as it is safe,
@@ -124,15 +136,15 @@ class BasicPathFollower(Module):
         while not self._stop_event.is_set():
             start_time = time.perf_counter()
             with self._lock:
-                odom = self._current_odom
                 waypoints = self._waypoints
-            if odom is not None and waypoints is not None:
-                self._step(odom, waypoints)
+            pose = self._lookup_pose() if waypoints is not None else None
+            if pose is not None and waypoints is not None:
+                self._step(pose, waypoints)
             elapsed = time.perf_counter() - start_time
             self._stop_event.wait(max(0.0, period - elapsed))
 
-    def _step(self, odom: PoseStamped, waypoints: NDArray[np.float32]) -> None:
-        position = np.array([odom.position.x, odom.position.y], dtype=np.float32)
+    def _step(self, pose: PoseStamped, waypoints: NDArray[np.float32]) -> None:
+        position = np.array([pose.position.x, pose.position.y], dtype=np.float32)
         if float(np.linalg.norm(waypoints[-1] - position)) < self.config.goal_tolerance:
             self.nav_cmd_vel.publish(Twist())
             with self._lock:
@@ -145,7 +157,7 @@ class BasicPathFollower(Module):
         target = self._lookahead_point(waypoints, position)
         yaw_error = angle_diff(
             math.atan2(target[1] - position[1], target[0] - position[0]),
-            odom.orientation.euler[2],
+            pose.orientation.euler[2],
         )
 
         angular = max(

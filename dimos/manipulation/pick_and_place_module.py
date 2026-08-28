@@ -23,22 +23,30 @@ Extends ManipulationModule with perception integration and long-horizon skills:
 from __future__ import annotations
 
 import math
-import time
 from typing import TYPE_CHECKING, Any
 
 from dimos.agents.annotation import skill
 from dimos.agents.skill_result import SkillResult
 from dimos.core.core import rpc
 from dimos.core.stream import In
+from dimos.manipulation.grasp_verification import (
+    GraspVerificationConfig,
+    GripperSettle,
+    await_gripper_settle,
+    grasp_failure,
+    open_failure,
+)
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationModuleConfig,
 )
+from dimos.manipulation.manipulation_spec import CommandResult, CommandStatus
+from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.manipulation.skill_errors import ManipulationSkillError
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.perception.detection.type.detection3d.object import (
+from dimos.perception.experimental.object import (
     Object as DetObject,
 )
 from dimos.utils.logging_config import setup_logger
@@ -337,26 +345,96 @@ class PickAndPlaceModule(ManipulationModule):
             return None
         return det.center.x, det.center.y, det.center.z
 
+    def _read_gripper(self, group_id: PlanningGroupID | None) -> float | None:
+        """Measured normalized gripper opening, or None when unavailable.
+
+        Resolves the group the same way set_gripper_position does, so the
+        reading comes back from the gripper the command was sent to.
+        """
+        group = self._resolve_gripper_group(group_id)
+        if isinstance(group, CommandResult):
+            return None
+        return self._get_group_gripper_position(group)
+
+    def _command_and_settle(
+        self, target: float, group_id: PlanningGroupID | None, config: GraspVerificationConfig
+    ) -> GripperSettle | None:
+        """Send one gripper command and poll the readback to rest.
+
+        Returns None when the command itself was refused, which the old
+        open-loop sleeps could not distinguish from a slow gripper.
+        """
+        command = self.set_gripper_position(target, group_id)
+        if command.status is not CommandStatus.SUCCEEDED:
+            logger.error(f"Gripper command to {target:.2f} refused: {command.message}")
+            return None
+        return await_gripper_settle(lambda: self._read_gripper(group_id), target, config)
+
+    def _open_gripper(
+        self, group_id: PlanningGroupID | None, config: GraspVerificationConfig, step: str
+    ) -> SkillResult[ManipulationSkillError]:
+        """Open the jaws and wait for them to reach the open position."""
+        settle = self._command_and_settle(config.open_position, group_id, config)
+        if settle is None:
+            return SkillResult.fail("GRIPPER_FAILED", f"{step}: gripper command refused")
+        if settle.position is None:
+            # Nothing to synchronize on. The command was accepted, so carry on
+            # rather than failing a robot whose gripper reports no measurement.
+            logger.warning(f"{step}: gripper readback unavailable, cannot confirm the open")
+            return SkillResult.ok(f"{step}: gripper commanded open, readback unavailable")
+        failure = open_failure(settle, config)
+        if failure is not None:
+            logger.error(f"{step}: {failure}")
+            return SkillResult.fail("GRIPPER_FAILED", f"{step}: {failure}")
+        logger.info(f"{step}: gripper open at {settle.position:.3f} after {settle.elapsed:.2f}s")
+        return SkillResult.ok(f"{step}: gripper open at {settle.position:.3f}")
+
+    def _close_and_verify(
+        self, group_id: PlanningGroupID | None, config: GraspVerificationConfig
+    ) -> SkillResult[ManipulationSkillError]:
+        """Close the jaws, wait for them to stall, and read the stall as a grasp."""
+        settle = self._command_and_settle(config.closed_position, group_id, config)
+        if settle is None:
+            return SkillResult.fail("GRIPPER_FAILED", "close: gripper command refused")
+
+        if not config.enabled:
+            logger.info(f"close: verification disabled, gripper at {settle.position}")
+            return SkillResult.ok("close: gripper commanded shut, verification disabled")
+
+        failure = grasp_failure(settle, config)
+        if failure is not None:
+            logger.error(f"Grasp verification failed: {failure}")
+            return SkillResult.fail("GRASP_VERIFICATION_FAILED", f"close: {failure}")
+        assert settle.position is not None
+        detail = (
+            f"object held — readback {settle.position:.3f} in band "
+            f"({config.held_low:.3f}, {config.held_high:.3f}) after {settle.elapsed:.2f}s"
+        )
+        logger.info(f"Grasp verified: {detail}")
+        return SkillResult.ok(detail)
+
     @skill
-    def get_scene_info(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
+    def get_scene_info(
+        self, group_id: PlanningGroupID | None = None
+    ) -> SkillResult[ManipulationSkillError]:
         """Get current robot state, detected objects, and scene information.
 
         Returns a summary of the robot's joint positions, end-effector pose,
         gripper state, detected objects, and obstacle count.
 
         Args:
-            robot_name: Robot to query (only needed for multi-arm setups).
+            group_id: Planning group used for the end-effector pose query.
         """
         lines: list[str] = []
 
         # Robot state
-        joints = self.get_current_joints(robot_name)
+        joints = self.get_current_joints()
         if joints is not None:
             lines.append(f"Joints: [{', '.join(f'{j:.3f}' for j in joints)}]")
         else:
             lines.append("Joints: unavailable (no state received)")
 
-        ee_pose = self.get_ee_pose(robot_name)
+        ee_pose = self.get_ee_pose(group_id)
         if ee_pose is not None:
             p = ee_pose.position
             lines.append(f"EE pose: ({p.x:.4f}, {p.y:.4f}, {p.z:.4f})")
@@ -364,9 +442,19 @@ class PickAndPlaceModule(ManipulationModule):
             lines.append("EE pose: unavailable")
 
         # Gripper
-        gripper_pos = self.get_gripper(robot_name)
+        snapshot = self.get_state()
+        if group_id is not None:
+            group_state = snapshot.groups.get(group_id)
+            gripper_pos = group_state.gripper_position if group_state is not None else None
+        else:
+            gripper_positions = [
+                state.gripper_position
+                for state in snapshot.groups.values()
+                if state.gripper_position is not None
+            ]
+            gripper_pos = gripper_positions[0] if len(gripper_positions) == 1 else None
         if gripper_pos is not None:
-            lines.append(f"Gripper: {gripper_pos:.3f}m")
+            lines.append(f"Gripper: {gripper_pos:.0%} open")
         else:
             lines.append("Gripper: not configured")
 
@@ -397,13 +485,11 @@ class PickAndPlaceModule(ManipulationModule):
         return SkillResult.ok("\n".join(lines))
 
     @skill
-    def look(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
+    def look(self) -> SkillResult[ManipulationSkillError]:
         """Quick check of what objects are visible from the current camera position.
 
         Does NOT move the arm. Returns objects currently detected in the camera view.
 
-        Args:
-            robot_name: Robot context (only needed for multi-arm setups).
         """
         obstacles = self.refresh_obstacles(0.0)
 
@@ -427,7 +513,7 @@ class PickAndPlaceModule(ManipulationModule):
     def scan_objects(
         self,
         min_duration: float = 0.0,
-        robot_name: str | None = None,
+        group_id: PlanningGroupID | None = None,
     ) -> SkillResult[ManipulationSkillError]:
         """Scan for objects — moves to init position first for a clear camera view, \
 then refreshes perception obstacles.
@@ -436,12 +522,26 @@ then refreshes perception obstacles.
 
         Args:
             min_duration: Minimum time an object must be seen to be included.
-            robot_name: Robot context (only needed for multi-arm setups).
+            group_id: Planning group to move; omission requires exactly one group.
         """
-        # Go to init for a clear camera view
-        init_result = self.go_init(robot_name)
-        if not init_result.is_success():
-            return init_result
+        # Go to init for a clear camera view.
+        groups = self.get_state().groups
+        if group_id is None:
+            if len(groups) != 1:
+                return SkillResult.fail("ROBOT_NOT_FOUND", "Planning group is missing or ambiguous")
+            group_id = next(iter(groups))
+        group_state = groups.get(group_id)
+        if group_state is None:
+            return SkillResult.fail("ROBOT_NOT_FOUND", f"Unknown planning group: {group_id}")
+        init = group_state.joint_presets.get("init")
+        if init is None:
+            return SkillResult.fail("NOT_CONFIGURED", "No init joints captured")
+        plan = self.plan_to_joints({group_id: init})
+        if not plan.succeeded:
+            return SkillResult.fail("PLANNING_FAILED", plan.message)
+        execution = self.execute(blocking=True)
+        if not execution.succeeded:
+            return SkillResult.fail("EXECUTION_FAILED", execution.message)
 
         obstacles = self.refresh_obstacles(min_duration)
 
@@ -467,7 +567,7 @@ then refreshes perception obstacles.
         self,
         object_name: str,
         object_id: str | None = None,
-        robot_name: str | None = None,
+        group_id: PlanningGroupID | None = None,
     ) -> SkillResult[ManipulationSkillError]:
         """Pick up an object by name using grasp planning and motion execution.
 
@@ -477,13 +577,11 @@ then refreshes perception obstacles.
         Args:
             object_name: Name of the object to pick (e.g. "cup", "bottle", "can").
             object_id: Optional unique object ID from perception for precise identification.
-            robot_name: Robot to use (only needed for multi-arm setups).
+            group_id: Planning group to use; omission requires exactly one group.
         """
-        robot = self._get_robot(robot_name)
-        if robot is None:
-            return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
-        rname, _, config, _ = robot
+        config = self.config.model
         pre_grasp_offset = config.pre_grasp_offset
+        verification = config.grasp_verification
 
         # 1. Generate grasps (uses already-cached detections — call scan_objects first)
         logger.info(f"Generating grasp poses for '{object_name}'...")
@@ -495,7 +593,7 @@ then refreshes perception obstacles.
             )
 
         # Lift if EE is low before approaching
-        lift = self._lift_if_low(rname)
+        lift = self._lift_if_low(group_id)
         if not lift.is_success():
             return lift
 
@@ -509,38 +607,40 @@ then refreshes perception obstacles.
             pre_grasp_pose = self._compute_pre_grasp_pose(grasp_pose, offset)
 
             logger.info(f"Planning approach to pre-grasp (attempt {i + 1}/{max_attempts})...")
-            if not self.plan_to_pose(pre_grasp_pose, rname):
+            if not self.plan_to_pose(pre_grasp_pose, group_id):
                 logger.info(f"Grasp candidate {i + 1} approach planning failed, trying next")
                 continue  # Try next candidate
 
             # 3. Open gripper before approach
             logger.info("Opening gripper...")
-            self._set_gripper_position(0.85, rname)
-            time.sleep(0.5)
+            opened = self._open_gripper(group_id, verification, "pre-grasp open")
+            if not opened.is_success():
+                return opened
 
             # 4. Execute approach to pre-grasp
-            exec_result = self._preview_execute_wait(rname)
+            exec_result = self._preview_execute_wait()
             if not exec_result.is_success():
                 return exec_result
 
             # 5. Move to grasp pose
             logger.info("Moving to grasp position...")
-            if not self.plan_to_pose(grasp_pose, rname):
+            if not self.plan_to_pose(grasp_pose, group_id):
                 return SkillResult.fail("PLANNING_FAILED", "Grasp pose planning failed")
-            exec_result = self._preview_execute_wait(rname)
+            exec_result = self._preview_execute_wait()
             if not exec_result.is_success():
                 return exec_result
 
-            # 6. Close gripper
+            # 6. Close the gripper and confirm the jaws stalled on the object
             logger.info("Closing gripper...")
-            self._set_gripper_position(0.0, rname)
-            time.sleep(1.5)  # Wait for gripper to close
+            grasped = self._close_and_verify(group_id, verification)
+            if not grasped.is_success():
+                return grasped
 
             # 7. Retract to pre-grasp
             logger.info("Retracting with object...")
-            if not self.plan_to_pose(pre_grasp_pose, rname):
+            if not self.plan_to_pose(pre_grasp_pose, group_id):
                 return SkillResult.fail("PLANNING_FAILED", "Retract planning failed")
-            exec_result = self._preview_execute_wait(rname)
+            exec_result = self._preview_execute_wait()
             if not exec_result.is_success():
                 return exec_result
 
@@ -560,7 +660,7 @@ then refreshes perception obstacles.
         x: float,
         y: float,
         z: float,
-        robot_name: str | None = None,
+        group_id: PlanningGroupID | None = None,
     ) -> SkillResult[ManipulationSkillError]:
         """Place a held object at the specified position.
 
@@ -571,11 +671,11 @@ then refreshes perception obstacles.
             x: Target X position in meters.
             y: Target Y position in meters.
             z: Target Z position in meters.
-            robot_name: Robot to use (only needed for multi-arm setups).
+            group_id: Planning group to use; omission requires exactly one group.
         """
         xy_dist = (x**2 + y**2) ** 0.5
         orientation = self._grasp_orientation(x, y, xy_dist)
-        return self._place_with_orientation(x, y, z, orientation, robot_name)
+        return self._place_with_orientation(x, y, z, orientation, group_id)
 
     def _place_with_orientation(
         self,
@@ -583,13 +683,10 @@ then refreshes perception obstacles.
         y: float,
         z: float,
         orientation: Quaternion,
-        robot_name: str | None = None,
+        group_id: PlanningGroupID | None = None,
     ) -> SkillResult[ManipulationSkillError]:
         """Internal place with explicit orientation."""
-        robot = self._get_robot(robot_name)
-        if robot is None:
-            return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
-        rname, _, config, _ = robot
+        config = self.config.model
         pre_place_offset = config.pre_grasp_offset
 
         # Reduce pre-place height for far targets
@@ -601,50 +698,53 @@ then refreshes perception obstacles.
         pre_place_pose = self._compute_pre_grasp_pose(place_pose, pre_place_offset)
 
         # Lift if EE is low before approaching
-        lift = self._lift_if_low(rname)
+        lift = self._lift_if_low(group_id)
         if not lift.is_success():
             return lift
 
         # 1. Move to pre-place
         logger.info(f"Planning approach to place position ({x:.3f}, {y:.3f}, {z:.3f})...")
-        if not self.plan_to_pose(pre_place_pose, rname):
+        if not self.plan_to_pose(pre_place_pose, group_id):
             return SkillResult.fail("PLANNING_FAILED", "Pre-place approach planning failed")
 
-        exec_result = self._preview_execute_wait(rname)
+        exec_result = self._preview_execute_wait()
         if not exec_result.is_success():
             return exec_result
 
         # 2. Lower to place position
         logger.info("Lowering to place position...")
-        if not self.plan_to_pose(place_pose, rname):
+        if not self.plan_to_pose(place_pose, group_id):
             return SkillResult.fail("PLANNING_FAILED", "Place pose planning failed")
-        exec_result = self._preview_execute_wait(rname)
+        exec_result = self._preview_execute_wait()
         if not exec_result.is_success():
             return exec_result
 
         # 3. Release
         logger.info("Releasing object...")
-        self._set_gripper_position(0.85, rname)
-        time.sleep(1.0)
+        released = self._open_gripper(group_id, config.grasp_verification, "release")
+        if not released.is_success():
+            return released
 
         # 4. Retract
         logger.info("Retracting...")
-        if not self.plan_to_pose(pre_place_pose, rname):
+        if not self.plan_to_pose(pre_place_pose, group_id):
             return SkillResult.fail("PLANNING_FAILED", "Retract planning failed")
-        exec_result = self._preview_execute_wait(rname)
+        exec_result = self._preview_execute_wait()
         if not exec_result.is_success():
             return exec_result
 
         return SkillResult.ok(f"Place complete — object released at ({x:.3f}, {y:.3f}, {z:.3f})")
 
     @skill
-    def place_back(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
+    def place_back(
+        self, group_id: PlanningGroupID | None = None
+    ) -> SkillResult[ManipulationSkillError]:
         """Place the held object back at its original pick position.
 
         Uses the position stored from the last successful pick operation.
 
         Args:
-            robot_name: Robot to use (only needed for multi-arm setups).
+            group_id: Planning group to use; omission requires exactly one group.
         """
         if self._last_pick_pose is None:
             return SkillResult.fail(
@@ -655,14 +755,14 @@ then refreshes perception obstacles.
         p = self._last_pick_pose.position
         o = self._last_pick_pose.orientation
         logger.info(f"Placing back at original position ({p.x:.3f}, {p.y:.3f}, {p.z:.3f})...")
-        return self._place_with_orientation(p.x, p.y, p.z, o, robot_name)
+        return self._place_with_orientation(p.x, p.y, p.z, o, group_id)
 
     @skill
     def drop_on(
         self,
         target_object_name: str,
         z_offset: float = 0.1,
-        robot_name: str | None = None,
+        group_id: PlanningGroupID | None = None,
     ) -> SkillResult[ManipulationSkillError]:
         """Drop a held object on top of a detected object.
 
@@ -672,7 +772,7 @@ then refreshes perception obstacles.
         Args:
             target_object_name: Name of the target object to drop onto (e.g. "cup", "bowl").
             z_offset: Height above the target object's center to release (meters).
-            robot_name: Robot to use (only needed for multi-arm setups).
+            group_id: Planning group to use; omission requires exactly one group.
         """
         pos = self._resolve_object_position(target_object_name)
         if pos is None:
@@ -685,7 +785,7 @@ then refreshes perception obstacles.
         logger.info(
             f"Dropping on '{target_object_name}' at corrected position ({x:.3f}, {y:.3f}, {z:.3f})"
         )
-        return self.place(x, y, z, robot_name)
+        return self.place(x, y, z, group_id)
 
     @skill
     def pick_and_place(
@@ -695,7 +795,7 @@ then refreshes perception obstacles.
         place_y: float,
         place_z: float,
         object_id: str | None = None,
-        robot_name: str | None = None,
+        group_id: PlanningGroupID | None = None,
     ) -> SkillResult[ManipulationSkillError]:
         """Pick up an object and place it at a target location.
 
@@ -707,7 +807,7 @@ then refreshes perception obstacles.
             place_y: Target Y position to place the object (meters).
             place_z: Target Z position to place the object (meters).
             object_id: Optional unique object ID from perception.
-            robot_name: Robot to use (only needed for multi-arm setups).
+            group_id: Planning group to use; omission requires exactly one group.
         """
         logger.info(
             f"Starting pick and place: pick '{object_name}' → place at "
@@ -715,12 +815,12 @@ then refreshes perception obstacles.
         )
 
         # Pick phase
-        pick_result = self.pick(object_name, object_id, robot_name)
+        pick_result = self.pick(object_name, object_id, group_id)
         if not pick_result.is_success():
             return pick_result
 
         # Place phase
-        return self.place(place_x, place_y, place_z, robot_name)
+        return self.place(place_x, place_y, place_z, group_id)
 
     @rpc
     def stop(self) -> None:

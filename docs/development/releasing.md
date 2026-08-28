@@ -16,7 +16,7 @@ Throughout this document, replace `X.Y.Z` with the version you are releasing (e.
    git push -u origin release/X.Y.Z
    ```
 
-4. Create a backport label for this release. Repo → Issues → Labels → New label, named `backport release/X.Y.Z`. (Or `gh label create "backport release/X.Y.Z" --repo dimensionalOS/dimos`.) The backport bot only runs when this label exists.
+4. Create a backport label for this release. Repo → Issues → Labels (in left sidebar) → New label, named `backport release/X.Y.Z`. (Or `gh label create "backport release/X.Y.Z" --repo dimensionalOS/dimos`.) The backport bot only runs when this label exists.
 5. To backport a fix from `main`: add the `backport release/X.Y.Z` label to a PR targeting `main` (before or after merging). The backport bot will open a cherry-pick PR onto the release branch; review it and squash-merge.
 
 ## 2. Creating the release
@@ -24,12 +24,12 @@ Throughout this document, replace `X.Y.Z` with the version you are releasing (e.
 1. Run the full test suite locally on the release branch.
 
    ```bash
-   uv run pytest -m 'not tool' --error-for-skips
+   uv run pytest -m '' --error-for-skips
    ```
 
 2. [Run](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow#running-a-workflow) the `release` workflow on the `release/X.Y.Z` branch.
 3. Monitor the CI run. When it reaches the publish-pypi step, you'll need other team members to approve the release.
-4. After completion, the bot will have pushed a signed merge-back commit directly to `main`. Confirm with `git log --first-parent main -1` — the tip should be `Merge release/X.Y.Z back to main`. Then verify `vX.Y.Z` shows on https://github.com/dimensionalOS/dimos/releases and on https://pypi.org/project/dimos/.
+4. After completion, the bot will have pushed a signed merge-back commit directly to `main`. Confirm with `git log --first-parent main -1`. The tip should be `Merge release/X.Y.Z back to main`. Then verify `vX.Y.Z` shows on https://github.com/dimensionalOS/dimos/releases and on https://pypi.org/project/dimos/.
 
 ## 3. Cleanup
 
@@ -73,7 +73,7 @@ git fetch --tags
 git tag -v vX.Y.Z
 ```
 
-`git tag -v` exits 0 and reports a good signature from `dimos-release-bot` when the tag is valid. GitHub's web UI shows "Unverified" because the GPG key isn't bound to a GitHub user account — this is expected.
+`git tag -v` exits 0 and reports a good signature from `dimos-release-bot` when the tag is valid. GitHub's web UI shows "Unverified" because the GPG key isn't bound to a GitHub user account. This is expected.
 
 ### Rotating the App private key
 
@@ -88,7 +88,7 @@ Rotate immediately on suspected compromise.
 Rotate immediately on suspected compromise.
 Sam/Stash have revocation certificates which can be published to revoke the old key.
 
-Regenerate the key in memory on Linux (private material never touches persistent storage — `/dev/shm` is always `tmpfs`):
+Regenerate the key in memory on Linux (private material never touches persistent storage, because `/dev/shm` is always `tmpfs`):
 
 ```bash
 export GNUPGHOME=/dev/shm/gnupg-release-bot

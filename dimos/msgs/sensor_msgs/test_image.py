@@ -12,17 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
-from reactivex import operators as ops
-
-_IS_MACOS = sys.platform == "darwin"
+from reactivex.testing import ReactiveTest, TestScheduler
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat, sharpness_barrier
 from dimos.utils.data import get_data
-from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
 
 @pytest.fixture
@@ -69,83 +66,31 @@ def test_opencv_conversion(img: Image) -> None:
     assert decoded_img == img
 
 
-@pytest.mark.tool
-def test_sharpness_stream() -> None:
-    get_data("unitree_office_walk")  # Preload data for testing
-    video_store = LegacyPickleStore(
-        "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
-    )
-
-    cnt = 0
-    for image in video_store.iterate():
-        cnt = cnt + 1
-        print(image.sharpness)
-        if cnt > 30:
-            return
-
-
 def test_sharpness_barrier() -> None:
-    import time
-    from unittest.mock import MagicMock
-
-    # Create mock images with known sharpness values
-    # This avoids loading real data from disk
+    # Mock images with known sharpness values, avoiding real data from disk
+    sharpness_values = [0.3711, 0.3241, 0.3067, 0.2583, 0.3665]
     mock_images = []
-    sharpness_values = [0.3711, 0.3241, 0.3067, 0.2583, 0.3665]  # Just 5 images for 1 window
-
-    for i, sharp in enumerate(sharpness_values):
+    for sharp in sharpness_values:
         img = MagicMock()
         img.sharpness = sharp
-        img.ts = 1758912038.208 + i * 0.01  # Simulate timestamps
         mock_images.append(img)
 
-    # Track what goes into windows and what comes out
-    start_wall_time = None
-    window_contents = []  # List of (wall_time, image)
-    emitted_images = []
-
-    def track_input(img):
-        """Track all images going into sharpness_barrier with wall-clock time"""
-        nonlocal start_wall_time
-        wall_time = time.time()
-        if start_wall_time is None:
-            start_wall_time = wall_time
-        relative_time = wall_time - start_wall_time
-        window_contents.append((relative_time, img))
-        return img
-
-    def track_output(img) -> None:
-        """Track what sharpness_barrier emits"""
-        emitted_images.append(img)
-
-    # macOS timer coalescing causes jitter at high frequencies, so use
-    # wider windows (2Hz) there. Linux handles 20Hz windows fine.
-    _freq = 2 if _IS_MACOS else 20
-    from reactivex import from_iterable, interval
-
-    source = from_iterable(mock_images).pipe(
-        ops.zip(interval(0.01)),  # 100Hz emission rate
-        ops.map(lambda x: x[0]),  # Extract just the image
+    # sharpness_barrier(20) -> 0.05s windows in virtual time. Subscription is at
+    # t=200, so windows close at 200.05, 200.10, ... Items 1-4 land in the first
+    # window, item 5 in the second.
+    scheduler = TestScheduler()
+    source = scheduler.create_hot_observable(
+        ReactiveTest.on_next(200.01, mock_images[0]),
+        ReactiveTest.on_next(200.02, mock_images[1]),
+        ReactiveTest.on_next(200.03, mock_images[2]),
+        ReactiveTest.on_next(200.04, mock_images[3]),
+        ReactiveTest.on_next(200.06, mock_images[4]),
+        ReactiveTest.on_completed(200.08),
     )
 
-    source.pipe(
-        ops.do_action(track_input),  # Track inputs
-        sharpness_barrier(_freq),
-        ops.do_action(track_output),  # Track outputs
-    ).run()
+    results = scheduler.start(lambda: source.pipe(sharpness_barrier(20, scheduler=scheduler)))
 
-    time.sleep(0.6 if _IS_MACOS else 0.08)
-
-    if _IS_MACOS:
-        # At 2Hz all 5 images land in one 500ms window → exactly 1 emission
-        assert len(emitted_images) == 1, (
-            f"Expected exactly 1 emission (one window), got {len(emitted_images)}"
-        )
-        assert emitted_images[0].sharpness == 0.3711
-    else:
-        # Items span 2 windows at 20Hz: items 1-4 in first, item 5 in second
-        assert len(emitted_images) == 2, (
-            f"Expected exactly 2 emissions (one per window), got {len(emitted_images)}"
-        )
-        assert emitted_images[0].sharpness == 0.3711  # Highest among first 4
-        assert emitted_images[1].sharpness == 0.3665  # Only item in second window
+    emitted = [m.value.value for m in results.messages if m.value.kind == "N"]
+    assert len(emitted) == 2, f"Expected one emission per window, got {len(emitted)}"
+    assert emitted[0].sharpness == 0.3711  # Sharpest of the 4 in the first window
+    assert emitted[1].sharpness == 0.3665  # Only item in the second window

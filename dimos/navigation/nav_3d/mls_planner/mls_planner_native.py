@@ -16,33 +16,45 @@
 
 from __future__ import annotations
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
 class MLSPlannerNativeConfig(NativeModuleConfig):
     cwd: str | None = "rust"
-    executable: str = "target/release/mls_planner"
+    # The crate is a workspace member, so cargo builds into the repo-root target dir.
+    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "mls_planner")
     build_command: str | None = "cargo build --release"
     stdin_config: bool = True
 
-    world_frame: str = "map"
-    voxel_size: float = 0.1
-    robot_height: float = 1.5
+    world_frame: str = "odom"
+    # Frame whose tf pose in the world frame is the planning start.
+    base_frame: str = "base_link"
+    voxel_size: float = 0.08
+    robot_height: float = 0.3
+    # Height of base_frame above the ground while standing. Subtracted from
+    # the start pose z before snapping to a surface.
+    start_z_offset_m: float = 0.0
+    max_overhead_m: float = 2.0
 
     surface_closing_radius: float = 0.3
     node_spacing_m: float = 1.0
-    wall_clearance_m: float = 0.3
+    wall_clearance_m: float = 0.1
     wall_buffer_m: float = 0.75
     wall_buffer_weight: float = 100.0
-    step_threshold_m: float = 0.25
+    step_threshold_m: float = 0.16
     step_penalty_weight: float = 4.0
     goal_tolerance: float = 0.3
     viz_publish_hz: float = 2.0
+    # Worker threads for parallel planner work.
+    worker_threads: int = 4
 
 
 class MLSPlannerNative(NativeModule):
@@ -57,8 +69,8 @@ class MLSPlannerNative(NativeModule):
     global_map: In[PointCloud2]
     local_map: In[PointCloud2]
     region_bounds: In[PoseStamped]
-    start_pose: In[PoseStamped]
-    goal_pose: In[PoseStamped]
+    goal: In[PointStamped]
+    tf: In[TFMessage]
 
     path: Out[Path]
     surface_map: Out[PointCloud2]

@@ -1,16 +1,31 @@
 // Copyright 2026 Dimensional Inc.
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 //! Config and the owned-state Planner that builds and queries the MLS graph.
 
-use ahash::AHashSet;
-use dimos_module::native_config;
+use std::sync::Arc;
+
+use ahash::{AHashMap, AHashSet};
+use dimos_module::{native_config, worker_pool};
 use rayon::prelude::*;
 use validator::ValidationError;
 
 use crate::adjacency::{build_surface_cells, build_surface_lookup, rebuild_edges_around, CellId};
-use crate::edges::{build_node_edges, build_node_edges_region, PlannerGraph};
-use crate::nodes::{place_nodes, place_nodes_region};
+use crate::edges::{build_node_edges, build_node_edges_region, edges_to_segments, PlannerGraph};
+use crate::nodes::{
+    place_nodes, place_nodes_region, relocate_dead_nodes, PlacementParams, HOLE_SPAN_CELLS,
+};
 use crate::planner;
 use crate::surfaces::{
     add_to_by_col, extract_surfaces, extract_surfaces_region, remove_from_by_col, ColumnIz,
@@ -22,10 +37,19 @@ use crate::voxel::{voxelize, VoxelKey};
 #[validate(schema(function = "validate_wall_buffer"))]
 pub struct Config {
     pub world_frame: String,
+    /// Frame whose tf pose in the world frame is the planning start.
+    pub base_frame: String,
     #[validate(range(exclusive_min = 0.0))]
     pub voxel_size: f32,
     #[validate(range(exclusive_min = 0.0))]
     pub robot_height: f32,
+    /// Subtracted from the start pose z before snapping to a surface. 0 when
+    /// the publisher already ground-projects.
+    #[validate(range(min = 0.0))]
+    pub start_z_offset_m: f32,
+    /// Ignore surface more than this far above the sensor.
+    #[validate(range(min = 0.0))]
+    pub max_overhead_m: f32,
     /// Radius in meters of the morphological closing that fills small holes in
     /// the extracted surface. Fills holes up to twice this wide.
     #[validate(range(min = 0.0))]
@@ -56,6 +80,9 @@ pub struct Config {
     /// artifacts. 0 disables them entirely. The path output is unthrottled.
     #[validate(range(min = 0.0))]
     pub viz_publish_hz: f32,
+    /// Worker threads for parallel planner work.
+    #[validate(range(min = 1))]
+    pub worker_threads: u32,
 }
 
 /// The soft wall penalty needs a non-zero zone to act in.
@@ -73,6 +100,30 @@ impl Config {
     pub fn closing_passes(&self) -> u32 {
         (self.surface_closing_radius / self.voxel_size).ceil() as u32
     }
+
+    /// Robot-height headroom in cells, the clear space a cell needs to be standable.
+    pub fn headroom_cells(&self) -> i32 {
+        (self.robot_height / self.voxel_size).ceil() as i32
+    }
+
+    /// Max traversable vertical step in cells.
+    pub fn step_cells(&self) -> i32 {
+        (self.step_threshold_m / self.voxel_size).floor() as i32
+    }
+
+    /// Config-derived scalars for node placement.
+    pub fn placement_params(&self) -> PlacementParams {
+        PlacementParams {
+            clearance_cells: self.headroom_cells(),
+            step_cells: self.step_cells(),
+            voxel_size: self.voxel_size,
+            node_spacing_m: self.node_spacing_m,
+            wall_clearance_m: self.wall_clearance_m,
+            wall_buffer_m: self.wall_buffer_m,
+            wall_buffer_weight: self.wall_buffer_weight,
+            step_penalty_weight: self.step_penalty_weight,
+        }
+    }
 }
 
 /// Cylindrical region the planner re-derives from a local map slice.
@@ -85,6 +136,26 @@ pub struct RegionBounds {
 }
 
 impl RegionBounds {
+    /// Region cylinder with its ceiling capped to `max_overhead_m` above the
+    /// sensor.
+    pub fn capped(
+        origin_x: f32,
+        origin_y: f32,
+        radius: f32,
+        z_min: f32,
+        z_max: f32,
+        sensor_z: f32,
+        max_overhead_m: f32,
+    ) -> Self {
+        RegionBounds {
+            origin_x,
+            origin_y,
+            radius,
+            z_min,
+            z_max: z_max.min(sensor_z + max_overhead_m),
+        }
+    }
+
     fn contains_voxel(&self, (kx, ky, kz): VoxelKey, voxel_size: f32) -> bool {
         let half = voxel_size * 0.5;
         let z = kz as f32 * voxel_size + half;
@@ -107,37 +178,56 @@ impl RegionBounds {
     }
 }
 
-#[derive(Default)]
 pub struct Planner {
+    // The planner owns its worker pool, so its thread setting cannot collide
+    // with other components sharing the process.
+    pool: Arc<rayon::ThreadPool>,
     graph: PlannerGraph,
     voxel_map: AHashSet<VoxelKey>,
     by_col: ColumnIz,
     // Last successful path and its goal, for safe truncation when a later
     // replan finds no full path.
     last_path: Option<((f32, f32, f32), Vec<VoxelKey>)>,
+    // Last goal and whether a full plan reached it, so replan outcomes log
+    // on transitions instead of every cycle.
+    last_result: Option<((f32, f32, f32), bool)>,
 }
 
 impl Planner {
-    pub fn update_global_map(&mut self, points: &[(f32, f32, f32)], config: &Config) {
-        let voxel_size = config.voxel_size;
-        let clearance = (config.robot_height / voxel_size).ceil() as i32;
-
-        self.voxel_map.clear();
-        for &p in points {
-            self.voxel_map.insert(voxelize(p, voxel_size));
+    pub fn new(worker_threads: u32) -> Self {
+        Self {
+            pool: worker_pool(worker_threads),
+            graph: PlannerGraph::default(),
+            voxel_map: AHashSet::new(),
+            by_col: ColumnIz::default(),
+            last_path: None,
+            last_result: None,
         }
+    }
 
-        let mut surface: Vec<VoxelKey> = Vec::new();
-        extract_surfaces(
-            &self.voxel_map,
-            clearance,
-            config.closing_passes(),
-            &mut self.by_col,
-            &mut surface,
-        );
-        build_surface_lookup(&surface, &mut self.graph.surface_lookup);
+    pub fn update_global_map(&mut self, points: &[(f32, f32, f32)], config: &Config) {
+        let pool = Arc::clone(&self.pool);
+        pool.install(|| {
+            let voxel_size = config.voxel_size;
+            let clearance = config.headroom_cells();
 
-        self.rebuild_graph(config);
+            self.voxel_map.clear();
+            for &p in points {
+                self.voxel_map.insert(voxelize(p, voxel_size));
+            }
+
+            let mut surface: Vec<VoxelKey> = Vec::new();
+            extract_surfaces(
+                &self.voxel_map,
+                clearance,
+                config.closing_passes(),
+                &mut self.by_col,
+                &mut surface,
+            );
+            build_surface_lookup(&surface, &mut self.graph.surface_lookup);
+
+            self.rebuild_graph(config);
+        });
     }
 
     /// Update planner artifacts within a local region instead of rebuilding
@@ -148,40 +238,56 @@ impl Planner {
         bounds: &RegionBounds,
         config: &Config,
     ) {
-        let voxel_size = config.voxel_size;
-        let clearance = (config.robot_height / voxel_size).ceil() as i32;
-        let pad = (2 * config.closing_passes()) as i32;
+        let pool = Arc::clone(&self.pool);
+        pool.install(|| {
+            let voxel_size = config.voxel_size;
+            let clearance = config.headroom_cells();
+            let pad = (2 * config.closing_passes()) as i32;
 
-        let changed = self.replace_region_voxels(local_points, bounds, voxel_size);
+            let changed = self.replace_region_voxels(local_points, bounds, voxel_size);
 
-        // No voxel changed, so surfaces and the graph are untouched.
-        let Some((bx0, bx1, by0, by1)) = changed else {
-            return;
-        };
+            // No voxel changed, so surfaces and the graph are untouched.
+            let Some((bx0, bx1, by0, by1)) = changed else {
+                return;
+            };
 
-        // A changed column shifts surfaces only within pad of it.
-        let write = (bx0 - pad, bx1 + pad, by0 - pad, by1 + pad);
-        let new_cells =
-            extract_surfaces_region(&self.by_col, clearance, config.closing_passes(), write);
-        let (added, removed) = self.replace_surface_region(write, &new_cells);
+            // A changed column shifts surfaces only within pad of it.
+            let write = (bx0 - pad, bx1 + pad, by0 - pad, by1 + pad);
+            let new_cells =
+                extract_surfaces_region(&self.by_col, clearance, config.closing_passes(), write);
+            let (added, removed) = self.replace_surface_region(write, &new_cells);
 
-        self.rebuild_region_graph(added, removed, config);
+            self.rebuild_region_graph(added, removed, config);
+        });
     }
 
-    /// Patch changed cells, then re-place nodes and edges over the change
-    /// window. A no-op when no surface cell changed.
+    /// Patch changed cells, then repair nodes and edges around the change.
+    /// A no-op when no surface cell changed.
     fn rebuild_region_graph(
         &mut self,
         added: Vec<VoxelKey>,
         removed: Vec<VoxelKey>,
         config: &Config,
     ) {
-        let step = (config.step_threshold_m / config.voxel_size).floor() as i32;
+        let step = config.step_cells();
+        // Removal frees cell ids and the insert loop below recycles them, so a
+        // node id captured here is not stable. Capture doomed nodes by
+        // coordinate while their ids still resolve.
+        let removed_set: AHashSet<VoxelKey> = removed.iter().copied().collect();
+        let dead_nodes: Vec<(usize, VoxelKey)> = self
+            .graph
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (i, self.graph.cells.coord(n.cell_id)))
+            .filter(|(_, c)| removed_set.contains(c))
+            .collect();
         for &c in &removed {
             self.graph.cells.remove(c);
         }
+        let mut added_ids: Vec<CellId> = Vec::with_capacity(added.len());
         for &c in &added {
-            self.graph.cells.insert(c);
+            added_ids.push(self.graph.cells.insert(c));
         }
         let mut seeds = added;
         seeds.extend_from_slice(&removed);
@@ -196,17 +302,23 @@ impl Planner {
             config.voxel_size,
             step,
         );
+        let params = config.placement_params();
+        relocate_dead_nodes(
+            &self.graph.cells,
+            &self.graph.surface_lookup,
+            &mut self.graph.nodes,
+            &dead_nodes,
+            &params,
+        );
         let window = self.node_window(&seeds, config);
         place_nodes_region(
             &mut self.graph.cells,
+            &self.by_col,
+            &params,
+            &added_ids,
             &window,
-            config.voxel_size,
-            config.node_spacing_m,
-            config.wall_clearance_m,
-            config.wall_buffer_m,
-            config.wall_buffer_weight,
-            config.step_penalty_weight,
             &mut self.graph.wall_state,
+            &mut self.graph.node_scratch,
             &mut self.graph.nodes,
         );
         build_node_edges_region(
@@ -272,52 +384,73 @@ impl Planner {
         bb.bounds()
     }
 
-    /// Replace the surface_lookup entries for columns in the write box with
-    /// the freshly extracted cells. Returns the added and removed cells so
-    /// only the affected parts of the graph get patched.
+    /// Replace the surface_lookup entries for write-box columns whose cells
+    /// changed, leaving identical columns untouched. Returns the added and
+    /// removed cells so only the affected parts of the graph get patched.
     fn replace_surface_region(
         &mut self,
         write: (i32, i32, i32, i32),
         new_cells: &[VoxelKey],
     ) -> (Vec<VoxelKey>, Vec<VoxelKey>) {
         let (x0, x1, y0, y1) = write;
-        let mut old: AHashSet<VoxelKey> = AHashSet::new();
-        for ix in x0..=x1 {
-            for iy in y0..=y1 {
-                if let Some(zs) = self.graph.surface_lookup.remove(&(ix, iy)) {
-                    for iz in zs {
-                        old.insert((ix, iy, iz));
+        let mut new_by_col: AHashMap<(i32, i32), Vec<i32>> = AHashMap::new();
+        for &(ix, iy, iz) in new_cells {
+            new_by_col.entry((ix, iy)).or_default().push(iz);
+        }
+        for zs in new_by_col.values_mut() {
+            zs.sort_unstable();
+            zs.dedup();
+        }
+
+        let lookup = &self.graph.surface_lookup;
+        let changed: Vec<((i32, i32), Vec<i32>)> = (x0..(x1 + 1))
+            .into_par_iter()
+            .flat_map_iter(|ix| {
+                let mut local: Vec<((i32, i32), Vec<i32>)> = Vec::new();
+                for iy in y0..=y1 {
+                    let col = (ix, iy);
+                    let old = lookup.get(&col).map(Vec::as_slice).unwrap_or(&[]);
+                    let new = new_by_col.get(&col).map(Vec::as_slice).unwrap_or(&[]);
+                    if old != new {
+                        local.push((col, new.to_vec()));
                     }
                 }
-            }
-        }
-        let new: AHashSet<VoxelKey> = new_cells.iter().copied().collect();
+                local
+            })
+            .collect();
 
-        let mut touched: AHashSet<(i32, i32)> = AHashSet::new();
-        for &(ix, iy, iz) in new_cells {
-            self.graph
+        let mut added: Vec<VoxelKey> = Vec::new();
+        let mut removed: Vec<VoxelKey> = Vec::new();
+        for (col, new_zs) in changed {
+            let old_zs = self
+                .graph
                 .surface_lookup
-                .entry((ix, iy))
-                .or_default()
-                .push(iz);
-            touched.insert((ix, iy));
-        }
-        for col in touched {
-            if let Some(zs) = self.graph.surface_lookup.get_mut(&col) {
-                zs.sort_unstable();
-                zs.dedup();
+                .get(&col)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            for &iz in &new_zs {
+                if old_zs.binary_search(&iz).is_err() {
+                    added.push((col.0, col.1, iz));
+                }
+            }
+            for &iz in old_zs {
+                if new_zs.binary_search(&iz).is_err() {
+                    removed.push((col.0, col.1, iz));
+                }
+            }
+            if new_zs.is_empty() {
+                self.graph.surface_lookup.remove(&col);
+            } else {
+                self.graph.surface_lookup.insert(col, new_zs);
             }
         }
-
-        let added: Vec<VoxelKey> = new.iter().filter(|c| !old.contains(c)).copied().collect();
-        let removed: Vec<VoxelKey> = old.iter().filter(|c| !new.contains(c)).copied().collect();
         (added, removed)
     }
 
     /// Rebuild all cells from surface_lookup, then nodes and edges.
     fn rebuild_graph(&mut self, config: &Config) {
         let voxel_size = config.voxel_size;
-        let step = (config.step_threshold_m / voxel_size).floor() as i32;
+        let step = config.step_cells();
 
         build_surface_cells(
             &mut self.graph.cells,
@@ -328,65 +461,109 @@ impl Planner {
         self.rebuild_nodes(config);
     }
 
-    /// Live cells within the changed-cell bbox grown by the node-graph margin,
-    /// which covers the reach of any node, edge, or Voronoi change.
-    fn node_window(&self, changed: &[VoxelKey], config: &Config) -> AHashSet<CellId> {
-        // Slack beyond the morphology, wall-buffer, and spacing reach.
+    /// Live cells within the node-graph margin of the changed cells, walked
+    /// as a BFS ball over cell adjacency from roots covering everything a
+    /// change can directly touch.
+    fn node_window(&mut self, changed: &[VoxelKey], config: &Config) -> Vec<CellId> {
+        // Wall distances only matter out to the penalty band, so the ball
+        // covers the buffer reach of the changed cells plus slack.
         const SLACK_CELLS: i32 = 2;
         let voxel_size = config.voxel_size;
-        let pad = (2 * config.closing_passes()) as i32;
         let buffer_cells =
             ((config.wall_clearance_m + config.wall_buffer_m) / voxel_size).ceil() as i32;
-        let spacing_cells = (config.node_spacing_m / voxel_size).ceil() as i32;
-        let margin = pad + buffer_cells + spacing_cells + SLACK_CELLS;
+        let steps = buffer_cells + SLACK_CELLS;
+        let step_dz = config.step_cells();
 
-        let mut bb = ChangeBounds::new();
-        for &(ix, iy, _) in changed {
-            bb.add(ix, iy);
-        }
-        let Some((min_x, max_x, min_y, max_y)) = bb.bounds() else {
-            return AHashSet::new();
+        let graph = &mut self.graph;
+        let lookup = &graph.surface_lookup;
+        let cells = &graph.cells;
+        graph.node_scratch.ensure_capacity(cells.slot_capacity());
+        let seen = &mut graph.node_scratch.seen;
+        let mut ball: Vec<CellId> = Vec::new();
+        let mut frontier: Vec<CellId> = Vec::new();
+        let mut insert = |id: CellId, ball: &mut Vec<CellId>, frontier: &mut Vec<CellId>| {
+            if !seen[id as usize] {
+                seen[id as usize] = true;
+                ball.push(id);
+                frontier.push(id);
+            }
         };
-        let (x0, x1, y0, y1) = (
-            min_x - margin,
-            max_x + margin,
-            min_y - margin,
-            max_y + margin,
-        );
 
-        let lookup = &self.graph.surface_lookup;
-        let cells = &self.graph.cells;
-        let ids: Vec<CellId> = (x0..(x1 + 1))
-            .into_par_iter()
-            .flat_map_iter(|ix| {
-                let mut local: Vec<CellId> = Vec::new();
-                for iy in y0..=y1 {
-                    let Some(zs) = lookup.get(&(ix, iy)) else {
+        // Roots: the changed cells themselves, plus the live column neighbors
+        // that carry the change when the cell itself was removed.
+        for &(ix, iy, iz) in changed {
+            for (dx, dy) in [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)] {
+                let Some(zs) = lookup.get(&(ix + dx, iy + dy)) else {
+                    continue;
+                };
+                for &nz in zs {
+                    if (nz - iz).abs() > step_dz {
                         continue;
-                    };
-                    for &iz in zs {
-                        if let Some(id) = cells.id((ix, iy, iz)) {
-                            local.push(id);
-                        }
+                    }
+                    if let Some(id) = cells.id((ix + dx, iy + dy, nz)) {
+                        insert(id, &mut ball, &mut frontier);
                     }
                 }
-                local
-            })
-            .collect();
-        ids.into_iter().collect()
+            }
+        }
+
+        // Wall-seed scans cross up to HOLE_SPAN_CELLS empty columns, so a
+        // change can flip wall adjacency that far away. Root the first
+        // surfaced column each direction, whole when its existence flipped.
+        let headroom = config.headroom_cells();
+        for &(ix, iy, iz) in changed {
+            let flipped = lookup.get(&(ix, iy)).is_none_or(|zs| zs.len() <= 1);
+            let (z_lo, z_hi) = (iz - headroom - step_dz, iz + step_dz);
+            for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                for k in 1..=HOLE_SPAN_CELLS {
+                    let col = (ix + dx * k, iy + dy * k);
+                    let Some(zs) = lookup.get(&col) else {
+                        continue;
+                    };
+                    for &nz in zs {
+                        if !flipped && !(z_lo..=z_hi).contains(&nz) {
+                            continue;
+                        }
+                        if let Some(id) = cells.id((col.0, col.1, nz)) {
+                            insert(id, &mut ball, &mut frontier);
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
+        for _ in 0..steps {
+            if frontier.is_empty() {
+                break;
+            }
+            let mut next: Vec<CellId> = Vec::new();
+            for &u in &frontier {
+                for e in cells.neighbors(u) {
+                    let i = e.dest as usize;
+                    if !seen[i] {
+                        seen[i] = true;
+                        ball.push(e.dest);
+                        next.push(e.dest);
+                    }
+                }
+            }
+            frontier = next;
+        }
+        for &id in &ball {
+            seen[id as usize] = false;
+        }
+        ball
     }
 
     /// Full rebuild of nodes and node edges from the current cells.
     fn rebuild_nodes(&mut self, config: &Config) {
         place_nodes(
             &mut self.graph.cells,
-            config.voxel_size,
-            config.node_spacing_m,
-            config.wall_clearance_m,
-            config.wall_buffer_m,
-            config.wall_buffer_weight,
-            config.step_penalty_weight,
+            &self.by_col,
+            &config.placement_params(),
             &mut self.graph.wall_state,
+            &mut self.graph.node_scratch,
             &mut self.graph.nodes,
         );
 
@@ -421,19 +598,24 @@ impl Planner {
     ) -> Vec<(f32, f32, f32)> {
         if !self.graph.nodes.is_empty() {
             if let Some((waypoints, cells)) = planner::plan(&self.graph, start, goal, config) {
+                if self.last_result != Some((goal, true)) {
+                    tracing::info!(?goal, waypoints = waypoints.len(), "full path to goal");
+                }
+                self.last_result = Some((goal, true));
                 self.last_path = Some((goal, cells));
                 return waypoints;
             }
         }
+        if self.last_result != Some((goal, false)) {
+            tracing::warn!(
+                ?goal,
+                "no full path to goal, following any cached path while safe"
+            );
+        }
+        self.last_result = Some((goal, false));
         match &self.last_path {
             Some((cached_goal, cells)) if *cached_goal == goal => {
-                let safe = planner::truncate_to_safe(&self.graph, cells, start, config);
-                tracing::warn!(
-                    ?goal,
-                    safe_waypoints = safe.len(),
-                    "no full path to goal, validating and following the cached path only while safe"
-                );
-                safe
+                planner::truncate_to_safe(&self.graph, cells, start, config)
             }
             _ => Vec::new(),
         }
@@ -441,6 +623,12 @@ impl Planner {
 
     pub fn graph(&self) -> &PlannerGraph {
         &self.graph
+    }
+
+    /// Corridor segments of every node edge, for visualization.
+    pub fn edge_segments(&self) -> Vec<(VoxelKey, VoxelKey, f32)> {
+        self.pool
+            .install(|| edges_to_segments(&self.graph.node_edges))
     }
 
     pub fn surface(&self) -> impl Iterator<Item = VoxelKey> + '_ {
@@ -512,11 +700,19 @@ mod region_tests {
     use super::*;
     use std::collections::{BTreeMap, BTreeSet};
 
+    /// Slack for comparing regional and full-rebuild path lengths. Node
+    /// placement differs between the two, so paths are equivalent, not equal.
+    const PATH_LEN_RATIO: f32 = 1.6;
+    const PATH_LEN_SLACK_M: f32 = 0.5;
+
     fn test_config() -> Config {
         Config {
             world_frame: String::new(),
+            base_frame: String::new(),
             voxel_size: 0.1,
             robot_height: 0.5,
+            start_z_offset_m: 0.0,
+            max_overhead_m: 2.0,
             surface_closing_radius: 0.3,
             node_spacing_m: 1.0,
             wall_clearance_m: 0.0,
@@ -526,7 +722,32 @@ mod region_tests {
             step_penalty_weight: 0.0,
             goal_tolerance: 0.3,
             viz_publish_hz: 2.0,
+            worker_threads: 4,
         }
+    }
+
+    #[test]
+    fn region_bounds_capped_clamps_ceiling_to_sensor_overhead() {
+        // A ceiling above sensor_z + max_overhead is pulled down to the cap.
+        let capped = RegionBounds::capped(0.0, 0.0, 1.0, -1.0, 5.0, 0.5, 2.0);
+        assert_eq!(capped.z_max, 2.5, "ceiling capped to sensor_z + overhead");
+        // A ceiling already below the cap is left untouched.
+        let low = RegionBounds::capped(0.0, 0.0, 1.0, -1.0, 1.0, 0.5, 2.0);
+        assert_eq!(low.z_max, 1.0, "cap never raises a lower ceiling");
+        assert_eq!(low.z_min, -1.0);
+        assert_eq!(low.radius, 1.0);
+    }
+
+    #[test]
+    fn step_cells_floors_to_a_hard_bound() {
+        let mut cfg = test_config();
+        cfg.voxel_size = 0.08;
+        // 0.15 / 0.08 = 1.875 floors to 1: a 2-voxel (0.16m) step exceeds 0.15m.
+        cfg.step_threshold_m = 0.15;
+        assert_eq!(cfg.step_cells(), 1);
+        // 0.20 / 0.08 = 2.5 floors to 2, so 2-voxel steps are allowed.
+        cfg.step_threshold_m = 0.20;
+        assert_eq!(cfg.step_cells(), 2);
     }
 
     /// Floor slab with a wall down the middle, as world-frame point centers.
@@ -608,7 +829,7 @@ mod region_tests {
         };
         let all = world_points();
 
-        let mut full = Planner::default();
+        let mut full = Planner::new(cfg.worker_threads);
         full.update_global_map(&all, &cfg);
 
         let inside: Vec<_> = all
@@ -628,7 +849,7 @@ mod region_tests {
         for iz in 3..8 {
             seeded.push((2.05, 2.05, iz as f32 * cfg.voxel_size + 0.05));
         }
-        let mut region = Planner::default();
+        let mut region = Planner::new(cfg.worker_threads);
         region.update_global_map(&seeded, &cfg);
         region.update_region(&inside, &bounds, &cfg);
 
@@ -639,12 +860,204 @@ mod region_tests {
             cell_edges(&full),
             "cell edges mismatch"
         );
-        assert_eq!(node_coords(&region), node_coords(&full), "node mismatch");
-        assert_eq!(
-            node_edge_pairs(&region),
-            node_edge_pairs(&full),
-            "node edge mismatch"
+        // Nodes are sticky, not re-derived, so their positions may differ
+        // from a fresh build. Equivalent planning is the contract.
+        let s = (0.5, 0.5, 0.1);
+        let g = (1.5, 3.5, 0.1);
+        let pf = full.plan(s, g, &cfg).expect("full build plans");
+        let pr = region.plan(s, g, &cfg).expect("region build plans");
+        let (lf, lr) = (path_len(&pf), path_len(&pr));
+        assert!(
+            lr <= lf * PATH_LEN_RATIO + PATH_LEN_SLACK_M,
+            "region path too long: {lr} vs {lf}"
         );
+        assert!(
+            lf <= lr * PATH_LEN_RATIO + PATH_LEN_SLACK_M,
+            "full path too long: {lf} vs {lr}"
+        );
+    }
+
+    /// A local change must not move nodes beyond its reach. Distant nodes are
+    /// sticky by contract, which keeps refined paths stable frame to frame.
+    /// A floor patch raised by one voxel must relocate its nodes upward in
+    /// place. Every node's position must match the cell it claims, which a
+    /// stale-id relocation breaks by leaving nodes meters from their cell.
+    #[test]
+    fn raised_floor_relocates_nodes_in_place() {
+        use crate::voxel::surface_point_xyz;
+
+        let cfg = test_config();
+        let all = big_world();
+        let vs = cfg.voxel_size;
+        let mut p = Planner::new(cfg.worker_threads);
+        p.update_global_map(&all, &cfg);
+        let in_patch = |pos: (f32, f32, f32)| {
+            let d = (pos.0 - 1.5, pos.1 - 1.5);
+            (d.0 * d.0 + d.1 * d.1).sqrt() < 1.2
+        };
+        let doomed_xy: Vec<(f32, f32)> = p
+            .graph
+            .nodes
+            .iter()
+            .filter(|n| in_patch(n.pos))
+            .map(|n| (n.pos.0, n.pos.1))
+            .collect();
+        assert!(!doomed_xy.is_empty(), "test needs a node inside the patch");
+
+        let b = RegionBounds {
+            origin_x: 1.5,
+            origin_y: 1.5,
+            radius: 1.2,
+            z_min: -1.0,
+            z_max: 2.0,
+        };
+        let pts: Vec<(f32, f32, f32)> = slice(&all, &b, vs)
+            .iter()
+            .map(|&(x, y, _)| (x, y, 0.15))
+            .collect();
+        p.update_region(&pts, &b, &cfg);
+
+        for n in p.graph.nodes.iter() {
+            let k = p.graph.cells.coord(n.cell_id);
+            assert_eq!(
+                n.pos,
+                surface_point_xyz(k.0, k.1, k.2, vs),
+                "node pos must match its cell {k:?}"
+            );
+        }
+        // Relocation preserves each node's xy exactly. A drop-and-re-derive
+        // pass would place fresh NMS nodes at different cells.
+        for &(x, y) in &doomed_xy {
+            assert!(
+                p.graph
+                    .nodes
+                    .iter()
+                    .any(|n| n.pos.0 == x && n.pos.1 == y && (n.pos.2 - 0.2).abs() < 1e-6),
+                "node at ({x}, {y}) must relocate up in place"
+            );
+        }
+    }
+
+    /// A junk voxel near a node shifts the local wall-distance field. A
+    /// fresh re-derivation would move the node to the new local maximum, but
+    /// sticky retention must keep it exactly where it was.
+    #[test]
+    fn sticky_node_keeps_its_place_when_the_field_shifts() {
+        let cfg = test_config();
+        let all = big_world();
+        let vs = cfg.voxel_size;
+        let mut p = Planner::new(cfg.worker_threads);
+        p.update_global_map(&all, &cfg);
+
+        // The node nearest the center of the open left half.
+        let target = p
+            .graph
+            .nodes
+            .iter()
+            .map(|n| n.pos)
+            .min_by(|a, b| {
+                let da = (a.0 - 2.0).powi(2) + (a.1 - 2.0).powi(2);
+                let db = (b.0 - 2.0).powi(2) + (b.1 - 2.0).powi(2);
+                da.total_cmp(&db)
+            })
+            .unwrap();
+
+        // Junk appears 0.25 m from the node, shrinking its wall distance.
+        let b = RegionBounds {
+            origin_x: target.0,
+            origin_y: target.1,
+            radius: 1.0,
+            z_min: -1.0,
+            z_max: 2.0,
+        };
+        let mut pts = slice(&all, &b, vs);
+        pts.push((target.0 + 0.25, target.1, 0.45));
+        p.update_region(&pts, &b, &cfg);
+
+        assert!(
+            p.graph.nodes.iter().any(|n| n.pos == target),
+            "sticky node moved on a nearby junk voxel: {target:?}"
+        );
+    }
+
+    /// The drop side of sticky retention: a node whose cell falls inside the
+    /// clearance zone of newly grown structure dies instead of persisting.
+    #[test]
+    fn sticky_node_dies_when_a_wall_grows_next_to_it() {
+        let cfg = Config {
+            wall_clearance_m: 0.2,
+            ..test_config()
+        };
+        let all = big_world();
+        let vs = cfg.voxel_size;
+        let mut p = Planner::new(cfg.worker_threads);
+        p.update_global_map(&all, &cfg);
+
+        let target = p
+            .graph
+            .nodes
+            .iter()
+            .map(|n| n.pos)
+            .min_by(|a, b| {
+                let da = (a.0 - 2.0).powi(2) + (a.1 - 2.0).powi(2);
+                let db = (b.0 - 2.0).powi(2) + (b.1 - 2.0).powi(2);
+                da.total_cmp(&db)
+            })
+            .unwrap();
+
+        // A wall stack grows in the column right next to the node's cell.
+        let b = RegionBounds {
+            origin_x: target.0,
+            origin_y: target.1,
+            radius: 1.0,
+            z_min: -1.0,
+            z_max: 2.0,
+        };
+        let mut pts = slice(&all, &b, vs);
+        for iz in 0..5 {
+            pts.push((target.0 + vs, target.1, iz as f32 * vs + vs * 0.5));
+        }
+        p.update_region(&pts, &b, &cfg);
+
+        assert!(
+            !p.graph.nodes.iter().any(|n| n.pos == target),
+            "sub-clearance node must be dropped, not kept: {target:?}"
+        );
+    }
+
+    #[test]
+    fn sticky_nodes_survive_distant_changes() {
+        let cfg = test_config();
+        let all = big_world();
+        let vs = cfg.voxel_size;
+        let mut p = Planner::new(cfg.worker_threads);
+        p.update_global_map(&all, &cfg);
+        let before = node_coords(&p);
+
+        // A junk voxel appears in one corner: a genuine local change.
+        let b = RegionBounds {
+            origin_x: 1.0,
+            origin_y: 1.0,
+            radius: 1.0,
+            z_min: -1.0,
+            z_max: 2.0,
+        };
+        let mut pts = slice(&all, &b, vs);
+        pts.push((1.05, 1.05, 0.45));
+        p.update_region(&pts, &b, &cfg);
+
+        let after = node_coords(&p);
+        let far = |c: &VoxelKey| {
+            let x = c.0 as f32 * vs;
+            let y = c.1 as f32 * vs;
+            ((x - 1.0).powi(2) + (y - 1.0).powi(2)).sqrt() > 3.5
+        };
+        for c in before.iter().filter(|c| far(c)) {
+            assert!(
+                after.contains(c),
+                "distant node {c:?} moved on a local change"
+            );
+        }
     }
 
     /// A point outside the region bounds must not enter the planner's voxel
@@ -662,7 +1075,7 @@ mod region_tests {
         let inside = (2.05, 2.05, 0.05);
         let outside = (10.05, 10.05, 0.05);
 
-        let mut p = Planner::default();
+        let mut p = Planner::new(cfg.worker_threads);
         p.update_region(&[inside, outside], &bounds, &cfg);
 
         assert!(p.voxel_map.contains(&voxelize(inside, cfg.voxel_size)));
@@ -732,8 +1145,14 @@ mod region_tests {
             );
             if let (Some(pf), Some(pr)) = (pf, pr) {
                 let (lf, lr) = (path_len(&pf), path_len(&pr));
-                assert!(lr <= lf * 1.6 + 0.5, "region path too long: {lr} vs {lf}");
-                assert!(lf <= lr * 1.6 + 0.5, "full path too long: {lf} vs {lr}");
+                assert!(
+                    lr <= lf * PATH_LEN_RATIO + PATH_LEN_SLACK_M,
+                    "region path too long: {lr} vs {lf}"
+                );
+                assert!(
+                    lf <= lr * PATH_LEN_RATIO + PATH_LEN_SLACK_M,
+                    "full path too long: {lf} vs {lr}"
+                );
             }
         }
     }
@@ -746,7 +1165,7 @@ mod region_tests {
         let all = big_world();
         let vs = cfg.voxel_size;
 
-        let mut p = Planner::default();
+        let mut p = Planner::new(cfg.worker_threads);
         p.update_global_map(&all, &cfg);
         let before_cells = cell_edges(&p);
         let before_nodes = node_coords(&p);
@@ -788,10 +1207,10 @@ mod region_tests {
         let all = big_world();
         let vs = cfg.voxel_size;
 
-        let mut full = Planner::default();
+        let mut full = Planner::new(cfg.worker_threads);
         full.update_global_map(&all, &cfg);
 
-        let mut region = Planner::default();
+        let mut region = Planner::new(cfg.worker_threads);
         let mut cx = 0.5;
         while cx <= 7.5 {
             let mut cy = 0.5;
@@ -859,13 +1278,13 @@ mod region_tests {
 
         // No clearance: the shortest route slips straight through the narrow gap.
         cfg.wall_clearance_m = 0.0;
-        let mut open = Planner::default();
+        let mut open = Planner::new(cfg.worker_threads);
         open.update_global_map(&pts, &cfg);
         let wp_open = open.plan(start, goal, &cfg).expect("open plan exists");
 
         // Clearance wider than the narrow gap: it is impassable, so detour wide.
         cfg.wall_clearance_m = 0.2;
-        let mut safe = Planner::default();
+        let mut safe = Planner::new(cfg.worker_threads);
         safe.update_global_map(&pts, &cfg);
         let wp_safe = safe.plan(start, goal, &cfg).expect("safe plan exists");
 
@@ -891,7 +1310,7 @@ mod region_tests {
         cfg.wall_clearance_m = 0.2;
         cfg.wall_buffer_m = 0.5;
         let all = big_world();
-        let mut p = Planner::default();
+        let mut p = Planner::new(cfg.worker_threads);
         p.update_global_map(&all, &cfg);
 
         let wp = p
@@ -963,7 +1382,7 @@ mod region_tests {
         cfg.wall_buffer_m = 0.0;
         cfg.node_spacing_m = 0.5;
         let pts = block_world();
-        let mut p = Planner::default();
+        let mut p = Planner::new(cfg.worker_threads);
         p.update_global_map(&pts, &cfg);
 
         let wp = p
@@ -1020,13 +1439,13 @@ mod region_tests {
 
         // No step penalty: the short route crosses the ridge low.
         cfg.step_penalty_weight = 0.0;
-        let mut cheap = Planner::default();
+        let mut cheap = Planner::new(cfg.worker_threads);
         cheap.update_global_map(&pts, &cfg);
         let wp_cheap = cheap.plan(start, goal, &cfg).expect("plan exists");
 
         // Heavy step penalty: the flat detour to the iy 10 gap wins.
         cfg.step_penalty_weight = 30.0;
-        let mut avoid = Planner::default();
+        let mut avoid = Planner::new(cfg.worker_threads);
         avoid.update_global_map(&pts, &cfg);
         let wp_avoid = avoid.plan(start, goal, &cfg).expect("plan exists");
 
@@ -1065,7 +1484,7 @@ mod region_tests {
             pts.push((ix as f32 * vs + half, 5.0 * vs + half, half));
         }
 
-        let mut p = Planner::default();
+        let mut p = Planner::new(cfg.worker_threads);
         p.update_global_map(&pts, &cfg);
 
         let start = (0.45, 0.45, 0.0);

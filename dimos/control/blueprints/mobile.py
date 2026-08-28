@@ -19,12 +19,9 @@ Usage:
     dimos run coordinator-mobile-manip-mock              # Mock arm + base
     dimos run coordinator-flowbase                       # FlowBase holonomic base (Portal RPC)
     dimos run coordinator-flowbase-keyboard-teleop       # FlowBase + WASD pygame teleop
-    dimos run coordinator-flowbase-nav                   # FlowBase + FastLio2 + nav stack (click-to-drive)
 """
 
 from __future__ import annotations
-
-import os
 
 from dimos.control.components import (
     HardwareComponent,
@@ -33,14 +30,9 @@ from dimos.control.components import (
     make_twist_base_joints,
 )
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
-from dimos.navigation.cmu_nav.main import cmu_nav_rerun_config, create_cmu_nav
-from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.robot.unitree.g1.config import G1_LOCAL_PLANNER_PRECOMPUTED_PATHS
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
-from dimos.visualization.rerun.bridge import RerunBridgeModule
-from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
 _base_joints = make_twist_base_joints("base")
 
@@ -114,77 +106,6 @@ coordinator_flowbase_keyboard_teleop = autoconnect(
     KeyboardTeleop.blueprint(),
 ).remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
 
-# FlowBase + Livox MID-360 + FastLio2 SLAM + nav stack with click-to-drive in Rerun. The velocity
-# sink is ControlCoordinator + FlowBaseAdapter
-
-coordinator_flowbase_nav = (
-    autoconnect(
-        FastLio2.blueprint(
-            host_ip=os.getenv("LIDAR_HOST_IP", "192.168.1.5"),
-            lidar_ip=os.getenv("LIDAR_IP", "192.168.1.189"),
-        ),
-        create_cmu_nav(
-            planner="simple",
-            vehicle_height=0.5,  # FlowBase platform clearance — tune if needed
-            max_speed=0.8,  # conservative starting point
-            terrain_analysis={
-                # MID-360 is mounted ~10cm above base (close to floor); G1 has it at ~1.2m.
-                # Looser thresholds avoid classifying floor noise as obstacles.
-                "obstacle_height_threshold": 0.15,
-                "ground_height_threshold": 0.10,
-                "sensor_range": 20,
-            },
-            local_planner={
-                # Reusing G1's precomputed paths until FlowBase-specific ones exist.
-                "paths_dir": str(G1_LOCAL_PLANNER_PRECOMPUTED_PATHS),
-                "publish_free_paths": False,
-            },
-            simple_planner={
-                "cell_size": 0.2,
-                "obstacle_height_threshold": 0.15,
-                "inflation_radius": 0.3,  # FlowBase footprint smaller than G1's 0.5
-                "lookahead_distance": 2.0,
-                "replan_rate": 5.0,
-                "replan_cooldown": 2.0,
-            },
-        ),
-        # MovementManager: subscribes clicked_point + nav_cmd_vel + tele_cmd_vel,
-        # publishes muxed cmd_vel + goal (+ way_point, disconnected below).
-        MovementManager.blueprint(),
-        # FlowBase driver: ControlCoordinator with the existing JointVelocityTask
-        # passthrough; receives Twist from MovementManager on LCM /cmd_vel.
-        ControlCoordinator.blueprint(
-            hardware=[_flowbase_twist_base()],
-            tasks=[
-                TaskConfig(
-                    name="vel_base",
-                    type="velocity",
-                    joint_names=_base_joints,
-                    priority=10,
-                ),
-            ],
-        ),
-        RerunBridgeModule.blueprint(
-            **cmu_nav_rerun_config({"memory_limit": "1GB"}, vis_throttle=0.5),
-            rerun_open="native",
-        ),
-        RerunWebSocketServer.blueprint(),
-    )
-    .remappings(
-        [
-            (FastLio2, "lidar", "registered_scan"),
-            # SimplePlanner / FarPlanner owns way_point — disconnect MovementManager's
-            # redundant pass-through copy (matches unitree-g1-nav-onboard).
-            (MovementManager, "way_point", "_mgr_way_point_unused"),
-            # MovementManager.cmd_vel publishes to LCM /cmd_vel by default; the
-            # coordinator's twist_command listens on the same name.
-            (ControlCoordinator, "twist_command", "cmd_vel"),
-        ]
-    )
-    .global_config(n_workers=8)
-)
-
-
 # Mock arm (7-DOF) + mock holonomic base (3-DOF)
 _mock_arm_hw = HardwareComponent(
     hardware_id="arm",
@@ -196,12 +117,7 @@ _mock_arm_hw = HardwareComponent(
 coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
     hardware=[_mock_arm_hw, _mock_twist_base()],
     tasks=[
-        TaskConfig(
-            name="traj_arm",
-            type="trajectory",
-            joint_names=_mock_arm_hw.joints,
-            priority=10,
-        ),
+        joint_trajectory_task(_mock_arm_hw.joints),
         TaskConfig(
             name="vel_base",
             type="velocity",

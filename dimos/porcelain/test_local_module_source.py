@@ -16,7 +16,29 @@ from __future__ import annotations
 
 import pytest
 
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.core import rpc
+from dimos.core.global_config import GlobalConfig
+from dimos.core.module import Module
 from dimos.porcelain.local_module_source import LocalModuleSource
+
+
+class NamedLocalModule(Module):
+    @rpc
+    def ping_name(self) -> str:
+        return self.config.instance_name or "default"
+
+
+@pytest.fixture
+def multi_instance_source():
+    coordinator = ModuleCoordinator(g=GlobalConfig(n_workers=0, viewer="none"))
+    coordinator.start()
+    try:
+        coordinator.deploy(NamedLocalModule, instance_name="robot0/namedlocalmodule")
+        coordinator.deploy(NamedLocalModule, instance_name="robot1/namedlocalmodule")
+        yield LocalModuleSource(coordinator)
+    finally:
+        coordinator.stop()
 
 
 def test_is_not_remote(running_app):
@@ -44,6 +66,14 @@ def test_get_module_returns_same_proxy(running_app):
 def test_get_module_unknown_raises(running_app):
     with pytest.raises(KeyError):
         running_app._source.get_module("NonexistentModule")
+
+
+def test_get_module_class_name_raises_when_ambiguous(multi_instance_source):
+    with pytest.raises(ValueError, match="Multiple instances"):
+        multi_instance_source.get_module("NamedLocalModule")
+
+    module = multi_instance_source.get_module("robot1/namedlocalmodule")
+    assert module.ping_name() == "robot1/namedlocalmodule"
 
 
 def test_invalidate_is_noop(running_app):

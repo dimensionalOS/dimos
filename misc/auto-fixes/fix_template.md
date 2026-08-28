@@ -22,7 +22,7 @@ Read `issues.ignore.md` and fix every issue it lists, following the repo's exist
 
 ## Verify before committing each fix
 - Run the tests RELEVANT to the code you changed (target specific files or `-k`):
-  `uv run pytest <paths> -k <name> -m 'not (tool or self_hosted or mujoco or self_hosted_large)'`
+  `uv run pytest <paths> -k <name> -m 'not (self_hosted or mujoco or self_hosted_large)'`
 - Run `uv run mypy` and ensure you introduce no new type errors.
 - Only commit a fix once its relevant tests and mypy pass. If a fix can't be made to pass, skip it
   (note why in your summary) rather than committing broken code.

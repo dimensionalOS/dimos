@@ -22,9 +22,9 @@ from typing import TYPE_CHECKING
 import pytest
 from typer.testing import CliRunner
 
+from dimos.cli.dimos import main
 from dimos.core import run_registry
 from dimos.core.run_registry import RunEntry
-from dimos.robot.cli.dimos import main
 
 if TYPE_CHECKING:
     from pathlib import Path

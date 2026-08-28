@@ -21,6 +21,7 @@ on the actual GR00T weights.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 import math
 from typing import Any
 from unittest.mock import MagicMock
@@ -36,6 +37,7 @@ from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
     G1GrootWBCTaskConfig,
 )
 from dimos.hardware.whole_body.spec import IMUState
+from dimos.msgs.geometry_msgs.Twist import Twist
 
 
 class _StubSession:
@@ -48,17 +50,22 @@ class _StubSession:
         label: str,
         action: np.ndarray,
         call_log: list[str],
+        providers: Any = None,
     ) -> None:
         self.model_path = model_path
         self._label = label
         self._action = action
         self._call_log = call_log
+        self._providers = list(providers or [])
         fake_input = MagicMock()
         fake_input.name = "obs"
         self._inputs = [fake_input]
 
     def get_inputs(self) -> list[Any]:
         return self._inputs
+
+    def get_providers(self) -> list[str]:
+        return self._providers
 
     def run(self, _outputs: Any, _feed: dict[str, np.ndarray]) -> list[np.ndarray]:
         self._call_log.append(self._label)
@@ -70,13 +77,13 @@ def patched_ort(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     call_log: list[str] = []
 
     def _factory(path: str, providers: Any = None) -> _StubSession:
-        _ = providers
         label = "balance" if "balance" in str(path) else "walk"
         return _StubSession(
             str(path),
             label=label,
             action=np.full(15, 0.1, dtype=np.float32),
             call_log=call_log,
+            providers=providers,
         )
 
     monkeypatch.setattr(g1_groot_wbc_task.ort, "InferenceSession", _factory)
@@ -106,9 +113,10 @@ def joints_29() -> list[str]:
 
 
 @pytest.fixture
-def task(patched_ort: list[str], stub_adapter: MagicMock, joints_29: list[str]) -> G1GrootWBCTask:
-    _ = patched_ort
-    return G1GrootWBCTask(
+def task(
+    patched_ort: list[str], stub_adapter: MagicMock, joints_29: list[str]
+) -> Iterator[G1GrootWBCTask]:
+    task = G1GrootWBCTask(
         name="groot_wbc",
         config=G1GrootWBCTaskConfig(
             balance_onnx="/fake/balance.onnx",
@@ -121,14 +129,17 @@ def task(patched_ort: list[str], stub_adapter: MagicMock, joints_29: list[str]) 
         ),
         adapter=stub_adapter,
     )
+    try:
+        yield task
+    finally:
+        task.stop()
 
 
 @pytest.fixture
 def unarmed_task(
     patched_ort: list[str], stub_adapter: MagicMock, joints_29: list[str]
-) -> G1GrootWBCTask:
-    _ = patched_ort
-    return G1GrootWBCTask(
+) -> Iterator[G1GrootWBCTask]:
+    task = G1GrootWBCTask(
         name="groot_wbc",
         config=G1GrootWBCTaskConfig(
             balance_onnx="/fake/balance.onnx",
@@ -141,6 +152,10 @@ def unarmed_task(
         ),
         adapter=stub_adapter,
     )
+    try:
+        yield task
+    finally:
+        task.stop()
 
 
 def _state_at(t_now: float, joint_names: list[str]) -> CoordinatorState:
@@ -170,12 +185,19 @@ def test_nonzero_cmd_uses_walk_until_timeout(
     assert patched_ort == ["walk", "balance"]
 
 
+def test_on_twist_command_sets_velocity_command(task: G1GrootWBCTask) -> None:
+    task.on_twist_command(Twist(linear=[0.5, 0.25, 0.0], angular=[0.0, 0.0, 0.3]), t_now=100.0)
+
+    assert list(task._cmd) == pytest.approx([0.5, 0.25, 0.3])
+    assert task._last_cmd_time == 100.0
+
+
 def test_observation_layout_matches_policy_contract(task: G1GrootWBCTask) -> None:
     cmd = np.array([1.0, 0.5, 0.25], dtype=np.float32)
     gyro = np.array([0.1, 0.2, 0.3], dtype=np.float32)
     gravity = np.array([0.0, 0.0, -1.0], dtype=np.float32)
-    q = np.zeros(29, dtype=np.float32)
-    dq = np.ones(29, dtype=np.float32)
+    q = np.zeros(g1_groot_wbc_task._NUM_MOTORS, dtype=np.float32)
+    dq = np.ones(g1_groot_wbc_task._NUM_MOTORS, dtype=np.float32)
 
     obs = task._build_obs(cmd=cmd, gyro=gyro, gravity=gravity, q=q, dq=dq)
 
@@ -276,6 +298,32 @@ def test_dry_run_suppresses_output_but_keeps_policy_hot(
     assert out is None
     assert patched_ort == ["balance"]
     assert np.any(task._obs_buf != 0.0)
+
+
+def test_reset_runtime_state_clears_policy_state_and_rearms(
+    task: G1GrootWBCTask, joints_29: list[str]
+) -> None:
+    task.start()
+    task.set_velocity_command(0.5, 0.0, 0.0, t_now=100.0)
+    for _ in range(10):
+        task.compute(_state_at(100.0, joints_29))
+
+    assert task.state_snapshot()["armed"]
+    assert np.any(task._obs_buf != 0.0)
+    assert np.any(task._cmd != 0.0)
+
+    assert task.reset_runtime_state(reactivate=True)
+
+    snapshot = task.state_snapshot()
+    assert not snapshot["armed"]
+    assert snapshot["arm_pending"]
+    np.testing.assert_array_equal(task._obs_buf, np.zeros_like(task._obs_buf))
+    np.testing.assert_array_equal(task._last_action, np.zeros_like(task._last_action))
+    np.testing.assert_array_equal(task._cmd, np.zeros_like(task._cmd))
+    assert task._last_cmd_time == 0.0
+
+    task.compute(_state_at(101.0, joints_29))
+    assert task.state_snapshot()["armed"]
 
 
 def test_projected_gravity_matches_reference_quaternion_order() -> None:

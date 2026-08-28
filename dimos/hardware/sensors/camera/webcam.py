@@ -17,7 +17,6 @@ import threading
 import time
 from typing import Literal
 
-import cv2
 from pydantic import Field
 from reactivex import create
 from reactivex.observable import Observable
@@ -73,6 +72,8 @@ class Webcam(CameraHardware):
         return backpressure(create(subscribe))
 
     def start(self):  # type: ignore[no-untyped-def]
+        import cv2
+
         if self._capture_thread and self._capture_thread.is_alive():
             return
 
@@ -113,6 +114,8 @@ class Webcam(CameraHardware):
 
     def capture_frame(self) -> Image:
         # Read frame
+        import cv2
+
         ret, frame = self._capture.read()  # type: ignore[attr-defined]
         if not ret:
             raise RuntimeError(f"Failed to read frame from camera {self.config.camera_index}")

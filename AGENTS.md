@@ -18,7 +18,7 @@ dimos list
 # --- Go2 quadruped ---
 dimos --replay run unitree-go2                  # perception + mapping, replay data
 dimos --replay run unitree-go2 --daemon         # same, backgrounded
-dimos --replay run unitree-go2-agentic          # + LLM agent (GPT-4o) + skills + MCP server
+dimos --replay run unitree-go2-agentic          # + LLM agent (gpt-5.6-luna) + skills + MCP server
 dimos run unitree-go2-agentic --robot-ip 192.168.123.161  # real Go2 hardware
 
 # --- G1 humanoid ---
@@ -27,6 +27,7 @@ dimos run unitree-g1-agentic --robot-ip 192.168.123.161   # real G1 hardware
 
 # --- Inspect & control ---
 dimos status
+dimos shell            # IPython attached to all module RPCs (no MCP required)
 dimos log              # last 50 lines, human-readable
 dimos log -f           # follow/tail in real time
 dimos agent-send "say hello"
@@ -39,12 +40,12 @@ dimos restart          # stop + re-run with same original args
 | Blueprint | Robot | Hardware | Agent | MCP server | Notes |
 |-----------|-------|----------|-------|------------|-------|
 | `unitree-go2-agentic` | Go2 | real | via McpClient | ✓ | McpServer live |
-| `unitree-g1-agentic-sim` | G1 | sim | GPT-4o (G1 prompt) | — | Full agentic sim, no real robot needed |
-| `xarm-perception-agent` | xArm | real | GPT-4o | — | Manipulation + perception + agent |
-| `xarm-perception-sim-agent` | xArm | sim | GPT-4o | — | Manipulation + perception + agent, sim |
+| `unitree-g1-agentic-sim` | G1 | sim | gpt-5.6-luna (G1 prompt) | ✓ | Full agentic sim, no real robot needed |
+| `xarm-perception-agent` | xArm | real | gpt-5.6-luna | ✓ | Manipulation + perception + agent |
+| `xarm-perception-sim-agent` | xArm | sim | gpt-5.6-luna | ✓ | Manipulation + perception + agent, sim |
 | `xarm7-planner-coordinator` | xArm7 | real | — | — | Trajectory planner coordinator |
 | `teleop-quest-xarm7` | xArm7 | real | — | — | Quest VR teleop |
-| `dual-xarm6-planner` | xArm6×2 | real | — | — | Dual-arm motion planner |
+| `dual-xarm6-planner-coordinator` | xArm6×2 | mock | — | — | Dual-arm motion planner |
 
 Run `dimos list` for the full list.
 
@@ -104,11 +105,11 @@ dimos/
 │   │   ├── blueprints.py           # Blueprint, autoconnect()
 │   │   ├── module_coordinator.py   # Deploy + lifecycle orchestration
 │   │   ├── python_worker.py        # Forkserver workers + Actor IPC
-│   │   └── worker_manager_*.py     # Python / docker worker pools
+│   │   └── worker_manager*.py      # Worker pool protocol + Python implementation
 │   ├── global_config.py     # GlobalConfig (env vars, CLI flags, .env)
 │   └── run_registry.py      # Per-run tracking + log paths
+├── cli/                     # `dimos` CLI entry point (typer) + TUI tools (spy, dtop, apriltag)
 ├── robot/
-│   ├── cli/dimos.py         # CLI entry point (typer)
 │   ├── all_blueprints.py    # Auto-generated blueprint registry (DO NOT EDIT MANUALLY)
 │   ├── unitree/             # Unitree robot implementations (Go2, G1, B1)
 │   │   ├── unitree_skill_container.py  # Go2 @skill methods
@@ -120,23 +121,22 @@ dimos/
 │       ├── drone_tracking_module.py    # Visual object tracking
 │       └── drone_visual_servoing_controller.py  # Visual servoing
 ├── agents/
-│   ├── agent.py             # Agent module (LangGraph-based)
 │   ├── system_prompt.py     # Default Go2 system prompt
 │   ├── annotation.py        # @skill decorator
-│   ├── mcp/                 # McpServer, McpClient, McpAdapter
+│   ├── mcp/                 # McpServer, McpClient, McpAdapter (the LangGraph agent lives here)
 │   └── skills/              # NavigationSkillContainer, SpeakSkill, etc.
 ├── navigation/              # Path planning, frontier exploration
 ├── perception/              # Object detection, tracking, memory
 ├── visualization/rerun/     # Rerun bridge
 ├── msgs/                    # Message types (geometry_msgs, sensor_msgs, nav_msgs)
-└── utils/                   # Logging, data loading, CLI tools
+└── utils/                   # Logging, data loading
 docs/
 ├── usage/modules.md         # ← Module system deep dive
 ├── usage/blueprints.md      # Blueprint composition guide
 ├── usage/configuration.md   # GlobalConfig + Configurable pattern
 ├── development/testing.md   # Fast/slow tests, pytest usage
-├── development/dimos_run.md # CLI usage, adding blueprints
-└── agents/                  # Agent system documentation
+├── usage/cli.md             # CLI usage, adding blueprints
+└── capabilities/agents/     # Agent system documentation
 ```
 
 ---
@@ -190,7 +190,7 @@ To run a blueprint directly from Python:
 autoconnect(module_a(), module_b(), module_c()).build().loop()
 ```
 
-Expose as a module-level variable for `dimos run` to find it. Add to the registry by running `pytest dimos/robot/test_all_blueprints_generation.py`.
+For in-repo DimOS blueprints, expose a module-level variable for `dimos run` to find it and add it to the built-in registry by running `pytest dimos/robot/test_all_blueprints_generation.py`. External packages should not edit `all_blueprints.py`; expose runnable blueprints through installed Python package entry points in the `dimos.blueprints` group.
 
 ### GlobalConfig
 
@@ -202,7 +202,7 @@ Singleton config. Values cascade: defaults → `.env` → env vars → blueprint
 - **SHMTransport/pSHMTransport**: Shared memory — use for images and point clouds.
 - **pLCMTransport**: Pickled LCM — use for complex Python objects.
 - **ROSTransport**: ROS topic bridge — interop with ROS nodes (`dimos/core/transport.py`).
-- **DDSTransport**: DDS pub/sub — available when `DDS_AVAILABLE`; install with `uv sync --extra dds` (`dimos/protocol/pubsub/impl/ddspubsub.py`).
+- **DDSTransport**: DDS pub/sub — available when `DDS_AVAILABLE`; install with `uv sync --extra dds --inexact` (`dimos/protocol/pubsub/impl/ddspubsub.py`).
 
 ---
 
@@ -217,11 +217,13 @@ Every `GlobalConfig` field is a CLI flag: `--robot-ip`, `--simulation/--no-simul
 | Command | Description |
 |---------|-------------|
 | `dimos run <blueprint> [--daemon]` | Start a blueprint |
+| `dimos shell` | Open an attached IPython session for live module/RPC discovery and calls |
 | `dimos status` | Show running instance (run ID, PID, blueprint, uptime, log path) |
 | `dimos stop [--force]` | SIGTERM → SIGKILL after 5s; `--force` = immediate SIGKILL |
 | `dimos restart [--force]` | Stop + re-exec with original args |
 | `dimos list` | List all non-demo blueprints |
 | `dimos show-config` | Print resolved GlobalConfig values |
+| `dimos cache clean [--yes] [--force]` | Remove DimOS caches; preserve robot Git work unless forced |
 | `dimos log [-f] [-n N] [--json] [-r <run-id>]` | View per-run logs |
 | `dimos mcp list-tools / call / status / modules` | MCP tools (requires McpServer in blueprint) |
 | `dimos agent-send "<text>"` | Send text to the running agent via LCM |
@@ -249,10 +251,10 @@ Run registry: `~/.local/state/dimos/runs/<run-id>.json`
 |------|------------------------------|
 | **Docstring is mandatory** | `ValueError` at startup — module fails to register, all skills disappear |
 | **Type-annotate every param** | Missing annotation → no `"type"` in schema — LLM has no type info |
-| **Return `str`** | `None` return → agent hears "It has started. You will be updated later." |
+| **Return `str`** (or an object with `agent_encode()`, e.g. `SkillResult`) | Other values are `str()`-ified — a `None` return reaches the agent as the literal string `"None"` |
 | **Full docstring verbatim in `description`** | Keep `Args:` block concise — it appears in every tool-call prompt |
 
-Supported param types: `str`, `int`, `float`, `bool`, `list[str]`, `list[float]`. Avoid complex nested types.
+Prefer simple param types: `str`, `int`, `float`, `bool`, `list[str]`, `list[float]`. Nested types work — the schema comes from pydantic — but keep them shallow.
 
 #### Minimal correct skill
 
@@ -323,8 +325,8 @@ If multiple modules match the spec, use `.remappings()` to resolve. Source: `dim
 1. Pick the right container (robot-specific or `dimos/agents/skills/`).
 2. `@skill` + mandatory docstring + type annotations on all params.
 3. If it needs another module's RPC, use the Spec pattern.
-4. Return a descriptive `str`.
-5. Update the system prompt — add to the `# AVAILABLE SKILLS` section.
+4. Return a descriptive `str`, or a `SkillResult`.
+5. Update the system prompt if the skill needs usage guidance — `dimos/agents/system_prompt.py`, or the robot-specific prompt.
 6. Expose as `my_container = MySkillContainer.blueprint` and include in the agentic blueprint.
 
 ---
@@ -339,13 +341,13 @@ uv run pytest
 ./bin/pytest-slow
 
 # Single file
-uv run pytest dimos/core/test_blueprints.py -v
+uv run pytest dimos/core/coordination/test_blueprints.py -v
 
 # Mypy
 uv run mypy dimos/
 ```
 
-`uv run pytest` excludes `self_hosted`, `tool`, and `mujoco` markers. CI runs `self_hosted`-marked tests on the self-hosted runner only. See `docs/development/testing.md`.
+`uv run pytest` excludes `self_hosted` and `mujoco` markers, and never collects `tool_*.py` files. CI runs `self_hosted`-marked tests on the self-hosted runner only. See `docs/development/testing.md`.
 
 ---
 
@@ -366,13 +368,13 @@ Code style rules:
 
 ## `all_blueprints.py` is auto-generated
 
-`dimos/robot/all_blueprints.py` is generated by `test_all_blueprints_generation.py`. After adding or renaming blueprints:
+`dimos/robot/all_blueprints.py` is generated by `test_all_blueprints_generation.py` for in-repo built-in blueprints and modules. After adding or renaming built-in blueprints:
 
 ```bash
 pytest dimos/robot/test_all_blueprints_generation.py
 ```
 
-CI asserts the file is current — if it's stale, CI fails.
+CI asserts the file is current — if it's stale, CI fails. Externally packaged blueprints are discovered from installed `dimos.blueprints` entry points and do not require regenerating this file.
 
 ---
 
@@ -392,6 +394,6 @@ CI asserts the file is current — if it's stale, CI fails.
 - Visualization: `docs/usage/visualization.md`
 - Configuration: `docs/usage/configuration.md`
 - Testing: `docs/development/testing.md`
-- CLI / dimos run: `docs/development/dimos_run.md`
+- CLI / dimos run: `docs/usage/cli.md`
 - LFS data: `docs/development/large_file_management.md`
-- Agent system: `docs/coding-agents/`
+- Agent system: `docs/capabilities/agents/`

@@ -25,7 +25,9 @@ Features:
 - Aggregated preemption notifications
 """
 
+from contextlib import suppress
 from dataclasses import dataclass, field
+import inspect
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -44,7 +46,15 @@ from dimos.control.hardware_interface import (
     ConnectedTwistBase,
     ConnectedWholeBody,
 )
+from dimos.control.routing import Routing
 from dimos.control.task import ControlTask
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JointTrajectoryTask,
+    TrajectoryCancellationResult,
+    TrajectoryCancellationStatus,
+    TrajectoryExecutionResult,
+    TrajectoryExecutionStatus,
+)
 from dimos.control.tick_loop import TickLoop
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -54,12 +64,10 @@ from dimos.hardware.drive_trains.spec import (
 )
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.hardware.whole_body.spec import WholeBodyAdapter
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.teleop.quest.quest_types import (
-    Buttons,
-)
+from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -74,10 +82,11 @@ class TaskConfig:
 
     name: str
     type: str = "trajectory"
-    joint_names: list[str] = field(default_factory=lambda: [])
+    joint_names: list[str] = field(default_factory=list)
     priority: int = 10
     auto_start: bool = False
     params: dict[str, Any] = field(default_factory=dict)
+    stream_bind: dict[str, str] = field(default_factory=dict)
 
 
 class ControlCoordinatorConfig(ModuleConfig):
@@ -85,6 +94,8 @@ class ControlCoordinatorConfig(ModuleConfig):
 
     tick_rate: float = 100.0
     publish_joint_state: bool = True
+    # Transitional: goes away once every consumer reads per-robot streams.
+    publish_robot_joint_states: bool = False
     joint_state_frame_id: str = "coordinator"
     log_ticks: bool = False
     hardware: list[HardwareComponent] = field(default_factory=lambda: [])
@@ -115,7 +126,8 @@ class ControlCoordinator(Module):
     Example:
         >>> from dimos.control.components import HardwareComponent, HardwareType
         >>> from dimos.control.components import make_joints
-        >>> from dimos.control.coordinator import ControlCoordinator, TaskConfig
+        >>> from dimos.control.coordinator import ControlCoordinator
+        >>> from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
         >>>
         >>> coordinator = ControlCoordinator.blueprint(
         ...     tick_rate=100.0,
@@ -129,12 +141,7 @@ class ControlCoordinator(Module):
         ...         ),
         ...     ],
         ...     tasks=[
-        ...         TaskConfig(
-        ...             name="traj_arm",
-        ...             type="trajectory",
-        ...             joint_names=make_joints("arm", 7),
-        ...             priority=10,
-        ...         ),
+        ...         joint_trajectory_task(make_joints("arm", 7)),
         ...     ],
         ... )
     """
@@ -147,15 +154,11 @@ class ControlCoordinator(Module):
     # Input: Streaming joint commands for real-time control
     joint_command: In[JointState]
 
-    # Input: Streaming cartesian commands for CartesianIKTask
-    # Uses frame_id as task name for routing
-    coordinator_cartesian_command: In[PoseStamped]
-
     # Input: Streaming twist commands for velocity-commanded platforms
     twist_command: In[Twist]
 
-    # Input: Teleop buttons for engage/disengage signaling
-    teleop_buttons: In[Buttons]
+    # Input: Normalized gripper opening (0.0 closed, 1.0 open).
+    gripper_command: In[Float32]
 
     # Arming and dry-run are one-shot RPCs, not streams.
 
@@ -172,21 +175,37 @@ class ControlCoordinator(Module):
         # Registered tasks
         self._tasks: dict[TaskName, ControlTask] = {}
         self._task_lock = threading.Lock()
+        self._trajectory_task: JointTrajectoryTask | None = None
+
+        # Card-declared stream routes, keyed by the port stream_bind resolved to:
+        # port -> (task, bound handler, routing). Guarded by _task_lock; entries
+        # are added/pruned with their task.
+        self._routes: dict[str, list[tuple[ControlTask, Callable[[Any, float], Any], Routing]]] = {}
+
+        # Card-declared command names per task, keyed by task name.
+        # Guarded by _task_lock; added/pruned with their task.
+        self._task_commands: dict[TaskName, frozenset[str]] = {}
 
         # Tick loop (created on start)
         self._tick_loop: TickLoop | None = None
 
-        # Subscription handles for streaming commands
-        self._joint_command_unsub: Callable[[], None] | None = None
-        self._cartesian_command_unsub: Callable[[], None] | None = None
-        self._twist_command_unsub: Callable[[], None] | None = None
-        self._buttons_unsub: Callable[[], None] | None = None
+        # Subscription handles for card-routed streams, keyed by stream name
+        self._stream_unsubs: dict[str, Callable[[], None]] = {}
+        self._subscribe_lock = threading.Lock()
+
+        # Hardware-side hooks run on the raw stream callback before card
+        # dispatch. They must stay out of _dispatch: the twist mapper itself
+        # dispatches joint_command, and _task_lock is not reentrant.
+        self._stream_pre_hooks: dict[str, Callable[[Any], None]] = {
+            "twist_command": self._map_twist_to_base_joints,
+        }
 
         logger.info(f"ControlCoordinator initialized at {self.config.tick_rate}Hz")
 
     def _setup_from_config(self) -> None:
         """Create hardware and tasks from config (called on start)."""
         hardware_added: list[str] = []
+        tasks_added: list[TaskName] = []
 
         try:
             for component in self.config.hardware:
@@ -195,19 +214,20 @@ class ControlCoordinator(Module):
 
             for task_cfg in self.config.tasks:
                 task = self._create_task_from_config(task_cfg)
-                self.add_task(task)
+                if self.add_task(task, task_type=task_cfg.type, stream_bind=task_cfg.stream_bind):
+                    tasks_added.append(task.name)
                 if task_cfg.auto_start:
-                    start = getattr(task, "start", None)
-                    if callable(start):
-                        start()
+                    self.task_invoke(task.name, "start")
 
         except Exception:
-            # Rollback: clean up all successfully added hardware
+            # Roll back everything this call added, tasks first: an active task
+            # blocks removal of the hardware whose joints it claims.
+            for task_name in tasks_added:
+                with suppress(Exception):
+                    self.remove_task(task_name)
             for hw_id in hardware_added:
-                try:
+                with suppress(Exception):
                     self.remove_hardware(hw_id)
-                except Exception:
-                    pass
             raise
 
     def _setup_hardware(self, component: HardwareComponent) -> None:
@@ -280,6 +300,24 @@ class ControlCoordinator(Module):
 
         return control_task_registry.create(cfg.type, cfg, hardware=self._hardware)
 
+    def _robot_joint_port(self, hardware_id: HardwareId) -> Out[JointState]:
+        name = f"{hardware_id}_joints"
+        port = getattr(self, name, None)
+        if isinstance(port, Out):
+            return port
+        if not name.isidentifier():
+            raise ValueError(
+                f"publish_robot_joint_states is on but hardware_id {hardware_id!r} cannot name "
+                f"an output port — rename it so `{name}` is a valid Python identifier"
+            )
+        raise ValueError(
+            f"publish_robot_joint_states is on but hardware {hardware_id!r} has no output "
+            f"port — add `{name}: Out[JointState]` to your coordinator subclass"
+        )
+
+    def _publish_robot_joint_state(self, hardware_id: HardwareId, msg: JointState) -> None:
+        self._robot_joint_port(hardware_id).publish(msg)
+
     @rpc
     def add_hardware(
         self,
@@ -303,6 +341,9 @@ class ControlCoordinator(Module):
                 f"hardware_type={component.hardware_type.value} but got "
                 f"{type(adapter).__name__}"
             )
+
+        if self.config.publish_robot_joint_states:
+            self._robot_joint_port(component.hardware_id)
 
         with self._hardware_lock:
             if component.hardware_id in self._hardware:
@@ -333,7 +374,8 @@ class ControlCoordinator(Module):
             logger.info(
                 f"Added hardware {component.hardware_id} with joints: {connected.joint_names}"
             )
-            return True
+        self._sync_stream_subscriptions()
+        return True
 
     @rpc
     def remove_hardware(self, hardware_id: str) -> bool:
@@ -367,7 +409,8 @@ class ControlCoordinator(Module):
             interface.disconnect()
             del self._hardware[hardware_id]
             logger.info(f"Removed hardware {hardware_id}")
-            return True
+        self._sync_stream_subscriptions()
+        return True
 
     @rpc
     def list_hardware(self) -> list[str]:
@@ -393,28 +436,198 @@ class ControlCoordinator(Module):
             return positions
 
     @rpc
-    def add_task(self, task: ControlTask) -> bool:
-        """Register a task with the coordinator."""
+    def execute_trajectory(self, trajectory: JointTrajectory) -> TrajectoryExecutionResult:
+        """Execute a trajectory through the coordinator's sole trajectory task."""
+        current_positions = self.get_joint_positions()
+        with self._task_lock:
+            if self._trajectory_task is None:
+                return TrajectoryExecutionResult(
+                    TrajectoryExecutionStatus.NO_TRAJECTORY_TASK,
+                    "Control coordinator has no trajectory task",
+                )
+            return self._trajectory_task.execute(trajectory, current_positions)
+
+    @rpc
+    def cancel_trajectory(self) -> TrajectoryCancellationResult:
+        """Cancel the coordinator's sole trajectory task."""
+        with self._task_lock:
+            if self._trajectory_task is None:
+                return TrajectoryCancellationResult(
+                    TrajectoryCancellationStatus.NO_TRAJECTORY_TASK,
+                    "Control coordinator has no trajectory task",
+                )
+            return self._trajectory_task.cancel()
+
+    @rpc
+    def add_task(
+        self,
+        task: ControlTask,
+        task_type: str | None = None,
+        stream_bind: dict[str, str] | None = None,
+    ) -> bool:
+        """Register a task; ``task_type`` binds its card's input streams (if any).
+
+        ``stream_bind`` remaps those inputs to other ports (see ``TaskConfig``).
+        """
         if not isinstance(task, ControlTask):
             raise TypeError("task must implement ControlTask")
+        if task_type is None and stream_bind:
+            raise ValueError(
+                f"task {task.name!r} was given stream_bind {sorted(stream_bind)} but no "
+                "task_type; the inputs it remaps come from the type's card, so pass task_type"
+            )
 
         with self._task_lock:
             if task.name in self._tasks:
                 logger.warning(f"Task {task.name} already registered")
                 return False
+            if isinstance(task, JointTrajectoryTask):
+                if self._trajectory_task is not None:
+                    raise ValueError("ControlCoordinator supports exactly one JointTrajectoryTask")
+                self._trajectory_task = task
+            if task_type is not None:
+                try:
+                    self._register_routes(task, task_type, stream_bind)
+                    self._task_commands[task.name] = self._commands_for(task_type)
+                except Exception:
+                    if task is self._trajectory_task:
+                        self._trajectory_task = None
+                    raise
+            else:
+                self._task_commands[task.name] = frozenset()
             self._tasks[task.name] = task
             logger.info(f"Added task {task.name}")
-            return True
+        self._sync_stream_subscriptions()
+        return True
 
     @rpc
     def remove_task(self, task_name: TaskName) -> bool:
         """Remove a task by name."""
         with self._task_lock:
-            if task_name in self._tasks:
-                del self._tasks[task_name]
-                logger.info(f"Removed task {task_name}")
-                return True
-            return False
+            task = self._tasks.pop(task_name, None)
+            if task is None:
+                return False
+            for entries in self._routes.values():
+                entries[:] = [entry for entry in entries if entry[0] is not task]
+            self._task_commands.pop(task_name, None)
+            if task is self._trajectory_task:
+                self._trajectory_task = None
+            logger.info(f"Removed task {task_name}")
+        self._sync_stream_subscriptions()
+        return True
+
+    def _register_routes(
+        self, task: ControlTask, task_type: str, stream_bind: dict[str, str] | None = None
+    ) -> None:
+        # Inline: importing the registry runs task-manifest discovery at import time.
+        from dimos.control.tasks.registry import control_task_registry
+
+        bindings = control_task_registry.bindings_for(task_type)
+        if not bindings.consumes and task_type.lower() not in control_task_registry.available():
+            # Distinct from a card-less-but-known type (e.g. trajectory): an
+            # unknown type usually means a typo or a missing manifest.
+            logger.warning(
+                "Task added with unknown task_type; no stream routing set up "
+                "(typo, or missing task manifest?)",
+                task_name=task.name,
+                task_type=task_type,
+            )
+
+        where = f"task {task.name!r} (type {task_type!r})"
+        binds = stream_bind or {}
+        inputs = {binding.stream for binding in bindings.consumes}
+        unknown = sorted(set(binds) - inputs)
+        if unknown:
+            raise ValueError(
+                f"{where}: stream_bind key(s) {unknown} are not card inputs {sorted(inputs)}"
+            )
+
+        ports = {name: binds.get(name, name) for name in inputs}
+        # All ports first: one typo must not leave the task half-wired.
+        for port in ports.values():
+            if not isinstance(getattr(self, port, None), In):
+                raise ValueError(
+                    f"{where}: this coordinator has no input port {port!r} — add "
+                    f"`{port}: In[...]` to your coordinator subclass, or fix the stream_bind entry"
+                )
+
+        for binding in bindings.consumes:
+            port = ports[binding.stream]
+            handler = getattr(task, binding.handler, None)
+            if not callable(handler):
+                raise TypeError(
+                    f"{where}: card binds stream {binding.stream!r} to handler "
+                    f"{binding.handler!r}, but the task has no callable {binding.handler!r}"
+                )
+            if binding.routing is Routing.DIRECT:
+                sharing = [t.name for t, _h, r in self._routes.get(port, ()) if r is Routing.DIRECT]
+                if sharing:
+                    logger.warning(
+                        "Port already has a 'direct' task; both get every message. "
+                        "stream_bind can give them separate ports",
+                        stream=port,
+                        task_name=task.name,
+                        also_bound=sharing,
+                    )
+            self._routes.setdefault(port, []).append((task, handler, binding.routing))
+
+    def _commands_for(self, task_type: str) -> frozenset[str]:
+        """The command names the task type declares in its TASK_EXPOSES card."""
+        # Inline: importing the registry runs task-manifest discovery at import time.
+        from dimos.control.tasks.registry import control_task_registry
+
+        return control_task_registry.bindings_for(task_type).exposes
+
+    def _sync_stream_subscriptions(self) -> None:
+        """Subscribe streams that gained consumers; drop those whose last consumer left.
+
+        A consumer is a card-declared task route, or BASE hardware for
+        ``twist_command``. The whole compute+apply runs under
+        ``_subscribe_lock`` (with ``_task_lock`` and ``_hardware_lock`` taken
+        sequentially inside it) so concurrent syncs cannot apply a stale
+        ``active`` set last. The nesting is deadlock-free: no code path
+        acquires ``_subscribe_lock`` while holding either inner lock.
+        """
+        with self._subscribe_lock:
+            if not (self._tick_loop and self._tick_loop.is_running):
+                return
+            with self._task_lock:
+                active = {stream for stream, entries in self._routes.items() if entries}
+            with self._hardware_lock:
+                has_base = any(
+                    hw.component.hardware_type == HardwareType.BASE
+                    for hw in self._hardware.values()
+                )
+            if has_base:
+                active.add("twist_command")
+            for stream in active - self._stream_unsubs.keys():
+                try:
+                    unsub = getattr(self, stream).subscribe(self._make_stream_cb(stream))
+                except Exception:
+                    logger.warning(
+                        "Tasks are bound to a stream but the coordinator could not "
+                        "subscribe to it; use task_invoke RPC or set transport via blueprint",
+                        stream=stream,
+                        exc_info=True,
+                    )
+                    continue
+                self._stream_unsubs[stream] = unsub
+                logger.info("Subscribed to stream for card-bound tasks", stream=stream)
+            for stream in self._stream_unsubs.keys() - active:
+                self._stream_unsubs.pop(stream)()
+                logger.info(
+                    "Unsubscribed from stream; last card-bound consumer removed", stream=stream
+                )
+
+    def _make_stream_cb(self, stream: str) -> "Callable[[Any], None]":
+        pre_hook = self._stream_pre_hooks.get(stream)
+
+        def _on_message(msg: Any) -> None:
+            if pre_hook is not None:
+                pre_hook(msg)
+            self._dispatch(stream, msg)
+
+        return _on_message
 
     @rpc
     def get_task(self, task_name: TaskName) -> ControlTask | None:
@@ -434,62 +647,37 @@ class ControlCoordinator(Module):
         with self._task_lock:
             return [name for name, task in self._tasks.items() if task.is_active()]
 
-    def _on_joint_command(self, msg: JointState) -> None:
-        """Route incoming JointState to streaming tasks by joint name.
+    def _dispatch(self, stream: str, msg: Any) -> None:
+        """Deliver a stream message to its card-routed tasks per each entry's routing rule.
 
-        Routes position data to servo tasks and velocity data to velocity tasks.
-        Each task only receives data for joints it claims.
+        BROADCAST and DIRECT are ungated, so only CLAIM_OVERLAP appears below.
         """
-        if not msg.name:
-            return
-
         t_now = time.perf_counter()
-        incoming_joints = set(msg.name)
-
         with self._task_lock:
-            for task in self._tasks.values():
-                claimed_joints = task.claim().joints
-
-                # Skip if no overlap between incoming and claimed joints
-                if not (claimed_joints & incoming_joints):
-                    continue
-
-                # Route to servo tasks (position control)
-                if msg.position:
-                    positions_by_name = dict(zip(msg.name, msg.position, strict=False))
-                    task.set_target_by_name(positions_by_name, t_now)
-
-                # Route to velocity tasks (velocity control)
-                elif msg.velocity:
-                    velocities_by_name = dict(zip(msg.name, msg.velocity, strict=False))
-                    task.set_velocities_by_name(velocities_by_name, t_now)
-
-    def _on_cartesian_command(self, msg: PoseStamped) -> None:
-        """Route incoming PoseStamped to CartesianIKTask by task name.
-
-        Uses frame_id as the target task name for routing.
-        """
-        task_name = msg.frame_id
-        if not task_name:
-            logger.warning("Received cartesian_command with empty frame_id (task name)")
-            return
-
-        t_now = time.perf_counter()
-
-        with self._task_lock:
-            task = self._tasks.get(task_name)
-            if task is None:
-                logger.warning(f"Cartesian command for unknown task: {task_name}")
+            entries = self._routes.get(stream)
+            if not entries:
                 return
 
-            task.on_cartesian_command(msg, t_now)
+            claimable: set[str] | None = None
 
-    def _on_twist_command(self, msg: Twist) -> None:
-        """Convert Twist → virtual joint velocities and route via _on_joint_command.
+            for task, handler, routing in entries:
+                if routing is Routing.CLAIM_OVERLAP:
+                    if claimable is None:
+                        claimable = set(getattr(msg, "name", ()) or ())
+                    if not claimable or not (task.claim().joints & claimable):
+                        continue
+                try:
+                    handler(msg, t_now)
+                except Exception:
+                    logger.exception(
+                        "Stream handler raised on task",
+                        handler=handler.__name__,
+                        task_name=task.name,
+                        stream=stream,
+                    )
 
-        Maps Twist fields to virtual joints using suffix convention:
-        base_vx ← linear.x, base_vy ← linear.y, base_wz ← angular.z, etc.
-        """
+    def _map_twist_to_base_joints(self, msg: Twist) -> None:
+        """Map Twist onto BASE virtual joints (base/vx ← linear.x, ...) via joint_command."""
         names: list[str] = []
         velocities: list[float] = []
 
@@ -510,102 +698,171 @@ class ControlCoordinator(Module):
 
         if names:
             joint_state = JointState(name=names, velocity=velocities)
-            self._on_joint_command(joint_state)
+            self._dispatch("joint_command", joint_state)
 
-        # Velocity-capable tasks opt in with set_velocity_command().
-        t_now = time.perf_counter()
+    @rpc
+    def set_estop(self, estopped: bool) -> bool:
+        """Latch/clear E-STOP on every task exposing ``set_estop``, making them
+        inert so the tick loop stops commanding the hardware within one tick.
+        Synchronous RPC (not a stream) so E-STOP can't be dropped under load."""
+        if estopped:
+            logger.warning("E-STOP latched at coordinator")
         with self._task_lock:
             for task in self._tasks.values():
-                set_vel = getattr(task, "set_velocity_command", None)
-                if set_vel is not None:
-                    set_vel(msg.linear.x, msg.linear.y, msg.angular.z, t_now)
-
-    def _on_buttons(self, msg: Buttons) -> None:
-        """Forward button state to all tasks."""
-        with self._task_lock:
-            for task in self._tasks.values():
-                task.on_buttons(msg)
+                handler = getattr(task, "set_estop", None)
+                if callable(handler):
+                    handler(estopped)
+        return True
 
     @rpc
     def set_activated(self, engaged: bool) -> None:
-        """Arm/disarm every task exposing ``arm()`` / ``disarm()``."""
+        """Arm/disarm every task whose card declares ``arm`` / ``disarm``."""
+        method = "arm" if engaged else "disarm"
         with self._task_lock:
-            for task in self._tasks.values():
-                method_name = "arm" if engaged else "disarm"
-                handler = getattr(task, method_name, None)
-                if callable(handler):
-                    try:
-                        handler()
-                    except Exception:
-                        logger.exception(f"{method_name}() raised on task {task.name!r}")
+            for name, task in self._tasks.items():
+                if method not in self._task_commands.get(name, frozenset()):
+                    continue
+                try:
+                    self._invoke_declared(task, name, method, {})
+                except Exception:
+                    logger.exception(
+                        "Activation command raised on task", method=method, task_name=name
+                    )
 
     @rpc
     def set_dry_run(self, enabled: bool) -> None:
-        """Toggle dry-run on every task exposing ``set_dry_run``."""
+        """Toggle dry-run on every task whose card declares ``set_dry_run``."""
         with self._task_lock:
-            for task in self._tasks.values():
-                handler = getattr(task, "set_dry_run", None)
-                if callable(handler):
-                    try:
-                        handler(enabled)
-                    except Exception:
-                        logger.exception(f"set_dry_run() raised on task {task.name!r}")
+            for name, task in self._tasks.items():
+                if "set_dry_run" not in self._task_commands.get(name, frozenset()):
+                    continue
+                try:
+                    self._invoke_declared(task, name, "set_dry_run", {"enabled": enabled})
+                except Exception:
+                    logger.exception("set_dry_run() raised on task", task_name=name)
+
+    @rpc
+    def reset_runtime_state(self, reactivate: bool | None = None) -> dict[str, bool]:
+        """Reset transient state on tasks whose card declares ``reset_runtime_state``.
+
+        This is meant for simulation/runtime discontinuities such as MuJoCo
+        respawn, where task histories and latched commands must be cleared
+        without tearing down the coordinator. The result covers declaring
+        tasks only.
+        """
+        results: dict[str, bool] = {}
+        with self._task_lock:
+            for name, task in self._tasks.items():
+                if "reset_runtime_state" not in self._task_commands.get(name, frozenset()):
+                    continue
+                try:
+                    results[name] = bool(
+                        self._invoke_declared(
+                            task, name, "reset_runtime_state", {"reactivate": reactivate}
+                        )
+                    )
+                except Exception:
+                    logger.exception("reset_runtime_state() raised on task", task_name=name)
+                    results[name] = False
+        return results
 
     @rpc
     def task_invoke(
         self, task_name: TaskName, method: str, kwargs: dict[str, Any] | None = None
     ) -> Any:
-        """Invoke a method on a task. Pass t_now=None to auto-inject current time."""
+        """Invoke a task command. Pass t_now=None to auto-inject current time.
+
+        Commands declared in the task's TASK_EXPOSES card are validated
+        against the method's own signature before dispatch; a bad kwarg name
+        or missing required argument raises to the caller. Undeclared methods
+        still dispatch exactly as before but log a nudge to declare them.
+        """
         with self._task_lock:
             task = self._tasks.get(task_name)
             if task is None:
                 logger.warning(f"Task {task_name} not found")
                 return None
 
-            if not hasattr(task, method):
-                logger.warning(f"Task {task_name} has no method {method}")
-                return None
-
-            kwargs = kwargs or {}
+            kwargs = dict(kwargs or {})
 
             # Auto-inject t_now if requested (None means "use current time")
             if "t_now" in kwargs and kwargs["t_now"] is None:
                 kwargs["t_now"] = time.perf_counter()
 
+            if method in self._task_commands.get(task_name, frozenset()):
+                return self._invoke_declared(task, task_name, method, kwargs)
+
+            if not hasattr(task, method):
+                raise AttributeError(
+                    f"task_invoke({task_name!r}, {method!r}): task has no such method; "
+                    f"declared commands: {sorted(self._task_commands.get(task_name, frozenset()))}"
+                )
+            # TODO: Make TASK_EXPOSES an enforced RPC allowlist after migrating callers
+            # that rely on reflective access to undeclared task methods.
+            logger.warning(
+                "undeclared task_invoke; declare it in TASK_EXPOSES",
+                task_name=task_name,
+                method=method,
+            )
             return getattr(task, method)(**kwargs)
 
-    @rpc
-    def set_gripper_position(self, hardware_id: str, position: float) -> bool:
-        """Set gripper position on a specific hardware device.
+    def _invoke_declared(
+        self, task: ControlTask, task_name: TaskName, method: str, kwargs: dict[str, Any]
+    ) -> Any:
+        """Bind ``kwargs`` to the command's own signature, then dispatch.
 
-        Args:
-            hardware_id: ID of the hardware with the gripper
-            position: Gripper position in meters
+        Caller must hold ``_task_lock``. A bad kwarg name or missing required
+        argument raises a ``TypeError`` naming the task, command, and the
+        offending argument; it propagates to the RPC caller.
         """
-        with self._hardware_lock:
-            hw = self._hardware.get(hardware_id)
-            if hw is None:
-                logger.warning(f"Hardware '{hardware_id}' not found for gripper command")
-                return False
-            if isinstance(hw, ConnectedTwistBase):
-                logger.warning(f"Hardware '{hardware_id}' is a twist base, no gripper support")
-                return False
-            return hw.adapter.write_gripper_position(position)
+        handler = getattr(task, method)
+        sig = inspect.signature(handler)
+        where = f"task_invoke({task_name!r}, {method!r})"
+        # ``bind`` reports a missing required arg before an unexpected one, so
+        # name unexpected kwargs explicitly — a typo'd kwarg must be visible.
+        accepts_var_kw = any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+        if not accepts_var_kw:
+            unexpected = [name for name in kwargs if name not in sig.parameters]
+            if unexpected:
+                raise TypeError(
+                    f"{where}: unexpected argument(s) {unexpected}; accepts {list(sig.parameters)}"
+                )
+        try:
+            bound = sig.bind(**kwargs)
+        except TypeError as exc:
+            raise TypeError(f"{where}: {exc}") from exc
+        return handler(*bound.args, **bound.kwargs)
 
     @rpc
-    def get_gripper_position(self, hardware_id: str) -> float | None:
-        """Get gripper position from a specific hardware device.
+    def describe_task(self, task_name: TaskName) -> dict[str, Any] | None:
+        """Describe a task's declared commands and stream routes.
 
-        Args:
-            hardware_id: ID of the hardware with the gripper
+        Each declared command reports its live signature (rendered string
+        plus parameter names) — the method signature is the argument
+        contract. Returns ``{"task", "commands": {name: {"signature",
+        "params"}}, "streams": [(stream, routing), ...]}`` or ``None`` for
+        an unknown task.
         """
-        with self._hardware_lock:
-            hw = self._hardware.get(hardware_id)
-            if hw is None:
+        with self._task_lock:
+            task = self._tasks.get(task_name)
+            if task is None:
                 return None
-            if isinstance(hw, ConnectedTwistBase):
-                return None
-            return hw.adapter.read_gripper_position()
+            commands: dict[str, Any] = {}
+            for name in sorted(self._task_commands.get(task_name, frozenset())):
+                handler = getattr(task, name, None)
+                if not callable(handler):
+                    continue
+                sig = inspect.signature(handler)
+                commands[name] = {"signature": str(sig), "params": list(sig.parameters)}
+            streams = sorted(
+                (stream, routing.value)
+                for stream, entries in self._routes.items()
+                for entry_task, _handler, routing in entries
+                if entry_task is task
+            )
+            return {"task": task_name, "commands": commands, "streams": streams}
 
     @rpc
     def start(self) -> None:
@@ -613,6 +870,17 @@ class ControlCoordinator(Module):
         if self._tick_loop and self._tick_loop.is_running:
             logger.warning("Coordinator already running")
             return
+
+        if type(self) is not ControlCoordinator and self.config.instance_name is None:
+            logger.warning(
+                f"Coordinator subclass {type(self).__name__} has no instance_name, so it "
+                f"serves RPCs under '{type(self).__name__}' — the shipped clients look for "
+                "'ControlCoordinator'. Pass instance_name='ControlCoordinator' in the blueprint."
+            )
+
+        if self.config.publish_robot_joint_states:
+            for component in self.config.hardware:
+                self._robot_joint_port(component.hardware_id)
 
         super().start()
 
@@ -624,6 +892,9 @@ class ControlCoordinator(Module):
         publish_cb = (
             self.coordinator_joint_state.publish if self.config.publish_joint_state else None
         )
+        publish_robot_cb = (
+            self._publish_robot_joint_state if self.config.publish_robot_joint_states else None
+        )
         self._tick_loop = TickLoop(
             tick_rate=self.config.tick_rate,
             hardware=self._hardware,
@@ -632,60 +903,15 @@ class ControlCoordinator(Module):
             task_lock=self._task_lock,
             joint_to_hardware=self._joint_to_hardware,
             publish_callback=publish_cb,
+            publish_robot_callback=publish_robot_cb,
             frame_id=self.config.joint_state_frame_id,
             log_ticks=self.config.log_ticks,
         )
         self._tick_loop.start()
 
-        # Subscribe to joint commands if any streaming tasks configured
-        streaming_types = ("servo", "velocity")
-        has_streaming = any(t.type in streaming_types for t in self.config.tasks)
-        if has_streaming:
-            try:
-                self._joint_command_unsub = self.joint_command.subscribe(self._on_joint_command)
-                logger.info("Subscribed to joint_command for streaming tasks")
-            except Exception:
-                logger.warning(
-                    "Streaming tasks configured but could not subscribe to joint_command. "
-                    "Use task_invoke RPC or set transport via blueprint."
-                )
-
-        # Subscribe to cartesian commands if any cartesian_ik tasks configured
-        has_cartesian_ik = any(t.type in ("cartesian_ik", "teleop_ik") for t in self.config.tasks)
-        if has_cartesian_ik:
-            try:
-                self._cartesian_command_unsub = self.coordinator_cartesian_command.subscribe(
-                    self._on_cartesian_command
-                )
-                logger.info("Subscribed to cartesian_command for CartesianIK/TeleopIK tasks")
-            except Exception:
-                logger.warning(
-                    "CartesianIK/TeleopIK tasks configured but could not subscribe to cartesian_command. "
-                    "Use task_invoke RPC or set transport via blueprint."
-                )
-
-        # Twist commands drive either base hardware or velocity-capable tasks.
-        has_twist_base = any(c.hardware_type == HardwareType.BASE for c in self.config.hardware)
-        with self._task_lock:
-            has_velocity_task = any(
-                callable(getattr(task, "set_velocity_command", None))
-                for task in self._tasks.values()
-            )
-        if has_twist_base or has_velocity_task:
-            try:
-                self._twist_command_unsub = self.twist_command.subscribe(self._on_twist_command)
-                logger.info("Subscribed to twist_command for twist base / velocity-capable tasks")
-            except Exception:
-                logger.warning(
-                    "Twist base or velocity-capable task configured but could not subscribe "
-                    "to twist_command. Use task_invoke RPC or set transport via blueprint."
-                )
-
-        # Subscribe to buttons if any teleop_ik tasks configured (engage/disengage)
-        has_teleop_ik = any(t.type == "teleop_ik" for t in self.config.tasks)
-        if has_teleop_ik:
-            self._buttons_unsub = self.teleop_buttons.subscribe(self._on_buttons)
-            logger.info("Subscribed to buttons for engage/disengage")
+        # Subscribe the streams that registered tasks' cards consume, plus
+        # twist_command when BASE hardware demands the twist mapping.
+        self._sync_stream_subscriptions()
 
         # Arming + dry-run are RPC-only; no stream subscription here.
 
@@ -696,19 +922,12 @@ class ControlCoordinator(Module):
         """Stop the coordinator."""
         logger.info("Stopping ControlCoordinator...")
 
-        # Unsubscribe from streaming commands
-        if self._joint_command_unsub:
-            self._joint_command_unsub()
-            self._joint_command_unsub = None
-        if self._cartesian_command_unsub:
-            self._cartesian_command_unsub()
-            self._cartesian_command_unsub = None
-        if self._twist_command_unsub:
-            self._twist_command_unsub()
-            self._twist_command_unsub = None
-        if self._buttons_unsub:
-            self._buttons_unsub()
-            self._buttons_unsub = None
+        # Route/command tables are kept: they track _tasks, which survives stop(),
+        # and add_task() skips known names so a restart would never rebuild them.
+        with self._subscribe_lock:
+            for unsub in self._stream_unsubs.values():
+                unsub()
+            self._stream_unsubs.clear()
 
         if self._tick_loop:
             self._tick_loop.stop()

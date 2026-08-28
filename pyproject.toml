@@ -29,7 +29,9 @@ include = ["dimos*"]
 exclude = [
     "dimos.web.websocket_vis.node_modules*",
     "dimos.web.command-center-extension*",
-    "dimos.web.dimos_interface*",
+    "dimos.web.dimos_interface.src*",
+    "dimos.web.dimos_interface.public*",
+    "dimos.web.dimos_interface.node_modules*",
 ]
 
 [tool.setuptools.package-data]
@@ -58,7 +60,12 @@ exclude = [
     "mapping/google_maps/fixtures/**",
     "web/command-center-extension/**",
     "web/websocket_vis/node_modules/**",
-    "web/dimos_interface/**",
+    "web/dimos_interface/index.html",
+    "web/dimos_interface/*.json",
+    "web/dimos_interface/*.js",
+    "web/dimos_interface/src/**",
+    "web/dimos_interface/public/**",
+    "web/dimos_interface/node_modules/**",
     "hardware/sensors/lidar/fastlio2/cpp/**",
 ]
 
@@ -67,9 +74,9 @@ name = "dimos"
 authors = [
     {name = "Dimensional Team", email = "build@dimensionalOS.com"},
 ]
-version = "0.0.13"
+version = "0.0.14b1"
 description = "Powering agentive generalist robotics"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 readme = {file = "README.md", content-type = "text/markdown"}
 license = {text = "Apache-2.0"}
 keywords = ["robotics", "ros", "agents", "dimos", "dimensional", "openclaw", "roboclaw", "humanoid", "unitree"]
@@ -94,21 +101,35 @@ classifiers = [
 dependencies = [
     # Transport Protocols
     "dimos-lcm>=0.1.3",
+    "eclipse-zenoh>=1.9.0,<2.0",
     "PyTurboJPEG==1.8.2",
+    "imagecodecs>=2024.6.1", # JPEG-XL for CompressedImage
+    "jsonlines>=4,<5",
     # Core
     "numpy>=1.26.4",
     "scipy>=1.15.1",
     "pin>=3.3.0", # Pinocchio IK library
+    "pin-pink>=4.3.0",
+    "qpsolvers[proxqp]>=4.12.0",
+    "cmeel-tinyxml2>=11,<12", # Pinocchio 4.1 requires the v11 ABI.
     "reactivex",
     "sortedcontainers==2.4.0",
     "pydantic",
     "python-dotenv",
-    "typing_extensions>=4.0; python_version < '3.13'",
+    "packaging>=24.0",
+    "filelock>=3.20,<4",
+    "annotation-protocol>=1.4.0",
+    "lazy_loader",
+    "typing_extensions>=4.7; python_version < '3.13'",
     "plum-dispatch==2.5.7",
+    "GitPython>=3.1.45",
     # Logging
     "structlog>=25.5.0,<26",
     # Core Msgs
-    "opencv-python",
+    # Contrib variant (superset of opencv-python) because cv2.legacy CSRT
+    # trackers (perception/drone) are contrib-only. <5 defers the OpenCV 5
+    # major bump. See also the opencv-python entry in override-dependencies.
+    "opencv-contrib-python>=4.8,<5",
     "open3d-unofficial-arm>=0.19.0.post9; platform_system == 'Linux' and platform_machine == 'aarch64'",
     "open3d>=0.18.0; platform_system != 'Linux' or platform_machine != 'aarch64'",
     # CLI
@@ -117,18 +138,22 @@ dependencies = [
     "textual-serve>=1.1.1,<2",
     "terminaltexteffects==0.12.2",
     "typer>=0.19.2,<1",
+    "keyring>=25,<26",
+    "ipython",
     "plotext==5.3.2",
     # Used for calculating the occupancy map.
     "numba>=0.60.0", # First version supporting Python 3.12
     "llvmlite>=0.42.0", # Required by numba 0.60+
     # TODO: rerun shouldn't be required but rn its in core (there is NO WAY to use dimos without rerun rn)
     # remove this once rerun is optional in core
-    "rerun-sdk==0.32.0a1",
-    "dimos-viewer==0.32.0a1",
+    "rerun-sdk==0.32.0",
+    "dimos-viewer==0.32.0a2",
     "toolz>=1.1.0",
     "protobuf>=6.33.5,<7",
     "psutil>=7.0.0",
-    "sqlite-vec>=0.1.6",
+    # >=0.1.7: the 0.1.6 linux-aarch64 wheel shipped a 32-bit armv7 vec0.so
+    # (wrong ELF class), which fails to load on aarch64. Fixed from 0.1.7 on.
+    "sqlite-vec>=0.1.7",
     "lz4>=4.4.5",
     "bleak>=3.0.2",
     "cryptography>=46.0.5",
@@ -139,13 +164,13 @@ dependencies = [
 
 
 [project.scripts]
-lcmspy = "dimos.utils.cli.lcmspy.run_lcmspy:main"
-agentspy = "dimos.utils.cli.agentspy.agentspy:main"
-humancli = "dimos.utils.cli.human.humanclianim:main"
-dimos = "dimos.robot.cli.dimos:cli_main"
+lcmspy = "dimos.cli.spy.run_spy:lcm_main"
+agentspy = "dimos.cli.agentspy.agentspy:main"
+humancli = "dimos.cli.human.humanclianim:main"
+dimos = "dimos.cli.dimos:cli_main"
 rerun-bridge = "dimos.visualization.rerun.bridge:app"
-doclinks = "dimos.utils.docs.doclinks:main"
-dtop = "dimos.utils.cli.dtop:main"
+doclinks = "dimos.cli.doclinks:main"
+dtop = "dimos.cli.dtop:main"
 
 [project.urls]
 Homepage = "https://dimensionalos.com"
@@ -163,7 +188,7 @@ misc = [
 
     # Perception Dependencies
     "timm>=1.0.15",  # runtime backbone for the EdgeTAM/sam2 segmentation config
-    "edgetam-dimos",
+    "edgetam-dimos>=1.0.1",
 
     # embedding models
     "open_clip_torch==3.2.0",
@@ -181,13 +206,22 @@ misc = [
     "portal",
 ]
 
+spot = [
+    "bosdyn-client>=4.0.0",
+    "bosdyn-api>=4.0.0",
+    "bosdyn-core>=4.0.0",
+]
+
 visualization = [
-    "rerun-sdk==0.32.0a1",
-    "dimos-viewer==0.32.0a1",
+    "rerun-sdk==0.32.0",
+    "dimos-viewer==0.32.0a2",
+    # Rerun URDF robot visualization. yourdfpy depends on trimesh[easy],
+    # which pulls embreex; embreex has no Linux aarch64 wheel.
+    "yourdfpy>=0.0.60; sys_platform != 'linux' or platform_machine != 'aarch64'",
 ]
 
 learning = [
-    # dimos.learning.dataprep dataset writers (lazy-imported per format)
+    # dimos.imitation.dataprep dataset writers (lazy-imported per format)
     "pyarrow",  # LeRobot v3.0 data/episodes parquet
     "pandas",   # LeRobot v3.0 tasks.parquet (task-indexed)
     "h5py",     # HDF5 writer
@@ -200,6 +234,7 @@ agents = [
     "langchain-huggingface>=1,<2",
     "langchain-ollama>=1,<2",
     "ollama>=0.6.0",
+    "openevals>=0.1",  # eval scorers (LLM-as-judge etc.) — dimos/evals
 
     # Audio
     "openai",
@@ -214,6 +249,7 @@ web = [
     "jinja2>=3.1.6",
     "ffmpeg-python",
     "soundfile",
+    "aioquic>=1.2.0",  # WebTransport client for the cockpit relay bridge
 ]
 
 perception = [
@@ -228,6 +264,9 @@ perception = [
     "omegaconf>=2.3.0",
     "hydra-core>=1.3.0",
     "chromadb>=1.0.0",  # spatial-memory vector store (dimos/perception/spatial_*)
+    # SigLIP tokenizer (SiglipProcessor) requires SentencePiece; not captured by
+    # transformers package metadata for google/siglip-base-patch16-224.
+    "sentencepiece>=0.2.0",
 ]
 
 unitree = [
@@ -246,8 +285,6 @@ manipulation = [
     # Planning (Drake)
     "drake==1.45.0; sys_platform == 'darwin' and platform_machine != 'aarch64'",
     "drake>=1.40.0; sys_platform != 'darwin' and platform_machine != 'aarch64'",
-    "pin-pink>=4.2.0",
-    "qpsolvers[proxqp]>=4.12.0",
 
     # Hardware SDKs
     "piper-sdk",
@@ -255,18 +292,22 @@ manipulation = [
     "xarm-python-sdk>=1.17.0",
     "a750-control; sys_platform == 'linux' and platform_machine == 'x86_64'",
 
+    "can-motor-control>=0.0.7; sys_platform == 'linux'",
+
     # Mesh conversion (STL/DAE → OBJ for Drake collision geometry)
     "trimesh",
     "pycollada",
 
     # Visualization (Optional)
+    "pygame>=2.6.1",
     "viser[urdf]>=1.0.29",
+    "yourdfpy>=0.0.60",
     "xacro",
 
     # Other
     "matplotlib>=3.7.1",
     "pyyaml>=6.0",
-    "roboplan",
+    "roboplan>=0.6.0,<0.7.0",
 ]
 
 cpu = [
@@ -287,7 +328,7 @@ sim = [
 ]
 
 mapping = [
-    # PGO for reloc premap + cmu_nav experiments
+    # PGO for reloc premap
     # Jeff's https://github.com/jeff-hykin/gtsam-extended
     "gtsam-extended>=4.3a1.post1",
 ]
@@ -310,18 +351,45 @@ dds = [
     "cyclonedds>=0.10.5",
 ]
 
+webrtc = [
+    # WebRTC DataChannel pubsub (Cloudflare Realtime SFU)
+    "aiortc>=1.14.0",
+    "aiohttp>=3.9.0",
+]
+
 base = [
     "dimos[agents,web,perception,visualization]",
 ]
 
 # All extras except dds and unitree-dds (which require special system setup).
 apriltag = [
-    "opencv-contrib-python==4.10.0.84",
     "reportlab>=4.5.0",
+    # 3D-printable tag plates (--3d). manifold3d is trimesh's boolean engine; it only
+    # arrives transitively via trimesh[easy], which is excluded on linux-aarch64.
+    "trimesh>=4.0.0",
+    "manifold3d>=2.5.0",
+]
+
+# Offline scene-package cooking + loading: USD import (usd-core), convex
+# decomposition for collision (coacd), and mesh ops (trimesh). open3d is
+# already a core dependency. The Blender visual bake is an optional external
+# `blender` binary, not a wheel.
+scene = [
+    "trimesh>=4.0.0",
+    "coacd>=1.0.0",
+    "usd-core>=23.11",
+]
+
+graspgenx = [
+    "graspgenx",
+    "huggingface-hub>=0.30,<1",
+    "matplotlib>=3.7.1",
+    "torch>=2.1,<2.7",
+    "torchvision>=0.16,<0.22",
 ]
 
 all = [
-    "dimos[agents,apriltag,base,cpu,cuda,drone,manipulation,misc,perception,sim,unitree,visualization,web]",
+    "dimos[agents,apriltag,base,cpu,cuda,drone,manipulation,misc,perception,scene,sim,unitree,visualization,web,webrtc]",
 ]
 
 [dependency-groups]
@@ -330,13 +398,16 @@ autofix = ["ruff==0.14.3"]
 
 # Project deps shared by `tests` and `lint`.
 project-deps = [
-    "dimos[web,visualization]",
-    "torch",
+    "dimos[web,visualization,webrtc]",
+    # Blackwell (sm_120) needs torch 2.7 from pytorch-cu128. Cap below 2.8.
+    "torch>=2.1,<2.8",
+    "torchvision>=0.16,<0.23",
     "langchain==1.2.3",
     "langchain-core==1.3.3",
     "googlemaps>=4.10.0",
     "transformers[torch]==4.53.3",
     "einops>=0.8.1",         # Florence2 trust_remote_code dep (see perception extra)
+    "sentencepiece>=0.2.0",  # SigLIP tokenizer dep (see perception extra)
     "ultralytics>=8.3.70",
     "hydra-core>=1.3.0",
     "open_clip_torch==3.2.0",
@@ -350,6 +421,8 @@ project-deps = [
     "lap>=0.5.12",
     "langchain-openai>=1,<2",
     "ollama>=0.6.0",
+    # The generic Damiao whole-body adapter imports upstream types directly.
+    "can-motor-control>=0.0.7; sys_platform == 'linux'",
 ]
 
 tests = [
@@ -362,13 +435,14 @@ tests = [
     "pytest-xdist>=3.5.0",
     "pytest-cov>=5.0",
     "pytest-error-for-skips>=2.0.2",
+    "pytest-rerunfailures>=15.0",
     "coverage>=7.0",
     "requests-mock==1.12.1",
 
     # Misc dev tools
     "pre_commit==4.2.0",
     "watchdog>=3.0.0",
-    "md-babel-py>=1.2.0",
+    "md-babel-py>=1.4.0",
     "py-spy",
     # Builds the pyo3 Rust extension modules into the venv.
     "maturin>=1.7",
@@ -380,6 +454,10 @@ tests = [
     # Deps the lint job swaps for stubs (`stubs/<pkg>/` or `types-*`):
     # the real packages are needed at test time, stubs cover mypy.
     "dimos[apriltag,mapping,drone,cpu,learning]",
+    # Scene-cooking tests need these two from the `scene` extra. The full
+    # extra can't be included: usd-core ships no linux-aarch64 wheel.
+    "coacd>=1.0.0",
+    "trimesh>=4.0.0",
     "mujoco>=3.3.4",
     "pygame>=2.6.1",
     "python-can>=4",
@@ -387,6 +465,12 @@ tests = [
     "viser[urdf]>=1.0.29; sys_platform != 'linux' or platform_machine != 'aarch64'",
 
     {include-group = "project-deps"},
+]
+
+# Drives the cockpit browser e2e (-m web_browser). Kept out of `tests`: only
+# the CI `web` job needs the platform-specific Playwright package.
+browser-tests = [
+    "playwright>=1.55",
 ]
 
 # Lint / format / type-check tooling for the dedicated `lint` CI job.
@@ -401,6 +485,7 @@ lint = [
     "pytest==8.3.5",
     "python-can>=4",
     "python-socketio>=5.16.1",
+    "roboplan>=0.6.0,<0.7.0",
     "sounddevice>=0.5.5",
     "trimesh>=4.12",
     "watchdog>=3.0.0",
@@ -423,13 +508,24 @@ tests-self-hosted = [
     # Needed to compile the in-tree extensions.
     "pybind11>=2.12",
 ]
+docs = [
+    "mkdocs-awesome-nav>=3.3.0",
+    "mkdocs-glightbox>=0.5.2",
+    "mkdocs-material>=9.7.7",
+    "mkdocs-minify-plugin>=0.8.0",
+    "mkdocs-redirects>=1.2.3",
+]
 
 [tool.uv]
 required-version = ">=0.9.17"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false }
+exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false }
 override-dependencies = [
+    # ultralytics, unitree-sdk2py-dimos and unitree-webrtc-connect depend on
+    # opencv-python, which ships the same cv2/ tree as our opencv-contrib-python
+    # core dep and clobbers it. Contrib is a superset, so never install plain.
+    "opencv-python; sys_platform == 'never'",
     # moondream pins pillow<11 but we need >=12.2.0 for security fixes
     # (CVE-2026-25990, CVE-2026-40192, CVE-2026-42311).
     "pillow>=12.2.0",
@@ -441,7 +537,35 @@ override-dependencies = [
     # uv picks importlib-metadata>=9 and cascades the otel stack down to 1.11.1,
     # whose stale _pb2.py files crash with protobuf>=6.
     "importlib-metadata<8.8.0",
+    # GraspGenX pins older versions that conflict with the current DimOS stack.
+    # These versions were validated with the pinned GraspGenX source revision.
+    "yourdfpy>=0.0.60",
+    "trimesh>=4.12",
+    "numpy>=2",
+    "timm>=1.0.17",
+    "huggingface-hub>=0.30,<1",
+    "diffusers>=0.29",
+    "pyopengl>=3.1.5",
+    # Force the torch 2.7 line even if a transitive dep asks for newer.
+    "torch>=2.1,<2.8",
+    "torchvision>=0.16,<0.23",
 ]
+
+[tool.uv.sources]
+graspgenx = { git = "https://github.com/NVlabs/GraspGenX.git", rev = "b9429097728cb1c430dd78b92edf17ba318aad03" }
+# CUDA builds are not published for macOS or non-x86_64 Linux. Those platforms
+# fall back to PyPI.
+torch = [
+    { index = "pytorch-cu128", marker = "(sys_platform == 'linux' and platform_machine == 'x86_64') or sys_platform == 'win32'" },
+]
+torchvision = [
+    { index = "pytorch-cu128", marker = "(sys_platform == 'linux' and platform_machine == 'x86_64') or sys_platform == 'win32'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
 
 [tool.ruff]
 line-length = 100
@@ -479,6 +603,10 @@ ignore = [
 "dimos/models/Detic/*" = ["ALL"]
 # Naming needs to match the actual libraries.
 "stubs/*.pyi" = ["N801", "N802", "N803", "N815", "N816", "N818"]
+# Wire-protocol/manifest mirrors: model field names are the wire names
+# (camelCase, pinned to the TS side by the golden fixtures).
+"dimos/web/relay_bridge/protocol.py" = ["N815"]
+"dimos/web/relay_bridge/manifest.py" = ["N815"]
 # Polyfill module: re-exports ROS message types (with a dimos_lcm fallback).
 "dimos/types/ros_polyfill.py" = ["F401"]
 
@@ -497,13 +625,16 @@ python_version = "3.12"
 incremental = true
 strict = true
 warn_unused_ignores = false
+untyped_calls_exclude = ["zenoh"]
 explicit_package_bases = true
-exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/conftest.py*"
+exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/tool_.|.*/conftest.py*"
 
 [[tool.mypy.overrides]]
 module = [
     "a750_control",
     "a750_control.*",
+    "bosdyn",
+    "bosdyn.*",
     "cyclonedds",
     "cyclonedds.*",
     "dimos_lcm.*",
@@ -512,6 +643,8 @@ module = [
     "etils",
     "faster_whisper",
     "geometry_msgs.*",
+    "graspgenx",
+    "graspgenx.*",
     "h5py",
     "h5py.*",
     "mcap",
@@ -520,7 +653,10 @@ module = [
     "mujoco_playground.*",
     "nav_msgs.*",
     "open_clip",
+    "openevals.*",
     "pinocchio",
+    "pink",
+    "pink.*",
     "piper_sdk.*",
     "plotext",
     "plum.*",
@@ -556,6 +692,13 @@ module = [
     "websocket",
     "xarm.*",
     "ament_index_python.*",
+    "coacd",
+    "open3d",
+    "open3d.*",
+    "pxr",
+    "pxr.*",
+    "trimesh",
+    "trimesh.*",
 ]
 ignore_missing_imports = true
 
@@ -577,7 +720,7 @@ env = [
   "GOOGLE_MAPS_API_KEY=AIzafake_google_key",
   "PYTHONWARNINGS=ignore:cupyx.jit.rawkernel is experimental:FutureWarning",
 ]
-addopts = "--dist=loadfile --durations=10 --timeout=600 --timeout-method=thread -v -ra --showlocals --cov-report=xml -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (tool or self_hosted or mujoco or self_hosted_large)'"
+addopts = "--dist=loadfile --durations=10 --timeout=600 --timeout-method=thread -v -ra --showlocals --cov-report=xml -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e)'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
@@ -596,14 +739,15 @@ exclude_also = [
 ]
 
 [tool.largefiles]
-max_size_kb = 50
+max_size_kb = 75
 ignore = [
     "uv.lock",
     "*/package-lock.json",
-    "dimos/dashboard/dimos.rbl",
+    "Cargo.lock",
+    "*/Cargo.lock",
     "dimos/web/dimos_interface/themes.json",
     "dimos/manipulation/manipulation_module.py",
-    "dimos/manipulation/visualization/viser/test_viser_visualization.py",
-    "dimos/navigation/cmu_nav/modules/*/main.cpp",
-    "dimos/navigation/cmu_nav/common/*.hpp",
+    "dimos/manipulation/test_roboplan.py",
+    "misc/DimSim/scenes/apartment/objects/manifest.json",
+    "misc/DimSim/src/engine.js",
 ]

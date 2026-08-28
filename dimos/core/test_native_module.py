@@ -18,28 +18,36 @@ Every test launches the real native_echo.py subprocess via ModuleCoordinator.bui
 The echo script writes received CLI args to a temp file for assertions.
 """
 
+import contextlib
 from io import BytesIO
 import json
 from pathlib import Path
 import time
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 
+from pydantic import ValidationError
 import pytest
 
 from dimos.core import native_module as native_module_mod
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
+from dimos.core.global_config import GlobalConfig, TransportBackend
 from dimos.core.module import Module
 from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
-from dimos.core.stream import In, Out
-from dimos.core.transport import LCMTransport
+from dimos.core.stream import IO, In, Out
+from dimos.core.transport import LCMTransport, ZenohTransport
+from dimos.core.transport_factory import make_transport, transport_topic
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.protocol.pubsub.impl.zenohpubsub import QOS_NEVER_DROP, Topic as ZenohTopic
+from dimos.protocol.service.zenohservice import ZenohConfig
 
-_ECHO = str(Path(__file__).parent / "tests" / "native_echo.py")
+_ECHO = str(Path(__file__).parent / "demos" / "native_echo.py")
 
 
 @pytest.fixture
@@ -48,9 +56,8 @@ def args_file(tmp_path: Path) -> str:
     return str(tmp_path / "native_echo_args.json")
 
 
-def read_json_file(path: str) -> dict[str, str]:
-    """Read and parse --key value pairs from the echo output file."""
-    raw: list[str] = json.loads(Path(path).read_text())
+def parse_cli_args(raw: list[str]) -> dict[str, str]:
+    """Parse --key value pairs out of a native module arg list."""
     result = {}
     i = 0
     while i < len(raw):
@@ -62,10 +69,22 @@ def read_json_file(path: str) -> dict[str, str]:
     return result
 
 
+def read_json_file(path: str) -> dict[str, str]:
+    """Read and parse --key value pairs from the echo output file."""
+    return parse_cli_args(json.loads(Path(path).read_text()))
+
+
 class StubNativeConfig(NativeModuleConfig):
     executable: str = _ECHO
     output_file: str | None = None
     die_after: float | None = None
+    some_param: float = 1.5
+
+
+class StubFrameIdConfig(NativeModuleConfig):
+    executable: str = _ECHO
+    stdin_config: bool = True
+    base_fields: frozenset[str] = frozenset({"frame_id"})
     some_param: float = 1.5
 
 
@@ -74,6 +93,16 @@ class StubNativeModule(NativeModule):
     pointcloud: Out[PointCloud2]
     imu: Out[Imu]
     cmd_vel: In[Twist]
+
+
+class StubBuildModule(NativeModule):
+    pass
+
+
+class StubIoModule(NativeModule):
+    config: StubNativeConfig
+    cmd_vel: In[Twist]
+    tf: IO[TFMessage]
 
 
 class StubConsumer(Module):
@@ -149,6 +178,54 @@ def test_manual(dimos_cluster: ModuleCoordinator, args_file: str) -> None:
     }
 
 
+def test_io_port_topic_reaches_the_native_process() -> None:
+    """An IO port is both a subscriber and a publisher, so it needs its topic."""
+    module = StubIoModule(executable=_ECHO)
+    transports = [LCMTransport("/cmd_vel", Twist), LCMTransport("/tf", TFMessage)]
+    try:
+        module.set_transport("cmd_vel", transports[0])
+        module.set_transport("tf", transports[1])
+
+        assert module._collect_topics() == {
+            "cmd_vel": "/cmd_vel#geometry_msgs.Twist",
+            "tf": "/tf#tf2_msgs.TFMessage",
+        }
+    finally:
+        module.stop()
+        for transport in transports:
+            with contextlib.suppress(Exception):
+                transport.stop()
+
+
+def test_tf_topic_comes_from_the_declared_port_only() -> None:
+    """No tf port declared means no tf topic, rather than a silently injected one."""
+    module = StubNativeModule(executable=_ECHO)
+    transport = LCMTransport("/cmd_vel", Twist)
+    try:
+        module.set_transport("cmd_vel", transport)
+
+        assert module._collect_topics() == {"cmd_vel": "/cmd_vel#geometry_msgs.Twist"}
+    finally:
+        module.stop()
+        with contextlib.suppress(Exception):
+            transport.stop()
+
+
+def test_io_port_publisher_qos_reaches_the_native_process() -> None:
+    module = StubIoModule(executable=_ECHO)
+    transport = ZenohTransport(ZenohTopic("/tf", TFMessage, qos=QOS_NEVER_DROP))
+    try:
+        module.set_transport("tf", transport)
+
+        assert module._collect_output_qos() == {
+            transport.channel: {"reliability": "reliable", "congestion_control": "block"},
+        }
+    finally:
+        module.stop()
+        with contextlib.suppress(Exception):
+            transport.stop()
+
+
 def test_autoconnect(args_file: str) -> None:
     """autoconnect passes correct topic args to the native subprocess."""
     blueprint = autoconnect(
@@ -160,7 +237,7 @@ def test_autoconnect(args_file: str) -> None:
         StubProducer.blueprint(),
     ).transports(
         {
-            ("pointcloud", PointCloud2): LCMTransport("/my/custom/lidar", PointCloud2),
+            ("pointcloud", PointCloud2): make_transport("/my/custom/lidar", PointCloud2),
         },
     )
 
@@ -180,7 +257,7 @@ def test_autoconnect(args_file: str) -> None:
         assert producer.cmd_vel.transport.topic == native.cmd_vel.transport.topic
 
         # Custom transport was applied
-        assert native.pointcloud.transport.topic.topic == "/my/custom/lidar"
+        assert native.pointcloud.transport.topic.topic == transport_topic("/my/custom/lidar")
 
         # Wait for the native subprocess to write the output file
         for _ in range(50):
@@ -190,13 +267,120 @@ def test_autoconnect(args_file: str) -> None:
     finally:
         coordinator.stop()
 
+    # A native module is handed each stream's wire channel, which the two
+    # backends spell differently -- ask the factory rather than pinning one.
     assert read_json_file(args_file) == {
-        "cmd_vel": "/cmd_vel#geometry_msgs.Twist",
-        "pointcloud": "/my/custom/lidar#sensor_msgs.PointCloud2",
-        "imu": "/imu#sensor_msgs.Imu",
+        "cmd_vel": make_transport("/cmd_vel", Twist).channel,
+        "pointcloud": make_transport("/my/custom/lidar", PointCloud2).channel,
+        "imu": make_transport("/imu", Imu).channel,
         "output_file": args_file,
         "some_param": "2.5",
     }
+
+
+def run_build(tmp_path: Path, *, build_native: bool) -> Path:
+    """Builds a module whose executable already exists. Returns the build sentinel path."""
+    sentinel = tmp_path / "build_ran"
+    exe = tmp_path / "already_built"
+    exe.touch()
+    module = StubBuildModule(
+        executable=str(exe),
+        build_command=f"touch {sentinel}",
+        g=GlobalConfig(build_native=build_native),
+    )
+    try:
+        module.build()
+    finally:
+        module.stop()
+    return sentinel
+
+
+def test_existing_executable_skips_build(tmp_path: Path) -> None:
+    assert not run_build(tmp_path, build_native=False).exists()
+
+
+def test_build_native_forces_build(tmp_path: Path) -> None:
+    assert run_build(tmp_path, build_native=True).exists()
+
+
+def _launch(monkeypatch, transport: TransportBackend, **config_kwargs: Any) -> dict[str, Any]:
+    """The launch line the native subprocess would get, without spawning it."""
+    monkeypatch.setattr(native_module_mod.global_config, "transport", transport)
+    monkeypatch.setattr(native_module_mod.global_config, "robot_ip", "192.0.2.10")
+    monkeypatch.setattr(native_module_mod.global_config, "robot_ips", None)
+    monkeypatch.setattr(native_module_mod.global_config, "zenoh_interface", "")
+    monkeypatch.setattr(native_module_mod.global_config, "zenoh_scouting", False)
+    monkeypatch.setattr(native_module_mod.global_config, "zenoh_mode", "peer")
+    monkeypatch.setattr(native_module_mod.global_config, "zenoh_connect", "")
+    # A port-less module: constructing one with ports opens its transports.
+    module = StubBuildModule(executable=_ECHO, stdin_config=True, **config_kwargs)
+    try:
+        return json.loads(module._stdin_blob({}))
+    finally:
+        module.stop()
+
+
+def test_the_launch_line_carries_the_session(monkeypatch) -> None:
+    session = _launch(monkeypatch, "zenoh")["session"]
+    assert session["mode"] == "peer"
+    assert session["connect"] == ["tcp/192.0.2.10:7447"]
+
+
+def test_lcm_sends_no_session_settings(monkeypatch) -> None:
+    assert _launch(monkeypatch, "lcm")["session"] == {}
+
+
+def test_a_pinned_mode_reaches_the_launch_line(monkeypatch) -> None:
+    """A blueprint can give one native a different role, keeping the rest derived."""
+    session = _launch(monkeypatch, "zenoh", session=ZenohConfig(mode="client"))["session"]
+    assert session["mode"] == "client"
+    assert session["connect"] == ["tcp/192.0.2.10:7447"]
+
+
+def test_a_native_can_be_opened_as_the_router(monkeypatch) -> None:
+    pinned = ZenohConfig(mode="router", listen=["tcp/127.0.0.1:17450"], connect=[])
+    session = _launch(monkeypatch, "zenoh", session=pinned)["session"]
+    assert session["mode"] == "router"
+    assert session["listen"] == ["tcp/127.0.0.1:17450"]
+    assert session["connect"] == []
+
+
+def test_a_pinned_session_is_not_a_module_config_field(monkeypatch) -> None:
+    """Native config structs reject unknown keys, so it stays out of config."""
+    assert _launch(monkeypatch, "zenoh", session=ZenohConfig())["config"] is None
+
+
+def test_a_session_for_another_transport_is_rejected(monkeypatch) -> None:
+    """A module pinned as a zenoh router must not start silently under LCM."""
+    with pytest.raises(ValueError, match="but the transport is lcm"):
+        _launch(monkeypatch, "lcm", session=ZenohConfig(mode="client"))
+
+
+def test_a_session_without_the_stdin_line_is_rejected() -> None:
+    """The session reaches the module on that line or not at all."""
+    with pytest.raises(ValidationError, match="stdin_config off"):
+        NativeModuleConfig(executable=_ECHO, session=ZenohConfig(), stdin_config=False)
+
+
+def test_base_field_not_sent_without_opt_in() -> None:
+    """Native config structs reject unknown keys, so a base field stays Python-side."""
+    config = StubNativeConfig(frame_id="odom")
+    assert "frame_id" not in config.to_config_dict()
+    assert "frame_id" not in parse_cli_args(config.to_cli_args())
+
+
+def test_base_field_sent_when_opted_in() -> None:
+    config = StubFrameIdConfig(frame_id="odom")
+    assert config.to_config_dict()["frame_id"] == "odom"
+    assert parse_cli_args(config.to_cli_args())["frame_id"] == "odom"
+
+
+def test_framework_fields_never_sent() -> None:
+    """Opting one base field in must not carry the subprocess plumbing with it."""
+    config = StubFrameIdConfig(frame_id="odom", cwd="/tmp", extra_args=["--x"])
+    plumbing = set(NativeModuleConfig.model_fields) - {"frame_id"}
+    assert not plumbing & set(config.to_config_dict())
+    assert not plumbing & set(parse_cli_args(config.to_cli_args()))
 
 
 def _capture_logs(

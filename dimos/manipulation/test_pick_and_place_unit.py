@@ -16,18 +16,19 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from collections.abc import Iterator
 
 import open3d as o3d
 import pytest
 
-from dimos.core.module import ModuleBase
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.perception.detection.type.detection3d.object import Object as DetObject
+from dimos.perception.experimental.object import Object as DetObject
+from dimos.robot.assets.model import RobotModel
 
 
 def _make_det_object(
@@ -54,10 +55,16 @@ def _make_det_object(
 
 
 @pytest.fixture
-def module() -> PickAndPlaceModule:
-    """Create a PickAndPlaceModule with heavy base init (RPC, config) patched out."""
-    with patch.object(ModuleBase, "__init__", lambda self, config_args: None):
-        return PickAndPlaceModule()
+def module() -> Iterator[PickAndPlaceModule]:
+    """Create an unstarted PickAndPlaceModule for pure-logic tests."""
+    instance = PickAndPlaceModule(
+        model=RobotModelConfig(
+            model=RobotModel.from_file("unused.urdf"),
+            joint_names=[],
+        )
+    )
+    yield instance
+    instance.stop()
 
 
 class TestFindObjectInDetections:

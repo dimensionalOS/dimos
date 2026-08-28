@@ -1,5 +1,16 @@
 // Copyright 2026 Dimensional Inc.
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 //! Multi-source Dijkstra over the CellId-indexed surface graph. State and
 //! the heap live in a reusable struct so the inner loop never allocates.
@@ -17,7 +28,25 @@ pub struct DijkstraState {
     pub dist: Vec<f32>,
     pub pred: Vec<CellId>,
     pub source: Vec<u32>,
-    heap: BinaryHeap<Scored>,
+    // Window and frontier membership for the regional search, left all-false
+    // between calls.
+    in_window: Vec<bool>,
+    in_frontier: Vec<bool>,
+    frontier: Vec<CellId>,
+    heap: BinaryHeap<Scored<u128>>,
+}
+
+/// Heap tie-breaker for the ordering. This is totally swappable, this is
+/// just very fast.
+#[inline]
+fn heap_key(c: VoxelKey, id: CellId) -> u128 {
+    let f = |v: i32| (v as u32 ^ 0x8000_0000) as u128;
+    f(c.0) << 96 | f(c.1) << 64 | f(c.2) << 32 | id as u128
+}
+
+#[inline]
+fn heap_id(key: u128) -> CellId {
+    key as u32
 }
 
 impl DijkstraState {
@@ -29,6 +58,10 @@ impl DijkstraState {
         self.pred.resize(n, NO_CELL);
         self.source.clear();
         self.source.resize(n, 0);
+        self.in_window.clear();
+        self.in_window.resize(n, false);
+        self.in_frontier.clear();
+        self.in_frontier.resize(n, false);
         self.heap.clear();
     }
 
@@ -39,6 +72,10 @@ impl DijkstraState {
             self.dist.resize(n, f32::INFINITY);
             self.pred.resize(n, NO_CELL);
             self.source.resize(n, 0);
+        }
+        if self.in_window.len() < n {
+            self.in_window.resize(n, false);
+            self.in_frontier.resize(n, false);
         }
     }
 }
@@ -77,10 +114,11 @@ pub fn dijkstra(
         }
         state.dist[s as usize] = 0.0;
         state.source[s as usize] = s;
-        state.heap.push(Scored(0.0, cells.coord(s), s));
+        state.heap.push(Scored(0.0, heap_key(cells.coord(s), s)));
     }
 
-    while let Some(Scored(d, _, u)) = state.heap.pop() {
+    while let Some(Scored(d, key)) = state.heap.pop() {
+        let u = heap_id(key);
         let cur = state.dist[u as usize];
         if d > cur {
             continue;
@@ -95,7 +133,7 @@ pub fn dijkstra(
                 state.source[v] = su;
                 state
                     .heap
-                    .push(Scored(nd, cells.coord(edge.dest), edge.dest));
+                    .push(Scored(nd, heap_key(cells.coord(edge.dest), edge.dest)));
             }
         }
     }
@@ -107,52 +145,62 @@ pub fn dijkstra(
 pub fn dijkstra_region(
     cells: &SurfaceCells,
     sources: &[CellId],
-    window: &AHashSet<CellId>,
+    window: &[CellId],
     state: &mut DijkstraState,
     weight: Weight,
 ) {
-    state.ensure_capacity(cells.slot_capacity());
+    let n_slots = cells.slot_capacity();
+    state.ensure_capacity(n_slots);
     state.heap.clear();
 
+    // Dense membership mask over the window cells.
     for &w in window {
         let i = w as usize;
+        state.in_window[i] = true;
         state.dist[i] = f32::INFINITY;
         state.pred[i] = NO_CELL;
         state.source[i] = 0;
     }
 
     for &s in sources {
-        if !cells.is_live(s) || !window.contains(&s) {
+        if !cells.is_live(s) || !state.in_window[s as usize] {
             continue;
         }
         state.dist[s as usize] = 0.0;
         state.source[s as usize] = s;
-        state.heap.push(Scored(0.0, cells.coord(s), s));
+        state.heap.push(Scored(0.0, heap_key(cells.coord(s), s)));
     }
 
-    let mut frontier: AHashSet<CellId> = AHashSet::new();
+    state.frontier.clear();
     for &w in window {
         for edge in cells.neighbors(w) {
             let n = edge.dest;
-            if !window.contains(&n) && state.dist[n as usize].is_finite() {
-                frontier.insert(n);
+            if !state.in_window[n as usize]
+                && !state.in_frontier[n as usize]
+                && state.dist[n as usize].is_finite()
+            {
+                state.in_frontier[n as usize] = true;
+                state.frontier.push(n);
             }
         }
     }
-    for &n in &frontier {
+    for i in 0..state.frontier.len() {
+        let n = state.frontier[i];
+        state.in_frontier[n as usize] = false;
         state
             .heap
-            .push(Scored(state.dist[n as usize], cells.coord(n), n));
+            .push(Scored(state.dist[n as usize], heap_key(cells.coord(n), n)));
     }
 
-    while let Some(Scored(d, _, u)) = state.heap.pop() {
+    while let Some(Scored(d, key)) = state.heap.pop() {
+        let u = heap_id(key);
         if d > state.dist[u as usize] {
             continue;
         }
         let su = state.source[u as usize];
         for edge in cells.neighbors(u) {
             let v = edge.dest;
-            if !window.contains(&v) {
+            if !state.in_window[v as usize] {
                 continue;
             }
             let nd = d + weight.of(edge);
@@ -160,9 +208,13 @@ pub fn dijkstra_region(
                 state.dist[v as usize] = nd;
                 state.pred[v as usize] = u;
                 state.source[v as usize] = su;
-                state.heap.push(Scored(nd, cells.coord(v), v));
+                state.heap.push(Scored(nd, heap_key(cells.coord(v), v)));
             }
         }
+    }
+
+    for &w in window {
+        state.in_window[w as usize] = false;
     }
 }
 
@@ -185,22 +237,23 @@ pub fn walk_preds(state: &DijkstraState, start: CellId) -> Vec<CellId> {
     cells
 }
 
-struct Scored(f32, VoxelKey, CellId);
+/// Min-heap entry: cost first, with an ordered payload as a deterministic
+/// tie-break.
+pub(crate) struct Scored<T>(pub f32, pub T);
 
-impl PartialEq for Scored {
+impl<T: Ord> PartialEq for Scored<T> {
     fn eq(&self, other: &Self) -> bool {
         self.0.total_cmp(&other.0) == Ordering::Equal && self.1 == other.1
     }
 }
-impl Eq for Scored {}
-impl PartialOrd for Scored {
+impl<T: Ord> Eq for Scored<T> {}
+impl<T: Ord> PartialOrd for Scored<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
-impl Ord for Scored {
+impl<T: Ord> Ord for Scored<T> {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Tie-break on cell id for repeatable ordering.
         other.0.total_cmp(&self.0).then(self.1.cmp(&other.1))
     }
 }
@@ -250,7 +303,7 @@ mod tests {
         let mut full = DijkstraState::default();
         dijkstra(&sc, &sources, &mut full, Weight::Penalized);
 
-        let window: AHashSet<CellId> = sc.ids().collect();
+        let window: Vec<CellId> = sc.ids().collect();
         let mut region = DijkstraState::default();
         dijkstra_region(&sc, &sources, &window, &mut region, Weight::Penalized);
 
@@ -282,7 +335,7 @@ mod tests {
             ..Default::default()
         };
 
-        let window: AHashSet<CellId> = sc
+        let window: Vec<CellId> = sc
             .ids()
             .filter(|&id| {
                 let (x, y, _) = sc.coord(id);

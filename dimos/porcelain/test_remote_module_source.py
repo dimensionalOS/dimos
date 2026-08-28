@@ -14,21 +14,58 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import importlib
+import inspect
 
 import pytest
 
-from dimos.core.tests.stress_test_module import StressTestModule
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.core import rpc
+from dimos.core.demos.stress_test_module import StressTestModule
+from dimos.core.global_config import GlobalConfig
+from dimos.core.module import Module
 from dimos.porcelain.dimos import Dimos
-from dimos.porcelain.remote_module_source import _RemoteProxy
+from dimos.porcelain.module_handle import RemoteModuleProxy
+from dimos.porcelain.remote_module_source import RemoteModuleSource
 
 
-def test_connect_no_running_system(tmp_path, monkeypatch):
-    import dimos.core.run_registry as run_registry
+class NamedRemoteModule(Module):
+    @rpc
+    def ping_name(self) -> str:
+        return self.config.instance_name or "default"
 
-    monkeypatch.setattr(run_registry, "REGISTRY_DIR", tmp_path / "runs")
-    with pytest.raises(RuntimeError, match="No running DimOS instance"):
+
+@contextmanager
+def _remote_source_with_instances(*instance_names: str):
+    coordinator = ModuleCoordinator(g=GlobalConfig(n_workers=0, viewer="none"))
+    coordinator.start()
+    try:
+        for instance_name in instance_names:
+            coordinator.deploy(NamedRemoteModule, instance_name=instance_name)
+        coordinator.start_rpc_service()
+        source = RemoteModuleSource()
+        try:
+            yield source
+        finally:
+            source.close()
+    finally:
+        coordinator.stop()
+
+
+def test_connect_no_running_system():
+    with pytest.raises(RuntimeError, match="No running DimOS coordinator"):
         Dimos.connect(timeout=0.5)
+
+
+def test_connect_uses_default_timeout_without_registry_precondition(mocker):
+    source = mocker.patch("dimos.porcelain.dimos.RemoteModuleSource")
+
+    app = Dimos.connect()
+    try:
+        source.assert_called_once_with(timeout=5.0)
+    finally:
+        app.stop()
 
 
 def test_connect_skill_call(running_app, client):
@@ -42,6 +79,15 @@ def test_connect_skill_call(running_app, client):
 def test_connect_rpc_method_call(client):
     module = client.StressTestModule
     assert module.ping() == "pong"
+
+
+def test_rpc_proxy_preserves_signature_and_documentation(client):
+    method = client.StressTestModule.slow
+
+    assert str(inspect.signature(method)) == "(seconds: 'float' = 1.0) -> 'str'"
+    assert method.__name__ == "slow"
+    assert method.__doc__ == StressTestModule.slow.__doc__
+    assert "self" not in inspect.signature(method).parameters
 
 
 def test_connect_restart_invalidates_cache(client):
@@ -84,6 +130,56 @@ def test_connect_get_module_caches(client):
     assert m1 is m2
 
 
+def test_get_module_class_name_resolves_single_namespaced_instance():
+    with _remote_source_with_instances("robot0/namedremotemodule") as source:
+        module = source.get_module("NamedRemoteModule")
+        assert module.ping_name() == "robot0/namedremotemodule"
+
+
+def test_get_module_class_name_raises_when_ambiguous():
+    with _remote_source_with_instances(
+        "robot0/namedremotemodule", "robot1/namedremotemodule"
+    ) as source:
+        with pytest.raises(ValueError, match="Multiple instances"):
+            source.get_module("NamedRemoteModule")
+
+        module = source.get_module("robot1/namedremotemodule")
+        assert module.ping_name() == "robot1/namedremotemodule"
+
+
+def test_cached_class_lookup_becomes_ambiguous_after_live_module_addition():
+    with _remote_source_with_instances("robot0/namedremotemodule") as source:
+        assert source.get_module("NamedRemoteModule").ping_name() == "robot0/namedremotemodule"
+
+        source._coord.call(
+            "load_blueprint",
+            NamedRemoteModule.blueprint(instance_name="robot1/namedremotemodule"),
+        )
+
+        with pytest.raises(ValueError, match="robot1/namedremotemodule"):
+            source.get_module("NamedRemoteModule")
+
+
+def test_dimos_discovery_distinguishes_same_class_instances():
+    with _remote_source_with_instances(
+        "robot0/namedremotemodule", "robot1/namedremotemodule"
+    ) as source:
+        app = Dimos()
+        app._source = source
+        try:
+            assert {module.instance_name for module in app.list_modules()} == {
+                "robot0/namedremotemodule",
+                "robot1/namedremotemodule",
+            }
+            assert app.get_module("robot1/namedremotemodule").ping_name() == (
+                "robot1/namedremotemodule"
+            )
+            with pytest.raises(ValueError, match="robot0/namedremotemodule"):
+                app.get_module("NamedRemoteModule")
+        finally:
+            app.stop()
+
+
 def test_remote_proxy_fallback_when_class_unimportable(client, monkeypatch):
     """If `importlib.import_module` raises, get_module returns a names-only proxy."""
     real_import = importlib.import_module
@@ -96,5 +192,10 @@ def test_remote_proxy_fallback_when_class_unimportable(client, monkeypatch):
     monkeypatch.setattr("dimos.porcelain.remote_module_source.importlib.import_module", fake_import)
     client._source.invalidate("StressTestModule")
     proxy = client._source.get_module("StressTestModule")
-    assert isinstance(proxy, _RemoteProxy)
+    assert isinstance(proxy, RemoteModuleProxy)
     assert proxy.ping() == "pong"
+    assert str(inspect.signature(proxy.ping)) == "(*args, **kwargs)"
+
+    info = client.describe("StressTestModule.ping")
+    assert info.signature is None
+    assert info.documentation is None

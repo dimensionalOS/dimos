@@ -21,7 +21,8 @@ import reactivex.operators as ops
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.core.transport import pLCMTransport
+from dimos.core.transport import PubSubTransport
+from dimos.core.transport_factory import make_transport
 from dimos.stream.audio.node_normalizer import AudioNormalizer
 from dimos.utils.logging_config import setup_logger
 from dimos.web.robot_web_interface import RobotWebInterface
@@ -35,13 +36,13 @@ logger = setup_logger()
 class WebInput(Module):
     _web_interface: RobotWebInterface | None = None
     _thread: Thread | None = None
-    _human_transport: pLCMTransport[str] | None = None
+    _human_transport: PubSubTransport[str] | None = None
 
     @rpc
     def start(self) -> None:
         super().start()
 
-        self._human_transport = pLCMTransport("/human_input")
+        self._human_transport = make_transport("/human_input")
 
         audio_subject: rx.subject.Subject[AudioEvent] = rx.subject.Subject()
 
@@ -83,5 +84,5 @@ class WebInput(Module):
         if self._thread:
             self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         if self._human_transport:
-            self._human_transport.lcm.stop()
+            self._human_transport.stop()
         super().stop()
