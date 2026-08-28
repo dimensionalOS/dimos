@@ -55,6 +55,13 @@ def _load_script() -> ModuleType:
 
 _SCRIPT = _load_script()
 _IN_GIT_CHECKOUT = (DIMOS_PROJECT_ROOT / ".git").exists()
+# (file, class) form of the script's externally-provisioned exclusions; their
+# machine-dependent build commands are exempt from the literal rule, and
+# discover() itself fails loudly if an entry goes stale.
+_PROVISIONED = {
+    (f"{qualname.rsplit('.', 1)[0].replace('.', '/')}.py", qualname.rsplit(".", 1)[-1])
+    for qualname in _SCRIPT.EXTERNALLY_PROVISIONED
+}
 
 
 class _ClassDef(NamedTuple):
@@ -147,6 +154,8 @@ def _closure_nix_configs(classes: list[_ClassDef]) -> set[tuple[str, str]]:
     nix_configs = set()
     for cls in classes:
         if cls.name not in closure or cls.name == "NativeModuleConfig":
+            continue
+        if (cls.file, cls.name) in _PROVISIONED:
             continue
         kind, command = effective_command(cls, frozenset())
         assert kind != "opaque", (

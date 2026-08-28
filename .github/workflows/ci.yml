@@ -482,8 +482,9 @@ jobs:
   tests:
     if: |
       !cancelled() &&
+      contains(fromJSON('["success", "skipped"]'), needs.cachix-build-check.result) &&
       contains(fromJSON('["success", "skipped"]'), needs.cachix-build.result)
-    needs: [cachix-build]
+    needs: [cachix-build-check, cachix-build]
     timeout-minutes: 20
     strategy:
       matrix:
@@ -601,8 +602,9 @@ jobs:
     if: |
       !cancelled() &&
       (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      needs.cachix-build-check.result == 'success' &&
       contains(fromJSON('["success", "skipped"]'), needs.cachix-build.result)
-    needs: [compute-ros-pin, cachix-build]
+    needs: [compute-ros-pin, cachix-build-check, cachix-build]
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -793,8 +795,9 @@ jobs:
     if: |
       !cancelled() &&
       (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      needs.cachix-build-check.result == 'success' &&
       contains(fromJSON('["success", "skipped"]'), needs.cachix-build.result)
-    needs: [cachix-build]
+    needs: [cachix-build-check, cachix-build]
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
