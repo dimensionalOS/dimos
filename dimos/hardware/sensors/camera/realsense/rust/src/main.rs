@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// RealSense D4xx camera, the native twin of realsense/camera.py: same config,
-// same ports, same frames on tf. The capture loop, align and the RGBD cloud run
-// here so the Python process never sees a frame.
+// RealSense D4xx camera; realsense/camera.py is the wrapper that launches it.
+// The capture loop, align and the RGBD cloud run here so the Python process
+// never sees a frame.
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::ffi::{CStr, CString};

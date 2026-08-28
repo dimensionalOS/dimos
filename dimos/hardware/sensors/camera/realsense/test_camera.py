@@ -12,31 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The native wrapper mirrors RealSenseCamera: same config keys, same ports."""
+"""The python config and the rust struct/registry agree field for field."""
 
 import json
 from pathlib import Path
 
 import tomllib
 
-from dimos.core.module import ModuleConfig
+from dimos.core.native_module import NativeModuleConfig
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera, RealSenseCameraConfig
-from dimos.hardware.sensors.camera.realsense.native import (
-    RealSenseCameraNative,
-    RealSenseCameraNativeConfig,
-)
 
 _RUST_MANIFEST = Path(__file__).parent / "rust" / "Cargo.toml"
 
 
 def _camera_fields() -> set[str]:
-    own = set(RealSenseCameraConfig.model_fields) - set(ModuleConfig.model_fields)
+    own = set(RealSenseCameraConfig.model_fields) - set(NativeModuleConfig.model_fields)
     # The frame stem and its namespace are base fields that cross the wire too.
     return own | {"frame_id", "frame_id_prefix"}
 
 
 def test_config_dict_is_the_camera_config() -> None:
-    config = RealSenseCameraNativeConfig(serial_number=None)
+    config = RealSenseCameraConfig(serial_number=None)
     wire = config.to_config_dict()
     assert set(wire) == _camera_fields()
     # Nones cross as nulls, never as missing keys.
@@ -52,7 +48,7 @@ def test_rust_struct_has_every_config_key() -> None:
     assert declared == _camera_fields()
 
 
-def test_ports_match_camera_and_registry() -> None:
+def test_ports_match_registry() -> None:
     def ports(cls: type) -> set[str]:
         return {
             name
@@ -60,8 +56,7 @@ def test_ports_match_camera_and_registry() -> None:
             if getattr(hint, "__origin__", None) is not None or "Out[" in str(hint)
         } - {"config"}
 
-    assert ports(RealSenseCameraNative) == ports(RealSenseCamera)
     manifest = tomllib.loads(_RUST_MANIFEST.read_text())
     registry = manifest["package"]["metadata"]["dimos"]["module"]["realsense"]
     # The registry files a #[tf] port under inputs, as it subscribes too.
-    assert set(registry["outputs"]) | set(registry["inputs"]) == ports(RealSenseCameraNative)
+    assert set(registry["outputs"]) | set(registry["inputs"]) == ports(RealSenseCamera)

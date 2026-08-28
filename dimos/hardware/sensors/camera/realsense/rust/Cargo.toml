@@ -16,7 +16,7 @@ path = "src/main.rs"
 # Bake registry entry, cross-checked at compile time by the module macro.
 [package.metadata.dimos.module.realsense]
 path = "dimos_realsense::RealSense"
-python = "dimos.hardware.sensors.camera.realsense.native:RealSenseCameraNative"
+python = "dimos.hardware.sensors.camera.realsense.camera:RealSenseCamera"
 
 [package.metadata.dimos.module.realsense.inputs]
 tf = "tf2_msgs.TFMessage"

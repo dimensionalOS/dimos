@@ -14,8 +14,7 @@
 
 """Standalone RealSense viewer: color, depth, and the RGBD cloud in Rerun.
 
-``dimos run real-sense-camera-vis``          # camera.py, pyrealsense2 in-process
-``dimos run real-sense-camera-native-vis``   # rust/, same ports and config
+``dimos run real-sense-camera-vis``
 
 The cloud comes from the camera's own ``enable_pointcloud`` path
 (:meth:`PointCloud2.from_rgbd`), so it lands in the color optical frame and rides
@@ -29,7 +28,6 @@ from typing import Any
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.hardware.sensors.camera.realsense.native import RealSenseCameraNative
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -110,12 +108,6 @@ _vis = vis_module(
 
 real_sense_camera_vis = autoconnect(
     RealSenseCamera.blueprint(),
-    RealSenseMountTf.blueprint(),
-    _vis,
-).global_config(n_workers=4)
-
-real_sense_camera_native_vis = autoconnect(
-    RealSenseCameraNative.blueprint(),
     RealSenseMountTf.blueprint(),
     _vis,
 ).global_config(n_workers=4)
