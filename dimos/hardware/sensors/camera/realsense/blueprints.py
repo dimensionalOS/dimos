@@ -66,6 +66,8 @@ def _rerun_blueprint() -> Any:
             rrb.Vertical(
                 rrb.Spatial2DView(origin="world/color_image", name="Color"),
                 rrb.Spatial2DView(origin="world/depth_image", name="Depth"),
+                rrb.Spatial2DView(origin="world/infrared_left", name="ir_left"),
+                rrb.Spatial2DView(origin="world/infrared_right", name="ir_right"),
             ),
             rrb.Spatial3DView(origin="world", name="3D"),
             column_shares=[1, 2],
@@ -89,7 +91,7 @@ _vis = vis_module(
 )
 
 real_sense_camera_vis = autoconnect(
-    RealSenseCamera.blueprint(),
+    RealSenseCamera.blueprint(enable_infrared=True),
     RealSenseMountTf.blueprint(),
     _vis,
 ).global_config(n_workers=4)
