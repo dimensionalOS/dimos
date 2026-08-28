@@ -156,6 +156,13 @@ def _closure_nix_configs(classes: list[_ClassDef]) -> set[tuple[str, str]]:
         if cls.name not in closure or cls.name == "NativeModuleConfig":
             continue
         if (cls.file, cls.name) in _PROVISIONED:
+            # The exclusion exists because the command is machine-dependent and
+            # unreadable. If it becomes statically readable, the publish gate
+            # can (and must) track it — the entry would then hide real inputs.
+            assert cls.command_kind == "opaque", (
+                f"{cls.file}: {cls.name}.build_command is statically readable — remove it"
+                " from EXTERNALLY_PROVISIONED in bin/build-native-modules"
+            )
             continue
         kind, command = effective_command(cls, frozenset())
         assert kind != "opaque", (
