@@ -45,6 +45,15 @@ prints one line per transition:
 > End each good take with **B** before quitting — an episode still recording at
 > shutdown is dropped.
 
+### OpenYAM collection-ready pose
+
+Before recording an OpenYAM take, use the manipulation Viser URL printed at
+startup to move the arm to its canonical collection-ready posture. Select the
+`arm/manipulator` planning group, choose the **Home** preset, then click
+**Plan** and **Execute**. Home is `[0°, 60°, 60°, 0°, 0°, 0°]` for joints 1–6.
+After execution completes, press **B** to begin the episode. DimOS never moves
+to Home automatically, and it does not reset the arm between episodes.
+
 ### Where the recording goes
 
 ```
