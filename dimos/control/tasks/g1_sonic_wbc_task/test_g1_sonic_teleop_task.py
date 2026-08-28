@@ -139,16 +139,50 @@ def test_live_policy_enters_planner_without_controller_buttons(
     pipeline.apply_pose_message.assert_not_called()
 
 
-def test_dry_run_owns_webxr_off_and_live_output_owns_planner(
+def test_dry_run_keeps_webxr_planner_available(
     task_and_pipeline: tuple[Any, Any],
 ) -> None:
     task, _ = task_and_pipeline
 
     task.set_dry_run(True)
-    assert task.state_snapshot()["webxr_teleop"]["mode"] == "off"
+    assert task.state_snapshot()["webxr_teleop"]["mode"] == "planner"
+
+
+def test_dry_run_pose_preview_runs_sonic_without_actuator_output(
+    task_and_pipeline: tuple[Any, Any], mocker: Any
+) -> None:
+    task, pipeline = task_and_pipeline
+    publish = mocker.Mock()
+    task.set_pose_reference_publisher(publish)
+    task.set_dry_run(True)
+    publish.reset_mock()
+
+    _enter_pose(task)
+    output = task.compute(_state(1.20))
+
+    snapshot = task.state_snapshot()
+    assert output is None
+    assert snapshot["dry_run"] is True
+    assert snapshot["webxr_teleop"]["mode"] == "pose"
+    assert snapshot["reference_source"] == "webxr_pose"
+    pipeline.apply_pose_message.assert_called()
+    assert publish.call_args.args[0].active is True
+
+
+def test_enabling_from_dry_run_pose_returns_to_planner_before_output(
+    task_and_pipeline: tuple[Any, Any],
+) -> None:
+    task, pipeline = task_and_pipeline
+    task.set_dry_run(True)
+    _enter_pose(task)
+    pipeline.stop_clip.reset_mock()
 
     task.set_dry_run(False)
+
     assert task.state_snapshot()["webxr_teleop"]["mode"] == "planner"
+    assert task.state_snapshot()["reference_source"] == "planner"
+    pipeline.stop_clip.assert_called_once_with()
+    pipeline.reset.assert_called()
 
 
 def test_ax_is_ignored_while_policy_is_unarmed(task_and_pipeline: tuple[Any, Any]) -> None:
@@ -298,7 +332,7 @@ def test_abxy_does_not_change_pose_mode(
     pipeline.stop_clip.assert_not_called()
 
 
-def test_dry_run_from_pose_clears_reference_and_enters_off(
+def test_entering_dry_run_from_live_pose_keeps_preview_active(
     task_and_pipeline: tuple[Any, Any], mocker: Any
 ) -> None:
     task, pipeline = task_and_pipeline
@@ -306,13 +340,14 @@ def test_dry_run_from_pose_clears_reference_and_enters_off(
     task.set_pose_reference_publisher(publish)
     _enter_pose(task)
     publish.reset_mock()
+    pipeline.stop_clip.reset_mock()
 
     task.set_dry_run(True)
 
-    assert task.state_snapshot()["webxr_teleop"]["mode"] == "off"
-    assert task.state_snapshot()["reference_source"] == "planner"
-    assert publish.call_args.args[0].active is False
-    pipeline.stop_clip.assert_called()
+    assert task.state_snapshot()["webxr_teleop"]["mode"] == "pose"
+    assert task.state_snapshot()["reference_source"] == "webxr_pose"
+    publish.assert_not_called()
+    pipeline.stop_clip.assert_not_called()
 
 
 def test_webxr_stays_off_while_policy_is_unarmed(

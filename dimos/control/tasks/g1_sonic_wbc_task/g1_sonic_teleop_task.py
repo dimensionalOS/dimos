@@ -57,9 +57,9 @@ class SonicTeleopMode(str, Enum):
 class G1SonicTeleopTask(G1SonicWBCTask):
     """Run NVIDIA's OFF -> PLANNER -> POSE WebXR teleoperation workflow.
 
-    The DimOS policy lifecycle owns OFF -> PLANNER: live policy output enters
-    the balancing planner, while dry-run or disarm enters OFF. Exact A+X
-    toggles between the planner and the configured full-body POSE stream.
+    The DimOS policy lifecycle owns OFF -> PLANNER: armed policy control enters
+    the balancing planner, including in dry-run, while disarm enters OFF. Exact
+    A+X toggles between the planner and the configured full-body POSE stream.
     """
 
     def __init__(
@@ -121,7 +121,7 @@ class G1SonicTeleopTask(G1SonicWBCTask):
 
             self._tracking_frame_id = msg.frame_id
             try:
-                self._pose_stream.push(msg, t_now=t_now)
+                self._pose_stream.push(msg)
             except (IncompleteBodyPoseError, PoseStreamError) as exc:
                 logger.warning(
                     "G1 SONIC WebXR pose stream reset",
@@ -162,7 +162,7 @@ class G1SonicTeleopTask(G1SonicWBCTask):
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
         with self._teleop_lock:
             self._sync_policy_lifecycle_locked()
-            if self.policy_active and not self._dry_run:
+            if self.policy_active:
                 self._prepare_teleop_locked(state.t_now, state.dt)
             output = super().compute(state)
             self._sync_policy_lifecycle_locked()
@@ -196,7 +196,11 @@ class G1SonicTeleopTask(G1SonicWBCTask):
 
     def set_dry_run(self, enabled: bool) -> None:
         with self._teleop_lock:
+            was_dry_run = self._dry_run
             super().set_dry_run(enabled)
+            if was_dry_run and not self._dry_run and self._mode is SonicTeleopMode.POSE:
+                self._enter_planner_locked("motor_output_enabled")
+                self._reset_policy_state()
             self._sync_policy_lifecycle_locked()
 
     def state_snapshot(self) -> dict[str, Any]:
@@ -221,7 +225,7 @@ class G1SonicTeleopTask(G1SonicWBCTask):
             return snapshot
 
     def _enter_pose_locked(self, t_now: float) -> None:
-        if not self.policy_active or self._dry_run:
+        if not self.policy_active:
             self._enter_off_locked("policy_inactive")
             return
         if (
@@ -274,7 +278,7 @@ class G1SonicTeleopTask(G1SonicWBCTask):
         if self._latest_complete is not None:
             self._tracking_frame_id = self._latest_complete.frame_id
             try:
-                self._pose_stream.push(self._latest_complete, t_now=self._latest_complete_time)
+                self._pose_stream.push(self._latest_complete)
             except (IncompleteBodyPoseError, PoseStreamError):
                 pass
         logger.info(
@@ -311,14 +315,12 @@ class G1SonicTeleopTask(G1SonicWBCTask):
         self._last_transition_reason = reason
 
     def _sync_policy_lifecycle_locked(self) -> None:
-        policy_live = self.policy_active and not self._dry_run
-        if not policy_live:
+        if not self.policy_active:
             if self._mode is not SonicTeleopMode.OFF:
-                reason = "dry_run_enabled" if self.policy_active else "policy_inactive"
-                self._enter_off_locked(reason)
+                self._enter_off_locked("policy_inactive")
             return
         if self._mode is SonicTeleopMode.OFF:
-            self._enter_planner_locked("live_policy_enabled")
+            self._enter_planner_locked("policy_control_active")
 
     def _prepare_teleop_locked(self, t_now: float, dt: float) -> None:
         if self._mode is SonicTeleopMode.OFF:

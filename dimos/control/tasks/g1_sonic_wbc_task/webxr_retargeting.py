@@ -24,12 +24,14 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
+from dimos.control.tasks.g1_sonic_wbc_task.nvidia_smpl import (
+    retarget_nvidia_smpl,
+    retarget_nvidia_smpl_wrist_targets,
+)
 from dimos.control.tasks.g1_sonic_wbc_task.sonic_pipeline import (
-    DEFAULT_ANGLES_ONNX,
     NUM_JOINTS,
     WRIST_ONNX_INDICES,
 )
-from dimos.msgs.visualization_msgs.SonicPoseReference import SMPL_PARENTS
 from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
 
 # Standard SMPL body order plus the terminal hand points used by SONIC.
@@ -60,20 +62,6 @@ SMPL_WEBXR_JOINTS: Final[tuple[str, ...]] = (
     "right-hand-palm",
 )
 
-# PICO's standardized WebXR roles currently expose the same rest axes as the
-# corresponding SMPL roles. Keep this explicit so a runtime-specific axis
-# correction cannot accidentally leak into the live conversion code.
-SMPL_REST_BASIS_XYZW: Final[tuple[tuple[float, float, float, float], ...]] = (
-    (0.0, 0.0, 0.0, 1.0),
-) * 24
-
-# WebXR: +X right, +Y up, -Z forward. SONIC: +X forward, +Y left, +Z up.
-WEBXR_TO_SONIC: Final[NDArray[np.float64]] = np.array(
-    [[0.0, 0.0, -1.0], [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-    dtype=np.float64,
-)
-
-_WRIST_LIMITS: Final[NDArray[np.float64]] = np.array([1.972, 1.615, 1.615], dtype=np.float64)
 POSE_TARGET_FPS: Final[float] = 50.0
 POSE_MAX_GAP_SECONDS: Final[float] = 0.15
 
@@ -101,20 +89,8 @@ class RetargetedSonicFrame:
     fields: dict[str, NDArray[Any]]
 
 
-def _direct_wrist_targets(body_pose: NDArray[np.float64]) -> NDArray[np.float32]:
-    left_wrist_euler = Rotation.from_rotvec(body_pose[19]).as_euler("XYZ")
-    right_wrist_euler = Rotation.from_rotvec(body_pose[20]).as_euler("XYZ")
-    left = np.clip(left_wrist_euler, -_WRIST_LIMITS, _WRIST_LIMITS)
-    right = np.clip(right_wrist_euler, -_WRIST_LIMITS, _WRIST_LIMITS)
-    return np.asarray([left[0], right[0], left[1], right[1], left[2], right[2]], dtype=np.float32)
-
-
 class WebXRSonicRetargeter:
-    """Convert complete WebXR snapshots into tracked root-local SMPL frames."""
-
-    def __init__(self) -> None:
-        self._previous_joint_pos: NDArray[np.float32] | None = None
-        self._previous_time: float | None = None
+    """Convert complete WebXR snapshots into NVIDIA's canonical SMPL frames."""
 
     @staticmethod
     def missing_joints(snapshot: BodyTrackingSnapshot) -> tuple[str, ...]:
@@ -127,74 +103,38 @@ class WebXRSonicRetargeter:
     def is_complete(cls, snapshot: BodyTrackingSnapshot) -> bool:
         return not cls.missing_joints(snapshot)
 
-    def reset(self) -> None:
-        self._previous_joint_pos = None
-        self._previous_time = None
-
     def retarget(
         self,
         snapshot: BodyTrackingSnapshot,
         *,
         frame_index: int,
-        t_now: float,
     ) -> RetargetedSonicFrame:
         missing = self.missing_joints(snapshot)
         if missing:
             raise IncompleteBodyPoseError(f"missing WebXR body joints: {', '.join(missing)}")
         assert snapshot.joints is not None
 
-        positions = np.empty((24, 3), dtype=np.float64)
-        world_rotations: list[Rotation] = []
+        global_quaternions = np.empty((24, 4), dtype=np.float64)
         for index, name in enumerate(SMPL_WEBXR_JOINTS):
             pose = snapshot.joints[name]
-            position = WEBXR_TO_SONIC @ np.asarray(pose.position, dtype=np.float64)
+            position = np.asarray(pose.position, dtype=np.float64)
             quaternion = np.asarray(pose.orientation, dtype=np.float64)
             norm = float(np.linalg.norm(quaternion))
             if not np.isfinite(position).all() or not np.isfinite(quaternion).all() or norm < 1e-8:
                 raise IncompleteBodyPoseError(f"invalid WebXR body pose for {name!r}")
-            webxr_rotation = Rotation.from_quat(quaternion / norm)
-            sonic_matrix = (
-                WEBXR_TO_SONIC
-                @ webxr_rotation.as_matrix()
-                @ WEBXR_TO_SONIC.T
-                @ Rotation.from_quat(SMPL_REST_BASIS_XYZW[index]).as_matrix()
-            )
-            positions[index] = position
-            world_rotations.append(Rotation.from_matrix(sonic_matrix))
+            global_quaternions[index] = quaternion / norm
 
-        root_position = positions[0].copy()
-        root_rotation = world_rotations[0]
-        root_matrix = root_rotation.as_matrix()
-        heading = np.arctan2(root_matrix[1, 0], root_matrix[0, 0])
-        heading_inverse = Rotation.from_euler("z", -heading)
-        root_local_positions = heading_inverse.apply(positions - root_position)
-
-        body_pose = np.empty((21, 3), dtype=np.float64)
-        for index in range(1, 24):
-            local_rotation = world_rotations[SMPL_PARENTS[index]].inv() * world_rotations[index]
-            if index <= 21:
-                body_pose[index - 1] = local_rotation.as_rotvec()
-
-        joint_pos = DEFAULT_ANGLES_ONNX.astype(np.float32, copy=True)
-        joint_pos[WRIST_ONNX_INDICES] = _direct_wrist_targets(body_pose)
+        nvidia_pose = retarget_nvidia_smpl(global_quaternions)
+        joint_pos = np.zeros(NUM_JOINTS, dtype=np.float32)
+        joint_pos[WRIST_ONNX_INDICES] = nvidia_pose.wrist_joint_pos
         joint_vel = np.zeros(NUM_JOINTS, dtype=np.float32)
-        if self._previous_joint_pos is not None and self._previous_time is not None:
-            dt = t_now - self._previous_time
-            if dt > 1e-6:
-                joint_vel[WRIST_ONNX_INDICES] = (
-                    joint_pos[WRIST_ONNX_INDICES] - self._previous_joint_pos[WRIST_ONNX_INDICES]
-                ) / dt
-        self._previous_joint_pos = joint_pos.copy()
-        self._previous_time = t_now
-
-        root_quaternion = root_rotation.as_quat()
         fields: dict[str, NDArray[Any]] = {
             "frame_index": np.array([frame_index], dtype=np.int64),
             "joint_pos": joint_pos.reshape(1, NUM_JOINTS),
             "joint_vel": joint_vel.reshape(1, NUM_JOINTS),
-            "body_quat_w": np.array([[root_quaternion[3], *root_quaternion[:3]]], dtype=np.float32),
-            "smpl_joints": root_local_positions.astype(np.float32).reshape(1, 24, 3),
-            "smpl_pose": body_pose.astype(np.float32).reshape(1, 21, 3),
+            "body_quat_w": nvidia_pose.body_quat_w.reshape(1, 4),
+            "smpl_joints": nvidia_pose.smpl_joints.reshape(1, 24, 3),
+            "smpl_pose": nvidia_pose.smpl_pose.reshape(1, 21, 3),
         }
         return RetargetedSonicFrame(fields=fields)
 
@@ -260,7 +200,6 @@ class WebXRSonicPoseStream:
         return self._generation
 
     def reset(self) -> None:
-        self._retargeter.reset()
         self._frames.clear()
         self._previous_time = None
         self._previous_fields = None
@@ -268,8 +207,8 @@ class WebXRSonicPoseStream:
         self._next_frame_index = 0
         self._generation = 0
 
-    def push(self, snapshot: BodyTrackingSnapshot, *, t_now: float) -> int:
-        current = self._retargeter.retarget(snapshot, frame_index=0, t_now=t_now).fields
+    def push(self, snapshot: BodyTrackingSnapshot) -> int:
+        current = self._retargeter.retarget(snapshot, frame_index=0).fields
         capture_time = float(snapshot.capture_time_s)
         if not np.isfinite(capture_time):
             raise PoseStreamError("body capture time is invalid")
@@ -324,14 +263,12 @@ class WebXRSonicPoseStream:
         alpha: float,
     ) -> dict[str, NDArray[Any]]:
         pose = _interpolate_rotvecs(left["smpl_pose"], right["smpl_pose"], alpha)
-        joint_pos = DEFAULT_ANGLES_ONNX.astype(np.float32, copy=True).reshape(1, NUM_JOINTS)
-        joint_pos[0, WRIST_ONNX_INDICES] = _direct_wrist_targets(pose[0])
+        joint_pos = np.zeros((1, NUM_JOINTS), dtype=np.float32)
+        joint_pos[0, WRIST_ONNX_INDICES] = retarget_nvidia_smpl_wrist_targets(pose[0])
         return {
             "frame_index": np.array([self._next_frame_index], dtype=np.int64),
             "joint_pos": joint_pos,
-            "joint_vel": ((1.0 - alpha) * left["joint_vel"] + alpha * right["joint_vel"]).astype(
-                np.float32
-            ),
+            "joint_vel": np.zeros((1, NUM_JOINTS), dtype=np.float32),
             "body_quat_w": _interpolate_quaternion_wxyz(
                 left["body_quat_w"][0], right["body_quat_w"][0], alpha
             ).reshape(1, 4),
