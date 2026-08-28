@@ -120,7 +120,7 @@ def test_sonic_doctor_fails_closed_before_real_robot_control(mocker) -> None:
         "_run_sonic_doctor",
         return_value=SonicDiagnosticReport(
             (
-                SonicDiagnosticCheck("ONNX Runtime", True, "1.20.1"),
+                SonicDiagnosticCheck("ONNX Runtime", True, "1.18.1"),
                 SonicDiagnosticCheck("planner latency", False, "p95=180.00 ms"),
             )
         ),

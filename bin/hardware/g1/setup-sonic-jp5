@@ -13,23 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Build the pinned CUDA ONNX Runtime wheel for a JetPack 5 G1 PC2.
+# Install the pinned CUDA ONNX Runtime wheel for a JetPack 5 G1 PC2.
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 CUDA_HOME_JP5=/usr/local/cuda-11.8
 SONIC_VENV="$REPO_ROOT/.venv-sonic-jp5"
 SONIC_PYTHON_VERSION=3.10
-ORT_VERSION=1.20.1
-ORT_COMMIT=5c1b7ccbff7e5141c1da7a9d963d660e5741c319
-EIGEN_COMMIT=e7248b26a1ed53fa030c5c459f7ea095dfd276ac
-TASK_CACHE_HOME=${XDG_CACHE_HOME:-$HOME/.cache}/dimos/sonic-jp5
-ORT_SOURCE="$TASK_CACHE_HOME/onnxruntime-$ORT_VERSION"
-EIGEN_SOURCE="$TASK_CACHE_HOME/eigen-$EIGEN_COMMIT"
-WHEEL_CACHE="$TASK_CACHE_HOME/wheels"
-ORT_BUILD_DIR="$ORT_SOURCE/build/Linux/Release"
-ORT_BUILD_CONFIG="ort=$ORT_COMMIT;eigen=$EIGEN_COMMIT;cuda=11.8;sm=87;gcc=10;python=$SONIC_PYTHON_VERSION;revision=1"
-ORT_BUILD_CONFIG_STAMP="$ORT_BUILD_DIR/.dimos-sonic-jp5-build-config"
+ORT_AUTO_VERSION=1.23.3
+ORT_DISTRIBUTION_VERSION=1.18.1.11.8
+ORT_VERSION=1.18.1
 CHECK_ONLY=false
 FAILED=0
 
@@ -69,9 +62,9 @@ else
     fail "expected Jetson Linux R35 (JetPack 5)"
 fi
 
-[[ -x "$CUDA_HOME_JP5/bin/nvcc" ]] \
-    && pass "CUDA 11.8 compiler: $CUDA_HOME_JP5/bin/nvcc" \
-    || fail "CUDA 11.8 is missing from $CUDA_HOME_JP5"
+[[ -e "$CUDA_HOME_JP5/lib64/libcudart.so.11.0" ]] \
+    && pass "CUDA 11.8 runtime: $CUDA_HOME_JP5/lib64/libcudart.so.11.0" \
+    || fail "CUDA 11.8 runtime is missing from $CUDA_HOME_JP5"
 
 [[ -e "$CUDA_HOME_JP5/compat/libcuda.so" ]] \
     && pass "CUDA 11.8 compatibility driver: $CUDA_HOME_JP5/compat/libcuda.so" \
@@ -81,22 +74,7 @@ fi
     && pass "cuDNN 8: /usr/lib/aarch64-linux-gnu/libcudnn.so.8" \
     || fail "cuDNN 8 is missing"
 
-[[ -x /usr/bin/gcc-10 && -x /usr/bin/g++-10 ]] \
-    && pass "compiler: gcc-10/g++-10" \
-    || fail "gcc-10 and g++-10 are required (GCC 9.4 is too old for ORT 1.20)"
-
 command -v uv >/dev/null 2>&1 && pass "uv: $(command -v uv)" || fail "uv is missing"
-command -v git >/dev/null 2>&1 && pass "git: $(command -v git)" || fail "git is missing"
-command -v git-lfs >/dev/null 2>&1 \
-    && pass "git-lfs: $(command -v git-lfs)" \
-    || fail "git-lfs is missing"
-
-AVAILABLE_KB=$(df -Pk "$REPO_ROOT" | awk 'NR == 2 {print $4}')
-if [[ -n "$AVAILABLE_KB" && "$AVAILABLE_KB" -ge 12582912 ]]; then
-    pass "free disk: $((AVAILABLE_KB / 1024 / 1024)) GiB"
-else
-    fail "at least 12 GiB free disk is required to build ONNX Runtime"
-fi
 
 if [[ "$FAILED" -ne 0 ]]; then
     cat >&2 <<'EOF'
@@ -105,7 +83,7 @@ Prerequisites failed. This setup does not flash JetPack and does not install
 system packages. For CUDA, use NVIDIA's CUDA 11.8 archive and select:
   Linux / aarch64-jetson / Ubuntu / 20.04 / deb
 Then install the versioned packages:
-  sudo apt-get install cuda-11-8 cuda-compat-11-8 gcc-10 g++-10
+  sudo apt-get install cuda-runtime-11-8 cuda-compat-11-8
 https://developer.nvidia.com/cuda-11-8-0-download-archive
 EOF
     exit 1
@@ -116,43 +94,8 @@ if [[ "$CHECK_ONLY" == true ]]; then
     exit 0
 fi
 
-mkdir -p "$TASK_CACHE_HOME" "$WHEEL_CACHE"
-
-if [[ ! -d "$ORT_SOURCE/.git" ]]; then
-    git clone \
-        --branch "v$ORT_VERSION" \
-        --depth 1 \
-        --recurse-submodules \
-        --shallow-submodules \
-        https://github.com/microsoft/onnxruntime.git \
-        "$ORT_SOURCE"
-fi
-
-ACTUAL_ORT_COMMIT=$(git -C "$ORT_SOURCE" rev-parse HEAD)
-if [[ "$ACTUAL_ORT_COMMIT" != "$ORT_COMMIT" ]]; then
-    echo "cached ONNX Runtime checkout is not the pinned commit:" >&2
-    echo "  expected: $ORT_COMMIT" >&2
-    echo "  actual:   $ACTUAL_ORT_COMMIT" >&2
-    echo "Move $ORT_SOURCE aside and rerun setup." >&2
-    exit 1
-fi
-
-if [[ ! -d "$EIGEN_SOURCE/.git" ]]; then
-    mkdir -p "$EIGEN_SOURCE"
-    git -C "$EIGEN_SOURCE" init
-    git -C "$EIGEN_SOURCE" remote add origin https://gitlab.com/libeigen/eigen.git
-    git -C "$EIGEN_SOURCE" fetch --depth 1 origin "$EIGEN_COMMIT"
-    git -C "$EIGEN_SOURCE" checkout --detach FETCH_HEAD
-fi
-
-ACTUAL_EIGEN_COMMIT=$(git -C "$EIGEN_SOURCE" rev-parse HEAD)
-if [[ "$ACTUAL_EIGEN_COMMIT" != "$EIGEN_COMMIT" ]]; then
-    echo "cached Eigen checkout is not the ONNX Runtime pinned commit:" >&2
-    echo "  expected: $EIGEN_COMMIT" >&2
-    echo "  actual:   $ACTUAL_EIGEN_COMMIT" >&2
-    echo "Move $EIGEN_SOURCE aside and rerun setup." >&2
-    exit 1
-fi
+export PATH="$CUDA_HOME_JP5/bin:$PATH"
+export LD_LIBRARY_PATH="$CUDA_HOME_JP5/compat:$CUDA_HOME_JP5/lib64:/usr/lib/aarch64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 if [[ ! -x "$SONIC_VENV/bin/python" ]] \
     || [[ $("$SONIC_VENV/bin/python" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")') != "$SONIC_PYTHON_VERSION" ]]; then
@@ -169,77 +112,51 @@ DIMOS_ALLOW_MISSING_COCKPIT=1 VIRTUAL_ENV="$SONIC_VENV" uv sync \
     --no-install-package onnxruntime
 uv pip install \
     --python "$SONIC_VENV/bin/python" \
-    "cmake>=3.28,<4" \
-    coloredlogs \
-    flatbuffers \
-    ninja \
     "numpy==1.26.4" \
-    packaging \
-    protobuf \
-    setuptools \
-    sympy \
-    wheel
+    pip
 
-shopt -s nullglob
-WHEELS=("$WHEEL_CACHE"/onnxruntime_gpu-"$ORT_VERSION"-*.whl)
-shopt -u nullglob
-if [[ ${#WHEELS[@]} -eq 0 ]]; then
-    export PATH="$SONIC_VENV/bin:$CUDA_HOME_JP5/bin:$PATH"
-    export LD_LIBRARY_PATH="$CUDA_HOME_JP5/compat:$CUDA_HOME_JP5/lib64:/usr/lib/aarch64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    export CC=/usr/bin/gcc-10
-    export CXX=/usr/bin/g++-10
+"$SONIC_VENV/bin/python" -m pip uninstall --yes \
+    onnxruntime \
+    onnxruntime-gpu \
+    onnxruntime-gpu-extended \
+    onnxruntime-gpu-extended-auto
+"$SONIC_VENV/bin/python" -m pip install \
+    --no-cache-dir \
+    "onnxruntime-gpu-extended-auto==$ORT_AUTO_VERSION"
 
-    CACHED_ORT_BUILD_CONFIG=""
-    if [[ -r "$ORT_BUILD_CONFIG_STAMP" ]]; then
-        IFS= read -r CACHED_ORT_BUILD_CONFIG < "$ORT_BUILD_CONFIG_STAMP" || true
-    fi
-    if [[ -d "$ORT_BUILD_DIR" && "$CACHED_ORT_BUILD_CONFIG" != "$ORT_BUILD_CONFIG" ]]; then
-        if [[ ! -f "$ORT_BUILD_DIR/Makefile" ]]; then
-            echo "cached ONNX Runtime build cannot be cleaned safely:" >&2
-            echo "  $ORT_BUILD_DIR" >&2
-            echo "Move that directory aside and rerun setup." >&2
-            exit 1
-        fi
-        echo "ONNX Runtime build configuration changed; cleaning stale objects."
-        "$SONIC_VENV/bin/cmake" --build "$ORT_BUILD_DIR" --target clean -- -j2
-    fi
-    mkdir -p "$ORT_BUILD_DIR"
-    printf '%s\n' "$ORT_BUILD_CONFIG" > "$ORT_BUILD_CONFIG_STAMP"
+"$SONIC_VENV/bin/python" - \
+    "$ORT_AUTO_VERSION" \
+    "$ORT_DISTRIBUTION_VERSION" \
+    "$ORT_VERSION" <<'PY'
+import sys
+from importlib.metadata import version
 
-    (
-        cd "$ORT_SOURCE"
-        ./build.sh \
-            --config Release \
-            --update \
-            --build \
-            --parallel 2 \
-            --nvcc_threads 1 \
-            --skip_tests \
-            --build_wheel \
-            --use_cuda \
-            --cuda_home "$CUDA_HOME_JP5" \
-            --cudnn_home /usr \
-            --use_preinstalled_eigen \
-            --eigen_path "$EIGEN_SOURCE" \
-            --cmake_extra_defines \
-                CMAKE_CUDA_ARCHITECTURES=87 \
-                CMAKE_DISABLE_FIND_PACKAGE_Eigen3=ON \
-                onnxruntime_BUILD_UNIT_TESTS=OFF
-    )
-    cp "$ORT_SOURCE"/build/Linux/Release/dist/onnxruntime_gpu-"$ORT_VERSION"-*.whl \
-        "$WHEEL_CACHE/"
-    shopt -s nullglob
-    WHEELS=("$WHEEL_CACHE"/onnxruntime_gpu-"$ORT_VERSION"-*.whl)
-    shopt -u nullglob
-fi
+try:
+    import onnxruntime as ort
+except ImportError as exc:
+    msg = "onnxruntime-gpu-extended installation did not provide onnxruntime"
+    raise ImportError(msg) from exc
+import onnxruntime as ort
 
-if [[ ${#WHEELS[@]} -ne 1 ]]; then
-    echo "expected one cached ONNX Runtime wheel, found ${#WHEELS[@]}" >&2
-    exit 1
-fi
+expected_auto, expected_distribution, expected_runtime = sys.argv[1:]
+actual_auto = version("onnxruntime-gpu-extended-auto")
+actual_distribution = version("onnxruntime-gpu-extended")
+actual_runtime = ort.__version__
+providers = ort.get_available_providers()
 
-uv pip uninstall --python "$SONIC_VENV/bin/python" onnxruntime onnxruntime-gpu || true
-uv pip install --python "$SONIC_VENV/bin/python" "${WHEELS[0]}"
+expected = (expected_auto, expected_distribution, expected_runtime)
+actual = (actual_auto, actual_distribution, actual_runtime)
+if actual != expected:
+    raise SystemExit(f"unexpected ONNX Runtime packages: expected {expected}, found {actual}")
+if "CUDAExecutionProvider" not in providers:
+    raise SystemExit(f"CUDAExecutionProvider unavailable; ONNX Runtime exposes {providers}")
+
+print(
+    "PASS  ONNX Runtime: "
+    f"auto={actual_auto} distribution={actual_distribution} runtime={actual_runtime}"
+)
+print(f"PASS  execution providers: {providers}")
+PY
 
 cat <<EOF
 
