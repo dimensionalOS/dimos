@@ -24,6 +24,7 @@ from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.memory.module import Recorder, RecorderConfig, pose_setter_for
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
@@ -55,6 +56,7 @@ class Go2MemoryConfig(RecorderConfig):
 
 class Go2Memory(Recorder):
     color_image: In[Image]
+    camera_info: In[CameraInfo]
     lidar: In[PointCloud2]
     odom: In[PoseStamped]
     config: Go2MemoryConfig
