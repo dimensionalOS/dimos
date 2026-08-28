@@ -15,8 +15,6 @@
 import argparse
 from pathlib import Path
 
-import cv2
-
 
 def extract_frames(video_path, output_dir, frame_rate) -> None:  # type: ignore[no-untyped-def]
     """
@@ -27,6 +25,8 @@ def extract_frames(video_path, output_dir, frame_rate) -> None:  # type: ignore[
     - output_dir: Directory where extracted frames will be saved.
     - frame_rate: Frame rate at which to extract frames (frames per second).
     """
+    import cv2
+
     video_path = Path(video_path)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

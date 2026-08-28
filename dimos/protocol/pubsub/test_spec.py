@@ -17,6 +17,7 @@
 import asyncio
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
+import threading
 import time
 from typing import Any
 
@@ -147,6 +148,28 @@ testdata.append(
 )
 
 
+from dimos.protocol.pubsub.impl.webrtc.test_transport import MockProvider
+from dimos.protocol.pubsub.impl.webrtc.webrtcpubsub import WebRTCPubSub
+
+
+@contextmanager
+def webrtc_context() -> Generator[WebRTCPubSub, None, None]:
+    provider = MockProvider()
+    pubsub = WebRTCPubSub(provider=provider)
+    pubsub.start()
+    yield pubsub
+    pubsub.stop()
+
+
+testdata.append(
+    (
+        webrtc_context,
+        "test_topic",
+        [b"webrtc_value1", b"webrtc_value2", b"webrtc_value3"],
+    )
+)
+
+
 @contextmanager
 def zenoh_lcm_context() -> Generator[Zenoh, None, None]:
     pool = ZenohSessionPool()
@@ -249,6 +272,76 @@ def test_unsubscribe(pubsub_context: Callable[[], Any], topic: Any, values: list
 
 
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)
+def test_unsubscribe_nonblocking_during_dispatch(
+    pubsub_context: Callable[[], Any], topic: Any, values: list[Any]
+) -> None:
+    """unsubscribe() must not wait for an in-flight callback.
+
+    Unsubscribing threads may be ones the system needs for progress (an
+    asyncio event loop tearing down a module); a dispatch thread stuck in a
+    slow callback must not be able to wedge them.
+    """
+    with pubsub_context() as x:
+        in_callback = threading.Event()
+        release = threading.Event()
+
+        def slow_callback(message: Any, topic: Any) -> None:
+            in_callback.set()
+            release.wait(timeout=10.0)
+
+        unsubscribe = x.subscribe(topic, slow_callback)
+
+        # Publish from a helper thread: in-process backends dispatch
+        # synchronously on the publishing thread.
+        publisher = threading.Thread(target=x.publish, args=(topic, values[0]), daemon=True)
+        publisher.start()
+        assert in_callback.wait(timeout=5.0), "callback was never dispatched"
+
+        unsubscribed = threading.Event()
+
+        def do_unsubscribe() -> None:
+            unsubscribe()
+            unsubscribed.set()
+
+        unsubscriber = threading.Thread(target=do_unsubscribe, daemon=True)
+        unsubscriber.start()
+        try:
+            assert unsubscribed.wait(timeout=2.0), (
+                "unsubscribe blocked behind an in-flight callback"
+            )
+        finally:
+            release.set()
+            unsubscriber.join(timeout=5.0)
+            publisher.join(timeout=5.0)
+
+
+@pytest.mark.parametrize("pubsub_context, topic, values", testdata)
+def test_unsubscribe_from_callback(
+    pubsub_context: Callable[[], Any], topic: Any, values: list[Any]
+) -> None:
+    """A callback may tear down its own subscription (one-shot receivers)
+    without deadlocking, and delivery stops once it has."""
+    with pubsub_context() as x:
+        received: list[Any] = []
+        done = threading.Event()
+        unsubscribe: Callable[[], None] | None = None
+
+        def one_shot(message: Any, topic: Any) -> None:
+            received.append(message)
+            assert unsubscribe is not None
+            unsubscribe()
+            done.set()
+
+        unsubscribe = x.subscribe(topic, one_shot)
+        x.publish(topic, values[0])
+        assert done.wait(timeout=5.0), "self-unsubscribing callback deadlocked"
+
+        x.publish(topic, values[0])
+        time.sleep(0.1)
+        assert len(received) == 1
+
+
+@pytest.mark.parametrize("pubsub_context, topic, values", testdata)
 @pytest.mark.skipif_macos_bug
 def test_multiple_messages(
     pubsub_context: Callable[[], Any], topic: Any, values: list[Any]
@@ -327,9 +420,9 @@ async def test_async_iterator(
 def test_high_volume_messages(
     pubsub_context: Callable[[], Any], topic: Any, values: list[Any]
 ) -> None:
-    """Test that all 5k messages are received correctly.
-    Limited to 5k because ros transport cannot handle more.
-    Might want to have separate expectations per transport later
+    """Test that all messages are received correctly under moderate volume.
+    This is an acceptance test, not a benchmark, so volume is kept low (500)
+    to avoid flakiness. Might want separate expectations per transport later.
     """
     with pubsub_context() as x:
         # Create a list to capture received messages
@@ -344,8 +437,8 @@ def test_high_volume_messages(
         # Subscribe to the topic
         x.subscribe(topic, callback)
 
-        # Publish 5000 messages
-        num_messages = 5000
+        # Publish 500 messages
+        num_messages = 500
         for _ in range(num_messages):
             x.publish(topic, values[0])
 

@@ -21,12 +21,21 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.manipulation.planning.groups.identifiers import assert_valid_group_id
+from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
+from dimos.manipulation.planning.groups.utils import filter_joint_state_to_selected_joints
 from dimos.manipulation.planning.monitor.robot_state_monitor import RobotStateMonitor
 from dimos.manipulation.planning.monitor.world_obstacle_monitor import WorldObstacleMonitor
-from dimos.manipulation.planning.spec.models import PlanningSceneInfo
+from dimos.manipulation.planning.spec.models import (
+    PlanningSceneInfo,
+    VisualizationSession,
+    VisualizationStateFrame,
+)
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec, WorldSpec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -40,10 +49,10 @@ if TYPE_CHECKING:
         CollisionObjectMessage,
         JointPath,
         Obstacle,
-        WorldRobotID,
+        PlanningGroupID,
     )
     from dimos.msgs.vision_msgs.Detection3D import Detection3D
-    from dimos.perception.detection.type.detection3d.object import Object
+    from dimos.perception.experimental.object import Object
 
 logger = setup_logger()
 
@@ -59,109 +68,130 @@ class WorldMonitor:
         self._world = world
         self._visualization = visualization
         self._lock = threading.RLock()
-        self._robot_joints: dict[WorldRobotID, list[str]] = {}
-        self._robot_configs: dict[WorldRobotID, RobotModelConfig] = {}
-        self._state_monitors: dict[WorldRobotID, RobotStateMonitor] = {}
+        # Keep renderer mutations and periodic publishes ordered.  Cancellation is
+        # deliberately issued outside this lock so it can interrupt an animation.
+        self._visualization_lock = threading.RLock()
+        self._model_config: RobotModelConfig | None = None
+        self._planning_groups = PlanningGroupRegistry()
+        self._state_monitor: RobotStateMonitor | None = None
         self._obstacle_monitor: WorldObstacleMonitor | None = None
         self._viz_thread: threading.Thread | None = None
         self._viz_stop_event = threading.Event()
         self._viz_rate_hz: float = 10.0
 
-    # Robot Management
+    # Model Management
 
-    def add_robot(self, config: RobotModelConfig) -> WorldRobotID:
-        """Add a robot. Returns robot_id."""
+    def load_model(self, config: RobotModelConfig) -> None:
+        """Load the one logical robot model."""
         with self._lock:
-            robot_id = self._world.add_robot(config)
-            self._robot_joints[robot_id] = config.joint_names
-            self._robot_configs[robot_id] = config
-            logger.info(f"Added robot '{config.name}' as '{robot_id}'")
-        return robot_id
+            if self._model_config is not None:
+                raise ValueError("A model is already loaded")
+            self._validate_planning_group_config(config)
+            self._world.load_model(config)
+            self._model_config = config
+            self._planning_groups.add_model(config)
+
+    @property
+    def planning_groups(self) -> PlanningGroupRegistry:
+        """Registered public planning groups."""
+        return self._planning_groups
 
     def planning_scene_info(self) -> PlanningSceneInfo:
         """Return a stable metadata snapshot of the initialized planning scene."""
         with self._lock:
-            return PlanningSceneInfo(robots=dict(self._robot_configs))
+            return PlanningSceneInfo(
+                model=self.get_model_config(),
+                planning_groups=tuple(self._planning_groups.list()),
+            )
 
-    def sync_visualization_scene(self) -> None:
-        """Synchronize startup scene metadata to the attached visualization."""
-        visualization = self._visualization
-        if visualization is None:
-            return
-        visualization.initialize_scene(self.planning_scene_info())
-
-    def get_robot_ids(self) -> list[WorldRobotID]:
-        """Get all robot IDs."""
+    def get_model_config(self) -> RobotModelConfig:
+        """Get the configured model."""
         with self._lock:
-            return self._world.get_robot_ids()
+            if self._model_config is None:
+                raise RuntimeError("Model is not loaded")
+            return self._model_config
 
-    def get_robot_config(self, robot_id: WorldRobotID) -> RobotModelConfig:
-        """Get robot configuration."""
+    def get_joint_limits(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        """Get model joint limits."""
         with self._lock:
-            return self._world.get_robot_config(robot_id)
-
-    def get_joint_limits(
-        self, robot_id: WorldRobotID
-    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        """Get joint limits for a robot."""
-        with self._lock:
-            return self._world.get_joint_limits(robot_id)
+            return self._world.get_joint_limits()
 
     # Obstacle Management
 
     def add_obstacle(self, obstacle: Obstacle) -> str:
-        """Add an obstacle. Returns obstacle_id."""
+        """Add an obstacle and visualize it only when the world accepts it."""
         with self._lock:
-            return self._world.add_obstacle(obstacle)
+            obstacle_id = self._world.add_obstacle(obstacle)
+            if not obstacle_id:
+                return ""
+            if self._visualization is not None:
+                try:
+                    self._visualization.add_vis_obstacle(obstacle_id, obstacle)
+                except Exception:
+                    logger.exception("Obstacle visualization add failed for '%s'", obstacle_id)
+            return obstacle_id
 
     def remove_obstacle(self, obstacle_id: str) -> bool:
         """Remove an obstacle."""
         with self._lock:
-            return self._world.remove_obstacle(obstacle_id)
+            removed = self._world.remove_obstacle(obstacle_id)
+            if removed and self._visualization is not None:
+                try:
+                    self._visualization.remove_vis_obstacle(obstacle_id)
+                except Exception:
+                    logger.exception("Obstacle visualization remove failed for '%s'", obstacle_id)
+            return removed
+
+    def update_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> bool:
+        """Update an obstacle through the authoritative planning-world mutation path."""
+        with self._lock:
+            updated = self._world.update_obstacle_pose(obstacle_id, pose)
+            if updated and self._visualization is not None:
+                try:
+                    self._visualization.update_vis_obstacle_pose(obstacle_id, pose)
+                except Exception:
+                    logger.exception("Obstacle visualization update failed for '%s'", obstacle_id)
+            return updated
+
+    def update_obstacle(self, obstacle: Obstacle) -> bool:
+        """Replace an obstacle and then forward the accepted value to visualization."""
+        with self._lock:
+            updated = self._world.update_obstacle(obstacle)
+            if updated and self._visualization is not None:
+                try:
+                    self._visualization.update_vis_obstacle(obstacle)
+                except Exception:
+                    logger.exception("Obstacle visualization update failed for '%s'", obstacle.name)
+            return updated
 
     def clear_obstacles(self) -> None:
         """Remove all obstacles."""
         with self._lock:
             self._world.clear_obstacles()
+            if self._obstacle_monitor is not None:
+                self._obstacle_monitor.clear_tracking()
+            if self._visualization is not None:
+                try:
+                    self._visualization.clear_vis_obstacles()
+                except Exception:
+                    logger.exception("Obstacle visualization clear failed")
 
     # Monitor Control
 
-    def start_state_monitor(
-        self,
-        robot_id: WorldRobotID,
-        joint_names: list[str] | None = None,
-        joint_name_mapping: dict[str, str] | None = None,
-    ) -> None:
-        """Start monitoring joint states. Uses config defaults if args are None."""
+    def start_state_monitor(self) -> None:
+        """Start monitoring canonical model joint state."""
         with self._lock:
-            if robot_id in self._state_monitors:
-                logger.warning(f"State monitor for '{robot_id}' already started")
+            if self._state_monitor is not None:
+                logger.warning("State monitor already started")
                 return
-
-            # Get config for defaults
-            config = self._world.get_robot_config(robot_id)
-
-            # Get joint names from config if not provided
-            if joint_names is None:
-                if robot_id in self._robot_joints:
-                    joint_names = self._robot_joints[robot_id]
-                else:
-                    joint_names = config.joint_names
-
-            # Get joint name mapping from config if not provided
-            if joint_name_mapping is None and config.joint_name_mapping:
-                joint_name_mapping = config.joint_name_mapping
-
+            config = self.get_model_config()
             monitor = RobotStateMonitor(
                 world=self._world,
                 lock=self._lock,
-                robot_id=robot_id,
-                joint_names=joint_names,
-                joint_name_mapping=joint_name_mapping,
+                joint_names=config.joint_names,
             )
             monitor.start()
-            self._state_monitors[robot_id] = monitor
-            logger.info(f"State monitor started for '{robot_id}'")
+            self._state_monitor = monitor
 
     def start_obstacle_monitor(self) -> None:
         """Start monitoring obstacle updates."""
@@ -171,8 +201,7 @@ class WorldMonitor:
                 return
 
             self._obstacle_monitor = WorldObstacleMonitor(
-                world=self._world,
-                lock=self._lock,
+                parent=self,
             )
             self._obstacle_monitor.start()
             logger.info("Obstacle monitor started")
@@ -183,9 +212,9 @@ class WorldMonitor:
         self.stop_visualization_thread()
 
         with self._lock:
-            for _robot_id, monitor in self._state_monitors.items():
-                monitor.stop()
-            self._state_monitors.clear()
+            if self._state_monitor is not None:
+                self._state_monitor.stop()
+                self._state_monitor = None
 
             if self._obstacle_monitor is not None:
                 self._obstacle_monitor.stop()
@@ -194,22 +223,18 @@ class WorldMonitor:
             logger.info("All monitors stopped")
 
         if self._visualization is not None:
-            self._visualization.close()
+            self._visualization.cancel_preview_animation()
+            # Wait for cancelled animation cleanup before releasing renderer resources.
+            with self._visualization_lock:
+                self._visualization.close()
 
     # Message Handlers
 
-    def on_joint_state(self, msg: JointState, robot_id: WorldRobotID | None = None) -> None:
-        """Handle joint state message. Broadcasts to all monitors if robot_id is None."""
+    def on_joint_state(self, msg: JointState) -> None:
+        """Handle a canonical model joint-state message."""
         try:
-            if robot_id is not None:
-                if robot_id in self._state_monitors:
-                    self._state_monitors[robot_id].on_joint_state(msg)
-                else:
-                    logger.warning(f"No state monitor for robot_id: {robot_id}")
-            else:
-                # Broadcast to all monitors
-                for monitor in self._state_monitors.values():
-                    monitor.on_joint_state(msg)
+            if self._state_monitor is not None:
+                self._state_monitor.on_joint_state(msg)
         except Exception as e:
             logger.error(f"[WorldMonitor] Exception in on_joint_state: {e}")
             import traceback
@@ -275,16 +300,14 @@ class WorldMonitor:
 
     # State Access
 
-    def get_current_joint_state(self, robot_id: WorldRobotID) -> JointState | None:
+    def get_current_joint_state(self) -> JointState | None:
         """Get current joint state. Returns None if not yet received."""
-        # Try state monitor first for positions
-        if robot_id in self._state_monitors:
-            positions = self._state_monitors[robot_id].get_current_positions()
-            velocities = self._state_monitors[robot_id].get_current_velocities()
+        if self._state_monitor is not None:
+            positions = self._state_monitor.get_current_positions()
+            velocities = self._state_monitor.get_current_velocities()
             if positions is not None:
-                joint_names = self._robot_joints.get(robot_id, [])
                 return JointState(
-                    name=joint_names,
+                    name=self.get_model_config().joint_names,
                     position=positions.tolist(),
                     velocity=velocities.tolist() if velocities is not None else [],
                 )
@@ -292,27 +315,63 @@ class WorldMonitor:
         # Fall back to world's live context
         with self._lock:
             ctx = self._world.get_live_context()
-            return self._world.get_joint_state(ctx, robot_id)
+            return self._world.get_joint_state(ctx)
 
-    def get_current_velocities(self, robot_id: WorldRobotID) -> JointState | None:
+    def current_model_joint_state(self, max_age: float = 1.0) -> JointState:
+        """Return the fresh canonical model state."""
+        if self._state_monitor is not None and self.is_state_stale(max_age):
+            return JointState()
+        return self.get_current_joint_state() or JointState()
+
+    def current_group_joint_state(
+        self, group_id: PlanningGroupID, max_age: float = 1.0
+    ) -> JointState:
+        """Return current joint state scoped and ordered for one planning group."""
+        group = self._planning_groups.get(group_id)
+        if self._state_monitor is not None and self.is_state_stale(max_age):
+            raise ValueError("Current model state is stale")
+        state = self.get_current_joint_state()
+        if state is None:
+            raise ValueError("Current model state is unavailable")
+        return filter_joint_state_to_selected_joints(state, group.joint_names)
+
+    def _validate_planning_group_config(self, config: RobotModelConfig) -> None:
+        """Validate planning groups before mutating world/backend state."""
+        seen_group_names: set[str] = set()
+        model_joint_names = set(config.joint_names)
+        for definition in config.planning_groups:
+            group_id = definition.name
+            assert_valid_group_id(group_id)
+            if definition.name in seen_group_names:
+                raise ValueError(f"Planning group '{group_id}' is already registered")
+            unknown_joint_names = set(definition.joint_names) - model_joint_names
+            if unknown_joint_names:
+                raise ValueError(
+                    f"Planning group '{group_id}' contains unknown model joints: "
+                    f"{sorted(unknown_joint_names)}"
+                )
+            seen_group_names.add(definition.name)
+
+    def get_current_velocities(self) -> JointState | None:
         """Get current joint velocities as JointState. Returns None if not available."""
-        if robot_id in self._state_monitors:
-            velocities = self._state_monitors[robot_id].get_current_velocities()
+        if self._state_monitor is not None:
+            velocities = self._state_monitor.get_current_velocities()
             if velocities is not None:
-                joint_names = self._robot_joints.get(robot_id, [])
-                return JointState(name=joint_names, velocity=velocities.tolist())
+                return JointState(
+                    name=self.get_model_config().joint_names, velocity=velocities.tolist()
+                )
         return None
 
-    def wait_for_state(self, robot_id: WorldRobotID, timeout: float = 1.0) -> bool:
+    def wait_for_state(self, timeout: float = 1.0) -> bool:
         """Wait until state is received. Returns False on timeout."""
-        if robot_id in self._state_monitors:
-            return self._state_monitors[robot_id].wait_for_state(timeout)
+        if self._state_monitor is not None:
+            return self._state_monitor.wait_for_state(timeout)
         return False
 
-    def is_state_stale(self, robot_id: WorldRobotID, max_age: float = 1.0) -> bool:
+    def is_state_stale(self, max_age: float = 1.0) -> bool:
         """Check if state is stale."""
-        if robot_id in self._state_monitors:
-            return self._state_monitors[robot_id].is_state_stale(max_age)
+        if self._state_monitor is not None:
+            return self._state_monitor.is_state_stale(max_age)
         return True
 
     # Context Management
@@ -329,17 +388,14 @@ class WorldMonitor:
 
     # Collision Checking
 
-    def is_state_valid(self, robot_id: WorldRobotID, joint_state: JointState) -> bool:
+    def is_state_valid(self, joint_state: JointState) -> bool:
         """Check if configuration is collision-free."""
-        return self._world.check_config_collision_free(robot_id, joint_state)
+        return self._world.check_config_collision_free(joint_state)
 
-    def is_path_valid(
-        self, robot_id: WorldRobotID, path: JointPath, step_size: float = 0.05
-    ) -> bool:
+    def is_path_valid(self, path: JointPath, step_size: float = 0.05) -> bool:
         """Check if path is collision-free with interpolation.
 
         Args:
-            robot_id: Robot to check
             path: List of JointState waypoints
             step_size: Max step size for interpolation (radians)
 
@@ -347,57 +403,63 @@ class WorldMonitor:
             True if entire path is collision-free
         """
         if len(path) < 2:
-            return len(path) == 0 or self._world.check_config_collision_free(robot_id, path[0])
+            return len(path) == 0 or self._world.check_config_collision_free(path[0])
 
         # Check each edge
         for i in range(len(path) - 1):
-            if not self._world.check_edge_collision_free(robot_id, path[i], path[i + 1], step_size):
+            if not self._world.check_edge_collision_free(path[i], path[i + 1], step_size):
                 return False
 
         return True
 
-    def get_min_distance(self, robot_id: WorldRobotID) -> float:
+    def get_min_distance(self) -> float:
         """Get minimum distance to obstacles for current state."""
         with self._world.scratch_context() as ctx:
-            return self._world.get_min_distance(ctx, robot_id)
+            return self._world.get_min_distance(ctx)
 
     # Kinematics
 
-    def get_ee_pose(
-        self, robot_id: WorldRobotID, joint_state: JointState | None = None
-    ) -> PoseStamped:
+    def get_ee_pose(self, joint_state: JointState | None = None) -> PoseStamped:
         """Get end-effector pose. Uses current state if joint_state is None."""
+        group_id = self._planning_groups.primary_pose_group_id()
+        if group_id is None:
+            raise ValueError("Model has no unique pose-targetable planning group")
+        return self.get_group_ee_pose(group_id, joint_state)
+
+    def get_group_ee_pose(
+        self, group_id: PlanningGroupID, joint_state: JointState | None = None
+    ) -> PoseStamped:
+        """Get planning-group tip pose. Uses current robot state if joint_state is None."""
+        self._planning_groups.get(group_id)
         with self._world.scratch_context() as ctx:
-            # If no state provided, fetch current from state monitor
             if joint_state is None:
-                joint_state = self.get_current_joint_state(robot_id)
+                if self._state_monitor is not None and self.is_state_stale():
+                    raise ValueError("Current model state is stale")
+                joint_state = self.get_current_joint_state()
+                if joint_state is None:
+                    raise ValueError("Current model state is unavailable")
+            self._world.set_joint_state(ctx, joint_state)
 
-            if joint_state is not None:
-                self._world.set_joint_state(ctx, robot_id, joint_state)
-
-            return self._world.get_ee_pose(ctx, robot_id)
+            return self._world.get_group_ee_pose(ctx, group_id)
 
     def get_link_pose(
-        self, robot_id: WorldRobotID, link_name: str, joint_state: JointState | None = None
+        self, link_name: str, joint_state: JointState | None = None
     ) -> PoseStamped | None:
         """Get arbitrary link pose as PoseStamped.
 
         Args:
-            robot_id: Robot to query
             link_name: Name of the link in the URDF
             joint_state: Joint state to use (uses current if None)
         """
-        from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-
         with self._world.scratch_context() as ctx:
             if joint_state is None:
-                joint_state = self.get_current_joint_state(robot_id)
+                joint_state = self.get_current_joint_state()
             if joint_state is not None:
-                self._world.set_joint_state(ctx, robot_id, joint_state)
+                self._world.set_joint_state(ctx, joint_state)
             try:
-                mat = self._world.get_link_pose(ctx, robot_id, link_name)
+                mat = self._world.get_link_pose(ctx, link_name)
             except KeyError:
-                logger.warning(f"Link '{link_name}' not found in robot '{robot_id}'")
+                logger.warning(f"Link '{link_name}' not found in model")
                 return None
 
             pos = mat[:3, 3]
@@ -409,19 +471,46 @@ class WorldMonitor:
                 orientation=[float(quat.x), float(quat.y), float(quat.z), float(quat.w)],
             )
 
-    def get_jacobian(self, robot_id: WorldRobotID, joint_state: JointState) -> NDArray[np.float64]:
+    def get_jacobian(self, joint_state: JointState) -> NDArray[np.float64]:
         """Get 6xN Jacobian matrix."""
+        group_id = self._planning_groups.primary_pose_group_id()
+        if group_id is None:
+            raise ValueError("Model has no unique pose-targetable planning group")
+        return self.get_group_jacobian(group_id, joint_state)
+
+    def get_group_jacobian(
+        self, group_id: PlanningGroupID, joint_state: JointState
+    ) -> NDArray[np.float64]:
+        """Get 6xN planning-group Jacobian matrix."""
+        self._planning_groups.get(group_id)
         with self._world.scratch_context() as ctx:
-            self._world.set_joint_state(ctx, robot_id, joint_state)
-            return self._world.get_jacobian(ctx, robot_id)
+            self._world.set_joint_state(ctx, joint_state)
+            return self._world.get_group_jacobian(ctx, group_id)
 
     # Lifecycle
 
-    def finalize(self) -> None:
-        """Finalize world. Must be called before collision checking."""
+    def finalize(
+        self, visualization: VisualizationSpec | None = None, *, operator: object | None = None
+    ) -> None:
+        """Finalize the world and initialize visualization before later mutations."""
+        session: VisualizationSession | None = None
+        attached_visualization: VisualizationSpec | None = None
         with self._lock:
             self._world.finalize()
+            if visualization is not None:
+                self._visualization = visualization
+            attached_visualization = self._visualization
+            if attached_visualization is not None:
+                session = VisualizationSession(
+                    scene=PlanningSceneInfo(
+                        model=self.get_model_config(),
+                        planning_groups=tuple(self._planning_groups.list()),
+                    ),
+                    operator=operator,
+                )
             logger.info("World finalized")
+        if attached_visualization is not None and session is not None:
+            attached_visualization.initialize(session)
 
     @property
     def is_finalized(self) -> bool:
@@ -437,30 +526,29 @@ class WorldMonitor:
             return str(url) if url else None
         return None
 
-    def publish_visualization(self) -> None:
-        """Force publish current state to visualization."""
-        if self._visualization is not None:
-            self._visualization.publish_visualization()
+    def visualization_state_frame(self) -> VisualizationStateFrame:
+        """Build a pushed visualization state frame without freshness policy."""
+        return VisualizationStateFrame(joint_state=self.get_current_joint_state())
 
-    def show_preview(self, robot_id: WorldRobotID) -> None:
-        """Show the preview representation for a robot if visualization is available."""
+    def update_visualization_state(self) -> None:
+        """Push current state to visualization."""
         if self._visualization is not None:
-            self._visualization.show_preview(robot_id)
+            with self._visualization_lock:
+                self._visualization.update_state(self.visualization_state_frame())
 
-    def hide_preview(self, robot_id: WorldRobotID) -> None:
-        """Hide the preview representation for a robot if visualization is available."""
+    def cancel_preview_animation(self) -> None:
+        """Cancel active visualization preview animation."""
         if self._visualization is not None:
-            self._visualization.hide_preview(robot_id)
+            self._visualization.cancel_preview_animation()
 
-    def animate_path(
-        self,
-        robot_id: WorldRobotID,
-        path: JointPath,
-        duration: float = 3.0,
+    def animate_trajectory(
+        self, trajectory: JointTrajectory, duration: float | None = None
     ) -> None:
-        """Animate a path if visualization is available."""
+        """Animate a raw generated-plan trajectory if visualization is available."""
         if self._visualization is not None:
-            self._visualization.animate_path(robot_id, path, duration)
+            self._visualization.cancel_preview_animation()
+            with self._visualization_lock:
+                self._visualization.animate_trajectory(trajectory, duration)
 
     def start_visualization_thread(self, rate_hz: float = 10.0) -> None:
         """Start background thread for visualization updates at given rate."""
@@ -501,7 +589,7 @@ class WorldMonitor:
         period = 1.0 / self._viz_rate_hz
         while not self._viz_stop_event.is_set():
             try:
-                self.publish_visualization()
+                self.update_visualization_state()
             except Exception as e:
                 logger.debug(f"Visualization publish failed: {e}")
             time.sleep(period)
@@ -518,13 +606,9 @@ class WorldMonitor:
         """Get optional visualization backend."""
         return self._visualization
 
-    def set_visualization(self, visualization: VisualizationSpec | None) -> None:
-        """Set optional visualization backend after monitor construction."""
-        self._visualization = visualization
-
-    def get_state_monitor(self, robot_id: str) -> RobotStateMonitor | None:
-        """Get state monitor for a robot (may be None)."""
-        return self._state_monitors.get(robot_id)
+    def get_state_monitor(self) -> RobotStateMonitor | None:
+        """Get the state monitor (may be None)."""
+        return self._state_monitor
 
     @property
     def obstacle_monitor(self) -> WorldObstacleMonitor | None:

@@ -16,9 +16,9 @@ import json
 from threading import Event, Thread
 import time
 
-import httpx
 from langchain_core.messages import HumanMessage
 import pytest
+import requests
 
 from dimos.agents import annotation as annotation_module
 from dimos.agents.annotation import skill
@@ -119,16 +119,20 @@ def _read_sse_notifications(
     """
     collected: list[dict] = []
     deadline = time.monotonic() + timeout
-    with httpx.Client(timeout=timeout) as client:
-        with client.stream(
-            "GET",
+    # A scalar timeout is requests' read timeout: the SSE stream stays open
+    # across the whole request, an idle read (no bytes for `timeout`s) trips it.
+    with requests.Session() as session:
+        with session.get(
             url,
             headers={"Accept": "text/event-stream"},
+            stream=True,
+            timeout=timeout,
         ) as response:
             assert response.headers["content-type"].startswith("text/event-stream")
-            for line in response.iter_lines():
+            for raw in response.iter_lines():
                 if time.monotonic() > deadline:
                     break
+                line = raw.decode("utf-8", "replace")
                 if not line or not line.startswith("data: "):
                     continue
                 try:

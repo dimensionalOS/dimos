@@ -1,8 +1,6 @@
----
-title: "Testing"
----
+# Testing
 
-`uv run` syncs the project deps + `tests` group on demand, so the default test suite needs no upfront install — just `uv run pytest --numprocesses=auto dimos` (xdist parallelizes across cores).
+`uv run` syncs the project deps + `tests` group on demand, so the default test suite needs no upfront install: `uv run pytest --numprocesses=auto dimos` (xdist parallelizes across cores).
 
 Self-hosted tests need the heavy optional extras (LFS data, perception models, simulation, hardware SDKs, …). Sync them explicitly before running:
 
@@ -57,7 +55,9 @@ The default `addopts` in `pyproject.toml` includes a `-m` filter that excludes `
 ./bin/pytest-slow
 ```
 
-(Shortcut for `pytest -m 'not mujoco' dimos` — runs the default suite *and* self-hosted tests, but not `mujoco`.)
+(Shortcut for `pytest -m 'not (mujoco or self_hosted_large)' dimos`: runs the default suite *and* self-hosted tests, excluding only `mujoco` and `self_hosted_large`.)
+
+Before running tests it calls `bin/build-test-natives`, which builds any missing native test dependencies.
 
 This includes slow agent and MCP-style integration tests in addition to slower transport and module tests. If one of those paths is broken, a failure can take close to a minute to surface because the harness waits for the agent flow to finish before timing out.
 

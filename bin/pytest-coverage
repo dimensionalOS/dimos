@@ -4,6 +4,8 @@ set -euo pipefail
 
 rm -f .coverage .coverage.*
 
+bin/build-test-natives
+
 export _DIMOS_COV=1
 
 uv run coverage run -m pytest "$@" -m ''

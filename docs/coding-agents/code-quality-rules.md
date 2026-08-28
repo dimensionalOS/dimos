@@ -1,6 +1,4 @@
----
-title: "Code Quality Rules"
----
+# Code Quality Rules
 
 Rules dimos code is expected to follow. They address recurring issues found in code review. The automated scan/fix prompts in `misc/auto-fixes/` are built from this file, but it's meant to be reused by any prompt that needs the project's code-quality criteria.
 
@@ -20,7 +18,7 @@ Rules dimos code is expected to follow. They address recurring issues found in c
 * No lambdas -- they can't be pickled to worker processes. Use named functions.
 * Do no work at import time: no subprocesses, viewers, model parsing, or network. In particular don't call `get_data(...)` (it blocks import until the download finishes) -- use `LfsPath` (resolved at access time) or build the config in `start`/`build`. Any process you start must be managed (shut down when not needed).
 * Blueprint files define blueprints, not modules/classes.
-* Helper blueprints not meant to run alone must start with `_` (the `all_blueprints.py` generator skips them); demo/non-shared ones get a `demo_` prefix (hidden from `dimos list`).
+* Helper blueprints not meant to run alone must start with `_` (the in-repo `all_blueprints.py` generator skips them); demo/non-shared built-in ones get a `demo_` prefix (hidden from `dimos list`). Externally packaged blueprints are not added to `all_blueprints.py`; expose them with `dimos.blueprints` Python package entry points.
 
 ## Concurrency and thread safety
 
@@ -35,7 +33,7 @@ Rules dimos code is expected to follow. They address recurring issues found in c
 
 ## Configuration
 
-* Don't use environment variables for what the config/CLI system already handles. Config values override from the CLI (`-o module.param=value`).
+* Don't use environment variables for what the config/CLI system already handles. Config values override from the CLI (`--module.param-name=value`).
 * Don't bake personal/hardware config into source or blueprints: IPs (`192.168.x.x`), interface names (`enp86s0`), default IPs in constructors. Use a `GlobalConfig` field with a sensible default (often `None`) and set it via `.env` or CLI.
 * Type required fields as required, not `... | None = None`. Then you drop the runtime None-check and the `or default` / `or ""` / `or "can0"` patterns.
 * Listen on `global_config.listen_host` by default, not `0.0.0.0`.

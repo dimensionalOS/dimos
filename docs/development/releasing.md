@@ -67,7 +67,7 @@ git fetch --tags
 git tag -v vX.Y.Z
 ```
 
-`git tag -v` exits 0 and reports a good signature from `dimos-release-bot` when the tag is valid. GitHub's web UI shows "Unverified" because the GPG key isn't bound to a GitHub user account — this is expected.
+`git tag -v` exits 0 and reports a good signature from `dimos-release-bot` when the tag is valid. GitHub's web UI shows "Unverified" because the GPG key isn't bound to a GitHub user account. This is expected.
 
 ### Rotating the App private key
 
@@ -82,7 +82,7 @@ Rotate immediately on suspected compromise.
 Rotate immediately on suspected compromise.
 Sam/Stash have revocation certificates which can be published to revoke the old key.
 
-Regenerate the key in memory on Linux (private material never touches persistent storage — `/dev/shm` is always `tmpfs`):
+Regenerate the key in memory on Linux (private material never touches persistent storage, because `/dev/shm` is always `tmpfs`):
 
 ```bash
 export GNUPGHOME=/dev/shm/gnupg-release-bot

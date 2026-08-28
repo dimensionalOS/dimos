@@ -14,17 +14,21 @@
 
 """Unit tests for UnitreeWebRTCConnection.
 
-Pure-Python — no hardware, no network. Covers connect() error propagation,
+Pure-Python test suite with no hardware or network. Covers connect() error propagation,
 aes_128_key forwarding, and the UNITREE_AES_128_KEY env var via GlobalConfig.
 """
 
+import json
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock, call
 
 import pytest
+from unitree_webrtc_connect.constants import DATA_CHANNEL_TYPE, RTC_TOPIC, SPORT_CMD
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import GlobalConfig
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.unitree import connection as conn_mod
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 
@@ -69,6 +73,59 @@ def test_connect_success_completes_setup(built_connection: Any) -> None:
 
     driver.connect.assert_awaited_once()
     driver.datachannel.pub_sub.publish_request_new.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    ("connection_options", "expected_call"),
+    [
+        pytest.param(
+            {},
+            call(
+                RTC_TOPIC["WIRELESS_CONTROLLER"],
+                data={"lx": 0.4, "ly": 1.5, "rx": -0.8, "ry": 0},
+            ),
+            id="joystick",
+        ),
+        pytest.param(
+            {"velocity_api": True},
+            call(
+                RTC_TOPIC["SPORT_MOD"],
+                data={
+                    "header": {
+                        "identity": {
+                            "id": ANY,
+                            "api_id": SPORT_CMD["Move"],
+                        }
+                    },
+                    "parameter": json.dumps({"x": 1.5, "y": -0.4, "z": 0.8}),
+                },
+                msg_type=DATA_CHANNEL_TYPE["REQUEST"],
+            ),
+            id="velocity",
+        ),
+    ],
+)
+def test_move_api_toggle_sends_selected_wire_command(
+    monkeypatch: pytest.MonkeyPatch,
+    connection_options: dict[str, bool],
+    expected_call: Any,
+) -> None:
+    driver = _stub_driver()
+    monkeypatch.setattr(conn_mod, "LegionConnection", MagicMock(return_value=driver))
+    twist = Twist(
+        linear=Vector3(1.5, -0.4, 0.0),
+        angular=Vector3(0.0, 0.0, 0.8),
+    )
+
+    connection = UnitreeWebRTCConnection(ip="10.0.0.99", **connection_options)
+    try:
+        driver.datachannel.pub_sub.publish_without_callback.reset_mock()
+        assert connection.move(twist)
+        assert driver.datachannel.pub_sub.publish_without_callback.call_args == expected_call
+    finally:
+        connection.stop_movement()
+        connection.loop.call_soon_threadsafe(connection.loop.stop)
+        connection.thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
 
 @pytest.fixture

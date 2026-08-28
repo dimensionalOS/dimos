@@ -1,6 +1,0 @@
-# Nix build outputs (symlinks to /nix/store)
-results/
-result
-
-# Cloned C++ source repos
-repo/

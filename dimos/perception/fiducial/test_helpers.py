@@ -49,11 +49,23 @@ def blank_image(ts: float = 10.0) -> Image:
     )
 
 
-def synthetic_marker_image(marker_id: int = 7, ts: float = 10.0) -> Image:
+def synthetic_marker_image(marker_id: int = 7, ts: float = 10.0, inverted: bool = False) -> Image:
+    """Render a marker on a white field; `inverted` swaps tag and quiet zone to negative.
+
+    The inverted form is what a multicolor 3D print looks like with its two filaments
+    swapped: a dark plate margin, a light tag border, and dark data cells.
+    """
     dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
     side_px = 220
     tile = np.zeros((side_px, side_px), dtype=np.uint8)
     cv2.aruco.generateImageMarker(dictionary, marker_id, side_px, tile)
+    if inverted:
+        # The quiet zone inverts with the tag, exactly as the printed plate does.
+        margin_px = 55
+        block = np.full((side_px + 2 * margin_px,) * 2, 255, dtype=np.uint8)
+        block[margin_px : margin_px + side_px, margin_px : margin_px + side_px] = tile
+        tile = 255 - block
+        side_px = tile.shape[0]
     canvas = np.full((480, 640), 255, dtype=np.uint8)
     y0 = (canvas.shape[0] - side_px) // 2
     x0 = (canvas.shape[1] - side_px) // 2

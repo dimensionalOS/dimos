@@ -36,7 +36,7 @@ from dimos.core.coordination.worker_messages import (
     WorkerResponse,
 )
 from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.library_config import apply_library_config
+from dimos.protocol.pubsub.impl.webrtc.providers.spec import shutdown_all_providers
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.sequential_ids import SequentialIds
 
@@ -222,7 +222,7 @@ class PythonWorker:
         if self._conn is None:
             raise RuntimeError("Worker process not started")
 
-        kwargs = kwargs or {}
+        kwargs = dict(kwargs or {})
         kwargs["g"] = global_config
         module_id = _module_ids.next()
 
@@ -328,7 +328,6 @@ class _WorkerState:
 
 
 def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
-    apply_library_config()
     signal.signal(signal.SIGINT, signal.SIG_IGN)  # coordinator handles shutdown
     state = _WorkerState(instances={}, worker_id=worker_id)
 
@@ -366,15 +365,19 @@ def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
                 )
             except Exception:
                 logger.error("Error during worker shutdown", exc_info=True)
+        try:
+            # Disconnect provider singletons so broker sessions close promptly.
+            shutdown_all_providers()
+        except Exception:
+            logger.error("Error during worker provider shutdown", exc_info=True)
 
 
 def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
     match request:
         case DeployModuleRequest(module_id=module_id, module_class=module_class, kwargs=kwargs):
-            # Always use the same transport backend as the host.
             host_config = kwargs.get("g")
             if host_config is not None:
-                global_config.update(transport=host_config.transport)
+                global_config.update(**host_config.model_dump())
 
             state.instances[module_id] = module_class(**kwargs)
 
@@ -429,6 +432,17 @@ def _worker_loop(conn: Connection, state: _WorkerState) -> None:
             conn.send(response)
         except (BrokenPipeError, EOFError):
             break
+        except Exception as e:
+            # A result that cannot be pickled must not take the worker with it.
+            logger.error(
+                "Worker response could not be sent",
+                worker_id=state.worker_id,
+                error_repr=repr(e),
+            )
+            try:
+                conn.send(WorkerResponse(error=f"{e.__class__.__name__}: {e}"))
+            except (BrokenPipeError, EOFError):
+                break
 
         if state.should_stop:
             break

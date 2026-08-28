@@ -24,7 +24,7 @@ from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
+from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.xarm.config import make_xarm7_model_config
 
 XARM_PERCEPTION_CAMERA_TRANSFORM = Transform(
@@ -34,16 +34,14 @@ XARM_PERCEPTION_CAMERA_TRANSFORM = Transform(
 
 xarm_perception = autoconnect(
     PickAndPlaceModule.blueprint(
-        robots=[
-            make_xarm7_model_config(
-                name="arm",
-                add_gripper=True,
-                pitch=math.radians(45),
-                tf_extra_links=["link7"],
-            )
-        ],
+        model=make_xarm7_model_config(
+            add_gripper=True,
+            gripper_hardware_id="arm",
+            pitch=math.radians(45),
+            tf_extra_links=["link7"],
+        ),
         planning_timeout=10.0,
-        visualization={"backend": "meshcat"},
+        visualization={"backend": "viser"},
         floor_z=-0.02,
     ),
     RealSenseCamera.blueprint(

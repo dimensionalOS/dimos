@@ -1,6 +1,4 @@
----
-title: "Quality-Based Stream Filtering"
----
+# Quality-Based Stream Filtering
 
 When processing sensor streams, you often want to reduce frequency while keeping the best quality data. For discrete data like images that can't be averaged or merged, instead of blindly dropping frames, `quality_barrier` selects the highest quality item within each time window.
 

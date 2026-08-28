@@ -1,3 +1,5 @@
+# Spatial Memory
+
 <details>
 <summary>Python</summary>
 
@@ -5,12 +7,12 @@
 import pickle
 from dimos.mapping.pointclouds.occupancy import general_occupancy, simple_occupancy, height_cost_occupancy
 from dimos.mapping.occupancy.inflation import simple_inflate
-from dimos.memory2.store.sqlite import SqliteStore
-from dimos.memory2.vis.color import Color
-from dimos.memory2.transform import downsample, throttle, speed, smooth
-from dimos.memory2.vis.space.space import Space
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.vis.color import Color
+from dimos.memory.transform import downsample, throttle, speed, smooth
+from dimos.memory.vis.space.space import Space
 from dimos.utils.data import get_data
-from dimos.memory2.vis.space.elements import Point
+from dimos.memory.vis.space.elements import Point
 ```
 
 </details>
@@ -25,10 +27,10 @@ for name, stream in store.streams.items():
 ```
 
 ```results
-Stream("color_image"): 4164 items, 2025-12-26 11:09:08 — 2025-12-26 11:14:00 (292.5s)
-Stream("color_image_embedded"): 267 items, 2025-12-26 11:09:12 — 2025-12-26 11:14:00 (288.4s)
-Stream("lidar"): 2251 items, 2025-12-26 11:09:08 — 2025-12-26 11:14:00 (292.3s)
-Stream("odom"): 5465 items, 2025-12-26 11:09:08 — 2025-12-26 11:14:00 (292.5s)
+Stream("color_image"): 4164 items, 2025-12-26 11:09:08 to 2025-12-26 11:14:00 (292.5s, 14.23 Hz, 133.76 MiB)
+Stream("color_image_embedded"): 267 items, 2025-12-26 11:09:12 to 2025-12-26 11:14:00 (288.4s, 0.92 Hz, 12.14 MiB)
+Stream("lidar"): 2251 items, 2025-12-26 11:09:08 to 2025-12-26 11:14:00 (292.3s, 7.70 Hz, 320.76 MiB)
+Stream("odom"): 5465 items, 2025-12-26 11:09:08 to 2025-12-26 11:14:00 (292.5s, 18.68 Hz, 458.97 KiB)
 ```
 
 Any stream is drawable
@@ -92,8 +94,8 @@ So knowing above, we can create embeddings for the full stream,
 ```python title="Python" session=mem skip
 from dimos.models.embedding.clip import CLIPModel
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.memory2.transform import QualityWindow
-from dimos.memory2.embed import EmbedImages
+from dimos.memory.transform import QualityWindow
+from dimos.memory.embed import EmbedImages
 
 embedded = store.stream("color_image_embedded", Image)
 clip = CLIPModel()
@@ -138,7 +140,7 @@ We don't really have to deal with the whole global map actually, let's get top 1
 
 ```python title="Python" session=mem output=none
 from dimos.models.embedding.clip import CLIPModel
-from dimos.mapping.voxels import VoxelMapTransformer
+from dimos.mapping.voxels.module import VoxelMapTransformer
 drawing = Space()
 
 # this is defined here, but not executed
@@ -160,7 +162,7 @@ drawing.to_svg("assets/embedding_focused.svg")
 
 ```results
 Stream("color_image_embedded") | vector_search(k=30)
-13:15:15.190 [inf][dimos/mapping/voxels.py       ] VoxelGrid using device: CUDA:0
+12:35:32.400 [inf][dimos/mapping/voxels/grid.py  ] VoxelGrid using device: CUDA:0
 ```
 
 ![output](assets/embedding_focused.svg)

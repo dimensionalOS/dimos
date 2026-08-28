@@ -14,35 +14,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from abc import abstractmethod
 from collections import deque
-from dataclasses import field
 from functools import reduce
 import threading
 import time
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
-from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
-from dimos.protocol.pubsub.spec import PubSub
-from dimos.protocol.service.spec import BaseConfig, Service
 from dimos.types.timestamped import to_human_readable
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.timeseries.inmemory import InMemoryStore
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = setup_logger()
 
 
 @runtime_checkable
 class TFLookup(Protocol):
-    """Read side of a tf service: resolve ``parent ← child`` at a time point.
+    """Read side of a tf buffer: resolve ``parent ← child`` at a time point.
 
-    Satisfied by the live services (:class:`MultiTBuffer`, :class:`PubSubTF`)
-    and by replay backends like ``dimos.memory2.tf.StreamTF``. Code that only
-    queries transforms should accept this instead of a concrete service.
+    Satisfied by the live buffers (:class:`MultiTBuffer`, :class:`TF`) and by
+    replay backends like ``dimos.memory.tf.StreamTF``. Code that only queries
+    transforms should accept this instead of a concrete implementation.
     """
 
     def get(
@@ -52,63 +49,6 @@ class TFLookup(Protocol):
         time_point: float | None = None,
         time_tolerance: float | None = None,
     ) -> Transform | None: ...
-
-
-# generic configuration for transform service
-class TFConfig(BaseConfig):
-    buffer_size: float = 10.0  # seconds
-    rate_limit: float = 10.0  # Hz
-
-
-# generic specification for transform service
-class TFSpec(Service):
-    config: TFConfig
-
-    @abstractmethod
-    def publish(self, *args: Transform) -> None: ...
-
-    @abstractmethod
-    def publish_static(self, *args: Transform) -> None: ...
-
-    def get_frames(self) -> set[str]:
-        return set()
-
-    @abstractmethod
-    def get(
-        self,
-        parent_frame: str,
-        child_frame: str,
-        time_point: float | None = None,
-        time_tolerance: float | None = None,
-        *,
-        forward_tolerance: float = 0.0,
-    ) -> Transform | None: ...
-
-    def get_pose(
-        self,
-        parent_frame: str,
-        child_frame: str,
-        time_point: float | None = None,
-        time_tolerance: float | None = None,
-        *,
-        forward_tolerance: float = 0.0,
-    ) -> PoseStamped | None:
-        tf = self.get(
-            parent_frame,
-            child_frame,
-            time_point,
-            time_tolerance,
-            forward_tolerance=forward_tolerance,
-        )
-        if not tf:
-            return None
-        return tf.to_pose()
-
-    def receive_transform(self, *args: Transform) -> None: ...
-
-    def receive_tfmessage(self, msg: TFMessage) -> None:
-        for transform in msg.transforms:
-            self.receive_transform(transform)
 
 
 class TBuffer(InMemoryStore[Transform]):
@@ -165,6 +105,9 @@ class MultiTBuffer:
                     self.buffers[key] = TBuffer(self.buffer_size)
                 self.buffers[key].add(transform)
             self._cv.notify_all()
+
+    def receive_tfmessage(self, msg: TFMessage) -> None:
+        self.receive_transform(*msg.transforms)
 
     def get_frames(self) -> set[str]:
         frames = set()
@@ -266,17 +209,38 @@ class MultiTBuffer:
         time_tolerance: float | None = None,
         *,
         forward_tolerance: float = 0.0,
+        warn: bool = True,
     ) -> Transform | None:
         result = self._get(parent_frame, child_frame, time_point, time_tolerance)
         if result is None and forward_tolerance > 0:
             result = self._wait_get(
                 parent_frame, child_frame, time_point, time_tolerance, forward_tolerance
             )
-        if result is None:
+        if result is None and warn:
             logger.warning(
                 f"No direct transform found between '{parent_frame}' and '{child_frame}' at '{to_human_readable(time_point or time.time())}'"
             )
         return result
+
+    def get_pose(
+        self,
+        parent_frame: str,
+        child_frame: str,
+        time_point: float | None = None,
+        time_tolerance: float | None = None,
+        *,
+        forward_tolerance: float = 0.0,
+    ) -> PoseStamped | None:
+        tf = self.get(
+            parent_frame,
+            child_frame,
+            time_point,
+            time_tolerance,
+            forward_tolerance=forward_tolerance,
+        )
+        if not tf:
+            return None
+        return tf.to_pose()
 
     def get_transform_search(
         self,
@@ -354,111 +318,34 @@ class MultiTBuffer:
         return "\n".join(lines)
 
 
-class PubSubTFConfig(TFConfig):
-    topic: Topic | None = None  # Required field but needs default for dataclass inheritance
-    pubsub: type[PubSub] | PubSub | None = None  # type: ignore[type-arg]
-    autostart: bool = True
+class TF(MultiTBuffer):
+    """Transform buffer over a tf stream — a disposable tf view.
 
+    Wraps anything that speaks ``TFMessage`` through ``subscribe``/``publish``
+    — typically a module's ``tf: IO[TFMessage]`` port, but a raw ``Transport``
+    works too. Received messages fill the buffer for ``get()`` lookups;
+    ``publish()`` stores locally and sends out on the stream. Without a stream
+    it is a purely local buffer.
+    """
 
-class PubSubTF(MultiTBuffer, TFSpec):
-    config: PubSubTFConfig
+    def __init__(self, stream: Any | None = None, buffer_size: float = 10.0) -> None:
+        super().__init__(buffer_size)
+        self._stream = stream
+        self._unsubscribe: Callable[[], None] | None = None
+        if stream is not None:
+            self._unsubscribe = stream.subscribe(self.receive_tfmessage)
 
-    def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        TFSpec.__init__(self, **kwargs)
-        MultiTBuffer.__init__(self, self.config.buffer_size)
+    def publish(self, *transforms: Transform) -> None:
+        self.receive_transform(*transforms)
+        if self._stream is not None:
+            self._stream.publish(TFMessage(*transforms))
 
-        pubsub_config = getattr(self.config, "pubsub", None)
-        if pubsub_config is not None:
-            if callable(pubsub_config):
-                self.pubsub = pubsub_config()
-            else:
-                self.pubsub = pubsub_config
-        else:
-            raise ValueError("PubSub configuration is missing")
+    def dispose(self) -> None:
+        if self._unsubscribe is not None:
+            self._unsubscribe()
+            self._unsubscribe = None
 
-        if self.config.autostart:
-            self.start()
-
-    def start(self, sub: bool = True) -> None:
-        self.pubsub.start()
-        if sub:
-            topic = getattr(self.config, "topic", None)
-            if topic:
-                self.pubsub.subscribe(topic, self.receive_msg)
-
-    def stop(self) -> None:
-        self.pubsub.stop()
-
-    def publish(self, *args: Transform) -> None:
-        """Send transforms using the configured PubSub."""
-        if not self.pubsub:
-            raise ValueError("PubSub is not configured.")
-
-        self.receive_transform(*args)
-        topic = getattr(self.config, "topic", None)
-        if topic:
-            self.pubsub.publish(topic, TFMessage(*args))
-
-    def publish_static(self, *args: Transform) -> None:
-        raise NotImplementedError("Static transforms not implemented in PubSubTF.")
-
-    def publish_all(self) -> None:
-        """Publish all transforms currently stored in all buffers."""
-        all_transforms = []
-        with self._cv:
-            for buffer in self.buffers.values():
-                # Get the latest transform from each buffer
-                latest = buffer.get()  # get() with no args returns latest
-                if latest:
-                    all_transforms.append(latest)
-
-        if all_transforms:
-            self.publish(*all_transforms)
-
-    def get(
-        self,
-        parent_frame: str,
-        child_frame: str,
-        time_point: float | None = None,
-        time_tolerance: float | None = None,
-        *,
-        forward_tolerance: float = 0.0,
-    ) -> Transform | None:
-        return super().get(
-            parent_frame,
-            child_frame,
-            time_point,
-            time_tolerance,
-            forward_tolerance=forward_tolerance,
-        )
-
-    def receive_msg(self, msg: TFMessage, topic: Topic) -> None:
-        self.receive_tfmessage(msg)
-
-
-class LCMPubsubConfig(PubSubTFConfig):
-    topic: Topic = field(default_factory=lambda: Topic("/tf", TFMessage))
-    pubsub: type[PubSub] | PubSub | None = LCM  # type: ignore[type-arg]
-    autostart: bool = True
-
-
-class LCMTF(PubSubTF):
-    config: LCMPubsubConfig
-
-
-class ZenohPubsubConfig(PubSubTFConfig):
-    # Zenoh key expressions can't start with '/'; namespace under 'dimos'.
-    topic: Topic = field(default_factory=lambda: Topic("dimos/tf", TFMessage))
-    pubsub: type[PubSub] | PubSub | None = Zenoh  # type: ignore[type-arg]
-    autostart: bool = True
-
-
-class ZenohTF(PubSubTF):
-    config: ZenohPubsubConfig
-
-
-TF = LCMTF
 
 if TYPE_CHECKING:
-    # mypy conformance checks: the live services satisfy the read-side protocol.
-    _lookup_impls: tuple[type[TFLookup], ...] = (MultiTBuffer, PubSubTF)
+    # mypy conformance checks: the live buffers satisfy the read-side protocol.
+    _lookup_impls: tuple[type[TFLookup], ...] = (MultiTBuffer, TF)

@@ -20,8 +20,6 @@ import socket
 from typing import Any
 from urllib.parse import urlparse
 
-import rerun as rr
-
 from dimos.msgs.sensor_msgs.PointCloud2 import register_colormap_annotation
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import RERUN_GRPC_PORT
@@ -42,6 +40,8 @@ def rerun_init(
     This exists to consolidate visualization settings across modules
     Note only the rerun bridge module should have start_grpc=True
     """
+    import rerun as rr
+
     rr.init(app_id, **kwargs)  # type: ignore[arg-type]
 
     server_uri: str | None = None

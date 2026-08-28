@@ -103,7 +103,8 @@
         ],
         "nixpkgs": [
           "nixpkgs"
-        ]
+        ],
+        "pfr": "pfr"
       },
       "locked": {
         "path": "../../livox/cpp",
@@ -131,6 +132,40 @@
         "type": "github"
       }
     },
+    "pfr": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1750486035,
+        "narHash": "sha256-Evp15skYDclMZ3IIV7VLwYGwu9BsZMCDKIP0k9cb+6E=",
+        "owner": "apolukhin",
+        "repo": "pfr_non_boost",
+        "rev": "b1a9798677adc191e21dd7904fb42cbe2f2889a7",
+        "type": "github"
+      },
+      "original": {
+        "owner": "apolukhin",
+        "ref": "2.3.2",
+        "repo": "pfr_non_boost",
+        "type": "github"
+      }
+    },
+    "pfr_2": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1750486035,
+        "narHash": "sha256-Evp15skYDclMZ3IIV7VLwYGwu9BsZMCDKIP0k9cb+6E=",
+        "owner": "apolukhin",
+        "repo": "pfr_non_boost",
+        "rev": "b1a9798677adc191e21dd7904fb42cbe2f2889a7",
+        "type": "github"
+      },
+      "original": {
+        "owner": "apolukhin",
+        "ref": "2.3.2",
+        "repo": "pfr_non_boost",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "dimos-lcm": "dimos-lcm",
@@ -138,7 +173,8 @@
         "flake-utils": "flake-utils",
         "lcm-extended": "lcm-extended",
         "livox-sdk": "livox-sdk",
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "pfr": "pfr_2"
       }
     },
     "systems": {

@@ -21,31 +21,42 @@ the optional dependency installed.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from pathlib import Path
-import tempfile
-import time
-from typing import TYPE_CHECKING
-import xml.etree.ElementTree as ET
-from xml.sax.saxutils import escape
+from threading import RLock
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 try:
     import roboplan.core as roboplan_core
-    import roboplan.rrt as roboplan_rrt
 except ImportError as exc:
     raise ImportError(
         "RoboPlanWorld requires the optional roboplan dependency. "
         "Install the manipulation extra before selecting the roboplan backend."
     ) from exc
 
+from dimos.manipulation.planning.groups.models import PlanningGroup
+from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
+from dimos.manipulation.planning.groups.utils import joint_state_to_ordered_positions
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
-from dimos.manipulation.planning.spec.models import Obstacle, PlanningResult, WorldRobotID
-from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
-from dimos.manipulation.planning.utils.path_utils import compute_path_length
+from dimos.manipulation.planning.spec.enums import ObstacleType
+from dimos.manipulation.planning.spec.models import (
+    Obstacle,
+    PlanningGroupID,
+)
+from dimos.manipulation.planning.spec.validation import (
+    validate_obstacle,
+    validate_robot_model_config,
+)
+from dimos.manipulation.planning.world.roboplan_model import (
+    ROBOPLAN_WORLD_FRAME,
+    RoboPlanGroup,
+    RoboPlanModel,
+    build_roboplan_model,
+)
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
@@ -56,135 +67,199 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-    from dimos.manipulation.planning.spec.protocols import WorldSpec
-
 logger = setup_logger()
-
-_WORLD_FRAME = ""
 
 
 @dataclass
 class _RoboPlanRobotData:
-    robot_id: WorldRobotID
     config: RobotModelConfig
-    lower_limits: NDArray[np.float64]
-    upper_limits: NDArray[np.float64]
+    lower_limits: NDArray[np.float64] | None = None
+    upper_limits: NDArray[np.float64] | None = None
 
 
 @dataclass
 class RoboPlanContext:
     """DimOS context wrapper for RoboPlan world state."""
 
-    q_by_robot: dict[WorldRobotID, NDArray[np.float64]] = field(default_factory=dict)
+    q: NDArray[np.float64] = field(default_factory=lambda: np.empty(0, dtype=np.float64))
 
 
 class RoboPlanWorld:
     """WorldSpec implementation backed by RoboPlan scene and collision queries."""
 
     def __init__(self, enable_viz: bool = False, **_: object) -> None:
-        self._scene: roboplan_core.Scene | None = None
+        self._scene: Any | None = None
+        self._model: RoboPlanModel | None = None
         self._enable_viz = enable_viz
         if enable_viz:
             logger.warning("RoboPlanWorld does not currently provide manipulation visualization")
 
-        self._robots: dict[WorldRobotID, _RoboPlanRobotData] = {}
+        self._model_data: _RoboPlanRobotData | None = None
+        self._planning_groups = PlanningGroupRegistry()
         self._obstacles: dict[str, Obstacle] = {}
-        self._robot_counter = 0
+        self._has_authoritative_state = False
         self._finalized = False
+        self._usable = True
         self._live_context = RoboPlanContext()
-        self._srdf_tempdirs: list[tempfile.TemporaryDirectory[str]] = []
+        self._state_lock = RLock()
+        self._lock = RLock()
 
-    # Robot Management
+    # Model Management
 
-    def add_robot(self, config: RobotModelConfig) -> WorldRobotID:
-        """Add a supported robot model to the RoboPlan scene."""
+    def load_model(self, config: RobotModelConfig) -> None:
+        """Register the logical robot model for :meth:`finalize`."""
         if self._finalized:
             raise RuntimeError("Cannot add robot after world is finalized")
-        if self._robots:
-            raise ValueError("RoboPlanWorld currently supports one robot per Scene")
-        if not Path(config.model_path).exists():
-            raise FileNotFoundError(f"Robot model not found: {Path(config.model_path).resolve()}")
-
+        if self._model_data is not None:
+            raise ValueError("A model is already loaded")
+        validate_robot_model_config(config)
+        self._validate_planning_group_config(config)
         self._validate_robot_config(config)
-        self._robot_counter += 1
-        robot_id = f"robot_{self._robot_counter}"
-        self._scene = self._create_scene(config)
-        lower, upper = self._extract_joint_limits(config)
-        self._robots[robot_id] = _RoboPlanRobotData(
-            robot_id=robot_id,
-            config=config,
-            lower_limits=lower,
-            upper_limits=upper,
-        )
-        self._live_context.q_by_robot[robot_id] = np.zeros(
-            len(config.joint_names), dtype=np.float64
-        )
-        logger.info(f"Added RoboPlan robot '{robot_id}' ({config.name})")
-        return robot_id
+        self._model_data = _RoboPlanRobotData(config=config)
+        self._planning_groups.add_model(config)
+        self._live_context.q = np.zeros(len(config.joint_names), dtype=np.float64)
 
-    def get_robot_ids(self) -> list[WorldRobotID]:
-        """Get all robot IDs in the world."""
-        return list(self._robots.keys())
+    def get_model_config(self) -> RobotModelConfig:
+        """Get the logical robot model configuration."""
+        return self._get_model_data().config
 
-    def get_robot_config(self, robot_id: WorldRobotID) -> RobotModelConfig:
-        """Get robot configuration by ID."""
-        return self._get_robot(robot_id).config
-
-    def get_joint_limits(
-        self, robot_id: WorldRobotID
-    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    def get_joint_limits(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         """Get joint limits in DimOS joint order."""
-        robot = self._get_robot(robot_id)
+        robot = self._get_model_data()
+        if robot.lower_limits is None or robot.upper_limits is None:
+            raise RuntimeError("Joint limits are available after RoboPlan finalization")
         return robot.lower_limits.copy(), robot.upper_limits.copy()
+
+    def ordered_joint_positions(self, joint_state: JointState) -> NDArray[np.float64]:
+        """Return a canonical joint state in configured model order."""
+        return self._joint_state_to_q(joint_state)
+
+    def is_ready(self) -> bool:
+        """Return whether authoritative state is available for planning."""
+        with self._state_lock:
+            return self._model_data is not None and self._has_authoritative_state
+
+    def planning_group(self, group_ids: Sequence[PlanningGroupID]) -> RoboPlanGroup | None:
+        """Return the native group generated for a public group selection."""
+        return self._require_model().groups.get(frozenset(group_ids))
+
+    def all_planning_group(self) -> RoboPlanGroup:
+        """Return the generated group spanning every canonical model joint."""
+        return self._require_model().all_group
+
+    def native_link_name(self, canonical_name: str) -> str:
+        """Return the backend link name for a canonical model link."""
+        return self._require_model().native_link(canonical_name)
 
     # Obstacle Management
 
-    def add_obstacle(self, obstacle: Obstacle) -> str:
+    def add_obstacle(self, obstacle: Obstacle) -> str | None:
         """Add a supported obstacle to the RoboPlan scene."""
-        obstacle_id = obstacle.name
-        if obstacle_id in self._obstacles:
+        with self._lock:
+            self._require_finalized()
+            self._validate_obstacle(obstacle, allow_empty_name=True)
+            obstacle_id = obstacle.name
+            if not obstacle_id:
+                return None
+            if obstacle_id in self._obstacles:
+                return None
+            snapshot = deepcopy(obstacle)
+            self._add_obstacle_to_scene(snapshot, obstacle_id)
+            self._obstacles[obstacle_id] = snapshot
             return obstacle_id
-        self._add_obstacle_to_scene(obstacle, obstacle_id)
-        self._obstacles[obstacle_id] = obstacle
-        return obstacle_id
 
     def remove_obstacle(self, obstacle_id: str) -> bool:
         """Remove an obstacle from the RoboPlan scene."""
-        if obstacle_id not in self._obstacles:
-            return False
-        scene = self._require_scene()
-        scene.removeGeometry(obstacle_id)
-        del self._obstacles[obstacle_id]
-        return True
+        with self._lock:
+            self._require_finalized()
+            if obstacle_id not in self._obstacles:
+                return False
+            self._require_scene().removeGeometry(obstacle_id)
+            del self._obstacles[obstacle_id]
+            return True
+
+    def update_obstacle(self, obstacle: Obstacle) -> bool:
+        """Atomically replace a complete obstacle."""
+        with self._lock:
+            self._require_finalized()
+            self._validate_obstacle(obstacle)
+            snapshot = deepcopy(obstacle)
+            obstacle_id = snapshot.name
+            if obstacle_id not in self._obstacles:
+                return False
+            scene = self._require_scene()
+            try:
+                scene.removeGeometry(obstacle_id)
+                self._add_obstacle_to_scene(snapshot, obstacle_id)
+            except Exception:
+                self._usable = False
+                raise
+            self._obstacles[obstacle_id] = snapshot
+            return True
 
     def update_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> bool:
-        """Update an obstacle pose and invalidate collision scratch."""
-        if obstacle_id not in self._obstacles:
-            return False
-        scene = self._require_scene()
-        scene.updateGeometryPlacement(obstacle_id, _WORLD_FRAME, pose_to_matrix(pose))
-        self._obstacles[obstacle_id] = replace(self._obstacles[obstacle_id], pose=pose)
-        return True
+        """Atomically update only an obstacle pose."""
+        with self._lock:
+            self._require_finalized()
+            replacement_pose = deepcopy(pose)
+            matrix = pose_to_matrix(replacement_pose)
+            if not np.isfinite(matrix).all():
+                raise ValueError("Obstacle pose must contain only finite values")
+            if obstacle_id not in self._obstacles:
+                return False
+            scene = self._require_scene()
+            try:
+                scene.updateGeometryPlacement(obstacle_id, ROBOPLAN_WORLD_FRAME, matrix)
+            except Exception:
+                self._usable = False
+                raise
+            self._obstacles[obstacle_id] = replace(
+                self._obstacles[obstacle_id],
+                pose=replacement_pose,
+            )
+            return True
 
     def clear_obstacles(self) -> None:
         """Remove all tracked obstacles."""
-        for obstacle_id in list(self._obstacles.keys()):
-            self.remove_obstacle(obstacle_id)
+        with self._lock:
+            self._require_finalized()
+            for obstacle_id in list(self._obstacles.keys()):
+                self.remove_obstacle(obstacle_id)
 
     def get_obstacles(self) -> list[Obstacle]:
         """Get all obstacles currently tracked by DimOS."""
-        return list(self._obstacles.values())
+        with self._lock:
+            self._require_finalized()
+            return deepcopy(list(self._obstacles.values()))
 
     # Lifecycle
 
     def finalize(self) -> None:
-        """Mark the RoboPlan scene ready for DimOS planning queries.
-
-        RoboPlan Python bindings construct a query-ready Scene directly; v0.4.0
-        exposes no Scene.finalize() lifecycle method.
-        """
-        self._require_scene()
-        self._finalized = True
+        """Build one immutable robot model and materialize pending obstacles."""
+        with self._lock:
+            self._require_usable()
+            if self._finalized:
+                return
+            model = build_roboplan_model(
+                self._get_model_data(),
+                self._planning_groups,
+                roboplan_core.Scene,
+            )
+            self._model = model
+            self._scene = model.scene
+            try:
+                robot = self._get_model_data()
+                group = model.all_group
+                lower, upper = self._extract_joint_limits(robot.config, group)
+                robot.lower_limits = lower
+                robot.upper_limits = upper
+                for obstacle_id, obstacle in self._obstacles.items():
+                    self._add_obstacle_to_scene(obstacle, obstacle_id)
+            except BaseException:
+                self._scene = None
+                self._model = None
+                raise
+            self._finalized = True
 
     @property
     def is_finalized(self) -> bool:
@@ -201,46 +276,43 @@ class RoboPlanWorld:
     @contextmanager
     def scratch_context(self) -> Generator[RoboPlanContext, None, None]:
         """Create a per-consumer context with independent collision scratch."""
-        self._require_finalized()
-        ctx = RoboPlanContext(
-            q_by_robot={robot_id: q.copy() for robot_id, q in self._live_context.q_by_robot.items()}
-        )
+        with self._state_lock:
+            self._require_finalized()
+            ctx = RoboPlanContext(q=self._live_context.q.copy())
         yield ctx
 
-    def sync_from_joint_state(self, robot_id: WorldRobotID, joint_state: JointState) -> None:
+    def sync_from_joint_state(self, joint_state: JointState) -> None:
         """Sync live context from a driver joint-state message."""
         if not self._finalized:
             return
-        self.set_joint_state(self._live_context, robot_id, joint_state)
+        q = self._joint_state_to_q(joint_state)
+        with self._state_lock:
+            self._live_context.q = q
+            self._has_authoritative_state = True
 
     # State Operations
 
-    def set_joint_state(
-        self, ctx: RoboPlanContext, robot_id: WorldRobotID, joint_state: JointState
-    ) -> None:
+    def set_joint_state(self, ctx: RoboPlanContext, joint_state: JointState) -> None:
         """Set robot joint state in a context."""
         self._require_finalized()
-        ctx.q_by_robot[robot_id] = self._joint_state_to_q(robot_id, joint_state)
+        ctx.q = self._joint_state_to_q(joint_state)
 
-    def get_joint_state(self, ctx: RoboPlanContext, robot_id: WorldRobotID) -> JointState:
+    def get_joint_state(self, ctx: RoboPlanContext) -> JointState:
         """Get robot joint state from a context."""
-        robot = self._get_robot(robot_id)
-        q = ctx.q_by_robot.get(robot_id)
-        if q is None:
+        robot = self._get_model_data()
+        q = ctx.q
+        if not len(q):
             q = np.zeros(len(robot.config.joint_names), dtype=np.float64)
         return JointState(name=robot.config.joint_names, position=q.astype(float).tolist())
 
     # Collision Checking
 
-    def is_collision_free(self, ctx: RoboPlanContext, robot_id: WorldRobotID) -> bool:
+    def is_collision_free(self, ctx: RoboPlanContext) -> bool:
         """Check if the robot configuration in a context is collision-free."""
         self._require_finalized()
-        q = ctx.q_by_robot.get(robot_id)
-        if q is None:
-            raise KeyError(f"Robot '{robot_id}' not found in context")
-        return not self._has_collisions(robot_id, q)
+        return not self._has_collisions(ctx, ctx.q)
 
-    def get_min_distance(self, ctx: RoboPlanContext, robot_id: WorldRobotID) -> float:
+    def get_min_distance(self, ctx: RoboPlanContext) -> float:
         """Get minimum signed distance.
 
         RoboPlan signed-distance semantics are not verified yet, so do not return
@@ -248,31 +320,41 @@ class RoboPlanWorld:
         """
         raise NotImplementedError("RoboPlanWorld.get_min_distance is not implemented")
 
-    def check_config_collision_free(self, robot_id: WorldRobotID, joint_state: JointState) -> bool:
+    def check_config_collision_free(self, joint_state: JointState) -> bool:
         """Check a joint state using a scratch collision context."""
         with self.scratch_context() as ctx:
-            self.set_joint_state(ctx, robot_id, joint_state)
-            return self.is_collision_free(ctx, robot_id)
+            self.set_joint_state(ctx, joint_state)
+            return self.is_collision_free(ctx)
 
     def check_edge_collision_free(
         self,
-        robot_id: WorldRobotID,
         start: JointState,
         end: JointState,
         step_size: float = 0.05,
     ) -> bool:
         """Check if an interpolated edge is collision-free."""
         self._require_finalized()
-        q_start = self._joint_state_to_q(robot_id, start)
-        q_end = self._joint_state_to_q(robot_id, end)
-        return not self._call_path_collision_checker(robot_id, q_start, q_end, step_size)
+        q_start = self._joint_state_to_q(start)
+        q_end = self._joint_state_to_q(end)
+        with self.scratch_context() as ctx:
+            return not self._call_path_collision_checker(ctx, q_start, q_end, step_size)
 
     # Forward Kinematics
 
-    def get_ee_pose(self, ctx: RoboPlanContext, robot_id: WorldRobotID) -> PoseStamped:
+    def get_ee_pose(self, ctx: RoboPlanContext) -> PoseStamped:
         """Get end-effector pose if RoboPlan exposes FK."""
-        robot = self._get_robot(robot_id)
-        mat = self.get_link_pose(ctx, robot_id, robot.config.end_effector_link)
+        robot = self._get_model_data()
+        group_id = self._primary_pose_group_id_for_config(robot.config)
+        if group_id is None:
+            raise ValueError("Model has no pose-targetable planning group")
+        return self.get_group_ee_pose(ctx, group_id)
+
+    def get_group_ee_pose(self, ctx: RoboPlanContext, group_id: PlanningGroupID) -> PoseStamped:
+        """Get planning-group tip pose if RoboPlan exposes FK."""
+        group = self._planning_group_from_id(group_id)
+        if group.tip_link is None:
+            raise ValueError(f"Planning group '{group_id}' has no tip link")
+        mat = self.get_link_pose(ctx, group.tip_link)
         pose = matrix_to_pose(mat)
         return PoseStamped(
             frame_id="world",
@@ -285,289 +367,205 @@ class RoboPlanWorld:
             ],
         )
 
-    def get_link_pose(
-        self, ctx: RoboPlanContext, robot_id: WorldRobotID, link_name: str
-    ) -> NDArray[np.float64]:
+    def get_link_pose(self, ctx: RoboPlanContext, link_name: str) -> NDArray[np.float64]:
         """Get link pose as a 4x4 homogeneous transform."""
-        q = ctx.q_by_robot.get(robot_id)
-        if q is None:
-            raise KeyError(f"Robot '{robot_id}' not found in context")
+        q = ctx.q
         scene = self._require_scene()
-        result = scene.forwardKinematics(self._to_scene_q(robot_id, q), link_name, "")
+        with self._lock:
+            scene_q = self._full_scene_q(ctx, overlay=q)
+            scene.setJointPositions(scene_q)
+            result = scene.forwardKinematics(
+                scene_q,
+                self._require_model().native_link(link_name),
+                "",
+            )
         return np.asarray(result, dtype=np.float64)
 
-    def get_jacobian(self, ctx: RoboPlanContext, robot_id: WorldRobotID) -> NDArray[np.float64]:
+    def get_jacobian(self, ctx: RoboPlanContext) -> NDArray[np.float64]:
         """Get end-effector Jacobian if RoboPlan exposes a compatible API."""
-        robot = self._get_robot(robot_id)
-        q = ctx.q_by_robot.get(robot_id)
-        if q is None:
-            raise KeyError(f"Robot '{robot_id}' not found in context")
+        robot = self._get_model_data()
+        group_id = self._primary_pose_group_id_for_config(robot.config)
+        if group_id is None:
+            raise ValueError("Model has no pose-targetable planning group")
+        return self.get_group_jacobian(ctx, group_id)
+
+    def get_group_jacobian(
+        self, ctx: RoboPlanContext, group_id: PlanningGroupID
+    ) -> NDArray[np.float64]:
+        """Get planning-group Jacobian projected to group-local joint order."""
+        group = self._planning_group_from_id(group_id)
+        if group.tip_link is None:
+            raise ValueError(f"Planning group '{group_id}' has no tip link")
         scene = self._require_scene()
-        result = scene.computeFrameJacobian(
-            self._to_scene_q(robot_id, q), robot.config.end_effector_link, True
-        )
+        model = self._require_model()
+        with self._lock:
+            scene_q = self._full_scene_q(ctx)
+            scene.setJointPositions(scene_q)
+            result = scene.computeFrameJacobian(
+                scene_q,
+                model.native_link(group.tip_link),
+                True,
+            )
         arr = np.asarray(result, dtype=np.float64)
         if arr.shape[0] != 6:
             raise ValueError(f"Unexpected RoboPlan Jacobian shape: {arr.shape}; expected 6 x n")
-        return arr
-
-    # PlannerSpec for native RoboPlan planning
-
-    def plan_joint_path(
-        self,
-        world: WorldSpec,
-        robot_id: WorldRobotID,
-        start: JointState,
-        goal: JointState,
-        timeout: float = 10.0,
-    ) -> PlanningResult:
-        """Plan a path using RoboPlan-native RRT when selected as planner."""
-        if world is not self:
-            return PlanningResult(
-                status=PlanningStatus.NO_SOLUTION,
-                message="RoboPlan-native planner requires its RoboPlanWorld instance",
-            )
-        start_time = time.time()
-        q_start = self._joint_state_to_q(robot_id, start)
-        q_goal = self._joint_state_to_q(robot_id, goal)
-        try:
-            path_arrays = self._run_native_rrt(robot_id, q_start, q_goal, timeout)
-        except ValueError as exc:
-            # _run_native_rrt raises ValueError for the known "no path" case; let any
-            # unexpected error propagate instead of swallowing its traceback.
-            return PlanningResult(
-                status=PlanningStatus.NO_SOLUTION,
-                planning_time=time.time() - start_time,
-                message=f"RoboPlan-native planning failed: {exc}",
-            )
-        if not path_arrays:
-            return PlanningResult(
-                status=PlanningStatus.NO_SOLUTION,
-                planning_time=time.time() - start_time,
-                message="RoboPlan-native planning failed: returned an empty path",
-            )
-        robot = self._get_robot(robot_id)
-        path = [
-            JointState(
-                name=list(robot.config.joint_names),
-                position=np.asarray(q).astype(float).tolist(),
-            )
-            for q in path_arrays
-        ]
-        return PlanningResult(
-            status=PlanningStatus.SUCCESS,
-            path=path,
-            planning_time=time.time() - start_time,
-            path_length=compute_path_length(path),
-            message="RoboPlan path found",
+        scene_joint_order = list(scene.getJointNames())
+        if arr.shape[1] == len(scene_joint_order):
+            native_names = [model.native_joint(name) for name in group.joint_names]
+            return arr[:, [scene_joint_order.index(name) for name in native_names]]
+        raise ValueError(
+            f"Unexpected RoboPlan Jacobian shape: {arr.shape}; cannot project group '{group_id}'"
         )
 
-    def get_name(self) -> str:
-        """Get planner name."""
-        return "RoboPlan"
-
-    # Internals
-
-    def _create_scene(self, config: RobotModelConfig) -> roboplan_core.Scene:
-        urdf_path = self._prepare_robot_urdf(config)
-        srdf_path = self._prepare_robot_srdf(config, urdf_path)
-        package_paths = [str(path) for path in config.package_paths.values()]
-        scene = roboplan_core.Scene(config.name, str(urdf_path), str(srdf_path), package_paths)
-        self._apply_collision_exclusions(scene, config, urdf_path)
-        return scene
+    # PlannerSpec for native RoboPlan planning
 
     def _validate_robot_config(self, config: RobotModelConfig) -> None:
         if not config.joint_names:
             raise ValueError("RoboPlanWorld requires explicit joint_names")
-        if not np.allclose(pose_to_matrix(config.base_pose), np.eye(4)):
-            raise ValueError("RoboPlanWorld does not yet support non-identity robot base_pose")
-
-    def _prepare_robot_urdf(self, config: RobotModelConfig) -> Path:
-        return Path(
-            prepare_urdf_for_drake(
-                config.model_path,
-                package_paths=config.package_paths,
-                xacro_args=config.xacro_args,
-                convert_meshes=config.auto_convert_meshes,
-            )
-        )
-
-    def _prepare_robot_srdf(self, config: RobotModelConfig, urdf_path: Path) -> Path:
-        srdf = self._generate_srdf(config, urdf_path)
-        srdf_tempdir = tempfile.TemporaryDirectory(prefix="dimos_roboplan_srdf_")
-        self._srdf_tempdirs.append(srdf_tempdir)
-        cache_dir = Path(srdf_tempdir.name)
-        srdf_path = cache_dir / f"{config.name}.srdf"
-        srdf_path.write_text(srdf)
-        return srdf_path
-
-    def _generate_srdf(self, config: RobotModelConfig, urdf_path: Path) -> str:
-        lines = [f'<robot name="{escape(config.name)}">']
-        lines.append(f'  <group name="{escape(config.name)}">')
-        for joint_name in config.joint_names:
-            lines.append(f'    <joint name="{escape(joint_name)}"/>')
-        lines.append("  </group>")
-        for link1, link2 in self._collision_exclusion_pairs(config, urdf_path):
-            lines.append(
-                f'  <disable_collisions link1="{escape(link1)}" link2="{escape(link2)}" '
-                'reason="DimOS configured"/>'
-            )
-        lines.append("</robot>")
-        return "\n".join(lines) + "\n"
-
-    def _collision_exclusion_pairs(
-        self, config: RobotModelConfig, urdf_path: Path
-    ) -> list[tuple[str, str]]:
-        pairs = set(config.collision_exclusion_pairs)
-        pairs.update(self._adjacent_link_pairs_from_urdf(urdf_path))
-        return sorted(pairs)
-
-    def _adjacent_link_pairs_from_urdf(self, urdf_path: Path) -> list[tuple[str, str]]:
-        try:
-            root = ET.parse(urdf_path).getroot()
-        except ET.ParseError as exc:
-            raise ValueError(
-                f"Unable to parse prepared URDF for SRDF generation: {urdf_path}"
-            ) from exc
-
-        pairs: list[tuple[str, str]] = []
-        for joint in root.findall("joint"):
-            parent = joint.find("parent")
-            child = joint.find("child")
-            parent_link = parent.get("link") if parent is not None else None
-            child_link = child.get("link") if child is not None else None
-            if parent_link and child_link:
-                pairs.append((parent_link, child_link))
-        return pairs
-
-    def _apply_collision_exclusions(
-        self, scene: roboplan_core.Scene, config: RobotModelConfig, urdf_path: Path
-    ) -> None:
-        for link1, link2 in self._collision_exclusion_pairs(config, urdf_path):
-            try:
-                scene.setCollisions(link1, link2, False)
-            except RuntimeError:
-                logger.warning(f"RoboPlan rejected collision exclusion pair: {link1} <-> {link2}")
+        if config.base_pose.frame_id not in ("", "world"):
+            raise ValueError("RoboPlanWorld base_pose frame_id must be empty or 'world'")
 
     def _extract_joint_limits(
-        self, config: RobotModelConfig
+        self, config: RobotModelConfig, group: RoboPlanGroup
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         if config.joint_limits_lower is not None and config.joint_limits_upper is not None:
             lower = np.asarray(config.joint_limits_lower, dtype=np.float64)
             upper = np.asarray(config.joint_limits_upper, dtype=np.float64)
         else:
-            limits = self._query_scene_joint_limits(config)
-            if limits is None:
+            scene = self._require_scene()
+            lower, upper = scene.getPositionLimitVectors(group.name, False)
+            lower = np.asarray(lower, dtype=np.float64)
+            upper = np.asarray(upper, dtype=np.float64)
+            native_names = tuple(scene.getJointGroupInfo(group.name).joint_names)
+            native_to_canonical = {
+                native: canonical
+                for canonical, native in self._require_model().native_joints.items()
+            }
+            try:
+                canonical_names = tuple(native_to_canonical[name] for name in native_names)
+            except KeyError as exc:
                 raise ValueError(
-                    "RoboPlanWorld requires explicit joint_limits_lower/joint_limits_upper "
-                    "when limits cannot be read from RoboPlan bindings"
+                    f"RoboPlan joint-limit group contains unknown native joint '{exc.args[0]}'"
+                ) from exc
+            if set(canonical_names) != set(config.joint_names):
+                raise ValueError(
+                    "RoboPlan joint-limit group does not match the composed model: "
+                    f"{sorted(canonical_names)} != {sorted(config.joint_names)}"
                 )
-            lower, upper = limits
+            by_name = dict(zip(canonical_names, zip(lower, upper, strict=True), strict=True))
+            lower = np.asarray([by_name[name][0] for name in config.joint_names])
+            upper = np.asarray([by_name[name][1] for name in config.joint_names])
         if len(lower) != len(config.joint_names) or len(upper) != len(config.joint_names):
             raise ValueError("Joint limit length must match joint_names length")
         if np.any(~np.isfinite(lower)) or np.any(~np.isfinite(upper)):
             raise ValueError("RoboPlanWorld requires finite joint limits")
         return lower, upper
 
-    def _query_scene_joint_limits(
-        self, config: RobotModelConfig
-    ) -> tuple[NDArray[np.float64], NDArray[np.float64]] | None:
-        scene = self._require_scene()
-        joint_order = self._query_scene_joint_order(scene, config)
-        if joint_order is None:
-            return None
-        lower, upper = scene.getPositionLimitVectors(config.name, False)
-        lower_array = np.asarray(lower, dtype=np.float64)
-        upper_array = np.asarray(upper, dtype=np.float64)
-        if len(joint_order) != len(lower_array) or len(joint_order) != len(upper_array):
-            raise ValueError(
-                "RoboPlan joint limit order length does not match returned limit vectors"
-            )
-        if len(set(joint_order)) != len(joint_order):
-            raise ValueError("RoboPlan returned duplicate joint names for joint limits")
-        if set(joint_order) != set(config.joint_names):
-            raise ValueError(
-                "RoboPlan joint limit names do not match configured joint_names: "
-                f"RoboPlan={joint_order}, configured={config.joint_names}"
-            )
-        order_indices = [joint_order.index(joint_name) for joint_name in config.joint_names]
-        return lower_array[order_indices], upper_array[order_indices]
+    def _validate_planning_group_config(self, config: RobotModelConfig) -> None:
+        """Validate planning groups before mutating backend state."""
+        PlanningGroupRegistry([config])
 
-    def _query_scene_joint_order(
-        self, scene: roboplan_core.Scene, config: RobotModelConfig
-    ) -> list[str] | None:
-        try:
-            group_info = scene.getJointGroupInfo(config.name)
-        except AttributeError:
-            return None
-        return list(group_info.joint_names)
+    def _planning_group_from_id(self, group_id: PlanningGroupID) -> PlanningGroup:
+        return self._planning_groups.get(group_id)
 
-    def _get_robot(self, robot_id: WorldRobotID) -> _RoboPlanRobotData:
-        if robot_id not in self._robots:
-            raise KeyError(f"Robot '{robot_id}' not found")
-        return self._robots[robot_id]
+    def _primary_pose_group_id_for_config(self, config: RobotModelConfig) -> PlanningGroupID | None:
+        return self._planning_groups.primary_pose_group_id()
 
-    def _joint_state_to_q(
-        self, robot_id: WorldRobotID, joint_state: JointState
-    ) -> NDArray[np.float64]:
-        robot = self._get_robot(robot_id)
-        if len(joint_state.position) != len(robot.config.joint_names):
-            raise ValueError("JointState position length must match configured joint count")
-        if not joint_state.name:
-            return np.asarray(joint_state.position, dtype=np.float64)
-        name_to_pos = {
-            robot.config.get_urdf_joint_name(name): position
-            for name, position in zip(joint_state.name, joint_state.position, strict=True)
-        }
-        missing = [name for name in robot.config.joint_names if name not in name_to_pos]
-        if missing:
-            raise ValueError(f"JointState missing joints for RoboPlanWorld: {missing}")
-        return np.asarray(
-            [name_to_pos[name] for name in robot.config.joint_names], dtype=np.float64
+    def _get_model_data(self) -> _RoboPlanRobotData:
+        if self._model_data is None:
+            raise RuntimeError("Model is not loaded")
+        return self._model_data
+
+    def _joint_state_to_q(self, joint_state: JointState) -> NDArray[np.float64]:
+        robot = self._get_model_data()
+        return joint_state_to_ordered_positions(
+            joint_state,
+            joint_names=robot.config.joint_names,
         )
 
     def _require_finalized(self) -> None:
+        self._require_usable()
         if not self._finalized:
             raise RuntimeError("World must be finalized first")
 
-    def _require_scene(self) -> roboplan_core.Scene:
+    def _require_usable(self) -> None:
+        if not self._usable:
+            raise RuntimeError("Planning world is invalid and must be reconstructed")
+
+    def _require_scene(self) -> Any:
+        self._require_usable()
         if self._scene is None:
-            raise RuntimeError("RoboPlan scene is not initialized; add a robot first")
+            raise RuntimeError("RoboPlan scene is not initialized; finalize the world first")
         return self._scene
 
-    def _to_scene_q(self, robot_id: WorldRobotID, q: NDArray[np.float64]) -> NDArray[np.float64]:
-        """Expand DimOS group positions to RoboPlan's full scene vector when available."""
-        scene = self._require_scene()
-        robot = self._get_robot(robot_id)
-        if len(q) != len(robot.config.joint_names):
-            return q
-        return np.asarray(scene.toFullJointPositions(robot.config.name, q), dtype=np.float64)
+    def _require_model(self) -> RoboPlanModel:
+        self._require_usable()
+        if self._model is None:
+            raise RuntimeError("RoboPlan model is not initialized; finalize the world first")
+        return self._model
 
-    def _has_collisions(self, robot_id: WorldRobotID, q: NDArray[np.float64]) -> bool:
+    @contextmanager
+    def parametrization_model(self) -> Generator[RoboPlanModel, None, None]:
+        """Yield the finalized trajectory model under the world scene lock."""
+        with self._lock:
+            yield self._require_model()
+
+    def _full_scene_q(
+        self,
+        ctx: RoboPlanContext,
+        overlay: NDArray[np.float64] | None = None,
+    ) -> NDArray[np.float64]:
         scene = self._require_scene()
-        scene_q = self._to_scene_q(robot_id, q)
-        return bool(scene.hasCollisions(scene_q))
+        group = self._require_model().all_group
+        positions = self._current_positions(ctx, overlay)
+        q = np.asarray([positions[name] for name in group.public_names], dtype=np.float64)
+        return np.asarray(scene.toFullJointPositions(group.name, q), dtype=np.float64)
+
+    def _current_positions(
+        self,
+        ctx: RoboPlanContext | None = None,
+        overlay: NDArray[np.float64] | None = None,
+    ) -> dict[str, float]:
+        context = ctx if ctx is not None else self._live_context
+        robot = self._get_model_data()
+        q = overlay if overlay is not None else context.q
+        if len(q) != len(robot.config.joint_names):
+            raise RuntimeError("Missing authoritative model state")
+        return dict(zip(robot.config.joint_names, map(float, q), strict=True))
+
+    def _has_collisions(
+        self,
+        ctx: RoboPlanContext,
+        q: NDArray[np.float64],
+    ) -> bool:
+        with self._lock:
+            scene = self._require_scene()
+            scene_q = self._full_scene_q(ctx, overlay=q)
+            scene.setJointPositions(scene_q)
+            return bool(scene.hasCollisions(scene_q))
 
     def _call_path_collision_checker(
         self,
-        robot_id: WorldRobotID,
+        ctx: RoboPlanContext,
         q_start: NDArray[np.float64],
         q_end: NDArray[np.float64],
         step_size: float,
     ) -> bool:
-        scene = self._require_scene()
-        scene_q_start = self._to_scene_q(robot_id, q_start)
-        scene_q_end = self._to_scene_q(robot_id, q_end)
-        return bool(
-            roboplan_core.hasCollisionsAlongPath(
-                scene,
-                scene_q_start,
-                scene_q_end,
-                step_size,
-                False,
-                True,
+        with self._lock:
+            scene = self._require_scene()
+            scene_q_start = self._full_scene_q(ctx, overlay=q_start)
+            scene_q_end = self._full_scene_q(ctx, overlay=q_end)
+            scene.setJointPositions(scene_q_start)
+            return bool(
+                roboplan_core.hasCollisionsAlongPath(
+                    scene,
+                    scene_q_start,
+                    scene_q_end,
+                    step_size,
+                    False,
+                    True,
+                )
             )
-        )
 
     def _add_obstacle_to_scene(self, obstacle: Obstacle, obstacle_id: str) -> None:
         scene = self._require_scene()
@@ -578,7 +576,7 @@ class RoboPlanWorld:
             width, height, depth = obstacle.dimensions
             scene.addBoxGeometry(
                 obstacle_id,
-                _WORLD_FRAME,
+                ROBOPLAN_WORLD_FRAME,
                 roboplan_core.Box(width, height, depth),
                 matrix,
                 color,
@@ -588,7 +586,7 @@ class RoboPlanWorld:
             self._require_dimensions(obstacle, 1)
             (radius,) = obstacle.dimensions
             scene.addSphereGeometry(
-                obstacle_id, _WORLD_FRAME, roboplan_core.Sphere(radius), matrix, color
+                obstacle_id, ROBOPLAN_WORLD_FRAME, roboplan_core.Sphere(radius), matrix, color
             )
             return
         if obstacle.obstacle_type == ObstacleType.CYLINDER:
@@ -596,7 +594,7 @@ class RoboPlanWorld:
             radius, length = obstacle.dimensions
             scene.addCylinderGeometry(
                 obstacle_id,
-                _WORLD_FRAME,
+                ROBOPLAN_WORLD_FRAME,
                 roboplan_core.Cylinder(radius, length),
                 matrix,
                 color,
@@ -607,13 +605,27 @@ class RoboPlanWorld:
                 raise ValueError("MESH obstacle requires mesh_path")
             scene.addMeshGeometry(
                 obstacle_id,
-                _WORLD_FRAME,
+                ROBOPLAN_WORLD_FRAME,
                 roboplan_core.Mesh(obstacle.mesh_path),
                 matrix,
                 color,
             )
             return
+        if obstacle.obstacle_type == ObstacleType.OCTREE:
+            scene.addOcTreeGeometry(
+                obstacle_id,
+                ROBOPLAN_WORLD_FRAME,
+                _octree(obstacle),
+                matrix,
+                color,
+            )
+            return
         raise ValueError(f"Unsupported obstacle type: {obstacle.obstacle_type}")
+
+    def _validate_obstacle(self, obstacle: Obstacle, *, allow_empty_name: bool = False) -> None:
+        validate_obstacle(
+            obstacle, pose_to_matrix(obstacle.pose), allow_empty_name=allow_empty_name
+        )
 
     def _require_dimensions(self, obstacle: Obstacle, n_dims: int) -> None:
         if len(obstacle.dimensions) != n_dims:
@@ -622,34 +634,18 @@ class RoboPlanWorld:
                 f"got {len(obstacle.dimensions)}"
             )
 
-    def _run_native_rrt(
-        self,
-        robot_id: WorldRobotID,
-        q_start: NDArray[np.float64],
-        q_goal: NDArray[np.float64],
-        timeout: float,
-    ) -> list[NDArray[np.float64]]:
-        scene = self._require_scene()
-        robot = self._get_robot(robot_id)
-        options = roboplan_rrt.RRTOptions()
-        options.group_name = robot.config.name
-        options.max_planning_time = timeout
-        options.collision_check_use_bisection = False
-        planner = roboplan_rrt.RRT(scene, options)
-        start_config = self._to_native_joint_configuration(robot_id, q_start)
-        goal_config = self._to_native_joint_configuration(robot_id, q_goal)
-        result = planner.plan(start_config, goal_config)
-        if result is None:
-            raise ValueError("RoboPlan RRT returned no path")
-        return self._extract_native_path(result)
 
-    def _to_native_joint_configuration(
-        self, robot_id: WorldRobotID, q: NDArray[np.float64]
-    ) -> roboplan_core.JointConfiguration:
-        robot = self._get_robot(robot_id)
-        return roboplan_core.JointConfiguration(
-            robot.config.joint_names, np.asarray(q, dtype=np.float64)
-        )
+def _octree(obstacle: Obstacle) -> Any:
+    """Build a roboplan octree from an obstacle's occupied cell centers.
 
-    def _extract_native_path(self, result: roboplan_core.JointPath) -> list[NDArray[np.float64]]:
-        return [np.asarray(q, dtype=np.float64) for q in result.positions]
+    Coal describes an octree cell as six numbers: center, edge length, cost and
+    occupancy threshold. Every cell is occupied here, so cost is 1.0 against the
+    default 0.5 threshold.
+    """
+    if obstacle.octree_resolution is None:
+        raise ValueError("OCTREE obstacle requires octree_resolution")
+    resolution = float(obstacle.octree_resolution)
+    boxes = [
+        np.array((x, y, z, resolution, 1.0, 0.5), dtype=np.float64) for x, y, z in obstacle.points
+    ]
+    return roboplan_core.OcTree(boxes, resolution)

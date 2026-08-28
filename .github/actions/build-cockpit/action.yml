@@ -1,0 +1,39 @@
+name: build-cockpit
+description: >-
+  Canonical web build for release artifacts: install the Deno version pinned
+  in dimos/utils/deno.py, validate the frozen lockfile, and build
+  web/sdk/dist and web/cockpit/dist (shipped in the sdist and copied into
+  wheels by setup.py).
+
+runs:
+  using: composite
+  steps:
+    - name: Extract Deno version
+      id: deno-version
+      shell: bash
+      # sed, not grep -P: macOS (BSD) grep has no -P, and a failed command
+      # substitution would silently yield an empty version.
+      run: |
+        version=$(sed -n 's/^DENO_VERSION = "\(.*\)"$/\1/p' dimos/utils/deno.py)
+        if [[ -z "$version" ]]; then
+          echo "::error::could not read DENO_VERSION from dimos/utils/deno.py"
+          exit 1
+        fi
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+    - name: Install Deno
+      uses: denoland/setup-deno@v2
+      with:
+        deno-version: ${{ steps.deno-version.outputs.version }}
+        cache: true
+    - name: Deno install (validates deno.lock)
+      shell: bash
+      working-directory: web
+      run: deno install --frozen
+    - name: Build sdk dist
+      shell: bash
+      working-directory: web/sdk
+      run: deno task build
+    - name: Build cockpit dist
+      shell: bash
+      working-directory: web/cockpit
+      run: deno task build

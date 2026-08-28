@@ -14,6 +14,7 @@
 
 """Graphviz DOT renderer for module IO diagrams."""
 
+from dimos.cli import theme
 from dimos.core.introspection.module.info import ModuleInfo
 from dimos.core.introspection.utils import (
     RPC_COLOR,
@@ -22,7 +23,6 @@ from dimos.core.introspection.utils import (
     color_for_string,
     sanitize_id,
 )
-from dimos.utils.cli import theme
 
 
 def render(info: ModuleInfo) -> str:

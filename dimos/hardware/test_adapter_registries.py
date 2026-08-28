@@ -32,6 +32,7 @@ from dimos.hardware.whole_body.registry import whole_body_adapter_registry
 # anything else (a typo in a manifest, an internal dimos import breaking,
 # a bad import inside an installed SDK) fails CI.
 OPTIONAL_VENDOR_MODULES = {
+    "a1z",
     "can",
     "cyclonedds",
     "mujoco",
@@ -42,12 +43,22 @@ OPTIONAL_VENDOR_MODULES = {
 }
 
 # Subpackages containing an adapter.py that intentionally register nothing.
-UNREGISTERED_ADAPTER_DIRS: set[str] = set()
+UNREGISTERED_ADAPTER_DIRS = {
+    # Abstract base used by concrete Damiao robot packages.
+    "dimos.hardware.whole_body.damiao",
+}
 
 # Every name each registry must declare. Removing a name from a manifest is a
 # conscious change: update this set in the same PR.
 EXPECTED_NAMES = {
-    "manipulators": {"a750", "mock", "openarm", "piper", "sim_mujoco", "xarm"},
+    "manipulators": {
+        "a750",
+        "galaxea_a1z",
+        "mock",
+        "piper",
+        "sim_mujoco",
+        "xarm",
+    },
     "drive_trains": {
         "flowbase",
         "mock_twist_base",
@@ -55,7 +66,14 @@ EXPECTED_NAMES = {
         "transport_ros",
         "unitree_go2",
     },
-    "whole_body": {"sim_mujoco_g1", "transport_lcm", "transport_ros"},
+    "whole_body": {
+        "mock_whole_body",
+        "openarm_damiao",
+        "openyam_damiao",
+        "sim_mujoco_g1",
+        "transport_lcm",
+        "transport_ros",
+    },
 }
 
 FAMILIES = [

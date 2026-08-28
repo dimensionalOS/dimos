@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import platform
+import os
 import re
 from typing import Literal, TypeAlias
 
@@ -29,16 +29,15 @@ from dimos.visualization.rerun.constants import (
 )
 
 TransportBackend: TypeAlias = Literal["lcm", "zenoh"]
+# How one zenoh session joins the network.
+ZenohMode: TypeAlias = Literal["peer", "client", "router"]
+# How every session in every process joins it. A router binds a port only one
+# process can hold, so it is pinned on the one session that owns that port.
+ZenohProcessMode: TypeAlias = Literal["peer", "client"]
 
 
 def _get_all_numbers(s: str) -> list[float]:
     return [float(x) for x in re.findall(r"-?\d+\.?\d*", s)]
-
-
-def _default_transport() -> TransportBackend:
-    if platform.system() == "Darwin":
-        return "zenoh"
-    return "lcm"
 
 
 class GlobalConfig(BaseSettings):
@@ -54,7 +53,35 @@ class GlobalConfig(BaseSettings):
     simulation: str = ""
     replay: bool = False
     replay_db: str = "go2_short"
+    record: Literal["", "sqlite"] = ""
+    record_topics: str = "*"  # comma-separated globs on the topic slug (/a/b -> a_b)
     new_memory: bool = False
+    # How every zenoh session this process opens joins the network.
+    zenoh_mode: ZenohProcessMode = "peer"
+    # Extra locators every session dials, alongside those derived from --robot-ip.
+    # Comma-separated, e.g. tcp/127.0.0.1:7447. Names a router or any non-robot peer.
+    zenoh_connect: str = ""
+    # Discover zenoh peers across the network.
+    # Toggling off drops back to loopback-only discovery:
+    # Sibling worker processes still find each other,
+    # remote peers come solely from the connect endpoints derived from --robot-ip
+    zenoh_scouting: bool = False
+    # Interface multicast scouting binds to, e.g. wlan0.
+    # Empty derives it from zenoh_scouting.
+    zenoh_interface: str = ""
+    # Whether multicast scouting runs at all. zenoh_scouting only sets its reach.
+    zenoh_multicast: bool = True
+    # Multicast group scouting joins, e.g. 224.0.0.224:7446. Empty takes zenoh's
+    # own. Moving it walks a session onto a private discovery bus, which is how
+    # parallel sessions on one machine stay apart -- LCM_DEFAULT_URL's analog.
+    zenoh_scout_addr: str = ""
+    # Whether peers propagate the peers they already know over established links.
+    # Unlike multicast scouting this reaches nothing new on the LAN, and zenoh
+    # needs it to resolve the key expressions a linked peer sends.
+    zenoh_gossip: bool | None = True
+    # Seconds ZenohService.start() blocks for the configured connect endpoints to
+    # link before giving up and continuing. 0 disables the wait.
+    zenoh_connect_timeout: float = Field(default=1.0, ge=0, le=86400)
     viewer: ViewerBackend = "rerun"
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
     rerun_web: bool = RERUN_ENABLE_WEB
@@ -75,13 +102,12 @@ class GlobalConfig(BaseSettings):
     robot_width: float = 0.3
     robot_rotation_diameter: float = 0.6
     nerf_speed: float = 1.0
-    planner_robot_speed: float | None = None
     mcp_port: int = 9990
     # `DIMOS_TRANSPORT` (or `.env`) is the single switch read by every process
     # (dimos, humancli, agentspy, dtop). The `transport` alias keeps the bare
     # env name and the `--transport` CLI flag (which sets the field by name) working.
     transport: TransportBackend = Field(
-        default_factory=_default_transport,
+        default="zenoh",
         validation_alias=AliasChoices("DIMOS_TRANSPORT", "transport"),
     )
     build_native: bool = DEFAULT_BUILD_NATIVE
@@ -89,8 +115,13 @@ class GlobalConfig(BaseSettings):
     obstacle_avoidance: bool = True
     detection_model: VlModelName = "moondream"
     listen_host: str = "127.0.0.1"
-    dimsim_scene: str = "apt"
+    dimsim_scene: str = "apartment"
     dimsim_port: int = 8090
+    dimsim_headless: bool = True
+    local_relay: bool = False
+    relay_url: str | None = None
+    dimos_cloud_url: str = "https://api.dimensional.org"
+    dimos_api_key: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -102,7 +133,7 @@ class GlobalConfig(BaseSettings):
     def update(self, **kwargs: object) -> None:
         """Update config fields in place."""
         for key, value in kwargs.items():
-            if not hasattr(self, key):
+            if key not in type(self).model_fields:
                 raise AttributeError(f"GlobalConfig has no field '{key}'")
             setattr(self, key, value)
 
@@ -124,6 +155,14 @@ class GlobalConfig(BaseSettings):
         if self.mujoco_camera_position is None:
             return (-0.906, 0.008, 1.101, 4.931, 89.749, -46.378)
         return tuple(_get_all_numbers(self.mujoco_camera_position))
+
+    @property
+    def processed_robot_ips(self) -> tuple[str, ...]:
+        ips = [x.strip() for x in (self.robot_ips or "").split(",") if x.strip()]
+        is_running_tests = "PYTEST_CURRENT_TEST" in os.environ
+        if not ips and not is_running_tests:
+            raise ValueError("No robot IPs specified. Must have at least one IP.")
+        return tuple(ips)
 
 
 global_config = GlobalConfig()

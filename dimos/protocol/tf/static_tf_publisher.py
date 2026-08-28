@@ -14,9 +14,9 @@
 
 """Repeatedly publish a fixed set of transforms onto the tf stream.
 
-``PubSubTF`` has no ``publish_static`` (latched) path, so a one-shot publish would
-be missed by anything that subscribed later — including a recorder that wants the
-mount geometry captured in its tf stream. This module works around that by
+The tf topic has no latched (static) path, so a one-shot publish would be missed
+by anything that subscribed later — including a recorder that wants the mount
+geometry captured in its tf stream. This module works around that by
 re-publishing the transforms on a fixed interval from a background task, each cycle
 re-stamped with the current time. Subclass and override :meth:`transforms` with the
 rig's mount frames (see the go2 / realsense recording blueprints).
@@ -31,9 +31,11 @@ from pydantic import Field
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -72,6 +74,8 @@ class StaticTfPublisherConfig(ModuleConfig):
 class StaticTfPublisher(Module):
     config: StaticTfPublisherConfig
 
+    tf: Out[TFMessage]
+
     _running: bool = False
     _transforms: list[Transform] = []
 
@@ -103,7 +107,7 @@ class StaticTfPublisher(Module):
             now = time.time()
             for transform in self._transforms:
                 transform.ts = now
-            self.tf.publish(*self._transforms)
+            self.tf.publish(TFMessage(*self._transforms))
             await asyncio.sleep(period)
 
     @rpc

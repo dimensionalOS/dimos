@@ -43,7 +43,7 @@ def vis_module(
                     "world/camera_info": lambda ci: ci.to_rerun(...),
                 },
                 "static": {
-                    "world/tf/base_link": lambda rr: [rr.Boxes3D(...)],
+                    "world/robot_body": lambda rr: [rr.Boxes3D(...)],
                 },
             },
         )
@@ -61,7 +61,7 @@ def vis_module(
             rerun_config.setdefault("pubsubs", [LCM()])
             rerun_config.setdefault("rerun_open", global_config.rerun_open)
             rerun_config.setdefault("rerun_web", global_config.rerun_web)
-            return autoconnect(
+            bundle = autoconnect(
                 RerunBridgeModule.blueprint(
                     **rerun_config,
                 ),
@@ -69,7 +69,8 @@ def vis_module(
                 WebsocketVisModule.blueprint(),
             )
         case "none":
-            return autoconnect(WebsocketVisModule.blueprint())
+            bundle = autoconnect(WebsocketVisModule.blueprint())
         case _:
             valid = ", ".join(get_args(ViewerBackend))
             raise ValueError(f"Unknown viewer_backend {viewer_backend!r}. Expected one of: {valid}")
+    return bundle

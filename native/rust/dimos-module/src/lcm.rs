@@ -12,32 +12,110 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::HashMap;
 use std::io;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use dimos_lcm::{Lcm, LcmOptions};
 
-use crate::transport::Transport;
+use crate::transport::{Dispatch, Transport};
 
 /// LCM UDP multicast transport. Wraps `dimos_lcm::Lcm`.
-pub struct LcmTransport(Lcm);
+///
+/// The multicast socket receives every channel, so `subscribe` registers a
+/// callback locally and one recv loop routes each message by channel.
+pub struct LcmTransport {
+    inner: Arc<Lcm>,
+    routes: Arc<Mutex<HashMap<String, Vec<Dispatch>>>>,
+    listening: AtomicBool,
+    /// The runtime the transport was opened on. In a baked host each module has
+    /// its own runtime, so the one shared recv loop must not land on whichever
+    /// module happened to subscribe first.
+    runtime: tokio::runtime::Handle,
+}
 
 impl LcmTransport {
     pub async fn new() -> io::Result<Self> {
-        Ok(Self(Lcm::new().await?))
+        Ok(Self::wrap(Lcm::new().await?))
     }
 
     pub async fn with_options(opts: LcmOptions) -> io::Result<Self> {
-        Ok(Self(Lcm::with_options(opts).await?))
+        Ok(Self::wrap(Lcm::with_options(opts).await?))
+    }
+
+    fn wrap(inner: Lcm) -> Self {
+        Self {
+            inner: Arc::new(inner),
+            routes: Arc::new(Mutex::new(HashMap::new())),
+            listening: AtomicBool::new(false),
+            runtime: tokio::runtime::Handle::current(),
+        }
+    }
+
+    fn spawn_recv_loop(&self) {
+        let inner = Arc::clone(&self.inner);
+        let routes = Arc::clone(&self.routes);
+        self.runtime.spawn(async move {
+            loop {
+                match inner.recv().await {
+                    Ok(msg) => {
+                        let callbacks = routes.lock().unwrap().get(&msg.channel).cloned();
+                        if let Some(callbacks) = callbacks {
+                            for cb in &callbacks {
+                                cb(&msg.data);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        crate::error_throttled!(
+                            Duration::from_secs(1),
+                            error = %e,
+                            "lcm recv error"
+                        );
+                    }
+                }
+            }
+        });
     }
 }
 
 impl Transport for LcmTransport {
-    async fn publish(&self, channel: &str, data: &[u8]) -> io::Result<()> {
-        self.0.publish(channel, data).await
+    async fn publish(&self, channel: &str, data: Vec<u8>) -> io::Result<()> {
+        self.inner.publish(channel, &data).await
     }
 
-    async fn recv(&self) -> io::Result<(String, Vec<u8>)> {
-        let msg = self.0.recv().await?;
-        Ok((msg.channel, msg.data))
+    async fn subscribe(&self, channel: &str, on_msg: Dispatch) -> io::Result<()> {
+        self.routes
+            .lock()
+            .unwrap()
+            .entry(channel.to_string())
+            .or_default()
+            .push(on_msg);
+        if !self.listening.swap(true, Ordering::SeqCst) {
+            self.spawn_recv_loop();
+        }
+        Ok(())
+    }
+
+    /// LCM has no per-topic publisher settings and no notion of a session-local
+    /// publisher, so a baked host cannot hide an internal hop on this transport.
+    fn set_publisher_qos(&self, qos: &serde_json::Value) {
+        let suppressed: Vec<&String> = qos
+            .as_object()
+            .map(|map| {
+                map.iter()
+                    .filter(|(_, entry)| entry.get("locality").is_some())
+                    .map(|(channel, _)| channel)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !suppressed.is_empty() {
+            tracing::warn!(
+                channels = ?suppressed,
+                "LCM cannot suppress a topic; these stay visible on the multicast bus",
+            );
+        }
     }
 }

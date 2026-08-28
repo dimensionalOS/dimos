@@ -12,79 +12,79 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
-
-from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
-from numpy.typing import NDArray
 import pytest
+from pytest_mock import MockerFixture
 
-from dimos.control.task import ControlMode, CoordinatorState, JointStateSnapshot
-from dimos.control.tasks.eef_twist_task.eef_twist_task import EEFTwistTask, EEFTwistTaskConfig
+from dimos.control.task import CoordinatorState, JointStateSnapshot
+from dimos.control.tasks.eef_twist_task.eef_twist_task import (
+    EEFTwistTask,
+    EEFTwistTaskConfig,
+)
+from dimos.control.tasks.pose_target_ik import PinkPoseTargetSolver
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.assets.model import RobotModel
 
 
-@dataclass
-class FakePose:
-    translation: NDArray[np.float64]
-    rotation: NDArray[np.float64]
-
-    def copy(self) -> FakePose:
-        return FakePose(self.translation.copy(), self.rotation.copy())
-
-
-class FakeIK:
-    def __init__(self) -> None:
-        self.nq = 3
-        self.fk_calls: list[np.ndarray] = []
-        self.solve_calls: list[FakePose] = []
-        self.solution = np.array([0.01, 0.02, 0.03], dtype=np.float64)
-        self.converged = True
-        self.final_error = 0.0
-
-    def forward_kinematics(self, q_current: NDArray[np.float64]) -> FakePose:
-        self.fk_calls.append(q_current.copy())
-        return FakePose(q_current.copy(), np.eye(3, dtype=np.float64))
-
-    def solve(
-        self, pose: FakePose, q_current: NDArray[np.float64]
-    ) -> tuple[NDArray[np.float64], bool, float]:
-        self.solve_calls.append(pose.copy())
-        return self.solution.copy(), self.converged, self.final_error
-
-
-@pytest.fixture
-def fake_ik(mocker) -> FakeIK:
-    ik = FakeIK()
-    mocker.patch(
-        "dimos.control.tasks.eef_twist_task.eef_twist_task.PinocchioIK.from_model_path",
-        return_value=ik,
+def _robot_model() -> RobotModelConfig:
+    return RobotModelConfig(
+        model=RobotModel.from_file(Path("fake.urdf")),
+        joint_names=["arm/joint1", "arm/joint2"],
     )
-    return ik
 
 
-@pytest.fixture
-def task(fake_ik: FakeIK) -> EEFTwistTask:
-    return EEFTwistTask(
+def _solver(mocker: MockerFixture) -> PinkPoseTargetSolver:
+    solver = mocker.Mock(spec=PinkPoseTargetSolver)
+    solver.frame_poses.return_value = {
+        "tool": PoseStamped(frame_id="world", position=[0.0, 0.0, 0.0])
+    }
+    solver.step.return_value = JointState(
+        name=["arm/joint1", "arm/joint2"],
+        position=[0.01, 0.02],
+    )
+    return solver
+
+
+def _config(
+    *,
+    target_frames: tuple[str, ...] = ("tool",),
+) -> EEFTwistTaskConfig:
+    return EEFTwistTaskConfig(
+        joint_names=("arm/joint1", "arm/joint2"),
+        robot_model=_robot_model(),
+        target_frames=target_frames,
+        timeout=0.0,
+        command_timeout=0.3,
+    )
+
+
+def _task(mocker: MockerFixture) -> tuple[EEFTwistTask, PinkPoseTargetSolver]:
+    solver = _solver(mocker)
+    task = EEFTwistTask(
         "eef",
-        EEFTwistTaskConfig(
-            joint_names=["arm/joint1", "arm/joint2", "arm/joint3"],
-            model_path="fake.urdf",
-            ee_joint_id=3,
-            timeout=0.3,
-            max_joint_delta_deg=15.0,
-        ),
+        _config(),
+        solver=solver,
     )
+    return task, solver
 
 
-def _state(
-    t_now: float, positions: list[float] | None = None, dt: float = 0.01
-) -> CoordinatorState:
-    values = [0.0, 0.0, 0.0] if positions is None else positions
+@pytest.mark.parametrize("target_frames", [(), ("tool", "other")])
+def test_eef_twist_config_requires_exactly_one_target_frame(
+    target_frames: tuple[str, ...],
+) -> None:
+    with pytest.raises(ValueError):
+        _config(target_frames=target_frames)
+
+
+def _state(t_now: float = 1.0, *, dt: float = 0.01) -> CoordinatorState:
     return CoordinatorState(
         joints=JointStateSnapshot(
-            joint_positions={f"arm/joint{i + 1}": value for i, value in enumerate(values)},
+            joint_positions={"arm/joint1": 0.0, "arm/joint2": 0.0},
         ),
         t_now=t_now,
         dt=dt,
@@ -92,102 +92,79 @@ def _state(
 
 
 def _twist(x: float = 0.1) -> TwistStamped:
-    return TwistStamped(frame_id="eef", linear=[x, 0.0, 0.0], angular=[0.0, 0.0, 0.0])
+    return TwistStamped(frame_id="tool", linear=[x, 0.0, 0.0], angular=[0.0, 0.0, 0.0])
 
 
-def test_first_nonzero_command_activates_seeds_from_fk_and_outputs_servo_position(
-    task: EEFTwistTask, fake_ik: FakeIK
+def test_twist_integrates_target_and_uses_shared_persistent_command(
+    mocker: MockerFixture,
 ) -> None:
+    task, solver = _task(mocker)
     assert task.on_ee_twist_command(_twist(), t_now=1.0)
-    assert task.is_active()
 
-    output = task.compute(_state(1.01))
-
-    assert output is not None
-    assert output.mode == ControlMode.SERVO_POSITION
-    assert output.joint_names == ["arm/joint1", "arm/joint2", "arm/joint3"]
-    assert output.positions == [0.01, 0.02, 0.03]
-    assert fake_ik.solve_calls[0].translation[0] > 0.0
-
-
-def test_integration_uses_current_fk_and_coordinator_dt(
-    task: EEFTwistTask, fake_ik: FakeIK
-) -> None:
-    assert task.on_ee_twist_command(_twist(1.0), t_now=1.0)
-
-    first = task.compute(_state(1.01, dt=0.01))
-    fake_ik.solution = np.array([0.51, 0.0, 0.0], dtype=np.float64)
-    second = task.compute(_state(1.04, positions=[0.5, 0.0, 0.0], dt=0.01))
+    first = task.compute(_state(1.01))
+    second = task.compute(_state(1.02))
 
     assert first is not None
     assert second is not None
-    assert fake_ik.solve_calls[1].translation[0] > fake_ik.solve_calls[0].translation[0]
+    first_target = solver.step.call_args_list[0].args[0]["tool"]
+    second_target = solver.step.call_args_list[1].args[0]["tool"]
+    assert first_target.position.x == pytest.approx(0.001)
+    assert second_target.position.x == pytest.approx(0.002)
 
 
-def test_non_converged_ik_solution_is_accepted_when_joint_delta_is_safe(
-    task: EEFTwistTask, fake_ik: FakeIK
-) -> None:
-    fake_ik.converged = False
-    fake_ik.final_error = 1.0
+def test_zero_twist_holds_the_integrated_target(mocker: MockerFixture) -> None:
+    task, solver = _task(mocker)
+    task.on_ee_twist_command(_twist(), t_now=1.0)
+    task.compute(_state(1.01))
+    task.on_ee_twist_command(_twist(0.0), t_now=1.02)
 
-    assert task.on_ee_twist_command(_twist(), t_now=1.0)
-    output = task.compute(_state(1.01))
+    task.compute(_state(1.03))
+
+    target = solver.step.call_args.args[0]["tool"]
+    assert target.position.x == pytest.approx(0.001)
+
+
+def test_stale_twist_stops_motion_without_dropping_hold(mocker: MockerFixture) -> None:
+    task, solver = _task(mocker)
+    task.on_ee_twist_command(_twist(), t_now=1.0)
+    task.compute(_state(1.01))
+
+    output = task.compute(_state(1.31))
 
     assert output is not None
-    assert output.positions == [0.01, 0.02, 0.03]
+    target = solver.step.call_args.args[0]["tool"]
+    assert target.position.x == pytest.approx(0.001)
 
 
-def test_non_finite_ik_solution_is_rejected(task: EEFTwistTask, fake_ik: FakeIK) -> None:
-    fake_ik.solution = np.array([np.nan, 0.0, 0.0], dtype=np.float64)
+def test_estop_rejects_input_and_reanchors_after_clear(mocker: MockerFixture) -> None:
+    task, solver = _task(mocker)
+    task.on_ee_twist_command(_twist(), t_now=1.0)
+    task.compute(_state(1.01))
 
-    assert task.on_ee_twist_command(_twist(), t_now=1.0)
-    output = task.compute(_state(1.01))
+    task.set_estop(True)
+    assert not task.on_ee_twist_command(_twist(), t_now=1.02)
+    assert task.compute(_state(1.02)) is None
 
-    assert output is None
-
-
-def test_non_finite_twist_is_rejected_without_activating_task(task: EEFTwistTask) -> None:
-    accepted = task.on_ee_twist_command(
-        TwistStamped(frame_id="eef", linear=[np.nan, 0.0, 0.0], angular=[0.0, 0.0, 0.0]),
-        t_now=1.0,
-    )
-
-    assert accepted is False
-    assert not task.is_active()
+    task.set_estop(False)
+    assert task.compute(_state(1.03)) is not None
+    assert solver.frame_poses.call_count == 2
 
 
-def test_missing_joint_state_skips_fk_and_ik(task: EEFTwistTask, fake_ik: FakeIK) -> None:
-    assert task.on_ee_twist_command(_twist(), t_now=1.0)
+def test_preemption_discards_twist_target_and_command_state(mocker: MockerFixture) -> None:
+    task, solver = _task(mocker)
+    task.on_ee_twist_command(_twist(), t_now=1.0)
+    task.compute(_state(1.01))
 
-    output = task.compute(_state(1.01, positions=[0.0, 0.0]))
+    task.on_preempted("trajectory", frozenset({"arm/joint1"}))
+    task.compute(_state(1.02))
 
-    assert output is None
-    assert fake_ik.fk_calls == []
-    assert fake_ik.solve_calls == []
-
-
-def test_joint_delta_rejection_returns_none(task: EEFTwistTask, fake_ik: FakeIK) -> None:
-    assert task.on_ee_twist_command(_twist(), t_now=1.0)
-    fake_ik.solution = np.array([10.0, 0.0, 0.0], dtype=np.float64)
-
-    rejected = task.compute(_state(1.01))
-
-    assert rejected is None
+    assert solver.frame_poses.call_count == 2
+    assert solver.reset.call_count >= 1
 
 
-def test_timeout_and_zero_command_clear_then_next_nonzero_reseeds(
-    task: EEFTwistTask, fake_ik: FakeIK
-) -> None:
-    assert task.on_ee_twist_command(_twist(), t_now=1.0)
-    assert task.compute(_state(1.01)) is not None
+def test_invalid_twist_is_rejected(mocker: MockerFixture) -> None:
+    task, _ = _task(mocker)
+    invalid = _twist()
+    invalid.linear.x = np.nan
 
-    assert task.compute(_state(1.5)) is None
-    assert not task.is_active()
-
-    fake_ik.solution = np.array([1.01, 0.0, 0.0], dtype=np.float64)
-    assert task.on_ee_twist_command(_twist(), t_now=2.0)
-    assert task.compute(_state(2.01, positions=[1.0, 0.0, 0.0])) is not None
-    assert fake_ik.solve_calls[-1].translation[0] > 1.0
-
-    assert task.on_ee_twist_command(_twist(0.0), t_now=2.02)
-    assert not task.is_active()
+    assert not task.on_ee_twist_command(invalid, t_now=1.0)
