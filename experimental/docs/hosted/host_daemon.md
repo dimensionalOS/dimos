@@ -26,15 +26,15 @@ Host daemon 与 deployment 子进程分离，避免模块异常、全局配置�
 
 Host 对外发布一个最小 descriptor：
 
-| 字段 | 含义 |
-| --- | --- |
-| `host_id` | 自动生成并持久化的稳定身份 |
-| `epoch` | Host daemon 每次启动生成的新实例标识 |
-| `name` | 便于用户识别的名称 |
-| `tags` | 用于 placement 的简单标签 |
-| `versions` | Host 协议、fragment schema、DimOS 和应用版本 |
-| `state` | `available`、`starting`、`running` 或 `failed` |
-| `active_run_id` | 当前运行的 application run ID，没有时为空 |
+| 字段            | 含义                                           |
+| --------------- | ---------------------------------------------- |
+| `host_id`       | 自动生成并持久化的稳定身份                     |
+| `epoch`         | Host daemon 每次启动生成的新实例标识           |
+| `name`          | 便于用户识别的名称                             |
+| `tags`          | 用于 placement 的简单标签                      |
+| `versions`      | Host 协议、fragment schema、DimOS 和应用版本   |
+| `state`         | `available`、`starting`、`running` 或 `failed` |
+| `active_run_id` | 当前运行的 application run ID，没有时为空      |
 
 Zenoh liveliness 表示 Host 是否在线。Controller 发现 Host 后，通过
 `describe` 获取最新 descriptor，不使用持久化的旧 descriptor 做放置决定。
@@ -43,16 +43,16 @@ Zenoh liveliness 表示 Host 是否在线。Controller 发现 Host 后，通过
 
 Host daemon 暴露四个幂等操作：
 
-| 操作 | 含义 |
-| --- | --- |
-| `describe` | 返回当前 Host descriptor |
-| `start` | 在 Host 空闲时校验并启动一个 Host fragment |
-| `status` | 返回当前 deployment 的状态、PID、日志位置和错误 |
-| `stop` | 停止当前 deployment 并释放 Host |
+| 操作       | 含义                                            |
+| ---------- | ----------------------------------------------- |
+| `describe` | 返回当前 Host descriptor                        |
+| `start`    | 在 Host 空闲时校验并启动一个 Host fragment      |
+| `status`   | 返回当前 deployment 的状态、PID、日志位置和错误 |
+| `stop`     | 停止当前 deployment 并释放 Host                 |
 
 `start` 同时完成资源占用和启动。Host 在一个原子检查中从 `available`
 进入 `starting`，因此多个 Controller 同时请求时最多只有一个成功，其余请求
-返回 `HostBusy`。
+返回 `RuntimeError`。
 
 每个控制请求携带目标 `host_id` 和 Controller 观察到的 `epoch`。修改状态的
 请求还携带全局唯一的 `run_id`、`generation` 和 `fragment_digest`，用于识别
@@ -75,13 +75,13 @@ Blueprint 独立执行 placement 或全图解析。
 
 Host 的 deployment 状态为：
 
-| 状态 | 含义 |
-| --- | --- |
+| 状态        | 含义                              |
+| ----------- | --------------------------------- |
 | `available` | 没有 deployment，可以接受 `start` |
-| `starting` | 子进程正在构建和启动 fragment |
-| `running` | 模块已启动且初始健康检查通过 |
-| `stopping` | 正在停止子进程和 workers |
-| `failed` | 启动失败或运行进程异常退出 |
+| `starting`  | 子进程正在构建和启动 fragment     |
+| `running`   | 模块已启动且初始健康检查通过      |
+| `stopping`  | 正在停止子进程和 workers          |
+| `failed`    | 启动失败或运行进程异常退出        |
 
 正常状态转换为：
 

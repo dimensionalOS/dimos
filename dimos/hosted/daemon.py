@@ -48,10 +48,6 @@ DEFAULT_STOP_TIMEOUT = 5.0
 DEFAULT_LOG_ROOT = STATE_DIR / "hosted" / "runs"
 
 
-class HostBusy(RuntimeError):  # noqa: N818 - protocol error name
-    """The Host already owns a different deployment."""
-
-
 @dataclass(frozen=True, slots=True)
 class HostDescriptor:
     host_id: str
@@ -148,7 +144,7 @@ class HostDaemon:
                     fragment.run_id,
                     fragment.generation,
                 ):
-                    raise HostBusy(f"Host {self._host_id} is running {current.run_id}")
+                    raise RuntimeError(f"Host {self._host_id} is running {current.run_id}")
                 if current.payload_digest != fragment.payload_digest:
                     raise ValueError("Fragment digest conflicts with the accepted deployment")
                 return self._status_locked()
