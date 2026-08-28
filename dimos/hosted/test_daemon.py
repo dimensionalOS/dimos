@@ -149,3 +149,16 @@ def test_stop_releases_host(host_setup: dict[str, Any]) -> None:
     assert status.state == "available"
     host_setup["process"].terminate.assert_called_once_with()
     host_setup["kill"].assert_called_once_with(fragment.run_id)
+
+
+def test_shutdown_cleans_up_active_deployment(host_setup: dict[str, Any]) -> None:
+    daemon = host_setup["daemon"]
+    fragment = host_setup["fragment"]
+    daemon.start(daemon.describe().epoch, fragment)
+    host_setup["process"].is_alive.side_effect = [True, False]
+
+    daemon.shutdown()
+
+    assert daemon.describe().state == "available"
+    host_setup["process"].terminate.assert_called_once_with()
+    host_setup["kill"].assert_called_once_with(fragment.run_id)
