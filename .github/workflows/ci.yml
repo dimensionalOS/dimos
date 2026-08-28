@@ -649,6 +649,11 @@ jobs:
               options: --memory=6g --memory-swap=6g
               volumes:
                 - /var/cache/dimos-root-cache:/root/.cache
+                # Persistent Nix store — without it every run reinstalls nix
+                # and re-downloads the modules' full runtime closure (~600 MB)
+                # through the runner's uplink. GC'd at the end of the job; the
+                # provision step roots the live closure so GC keeps it.
+                - /var/cache/dimos-nix:/nix
             markers: "self_hosted or skipif_no_ros"
             experimental: false
           # macOS runner disabled for now — we don't want Mac tests.
@@ -769,6 +774,16 @@ jobs:
           else
             python3 bin/build-native-modules
           fi
+          # Root the out paths (and thereby their closures) so the end-of-job
+          # GC keeps them warm: the workspace result links die in the next
+          # run's `git clean`, so they cannot serve as roots themselves.
+          # Replacing the directory unroots superseded paths for GC to reap.
+          sudo mkdir -p /nix/var/nix/gcroots/dimos-native
+          sudo find /nix/var/nix/gcroots/dimos-native -maxdepth 1 -type l -delete
+          python3 bin/build-native-modules --record-links | cut -d' ' -f2 | sort -u |
+            while read -r p; do
+              sudo ln -sfn "$p" "/nix/var/nix/gcroots/dimos-native/$(basename "$p")"
+            done
       - name: Run tests
         run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not mujoco'
       - name: Re-run the failing tests with maximum verbosity
@@ -829,6 +844,13 @@ jobs:
           size_mb=$(du -sm "$UV_CACHE_DIR" | cut -f1)
           echo "uv cache size: ${size_mb} MB"
           if [ "$size_mb" -gt 25600 ]; then uv cache prune --ci; fi
+      - name: GC the persistent Nix store
+        # /nix persists on the runner (container volume above), so superseded
+        # module closures accumulate as inputs change. Unrooted paths go; the
+        # provision step's gcroots keep the live closure across runs. Not
+        # always(): a cancelled run can leave nix processes holding locks.
+        if: ${{ !cancelled() && matrix.os == 'Linux' }}
+        run: nix-collect-garbage --delete-older-than 3d
 
   self-hosted-large-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
