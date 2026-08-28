@@ -56,7 +56,7 @@ xarm_perception = autoconnect(
     ),
     ObjectSceneRegistrationModule.blueprint(
         target_frame="world",
-        detector_backend="owlv2",
+        detector_backend="moondream",
         segmentation_backend="edgetam",
         detect_on_request=True,
         distance_threshold=0.08,
