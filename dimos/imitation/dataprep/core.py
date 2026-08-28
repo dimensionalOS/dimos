@@ -14,7 +14,7 @@
 
 """Dataset-shape types + pure helpers.
 
-Sub-configs (StreamField, SyncConfig, OutputConfig, EpisodeExtractor) and
+Sub-configs (FeatureSpec, SyncConfig, QualityConfig, OutputConfig, EpisodeExtractor) and
 data records (Episode, Sample) live here. So do the stateless functions
 that walk samples — `resolve_field`, `extract_episodes`,
 `iter_episode_samples`. Pure and side-effect-free; importable without
@@ -28,12 +28,14 @@ from __future__ import annotations
 
 import bisect
 from collections.abc import Callable, Iterator
+from itertools import pairwise
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 from numpy.typing import NDArray
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from dimos.constants import STATE_DIR
 from dimos.protocol.service.spec import BaseConfig
@@ -62,9 +64,32 @@ class EpisodeExtractor(BaseConfig):
     ranges: list[tuple[float, float]] | None = None
 
 
-class StreamField(BaseConfig):
+class FeatureSpec(BaseConfig):
+    """Explicit dataset feature and its recorded source."""
+
     stream: str
     field: str | None = None
+    dtype: str
+    shape: tuple[int, ...]
+    names: list[str]
+
+    @model_validator(mode="after")
+    def validate_schema(self) -> FeatureSpec:
+        if not self.shape or any(value <= 0 for value in self.shape):
+            raise ValueError("feature shape must contain positive dimensions")
+        if self.dtype == "video":
+            if len(self.names) != len(self.shape):
+                raise ValueError("video feature names must name every axis")
+        else:
+            try:
+                np.dtype(self.dtype)
+            except TypeError as error:
+                raise ValueError(f"unsupported feature dtype {self.dtype!r}") from error
+            if len(self.shape) == 1 and len(self.names) != self.shape[0]:
+                raise ValueError("vector feature names must match its length")
+        if any(not name.strip() for name in self.names):
+            raise ValueError("feature names must not be empty")
+        return self
 
 
 class SyncConfig(BaseConfig):
@@ -74,7 +99,13 @@ class SyncConfig(BaseConfig):
     # TODO: add "interp" — do it per-stream (lerp low-dim vectors, force nearest
     # for ndim>=3 images, can't blend frames). Only "nearest" is wired today.
     strategy: Literal["nearest"] = "nearest"
-    action_shift: int = 1
+
+
+class QualityConfig(BaseConfig):
+    mode: Literal["strict", "fill"] = "strict"
+    min_source_rate_ratio: float = 0.95
+    max_camera_gap_ms: float = 100.0
+    max_alignment_error_ms: float = 20.0
 
 
 class OutputConfig(BaseConfig):
@@ -93,9 +124,10 @@ class DataPrepConfig(BaseConfig):
 
     source: str = ""
     episodes: EpisodeExtractor = EpisodeExtractor()
-    observation: dict[str, StreamField] = Field(default_factory=dict)
-    action: dict[str, StreamField] = Field(default_factory=dict)
+    observation: dict[str, FeatureSpec] = Field(default_factory=dict)
+    action: dict[str, FeatureSpec] = Field(default_factory=dict)
     sync: SyncConfig = SyncConfig(anchor="image", rate_hz=DEFAULT_FPS, tolerance_ms=50.0)
+    quality: QualityConfig = QualityConfig()
     output: OutputConfig = OutputConfig(format="lerobot", path=STATE_DIR / "datasets" / "default")
 
 
@@ -131,6 +163,20 @@ class Sample(BaseModel):
     observation: dict[str, NDArray[Any]]
     action: dict[str, NDArray[Any]]
     task_label: str | None = None  # carried from the episode for multi-task datasets
+    complementary_info: dict[str, NDArray[Any]] = Field(default_factory=dict)
+
+
+class EpisodeQualityReport(BaseModel):
+    episode_id: str
+    valid: bool
+    mode: Literal["strict", "fill"]
+    expected_frames: int = 0
+    emitted_frames: int = 0
+    filled_frames: int = 0
+    source_rates_hz: dict[str, float] = Field(default_factory=dict)
+    max_gaps_ms: dict[str, float] = Field(default_factory=dict)
+    max_alignment_error_ms: float = 0.0
+    rejection_reasons: list[str] = Field(default_factory=list)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -138,7 +184,7 @@ class Sample(BaseModel):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def resolve_field(msg: Any, ref: StreamField) -> NDArray[Any]:
+def resolve_field(msg: Any, ref: FeatureSpec) -> NDArray[Any]:
     """Project `msg` through `ref` (attribute access) and coerce to ndarray.
 
     Single source of truth for obs/action construction across train and
@@ -260,8 +306,9 @@ def inspect_episodes(store: SqliteStore, cfg: EpisodeExtractor) -> EpisodeReport
 def iter_episode_samples(
     store: SqliteStore,
     episode: Episode,
-    streams: dict[str, StreamField],  # observation ∪ action
+    streams: dict[str, FeatureSpec],  # observation ∪ action
     sync: SyncConfig,
+    quality: QualityConfig,
     obs_keys: set[str] | None = None,
     action_keys: set[str] | None = None,
 ) -> Iterator[Sample]:
@@ -276,8 +323,10 @@ def iter_episode_samples(
     action. If omitted, every key is treated as observation (used by
     callers that only need raw aligned data).
 
-    With `sync.action_shift > 0` (default 1), each frame's action is taken
-    `action_shift` frames later (next-state target); the tail is dropped.
+    In strict mode callers validate every target before iterating. In fill mode,
+    a target without a nearby value uses the last value at or before the target
+    and marks the frame as filled. Leading targets without a complete causal
+    sample are trimmed rather than fabricated.
     """
     if sync.anchor not in streams:
         raise ValueError(f"sync.anchor {sync.anchor!r} not in streams: {sorted(streams)}")
@@ -285,7 +334,7 @@ def iter_episode_samples(
     obs_keys = obs_keys if obs_keys is not None else set(streams)
     action_keys = action_keys if action_keys is not None else set()
 
-    tolerance_s = sync.tolerance_ms / 1000.0
+    tolerance_s = min(sync.tolerance_ms, quality.max_alignment_error_ms) / 1000.0
 
     # Materialize each stream's (timestamps, messages) once per episode.
     cached: dict[str, tuple[list[float], list[Any]]] = {}
@@ -340,19 +389,29 @@ def iter_episode_samples(
             best = i if (ts_list[i] - t) < (t - ts_list[i - 1]) else i - 1
         return msg_list[best] if abs(ts_list[best] - t) <= tolerance_s else None
 
+    def _previous(key: str, t: float) -> Any | None:
+        ts_list, msg_list = cached[key]
+        i = bisect.bisect_right(ts_list, t) - 1
+        return msg_list[i] if i >= 0 else None
+
     def _build_frames() -> Iterator[Sample]:
         for t in targets:
             obs_dict: dict[str, NDArray[Any]] = {}
             act_dict: dict[str, NDArray[Any]] = {}
             skip = False
+            filled = False
             for key, ref in streams.items():
                 msg = _nearest(key, t)
                 if msg is None:
-                    skip = True
-                    break
+                    if quality.mode == "fill":
+                        msg = _previous(key, t)
+                        filled = msg is not None
+                    if msg is None:
+                        skip = True
+                        break
                 arr = resolve_field(msg, ref)
                 if not is_image_array(arr):
-                    arr = arr.astype(np.float32, copy=False)
+                    arr = arr.astype(np.dtype(ref.dtype), copy=False)
                 if key in action_keys:
                     act_dict[key] = arr
                 elif key in obs_keys:
@@ -365,25 +424,141 @@ def iter_episode_samples(
                 observation=obs_dict,
                 action=act_dict,
                 task_label=episode.task_label,
+                complementary_info={"is_filled": np.asarray([filled], dtype=np.bool_)},
             )
 
-    shift = max(0, sync.action_shift)
-    if shift == 0 or not action_keys:
-        yield from _build_frames()
-        return
+    yield from _build_frames()
 
-    # frame i keeps its obs but takes frame i+shift's action; tail dropped.
-    frames = list(_build_frames())
-    for i in range(len(frames) - shift):
-        cur = frames[i]
-        nxt = frames[i + shift]
-        yield Sample(
-            ts=cur.ts,
-            episode_id=cur.episode_id,
-            observation=cur.observation,
-            action=nxt.action,
-            task_label=cur.task_label,
+
+def _feature_error(msg: Any, key: str, spec: FeatureSpec) -> str | None:
+    """Return a schema error for one source message, if any."""
+    try:
+        value = resolve_field(msg, spec)
+    except (AttributeError, KeyError, TypeError) as error:
+        return f"{key}: cannot resolve {spec.stream}.{spec.field}: {error}"
+    if tuple(value.shape) != spec.shape:
+        return f"{key}: expected shape {spec.shape}, got {tuple(value.shape)}"
+    if spec.dtype == "video":
+        if not is_image_array(value) or value.dtype != np.uint8:
+            return f"{key}: video source must be a uint8 image, got {value.dtype} {value.shape}"
+    else:
+        try:
+            numeric = value.astype(np.dtype(spec.dtype), copy=False)
+        except (TypeError, ValueError) as error:
+            return f"{key}: cannot convert to {spec.dtype}: {error}"
+        if np.issubdtype(numeric.dtype, np.number) and not np.isfinite(numeric).all():
+            return f"{key}: contains non-finite values"
+    source_names = getattr(msg, "name", None)
+    if spec.field in {"position", "velocity", "effort"} and source_names is not None:
+        if list(source_names) != spec.names:
+            return f"{key}: expected names {spec.names}, got {list(source_names)}"
+    return None
+
+
+def inspect_episode_quality(
+    store: SqliteStore,
+    episode: Episode,
+    streams: dict[str, FeatureSpec],
+    sync: SyncConfig,
+    quality: QualityConfig,
+) -> EpisodeQualityReport:
+    """Validate one saved episode without retaining payloads in memory."""
+    report = EpisodeQualityReport(episode_id=episode.id, valid=True, mode=quality.mode)
+    if sync.anchor not in streams:
+        report.rejection_reasons.append(
+            f"sync.anchor {sync.anchor!r} not in features {sorted(streams)}"
         )
+        report.valid = False
+        return report
+
+    timestamps: dict[str, list[float]] = {}
+    for key, spec in streams.items():
+        values: list[float] = []
+        schema_error: str | None = None
+        source_stream: Stream[Any, Any] = store.stream(spec.stream)
+        for observation in source_stream.time_range(episode.start_ts, episode.end_ts):
+            values.append(observation.ts)
+            if schema_error is None:
+                schema_error = _feature_error(observation.data, key, spec)
+        values.sort()
+        timestamps[key] = values
+        if not values:
+            report.rejection_reasons.append(f"{key}: stream {spec.stream!r} has no episode data")
+        if schema_error is not None:
+            report.rejection_reasons.append(schema_error)
+
+        if spec.dtype == "video":
+            if len(values) > 1:
+                duration = values[-1] - values[0]
+                rate = (len(values) - 1) / duration if duration > 0 else 0.0
+                gap_ms = max(b - a for a, b in pairwise(values)) * 1000.0
+            else:
+                rate = 0.0
+                gap_ms = math.inf
+            report.source_rates_hz[key] = rate
+            report.max_gaps_ms[key] = gap_ms
+            if quality.mode == "strict" and rate < sync.rate_hz * quality.min_source_rate_ratio:
+                report.rejection_reasons.append(
+                    f"{key}: source rate {rate:.2f}Hz is below "
+                    f"{sync.rate_hz * quality.min_source_rate_ratio:.2f}Hz"
+                )
+            if quality.mode == "strict" and gap_ms > quality.max_camera_gap_ms:
+                report.rejection_reasons.append(
+                    f"{key}: maximum source gap {gap_ms:.1f}ms exceeds "
+                    f"{quality.max_camera_gap_ms:.1f}ms"
+                )
+
+    anchor = timestamps.get(sync.anchor, [])
+    if anchor and sync.rate_hz > 0:
+        period = 1.0 / sync.rate_hz
+        targets: list[float] = []
+        target = anchor[0]
+        while target <= anchor[-1]:
+            targets.append(target)
+            target += period
+    else:
+        targets = list(anchor)
+    report.expected_frames = len(targets)
+
+    tolerance_s = min(sync.tolerance_ms, quality.max_alignment_error_ms) / 1000.0
+    filled = 0
+    emitted = 0
+    max_error_s = 0.0
+    for target in targets:
+        target_filled = False
+        complete = True
+        for values in timestamps.values():
+            if not values:
+                complete = False
+                break
+            index = bisect.bisect_left(values, target)
+            candidates = values[max(0, index - 1) : min(len(values), index + 1)]
+            error = min(abs(value - target) for value in candidates)
+            max_error_s = max(max_error_s, error)
+            if error > tolerance_s:
+                if quality.mode == "fill" and bisect.bisect_right(values, target) > 0:
+                    target_filled = True
+                else:
+                    complete = False
+                    break
+        if complete:
+            emitted += 1
+            filled += int(target_filled)
+        elif quality.mode == "strict":
+            report.rejection_reasons.append(
+                f"fixed-rate target at {target:.6f} has no complete aligned sample"
+            )
+            break
+
+    report.emitted_frames = emitted
+    report.filled_frames = filled
+    report.max_alignment_error_ms = max_error_s * 1000.0
+    if not targets:
+        report.rejection_reasons.append("anchor stream has no episode data")
+    if emitted == 0:
+        report.rejection_reasons.append("episode has no complete output frames")
+    report.valid = not report.rejection_reasons
+    return report
 
 
 def get_writer(format_name: str) -> Writer:

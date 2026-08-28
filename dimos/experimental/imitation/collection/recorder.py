@@ -43,4 +43,5 @@ class NativeCollectionRecorder(RustRecorder):
 
     color_image: In[Image]
     coordinator_joint_state: In[JointState]
+    applied_joint_position_command: In[JointState]
     status: In[EpisodeStatus]

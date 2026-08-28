@@ -34,9 +34,18 @@ def dataprep_build(
     config_path: Path | None = typer.Option(
         None, "--config", "-c", help="JSON DataPrepConfig (needed for obs/action stream maps)"
     ),
+    quality_mode: Literal["strict", "fill"] | None = typer.Option(
+        None, "--quality-mode", help="Override episode validation: strict | fill"
+    ),
 ) -> None:
     """Build a dataset from a recording (lerobot/hdf5 + dimos_meta.json)."""
-    build(config_path, source, output, cast("Literal['lerobot', 'hdf5'] | None", output_format))
+    build(
+        config_path,
+        source,
+        output,
+        cast("Literal['lerobot', 'hdf5'] | None", output_format),
+        quality_mode,
+    )
 
 
 @dataprep_app.command("inspect")
@@ -47,6 +56,17 @@ def dataprep_inspect(
     output_format: str = typer.Option(
         None, "--format", "-f", help="lerobot | hdf5 (auto-detected from the path if omitted)"
     ),
+    config_path: Path | None = typer.Option(
+        None, "--config", "-c", help="Validate recording episodes with this DataPrepConfig"
+    ),
+    quality_mode: Literal["strict", "fill"] | None = typer.Option(
+        None, "--quality-mode", help="Override episode validation: strict | fill"
+    ),
 ) -> None:
     """Summarize a recording or built dataset, including incomplete episodes."""
-    inspect(dataset, cast("Literal['lerobot', 'hdf5'] | None", output_format))
+    inspect(
+        dataset,
+        cast("Literal['lerobot', 'hdf5'] | None", output_format),
+        config_path,
+        quality_mode,
+    )

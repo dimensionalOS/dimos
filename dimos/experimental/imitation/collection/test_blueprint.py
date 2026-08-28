@@ -43,6 +43,7 @@ def test_native_openyam_recorded_streams_never_drop() -> None:
     payload_types = {
         "color_image": Image,
         "coordinator_joint_state": JointState,
+        "applied_joint_position_command": JointState,
         "status": EpisodeStatus,
     }
     for stream, payload_type in payload_types.items():
@@ -59,6 +60,8 @@ def test_native_openyam_paths_are_configurable_from_cli() -> None:
             "/tmp/native-openyam.db",
             "--WristCamera.webcam.camera-index",
             "/dev/v4l/by-id/usb-wrist-camera",
+            "--task",
+            "pick up the red block",
         ],
         environ={},
     )
@@ -69,6 +72,7 @@ def test_native_openyam_paths_are_configurable_from_cli() -> None:
     assert parsed.module_kwargs("WristCamera")["webcam"]["camera_index"] == (
         "/dev/v4l/by-id/usb-wrist-camera"
     )
+    assert parsed.module_kwargs("episodemonitormodule")["task"] == "pick up the red block"
 
 
 def test_native_openyam_rejects_an_lcm_override(monkeypatch: MonkeyPatch) -> None:

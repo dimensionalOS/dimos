@@ -59,6 +59,7 @@ def make_monitor(
     built: list[EpisodeMonitorModule] = []
 
     def _make(**config: object) -> EpisodeMonitorModule:
+        config.setdefault("task", "pick up the block")
         m = EpisodeMonitorModule(**config)
         m.status = mocker.MagicMock()  # type: ignore[assignment]
         built.append(m)
@@ -94,6 +95,12 @@ def test_toggle_starts_then_saves(make_monitor: Callable[..., EpisodeMonitorModu
     assert events[-1].state == "idle"
     assert events[-1].episodes_saved == 1
     assert events[-1].episodes_discarded == 0
+    assert events[-1].task_label == "pick up the block"
+
+
+def test_task_is_required(make_monitor: Callable[..., EpisodeMonitorModule]) -> None:
+    with pytest.raises(ValidationError, match="task"):
+        EpisodeMonitorModule()
 
 
 def test_discard_does_not_count_as_saved(

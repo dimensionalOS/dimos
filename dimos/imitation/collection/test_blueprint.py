@@ -135,7 +135,7 @@ def test_openyam_wrist_camera_device_is_configurable_from_cli(
     argument: str, expected: int | str
 ) -> None:
     parsed = BlueprintConfigParser(learning_collect_quest_openyam).parse(
-        ["--WristCamera.webcam.camera-index", argument],
+        ["--WristCamera.webcam.camera-index", argument, "--task", "pick up the block"],
         environ={},
     )
 

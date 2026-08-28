@@ -26,6 +26,7 @@ Layout::
             timestamp             (T,)            float32
             <obs_key>             (T, ...)        as recorded
             <action_key>          (T, ...)        as recorded
+            complementary_info/<key> (T, ...)    conversion metadata
                                   attrs: length, start_ts, task_index
 
 This is the ACT-original style adapted to one file with multiple episodes.
@@ -67,7 +68,6 @@ class _Hdf5Writer:
         self.out.parent.mkdir(parents=True, exist_ok=True)
 
         self.stats = stats_from_metadata(output.metadata)
-        self.default_task_label: str = output.metadata.get("default_task_label", "task")
         self.fps = float(output.metadata.get("fps", DEFAULT_FPS))
 
         self.tasks_index: dict[str, int] = {}
@@ -76,11 +76,12 @@ class _Hdf5Writer:
         # Per-episode buffers — flushed at episode boundary.
         self.cur_id: str | None = None
         self.cur_idx = 0
-        self.cur_task = self.default_task_label  # actual label for the in-progress episode
+        self.cur_task: str | None = None
         self.cur_start_ts: float | None = None
         self.buf_ts: list[float] = []
         self.buf_obs: dict[str, list[NDArray[Any]]] = {}
         self.buf_act: dict[str, list[NDArray[Any]]] = {}
+        self.buf_info: dict[str, list[NDArray[Any]]] = {}
 
         self._h5 = h5py.File(self.out, "w")
         self._episodes_g = self._h5.create_group("episodes")
@@ -93,7 +94,9 @@ class _Hdf5Writer:
                 self.cur_idx += 1
             self.cur_id = sample.episode_id
             self.cur_start_ts = float(sample.ts)
-            self.cur_task = sample.task_label or self.default_task_label
+            if not sample.task_label:
+                raise ValueError("every HDF5 frame requires an episode task label")
+            self.cur_task = sample.task_label
             if self.cur_task not in self.tasks_index:
                 self.tasks_index[self.cur_task] = len(self.tasks_index)
 
@@ -106,6 +109,8 @@ class _Hdf5Writer:
             a = np.asarray(v)
             self.buf_act.setdefault(k, []).append(a)
             self.stats.update(f"action.{k}", a)
+        for k, v in sample.complementary_info.items():
+            self.buf_info.setdefault(k, []).append(np.asarray(v))
         self.total_frames += 1
 
     def flush_episode(self) -> bool:
@@ -116,6 +121,8 @@ class _Hdf5Writer:
         ep = self._episodes_g.create_group(f"episode_{self.cur_idx:06d}")
         ep.attrs["length"] = len(self.buf_ts)
         ep.attrs["start_ts"] = float(self.cur_start_ts or 0.0)
+        if self.cur_task is None:
+            raise RuntimeError("buffered episode has no task")
         ep.attrs["task_index"] = self.tasks_index[self.cur_task]
         ep.create_dataset("timestamp", data=np.asarray(self.buf_ts, dtype=np.float32))
         for k, frames in self.buf_obs.items():
@@ -131,9 +138,12 @@ class _Hdf5Writer:
             )
         for k, frames in self.buf_act.items():
             ep.create_dataset(f"action/{k}", data=np.stack(frames, axis=0))
+        for k, frames in self.buf_info.items():
+            ep.create_dataset(f"complementary_info/{k}", data=np.stack(frames, axis=0))
         self.buf_ts.clear()
         self.buf_obs.clear()
         self.buf_act.clear()
+        self.buf_info.clear()
         return True
 
     def finalize(self) -> None:

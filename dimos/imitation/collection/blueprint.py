@@ -94,7 +94,7 @@ learning_collect_quest_openyam = autoconnect(
         ),
         frame_id="wrist_camera_link",
     ),
-    EpisodeMonitorModule.blueprint(default_task_label="openyam_task"),
+    EpisodeMonitorModule.blueprint(),
     CollectionRecorder.blueprint(db_path=_session_db("openyam")),
 ).transports(
     {

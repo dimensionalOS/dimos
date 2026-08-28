@@ -51,7 +51,7 @@ learning_collect_quest_openyam_native = (
         NativeCollectionRecorder.blueprint(
             store=RustSqliteStoreConfig(path=_session_db()),
         ),
-        EpisodeMonitorModule.blueprint(default_task_label="openyam_task"),
+        EpisodeMonitorModule.blueprint(),
         teleop_quest_openyam,
         CameraModule.blueprint(
             instance_name="WristCamera",
@@ -73,6 +73,13 @@ learning_collect_quest_openyam_native = (
             ("coordinator_joint_state", JointState): ZenohTransport(
                 ZenohTopic(
                     "dimos/coordinator_joint_state",
+                    JointState,
+                    qos=QOS_NEVER_DROP,
+                )
+            ),
+            ("applied_joint_position_command", JointState): ZenohTransport(
+                ZenohTopic(
+                    "dimos/applied_joint_position_command",
                     JointState,
                     qos=QOS_NEVER_DROP,
                 )
