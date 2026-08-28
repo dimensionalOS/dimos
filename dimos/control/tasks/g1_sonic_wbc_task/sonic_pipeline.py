@@ -324,6 +324,7 @@ DEFAULT_HEIGHT = 0.788740
 POLICY_DT = 0.02
 REPLAN_INTERVAL_DEFAULT = 1.0
 REPLAN_INTERVAL_RUNNING = 0.1
+REPLAN_INTERVAL_CRAWLING = 0.2  # C++ replan_interval_crawling_
 BLEND_FRAMES = 8
 LOOK_AHEAD_FRAMES = 2
 
@@ -1149,7 +1150,12 @@ class SonicPipeline:
         speed = math.hypot(self._vx, self._vy)
         mode = self._mode_override if self._mode_override is not None else self._auto_mode(speed)
         moving = speed > 0.05 or (self._mode_override is not None and mode not in STATIC_MODES)
-        interval = REPLAN_INTERVAL_RUNNING if speed >= 1.2 else REPLAN_INTERVAL_DEFAULT
+        if speed >= 1.2 or mode == 3:
+            interval = REPLAN_INTERVAL_RUNNING
+        elif mode == 8:  # CRAWLING replans faster (C++ 0.2 s)
+            interval = REPLAN_INTERVAL_CRAWLING
+        else:
+            interval = REPLAN_INTERVAL_DEFAULT
         traj_low = (
             self._trajectory is not None
             and self._traj_frame > self._trajectory.num_frames - 20
