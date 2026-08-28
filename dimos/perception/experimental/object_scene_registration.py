@@ -48,7 +48,7 @@ logger = setup_logger()
 
 
 class ObjectSceneRegistrationConfig(ModuleConfig):
-    target_frame: str = "map"
+    target_frame: str = "base_link"
     prompt_mode: YoloePromptMode = YoloePromptMode.LRPC
     detector_backend: Literal["yoloe", "owlv2", "moondream"] = "yoloe"
     segmentation_backend: Literal["yolo", "edgetam"] = "yolo"
