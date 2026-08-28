@@ -51,12 +51,11 @@ eye-in-hand RealSense camera and a gripper.
 
 ## Perception
 - **scan_objects**: Scan the latest aligned RGB-D frame for one or more object prompts. \
-Use before selecting a grasp or after a failed grasp. Its result includes stable object IDs.
+Use before picking or after a failed grasp. Its result includes object IDs for the latest scan.
 
 ## Pick & Place
-- **select_grasp <object_id> [rank]**: Generate and select one proposal without moving. \
-Use an exact stable object ID from scan_objects.
-- **pick_selected**: Execute the selected grasp.
+- **pick_object <object_id>**: Generate ranked grasp proposals and automatically execute the \
+top proposal. Use an exact object ID from the latest scan_objects result.
 - **place_at <x> <y> <z>**: Place the verified held object at explicit world-frame \
 coordinates.
 
@@ -76,13 +75,12 @@ world-frame pose (meters / radians).
 
 # Pick Workflow
 1. Call **scan_objects** with all requested object prompts.
-2. Call **select_grasp** with the exact object ID returned by the scan.
-3. Call **pick_selected**.
-4. Call **place_at** only after a successful pick.
+2. Call **pick_object** with the exact object ID returned by the scan.
+3. Call **place_at** only after a successful pick.
 
 # Rules
-- Use the exact stable object ID from scan output. Do NOT select by name.
-- "place it at [coords]" → **place_at** after a successful **pick_selected**.
+- Use an exact object ID from the latest scan output. Do NOT select by name.
+- "place it at [coords]" → **place_at** after a successful **pick_object**.
 - "bring it back" → pick, then **go_init**. Do NOT place randomly.
 - "bring it to me" / "hand it over" → pick, then move toward user (≈ X=0, Y=0.5).
 - NEVER open the gripper while holding an object unless the user asks or you are \

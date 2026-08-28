@@ -21,6 +21,7 @@ from typing import Any, Literal
 from pydantic import Field
 
 from dimos.agents.annotation import skill
+from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.agents.skill_result import SkillResult
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -63,7 +64,6 @@ class PickAndPlaceModule(Module):
         self._grasp_candidates = GraspCandidateArray()
         self._selected_object_id: str | None = None
         self._selected_grasp: PoseStamped | None = None
-        self._selected_pregrasp: PoseStamped | None = None
         self._holding_object = False
 
     @skill
@@ -71,13 +71,14 @@ class PickAndPlaceModule(Module):
         """Scan the latest RGB-D frame for prompted objects.
 
         Args:
-            prompts: Object labels to detect. The returned stable IDs are required by select_grasp.
+            prompts: Object labels to detect. Use an ID from this scan with pick_object.
         """
         prompts = [prompt.strip() for prompt in prompts if prompt.strip()]
         if not prompts:
             return SkillResult.fail("INVALID_INPUT", "At least one object prompt is required")
         if not self._holding_object:
             self._clear_selection()
+        self._objects = {}
         try:
             detections = self._scene.scan_scene(text=prompts)
         except RuntimeError as exc:
@@ -101,20 +102,21 @@ class PickAndPlaceModule(Module):
     def get_object(self, object_id: str) -> dict[str, Any] | None:
         return self._objects.get(object_id)
 
-    @skill
-    def select_grasp(self, object_id: str, rank: int = 0) -> SkillResult[ManipulationSkillError]:
-        """Select a provider proposal for one scanned object without moving.
+    @skill(uses=[CAP_MOVEMENT])
+    def pick_object(
+        self, object_id: str, planning_group: PlanningGroupID | None = None
+    ) -> SkillResult[ManipulationSkillError]:
+        """Generate ranked grasps and pick one object from the latest scan.
 
         Args:
-            object_id: Exact stable ID returned by scan_objects.
-            rank: Zero-based provider candidate rank.
+            object_id: Exact object ID returned by the latest scan_objects call.
+            planning_group: Gripper-capable pose group; omitted only when unambiguous.
         """
         if self._holding_object:
             return SkillResult.fail(
-                "INVALID_STATE", "Place the held object before selecting a grasp"
+                "INVALID_STATE", "Place the held object before starting another pick"
             )
-        if rank < 0:
-            return SkillResult.fail("INVALID_INPUT", "Grasp rank must be non-negative")
+        self._clear_selection()
         if object_id not in self._objects:
             return SkillResult.fail("OBJECT_NOT_DETECTED", f"Unknown object_id: {object_id}")
         try:
@@ -126,61 +128,30 @@ class PickAndPlaceModule(Module):
             candidates = self._grasp_generator.propose_grasps(pointcloud)
         except (RuntimeError, ValueError) as exc:
             return SkillResult.fail("GRASP_GENERATION_FAILED", str(exc))
+        self._grasp_candidates = candidates
         if candidates.header.frame_id != self.config.planning_frame:
             return SkillResult.fail(
                 "GRASP_FRAME_MISMATCH",
                 f"Expected {self.config.planning_frame}, got {candidates.header.frame_id}",
             )
-        if rank >= len(candidates.candidates):
-            return SkillResult.fail("GRASP_GENERATION_FAILED", f"Grasp rank {rank} is unavailable")
-        candidate = candidates.candidates[rank]
-        selected_grasp = PoseStamped(
-            ts=candidates.header.timestamp,
-            frame_id=candidates.header.frame_id,
-            position=candidate.pose.position,
-            orientation=candidate.pose.orientation,
-        )
-        self._grasp_candidates = candidates
-        self._selected_object_id = object_id
-        self._selected_grasp = selected_grasp
-        self._selected_pregrasp = self._offset_pose(selected_grasp, self.config.pregrasp_offset)
-        return SkillResult.ok(
-            "Grasp selected",
-            object_id=object_id,
-            rank=rank,
-            score=candidate.score,
-            candidates=len(candidates.candidates),
-        )
-
-    @rpc
-    def get_grasp_candidates(self) -> GraspCandidateArray:
-        return self._grasp_candidates
-
-    @skill
-    def pick_selected(
-        self, planning_group: PlanningGroupID | None = None
-    ) -> SkillResult[ManipulationSkillError]:
-        """Execute the grasp selected by select_grasp.
-
-        Args:
-            planning_group: Gripper-capable pose group; omitted only when unambiguous.
-        """
-        if self._holding_object:
-            return SkillResult.fail(
-                "INVALID_STATE", "Place the held object before starting another pick"
-            )
-        grasp = self._selected_grasp
-        if grasp is None:
-            return SkillResult.fail("INVALID_STATE", "Select a grasp before starting a pick")
+        if not candidates.candidates:
+            return SkillResult.fail("GRASP_GENERATION_FAILED", "No grasp candidates generated")
         group = self._resolve_group(planning_group)
         if group is None:
             return SkillResult.fail(
                 "ROBOT_NOT_FOUND", "Gripper-capable planning group is missing or ambiguous"
             )
-        grasp = self._apply_yaw_policy(grasp, group)
+        candidate = candidates.candidates[0]
+        grasp = self._apply_yaw_policy(
+            PoseStamped(
+                ts=candidates.header.timestamp,
+                frame_id=candidates.header.frame_id,
+                position=candidate.pose.position,
+                orientation=candidate.pose.orientation,
+            ),
+            group,
+        )
         pregrasp = self._offset_pose(grasp, self.config.pregrasp_offset)
-        self._selected_grasp = grasp
-        self._selected_pregrasp = pregrasp
         if failure := self._open_gripper(group, "pre-grasp open"):
             return failure
         if failure := self._move(pregrasp, group):
@@ -189,12 +160,25 @@ class PickAndPlaceModule(Module):
             return failure
         if failure := self._close_and_verify(group):
             return failure
+
+        self._selected_object_id = object_id
+        self._selected_grasp = grasp
         self._holding_object = True
         if failure := self._move(pregrasp, group):
             return failure
-        return SkillResult.ok("Pick complete", object_id=self._selected_object_id)
+        return SkillResult.ok(
+            "Pick complete",
+            object_id=object_id,
+            rank=0,
+            score=candidate.score,
+            candidates=len(candidates.candidates),
+        )
 
-    @skill
+    @rpc
+    def get_grasp_candidates(self) -> GraspCandidateArray:
+        return self._grasp_candidates
+
+    @skill(uses=[CAP_MOVEMENT])
     def place_at(
         self,
         x: float,
@@ -237,7 +221,6 @@ class PickAndPlaceModule(Module):
         self._grasp_candidates = GraspCandidateArray()
         self._selected_object_id = None
         self._selected_grasp = None
-        self._selected_pregrasp = None
 
     def _resolve_group(self, planning_group: PlanningGroupID | None) -> PlanningGroupID | None:
         groups = [

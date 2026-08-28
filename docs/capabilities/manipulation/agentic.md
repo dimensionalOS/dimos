@@ -60,7 +60,7 @@ Start with a non-motion state check:
 Report the current robot state without moving.
 ```
 
-Scan the scene for objects. This moves the arm to its observation pose:
+Scan the latest camera frame for objects without moving the arm:
 
 ```text
 Scan for objects.
