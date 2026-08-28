@@ -27,11 +27,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.imitation.dataprep.build import run_dataprep
-from dimos.imitation.dataprep.core import DataPrepConfig, OutputConfig, Sample, is_image_array
-
-_IMAGE_FEATURE = "observation.images.wrist"
-_STATE_FEATURE = "observation.state"
-_ACTION_FEATURE = "action"
+from dimos.imitation.dataprep.core import DataPrepConfig, OutputConfig, Sample
 
 
 class _WritableDataset(Protocol):
@@ -46,30 +42,15 @@ class _WritableDataset(Protocol):
     def finalize(self) -> None: ...
 
 
-def _one_feature(
-    values: dict[str, NDArray[Any]], *, image: bool, kind: str
-) -> tuple[str, NDArray[Any]]:
-    matches = [(name, value) for name, value in values.items() if is_image_array(value) is image]
-    if len(matches) != 1:
-        expected = "image" if image else "low-dimensional"
-        raise ValueError(f"LeRobot conversion requires exactly one {expected} {kind} feature")
-    return matches[0]
-
-
-def _joint_names(metadata: dict[str, Any], size: int) -> list[str]:
-    names = metadata.get("joint_names")
-    if not isinstance(names, list) or not all(isinstance(name, str) and name for name in names):
-        raise ValueError("LeRobot output.metadata.joint_names must be a non-empty string list")
-    if len(names) != size:
-        raise ValueError(f"joint_names has {len(names)} entries but state has {size}")
-    return names
-
-
-def _task(sample: Sample, metadata: dict[str, Any]) -> str:
-    value = sample.task_label or metadata.get("default_task_label")
+def _task(sample: Sample) -> str:
+    value = sample.task_label
     if not isinstance(value, str) or not value.strip():
-        raise ValueError("every LeRobot frame requires an episode or default task label")
+        raise ValueError("every LeRobot frame requires an episode task label")
     return value
+
+
+def _sample_features(sample: Sample) -> dict[str, NDArray[Any]]:
+    return {**sample.observation, **sample.action, **sample.complementary_info}
 
 
 def write(samples: Iterator[Sample], output: OutputConfig) -> Path:
@@ -93,26 +74,23 @@ def write(samples: Iterator[Sample], output: OutputConfig) -> Path:
     except StopIteration as error:
         raise ValueError("cannot create a LeRobot dataset without samples") from error
 
-    image_key, image = _one_feature(first.observation, image=True, kind="observation")
-    state_key, state = _one_feature(first.observation, image=False, kind="observation")
-    action_key, action = _one_feature(first.action, image=False, kind="action")
-    state = np.asarray(state).reshape(-1)
-    action = np.asarray(action).reshape(-1)
-    if state.shape != action.shape:
-        raise ValueError(f"state shape {state.shape} does not match action shape {action.shape}")
-    if image.ndim != 3 or image.shape[2] not in (1, 3, 4):
-        raise ValueError(f"wrist image must have HWC shape, got {image.shape}")
-    names = _joint_names(output.metadata, state.size)
-    shape = tuple(int(value) for value in image.shape)
-    features = {
-        _IMAGE_FEATURE: {
-            "dtype": "video",
-            "shape": shape,
-            "names": ["height", "width", "channels"],
-        },
-        _STATE_FEATURE: {"dtype": "float32", "shape": state.shape, "names": names},
-        _ACTION_FEATURE: {"dtype": "float32", "shape": action.shape, "names": names},
-    }
+    raw_schema = output.metadata.get("feature_schema")
+    if not isinstance(raw_schema, dict) or not raw_schema:
+        raise ValueError("LeRobot output.metadata.feature_schema is required")
+    features: dict[str, dict[str, Any]] = {}
+    for key, raw in raw_schema.items():
+        if not isinstance(key, str) or not isinstance(raw, dict):
+            raise ValueError("feature_schema must map feature names to definitions")
+        dtype = raw.get("dtype")
+        shape = raw.get("shape")
+        names = raw.get("names")
+        features[key] = {"dtype": dtype, "shape": tuple(shape), "names": names}
+
+    first_values = _sample_features(first)
+    if set(first_values) != set(features):
+        raise ValueError(
+            f"sample features {sorted(first_values)} do not match schema {sorted(features)}"
+        )
     dataset = cast(
         "_WritableDataset",
         LeRobotDataset.create(
@@ -135,21 +113,22 @@ def write(samples: Iterator[Sample], output: OutputConfig) -> Path:
         if sample.episode_id in finished:
             raise ValueError(f"episode {sample.episode_id!r} is not contiguous")
         current_episode = sample.episode_id
-        sample_image = np.asarray(sample.observation[image_key])
-        sample_state = np.asarray(sample.observation[state_key], dtype=np.float32).reshape(-1)
-        sample_action = np.asarray(sample.action[action_key], dtype=np.float32).reshape(-1)
-        if sample_image.shape != shape:
-            raise ValueError(f"wrist image shape changed from {shape} to {sample_image.shape}")
-        if sample_state.shape != state.shape or sample_action.shape != action.shape:
-            raise ValueError("state or action shape changed during conversion")
-        dataset.add_frame(
-            {
-                _IMAGE_FEATURE: sample_image.astype(np.uint8, copy=False),
-                _STATE_FEATURE: sample_state,
-                _ACTION_FEATURE: sample_action,
-                "task": _task(sample, output.metadata),
-            }
-        )
+        values = _sample_features(sample)
+        if set(values) != set(features):
+            raise ValueError(f"sample feature keys changed in episode {sample.episode_id}")
+        frame: dict[str, Any] = {"task": _task(sample)}
+        for key, definition in features.items():
+            value = np.asarray(values[key])
+            shape = tuple(definition["shape"])
+            if value.shape != shape:
+                raise ValueError(f"{key} shape changed from {shape} to {value.shape}")
+            dtype = definition["dtype"]
+            frame[key] = (
+                value.astype(np.uint8, copy=False)
+                if dtype == "video"
+                else value.astype(np.dtype(dtype), copy=False)
+            )
+        dataset.add_frame(frame)
 
     try:
         add(first)

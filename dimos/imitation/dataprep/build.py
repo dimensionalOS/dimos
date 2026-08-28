@@ -32,11 +32,13 @@ from dimos.imitation.dataprep.core import (
     DataPrepConfig,
     Episode,
     EpisodeExtractor,
+    EpisodeQualityReport,
     Sample,
     Writer,
     extract_episodes,
     get_inspector,
     get_writer,
+    inspect_episode_quality,
     inspect_episodes,
     iter_episode_samples,
 )
@@ -46,7 +48,12 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-def _write_dimos_meta(dataset_path: Path, config: DataPrepConfig, episodes: list[Episode]) -> None:
+def _write_dimos_meta(
+    dataset_path: Path,
+    config: DataPrepConfig,
+    episodes: list[Episode],
+    quality_reports: list[EpisodeQualityReport],
+) -> None:
     """Sidecar describing how this dataset was built, recording the obs/action
     schema alongside the dataset."""
     meta = {
@@ -54,6 +61,8 @@ def _write_dimos_meta(dataset_path: Path, config: DataPrepConfig, episodes: list
         "observation": {k: v.model_dump() for k, v in config.observation.items()},
         "action": {k: v.model_dump() for k, v in config.action.items()},
         "sync": config.sync.model_dump(),
+        "quality": config.quality.model_dump(),
+        "quality_reports": [report.model_dump() for report in quality_reports],
         "episodes": [
             {
                 "id": e.id,
@@ -127,9 +136,41 @@ def run_dataprep(config: DataPrepConfig, *, writer: Writer | None = None) -> Pat
             config.sync.model_dump(),
         )
         selected_writer = writer or get_writer(config.output.format)
+        quality_reports = [
+            inspect_episode_quality(store, episode, streams, config.sync, config.quality)
+            for episode in successful
+        ]
+        valid_ids = {report.episode_id for report in quality_reports if report.valid}
+        valid_episodes = [episode for episode in successful if episode.id in valid_ids]
+        for report in quality_reports:
+            if not report.valid:
+                logger.warning(
+                    "[dataprep] excluding episode %s: %s",
+                    report.episode_id,
+                    "; ".join(report.rejection_reasons),
+                )
+        if not valid_episodes:
+            reasons = {report.episode_id: report.rejection_reasons for report in quality_reports}
+            raise RuntimeError(f"All saved episodes failed dataset validation: {reasons}")
         # fps drives written timestamps + video rate, so tie it to the resample
         # rate; an explicit metadata.fps still wins.
-        output = config.output
+        feature_schema = {
+            **{key: value.model_dump() for key, value in config.observation.items()},
+            **{key: value.model_dump() for key, value in config.action.items()},
+            "complementary_info.is_filled": {
+                "dtype": "bool",
+                "shape": [1],
+                "names": ["is_filled"],
+            },
+        }
+        output = config.output.model_copy(
+            update={
+                "metadata": {
+                    **config.output.metadata,
+                    "feature_schema": feature_schema,
+                }
+            }
+        )
         if config.sync.rate_hz > 0 and "fps" not in output.metadata:
             output = output.model_copy(
                 update={"metadata": {**output.metadata, "fps": config.sync.rate_hz}}
@@ -138,18 +179,19 @@ def run_dataprep(config: DataPrepConfig, *, writer: Writer | None = None) -> Pat
 
         samples_seen = 0
         episodes_done = 0
-        total = len(successful)
+        total = len(valid_episodes)
         produced: list[Episode] = []  # episodes that yielded ≥1 sample
 
         def _all_samples() -> Iterator[Sample]:
             nonlocal samples_seen, episodes_done
-            for ep in successful:
+            for ep in valid_episodes:
                 before = samples_seen
                 for sample in iter_episode_samples(
                     store=store,
                     episode=ep,
                     streams=streams,
                     sync=config.sync,
+                    quality=config.quality,
                     obs_keys=obs_keys,
                     action_keys=action_keys,
                 ):
@@ -179,12 +221,12 @@ def run_dataprep(config: DataPrepConfig, *, writer: Writer | None = None) -> Pat
             raise RuntimeError(
                 f"No synchronized samples were produced from {total} successful episode(s). "
                 f"Recorded stream counts: {counts}. Check that every configured stream records "
-                "data during each episode before adjusting sync tolerance or action_shift."
+                "data during each episode before changing the synchronization contract."
             ) from error
 
         dataset_path = Path(selected_writer(chain((first_sample,), samples), output))
         written = [e.model_copy(update={"id": f"ep_{i:06d}"}) for i, e in enumerate(produced)]
-        _write_dimos_meta(dataset_path, config, written)
+        _write_dimos_meta(dataset_path, config, written, quality_reports)
         logger.info(
             "[dataprep] succeeded — wrote %d samples across %d episodes to %s",
             samples_seen,
@@ -196,7 +238,11 @@ def run_dataprep(config: DataPrepConfig, *, writer: Writer | None = None) -> Pat
         store.stop()
 
 
-def inspect_recording(path: Path | str, status_stream: str = "status") -> dict[str, Any]:
+def inspect_recording(
+    path: Path | str,
+    status_stream: str = "status",
+    config: DataPrepConfig | None = None,
+) -> dict[str, Any]:
     """Summarize a source recording, including an episode left open at EOF."""
     p = Path(path)
     store = SqliteStore(path=str(p), must_exist=True)
@@ -209,7 +255,7 @@ def inspect_recording(path: Path | str, status_stream: str = "status") -> dict[s
             report = None
         episodes = report.episodes if report is not None else []
         incomplete = report.incomplete if report is not None else []
-        return {
+        result: dict[str, Any] = {
             "format": "recording",
             "path": str(p),
             "streams": stream_counts,
@@ -219,6 +265,16 @@ def inspect_recording(path: Path | str, status_stream: str = "status") -> dict[s
             "discarded_episodes": sum(not episode.success for episode in episodes),
             "incomplete_episodes": [episode.model_dump() for episode in incomplete],
         }
+        if config is not None:
+            streams = {**config.observation, **config.action}
+            result["quality"] = [
+                inspect_episode_quality(
+                    store, episode, streams, config.sync, config.quality
+                ).model_dump()
+                for episode in episodes
+                if episode.success
+            ]
+        return result
     finally:
         store.stop()
 

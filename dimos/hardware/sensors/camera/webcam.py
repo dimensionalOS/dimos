@@ -24,7 +24,10 @@ from reactivex.observable import Observable
 from dimos.hardware.sensors.camera.spec import CameraConfig, CameraHardware
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
+
+logger = setup_logger()
 
 
 def _parse_camera_device(value: object) -> object:
@@ -94,6 +97,18 @@ class Webcam(CameraHardware):
         # Set camera properties
         self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.config.width)  # type: ignore[attr-defined]
         self._capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.config.height)  # type: ignore[attr-defined]
+        if self.config.fps > 0:
+            self._capture.set(cv2.CAP_PROP_FPS, self.config.fps)  # type: ignore[attr-defined]
+        logger.info(
+            "Webcam %s requested %.1fHz %dx%d; negotiated %.1fHz %dx%d",
+            self.config.camera_index,
+            self.config.fps,
+            self.config.width,
+            self.config.height,
+            self._capture.get(cv2.CAP_PROP_FPS),  # type: ignore[attr-defined]
+            round(self._capture.get(cv2.CAP_PROP_FRAME_WIDTH)),  # type: ignore[attr-defined]
+            round(self._capture.get(cv2.CAP_PROP_FRAME_HEIGHT)),  # type: ignore[attr-defined]
+        )
 
         # Clear stop event and start the capture thread
         self._stop_event.clear()
@@ -126,6 +141,7 @@ class Webcam(CameraHardware):
         import cv2
 
         ret, frame = self._capture.read()  # type: ignore[attr-defined]
+        acquired_at = time.time()
         if not ret:
             raise RuntimeError(f"Failed to read frame from camera {self.config.camera_index}")
 
@@ -139,7 +155,7 @@ class Webcam(CameraHardware):
             frame_rgb,
             format=ImageFormat.RGB,  # We converted to RGB above
             frame_id=self._frame("camera_optical"),  # Standard frame ID for camera images
-            ts=time.time(),  # Current timestamp
+            ts=acquired_at,
         )
 
         if self.config.stereo_slice in ("left", "right"):

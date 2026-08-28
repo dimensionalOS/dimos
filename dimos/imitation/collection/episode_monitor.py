@@ -63,7 +63,14 @@ def _default_button_map() -> dict[EpisodeCommand, str]:
 class EpisodeMonitorModuleConfig(ModuleConfig):
     button_map: dict[EpisodeCommand, str] = Field(default_factory=_default_button_map)
     keyboard_map: dict[EpisodeCommand, str] = Field(default_factory=dict)
-    default_task_label: str | None = None
+    task: str
+
+    @field_validator("task")
+    @classmethod
+    def _validate_task(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("task must be a non-empty description")
+        return value.strip()
 
     @field_validator("button_map")
     @classmethod
@@ -221,7 +228,7 @@ class EpisodeMonitorModule(Module):
             episodes_saved=self._saved,
             episodes_discarded=self._discarded,
             last_event=last_event,
-            task_label=self.config.default_task_label,
+            task_label=self.config.task,
         )
 
     def _emit(self, status: EpisodeStatus) -> EpisodeStatus:
