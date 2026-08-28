@@ -27,6 +27,9 @@ TASK_CACHE_HOME=${XDG_CACHE_HOME:-$HOME/.cache}/dimos/sonic-jp5
 ORT_SOURCE="$TASK_CACHE_HOME/onnxruntime-$ORT_VERSION"
 EIGEN_SOURCE="$TASK_CACHE_HOME/eigen-$EIGEN_COMMIT"
 WHEEL_CACHE="$TASK_CACHE_HOME/wheels"
+ORT_BUILD_DIR="$ORT_SOURCE/build/Linux/Release"
+ORT_BUILD_CONFIG="ort=$ORT_COMMIT;eigen=$EIGEN_COMMIT;cuda=11.8;sm=87;gcc=10;python=$SONIC_PYTHON_VERSION;revision=1"
+ORT_BUILD_CONFIG_STAMP="$ORT_BUILD_DIR/.dimos-sonic-jp5-build-config"
 CHECK_ONLY=false
 FAILED=0
 
@@ -185,6 +188,24 @@ if [[ ${#WHEELS[@]} -eq 0 ]]; then
     export LD_LIBRARY_PATH="$CUDA_HOME_JP5/compat:$CUDA_HOME_JP5/lib64:/usr/lib/aarch64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     export CC=/usr/bin/gcc-10
     export CXX=/usr/bin/g++-10
+
+    CACHED_ORT_BUILD_CONFIG=""
+    if [[ -r "$ORT_BUILD_CONFIG_STAMP" ]]; then
+        IFS= read -r CACHED_ORT_BUILD_CONFIG < "$ORT_BUILD_CONFIG_STAMP" || true
+    fi
+    if [[ -d "$ORT_BUILD_DIR" && "$CACHED_ORT_BUILD_CONFIG" != "$ORT_BUILD_CONFIG" ]]; then
+        if [[ ! -f "$ORT_BUILD_DIR/Makefile" ]]; then
+            echo "cached ONNX Runtime build cannot be cleaned safely:" >&2
+            echo "  $ORT_BUILD_DIR" >&2
+            echo "Move that directory aside and rerun setup." >&2
+            exit 1
+        fi
+        echo "ONNX Runtime build configuration changed; cleaning stale objects."
+        "$SONIC_VENV/bin/cmake" --build "$ORT_BUILD_DIR" --target clean -- -j2
+    fi
+    mkdir -p "$ORT_BUILD_DIR"
+    printf '%s\n' "$ORT_BUILD_CONFIG" > "$ORT_BUILD_CONFIG_STAMP"
+
     (
         cd "$ORT_SOURCE"
         ./build.sh \
