@@ -8,6 +8,7 @@ version = "0.1.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "lerobot[dataset,viz]==0.6.0",
+    "mcap>=1.2",
     "opencv-contrib-python>=4.8,<5",
     "transformers[torch]>=5.4,<5.6",
 ]

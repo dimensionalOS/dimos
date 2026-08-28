@@ -463,7 +463,7 @@ def test_run_dataprep_rejects_empty_recorded_stream_before_writer(mocker, tmp_pa
     store.stream.side_effect = lambda name: mocker.MagicMock(
         count=mocker.Mock(return_value=stream_counts[name])
     )
-    mocker.patch("dimos.imitation.dataprep.build.SqliteStore", return_value=store)
+    mocker.patch("dimos.imitation.dataprep.build._open_recording", return_value=store)
     mocker.patch(
         "dimos.imitation.dataprep.build.extract_episodes",
         return_value=[Episode(id="ep_0", start_ts=1.0, end_ts=2.0)],
@@ -495,7 +495,7 @@ def test_run_dataprep_rejects_empty_recorded_stream_before_writer(mocker, tmp_pa
 def test_run_dataprep_excludes_only_invalid_episode(mocker, tmp_path: Path) -> None:
     store = mocker.MagicMock()
     store.list_streams.return_value = ["joint_state", "status"]
-    mocker.patch("dimos.imitation.dataprep.build.SqliteStore", return_value=store)
+    mocker.patch("dimos.imitation.dataprep.build._open_recording", return_value=store)
     episodes = [
         Episode(id="bad", start_ts=0.0, end_ts=1.0, task_label="pick"),
         Episode(id="good", start_ts=2.0, end_ts=3.0, task_label="pick"),

@@ -22,6 +22,7 @@ from dimos.core.stream import In
 from dimos.experimental.memory.rust_recorder import (
     RustRecorder,
     RustRecorderConfig,
+    RustRecordingStoreConfig,
     RustSqliteStoreConfig,
 )
 from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
@@ -30,9 +31,9 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 
 
 class NativeCollectionRecorderConfig(RustRecorderConfig):
-    """SQLite-only native recorder configuration for offline dataprep."""
+    """Native recorder configuration for offline DataPrep."""
 
-    store: RustSqliteStoreConfig = Field(default_factory=RustSqliteStoreConfig)
+    store: RustRecordingStoreConfig = Field(default_factory=RustSqliteStoreConfig)
     record_tf: bool = Field(default=False, exclude=True)
 
 
