@@ -43,11 +43,11 @@ $ dimos mem summary recordings/<run-id>/memory.db
 │ way_point      │  1,855 │  98.9 │ 2026-08-27 03:39:07 │    18.8s │  94.20 KiB │
 │ odom           │    981 │  45.2 │ 2026-08-27 03:39:06 │    21.7s │  82.39 KiB │
 │ stop_movement  │  1,855 │  98.9 │ 2026-08-27 03:39:07 │    18.7s │  16.30 KiB │
-│ camera_info    │     24 │     — │ 2026-08-27 03:38:56 │     0.0s │   8.67 KiB │
+│ camera_info    │     24 │     - │ 2026-08-27 03:38:56 │     0.0s │   8.67 KiB │
 │ nav_cmd_vel    │      3 │  32.8 │ 2026-08-27 03:39:28 │     0.1s │   168.00 B │
-│ goal_request   │      1 │     — │ 2026-08-27 03:39:28 │     0.0s │    86.00 B │
+│ goal_request   │      1 │     - │ 2026-08-27 03:39:28 │     0.0s │    86.00 B │
 │ path           │      2 │ 289.1 │ 2026-08-27 03:39:28 │     0.0s │    68.00 B │
-│ goal_reached   │      1 │     — │ 2026-08-27 03:39:28 │     0.0s │     9.00 B │
+│ goal_reached   │      1 │     - │ 2026-08-27 03:39:28 │     0.0s │     9.00 B │
 ├────────────────┼────────┼───────┼─────────────────────┼──────────┼────────────┤
 │ total          │ 11,705 │       │                     │          │  13.66 MiB │
 └────────────────┴────────┴───────┴─────────────────────┴──────────┴────────────┘
@@ -63,4 +63,4 @@ dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2
 
 - Off unless `--record`; never active under `--replay`.
 - One writer thread; transport callbacks only enqueue. Queue holds 1000 messages, then drops and warns.
-- We also still have explicit recorder modules (`unitree-go2-memory`, `unitree-go2-mid360-record`, `unitree-g1-record`) that are unaffected and still record their own streams. These will be deprecated shortly. 
+- We also still have explicit recorder modules (`unitree-go2-memory`, `unitree-go2-mid360-record`, `unitree-g1-record`) that are unaffected and still record their own streams. These will be deprecated shortly.
