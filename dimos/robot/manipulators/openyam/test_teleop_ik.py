@@ -22,10 +22,9 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.openyam.blueprints.teleop import _openyam_quest_task
-from dimos.robot.manipulators.openyam.config import OPENYAM_ARM_JOINTS
+from dimos.robot.manipulators.openyam.config import OPENYAM_ARM_JOINTS, OPENYAM_HOME_JOINTS
 from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolver
 
-_SAFE_POSTURE = [0.0, 1.047, 1.047, 0.0, 0.0, 0.0]
 _TARGET_FRAME = _openyam_quest_task.params["robot_model"].end_effector_link
 
 
@@ -47,7 +46,7 @@ def _solver(
 @pytest.mark.self_hosted
 def test_solver_weights_large_joints_above_wrist_joints() -> None:
     solver = _solver()
-    state = JointState(name=OPENYAM_ARM_JOINTS, position=_SAFE_POSTURE)
+    state = JointState(name=OPENYAM_ARM_JOINTS, position=OPENYAM_HOME_JOINTS)
     targets = solver.frame_poses(state, (_TARGET_FRAME,))
 
     assert solver.step(targets, state, 0.01) is not None
@@ -62,7 +61,7 @@ def _orientation_target_motion(
     solver_type: type[PinkPoseTargetSolver],
 ) -> tuple[float, float]:
     solver = _solver(solver_type)
-    initial = JointState(name=OPENYAM_ARM_JOINTS, position=_SAFE_POSTURE)
+    initial = JointState(name=OPENYAM_ARM_JOINTS, position=OPENYAM_HOME_JOINTS)
     pose = solver.frame_poses(initial, (_TARGET_FRAME,))[_TARGET_FRAME]
     target = PoseStamped(
         frame_id=pose.frame_id,
