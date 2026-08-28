@@ -18,7 +18,7 @@ from collections.abc import Iterator
 import sys
 from threading import Event, Thread
 from typing import Any
-from unittest.mock import ANY, MagicMock
+from unittest.mock import ANY, MagicMock, call
 
 import numpy as np
 import pytest
@@ -154,11 +154,12 @@ def test_osr_implements_request_driven_scan_spec(module: ObjectSceneRegistration
     assert spec_annotation_compliance(module, ObjectSceneRegistrationSpec)
 
 
-def test_owlv2_prompts_are_text_only() -> None:
-    module = ObjectSceneRegistrationModule(detector_backend="owlv2")
+@pytest.mark.parametrize("backend", ["owlv2", "moondream"])
+def test_text_detector_prompts_reject_boxes(backend: str) -> None:
+    module = ObjectSceneRegistrationModule(detector_backend=backend)
     try:
         module.set_prompts(text=["mug"])
-        assert module._owlv2_prompts == ["mug"]
+        assert module._text_prompts == ["mug"]
         with pytest.raises(ValueError, match="text prompts"):
             module.set_prompts(bboxes=np.zeros((1, 4)))
     finally:
@@ -169,7 +170,7 @@ def test_owlv2_queries_configured_prompts(monkeypatch: Any) -> None:
     module = ObjectSceneRegistrationModule(detector_backend="owlv2")
     module._camera_info = MagicMock()
     module._detector = MagicMock()
-    module._owlv2_prompts = ["mug"]
+    module._text_prompts = ["mug"]
     module.detections_2d = MagicMock()
     color = Image(
         data=np.zeros((2, 2, 3), dtype=np.uint8),
@@ -186,6 +187,40 @@ def test_owlv2_queries_configured_prompts(monkeypatch: Any) -> None:
 
     module._detector.query_detections.assert_called_once_with(color, ["mug"], threshold=0.6)
     process_3d.assert_called_once_with(detections, color, ANY)
+    module.stop()
+
+
+def test_moondream_queries_each_configured_prompt(monkeypatch: Any) -> None:
+    module = ObjectSceneRegistrationModule(detector_backend="moondream")
+    module._camera_info = MagicMock()
+    module._detector = MagicMock()
+    module._text_prompts = ["cup", "bottle"]
+    module.detections_2d = MagicMock()
+    color = Image(
+        data=np.zeros((2, 2, 3), dtype=np.uint8),
+        format=ImageFormat.BGR,
+        frame_id="camera",
+        ts=4.0,
+    )
+    cup = MagicMock(track_id=0, class_id=-1)
+    bottle = MagicMock(track_id=0, class_id=-1)
+    module._detector.query_detections.side_effect = [
+        ImageDetections2D(color, [cup]),
+        ImageDetections2D(color, [bottle]),
+    ]
+    process_3d = MagicMock()
+    monkeypatch.setattr(module, "_process_3d_detections", process_3d)
+
+    module._process_images(color, _image(4.0))
+
+    assert module._detector.query_detections.call_args_list == [
+        call(color, "cup"),
+        call(color, "bottle"),
+    ]
+    combined = process_3d.call_args.args[0]
+    assert combined.detections == [cup, bottle]
+    assert (cup.track_id, cup.class_id) == (-1, 0)
+    assert (bottle.track_id, bottle.class_id) == (-1, 1)
     module.stop()
 
 
@@ -242,7 +277,7 @@ def test_request_driven_scan_processes_latest_aligned_frame(monkeypatch: Any) ->
     )
 
     assert module.scan_scene(text=["mug"]) is result
-    assert module._owlv2_prompts == ["mug"]
+    assert module._text_prompts == ["mug"]
     module.stop()
 
 
@@ -255,8 +290,8 @@ def test_request_driven_detect_triggers_scan(monkeypatch: Any) -> None:
     monkeypatch.setattr(module, "_scan_scene_objects", scan_objects)
     monkeypatch.setattr(module, "get_detected_objects", lambda: pytest.fail("read stale database"))
 
-    assert module.detect("mug") == "Detected 1 object(s):\n  - mug (object_id='current')"
-    assert module._owlv2_prompts == ["mug"]
+    assert module.detect(["mug"]) == "Detected 1 object(s):\n  - mug (object_id='current')"
+    assert module._text_prompts == ["mug"]
     scan_objects.assert_called_once_with()
     module.stop()
 
@@ -315,7 +350,7 @@ def test_concurrent_request_scans_do_not_overlap(monkeypatch: Any) -> None:
     seen_prompts: list[list[str]] = []
 
     def process_images(_: Image, __: Image) -> list[MagicMock]:
-        seen_prompts.append(list(module._owlv2_prompts))
+        seen_prompts.append(list(module._text_prompts))
         if len(seen_prompts) == 1:
             first_started.set()
             assert release_first.wait(timeout=1.0)

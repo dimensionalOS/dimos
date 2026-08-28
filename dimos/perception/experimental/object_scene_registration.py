@@ -49,13 +49,13 @@ logger = setup_logger()
 
 class ObjectSceneRegistrationConfig(ModuleConfig):
     prompt_mode: YoloePromptMode = YoloePromptMode.LRPC
-    detector_backend: Literal["yoloe", "owlv2"] = "yoloe"
+    detector_backend: Literal["yoloe", "owlv2", "moondream"] = "yoloe"
     segmentation_backend: Literal["yolo", "edgetam"] = "yolo"
     detect_on_request: bool = False
 
 
 class ObjectSceneRegistrationModule(Module):
-    """Module for detecting objects in camera images using YOLO-E with 2D and 3D detection."""
+    """Register prompted camera detections as stable 3D scene objects."""
 
     color_image: In[Image]
     depth_image: In[Image]
@@ -71,7 +71,7 @@ class ObjectSceneRegistrationModule(Module):
     _segmenter: Any | None = None
     _camera_info: CameraInfo | None = None
     _object_db: ObjectDB
-    _owlv2_prompts: list[str]
+    _text_prompts: list[str]
     _latest_aligned_frames: tuple[Image, Image] | None = None
     _processing_lock: threading.RLock
     # A tuple assignment/read is atomic, so depth and its transform cannot be
@@ -102,7 +102,7 @@ class ObjectSceneRegistrationModule(Module):
             min_detections_for_permanent=min_detections_for_permanent,
         )
         self._processing_lock = threading.RLock()
-        self._owlv2_prompts = []
+        self._text_prompts = []
         self._max_distance = max_distance
         self._use_aabb = use_aabb
         self._max_obstacle_width = max_obstacle_width
@@ -115,6 +115,12 @@ class ObjectSceneRegistrationModule(Module):
             from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
 
             self._detector = Owlv2Detector()
+            self._detector.start()
+        elif self._detector_backend == "moondream":
+            from dimos.models.vl.moondream import MoondreamVlModel
+
+            self._detector = MoondreamVlModel()
+            self._detector.start()
         else:
             if self._prompt_mode == YoloePromptMode.LRPC:
                 model_name = "yoloe-11l-seg-pf.pt"
@@ -172,10 +178,10 @@ class ObjectSceneRegistrationModule(Module):
         text: list[str] | None = None,
         bboxes: NDArray[np.float64] | None = None,
     ) -> None:
-        if self._detector_backend == "owlv2":
+        if self._detector_backend in {"owlv2", "moondream"}:
             if bboxes is not None:
-                raise ValueError("OWLv2 supports text prompts only")
-            self._owlv2_prompts = text or []
+                raise ValueError(f"{self._detector_backend} supports text prompts only")
+            self._text_prompts = text or []
         elif self._detector is not None:
             self._detector.set_prompts(text=text, bboxes=bboxes)
 
@@ -310,28 +316,28 @@ class ObjectSceneRegistrationModule(Module):
         return pc
 
     @skill
-    def detect(self, *prompts: str) -> str:
+    def detect(self, prompts: list[str]) -> str:
         """Detect objects matching the given text prompts.
 
         Do NOT call this tool multiple times for one query. Pass all objects in a single call.
-        For example, to detect a cup and mouse, call detect("cup", "mouse") not detect("cup") then detect("mouse").
+        For example, to detect a cup and mouse, pass ["cup", "mouse"] in one call.
 
         Args:
-            prompts (str): Text descriptions of objects to detect (e.g., "person", "car", "dog")
+            prompts: Text descriptions of concrete object categories to detect.
 
         Returns:
             str: Detected objects with their object_id (stable UUID) and name.
 
         Example:
-            detect("person", "car", "dog")
-            detect("cup")
+            detect(["person", "car", "dog"])
+            detect(["cup"])
         """
         if not prompts:
             return "No prompts provided."
         with self._processing_lock:
             if self._detector is None:
                 return "Detector not initialized."
-            self._set_prompts(text=list(prompts))
+            self._set_prompts(text=prompts)
             if self._detect_on_request:
                 detected = [obj.agent_encode() for obj in self._scan_scene_objects()]
             else:
@@ -382,14 +388,23 @@ class ObjectSceneRegistrationModule(Module):
         )
 
         if self._detector_backend == "owlv2":
-            if not self._owlv2_prompts:
+            if not self._text_prompts:
                 detections_2d = ImageDetections2D(color_image, [])
             else:
                 detections_2d = self._detector.query_detections(
                     color_image,
-                    self._owlv2_prompts,
+                    self._text_prompts,
                     threshold=self._detector_confidence,
                 )
+        elif self._detector_backend == "moondream":
+            detections_2d = ImageDetections2D(color_image, [])
+            for class_id, prompt in enumerate(self._text_prompts):
+                prompted = self._detector.query_detections(color_image, prompt)
+                for detection in prompted.detections:
+                    # Moondream's per-query indices are not temporal track IDs.
+                    detection.track_id = -1
+                    detection.class_id = class_id
+                detections_2d.detections.extend(prompted.detections)
         else:
             detections_2d = self._detector.process_image(color_image)
 
