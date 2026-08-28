@@ -23,7 +23,7 @@ rebuild the same class on import because ``dimos run`` exports ``--replay-db`` a
 from __future__ import annotations
 
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -32,6 +32,12 @@ from dimos.memory.cli.dataset import open_dataset, stream_payload_types
 from dimos.memory.store.base import Store
 from dimos.memory.tap import check_topics, matching
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from reactivex import Observable
+
+    from dimos.memory.replay import Replay, ReplayStream
+    from dimos.msgs.protocol import DimosMsg
 
 logger = setup_logger()
 
@@ -55,19 +61,23 @@ class ReplayModule(Module):
     def start(self) -> None:
         super().start()
         if not self.config.dataset:
-            raise ValueError("no recording: run `dimos replay <memory.db>`")
-        self._store = open_dataset(self.config.dataset)
-        self._store.start()
-        replay = self._store.replay(
+            raise ValueError("no recording: pass --replay-db <memory.db>")
+        store: Store = open_dataset(self.config.dataset)
+        store.start()
+        self._store = store
+        replay: Replay = store.replay(
             speed=self.config.speed,
             loop=self.config.loop,
             seek=self.config.seek,
             duration=self.config.duration,
         )
         replay.pin_anchor()
+        port: Out[DimosMsg]
         for name, port in self.outputs.items():
+            stream: ReplayStream[DimosMsg] = replay.stream(name)
+            timed: Observable[DimosMsg] = stream.observable()
             logger.info("Replaying %s -> %s", name, port)
-            self.register_disposable(replay.stream(name).observable().subscribe(port.publish))
+            self.register_disposable(timed.subscribe(port.publish))
 
     @rpc
     def stop(self) -> None:
