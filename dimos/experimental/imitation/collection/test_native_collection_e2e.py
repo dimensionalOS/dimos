@@ -35,6 +35,7 @@ from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
 from dimos.msgs.protocol import DimosMsg
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_NEVER_DROP, Topic
 from dimos.utils.testing.waiting import wait_until
 
@@ -80,6 +81,7 @@ def test_native_collection_records_typed_zenoh_streams(
         "color_image": Image,
         "coordinator_joint_state": JointState,
         "status": EpisodeStatus,
+        "tf": TFMessage,
     }
     publishers: dict[str, ZenohTransport[Any]] = {}
     for name, payload_type in payload_types.items():
