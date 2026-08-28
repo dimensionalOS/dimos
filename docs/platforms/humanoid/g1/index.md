@@ -182,7 +182,8 @@ development-only simulation and test dependency groups. Those groups contain
 prebuilt ARM64 packages that require a newer glibc than Ubuntu 20.04. Rehearse
 the simulation on the development workstation, then use this environment for
 the onboard diagnostic and real-hardware launch. The setup script creates this
-environment with CPython 3.11; Python 3.10 cannot launch the current DimOS CLI.
+environment with CPython 3.10 so the Open3D ARM wheel remains compatible with
+JetPack 5's Ubuntu 20.04 userspace.
 
 The setup script installs
 [`onnxruntime-gpu-extended-auto==1.23.3`](https://github.com/jeff-hykin/onnxruntime-gpu-extended-auto)
