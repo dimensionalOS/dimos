@@ -47,7 +47,7 @@ ament_target_dependencies(m20_ros_bridge
   rclcpp
   sensor_msgs
 )
-target_link_libraries(m20_ros_bridge PRIVATE
+target_link_libraries(m20_ros_bridge
   dimos_native
   PkgConfig::LCM
 )

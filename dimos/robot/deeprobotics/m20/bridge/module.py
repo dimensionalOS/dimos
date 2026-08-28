@@ -59,6 +59,7 @@ class M20ROSBridgeConfig(NativeModuleConfig):
     command_rate_hz: float = Field(default=10.0, gt=0.0)
     command_timeout_s: float = Field(default=0.4, gt=0.0)
     safety_timeout_s: float = Field(default=2.5, gt=0.0)
+    lidar_timeout_s: float = Field(default=0.5, gt=0.0)
     max_linear_x: float = Field(default=MAX_LINEAR_X_M_S, gt=0.0)
     max_linear_y: float = Field(default=MAX_LINEAR_Y_M_S, gt=0.0)
     max_angular_z: float = Field(default=MAX_ANGULAR_Z_RAD_S, gt=0.0)
@@ -75,6 +76,7 @@ class M20ROSBridge(NativeModule, perception.Lidar, perception.Odometry):
 
     safe_cmd_vel: In[Twist]
     command_ready: Out[Bool]
+    lidar_ready: Out[Bool]
     lidar: Out[PointCloud2]
     odom: Out[PoseStamped]
     odometry: Out[Odometry]

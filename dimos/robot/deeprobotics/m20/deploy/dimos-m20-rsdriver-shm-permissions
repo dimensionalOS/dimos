@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Copyright 2026 Dimensional Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+set -euo pipefail
+
+service_pid="${1:-}"
+if [[ ! "$service_pid" =~ ^[0-9]+$ ]] || [[ ! -d "/proc/$service_pid" ]]; then
+  echo "expected the live rsdriver.service MainPID, got: $service_pid" >&2
+  exit 1
+fi
+
+for _attempt in $(seq 1 50); do
+  driver_pid="$(pgrep --parent "$service_pid" --exact rslidar | head -n 1 || true)"
+  if [[ -n "$driver_pid" ]]; then
+    mapfile -t shm_files < <(
+      {
+        awk '$NF ~ /^\/dev\/shm\/fastrtps_/ {print $NF}' "/proc/$driver_pid/maps"
+        for fd in "/proc/$driver_pid"/fd/*; do
+          readlink -f "$fd" || true
+        done
+      } \
+        | grep -E '^/dev/shm/fastrtps_([0-9a-f]+|port[0-9]+)(_el)?$' \
+        | sort -u
+    )
+    if (( ${#shm_files[@]} >= 4 )); then
+      chgrp user -- "${shm_files[@]}"
+      chmod g+rw -- "${shm_files[@]}"
+      exit 0
+    fi
+  fi
+  sleep 0.1
+done
+
+echo "rslidar did not open its Fast DDS shared-memory files within 5 seconds" >&2
+exit 1

@@ -105,6 +105,7 @@ def test_connection_forwards_bounded_command_after_arm(
     armed_publish = mocker.patch.object(connection.armed, "publish")
     command = Twist(linear=Vector3(0.7, -0.4, 2.0), angular=Vector3(1.0, 2.0, 0.9))
 
+    connection._on_lidar_ready(Bool(True))
     connection._on_command_ready(Bool(True))
     connection.arm()
     accepted = connection.move(command)
@@ -125,6 +126,7 @@ def test_disarm_publishes_zero_and_blocks_following_commands(
     safe_publish = mocker.patch.object(connection.safe_cmd_vel, "publish")
     armed_publish = mocker.patch.object(connection.armed, "publish")
 
+    connection._on_lidar_ready(Bool(True))
     connection._on_command_ready(Bool(True))
     connection.arm()
     safe_publish.reset_mock()
@@ -144,6 +146,7 @@ def test_connection_refuses_arm_until_native_bridge_is_ready(
 ) -> None:
     connection = connection_factory()
     armed_publish = mocker.patch.object(connection.armed, "publish")
+    connection._on_lidar_ready(Bool(True))
 
     accepted = connection.arm()
 
@@ -159,6 +162,7 @@ def test_connection_disarms_when_native_bridge_loses_readiness(
     connection = connection_factory()
     safe_publish = mocker.patch.object(connection.safe_cmd_vel, "publish")
     armed_publish = mocker.patch.object(connection.armed, "publish")
+    connection._on_lidar_ready(Bool(True))
     connection._on_command_ready(Bool(True))
     connection.arm()
     safe_publish.reset_mock()
@@ -167,6 +171,54 @@ def test_connection_disarms_when_native_bridge_loses_readiness(
     connection._on_command_ready(Bool(False))
 
     assert connection.is_command_ready() is False
+    assert connection.is_armed() is False
+    safe_publish.assert_called_once_with(Twist.zero())
+    armed_publish.assert_called_once()
+    assert armed_publish.call_args.args[0].data is False
+
+
+def test_connection_refuses_arm_without_a_fresh_lidar_stream(
+    mocker: MockerFixture,
+    connection_factory: Callable[..., M20Connection],
+) -> None:
+    connection = connection_factory()
+    armed_publish = mocker.patch.object(connection.armed, "publish")
+    connection._on_command_ready(Bool(True))
+
+    accepted = connection.arm()
+
+    assert accepted is False
+    assert connection.is_lidar_ready() is False
+    assert connection.is_armed() is False
+    armed_publish.assert_not_called()
+
+
+def test_connection_reports_lidar_recovery(
+    connection_factory: Callable[..., M20Connection],
+) -> None:
+    connection = connection_factory()
+
+    connection._on_lidar_ready(Bool(True))
+
+    assert connection.is_lidar_ready() is True
+
+
+def test_connection_disarms_when_lidar_stream_becomes_stale(
+    mocker: MockerFixture,
+    connection_factory: Callable[..., M20Connection],
+) -> None:
+    connection = connection_factory()
+    safe_publish = mocker.patch.object(connection.safe_cmd_vel, "publish")
+    armed_publish = mocker.patch.object(connection.armed, "publish")
+    connection._on_lidar_ready(Bool(True))
+    connection._on_command_ready(Bool(True))
+    connection.arm()
+    safe_publish.reset_mock()
+    armed_publish.reset_mock()
+
+    connection._on_lidar_ready(Bool(False))
+
+    assert connection.is_lidar_ready() is False
     assert connection.is_armed() is False
     safe_publish.assert_called_once_with(Twist.zero())
     armed_publish.assert_called_once()

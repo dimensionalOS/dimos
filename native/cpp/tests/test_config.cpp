@@ -94,6 +94,27 @@ TEST_CASE("a non-object config is rejected") {
     CHECK_THROWS_AS(Config(json::array({1, 2})), std::runtime_error);
 }
 
+TEST_CASE("take reads explicit fields and preserves strict consumption") {
+    Config cfg(json{{"count", 3}, {"enabled", true}, {"name", "m20"}});
+
+    CHECK(cfg.take<std::int64_t>("count") == 3);
+    CHECK(cfg.take<bool>("enabled"));
+    CHECK(cfg.take<std::string>("name") == "m20");
+    CHECK_NOTHROW(cfg.enforce_all_consumed());
+}
+
+TEST_CASE("take rejects missing, wrong-typed, and unconsumed fields") {
+    Config missing(json::object());
+    CHECK_THROWS_AS(missing.take<double>("rate"), std::runtime_error);
+
+    Config wrong_type(json{{"enabled", 1}});
+    CHECK_THROWS_AS(wrong_type.take<bool>("enabled"), std::runtime_error);
+
+    Config unknown(json{{"known", 1}, {"extra", 2}});
+    CHECK(unknown.take<std::int64_t>("known") == 1);
+    CHECK_THROWS_AS(unknown.enforce_all_consumed(), std::runtime_error);
+}
+
 TEST_CASE("parse deserializes a typed config struct") {
     Config cfg(json{{"value", 5}, {"name", "lidar"}});
     RangedCfg c = cfg.parse<RangedCfg>();

@@ -20,6 +20,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.dannav.holonomic_tc.module import DanHolonomicTC
 from dimos.navigation.dannav.local_planner.module import DanLocalPlanner
@@ -76,6 +77,8 @@ def test_sensor_and_pose_streams_reach_mapping_and_navigation() -> None:
 
     assert _endpoint_modules(blueprint, "lidar", PointCloud2, "out") == {M20ROSBridge}
     assert RayTracingVoxelMap in _endpoint_modules(blueprint, "lidar", PointCloud2, "in")
+    assert _endpoint_modules(blueprint, "lidar_ready", Bool, "out") == {M20ROSBridge}
+    assert _endpoint_modules(blueprint, "lidar_ready", Bool, "in") == {M20Connection}
     assert _endpoint_modules(blueprint, "tf", TFMessage, "out") == {M20ROSBridge}
     assert _endpoint_modules(blueprint, "tf", TFMessage, "in") == {
         RayTracingVoxelMap,

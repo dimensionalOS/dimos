@@ -411,6 +411,54 @@ mod tests {
         )
     }
 
+    #[test]
+    fn extract_xyz_accepts_the_m20_extended_point_layout() {
+        let field = |name: &str, offset: i32, datatype: u8| PointField {
+            name: name.into(),
+            offset,
+            datatype,
+            count: 1,
+        };
+        let expected = [(1.25_f32, -2.5_f32, 0.75_f32), (-4.0_f32, 5.5_f32, 1.0_f32)];
+        let mut data = vec![0_u8; expected.len() * 26];
+        for (index, &(x, y, z)) in expected.iter().enumerate() {
+            let base = index * 26;
+            data[base..base + 4].copy_from_slice(&x.to_le_bytes());
+            data[base + 4..base + 8].copy_from_slice(&y.to_le_bytes());
+            data[base + 8..base + 12].copy_from_slice(&z.to_le_bytes());
+            data[base + 12..base + 16].copy_from_slice(&42.0_f32.to_le_bytes());
+            data[base + 16..base + 18].copy_from_slice(&7_u16.to_le_bytes());
+            data[base + 18..base + 26].copy_from_slice(&1_718_663_385.5_f64.to_le_bytes());
+        }
+        let cloud = PointCloud2 {
+            header: Header {
+                frame_id: "base_link".into(),
+                ..Header::default()
+            },
+            height: 1,
+            width: expected.len() as i32,
+            fields: vec![
+                field("x", 0, PointField::FLOAT32 as u8),
+                field("y", 4, PointField::FLOAT32 as u8),
+                field("z", 8, PointField::FLOAT32 as u8),
+                field("intensity", 12, PointField::FLOAT32 as u8),
+                field("ring", 16, PointField::UINT16 as u8),
+                field("timestamp", 18, PointField::FLOAT64 as u8),
+            ],
+            is_bigendian: false,
+            point_step: 26,
+            row_step: expected.len() as i32 * 26,
+            data,
+            is_dense: false,
+        };
+
+        let Ok(decoded) = extract_xyz(&cloud) else {
+            panic!("M20 clouds must be mapper-compatible");
+        };
+
+        assert_eq!(decoded, expected);
+    }
+
     /// The clear-mask handler names voxels by decoding a cloud and quantizing
     /// it. Both halves have to agree with how returns were quantized on the way
     /// in, or a mask silently clears nothing.

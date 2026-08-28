@@ -83,6 +83,7 @@ class M20Connection(Module):
 
     cmd_vel: In[Twist]
     command_ready: In[Bool]
+    lidar_ready: In[Bool]
     safe_cmd_vel: Out[Twist]
     armed: Out[Bool]
 
@@ -91,11 +92,13 @@ class M20Connection(Module):
         self._lock = RLock()
         self._armed = False
         self._command_ready = False
+        self._lidar_ready = False
 
     @rpc
     def start(self) -> None:
         super().start()
         self.register_disposable(Disposable(self.command_ready.subscribe(self._on_command_ready)))
+        self.register_disposable(Disposable(self.lidar_ready.subscribe(self._on_lidar_ready)))
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
         self.safe_cmd_vel.publish(Twist.zero())
         self.armed.publish(Bool(False))
@@ -109,8 +112,10 @@ class M20Connection(Module):
     def arm(self) -> bool:
         """Allow bounded planner commands to reach the M20 ROS bridge."""
         with self._lock:
-            if self.config.require_command_ready and not self._command_ready:
-                logger.warning("M20 command gate refused arm: native bridge is not ready")
+            if self.config.require_command_ready and (
+                not self._command_ready or not self._lidar_ready
+            ):
+                logger.warning("M20 command gate refused arm: native bridge or lidar is not ready")
                 return False
             self._armed = True
         self.armed.publish(Bool(True))
@@ -135,9 +140,15 @@ class M20Connection(Module):
 
     @rpc
     def is_command_ready(self) -> bool:
-        """Return whether the native bridge reports a fresh safe command path."""
+        """Return whether the native bridge reports a fresh, lidar-safe command path."""
         with self._lock:
             return self._command_ready
+
+    @rpc
+    def is_lidar_ready(self) -> bool:
+        """Return whether the native bridge has received a valid cloud within its timeout."""
+        with self._lock:
+            return self._lidar_ready
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
@@ -169,3 +180,18 @@ class M20Connection(Module):
             self.safe_cmd_vel.publish(Twist.zero())
             self.armed.publish(Bool(False))
             logger.warning("M20 command gate disarmed: native bridge lost readiness")
+
+    def _on_lidar_ready(self, msg: Bool) -> None:
+        ready = bool(msg.data)
+        with self._lock:
+            was_armed = self._armed
+            changed = self._lidar_ready != ready
+            self._lidar_ready = ready
+            if not ready:
+                self._armed = False
+        if was_armed and not ready:
+            self.safe_cmd_vel.publish(Twist.zero())
+            self.armed.publish(Bool(False))
+            logger.warning("M20 command gate disarmed: lidar stream became stale")
+        elif changed and ready:
+            logger.info("M20 lidar stream became ready")
