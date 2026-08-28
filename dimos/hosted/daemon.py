@@ -41,8 +41,11 @@ if TYPE_CHECKING:
 
 HostState = Literal["available", "starting", "running", "stopping", "failed"]
 
+HOST_PROTOCOL_VERSION = 1
 FRAGMENT_SCHEMA_VERSION = 1
 FRAGMENT_FORMAT = "python-blueprint"
+HOST_LIVELINESS_KEY = "dimos/hosts/{host_id}/live"
+HOST_CONTROL_RPC_NAME = "hosts/{host_id}"
 DEFAULT_STARTUP_TIMEOUT = 60.0
 DEFAULT_STOP_TIMEOUT = 5.0
 DEFAULT_LOG_ROOT = STATE_DIR / "hosted" / "runs"
@@ -227,6 +230,15 @@ class HostDaemon:
             if self._deployment is deployment:
                 self._deployment = None
             return self._status_locked()
+
+    def shutdown(self) -> None:
+        """Stop the active deployment when the Host service exits."""
+        with self._lock:
+            deployment = self._deployment
+            self._deployment = None
+        if deployment is not None:
+            _terminate(deployment.process, self._stop_timeout)
+            kill_run_processes(deployment.fragment.run_id)
 
     def _check_epoch(self, epoch: str) -> None:
         if epoch != self._epoch:
