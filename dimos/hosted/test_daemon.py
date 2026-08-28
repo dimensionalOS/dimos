@@ -20,7 +20,7 @@ from typing import Any
 import pytest
 from pytest_mock import MockerFixture
 
-from dimos.hosted.daemon import HostBusy, HostDaemon, HostFragment
+from dimos.hosted.daemon import HostDaemon, HostFragment
 
 
 @pytest.fixture
@@ -84,7 +84,7 @@ def test_start_is_idempotent_and_rejects_conflicts(host_setup: dict[str, Any]) -
     assert started.run_id == "run-1"
     assert repeated == started
     host_setup["context"].Process.assert_called_once()
-    with pytest.raises(HostBusy):
+    with pytest.raises(RuntimeError, match="is running"):
         daemon.start(epoch, replace(fragment, run_id="run-2"))
     other_payload = b"different blueprint"
     with pytest.raises(ValueError, match="digest conflicts"):
