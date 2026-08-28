@@ -320,7 +320,12 @@ class DimSlamConfig(NativeModuleConfig):
     # Keyed by the frame_id the IMU's samples carry. The filter propagates on a single IMU,
     # so use_imu needs exactly one entry.
     imus: dict[str, ImuConfig] = Field(default_factory=dict)
-    gravity: float = 9.81
+    # m/s^2, seeding the filter rather than fixing it: a ZUPT is meant to refine it later.
+    # Worth setting only on good hardware. Local gravity runs 9.780 at the equator to 9.832
+    # at the poles, a 0.07 spread, and altitude is a tenth of that (Everest costs 0.027).
+    # The BMI055 in a D455 has a 0.69 zero-g offset, ten times the whole spread, so there
+    # the number is unmeasurable; an ADIS16505 repeats to 0.02 and can tell the difference.
+    initial_gravity_estimate: float = 9.8
 
     initial_position_std: float = 0.01
     initial_velocity_std: float = 0.1

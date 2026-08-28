@@ -62,7 +62,7 @@ struct DimSlamConfig {
     use_imu: bool,
     /// Keyed by the frame_id the IMU's samples carry; use_imu needs exactly one entry.
     imus: BTreeMap<String, ImuConfig>,
-    gravity: f64,
+    initial_gravity_estimate: f64,
     initial_position_std: f64,
     initial_velocity_std: f64,
     initial_rotation_std: f64,
@@ -141,7 +141,7 @@ impl DimSlam {
             max_position_m: self.config.max_position_m,
             use_imu: self.config.use_imu,
             imus: self.config.imus.clone(),
-            gravity: self.config.gravity,
+            initial_gravity_estimate: self.config.initial_gravity_estimate,
             initial_position_std: self.config.initial_position_std,
             initial_velocity_std: self.config.initial_velocity_std,
             initial_rotation_std: self.config.initial_rotation_std,
