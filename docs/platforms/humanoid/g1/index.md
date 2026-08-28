@@ -169,7 +169,9 @@ bin/hardware/g1/setup-sonic-jp5 --check
 bin/hardware/g1/setup-sonic-jp5
 
 export PATH=/usr/local/cuda-11.8/bin:$PATH
-export LD_LIBRARY_PATH=/usr/local/cuda-11.8/compat:/usr/local/cuda-11.8/lib64:/usr/lib/aarch64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+export LD_LIBRARY_PATH=/usr/local/cuda-11.8/lib64:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=/usr/local/cuda-11.8/compat:$LD_LIBRARY_PATH
 source .venv-sonic-jp5/bin/activate
 
 dimos hardware g1 sonic-doctor
@@ -179,7 +181,8 @@ The JetPack 5 environment contains the real-hardware SONIC stack, not the
 development-only simulation and test dependency groups. Those groups contain
 prebuilt ARM64 packages that require a newer glibc than Ubuntu 20.04. Rehearse
 the simulation on the development workstation, then use this environment for
-the onboard diagnostic and real-hardware launch.
+the onboard diagnostic and real-hardware launch. The setup script creates this
+environment with CPython 3.11; Python 3.10 cannot launch the current DimOS CLI.
 
 The setup script installs
 [`onnxruntime-gpu-extended-auto==1.23.3`](https://github.com/jeff-hykin/onnxruntime-gpu-extended-auto)
@@ -405,7 +408,9 @@ environment and validate its pinned CUDA 11 wheel:
 
 ```bash
 export PATH=/usr/local/cuda-11.8/bin:$PATH
-export LD_LIBRARY_PATH=/usr/local/cuda-11.8/compat:/usr/local/cuda-11.8/lib64:/usr/lib/aarch64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+export LD_LIBRARY_PATH=/usr/local/cuda-11.8/lib64:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=/usr/local/cuda-11.8/compat:$LD_LIBRARY_PATH
 source .venv-sonic-jp5/bin/activate
 
 python -c 'import onnxruntime as ort; print(ort.__version__, ort.get_available_providers())'

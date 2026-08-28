@@ -19,7 +19,7 @@ set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 CUDA_HOME_JP5=/usr/local/cuda-11.8
 SONIC_VENV="$REPO_ROOT/.venv-sonic-jp5"
-SONIC_PYTHON_VERSION=3.10
+SONIC_PYTHON_VERSION=3.11
 ORT_AUTO_VERSION=1.23.3
 ORT_DISTRIBUTION_VERSION=1.18.1.11.8
 ORT_VERSION=1.18.1
@@ -164,7 +164,9 @@ JetPack 5 SONIC environment is ready.
 
 Before each run:
   export PATH=$CUDA_HOME_JP5/bin:\$PATH
-  export LD_LIBRARY_PATH=$CUDA_HOME_JP5/compat:$CUDA_HOME_JP5/lib64:/usr/lib/aarch64-linux-gnu\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}
+  export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}
+  export LD_LIBRARY_PATH=$CUDA_HOME_JP5/lib64:\$LD_LIBRARY_PATH
+  export LD_LIBRARY_PATH=$CUDA_HOME_JP5/compat:\$LD_LIBRARY_PATH
   source $SONIC_VENV/bin/activate
   dimos hardware g1 sonic-doctor
 
