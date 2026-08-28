@@ -13,12 +13,8 @@ def main(paths: list[str]) -> int:
             lines = open(path, encoding="utf-8").read().split("\n")
         except (OSError, UnicodeDecodeError):
             continue
-        fenced = False
         for number, line in enumerate(lines, 1):
-            if line.lstrip().startswith("```"):
-                fenced = not fenced
-            # Fenced blocks are verbatim command output, not prose to reread.
-            if fenced or EM_DASH not in line:
+            if EM_DASH not in line:
                 continue
             hits += line.count(EM_DASH)
             stripped = line.lstrip()
