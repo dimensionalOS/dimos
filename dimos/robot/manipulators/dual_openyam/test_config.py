@@ -23,6 +23,7 @@ from dimos.robot.manipulators.dual_openyam.config import (
     dual_openyam_hardware,
     dual_openyam_model_config,
 )
+from dimos.robot.manipulators.openyam.config import OPENYAM_HOME_JOINTS
 
 
 def test_dual_openyam_model_has_canonical_groups_and_reference_posture() -> None:
@@ -35,6 +36,10 @@ def test_dual_openyam_model_has_canonical_groups_and_reference_posture() -> None
         ("left_manipulator", "left_grasp_frame"),
         ("right_manipulator", "right_grasp_frame"),
     ]
+
+
+def test_dual_openyam_reuses_the_single_arm_home_posture() -> None:
+    assert DUAL_OPENYAM_HOME_JOINTS == [*OPENYAM_HOME_JOINTS, *OPENYAM_HOME_JOINTS]
 
 
 def test_dual_openyam_hardware_defaults_to_complete_mock() -> None:
