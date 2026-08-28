@@ -101,11 +101,20 @@ The experimental imitation-learning profile uses this recorder without adding
 Python-side recording behavior:
 
 ```bash
-dimos run learning-collect-quest-openyam-native --can-port can0
+dimos --transport zenoh --can-port can0 \
+  run learning-collect-quest-openyam-native \
+  --task "pick up the red block"
 ```
 
-It records the USB wrist camera, aggregate coordinator joint state, and typed
-episode status over reliable Zenoh into a Python-readable SQLite artifact. The
-stable `learning-collect-quest-openyam` command continues to use the Python
-recorder and pSHM. Override the native artifact path with
-`--nativecollectionrecorder.store.path /path/to/session_openyam.db`.
+It records the USB wrist camera, aggregate coordinator joint state,
+hardware-accepted joint position command, and typed episode status over
+reliable Zenoh. SQLite is the default; select MCAP for a run with:
+
+```bash
+  --nativecollectionrecorder.store.kind mcap \
+  --nativecollectionrecorder.store.path /path/to/session_openyam.mcap
+```
+
+Both artifacts feed `dimos dataprep` directly. The stable
+`learning-collect-quest-openyam` command continues to use the Python recorder
+and pSHM.

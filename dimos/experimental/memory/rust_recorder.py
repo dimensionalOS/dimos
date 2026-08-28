@@ -73,12 +73,24 @@ class RustSqliteStoreConfig(RustStoreConfig):
     kind: Literal["sqlite"] = "sqlite"
     path: str = "recording.db"
 
+    @model_validator(mode="after")
+    def _require_db_suffix(self) -> RustSqliteStoreConfig:
+        if Path(self.path).suffix != ".db":
+            raise ValueError("SQLite recording path must end in .db")
+        return self
+
 
 class RustMcapStoreConfig(RustStoreConfig):
     """Write storage-encoded observations to an indexed, compressed MCAP artifact."""
 
     kind: Literal["mcap"] = "mcap"
     path: str = "recording.mcap"
+
+    @model_validator(mode="after")
+    def _require_mcap_suffix(self) -> RustMcapStoreConfig:
+        if Path(self.path).suffix != ".mcap":
+            raise ValueError("MCAP recording path must end in .mcap")
+        return self
 
 
 RustRecordingStoreConfig: TypeAlias = Annotated[

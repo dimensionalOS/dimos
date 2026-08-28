@@ -1905,6 +1905,7 @@ graspgenx = [
 ]
 learning = [
     { name = "h5py" },
+    { name = "mcap" },
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pandas", version = "3.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pyarrow" },
@@ -2315,6 +2316,7 @@ requires-dist = [
     { name = "manifold3d", marker = "extra == 'apriltag'", specifier = ">=2.5.0" },
     { name = "matplotlib", marker = "extra == 'graspgenx'", specifier = ">=3.7.1" },
     { name = "matplotlib", marker = "extra == 'manipulation'", specifier = ">=3.7.1" },
+    { name = "mcap", marker = "extra == 'learning'", specifier = ">=1.2" },
     { name = "mcap", marker = "extra == 'unitree-dds'", specifier = ">=1.2.0" },
     { name = "moondream", marker = "extra == 'perception'" },
     { name = "mujoco", marker = "extra == 'sim'", specifier = ">=3.3.4" },

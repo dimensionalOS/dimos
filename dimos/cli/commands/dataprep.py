@@ -28,7 +28,9 @@ dataprep_app = typer.Typer(help="Build and inspect learning datasets from record
 
 @dataprep_app.command("build")
 def dataprep_build(
-    source: Path | None = typer.Option(None, "--source", "-s", help="Recording .db to read"),
+    source: Path | None = typer.Option(
+        None, "--source", "-s", help="Recording .db or .mcap to read"
+    ),
     output: Path | None = typer.Option(None, "--output", help="Dataset output directory"),
     output_format: str = typer.Option(None, "--format", "-f", help="Output format: lerobot | hdf5"),
     config_path: Path | None = typer.Option(
@@ -51,7 +53,7 @@ def dataprep_build(
 @dataprep_app.command("inspect")
 def dataprep_inspect(
     dataset: Path | None = typer.Argument(
-        None, help="Recording .db, built .hdf5 file, or lerobot directory"
+        None, help="Recording .db/.mcap, built .hdf5 file, or lerobot directory"
     ),
     output_format: str = typer.Option(
         None, "--format", "-f", help="lerobot | hdf5 (auto-detected from the path if omitted)"

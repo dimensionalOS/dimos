@@ -39,7 +39,7 @@ def samples() -> Iterator[Sample]:
                 },
                 action={"action": np.full(7, value + 1, dtype=np.float32)},
                 task_label=task,
-                complementary_info={"complementary_info.is_filled": np.asarray([False])},
+                complementary_info={"is_filled": np.asarray([False])},
             )
 
 
