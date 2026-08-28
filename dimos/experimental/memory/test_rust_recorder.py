@@ -183,6 +183,22 @@ def test_default_store_path_is_resolved_from_the_project_root() -> None:
     assert Path(config.store.path).name == "recording.db"
 
 
+@pytest.mark.parametrize(
+    ("store_type", "path", "message"),
+    [
+        (RustSqliteStoreConfig, "recording.mcap", "must end in .db"),
+        (RustMcapStoreConfig, "recording.db", "must end in .mcap"),
+    ],
+)
+def test_store_kind_requires_matching_artifact_suffix(
+    store_type: type[RustSqliteStoreConfig] | type[RustMcapStoreConfig],
+    path: str,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        store_type(path=path)
+
+
 def test_native_recorder_is_built_and_run_from_the_nix_package() -> None:
     config = RustRecorderConfig()
 

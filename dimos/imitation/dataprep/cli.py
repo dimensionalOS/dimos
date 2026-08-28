@@ -111,7 +111,7 @@ def inspect(
 
     if dataset is None:
         typer.echo(
-            "error: no path given (pass a recording .db, .hdf5 file, or lerobot directory)",
+            "error: no path given (pass a recording .db/.mcap, .hdf5 file, or lerobot directory)",
             err=True,
         )
         raise typer.Exit(2)

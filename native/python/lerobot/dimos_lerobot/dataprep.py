@@ -50,7 +50,11 @@ def _task(sample: Sample) -> str:
 
 
 def _sample_features(sample: Sample) -> dict[str, NDArray[Any]]:
-    return {**sample.observation, **sample.action, **sample.complementary_info}
+    return {
+        **sample.observation,
+        **sample.action,
+        **{f"complementary_info.{key}": value for key, value in sample.complementary_info.items()},
+    }
 
 
 def write(samples: Iterator[Sample], output: OutputConfig) -> Path:

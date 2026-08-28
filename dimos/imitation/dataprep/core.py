@@ -41,7 +41,7 @@ from dimos.constants import STATE_DIR
 from dimos.protocol.service.spec import BaseConfig
 
 if TYPE_CHECKING:
-    from dimos.memory.store.sqlite import SqliteStore
+    from dimos.memory.store.base import Store
     from dimos.memory.stream import Stream
 
 # Each `formats/<name>/` package's writer/reader expose these, via get_writer/get_inspector.
@@ -117,7 +117,7 @@ class OutputConfig(BaseConfig):
 class DataPrepConfig(BaseConfig):
     """Everything needed to turn a recording into a dataset.
 
-    `source` is a recording `.db`; `observation`/`action` map dataset feature
+    `source` is a recording `.db` or `.mcap`; `observation`/`action` map dataset feature
     names to recorded streams; `sync` resamples them onto a common timeline;
     `output` selects format + path. Consumed by `build.run_dataprep`.
     """
@@ -223,7 +223,7 @@ def is_image_array(arr: NDArray[Any]) -> bool:
     return False
 
 
-def extract_episodes(store: SqliteStore, cfg: EpisodeExtractor) -> list[Episode]:
+def extract_episodes(store: Store, cfg: EpisodeExtractor) -> list[Episode]:
     """Walk recorded events into Episodes per the configured strategy.
 
     EPISODE_STATUS: scan `cfg.status_stream` for state transitions emitted
@@ -238,7 +238,7 @@ def extract_episodes(store: SqliteStore, cfg: EpisodeExtractor) -> list[Episode]
     return inspect_episodes(store, cfg).episodes
 
 
-def inspect_episodes(store: SqliteStore, cfg: EpisodeExtractor) -> EpisodeReport:
+def inspect_episodes(store: Store, cfg: EpisodeExtractor) -> EpisodeReport:
     """Extract completed episodes and retain any recording left open at EOF."""
     if cfg.extractor == "ranges":
         if not cfg.ranges:
@@ -304,7 +304,7 @@ def inspect_episodes(store: SqliteStore, cfg: EpisodeExtractor) -> EpisodeReport
 
 
 def iter_episode_samples(
-    store: SqliteStore,
+    store: Store,
     episode: Episode,
     streams: dict[str, FeatureSpec],  # observation ∪ action
     sync: SyncConfig,
@@ -456,7 +456,7 @@ def _feature_error(msg: Any, key: str, spec: FeatureSpec) -> str | None:
 
 
 def inspect_episode_quality(
-    store: SqliteStore,
+    store: Store,
     episode: Episode,
     streams: dict[str, FeatureSpec],
     sync: SyncConfig,
