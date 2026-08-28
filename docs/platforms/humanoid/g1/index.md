@@ -233,31 +233,32 @@ tracked leg can command an unsafe whole-body reference. Wear close-fitting
 pants, keep at least 3 m of clear space around the robot, and do not proceed if
 tracking latency is above 30 ms or any body joint is unstable.
 
-DimOS uses the robot-policy lifecycle to gate the WebXR reference:
+dimOS uses the robot-policy lifecycle to gate the WebXR reference:
 
 ```text
 UNARMED/current hold
         |
         | dimos hardware g1 arm
         v
-CONTROL/dry-run, WebXR OFF
-        |
-        | dimos hardware g1 enable
-        v
-CONTROL/live, WebXR PLANNER
-        |
-        | align operator with robot
-        |
-     A+X| toggle
-        v
-CONTROL/live, WebXR POSE
+CONTROL/dry-run, WebXR PLANNER <-- A+X --> WebXR POSE preview
+        |                                      |
+        | dimos hardware g1 enable             | enable returns to PLANNER
+        +----------------------+---------------+
+                               v
+                  CONTROL/live, WebXR PLANNER <-- A+X --> WebXR POSE
 ```
 
-Run `status`, `arm`, `status`, `enable`, and `status` as separate commands so
-the team can inspect the robot between transitions. `enable` enters WebXR
-`PLANNER`; it does not apply the tracked body pose. Before pressing A+X, stand
-upright with feet together, look forward, keep the upper arms down, bend the
-forearms 90 degrees forward, and point the palms inward.
+Run `status`, `arm`, `status`, dry-run POSE preview, `enable`, and `status` as
+separate steps so the team can inspect the reference between transitions.
+Dry-run still executes SONIC inference and publishes `world/sonic_reference`,
+but the task returns no learned-policy joint command. `enable` always enters
+WebXR `PLANNER`; if dry-run preview is currently in `POSE`, enabling clears the
+pose reference, clears preview-only policy history, and returns to `PLANNER`
+before motor output can resume. A+X must be pressed again to enter live `POSE`.
+
+Before pressing A+X, stand upright with feet together, look forward, keep the
+upper arms down, bend the forearms 90 degrees forward, and point the palms
+inward.
 
 Select the WebXR pose window when launching the blueprint. Both options use the
 same SONIC v1.1 ONNX models:
@@ -290,17 +291,22 @@ robot.
 
 Use the CLI and controller in this order:
 
-1. Run `dimos hardware g1 enable`. DimOS enters WebXR `PLANNER` and begins
-   building the selected 50 Hz pose window when complete PICO tracking arrives,
-   without moving the robot from its planner reference.
-2. Run `dimos hardware g1 status` and confirm `webxr: planner`, then physically
-   align the operator's body and heading with the standing robot. Remain aligned
-   until `pose_buffer` reports `ready`: about 200 ms for `sonic-v1.1` or 40 ms
-   for `sonic-low-latency` after complete tracking begins.
-3. Press **A+X** once to enter `POSE`. Do not press it from a mismatched pose;
-   the policy will immediately track the new whole-body reference.
-4. Press **A+X** again to return to the balancing planner.
-5. Finish routine operation with `dimos hardware g1 disable`, followed by
+1. Run `dimos hardware g1 arm`, then `dimos hardware g1 status`. Confirm
+   `armed: True`, `dry_run: True`, and `webxr: planner`.
+2. Align the operator with the robot and wait until `pose_buffer` reports
+   `ready`: about 200 ms for `sonic-v1.1` or 40 ms for
+   `sonic-low-latency` after complete tracking begins.
+3. Press **A+X** to enter dry-run `POSE`. The robot must not follow the pose.
+   Confirm `dry_run: True`, `webxr: pose`, and `reference: webxr_pose` with
+   `dimos hardware g1 status`, and inspect `world/sonic_reference` in Rerun.
+4. Run `dimos hardware g1 enable`. This clears the preview and returns to
+   `PLANNER` before learned-policy motor output resumes. Confirm
+   `dry_run: False`, `webxr: planner`, and `reference: planner` with `status`.
+5. Realign the operator, wait for `pose_buffer` to become ready again, and
+   press **A+X** to enter live `POSE`. Do not proceed if the preview was
+   unstable, incorrectly oriented, or did not match the operator.
+6. Press **A+X** again to return to the balancing planner.
+7. Finish routine operation with `dimos hardware g1 disable`, followed by
    `dimos stop`.
 
 ABXY has no SONIC teleoperation action. The terminal owns live policy output,

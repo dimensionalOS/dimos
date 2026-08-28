@@ -21,8 +21,9 @@ Run with:
         --sonic-pipeline sonic-low-latency
     dimos --viewer none run unitree-g1-sonic-webxr-teleop --network-interface <robot-nic>
 
-Press A+B+X+Y to start in planner mode, then A+X to toggle full-body POSE.
-Press A+B+X+Y again to stop the teleop session without disabling SONIC.
+On hardware, use ``dimos hardware g1 arm`` to enter dry-run PLANNER. A+X
+toggles full-body POSE in either dry-run preview or live control. Enabling
+motor output always returns a dry-run POSE preview to PLANNER first.
 Accepted POSE chunks appear under world/sonic_reference when Rerun is enabled.
 """
 
