@@ -24,15 +24,13 @@
           config = { allowUnfree = true; cudaSupport = !isDarwin; };
         };
 
-        # cuVSLAM SDKs come from the cu_vslam_rs flake: one sdk-<variant> package
-        # per build available on this system (see that flake for the variant list).
+        # cuVSLAM SDKs come from the cu_vslam_rs flake: one sdk-<variant> package per build
+        # that exists for this system. metal on aarch64-darwin; orin and thor on
+        # aarch64-linux; x86_64-cuda12 and x86_64-cuda13 on x86_64-linux. Taken from that
+        # flake rather than listed here so the two cannot drift apart.
         sdkPackages = nixpkgs.lib.filterAttrs (name: _: nixpkgs.lib.hasPrefix "sdk-" name)
           cu-vslam-rs.packages.${system};
         variants = map (nixpkgs.lib.removePrefix "sdk-") (builtins.attrNames sdkPackages);
-        defaultVariant = {
-          aarch64-darwin = "metal";
-          aarch64-linux = "orin";
-        }.${system} or "x86_64-cuda12";
 
         src = pkgs.runCommand "dim-slam-module-src" {} ''
           mkdir -p $out/dimos/mapping/dim_slam/rust
@@ -65,7 +63,10 @@
             meta.mainProgram = "dim_slam";
           };
       in {
-        packages = nixpkgs.lib.genAttrs variants packageFor
-          // { default = packageFor defaultVariant; };
+        # No `default`: nix sees neither /proc/device-tree nor the installed driver, so orin
+        # vs thor and cuda12 vs cuda13 are not decidable here, and guessing one builds a
+        # module that dies at the first CUDA call. dim_slam.py's sdk_variant() detects the
+        # hardware and names the variant on the build command.
+        packages = nixpkgs.lib.genAttrs variants packageFor;
       });
 }
