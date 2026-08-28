@@ -119,6 +119,7 @@ ALFRED_BODY_HEIGHT_METERS = 0.5
 
 _vis_nav = autoconnect(
     DimSlam.blueprint(
+        camera_mode="stereo",
         # Alfred's computer has no GPU, so libcuvslam is built -DENFORCE_GPU=OFF.
         use_gpu=False,
         # Both imagers share one camera_info topic. Left undeclared, cuVSLAM orders its rig

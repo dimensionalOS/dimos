@@ -82,14 +82,11 @@ _hw.auto_enable = True
 xarm6_worldbelief = autoconnect(
     # Provides wrist-camera FK/TF.
     ManipulationModule.blueprint(
-        robots=[
-            make_xarm6_model_config(
-                name="arm",
-                add_gripper=False,
-                # Enables TF publication.
-                tf_extra_links=["link_base"],
-            ),
-        ],
+        model=make_xarm6_model_config(
+            add_gripper=False,
+            # Enables TF publication.
+            tf_extra_links=["link_base"],
+        ),
     ),
     RealSenseCamera.blueprint(
         width=640,

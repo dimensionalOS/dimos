@@ -39,37 +39,38 @@ struct DimSlamConfig {
     camera_mode: String,
     /// Declares cuVSLAM's rig order, which a JSON object's key order could not carry.
     camera_frames: Vec<String>,
-    /// Keyed by the frame_id the images carry, depth streams included.
+    /// Keyed by the frame_id the camera's images carry; an absent camera takes the defaults.
     cameras: BTreeMap<String, CameraConfig>,
     use_gpu: bool,
-    /// Fused as a drifting source, so it must also be the parent of a key in sources.
-    visual_odom_frame: String,
-    rig_frame: String,
+    /// Fused as a drifting source, so it must also key one of `sources`.
+    visual_odom_frame_id: String,
+    rig_frame_id: String,
+    map_frame_id: String,
     covariance_gate_translation_std: f64,
     speed_gate_max_linear: f64,
     speed_gate_max_angular: f64,
     /// cuVSLAM's own inertial mode, separate from the filter's use_imu.
     cuvslam_enable_imu: bool,
+    max_skew_ms: f64,
 
-    odom_frame: String,
-    base_frame: String,
+    odom_frame_id: String,
+    output_frame_id: String,
     publish_tf: bool,
     publish_rate: f64,
     replay_buffer_seconds: f64,
     mahalanobis_gate: f64,
     max_position_m: f64,
     use_imu: bool,
-    /// Keyed by the frame_id the samples carry.
+    /// Keyed by the frame_id the IMU's samples carry; use_imu needs exactly one entry.
     imus: BTreeMap<String, ImuConfig>,
-    gravity: f64,
-    imu_init_samples: i64,
+    initial_gravity_estimate: f64,
     initial_position_std: f64,
     initial_velocity_std: f64,
     initial_rotation_std: f64,
     initial_bias_std: f64,
-    /// Keyed by the transform the source reports, written "parent_frame->child_frame".
+    /// Keyed "parent_frame_id->child_frame_id", the transform the source's estimates carry.
     sources: BTreeMap<SourceKey, SourceConfig>,
-    constraint_twist_variances: Vec<f64>,
+    constraint_twist_variances: [f64; 6],
 }
 
 fn tf_lookup(tf: &Tf) -> impl Fn(&str, &str) -> Option<Isometry3<f64>> + '_ {
@@ -116,41 +117,38 @@ struct DimSlam {
 
 impl DimSlam {
     async fn init(&mut self) {
-        self.vo = Some(CuvslamCore::new(CuvslamOdometryConfig {
+        let vo = CuvslamCore::new(CuvslamOdometryConfig {
             camera_mode: self.config.camera_mode.clone(),
             camera_frames: self.config.camera_frames.clone(),
             cameras: self.config.cameras.clone(),
             use_gpu: self.config.use_gpu,
-            odom_frame: self.config.visual_odom_frame.clone(),
-            base_frame: self.config.base_frame.clone(),
-            rig_frame: self.config.rig_frame.clone(),
+            odom_frame_id: self.config.visual_odom_frame_id.clone(),
+            output_frame_id: self.config.output_frame_id.clone(),
+            rig_frame_id: self.config.rig_frame_id.clone(),
+            map_frame_id: self.config.map_frame_id.clone(),
             covariance_gate_translation_std: self.config.covariance_gate_translation_std,
             speed_gate_max_linear: self.config.speed_gate_max_linear,
             speed_gate_max_angular: self.config.speed_gate_max_angular,
             enable_imu: self.config.cuvslam_enable_imu,
-        }));
+            max_skew_ms: self.config.max_skew_ms,
+        });
+        self.vo = Some(vo.unwrap_or_else(|error| panic!("{error}")));
         self.fusion = Some(FusionCore::new(OdometryFusionConfig {
-            odom_frame: self.config.odom_frame.clone(),
-            base_frame: self.config.base_frame.clone(),
+            odom_frame_id: self.config.odom_frame_id.clone(),
+            output_frame_id: self.config.output_frame_id.clone(),
             publish_rate: self.config.publish_rate,
             replay_buffer_seconds: self.config.replay_buffer_seconds,
             mahalanobis_gate: self.config.mahalanobis_gate,
             max_position_m: self.config.max_position_m,
             use_imu: self.config.use_imu,
             imus: self.config.imus.clone(),
-            gravity: self.config.gravity,
-            imu_init_samples: self.config.imu_init_samples,
+            initial_gravity_estimate: self.config.initial_gravity_estimate,
             initial_position_std: self.config.initial_position_std,
             initial_velocity_std: self.config.initial_velocity_std,
             initial_rotation_std: self.config.initial_rotation_std,
             initial_bias_std: self.config.initial_bias_std,
             sources: self.config.sources.clone(),
-            constraint_twist_variances: self
-                .config
-                .constraint_twist_variances
-                .as_slice()
-                .try_into()
-                .expect("constraint_twist_variances needs exactly 6 entries"),
+            constraint_twist_variances: self.config.constraint_twist_variances,
         }));
     }
 
@@ -202,7 +200,7 @@ impl DimSlam {
         }
         let Some(base_from_imu) = self
             .tf
-            .get_latest(&self.config.base_frame, &msg.header.frame_id)
+            .get_latest(&self.config.output_frame_id, &msg.header.frame_id)
         else {
             warn_throttled!(
                 std::time::Duration::from_secs(10),

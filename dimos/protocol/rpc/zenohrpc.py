@@ -57,6 +57,24 @@ class ZenohRPC(RPCSpec, ZenohService):
         self._pending: dict[int, Callable[..., Any]] = {}
         self._call_counter = count(1)
 
+    def __getstate__(self):  # type: ignore[no-untyped-def]
+        """Drop the live queryables, call pool and in-flight calls on top of the session.
+
+        A module carries its RPC service into the worker by pickle, and none of
+        these survive the trip; the far side rebuilds them on first use.
+        """
+        state = super().__getstate__()  # type: ignore[no-untyped-call]
+        for key in ("_call_thread_pool", "_call_thread_pool_lock", "_queryables", "_pending"):
+            state.pop(key, None)
+        return state
+
+    def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
+        super().__setstate__(state)
+        self._call_thread_pool = None
+        self._call_thread_pool_lock = threading.RLock()
+        self._queryables = []
+        self._pending = {}
+
     def _get_call_thread_pool(self) -> ThreadPoolExecutor:
         """Get or create the thread pool for RPC handler execution (lazy initialization)."""
         with self._call_thread_pool_lock:

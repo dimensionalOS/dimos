@@ -110,7 +110,7 @@ Every robot skill is also exposed over MCP, which means external tools and codin
 
 ```bash
 dimos mcp list-tools
-dimos mcp call relative_move --arg forward=0.5
+dimos mcp call move_to --arg x=0.5 --arg relative=true
 ```
 
 Manage the background run with `dimos status`, `dimos log -f`, and `dimos stop`. The full command reference is in the [CLI guide](/docs/usage/cli.md).

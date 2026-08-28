@@ -18,8 +18,8 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use validator::Validate;
 
-use crate::mls_planner::{Config, Planner, RegionBounds};
-use crate::voxel::{surface_point_xyz, VoxelKey};
+use dimos_mls_planner::mls_planner::{Config, Planner, RegionBounds};
+use dimos_mls_planner::voxel::{surface_point_xyz, VoxelKey};
 
 #[pyclass]
 pub struct MLSPlanner {
@@ -289,8 +289,8 @@ impl MLSPlanner {
     }
 }
 
-#[pymodule]
-fn dimos_mls_planner(m: &Bound<'_, PyModule>) -> PyResult<()> {
+#[pymodule(name = "dimos_mls_planner")]
+fn dimos_mls_planner_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Log planner tracing to stderr. Defaults to warn, override with RUST_LOG.
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("dimos_mls_planner=warn"));

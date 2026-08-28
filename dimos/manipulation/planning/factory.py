@@ -216,15 +216,12 @@ def create_planning_specs(
     world: WorldSpec,
     world_backend: str = "roboplan",
     planner: ManipulationPlannerConfig | None = None,
-    kinematics_name: str | None = None,
     kinematics: ManipulationKinematicsConfig | None = None,
     trajectory_parametrization: TrajectoryParametrizationConfig | None = None,
 ) -> PlanningSpecs:
     """Create planning specs around an already-created world."""
     from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 
-    if kinematics_name is not None:
-        kinematics = kinematics_config_from_name(kinematics_name)
     if kinematics is None:
         kinematics = kinematics_config_from_name(DEFAULT_KINEMATICS_NAME)
     if planner is None:
@@ -259,20 +256,18 @@ def create_planning_stack(
     world_backend: str = "roboplan",
     visualization: ManipulationVisualizationConfig | None = None,
     planner: ManipulationPlannerConfig | None = None,
-    kinematics_name: str | None = None,
     kinematics: ManipulationKinematicsConfig | None = None,
-) -> tuple[WorldSpec, KinematicsSpec, PlannerSpec, str]:
-    """Create complete planning stack. Returns (world, kinematics, planner, robot_id)."""
+) -> tuple[WorldSpec, KinematicsSpec, PlannerSpec]:
+    """Create and finalize a complete single-model planning stack."""
     world = create_world(backend=world_backend, visualization=visualization)
     planning_specs = create_planning_specs(
         world=world,
         world_backend=world_backend,
         planner=planner,
-        kinematics_name=kinematics_name,
         kinematics=kinematics,
     )
 
-    robot_id = world.add_robot(robot_config)
+    world.load_model(robot_config)
     world.finalize()
 
-    return world, planning_specs.kinematics, planning_specs.planner, robot_id
+    return world, planning_specs.kinematics, planning_specs.planner

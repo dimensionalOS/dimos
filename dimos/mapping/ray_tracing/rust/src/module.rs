@@ -28,6 +28,11 @@ pub struct RayTracingVoxelMap {
     #[input(decode = PointCloud2::decode, handler = on_lidar)]
     lidar: Input<PointCloud2>,
 
+    // World-frame points a sensor knows to be empty. Their voxels are deleted
+    // outright, reaching space ray tracing cannot clear.
+    #[input(decode = PointCloud2::decode, handler = on_voxel_clear_mask)]
+    voxel_clear_mask: Input<PointCloud2>,
+
     #[tf]
     tf: Tf,
 
@@ -50,6 +55,10 @@ pub struct RayTracingVoxelMap {
 
     // Built once at startup by init_mapper. All mapping state lives inside.
     mapper: Option<Mapper>,
+
+    // Stamp of the last applied clear mask, so a late one cannot erase voxels a
+    // newer mask already accounted for.
+    last_clear_mask_stamp: f64,
 }
 
 impl RayTracingVoxelMap {
@@ -160,6 +169,56 @@ impl RayTracingVoxelMap {
             let fine = points_to_cloud(&points, out_frame_id, stamp);
             publish_cloud(&self.local_map_fine, &fine).await;
         }
+    }
+
+    /// Delete the voxels covering a cloud of world-frame points a sensor knows
+    /// to be empty.
+    ///
+    /// Ray tracing only clears what a ray passes through, so a sensor that
+    /// occludes itself - a wrist camera staring past its own arm - can never
+    /// clear the volume its arm hides. It deposits voxels of itself there and
+    /// walls itself in. A publisher that knows those points are free says so
+    /// here.
+    async fn on_voxel_clear_mask(&mut self, msg: PointCloud2) {
+        let stamp = time_secs(&msg.header.stamp);
+        if stamp < self.last_clear_mask_stamp {
+            warn_throttled!(
+                Duration::from_secs(1),
+                stamp,
+                last_stamp = self.last_clear_mask_stamp,
+                "Out-of-order voxel clear mask dropped",
+            );
+            return;
+        }
+        // The keys are metric positions, so the cloud must already be in the
+        // world frame. Registering it would need a pose this node has no reason
+        // to trust for a mask.
+        if msg.header.frame_id != self.config.world_frame {
+            warn_throttled!(
+                Duration::from_secs(1),
+                frame = %msg.header.frame_id,
+                expected = %self.config.world_frame,
+                "Voxel clear mask is not in the world frame, dropped a mask.",
+            );
+            return;
+        }
+        let points = match extract_xyz(&msg) {
+            Ok(p) => p,
+            Err(e) => {
+                warn_throttled!(
+                    Duration::from_secs(1),
+                    error = %e,
+                    "Failed to get clear mask points, dropped a mask.",
+                );
+                return;
+            }
+        };
+        self.last_clear_mask_stamp = stamp;
+        if points.is_empty() {
+            return;
+        }
+        let mapper = self.mapper.as_mut().expect("built in setup");
+        mapper.clear_metric(points);
     }
 }
 
@@ -297,7 +356,9 @@ async fn publish_cloud(out: &Output<PointCloud2>, cloud: &PointCloud2) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::voxel_ray_tracer::{emit_points, update_map, LocalBounds, VoxelKey, VoxelMap};
+    use crate::voxel_ray_tracer::{
+        emit_points, metric_voxel_keys, update_map, LocalBounds, VoxelKey, VoxelMap,
+    };
     use ahash::AHashSet;
 
     /// Build a map whose listed voxels are healthy, through the public API.
@@ -348,6 +409,26 @@ mod tests {
             (ky as f32 + 0.5).to_bits(),
             (kz as f32 + 0.5).to_bits(),
         )
+    }
+
+    /// The clear-mask handler names voxels by decoding a cloud and quantizing
+    /// it. Both halves have to agree with how returns were quantized on the way
+    /// in, or a mask silently clears nothing.
+    #[test]
+    fn clear_mask_cloud_round_trips_to_the_voxels_it_covers() {
+        let map = map_with_healthy(&[(3, -2, 1)]);
+        let occupied: Vec<VoxelKey> = map.voxels.keys().copied().collect();
+        assert_eq!(occupied, vec![(3, -2, 1)]);
+
+        // A mask cloud naming that voxel's center, encoded and decoded exactly
+        // as the port would.
+        let cloud = points_to_cloud(&[3.5, -1.5, 1.5], "world", Time::default());
+        let Ok(points) = extract_xyz(&cloud) else {
+            panic!("clear mask cloud must decode");
+        };
+        let keys: Vec<VoxelKey> = metric_voxel_keys(points, 1.0).collect();
+
+        assert_eq!(keys, occupied);
     }
 
     #[test]

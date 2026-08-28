@@ -26,7 +26,7 @@ from typing import Any
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.mapping.dim_slam.dim_slam import DimSlam
+from dimos.mapping.cuvslam.cuvslam import CuvslamOdometry
 from dimos.mapping.odometry_hist import OdometryHist, path_at_true_height
 from dimos.visualization.vis_module import vis_module
 
@@ -61,7 +61,7 @@ demo_cuvslam_realsense = (
             enable_color=False,
             enable_depth=False,
         ),
-        DimSlam.blueprint(),
+        CuvslamOdometry.blueprint(camera_mode="stereo"),
         OdometryHist.blueprint(),
         vis_module(
             global_config.viewer,

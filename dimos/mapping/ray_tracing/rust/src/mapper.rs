@@ -14,12 +14,13 @@
 
 use std::sync::Arc;
 
+use ahash::AHashSet;
 use dimos_module::worker_pool;
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
 use crate::voxel_ray_tracer::{
-    batch_local_bounds, emit_points, emit_points_fine, global_normal_fits, update_map, Config,
-    Cylinder, FrameHits, LocalBounds, VoxelMap,
+    batch_local_bounds, coarse_of_fine, emit_points, emit_points_fine, global_normal_fits,
+    metric_voxel_keys, update_map, Config, Cylinder, FrameHits, LocalBounds, VoxelMap,
 };
 
 pub type Point = (f32, f32, f32);
@@ -197,6 +198,26 @@ impl Mapper {
             .install(|| global_normal_fits(&self.map, self.config.voxel_size))
     }
 
+    /// Delete the voxels covering `points`, world-frame metric positions the
+    /// caller knows to be free. Returns how many voxels were removed.
+    ///
+    /// This frame's live hits are dropped alongside them, so a cleared voxel
+    /// cannot come back out of the live overlay before the next frame replaces
+    /// it.
+    pub fn clear_metric(&mut self, points: impl IntoIterator<Item = Point>) -> usize {
+        let keys: Vec<_> = metric_voxel_keys(points, self.config.voxel_size).collect();
+        for key in &keys {
+            self.live.coarse.remove(key);
+        }
+        if let Some((divisor, _)) = self.config.fine_layer() {
+            let cleared: AHashSet<_> = keys.iter().copied().collect();
+            self.live
+                .fine
+                .retain(|&fine| !cleared.contains(&coarse_of_fine(fine, divisor as i32)));
+        }
+        self.map.clear_voxels(keys)
+    }
+
     /// Reset to an empty map, keeping the config.
     pub fn clear(&mut self) {
         self.map.clear();
@@ -342,6 +363,25 @@ mod tests {
             mapper.add_frame(vec![(5.5, 0.5, 0.5)], pose);
             assert_eq!((mapper.local_due(), mapper.global_due()), (false, false));
         }
+    }
+
+    /// The ghost case: a sensor deposits returns off its own body, then tells
+    /// the mapper that volume is free. Ray tracing never reaches it because the
+    /// body occludes what is behind it, so the mask is the only way out.
+    #[test]
+    fn clear_metric_erases_voxels_ray_tracing_cannot_reach() {
+        let mut mapper = Mapper::new(config());
+        let pose = Pose {
+            position: (0.0, 0.0, 0.0),
+            orientation: IDENTITY,
+        };
+        mapper.add_frame(vec![(5.5, 0.5, 0.5)], pose);
+        assert_eq!(mapper.global_points(), vec![5.5, 0.5, 0.5]);
+
+        assert_eq!(mapper.clear_metric([(5.5, 0.5, 0.5)]), 1);
+
+        assert!(mapper.global_points().is_empty());
+        assert_eq!(mapper.clear_metric([(5.5, 0.5, 0.5)]), 0);
     }
 
     #[test]
