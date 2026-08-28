@@ -71,6 +71,8 @@ class RealSenseCameraConfig(NativeModuleConfig, DepthCameraConfig):
     pointcloud_fps: float = 5.0
     # Every n-th pixel goes into the cloud.
     pointcloud_decimation: int = 2
+    # Cloud points further than this are dropped; D4xx range varies by model and calibration.
+    depth_trunc_m: float = 5.0
     camera_info_fps: float = 1.0
     serial_number: str | None = None
 
