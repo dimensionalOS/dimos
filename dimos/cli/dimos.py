@@ -59,7 +59,6 @@ from dimos.cli.commands.info import list_blueprints, show_config
 from dimos.cli.commands.lifecycle import log_cmd, restart, run, status, stop
 from dimos.cli.commands.map import map_app
 from dimos.cli.commands.mcp import agent_send_cmd, mcp_app
-from dimos.cli.commands.replay import replay
 from dimos.cli.commands.rerun_bridge import rerun_bridge_cmd
 from dimos.cli.commands.topic import topic_app
 from dimos.cli.commands.tuis import agentspy, humancli, lcmspy, spy, top
@@ -110,7 +109,6 @@ main.command("login")(cloud_login)
 main.command("logout")(cloud_logout)
 main.command("whoami")(cloud_whoami)
 main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(run)
-main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(replay)
 main.command()(status)
 main.command()(stop)
 main.command("log")(log_cmd)

@@ -16,8 +16,8 @@
 
 The port set depends on the recording, so :func:`replay_module` builds the class at
 import time of the blueprint that uses it (see ``dimos.memory.blueprints``). Workers
-rebuild the same class on import, as long as they see the same ``REPLAY_DB`` /
-``REPLAY_TOPICS`` environment; ``dimos replay`` sets both before ``dimos run``.
+rebuild the same class on import because ``dimos run`` exports ``--replay-db`` as
+``REPLAY_DB`` before they start.
 """
 
 from __future__ import annotations

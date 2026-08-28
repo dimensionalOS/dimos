@@ -12,7 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""``dimos replay <memory.db>``: the recording's streams back on the bus, with the viewer."""
+"""``dimos --replay-db <memory.db> run replay``: every recorded stream back on the bus, with the viewer.
+
+The port set is read from the recording when this module is imported. ``dimos run`` puts
+``--replay-db`` in ``REPLAY_DB`` so workers build the same class; outside ``dimos run``
+(the blueprint registry, tests) there is no recording and ``Replay`` has no ports.
+"""
 
 import os
 from typing import Any
@@ -24,7 +29,7 @@ from dimos.visualization.vis_module import vis_module
 
 _DATASET = os.environ.get("REPLAY_DB", "")
 
-Replay = replay_module(_DATASET, os.environ.get("REPLAY_TOPICS", "*"))
+Replay = replay_module(_DATASET)
 
 
 def _layout() -> Any:
