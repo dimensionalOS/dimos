@@ -120,7 +120,7 @@ class GlobalConfig(BaseSettings):
     dimsim_headless: bool = True
     local_relay: bool = False
     relay_url: str | None = None
-    dimos_cloud_url: str = "https://login.dimensional.org"
+    dimos_cloud_url: str = "https://api.dimensional.org"
     dimos_api_key: str | None = None
 
     model_config = SettingsConfigDict(
