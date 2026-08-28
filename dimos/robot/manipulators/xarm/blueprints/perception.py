@@ -49,7 +49,7 @@ xarm_perception = autoconnect(
     ),
     ManipulationSkills.blueprint(),
     PickAndPlaceModule.blueprint(),
-    HeuristicGraspModule.blueprint(instance_name="heuristic_grasp"),
+    HeuristicGraspModule.blueprint(),
     RealSenseCamera.blueprint(
         base_frame_id="link7",
         base_transform=XARM_PERCEPTION_CAMERA_TRANSFORM,

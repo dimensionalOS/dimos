@@ -44,7 +44,7 @@ xarm_perception_sim = autoconnect(
     ),
     ManipulationSkills.blueprint(),
     PickAndPlaceModule.blueprint(),
-    HeuristicGraspModule.blueprint(instance_name="heuristic_grasp"),
+    HeuristicGraspModule.blueprint(),
     MujocoSimModule.blueprint(**make_xarm7_sim_module_kwargs(XARM7_SIM_PATH)),
     ObjectSceneRegistrationModule.blueprint(
         target_frame="world",
