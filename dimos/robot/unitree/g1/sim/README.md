@@ -1,13 +1,11 @@
 # g1sim
 
 The G1 plant for MuJoCo, on the shared identification pipeline
-(`dimos/simulation/sysid`, the method go2sim was built with): record the real
-robot, replay the recorded joint targets open loop through the plant, fit the
-knobs the data resolves, keep the rest declared.
-
-Mode A only for now: the GR00T policy is not in the loop, so there is no
-referee (go2sim's loop 2). `groot_mujoco.py` is the closed-loop viewer that a
-future Mode B grows from.
+(`dimos/simulation/sysid`, the method go2sim was built with). Unlike the Go2,
+the G1 is FITTED on loop 2 (`sysid/ground.py`): the GR00T policy drives the
+plant on the recorded commands and Point-LIO is the yardstick. Loop 1
+(`sysid/replay`, `identify`, `fit`) is kept as the open-loop sensitivity
+diagnostic. The tune is `measured` (section 5).
 
 ## 1. Watch it
 
@@ -20,8 +18,15 @@ python -m dimos.robot.unitree.g1.sim.sysid.replay data/g1_groot_characterization
 python -m dimos.robot.unitree.g1.sim.sysid.replay data/g1_groot_characterization_2026-08-27.db \
     --preset stock --segment 3 --view --speed 0.5
 
-# the GR00T policy closed loop, with the ghost (the recording's twists drive it)
-python -m dimos.robot.unitree.g1.sim.groot_mujoco data/g1_groot_characterization_2026-08-27.db
+# loop 2: the GR00T policy driving the tuned plant on the recorded commands,
+# from the measured mid-walk state, the Point-LIO pelvis as a ghost
+python -m dimos.robot.unitree.g1.sim.sysid.ground data/g1_groot_characterization_2026-08-27.db \
+    --preset measured --view            # --start S --seconds N --speed 0.5 to narrow
+# grade any preset held out, or refit (writes <out>.plant.json + .loop.json)
+python -m dimos.robot.unitree.g1.sim.sysid.ground data/g1_groot_characterization_2026-08-27.db \
+    --preset measured --windows 8 --seconds 10 --seed 1 --replicates 3
+python -m dimos.robot.unitree.g1.sim.sysid.ground data/g1_groot_characterization_2026-08-27.db \
+    --preset measured --fit 60 --studies 3 --workers 8 --out dimos/robot/unitree/g1/sim/presets/candidate
 ```
 
 `--preset` takes a built-in name or a JSON a fit wrote (`presets/`). The
@@ -133,4 +138,5 @@ the declared values, and cross-track never moved.
 - A scale reading; the model says 35.112 kg.
 - Whether the real IMU is torso- or pelvis-mounted (the MJCF says torso).
 - A hanging recording with leg motion, and a harder walking one.
-- Mode B: GR00T in the loop, grounded against Point-LIO, and draw selection.
+- Measure the envelope and the action delay on the hardware instead of fitting them.
+- A robot-repeat floor (two recordings of the same walk) in place of the sim-perturb one.
