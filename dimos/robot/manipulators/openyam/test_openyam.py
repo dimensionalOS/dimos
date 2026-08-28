@@ -35,6 +35,7 @@ from dimos.robot.manipulators.openyam.config import (
     OPENYAM_DOF,
     OPENYAM_GRIPPER_JOINT,
     OPENYAM_HARDWARE_ID,
+    OPENYAM_HOME_JOINTS,
     OPENYAM_JOINTS,
     make_openyam_model_config,
     openyam_hardware,
@@ -62,6 +63,7 @@ def test_make_openyam_model_config_uses_canonical_arm_joints() -> None:
     assert config.base_link == "yam_base_link"
     assert config.planning_groups[0].tip_link == "yam_hand_tcp"
     assert config.gripper_hardware_id == "arm"
+    assert config.home_joints == OPENYAM_HOME_JOINTS
     assert config.velocity_limits == [2.0] * OPENYAM_DOF
     assert config.max_velocity == 2.0
 
@@ -74,6 +76,14 @@ def test_openyam_model_contains_canonical_arm_joints() -> None:
     assert [joint.name for joint in model.joints if joint.name in config.joint_names] == (
         OPENYAM_ARM_JOINTS
     )
+
+
+def test_make_openyam_model_config_preserves_explicit_home() -> None:
+    configured_home = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+
+    config = make_openyam_model_config(home_joints=configured_home)
+
+    assert config.home_joints == configured_home
 
 
 def test_quest_teleop_matches_dual_openyam_response_tuning() -> None:
