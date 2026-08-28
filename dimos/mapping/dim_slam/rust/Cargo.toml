@@ -9,7 +9,7 @@ name = "dim_slam"
 path = "src/main.rs"
 
 [dependencies]
-dim_slam = { git = "https://github.com/dimensionalOS/dimSLAM", rev = "9ebec10e338fc63856b5e880c5b704447694d900" }
+dim_slam = { git = "https://github.com/dimensionalOS/dimSLAM", rev = "633bbb94cbf29e89c617dfb6aa0cf976fada8a80" }
 # Unused directly, but cargo hands DEP_CUVSLAM_LIB_DIR only to immediate dependents
 # and build.rs needs it for the rpath.
 cu_vslam_rs = "0.1.2"

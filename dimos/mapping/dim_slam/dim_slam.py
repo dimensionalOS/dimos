@@ -25,7 +25,7 @@ import sys
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import Field, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from dimos.constants import CACHE_DIR
 from dimos.core.native_module import NativeModule, NativeModuleConfig
@@ -194,6 +194,69 @@ def _driver_env() -> dict[str, str]:
     return {"LD_LIBRARY_PATH": ":".join(parts)}
 
 
+class CameraConfig(BaseModel):
+    """Settings for one camera, keyed by the frame_id its images carry. A depth stream is a
+    camera of its own here, and need not be a rig camera."""
+
+    # Asserted, not performed. cuVSLAM takes one flag for the whole rig, so the rig's
+    # cameras have to agree.
+    rectified: bool = True
+    # Raw depth units per metre; 16-bit millimetre depth is 1000. Scaling one camera's depth
+    # by another's factor yields a plausible-looking wrong map.
+    depth_units_per_meter: float = 1000.0
+    # Range gate on the published depth_cloud, metres. Stereo depth error grows as range
+    # squared, so the far gate decides whether the cloud is worth mapping with; 0 leaves it
+    # open.
+    depth_cloud_min_range: float = 0.0
+    depth_cloud_max_range: float = 0.0
+    # One point per k x k depth block (median of in-gate depths). <= 1 emits every pixel.
+    depth_cloud_decimation: int = 0
+
+
+# Datasheet values, in the continuous-time units the filter wants: rad/s/sqrt(Hz),
+# rad/s^2/sqrt(Hz), m/s^2/sqrt(Hz), m/s^3/sqrt(Hz). Named so use_imu can insist on them.
+IMU_NOISE_FIGURES = (
+    "gyro_noise_density",
+    "gyro_random_walk",
+    "accel_noise_density",
+    "accel_random_walk",
+)
+
+
+class ImuConfig(BaseModel):
+    """One physical IMU: its noise figures and how long it has to hold still to init."""
+
+    gyro_noise_density: float = 0.0
+    gyro_random_walk: float = 0.0
+    accel_noise_density: float = 0.0
+    accel_random_walk: float = 0.0
+
+    # Averaged while stationary to level the filter and take the gyro bias; leaving that
+    # bias in cost 19.8 m of final error against 1.6 m on a 517 s Alfred drive. At 200 Hz
+    # this is one second of standing still at startup.
+    init_samples: int = 200
+    # rad/s. Above this the robot is called moving and bias calibration restarts, so it
+    # belongs above this gyro's own bias and below any real rotation. A noisy gyro that
+    # reads above it at rest never finishes init.
+    init_gyro_limit: float = 0.05
+
+
+class SourceConfig(BaseModel):
+    """How much one odometry source is trusted. Below zero takes the message covariance,
+    zero drops that dimension, above zero is a fixed variance. A drifting source's
+    covariance describes its accumulated drift rather than the delta being fused, so a
+    fixed value is usually the right answer."""
+
+    # [x y z roll pitch yaw]
+    pose_variances: list[float] = Field(
+        default_factory=lambda: [0.0] * 6, min_length=6, max_length=6
+    )
+    # [vx vy vz wx wy wz], body frame
+    twist_variances: list[float] = Field(
+        default_factory=lambda: [0.0] * 6, min_length=6, max_length=6
+    )
+
+
 class DimSlamConfig(NativeModuleConfig):
     cwd: str | None = str(MODULE_DIR / "rust")
     executable: str = "result/bin/dim_slam"
@@ -207,14 +270,14 @@ class DimSlamConfig(NativeModuleConfig):
     camera_mode: Literal["mono", "stereo", "rgbd"]
     # Empty: auto-discover from camera_info.
     camera_frames: list[str] = Field(default_factory=list)
-    # Asserted, not performed.
-    rectified: bool = True
+    # Keyed by the frame_id the camera's images carry; an absent camera takes the defaults.
+    cameras: dict[str, CameraConfig] = Field(default_factory=dict)
     # Off runs the deterministic CPU path, which needs a libcuvslam built
     # -DENFORCE_GPU=OFF. A build carrying only the other backend is used with a warning.
     use_gpu: bool = True
 
     # The tracker's own world frame, drifting freely; the filter fuses it as a
-    # drifting source, so it must appear in source_frames.
+    # drifting source, so it must key one of `sources`.
     visual_odom_frame_id: str = "visual_odom"
     # Frame the cuVSLAM rig is built in. Empty means output_frame_id.
     rig_frame_id: str = ""
@@ -225,23 +288,16 @@ class DimSlamConfig(NativeModuleConfig):
     # come from the imu_info stream. Separate from use_imu, which feeds the fusion
     # filter. Implemented only on the CUDA path.
     cuvslam_enable_imu: bool = False
+    # Stamp spread one frame set may span, milliseconds; 0 keeps cuVSLAM's 1 ms contract. A
+    # software-triggered rig needs this widened: Spot's images land within ~15 ms of each
+    # other and its depth trails its camera by up to ~90 ms, so every set is dropped at 1 ms.
+    max_skew_ms: float = 0.0
     # Translation std (m) above which the frame's motion is dropped and the path rebased;
     # 0 disables.
     covariance_gate_translation_std: float = 1.0
     # Frame-to-frame m/s and rad/s, catching teleports the covariance gate misses; 0 disables.
     speed_gate_max_linear: float = 5.0
     speed_gate_max_angular: float = 12.0
-    # Raw depth units per metre, keyed by the depth image's frame_id; 16-bit millimetre
-    # depth is 1000. Scaling one camera's depth by another's factor yields a
-    # plausible-looking wrong map, so an unlisted frame is dropped rather than guessed at.
-    frame_id_to_depth_units_per_meter: dict[str, float] = Field(default_factory=dict)
-    # Range gate on the published depth_cloud, metres. Stereo depth error grows as range
-    # squared, so the far gate decides whether the cloud is worth mapping with; 0 leaves
-    # it open.
-    depth_cloud_min_range: float = 0.0
-    depth_cloud_max_range: float = 0.0
-    # One point per k x k depth block (median of in-gate depths). <= 1 emits every pixel.
-    depth_cloud_decimation: int = 1
 
     odom_frame_id: str = "odom"
     output_frame_id: str = "base_link"
@@ -257,57 +313,52 @@ class DimSlamConfig(NativeModuleConfig):
     # Caps the filter's own state rather than an incoming reading. 0 disables it.
     max_position_m: float = 10000.0
 
-    # On, the filter propagates on IMU and needs all four noise figures below. Off, it is
+    # On, the filter propagates on IMU and needs one fully specified imus entry. Off, it is
     # seeded level from the first source message and holds its pose between them.
     use_imu: bool = False
 
-    # The IMU's datasheet noise figures, in the continuous-time units the filter wants:
-    # rad/s/sqrt(Hz), rad/s^2/sqrt(Hz), m/s^2/sqrt(Hz), m/s^3/sqrt(Hz). use_imu requires
-    # all four above zero.
-    imu_gyro_noise_density: float = 0.0
-    imu_gyro_random_walk: float = 0.0
-    imu_accel_noise_density: float = 0.0
-    imu_accel_random_walk: float = 0.0
+    # Keyed by the frame_id the IMU's samples carry. The filter propagates on a single IMU,
+    # so use_imu needs exactly one entry.
+    imus: dict[str, ImuConfig] = Field(default_factory=dict)
     gravity: float = 9.81
-    # Averaged while stationary to level the filter and take the gyro bias; leaving that
-    # bias in cost 19.8 m of final error against 1.6 m on a 517 s Alfred drive. At 200 Hz
-    # this is one second of standing still at startup.
-    imu_init_samples: int = 200
 
     initial_position_std: float = 0.01
     initial_velocity_std: float = 0.1
     initial_rotation_std: float = 0.05
     initial_bias_std: float = 0.05
 
-    # One entry per source, matched against each message's header.frame_id. A source
-    # whose frame is odom_frame_id is fused absolutely; anything else is fused as
-    # filter-anchored deltas, since its own pose has drifted.
-    source_frames: list[str] = Field(default_factory=lambda: ["visual_odom"])
-    # 6 per source, [x y z roll pitch yaw] then [vx vy vz wx wy wz]: below zero takes the
-    # message covariance, zero drops the dimension, above zero is a fixed variance.
-    source_pose_variances: list[float] = Field(
-        default_factory=lambda: [0.01, 0.01, 0.01, 0.05, 0.05, 0.05]
+    # One entry per source, keyed "parent_frame_id->child_frame_id" and matched against each
+    # message's header.frame_id and child_frame_id. Both halves are needed because two
+    # sources can share a parent. A source whose parent is odom_frame_id is fused
+    # absolutely; anything else is fused as filter-anchored deltas, since its own pose has
+    # drifted.
+    sources: dict[str, SourceConfig] = Field(
+        default_factory=lambda: {
+            "visual_odom->base_link": SourceConfig(
+                pose_variances=[0.01, 0.01, 0.01, 0.05, 0.05, 0.05]
+            )
+        }
     )
-    source_twist_variances: list[float] = Field(default_factory=lambda: [0.0] * 6)
     # A virtual zero-twist measurement applied with every source message, for the
     # directions the platform cannot move in. Above zero pulls that dimension toward
     # zero with this variance; zero leaves it free.
-    constraint_twist_variances: list[float] = Field(default_factory=lambda: [0.0] * 6)
+    constraint_twist_variances: list[float] = Field(
+        default_factory=lambda: [0.0] * 6, min_length=6, max_length=6
+    )
 
     @model_validator(mode="after")
     def _imu_noise_is_set(self) -> DimSlamConfig:
-        missing = [
-            name
-            for name in (
-                "imu_gyro_noise_density",
-                "imu_gyro_random_walk",
-                "imu_accel_noise_density",
-                "imu_accel_random_walk",
-            )
-            if getattr(self, name) <= 0.0
-        ]
-        if self.use_imu and missing:
-            raise ValueError(f"use_imu needs the IMU's noise figures: {', '.join(missing)}")
+        if not self.use_imu:
+            return self
+        # The filter propagates on one IMU, so a second entry would silently go unused.
+        if len(self.imus) != 1:
+            raise ValueError(f"use_imu needs exactly one imus entry, got {list(self.imus)}")
+        frame, imu = next(iter(self.imus.items()))
+        missing = [name for name in IMU_NOISE_FIGURES if getattr(imu, name) <= 0.0]
+        if missing:
+            raise ValueError(f"use_imu needs IMU {frame!r}'s noise figures: {', '.join(missing)}")
+        if imu.init_gyro_limit <= 0.0:
+            raise ValueError(f"IMU {frame!r}'s init_gyro_limit must be above zero to ever init")
         return self
 
     @model_validator(mode="after")
@@ -317,43 +368,30 @@ class DimSlamConfig(NativeModuleConfig):
             raise ValueError(
                 f"cuvslam_enable_imu needs camera_mode='stereo', not {self.camera_mode!r}"
             )
-        # cuVSLAM carries a single global depth scale, so rgbd can serve only one stream;
-        # a second entry would be applied to the wrong camera.
-        if self.camera_mode == "rgbd" and len(self.frame_id_to_depth_units_per_meter) != 1:
-            raise ValueError(
-                "camera_mode='rgbd' needs exactly one frame_id_to_depth_units_per_meter "
-                f"entry, got {self.frame_id_to_depth_units_per_meter}"
-            )
         return self
 
     @model_validator(mode="after")
     def _sources_are_fusable(self) -> DimSlamConfig:
-        # The tracker's pose only reaches the filter as a source under this frame.
-        if self.visual_odom_frame_id not in self.source_frames:
-            raise ValueError(
-                f"visual_odom_frame_id {self.visual_odom_frame_id!r} is missing from source_frames "
-                f"{self.source_frames}, so the visual odometry would never be fused"
-            )
-        # The native asserts these lengths; catching it here names the offender.
-        for name in ("source_pose_variances", "source_twist_variances"):
-            values = getattr(self, name)
-            if len(values) != len(self.source_frames) * 6:
+        # The native parses these keys and refuses a malformed one; catching it here names
+        # the offender against the config that wrote it.
+        for key in self.sources:
+            parent, separator, child = key.partition("->")
+            if not separator or not parent.strip() or not child.strip():
                 raise ValueError(
-                    f"{name} needs 6 entries per source frame: expected "
-                    f"{len(self.source_frames) * 6} for {self.source_frames}, got {len(values)}"
+                    f"source key {key!r} must be written 'parent_frame_id->child_frame_id'"
                 )
-        if len(self.constraint_twist_variances) != 6:
+        # The tracker's pose only reaches the filter as a source under this transform.
+        visual_odom_key = f"{self.visual_odom_frame_id}->{self.output_frame_id}"
+        if visual_odom_key not in self.sources:
             raise ValueError(
-                "constraint_twist_variances needs 6 entries, got "
-                f"{len(self.constraint_twist_variances)}"
+                f"source {visual_odom_key!r} is missing from sources {list(self.sources)}, "
+                "so the visual odometry would never be fused"
             )
         # Zero drops a dimension, so an all-zero source is fused in no dimension at all.
-        for index, frame in enumerate(self.source_frames):
-            pose = self.source_pose_variances[index * 6 : index * 6 + 6]
-            twist = self.source_twist_variances[index * 6 : index * 6 + 6]
-            if not any(pose) and not any(twist):
+        for key, source in self.sources.items():
+            if not any(source.pose_variances) and not any(source.twist_variances):
                 raise ValueError(
-                    f"source {frame!r} has every pose and twist variance at zero, "
+                    f"source {key!r} has every pose and twist variance at zero, "
                     "which fuses nothing; use a positive variance or drop the source"
                 )
         return self
@@ -370,7 +408,7 @@ class DimSlam(NativeModule):
     The tracker's pose stream never touches the wire: it enters the filter as a
     drifting source under ``visual_odom_frame_id``. Any number of external sources
     (wheel odometry, ...) publish onto ``sources`` and are told apart by
-    ``header.frame_id``. Late messages roll the filter back to their own slot and replay
+    ``header.frame_id`` and ``child_frame_id``. Late messages roll the filter back and replay
     everything after.
     """
 
