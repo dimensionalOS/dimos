@@ -1351,6 +1351,49 @@ class TestTickLoop:
             "Hardware arm rejected SERVO_POSITION command from control task"
         )
 
+    def test_applied_position_command_publishes_only_accepted_position_modes(self):
+        publish = MagicMock()
+        tick_loop = TickLoop(
+            tick_rate=100.0,
+            hardware={},
+            hardware_lock=threading.Lock(),
+            tasks={},
+            task_lock=threading.Lock(),
+            joint_to_hardware={},
+            publish_command_callback=publish,
+        )
+
+        tick_loop._publish_applied_position_command(
+            {
+                "arm": ({"arm/joint1": 0.25}, ControlMode.SERVO_POSITION),
+                "base": ({"base/wheel": 1.0}, ControlMode.VELOCITY),
+            },
+            timestamp=123.0,
+        )
+
+        message = publish.call_args.args[0]
+        assert message.ts == 123.0
+        assert message.name == ["arm/joint1"]
+        assert message.position == [0.25]
+
+    def test_rejected_hardware_command_is_not_returned_as_applied(self):
+        hardware = {"arm": MagicMock()}
+        hardware["arm"].write_command.return_value = False
+        tick_loop = TickLoop(
+            tick_rate=100.0,
+            hardware=hardware,
+            hardware_lock=threading.Lock(),
+            tasks={},
+            task_lock=threading.Lock(),
+            joint_to_hardware={"arm/joint1": "arm"},
+        )
+
+        accepted = tick_loop._write_all_hardware(
+            {"arm": ({"arm/joint1": 0.25}, ControlMode.SERVO_POSITION)}
+        )
+
+        assert accepted == {}
+
 
 class TestIntegration:
     def test_full_trajectory_execution(self, mock_adapter, wait_until):

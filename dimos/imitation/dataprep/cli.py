@@ -66,8 +66,13 @@ def build(
     source: Path | None,
     output: Path | None,
     output_format: Literal["lerobot", "hdf5"] | None,
+    quality_mode: Literal["strict", "fill"] | None = None,
 ) -> None:
     cfg = _load_config(config_path, source, output, output_format)
+    if quality_mode is not None:
+        cfg = cfg.model_copy(
+            update={"quality": cfg.quality.model_copy(update={"mode": quality_mode})}
+        )
     if not cfg.source:
         typer.echo("error: no source given (use --source or set it in --config)", err=True)
         raise typer.Exit(2)
@@ -96,8 +101,13 @@ def build(
     typer.echo(f"✓ wrote dataset to {path}")
 
 
-def inspect(dataset: Path | None, output_format: Literal["lerobot", "hdf5"] | None) -> None:
-    from dimos.imitation.dataprep.build import inspect_dataset
+def inspect(
+    dataset: Path | None,
+    output_format: Literal["lerobot", "hdf5"] | None,
+    config_path: Path | None = None,
+    quality_mode: Literal["strict", "fill"] | None = None,
+) -> None:
+    from dimos.imitation.dataprep.build import inspect_dataset, inspect_recording
 
     if dataset is None:
         typer.echo(
@@ -107,7 +117,15 @@ def inspect(dataset: Path | None, output_format: Literal["lerobot", "hdf5"] | No
         raise typer.Exit(2)
 
     try:
-        info = inspect_dataset(dataset, output_format)
+        if config_path is not None:
+            cfg = _load_config(config_path, dataset, None, None)
+            if quality_mode is not None:
+                cfg = cfg.model_copy(
+                    update={"quality": cfg.quality.model_copy(update={"mode": quality_mode})}
+                )
+            info = inspect_recording(dataset, config=cfg)
+        else:
+            info = inspect_dataset(dataset, output_format)
     except Exception as e:
         # CLI boundary: surface failures as a message + non-zero exit, not a traceback.
         typer.echo(f"dataprep inspect failed: {e}", err=True)

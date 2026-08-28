@@ -80,6 +80,7 @@ def test_native_collection_records_typed_zenoh_streams(
     payload_types: dict[str, type[Any]] = {
         "color_image": Image,
         "coordinator_joint_state": JointState,
+        "applied_joint_position_command": JointState,
         "status": EpisodeStatus,
         "tf": TFMessage,
     }
@@ -146,6 +147,17 @@ def test_native_collection_records_typed_zenoh_streams(
             ),
         )
         publish(
+            "applied_joint_position_command",
+            JointState(
+                ts=10.0,
+                frame_id="coordinator",
+                name=["shoulder", "wrist"],
+                position=[0.3, -0.4],
+                velocity=[],
+                effort=[],
+            ),
+        )
+        publish(
             "status",
             EpisodeStatus(
                 ts=11.0,
@@ -162,6 +174,7 @@ def test_native_collection_records_typed_zenoh_streams(
                 for name, count in {
                     "color_image": 1,
                     "coordinator_joint_state": 1,
+                    "applied_joint_position_command": 1,
                     "status": 3,
                 }.items()
             ),
@@ -181,6 +194,7 @@ def test_native_collection_records_typed_zenoh_streams(
         joint_observation = store.stream("coordinator_joint_state", JointState).last()
         joints = joint_observation.data
         joint_ts = joint_observation.ts
+        action = store.stream("applied_joint_position_command", JointState).last().data
         statuses = [
             (observation.ts, observation.data.last_event)
             for observation in store.stream("status", EpisodeStatus).to_list()
@@ -192,6 +206,7 @@ def test_native_collection_records_typed_zenoh_streams(
     assert image.data.shape == (16, 16, 3)
     assert joint_ts == 10.0
     assert joints.position == [0.25, -0.5]
+    assert action.position == [0.3, -0.4]
     assert statuses[-2:] == [
         (10.0, "start"),
         (11.0, "save"),

@@ -34,10 +34,14 @@ from dimos.imitation.dataprep.core import (
     DataPrepConfig,
     Episode,
     EpisodeExtractor,
+    EpisodeQualityReport,
+    FeatureSpec,
     OutputConfig,
-    StreamField,
+    QualityConfig,
+    Sample,
     SyncConfig,
     extract_episodes,
+    inspect_episode_quality,
     inspect_episodes,
     is_image_array,
     iter_episode_samples,
@@ -126,6 +130,10 @@ def _status(events: list[tuple[float, str, str | None]]) -> list[_Obs]:
     return [_Obs(ts=ts, data=_Status(last_event=ev, task_label=lbl)) for ts, ev, lbl in events]
 
 
+def _feature(stream: str, field: str | None = "position") -> FeatureSpec:
+    return FeatureSpec(stream=stream, field=field, dtype="float32", shape=(1,), names=["joint"])
+
+
 # ── resolve_field ────────────────────────────────────────────────────────────
 
 
@@ -134,19 +142,29 @@ def test_resolve_field_attribute() -> None:
     class Msg:
         position: list[float]
 
-    arr = resolve_field(Msg(position=[1.0, 2.0, 3.0]), StreamField(stream="x", field="position"))
+    arr = resolve_field(
+        Msg(position=[1.0, 2.0, 3.0]),
+        FeatureSpec(
+            stream="x", field="position", dtype="float32", shape=(3,), names=["a", "b", "c"]
+        ),
+    )
     assert isinstance(arr, np.ndarray)
     np.testing.assert_array_equal(arr, np.array([1.0, 2.0, 3.0]))
 
 
 def test_resolve_field_dict_payload() -> None:
-    arr = resolve_field({"q": [4, 5]}, StreamField(stream="x", field="q"))
+    arr = resolve_field(
+        {"q": [4, 5]},
+        FeatureSpec(stream="x", field="q", dtype="float32", shape=(2,), names=["a", "b"]),
+    )
     np.testing.assert_array_equal(arr, np.array([4, 5]))
 
 
 def test_resolve_field_none_passthrough_ndarray() -> None:
     src = np.arange(6).reshape(2, 3)
-    out = resolve_field(src, StreamField(stream="x", field=None))
+    out = resolve_field(
+        src, FeatureSpec(stream="x", dtype="float32", shape=(2, 3), names=["row", "column"])
+    )
     assert out is src  # ndarray passes straight through
 
 
@@ -156,7 +174,9 @@ def test_resolve_field_none_unwraps_data_attr() -> None:
         data: np.ndarray
 
     img = Image(data=np.ones((2, 2)))
-    out = resolve_field(img, StreamField(stream="x", field=None))
+    out = resolve_field(
+        img, FeatureSpec(stream="x", dtype="float32", shape=(2, 2), names=["row", "column"])
+    )
     np.testing.assert_array_equal(out, np.ones((2, 2)))
 
 
@@ -255,8 +275,7 @@ def _scalar_stream(values: list[tuple[float, float]]) -> list[_Obs]:
     return [_Obs(ts=ts, data=S(position=[v])) for ts, v in values]
 
 
-def test_sync_basic_no_shift() -> None:
-    # obs == action, shift disabled → one sample per anchor target
+def test_sync_uses_same_frame_observation_and_applied_action() -> None:
     store = _FakeStore(
         {
             "js": _scalar_stream([(0.0, 10.0), (1.0, 11.0), (2.0, 12.0)]),
@@ -264,39 +283,27 @@ def test_sync_basic_no_shift() -> None:
     )
     ep = Episode(id="ep_0", start_ts=0.0, end_ts=2.0)
     streams = {
-        "state": StreamField(stream="js", field="position"),
-        "act": StreamField(stream="js", field="position"),
+        "state": _feature("js"),
+        "act": _feature("js"),
     }
-    sync = SyncConfig(anchor="state", rate_hz=1.0, tolerance_ms=100.0, action_shift=0)
+    sync = SyncConfig(anchor="state", rate_hz=1.0, tolerance_ms=100.0)
     samples = list(
-        iter_episode_samples(store, ep, streams, sync, obs_keys={"state"}, action_keys={"act"})
+        iter_episode_samples(
+            store,
+            ep,
+            streams,
+            sync,
+            QualityConfig(),
+            obs_keys={"state"},
+            action_keys={"act"},
+        )
     )
     assert len(samples) == 3
     # action equals state at the same frame
     np.testing.assert_array_equal(samples[0].observation["state"], samples[0].action["act"])
 
 
-def test_sync_action_shift_next_state() -> None:
-    store = _FakeStore({"js": _scalar_stream([(0.0, 10.0), (1.0, 11.0), (2.0, 12.0)])})
-    ep = Episode(id="ep_0", start_ts=0.0, end_ts=2.0)
-    streams = {
-        "state": StreamField(stream="js", field="position"),
-        "act": StreamField(stream="js", field="position"),
-    }
-    sync = SyncConfig(anchor="state", rate_hz=1.0, tolerance_ms=100.0, action_shift=1)
-    samples = list(
-        iter_episode_samples(store, ep, streams, sync, obs_keys={"state"}, action_keys={"act"})
-    )
-    # 3 frames, shift 1 → 2 emitted; trailing frame dropped
-    assert len(samples) == 2
-    # frame 0: obs is state@0 (10), action is state@1 (11)
-    np.testing.assert_array_equal(samples[0].observation["state"], [10.0])
-    np.testing.assert_array_equal(samples[0].action["act"], [11.0])
-    np.testing.assert_array_equal(samples[1].observation["state"], [11.0])
-    np.testing.assert_array_equal(samples[1].action["act"], [12.0])
-
-
-def test_sync_tolerance_skips_unmatched_frame() -> None:
+def test_fill_preserves_grid_and_marks_held_frame() -> None:
     # anchor ticks every 1s, but the second stream has a big gap around t=1
     store = _FakeStore(
         {
@@ -306,29 +313,87 @@ def test_sync_tolerance_skips_unmatched_frame() -> None:
     )
     ep = Episode(id="ep_0", start_ts=0.0, end_ts=2.0)
     streams = {
-        "anchor": StreamField(stream="anchor", field="position"),
-        "other": StreamField(stream="other", field="position"),
+        "anchor": _feature("anchor"),
+        "other": _feature("other"),
     }
-    sync = SyncConfig(anchor="anchor", rate_hz=1.0, tolerance_ms=100.0, action_shift=0)
-    samples = list(iter_episode_samples(store, ep, streams, sync, obs_keys={"anchor", "other"}))
-    # t=1 dropped (no `other` within 100ms) → only t=0 and t=2 survive
-    assert [round(s.ts) for s in samples] == [0, 2]
+    sync = SyncConfig(anchor="anchor", rate_hz=1.0, tolerance_ms=100.0)
+    samples = list(
+        iter_episode_samples(
+            store,
+            ep,
+            streams,
+            sync,
+            QualityConfig(mode="fill"),
+            obs_keys={"anchor", "other"},
+        )
+    )
+    assert [round(s.ts) for s in samples] == [0, 1, 2]
+    assert [bool(s.complementary_info["is_filled"][0]) for s in samples] == [False, True, False]
+    np.testing.assert_array_equal(samples[1].observation["other"], [5.0])
+
+
+def test_strict_quality_rejects_missing_fixed_rate_slot() -> None:
+    store = _FakeStore(
+        {
+            "anchor": _scalar_stream([(0.0, 0.0), (1.0, 1.0), (2.0, 2.0)]),
+            "other": _scalar_stream([(0.0, 5.0), (2.0, 7.0)]),
+        }
+    )
+    episode = Episode(id="ep_0", start_ts=0.0, end_ts=2.0)
+    streams = {"anchor": _feature("anchor"), "other": _feature("other")}
+
+    report = inspect_episode_quality(
+        store,
+        episode,
+        streams,
+        SyncConfig(anchor="anchor", rate_hz=1.0, tolerance_ms=20.0),
+        QualityConfig(mode="strict"),
+    )
+
+    assert report.valid is False
+    assert report.expected_frames == 3
+    assert report.emitted_frames == 1
+    assert "no complete aligned sample" in report.rejection_reasons[-1]
+
+
+def test_fill_quality_accepts_gap_and_reports_filled_slot() -> None:
+    store = _FakeStore(
+        {
+            "anchor": _scalar_stream([(0.0, 0.0), (1.0, 1.0), (2.0, 2.0)]),
+            "other": _scalar_stream([(0.0, 5.0), (2.0, 7.0)]),
+        }
+    )
+    episode = Episode(id="ep_0", start_ts=0.0, end_ts=2.0)
+    streams = {"anchor": _feature("anchor"), "other": _feature("other")}
+
+    report = inspect_episode_quality(
+        store,
+        episode,
+        streams,
+        SyncConfig(anchor="anchor", rate_hz=1.0, tolerance_ms=20.0),
+        QualityConfig(mode="fill"),
+    )
+
+    assert report.valid is True
+    assert report.expected_frames == 3
+    assert report.emitted_frames == 3
+    assert report.filled_frames == 1
 
 
 def test_sync_missing_anchor_raises() -> None:
     ep = Episode(id="ep_0", start_ts=0.0, end_ts=1.0)
-    streams = {"x": StreamField(stream="x", field="position")}
+    streams = {"x": _feature("x")}
     sync = SyncConfig(anchor="not_there", rate_hz=1.0, tolerance_ms=10.0)
     with pytest.raises(ValueError, match="anchor"):
-        list(iter_episode_samples(_FakeStore({}), ep, streams, sync))
+        list(iter_episode_samples(_FakeStore({}), ep, streams, sync, QualityConfig()))
 
 
 def test_sync_empty_anchor_yields_nothing() -> None:
     store = _FakeStore({"a": []})
     ep = Episode(id="ep_0", start_ts=0.0, end_ts=1.0)
-    streams = {"a": StreamField(stream="a", field="position")}
+    streams = {"a": _feature("a")}
     sync = SyncConfig(anchor="a", rate_hz=1.0, tolerance_ms=10.0)
-    assert list(iter_episode_samples(store, ep, streams, sync)) == []
+    assert list(iter_episode_samples(store, ep, streams, sync, QualityConfig())) == []
 
 
 # ── summarize_lengths ────────────────────────────────────────────────────────
@@ -350,18 +415,18 @@ def test_summarize_lengths_empty() -> None:
 # ── dimos_meta sidecar ───────────────────────────────────────────────────────
 
 
-def test_dimos_meta_records_sync_and_action_shift(tmp_path: Path) -> None:
+def test_dimos_meta_records_sync_and_quality(tmp_path: Path) -> None:
     cfg = DataPrepConfig(
         source="s.db",
-        observation={"state": StreamField(stream="js", field="position")},
-        action={"action": StreamField(stream="js", field="position")},
-        sync=SyncConfig(anchor="state", rate_hz=14.0, tolerance_ms=80.0, action_shift=0),
+        observation={"state": _feature("js")},
+        action={"action": _feature("js")},
+        sync=SyncConfig(anchor="state", rate_hz=14.0, tolerance_ms=80.0),
         output=OutputConfig(format="lerobot", path=tmp_path, metadata={"fps": 14}),
     )
-    _write_dimos_meta(tmp_path, cfg, episodes=[])
+    _write_dimos_meta(tmp_path, cfg, episodes=[], quality_reports=[])
 
     meta = json.loads((tmp_path / "dimos_meta.json").read_text())
-    assert meta["sync"]["action_shift"] == 0
+    assert meta["quality"]["mode"] == "strict"
     assert meta["source"] == "s.db"
 
 
@@ -372,7 +437,7 @@ def test_dimos_meta_beside_file_for_hdf5(tmp_path: Path) -> None:
     ds_file.write_bytes(b"\x89HDF\r\n")  # stand-in for a real .hdf5
     cfg = DataPrepConfig(source="s.db", output=OutputConfig(format="hdf5", path=ds_file))
 
-    _write_dimos_meta(ds_file, cfg, episodes=[])
+    _write_dimos_meta(ds_file, cfg, episodes=[], quality_reports=[])
 
     sidecar = tmp_path / "session.dimos_meta.json"
     assert sidecar.exists()  # beside the file, not session.hdf5/dimos_meta.json
@@ -384,14 +449,14 @@ def test_run_dataprep_rejects_shared_obs_action_key() -> None:
     two maps merge; run_dataprep must reject it before opening the store."""
     cfg = DataPrepConfig(
         source="nonexistent.db",  # never reached — the check runs first
-        observation={"joints": StreamField(stream="joint_state", field="position")},
-        action={"joints": StreamField(stream="joint_state", field="position")},
+        observation={"joints": _feature("joint_state")},
+        action={"joints": _feature("joint_state")},
     )
     with pytest.raises(ValueError, match="share feature name"):
         run_dataprep(cfg)
 
 
-def test_run_dataprep_reports_empty_recorded_stream_before_writer(mocker, tmp_path: Path) -> None:
+def test_run_dataprep_rejects_empty_recorded_stream_before_writer(mocker, tmp_path: Path) -> None:
     store = mocker.MagicMock()
     store.list_streams.return_value = ["color_image", "joint_state", "status"]
     stream_counts = {"color_image": 0, "joint_state": 20}
@@ -403,19 +468,81 @@ def test_run_dataprep_reports_empty_recorded_stream_before_writer(mocker, tmp_pa
         "dimos.imitation.dataprep.build.extract_episodes",
         return_value=[Episode(id="ep_0", start_ts=1.0, end_ts=2.0)],
     )
-    mocker.patch("dimos.imitation.dataprep.build.iter_episode_samples", return_value=iter(()))
     writer = mocker.Mock(return_value=tmp_path)
     cfg = DataPrepConfig(
         source="recording.db",
         observation={
-            "wrist": StreamField(stream="color_image", field="data"),
-            "state": StreamField(stream="joint_state", field="position"),
+            "wrist": FeatureSpec(
+                stream="color_image",
+                field="data",
+                dtype="video",
+                shape=(2, 2, 3),
+                names=["height", "width", "channels"],
+            ),
+            "state": _feature("joint_state"),
         },
         output=OutputConfig(format="hdf5", path=tmp_path / "dataset.hdf5"),
+        sync=SyncConfig(anchor="wrist", rate_hz=30.0, tolerance_ms=20.0),
     )
 
-    with pytest.raises(RuntimeError, match="color_image=0, joint_state=20"):
+    with pytest.raises(RuntimeError, match="stream 'color_image' has no episode data"):
         run_dataprep(cfg, writer=writer)
 
     writer.assert_not_called()
     store.stop.assert_called_once_with()
+
+
+def test_run_dataprep_excludes_only_invalid_episode(mocker, tmp_path: Path) -> None:
+    store = mocker.MagicMock()
+    store.list_streams.return_value = ["joint_state", "status"]
+    mocker.patch("dimos.imitation.dataprep.build.SqliteStore", return_value=store)
+    episodes = [
+        Episode(id="bad", start_ts=0.0, end_ts=1.0, task_label="pick"),
+        Episode(id="good", start_ts=2.0, end_ts=3.0, task_label="pick"),
+    ]
+    mocker.patch("dimos.imitation.dataprep.build.extract_episodes", return_value=episodes)
+    mocker.patch(
+        "dimos.imitation.dataprep.build.inspect_episode_quality",
+        side_effect=[
+            EpisodeQualityReport(
+                episode_id="bad",
+                valid=False,
+                mode="strict",
+                rejection_reasons=["missing frame"],
+            ),
+            EpisodeQualityReport(episode_id="good", valid=True, mode="strict"),
+        ],
+    )
+    sample = Sample(
+        ts=2.0,
+        episode_id="good",
+        observation={"state": np.asarray([1.0], dtype=np.float32)},
+        action={},
+        task_label="pick",
+        complementary_info={"is_filled": np.asarray([False])},
+    )
+    aligned = mocker.patch(
+        "dimos.imitation.dataprep.build.iter_episode_samples", return_value=iter([sample])
+    )
+    received: list[Sample] = []
+
+    def writer(samples, _output):
+        received.extend(samples)
+        return tmp_path
+
+    config = DataPrepConfig(
+        source="recording.db",
+        observation={"state": _feature("joint_state")},
+        sync=SyncConfig(anchor="state", rate_hz=1.0, tolerance_ms=20.0),
+        output=OutputConfig(format="hdf5", path=tmp_path / "dataset.hdf5"),
+    )
+
+    run_dataprep(config, writer=writer)
+
+    assert [value.episode_id for value in received] == ["good"]
+    assert aligned.call_args.kwargs["episode"].id == "good"
+    reports = json.loads((tmp_path / "dimos_meta.json").read_text())["quality_reports"]
+    assert [(report["episode_id"], report["valid"]) for report in reports] == [
+        ("bad", False),
+        ("good", True),
+    ]

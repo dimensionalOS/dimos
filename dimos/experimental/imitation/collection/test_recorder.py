@@ -33,7 +33,12 @@ def test_native_collection_profile_resolves_dataprep_codecs(
     recorder: NativeCollectionRecorder,
     mocker: pytest_mock.MockerFixture,
 ) -> None:
-    for name in ("color_image", "coordinator_joint_state", "status"):
+    for name in (
+        "color_image",
+        "coordinator_joint_state",
+        "applied_joint_position_command",
+        "status",
+    ):
         getattr(recorder, name).transport = mocker.MagicMock(channel=f"dimos/{name}")
 
     specs = recorder._stream_specs()
@@ -41,6 +46,7 @@ def test_native_collection_profile_resolves_dataprep_codecs(
     assert [(spec.name, spec.codec) for spec in specs] == [
         ("color_image", "jpeg"),
         ("coordinator_joint_state", "lcm"),
+        ("applied_joint_position_command", "lcm"),
         ("status", "lcm"),
     ]
     assert recorder.config.record_tf is False
@@ -55,8 +61,25 @@ def test_native_collection_profile_rejects_non_sqlite_store(tmp_path: Path) -> N
 @pytest.mark.parametrize(
     ("record_tf", "expected_ports"),
     [
-        (False, {"color_image", "coordinator_joint_state", "status"}),
-        (True, {"color_image", "coordinator_joint_state", "status", "tf"}),
+        (
+            False,
+            {
+                "color_image",
+                "coordinator_joint_state",
+                "applied_joint_position_command",
+                "status",
+            },
+        ),
+        (
+            True,
+            {
+                "color_image",
+                "coordinator_joint_state",
+                "applied_joint_position_command",
+                "status",
+                "tf",
+            },
+        ),
     ],
 )
 def test_native_collection_forwards_only_enabled_stream_topics(
@@ -66,7 +89,13 @@ def test_native_collection_forwards_only_enabled_stream_topics(
     expected_ports: set[str],
 ) -> None:
     recorder.config.record_tf = record_tf
-    for name in ("color_image", "coordinator_joint_state", "status", "tf"):
+    for name in (
+        "color_image",
+        "coordinator_joint_state",
+        "applied_joint_position_command",
+        "status",
+        "tf",
+    ):
         getattr(recorder, name).transport = mocker.MagicMock(channel=f"dimos/{name}")
     recorder.config.streams = recorder._stream_specs()
 
