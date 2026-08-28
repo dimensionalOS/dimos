@@ -48,10 +48,16 @@ logger = setup_logger()
 
 
 class ObjectSceneRegistrationConfig(ModuleConfig):
+    target_frame: str = "map"
     prompt_mode: YoloePromptMode = YoloePromptMode.LRPC
     detector_backend: Literal["yoloe", "owlv2", "moondream"] = "yoloe"
     segmentation_backend: Literal["yolo", "edgetam"] = "yolo"
     detect_on_request: bool = False
+    distance_threshold: float = 0.2
+    min_detections_for_permanent: int = 6
+    max_distance: float = 0.0
+    use_aabb: bool = False
+    max_obstacle_width: float = 0.0
 
 
 class ObjectSceneRegistrationModule(Module):
@@ -80,32 +86,23 @@ class ObjectSceneRegistrationModule(Module):
 
     config: ObjectSceneRegistrationConfig
 
-    def __init__(
-        self,
-        target_frame: str = "map",
-        distance_threshold: float = 0.2,
-        min_detections_for_permanent: int = 6,
-        max_distance: float = 0.0,
-        use_aabb: bool = False,
-        max_obstacle_width: float = 0.0,
-        **kwargs: Any,
-    ) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._target_frame = target_frame
+        self._target_frame = self.config.target_frame
         self._prompt_mode = self.config.prompt_mode
         self._detector_backend = self.config.detector_backend
         self._segmentation_backend = self.config.segmentation_backend
         self._detector_confidence = 0.6
         self._detect_on_request = self.config.detect_on_request
         self._object_db = ObjectDB(
-            distance_threshold=distance_threshold,
-            min_detections_for_permanent=min_detections_for_permanent,
+            distance_threshold=self.config.distance_threshold,
+            min_detections_for_permanent=self.config.min_detections_for_permanent,
         )
         self._processing_lock = threading.RLock()
         self._text_prompts = []
-        self._max_distance = max_distance
-        self._use_aabb = use_aabb
-        self._max_obstacle_width = max_obstacle_width
+        self._max_distance = self.config.max_distance
+        self._use_aabb = self.config.use_aabb
+        self._max_obstacle_width = self.config.max_obstacle_width
 
     @rpc
     def start(self) -> None:
@@ -133,9 +130,14 @@ class ObjectSceneRegistrationModule(Module):
             )
 
         if self._segmentation_backend == "edgetam":
-            from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
+            try:
+                from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
 
-            self._segmenter = EdgeTAMImageSegmenter()
+                self._segmenter = EdgeTAMImageSegmenter()
+            except ModuleNotFoundError as e:
+                raise ModuleNotFoundError(
+                    "EdgeTAM requires the optional dependencies from dimos[misc]"
+                ) from e
 
         self.camera_info.subscribe(lambda msg: setattr(self, "_camera_info", msg))
 
@@ -458,11 +460,11 @@ class ObjectSceneRegistrationModule(Module):
             use_aabb=self._use_aabb,
             max_obstacle_width=self._max_obstacle_width,
         )
+
+        # Empty observations still advance pending-object expiry.
+        observed_objects = self._object_db.add_objects(objects)
         if not objects:
             return []
-
-        # Add objects to spatial memory database
-        observed_objects = self._object_db.add_objects(objects)
 
         # Publish ALL permanent objects so downstream consumers get the full set,
         # not just this frame's batch (which may be a subset of what's on the table).

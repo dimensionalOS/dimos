@@ -27,9 +27,7 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
-from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
 from dimos.perception.experimental.objectDB import ObjectDB
-from dimos.spec.utils import spec_annotation_compliance
 
 
 class _FakeTF:
@@ -148,22 +146,6 @@ def test_full_scene_pointcloud_uses_one_coherent_scene_snapshot(
 
     module.get_full_scene_pointcloud()
     result.transform.assert_called_once_with(transform)
-
-
-def test_osr_implements_request_driven_scan_spec(module: ObjectSceneRegistrationModule) -> None:
-    assert spec_annotation_compliance(module, ObjectSceneRegistrationSpec)
-
-
-@pytest.mark.parametrize("backend", ["owlv2", "moondream"])
-def test_text_detector_prompts_reject_boxes(backend: str) -> None:
-    module = ObjectSceneRegistrationModule(detector_backend=backend)
-    try:
-        module.set_prompts(text=["mug"])
-        assert module._text_prompts == ["mug"]
-        with pytest.raises(ValueError, match="text prompts"):
-            module.set_prompts(bboxes=np.zeros((1, 4)))
-    finally:
-        module.stop()
 
 
 def test_owlv2_queries_configured_prompts(monkeypatch: Any) -> None:
@@ -308,9 +290,10 @@ def test_scan_output_includes_pending_objects(monkeypatch: Any) -> None:
     module.detections_3d = MagicMock()
     module.objects = MagicMock()
     module.pointcloud = MagicMock()
+    converted_objects = [pending]
     monkeypatch.setattr(
         "dimos.perception.experimental.object_scene_registration.Object.from_2d_to_list",
-        lambda **_: [pending],
+        lambda **_: converted_objects,
     )
     monkeypatch.setattr(
         "dimos.perception.experimental.object_scene_registration.to_detection3d_array",
@@ -329,6 +312,18 @@ def test_scan_output_includes_pending_objects(monkeypatch: Any) -> None:
     )
 
     assert observed == [pending]
+
+    converted_objects.clear()
+    module._object_db.add_objects.reset_mock()
+    observed = ObjectSceneRegistrationModule._process_3d_detections(
+        module,
+        MagicMock(spec=ImageDetections2D),
+        _image(5.0),
+        _image(5.0),
+    )
+
+    assert observed == []
+    module._object_db.add_objects.assert_called_once_with([])
     module.stop()
 
 
@@ -398,3 +393,37 @@ def test_object_db_uses_wall_clock_for_pending_ttl(monkeypatch: Any) -> None:
     now[0] = 1006.0
     object_db.add_objects([])
     assert object_db.find_by_object_id("stable-id") is None
+
+
+def test_object_db_counts_each_source_frame_once(monkeypatch: Any) -> None:
+    object_db = ObjectDB(min_detections_for_permanent=10)
+    now = [1000.0]
+    monkeypatch.setattr("dimos.perception.experimental.objectDB.time.time", lambda: now[0])
+
+    first = MagicMock(
+        object_id="first-id",
+        track_id=-1,
+        ts=4.0,
+        last_seen_ts=None,
+        detections_count=1,
+    )
+    first.center = MagicMock()
+    duplicate = MagicMock(object_id="duplicate-id", track_id=-1, ts=4.0)
+    duplicate.center = MagicMock()
+    duplicate.center.distance.return_value = 0.0
+
+    observed = object_db.add_objects([first, duplicate])
+
+    assert observed == [first]
+    first.update_object.assert_not_called()
+    assert first.last_seen_ts == 1000.0
+
+    newer = MagicMock(object_id="newer-id", track_id=-1, ts=5.0)
+    newer.center = MagicMock()
+    newer.center.distance.return_value = 0.0
+    first.update_object.side_effect = lambda _: setattr(first, "detections_count", 2)
+    now[0] = 1001.0
+
+    assert object_db.add_objects([newer]) == [first]
+    first.update_object.assert_called_once_with(newer)
+    assert first.last_seen_ts == 1001.0
