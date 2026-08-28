@@ -225,6 +225,11 @@ class RustRecorder(NativeModule):
             logger.warning("Native recorder has no connected streams")
         return specs
 
+    def _collect_topics(self) -> dict[str, str]:
+        topics = super()._collect_topics()
+        enabled_ports = {spec.port for spec in self.config.streams}
+        return {port: topic for port, topic in topics.items() if port in enabled_ports}
+
     @staticmethod
     def _default_codec(payload_type: type[Any]) -> str:
         if issubclass(payload_type, Image):
