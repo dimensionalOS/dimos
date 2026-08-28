@@ -143,6 +143,28 @@ What this does NOT say: one recording on one undeclared floor with nothing
 weighed anchors none of the pinned values, and the replicate floor is the
 sim against itself, not the robot against itself.
 
+**Widened loop-2 search** (`ground.py`, not yet run): the five knobs above
+move yaw, not position, so the search now also takes the unweighed masses
+(`trunk_mass_scale`, `trunk_com_x`, `leg_mass_scale`), the floor and the
+contact shape (`foot_friction`, `foot_solimp_dmin/width`), two LOOP knobs
+that were hard-coded ideals (a speed-torque envelope `envelope_gain` at
+`envelope_speed`, and `action_delay` in physics steps between inference
+and the PD), and three RIG knobs (`rig_dx/dy/dz`, a pelvis-frame lever-arm
+correction on where Point-LIO says the pelvis is). Rig knobs move the
+yardstick, not the plant: they are printed apart, and a fit that improves
+mainly through them is a calibration finding, not a plant one. Loop and rig
+values ride in a `.loop.json` beside the `.plant.json`; `apply_physics`
+never sees them.
+
+```bash
+python -m dimos.robot.unitree.g1.sim.sysid.ground data/g1_groot_characterization_2026-08-27.db \
+    --preset dimos/robot/unitree/g1/sim/presets/loop2.plant.json \
+    --windows 8 --seconds 10 --fit 60 --studies 3 --workers 8 \
+    --out dimos/robot/unitree/g1/sim/presets/loop2b
+python -m dimos.robot.unitree.g1.sim.sysid.ground data/g1_groot_characterization_2026-08-27.db \
+    --preset dimos/robot/unitree/g1/sim/presets/loop2b.plant.json --windows 8 --seconds 10 --seed 1 --replicates 3
+```
+
 ## 6. Owed
 
 - The floor material of the recording (declare it in a

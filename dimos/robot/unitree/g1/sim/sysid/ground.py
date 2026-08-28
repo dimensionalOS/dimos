@@ -22,17 +22,27 @@ horizon of the pelvis position, split along/cross in the real trajectory's
 heading frame, and of yaw (go2sim's headline statistic). The loss a fit
 minimises is the mean over windows and terms of area / stock area.
 
+Three kinds of knob are searched here. Plant knobs (``ranges.KNOBS``) land on
+the compiled model. LOOP knobs live in the stepping loop: a speed-torque
+envelope (``envelope_gain`` at and beyond ``envelope_speed`` rad/s, 1.0 at
+rest, linear between) and ``action_delay`` physics steps between inference
+and the PD seeing the target. RIG knobs (``rig_dx/dy/dz``) are a pelvis-frame
+lever-arm correction on where Point-LIO says the pelvis is: they move the
+YARDSTICK, not the plant, and are reported apart so a fit that improves by
+moving the ruler is seen doing it.
+
 This is fitting THROUGH the controller, which go2sim measured to anti-transfer
 on the Go2 twice; it is used here by decision, with that on record.
 
     python -m dimos.robot.unitree.g1.sim.sysid.ground REC.db --preset measured
-    python -m dimos.robot.unitree.g1.sim.sysid.ground REC.db --fit 40 --studies 3 --workers 8 --out presets/loop2
-    python -m dimos.robot.unitree.g1.sim.sysid.ground REC.db --preset measured --view --start 30
+    python -m dimos.robot.unitree.g1.sim.sysid.ground REC.db --fit 60 --studies 3 --workers 8 --out presets/loop2
+    python -m dimos.robot.unitree.g1.sim.sysid.ground REC.db --preset presets/loop2.plant.json --view
 """
 
 from __future__ import annotations
 
 import argparse
+from collections import deque
 import concurrent.futures
 from dataclasses import dataclass
 import json
@@ -56,10 +66,10 @@ from dimos.robot.unitree.g1.sim.policy import (
     action_of_target,
     observation,
 )
-from dimos.robot.unitree.g1.sim.ranges import ENGINE_DEFAULTS, KNOBS, load_preset
+from dimos.robot.unitree.g1.sim.ranges import ENGINE_DEFAULTS, KNOBS, PHYSICS_KEYS, load_preset
 from dimos.robot.unitree.g1.sim.sysid.ingest import read_streams
-from dimos.simulation.sysid.plant import actuator_step
-from dimos.simulation.sysid.presets import Preset
+from dimos.simulation.sysid.plant import TorqueEnvelope, actuator_step
+from dimos.simulation.sysid.presets import Knob, Preset
 from dimos.simulation.sysid.recording import Streams
 from dimos.simulation.sysid.replay import measured_state
 from dimos.simulation.sysid.rotations import mat_to_quat, quat_to_mat, yaw_anchor, yaw_of
@@ -68,12 +78,60 @@ from dimos.utils.data import LfsPath
 TERMS = ("along", "cross", "yaw")
 PERTURB_RAD = 0.005  # sim-perturb replicates: +-0.3 deg on the 12 seeded leg joints
 TRACKING_ANCHOR_S = 0.5  # where the free rollout is anchored to the room
+
+# Knobs that live in the loop or on the yardstick, not on the compiled model.
+LOOP_KNOBS: dict[str, Knob] = {
+    "envelope_gain": Knob(
+        0.3,
+        1.0,
+        why="torque delivered at high joint speed as a fraction of the demand; the Go2 "
+        "measured ~0.5 above 3 rad/s and it closed half its speed deficit; 1.0 = no envelope",
+    ),
+    "envelope_speed": Knob(
+        2.0,
+        20.0,
+        log=True,
+        unit="rad/s",
+        why="joint speed at which the derate reaches envelope_gain",
+    ),
+    "action_delay": Knob(
+        0,
+        4,
+        unit="steps",
+        why="physics steps (5 ms) between inference and the PD seeing the "
+        "target; the real coordinator ticks at 100 Hz with transport on top; rounded",
+    ),
+    "rig_dx": Knob(-0.1, 0.1, unit="m", why="Point-LIO -> pelvis lever-arm correction, pelvis x"),
+    "rig_dy": Knob(-0.1, 0.1, unit="m", why="Point-LIO -> pelvis lever-arm correction, pelvis y"),
+    "rig_dz": Knob(-0.1, 0.1, unit="m", why="Point-LIO -> pelvis lever-arm correction, pelvis z"),
+}
+LOOP_DEFAULTS: dict[str, float] = {
+    "envelope_gain": 1.0,
+    "envelope_speed": 8.0,
+    "action_delay": 0.0,
+    "rig_dx": 0.0,
+    "rig_dy": 0.0,
+    "rig_dz": 0.0,
+}
+ALL_KNOBS: dict[str, Knob] = {**KNOBS, **LOOP_KNOBS}
 DEFAULT_SEARCH = (
     "armature",
     "frictionloss",
     "actuator_tau",
     "foot_solref_time",
     "foot_solref_damp",
+    "trunk_mass_scale",
+    "trunk_com_x",
+    "leg_mass_scale",
+    "foot_friction",
+    "foot_solimp_dmin",
+    "foot_solimp_width",
+    "envelope_gain",
+    "envelope_speed",
+    "action_delay",
+    "rig_dx",
+    "rig_dy",
+    "rig_dz",
 )
 
 _POLICY: GrootPolicy | None = None
@@ -100,6 +158,24 @@ def _cmd_at(st: Streams, t_abs: float) -> NDArray[Any]:
     return st.wcmd[i] if i >= 0 else np.zeros(3)
 
 
+def _envelope(values: dict[str, float]) -> TorqueEnvelope | None:
+    g = float(values.get("envelope_gain", 1.0))
+    if g >= 1.0:
+        return None
+    s = float(values.get("envelope_speed", 8.0))
+    top = float(TORQUE_LIMITS.max())
+    return TorqueEnvelope("fit", (0.0, s), (1.0, g), (0.0, 1.0), (top, top))
+
+
+def base_pose(st: Streams, values: dict[str, float]) -> tuple[NDArray[Any], NDArray[Any]]:
+    """Point-LIO's pelvis track with the rig knobs' lever-arm correction applied."""
+    base_p, base_r = st.base_pose_room()
+    d = np.array([values.get(k, 0.0) for k in ("rig_dx", "rig_dy", "rig_dz")])
+    if d.any():
+        base_p = base_p + base_r @ d
+    return base_p, base_r
+
+
 def rollout(
     st: Streams,
     values: dict[str, float],
@@ -112,9 +188,10 @@ def rollout(
 ) -> PolicyRun:
     """GR00T on the plant ``values`` from the measured state at ``start``."""
     model, data = g1_model.load(ghost=view)
-    physics = {k: v for k, v in values.items() if k != "actuator_tau"}
-    g1_model.apply_physics(model, physics)
+    g1_model.apply_physics(model, {k: v for k, v in values.items() if k in PHYSICS_KEYS})
     tau_lag = float(values.get("actuator_tau", 0.0))
+    envelope = _envelope(values)
+    delay = round(float(values.get("action_delay", 0.0)))
     dt = float(model.opt.timestep)
     decim = max(1, round(CONTROL_DT / dt))
     feet = g1_model.foot_geom_ids(model)
@@ -122,7 +199,7 @@ def rollout(
     gyro_adr = model.sensor_adr[
         mujoco.mj_name2id(model, sensor, g1_model.IMU_SITE + "-angular-velocity")
     ]
-    base_p, base_r = st.base_pose_room()
+    base_p, base_r = base_pose(st, values)
 
     # Seed: the measured state, the same placement as loop 1's snap.
     s0 = measured_state(st, start, base_p=base_p, base_r=base_r)
@@ -172,6 +249,7 @@ def rollout(
         a_p = data.qpos[0:3].copy() - a_r @ base_p[j0]
 
     target = DEFAULT_29[:NUM_ACTIONS].copy()
+    pending: deque[NDArray[Any]] = deque([target] * delay, maxlen=delay) if delay else deque()
     desired = DEFAULT_29.astype(np.float64).copy()
     applied = np.zeros(model.nu)
     n = int(seconds / dt)
@@ -188,18 +266,26 @@ def rollout(
         for i in range(n):
             t = i * dt
             if i % decim == 0:
-                target = policy.step(
+                fresh = policy.step(
                     _cmd_at(st, start + t),
                     data.sensordata[gyro_adr : gyro_adr + 3],
                     data.qpos[3:7],
                     data.qpos[7:],
                     data.qvel[6:],
                 )
+                if delay:
+                    pending.append(fresh)
+                    target = pending[0]
+                else:
+                    target = fresh
+            elif delay:
+                pending.append(pending[-1])
+                target = pending[0]
             desired[:NUM_ACTIONS] = target
             tau = np.clip(
                 KP * (desired - data.qpos[7:]) - KD * data.qvel[6:], -TORQUE_LIMITS, TORQUE_LIMITS
             )
-            applied = actuator_step(applied, tau, dt, tau_lag, dq=data.qvel[6:])
+            applied = actuator_step(applied, tau, dt, tau_lag, dq=data.qvel[6:], envelope=envelope)
             data.ctrl[:] = applied
             mujoco.mj_step(model, data)
             ts[i] = t + dt
@@ -224,9 +310,11 @@ def rollout(
     return PolicyRun(ts, pos, quat)
 
 
-def curves(run: PolicyRun, st: Streams, start: float) -> dict[str, NDArray[Any]]:
+def curves(
+    run: PolicyRun, st: Streams, start: float, values: dict[str, float] | None = None
+) -> dict[str, NDArray[Any]]:
     """Signed tracking error vs time: along/cross in the real heading frame, yaw."""
-    base_p, base_r = st.base_pose_room()
+    base_p, base_r = base_pose(st, values or {})
     yaw_room = np.unwrap(yaw_of(np.stack([mat_to_quat(r) for r in base_r])))
     yaw_s = np.unwrap(yaw_of(run.quat))
     i0 = int(np.searchsorted(run.t, TRACKING_ANCHOR_S - 1e-9, "left"))
@@ -291,7 +379,7 @@ def _init(recording: str) -> None:
 def _eval_window(args: tuple[dict[str, float], float, float, int]) -> dict[str, float]:
     values, start, seconds, seed = args
     st = _W["st"]
-    return areas(curves(rollout(st, values, start, seconds, seed=seed), st, start))
+    return areas(curves(rollout(st, values, start, seconds, seed=seed), st, start, values))
 
 
 class Objective:
@@ -332,12 +420,37 @@ def table(name: str, per: list[dict[str, float]]) -> str:
     )
 
 
+def load_values(preset_arg: str) -> tuple[Preset, dict[str, float]]:
+    """A preset's complete loop-2 values: plant knobs, and the loop/rig knobs from
+    the ``.loop.json`` a loop-2 fit writes beside its plant JSON (defaults otherwise)."""
+    preset = load_preset(preset_arg)
+    values = {
+        **ENGINE_DEFAULTS,
+        **LOOP_DEFAULTS,
+        **preset.physics,
+        "actuator_tau": preset.actuator_tau,
+    }
+    loop = (
+        Path(preset_arg).with_suffix("").with_suffix(".loop.json")
+        if preset_arg.endswith(".plant.json")
+        else None
+    )
+    if loop is not None and loop.is_file():
+        values.update(json.loads(loop.read_text()))
+    return preset, values
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="g1.sim.sysid.ground", description=__doc__)
     ap.add_argument("recording")
-    ap.add_argument("--preset", default="stock", help="plant to grade (name or JSON)")
+    ap.add_argument("--preset", default="stock", help="plant to grade (name or .plant.json)")
     ap.add_argument("--windows", type=int, default=6)
-    ap.add_argument("--seconds", type=float, default=15.0)
+    ap.add_argument(
+        "--seconds",
+        type=float,
+        default=None,
+        help="window length: 15 s for grading and fitting; --view runs to the end of the recording",
+    )
     ap.add_argument("--seed", type=int, default=0, help="window placement seed")
     ap.add_argument(
         "--replicates", type=int, default=1, help="perturbed repeats for the chaos floor"
@@ -347,35 +460,32 @@ def main() -> None:
         "--fit", type=int, default=0, metavar="TRIALS", help="search the knobs on this loss"
     )
     ap.add_argument("--studies", type=int, default=3)
-    ap.add_argument("--search", default=",".join(DEFAULT_SEARCH))
-    ap.add_argument("--out", default=None, help="prefix for .plant.json")
+    ap.add_argument("--search", default=",".join(DEFAULT_SEARCH), help="plant, loop and rig knobs")
+    ap.add_argument(
+        "--out", default=None, help="prefix: writes .plant.json, .loop.json, .trials.json"
+    )
     ap.add_argument("--name", default="loop2")
-    ap.add_argument("--view", action="store_true", help="watch one window from --start")
+    ap.add_argument("--view", action="store_true", help="watch from --start")
     ap.add_argument("--start", type=float, default=None)
     ap.add_argument("--speed", type=float, default=1.0)
     args = ap.parse_args()
 
     st = read_streams(args.recording)
-    preset = load_preset(args.preset)
-    values = {**ENGINE_DEFAULTS, **preset.physics, "actuator_tau": preset.actuator_tau}
+    preset, values = load_values(args.preset)
 
     if args.view:
-        start = (
-            args.start
-            if args.start is not None
-            else windows(st, 1, args.seconds, seed=args.seed)[0]
-        )
-        run = rollout(st, values, start, args.seconds, view=True, speed=args.speed)
-        print(table(preset.name, [areas(curves(run, st, start))]))
+        start = args.start if args.start is not None else float(st.segments()[1][2])
+        seconds = args.seconds if args.seconds is not None else float(st.wt[-1]) - start
+        run = rollout(st, values, start, seconds, view=True, speed=args.speed)
+        print(table(preset.name, [areas(curves(run, st, start, values))]))
         return
 
-    starts = windows(st, args.windows, args.seconds, seed=args.seed)
-    print(
-        f"{len(starts)} windows of {args.seconds:.0f} s at " + ", ".join(f"{s:.1f}" for s in starts)
-    )
-    obj = Objective(args.recording, starts, args.seconds, args.workers)
+    seconds = 15.0 if args.seconds is None else args.seconds
+    starts = windows(st, args.windows, seconds, seed=args.seed)
+    print(f"{len(starts)} windows of {seconds:.0f} s at " + ", ".join(f"{s:.1f}" for s in starts))
+    obj = Objective(args.recording, starts, seconds, args.workers)
     try:
-        stock = {**ENGINE_DEFAULTS, "actuator_tau": 0.0}
+        stock = {**ENGINE_DEFAULTS, **LOOP_DEFAULTS, "actuator_tau": 0.0}
         base = obj.calibrate(stock)
         print("TRACKING AREAS  mean |error| over the horizon, mean over windows")
         print(table("stock", base))
@@ -383,20 +493,15 @@ def main() -> None:
             print(table(preset.name, obj.rollouts(values)))
         if args.replicates > 1:
             reps = [obj.rollouts(values, seed=k) for k in range(1, args.replicates + 1)]
-            floor = {
-                t: float(
-                    np.median(
-                        [
-                            abs(a[t] - b[t])
-                            for i, ra in enumerate(reps)
-                            for rb in reps[i + 1 :]
-                            for a, b in zip(ra, rb, strict=True)
-                        ]
-                    )
-                )
-                / np.sqrt(2)
-                for t in TERMS
-            }
+            floor = {}
+            for t in TERMS:
+                pairs = [
+                    abs(a[t] - b[t])
+                    for i, ra in enumerate(reps)
+                    for rb in reps[i + 1 :]
+                    for a, b in zip(ra, rb, strict=True)
+                ]
+                floor[t] = float(np.median(pairs)) / np.sqrt(2)
             print(
                 "  chaos floor (median pairwise sim-vs-sim / sqrt 2): "
                 + "  ".join(f"{t} {floor[t]:.4f}" for t in TERMS)
@@ -407,7 +512,12 @@ def main() -> None:
 
             optuna.logging.set_verbosity(optuna.logging.WARNING)
             names = tuple(args.search.split(","))
-            searched = {n: KNOBS[n] for n in names}
+            unknown = [n for n in names if n not in ALL_KNOBS]
+            if unknown:
+                raise KeyError(
+                    f"unknown knob(s) {unknown}; plant {sorted(KNOBS)} loop {sorted(LOOP_KNOBS)}"
+                )
+            searched = {n: ALL_KNOBS[n] for n in names}
             best: list[tuple[float, dict[str, float]]] = []
             for seed in range(args.studies):
 
@@ -430,31 +540,40 @@ def main() -> None:
                     {n: float(min(k.hi, max(k.lo, values[n]))) for n, k in searched.items()}
                 )
                 study.optimize(fn, n_trials=args.fit)
-                print(f"  study {seed}: best {study.best_value:.4f}  {study.best_params}")
+                print(f"  study {seed}: best {study.best_value:.4f}")
             best.sort(key=lambda r: r[0])
             top = best[: max(3, len(best) // 10)]
             point = {n: float(np.median([p[n] for _, p in top])) for n in names}
+            final = {**values, **point}
             print(
-                f"\nLOOP-2 FIT  stock 1.0000 -> point {obj.evaluate({**values, **point}):.4f}  (median of the top {len(top)} of {len(best)} trials)"
+                f"\nLOOP-2 FIT  stock 1.0000 -> point {obj.evaluate(final):.4f}"
+                f"  (median of the top {len(top)} of {len(best)} trials)"
             )
             for n in names:
                 lo, hi = min(p[n] for _, p in top), max(p[n] for _, p in top)
-                print(f"  {n:<20s} {point[n]:.6g}   top spread {lo:.4g} .. {hi:.4g}")
-            print(table("loop2", obj.rollouts({**values, **point})))
+                kind = "rig " if n.startswith("rig_") else ("loop" if n in LOOP_KNOBS else "plant")
+                print(f"  {kind} {n:<20s} {point[n]:.6g}   top spread {lo:.4g} .. {hi:.4g}")
+            print(table("loop2", obj.rollouts(final)))
             if args.out:
-                phys = {**values, **point}
-                tau = phys.pop("actuator_tau")
+                phys = {k: v for k, v in final.items() if k in PHYSICS_KEYS}
                 out = Path(args.out + ".plant.json")
                 Preset(
                     name=args.name,
                     physics=phys,
-                    actuator_tau=tau,
-                    provenance={n: "fitted on loop 2 (tracking areas vs Point-LIO)" for n in names},
+                    actuator_tau=float(final["actuator_tau"]),
+                    provenance={
+                        n: "fitted on loop 2 (tracking areas vs Point-LIO)"
+                        for n in names
+                        if n in phys
+                    },
                 ).save(out)
-                out.with_suffix(".trials.json").write_text(
-                    json.dumps([{"loss": l, **p} for l, p in best], indent=1)
+                Path(args.out + ".loop.json").write_text(
+                    json.dumps({k: final[k] for k in LOOP_KNOBS}, indent=2) + "\n"
                 )
-                print(f"wrote {out}")
+                Path(args.out + ".trials.json").write_text(
+                    json.dumps([{"loss": loss, **p} for loss, p in best], indent=1) + "\n"
+                )
+                print(f"wrote {out}, .loop.json, .trials.json")
     finally:
         obj.close()
 
