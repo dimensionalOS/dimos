@@ -1,22 +1,34 @@
 {
   "name": "measured",
   "physics": {
-    "armature": 0.01756149228582811,
+    "armature": 0.013532718113392453,
     "damping": 0.001,
-    "frictionloss": 6.582118989435054,
-    "trunk_mass_scale": 1.0,
+    "frictionloss": 3.49491103311723,
+    "trunk_mass_scale": 1.0768244108348717,
     "trunk_inertia_scale": 1.0,
-    "trunk_com_x": 0.0,
-    "leg_mass_scale": 1.0,
-    "foot_friction": 1.0,
+    "trunk_com_x": -0.0017302087401046204,
+    "leg_mass_scale": 0.9551293057125474,
+    "foot_friction": 0.9189821384782009,
     "foot_friction_torsional": 0.005,
-    "foot_solref_time": 0.006732566509571869,
-    "foot_solref_damp": 1.2469639963773431,
-    "foot_solimp_dmin": 0.9,
-    "foot_solimp_width": 0.001,
+    "foot_solref_time": 0.007403190681243228,
+    "foot_solref_damp": 0.9119060721424599,
+    "foot_solimp_dmin": 0.6903494516742212,
+    "foot_solimp_width": 0.0036381262222917416,
     "solver_iterations": 100.0,
     "solver_ls_iterations": 50.0,
     "solver_cone": 0.0
   },
-  "actuator_tau": 0.002360108631305092
+  "actuator_tau": 0.003113984398972721,
+  "provenance": {
+    "armature": "fitted on loop 2 (tracking areas, yaw and cadence vs Point-LIO), 2026-08-28",
+    "frictionloss": "fitted on loop 2 (tracking areas, yaw and cadence vs Point-LIO), 2026-08-28",
+    "foot_solref_time": "fitted on loop 2 (tracking areas, yaw and cadence vs Point-LIO), 2026-08-28",
+    "foot_solref_damp": "fitted on loop 2 (tracking areas, yaw and cadence vs Point-LIO), 2026-08-28",
+    "trunk_mass_scale": "fitted on loop 2 (tracking areas, yaw and cadence vs Point-LIO), 2026-08-28",
+    "trunk_com_x": "fitted on loop 2 (tracking areas, yaw and cadence vs Point-LIO), 2026-08-28",
+    "leg_mass_scale": "fitted on loop 2 (tracking areas, yaw and cadence vs Point-LIO), 2026-08-28",
+    "foot_friction": "fitted on loop 2 (tracking areas, yaw and cadence vs Point-LIO), 2026-08-28",
+    "foot_solimp_dmin": "fitted on loop 2 (tracking areas, yaw and cadence vs Point-LIO), 2026-08-28",
+    "foot_solimp_width": "fitted on loop 2 (tracking areas, yaw and cadence vs Point-LIO), 2026-08-28"
+  }
 }

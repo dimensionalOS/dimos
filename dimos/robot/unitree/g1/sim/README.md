@@ -78,122 +78,53 @@ eight segments are standing. Closest: `foot_solref_time` 1.9,
 capture, not fitting: harder manoeuvres, and a hanging recording for the
 joint-level knobs (go2sim §5, step 2).
 
-## 5. Results
+## 5. The tune
 
-**First fit, 2026-08-28** (`presets/measured.*`): stock as the incumbent,
-searched `armature, frictionloss, actuator_tau, foot_solref_time,
-foot_solref_damp`, everything else pinned as declared; 12 studies x 30
-trials on t=20..150 s, 8 segments, multiple shooting U(0.05, 0.8) s,
-weights joint .30 / dq .30 / tau .15. The shipped point is the median of the
-14 pooled near-optimal trials, never the best draw:
+`measured` = `presets/measured.plant.json` (the plant half, restated as
+`ranges.MEASURED`) + `presets/measured.loop.json` (the loop half). Fitted on
+loop 2, 2026-08-28: the GR00T policy drives the plant from the robot's
+measured mid-walk state on the recorded commands, and the loss is the
+tracking area against Point-LIO (along/cross in the real heading frame,
+yaw) plus the sway cadence error, each divided by stock; 8 windows x 10 s,
+3 studies x 60 CMA-ES trials over 18 knobs, shipped as the median of the
+top tenth of trials.
 
-| knob | stock | measured | p10 .. p90 | of range |
-|---|---:|---:|---:|---:|
-| armature (kg m^2) | 0.010 | 0.0176 | 0.0063 .. 0.0288 | 47% |
-| frictionloss (N m) | 0.10 | 6.58 | 5.02 .. 7.74 | 8.5% |
-| actuator_tau (s) | 0 | 0.00236 | 0.0018 .. 0.0054 | 30% |
-| foot_solref_time (s) | 0.020 | 0.0067 | 0.0040 .. 0.0121 | 41% |
-| foot_solref_damp | 1.0 | 1.25 | 1.07 .. 1.59 | 35% |
+| knob | stock | measured |
+|---|---:|---:|
+| armature (kg m^2) | 0.010 | 0.0135 |
+| frictionloss (N m) | 0.10 | 3.49 |
+| actuator_tau (s) | 0 | 0.0031 |
+| foot_solref_time / damp | 0.020 / 1.0 | 0.0074 / 0.91 |
+| foot_solimp_dmin / width | 0.90 / 0.001 | 0.69 / 0.0036 |
+| foot_friction | 1.0 | 0.92 |
+| trunk_mass_scale, leg_mass_scale | 1.0, 1.0 | 1.08, 0.96 |
+| envelope: gain beyond speed | none | 0.63 beyond 7.5 rad/s |
+| action_delay (physics steps) | 0 | ~2 (10 ms) |
+| cmd_dt / rig_dt (s) | 0 / 0 | -0.017 / +0.010 (rig_dt measured, pinned) |
 
-The fit hit the study cap without the leave-one-out drift stabilising
-(0.20 at k=12): the region is wider than this data pins, which is the
-result, not a failure; the spread ships with the point. The frictionloss
-region sits near the range's upper bound (8.0): widen it before refitting.
+Held out (8 fresh windows, 3 perturbed replicates, chaos floor ~0.003):
 
-| window | stock | measured | change |
-|---|---:|---:|---:|
-| fit set, t=20..150 s | 0.816 | 0.671 | -17.7% |
-| held out, t=200..260 s (never fitted) | 0.797 | 0.630 | -21.0% |
+| | stock | measured |
+|---|---:|---:|
+| along (m) | 0.128 | 0.113 |
+| cross (m) | 0.105 | 0.115 |
+| yaw (rad) | 0.207 | 0.077 |
+| cadence | 10.9% | 7.9% |
 
-Every channel improved on both windows, scored or not (held out: joint
-0.046 -> 0.037 rad, dq 0.50 -> 0.37 rad/s, tau 4.22 -> 3.72 N m, accel
-2.13 -> 1.96 m/s^2, pos 0.071 -> 0.063 m, rot 0.157 -> 0.131 rad).
+What was learned on the way, so nobody re-opens it: five plant knobs alone
+move only yaw; a wider search without a cadence term bought along-track
+area by striding slower (the tracking area cannot see it over 10 s); the
+rig lever-arm knobs come back at ~1 cm with wide spread, so the Point-LIO
+mount stands; Point-LIO trails the IMU by 10 ms on every axis (measured by
+cross-correlation, pinned as `rig_dt`); and every fit kept a speed-torque
+envelope and ~10 ms of action delay, the two things to MEASURE on the
+hardware next (delivered-vs-demanded torque at speed; a command-echo
+timestamp). Loop 1 (`replay`, `identify`, `fit`) remains as the
+sensitivity diagnostic; walking this gentle resolves no knob there.
 
-For comparison only: the fork `aaryan/g1-groot-characterization` fitted
-damping 5.6e-4 / armature 0.0138 / frictionloss 3.25 on this same
-recording by a different method. Not used here.
-
-**Loop 2, 2026-08-28** (`sysid/ground.py`, `presets/loop2.plant.json`): by
-decision the fit moved to the closed loop. GR00T drives the plant from the
-measured mid-walk state (its six-frame history teacher-forced from the
-recording) on the recorded velocity commands; the loss is the tracking
-area against Point-LIO (along/cross in the real heading frame, yaw),
-normalised by stock, 8 windows x 10 s, 3 studies x 40 trials. Point =
-median of the top 12 trials: armature 0.0049, frictionloss 5.38,
-actuator_tau 1.8 ms, foot_solref_time 7.4 ms, foot_solref_damp 1.52.
-In sample: stock 1.00 -> 0.57.
-
-Graded on FRESH windows (seed 1, 3 perturbed replicates; the chaos floor is
-~0.002 in every term, so the ordering is real):
-
-| plant | along (m) | cross (m) | yaw (rad) |
-|---|---:|---:|---:|
-| stock | 0.120 | 0.104 | 0.214 |
-| measured (loop 1) | 0.118 | 0.117 | 0.163 |
-| loop2 | 0.117 | 0.104 | **0.114** |
-
-The in-sample position gain (-39% along) did not transfer: it was the fit
-windows'. The yaw gain (-47%) did. Position tracking is not reachable with
-these five knobs, on either loop; what closes it is a capture or a
-contact-model question, not a search. This is the anti-transfer pattern
-go2sim measured, one storey up: fitting through the controller finds what
-the controller lets it find.
-
-What this does NOT say: one recording on one undeclared floor with nothing
-weighed anchors none of the pinned values, and the replicate floor is the
-sim against itself, not the robot against itself.
-
-**Cadence, and the plant to use: `loop2c`** (2026-08-28). Watching loop2b
-beside the ghost showed the sway drifting in and out of phase. Not latency:
-Point-LIO trails the IMU by a measured 10 ms on every axis (`rig_dt`, now
-pinned). The stock plant sways at the robot's cadence to the sample; loop2b
-had bought its along-track area by striding SLOWER (0.88 vs 1.25 Hz), which
-a 10 s tracking area cannot see. `cadence` (relative sway-frequency error
-from the roll spectrum) joined the loss, `cmd_dt` (the command clock,
-unknown to ~50 ms) joined the search, and the refit is `loop2c`. Held out
-(seed 1, 3 replicates, floor ~0.003):
-
-| plant | along (m) | cross (m) | yaw (rad) | cadence |
-|---|---:|---:|---:|---:|
-| stock | 0.128 | 0.105 | 0.207 | 10.9% |
-| loop2b | 0.099 | 0.107 | 0.121 | 14.4% |
-| loop2c | 0.113 | 0.115 | 0.077 | 7.9% |
-
-loop2c is the only plant whose cadence beats stock; yaw is a third of
-stock's and along-track still improves 11%. The envelope (0.63 at
-7.5 rad/s) and ~2 steps of action delay survive a loss that punishes slow
-striding; `cmd_dt` came back at -17 ms with a wide spread. Use loop2c.
-
-**Widened loop-2 search, 2026-08-28** (`presets/loop2b.*`): in sample the
-point reads 0.571, the same as the five-knob fit, but on FRESH windows it
-is the first plant to move position: along 0.120 -> 0.097 m (-19%, held
-out), cross unchanged, yaw 0.116 rad (as loop2). What carried it are the
-LOOP knobs, `envelope_gain` 0.63 reached at 6.9 rad/s and ~2 physics steps
-of `action_delay`: the sim's ideal actuator and zero-latency loop were the
-misspecification, the same speed-family story as the Go2. The rig knobs
-came back at ~0 with wide spread (the Point-LIO mount is fine, and the fit
-did not move the ruler) and the masses at ~1.0 (nothing to weigh for,
-yet). The search: the five knobs above
-move yaw, not position, so the search now also takes the unweighed masses
-(`trunk_mass_scale`, `trunk_com_x`, `leg_mass_scale`), the floor and the
-contact shape (`foot_friction`, `foot_solimp_dmin/width`), two LOOP knobs
-that were hard-coded ideals (a speed-torque envelope `envelope_gain` at
-`envelope_speed`, and `action_delay` in physics steps between inference
-and the PD), and three RIG knobs (`rig_dx/dy/dz`, a pelvis-frame lever-arm
-correction on where Point-LIO says the pelvis is). Rig knobs move the
-yardstick, not the plant: they are printed apart, and a fit that improves
-mainly through them is a calibration finding, not a plant one. Loop and rig
-values ride in a `.loop.json` beside the `.plant.json`; `apply_physics`
-never sees them.
-
-```bash
-python -m dimos.robot.unitree.g1.sim.sysid.ground data/g1_groot_characterization_2026-08-27.db \
-    --preset dimos/robot/unitree/g1/sim/presets/loop2.plant.json \
-    --windows 8 --seconds 10 --fit 60 --studies 3 --workers 8 \
-    --out dimos/robot/unitree/g1/sim/presets/loop2b
-python -m dimos.robot.unitree.g1.sim.sysid.ground data/g1_groot_characterization_2026-08-27.db \
-    --preset dimos/robot/unitree/g1/sim/presets/loop2b.plant.json --windows 8 --seconds 10 --seed 1 --replicates 3
-```
+Not said by any of this: the replicate floor is the sim against itself,
+one recording on one undeclared floor with nothing weighed anchors none of
+the declared values, and cross-track never moved.
 
 ## 6. Owed
 

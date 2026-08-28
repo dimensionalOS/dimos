@@ -138,42 +138,49 @@ PHYSICS_KEYS = frozenset(KNOBS) - {"actuator_tau"}
 # Bare g1_29dof.xml: the experimental control every claim is comparative against.
 STOCK = Preset(name="stock", builtin=True)
 
-# The first fit (2026-08-28): 12 studies x 30 trials on t=20..150 s of the
-# 08-27 recording, the median of 14 pooled near-optimal trials. It hit the
-# study cap without stabilising: the region is wider than this data pins
-# (presets/measured.ranges.json carries the spread and the cloud), so every
-# fitted value is a CENTRE. Weighted score 0.816 -> 0.671 (-17.7%); every
-# channel improved, scored or not. Held-out on t=200..260 s: see README 5.
-_FIT = "fitted: 2026-08-28, median of the pooled region; p10..p90 in presets/measured.ranges.json"
+# The tune (2026-08-28): fitted on loop 2, the GR00T policy driving the plant
+# on the recorded commands, against Point-LIO (tracking areas along/cross/yaw
+# and the sway cadence), 3 studies x 60 trials on 8 windows x 10 s, shipped as
+# the median of the top tenth of trials. Held out: cadence 10.9 -> 7.9%, yaw
+# 0.207 -> 0.077 rad, along 0.128 -> 0.113 m. The plant half; the loop half
+# (torque envelope, action delay, clocks) rides in presets/measured.loop.json.
+# presets/measured.plant.json is the artifact this restates (held by test).
+_FIT = "fitted: loop 2 vs Point-LIO, 2026-08-28; see README 5"
 MEASURED = Preset(
     name="measured",
     builtin=True,
     physics={
         **ENGINE_DEFAULTS,
-        "armature": 0.01756149228582811,
-        "frictionloss": 6.582118989435054,
-        "foot_solref_time": 0.006732566509571869,
-        "foot_solref_damp": 1.2469639963773431,
+        "armature": 0.013532718113392453,
+        "frictionloss": 3.49491103311723,
+        "trunk_mass_scale": 1.0768244108348717,
+        "trunk_com_x": -0.0017302087401046204,
+        "leg_mass_scale": 0.9551293057125474,
+        "foot_friction": 0.9189821384782009,
+        "foot_solref_time": 0.007403190681243228,
+        "foot_solref_damp": 0.9119060721424599,
+        "foot_solimp_dmin": 0.6903494516742212,
+        "foot_solimp_width": 0.0036381262222917416,
     },
-    actuator_tau=0.002360108631305092,
+    actuator_tau=0.003113984398972721,
     provenance={
-        "armature": _FIT + " (0.0063..0.0288)",
-        "frictionloss": _FIT + " (5.02..7.74; the upper bound 8.0 is near, widen before refitting)",
-        "actuator_tau": _FIT + " (0.0018..0.0054)",
-        "foot_solref_time": _FIT + " (0.0040..0.0121)",
-        "foot_solref_damp": _FIT + " (1.07..1.59)",
-        "damping": "declared: stock; only a hanging recording resolves it",
-        "trunk_mass_scale": "declared: not weighed (model mass 35.112 kg)",
-        "trunk_inertia_scale": "declared: not weighed",
-        "trunk_com_x": "declared: not weighed",
-        "leg_mass_scale": "declared: CAD masses from Unitree's URDF",
-        "foot_friction": "declared: a floor property; the recording's floor is undeclared",
-        "foot_friction_torsional": "declared: stock; meaningless for a four-sphere foot",
-        "foot_solimp_dmin": "declared: stock; contact shape not resolved by walking",
-        "foot_solimp_width": "declared: stock; contact shape not resolved by walking",
-        "solver_iterations": "declared: the scene's 100",
-        "solver_ls_iterations": "declared: the scene's 50",
-        "solver_cone": "declared: the scene's pyramidal cone",
+        "armature": _FIT,
+        "frictionloss": _FIT,
+        "actuator_tau": _FIT,
+        "foot_solref_time": _FIT,
+        "foot_solref_damp": _FIT,
+        "trunk_mass_scale": _FIT,
+        "trunk_com_x": _FIT,
+        "leg_mass_scale": _FIT,
+        "foot_friction": _FIT,
+        "foot_solimp_dmin": _FIT,
+        "foot_solimp_width": _FIT,
+        "damping": "declared: stock",
+        "trunk_inertia_scale": "declared: stock",
+        "foot_friction_torsional": "declared: stock",
+        "solver_iterations": "declared: stock",
+        "solver_ls_iterations": "declared: stock",
+        "solver_cone": "declared: stock",
     },
 )
 

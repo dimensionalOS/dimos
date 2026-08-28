@@ -35,8 +35,8 @@ This is fitting THROUGH the controller, which go2sim measured to anti-transfer
 on the Go2 twice; it is used here by decision, with that on record.
 
     python -m dimos.robot.unitree.g1.sim.sysid.ground REC.db --preset measured
-    python -m dimos.robot.unitree.g1.sim.sysid.ground REC.db --fit 60 --studies 3 --workers 8 --out presets/loop2
-    python -m dimos.robot.unitree.g1.sim.sysid.ground REC.db --preset presets/loop2.plant.json --view
+    python -m dimos.robot.unitree.g1.sim.sysid.ground REC.db --fit 60 --studies 3 --workers 8 --out presets/candidate
+    python -m dimos.robot.unitree.g1.sim.sysid.ground REC.db --preset measured --view
 """
 
 from __future__ import annotations
@@ -475,8 +475,9 @@ def table(name: str, per: list[dict[str, float]]) -> str:
 
 
 def load_values(preset_arg: str) -> tuple[Preset, dict[str, float]]:
-    """A preset's complete loop-2 values: plant knobs, and the loop/rig knobs from
-    the ``.loop.json`` a loop-2 fit writes beside its plant JSON (defaults otherwise)."""
+    """A preset's complete loop-2 values: plant knobs, plus the loop/rig knobs
+    from the ``.loop.json`` beside its plant JSON (a built-in name looks in
+    ``presets/``); defaults otherwise."""
     preset = load_preset(preset_arg)
     values = {
         **ENGINE_DEFAULTS,
@@ -484,12 +485,11 @@ def load_values(preset_arg: str) -> tuple[Preset, dict[str, float]]:
         **preset.physics,
         "actuator_tau": preset.actuator_tau,
     }
-    loop = (
-        Path(preset_arg).with_suffix("").with_suffix(".loop.json")
-        if preset_arg.endswith(".plant.json")
-        else None
-    )
-    if loop is not None and loop.is_file():
+    if preset_arg.endswith(".plant.json"):
+        loop = Path(preset_arg[: -len(".plant.json")] + ".loop.json")
+    else:
+        loop = Path(__file__).resolve().parents[1] / "presets" / f"{preset_arg}.loop.json"
+    if loop.is_file():
         values.update(json.loads(loop.read_text()))
     return preset, values
 
@@ -518,7 +518,7 @@ def main() -> None:
     ap.add_argument(
         "--out", default=None, help="prefix: writes .plant.json, .loop.json, .trials.json"
     )
-    ap.add_argument("--name", default="loop2")
+    ap.add_argument("--name", default="candidate")
     ap.add_argument("--view", action="store_true", help="watch from --start")
     ap.add_argument("--start", type=float, default=None)
     ap.add_argument("--speed", type=float, default=1.0)
