@@ -143,6 +143,27 @@ What this does NOT say: one recording on one undeclared floor with nothing
 weighed anchors none of the pinned values, and the replicate floor is the
 sim against itself, not the robot against itself.
 
+**Cadence, and the plant to use: `loop2c`** (2026-08-28). Watching loop2b
+beside the ghost showed the sway drifting in and out of phase. Not latency:
+Point-LIO trails the IMU by a measured 10 ms on every axis (`rig_dt`, now
+pinned). The stock plant sways at the robot's cadence to the sample; loop2b
+had bought its along-track area by striding SLOWER (0.88 vs 1.25 Hz), which
+a 10 s tracking area cannot see. `cadence` (relative sway-frequency error
+from the roll spectrum) joined the loss, `cmd_dt` (the command clock,
+unknown to ~50 ms) joined the search, and the refit is `loop2c`. Held out
+(seed 1, 3 replicates, floor ~0.003):
+
+| plant | along (m) | cross (m) | yaw (rad) | cadence |
+|---|---:|---:|---:|---:|
+| stock | 0.128 | 0.105 | 0.207 | 10.9% |
+| loop2b | 0.099 | 0.107 | 0.121 | 14.4% |
+| loop2c | 0.113 | 0.115 | 0.077 | 7.9% |
+
+loop2c is the only plant whose cadence beats stock; yaw is a third of
+stock's and along-track still improves 11%. The envelope (0.63 at
+7.5 rad/s) and ~2 steps of action delay survive a loss that punishes slow
+striding; `cmd_dt` came back at -17 ms with a wide spread. Use loop2c.
+
 **Widened loop-2 search, 2026-08-28** (`presets/loop2b.*`): in sample the
 point reads 0.571, the same as the five-knob fit, but on FRESH windows it
 is the first plant to move position: along 0.120 -> 0.097 m (-19%, held
