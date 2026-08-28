@@ -22,11 +22,13 @@ import open3d as o3d
 import pytest
 
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.experimental.object import Object as DetObject
+from dimos.robot.assets.model import RobotModel
 
 
 def _make_det_object(
@@ -55,7 +57,12 @@ def _make_det_object(
 @pytest.fixture
 def module() -> Iterator[PickAndPlaceModule]:
     """Create an unstarted PickAndPlaceModule for pure-logic tests."""
-    instance = PickAndPlaceModule()
+    instance = PickAndPlaceModule(
+        model=RobotModelConfig(
+            model=RobotModel.from_file("unused.urdf"),
+            joint_names=[],
+        )
+    )
     yield instance
     instance.stop()
 

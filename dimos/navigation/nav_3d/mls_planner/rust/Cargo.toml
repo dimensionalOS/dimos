@@ -6,10 +6,8 @@ description = "Native Rust multi-level surface path planner for dimos"
 license = "Apache-2.0"
 
 [lib]
-# Must match the #[pymodule] fn name in python.rs.
 name = "dimos_mls_planner"
 path = "src/lib.rs"
-crate-type = ["cdylib", "rlib"]
 
 [[bin]]
 name = "mls_planner"
@@ -27,19 +25,14 @@ threads = 2
 global_map = "sensor_msgs.PointCloud2"
 local_map = "sensor_msgs.PointCloud2"
 region_bounds = "geometry_msgs.PoseStamped"
-start_pose = "geometry_msgs.PoseStamped"
-goal_pose = "geometry_msgs.PoseStamped"
+goal = "geometry_msgs.PointStamped"
+tf = "tf2_msgs.TFMessage"
 
 [package.metadata.dimos.module.mls_planner.outputs]
 surface_map = "sensor_msgs.PointCloud2"
 nodes = "sensor_msgs.PointCloud2"
 node_edges = "nav_msgs.LineSegments3D"
 path = "nav_msgs.Path"
-
-[features]
-# Baked host binaries build with default-features off to keep libpython out of a static link.
-default = ["python"]
-python = ["dep:pyo3", "dep:numpy"]
 
 [dependencies]
 dimos-module = { path = "../../../../../native/rust/dimos-module" }
@@ -53,9 +46,3 @@ validator = { version = "0.20", features = ["derive"] }
 image = { version = "0.25", default-features = false }
 imageproc = { version = "0.25", default-features = false }
 rayon = "1"
-pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"], optional = true }
-numpy = { version = "0.25", optional = true }
-
-[profile.release]
-lto = "thin"
-codegen-units = 1

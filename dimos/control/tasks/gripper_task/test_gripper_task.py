@@ -118,6 +118,24 @@ def test_limits_resolve_by_joint_name_in_adapter_order(mocker: MockerFixture) ->
     assert output.positions == pytest.approx([1.57, 0.04])
 
 
+def test_configured_hardware_limits_override_adapter_limits(mocker: MockerFixture) -> None:
+    hardware = _hardware(mocker)
+    configured = JointLimits(
+        position_lower=[0.0] * 7,
+        position_upper=[*([2.0] * 6), 0.1],
+        velocity_max=[1.0] * 7,
+    )
+    hardware["robot"].component.limits = configured
+
+    task = create_task(_cfg(["arm/tool_joint"]), hardware)
+    assert task.set_normalized([0.5])
+    output = task.compute(_state())
+
+    assert output is not None
+    assert output.positions == pytest.approx([0.05])
+    hardware["robot"].adapter.get_limits.assert_not_called()
+
+
 def test_limit_resolution_rejects_ambiguous_joint_ownership(mocker: MockerFixture) -> None:
     hardware = _hardware(mocker)
     hardware["duplicate"] = hardware["robot"]

@@ -162,7 +162,7 @@ class EEFTwistTask(PoseTargetIKTask):
 
 
 class EEFTwistTaskParams(PoseTargetIKTaskParams):
-    target_frame: str | None = None
+    target_frame: str
     timeout: float = 0.3
 
 
@@ -177,7 +177,7 @@ def create_task(
         EEFTwistTaskConfig(
             joint_names=tuple(cfg.joint_names),
             robot_model=params.robot_model,
-            target_frames=(params.target_frame or params.robot_model.end_effector_link,),
+            target_frames=(params.target_frame,),
             pink=params.pink,
             priority=cfg.priority,
             timeout=0.0,

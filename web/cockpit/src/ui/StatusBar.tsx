@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { SessionStatus } from "../session/store.ts";
+import type { SessionStatus } from "@dimos/sdk";
 import styles from "./StatusBar.module.css";
 
 /** Wall clock ticking at `periodMs` while `active`; frozen otherwise. */
@@ -42,9 +42,12 @@ export function StatusBar({ status }: { status: SessionStatus }) {
       </span>
       {detail !== "" && <span className={styles.detail}>{detail}</span>}
       <span className={styles.robot} data-testid="robot">
-        {status.robot !== null ? `${status.robot.name} (${status.robot.model})` : "no robot"}
+        {status.watchedRobot !== null
+          ? `${status.watchedRobot.name} (${status.watchedRobot.model})`
+          : "no robot"}
       </span>
-      {status.lastError !== null && <span className={styles.error}>{status.lastError}</span>}
+      {status.lastError !== null && <span className={styles.error}>{status.lastError.message}
+      </span>}
     </header>
   );
 }

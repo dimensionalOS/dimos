@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 
@@ -25,10 +25,10 @@ from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.kinematics.utils import (
     filter_result_to_group as _filter_result_to_group,
     resolve_single_pose_target_request as _resolve_single_pose_target_request,
-    unique_pose_target_frame_for_robot as _unique_pose_target_frame_for_robot,
+    unique_pose_target_frame as _unique_pose_target_frame,
 )
 from dimos.manipulation.planning.spec.enums import IKStatus
-from dimos.manipulation.planning.spec.models import IKResult, WorldRobotID
+from dimos.manipulation.planning.spec.models import IKResult
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -38,6 +38,8 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+
+    from dimos.manipulation.planning.world.drake_world import DrakeWorld
 
 try:
     from pydrake.math import RigidTransform, RotationMatrix
@@ -77,7 +79,6 @@ class DrakeOptimizationIK:
     def solve(
         self,
         world: WorldSpec,
-        robot_id: WorldRobotID,
         target_pose: PoseStamped,
         seed: JointState | None = None,
         position_tolerance: float = 0.001,
@@ -90,7 +91,7 @@ class DrakeOptimizationIK:
         if error is not None:
             return error
 
-        target_frame_name = _unique_pose_target_frame_for_robot(world, robot_id)
+        target_frame_name = _unique_pose_target_frame(world)
         if target_frame_name is None:
             return _create_failure_result(
                 IKStatus.UNSUPPORTED,
@@ -104,12 +105,12 @@ class DrakeOptimizationIK:
         ).to_matrix()
 
         # Get joint limits
-        lower_limits, upper_limits = world.get_joint_limits(robot_id)
+        lower_limits, upper_limits = world.get_joint_limits()
 
         # Get seed from current state if not provided
         if seed is None:
             with world.scratch_context() as ctx:
-                seed = world.get_joint_state(ctx, robot_id)
+                seed = world.get_joint_state(ctx)
 
         # Extract joint names and seed positions
         joint_names = seed.name
@@ -132,7 +133,6 @@ class DrakeOptimizationIK:
             # Solve IK
             result = self._solve_single(
                 world=world,
-                robot_id=robot_id,
                 target_transform=target_transform,
                 seed=current_seed,
                 joint_names=joint_names,
@@ -146,7 +146,7 @@ class DrakeOptimizationIK:
             if result.is_success() and result.joint_state is not None:
                 # Check collision if requested
                 if check_collision:
-                    if not world.check_config_collision_free(robot_id, result.joint_state):
+                    if not world.check_config_collision_free(result.joint_state):
                         continue  # Try another seed
 
                 # Check error
@@ -200,7 +200,7 @@ class DrakeOptimizationIK:
                 "DrakeOptimizationIK requires a pose-targetable planning group",
             )
 
-        lower_limits, upper_limits = world.get_joint_limits(request.robot_id)
+        lower_limits, upper_limits = world.get_joint_limits()
         target_matrix = Transform(
             translation=request.target_pose.position,
             rotation=request.target_pose.orientation,
@@ -226,7 +226,6 @@ class DrakeOptimizationIK:
 
             result = self._solve_single(
                 world=world,
-                robot_id=request.robot_id,
                 target_transform=target_transform,
                 seed=current_seed,
                 joint_names=request.joint_names,
@@ -239,9 +238,7 @@ class DrakeOptimizationIK:
             )
             if not result.is_success() or result.joint_state is None:
                 continue
-            if check_collision and not world.check_config_collision_free(
-                request.robot_id, result.joint_state
-            ):
+            if check_collision and not world.check_config_collision_free(result.joint_state):
                 continue
             total_error = result.position_error + result.orientation_error
             if total_error < best_error:
@@ -263,7 +260,6 @@ class DrakeOptimizationIK:
     def _solve_single(
         self,
         world: WorldSpec,
-        robot_id: WorldRobotID,
         target_transform: RigidTransform,
         seed: NDArray[np.float64],
         joint_names: list[str],
@@ -274,16 +270,14 @@ class DrakeOptimizationIK:
         target_frame_name: str,
         locked_joint_positions: Mapping[int, float] | None = None,
     ) -> IKResult:
-        # Get robot data from world internals (Drake-specific access)
-        robot_data = world._robots[robot_id]  # type: ignore[attr-defined]
-        plant = world.plant  # type: ignore[attr-defined]
+        drake_world = cast("DrakeWorld", world)
+        plant = drake_world.plant
+        joint_indices = drake_world.get_model_joint_indices()
 
         # Create IK problem
         ik = InverseKinematics(plant)
 
-        target_frame = plant.GetBodyByName(
-            target_frame_name, robot_data.model_instance
-        ).body_frame()
+        target_frame = drake_world.get_body_frame(target_frame_name)
 
         # Add position constraint
         ik.AddPositionConstraint(
@@ -308,12 +302,12 @@ class DrakeOptimizationIK:
         q = ik.q()
 
         for local_index, value in (locked_joint_positions or {}).items():
-            joint_idx = robot_data.joint_indices[local_index]
+            joint_idx = joint_indices[local_index]
             prog.AddBoundingBoxConstraint(value, value, q[joint_idx])
 
         # Set initial guess (full positions vector)
         full_seed = np.zeros(plant.num_positions())
-        for i, joint_idx in enumerate(robot_data.joint_indices):
+        for i, joint_idx in enumerate(joint_indices):
             full_seed[joint_idx] = seed[i]
         prog.SetInitialGuess(q, full_seed)
 
@@ -328,7 +322,7 @@ class DrakeOptimizationIK:
 
         # Extract solution for this robot's joints
         full_solution = result.GetSolution(q)
-        joint_solution = np.array([full_solution[idx] for idx in robot_data.joint_indices])
+        joint_solution = np.array([full_solution[idx] for idx in joint_indices])
 
         # Clip to limits
         joint_solution = np.clip(joint_solution, lower_limits, upper_limits)
@@ -336,8 +330,8 @@ class DrakeOptimizationIK:
         # Compute actual error using FK
         solution_state = JointState({"name": joint_names, "position": joint_solution.tolist()})
         with world.scratch_context() as ctx:
-            world.set_joint_state(ctx, robot_id, solution_state)
-            actual_matrix = world.get_link_pose(ctx, robot_id, target_frame_name)
+            world.set_joint_state(ctx, solution_state)
+            actual_matrix = world.get_link_pose(ctx, target_frame_name)
 
         position_error, orientation_error = compute_pose_error(
             actual_matrix,

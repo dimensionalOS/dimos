@@ -28,7 +28,6 @@ from dimos.robot.manipulators.openarm.config import (
     OPENARM_ARM_JOINTS,
     OPENARM_GRIPPER_JOINTS,
     OPENARM_JOINTS,
-    openarm_arm_joints,
     openarm_bimanual_model_config,
     openarm_hardware,
 )
@@ -40,10 +39,9 @@ OPENARM_QUEST_TASK_NAME = "teleop_openarm"
 _OPENARM_ARM_VELOCITY_PROFILE_RAD_S = (1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0)
 _OPENARM_JOINT_VELOCITY_LIMITS_RAD_S = {
     joint_name: velocity_limit
-    for side in ("left", "right")
     for joint_name, velocity_limit in zip(
-        openarm_arm_joints(side),
-        _OPENARM_ARM_VELOCITY_PROFILE_RAD_S,
+        OPENARM_ARM_JOINTS,
+        _OPENARM_ARM_VELOCITY_PROFILE_RAD_S * 2,
         strict=True,
     )
 }
@@ -97,7 +95,7 @@ class _OpenArmManipulationModule(ManipulationModule):
     """Own the fixed OpenArm model outside blueprint CLI configuration."""
 
     def _initialize_planning(self) -> None:
-        self.config.robots = [openarm_bimanual_model_config()]
+        self.config.model = openarm_bimanual_model_config()
         super()._initialize_planning()
 
 
@@ -161,6 +159,7 @@ teleop_quest_openarm = autoconnect(
         ],
     ),
     _OpenArmManipulationModule.blueprint(
+        model=openarm_bimanual_model_config(),
         kinematics=_openarm_quest_pink,
         visualization={"backend": "viser"},
     ),
