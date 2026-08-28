@@ -60,3 +60,10 @@ def test_module_publishes_recorded_messages(recording: str) -> None:
     module.stop()
     assert [round(t, 3) for t in got["odom"]] == [1.0, 1.1, 1.2]
     assert [round(t, 3) for t in got["goal"]] == [1.05]
+
+
+def test_portless_class_gets_ports_from_dataset(recording: str) -> None:
+    """A worker imports the class without a recording; the instance still has the ports."""
+    module = replay_module("")(dataset=recording)
+    assert sorted(module.outputs) == ["goal", "odom"]
+    module.stop()

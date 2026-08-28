@@ -153,9 +153,6 @@ def run(
     # Some blueprint modules select their composition at import time, so all
     # global sources must be visible before resolving the requested names.
     global_config.update(**preparsed_global_config)
-    # Workers re-import blueprint modules before they receive the global config;
-    # what shapes a module class at import (the replay blueprint's ports) goes via env.
-    os.environ["REPLAY_DB"] = global_config.replay_db
 
     blueprint = autoconnect(*map(get_by_name_or_exit, blueprint_names))
 

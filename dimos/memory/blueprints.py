@@ -14,12 +14,12 @@
 
 """``dimos --replay-db <memory.db> run replay``: every recorded stream back on the bus, with the viewer.
 
-The port set is read from the recording when this module is imported. ``dimos run`` puts
-``--replay-db`` in ``REPLAY_DB`` so workers build the same class; outside ``dimos run``
-(the blueprint registry, tests) there is no recording and ``Replay`` has no ports.
+``--replay-db`` must be a path to a recording; the ports are read from it when this
+module is imported. Anywhere the value is not a file (the blueprint registry, workers,
+tests) ``Replay`` has no class-level ports; instances add them from ``dataset``.
 """
 
-import os
+from pathlib import Path
 from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
@@ -27,7 +27,7 @@ from dimos.core.global_config import global_config
 from dimos.memory.replay_module import replay_module, rerun_layout
 from dimos.visualization.vis_module import vis_module
 
-_DATASET = os.environ.get("REPLAY_DB", "")
+_DATASET = global_config.replay_db if Path(global_config.replay_db).is_file() else ""
 
 Replay = replay_module(_DATASET)
 

@@ -14,10 +14,10 @@
 
 """Replay a recording as a module: one ``Out`` port per recorded stream.
 
-The port set depends on the recording, so :func:`replay_module` builds the class at
-import time of the blueprint that uses it (see ``dimos.memory.blueprints``). Workers
-rebuild the same class on import because ``dimos run`` exports ``--replay-db`` as
-``REPLAY_DB`` before they start.
+The port set depends on the recording. :func:`replay_module` builds a class with the
+ports as annotations so ``autoconnect`` can wire them; the instance also creates any
+missing ``Out`` from its ``dataset`` config, so a worker that imported a port-less
+class still ends up with the same ports.
 """
 
 from __future__ import annotations
@@ -50,12 +50,29 @@ class ReplayModuleConfig(ModuleConfig):
     duration: float | None = None
 
 
+def stream_types_of(dataset: str) -> dict[str, type]:
+    """Stream name -> payload type for every stream in *dataset*."""
+    store = open_dataset(dataset)
+    store.start()
+    try:
+        return stream_payload_types(store)
+    finally:
+        store.stop()
+
+
 class ReplayModule(Module):
     """Publishes every ``Out`` port from the recording at recorded timing."""
 
     config: ReplayModuleConfig
     stream_types: dict[str, type] = {}  # set by replay_module()
     _store: Store | None = None
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        if self.config.dataset:
+            for name, t in stream_types_of(self.config.dataset).items():
+                if not hasattr(self, name):
+                    setattr(self, name, Out(t, name, self))
 
     @rpc
     def start(self) -> None:
@@ -95,12 +112,7 @@ def replay_module(dataset: str, topics: str = "*", name: str = "Replay") -> type
     """
     ports: dict[str, Any] = {}
     if dataset:
-        store = open_dataset(dataset)
-        store.start()
-        try:
-            types = stream_payload_types(store)
-        finally:
-            store.stop()
+        types = stream_types_of(dataset)
         check_topics(topics, types)
         ports = {n: Out[types[n]] for n in sorted(matching(topics, types))}  # type: ignore[valid-type]
     caller = sys._getframe(1).f_globals.get("__name__", __name__)
