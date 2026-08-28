@@ -18,11 +18,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
+import fcntl
 from importlib.metadata import version as package_version
 import json
 from pathlib import Path
 import threading
-from typing import TYPE_CHECKING, Any, Never
+from typing import TYPE_CHECKING, Any, Never, TextIO
 import uuid
 
 import typer
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
 
 host_app = typer.Typer(help="Run and inspect DimOS Hosts", no_args_is_help=True)
 HOST_ID_PATH = STATE_DIR / "hosted" / "host_id"
+HOST_LOCK_PATH = STATE_DIR / "hosted" / "host.lock"
 DISCOVERY_KEY = "dimos/hosts/*/live"
 DEFAULT_DISCOVERY_TIMEOUT = 2.0
 
@@ -54,6 +56,17 @@ def _load_host_id(path: Path) -> str:
     if not host_id:
         raise ValueError(f"Host identity file is empty: {path}")
     return host_id
+
+
+def _acquire_host_lock(path: Path) -> TextIO:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = path.open("a+")
+    try:
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as exc:
+        lock_file.close()
+        raise RuntimeError("Host service is already running on this machine") from exc
+    return lock_file
 
 
 def _zenoh_kwargs() -> dict[str, Any]:
@@ -313,34 +326,42 @@ def serve(
     from dimos.protocol.rpc.zenohrpc import ZenohRPC
     from dimos.protocol.service.zenohservice import ZenohSessionPool
 
-    host_id = _load_host_id(HOST_ID_PATH)
-    daemon = HostDaemon(
-        host_id,
-        name=name,
-        tags=set(tags),
-        versions={
-            "protocol": HOST_PROTOCOL_VERSION,
-            "fragment_schema": FRAGMENT_SCHEMA_VERSION,
-            "dimos": package_version("dimos"),
-        },
-    )
-    pool = ZenohSessionPool()
-    rpc = ZenohRPC(session_pool=pool, **_zenoh_kwargs())
-    with ExitStack() as cleanup:
-        cleanup.callback(pool.close_all)
-        cleanup.callback(daemon.shutdown)
-        rpc.start()
-        cleanup.callback(rpc.stop)
-        control_name = HOST_CONTROL_RPC_NAME.format(host_id=host_id)
-        rpc.serve_rpc(daemon.describe, f"{control_name}/describe")  # type: ignore[arg-type]
-        rpc.serve_rpc(daemon.start, f"{control_name}/start")  # type: ignore[arg-type]
-        rpc.serve_rpc(daemon.status, f"{control_name}/status")  # type: ignore[arg-type]
-        rpc.serve_rpc(daemon.stop, f"{control_name}/stop")  # type: ignore[arg-type]
-        token = rpc.session.liveliness().declare_token(HOST_LIVELINESS_KEY.format(host_id=host_id))
-        cleanup.callback(token.undeclare)
-        descriptor = daemon.describe()
-        typer.echo(f"Host {descriptor.name} ({host_id}) is available")
-        try:
-            threading.Event().wait()
-        except KeyboardInterrupt:
-            pass
+    try:
+        lock_file = _acquire_host_lock(HOST_LOCK_PATH)
+    except (OSError, RuntimeError) as exc:
+        _fail(str(exc))
+
+    with lock_file:
+        host_id = _load_host_id(HOST_ID_PATH)
+        daemon = HostDaemon(
+            host_id,
+            name=name,
+            tags=set(tags),
+            versions={
+                "protocol": HOST_PROTOCOL_VERSION,
+                "fragment_schema": FRAGMENT_SCHEMA_VERSION,
+                "dimos": package_version("dimos"),
+            },
+        )
+        pool = ZenohSessionPool()
+        rpc = ZenohRPC(session_pool=pool, **_zenoh_kwargs())
+        with ExitStack() as cleanup:
+            cleanup.callback(pool.close_all)
+            cleanup.callback(daemon.shutdown)
+            rpc.start()
+            cleanup.callback(rpc.stop)
+            control_name = HOST_CONTROL_RPC_NAME.format(host_id=host_id)
+            rpc.serve_rpc(daemon.describe, f"{control_name}/describe")  # type: ignore[arg-type]
+            rpc.serve_rpc(daemon.start, f"{control_name}/start")  # type: ignore[arg-type]
+            rpc.serve_rpc(daemon.status, f"{control_name}/status")  # type: ignore[arg-type]
+            rpc.serve_rpc(daemon.stop, f"{control_name}/stop")  # type: ignore[arg-type]
+            token = rpc.session.liveliness().declare_token(
+                HOST_LIVELINESS_KEY.format(host_id=host_id)
+            )
+            cleanup.callback(token.undeclare)
+            descriptor = daemon.describe()
+            typer.echo(f"Host {descriptor.name} ({host_id}) is available")
+            try:
+                threading.Event().wait()
+            except KeyboardInterrupt:
+                pass
