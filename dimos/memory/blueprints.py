@@ -24,7 +24,7 @@ from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.memory.replay_module import replay_module, rerun_layout
+from dimos.memory.replay_module import replay_module, rerun_layout, stream_types_of
 from dimos.visualization.vis_module import vis_module
 
 _DATASET = global_config.replay_db if Path(global_config.replay_db).is_file() else ""
@@ -33,7 +33,8 @@ Replay = replay_module(_DATASET)
 
 
 def _layout() -> Any:
-    return rerun_layout(Replay.stream_types)
+    # Runs in the bridge worker at start(), where the global config is already applied.
+    return rerun_layout(stream_types_of(global_config.replay_db))
 
 
 replay = autoconnect(
