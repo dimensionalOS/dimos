@@ -114,9 +114,9 @@ def test_recording_fails_loudly_when_no_stream_matches(
     monkeypatch.setattr(tap, "RECORDINGS_DIR", tmp_path)
     monkeypatch.setattr(global_config, "record", "sqlite")
     monkeypatch.setattr(global_config, "record_topics", "color_image2")
-    with pytest.raises(ValueError, match="matched none of: lidar, odom"):
-        with tap.recording(
-            {("odom", PoseStamped): _Transport(), ("lidar", PoseStamped): _Transport()}
-        ):
-            pass
+    with (
+        pytest.raises(ValueError, match="matched none of: lidar, odom"),
+        tap.recording({("odom", PoseStamped): _Transport(), ("lidar", PoseStamped): _Transport()}),
+    ):
+        pass
     assert not any(tmp_path.rglob("memory.db"))

@@ -951,7 +951,7 @@ class ManipulationModule(Module):
             self._fail("Cartesian target groups must be unique")
             return None
         auxiliary_ids = tuple(planning_group_id_from_selector(group) for group in auxiliary_groups)
-        group_ids = tuple((*normalized_targets.keys(), *auxiliary_ids))
+        group_ids = (*normalized_targets.keys(), *auxiliary_ids)
         planning = self._begin_group_planning(speed_scale)
         if planning is None:
             return None

@@ -326,7 +326,7 @@ class EvalRunner(Configurable, CompositeResource):
         final_text = ""
         with transcript.open("w") as fh:
             for update in graph.stream({"messages": messages}, stream_mode="updates"):
-                for _node, payload in update.items():
+                for payload in update.values():
                     for msg in payload.get("messages", []):
                         fh.write(
                             json.dumps({"type": type(msg).__name__, "content": str(msg.content)})

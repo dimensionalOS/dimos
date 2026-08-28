@@ -21,19 +21,17 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-import dimos.cli.commands.lifecycle as lifecycle
+from dimos.cli.commands import lifecycle
 from dimos.cli.commands.lifecycle import _with_relay_bridge
 from dimos.cli.dimos import main, normalize_argv
-import dimos.cli.spy.run_spy as run_spy
-import dimos.core.coordination.module_coordinator as module_coordinator
-import dimos.core.coordination.process_lifecycle as process_lifecycle
+from dimos.cli.spy import run_spy
+from dimos.core import run_registry
+from dimos.core.coordination import module_coordinator, process_lifecycle
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
-import dimos.core.run_registry as run_registry
-from dimos.robot import external_blueprints as external
-import dimos.robot.get_all_blueprints as get_all_blueprints
+from dimos.robot import external_blueprints as external, get_all_blueprints
+from dimos.utils import logging_config
 import dimos.utils.cache as cache_utils
-import dimos.utils.logging_config as logging_config
 
 
 class RunConfigA(ModuleConfig):
@@ -134,7 +132,7 @@ def test_list_blueprints_groups_builtin_and_external(monkeypatch: pytest.MonkeyP
 
 
 def test_list_blueprints_without_external_names(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(external, "list_external_blueprint_names", lambda: [])
+    monkeypatch.setattr(external, "list_external_blueprint_names", list)
 
     result = CliRunner().invoke(main, ["list"])
 

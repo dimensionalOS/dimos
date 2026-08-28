@@ -136,12 +136,7 @@ def merge_cli(
     index = 0
     while index < len(tokens):
         token = tokens[index]
-        if (
-            token == "-o"
-            or token.startswith("-o=")
-            or token == "--option"
-            or token.startswith("--option=")
-        ):
+        if token == "-o" or token.startswith(("-o=", "--option=")) or token == "--option":
             raise BlueprintConfigError(
                 "The legacy -o/--option syntax was removed. "
                 "Use a blueprint option directly, for example "
