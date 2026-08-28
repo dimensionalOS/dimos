@@ -156,19 +156,22 @@ def sdk_variant() -> str:
     hardware = detect_hardware()
     if hardware in ("thor", "orin"):
         return hardware
+    if hardware in ("xavier", "nano"):
+        # cuVSLAM ships no JetPack 4/5 build, so their GPUs are unusable here
+        logger.warning("cuVSLAM has no %s GPU build; only use_gpu=False will work.", hardware)
+        return "aarch64"
     if hardware == "darwin-apple-silicon":
         return "metal"
     if hardware == "darwin-intel":
         raise RuntimeError("cuVSLAM has no Intel-mac build; it needs Apple silicon.")
-    # cu_vslam_rs carries no CPU-fallback variant for these, so there is nothing to build.
-    if hardware in ("xavier", "nano"):
-        raise RuntimeError(f"cuVSLAM ships no JetPack 4/5 build, so {hardware} is unsupported.")
     if hardware == "linux-arm-no-nvidia":
-        raise RuntimeError("cuVSLAM ships no build for non-Jetson ARM.")
+        # non-Jetson ARM: the CPU-fallback build
+        return "aarch64"
     if hardware == "linux-x86-no-nvidia":
-        # fork-built with ENFORCE_GPU=OFF, so it runs without a driver
+        # same derivation as x86_64-cuda12 (ENFORCE_GPU=OFF, so it runs without a
+        # driver); the alias exists so the choice reads as deliberate
         logger.warning("No NVIDIA driver found; only use_gpu=False will work.")
-        return "x86_64-cuda12"
+        return "x86_64"
     major = detect_cuda_major()
     if major < 12:
         logger.warning(
@@ -176,7 +179,7 @@ def sdk_variant() -> str:
             "only use_gpu=False will work until the driver is upgraded.",
             major,
         )
-    return "x86_64-cuda13" if major >= 13 else "x86_64-cuda12"
+    return f"x86_64-cuda{major}"
 
 
 def _driver_env() -> dict[str, str]:
