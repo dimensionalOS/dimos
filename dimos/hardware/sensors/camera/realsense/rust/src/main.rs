@@ -862,15 +862,23 @@ fn camera_info_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Out
         let Some(ts) = *shared.last_hardware_ts.lock().unwrap() else {
             continue;
         };
-        let infos = shared.infos.lock().unwrap();
-        let Some(infos) = infos.as_ref() else {
+        // Copy out under the lock, publish after; the capture thread takes it too.
+        let snapshot = shared.infos.lock().unwrap().as_ref().map(|i| {
+            (
+                i.color.clone(),
+                i.depth.clone(),
+                i.infra1.clone(),
+                i.infra2.clone(),
+            )
+        });
+        let Some((color, depth, infra1, infra2)) = snapshot else {
             continue;
         };
         let published = [
-            (&infos.color, &outs.camera_info, cfg.enable_color),
-            (&infos.depth, &outs.depth_camera_info, cfg.enable_depth),
-            (&infos.infra1, &outs.infrared_left_camera_info, true),
-            (&infos.infra2, &outs.infrared_right_camera_info, true),
+            (&color, &outs.camera_info, cfg.enable_color),
+            (&depth, &outs.depth_camera_info, cfg.enable_depth),
+            (&infra1, &outs.infrared_left_camera_info, true),
+            (&infra2, &outs.infrared_right_camera_info, true),
         ];
         for (info, out, enabled) in published {
             if let (Some(info), true) = (info, enabled) {
@@ -898,23 +906,19 @@ fn pointcloud_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs
     let stride = cfg.pointcloud_decimation as usize;
     loop {
         let tick = std::time::Instant::now();
+        // Copy out under the locks and release them before any work or sleep;
+        // the capture thread takes both, and a std Mutex is not fair.
         let rgbd = shared.latest_rgbd.lock().unwrap().clone();
-        let (color_info, depth_scale) = {
-            let infos = shared.infos.lock().unwrap();
-            match infos.as_ref() {
-                Some(i) => (i.color.clone(), i.depth_scale),
-                None => {
-                    std::thread::sleep(period);
-                    continue;
-                }
-            }
-        };
-        let (Some(rgbd), Some(info)) = (rgbd, color_info) else {
-            std::thread::sleep(period);
-            continue;
-        };
-        let cloud = rgbd_to_cloud(&rgbd, &info, depth_scale, stride);
-        let _ = handle.block_on(outs.pointcloud.publish(&cloud));
+        let infos = shared
+            .infos
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|i| (i.color.clone(), i.depth_scale));
+        if let (Some(rgbd), Some((Some(info), depth_scale))) = (rgbd, infos) {
+            let cloud = rgbd_to_cloud(&rgbd, &info, depth_scale, stride);
+            let _ = handle.block_on(outs.pointcloud.publish(&cloud));
+        }
         std::thread::sleep(period.saturating_sub(tick.elapsed()));
         if shared.stopped() {
             return;
