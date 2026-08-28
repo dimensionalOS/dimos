@@ -21,7 +21,6 @@
   --dim-radius-sm: 0.375rem;
   --dim-radius-lg: 1rem;
   --dim-radius-pill: 9999px;
-  --dim-hairline: color-mix(in srgb, var(--md-default-fg-color) 12%, transparent);
   --dim-nav-title: #ffffff;
 }
 
@@ -36,6 +35,13 @@
   --md-code-bg-color: #131923;
   --md-footer-bg-color: #0a0e14;
   --md-footer-bg-color--dark: #080b10;
+
+  /* Hairlines, applied consistently to every raised surface. Declared here
+   * rather than at :root: material puts the scheme on <body>, so a custom
+   * property that reads --md-default-fg-color from :root resolves against
+   * material's light-mode default and freezes to black — invisible on this
+   * background, and inherited that way by every border on the site. */
+  --dim-hairline: color-mix(in srgb, var(--md-default-fg-color) 12%, transparent);
 }
 
 /* ---------------------------------------------------------------- layout */
@@ -44,7 +50,7 @@
  * nobody can track back from. Sidebars are fixed, so the middle column takes
  * every pixel this cap frees up. */
 .md-grid {
-  max-width: min(84rem, 100%);
+  max-width: min(72rem, 100%);
 }
 
 /* Reading measure only applies to prose. Code, tables, and figures keep the
@@ -53,7 +59,21 @@
 .md-typeset > ul,
 .md-typeset > ol,
 .md-typeset > blockquote {
-  max-width: 52rem;
+  max-width: 44rem;
+}
+
+/* Once the table of contents is showing there is room to inset the article
+ * from both sidebars, so the text sits in the middle rather than running up
+ * against the nav. The rule runs down the article rather than the sidebar,
+ * because the sidebar is sticky and only as tall as its own scrollwrap. */
+@media screen and (min-width: 76.25em) {
+  .md-content {
+    border-left: 1px solid var(--dim-hairline);
+  }
+
+  .md-content__inner {
+    padding-inline: 2.4rem;
+  }
 }
 
 /* A little more room for the nav tree; deep paths like
@@ -322,6 +342,120 @@
 .md-typeset .grid.cards > ul > li:hover {
   border-color: var(--md-accent-fg-color);
   transform: translateY(-2px);
+}
+
+/* Six capability cards, three to a row so the grid stays two tidy rows. The
+ * columns belong on the wrapper: material gives `.grid` the tracks and sets
+ * the inner ul to display:contents, so a rule on the ul would do nothing. */
+.md-typeset .dim-media {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+@media screen and (min-width: 60em) {
+  .md-typeset .dim-media {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* Narrower cards want less air and smaller supporting text than material's
+ * default, or three across turns into three columns of wrapped fragments. */
+.md-typeset .grid.cards.dim-media > ul > li {
+  --dim-card-pad: 0.6rem;
+  padding: var(--dim-card-pad);
+}
+
+.md-typeset .dim-media > ul > li > p + p {
+  font-size: 0.72rem;
+  color: var(--md-default-fg-color--light);
+}
+
+/* A card that leads with a demo clip: the clip is the card's top edge, so it
+ * cancels material's card padding and takes the card's own corners. */
+.md-typeset .grid.cards > ul > li {
+  --dim-card-pad: 0.8rem;
+}
+
+.md-typeset .grid.cards > ul > li > p:first-child:has(> a > :is(img, video)) {
+  margin: calc(-1 * var(--dim-card-pad)) calc(-1 * var(--dim-card-pad)) 0.7rem;
+}
+
+/* The clips are captured at whatever the source window was — 1:1, 16:10, 16:9 —
+ * so crop to one ratio rather than let each card set its own height. */
+.md-typeset .grid.cards > ul > li > p:first-child > a > :is(img, video) {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: var(--dim-radius) var(--dim-radius) 0 0;
+}
+
+/* ----------------------------------------------------------------- home */
+
+/* One wide signpost rather than a row of them: a single full-width card with
+ * the icon floated beside the link and the line under it. */
+.md-typeset .dim-cta {
+  grid-template-columns: 1fr;
+}
+
+.md-typeset .grid.cards.dim-cta > ul > li {
+  padding: 1.1rem 1.3rem;
+}
+
+/* Floated so the summary wraps beside the icon too, not just the title. */
+.md-typeset .dim-cta .twemoji {
+  float: left;
+  width: 1.7em;
+  height: 1.7em;
+  margin: 0.1rem 0.9rem 0 0;
+  color: var(--md-accent-fg-color);
+}
+
+.md-typeset .dim-cta .twemoji svg {
+  width: 100%;
+  height: 100%;
+}
+
+.md-typeset .dim-cta > ul > li > p + p {
+  margin-top: 0.1rem;
+  color: var(--md-default-fg-color--light);
+}
+
+/* The capability grid above carries a clip per card, so the two calls to
+ * action need to read as a different kind of card rather than a third row of
+ * the same one: filled surface, no outline, icon promoted above the link. */
+/* These two are the end of the page, so they get room rather than being the
+ * tightest cards on it: a floor on the height, and the content centred in
+ * whatever height wins. */
+.md-typeset .grid.cards.dim-tiles > ul > li {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 9rem;
+  background: var(--md-default-bg-color--light);
+  border-color: transparent;
+  padding: 1.6rem;
+}
+
+.md-typeset .grid.cards.dim-tiles > ul > li:hover {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--md-accent-fg-color) 8%, var(--md-default-bg-color--light));
+}
+
+.md-typeset .dim-tiles .twemoji {
+  display: block;
+  margin-bottom: 0.5rem;
+  color: var(--md-accent-fg-color);
+}
+
+.md-typeset .dim-tiles .twemoji svg {
+  width: 1.4em;
+  height: 1.4em;
+}
+
+/* The summary is supporting text here, not body copy. */
+.md-typeset .dim-tiles > ul > li > p + p {
+  font-size: 0.72rem;
+  color: var(--md-default-fg-color--light);
 }
 
 /* --------------------------------------------------------------- footer */
