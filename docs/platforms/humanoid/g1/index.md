@@ -411,7 +411,9 @@ different or only `CPUExecutionProvider` is available.
 If an interrupted source build failed in `EigenNonBlockingThreadPool.h` with
 `MaxSizeVector` errors, update the checkout and rerun the setup script. The
 script disables discovery of JetPack's old system Eigen so ONNX Runtime uses
-the Eigen revision pinned by its own build. The existing build directory is
+the Eigen revision pinned by its own build. The installer shallow-fetches and
+verifies the exact Eigen Git commit instead of relying on GitLab's generated
+archive, whose container hash can change. The existing build directory is
 reconfigured and reused.
 
 ### `libgomp.so.1: cannot allocate memory in static TLS block`

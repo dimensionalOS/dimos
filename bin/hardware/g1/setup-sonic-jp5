@@ -22,8 +22,10 @@ SONIC_VENV="$REPO_ROOT/.venv-sonic-jp5"
 SONIC_PYTHON_VERSION=3.10
 ORT_VERSION=1.20.1
 ORT_COMMIT=5c1b7ccbff7e5141c1da7a9d963d660e5741c319
+EIGEN_COMMIT=e7248b26a1ed53fa030c5c459f7ea095dfd276ac
 TASK_CACHE_HOME=${XDG_CACHE_HOME:-$HOME/.cache}/dimos/sonic-jp5
 ORT_SOURCE="$TASK_CACHE_HOME/onnxruntime-$ORT_VERSION"
+EIGEN_SOURCE="$TASK_CACHE_HOME/eigen-$EIGEN_COMMIT"
 WHEEL_CACHE="$TASK_CACHE_HOME/wheels"
 CHECK_ONLY=false
 FAILED=0
@@ -132,6 +134,23 @@ if [[ "$ACTUAL_ORT_COMMIT" != "$ORT_COMMIT" ]]; then
     exit 1
 fi
 
+if [[ ! -d "$EIGEN_SOURCE/.git" ]]; then
+    mkdir -p "$EIGEN_SOURCE"
+    git -C "$EIGEN_SOURCE" init
+    git -C "$EIGEN_SOURCE" remote add origin https://gitlab.com/libeigen/eigen.git
+    git -C "$EIGEN_SOURCE" fetch --depth 1 origin "$EIGEN_COMMIT"
+    git -C "$EIGEN_SOURCE" checkout --detach FETCH_HEAD
+fi
+
+ACTUAL_EIGEN_COMMIT=$(git -C "$EIGEN_SOURCE" rev-parse HEAD)
+if [[ "$ACTUAL_EIGEN_COMMIT" != "$EIGEN_COMMIT" ]]; then
+    echo "cached Eigen checkout is not the ONNX Runtime pinned commit:" >&2
+    echo "  expected: $EIGEN_COMMIT" >&2
+    echo "  actual:   $ACTUAL_EIGEN_COMMIT" >&2
+    echo "Move $EIGEN_SOURCE aside and rerun setup." >&2
+    exit 1
+fi
+
 if [[ ! -x "$SONIC_VENV/bin/python" ]] \
     || [[ $("$SONIC_VENV/bin/python" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")') != "$SONIC_PYTHON_VERSION" ]]; then
     uv venv --clear --python "$SONIC_PYTHON_VERSION" "$SONIC_VENV"
@@ -179,6 +198,8 @@ if [[ ${#WHEELS[@]} -eq 0 ]]; then
             --use_cuda \
             --cuda_home "$CUDA_HOME_JP5" \
             --cudnn_home /usr \
+            --use_preinstalled_eigen \
+            --eigen_path "$EIGEN_SOURCE" \
             --cmake_extra_defines \
                 CMAKE_CUDA_ARCHITECTURES=87 \
                 CMAKE_DISABLE_FIND_PACKAGE_Eigen3=ON \
