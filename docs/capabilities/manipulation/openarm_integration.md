@@ -21,7 +21,7 @@ ControlCoordinator (100 Hz)
 
 One adapter owns both arms: bus `left` (default `can1`) and bus `right`
 (default `can0`) are commanded together in one synchronized tick per control
-cycle. The command vector order is `left_arm/joint1..7`, `right_arm/joint1..7`,
+cycle. The command vector order is `openarm_left_joint1..7`, `openarm_right_joint1..7`,
 `left_arm/gripper`, `right_arm/gripper`; gripper joints are normalized
 (`0.0` closed, `1.0` open).
 
@@ -34,9 +34,8 @@ it out lazily through the robot asset cache. Gravity compensation locks the
 finger joints and preflights the remaining 14 joints against the declared arm
 order before enabling the motors.
 
-Planning treats the two arms as one robot with `left_manipulator` and
-`right_manipulator` planning groups because collision exclusions cannot span
-robots.
+Planning treats the two arms as one robot with `left_arm`, `right_arm`, and
+`both_arms` planning groups because collision exclusions cannot span robots.
 
 ## Bring-up
 

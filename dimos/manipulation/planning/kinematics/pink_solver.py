@@ -286,7 +286,7 @@ def _build_joint_mapping(
     dimos_joint_names = list(controlled_joints or config.joint_names)
 
     for dimos_name in dimos_joint_names:
-        model_joint_name = config.get_urdf_joint_name(dimos_name)
+        model_joint_name = dimos_name
         joint_id = _get_joint_id(model, model_joint_name)
         joint = model.joints[joint_id]
         nq = int(getattr(joint, "nq", 1))

@@ -19,6 +19,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 
 HardwareId = str
@@ -69,6 +70,7 @@ class HardwareComponent:
         domain_id: DDS domain ID for adapters that use DDS transport
             (e.g. Unitree G1). Real robot uses 0; unitree_mujoco sim
             defaults to 1. Ignored by non-DDS adapters.
+        limits: Optional joint limits in adapter array order.
         adapter_kwargs: Generic untyped kwargs forwarded to the adapter
             constructor — use for adapter-specific knobs that don't
             belong in the spec.
@@ -85,6 +87,7 @@ class HardwareComponent:
     address: str | Path | None = None
     auto_enable: bool = True
     domain_id: int = 0
+    limits: JointLimits | None = None
     adapter_kwargs: dict[str, Any] = field(default_factory=dict)
     wb_config: WholeBodyConfig | None = None
 

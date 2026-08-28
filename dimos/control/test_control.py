@@ -57,6 +57,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 from dimos.control.tick_loop import TickLoop
 from dimos.core.stream import In
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
+from dimos.hardware.spec import JointLimits
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -192,6 +193,34 @@ class TestJointStateSnapshot:
 
 
 class TestConnectedHardware:
+    def test_configured_limits_override_adapter_limits(self, mock_adapter):
+        configured = JointLimits(
+            position_lower=[0.0],
+            position_upper=[1.0],
+            velocity_max=[2.0],
+        )
+        component = HardwareComponent(
+            hardware_id="gripper",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=["gripper/finger"],
+            limits=configured,
+        )
+        hardware = ConnectedHardware(mock_adapter, component)
+
+        assert hardware.get_limits() is configured
+        mock_adapter.get_limits.assert_not_called()
+
+    def test_adapter_limits_are_used_when_not_configured(self, connected_hardware, mock_adapter):
+        reported = JointLimits(
+            position_lower=[-1.0] * 6,
+            position_upper=[1.0] * 6,
+            velocity_max=[2.0] * 6,
+        )
+        mock_adapter.get_limits.return_value = reported
+
+        assert connected_hardware.get_limits() is reported
+        mock_adapter.get_limits.assert_called_once_with()
+
     def test_gripper_rides_the_one_array_without_conversion(self, mock_adapter):
         mock_adapter.read_joint_positions.return_value = [0.0] * 6 + [0.035]
         mock_adapter.read_joint_velocities.return_value = [0.0] * 7

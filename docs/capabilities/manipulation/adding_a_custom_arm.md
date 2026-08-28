@@ -515,7 +515,6 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
-from dimos.robot.manipulators._modeling import coordinator_joint_mapping
 
 _YOURARM_REPO = RobotDescriptionSource(
     url="https://github.com/example/yourarm_description",
@@ -536,21 +535,16 @@ def _make_base_pose(x=0.0, y=0.0, z=0.0) -> PoseStamped:
 ### 4b. Create a robot model config helper
 
 ```python skip
-def _make_yourarm_config(
-    name: str = "arm",
-    y_offset: float = 0.0,
-) -> RobotModelConfig:
+def _make_yourarm_config(y_offset: float = 0.0) -> RobotModelConfig:
     """Create YourArm robot config for planning.
 
     Args:
-        name: Robot name in the Drake planning world.
-        y_offset: Y-axis offset for multi-arm setups.
+        y_offset: Y-axis offset for model placement.
     """
     # These must match the joint names in your URDF
-    joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
+    joint_names = [f"arm/joint{i}" for i in range(1, 7)]
 
     return RobotModelConfig(
-        name=name,
         model=RobotModel.from_file(
             _YOURARM_URDF_PATH,
             package_paths=_YOURARM_PACKAGE_PATHS,
@@ -568,7 +562,6 @@ def _make_yourarm_config(
         base_link="base_link",                 # Robot-scoped placement/weld/strip link
         collision_exclusion_pairs=[],   # Pairs of links that can touch (e.g., gripper fingers)
         auto_convert_meshes=True,       # Convert DAE/STL meshes for Drake
-        joint_name_mapping=coordinator_joint_mapping(name, 6),
         max_velocity=1.0,               # Max velocity scaling factor
         max_acceleration=2.0,           # Max acceleration scaling factor
     )
@@ -581,7 +574,7 @@ Add this to your `dimos/robot/yourarm/blueprints.py` alongside the coordinator b
 ```python skip
 
 yourarm_planner = manipulation_module(
-    robots=[_make_yourarm_config("arm")],
+    model=_make_yourarm_config(),
     planning_timeout=10.0,
     visualization={"backend": "meshcat"},
     trajectory_parametrization={"backend": "simple_trapezoid"},
@@ -600,7 +593,7 @@ parametrizer after adding the URDF limits described above:
 
 ```python skip
 yourarm_planner = manipulation_module(
-    robots=[_make_yourarm_config("arm")],
+    model=_make_yourarm_config(),
     world_backend="roboplan",
     trajectory_parametrization={
         "backend": "roboplan_toppra",
@@ -616,16 +609,14 @@ yourarm_planner = manipulation_module(
 | Field | Description |
 |-------|-------------|
 | `model` | Lazy `RobotModel` created from a `.urdf` or `.xacro` source |
-| `joint_names` | Ordered controllable local model joint set (must match URDF); not itself a planning group |
+| `joint_names` | Ordered canonical model joint set (must match the URDF and coordinator); not itself a planning group |
 | `planning_groups` / `srdf_path` | Explicit planning groups or SRDF source; direct `RobotModelConfig(...)` helpers should pass explicit groups, while shared config helpers can discover groups from SRDF/fallback |
 | `base_pose` / `base_link` | Optional robot placement: `base_pose` places `base_link` in the world for weld/strip behavior |
 | `collision_exclusion_pairs` | List of `(link_a, link_b)` tuples for links that may legitimately touch (e.g., gripper fingers) |
-| `joint_name_mapping` | Maps coordinator names such as `arm/joint1` to local URDF names such as `joint1` |
 
-Coordinator-facing joint states and trajectories use global joint names derived
-mechanically as `{robot_name}/{local_joint_name}` (for example, `arm/joint1`).
-Keep hardware-native name translation inside the hardware adapter; manipulation
-planning config uses local model joint names.
+Coordinator-facing joint states and trajectories use the model's canonical
+joint names unchanged. Keep hardware-native name translation inside the
+hardware adapter.
 
 Planning-group `base_link`/`tip_link` values define kinematic chains and pose
 target frames. `base_link` is only the robot-scoped link placed by
