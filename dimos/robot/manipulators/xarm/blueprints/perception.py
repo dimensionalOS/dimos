@@ -48,7 +48,7 @@ xarm_perception = autoconnect(
         floor_z=-0.02,
     ),
     ManipulationSkills.blueprint(),
-    PickAndPlaceModule.blueprint(),
+    PickAndPlaceModule.blueprint(planning_frame="world"),
     HeuristicGraspModule.blueprint(),
     RealSenseCamera.blueprint(
         base_frame_id="link7",

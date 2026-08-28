@@ -33,7 +33,7 @@ from dimos.msgs.std_msgs.Header import Header
 
 @pytest.fixture
 def module() -> Iterator[PickAndPlaceModule]:
-    instance = PickAndPlaceModule()
+    instance = PickAndPlaceModule(planning_frame="world")
     instance._scene = MagicMock()
     instance._grasp_generator = MagicMock()
     instance._manipulation = MagicMock()

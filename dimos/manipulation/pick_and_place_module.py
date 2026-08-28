@@ -44,7 +44,7 @@ from dimos.perception.experimental.object_scene_registration_spec import ObjectS
 
 
 class PickAndPlaceModuleConfig(ModuleConfig):
-    planning_frame: str = "world"
+    planning_frame: str = "base_link"
     pregrasp_offset: float = Field(default=0.10, gt=0.0)
     yaw_policy: Literal["generated", "preserve_current"] = "generated"
     grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
