@@ -31,13 +31,9 @@ from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher
 from dimos.visualization.vis_module import vis_module
-
-# align_depth_to_color is on by default, so depth shares the color optical frame.
-_OPTICAL_FRAME = "camera_color_optical_frame"
 
 # Dot radius in screen-space UI points.
 _CLOUD_RADIUS_UI = 1.0
@@ -77,14 +73,6 @@ def _rerun_blueprint() -> Any:
     )
 
 
-def _color_info(info: CameraInfo) -> Any:
-    return info.to_rerun(image_topic="/world/color_image", optical_frame=_OPTICAL_FRAME)
-
-
-def _depth_info(info: CameraInfo) -> Any:
-    return info.to_rerun(image_topic="/world/depth_image", optical_frame=_OPTICAL_FRAME)
-
-
 def _cloud(cloud: PointCloud2) -> Any:
     # The default "spheres" mode is sized for sparse lidar; a dense RGBD cloud
     # reads better as flat dots that keep their size as you zoom.
@@ -95,13 +83,7 @@ _vis = vis_module(
     viewer_backend=global_config.viewer,
     rerun_config={
         "blueprint": _rerun_blueprint,
-        # Without these the pinhole gets logged on the camera_info entity itself,
-        # which then has two tf parents and rerun drops the frustum.
-        "visual_override": {
-            "world/camera_info": _color_info,
-            "world/depth_camera_info": _depth_info,
-            "world/pointcloud": _cloud,
-        },
+        "visual_override": {"world/pointcloud": _cloud},
         "tf_axes": 0.2,
     },
 )
