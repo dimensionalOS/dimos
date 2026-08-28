@@ -147,7 +147,7 @@ def _axes_observed(members: list[Detection3DPC], center: np.ndarray) -> tuple[bo
 
 
 def _lift(
-    detections: ImageDetections2D,
+    detections: ImageDetections2D[Any],
     rig: Rig,
     policy: LocalizePolicy,
     plane: Any | None = None,
