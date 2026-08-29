@@ -71,3 +71,17 @@ def test_momentum_weight_scales_the_direction_gap():
 
     assert quiet["ahead"] == quiet["behind"]
     assert loud["ahead"] - loud["behind"] == pytest.approx(1.0)
+
+
+def test_zeroed_direction_neutralizes_momentum_after_a_timeout():
+    """The timeout branch zeroes exploration_direction, so the ranking right
+    after a timeout must carry no directional preference at all."""
+    explorer = WavefrontFrontierExplorer.__new__(WavefrontFrontierExplorer)
+    explorer.config = WavefrontConfig()
+    explorer.explored_goals = []
+    explorer.exploration_direction = Vector3(0.0, 0.0, 0.0)
+
+    costmap = open_costmap()
+    ahead = explorer._compute_comprehensive_frontier_score(AHEAD, FRONTIER_SIZE, ROBOT, costmap)
+    behind = explorer._compute_comprehensive_frontier_score(BEHIND, FRONTIER_SIZE, ROBOT, costmap)
+    assert ahead == pytest.approx(behind)

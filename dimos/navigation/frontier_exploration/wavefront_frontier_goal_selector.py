@@ -832,7 +832,15 @@ class WavefrontFrontierExplorer(Module):
                 if goal_reached:
                     logger.info("Goal reached, finding next frontier")
                 else:
-                    logger.warning("Goal timeout after 30 seconds, finding next frontier anyway")
+                    logger.warning(
+                        f"Goal timeout after {self.config.goal_timeout:g} seconds, "
+                        "finding next frontier anyway"
+                    )
+                    # A goal we failed to reach must not keep steering the next
+                    # ranking: zero the exploration direction so the momentum
+                    # term is neutral for the selection right after a timeout.
+                    # It re-establishes itself on the next chosen goal.
+                    self.exploration_direction = Vector3(0.0, 0.0, 0.0)
             else:
                 consecutive_failures += 1
 
