@@ -18,9 +18,12 @@ import pytest
 
 from dimos.manipulation.planning.spec.validation import validate_robot_model_config
 from dimos.robot.manipulators.xarm.config import (
+    XARM7_SIM_BASE_POSE,
+    XARM7_SIM_PATH,
     XARM_GRIPPER_COLLISION_EXCLUSIONS,
     make_dual_xarm6_model_config,
     make_xarm6_model_config,
+    make_xarm7_sim_robot_config,
 )
 
 
@@ -80,3 +83,22 @@ def test_prefixed_xarm_model_asset_uses_coordinator_facing_names() -> None:
     model = validate_robot_model_config(config)
 
     assert [joint.name for joint in model.joints if joint.type != "fixed"] == config.joint_names
+
+
+@pytest.mark.self_hosted
+def test_sim_model_stands_on_the_same_pedestal_as_the_sim_scene() -> None:
+    """The planner and MuJoCo must agree on where the arm is bolted down.
+
+    xarm7.xml mounts link_base on a pedestal. A model placed at the origin
+    instead solves every pose that far below the arm it is driving, so grasps
+    close on air with no error anywhere to explain it.
+    """
+    import re
+
+    mjcf = (XARM7_SIM_PATH.parent / "xarm7.xml").read_text()
+    match = re.search(r'<body name="link_base" pos="([\d.\- ]+)"', mjcf)
+    assert match is not None, "xarm7.xml no longer declares link_base with a pos"
+    scene_base_z = float(match.group(1).split()[2])
+
+    assert scene_base_z == XARM7_SIM_BASE_POSE.position.z
+    assert make_xarm7_sim_robot_config().base_pose == XARM7_SIM_BASE_POSE
