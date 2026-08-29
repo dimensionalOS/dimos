@@ -8,6 +8,7 @@ name = "virtual_mid360"
 path = "src/main.rs"
 
 [dependencies]
+dimos-livox = { path = "../livox/rust" }
 dimos-module = { path = "../../../../../native/rust/dimos-module" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "sync"] }
 serde = { version = "1", features = ["derive"] }
