@@ -116,6 +116,7 @@ class MultipartBackend:
 
     def _staging(self, beside: Path) -> tempfile.TemporaryDirectory[str]:
         parent = self.staging_dir or beside.parent
+        parent.mkdir(parents=True, exist_ok=True)
         _reap_stale(parent)
         return tempfile.TemporaryDirectory(prefix=".dimos-staging-", dir=parent)
 
@@ -130,9 +131,9 @@ class MultipartBackend:
     ) -> dict[str, Any]:
         tick = progress or (lambda phase, done, total: None)
         manifest = _manifest(path)
-        if self.codec_id and path.suffix != codecs.suffix(self.codec_id):
-            _require_space(self.staging_dir or path.parent, path.stat().st_size)
         with self._staging(path) as tmp:
+            if self.codec_id and path.suffix != codecs.suffix(self.codec_id):
+                _require_space(Path(tmp), path.stat().st_size)
             if self.codec_id and path.suffix != codecs.suffix(self.codec_id):
                 artifact = Path(tmp) / (path.name + codecs.suffix(self.codec_id))
                 tick("compress", 0, 0)
@@ -303,7 +304,6 @@ def kind_of(path: Path) -> str:
 def _require_space(where: Path, need: int) -> None:
     """Compression stages a copy beside the file (or in dimos_staging_dir); fail before
     starting rather than at 99% of a 100 GB transfer."""
-    where.mkdir(parents=True, exist_ok=True)
     free = shutil.disk_usage(where).free
     if free < need:
         raise RuntimeError(

@@ -294,5 +294,6 @@ def test_upload_refuses_when_staging_partition_is_full(
 
 def test_missing_staging_dir_is_created(tmp_path: Path) -> None:
     where = tmp_path / "scratch" / "deeper"
-    cd._require_space(where, 1)
-    assert where.is_dir()
+    b = MultipartBackend(DataApi(FakeTransport()), "lz4", where, retries=0)
+    with b._staging(tmp_path):
+        assert where.is_dir()
