@@ -17,7 +17,7 @@ from queue import Queue
 import pytest
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.core.module import Module, StreamGroup
+from dimos.core.module import Module, TopicFunnel
 from dimos.core.stream import Out
 from dimos.core.transport_factory import make_transport
 
@@ -33,7 +33,7 @@ class FanInModule(Module):
 
 @pytest.fixture
 def start_fan_in_module(each_transport):
-    blueprint = FanInModule.blueprint(stream_groups={"sensors": StreamGroup(names=["s0", "s1"])})
+    blueprint = FanInModule.blueprint(topic_funnels={"sensors": TopicFunnel(names=["s0", "s1"])})
     coordinator = ModuleCoordinator.build(blueprint)
     yield
     coordinator.stop()
@@ -49,7 +49,7 @@ def group_transports(each_transport):
         transport.stop()
 
 
-def test_stream_group_tags_each_message_with_its_stream(start_fan_in_module, group_transports):
+def test_topic_funnel_tags_each_message_with_its_stream(start_fan_in_module, group_transports):
     s0, s1, tagged = group_transports
     queue: Queue[int] = Queue()
     tagged.subscribe(queue.put)
@@ -64,14 +64,14 @@ def test_stream_group_tags_each_message_with_its_stream(start_fan_in_module, gro
 @pytest.fixture
 def start_remapped_fan_in_module(each_transport):
     blueprint = FanInModule.blueprint(
-        stream_groups={"sensors": StreamGroup(names=["s0", "s1"])}
+        topic_funnels={"sensors": TopicFunnel(names=["s0", "s1"])}
     ).remappings([(FanInModule, "s0", "alt0")])
     coordinator = ModuleCoordinator.build(blueprint)
     yield
     coordinator.stop()
 
 
-def test_stream_group_entries_follow_remappings(start_remapped_fan_in_module, each_transport):
+def test_topic_funnel_entries_follow_remappings(start_remapped_fan_in_module, each_transport):
     """A remapped entry keeps its index but listens on the remapped stream."""
     alt0, tagged = make_transport("alt0"), make_transport("tagged")
     for transport in (alt0, tagged):
@@ -86,9 +86,9 @@ def test_stream_group_entries_follow_remappings(start_remapped_fan_in_module, ea
             transport.stop()
 
 
-def test_namespace_prefixes_stream_group_entries():
+def test_namespace_prefixes_topic_funnel_entries():
     blueprint = FanInModule.blueprint(
-        stream_groups={"sensors": StreamGroup(names=["s0", "s1"])}
+        topic_funnels={"sensors": TopicFunnel(names=["s0", "s1"])}
     ).namespace("bot")
     atom = blueprint.blueprints[0]
     assert blueprint.remapping_map[atom.name, "s0"] == "bot/s0"
@@ -97,4 +97,4 @@ def test_namespace_prefixes_stream_group_entries():
 
 def test_a_group_entry_cannot_collide_with_a_declared_stream():
     with pytest.raises(ValueError, match="collides"):
-        FanInModule(stream_groups={"sensors": StreamGroup(names=["tagged"])})
+        FanInModule(topic_funnels={"sensors": TopicFunnel(names=["tagged"])})

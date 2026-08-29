@@ -140,10 +140,10 @@ class BlueprintAtom:
                     elif is_module_type(inner):
                         module_refs.append(ModuleRef(name=name, spec=inner, optional=True))
 
-        # Stream-group entries are synthetic In streams: part of stream wiring
+        # Topic-funnel entries are synthetic In streams: part of stream wiring
         # (autoconnect, remapping, namespacing, transport pins) without being
         # ports of their own.
-        for group in (kwargs.get("stream_groups") or {}).values():
+        for group in (kwargs.get("topic_funnels") or {}).values():
             names = group["names"] if isinstance(group, dict) else group.names
             msg_type = group.get("msg_type") if isinstance(group, dict) else group.msg_type
             for name in names:

@@ -35,7 +35,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, TransportBackend
-from dimos.core.module import Module, StreamGroup
+from dimos.core.module import Module, TopicFunnel
 from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
 from dimos.core.transport import LCMTransport, ZenohTransport
@@ -211,12 +211,12 @@ def test_tf_topic_comes_from_the_declared_port_only() -> None:
             transport.stop()
 
 
-def test_a_stream_group_reaches_the_native_process_as_a_list(monkeypatch) -> None:
+def test_a_topic_funnel_reaches_the_native_process_as_a_list(monkeypatch) -> None:
     """A group's channels are resolved without the module declaring a stream each."""
     monkeypatch.setattr(native_module_mod.global_config, "transport", "lcm")
     module = StubNativeModule(
         executable=_ECHO,
-        stream_groups={"cams": StreamGroup(names=["cam0/imu", "cam1/imu"], msg_type=Imu)},
+        topic_funnels={"cams": TopicFunnel(names=["cam0/imu", "cam1/imu"], msg_type=Imu)},
     )
     try:
         topics = module._collect_topics()
@@ -229,11 +229,11 @@ def test_a_stream_group_reaches_the_native_process_as_a_list(monkeypatch) -> Non
         module.stop()
 
 
-def test_a_wired_stream_group_entry_uses_its_transport() -> None:
+def test_a_wired_topic_funnel_entry_uses_its_transport() -> None:
     """Remapping/pins arrive as set_transport on the entry, and the launch line follows."""
     module = StubNativeModule(
         executable=_ECHO,
-        stream_groups={"cams": StreamGroup(names=["cam0/imu"], msg_type=Imu)},
+        topic_funnels={"cams": TopicFunnel(names=["cam0/imu"], msg_type=Imu)},
     )
     transport = LCMTransport("/remapped/imu", Imu)
     try:
@@ -245,16 +245,16 @@ def test_a_wired_stream_group_entry_uses_its_transport() -> None:
             transport.stop()
 
 
-def test_a_stream_group_rejects_a_backend_topic_string() -> None:
+def test_a_topic_funnel_rejects_a_backend_topic_string() -> None:
     """Names are stream names, so a leading slash is a transport leaking in."""
     with pytest.raises(ValidationError, match="not topics"):
-        StreamGroup(names=["/cam0/imu"], msg_type=Imu)
+        TopicFunnel(names=["/cam0/imu"], msg_type=Imu)
 
 
-def test_a_stream_group_cannot_shadow_a_declared_port() -> None:
+def test_a_topic_funnel_cannot_shadow_a_declared_port() -> None:
     module = StubNativeModule(
         executable=_ECHO,
-        stream_groups={"cmd_vel": StreamGroup(names=["other"], msg_type=Twist)},
+        topic_funnels={"cmd_vel": TopicFunnel(names=["other"], msg_type=Twist)},
     )
     transport = LCMTransport("/cmd_vel", Twist)
     try:
@@ -267,15 +267,15 @@ def test_a_stream_group_cannot_shadow_a_declared_port() -> None:
             transport.stop()
 
 
-def test_a_stream_group_is_not_a_native_config_field() -> None:
+def test_a_topic_funnel_is_not_a_native_config_field() -> None:
     """The group is wiring, so it belongs in `topics`, not the config struct."""
     module = StubNativeModule(
         executable=_ECHO,
-        stream_groups={"cams": StreamGroup(names=["cam0/imu"], msg_type=Imu)},
+        topic_funnels={"cams": TopicFunnel(names=["cam0/imu"], msg_type=Imu)},
     )
     try:
-        assert "stream_groups" not in module.config.to_config_dict()
-        assert "--stream_groups" not in module._argv({})
+        assert "topic_funnels" not in module.config.to_config_dict()
+        assert "--topic_funnels" not in module._argv({})
     finally:
         module.stop()
 

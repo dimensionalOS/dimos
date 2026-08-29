@@ -30,7 +30,7 @@ pub use dimos_module_macros::{native_config, Module};
 pub use host::{host_main, HostSpec, ModuleEntry};
 pub use lcm::LcmTransport;
 pub use module::{
-    run, Builder, Input, InputGroup, Io, Module, ModuleConfig, NativeConfig, NoConfig, Output,
+    run, Builder, Input, Io, Module, ModuleConfig, NativeConfig, NoConfig, Output, TopicFunnel,
 };
 pub use tf::{Lookup, Tf, Transform};
 pub use transport::{SharedTransport, Transport};

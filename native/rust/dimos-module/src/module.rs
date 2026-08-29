@@ -129,12 +129,12 @@ impl<T> Input<T> {
 /// The launch line gives the port an array of topics instead of one, and every
 /// message is tagged with the index of the topic it arrived on so a handler can
 /// tell a rig's cameras apart. A group configured with no topics never yields.
-pub struct InputGroup<T> {
+pub struct TopicFunnel<T> {
     pub topics: Vec<String>,
     receiver: mpsc::Receiver<(usize, T)>,
 }
 
-impl<T> InputGroup<T> {
+impl<T> TopicFunnel<T> {
     pub async fn recv(&mut self) -> Option<(usize, T)> {
         self.receiver.recv().await
     }
@@ -480,18 +480,18 @@ impl Builder {
 
     /// A port wired to every topic the launch line lists under `port`, all of
     /// one message type, delivered to one handler in arrival order.
-    pub fn input_group<T: Send + 'static>(
+    pub fn topic_funnel<T: Send + 'static>(
         &mut self,
         port: &str,
         decode: fn(&[u8]) -> io::Result<T>,
-    ) -> InputGroup<T> {
+    ) -> TopicFunnel<T> {
         let topics = self.group_for(port);
         let (sender, receiver) = mpsc::channel(INPUT_CHANNEL_CAPACITY);
         for (index, topic) in topics.iter().enumerate() {
             let tag = Box::new(move |bytes: &[u8]| decode(bytes).map(|msg| (index, msg)));
             self.push_route(topic, tag, sender.clone());
         }
-        InputGroup { topics, receiver }
+        TopicFunnel { topics, receiver }
     }
 
     pub fn output<T>(&mut self, port: &str, encode: fn(&T) -> Vec<u8>) -> Output<T> {
@@ -1073,7 +1073,7 @@ mod tests {
     #[test]
     fn a_group_subscribes_every_topic_it_was_given() {
         let mut builder = Builder::new(grouped_topics("cams", &["/cam0", "/cam1"]));
-        let group = builder.input_group("cams", |b| Ok(b.to_vec()));
+        let group = builder.topic_funnel("cams", |b| Ok(b.to_vec()));
         assert_eq!(group.topics, ["/cam0", "/cam1"]);
         assert_eq!(builder.routes.get("/cam0").map(Vec::len), Some(1));
         assert_eq!(builder.routes.get("/cam1").map(Vec::len), Some(1));
@@ -1085,7 +1085,7 @@ mod tests {
     #[tokio::test]
     async fn a_group_tags_each_message_with_its_topic_index() {
         let mut builder = Builder::new(grouped_topics("cams", &["/cam0", "/cam1"]));
-        let mut group = builder.input_group("cams", |b| Ok(b.to_vec()));
+        let mut group = builder.topic_funnel("cams", |b| Ok(b.to_vec()));
 
         builder.routes["/cam1"][0].try_dispatch(b"second");
         builder.routes["/cam0"][0].try_dispatch(b"first");
@@ -1104,7 +1104,7 @@ mod tests {
     #[test]
     fn an_empty_group_still_claims_its_port() {
         let mut builder = Builder::new(grouped_topics("cams", &[]));
-        let group = builder.input_group("cams", |b| Ok(b.to_vec()));
+        let group = builder.topic_funnel("cams", |b| Ok(b.to_vec()));
         assert!(group.is_empty());
         assert!(builder.routes.is_empty());
         builder.enforce_topics_match_ports().expect("group claimed");
@@ -1465,8 +1465,8 @@ mod tests {
 
         #[derive(crate::Module)]
         struct Rig {
-            #[input_group(decode = decode)]
-            cams: crate::InputGroup<Msg>,
+            #[topic_funnel(decode = decode)]
+            cams: crate::TopicFunnel<Msg>,
             #[output(encode = encode)]
             seen: crate::Output<Msg>,
         }
@@ -1480,7 +1480,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn input_group_field_hands_its_handler_the_topic_index() {
+        async fn topic_funnel_field_hands_its_handler_the_topic_index() {
             let mut builder = Builder::new(Topics {
                 single: HashMap::from([("seen".to_string(), "/seen".to_string())]),
                 grouped: HashMap::from([(

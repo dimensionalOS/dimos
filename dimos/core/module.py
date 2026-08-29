@@ -103,7 +103,7 @@ def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
 Deployment = Literal["python", "docker"]
 
 
-class StreamGroup(BaseModel):
+class TopicFunnel(BaseModel):
     """Several same-typed streams that one port fans into a single handler.
 
     `names` are stream names — `left_cam`, `robot1/lidar` — never a backend
@@ -123,7 +123,7 @@ class StreamGroup(BaseModel):
         leading_slash = [n for n in names if n.startswith("/")]
         if leading_slash:
             raise ValueError(
-                f"stream group names must be stream names, not topics: {leading_slash} "
+                f"topic funnel names must be stream names, not topics: {leading_slash} "
                 "start with '/' (use `left_cam`, not `/left_cam`)"
             )
         return names
@@ -140,7 +140,7 @@ class ModuleConfig(BaseConfig):
     # from the class name to this name.
     instance_name: str | None = None
     # Port name -> the group of streams that port's single handler receives.
-    stream_groups: dict[str, StreamGroup] = Field(default_factory=dict)
+    topic_funnels: dict[str, TopicFunnel] = Field(default_factory=dict)
     g: GlobalConfig = global_config
 
 
@@ -174,11 +174,11 @@ class ModuleBase(Configurable, CompositeResource):
     _main_gen: AsyncGenerator[None, None] | None = None
     _tools: dict[str, Any]
     _tools_lock: threading.Lock
-    _group_streams: dict[str, In[Any]]
+    _funnel_streams: dict[str, In[Any]]
 
     def __init__(self, config_args: dict[str, Any]) -> None:
         super().__init__(**config_args)
-        self._group_streams = self._make_group_streams()
+        self._funnel_streams = self._make_funnel_streams()
         self._module_closed_lock = threading.Lock()
         self._tools = {}
         self._tools_lock = threading.Lock()
@@ -220,7 +220,7 @@ class ModuleBase(Configurable, CompositeResource):
     def start(self) -> None:
         self._start_main()
         self._auto_bind_handlers()
-        self._bind_stream_groups()
+        self._bind_topic_funnels()
 
     @rpc
     def stop(self) -> None:
@@ -697,8 +697,8 @@ class ModuleBase(Configurable, CompositeResource):
             # backpressure.
             self.process_observable(in_stream.pure_observable(), handler)
 
-    def _make_group_streams(self) -> "dict[str, In[Any]]":
-        """One synthetic `In` per stream-group entry, keyed by stream name.
+    def _make_funnel_streams(self) -> "dict[str, In[Any]]":
+        """One synthetic `In` per topic-funnel entry, keyed by stream name.
 
         These are wired like declared ports (`set_transport` finds them, the
         blueprint machinery remaps/namespaces/pins them), but they are not
@@ -707,28 +707,28 @@ class ModuleBase(Configurable, CompositeResource):
         """
         streams: dict[str, In[Any]] = {}
         declared = set(self.inputs) | set(self.outputs) | set(self.ios)
-        for port, group in self.config.stream_groups.items():
+        for port, group in self.config.topic_funnels.items():
             for name in group.names:
                 if name in declared:
                     raise ValueError(
-                        f"stream group {port!r} entry {name!r} collides with a "
+                        f"topic funnel {port!r} entry {name!r} collides with a "
                         f"declared stream of {type(self).__name__}"
                     )
                 if name in streams:
                     raise ValueError(
-                        f"stream group {port!r} entry {name!r} appears in more than one group"
+                        f"topic funnel {port!r} entry {name!r} appears in more than one group"
                     )
                 streams[name] = In(group.msg_type or Any, name, self)
         return streams
 
-    def _bind_stream_groups(self) -> None:
-        """For each `stream_groups` port with an `async def handle_<port>`, subscribe
+    def _bind_topic_funnels(self) -> None:
+        """For each `topic_funnels` port with an `async def handle_<port>`, subscribe
         every stream in the group into that one handler.
 
         A native module defines no such method — its subprocess subscribes instead —
         so this is a no-op there.
         """
-        for port, group in self.config.stream_groups.items():
+        for port, group in self.config.topic_funnels.items():
             handler = getattr(self, f"handle_{port}", None)
             if handler is None:
                 continue
@@ -737,12 +737,12 @@ class ModuleBase(Configurable, CompositeResource):
             if not inspect.iscoroutinefunction(handler):
                 raise TypeError(
                     f"{type(self).__name__}.handle_{port} must be `async def` "
-                    "(stream groups have no sync path)"
+                    "(topic funnels have no sync path)"
                 )
             on_msg, dispatcher_disp = self._make_keyed_dispatch(handler)
             self.register_disposable(dispatcher_disp)
             for index, name in enumerate(group.names):
-                stream = self._group_streams[name]
+                stream = self._funnel_streams[name]
                 if getattr(stream, "_transport", None) is None:
                     # Not wired by a coordinator (standalone use): default transport.
                     stream.transport = make_transport(name, group.msg_type)
@@ -911,7 +911,7 @@ class Module(ModuleBase):
 
     @rpc
     def set_transport(self, stream_name: str, transport: Transport) -> bool:  # type: ignore[type-arg]
-        stream = self._group_streams.get(stream_name) or getattr(self, stream_name, None)
+        stream = self._funnel_streams.get(stream_name) or getattr(self, stream_name, None)
         if not stream:
             raise ValueError(f"{stream_name} not found in {self.__class__.__name__}")
 

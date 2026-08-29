@@ -201,7 +201,7 @@ class NativeModule(Module):
     ``DIMOS_TRANSPORT`` env var. With ``stdin_config``, the topics, config,
     publisher QoS and session settings also arrive as one JSON line on stdin.
 
-    A port named in ``stream_groups`` gets a list of channels instead of one, so
+    A port named in ``topic_funnels`` gets a list of channels instead of one, so
     several same-typed streams reach a single native handler.
 
     The native process should parse whichever it uses and pub/sub on the given
@@ -529,15 +529,15 @@ class NativeModule(Module):
             channel = getattr(transport, "channel", None)
             if channel is not None:
                 topics[name] = channel
-        for port, group in self.config.stream_groups.items():
+        for port, group in self.config.topic_funnels.items():
             if port in topics:
                 raise ValueError(
-                    f"[{self._module_label}] stream group {port!r} collides with the "
+                    f"[{self._module_label}] topic funnel {port!r} collides with the "
                     "port of the same name declared as a stream"
                 )
             channels = []
             for name in group.names:
-                transport = getattr(self._group_streams[name], "_transport", None)
+                transport = getattr(self._funnel_streams[name], "_transport", None)
                 channel = getattr(transport, "channel", None)
                 # Unwired (standalone use): the channel the default transport lands on.
                 channels.append(

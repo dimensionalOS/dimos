@@ -62,7 +62,7 @@ Every transport is compiled into the binary. `run_with_transport` opens the one 
 - `#[derive(Module)]`: on the struct. Required.
 - `#[module(setup = fn, teardown = fn)]`: on the struct. Both optional. Names methods on `Self`. `setup` runs once before the input dispatch loop starts (use it to spawn background tasks or initialize resources); `teardown` runs once after the loop exits (use it for cleanup).
 - `#[input(decode = fn, handler = fn)]`: on a field of type `Input<T>`. `decode` is required; `handler` defaults to `handle_<field_name>`.
-- `#[input_group(decode = fn, handler = fn)]`: on a field of type `InputGroup<T>`, one port fed by several topics of the same message type (see [Stream groups](#stream-groups)). `decode` is required; `handler` defaults to `handle_<field_name>` and takes `(index, msg)`.
+- `#[topic_funnel(decode = fn, handler = fn)]`: on a field of type `TopicFunnel<T>`, one port fed by several topics of the same message type (see [Topic funnels](#topic-funnels)). `decode` is required; `handler` defaults to `handle_<field_name>` and takes `(index, msg)`.
 - `#[output(encode = fn)]`: on a field of type `Output<T>`. `encode` is required.
 - `#[io(decode = fn, encode = fn, handler = fn)]`: on a field of type `Io<T>`, a port that publishes to and subscribes on one topic. `decode` and `encode` are required; `handler` defaults to `handle_<field_name>`. The transports deliver a message back to its own sender, so the handler also sees what the module publishes. Use `#[output]` instead when the module only publishes.
 - `#[config]`: on one field. The type must be defined with `#[native_config]` (see [Config](#config)). At most one per struct. If absent, `Config` defaults to `dimos_module::NoConfig`.
@@ -109,15 +109,15 @@ At runtime `run()` enforces the mapping on the Python payload: deserialization r
 
 Field name = port name. Ports map to topics via the stdin JSON; unmapped ports fall back to `/{port}`.
 
-## Stream groups
+## Topic funnels
 
-A rig with N identical sensors would otherwise need N ports and N near-identical handlers. An `InputGroup<T>` is one port wired to a list of topics that all carry `T`, delivered to one handler in arrival order. Each message is tagged with the index of the topic it arrived on, so the handler can tell the sources apart.
+A rig with N identical sensors would otherwise need N ports and N near-identical handlers. An `TopicFunnel<T>` is one port wired to a list of topics that all carry `T`, delivered to one handler in arrival order. Each message is tagged with the index of the topic it arrived on, so the handler can tell the sources apart.
 
 ```rust
 #[derive(Module)]
 struct MultiCam {
-    #[input_group(decode = Image::decode)]
-    cameras: InputGroup<Image>,
+    #[topic_funnel(decode = Image::decode)]
+    cameras: TopicFunnel<Image>,
 }
 
 impl MultiCam {
@@ -127,11 +127,11 @@ impl MultiCam {
 }
 ```
 
-The Python wrapper supplies the sources with `stream_groups`, keyed by port name:
+The Python wrapper supplies the sources with `topic_funnels`, keyed by port name:
 
 ```python
 MultiCam.blueprint(
-    stream_groups={"cameras": StreamGroup(names=["left_cam", "right_cam"], msg_type=Image)},
+    topic_funnels={"cameras": TopicFunnel(names=["left_cam", "right_cam"], msg_type=Image)},
 )
 ```
 
@@ -139,7 +139,7 @@ MultiCam.blueprint(
 
 The group itself is not a port with a stream of its own: python hands the wired entries' channels to the native process, which subscribes them directly. On the launch line the port's value is an array rather than a string. A group configured with no names still claims its port but never yields.
 
-`stream_groups` lives on `ModuleConfig`, so a plain Python `Module` takes the same field. There the module subscribes the group itself and dispatches to `async def handle_<port>(self, index, msg)`, matching the Rust handler signature:
+`topic_funnels` lives on `ModuleConfig`, so a plain Python `Module` takes the same field. There the module subscribes the group itself and dispatches to `async def handle_<port>(self, index, msg)`, matching the Rust handler signature:
 
 ```python
 class MultiCam(Module):
