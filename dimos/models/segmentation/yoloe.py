@@ -21,6 +21,7 @@ from typing import Protocol
 
 import numpy as np
 from numpy.typing import NDArray
+from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
 
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.detectors.yoloe import Yoloe2DDetector, YoloePromptMode
@@ -46,6 +47,29 @@ class YoloeVisualPromptDetector(Protocol):
     def stop(self) -> None: ...
 
 
+class _YoloeVisualPromptSegmentationDetector(Yoloe2DDetector):
+    """YOLO-E box prompting pinned to its mask-capable predictor."""
+
+    def predict_image(self, image: Image) -> ImageDetections2D:
+        # Ultralytics 8.4 defaults visual prompts to its detection predictor,
+        # even for segmentation checkpoints. That predictor cannot postprocess
+        # the segmentation head's tuple output.
+        if self._visual_prompts is None:
+            raise RuntimeError("YOLO-E segmentation requires visual box prompts")
+        with self._lock:
+            results = self.model.predict(
+                source=image.to_opencv(),
+                device=self.device,
+                conf=self.conf,
+                iou=0.6,
+                verbose=False,
+                visual_prompts=self._visual_prompts,  # type: ignore[arg-type]
+                predictor=YOLOEVPSegPredictor,
+            )
+        detections = ImageDetections2D.from_ultralytics_result(image, results)
+        return self._apply_filters(image, detections)
+
+
 def _intersection_over_union(left: Bbox, right: Bbox) -> float:
     x1 = max(left[0], right[0])
     y1 = max(left[1], right[1])
@@ -66,7 +90,7 @@ class YoloeBoxSegmenter:
         confidence: float = 0.05,
         detector: YoloeVisualPromptDetector | None = None,
     ) -> None:
-        self._detector = detector or Yoloe2DDetector(
+        self._detector = detector or _YoloeVisualPromptSegmentationDetector(
             model_name="yoloe-11s-seg.pt",
             prompt_mode=YoloePromptMode.PROMPT,
             max_area_ratio=None,

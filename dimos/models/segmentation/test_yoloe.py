@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import numpy as np
+from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
 
 from dimos.models.segmentation.yoloe import YoloeBoxSegmenter
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
@@ -114,3 +117,30 @@ def test_missing_yoloe_mask_drops_box_instead_of_using_rectangle() -> None:
 
     assert result.image is image
     assert result.detections == []
+
+
+def test_visual_box_prompts_use_segmentation_predictor(mocker: Any) -> None:
+    get_data = mocker.patch(
+        "dimos.perception.detection.detectors.yoloe.get_data",
+        return_value=Path("/models"),
+    )
+    model_factory = mocker.patch("dimos.perception.detection.detectors.yoloe.YOLOE")
+    model = model_factory.return_value
+    model.predict.return_value = []
+    image = _image()
+    detection = _box(image, bbox=(10.0, 8.0, 24.0, 28.0))
+    segmenter = YoloeBoxSegmenter()
+
+    result = segmenter.segment(ImageDetections2D(image, [detection]))
+
+    assert result.detections == []
+    get_data.assert_called_once_with("models_yoloe")
+    model_factory.assert_called_once_with(Path("/models/yoloe-11s-seg.pt"))
+    kwargs = dict(model.predict.call_args.kwargs)
+    np.testing.assert_array_equal(kwargs.pop("source"), image.to_opencv())
+    visual_prompts = kwargs.pop("visual_prompts")
+    np.testing.assert_array_equal(
+        visual_prompts["bboxes"], np.asarray([detection.bbox], dtype=np.float64)
+    )
+    np.testing.assert_array_equal(visual_prompts["cls"], np.asarray([0], dtype=np.int16))
+    assert kwargs["predictor"] is YOLOEVPSegPredictor
