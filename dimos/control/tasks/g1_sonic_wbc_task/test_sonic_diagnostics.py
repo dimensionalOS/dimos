@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+import subprocess
 from types import SimpleNamespace
 
 import numpy as np
@@ -125,6 +126,25 @@ def test_max_performance_check_accepts_locked_cpu_and_gpu(mocker) -> None:
     ensure_sonic_max_performance()
 
     assert run.call_count == 2
+    assert run.call_args_list[1].args[0] == [
+        "sudo",
+        "-n",
+        "/usr/bin/jetson_clocks",
+        "--show",
+    ]
+
+
+def test_max_performance_check_explains_sudo_requirement(mocker) -> None:
+    mocker.patch(
+        "subprocess.run",
+        side_effect=[
+            SimpleNamespace(stdout="NV Power Mode: MAXN\n0\n"),
+            subprocess.CalledProcessError(1, ["sudo", "-n", "/usr/bin/jetson_clocks", "--show"]),
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="sudo -v"):
+        ensure_sonic_max_performance()
 
 
 def test_max_performance_check_rejects_unlocked_clocks(mocker) -> None:
