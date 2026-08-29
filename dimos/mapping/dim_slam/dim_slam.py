@@ -34,7 +34,6 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.ImuInfo import ImuInfo
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
@@ -217,7 +216,7 @@ class CameraConfig(BaseModel):
 
 
 # Datasheet values, in the continuous-time units the filter wants: rad/s/sqrt(Hz),
-# rad/s^2/sqrt(Hz), m/s^2/sqrt(Hz), m/s^3/sqrt(Hz). Named so use_imu can insist on them.
+# rad/s^2/sqrt(Hz), m/s^2/sqrt(Hz), m/s^3/sqrt(Hz). Named so the config check can insist on them.
 IMU_NOISE_FIGURES = (
     "gyro_noise_density",
     "gyro_random_walk",
@@ -287,10 +286,6 @@ class DimSlamConfig(NativeModuleConfig):
     # Carried for whatever consumes the loop-closed pose; nothing here publishes map -> odom.
     map_frame_id: str = "map"
 
-    # cuVSLAM's Inertial mode: the stereo pair plus one IMU. The noise model and frame
-    # come from the imu_info stream. Separate from use_imu, which feeds the fusion
-    # filter. Implemented only on the CUDA path.
-    cuvslam_enable_imu: bool = False
     # Stamp spread one frame set may span, milliseconds; 0 keeps cuVSLAM's 1 ms contract. A
     # software-triggered rig needs this widened: Spot's images land within ~15 ms of each
     # other and its depth trails its camera by up to ~90 ms, so every set is dropped at 1 ms.
@@ -310,18 +305,15 @@ class DimSlamConfig(NativeModuleConfig):
     # The filter itself steps at the IMU rate; this is only how often it emits.
     publish_rate: float = 50.0
     replay_buffer_seconds: float = 0.5
-    # Standard deviations per measurement dimension before a reading is called an
-    # outlier. 0 disables the gate.
-    max_measurement_stddevs: float = 5.0
+    # Outlier gate in variance units, per measurement dimension. Smaller is more
+    # aggressive, 0 is no gate.
+    outlier_rejection_allowed_variance: float = 25.0
     # Caps the filter's own state rather than an incoming reading. 0 disables it.
     max_position_m: float = 10000.0
 
-    # On, the filter propagates on IMU and needs one fully specified imus entry. Off, it is
-    # seeded level from the first source message and holds its pose between them.
-    use_imu: bool = False
-
-    # Keyed by the frame_id the IMU's samples carry. The filter propagates on a single IMU,
-    # so use_imu needs exactly one entry.
+    # Keyed by the frame_id the IMU's samples carry. Empty disables the IMU: the filter is
+    # seeded level from the first source message and holds its pose between them. It
+    # propagates on a single IMU, so at most one fully specified entry.
     imus: dict[str, ImuConfig] = Field(default_factory=dict)
     # m/s^2, seeding the filter rather than fixing it: a ZUPT is meant to refine it later.
     # Worth setting only on good hardware. Local gravity runs 9.780 at the equator to 9.832
@@ -356,26 +348,17 @@ class DimSlamConfig(NativeModuleConfig):
 
     @model_validator(mode="after")
     def _imu_noise_is_set(self) -> DimSlamConfig:
-        if not self.use_imu:
+        if not self.imus:
             return self
         # The filter propagates on one IMU, so a second entry would silently go unused.
-        if len(self.imus) != 1:
-            raise ValueError(f"use_imu needs exactly one imus entry, got {list(self.imus)}")
+        if len(self.imus) > 1:
+            raise ValueError(f"the filter propagates on a single IMU, got {list(self.imus)}")
         frame, imu = next(iter(self.imus.items()))
         missing = [name for name in IMU_NOISE_FIGURES if getattr(imu, name) <= 0.0]
         if missing:
-            raise ValueError(f"use_imu needs IMU {frame!r}'s noise figures: {', '.join(missing)}")
+            raise ValueError(f"IMU {frame!r} needs its noise figures set: {', '.join(missing)}")
         if imu.init_gyro_limit <= 0.0:
             raise ValueError(f"IMU {frame!r}'s init_gyro_limit must be above zero to ever init")
-        return self
-
-    @model_validator(mode="after")
-    def _mode_combinations(self) -> DimSlamConfig:
-        # cuVSLAM has no inertial mono or rgbd, so the flag would be dropped on the floor.
-        if self.cuvslam_enable_imu and self.camera_mode != "stereo":
-            raise ValueError(
-                f"cuvslam_enable_imu needs camera_mode='stereo', not {self.camera_mode!r}"
-            )
         return self
 
     @model_validator(mode="after")
@@ -427,7 +410,6 @@ class DimSlam(NativeModule):
     camera_info: In[CameraInfo]
     depth_camera_info: In[CameraInfo]
     imu: In[Imu]
-    imu_info: In[ImuInfo]
     sources: In[Odometry]
 
     odometry: Out[Odometry]

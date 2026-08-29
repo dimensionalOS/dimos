@@ -15,7 +15,6 @@
 // cuVSLAM visual odometry enters the fusion filter in-process as a drifting source, so its
 // pose never touches the wire.
 
-mod imu_info;
 mod msg_convert;
 
 use std::collections::BTreeMap;
@@ -26,12 +25,11 @@ use dim_slam::{
     OdometryFusionConfig, SourceConfig, SourceKey,
 };
 use dimos_module::{native_config, run_with_transport, warn_throttled, Input, Module, Output, Tf};
-use imu_info::ImuInfo;
 use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{CameraInfo, Image, Imu, PointCloud2};
 use msg_convert::{
-    to_camera_model, to_estimate, to_image_frame, to_imu_sample, to_isometry, to_noise_model,
-    to_odometry_msg, to_point_cloud2, to_transform,
+    to_camera_model, to_estimate, to_image_frame, to_imu_sample, to_isometry, to_odometry_msg,
+    to_point_cloud2, to_transform,
 };
 
 #[native_config]
@@ -48,8 +46,6 @@ struct DimSlamConfig {
     covariance_gate_translation_std: f64,
     speed_gate_max_linear: f64,
     speed_gate_max_angular: f64,
-    /// cuVSLAM's own inertial mode, separate from the filter's use_imu.
-    cuvslam_enable_imu: bool,
     max_skew_ms: f64,
 
     odom_frame_id: String,
@@ -57,10 +53,10 @@ struct DimSlamConfig {
     publish_tf: bool,
     publish_rate: f64,
     replay_buffer_seconds: f64,
-    max_measurement_stddevs: f64,
+    outlier_rejection_allowed_variance: f64,
     max_position_m: f64,
-    use_imu: bool,
-    /// Keyed by the frame_id the IMU's samples carry; use_imu needs exactly one entry.
+    /// Keyed by the frame_id the IMU's samples carry. Empty disables the IMU; the filter
+    /// propagates on a single one, so at most one entry.
     imus: BTreeMap<String, ImuConfig>,
     initial_gravity_estimate: f64,
     initial_position_std: f64,
@@ -94,9 +90,6 @@ struct DimSlam {
     depth_camera_info: Input<CameraInfo>,
     #[input(decode = Imu::decode)]
     imu: Input<Imu>,
-    /// cuvslam_enable_imu only: the IMU's noise model and frame.
-    #[input(decode = ImuInfo::decode)]
-    imu_info: Input<ImuInfo>,
     /// External odometry sources, told apart by header.frame_id.
     #[input(decode = Odometry::decode)]
     sources: Input<Odometry>,
@@ -128,7 +121,8 @@ impl DimSlam {
             covariance_gate_translation_std: self.config.covariance_gate_translation_std,
             speed_gate_max_linear: self.config.speed_gate_max_linear,
             speed_gate_max_angular: self.config.speed_gate_max_angular,
-            enable_imu: self.config.cuvslam_enable_imu,
+            // The fusion filter owns the IMU; cuVSLAM's own inertial mode stays off.
+            enable_imu: false,
             max_skew_ms: self.config.max_skew_ms,
         });
         self.vo = Some(vo.unwrap_or_else(|error| panic!("{error}")));
@@ -137,9 +131,8 @@ impl DimSlam {
             output_frame_id: self.config.output_frame_id.clone(),
             publish_rate: self.config.publish_rate,
             replay_buffer_seconds: self.config.replay_buffer_seconds,
-            max_measurement_stddevs: self.config.max_measurement_stddevs,
+            outlier_rejection_allowed_variance: self.config.outlier_rejection_allowed_variance,
             max_position_m: self.config.max_position_m,
-            use_imu: self.config.use_imu,
             imus: self.config.imus.clone(),
             initial_gravity_estimate: self.config.initial_gravity_estimate,
             initial_position_std: self.config.initial_position_std,
@@ -190,13 +183,10 @@ impl DimSlam {
     }
 
     async fn handle_imu(&mut self, msg: Imu) {
-        let sample = to_imu_sample(&msg);
-        if self.config.cuvslam_enable_imu {
-            self.vo.as_mut().expect("setup ran").handle_imu(&sample);
-        }
-        if !self.config.use_imu {
+        if self.config.imus.is_empty() {
             return;
         }
+        let sample = to_imu_sample(&msg);
         let Some(base_from_imu) = self
             .tf
             .get_latest(&self.config.output_frame_id, &msg.header.frame_id)
@@ -213,13 +203,6 @@ impl DimSlam {
             .expect("setup ran")
             .handle_imu(&sample, &to_isometry(&base_from_imu));
         self.publish().await;
-    }
-
-    async fn handle_imu_info(&mut self, info: ImuInfo) {
-        let Self { vo, tf, .. } = self;
-        vo.as_mut()
-            .expect("setup ran")
-            .handle_imu_info(to_noise_model(info), &tf_lookup(tf));
     }
 
     async fn handle_sources(&mut self, msg: Odometry) {

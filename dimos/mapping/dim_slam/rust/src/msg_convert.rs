@@ -15,15 +15,11 @@
 // LCM messages in and out of the dim_slam library's plain types.
 
 use dim_slam::nalgebra::{Isometry3, Matrix6, Quaternion, Translation3, UnitQuaternion, Vector3};
-use dim_slam::{
-    CameraModel, ImageFrame, ImuNoiseModel, ImuSample, OdometryEstimate, PointCloud, Twist,
-};
+use dim_slam::{CameraModel, ImageFrame, ImuSample, OdometryEstimate, PointCloud, Twist};
 use dimos_module::Transform;
 use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{CameraInfo, Image, Imu, PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
-
-use crate::imu_info::ImuInfo;
 
 const NS_PER_SEC: i64 = 1_000_000_000;
 const BYTES_PER_POINT: i32 = 12;
@@ -87,17 +83,6 @@ pub fn to_imu_sample(msg: &Imu) -> ImuSample {
         frame_id: msg.header.frame_id.clone(),
         angular_velocity: vector3(&msg.angular_velocity),
         linear_acceleration: vector3(&msg.linear_acceleration),
-    }
-}
-
-pub fn to_noise_model(info: ImuInfo) -> ImuNoiseModel {
-    ImuNoiseModel {
-        frame_id: info.header.frame_id,
-        gyro_noise_density: info.gyro_noise_density,
-        gyro_random_walk: info.gyro_random_walk,
-        accel_noise_density: info.accel_noise_density,
-        accel_random_walk: info.accel_random_walk,
-        frequency: info.frequency,
     }
 }
 
