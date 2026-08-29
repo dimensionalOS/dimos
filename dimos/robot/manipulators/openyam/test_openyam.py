@@ -223,3 +223,9 @@ def test_quest_teleop_routes_pose_and_gripper_to_separate_tasks() -> None:
     assert teleop.params["bindings"] == [{"hand": "right", "target_frame": "gripper_tip"}]
     assert gripper.joint_names == [OPENYAM_GRIPPER_JOINT]
     assert gripper.stream_bind == {"gripper_command": "right_gripper_command"}
+
+
+def test_quest_openyam_defaults_to_fake_hardware_at_collection_ready_pose() -> None:
+    hardware = _openyam_quest_hardware(None)
+    assert hardware.adapter_type == "mock_whole_body"
+    assert hardware.adapter_kwargs["initial_positions"] == [*OPENYAM_HOME_JOINTS, 0.0]

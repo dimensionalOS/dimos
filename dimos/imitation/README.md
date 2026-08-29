@@ -40,11 +40,11 @@ recorder, all wired together.
 
 | Button | Action |
 | --- | --- |
-| **A** (right) / **X** (left) | **Hold to engage** — the arm tracks the controller only while held |
+| Controller grip | **Hold to engage** — the arm tracks the controller only while held |
 | **B** | **Toggle record** — press to start an episode, press again to save it |
 | **Y** | **Discard** the in-progress episode |
 
-So a take is: hold **A** to move the arm into place → press **B** to start →
+So a take is: hold the controller grip to move the arm into place → press **B** to start →
 perform the task → press **B** to save (or **Y** to throw it away). The terminal
 prints one line per transition:
 
@@ -141,3 +141,16 @@ code. The returned config is a reusable template whose fields mean:
   right one automatically.
 - **"action" is an applied command** — it is published only after arbitration
   and hardware acceptance. Rejected and non-position commands are not emitted.
+
+## 4. Roll out an OpenYAM checkpoint
+
+```bash
+uv run dimos run learning-rollout-quest-openyam \
+  --LeRobotPolicyModule.policy-path \
+    outputs/train/last/pretrained_model
+```
+
+Quest **A** toggles policy rollout. Hold the right controller grip to take over
+with teleoperation. Coordinator preemption stops the rollout rather than merely
+hiding its commands, so release the grip and press **A** again to resume policy
+control. **B** and **Y** remain reserved for collection save/discard controls.
