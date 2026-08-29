@@ -97,7 +97,7 @@ _openyam_quest_pink = PinkKinematicsConfig(
     gain=0.25,
 )
 _openyam_quest_hw = openyam_hardware()
-_openyam_quest_model = make_openyam_model_config(name="arm")
+_openyam_quest_model = make_openyam_model_config()
 _openyam_quest_task = teleop_ik_task(
     _openyam_quest_hw,
     robot_model=_openyam_quest_model,
@@ -107,10 +107,7 @@ _openyam_quest_task = teleop_ik_task(
     bindings=[
         {
             "hand": "right",
-            "target_frame": _openyam_quest_model.end_effector_link,
-            "gripper_joint": OPENYAM_GRIPPER_JOINT,
-            "gripper_open_position": 1.0,
-            "gripper_closed_position": 0.0,
+            "target_frame": "yam_hand_tcp",
         }
     ],
     params={
@@ -124,21 +121,33 @@ _openyam_quest_task = teleop_ik_task(
 
 # Single-arm Quest teleop: right controller -> OpenYAM arm
 teleop_quest_openyam = autoconnect(
-    ArmTeleopModule.blueprint(task_names={"right": OPENYAM_QUEST_TASK_NAME}),
+    ArmTeleopModule.blueprint(),
     TeleopControlCoordinator.blueprint(
         instance_name="ControlCoordinator",
         hardware=[_openyam_quest_hw],
         tasks=[
             _openyam_quest_task,
+            TaskConfig(
+                name="arm_gripper",
+                type="gripper",
+                joint_names=[OPENYAM_GRIPPER_JOINT],
+                priority=20,
+                stream_bind={"gripper_command": "right_gripper_command"},
+            ),
             _trajectory_task(priority=20),
         ],
     ),
     ManipulationModule.blueprint(
-        robots=[_openyam_quest_model],
+        model=_openyam_quest_model,
         kinematics=_openyam_quest_pink,
         visualization={"backend": "viser"},
     ),
-).remappings([(ArmTeleopModule, "right_controller_output", "right_cartesian_command")])
+).remappings(
+    [
+        (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
+        (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
+    ]
+)
 
 _openyam_keyboard_planner_hw = openyam_hardware()
 

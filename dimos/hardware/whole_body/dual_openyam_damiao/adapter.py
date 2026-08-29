@@ -55,7 +55,6 @@ class DualOpenYamDamiaoAdapter(DamiaoWholeBodyAdapter):
         "left_gripper": "left_arm/gripper",
         "right_gripper": "right_arm/gripper",
     }
-    bus_defaults = {"left": "can0", "right": "can1"}
     bus_names = ("left", "right")
     kinematic_joint_names = (*arm_joints["left_arm"], *arm_joints["right_arm"])
 
@@ -69,12 +68,12 @@ class DualOpenYamDamiaoAdapter(DamiaoWholeBodyAdapter):
             can_motor_control.Robot.builder()
             .add_bus(
                 "left",
-                can_motor_control.SocketCanBus(self.bus_address("left")),
+                self._make_can_bus("left"),
                 damiao.DamiaoCodec(),
             )
             .add_bus(
                 "right",
-                can_motor_control.SocketCanBus(self.bus_address("right")),
+                self._make_can_bus("right"),
                 damiao.DamiaoCodec(),
             )
             .add_arm("left_arm", bus="left", motors=_arm_motors("left"))
