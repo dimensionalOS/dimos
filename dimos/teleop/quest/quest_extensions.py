@@ -15,7 +15,7 @@
 """Quest teleop module extensions and subclasses.
 
 Available subclasses:
-    - ArmTeleopModule: Per-hand press-and-hold engage (X/A hold to track)
+    - ArmTeleopModule: Raw arm poses with middle-finger grip deadman buttons
     - HandTeleopModule: Pinch-to-toggle arm teleop using WebXR hand tracking
     - TwistTeleopModule: Outputs Twist instead of PoseStamped
     - VideoArmTeleopModule: ArmTeleopModule + JPEG frames pushed to the Quest over /ws
@@ -127,12 +127,11 @@ class TwistTeleopModule(QuestTeleopModule):
 
 
 class ArmTeleopModule(QuestTeleopModule):
-    """Quest teleop with per-hand press-and-hold engage.
+    """Quest arm input that leaves engagement to the coordinator task.
 
-    Each controller's primary button (X for left, A for right)
-    engages that hand while held, disengages on release. Each hand's
-    output port is wired to its consuming task's coordinator port in
-    the blueprint; no addressing happens in the message.
+    Controller poses and buttons are published as raw operator input. The
+    consuming TeleopIKTask owns the middle-finger grip deadman and reference
+    capture, leaving the face buttons available for stack controls.
 
     Unlike the base module, this publishes absolute controller poses. The
     control task owns controller-to-robot reference capture so one task can
@@ -161,6 +160,13 @@ class ArmTeleopModule(QuestTeleopModule):
         """Return the current absolute controller pose."""
         return self._current_poses.get(hand)
 
+    def _handle_engage(self) -> None:
+        """Leave arm engagement to TeleopIKTask."""
+
+    def _should_publish(self, hand: Hand) -> bool:
+        """Publish every fresh absolute controller pose."""
+        return self._controllers.get(hand) is not None
+
     def _publish_button_state(
         self,
         left: QuestControllerState | None,
@@ -180,16 +186,19 @@ class ArmTeleopModule(QuestTeleopModule):
         left: QuestControllerState | None,
         right: QuestControllerState | None,
     ) -> None:
-        """Publish normalized opening for each currently engaged hand."""
+        """Publish normalized opening while the hand's deadman is held."""
         controllers = {Hand.LEFT: left, Hand.RIGHT: right}
         outputs = {
             Hand.LEFT: self.left_gripper_command,
             Hand.RIGHT: self.right_gripper_command,
         }
         for hand, controller in controllers.items():
-            if controller is None or not self._is_engaged[hand]:
+            if controller is None or not self._gripper_is_enabled(hand, controller):
                 continue
             outputs[hand].publish(Float32(data=1.0 - float(controller.trigger)))
+
+    def _gripper_is_enabled(self, hand: Hand, controller: QuestControllerState) -> bool:
+        return controller.grip > 0.5
 
 
 class HandTeleopModule(ArmTeleopModule):
@@ -215,6 +224,12 @@ class HandTeleopModule(ArmTeleopModule):
                 else:
                     self._engage(hand)
             self._primary_was_pressed[hand] = is_pressed
+
+    def _should_publish(self, hand: Hand) -> bool:
+        return self._is_engaged[hand]
+
+    def _gripper_is_enabled(self, hand: Hand, controller: QuestControllerState) -> bool:
+        return self._is_engaged[hand]
 
     def _publish_button_state(
         self,

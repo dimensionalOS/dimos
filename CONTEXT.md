@@ -98,3 +98,21 @@ _Avoid_: Interpolated episode, repaired episode
 **Training Frame**:
 One fixed-rate set of aligned observations, an applied action, task text, and complementary information.
 _Avoid_: Camera frame, raw sample
+
+## Policy Rollout
+
+**Policy rollout**:
+One active execution of one configured checkpoint against live observations, from an explicit start until stop, timeout, failure, or control preemption.
+_Avoid_: Policy task, inference request
+
+**Rollout controller**:
+The operator-facing lifecycle adapter that translates Quest input and coordinator preemption into policy start and stop RPCs.
+_Avoid_: Policy runtime, control task
+
+**Policy joint command**:
+The complete joint target produced by a policy and routed only to the coordinator's dedicated policy-rollout task.
+_Avoid_: Applied command, measured state
+
+**Control preemption**:
+A transition in which a higher-priority task wins one or more joints previously claimed by another task. It is emitted once when the conflict begins, not once per control tick.
+_Avoid_: Rejected command, hidden output
