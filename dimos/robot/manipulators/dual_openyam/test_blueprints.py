@@ -18,6 +18,7 @@ from dimos.core.coordination.blueprints import Blueprint
 from dimos.hardware.whole_body.spec import WholeBodyAdapter
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
     DualOpenYamCoordinator,
 )
@@ -27,7 +28,6 @@ from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
 )
 from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_ARM_JOINTS,
-    DUAL_OPENYAM_GRIPPER_JOINTS,
 )
 from dimos.robot.manipulators.dual_openyam.teleop_ik import (
     DualOpenYamPinkPoseTargetSolver,
@@ -81,14 +81,14 @@ def test_mock_quest_coordinator_commands_both_arms_and_grippers(
     coordinator.start()
     try:
         task = cast("TeleopIKTask", coordinator._tasks[DUAL_OPENYAM_QUEST_TASK_NAME])
-        assert set(task.claim().joints) == set(
-            DUAL_OPENYAM_ARM_JOINTS + DUAL_OPENYAM_GRIPPER_JOINTS
-        )
+        assert set(task.claim().joints) == set(DUAL_OPENYAM_ARM_JOINTS)
         buttons = Buttons()
         buttons.left_primary = True
         buttons.right_primary = True
         buttons.pack_analog_triggers(left=0.25, right=0.75)
         coordinator._dispatch("teleop_buttons", buttons)
+        coordinator._dispatch("left_gripper_command", Float32(data=0.75))
+        coordinator._dispatch("right_gripper_command", Float32(data=0.25))
         coordinator._dispatch(
             "left_cartesian_command",
             PoseStamped(frame_id=DUAL_OPENYAM_QUEST_TASK_NAME, position=[1.0, 0.0, 0.0]),

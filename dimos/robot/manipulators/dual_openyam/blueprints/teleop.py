@@ -14,6 +14,7 @@
 
 """Coupled Quest teleoperation for the complete Dual OpenYAM entity."""
 
+from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
@@ -57,16 +58,10 @@ _dual_openyam_quest_task = teleop_ik_task(
         {
             "hand": "left",
             "target_frame": "left_grasp_frame",
-            "gripper_joint": DUAL_OPENYAM_GRIPPER_JOINTS[0],
-            "gripper_open_position": 1.0,
-            "gripper_closed_position": 0.0,
         },
         {
             "hand": "right",
             "target_frame": "right_grasp_frame",
-            "gripper_joint": DUAL_OPENYAM_GRIPPER_JOINTS[1],
-            "gripper_open_position": 1.0,
-            "gripper_closed_position": 0.0,
         },
     ],
     params={
@@ -79,27 +74,38 @@ _dual_openyam_quest_task = teleop_ik_task(
 )
 
 teleop_quest_dual_openyam = autoconnect(
-    ArmTeleopModule.blueprint(
-        task_names={
-            "left": DUAL_OPENYAM_QUEST_TASK_NAME,
-            "right": DUAL_OPENYAM_QUEST_TASK_NAME,
-        }
-    ),
+    ArmTeleopModule.blueprint(),
     DualOpenYamCoordinator.blueprint(
         instance_name="ControlCoordinator",
         tasks=[
             _dual_openyam_quest_task,
+            TaskConfig(
+                name="left_arm_gripper",
+                type="gripper",
+                joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[0]],
+                priority=20,
+                stream_bind={"gripper_command": "left_gripper_command"},
+            ),
+            TaskConfig(
+                name="right_arm_gripper",
+                type="gripper",
+                joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[1]],
+                priority=20,
+                stream_bind={"gripper_command": "right_gripper_command"},
+            ),
             dual_openyam_trajectory_task(priority=20),
         ],
     ),
     ManipulationModule.blueprint(
-        robots=[_dual_openyam_quest_model],
+        model=_dual_openyam_quest_model,
         kinematics=_dual_openyam_quest_pink,
         visualization={"backend": "viser"},
     ),
 ).remappings(
     [
         (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
+        (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
         (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
+        (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
     ]
 )
