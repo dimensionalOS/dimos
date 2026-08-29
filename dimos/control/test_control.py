@@ -1217,6 +1217,86 @@ class TestTickLoop:
         assert state.joint_positions == {"g1/joint1": 0.5}
         adapter.write_motor_commands.assert_called_once()
 
+    def test_preemption_event_is_published_once_per_conflict_transition(self, mocker):
+        task = mocker.Mock()
+        publish = mocker.Mock()
+        tick_loop = TickLoop(
+            tick_rate=100.0,
+            hardware={},
+            hardware_lock=threading.Lock(),
+            tasks={"policy_rollout": task},
+            task_lock=threading.Lock(),
+            joint_to_hardware={},
+            publish_preemption_callback=publish,
+        )
+        conflict = {
+            "policy_rollout": {
+                "arm/joint2": "teleop_openyam",
+                "arm/joint1": "teleop_openyam",
+            }
+        }
+
+        tick_loop._notify_preemptions(conflict, timestamp=10.0)
+        tick_loop._notify_preemptions(conflict, timestamp=10.1)
+
+        task.on_preempted.assert_called_with(
+            by_task="teleop_openyam",
+            joints=frozenset({"arm/joint1", "arm/joint2"}),
+        )
+        publish.assert_called_once()
+        event = publish.call_args.args[0]
+        assert event.timestamp == 10.0
+        assert event.preempted_task == "policy_rollout"
+        assert event.preempting_task == "teleop_openyam"
+        assert event.joints == ["arm/joint1", "arm/joint2"]
+
+        tick_loop._notify_preemptions({}, timestamp=10.2)
+        tick_loop._notify_preemptions(conflict, timestamp=10.3)
+        assert publish.call_count == 2
+
+    def test_applied_position_command_publishes_only_accepted_position_modes(self):
+        publish = MagicMock()
+        tick_loop = TickLoop(
+            tick_rate=100.0,
+            hardware={},
+            hardware_lock=threading.Lock(),
+            tasks={},
+            task_lock=threading.Lock(),
+            joint_to_hardware={},
+            publish_command_callback=publish,
+        )
+
+        tick_loop._publish_applied_position_command(
+            {
+                "arm": ({"arm/joint1": 0.25}, ControlMode.SERVO_POSITION),
+                "base": ({"base/wheel": 1.0}, ControlMode.VELOCITY),
+            },
+            timestamp=123.0,
+        )
+
+        message = publish.call_args.args[0]
+        assert message.ts == 123.0
+        assert message.name == ["arm/joint1"]
+        assert message.position == [0.25]
+
+    def test_rejected_hardware_command_is_not_returned_as_applied(self):
+        hardware = {"arm": MagicMock()}
+        hardware["arm"].write_command.return_value = False
+        tick_loop = TickLoop(
+            tick_rate=100.0,
+            hardware=hardware,
+            hardware_lock=threading.Lock(),
+            tasks={},
+            task_lock=threading.Lock(),
+            joint_to_hardware={"arm/joint1": "arm"},
+        )
+
+        accepted = tick_loop._write_all_hardware(
+            {"arm": ({"arm/joint1": 0.25}, ControlMode.SERVO_POSITION)}
+        )
+
+        assert accepted == {}
+
     def test_partial_trajectory_and_gripper_command_share_hardware_write(self, mocker):
         joint_names = ["arm/joint1", "arm/joint2", "arm/gripper"]
         adapter = mocker.Mock(spec=ManipulatorAdapter)
