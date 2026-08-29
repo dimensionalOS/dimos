@@ -42,9 +42,11 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 pytestmark = [pytest.mark.self_hosted_large]
 
 JOINT_STATE_TOPIC = "/coordinator_joint_state#sensor_msgs.JointState"
-BLUEPRINT = "openarm-mock-planner-coordinator"
+BLUEPRINT = "openarm-planner-coordinator"
 LEFT_GROUP_ID = "left_arm"
 RIGHT_GROUP_ID = "right_arm"
+BOTH_GROUP_ID = "both_arms"
+ALL_GROUP_IDS = {LEFT_GROUP_ID, RIGHT_GROUP_ID, BOTH_GROUP_ID}
 
 
 def _wait_for_groups(
@@ -161,7 +163,7 @@ def test_single_arm_plans_and_executes_through_control_coordinator(
     client = RPCClient(None, ManipulationModule)
     coordinator_client = RPCClient(None, ControlCoordinator)
     try:
-        groups = _wait_for_groups(client, {LEFT_GROUP_ID, RIGHT_GROUP_ID})
+        groups = _wait_for_groups(client, ALL_GROUP_IDS)
         left_id = groups[LEFT_GROUP_ID].id
 
         tasks = coordinator_client.list_tasks()
@@ -192,7 +194,7 @@ def test_dual_arm_plans_and_dispatches_both_arms_through_control_coordinator(
     client = RPCClient(None, ManipulationModule)
     coordinator_client = RPCClient(None, ControlCoordinator)
     try:
-        groups = _wait_for_groups(client, {LEFT_GROUP_ID, RIGHT_GROUP_ID})
+        groups = _wait_for_groups(client, ALL_GROUP_IDS)
         left_id = groups[LEFT_GROUP_ID].id
         right_id = groups[RIGHT_GROUP_ID].id
 

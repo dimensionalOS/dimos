@@ -24,6 +24,7 @@ from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -40,7 +41,10 @@ xarm_perception = autoconnect(
         model=make_xarm7_model_config(
             add_gripper=True,
             gripper_hardware_id="arm",
-            pitch=math.radians(45),
+            base_pose=PoseStamped(
+                frame_id="world",
+                orientation=Quaternion.from_euler(Vector3(0.0, math.radians(45), 0.0)),
+            ),
             tf_extra_links=["link7"],
         ),
         planning_timeout=10.0,
