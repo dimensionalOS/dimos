@@ -88,6 +88,7 @@ def _hardware_component(
     adapter_type: str,
     adapter_kwargs: dict[str, object],
 ) -> HardwareComponent:
+    arm_count = len(DUAL_OPENYAM_ARM_JOINTS)
     return HardwareComponent(
         hardware_id=DUAL_OPENYAM_HARDWARE_ID,
         hardware_type=HardwareType.WHOLE_BODY,
@@ -95,8 +96,8 @@ def _hardware_component(
         adapter_type=adapter_type,
         auto_enable=True,
         limits=JointLimits(
-            position_lower=[*([None] * len(DUAL_OPENYAM_ARM_JOINTS)), 0.0, 0.0],
-            position_upper=[*([None] * len(DUAL_OPENYAM_ARM_JOINTS)), 1.0, 1.0],
+            position_lower=[*([None] * arm_count), 0.0, 0.0],
+            position_upper=[*([None] * arm_count), 1.0, 1.0],
             velocity_max=[None] * len(DUAL_OPENYAM_JOINTS),
         ),
         adapter_kwargs=adapter_kwargs,
