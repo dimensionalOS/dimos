@@ -24,6 +24,8 @@ from dimos.hardware.whole_body.dual_openyam_damiao.adapter import (
 )
 from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM_JOINTS
 
+pytestmark = pytest.mark.self_hosted
+
 
 @pytest.fixture
 def adapter(mocker: MockerFixture) -> Iterator[DualOpenYamDamiaoAdapter]:

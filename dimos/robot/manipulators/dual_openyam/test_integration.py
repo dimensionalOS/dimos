@@ -5,13 +5,22 @@
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 from io import BytesIO
 
+import pytest
 from yourdfpy import URDF  # type: ignore[import-untyped]
 
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.robot.manipulators.dual_openyam.config import dual_openyam_model_config
+
+pytestmark = pytest.mark.self_hosted
 
 
 def test_authoritative_arm_only_model_prepares_for_viser() -> None:
