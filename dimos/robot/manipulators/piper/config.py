@@ -26,7 +26,6 @@ from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators._modeling import (
-    base_pose,
     joint_names,
 )
 from dimos.utils.data import LfsPath
@@ -142,7 +141,6 @@ def make_piper_model_config(
     model_home_joints = list(home_joints) if home_joints is not None else list(PIPER_HOME_JOINTS)
     return RobotModelConfig(
         model=RobotModel.from_file(PIPER_MODEL_PATH, package_paths=PIPER_PACKAGE_PATHS),
-        base_pose=base_pose(),
         joint_names=model_joint_names,
         base_link="base_link",
         planning_groups=[
