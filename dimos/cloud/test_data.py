@@ -297,3 +297,17 @@ def test_missing_staging_dir_is_created(tmp_path: Path) -> None:
     b = MultipartBackend(DataApi(FakeTransport()), "lz4", where, retries=0)
     with b._staging(tmp_path):
         assert where.is_dir()
+
+
+def test_recordings_discovery_recurses_run_dirs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cd, "RECORDINGS_DIR", tmp_path)
+    run = tmp_path / "20260828-181256-unitree-go2"
+    run.mkdir()
+    db = recording(run)  # recordings/<run>/session_go2_1.db
+    (run / "memory.db-wal").write_bytes(b"x")  # sidecar, skipped
+    stale = tmp_path / ".dimos-staging-abc"
+    stale.mkdir()
+    (stale / "memory.db.lz4").write_bytes(b"x")  # staging leftovers, skipped
+    assert cd.recordings() == [db]

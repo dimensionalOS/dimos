@@ -276,13 +276,20 @@ class CloudData:
 
 
 def recordings(newer_than_s: float | None = None) -> list[Path]:
-    """Files in RECORDINGS_DIR by mtime, oldest first, any format; sidecars excluded;
-    tolerant of files vanishing mid-scan."""
+    """Files under RECORDINGS_DIR (recursively: runs live in per-run subdirectories) by
+    mtime, oldest first, any format; sidecars and staging dirs excluded."""
     cutoff = time.time() - newer_than_s if newer_than_s else None
     found = []
-    for p in RECORDINGS_DIR.iterdir():
+    for p in RECORDINGS_DIR.rglob("*"):
         try:
-            if not p.is_file() or _is_sidecar(p):
+            if (
+                not p.is_file()
+                or _is_sidecar(p)
+                or any(
+                    part.startswith(".dimos-staging-")
+                    for part in p.relative_to(RECORDINGS_DIR).parts
+                )
+            ):
                 continue
             mtime = p.stat().st_mtime
         except FileNotFoundError:
