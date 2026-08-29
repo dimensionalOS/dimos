@@ -303,6 +303,7 @@ def kind_of(path: Path) -> str:
 def _require_space(where: Path, need: int) -> None:
     """Compression stages a copy beside the file (or in dimos_staging_dir); fail before
     starting rather than at 99% of a 100 GB transfer."""
+    where.mkdir(parents=True, exist_ok=True)
     free = shutil.disk_usage(where).free
     if free < need:
         raise RuntimeError(

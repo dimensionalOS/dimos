@@ -290,3 +290,9 @@ def test_upload_refuses_when_staging_partition_is_full(
     monkeypatch.setattr(shutil, "disk_usage", lambda p: shutil._ntuple_diskusage(10, 9, 1))  # type: ignore[attr-defined]
     with pytest.raises(RuntimeError, match="free, need"):
         cloud.upload(db)
+
+
+def test_missing_staging_dir_is_created(tmp_path: Path) -> None:
+    where = tmp_path / "scratch" / "deeper"
+    cd._require_space(where, 1)
+    assert where.is_dir()
