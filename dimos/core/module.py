@@ -31,7 +31,7 @@ from typing import (
     get_type_hints,
 )
 
-from pydantic import Field
+from pydantic import BaseModel, Field, field_validator
 from reactivex.disposable import CompositeDisposable, Disposable
 
 from dimos.core.core import T, rpc
@@ -41,7 +41,7 @@ from dimos.core.introspection.module.render import render_module_io
 from dimos.core.resource import CompositeResource
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import IO, In, Out, RemoteOut, Transport
-from dimos.core.transport_factory import rpc_backend
+from dimos.core.transport_factory import make_transport, rpc_backend
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
 from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.protocol.tf.tf import TF
@@ -103,6 +103,34 @@ def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
 Deployment = Literal["python", "docker"]
 
 
+class StreamGroup(BaseModel):
+    """Several same-typed streams that one port fans into a single handler.
+
+    `names` are stream names as they read after remapping and namespacing —
+    `left_cam`, `robot1/lidar` — never a backend topic string. Each is resolved
+    to a wire channel the same way a declared stream's name is, so the group
+    says nothing about which transport is in use.
+
+    No `In` stream is declared for these, so they take no part in blueprint
+    autoconnection. A python module subscribes them itself; a native module
+    hands them to its subprocess, which does the subscribing.
+    """
+
+    names: list[str]
+    msg_type: type[Any] | None = None
+
+    @field_validator("names")
+    @classmethod
+    def _reject_topic_strings(cls, names: list[str]) -> list[str]:
+        leading_slash = [n for n in names if n.startswith("/")]
+        if leading_slash:
+            raise ValueError(
+                f"stream group names must be stream names, not topics: {leading_slash} "
+                "start with '/' (use `left_cam`, not `/left_cam`)"
+            )
+        return names
+
+
 class ModuleConfig(BaseConfig):
     rpc_transport: type[RPCSpec] = Field(default_factory=rpc_backend)
     default_rpc_timeout: float = DEFAULT_RPC_TIMEOUT
@@ -113,6 +141,8 @@ class ModuleConfig(BaseConfig):
     # once (see BlueprintAtom.instance_name). Changes the RPC topic prefix
     # from the class name to this name.
     instance_name: str | None = None
+    # Port name -> the group of streams that port's single handler receives.
+    stream_groups: dict[str, StreamGroup] = Field(default_factory=dict)
     g: GlobalConfig = global_config
 
 
@@ -190,6 +220,7 @@ class ModuleBase(Configurable, CompositeResource):
     def start(self) -> None:
         self._start_main()
         self._auto_bind_handlers()
+        self._bind_stream_groups()
 
     @rpc
     def stop(self) -> None:
@@ -666,6 +697,30 @@ class ModuleBase(Configurable, CompositeResource):
             # backpressure.
             self.process_observable(in_stream.pure_observable(), handler)
 
+    def _bind_stream_groups(self) -> None:
+        """For each `stream_groups` port with an `async def handle_<port>`, subscribe
+        every stream in the group into that one handler.
+
+        A native module defines no such method — its subprocess subscribes instead —
+        so this is a no-op there.
+        """
+        for port, group in self.config.stream_groups.items():
+            handler = getattr(self, f"handle_{port}", None)
+            if handler is None:
+                continue
+            if hasattr(handler, "aio"):
+                handler = handler.aio.__get__(self, type(self))
+            if not inspect.iscoroutinefunction(handler):
+                raise TypeError(
+                    f"{type(self).__name__}.handle_{port} must be `async def` "
+                    "(stream groups have no sync path)"
+                )
+            on_msg, dispatcher_disp = self._make_keyed_dispatch(handler)
+            self.register_disposable(dispatcher_disp)
+            for index, name in enumerate(group.names):
+                transport = make_transport(name, group.msg_type)
+                self.register_disposable(Disposable(transport.subscribe(partial(on_msg, index))))
+
     def _make_async_dispatch(
         self, async_handler: Callable[[Any], Any]
     ) -> tuple[Callable[[Any], None], "DisposableBase"]:
@@ -680,45 +735,63 @@ class ModuleBase(Configurable, CompositeResource):
             message is kept (LATEST policy).
           - The returned Disposable cancels the dispatcher task.
         """
+
+        async def single(_: int, msg: Any) -> None:
+            await async_handler(msg)
+
+        on_msg, disposable = self._make_keyed_dispatch(single)
+        return partial(on_msg, 0), disposable
+
+    def _make_keyed_dispatch(
+        self, async_handler: Callable[[int, Any], Any]
+    ) -> tuple[Callable[[int, Any], None], "DisposableBase"]:
+        """`_make_async_dispatch` generalized to a mailbox keyed by sender.
+
+        The mailbox keeps the latest unprocessed message *per key* and drains them
+        oldest-waiting first, so one chatty topic in a group cannot starve its
+        siblings the way a single shared slot would. One key is the degenerate case
+        and behaves exactly like a single LATEST slot.
+        """
         loop = self._loop
         if loop is None or not loop.is_running():
             raise RuntimeError(f"{type(self).__name__}._loop is not running")
 
-        async def _bootstrap() -> tuple[asyncio.Event, dict[str, Any], asyncio.Task[None]]:
+        async def _bootstrap() -> tuple[asyncio.Event, dict[int, Any], asyncio.Task[None]]:
             event = asyncio.Event()
-            slot: dict[str, Any] = {"value": None, "has_value": False}
+            # Insertion-ordered, and re-assigning an existing key keeps its
+            # position, so a waiting topic holds its place while its value ages up.
+            pending: dict[int, Any] = {}
 
             async def dispatcher() -> None:
                 try:
                     while True:
                         await event.wait()
                         event.clear()
-                        if not slot["has_value"]:
-                            continue
-                        msg = slot["value"]
-                        slot["value"] = None
-                        slot["has_value"] = False
-                        try:
-                            await async_handler(msg)
-                        except asyncio.CancelledError:
-                            raise
-                        except BaseException as e:
-                            self._log_async_handler_exception(e)
+                        while pending:
+                            key = next(iter(pending))
+                            msg = pending.pop(key)
+                            try:
+                                await async_handler(key, msg)
+                            except asyncio.CancelledError:
+                                raise
+                            except BaseException as e:
+                                self._log_async_handler_exception(e)
                 except asyncio.CancelledError:
                     return
 
-            return event, slot, asyncio.create_task(dispatcher())
+            return event, pending, asyncio.create_task(dispatcher())
 
-        event, slot, task = asyncio.run_coroutine_threadsafe(_bootstrap(), loop).result(timeout=5.0)
+        event, pending, task = asyncio.run_coroutine_threadsafe(_bootstrap(), loop).result(
+            timeout=5.0
+        )
 
-        def on_msg(msg: Any) -> None:
+        def on_msg(key: int, msg: Any) -> None:
             loop_now = self._loop
             if loop_now is None or not loop_now.is_running():
                 return
 
             def _set() -> None:
-                slot["value"] = msg
-                slot["has_value"] = True
+                pending[key] = msg
                 event.set()
 
             loop_now.call_soon_threadsafe(_set)

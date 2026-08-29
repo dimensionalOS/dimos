@@ -35,8 +35,8 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, TransportBackend
-from dimos.core.module import Module
-from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig, TopicGroup
+from dimos.core.module import Module, StreamGroup
+from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.core.transport_factory import make_transport, transport_topic
@@ -211,12 +211,12 @@ def test_tf_topic_comes_from_the_declared_port_only() -> None:
             transport.stop()
 
 
-def test_a_topic_group_reaches_the_native_process_as_a_list(monkeypatch) -> None:
+def test_a_stream_group_reaches_the_native_process_as_a_list(monkeypatch) -> None:
     """A group's channels are resolved without the module declaring a stream each."""
     monkeypatch.setattr(native_module_mod.global_config, "transport", "lcm")
     module = StubNativeModule(
         executable=_ECHO,
-        topic_groups={"cams": TopicGroup(names=["/cam0/imu", "/cam1/imu"], msg_type=Imu)},
+        stream_groups={"cams": StreamGroup(names=["cam0/imu", "cam1/imu"], msg_type=Imu)},
     )
     try:
         topics = module._collect_topics()
@@ -229,10 +229,16 @@ def test_a_topic_group_reaches_the_native_process_as_a_list(monkeypatch) -> None
         module.stop()
 
 
-def test_a_topic_group_cannot_shadow_a_declared_port() -> None:
+def test_a_stream_group_rejects_a_backend_topic_string() -> None:
+    """Names are stream names, so a leading slash is a transport leaking in."""
+    with pytest.raises(ValidationError, match="not topics"):
+        StreamGroup(names=["/cam0/imu"], msg_type=Imu)
+
+
+def test_a_stream_group_cannot_shadow_a_declared_port() -> None:
     module = StubNativeModule(
         executable=_ECHO,
-        topic_groups={"cmd_vel": TopicGroup(names=["/other"], msg_type=Twist)},
+        stream_groups={"cmd_vel": StreamGroup(names=["other"], msg_type=Twist)},
     )
     transport = LCMTransport("/cmd_vel", Twist)
     try:
@@ -245,15 +251,15 @@ def test_a_topic_group_cannot_shadow_a_declared_port() -> None:
             transport.stop()
 
 
-def test_a_topic_group_is_not_a_native_config_field() -> None:
+def test_a_stream_group_is_not_a_native_config_field() -> None:
     """The group is wiring, so it belongs in `topics`, not the config struct."""
     module = StubNativeModule(
         executable=_ECHO,
-        topic_groups={"cams": TopicGroup(names=["/cam0/imu"], msg_type=Imu)},
+        stream_groups={"cams": StreamGroup(names=["cam0/imu"], msg_type=Imu)},
     )
     try:
-        assert "topic_groups" not in module.config.to_config_dict()
-        assert "--topic_groups" not in module._argv({})
+        assert "stream_groups" not in module.config.to_config_dict()
+        assert "--stream_groups" not in module._argv({})
     finally:
         module.stop()
 

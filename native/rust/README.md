@@ -62,7 +62,7 @@ Every transport is compiled into the binary. `run_with_transport` opens the one 
 - `#[derive(Module)]`: on the struct. Required.
 - `#[module(setup = fn, teardown = fn)]`: on the struct. Both optional. Names methods on `Self`. `setup` runs once before the input dispatch loop starts (use it to spawn background tasks or initialize resources); `teardown` runs once after the loop exits (use it for cleanup).
 - `#[input(decode = fn, handler = fn)]`: on a field of type `Input<T>`. `decode` is required; `handler` defaults to `handle_<field_name>`.
-- `#[input_group(decode = fn, handler = fn)]`: on a field of type `InputGroup<T>`, one port fed by several topics of the same message type (see [Topic groups](#topic-groups)). `decode` is required; `handler` defaults to `handle_<field_name>` and takes `(index, msg)`.
+- `#[input_group(decode = fn, handler = fn)]`: on a field of type `InputGroup<T>`, one port fed by several topics of the same message type (see [Stream groups](#stream-groups)). `decode` is required; `handler` defaults to `handle_<field_name>` and takes `(index, msg)`.
 - `#[output(encode = fn)]`: on a field of type `Output<T>`. `encode` is required.
 - `#[io(decode = fn, encode = fn, handler = fn)]`: on a field of type `Io<T>`, a port that publishes to and subscribes on one topic. `decode` and `encode` are required; `handler` defaults to `handle_<field_name>`. The transports deliver a message back to its own sender, so the handler also sees what the module publishes. Use `#[output]` instead when the module only publishes.
 - `#[config]`: on one field. The type must be defined with `#[native_config]` (see [Config](#config)). At most one per struct. If absent, `Config` defaults to `dimos_module::NoConfig`.
@@ -109,7 +109,7 @@ At runtime `run()` enforces the mapping on the Python payload: deserialization r
 
 Field name = port name. Ports map to topics via the stdin JSON; unmapped ports fall back to `/{port}`.
 
-## Topic groups
+## Stream groups
 
 A rig with N identical sensors would otherwise need N ports and N near-identical handlers. An `InputGroup<T>` is one port wired to a list of topics that all carry `T`, delivered to one handler in arrival order. Each message is tagged with the index of the topic it arrived on, so the handler can tell the sources apart.
 
@@ -127,15 +127,26 @@ impl MultiCam {
 }
 ```
 
-The Python wrapper supplies the topics with `topic_groups`, keyed by port name:
+The Python wrapper supplies the sources with `stream_groups`, keyed by port name:
 
 ```python
 MultiCam.blueprint(
-    topic_groups={"cameras": TopicGroup(names=["/cam0/color", "/cam1/color"], msg_type=Image)},
+    stream_groups={"cameras": StreamGroup(names=["left_cam", "right_cam"], msg_type=Image)},
 )
 ```
 
-Those channels are not declared as `In` streams, so they take no part in blueprint autoconnection: the names are resolved to wire channels and the native process subscribes them itself. On the launch line the port's value is an array rather than a string. A group configured with no topics still claims its port but never yields.
+`names` are stream names as they read after remapping and namespacing, not backend topics — a leading `/` is rejected. Python resolves each to a wire channel the same way it resolves a declared stream's name, so the same blueprint runs unchanged over LCM or zenoh.
+
+Those streams are not declared as `In` ports, so they take no part in blueprint autoconnection: the names are resolved to wire channels and the native process subscribes them itself. On the launch line the port's value is an array rather than a string. A group configured with no names still claims its port but never yields.
+
+`stream_groups` lives on `ModuleConfig`, so a plain Python `Module` takes the same field. There the module subscribes the group itself and dispatches to `async def handle_<port>(self, index, msg)`, matching the Rust handler signature:
+
+```python
+class MultiCam(Module):
+    async def handle_cameras(self, index: int, image: Image) -> None: ...
+```
+
+The whole group shares one dispatcher, so the handler is never re-entered, and its mailbox holds the latest unprocessed message per stream rather than one slot for the group — a chatty camera cannot starve the others.
 
 ## Transforms
 

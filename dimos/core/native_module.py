@@ -54,7 +54,7 @@ import threading
 import time
 from typing import IO, Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import Field, model_validator
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
@@ -114,18 +114,6 @@ _PYTHON_TO_RUST_LEVELS = {
 }
 
 
-class TopicGroup(BaseModel):
-    """Several same-typed channels a native port fans into one handler.
-
-    The module declares no In stream for these, so nothing here participates in
-    blueprint autoconnection: the names are resolved to wire channels and handed
-    to the native process, which subscribes them itself.
-    """
-
-    names: list[str]
-    msg_type: type[Any] | None = None
-
-
 class NativeModuleConfig(ModuleConfig):
     """Configuration for a native subprocess module."""
 
@@ -142,9 +130,6 @@ class NativeModuleConfig(ModuleConfig):
     auto_build: bool = False
 
     stdin_config: bool = False
-
-    # Port name -> the group of channels that port's single handler receives.
-    topic_groups: dict[str, TopicGroup] = Field(default_factory=dict)
 
     cli_exclude: frozenset[str] = frozenset()
     cli_name_override: dict[str, str] = Field(default_factory=dict)
@@ -216,8 +201,8 @@ class NativeModule(Module):
     ``DIMOS_TRANSPORT`` env var. With ``stdin_config``, the topics, config,
     publisher QoS and session settings also arrive as one JSON line on stdin.
 
-    A port named in ``topic_groups`` gets a list of channels instead of one, so
-    several same-typed topics reach a single native handler.
+    A port named in ``stream_groups`` gets a list of channels instead of one, so
+    several same-typed streams reach a single native handler.
 
     The native process should parse whichever it uses and pub/sub on the given
     topics directly. On ``stop()``, the process receives SIGTERM.
@@ -544,10 +529,10 @@ class NativeModule(Module):
             channel = getattr(transport, "channel", None)
             if channel is not None:
                 topics[name] = channel
-        for port, group in self.config.topic_groups.items():
+        for port, group in self.config.stream_groups.items():
             if port in topics:
                 raise ValueError(
-                    f"[{self._module_label}] topic group {port!r} collides with the "
+                    f"[{self._module_label}] stream group {port!r} collides with the "
                     "port of the same name declared as a stream"
                 )
             topics[port] = [channel_for(n, group.msg_type) for n in group.names]
