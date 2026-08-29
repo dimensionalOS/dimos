@@ -265,10 +265,12 @@ def status() -> None:
             required = webxr.get("pose_window_frames", 0)
             readiness = "ready" if webxr.get("stream_ready") else "waiting"
             typer.echo(f"pose_buffer: {buffered}/{required} ({readiness})")
-            if webxr.get("mode") == "pose_transition":
+            mode = webxr.get("mode")
+            if mode in {"pose_transition", "planner_transition"}:
                 progress = float(webxr.get("pose_transition_progress", 0.0))
                 duration = float(webxr.get("pose_transition_seconds", 0.0))
-                typer.echo(f"pose_handoff: {progress:.0%} of {duration:.2f}s")
+                direction = "planner->pose" if mode == "pose_transition" else "pose->planner"
+                typer.echo(f"reference_handoff: {direction} {progress:.0%} of {duration:.2f}s")
             typer.echo(f"transition:  {webxr.get('last_transition_reason', 'unknown')}")
         typer.echo(f"trajectory:  {trajectory}")
         typer.echo(f"manipulation: {', '.join(group_ids) if group_ids else 'unavailable'}")

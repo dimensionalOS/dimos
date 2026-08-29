@@ -247,20 +247,26 @@ UNARMED/current hold
         | dimos hardware g1 arm
         v
 CONTROL/dry-run, WebXR PLANNER --A+X--> POSE_TRANSITION --> POSE preview
-        |                                              |
-        | dimos hardware g1 enable                     | enable returns to PLANNER
-        +-----------------------------+----------------+
+        |                                                  |
+        | dimos hardware g1 enable                         | A+X / tracking loss
+        +-----------------------------+                    v
+                                      |        PLANNER_TRANSITION --> PLANNER
                                       v
        CONTROL/live, WebXR PLANNER --A+X--> POSE_TRANSITION --> POSE
+                                                            |
+                                         A+X / tracking loss|
+                                                            v
+                                             PLANNER_TRANSITION --> PLANNER
 ```
 
 Run `status`, `arm`, `status`, dry-run POSE preview, `enable`, and `status` as
 separate steps so the team can inspect the reference between transitions.
 Dry-run still executes SONIC inference and publishes `world/sonic_reference`,
 but the task returns no learned-policy joint command. `enable` always enters
-WebXR `PLANNER`; if dry-run preview is in `POSE_TRANSITION` or `POSE`, enabling
-clears the pose reference and preview-only policy history, then returns to
-`PLANNER` before motor output resumes. Press A+X again to enter live `POSE`.
+WebXR `PLANNER`; if dry-run preview is in `POSE_TRANSITION`, `POSE`, or
+`PLANNER_TRANSITION`, enabling clears the pose reference and preview-only
+policy history, then returns to `PLANNER` before motor output resumes. Press
+A+X again to enter live `POSE`.
 
 Before pressing A+X, stand upright with feet together, look forward, keep the
 upper arms down, bend the forearms 90 degrees forward, and point the palms
@@ -290,8 +296,9 @@ uv run dimos --simulation mujoco run unitree-g1-sonic-webxr-teleop \
 ```
 
 The selection is fixed for the process lifetime; restart the blueprint to
-change it. A+X blends the current planner encoder token into the live PICO
-token over 0.5 seconds by default. Tune that handoff without changing the pose
+change it. Both planner-to-PICO and PICO-to-planner handoffs blend encoder
+tokens over 0.5 seconds by default. The reverse handoff applies to A+X and to
+automatic tracking fallbacks. Tune both directions without changing the pose
 window:
 
 ```bash
@@ -300,8 +307,12 @@ uv run dimos --simulation mujoco run unitree-g1-sonic-webxr-teleop \
   --pose-transition-seconds 0.8
 ```
 
-The duration must be positive and finite. The blend follows new PICO frames as
-they arrive; it does not freeze the operator's pose at the A+X press.
+The duration must be positive and finite. The planner-to-PICO blend follows new
+PICO frames as they arrive; the PICO-to-planner blend starts at the last policy
+pose token and follows live planner tokens. Missing body frames are held for up
+to 1.0 second before the reverse handoff begins, avoiding planner fallbacks for
+brief headset or network stalls. Explicit unavailable or invalid tracking
+starts the reverse handoff immediately.
 
 MuJoCo keeps its existing fast iteration lifecycle: the simulated policy
 auto-arms with no ramp or dry-run and enters WebXR `PLANNER` as soon as control
@@ -328,7 +339,7 @@ Use the CLI and controller in this order:
 5. Realign the operator, wait for `pose_buffer` to become ready again, and
    press **A+X** to enter live `POSE`. Do not proceed if the preview was
    unstable, incorrectly oriented, or did not match the operator.
-6. Press **A+X** again to return to the balancing planner.
+6. Press **A+X** again to transition smoothly back to the balancing planner.
 7. Finish routine operation with `dimos hardware g1 disable`, followed by
    `dimos stop`.
 
@@ -358,17 +369,17 @@ the newest pending reference, displays it at up to 30 Hz, and prioritizes live
 data when a browser connects or falls behind. The newest accepted skeleton is
 bright cyan, the preceding frame is a faint trail, and RGB axes show the
 separately sent root and wrist orientations. The layer remains visible through
-`POSE_TRANSITION` and `POSE`, then clears on the immediate return to `PLANNER`
-or `OFF`. In `sonic-v1.1`, the newest cyan input contains approximately 200 ms
-of reference history; the `sonic-low-latency` option reduces that window to
-approximately 40 ms. The separate `--pose-transition-seconds` handoff applies
-only when entering POSE.
+`POSE_TRANSITION` and `POSE`, then clears when `PLANNER_TRANSITION` begins or
+the task enters `OFF`. In `sonic-v1.1`, the newest cyan input contains
+approximately 200 ms of reference history; the `sonic-low-latency` option
+reduces that window to approximately 40 ms. The `--pose-transition-seconds`
+handoff applies in both directions.
 
 For the first hardware run, rehearse the complete lifecycle in simulation and
 inspect `dimos hardware g1 status` before every real transition. Tracking loss
-or a WebXR reference-space change returns `POSE_TRANSITION` or `POSE` to
-`PLANNER`, clears the old reference, and rebuilds the pose buffer before A+X
-can enter `POSE` again.
+or a WebXR reference-space change moves `POSE_TRANSITION` or `POSE` through
+`PLANNER_TRANSITION`, clears the old reference, and rebuilds the pose buffer
+before A+X can enter `POSE` again.
 
 ## 5. Legacy navigation viewer example
 

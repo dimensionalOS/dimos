@@ -176,9 +176,41 @@ def test_status_discovers_sonic_lifecycle_task(mocker) -> None:
     assert "webxr:       pose_transition" in result.output
     assert "pipeline:    sonic-v1.1" in result.output
     assert "pose_buffer: 7/10 (waiting)" in result.output
-    assert "pose_handoff: 40% of 0.50s" in result.output
+    assert "reference_handoff: planner->pose 40% of 0.50s" in result.output
     assert "transition:  operator_pose_toggle" in result.output
     coordinator.task_invoke.assert_any_call("sonic_teleop", "state_snapshot", {})
+
+
+def test_status_reports_pose_to_planner_handoff(mocker) -> None:
+    coordinator = _coordinator("sonic_teleop")
+    coordinator.task_invoke.side_effect = [
+        {
+            **_state(armed=True, dry_run=False),
+            "control_state": "control",
+            "reference_source": "webxr_pose_to_planner",
+            "webxr_teleop": {
+                "mode": "planner_transition",
+                "sonic_pipeline": "sonic-v1.1",
+                "pose_window_frames": 10,
+                "buffered_frames": 0,
+                "stream_ready": False,
+                "pose_transition_progress": 0.6,
+                "pose_transition_seconds": 0.5,
+                "last_transition_reason": "body_tracking_stale",
+            },
+        },
+        {"state": "idle"},
+    ]
+    client = _Client(coordinator)
+    mocker.patch.object(g1_cli.Dimos, "connect", return_value=client)
+
+    result = runner.invoke(g1_cli.app, ["status"])
+
+    assert result.exit_code == 0, result.output
+    assert "reference:   webxr_pose_to_planner" in result.output
+    assert "webxr:       planner_transition" in result.output
+    assert "reference_handoff: pose->planner 60% of 0.50s" in result.output
+    assert "transition:  body_tracking_stale" in result.output
 
 
 def test_arm_rejects_stack_without_lifecycle_task(mocker) -> None:

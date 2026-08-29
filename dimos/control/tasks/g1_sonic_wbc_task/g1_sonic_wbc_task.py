@@ -847,6 +847,13 @@ class G1SonicWBCTask(BaseControlTask):
         self._stream_source_requested = started
         return started
 
+    def _begin_planner_reference_transition(self, duration_seconds: float) -> bool:
+        if not self.policy_active:
+            return False
+        started = self._pipeline.begin_planner_transition(duration_seconds)
+        self._stream_source_requested = False
+        return started
+
     def _return_to_planner_reference(self) -> None:
         self._stream_source_requested = False
         self._pipeline.stop_clip()

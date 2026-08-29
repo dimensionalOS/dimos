@@ -286,10 +286,10 @@ def test_stream_transition_blends_planner_token_to_each_live_pose_token(
 
     assert pipeline.begin_stream_transition(0.04) is True
     _policy_step(pipeline)
-    assert pipeline.stream_transition_progress == 0.5
+    assert pipeline.reference_transition_progress == 0.5
     _policy_step(pipeline)
 
-    assert pipeline.stream_transition_active is False
+    assert pipeline.reference_transition_active is False
     assert encoder_run.call_count == 2
     assert decoder_run.call_count == 2
     np.testing.assert_allclose(decoded_tokens[0], 0.5)
@@ -313,7 +313,67 @@ def test_stream_transition_rejects_invalid_duration(
         pipeline.begin_stream_transition(duration)
 
 
-def test_returning_to_planner_cancels_stream_transition(pipeline: SonicPipeline) -> None:
+def test_planner_transition_blends_pose_token_to_each_live_planner_token(
+    pipeline: SonicPipeline,
+    mocker: Any,
+) -> None:
+    pipeline._needs_replan = False
+    pipeline._decoder.run.return_value = [np.zeros((1, NUM_JOINTS), dtype=np.float32)]
+    _policy_step(pipeline)
+    pipeline.apply_pose_message(_smpl_pose_fields())
+    assert pipeline.begin_stream_transition(0.02) is True
+    encoder_run = mocker.patch.object(
+        pipeline._encoder,
+        "run",
+        return_value=[np.ones((1, 64), dtype=np.float32)],
+    )
+    _policy_step(pipeline)
+    assert pipeline.reference_transition_active is False
+    planner_qpos = np.zeros((2, 36), dtype=np.float32)
+    planner_qpos[:, 3] = 1.0
+    pipeline._apply_planner_result([planner_qpos, np.array(2, dtype=np.int64)])
+
+    planner_tokens = iter(
+        [
+            np.full((1, 64), 2.0, dtype=np.float32),
+            np.full((1, 64), 3.0, dtype=np.float32),
+        ]
+    )
+    encoder_run.side_effect = lambda *_args, **_kwargs: [next(planner_tokens)]
+    decoded_tokens: list[np.ndarray[Any, Any]] = []
+
+    def decode(_outputs: Any, feeds: dict[str, np.ndarray[Any, Any]]) -> list[np.ndarray[Any, Any]]:
+        decoded_tokens.append(feeds[pipeline._decoder_input][0, :64].copy())
+        return [np.zeros((1, NUM_JOINTS), dtype=np.float32)]
+
+    mocker.patch.object(pipeline._decoder, "run", side_effect=decode)
+
+    assert pipeline.begin_planner_transition(0.04) is True
+    _policy_step(pipeline)
+    assert pipeline.reference_transition_progress == 0.5
+    _policy_step(pipeline)
+
+    assert pipeline.reference_transition_active is False
+    assert pipeline.snapshot()["stream_active"] is False
+    assert pipeline.snapshot()["stream_frames"] == 0
+    np.testing.assert_allclose(decoded_tokens[0], 1.5)
+    np.testing.assert_allclose(decoded_tokens[1], 3.0)
+
+
+def test_planner_transition_requires_a_previous_stream_token(pipeline: SonicPipeline) -> None:
+    assert pipeline.begin_planner_transition(0.5) is False
+
+
+@pytest.mark.parametrize("duration", [0.0, -0.1, float("inf"), float("nan")])
+def test_planner_transition_rejects_invalid_duration(
+    pipeline: SonicPipeline,
+    duration: float,
+) -> None:
+    with pytest.raises(ValueError, match="positive and finite"):
+        pipeline.begin_planner_transition(duration)
+
+
+def test_stop_clip_cancels_reference_transition(pipeline: SonicPipeline) -> None:
     pipeline._needs_replan = False
     pipeline._decoder.run.return_value = [np.zeros((1, NUM_JOINTS), dtype=np.float32)]
     _policy_step(pipeline)
@@ -322,6 +382,6 @@ def test_returning_to_planner_cancels_stream_transition(pipeline: SonicPipeline)
 
     pipeline.stop_clip()
 
-    assert pipeline.stream_transition_active is False
-    assert pipeline.stream_transition_progress == 0.0
+    assert pipeline.reference_transition_active is False
+    assert pipeline.reference_transition_progress == 0.0
     assert pipeline.snapshot()["stream_active"] is False

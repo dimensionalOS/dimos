@@ -665,9 +665,9 @@ class SonicPipeline:
         self._streamed: StreamedMotion | None = None
         self._streamed_frame = 0
         self._use_stream = False
-        self._stream_transition_start_token: NDArray[Any] | None = None
-        self._stream_transition_step = 0
-        self._stream_transition_steps = 0
+        self._reference_transition_start_token: NDArray[Any] | None = None
+        self._reference_transition_step = 0
+        self._reference_transition_steps = 0
         # Direct planner command (ZMQ planner topic); None -> twist-derived
         self._planner_cmd: dict[str, Any] | None = None
         self._upper_vel_dds: NDArray[Any] | None = None
@@ -774,7 +774,7 @@ class SonicPipeline:
 
     def set_source_stream(self, use_stream: bool) -> None:
         """Command-topic planner-flag inverse: True -> pose-topic motion."""
-        self._clear_stream_transition()
+        self._clear_reference_transition()
         if use_stream != self._use_stream:
             self._needs_replan = not use_stream
             # Motion-source switch = heading re-anchor (C++ sets
@@ -786,16 +786,19 @@ class SonicPipeline:
         self._use_stream = bool(use_stream)
 
     @property
-    def stream_transition_active(self) -> bool:
-        """Whether a planner-to-stream encoder-token blend is in progress."""
-        return self._stream_transition_start_token is not None
+    def reference_transition_active(self) -> bool:
+        """Whether an encoder-token source blend is in progress."""
+        return self._reference_transition_start_token is not None
 
     @property
-    def stream_transition_progress(self) -> float:
-        """Completed fraction of the active planner-to-stream blend."""
-        if not self.stream_transition_active or self._stream_transition_steps <= 0:
+    def reference_transition_progress(self) -> float:
+        """Completed fraction of the active encoder-token source blend."""
+        if not self.reference_transition_active or self._reference_transition_steps <= 0:
             return 0.0
-        return min(1.0, self._stream_transition_step / self._stream_transition_steps)
+        return min(
+            1.0,
+            self._reference_transition_step / self._reference_transition_steps,
+        )
 
     def begin_stream_transition(self, duration_seconds: float) -> bool:
         """Blend from the last planner token to the live streamed reference.
@@ -803,8 +806,7 @@ class SonicPipeline:
         The streamed motion must already be loaded. Returns ``False`` until
         at least one planner policy step has produced a reference token.
         """
-        if not math.isfinite(duration_seconds) or duration_seconds <= 0.0:
-            raise ValueError("stream transition duration must be positive and finite")
+        self._validate_reference_transition_duration(duration_seconds)
         if (
             self._use_stream
             or self._streamed is None
@@ -816,28 +818,59 @@ class SonicPipeline:
 
         start_token = self._last_reference_token.copy()
         self.set_source_stream(True)
-        self._stream_transition_start_token = start_token
-        self._stream_transition_step = 0
-        self._stream_transition_steps = max(1, math.ceil(duration_seconds / POLICY_DT))
+        self._start_reference_transition(start_token, duration_seconds)
         return True
 
-    def _clear_stream_transition(self) -> None:
-        self._stream_transition_start_token = None
-        self._stream_transition_step = 0
-        self._stream_transition_steps = 0
+    def begin_planner_transition(self, duration_seconds: float) -> bool:
+        """Blend from the last streamed token to the balancing planner.
 
-    def _blend_stream_token(self, stream_token: NDArray[Any]) -> NDArray[Any]:
-        start_token = self._stream_transition_start_token
+        Returns ``False`` when the policy has not produced a streamed token,
+        in which case planner is already the last decoder reference.
+        """
+        self._validate_reference_transition_duration(duration_seconds)
+        if (
+            not self._use_stream
+            or self._last_reference_token is None
+            or not self._last_token_was_stream
+        ):
+            return False
+
+        start_token = self._last_reference_token.copy()
+        self.stop_clip()
+        self._start_reference_transition(start_token, duration_seconds)
+        return True
+
+    @staticmethod
+    def _validate_reference_transition_duration(duration_seconds: float) -> None:
+        if not math.isfinite(duration_seconds) or duration_seconds <= 0.0:
+            raise ValueError("reference transition duration must be positive and finite")
+
+    def _start_reference_transition(
+        self,
+        start_token: NDArray[Any],
+        duration_seconds: float,
+    ) -> None:
+        self._reference_transition_start_token = start_token
+        self._reference_transition_step = 0
+        self._reference_transition_steps = max(1, math.ceil(duration_seconds / POLICY_DT))
+
+    def _clear_reference_transition(self) -> None:
+        self._reference_transition_start_token = None
+        self._reference_transition_step = 0
+        self._reference_transition_steps = 0
+
+    def _blend_reference_token(self, target_token: NDArray[Any]) -> NDArray[Any]:
+        start_token = self._reference_transition_start_token
         if start_token is None:
-            return stream_token
+            return target_token
 
-        self._stream_transition_step = min(
-            self._stream_transition_step + 1,
-            self._stream_transition_steps,
+        self._reference_transition_step = min(
+            self._reference_transition_step + 1,
+            self._reference_transition_steps,
         )
-        linear = self._stream_transition_step / self._stream_transition_steps
+        linear = self._reference_transition_step / self._reference_transition_steps
         alpha = linear * linear * (3.0 - 2.0 * linear)
-        return ((1.0 - alpha) * start_token + alpha * stream_token).astype(np.float32)
+        return ((1.0 - alpha) * start_token + alpha * target_token).astype(np.float32)
 
     def _reset_heading_alignment(self) -> None:
         self._heading_delta_quat = np.array([1, 0, 0, 0], dtype=np.float64)
@@ -882,7 +915,7 @@ class SonicPipeline:
         current heading (mirrors the C++ reference-motion switch)."""
         self._streamed = motion
         self._streamed_frame = 0
-        self._clear_stream_transition()
+        self._clear_reference_transition()
         self._use_stream = True
         self._reset_heading_alignment()
 
@@ -890,7 +923,7 @@ class SonicPipeline:
         """Back to planner-driven locomotion (heading re-anchors on the next
         planner trajectory - see set_source_stream)."""
         self._use_stream = False
-        self._clear_stream_transition()
+        self._clear_reference_transition()
         self._streamed = None
         self._streamed_frame = 0
         self._merger.reset()
@@ -941,7 +974,7 @@ class SonicPipeline:
         self._streamed = None
         self._streamed_frame = 0
         self._use_stream = False
-        self._clear_stream_transition()
+        self._clear_reference_transition()
         self._last_reference_token = None
         self._last_token_was_stream = False
         self._planner_cmd = None
@@ -1327,8 +1360,7 @@ class SonicPipeline:
                 )
                 self._heading_delta_quat = _quat_multiply(init_heading, init_ref_inv)
                 self._heading_initialized = True
-            stream_token = self._run_encoder(self._build_streamed_encoder_obs(self._cur_quat))
-            token = self._blend_stream_token(stream_token)
+            token = self._run_encoder(self._build_streamed_encoder_obs(self._cur_quat))
         elif self._vr_active() and self._trajectory is not None and self._trajectory.num_frames > 0:
             token = self._run_encoder(self._build_teleop_encoder_obs(self._cur_quat))
         elif self._trajectory is not None and self._trajectory.num_frames > 0:
@@ -1344,6 +1376,7 @@ class SonicPipeline:
             token = self._run_encoder(enc_obs)
         else:
             token = self._standing_token
+        token = self._blend_reference_token(token)
 
         # Proprio history (ONNX order)
         q_onnx = self._cur_q_dds[ONNX_TO_DDS]
@@ -1379,10 +1412,10 @@ class SonicPipeline:
         self._last_reference_token = token.copy()
         self._last_token_was_stream = self._use_stream
         if (
-            self.stream_transition_active
-            and self._stream_transition_step >= self._stream_transition_steps
+            self.reference_transition_active
+            and self._reference_transition_step >= self._reference_transition_steps
         ):
-            self._clear_stream_transition()
+            self._clear_reference_transition()
         self._last_action = actions.copy()
 
         # All 29 decoder actions applied directly - no post-decoder override
@@ -1474,8 +1507,8 @@ class SonicPipeline:
             "stream_frames": self._streamed.timesteps if self._streamed else 0,
             "stream_frame": self._streamed_frame,
             "stream_encode_mode": self._streamed.encode_mode if self._streamed else -1,
-            "stream_transition_active": self.stream_transition_active,
-            "stream_transition_progress": self.stream_transition_progress,
+            "reference_transition_active": self.reference_transition_active,
+            "reference_transition_progress": self.reference_transition_progress,
             "vr_active": self._vr_active(),
             "vr_age_sec": (
                 round(time.perf_counter() - self._vr_time, 3) if self._vr_pos is not None else -1.0
