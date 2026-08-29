@@ -99,7 +99,7 @@ def _start_pose_transition(task: G1SonicTeleopTask) -> None:
 
 def _enter_pose(task: G1SonicTeleopTask) -> None:
     _start_pose_transition(task)
-    cast("Any", task._pipeline).stream_transition_active = False
+    cast("Any", task._pipeline).reference_transition_active = False
     task.compute(_state(1.20))
 
 
@@ -111,8 +111,14 @@ def task_and_pipeline(mocker: Any) -> Iterator[tuple[G1SonicTeleopTask, Any]]:
     pipeline = pipeline_class.return_value
     pipeline.apply_pose_message.return_value = {"frames": 10, "encode_mode": 2}
     pipeline.begin_stream_transition.return_value = True
-    pipeline.stream_transition_active = True
-    pipeline.stream_transition_progress = 0.0
+    pipeline.reference_transition_active = True
+    pipeline.reference_transition_progress = 0.0
+
+    def begin_planner_transition(_duration: float) -> bool:
+        pipeline.reference_transition_active = True
+        return True
+
+    pipeline.begin_planner_transition.side_effect = begin_planner_transition
     pipeline.step.return_value = np.zeros(29, dtype=np.float32)
     pipeline.snapshot.return_value = {}
     adapter = mocker.MagicMock()
@@ -206,7 +212,7 @@ def test_slow_policy_timing_does_not_gate_pose(task_and_pipeline: tuple[Any, Any
 def test_completed_transition_enters_pose(task_and_pipeline: tuple[Any, Any]) -> None:
     task, pipeline = task_and_pipeline
     _start_pose_transition(task)
-    pipeline.stream_transition_active = False
+    pipeline.reference_transition_active = False
 
     task.compute(_state(1.20))
 
@@ -217,7 +223,7 @@ def test_completed_transition_enters_pose(task_and_pipeline: tuple[Any, Any]) ->
     assert snapshot["reference_source"] == "webxr_pose"
 
 
-def test_ax_cancels_pose_transition_immediately(
+def test_ax_reverses_pose_transition_smoothly(
     task_and_pipeline: tuple[Any, Any],
 ) -> None:
     task, pipeline = task_and_pipeline
@@ -226,9 +232,10 @@ def test_ax_cancels_pose_transition_immediately(
 
     task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.21)
 
-    assert task.state_snapshot()["webxr_teleop"]["mode"] == "planner"
-    assert task.state_snapshot()["reference_source"] == "planner"
-    pipeline.stop_clip.assert_called()
+    snapshot = task.state_snapshot()
+    assert snapshot["webxr_teleop"]["mode"] == "planner_transition"
+    assert snapshot["reference_source"] == "webxr_pose_to_planner"
+    pipeline.begin_planner_transition.assert_called_once_with(0.5)
 
 
 def test_pose_transition_rejects_missing_planner_reference(
@@ -267,9 +274,9 @@ def test_tracking_loss_during_transition_returns_to_planner(
 
     task.on_body_tracking(_body_snapshot(available=False), t_now=1.20)
 
-    assert task.state_snapshot()["webxr_teleop"]["mode"] == "planner"
-    assert task.state_snapshot()["reference_source"] == "planner"
-    pipeline.stop_clip.assert_called()
+    assert task.state_snapshot()["webxr_teleop"]["mode"] == "planner_transition"
+    assert task.state_snapshot()["reference_source"] == "webxr_pose_to_planner"
+    pipeline.begin_planner_transition.assert_called_once_with(0.5)
 
 
 def test_enabling_from_dry_run_pose_returns_to_planner_before_output(
@@ -405,7 +412,7 @@ def test_leaving_pose_clears_sonic_reference(
     assert publish.call_args.args[0].active is False
 
 
-def test_ax_toggles_pose_back_to_balancing_planner(
+def test_ax_transitions_pose_back_to_balancing_planner(
     task_and_pipeline: tuple[Any, Any],
 ) -> None:
     task, pipeline = task_and_pipeline
@@ -415,9 +422,42 @@ def test_ax_toggles_pose_back_to_balancing_planner(
     task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.21)
 
     assert task.control_state is SonicControlState.CONTROL
-    assert task.state_snapshot()["webxr_teleop"]["mode"] == "planner"
-    assert task.state_snapshot()["reference_source"] == "planner"
-    pipeline.stop_clip.assert_called()
+    assert task.state_snapshot()["webxr_teleop"]["mode"] == "planner_transition"
+    assert task.state_snapshot()["reference_source"] == "webxr_pose_to_planner"
+    pipeline.begin_planner_transition.assert_called_once_with(0.5)
+
+
+def test_completed_planner_transition_enters_planner_and_preserves_reason(
+    task_and_pipeline: tuple[Any, Any],
+) -> None:
+    task, pipeline = task_and_pipeline
+    _enter_pose(task)
+    task.on_teleop_buttons(_buttons(), t_now=1.20)
+    task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.21)
+    pipeline.reference_transition_active = False
+
+    task.compute(_state(1.22))
+
+    snapshot = task.state_snapshot()
+    assert snapshot["webxr_teleop"]["mode"] == "planner"
+    assert snapshot["webxr_teleop"]["last_transition_reason"] == "operator_planner_toggle"
+    assert snapshot["reference_source"] == "planner"
+
+
+def test_ax_is_ignored_during_planner_transition(
+    task_and_pipeline: tuple[Any, Any],
+) -> None:
+    task, pipeline = task_and_pipeline
+    _enter_pose(task)
+    task.on_teleop_buttons(_buttons(), t_now=1.20)
+    task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.21)
+    task.on_teleop_buttons(_buttons(), t_now=1.22)
+    pipeline.begin_stream_transition.reset_mock()
+
+    task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.23)
+
+    assert task.state_snapshot()["webxr_teleop"]["mode"] == "planner_transition"
+    pipeline.begin_stream_transition.assert_not_called()
 
 
 def test_abxy_does_not_change_pose_mode(
@@ -476,10 +516,13 @@ def test_tracking_loss_in_pose_returns_to_planner(
     _enter_pose(task)
 
     task.on_body_tracking(_body_snapshot(available=False), t_now=1.20)
+    task.compute(_state(1.22))
 
-    assert task.state_snapshot()["webxr_teleop"]["mode"] == "planner"
-    assert task.state_snapshot()["webxr_teleop"]["stream_ready"] is False
-    pipeline.stop_clip.assert_called()
+    teleop = task.state_snapshot()["webxr_teleop"]
+    assert teleop["mode"] == "planner_transition"
+    assert teleop["stream_ready"] is False
+    assert teleop["last_transition_reason"] == "body_tracking_unavailable"
+    pipeline.begin_planner_transition.assert_called_once_with(0.5)
 
 
 def test_tracking_reference_change_returns_to_planner(
@@ -494,7 +537,7 @@ def test_tracking_reference_change_returns_to_planner(
     )
 
     teleop = task.state_snapshot()["webxr_teleop"]
-    assert teleop["mode"] == "planner"
+    assert teleop["mode"] == "planner_transition"
     assert teleop["last_transition_reason"] == "tracking_reference_changed"
 
 
@@ -504,13 +547,18 @@ def test_stale_tracking_in_pose_returns_to_planner(
     task, pipeline = task_and_pipeline
     _enter_pose(task)
 
-    task.compute(_state(1.34))
+    task.compute(_state(2.17))
 
-    assert task.state_snapshot()["webxr_teleop"]["mode"] == "planner"
+    assert task.state_snapshot()["webxr_teleop"]["mode"] == "pose"
+    pipeline.begin_planner_transition.assert_not_called()
+
+    task.compute(_state(2.19))
+
+    assert task.state_snapshot()["webxr_teleop"]["mode"] == "planner_transition"
     assert task.state_snapshot()["webxr_teleop"]["last_transition_reason"] == (
         "body_tracking_stale"
     )
-    pipeline.stop_clip.assert_called()
+    pipeline.begin_planner_transition.assert_called_once_with(0.5)
 
 
 def test_pose_twist_ignores_translation_and_applies_yaw(

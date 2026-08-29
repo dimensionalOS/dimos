@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-_BODY_HOLD_SECONDS = 0.15
+_BODY_HOLD_SECONDS = 1.0
 
 
 class SonicTeleopMode(str, Enum):
@@ -53,6 +53,7 @@ class SonicTeleopMode(str, Enum):
     PLANNER = "planner"
     POSE_TRANSITION = "pose_transition"
     POSE = "pose"
+    PLANNER_TRANSITION = "planner_transition"
 
 
 _POSE_REFERENCE_MODES = frozenset(
@@ -61,10 +62,11 @@ _POSE_REFERENCE_MODES = frozenset(
         SonicTeleopMode.POSE,
     }
 )
+_POSE_HISTORY_MODES = _POSE_REFERENCE_MODES | {SonicTeleopMode.PLANNER_TRANSITION}
 
 
 class G1SonicTeleopTask(G1SonicWBCTask):
-    """Run the OFF -> PLANNER -> POSE_TRANSITION -> POSE workflow.
+    """Run smooth planner-to-pose and pose-to-planner handoffs.
 
     The DimOS policy lifecycle owns OFF -> PLANNER: armed policy control enters
     the balancing planner, including in dry-run, while disarm enters OFF. Exact
@@ -177,11 +179,22 @@ class G1SonicTeleopTask(G1SonicWBCTask):
             self._sync_policy_lifecycle_locked()
             if (
                 self._mode is SonicTeleopMode.POSE_TRANSITION
-                and not self._pipeline.stream_transition_active
+                and not self._pipeline.reference_transition_active
             ):
                 self._mode = SonicTeleopMode.POSE
                 self._last_transition_reason = "pose_transition_complete"
                 logger.info("G1 SONIC WebXR mode", task=self._name, mode=self._mode.value)
+            elif (
+                self._mode is SonicTeleopMode.PLANNER_TRANSITION
+                and not self._pipeline.reference_transition_active
+            ):
+                self._mode = SonicTeleopMode.PLANNER
+                logger.info(
+                    "G1 SONIC WebXR mode",
+                    task=self._name,
+                    mode=self._mode.value,
+                    reason=self._last_transition_reason,
+                )
             return output
 
     def start(self) -> None:
@@ -214,8 +227,8 @@ class G1SonicTeleopTask(G1SonicWBCTask):
         with self._teleop_lock:
             was_dry_run = self._dry_run
             super().set_dry_run(enabled)
-            if was_dry_run and not self._dry_run and self._mode in _POSE_REFERENCE_MODES:
-                self._enter_planner_locked("motor_output_enabled")
+            if was_dry_run and not self._dry_run and self._mode in _POSE_HISTORY_MODES:
+                self._enter_planner_locked("motor_output_enabled", smooth=False)
                 self._reset_policy_state()
             self._sync_policy_lifecycle_locked()
 
@@ -233,8 +246,12 @@ class G1SonicTeleopTask(G1SonicWBCTask):
                 "pose_transition_progress": (
                     1.0
                     if self._mode is SonicTeleopMode.POSE
-                    else self._pipeline.stream_transition_progress
-                    if self._mode is SonicTeleopMode.POSE_TRANSITION
+                    else self._pipeline.reference_transition_progress
+                    if self._mode
+                    in {
+                        SonicTeleopMode.POSE_TRANSITION,
+                        SonicTeleopMode.PLANNER_TRANSITION,
+                    }
                     else 0.0
                 ),
                 "stream_ready": self._pose_stream.ready,
@@ -247,6 +264,8 @@ class G1SonicTeleopTask(G1SonicWBCTask):
                 snapshot["reference_source"] = "planner_to_webxr_pose"
             elif self._mode is SonicTeleopMode.POSE:
                 snapshot["reference_source"] = "webxr_pose"
+            elif self._mode is SonicTeleopMode.PLANNER_TRANSITION:
+                snapshot["reference_source"] = "webxr_pose_to_planner"
             else:
                 snapshot["reference_source"] = "planner"
             return snapshot
@@ -293,17 +312,26 @@ class G1SonicTeleopTask(G1SonicWBCTask):
         self._last_transition_reason = "operator_pose_toggle"
         logger.info("G1 SONIC WebXR mode", task=self._name, mode=self._mode.value)
 
-    def _enter_planner_locked(self, reason: str) -> None:
-        was_pose = self._mode in _POSE_REFERENCE_MODES
+    def _enter_planner_locked(self, reason: str, *, smooth: bool = True) -> None:
+        was_pose_reference = self._mode in _POSE_REFERENCE_MODES
+        was_pose_history = self._mode in _POSE_HISTORY_MODES
         self._clear_pose_reference_locked()
-        self._mode = SonicTeleopMode.PLANNER
         self._last_transition_reason = reason
         self._yaw_rate = 0.0
         self._last_yaw_time = 0.0
         self._pipeline.clear_vr_3point()
-        if was_pose:
-            self._return_to_planner_reference()
+        transition_started = False
+        if was_pose_reference:
             self.set_velocity_command(0.0, 0.0, 0.0)
+            if smooth:
+                transition_started = self._begin_planner_reference_transition(
+                    self._config.pose_transition_seconds
+                )
+        if was_pose_history and not transition_started:
+            self._return_to_planner_reference()
+        self._mode = (
+            SonicTeleopMode.PLANNER_TRANSITION if transition_started else SonicTeleopMode.PLANNER
+        )
         self._pose_stream.reset()
         self._applied_generation = 0
         self._tracking_frame_id = None
@@ -321,7 +349,7 @@ class G1SonicTeleopTask(G1SonicWBCTask):
         )
 
     def _enter_off_locked(self, reason: str) -> None:
-        was_pose = self._mode in _POSE_REFERENCE_MODES
+        was_pose = self._mode in _POSE_HISTORY_MODES
         self._clear_pose_reference_locked()
         self._mode = SonicTeleopMode.OFF
         self._last_transition_reason = reason
@@ -355,7 +383,7 @@ class G1SonicTeleopTask(G1SonicWBCTask):
             self._enter_planner_locked("policy_control_active")
 
     def _prepare_teleop_locked(self, t_now: float, dt: float) -> None:
-        if self._mode is SonicTeleopMode.OFF:
+        if self._mode in {SonicTeleopMode.OFF, SonicTeleopMode.PLANNER_TRANSITION}:
             return
         if (
             self._latest_complete is None
@@ -418,7 +446,7 @@ class G1SonicTeleopTask(G1SonicWBCTask):
 
     def _reset_teleop_locked(self, reason: str = "not_started") -> None:
         self._clear_pose_reference_locked()
-        if self._mode in _POSE_REFERENCE_MODES:
+        if self._mode in _POSE_HISTORY_MODES:
             self._pipeline.clear_vr_3point()
             self._return_to_planner_reference()
             self.set_velocity_command(0.0, 0.0, 0.0)
