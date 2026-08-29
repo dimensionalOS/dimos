@@ -63,7 +63,7 @@ coordinator_dual_openyam = DualOpenYamCoordinator.blueprint(
 )
 
 dual_openyam_planner_coordinator = autoconnect(
-    planner(robots=[dual_openyam_model_config()]),
+    planner(model=dual_openyam_model_config()),
     DualOpenYamCoordinator.blueprint(
         tasks=[dual_openyam_trajectory_task()],
     ),
