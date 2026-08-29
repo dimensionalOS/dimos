@@ -130,6 +130,8 @@ class MultipartBackend:
     ) -> dict[str, Any]:
         tick = progress or (lambda phase, done, total: None)
         manifest = _manifest(path)
+        if self.codec_id and path.suffix != codecs.suffix(self.codec_id):
+            _require_space(self.staging_dir or path.parent, path.stat().st_size)
         with self._staging(path) as tmp:
             if self.codec_id and path.suffix != codecs.suffix(self.codec_id):
                 artifact = Path(tmp) / (path.name + codecs.suffix(self.codec_id))
@@ -296,6 +298,17 @@ def kind_of(path: Path) -> str:
     if path.suffix == ".mcap" or _manifest(path) is not None:
         return "recording"
     return "blob"
+
+
+def _require_space(where: Path, need: int) -> None:
+    """Compression stages a copy beside the file (or in dimos_staging_dir); fail before
+    starting rather than at 99% of a 100 GB transfer."""
+    free = shutil.disk_usage(where).free
+    if free < need:
+        raise RuntimeError(
+            f"{where} has {free / 2**30:.1f} GB free, need ~{need / 2**30:.1f} GB to stage the "
+            "compressed copy — set dimos_staging_dir to a larger partition or upload with dimos_upload_codec=''"
+        )
 
 
 def _reap_stale(parent: Path, max_age_s: float = 86400) -> None:

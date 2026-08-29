@@ -279,3 +279,14 @@ def test_progress_prefix_and_default_pull(env: tuple[CloudData, FakeTransport, P
     with pytest.raises(RuntimeError, match="no upload matching"):
         cloud.resolve("zz")
     assert cloud.pull(uid[:6], dest=db.parent / "p.db").read_bytes() == db.read_bytes()
+
+
+def test_upload_refuses_when_staging_partition_is_full(
+    env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cloud, _, db = env
+    import shutil
+
+    monkeypatch.setattr(shutil, "disk_usage", lambda p: shutil._ntuple_diskusage(10, 9, 1))  # type: ignore[attr-defined]
+    with pytest.raises(RuntimeError, match="free, need"):
+        cloud.upload(db)
