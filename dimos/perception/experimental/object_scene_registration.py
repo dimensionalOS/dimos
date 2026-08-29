@@ -52,6 +52,7 @@ class ObjectSceneRegistrationConfig(ModuleConfig):
     prompt_mode: YoloePromptMode = YoloePromptMode.LRPC
     detector_backend: Literal["yoloe", "owlv2", "moondream"] = "yoloe"
     segmentation_backend: Literal["yolo", "edgetam"] = "yolo"
+    detector_confidence: float = 0.6
     detect_on_request: bool = False
     distance_threshold: float = 0.2
     min_detections_for_permanent: int = 6
@@ -92,7 +93,7 @@ class ObjectSceneRegistrationModule(Module):
         self._prompt_mode = self.config.prompt_mode
         self._detector_backend = self.config.detector_backend
         self._segmentation_backend = self.config.segmentation_backend
-        self._detector_confidence = 0.6
+        self._detector_confidence = self.config.detector_confidence
         self._detect_on_request = self.config.detect_on_request
         self._object_db = ObjectDB(
             distance_threshold=self.config.distance_threshold,
