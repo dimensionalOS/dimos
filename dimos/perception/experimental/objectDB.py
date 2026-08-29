@@ -84,25 +84,27 @@ class ObjectDB:
             "matched_distance": 0,
         }
 
-        results: list[Object] = []
+        results: dict[str, Object] = {}
         now = time.time()
         with self._lock:
             self._prune_stale_pending(now)
             for obj in objects:
                 matched, reason = self._match(obj, now)
                 if matched is None:
-                    results.append(self._insert_pending(obj, now))
+                    inserted = self._insert_pending(obj, now)
+                    results[inserted.object_id] = inserted
                     stats["created"] += 1
                     continue
 
-                self._update_existing(matched, obj, now)
-                results.append(matched)
-                stats["updated"] += 1
+                updated = self._update_existing(matched, obj, now)
+                results[matched.object_id] = matched
+                if updated:
+                    stats["updated"] += 1
                 if reason == "track":
                     stats["matched_track"] += 1
                 elif reason == "distance":
                     stats["matched_distance"] += 1
-                if self._check_promotion(matched):
+                if updated and self._check_promotion(matched):
                     stats["promoted"] += 1
 
         stats["pending"] = len(self._pending_objects)
@@ -110,7 +112,7 @@ class ObjectDB:
         self._last_add_stats = stats
         if stats["created"] > 0 or stats["promoted"] > 0:
             logger.info(f"ObjectDB: {stats}")
-        return results
+        return list(results.values())
 
     def get_last_add_stats(self) -> dict[str, int]:
         with self._lock:
@@ -218,17 +220,25 @@ class ObjectDB:
     def _insert_pending(self, obj: Object, now: float) -> Object:
         if not obj.ts:
             obj.ts = now
+        obj.last_seen_ts = now
         self._pending_objects[obj.object_id] = obj
         if obj.track_id >= 0:
             self._track_id_map[obj.track_id] = obj.object_id
         logger.info(f"Created new pending object {obj.object_id} ({obj.name})")
         return obj
 
-    def _update_existing(self, existing: Object, obj: Object, now: float) -> None:
-        existing.update_object(obj)
-        existing.ts = obj.ts or now
+    def _update_existing(self, existing: Object, obj: Object, now: float) -> bool:
         if obj.track_id >= 0:
             self._track_id_map[obj.track_id] = existing.object_id
+        # Multiple prompts or repeated scans may produce the same object from
+        # one camera frame. Only distinct source observations advance memory.
+        if existing.ts == obj.ts:
+            return False
+
+        existing.update_object(obj)
+        existing.ts = obj.ts or now
+        existing.last_seen_ts = now
+        return True
 
     def _match_by_track_id(self, track_id: int, now: float) -> Object | None:
         """Find object with matching track_id from YOLOE."""
@@ -248,7 +258,7 @@ class ObjectDB:
             del self._track_id_map[track_id]
             return None
 
-        last_seen = obj.ts if obj.ts else now
+        last_seen = obj.last_seen_ts if obj.last_seen_ts is not None else now
         if now - last_seen > self._track_id_ttl_s:
             del self._track_id_map[track_id]
             return None
@@ -284,7 +294,9 @@ class ObjectDB:
             return
         cutoff = now - self._pending_ttl_s
         stale_ids = [
-            obj_id for obj_id, obj in self._pending_objects.items() if (obj.ts or now) < cutoff
+            obj_id
+            for obj_id, obj in self._pending_objects.items()
+            if (obj.last_seen_ts if obj.last_seen_ts is not None else now) < cutoff
         ]
         for obj_id in stale_ids:
             del self._pending_objects[obj_id]

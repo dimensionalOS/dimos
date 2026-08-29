@@ -20,6 +20,9 @@ import math
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
+from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
+from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -33,7 +36,7 @@ XARM_PERCEPTION_CAMERA_TRANSFORM = Transform(
 )
 
 xarm_perception = autoconnect(
-    PickAndPlaceModule.blueprint(
+    ManipulationModule.blueprint(
         model=make_xarm7_model_config(
             add_gripper=True,
             gripper_hardware_id="arm",
@@ -44,12 +47,18 @@ xarm_perception = autoconnect(
         visualization={"backend": "viser"},
         floor_z=-0.02,
     ),
+    ManipulationSkills.blueprint(),
+    PickAndPlaceModule.blueprint(planning_frame="world"),
+    HeuristicGraspModule.blueprint(),
     RealSenseCamera.blueprint(
         base_frame_id="link7",
         base_transform=XARM_PERCEPTION_CAMERA_TRANSFORM,
     ),
     ObjectSceneRegistrationModule.blueprint(
         target_frame="world",
+        detector_backend="moondream",
+        segmentation_backend="edgetam",
+        detect_on_request=True,
         distance_threshold=0.08,
         min_detections_for_permanent=3,
         max_distance=1.0,
