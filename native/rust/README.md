@@ -135,9 +135,9 @@ MultiCam.blueprint(
 )
 ```
 
-`names` are stream names as they read after remapping and namespacing, not backend topics — a leading `/` is rejected. Python resolves each to a wire channel the same way it resolves a declared stream's name, so the same blueprint runs unchanged over LCM or zenoh.
+`names` are stream names, not backend topics — a leading `/` is rejected. Each entry becomes a synthetic `In` stream on the python side, so the blueprint machinery treats it like a declared port: autoconnect matches it against producers' `Out` streams, `.remappings()` and `.namespace()` rewrite it, and blueprint transport pins apply. The same blueprint runs unchanged over LCM or zenoh.
 
-Those streams are not declared as `In` ports, so they take no part in blueprint autoconnection: the names are resolved to wire channels and the native process subscribes them itself. On the launch line the port's value is an array rather than a string. A group configured with no names still claims its port but never yields.
+The group itself is not a port with a stream of its own: python hands the wired entries' channels to the native process, which subscribes them directly. On the launch line the port's value is an array rather than a string. A group configured with no names still claims its port but never yields.
 
 `stream_groups` lives on `ModuleConfig`, so a plain Python `Module` takes the same field. There the module subscribes the group itself and dispatches to `async def handle_<port>(self, index, msg)`, matching the Rust handler signature:
 

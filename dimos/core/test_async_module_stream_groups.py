@@ -59,3 +59,42 @@ def test_stream_group_tags_each_message_with_its_stream(start_fan_in_module, gro
 
     s1.publish(7)
     assert queue.get(timeout=1.0) == 107
+
+
+@pytest.fixture
+def start_remapped_fan_in_module(each_transport):
+    blueprint = FanInModule.blueprint(
+        stream_groups={"sensors": StreamGroup(names=["s0", "s1"])}
+    ).remappings([(FanInModule, "s0", "alt0")])
+    coordinator = ModuleCoordinator.build(blueprint)
+    yield
+    coordinator.stop()
+
+
+def test_stream_group_entries_follow_remappings(start_remapped_fan_in_module, each_transport):
+    """A remapped entry keeps its index but listens on the remapped stream."""
+    alt0, tagged = make_transport("alt0"), make_transport("tagged")
+    for transport in (alt0, tagged):
+        transport.start()
+    try:
+        queue: Queue[int] = Queue()
+        tagged.subscribe(queue.put)
+        alt0.publish(7)
+        assert queue.get(timeout=1.0) == 7
+    finally:
+        for transport in (alt0, tagged):
+            transport.stop()
+
+
+def test_namespace_prefixes_stream_group_entries():
+    blueprint = FanInModule.blueprint(
+        stream_groups={"sensors": StreamGroup(names=["s0", "s1"])}
+    ).namespace("bot")
+    atom = blueprint.blueprints[0]
+    assert blueprint.remapping_map[atom.name, "s0"] == "bot/s0"
+    assert blueprint.remapping_map[atom.name, "s1"] == "bot/s1"
+
+
+def test_a_group_entry_cannot_collide_with_a_declared_stream():
+    with pytest.raises(ValueError, match="collides"):
+        FanInModule(stream_groups={"sensors": StreamGroup(names=["tagged"])})

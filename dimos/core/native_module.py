@@ -535,7 +535,15 @@ class NativeModule(Module):
                     f"[{self._module_label}] stream group {port!r} collides with the "
                     "port of the same name declared as a stream"
                 )
-            topics[port] = [channel_for(n, group.msg_type) for n in group.names]
+            channels = []
+            for name in group.names:
+                transport = getattr(self._group_streams[name], "_transport", None)
+                channel = getattr(transport, "channel", None)
+                # Unwired (standalone use): the channel the default transport lands on.
+                channels.append(
+                    channel if channel is not None else channel_for(name, group.msg_type)
+                )
+            topics[port] = channels
         return topics
 
     def _collect_output_qos(self) -> dict[str, dict[str, str]]:

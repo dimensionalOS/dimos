@@ -106,14 +106,12 @@ Deployment = Literal["python", "docker"]
 class StreamGroup(BaseModel):
     """Several same-typed streams that one port fans into a single handler.
 
-    `names` are stream names as they read after remapping and namespacing —
-    `left_cam`, `robot1/lidar` — never a backend topic string. Each is resolved
-    to a wire channel the same way a declared stream's name is, so the group
-    says nothing about which transport is in use.
-
-    No `In` stream is declared for these, so they take no part in blueprint
-    autoconnection. A python module subscribes them itself; a native module
-    hands them to its subprocess, which does the subscribing.
+    `names` are stream names — `left_cam`, `robot1/lidar` — never a backend
+    topic string. Each entry becomes a synthetic `In` stream, so the blueprint
+    machinery treats it like a declared port: autoconnect matches it against
+    producers, `.remappings()` and `.namespace()` rewrite it, and transport
+    pins apply. A python module subscribes the wired streams itself; a native
+    module hands their channels to its subprocess, which does the subscribing.
     """
 
     names: list[str]
@@ -176,9 +174,11 @@ class ModuleBase(Configurable, CompositeResource):
     _main_gen: AsyncGenerator[None, None] | None = None
     _tools: dict[str, Any]
     _tools_lock: threading.Lock
+    _group_streams: dict[str, In[Any]]
 
     def __init__(self, config_args: dict[str, Any]) -> None:
         super().__init__(**config_args)
+        self._group_streams = self._make_group_streams()
         self._module_closed_lock = threading.Lock()
         self._tools = {}
         self._tools_lock = threading.Lock()
@@ -697,6 +697,30 @@ class ModuleBase(Configurable, CompositeResource):
             # backpressure.
             self.process_observable(in_stream.pure_observable(), handler)
 
+    def _make_group_streams(self) -> "dict[str, In[Any]]":
+        """One synthetic `In` per stream-group entry, keyed by stream name.
+
+        These are wired like declared ports (`set_transport` finds them, the
+        blueprint machinery remaps/namespaces/pins them), but they are not
+        attributes, so `inputs` and the native launch line never see them as
+        ports of their own.
+        """
+        streams: dict[str, In[Any]] = {}
+        declared = set(self.inputs) | set(self.outputs) | set(self.ios)
+        for port, group in self.config.stream_groups.items():
+            for name in group.names:
+                if name in declared:
+                    raise ValueError(
+                        f"stream group {port!r} entry {name!r} collides with a "
+                        f"declared stream of {type(self).__name__}"
+                    )
+                if name in streams:
+                    raise ValueError(
+                        f"stream group {port!r} entry {name!r} appears in more than one group"
+                    )
+                streams[name] = In(group.msg_type or Any, name, self)
+        return streams
+
     def _bind_stream_groups(self) -> None:
         """For each `stream_groups` port with an `async def handle_<port>`, subscribe
         every stream in the group into that one handler.
@@ -718,8 +742,11 @@ class ModuleBase(Configurable, CompositeResource):
             on_msg, dispatcher_disp = self._make_keyed_dispatch(handler)
             self.register_disposable(dispatcher_disp)
             for index, name in enumerate(group.names):
-                transport = make_transport(name, group.msg_type)
-                self.register_disposable(Disposable(transport.subscribe(partial(on_msg, index))))
+                stream = self._group_streams[name]
+                if getattr(stream, "_transport", None) is None:
+                    # Not wired by a coordinator (standalone use): default transport.
+                    stream.transport = make_transport(name, group.msg_type)
+                self.register_disposable(Disposable(stream.subscribe(partial(on_msg, index))))
 
     def _make_async_dispatch(
         self, async_handler: Callable[[Any], Any]
@@ -884,7 +911,7 @@ class Module(ModuleBase):
 
     @rpc
     def set_transport(self, stream_name: str, transport: Transport) -> bool:  # type: ignore[type-arg]
-        stream = getattr(self, stream_name, None)
+        stream = self._group_streams.get(stream_name) or getattr(self, stream_name, None)
         if not stream:
             raise ValueError(f"{stream_name} not found in {self.__class__.__name__}")
 

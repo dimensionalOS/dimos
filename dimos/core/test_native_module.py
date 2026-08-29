@@ -229,6 +229,22 @@ def test_a_stream_group_reaches_the_native_process_as_a_list(monkeypatch) -> Non
         module.stop()
 
 
+def test_a_wired_stream_group_entry_uses_its_transport() -> None:
+    """Remapping/pins arrive as set_transport on the entry, and the launch line follows."""
+    module = StubNativeModule(
+        executable=_ECHO,
+        stream_groups={"cams": StreamGroup(names=["cam0/imu"], msg_type=Imu)},
+    )
+    transport = LCMTransport("/remapped/imu", Imu)
+    try:
+        module.set_transport("cam0/imu", transport)
+        assert module._collect_topics()["cams"] == ["/remapped/imu#sensor_msgs.Imu"]
+    finally:
+        module.stop()
+        with contextlib.suppress(Exception):
+            transport.stop()
+
+
 def test_a_stream_group_rejects_a_backend_topic_string() -> None:
     """Names are stream names, so a leading slash is a transport leaking in."""
     with pytest.raises(ValidationError, match="not topics"):
