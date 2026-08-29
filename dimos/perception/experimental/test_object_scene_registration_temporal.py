@@ -382,6 +382,7 @@ def test_object_db_uses_wall_clock_for_pending_ttl(monkeypatch: Any) -> None:
     detected.ts = 4.0  # Hardware timestamps are relative to camera boot.
     detected.last_seen_ts = None
     detected.center = None
+    detected.detections_count = 1
     now = [1000.0]
     monkeypatch.setattr("dimos.perception.experimental.objectDB.time.time", lambda: now[0])
 
@@ -427,3 +428,50 @@ def test_object_db_counts_each_source_frame_once(monkeypatch: Any) -> None:
     assert object_db.add_objects([newer]) == [first]
     first.update_object.assert_called_once_with(newer)
     assert first.last_seen_ts == 1001.0
+
+
+def test_object_db_promotes_a_first_sighting_when_threshold_is_one() -> None:
+    object_db = ObjectDB(min_detections_for_permanent=1)
+    detected = MagicMock(
+        object_id="first-id",
+        track_id=-1,
+        ts=1.0,
+        last_seen_ts=None,
+        detections_count=1,
+        name="cup",
+    )
+    detected.center = None
+
+    object_db.add_objects([detected])
+
+    assert object_db.get_objects() == [detected]
+    assert object_db.get_stats() == {
+        "pending_count": 0,
+        "permanent_count": 1,
+        "total_count": 1,
+    }
+
+
+def test_object_db_keeps_first_sighting_pending_above_threshold() -> None:
+    object_db = ObjectDB(min_detections_for_permanent=2)
+    detected = MagicMock(
+        object_id="first-id",
+        track_id=7,
+        ts=1.0,
+        last_seen_ts=None,
+        detections_count=1,
+        name="cup",
+    )
+    detected.center = None
+    newer = MagicMock(object_id="newer-id", track_id=7, ts=2.0)
+    newer.center = None
+    detected.update_object.side_effect = lambda _: setattr(detected, "detections_count", 2)
+
+    object_db.add_objects([detected])
+
+    assert object_db.get_objects() == []
+    assert object_db.find_by_object_id("first-id") is detected
+
+    object_db.add_objects([newer])
+
+    assert object_db.get_objects() == [detected]
