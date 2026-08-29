@@ -66,7 +66,7 @@ def dual_openyam_hardware(
         DUAL_OPENYAM_ADAPTER_TYPE,
         {
             "runtime_config": DamiaoRuntimeConfig(
-                bus_addresses={"left": left_can_port, "right": right_can_port},
+                bus_devices={"left": left_can_port, "right": right_can_port},
                 gravity_comp=True,
             )
         },
