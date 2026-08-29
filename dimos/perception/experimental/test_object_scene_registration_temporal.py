@@ -149,7 +149,7 @@ def test_full_scene_pointcloud_uses_one_coherent_scene_snapshot(
 
 
 def test_owlv2_queries_configured_prompts(monkeypatch: Any) -> None:
-    module = ObjectSceneRegistrationModule(detector_backend="owlv2")
+    module = ObjectSceneRegistrationModule(detector_backend="owlv2", detector_confidence=0.07)
     module._camera_info = MagicMock()
     module._detector = MagicMock()
     module._text_prompts = ["mug"]
@@ -167,7 +167,7 @@ def test_owlv2_queries_configured_prompts(monkeypatch: Any) -> None:
 
     module._process_images(color, _image(4.0))
 
-    module._detector.query_detections.assert_called_once_with(color, ["mug"], threshold=0.6)
+    module._detector.query_detections.assert_called_once_with(color, ["mug"], threshold=0.07)
     process_3d.assert_called_once_with(detections, color, ANY)
     module.stop()
 
