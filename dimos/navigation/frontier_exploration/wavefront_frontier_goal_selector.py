@@ -91,6 +91,8 @@ class WavefrontConfig(ModuleConfig):
     info_gain_threshold: float = 0.03
     num_no_gain_attempts: int = 2
     goal_timeout: float = 15.0
+    momentum_weight: float = 0.3
+    min_momentum_score: float = -1.0
 
 
 class WavefrontFrontierExplorer(Module):
@@ -463,8 +465,11 @@ class WavefrontFrontierExplorer(Module):
             + self.exploration_direction.y * frontier_direction.y
         )
 
-        # Return momentum score (higher for same direction, lower for opposite)
-        return max(0.0, dot_product)  # Only positive momentum, no penalty for different directions
+        # Return momentum score (higher for same direction, lower for opposite).
+        # Signed: +1 straight ahead, 0 sideways, -1 a full U-turn. Clamping at
+        # 0.0 priced a reversal exactly like a sideways move, so turning around
+        # was free. Set min_momentum_score to 0.0 to restore that behavior.
+        return max(self.config.min_momentum_score, dot_product)
 
     def _compute_distance_to_explored_goals(self, frontier: Vector3) -> float:
         """Compute distance from frontier to the nearest explored goal."""
@@ -557,20 +562,22 @@ class WavefrontFrontierExplorer(Module):
         else:
             obstacles_score = obstacles_distance / self.config.safe_distance  # Linear penalty
 
-        # 5. Direction momentum (already in 0-1 range from dot product)
+        # 5. Direction momentum (in -1 to 1 range from the signed dot product)
         momentum_score = self._compute_direction_momentum_score(frontier, robot_pose)
 
         logger.info(
             f"Distance score: {distance_score:.2f}, Info gain: {info_gain_score:.2f}, Explored goals: {explored_goals_score:.2f}, Obstacles: {obstacles_score:.2f}, Momentum: {momentum_score:.2f}"
         )
 
-        # Combine scores with consistent scaling
+        # Combine scores with consistent scaling. Frontiers are only ever ranked
+        # against each other (see _rank_frontiers), never against an absolute
+        # threshold, so the weights do not have to sum to 1.
         total_score = (
             0.3 * info_gain_score  # 30% information gain
             + 0.3 * explored_goals_score  # 30% distance from explored goals
             + 0.2 * distance_score  # 20% distance optimization
             + 0.15 * obstacles_score  # 15% distance from obstacles
-            + 0.05 * momentum_score  # 5% direction momentum
+            + self.config.momentum_weight * momentum_score  # signed direction momentum
         )
 
         return total_score
