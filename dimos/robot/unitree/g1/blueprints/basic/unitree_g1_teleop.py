@@ -118,7 +118,7 @@ unitree_g1_teleop = (
         MobileVideoArmTeleopModule.blueprint(),
         G1ManipulationModule.blueprint(
             instance_name="G1Manipulation",
-            robots=[g1_upper_body_model_config()],
+            model=g1_upper_body_model_config(),
             visualization=ViserVisualizationConfig(host="0.0.0.0"),
         ),
         *_camera_if_real(),

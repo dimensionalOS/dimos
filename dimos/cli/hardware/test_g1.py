@@ -208,9 +208,9 @@ def test_ready_plans_both_arms_at_conservative_speed(mocker) -> None:
 
     assert result.exit_code == 0, result.output
     targets = manipulation.plan_to_joints.call_args.args[0]
-    assert set(targets) == {"g1_upper_body/left_arm", "g1_upper_body/right_arm"}
-    assert tuple(targets["g1_upper_body/left_arm"].position) == G1_READY_JOINTS["left_arm"]
-    assert tuple(targets["g1_upper_body/right_arm"].position) == G1_READY_JOINTS["right_arm"]
+    assert set(targets) == {"left_arm", "right_arm"}
+    assert tuple(targets["left_arm"].position) == G1_READY_JOINTS["left_arm"]
+    assert tuple(targets["right_arm"].position) == G1_READY_JOINTS["right_arm"]
     assert manipulation.plan_to_joints.call_args.kwargs == {"speed_scale": G1_READY_SPEED_SCALE}
     manipulation.execute.assert_called_once_with(blocking=True)
 

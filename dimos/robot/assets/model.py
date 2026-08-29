@@ -98,6 +98,7 @@ class RobotModel:
     _xacro_args: tuple[tuple[str, str], ...] = ()
     _fixed_frames: tuple[_FixedFrame, ...] = ()
     _fixed_joints: tuple[str, ...] = ()
+    _renamed_joints: tuple[tuple[str, str], ...] = ()
     _joint_position_limits: tuple[_JointPositionLimits, ...] = ()
     _subtree_root_link: str | None = None
     _removed_joint_subtrees: tuple[str, ...] = ()
@@ -166,6 +167,19 @@ class RobotModel:
             raise ValueError("At least one joint must be fixed")
         return replace(self, _fixed_joints=(*self._fixed_joints, *names))
 
+    def with_renamed_joints(self, names: Mapping[str, str]) -> RobotModel:
+        """Return a model view whose joints use the supplied canonical names."""
+        if not names:
+            raise ValueError("At least one joint rename is required")
+        if any(not source or not target for source, target in names.items()):
+            raise ValueError("Joint rename names must not be empty")
+        requested = (*self._renamed_joints, *names.items())
+        sources = [source for source, _target in requested]
+        if len(sources) != len(set(sources)):
+            duplicate = next(name for name in sources if sources.count(name) > 1)
+            raise ValueError(f"Joint is already renamed: {duplicate}")
+        return replace(self, _renamed_joints=requested)
+
     def with_joint_position_limits(
         self,
         name: str,
@@ -220,6 +234,8 @@ class RobotModel:
             xml = _set_joints_fixed(xml, self._fixed_joints)
         if self._joint_position_limits:
             xml = _set_joint_position_limits(xml, self._joint_position_limits)
+        if self._renamed_joints:
+            xml = _rename_joints(xml, dict(self._renamed_joints))
         if self._fixed_frames:
             xml = _add_fixed_frames(xml, self._fixed_frames)
 
@@ -368,6 +384,30 @@ def _set_joints_fixed(xml: str, names: tuple[str, ...]) -> str:
             if element.tag in movable_elements:
                 joint.remove(element)
 
+    return ET.tostring(root, encoding="unicode")
+
+
+def _rename_joints(xml: str, names: Mapping[str, str]) -> str:
+    root = ET.fromstring(xml)
+    model_joints = {joint.get("name") for joint in root.findall("joint")}
+    missing = sorted(set(names) - model_joints)
+    if missing:
+        raise ValueError(f"Joint not found: {missing[0]}")
+
+    unchanged = model_joints - set(names)
+    targets = list(names.values())
+    if len(targets) != len(set(targets)) or unchanged & set(targets):
+        raise ValueError("Renamed joint names must be unique in the model")
+
+    for joint in root.findall("joint"):
+        if (name := joint.get("name")) is not None and name in names:
+            joint.set("name", names[name])
+    for mimic in root.findall(".//mimic"):
+        if (name := mimic.get("joint")) is not None and name in names:
+            mimic.set("joint", names[name])
+    for transmission_joint in root.findall(".//transmission/joint"):
+        if (name := transmission_joint.get("name")) is not None and name in names:
+            transmission_joint.set("name", names[name])
     return ET.tostring(root, encoding="unicode")
 
 

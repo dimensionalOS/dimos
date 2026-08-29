@@ -389,6 +389,54 @@ def test_with_fixed_joints_requires_a_joint(tmp_path: Path) -> None:
         robot_model.RobotModel.from_file(urdf).with_fixed_joints()
 
 
+def test_with_renamed_joints_updates_model_references(tmp_path: Path) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(
+        "<robot name='r'><link name='base'/><link name='first'/><link name='second'/>"
+        "<joint name='source' type='revolute'><parent link='base'/><child link='first'/></joint>"
+        "<joint name='follower' type='revolute'><parent link='first'/><child link='second'/>"
+        "<mimic joint='source'/></joint></robot>"
+    )
+
+    loaded = (
+        robot_model.RobotModel.from_file(urdf)
+        .with_renamed_joints({"source": "robot/source"})
+        .load()
+    )
+    root = ET.fromstring(loaded.xml)
+
+    assert [joint.get("name") for joint in root.findall("joint")] == [
+        "robot/source",
+        "follower",
+    ]
+    assert root.find("joint[@name='follower']/mimic").get("joint") == "robot/source"
+
+
+@pytest.mark.parametrize(
+    ("names", "message"),
+    [
+        ({"missing": "robot/missing"}, "Joint not found"),
+        ({"source": "follower"}, "unique"),
+        ({"source": "robot/joint", "follower": "robot/joint"}, "unique"),
+    ],
+)
+def test_with_renamed_joints_rejects_invalid_model(
+    tmp_path: Path,
+    names: dict[str, str],
+    message: str,
+) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(
+        "<robot name='r'><link name='base'/><link name='first'/><link name='second'/>"
+        "<joint name='source' type='revolute'><parent link='base'/><child link='first'/></joint>"
+        "<joint name='follower' type='revolute'><parent link='first'/><child link='second'/></joint>"
+        "</robot>"
+    )
+
+    with pytest.raises(ValueError, match=message):
+        robot_model.RobotModel.from_file(urdf).with_renamed_joints(names).load()
+
+
 @pytest.mark.parametrize(
     ("lower", "upper", "message"),
     [

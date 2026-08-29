@@ -1144,7 +1144,6 @@ def test_pose_target_solve_constrains_joints_outside_planning_group(tmp_path: Pa
     ]
     arm_names = joint_names[3:]
     config = RobotModelConfig(
-        name="chain",
         model=RobotModel.from_file(model_path),
         joint_names=joint_names,
         base_link="pelvis",
@@ -1158,11 +1157,8 @@ def test_pose_target_solve_constrains_joints_outside_planning_group(tmp_path: Pa
         ],
     )
     group = PlanningGroup(
-        id="chain/arm",
-        robot_name="chain",
-        group_name="arm",
-        joint_names=tuple(f"chain/{name}" for name in arm_names),
-        local_joint_names=tuple(arm_names),
+        id="arm",
+        joint_names=tuple(arm_names),
         base_link="pelvis",
         tip_link="tool",
     )
@@ -1178,28 +1174,25 @@ def test_pose_target_solve_constrains_joints_outside_planning_group(tmp_path: Pa
     class World:
         is_finalized = True
 
-        def get_robot_ids(self) -> list[str]:
-            return ["robot"]
-
-        def get_robot_config(self, robot_id: str) -> RobotModelConfig:
+        def get_model_config(self) -> RobotModelConfig:
             return config
 
-        def get_joint_limits(self, robot_id: str) -> tuple[np.ndarray, np.ndarray]:
+        def get_joint_limits(self) -> tuple[np.ndarray, np.ndarray]:
             return lower_limits, upper_limits
 
         def scratch_context(self) -> nullcontext[None]:
             return nullcontext(None)
 
-        def get_joint_state(self, ctx: object, robot_id: str) -> JointState:
+        def get_joint_state(self, ctx: object) -> JointState:
             return seed
 
-        def check_config_collision_free(self, robot_id: str, joint_state: JointState) -> bool:
+        def check_config_collision_free(self, joint_state: JointState) -> bool:
             return True
 
-        def set_joint_state(self, ctx: object, robot_id: str, joint_state: JointState) -> None:
+        def set_joint_state(self, ctx: object, joint_state: JointState) -> None:
             pass
 
-        def is_collision_free(self, ctx: object, robot_id: str) -> bool:
+        def is_collision_free(self, ctx: object) -> bool:
             return True
 
     ik = PinkIK(PinkIKConfig(max_iterations=100))
@@ -1221,7 +1214,7 @@ def test_pose_target_solve_constrains_joints_outside_planning_group(tmp_path: Pa
 
     assert result.status == IKStatus.SUCCESS
     assert result.joint_state is not None
-    assert result.joint_state.name == [f"chain/{name}" for name in arm_names]
+    assert result.joint_state.name == arm_names
     assert result.position_error <= 0.001
     assert result.orientation_error <= 0.01
 

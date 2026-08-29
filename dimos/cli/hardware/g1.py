@@ -25,11 +25,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.porcelain.dimos import Dimos
 from dimos.porcelain.module_handle import ModuleHandle
-from dimos.robot.unitree.g1.manip_config import (
-    G1_READY_JOINTS,
-    G1_READY_SPEED_SCALE,
-    G1_UPPER_BODY_NAME,
-)
+from dimos.robot.unitree.g1.manip_config import G1_READY_JOINTS, G1_READY_SPEED_SCALE
 
 app = typer.Typer(help="Operate a running Unitree G1 stack safely")
 
@@ -157,8 +153,7 @@ def _execute_ready_pose(
     _require_armed_and_enabled(coordinator)
     _require_teleop_disengaged(coordinator)
     targets = {
-        f"{G1_UPPER_BODY_NAME}/{group}": JointState(position=list(positions))
-        for group, positions in G1_READY_JOINTS.items()
+        group: JointState(position=list(positions)) for group, positions in G1_READY_JOINTS.items()
     }
     planned = manipulation.plan_to_joints(targets, speed_scale=G1_READY_SPEED_SCALE)
     if not planned.succeeded:

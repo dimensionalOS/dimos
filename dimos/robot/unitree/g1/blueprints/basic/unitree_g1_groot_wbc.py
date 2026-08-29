@@ -83,10 +83,7 @@ from dimos.robot.unitree.g1.g1_rerun import (
     g1_urdf_joint_state,
     g1_urdf_static_robot,
 )
-from dimos.robot.unitree.g1.manip_config import (
-    G1_TELEOP_ARM_MODEL,
-    G1_UPPER_BODY_JOINT_NAME_MAPPING,
-)
+from dimos.robot.unitree.g1.manip_config import G1_TELEOP_ARM_MODEL
 from dimos.robot.unitree.g1.teleop_ik import G1PinkPoseTargetSolver
 from dimos.simulation.scene_assets.spec import ScenePackage
 from dimos.utils.data import LfsPath
@@ -391,15 +388,10 @@ def _g1_nav_path(path: NavPath) -> Any:
 _G1_ROOT = G1_RERUN_ROOT if global_config.simulation == "mujoco" else "world/odometry/g1"
 
 _G1_URDF_PATH = Path(__file__).resolve().parents[2] / "g1.urdf"
-_G1_ARM_JOINT_NAME_MAPPING = {
-    joint_name: G1_UPPER_BODY_JOINT_NAME_MAPPING[joint_name] for joint_name in g1_arms
-}
 _G1_TELEOP_MODEL = RobotModelConfig(
-    name="g1_arms",
     model=G1_TELEOP_ARM_MODEL,
-    joint_names=list(_G1_ARM_JOINT_NAME_MAPPING.values()),
+    joint_names=list(g1_arms),
     base_link="pelvis",
-    joint_name_mapping=_G1_ARM_JOINT_NAME_MAPPING,
 )
 _G1_TELEOP_PINK = PinkKinematicsConfig(
     dt=0.01,
