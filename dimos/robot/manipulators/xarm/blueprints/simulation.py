@@ -99,6 +99,10 @@ xarm_room_sim = autoconnect(
         **{
             **make_xarm7_sim_module_kwargs(XARM_ROOM_SCENE_PATH),
             "headless": True,
+            # Publish the simulated camera pose directly in the planning frame.
+            # A wrist-relative TF would require a second asynchronously stamped
+            # world->link7 edge and can make an otherwise valid scan unregistrable.
+            "base_frame_id": "world",
             "reset_joint_positions": XARM_ROOM_SCAN_JOINTS,
         }
     ),
