@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// realsense-sys only emits -L for librealsense2; bake its directory in as an
-// rpath so the binary runs outside the nix shell that built it. nixpkgs' .pc
-// names lib/x86_64-linux-gnu while the .so sits in lib/, so walk up to it.
+// nixpkgs' realsense2.pc names a libdir of lib/x86_64-linux-gnu while the .so
+// sits in lib/, so walk up to the real directory. Emit it as a link search
+// path (the .pc's -L alone dangles) and as an rpath so the binary also runs
+// outside the nix shell that built it.
 fn main() {
     let lib = pkg_config::probe_library("realsense2").expect("librealsense2 via pkg-config");
     for path in lib.link_paths {
@@ -22,6 +23,7 @@ fn main() {
             .ancestors()
             .find(|d| d.join("librealsense2.so").exists())
             .unwrap_or(&path);
+        println!("cargo:rustc-link-search=native={}", dir.display());
         println!("cargo:rustc-link-arg=-Wl,-rpath,{}", dir.display());
     }
 }

@@ -82,6 +82,8 @@
 
           ### Runtime deps
           { vals.pkg=pkgs.portaudio;                 flags={ldLibraryGroup=true; packageConfGroup=true;}; }
+          { vals.pkg=pkgs.librealsense;              flags.ldLibraryGroup=true;   onlyIf=pkgs.stdenv.isLinux; }
+          { vals.pkg=pkgs.librealsense.dev;          flags.packageConfGroup=true; onlyIf=pkgs.stdenv.isLinux; }
           { vals.pkg=pkgs.ffmpeg_6;                  flags={}; }
           { vals.pkg=pkgs.ffmpeg_6.dev;              flags={}; }
 

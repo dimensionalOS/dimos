@@ -9,10 +9,6 @@ license = "Apache-2.0"
 name = "realsense_native"
 path = "src/main.rs"
 
-# Not a root-workspace member: it links librealsense2, which the root shell and
-# CI's `cargo clippy --workspace` don't carry. Built via ./flake.nix instead.
-[workspace]
-
 # Bake registry entry, cross-checked at compile time by the module macro.
 [package.metadata.dimos.module.realsense]
 path = "dimos_realsense::RealSense"
