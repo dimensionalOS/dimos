@@ -33,7 +33,13 @@ def ensure_sonic_max_performance() -> None:
     if "NV Power Mode: MAXN" not in nvpmodel:
         raise RuntimeError("SONIC requires Jetson MAXN mode. Run `sudo nvpmodel -m 0`, then retry.")
 
-    clocks = _output(["jetson_clocks", "--show"])
+    try:
+        clocks = _output(["sudo", "-n", "/usr/bin/jetson_clocks", "--show"])
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "checking locked Jetson clocks requires cached sudo credentials. "
+            "Run `sudo -v`, then retry `dimos hardware g1 sonic-doctor`."
+        ) from exc
     cpu_matches = re.findall(r"cpu\d+[^\n]*MinFreq=(\d+)[^\n]*MaxFreq=(\d+)", clocks, re.IGNORECASE)
     gpu_match = re.search(r"GPU[^\n]*MinFreq=(\d+)[^\n]*MaxFreq=(\d+)", clocks, re.IGNORECASE)
     unlocked: list[str] = []
