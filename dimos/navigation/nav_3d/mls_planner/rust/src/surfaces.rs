@@ -178,9 +178,10 @@ fn close_surface_holes(
         by_z.entry(iz).or_default().push((ix, iy));
     }
 
-    let tasks: Vec<(i32, Vec<(i32, i32)>)> = by_z
-        .into_iter()
-        .flat_map(|(iz, xys)| {
+    let slices: Vec<(i32, Vec<(i32, i32)>)> = by_z.into_iter().collect();
+    let tasks: Vec<(i32, Vec<(i32, i32)>)> = slices
+        .into_par_iter()
+        .flat_map_iter(|(iz, xys)| {
             interaction_clusters(&xys, closing_passes)
                 .into_iter()
                 .map(move |cluster| (iz, cluster))
@@ -193,13 +194,12 @@ fn close_surface_holes(
     );
 }
 
-/// Split a slice into clusters that closing cannot connect. Cells go into
-/// tiles, then 8-adjacent occupied tiles flood fill into clusters.
+/// Split a slice into clusters that closing cannot connect.
 fn interaction_clusters(xys: &[(i32, i32)], closing_passes: u32) -> Vec<Vec<(i32, i32)>> {
-    // Cells in different clusters are at least the tile side plus one apart.
-    // Beyond 4r their dilations stay more than r apart, so closing each
-    // cluster alone gives the same result as closing the whole slice.
-    let side = (4 * closing_passes as i32).max(16);
+    const MIN_TILE_SIDE: i32 = 16;
+    // Separate clusters end up more than 2 closing passes apart, so each closes
+    // to the same cells it would as part of the whole slice.
+    let side = (4 * closing_passes as i32).max(MIN_TILE_SIDE);
     let mut tiles: AHashMap<(i32, i32), Vec<(i32, i32)>> = AHashMap::new();
     for &(x, y) in xys {
         tiles
@@ -282,14 +282,13 @@ fn close_at_z(
     for &(ix, iy) in xys {
         dist[(iy - y0) as usize * w + (ix - x0) as usize] = 0;
     }
-    chamfer(&mut dist, w, h, false);
-    // Cells within r of an occupied cell are the dilation. Reseeding from its
-    // complement measures distance to background, and cells farther than r
-    // survive the erosion.
+    chamfer(&mut dist, w, h, Border::Empty);
+    // Reseeding from the dilation's complement turns the second pass into the
+    // erosion.
     for v in dist.iter_mut() {
         *v = if *v <= r { INF } else { 0 };
     }
-    chamfer(&mut dist, w, h, true);
+    chamfer(&mut dist, w, h, Border::Source);
 
     let original: AHashSet<(i32, i32)> = xys.iter().copied().collect();
     let mut out = Vec::new();
@@ -314,10 +313,19 @@ fn close_at_z(
     out
 }
 
-/// Two-pass L1 distance transform to the zero cells. Cells beyond the grid
-/// edge count as sources when outside_is_source is set.
-fn chamfer(dist: &mut [u16], w: usize, h: usize, outside_is_source: bool) {
-    let edge = if outside_is_source { 0 } else { INF };
+/// What lies beyond the grid edge for the distance transform.
+#[derive(Clone, Copy)]
+enum Border {
+    Empty,
+    Source,
+}
+
+/// Two-pass L1 distance transform to the zero cells.
+fn chamfer(dist: &mut [u16], w: usize, h: usize, border: Border) {
+    let edge = match border {
+        Border::Empty => INF,
+        Border::Source => 0,
+    };
     for y in 0..h {
         for x in 0..w {
             let left = if x > 0 { dist[y * w + x - 1] } else { edge };
@@ -432,6 +440,20 @@ mod tests {
         let mut expected = cells;
         expected.sort();
         assert_eq!(s, expected, "closing must not grow the block outward");
+    }
+
+    #[test]
+    fn closing_keeps_a_thin_row_exact() {
+        for axis_is_x in [true, false] {
+            let cells: Vec<VoxelKey> = (0..8)
+                .map(|t| if axis_is_x { (t, 0, 0) } else { (0, t, 0) })
+                .collect();
+            let mut s = run(&cells, 5, 3);
+            s.sort();
+            let mut expected = cells;
+            expected.sort();
+            assert_eq!(s, expected, "closing must not grow a one-cell-wide row");
+        }
     }
 
     #[test]
