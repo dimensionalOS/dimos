@@ -17,7 +17,7 @@ from queue import Queue
 import pytest
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.core.module import Module, TopicFunnel
+from dimos.core.module import Metadata, Module, TopicFunnel
 from dimos.core.stream import Out
 from dimos.core.transport_factory import make_transport
 
@@ -26,9 +26,11 @@ class FanInModule(Module):
     """One handler for two same-typed streams; echoes which one it came from."""
 
     tagged: Out[int]
+    named: Out[str]
 
-    async def handle_sensors(self, index: int, value: int) -> None:
-        self.tagged.publish(index * 100 + value)
+    async def handle_sensors(self, value: int, meta: Metadata) -> None:
+        self.tagged.publish(meta.index * 100 + value)
+        self.named.publish(meta.name)
 
 
 @pytest.fixture
@@ -41,7 +43,12 @@ def start_fan_in_module(each_transport):
 
 @pytest.fixture
 def group_transports(each_transport):
-    transports = [make_transport("s0"), make_transport("s1"), make_transport("tagged")]
+    transports = [
+        make_transport("s0"),
+        make_transport("s1"),
+        make_transport("tagged"),
+        make_transport("named"),
+    ]
     for transport in transports:
         transport.start()
     yield transports
@@ -50,15 +57,19 @@ def group_transports(each_transport):
 
 
 def test_topic_funnel_tags_each_message_with_its_stream(start_fan_in_module, group_transports):
-    s0, s1, tagged = group_transports
+    s0, s1, tagged, named = group_transports
     queue: Queue[int] = Queue()
+    names: Queue[str] = Queue()
     tagged.subscribe(queue.put)
+    named.subscribe(names.put)
 
     s0.publish(7)
     assert queue.get(timeout=1.0) == 7
+    assert names.get(timeout=1.0) == "s0"
 
     s1.publish(7)
     assert queue.get(timeout=1.0) == 107
+    assert names.get(timeout=1.0) == "s1"
 
 
 @pytest.fixture
@@ -72,17 +83,21 @@ def start_remapped_fan_in_module(each_transport):
 
 
 def test_topic_funnel_entries_follow_remappings(start_remapped_fan_in_module, each_transport):
-    """A remapped entry keeps its index but listens on the remapped stream."""
-    alt0, tagged = make_transport("alt0"), make_transport("tagged")
-    for transport in (alt0, tagged):
+    """A remapped entry keeps its index and declared name, but listens on the
+    remapped stream."""
+    alt0, tagged, named = make_transport("alt0"), make_transport("tagged"), make_transport("named")
+    for transport in (alt0, tagged, named):
         transport.start()
     try:
         queue: Queue[int] = Queue()
+        names: Queue[str] = Queue()
         tagged.subscribe(queue.put)
+        named.subscribe(names.put)
         alt0.publish(7)
         assert queue.get(timeout=1.0) == 7
+        assert names.get(timeout=1.0) == "s0"
     finally:
-        for transport in (alt0, tagged):
+        for transport in (alt0, tagged, named):
             transport.stop()
 
 
@@ -98,3 +113,31 @@ def test_namespace_prefixes_topic_funnel_entries():
 def test_a_group_entry_cannot_collide_with_a_declared_stream():
     with pytest.raises(ValueError, match="collides"):
         FanInModule(topic_funnels={"sensors": TopicFunnel(names=["tagged"])})
+
+
+class PlainFanInModule(Module):
+    """A funnel handler that doesn't ask for metadata just gets the message."""
+
+    echoed: Out[int]
+
+    async def handle_sensors(self, value: int) -> None:
+        self.echoed.publish(value)
+
+
+def test_a_funnel_handler_without_meta_gets_just_the_message(each_transport):
+    blueprint = PlainFanInModule.blueprint(
+        topic_funnels={"sensors": TopicFunnel(names=["s0", "s1"])}
+    )
+    coordinator = ModuleCoordinator.build(blueprint)
+    s1, echoed = make_transport("s1"), make_transport("echoed")
+    for transport in (s1, echoed):
+        transport.start()
+    try:
+        queue: Queue[int] = Queue()
+        echoed.subscribe(queue.put)
+        s1.publish(7)
+        assert queue.get(timeout=1.0) == 7
+    finally:
+        for transport in (s1, echoed):
+            transport.stop()
+        coordinator.stop()

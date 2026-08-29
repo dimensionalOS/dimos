@@ -129,6 +129,33 @@ class TopicFunnel(BaseModel):
         return names
 
 
+@dataclass(frozen=True)
+class Metadata:
+    """Which stream a message arrived on, for handlers that take `(msg, meta)`.
+
+    `index` is the position in the funnel's `names` (0 for a plain input);
+    `name` is the stream name as the module declared it, pre-remapping.
+    """
+
+    index: int
+    name: str
+
+
+def _handler_wants_metadata(handler: Callable[..., Any], label: str) -> bool:
+    """True if the bound handler takes `(msg, meta)` rather than just `(msg)`."""
+    positional_kinds = (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    count = sum(
+        1
+        for parameter in inspect.signature(handler).parameters.values()
+        if parameter.kind in positional_kinds
+    )
+    if count == 1:
+        return False
+    if count == 2:
+        return True
+    raise TypeError(f"{label} must take (msg) or (msg, meta), not {count} positional parameters")
+
+
 class ModuleConfig(BaseConfig):
     rpc_transport: type[RPCSpec] = Field(default_factory=rpc_backend)
     default_rpc_timeout: float = DEFAULT_RPC_TIMEOUT
@@ -687,6 +714,17 @@ class ModuleBase(Configurable, CompositeResource):
                     f"{type(self).__name__}.handle_{input_name} must be `async def` "
                     "(use a manual self.<input>.subscribe(...) for sync handlers)"
                 )
+            if _handler_wants_metadata(handler, f"{type(self).__name__}.handle_{input_name}"):
+                metadata = Metadata(index=0, name=input_name)
+
+                async def with_meta(
+                    msg: Any,
+                    _handler: Callable[[Any, Metadata], Any] = handler,
+                    _metadata: Metadata = metadata,
+                ) -> None:
+                    await _handler(msg, _metadata)
+
+                handler = with_meta
             bindings.append((in_stream, handler))
 
         for in_stream, handler in bindings:
@@ -739,7 +777,25 @@ class ModuleBase(Configurable, CompositeResource):
                     f"{type(self).__name__}.handle_{port} must be `async def` "
                     "(topic funnels have no sync path)"
                 )
-            on_msg, dispatcher_disp = self._make_keyed_dispatch(handler)
+            if _handler_wants_metadata(handler, f"{type(self).__name__}.handle_{port}"):
+
+                async def invoke(
+                    index: int,
+                    msg: Any,
+                    _handler: Callable[[Any, Metadata], Any] = handler,
+                    _names: tuple[str, ...] = tuple(group.names),
+                ) -> None:
+                    await _handler(msg, Metadata(index=index, name=_names[index]))
+            else:
+
+                async def invoke(  # type: ignore[misc]
+                    index: int,
+                    msg: Any,
+                    _handler: Callable[[Any], Any] = handler,
+                ) -> None:
+                    await _handler(msg)
+
+            on_msg, dispatcher_disp = self._make_keyed_dispatch(invoke)
             self.register_disposable(dispatcher_disp)
             for index, name in enumerate(group.names):
                 stream = self._funnel_streams[name]

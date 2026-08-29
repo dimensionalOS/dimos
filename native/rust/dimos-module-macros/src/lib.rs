@@ -17,10 +17,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{parse_macro_input, Data, DeriveInput, Field, Fields, Ident, LitStr, Path, Type};
 
-#[proc_macro_derive(
-    Module,
-    attributes(input, topic_funnel, output, io, config, tf, module)
-)]
+#[proc_macro_derive(Module, attributes(input, output, io, config, tf, module))]
 pub fn derive_module(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     match expand(input) {
@@ -178,7 +175,7 @@ fn is_option(ty: &Type) -> bool {
 }
 
 const ONE_ATTR_ONLY: &str = "field has multiple module attributes; only one of #[input], \
-                             #[topic_funnel], #[output], #[io], #[config], #[tf] is allowed";
+                             #[output], #[io], #[config], #[tf] is allowed";
 
 /// What a `#[tf]` port carries, for the Cargo.toml registry cross-check.
 const TF_PAYLOAD_TYPE: &str = "TFMessage";
@@ -187,10 +184,7 @@ enum FieldKind {
     Input {
         decode: Path,
         handler: Ident,
-    },
-    TopicFunnel {
-        decode: Path,
-        handler: Ident,
+        wants_meta: bool,
     },
     Output {
         encode: Path,
@@ -330,9 +324,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             FieldKind::Input { decode, .. } => {
                 quote!(#name: builder.input(#name_str, #decode))
             }
-            FieldKind::TopicFunnel { decode, .. } => {
-                quote!(#name: builder.topic_funnel(#name_str, #decode))
-            }
             FieldKind::Output { encode } => {
                 quote!(#name: builder.output(#name_str, #encode))
             }
@@ -351,14 +342,18 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         .filter_map(|f| {
             let name = f.name;
             match &f.kind {
+                FieldKind::Input {
+                    handler,
+                    wants_meta: true,
+                    ..
+                } => Some(quote!(
+                    ::core::option::Option::Some((msg, meta)) = self.#name.recv_meta() => {
+                        self.#handler(msg, meta).await
+                    }
+                )),
                 FieldKind::Input { handler, .. } | FieldKind::Io { handler, .. } => Some(quote!(
                     ::core::option::Option::Some(msg) = self.#name.recv() => {
                         self.#handler(msg).await
-                    }
-                )),
-                FieldKind::TopicFunnel { handler, .. } => Some(quote!(
-                    ::core::option::Option::Some((index, msg)) = self.#name.recv() => {
-                        self.#handler(index, msg).await
                     }
                 )),
                 _ => None,
@@ -447,7 +442,7 @@ fn port_decls(classified: &[ClassifiedField], want_input: bool) -> Vec<PortDecl>
     classified
         .iter()
         .filter(|f| match f.kind {
-            FieldKind::Input { .. } | FieldKind::TopicFunnel { .. } => want_input,
+            FieldKind::Input { .. } => want_input,
             FieldKind::Output { .. } => !want_input,
             // A `#[tf]` field is a port like any other as far as the registry
             // goes: bake has to put the topic in the host's map or the module
@@ -571,6 +566,7 @@ fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldAttr> {
             }
             let mut decode: Option<Path> = None;
             let mut handler: Option<Ident> = None;
+            let mut wants_meta = false;
             attr.parse_nested_meta(|meta| {
                 if meta.path.is_ident("decode") {
                     decode = Some(meta.value()?.parse()?);
@@ -578,10 +574,12 @@ fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldAttr> {
                     handler = Some(meta.value()?.parse()?);
                 } else if meta.path.is_ident("msg") {
                     msg = Some(meta.value()?.parse::<LitStr>()?.value());
+                } else if meta.path.is_ident("meta") {
+                    wants_meta = true;
                 } else {
                     return Err(meta.error(
                         "unrecognized #[input] argument; expected `decode = ...`, \
-                         `handler = ...` or `msg = ...`",
+                         `handler = ...`, `msg = ...` or `meta`",
                     ));
                 }
                 Ok(())
@@ -589,33 +587,11 @@ fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldAttr> {
             let decode = decode
                 .ok_or_else(|| syn::Error::new_spanned(attr, "#[input] requires `decode = ...`"))?;
             let handler = handler.unwrap_or_else(|| format_ident!("handle_{}", name));
-            found = Some(FieldKind::Input { decode, handler });
-        } else if path.is_ident("topic_funnel") {
-            if found.is_some() {
-                return Err(syn::Error::new_spanned(attr, ONE_ATTR_ONLY));
-            }
-            let mut decode: Option<Path> = None;
-            let mut handler: Option<Ident> = None;
-            attr.parse_nested_meta(|meta| {
-                if meta.path.is_ident("decode") {
-                    decode = Some(meta.value()?.parse()?);
-                } else if meta.path.is_ident("handler") {
-                    handler = Some(meta.value()?.parse()?);
-                } else if meta.path.is_ident("msg") {
-                    msg = Some(meta.value()?.parse::<LitStr>()?.value());
-                } else {
-                    return Err(meta.error(
-                        "unrecognized #[topic_funnel] argument; expected `decode = ...`, \
-                         `handler = ...` or `msg = ...`",
-                    ));
-                }
-                Ok(())
-            })?;
-            let decode = decode.ok_or_else(|| {
-                syn::Error::new_spanned(attr, "#[topic_funnel] requires `decode = ...`")
-            })?;
-            let handler = handler.unwrap_or_else(|| format_ident!("handle_{}", name));
-            found = Some(FieldKind::TopicFunnel { decode, handler });
+            found = Some(FieldKind::Input {
+                decode,
+                handler,
+                wants_meta,
+            });
         } else if path.is_ident("output") {
             if found.is_some() {
                 return Err(syn::Error::new_spanned(attr, ONE_ATTR_ONLY));
