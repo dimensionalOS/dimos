@@ -16,10 +16,11 @@
 
 Run with:
 
-    dimos --simulation mujoco run unitree-g1-sonic-webxr-teleop
-    dimos --simulation mujoco run unitree-g1-sonic-webxr-teleop \
+    dimos --transport zenoh --simulation mujoco run unitree-g1-sonic-webxr-teleop
+    dimos --transport zenoh --simulation mujoco run unitree-g1-sonic-webxr-teleop \
         --sonic-pipeline sonic-low-latency
-    dimos --viewer none run unitree-g1-sonic-webxr-teleop --network-interface <robot-nic>
+    dimos --transport zenoh --viewer none run unitree-g1-sonic-webxr-teleop \
+        --network-interface <robot-nic>
 
 On hardware, use ``dimos hardware g1 arm`` to enter dry-run PLANNER. A+X
 toggles full-body POSE in either dry-run preview or live control. Enabling

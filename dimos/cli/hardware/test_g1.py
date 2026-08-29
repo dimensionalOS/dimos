@@ -213,6 +213,35 @@ def test_status_reports_pose_to_planner_handoff(mocker) -> None:
     assert "transition:  body_tracking_stale" in result.output
 
 
+def test_status_reports_fresh_planner_prepare(mocker) -> None:
+    coordinator = _coordinator("sonic_teleop")
+    coordinator.task_invoke.side_effect = [
+        {
+            **_state(armed=True, dry_run=False),
+            "control_state": "control",
+            "reference_source": "webxr_pose_held_for_planner",
+            "webxr_teleop": {
+                "mode": "planner_prepare",
+                "sonic_pipeline": "sonic-low-latency",
+                "pose_window_frames": 4,
+                "buffered_frames": 0,
+                "stream_ready": False,
+                "planner_prepare_age_seconds": 0.32,
+                "last_transition_reason": "body_tracking_stale",
+            },
+        },
+        {"state": "idle"},
+    ]
+    client = _Client(coordinator)
+    mocker.patch.object(g1_cli.Dimos, "connect", return_value=client)
+
+    result = runner.invoke(g1_cli.app, ["status"])
+
+    assert result.exit_code == 0, result.output
+    assert "webxr:       planner_prepare" in result.output
+    assert "reference_handoff: holding pose; fresh planner pending (0.32s)" in result.output
+
+
 def test_arm_rejects_stack_without_lifecycle_task(mocker) -> None:
     coordinator = _coordinator()
     coordinator.list_tasks.return_value = ["joint_trajectory"]

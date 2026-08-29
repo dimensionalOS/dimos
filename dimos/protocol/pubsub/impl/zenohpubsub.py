@@ -21,6 +21,7 @@ import threading
 from typing import Any, Literal
 
 import zenoh
+from zenoh.handlers import RingChannel
 
 from dimos.msgs.helpers import resolve_msg_type
 from dimos.protocol.pubsub.encoders import LCMEncoderMixin, PickleEncoderMixin
@@ -175,37 +176,83 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
     def subscribe(
         self, topic: Topic, callback: Callable[[bytes, Topic], None]
     ) -> Callable[[], None]:
-        """Subscribe to a Zenoh key expression."""
+        """Subscribe through a bounded, newest-preserving delivery queue."""
         key_expr = _topic_to_key_expr(topic)
+        stop = threading.Event()
 
-        def on_sample(sample: zenoh.Sample) -> None:
+        channel: RingChannel[zenoh.Sample] = RingChannel(max(1, topic.queue_capacity))
+        sub = self.session.declare_subscriber(key_expr, channel)
+
+        def drain() -> None:
+            while not stop.is_set():
+                try:
+                    sample = sub.try_recv()
+                except Exception:
+                    if not stop.is_set():
+                        logger.error(
+                            f"Error receiving payload from {key_expr}",
+                            exc_info=True,
+                        )
+                    return
+                if sample is None:
+                    stop.wait(0.005)
+                    continue
+                try:
+                    data = sample.payload.to_bytes()
+                except Exception:
+                    logger.error(f"Error reading payload from {key_expr}", exc_info=True)
+                    continue
+                sample_key = str(sample.key_expr)
+                recv_topic = (
+                    topic
+                    if sample_key == key_expr
+                    else _key_expr_to_topic(sample_key, topic.lcm_type)
+                )
+                try:
+                    callback(data, recv_topic)
+                except Exception:
+                    logger.error("Error in Zenoh subscriber callback", exc_info=True)
+
+        thread = threading.Thread(
+            target=drain,
+            name=f"zenoh-subscribe-{key_expr.rsplit('/', 1)[-1]}",
+            daemon=True,
+        )
+        close_lock = threading.Lock()
+        closed = False
+
+        def stop_drain() -> None:
+            nonlocal closed
+            with close_lock:
+                if closed:
+                    return
+                closed = True
+            stop.set()
             try:
-                data = sample.payload.to_bytes()
+                sub.undeclare()
             except Exception:
-                logger.error(f"Error reading payload from {key_expr}", exc_info=True)
-                return
-            # Concrete subscriptions only ever receive their own key, so the
-            # subscribed topic can be passed through without re-parsing.
-            sample_key = str(sample.key_expr)
-            if sample_key == key_expr:
-                recv_topic = topic
-            else:
-                recv_topic = _key_expr_to_topic(sample_key, topic.lcm_type)
-            callback(data, recv_topic)
+                logger.debug(
+                    f"Zenoh subscriber {key_expr} was already undeclared",
+                    exc_info=True,
+                )
+            if thread is not threading.current_thread():
+                thread.join(timeout=2.0)
 
-        sub = self.session.declare_subscriber(key_expr, on_sample)
         with self._subscriber_lock:
             if self._stopped:
                 sub.undeclare()
                 return lambda: None
             self._subscribers.append(sub)
+            self._drain_stops.append(stop_drain)
+            thread.start()
 
         def unsubscribe() -> None:
             with self._subscriber_lock:
                 if sub not in self._subscribers:
                     return  # Already removed by stop() or a concurrent unsubscribe
                 self._subscribers.remove(sub)
-            sub.undeclare()
+                self._drain_stops.remove(stop_drain)
+            stop_drain()
 
         return unsubscribe
 
@@ -271,12 +318,9 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
             self._stopped = True
             drain_stops = list(self._drain_stops)
             self._drain_stops.clear()
+            self._subscribers.clear()
         for stop_drain in drain_stops:
             stop_drain()
-        with self._subscriber_lock:
-            for subscriber in self._subscribers:
-                subscriber.undeclare()
-            self._subscribers.clear()
         with self._publisher_lock:
             for publisher in self._publishers.values():
                 publisher.undeclare()

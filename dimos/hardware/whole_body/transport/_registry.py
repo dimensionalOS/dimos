@@ -14,5 +14,6 @@
 
 ADAPTER_FACTORIES = {
     "transport_lcm": "dimos.hardware.whole_body.transport.adapter:transport_lcm_factory",
+    "transport_zenoh": "dimos.hardware.whole_body.transport.adapter:transport_zenoh_factory",
     "transport_ros": "dimos.hardware.whole_body.transport.adapter:transport_ros_factory",
 }

@@ -56,9 +56,22 @@ def transport_topic(name: str, g: GlobalConfig | SessionConfig = global_config) 
     return name if name.startswith("/") else "/" + name
 
 
-# High-rate sensor streams: drop stale frames under congestion, never stall the
-# publisher. Matched by message type since that is what makes them high-rate.
+# High-rate sensor and real-time control streams: drop stale frames under
+# congestion, never stall the publisher. Control streams are matched by name
+# because several are pickled Python models without a stable msg_name.
 _LATEST_WINS_TYPES = ("sensor_msgs.Image", "sensor_msgs.PointCloud2")
+_LATEST_WINS_CHANNELS = (
+    "body_tracking",
+    "cmd_vel",
+    "g1_joints",
+    "imu",
+    "joint_command",
+    "motor_command",
+    "motor_states",
+    "sonic_pose_reference",
+    "twist_command",
+)
+_BOUNDED_EVENT_CHANNELS = {"teleop_buttons": 16}
 # Low-rate channels where a drop loses something that never comes back: a whole
 # turn of agent/human conversation, or a one-shot robot action verb.
 _NEVER_DROP_CHANNELS = ("human_input", "agent", "agent_idle", "command")
@@ -71,11 +84,20 @@ def zenoh_key_expr(name: str, msg_name: str) -> str:
 
 def default_zenoh_qos_for(name: str, msg_name: str) -> ZenohQoS | None:
     """Default publisher QoS from a channel name and message type name."""
-    if msg_name in _LATEST_WINS_TYPES:
+    if msg_name in _LATEST_WINS_TYPES or name.lstrip("/") in _LATEST_WINS_CHANNELS:
         return QOS_LATEST_WINS
     if name.lstrip("/") in _NEVER_DROP_CHANNELS:
         return QOS_NEVER_DROP
     return None
+
+
+def default_zenoh_queue_capacity(name: str, msg_type: type | None = None) -> int:
+    """Bound subscriber work for streams whose old values are unsafe."""
+    logical_name = name.lstrip("/")
+    msg_name = getattr(msg_type, "msg_name", "")
+    if msg_name in _LATEST_WINS_TYPES or logical_name in _LATEST_WINS_CHANNELS:
+        return 1
+    return _BOUNDED_EVENT_CHANNELS.get(logical_name, 10000)
 
 
 def default_zenoh_qos(name: str, msg_type: type | None = None) -> ZenohQoS | None:
@@ -103,7 +125,10 @@ def make_transport(
     topic = transport_topic(name, g)
     if g.transport == "zenoh":
         ztopic = ZenohTopic(
-            topic, None if use_pickled else msg_type, qos=default_zenoh_qos(name, msg_type)
+            topic,
+            None if use_pickled else msg_type,
+            queue_capacity=default_zenoh_queue_capacity(name, msg_type),
+            qos=default_zenoh_qos(name, msg_type),
         )
         return pZenohTransport(ztopic) if use_pickled else ZenohTransport(ztopic)
     if use_pickled:

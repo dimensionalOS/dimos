@@ -266,7 +266,10 @@ def status() -> None:
             readiness = "ready" if webxr.get("stream_ready") else "waiting"
             typer.echo(f"pose_buffer: {buffered}/{required} ({readiness})")
             mode = webxr.get("mode")
-            if mode in {"pose_transition", "planner_transition"}:
+            if mode == "planner_prepare":
+                age = float(webxr.get("planner_prepare_age_seconds", 0.0))
+                typer.echo(f"reference_handoff: holding pose; fresh planner pending ({age:.2f}s)")
+            elif mode in {"pose_transition", "planner_transition"}:
                 progress = float(webxr.get("pose_transition_progress", 0.0))
                 duration = float(webxr.get("pose_transition_seconds", 0.0))
                 direction = "planner->pose" if mode == "pose_transition" else "pose->planner"

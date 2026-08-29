@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from enum import Enum
 import threading
+import time
 from typing import TYPE_CHECKING, Any, cast
 
 from dimos.control.task import CoordinatorState, JointCommandOutput
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 _BODY_HOLD_SECONDS = 1.0
+_PLANNER_PREPARE_RETRY_SECONDS = 5.0
 
 
 class SonicTeleopMode(str, Enum):
@@ -53,6 +55,7 @@ class SonicTeleopMode(str, Enum):
     PLANNER = "planner"
     POSE_TRANSITION = "pose_transition"
     POSE = "pose"
+    PLANNER_PREPARE = "planner_prepare"
     PLANNER_TRANSITION = "planner_transition"
 
 
@@ -62,7 +65,10 @@ _POSE_REFERENCE_MODES = frozenset(
         SonicTeleopMode.POSE,
     }
 )
-_POSE_HISTORY_MODES = _POSE_REFERENCE_MODES | {SonicTeleopMode.PLANNER_TRANSITION}
+_POSE_HISTORY_MODES = _POSE_REFERENCE_MODES | {
+    SonicTeleopMode.PLANNER_PREPARE,
+    SonicTeleopMode.PLANNER_TRANSITION,
+}
 
 
 class G1SonicTeleopTask(G1SonicWBCTask):
@@ -91,6 +97,10 @@ class G1SonicTeleopTask(G1SonicWBCTask):
         self._previous_ax_combo = False
         self._applied_generation = 0
         self._last_transition_reason = "not_started"
+        self._planner_prepare_started_at = 0.0
+        self._last_capture_time_s = 0.0
+        self._last_source_age_ms = 0.0
+        self._last_retarget_ms = 0.0
         self._yaw_rate = 0.0
         self._last_yaw_time = 0.0
         self._pose_reference_publisher: Callable[[SonicPoseReference], None] | None = None
@@ -103,7 +113,10 @@ class G1SonicTeleopTask(G1SonicWBCTask):
             self._publish_pose_reference_locked(SonicPoseReference.clear())
 
     def on_body_tracking(self, msg: BodyTrackingSnapshot, t_now: float) -> None:
+        retarget_started_at = time.perf_counter()
         with self._teleop_lock:
+            self._last_capture_time_s = float(msg.capture_time_s)
+            self._last_source_age_ms = (time.time() - self._last_capture_time_s) * 1000.0
             if msg.joints is None:
                 self._latest_complete = None
                 if self._mode in _POSE_REFERENCE_MODES:
@@ -131,6 +144,8 @@ class G1SonicTeleopTask(G1SonicWBCTask):
                 return
 
             self._tracking_frame_id = msg.frame_id
+            if self._mode not in {SonicTeleopMode.PLANNER, *_POSE_REFERENCE_MODES}:
+                return
             try:
                 self._pose_stream.push(msg)
             except (IncompleteBodyPoseError, PoseStreamError) as exc:
@@ -143,6 +158,8 @@ class G1SonicTeleopTask(G1SonicWBCTask):
                     self._enter_planner_locked("invalid_body_pose")
                 else:
                     self._clear_pose_stream_locked("invalid_body_pose")
+            finally:
+                self._last_retarget_ms = (time.perf_counter() - retarget_started_at) * 1000.0
 
     def on_teleop_buttons(self, msg: Buttons, t_now: float) -> None:
         ax_combo = bool(
@@ -177,6 +194,8 @@ class G1SonicTeleopTask(G1SonicWBCTask):
                 self._prepare_teleop_locked(state.t_now, state.dt)
             output = super().compute(state)
             self._sync_policy_lifecycle_locked()
+            if self._mode is SonicTeleopMode.PLANNER_PREPARE:
+                self._advance_planner_prepare_locked()
             if (
                 self._mode is SonicTeleopMode.POSE_TRANSITION
                 and not self._pipeline.reference_transition_active
@@ -259,6 +278,14 @@ class G1SonicTeleopTask(G1SonicWBCTask):
                 "tracking_frame_id": self._tracking_frame_id,
                 "last_complete_received_at": last_complete_received_at,
                 "last_transition_reason": self._last_transition_reason,
+                "planner_prepare_age_seconds": (
+                    round(time.perf_counter() - self._planner_prepare_started_at, 3)
+                    if self._mode is SonicTeleopMode.PLANNER_PREPARE
+                    else 0.0
+                ),
+                "capture_time_s": self._last_capture_time_s,
+                "source_age_ms": round(self._last_source_age_ms, 3),
+                "retarget_ms": round(self._last_retarget_ms, 3),
             }
             if self._mode is SonicTeleopMode.POSE_TRANSITION:
                 snapshot["reference_source"] = "planner_to_webxr_pose"
@@ -266,6 +293,8 @@ class G1SonicTeleopTask(G1SonicWBCTask):
                 snapshot["reference_source"] = "webxr_pose"
             elif self._mode is SonicTeleopMode.PLANNER_TRANSITION:
                 snapshot["reference_source"] = "webxr_pose_to_planner"
+            elif self._mode is SonicTeleopMode.PLANNER_PREPARE:
+                snapshot["reference_source"] = "webxr_pose_held_for_planner"
             else:
                 snapshot["reference_source"] = "planner"
             return snapshot
@@ -320,18 +349,15 @@ class G1SonicTeleopTask(G1SonicWBCTask):
         self._yaw_rate = 0.0
         self._last_yaw_time = 0.0
         self._pipeline.clear_vr_3point()
-        transition_started = False
+        prepare_started = False
         if was_pose_reference:
             self.set_velocity_command(0.0, 0.0, 0.0)
             if smooth:
-                transition_started = self._begin_planner_reference_transition(
-                    self._config.pose_transition_seconds
-                )
-        if was_pose_history and not transition_started:
+                prepare_started = self._pipeline.prepare_planner_transition()
+        if was_pose_history and not prepare_started:
             self._return_to_planner_reference()
-        self._mode = (
-            SonicTeleopMode.PLANNER_TRANSITION if transition_started else SonicTeleopMode.PLANNER
-        )
+        self._mode = SonicTeleopMode.PLANNER_PREPARE if prepare_started else SonicTeleopMode.PLANNER
+        self._planner_prepare_started_at = time.perf_counter() if prepare_started else 0.0
         self._pose_stream.reset()
         self._applied_generation = 0
         self._tracking_frame_id = None
@@ -348,11 +374,40 @@ class G1SonicTeleopTask(G1SonicWBCTask):
             reason=reason,
         )
 
+    def _advance_planner_prepare_locked(self) -> None:
+        if self._pipeline.planner_transition_ready:
+            if self._begin_planner_reference_transition(self._config.pose_transition_seconds):
+                self._mode = SonicTeleopMode.PLANNER_TRANSITION
+                self._planner_prepare_started_at = 0.0
+                logger.info(
+                    "G1 SONIC WebXR mode",
+                    task=self._name,
+                    mode=self._mode.value,
+                    reason=self._last_transition_reason,
+                )
+            return
+        if (
+            self._planner_prepare_started_at > 0.0
+            and (time.perf_counter() - self._planner_prepare_started_at)
+            >= _PLANNER_PREPARE_RETRY_SECONDS
+        ):
+            self._pipeline.retry_planner_transition()
+            self._planner_prepare_started_at = time.perf_counter()
+            logger.warning(
+                "G1 SONIC planner handoff retry",
+                task=self._name,
+                reason=self._last_transition_reason,
+            )
+
     def _enter_off_locked(self, reason: str) -> None:
         was_pose = self._mode in _POSE_HISTORY_MODES
         self._clear_pose_reference_locked()
         self._mode = SonicTeleopMode.OFF
         self._last_transition_reason = reason
+        self._planner_prepare_started_at = 0.0
+        self._last_capture_time_s = 0.0
+        self._last_source_age_ms = 0.0
+        self._last_retarget_ms = 0.0
         self._tracking_frame_id = None
         self._yaw_rate = 0.0
         self._last_yaw_time = 0.0
@@ -383,7 +438,11 @@ class G1SonicTeleopTask(G1SonicWBCTask):
             self._enter_planner_locked("policy_control_active")
 
     def _prepare_teleop_locked(self, t_now: float, dt: float) -> None:
-        if self._mode in {SonicTeleopMode.OFF, SonicTeleopMode.PLANNER_TRANSITION}:
+        if self._mode in {
+            SonicTeleopMode.OFF,
+            SonicTeleopMode.PLANNER_PREPARE,
+            SonicTeleopMode.PLANNER_TRANSITION,
+        }:
             return
         if (
             self._latest_complete is None
@@ -457,6 +516,7 @@ class G1SonicTeleopTask(G1SonicWBCTask):
         self._previous_ax_combo = False
         self._applied_generation = 0
         self._last_transition_reason = reason
+        self._planner_prepare_started_at = 0.0
         self._yaw_rate = 0.0
         self._last_yaw_time = 0.0
         self._pose_stream.reset()

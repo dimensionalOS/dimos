@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import threading
+import time
 
 import pytest
 
@@ -96,6 +97,34 @@ class TestZenohPubSubBase:
         retry_until(both_received, lambda: pubsub.publish(topic, b"broadcast"))
         assert received_a[-1:] == [b"broadcast"]
         assert received_b[-1:] == [b"broadcast"]
+
+    def test_capacity_one_drops_stale_samples_while_callback_is_busy(
+        self, pubsub, retry_until
+    ) -> None:
+        received: list[bytes] = []
+        callback_blocked = threading.Event()
+        release_callback = threading.Event()
+        latest_received = threading.Event()
+        topic = Topic("dimos/test/latest_only", queue_capacity=1)
+
+        def callback(msg: bytes, t: Topic) -> None:
+            received.append(msg)
+            if msg == b"blocking":
+                callback_blocked.set()
+                release_callback.wait(timeout=1.0)
+            elif msg == b"latest":
+                latest_received.set()
+
+        pubsub.subscribe(topic, callback)
+        retry_until(callback_blocked, lambda: pubsub.publish(topic, b"blocking"))
+        for value in range(20):
+            pubsub.publish(topic, str(value).encode())
+        pubsub.publish(topic, b"latest")
+        time.sleep(0.1)
+        release_callback.set()
+
+        assert latest_received.wait(timeout=1.0)
+        assert received == [b"blocking", b"latest"]
 
     def test_unsubscribe(self, pubsub, retry_until) -> None:
         received: list[bytes] = []

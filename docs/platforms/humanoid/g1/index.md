@@ -172,6 +172,7 @@ export PATH=/usr/local/cuda-11.8/bin:$PATH
 export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 export LD_LIBRARY_PATH=/usr/local/cuda-11.8/lib64:$LD_LIBRARY_PATH
 export LD_LIBRARY_PATH=/usr/local/cuda-11.8/compat:$LD_LIBRARY_PATH
+export DIMOS_TRANSPORT=zenoh
 source .venv-sonic-jp5/bin/activate
 
 sudo nvpmodel -m 0
@@ -203,7 +204,10 @@ fails the check. Do not continue if any check fails.
 
 Run the activated environment's `dimos` executable directly. Do not use
 `uv run`: dependency synchronization can reinstall the CPU-only
-`onnxruntime` package over the JetPack 5 GPU wheel.
+`onnxruntime` package over the JetPack 5 GPU wheel. Keep
+`DIMOS_TRANSPORT=zenoh` in the shell that launches both the blueprint and the
+`dimos hardware g1 ...` lifecycle commands so their RPC clients use the same
+bus.
 
 Rehearse the full stack in MuJoCo before connecting policy output to motors:
 
@@ -211,7 +215,7 @@ Rehearse the full stack in MuJoCo before connecting policy output to motors:
 uv run python bin/hardware/g1/setup-sonic-models \
   --profile sonic-v1.1
 
-dimos --simulation mujoco --viewer none \
+dimos --transport zenoh --simulation mujoco --viewer none \
   run unitree-g1-sonic-webxr-teleop \
   --sonic-pipeline sonic-v1.1
 ```
@@ -221,7 +225,7 @@ Require ten minutes of stable planner balancing and repeat the
 real-hardware blueprint with:
 
 ```bash
-dimos --viewer none run unitree-g1-sonic-webxr-teleop \
+dimos --transport zenoh --viewer none run unitree-g1-sonic-webxr-teleop \
   --network-interface <robot-nic>
 ```
 
@@ -285,13 +289,13 @@ from [`nvidia/GEAR-SONIC`](https://huggingface.co/nvidia/GEAR-SONIC/tree/main).
 
 ```bash
 # Official ten-frame path (the flag may be omitted)
-uv run dimos --simulation mujoco run unitree-g1-sonic-webxr-teleop \
+uv run dimos --transport zenoh --simulation mujoco run unitree-g1-sonic-webxr-teleop \
   --sonic-pipeline sonic-v1.1
 
 # Official four-frame low-latency path
 uv run python bin/hardware/g1/setup-sonic-models \
   --profile sonic-low-latency
-uv run dimos --simulation mujoco run unitree-g1-sonic-webxr-teleop \
+uv run dimos --transport zenoh --simulation mujoco run unitree-g1-sonic-webxr-teleop \
   --sonic-pipeline sonic-low-latency
 ```
 
@@ -302,17 +306,18 @@ automatic tracking fallbacks. Tune both directions without changing the pose
 window:
 
 ```bash
-uv run dimos --simulation mujoco run unitree-g1-sonic-webxr-teleop \
+uv run dimos --transport zenoh --simulation mujoco run unitree-g1-sonic-webxr-teleop \
   --sonic-pipeline sonic-v1.1 \
   --pose-transition-seconds 0.8
 ```
 
 The duration must be positive and finite. The planner-to-PICO blend follows new
-PICO frames as they arrive; the PICO-to-planner blend starts at the last policy
-pose token and follows live planner tokens. Missing body frames are held for up
-to 1.0 second before the reverse handoff begins, avoiding planner fallbacks for
-brief headset or network stalls. Explicit unavailable or invalid tracking
-starts the reverse handoff immediately.
+PICO frames as they arrive. For the PICO-to-planner handoff, SONIC first holds
+the last PICO reference while it computes a fresh planner trajectory from the
+measured robot joints. The token blend starts only after that fresh planner
+reference is ready. Missing body frames are held for up to 1.0 second before
+this reverse handoff begins, avoiding planner fallbacks for brief headset or
+network stalls. Explicit unavailable or invalid tracking starts it immediately.
 
 MuJoCo keeps its existing fast iteration lifecycle: the simulated policy
 auto-arms with no ramp or dry-run and enters WebXR `PLANNER` as soon as control
@@ -343,11 +348,15 @@ Use the CLI and controller in this order:
 7. Finish routine operation with `dimos hardware g1 disable`, followed by
    `dimos stop`.
 
-SONIC inference runs at 50 Hz. On hardware, the G1 connection holds the newest
-policy target and publishes it to `rt/lowcmd` at 500 Hz. Runtime timing is
-reported under `policy_timing` by `dimos hardware g1 status`, but it does not
-gate POSE or force a return to PLANNER. Run `sonic-doctor` before hardware use;
-its policy and planner latency checks are the performance acceptance gate.
+SONIC inference runs at 50 Hz. The SONIC blueprint is Zenoh-only inside DimOS:
+body tracking, state, reference, and command subscribers use bounded queues,
+and real-time channels retain only their newest sample. DDS exists only inside
+`G1WholeBodyConnection`, at the robot boundary. On hardware, that connection
+holds the newest 50 Hz policy target and publishes it to `rt/lowcmd` at 500 Hz.
+Runtime timing is reported under `policy_timing` by `dimos hardware g1 status`,
+but it does not gate POSE or force a return to PLANNER. Run `sonic-doctor`
+before hardware use; its policy and planner latency checks are the performance
+acceptance gate.
 
 ABXY has no SONIC teleoperation action. The terminal owns live policy output,
 while the PICO wearer owns only the `PLANNER`/`POSE` tracking toggle. Neither
@@ -359,7 +368,8 @@ emergencies.
 Launch the Rerun viewer when testing teleoperation:
 
 ```bash
-uv run dimos --simulation mujoco --viewer rerun --rerun-open web run unitree-g1-sonic-webxr-teleop
+uv run dimos --transport zenoh --simulation mujoco --viewer rerun --rerun-open web \
+  run unitree-g1-sonic-webxr-teleop
 ```
 
 The browser opens the direct Rerun Web viewer at `http://localhost:9878`.
@@ -460,6 +470,7 @@ export PATH=/usr/local/cuda-11.8/bin:$PATH
 export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 export LD_LIBRARY_PATH=/usr/local/cuda-11.8/lib64:$LD_LIBRARY_PATH
 export LD_LIBRARY_PATH=/usr/local/cuda-11.8/compat:$LD_LIBRARY_PATH
+export DIMOS_TRANSPORT=zenoh
 source .venv-sonic-jp5/bin/activate
 
 python -c 'import onnxruntime as ort; print(ort.__version__, ort.get_available_providers())'

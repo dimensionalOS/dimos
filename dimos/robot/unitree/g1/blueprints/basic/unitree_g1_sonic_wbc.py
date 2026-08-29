@@ -21,8 +21,8 @@ modes are reachable at runtime through the coordinator RPC surface:
                             {"mode": "HAPPY_DANCE_WALK"})
 
 Usage:
-    dimos --simulation mujoco run unitree-g1-sonic-wbc    # sim
-    dimos run unitree-g1-sonic-wbc                        # real hardware
+    dimos --transport zenoh --simulation mujoco run unitree-g1-sonic-wbc
+    dimos --transport zenoh run unitree-g1-sonic-wbc
 
 Real hardware note: SONIC uses armature-derived PD gains (SONIC_KP/KD),
 NOT the GR00T gain table. Never run this blueprint while the C++
@@ -53,11 +53,10 @@ from dimos.control.tasks.g1_sonic_wbc_task.sonic_pipeline import (
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.stream import In, Out
-from dimos.core.transport import LCMTransport
 from dimos.hardware.whole_body.spec import WholeBodyConfig
+from dimos.hardware.whole_body.transport.adapter import zenoh_latest_transport
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.pointclouds.occupancy import HeightCostConfig
-from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
@@ -113,8 +112,6 @@ _SONIC_PLANNER_PATH = (
 
 _MJCF_PATH = LfsPath("mujoco_sim/g1_gear_wbc.xml")
 _G1_NUM_MOTORS = len(g1_joints)
-_cmd_vel_topic = "/cmd_vel" if global_config.simulation else "/g1/cmd_vel"
-
 _adapter_address: str | Path
 
 if global_config.simulation and global_config.simulation != "mujoco":
@@ -196,7 +193,7 @@ else:
     from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
 
     _backend = G1WholeBodyConnection.blueprint()
-    _adapter_type = "transport_lcm"
+    _adapter_type = "transport_zenoh"
     _adapter_address = ""
     _tick_rate = 50.0
     _auto_arm = False
@@ -351,23 +348,23 @@ def _g1_sonic_coordinator(
         **teleop_config,
     )
 
-    # Real hardware speaks LCM to G1WholeBodyConnection on fixed topics. In
-    # sim, leave transports to the runtime default (works under both lcm and
-    # zenoh); pinning LCM here would silently break zenoh.
-    if global_config.simulation:
-        return coordinator
     return coordinator.transports(
         {
-            ("joint_command", JointState): LCMTransport("/g1/joint_command", JointState),
-            ("g1_joints", JointState): LCMTransport("/g1/joints", JointState),
-            ("cmd_vel", Twist): LCMTransport(_cmd_vel_topic, Twist),
-            ("motor_states", JointState): LCMTransport("/g1/motor_states", JointState),
-            ("imu", Imu): LCMTransport("/g1/imu", Imu),
-            ("motor_command", MotorCommandArray): LCMTransport(
+            ("joint_command", JointState): zenoh_latest_transport("/g1/joint_command", JointState),
+            ("g1_joints", JointState): zenoh_latest_transport("/g1/joints", JointState),
+            ("motor_states", JointState): zenoh_latest_transport("/g1/motor_states", JointState),
+            ("imu", Imu): zenoh_latest_transport("/g1/imu", Imu),
+            ("motor_command", MotorCommandArray): zenoh_latest_transport(
                 "/g1/motor_command", MotorCommandArray
             ),
-        },
+        }
     )
+
+
+def _require_zenoh() -> str | None:
+    if global_config.transport == "zenoh":
+        return None
+    return "G1 SONIC is Zenoh-only; launch it with `--transport zenoh`"
 
 
 def _g1_sonic_control_blueprint(
@@ -381,8 +378,11 @@ def _g1_sonic_control_blueprint(
         task_name=task_name,
         zmq_enabled=zmq_enabled,
     )
-    return autoconnect(_backend, coordinator).remappings(
-        cast("Any", [("ControlCoordinator", "twist_command", "cmd_vel")])
+    return (
+        autoconnect(_backend, coordinator)
+        .remappings(cast("Any", [("ControlCoordinator", "twist_command", "cmd_vel")]))
+        .global_config(transport="zenoh", zenoh_mode="peer")
+        .requirements(_require_zenoh)
     )
 
 
@@ -415,10 +415,9 @@ _rerun_config: dict[str, Any] = {
 
 def _g1_sonic_visualization() -> Any:
     rerun_config = dict(_rerun_config)
-    if global_config.transport == "zenoh":
-        # Callable blueprint factories do not survive the Zenoh deploy path.
-        # The live topic config is plain data and works on both transports.
-        rerun_config.pop("blueprint")
+    # Callable blueprint factories do not survive the Zenoh deploy path. The
+    # live topic config is plain data and is all this control blueprint needs.
+    rerun_config.pop("blueprint")
     return vis_module(
         viewer_backend=global_config.viewer,
         rerun_config=rerun_config,

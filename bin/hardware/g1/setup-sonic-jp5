@@ -184,6 +184,7 @@ cat <<EOF
 JetPack 5 SONIC environment is ready.
 
 Before each run:
+  export DIMOS_TRANSPORT=zenoh
   export PATH=$CUDA_HOME_JP5/bin:\$PATH
   export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}
   export LD_LIBRARY_PATH=$CUDA_HOME_JP5/lib64:\$LD_LIBRARY_PATH
