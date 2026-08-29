@@ -260,16 +260,16 @@ fn close_at_z(
     closing_passes: u32,
     clearance_cells: i32,
 ) -> Vec<VoxelKey> {
-    let pad = closing_passes as i32;
-    let mut min_x = i32::MAX;
-    let mut max_x = i32::MIN;
-    let mut min_y = i32::MAX;
-    let mut max_y = i32::MIN;
+    let pad = closing_passes as i64;
+    let mut min_x = i64::MAX;
+    let mut max_x = i64::MIN;
+    let mut min_y = i64::MAX;
+    let mut max_y = i64::MIN;
     for &(ix, iy) in xys {
-        min_x = min_x.min(ix);
-        max_x = max_x.max(ix);
-        min_y = min_y.min(iy);
-        max_y = max_y.max(iy);
+        min_x = min_x.min(ix as i64);
+        max_x = max_x.max(ix as i64);
+        min_y = min_y.min(iy as i64);
+        max_y = max_y.max(iy as i64);
     }
 
     let w = (max_x - min_x + 1 + 2 * pad) as usize;
@@ -280,7 +280,7 @@ fn close_at_z(
     let r = closing_passes.min(INF as u32 - 1) as u16;
     let mut dist = vec![INF; w * h];
     for &(ix, iy) in xys {
-        dist[(iy - y0) as usize * w + (ix - x0) as usize] = 0;
+        dist[(iy as i64 - y0) as usize * w + (ix as i64 - x0) as usize] = 0;
     }
     chamfer(&mut dist, w, h, Border::Empty);
     // Reseeding from the dilation's complement turns the second pass into the
@@ -297,8 +297,10 @@ fn close_at_z(
             if dist[py * w + px] <= r {
                 continue;
             }
-            let ix = x0 + px as i32;
-            let iy = y0 + py as i32;
+            let (Ok(ix), Ok(iy)) = (i32::try_from(x0 + px as i64), i32::try_from(y0 + py as i64))
+            else {
+                continue;
+            };
 
             if !is_standable(ix, iy, iz, by_col, clearance_cells) {
                 continue;
@@ -440,6 +442,14 @@ mod tests {
         let mut expected = cells;
         expected.sort();
         assert_eq!(s, expected, "closing must not grow the block outward");
+    }
+
+    #[test]
+    fn boundary_coordinates_do_not_overflow() {
+        let cells = [(i32::MIN, i32::MIN, 0), (i32::MAX, i32::MAX, 0)];
+        let s = run(&cells, 5, 3);
+        assert!(s.contains(&cells[0]), "min-corner cell survives");
+        assert!(s.contains(&cells[1]), "max-corner cell survives");
     }
 
     #[test]
