@@ -28,12 +28,11 @@ from dimos.core.global_config import global_config
 from dimos.hardware.spec import JointLimits
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
-from dimos.robot.manipulators._modeling import (
-    base_pose,
-    joint_names,
-)
+from dimos.robot.manipulators._modeling import joint_names
 from dimos.utils.data import LfsPath
 
 XARM_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
@@ -64,12 +63,17 @@ XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": _XARM_REPO / "xarm_de
 XARM6_SIM_PATH = LfsPath("xarm6/scene.xml")
 XARM7_SIM_PATH = LfsPath("xarm7/scene.xml")
 XARM7_SIM_HOME = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
+# The sim scene stands the arm on a pedestal: xarm7.xml mounts link_base at
+# z=0.12. Place the planning model to match, or the planner solves poses 12cm
+# below the arm it is driving and every grasp closes on air.
+XARM7_SIM_BASE_POSE = PoseStamped(frame_id="world", position=Vector3(z=0.12))
 
 
 def make_xarm7_sim_robot_config() -> RobotModelConfig:
     return make_xarm7_model_config(
         add_gripper=True,
         gripper_hardware_id="arm",
+        base_pose=XARM7_SIM_BASE_POSE,
         tf_extra_links=["link7"],
         home_joints=XARM7_SIM_HOME,
         pre_grasp_offset=0.05,
@@ -276,10 +280,7 @@ def make_xarm_model_config(
     prefix: str = "",
     add_gripper: bool = True,
     gripper_hardware_id: str | None = None,
-    x_offset: float = 0.0,
-    y_offset: float = 0.0,
-    z_offset: float = 0.0,
-    pitch: float = 0.0,
+    base_pose: PoseStamped | None = None,
     tf_extra_links: list[str] | None = None,
     home_joints: list[float] | None = None,
     pre_grasp_offset: float = 0.10,
@@ -305,7 +306,7 @@ def make_xarm_model_config(
             package_paths=XARM_PACKAGE_PATHS,
             xacro_args=xacro_args,
         ),
-        base_pose=base_pose(x_offset, y_offset, z_offset, pitch),
+        base_pose=base_pose if base_pose is not None else PoseStamped(),
         joint_names=model_joint_names,
         base_link=f"{prefix}link_base",
         planning_groups=[
