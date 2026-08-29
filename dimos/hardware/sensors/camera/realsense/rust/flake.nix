@@ -11,7 +11,7 @@
       # The rust toolchain comes from the enclosing dimos shell; this only adds
       # what realsense-sys links against.
       devShells = forAll (pkgs: {
-        default = pkgs.mkShell { packages = [ pkgs.librealsense pkgs.pkg-config ]; };
+        default = pkgs.mkShellNoCC { packages = [ pkgs.librealsense pkgs.pkg-config ]; };
       });
     };
 }
