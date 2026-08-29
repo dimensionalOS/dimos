@@ -105,9 +105,11 @@ xarm_room_sim = autoconnect(
     ObjectSceneRegistrationModule.blueprint(
         target_frame="world",
         detector_backend="owlv2",
+        # OWLv2 is box-only; YOLO-E visual prompts refine its boxes into masks.
         segmentation_backend="yolo",
         # Synthetic MuJoCo renders score far below natural images.
         detector_confidence=0.07,
+        segmentation_confidence=0.05,
         # Keep adjacent tabletop targets distinct instead of merging by label.
         distance_threshold=0.05,
         detect_on_request=True,
