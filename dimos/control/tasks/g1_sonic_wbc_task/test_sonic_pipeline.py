@@ -22,13 +22,18 @@ import pytest
 
 from dimos.control.tasks.g1_sonic_wbc_task.sonic_pipeline import (
     DEFAULT_ANGLES_DDS,
-    ENCODER_OBS_DIM,
     NUM_JOINTS,
     SMPL_JOINTS_OFFSET,
+    SONIC_LOW_LATENCY_PIPELINE,
+    SONIC_V1_1_PIPELINE,
     WRIST_ONNX_INDICES,
-    WRISTS_OFFSET,
     SonicPipeline,
+    sonic_model_profile,
 )
+
+_V1_PROFILE = sonic_model_profile(SONIC_V1_1_PIPELINE)
+ENCODER_OBS_DIM = _V1_PROFILE.encoder_obs_dim
+WRISTS_OFFSET = _V1_PROFILE.wrists_offset
 
 
 def _smpl_pose_fields(num_frames: int = 10) -> dict[str, np.ndarray[Any, Any]]:
@@ -208,39 +213,46 @@ def test_smpl_pose_chunk_populates_all_ten_encoder_frames(pipeline: SonicPipelin
     np.testing.assert_array_equal(encoded_wrists, joint_pos[:, WRIST_ONNX_INDICES])
 
 
-def test_two_frame_pose_chunk_holds_newest_frame_across_encoder_window(
-    pipeline: SonicPipeline,
-) -> None:
-    smpl_joints = np.zeros((2, 24, 3), dtype=np.float32)
-    smpl_joints[:, :, 0] = np.arange(2, dtype=np.float32)[:, np.newaxis]
-    joint_pos = np.zeros((2, NUM_JOINTS), dtype=np.float32)
-    joint_pos[:, WRIST_ONNX_INDICES] = np.arange(2, dtype=np.float32)[:, np.newaxis]
-    identity_quaternions = np.tile(
-        np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32),
-        (2, 1),
-    )
-    fields: dict[str, np.ndarray[Any, Any]] = {
-        "frame_index": np.arange(2, dtype=np.int64),
-        "joint_pos": joint_pos,
-        "joint_vel": np.zeros_like(joint_pos),
-        "body_quat_w": identity_quaternions,
-        "smpl_joints": smpl_joints,
-        "smpl_pose": np.zeros((2, 21, 3), dtype=np.float32),
-    }
+def test_low_latency_profile_is_the_released_four_frame_model_contract() -> None:
+    profile = sonic_model_profile(SONIC_LOW_LATENCY_PIPELINE)
 
-    summary = pipeline.apply_pose_message(fields)
-    observation = pipeline._build_streamed_encoder_obs(identity_quaternions[0])
+    assert profile.model_subdir == "low_latency"
+    assert profile.encoder_obs_dim == 1247
+    assert profile.smpl_frames == 4
+    assert profile.g1_frame_stride == 1
+    assert profile.heading_normalized is False
+    assert profile.wrists_offset + profile.smpl_frames * 6 == profile.encoder_obs_dim
 
-    encoded_smpl = observation[SMPL_JOINTS_OFFSET : SMPL_JOINTS_OFFSET + 720].reshape(10, 24, 3)
-    encoded_wrists = observation[WRISTS_OFFSET : WRISTS_OFFSET + 60].reshape(10, 6)
-    assert summary == {"frames": 2, "encode_mode": 2, "catchup": True}
-    np.testing.assert_array_equal(encoded_smpl[:2], smpl_joints)
-    np.testing.assert_array_equal(encoded_smpl[2:], np.repeat(smpl_joints[1:2], 8, axis=0))
-    np.testing.assert_array_equal(encoded_wrists[:2], joint_pos[:, WRIST_ONNX_INDICES])
-    np.testing.assert_array_equal(
-        encoded_wrists[2:],
-        np.repeat(joint_pos[1:2, WRIST_ONNX_INDICES], 8, axis=0),
+
+def test_low_latency_pipeline_accepts_only_its_1247_input_model(mocker: Any) -> None:
+    encoder = mocker.MagicMock()
+    encoder.get_inputs.return_value = [SimpleNamespace(name="encoder", shape=[1, 1247])]
+    encoder.get_providers.return_value = ["CUDAExecutionProvider"]
+    encoder.run.return_value = [np.zeros((1, 64), dtype=np.float32)]
+    decoder = mocker.MagicMock()
+    decoder.get_inputs.return_value = [SimpleNamespace(name="decoder", shape=[1, 994])]
+    decoder.get_providers.return_value = ["CUDAExecutionProvider"]
+    planner = mocker.MagicMock()
+    planner.get_providers.return_value = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    mocker.patch.object(
+        ort,
+        "get_available_providers",
+        return_value=["CUDAExecutionProvider", "CPUExecutionProvider"],
     )
+    mocker.patch.object(ort, "preload_dlls")
+    mocker.patch.object(ort, "InferenceSession", side_effect=[encoder, decoder, planner])
+
+    instance = SonicPipeline(
+        "low_encoder.onnx",
+        "low_decoder.onnx",
+        "planner.onnx",
+        profile=SONIC_LOW_LATENCY_PIPELINE,
+    )
+    try:
+        assert instance.snapshot()["encoder_obs_dim"] == 1247
+        assert instance.snapshot()["smpl_reference_frames"] == 4
+    finally:
+        instance._planner_executor.shutdown(wait=True)
 
 
 def test_stream_transition_blends_planner_token_to_each_live_pose_token(

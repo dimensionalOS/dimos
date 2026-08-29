@@ -116,6 +116,16 @@ class G1LowStateSnapshot:
     accelerometer: tuple[float, float, float]
 
 
+@dataclass(frozen=True)
+class _CachedMotorCommand:
+    q: tuple[float, ...]
+    dq: tuple[float, ...]
+    kp: tuple[float, ...]
+    kd: tuple[float, ...]
+    tau: tuple[float, ...]
+    received_at: float
+
+
 class G1WholeBodyConnection(Module):
     """G1 humanoid Module - owns the DDS connection in its own worker."""
 
@@ -142,6 +152,9 @@ class G1WholeBodyConnection(Module):
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._publish_thread: Thread | None = None
+        self._command_thread: Thread | None = None
+        self._latest_command: _CachedMotorCommand | None = None
+        self._command_frames_sent = 0
         # Soft-start clock, armed by the first motor command after start().
         self._soft_start_t0: float | None = None
         self._soft_start_done = False
@@ -151,6 +164,7 @@ class G1WholeBodyConnection(Module):
     @rpc
     def start(self) -> None:
         super().start()
+        self._stop_event.clear()
 
         # Lazy SDK imports - file must import cleanly outside the [unitree-dds] extra.
         from unitree_sdk2py.core.channel import (
@@ -208,13 +222,19 @@ class G1WholeBodyConnection(Module):
         # Fresh soft-start every time control is (re)acquired.
         self._soft_start_t0 = None
         self._soft_start_done = False
+        self._latest_command = None
+        self._command_frames_sent = 0
 
         self.register_disposable(Disposable(self.motor_command.subscribe(self._on_motor_command)))
 
         self._publish_thread = Thread(
-            target=self._publish_loop, name="g1-wholebody-pump", daemon=True
+            target=self._publish_loop, name="g1-wholebody-state-pump", daemon=True
         )
         self._publish_thread.start()
+        self._command_thread = Thread(
+            target=self._command_loop, name="g1-wholebody-command-pump", daemon=True
+        )
+        self._command_thread.start()
 
     @rpc
     def stop(self) -> None:
@@ -222,6 +242,9 @@ class G1WholeBodyConnection(Module):
         if self._publish_thread is not None and self._publish_thread.is_alive():
             self._publish_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             self._publish_thread = None
+        if self._command_thread is not None and self._command_thread.is_alive():
+            self._command_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            self._command_thread = None
 
         # Final safe-stop lowcmd: disable every motor (mode=0x00, kp=kd=0,
         # tau=0).  Without this, the motors freeze stiffly at whatever
@@ -369,7 +392,19 @@ class G1WholeBodyConnection(Module):
             sample = self._snapshot_motor_imu()
             if sample is not None:
                 self._publish_motor_state_and_imu(now=time.time(), frame_id=frame_id, sample=sample)
+            next_tick += period
+            sleep_for = next_tick - time.perf_counter()
+            if sleep_for > 0:
+                time.sleep(sleep_for)
+            else:
+                next_tick = time.perf_counter()
 
+    def _command_loop(self) -> None:
+        """Repeat the newest policy target on an independent 500 Hz clock."""
+        period = 1.0 / float(self.config.publish_rate_hz)
+        next_tick = time.perf_counter()
+        while not self._stop_event.is_set():
+            self._publish_latest_command(time.perf_counter())
             next_tick += period
             sleep_for = next_tick - time.perf_counter()
             if sleep_for > 0:
@@ -401,33 +436,58 @@ class G1WholeBodyConnection(Module):
         if not self._ensure_low_level_control():
             return
 
+        command = _CachedMotorCommand(
+            q=tuple(msg.q),
+            dq=tuple(msg.dq),
+            kp=tuple(msg.kp),
+            kd=tuple(msg.kd),
+            tau=tuple(msg.tau),
+            received_at=time.perf_counter(),
+        )
         with self._lock:
+            self._latest_command = command
+
+    def _publish_latest_command(self, now: float) -> bool:
+        """Publish the newest 50 Hz policy target on the 500 Hz DDS clock."""
+        with self._lock:
+            command = self._latest_command
             if (
-                self._low_cmd is None
+                command is None
+                or self._low_cmd is None
                 or self._crc is None
                 or self._publisher is None
                 or self._mode_machine is None
             ):
-                # Pre-start or post-stop - drop silently.
-                return
+                return False
 
-            # G1 firmware requires mode_machine on every LowCmd frame.
             self._low_cmd.mode_machine = self._mode_machine
-
-            # Damping-first bring-up: kd applies in full from the first frame
-            # (that is Unitree's own damp mode), while kp and tau fade in so
-            # taking control never step-changes the stiffness.
-            scale = self._soft_start_scale(time.perf_counter())
-
+            scale = self._soft_start_scale(now)
             for i in range(_NUM_MOTORS):
-                self._low_cmd.motor_cmd[i].q = msg.q[i]
-                self._low_cmd.motor_cmd[i].dq = msg.dq[i]
-                self._low_cmd.motor_cmd[i].kp = msg.kp[i] * scale
-                self._low_cmd.motor_cmd[i].kd = msg.kd[i]
-                self._low_cmd.motor_cmd[i].tau = msg.tau[i] * scale
+                self._low_cmd.motor_cmd[i].q = command.q[i]
+                self._low_cmd.motor_cmd[i].dq = command.dq[i]
+                self._low_cmd.motor_cmd[i].kp = command.kp[i] * scale
+                self._low_cmd.motor_cmd[i].kd = command.kd[i]
+                self._low_cmd.motor_cmd[i].tau = command.tau[i] * scale
 
             self._low_cmd.crc = self._crc.Crc(self._low_cmd)
             self._publisher.Write(self._low_cmd)
+            self._command_frames_sent += 1
+            return True
+
+    @rpc
+    def command_stream_status(self) -> dict[str, float | int | None]:
+        """Return DDS command publication telemetry for hardware diagnostics."""
+        with self._lock:
+            age_ms = (
+                None
+                if self._latest_command is None
+                else (time.perf_counter() - self._latest_command.received_at) * 1000.0
+            )
+            return {
+                "configured_rate_hz": float(self.config.publish_rate_hz),
+                "frames_sent": self._command_frames_sent,
+                "latest_command_age_ms": age_ms,
+            }
 
     def _ensure_low_level_control(self) -> bool:
         """Release the native controller exactly once, when commands are ready."""

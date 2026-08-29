@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Final, Literal, TypeAlias, cast
+from typing import Any, Final, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -30,7 +30,10 @@ from dimos.control.tasks.g1_sonic_wbc_task.nvidia_smpl import (
 )
 from dimos.control.tasks.g1_sonic_wbc_task.sonic_pipeline import (
     NUM_JOINTS,
+    SONIC_V1_1_PIPELINE,
     WRIST_ONNX_INDICES,
+    SonicTeleopPipeline,
+    sonic_model_profile,
 )
 from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
 
@@ -64,14 +67,6 @@ SMPL_WEBXR_JOINTS: Final[tuple[str, ...]] = (
 
 POSE_TARGET_FPS: Final[float] = 50.0
 POSE_MAX_GAP_SECONDS: Final[float] = 0.15
-
-SonicTeleopPipeline: TypeAlias = Literal["sonic-v1.1", "sonic-low-latency"]
-SONIC_V1_1_PIPELINE: Final[SonicTeleopPipeline] = "sonic-v1.1"
-SONIC_LOW_LATENCY_PIPELINE: Final[SonicTeleopPipeline] = "sonic-low-latency"
-SONIC_PIPELINE_WINDOW_FRAMES: Final[dict[SonicTeleopPipeline, int]] = {
-    SONIC_V1_1_PIPELINE: 10,
-    SONIC_LOW_LATENCY_PIPELINE: 2,
-}
 
 
 class IncompleteBodyPoseError(ValueError):
@@ -170,7 +165,7 @@ class WebXRSonicPoseStream:
         sonic_pipeline: SonicTeleopPipeline = SONIC_V1_1_PIPELINE,
     ) -> None:
         self._sonic_pipeline = sonic_pipeline
-        self._window_frames = SONIC_PIPELINE_WINDOW_FRAMES[sonic_pipeline]
+        self._window_frames = sonic_model_profile(sonic_pipeline).smpl_frames
         self._retargeter = WebXRSonicRetargeter()
         self._frames: deque[dict[str, NDArray[Any]]] = deque(maxlen=self._window_frames)
         self._previous_time: float | None = None

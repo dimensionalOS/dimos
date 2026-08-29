@@ -13,11 +13,15 @@
 # limitations under the License.
 
 import json
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from dimos.control.tasks.g1_sonic_wbc_task import sonic_diagnostics
+from dimos.control.tasks.g1_sonic_wbc_task.sonic_hardware import (
+    ensure_sonic_max_performance,
+)
 
 
 def test_profile_counts_only_cpu_kernel_events(tmp_path) -> None:
@@ -102,3 +106,40 @@ def test_planner_input_matches_released_model_contract() -> None:
         "allowed_pred_num_tokens": ((1, 11), np.dtype(np.int64)),
         "height": ((1,), np.dtype(np.float32)),
     }
+
+
+def test_max_performance_check_accepts_locked_cpu_and_gpu(mocker) -> None:
+    run = mocker.patch(
+        "subprocess.run",
+        side_effect=[
+            SimpleNamespace(stdout="NV Power Mode: MAXN\n0\n"),
+            SimpleNamespace(
+                stdout=(
+                    "cpu0: Online=1 MinFreq=2201600 MaxFreq=2201600 CurrentFreq=2201600\n"
+                    "GPU MinFreq=1300500000 MaxFreq=1300500000 CurrentFreq=1300500000\n"
+                )
+            ),
+        ],
+    )
+
+    ensure_sonic_max_performance()
+
+    assert run.call_count == 2
+
+
+def test_max_performance_check_rejects_unlocked_clocks(mocker) -> None:
+    mocker.patch(
+        "subprocess.run",
+        side_effect=[
+            SimpleNamespace(stdout="NV Power Mode: MAXN\n0\n"),
+            SimpleNamespace(
+                stdout=(
+                    "cpu0: Online=1 MinFreq=115200 MaxFreq=2201600 CurrentFreq=729600\n"
+                    "GPU MinFreq=306000000 MaxFreq=1300500000 CurrentFreq=306000000\n"
+                )
+            ),
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="locked Jetson clocks"):
+        ensure_sonic_max_performance()

@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+
+"""Download and verify the official NVIDIA SONIC policy bundles."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+from pathlib import Path
+
+try:
+    from huggingface_hub import hf_hub_download
+except ImportError as exc:
+    msg = "huggingface_hub is required; run this command through the DimOS environment"
+    raise ImportError(msg) from exc
+from huggingface_hub import hf_hub_download
+
+from dimos.utils.data import get_data
+
+REPO_ID = "nvidia/GEAR-SONIC"
+REVISION = "6733128a3d8a523b1418b06bca3cdf61c8b0987f"
+FILES: dict[str, str | None] = {
+    "sonic_v1_1/model_encoder.onnx": "fb97de22819b2057b41459802128d91723d91a25f0ad73e7bfc41a9cf8365bae",
+    "sonic_v1_1/model_decoder.onnx": "34bae8570d4a4421a5391a5c2befd745d4a02d182ec539e5f9da44c091c67509",
+    "sonic_v1_1/observation_config.yaml": None,
+    "low_latency/model_encoder.onnx": "60be43157f57d812f38bdbb740a5de5d5d070e8840d9edc16f02a91a6d06255b",
+    "low_latency/model_decoder.onnx": "c4ac2e74045e7cbfb568f15e6bf47ea7ce023df7a94322af50be223e0a628bab",
+    "low_latency/observation_config.yaml": None,
+}
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _verify(path: Path, expected_sha: str | None) -> None:
+    if not path.is_file():
+        raise RuntimeError(f"missing {path}")
+    if expected_sha is not None:
+        actual_sha = _sha256(path)
+        if actual_sha != expected_sha:
+            raise RuntimeError(
+                f"bad SHA-256 for {path}: expected {expected_sha}, found {actual_sha}"
+            )
+    print(f"PASS  SONIC model: {path}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--check", action="store_true")
+    parser.add_argument(
+        "--profile",
+        choices=("all", "sonic-v1.1", "sonic-low-latency"),
+        default="all",
+    )
+    parser.add_argument(
+        "--destination",
+        type=Path,
+        default=None,
+    )
+    args = parser.parse_args()
+
+    default_destination = Path(__file__).resolve().parents[3] / "data" / "sonic"
+    destination = args.destination or default_destination
+    if args.destination is None and not args.check and not destination.is_dir():
+        print("Materializing the shared SONIC planner and motion data...")
+        destination = get_data("sonic")
+
+    prefix = {
+        "all": None,
+        "sonic-v1.1": "sonic_v1_1/",
+        "sonic-low-latency": "low_latency/",
+    }[args.profile]
+    selected_files = {
+        filename: expected_sha
+        for filename, expected_sha in FILES.items()
+        if prefix is None or filename.startswith(prefix)
+    }
+    for filename, expected_sha in selected_files.items():
+        path = destination / filename
+        try:
+            _verify(path, expected_sha)
+            continue
+        except RuntimeError:
+            if args.check:
+                raise
+
+        if not args.check:
+            path = Path(
+                hf_hub_download(
+                    repo_id=REPO_ID,
+                    filename=filename,
+                    revision=REVISION,
+                    local_dir=destination,
+                )
+            )
+        _verify(path, expected_sha)
+
+
+if __name__ == "__main__":
+    main()

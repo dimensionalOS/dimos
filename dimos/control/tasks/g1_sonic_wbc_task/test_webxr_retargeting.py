@@ -202,9 +202,7 @@ def test_pose_stream_waits_for_ten_chronological_resampled_frames() -> None:
     stream = WebXRSonicPoseStream()
 
     for index in range(9):
-        stream.push(
-            _snapshot(capture_time_s=10.0 + 0.02 * index, position_scale=1.0 + 0.1 * index)
-        )
+        stream.push(_snapshot(capture_time_s=10.0 + 0.02 * index, position_scale=1.0 + 0.1 * index))
 
     assert stream.ready is False
     assert stream.buffered_frames == 9
@@ -228,7 +226,7 @@ def test_pose_stream_waits_for_ten_chronological_resampled_frames() -> None:
     assert stream.fields()["frame_index"].tolist() == list(range(1, 11))
 
 
-def test_low_latency_pose_stream_uses_two_frame_rolling_window() -> None:
+def test_low_latency_pose_stream_uses_four_frame_rolling_window() -> None:
     stream = WebXRSonicPoseStream(sonic_pipeline="sonic-low-latency")
 
     stream.push(_snapshot(capture_time_s=10.0))
@@ -238,15 +236,21 @@ def test_low_latency_pose_stream_uses_two_frame_rolling_window() -> None:
 
     stream.push(_snapshot(capture_time_s=10.02))
 
-    assert stream.ready is True
+    assert stream.ready is False
     assert stream.sonic_pipeline == "sonic-low-latency"
-    assert stream.window_frames == 2
-    assert stream.fields()["frame_index"].tolist() == [0, 1]
+    assert stream.window_frames == 4
 
     stream.push(_snapshot(capture_time_s=10.04))
+    stream.push(_snapshot(capture_time_s=10.06))
 
-    assert stream.buffered_frames == 2
-    assert stream.fields()["frame_index"].tolist() == [1, 2]
+    assert stream.ready is True
+    assert stream.buffered_frames == 4
+    assert stream.fields()["frame_index"].tolist() == [0, 1, 2, 3]
+
+    stream.push(_snapshot(capture_time_s=10.08))
+
+    assert stream.buffered_frames == 4
+    assert stream.fields()["frame_index"].tolist() == [1, 2, 3, 4]
 
 
 def test_pose_stream_interpolates_root_by_shortest_quaternion_path() -> None:

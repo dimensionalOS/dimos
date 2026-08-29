@@ -158,6 +158,8 @@ print(
 print(f"PASS  execution providers: {providers}")
 PY
 
+"$SONIC_VENV/bin/python" "$REPO_ROOT/bin/hardware/g1/setup-sonic-models"
+
 "$SONIC_VENV/bin/python" - <<'PY'
 try:
     import open3d

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -23,6 +24,7 @@ from dimos.control.tasks.g1_sonic_wbc_task.g1_sonic_wbc_task import (
     G1SonicWBCTask,
     G1SonicWBCTaskConfig,
     SonicControlState,
+    _create_task,
 )
 from dimos.control.tasks.g1_sonic_wbc_task.sonic_pipeline import DEFAULT_ANGLES_DDS
 from dimos.hardware.whole_body.spec import IMUState
@@ -189,3 +191,40 @@ def test_dry_run_outputs_arm_ramp_but_suppresses_policy_output(make_task: Any) -
     assert ramp_output is not None
     assert policy_output is None
     pipeline.step.assert_called_once()
+
+
+def test_policy_timing_is_observational(make_task: Any) -> None:
+    factory, _pipeline = make_task
+    task = factory(auto_arm=True, default_ramp_seconds=0.0)
+
+    task._record_policy_timing(0.201, 1.0)
+    task._record_policy_timing(0.005, 1.02)
+
+    assert task._policy_timing_snapshot() == {
+        "step_ms": {"samples": 2, "mean": 103.0, "p95": 191.2, "p99": 199.04, "max": 201.0},
+        "start_interval_ms": {
+            "samples": 1,
+            "mean": 20.0,
+            "p95": 20.0,
+            "p99": 20.0,
+            "max": 20.0,
+        },
+    }
+
+
+def test_task_factory_fails_fast_when_selected_model_bundle_is_missing(tmp_path: Path) -> None:
+    cfg = SimpleNamespace(
+        name="sonic",
+        joint_names=_JOINT_NAMES,
+        priority=50,
+        params={
+            "encoder_onnx": tmp_path / "low_latency/model_encoder.onnx",
+            "decoder_onnx": tmp_path / "low_latency/model_decoder.onnx",
+            "planner_onnx": tmp_path / "planner_sonic.onnx",
+            "hardware_id": "g1",
+            "sonic_pipeline": "sonic-low-latency",
+        },
+    )
+
+    with pytest.raises(FileNotFoundError, match="setup-sonic-models"):
+        _create_task(cfg, {}, G1SonicWBCTask)

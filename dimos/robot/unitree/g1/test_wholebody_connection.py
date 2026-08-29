@@ -82,6 +82,7 @@ def test_soft_start_is_damping_first(connection: G1WholeBodyConnection):
     publisher = _wire(connection, soft_start_seconds=1000.0)
 
     connection._on_motor_command(_command())
+    connection._publish_latest_command(10.0)
 
     q, dq, kp, kd, tau = publisher.frames[0][0]
     # First frame: target and damping pass through, stiffness and tau do not —
@@ -96,9 +97,10 @@ def test_stiffness_ramps_to_full(connection: G1WholeBodyConnection):
     publisher = _wire(connection, soft_start_seconds=0.05)
 
     connection._on_motor_command(_command())
+    connection._publish_latest_command(10.0)
     # Rewind the clock instead of sleeping through the window.
     connection._soft_start_t0 -= 1.0
-    connection._on_motor_command(_command())
+    connection._publish_latest_command(10.0)
 
     _q, _dq, kp, kd, tau = publisher.frames[-1][0]
     assert kp == 100.0
@@ -110,6 +112,7 @@ def test_soft_start_disabled_passes_through(connection: G1WholeBodyConnection):
     publisher = _wire(connection, soft_start_seconds=0.0)
 
     connection._on_motor_command(_command())
+    connection._publish_latest_command(10.0)
 
     _q, _dq, kp, _kd, tau = publisher.frames[0][0]
     assert kp == 100.0
@@ -137,9 +140,25 @@ def test_sport_mode_handoff_waits_for_first_complete_command(
 
     connection._on_motor_command(_command())
     connection._on_motor_command(_command())
+    connection._publish_latest_command(10.0)
+    connection._publish_latest_command(10.002)
 
     release.assert_called_once_with()
     assert len(publisher.frames) == 2
+
+
+def test_latest_policy_target_is_republished_on_each_dds_tick(
+    connection: G1WholeBodyConnection,
+) -> None:
+    publisher = _wire(connection, soft_start_seconds=0.0)
+
+    connection._on_motor_command(_command())
+
+    assert publisher.frames == []
+    assert connection._publish_latest_command(10.0)
+    assert connection._publish_latest_command(10.002)
+    assert len(publisher.frames) == 2
+    assert publisher.frames[0] == publisher.frames[1]
 
 
 @pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])
