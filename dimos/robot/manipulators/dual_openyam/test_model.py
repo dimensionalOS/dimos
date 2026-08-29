@@ -16,6 +16,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 import pinocchio
+import pytest
 
 from dimos.robot.manipulators.dual_openyam.model import (
     DUAL_OPENYAM_ARTIFACT,
@@ -23,6 +24,8 @@ from dimos.robot.manipulators.dual_openyam.model import (
     DUAL_OPENYAM_PACKAGE,
     DUAL_OPENYAM_PACKAGE_PATHS,
 )
+
+pytestmark = pytest.mark.self_hosted
 
 
 def _tree() -> ET.Element:
