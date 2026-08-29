@@ -17,7 +17,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{parse_macro_input, Data, DeriveInput, Field, Fields, Ident, LitStr, Path, Type};
 
-#[proc_macro_derive(Module, attributes(input, output, io, config, tf, module))]
+#[proc_macro_derive(Module, attributes(input, input_group, output, io, config, tf, module))]
 pub fn derive_module(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     match expand(input) {
@@ -175,13 +175,17 @@ fn is_option(ty: &Type) -> bool {
 }
 
 const ONE_ATTR_ONLY: &str = "field has multiple module attributes; only one of #[input], \
-                             #[output], #[io], #[config], #[tf] is allowed";
+                             #[input_group], #[output], #[io], #[config], #[tf] is allowed";
 
 /// What a `#[tf]` port carries, for the Cargo.toml registry cross-check.
 const TF_PAYLOAD_TYPE: &str = "TFMessage";
 
 enum FieldKind {
     Input {
+        decode: Path,
+        handler: Ident,
+    },
+    InputGroup {
         decode: Path,
         handler: Ident,
     },
@@ -323,6 +327,9 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             FieldKind::Input { decode, .. } => {
                 quote!(#name: builder.input(#name_str, #decode))
             }
+            FieldKind::InputGroup { decode, .. } => {
+                quote!(#name: builder.input_group(#name_str, #decode))
+            }
             FieldKind::Output { encode } => {
                 quote!(#name: builder.output(#name_str, #encode))
             }
@@ -336,26 +343,29 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     });
 
     // Every port that receives messages gets an arm in the select! loop.
-    let handled_fields: Vec<(&Ident, &Ident)> = classified
+    let handle_arms: Vec<TokenStream2> = classified
         .iter()
-        .filter_map(|f| match &f.kind {
-            FieldKind::Input { handler, .. } | FieldKind::Io { handler, .. } => {
-                Some((f.name, handler))
+        .filter_map(|f| {
+            let name = f.name;
+            match &f.kind {
+                FieldKind::Input { handler, .. } | FieldKind::Io { handler, .. } => Some(quote!(
+                    ::core::option::Option::Some(msg) = self.#name.recv() => {
+                        self.#handler(msg).await
+                    }
+                )),
+                FieldKind::InputGroup { handler, .. } => Some(quote!(
+                    ::core::option::Option::Some((index, msg)) = self.#name.recv() => {
+                        self.#handler(index, msg).await
+                    }
+                )),
+                _ => None,
             }
-            _ => None,
         })
         .collect();
 
-    let handle_body = if handled_fields.is_empty() {
+    let handle_body = if handle_arms.is_empty() {
         quote!(::std::future::pending::<()>().await)
     } else {
-        let handle_arms = handled_fields.iter().map(|(name, handler)| {
-            quote!(
-                ::core::option::Option::Some(msg) = self.#name.recv() => {
-                    self.#handler(msg).await
-                }
-            )
-        });
         quote! {
             loop {
                 ::tokio::select! {
@@ -434,7 +444,7 @@ fn port_decls(classified: &[ClassifiedField], want_input: bool) -> Vec<PortDecl>
     classified
         .iter()
         .filter(|f| match f.kind {
-            FieldKind::Input { .. } => want_input,
+            FieldKind::Input { .. } | FieldKind::InputGroup { .. } => want_input,
             FieldKind::Output { .. } => !want_input,
             // A `#[tf]` field is a port like any other as far as the registry
             // goes: bake has to put the topic in the host's map or the module
@@ -577,6 +587,32 @@ fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldAttr> {
                 .ok_or_else(|| syn::Error::new_spanned(attr, "#[input] requires `decode = ...`"))?;
             let handler = handler.unwrap_or_else(|| format_ident!("handle_{}", name));
             found = Some(FieldKind::Input { decode, handler });
+        } else if path.is_ident("input_group") {
+            if found.is_some() {
+                return Err(syn::Error::new_spanned(attr, ONE_ATTR_ONLY));
+            }
+            let mut decode: Option<Path> = None;
+            let mut handler: Option<Ident> = None;
+            attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("decode") {
+                    decode = Some(meta.value()?.parse()?);
+                } else if meta.path.is_ident("handler") {
+                    handler = Some(meta.value()?.parse()?);
+                } else if meta.path.is_ident("msg") {
+                    msg = Some(meta.value()?.parse::<LitStr>()?.value());
+                } else {
+                    return Err(meta.error(
+                        "unrecognized #[input_group] argument; expected `decode = ...`, \
+                         `handler = ...` or `msg = ...`",
+                    ));
+                }
+                Ok(())
+            })?;
+            let decode = decode.ok_or_else(|| {
+                syn::Error::new_spanned(attr, "#[input_group] requires `decode = ...`")
+            })?;
+            let handler = handler.unwrap_or_else(|| format_ident!("handle_{}", name));
+            found = Some(FieldKind::InputGroup { decode, handler });
         } else if path.is_ident("output") {
             if found.is_some() {
                 return Err(syn::Error::new_spanned(attr, ONE_ATTR_ONLY));

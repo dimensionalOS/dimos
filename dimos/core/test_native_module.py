@@ -36,7 +36,7 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, TransportBackend
 from dimos.core.module import Module
-from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
+from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig, TopicGroup
 from dimos.core.stream import IO, In, Out
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.core.transport_factory import make_transport, transport_topic
@@ -209,6 +209,53 @@ def test_tf_topic_comes_from_the_declared_port_only() -> None:
         module.stop()
         with contextlib.suppress(Exception):
             transport.stop()
+
+
+def test_a_topic_group_reaches_the_native_process_as_a_list(monkeypatch) -> None:
+    """A group's channels are resolved without the module declaring a stream each."""
+    monkeypatch.setattr(native_module_mod.global_config, "transport", "lcm")
+    module = StubNativeModule(
+        executable=_ECHO,
+        topic_groups={"cams": TopicGroup(names=["/cam0/imu", "/cam1/imu"], msg_type=Imu)},
+    )
+    try:
+        topics = module._collect_topics()
+        assert topics["cams"] == ["/cam0/imu#sensor_msgs.Imu", "/cam1/imu#sensor_msgs.Imu"]
+        assert module._argv(topics)[1:3] == [
+            "--cams",
+            "/cam0/imu#sensor_msgs.Imu,/cam1/imu#sensor_msgs.Imu",
+        ]
+    finally:
+        module.stop()
+
+
+def test_a_topic_group_cannot_shadow_a_declared_port() -> None:
+    module = StubNativeModule(
+        executable=_ECHO,
+        topic_groups={"cmd_vel": TopicGroup(names=["/other"], msg_type=Twist)},
+    )
+    transport = LCMTransport("/cmd_vel", Twist)
+    try:
+        module.set_transport("cmd_vel", transport)
+        with pytest.raises(ValueError, match="collides"):
+            module._collect_topics()
+    finally:
+        module.stop()
+        with contextlib.suppress(Exception):
+            transport.stop()
+
+
+def test_a_topic_group_is_not_a_native_config_field() -> None:
+    """The group is wiring, so it belongs in `topics`, not the config struct."""
+    module = StubNativeModule(
+        executable=_ECHO,
+        topic_groups={"cams": TopicGroup(names=["/cam0/imu"], msg_type=Imu)},
+    )
+    try:
+        assert "topic_groups" not in module.config.to_config_dict()
+        assert "--topic_groups" not in module._argv({})
+    finally:
+        module.stop()
 
 
 def test_io_port_publisher_qos_reaches_the_native_process() -> None:

@@ -62,6 +62,7 @@ Every transport is compiled into the binary. `run_with_transport` opens the one 
 - `#[derive(Module)]`: on the struct. Required.
 - `#[module(setup = fn, teardown = fn)]`: on the struct. Both optional. Names methods on `Self`. `setup` runs once before the input dispatch loop starts (use it to spawn background tasks or initialize resources); `teardown` runs once after the loop exits (use it for cleanup).
 - `#[input(decode = fn, handler = fn)]`: on a field of type `Input<T>`. `decode` is required; `handler` defaults to `handle_<field_name>`.
+- `#[input_group(decode = fn, handler = fn)]`: on a field of type `InputGroup<T>`, one port fed by several topics of the same message type (see [Topic groups](#topic-groups)). `decode` is required; `handler` defaults to `handle_<field_name>` and takes `(index, msg)`.
 - `#[output(encode = fn)]`: on a field of type `Output<T>`. `encode` is required.
 - `#[io(decode = fn, encode = fn, handler = fn)]`: on a field of type `Io<T>`, a port that publishes to and subscribes on one topic. `decode` and `encode` are required; `handler` defaults to `handle_<field_name>`. The transports deliver a message back to its own sender, so the handler also sees what the module publishes. Use `#[output]` instead when the module only publishes.
 - `#[config]`: on one field. The type must be defined with `#[native_config]` (see [Config](#config)). At most one per struct. If absent, `Config` defaults to `dimos_module::NoConfig`.
@@ -107,6 +108,34 @@ fn validate_health_range(cfg: &Config) -> Result<(), ValidationError> {
 At runtime `run()` enforces the mapping on the Python payload: deserialization rejects an unknown field, and a key-set check rejects any field whose JSON key is absent, even an `Option` or a type alias to `Option` that serde would otherwise accept as `None`.
 
 Field name = port name. Ports map to topics via the stdin JSON; unmapped ports fall back to `/{port}`.
+
+## Topic groups
+
+A rig with N identical sensors would otherwise need N ports and N near-identical handlers. An `InputGroup<T>` is one port wired to a list of topics that all carry `T`, delivered to one handler in arrival order. Each message is tagged with the index of the topic it arrived on, so the handler can tell the sources apart.
+
+```rust
+#[derive(Module)]
+struct MultiCam {
+    #[input_group(decode = Image::decode)]
+    cameras: InputGroup<Image>,
+}
+
+impl MultiCam {
+    async fn handle_cameras(&mut self, index: usize, image: Image) {
+        let topic = self.cameras.topic(index);
+    }
+}
+```
+
+The Python wrapper supplies the topics with `topic_groups`, keyed by port name:
+
+```python
+MultiCam.blueprint(
+    topic_groups={"cameras": TopicGroup(names=["/cam0/color", "/cam1/color"], msg_type=Image)},
+)
+```
+
+Those channels are not declared as `In` streams, so they take no part in blueprint autoconnection: the names are resolved to wire channels and the native process subscribes them itself. On the launch line the port's value is an array rather than a string. A group configured with no topics still claims its port but never yields.
 
 ## Transforms
 

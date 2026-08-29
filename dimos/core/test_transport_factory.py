@@ -25,6 +25,7 @@ from dimos.core.transport import (
 )
 from dimos.core.transport_factory import (
     apply_transport_arg,
+    channel_for,
     default_zenoh_qos,
     make_transport,
     rpc_backend,
@@ -78,6 +79,14 @@ def test_make_transport_zenoh_pickled() -> None:
     t = make_transport("/human_input", g=ZENOH)
     assert type(t) is pZenohTransport
     assert t.topic == "dimos/human_input"
+
+
+@pytest.mark.parametrize("g", [LCM, ZENOH])
+@pytest.mark.parametrize(("name", "msg_type"), [("/camera/color", Image), ("/human_input", None)])
+def test_channel_for_matches_the_transport_it_skips_building(
+    g: GlobalConfig, name: str, msg_type: type | None
+) -> None:
+    assert channel_for(name, msg_type, g=g) == make_transport(name, msg_type, g=g).channel
 
 
 def test_default_zenoh_qos_high_rate_sensor_types_drop() -> None:
