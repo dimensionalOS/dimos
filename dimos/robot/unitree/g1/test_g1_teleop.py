@@ -15,12 +15,17 @@
 """Construction and objective tests for shared G1 Quest teleoperation."""
 
 from typing import Any, cast
+import xml.etree.ElementTree as ET
 
 import numpy as np
 import pytest
 
 from dimos.control.coordinator import TaskConfig
-from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import g1_arms
+from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
+    g1_arms,
+    g1_joints,
+    g1_legs_waist,
+)
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
@@ -37,9 +42,9 @@ from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import (
 )
 from dimos.robot.unitree.g1.manip_config import (
     G1_LEFT_ARM_JOINTS,
+    G1_MANIPULATION_MODEL,
     G1_RIGHT_ARM_JOINTS,
-    G1_WAIST_JOINTS,
-    g1_upper_body_model_config,
+    g1_manipulation_model_config,
 )
 from dimos.robot.unitree.g1.teleop_ik import G1PinkPoseTargetSolver
 from dimos.teleop.quest.quest_extensions import MobileVideoArmTeleopModule
@@ -146,20 +151,31 @@ def test_g1_collection_streams_do_not_require_world_poses() -> None:
     ]
 
 
-def test_g1_upper_body_plans_arms_without_owning_waist() -> None:
-    config = g1_upper_body_model_config()
+def test_g1_manipulation_model_tracks_full_body_but_plans_only_arms() -> None:
+    config = g1_manipulation_model_config()
 
-    assert config.joint_names == [*G1_WAIST_JOINTS, *g1_arms]
+    assert config.joint_names == g1_joints
     assert [group.name for group in config.planning_groups] == ["left_arm", "right_arm"]
     assert config.planning_groups[0].joint_names == G1_LEFT_ARM_JOINTS
     assert config.planning_groups[1].joint_names == G1_RIGHT_ARM_JOINTS
 
+    root = ET.fromstring(config.model.load().xml)
+    links = {link.get("name"): link for link in root.findall("link")}
+    expected_leg_links = {
+        f"{joint_name.partition('/')[2]}_link" for joint_name in g1_legs_waist[:12]
+    }
+    assert expected_leg_links <= links.keys()
+    assert all(links[name].find("collision") is not None for name in expected_leg_links)
+
 
 def test_g1_teleop_wires_manipulation_to_existing_coordinator() -> None:
     manipulation_kwargs = _module_kwargs(unitree_g1_teleop, G1ManipulationModule)
+    model = manipulation_kwargs["model"]
 
     assert manipulation_kwargs["instance_name"] == "G1Manipulation"
-    assert manipulation_kwargs["model"] == g1_upper_body_model_config()
+    assert model.model is G1_MANIPULATION_MODEL
+    assert model.joint_names == g1_joints
+    assert [group.name for group in model.planning_groups] == ["left_arm", "right_arm"]
     assert manipulation_kwargs["visualization"] == ViserVisualizationConfig(host="0.0.0.0")
     assert (
         unitree_g1_teleop.remapping_map[("G1Manipulation", "_control_coordinator")]

@@ -135,9 +135,19 @@ def _enable_motor_output(
     if not _fully_armed(current):
         _abort("G1 is not fully armed; run `dimos hardware g1 arm` first")
     coordinator.set_dry_run(False)
-    enabled = _groot_state(coordinator)
-    if enabled.get("dry_run"):
-        _abort("G1 remained in dry-run after the enable request")
+    try:
+        enabled = _groot_state(coordinator)
+        if enabled.get("dry_run"):
+            _abort("G1 remained in dry-run after the enable request")
+    except BaseException as enable_error:
+        try:
+            coordinator.set_dry_run(True)
+        except BaseException as restore_error:
+            raise RuntimeError(
+                f"enable verification failed ({enable_error}); "
+                f"failed to restore dry-run ({restore_error})"
+            ) from restore_error
+        raise
     return enabled
 
 

@@ -287,8 +287,20 @@ class MobileVideoArmTeleopModule(VideoArmTeleopModule):
         self._cmd_vel_moving = False
         self._right_stick_pressed = False
 
+    def _publish_safe_command(self) -> None:
+        with self._lock:
+            self._cmd_vel_moving = False
+            self._right_stick_pressed = False
+        self.cmd_vel.publish(Twist.zero())
+
     def _on_joy_bytes(self, data: bytes) -> bool:
-        if not super()._on_joy_bytes(data):
+        try:
+            valid = super()._on_joy_bytes(data)
+        except ValueError:
+            self._publish_safe_command()
+            raise
+        if not valid:
+            self._publish_safe_command()
             return False
         with self._lock:
             left = self._controllers.get(Hand.LEFT)
@@ -339,14 +351,6 @@ class MobileVideoArmTeleopModule(VideoArmTeleopModule):
         elif self._cmd_vel_moving:
             self.cmd_vel.publish(Twist.zero())
         self._cmd_vel_moving = moving
-
-    @rpc
-    def stop(self) -> None:
-        try:
-            self.cmd_vel.publish(Twist.zero())
-        except Exception:
-            logger.exception("Failed to publish stop Twist")
-        super().stop()
 
 
 class Go2TeleopConfig(QuestTeleopConfig):

@@ -496,3 +496,71 @@ def test_mobile_arm_teleop_stick_press_publishes_one_stop_per_press(mocker) -> N
         assert publish.call_args.args[0] == Twist.zero()
     finally:
         module.stop()
+
+
+def test_mobile_arm_stale_input_publishes_zero_velocity(mocker) -> None:
+    module = MobileVideoArmTeleopModule()
+    publish = mocker.patch.object(module.cmd_vel, "publish")
+    try:
+        with module._lock:
+            module._controllers[Hand.LEFT] = _controller(is_left=True, stick_y=-1.0)
+            module._last_controller_update[Hand.LEFT] = 1.0
+            module._cmd_vel_moving = True
+            module._expire_stale_state(1.0 + module.config.input_timeout_s + 0.1)
+
+        publish.assert_called_once_with(Twist.zero())
+        assert module._cmd_vel_moving is False
+    finally:
+        module.stop()
+
+
+def test_mobile_arm_disconnect_publishes_zero_velocity(mocker) -> None:
+    module = MobileVideoArmTeleopModule()
+    publish = mocker.patch.object(module.cmd_vel, "publish")
+    client = mocker.MagicMock()
+    try:
+        assert module._client_connected(client) is True
+        publish.reset_mock()
+        module._cmd_vel_moving = True
+
+        module._client_disconnected(client)
+
+        publish.assert_called_once_with(Twist.zero())
+        assert module._cmd_vel_moving is False
+    finally:
+        module.stop()
+
+
+def test_mobile_arm_malformed_joy_publishes_zero_velocity(mocker) -> None:
+    module = MobileVideoArmTeleopModule()
+    publish = mocker.patch.object(module.cmd_vel, "publish")
+    mocker.patch(
+        "dimos.teleop.quest.quest_teleop_module.Joy.lcm_decode",
+        return_value=SimpleNamespace(frame_id="left", axes=[], buttons=[]),
+    )
+    module._cmd_vel_moving = True
+    try:
+        assert module._on_joy_bytes(b"malformed") is False
+
+        publish.assert_called_once_with(Twist.zero())
+        assert module._cmd_vel_moving is False
+    finally:
+        module.stop()
+
+
+def test_mobile_arm_unknown_controller_identity_publishes_zero_velocity(mocker) -> None:
+    module = MobileVideoArmTeleopModule()
+    publish = mocker.patch.object(module.cmd_vel, "publish")
+    mocker.patch(
+        "dimos.teleop.quest.quest_teleop_module.Joy.lcm_decode",
+        return_value=SimpleNamespace(frame_id="unknown"),
+    )
+    module._cmd_vel_moving = True
+    try:
+        with pytest.raises(ValueError, match="Unexpected frame_id"):
+            module._on_joy_bytes(b"unknown")
+
+        publish.assert_called_once_with(Twist.zero())
+        assert module._cmd_vel_moving is False
+    finally:
+        module.stop()

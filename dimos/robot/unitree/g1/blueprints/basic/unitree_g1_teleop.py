@@ -15,9 +15,9 @@
 """Unitree G1 GR00T WBC + Quest teleop + manipulation + recording.
 
 The GR00T locomotion/control core (without navigation, mapping, or the legacy
-viewer) plus the Quest WebXR retargeting module, upper-body manipulation, and
-the dimos.imitation data-collection stack. ``--simulation mujoco`` and
-``--scene-package`` remain supported. Put on the headset, open
+viewer) plus the Quest WebXR retargeting module, collision-aware arm
+manipulation, and the dimos.imitation data-collection stack. ``--simulation
+mujoco`` and ``--scene-package`` remain supported. Put on the headset, open
 ``https://<host>:8443/teleop``, and:
 
     left stick        walk forward/back (+ yaw in strafe mode)
@@ -66,7 +66,7 @@ from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
     _G1GrootCoordinator,
     _unitree_g1_groot_wbc_core,
 )
-from dimos.robot.unitree.g1.manip_config import g1_upper_body_model_config
+from dimos.robot.unitree.g1.manip_config import g1_manipulation_model_config
 from dimos.teleop.quest.quest_extensions import MobileVideoArmTeleopModule
 
 
@@ -109,7 +109,7 @@ def _camera_if_real() -> tuple[Blueprint, ...]:
 
 
 class G1ManipulationModule(ManipulationModule):
-    """Own the fixed, stationary-only G1 upper-body planning model."""
+    """Plan arm motion against the live full-body G1 collision model."""
 
 
 unitree_g1_teleop = (
@@ -118,7 +118,7 @@ unitree_g1_teleop = (
         MobileVideoArmTeleopModule.blueprint(),
         G1ManipulationModule.blueprint(
             instance_name="G1Manipulation",
-            model=g1_upper_body_model_config(),
+            model=g1_manipulation_model_config(),
             visualization=ViserVisualizationConfig(host="0.0.0.0"),
         ),
         *_camera_if_real(),

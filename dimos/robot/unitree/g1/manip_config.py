@@ -18,7 +18,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import g1_arms, g1_legs_waist
+from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
+    g1_arms,
+    g1_joints,
+    g1_legs_waist,
+)
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
@@ -34,26 +38,21 @@ def _urdf_joint_name(coordinator_name: str) -> str:
     return f"{coordinator_name.partition('/')[2]}_joint"
 
 
-G1_UPPER_BODY_JOINTS = (*G1_WAIST_JOINTS, *g1_arms)
-G1_UPPER_BODY_JOINT_NAME_MAPPING = {
-    joint_name: _urdf_joint_name(joint_name) for joint_name in G1_UPPER_BODY_JOINTS
-}
-G1_UPPER_BODY_MODEL = (
-    RobotModel.from_file(
-        G1_URDF_PATH,
-        package_paths={"g1_description": LfsPath("g1_urdf")},
-    )
-    .with_subtree_rooted_at("pelvis")
-    .without_joint_subtrees("left_hip_pitch_joint", "right_hip_pitch_joint")
-    .with_renamed_joints(
-        {
-            model_name: joint_name
-            for joint_name, model_name in G1_UPPER_BODY_JOINT_NAME_MAPPING.items()
-        }
-    )
+G1_MANIPULATION_JOINTS = tuple(g1_joints)
+_G1_TELEOP_MODEL_JOINTS = (*G1_WAIST_JOINTS, *g1_arms)
+_G1_PELVIS_MODEL = RobotModel.from_file(
+    G1_URDF_PATH,
+    package_paths={"g1_description": LfsPath("g1_urdf")},
+).with_subtree_rooted_at("pelvis")
+G1_MANIPULATION_MODEL = _G1_PELVIS_MODEL.with_renamed_joints(
+    {_urdf_joint_name(joint_name): joint_name for joint_name in G1_MANIPULATION_JOINTS}
 )
-G1_TELEOP_ARM_MODEL = G1_UPPER_BODY_MODEL.with_fixed_joints(
-    *(_urdf_joint_name(name) for name in G1_WAIST_JOINTS)
+G1_TELEOP_ARM_MODEL = (
+    _G1_PELVIS_MODEL.without_joint_subtrees("left_hip_pitch_joint", "right_hip_pitch_joint")
+    .with_renamed_joints(
+        {_urdf_joint_name(joint_name): joint_name for joint_name in _G1_TELEOP_MODEL_JOINTS}
+    )
+    .with_fixed_joints(*(_urdf_joint_name(name) for name in G1_WAIST_JOINTS))
 )
 
 G1_READY_JOINTS = {
@@ -63,17 +62,15 @@ G1_READY_JOINTS = {
 G1_READY_SPEED_SCALE = 0.25
 
 
-def g1_upper_body_model_config() -> RobotModelConfig:
-    """Build the stationary G1 upper-body collision and kinematics model.
+def g1_manipulation_model_config() -> RobotModelConfig:
+    """Build the full-body G1 collision model for arm manipulation.
 
-    Waist joints remain in the model so measured torso motion is reflected in
-    collision checks, but only the two arm groups are eligible for planning.
-    The removed leg branches are therefore outside the collision world; this
-    model must only be used while the robot is stationary.
+    All measured joints participate in collision checks while only the two arm
+    groups are eligible for planning and trajectory execution.
     """
     return RobotModelConfig(
-        model=G1_UPPER_BODY_MODEL,
-        joint_names=list(G1_UPPER_BODY_JOINTS),
+        model=G1_MANIPULATION_MODEL,
+        joint_names=list(G1_MANIPULATION_JOINTS),
         base_link="pelvis",
         planning_groups=[
             PlanningGroupDefinition(
