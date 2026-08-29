@@ -28,6 +28,7 @@ from dimos.robot.deeprobotics.m20.bridge.module import M20ROSBridge
 from dimos.robot.deeprobotics.m20.connection import M20Connection
 from dimos.robot.deeprobotics.m20.constants import (
     BASE_LINK_HEIGHT_M,
+    BODY_LENGTH_M,
     BODY_WIDTH_M,
     MAX_ANGULAR_Z_RAD_S,
     MAX_LINEAR_X_M_S,
@@ -35,6 +36,7 @@ from dimos.robot.deeprobotics.m20.constants import (
     PLANNING_HEIGHT_M,
     ROTATION_DIAMETER_M,
 )
+from dimos.robot.deeprobotics.m20.pointlio.module import M20PointLio
 from dimos.visualization.vis_module import vis_module
 
 VOXEL_SIZE_M = 0.1
@@ -53,21 +55,77 @@ def _render_path(msg: Any) -> Any:
     return msg
 
 
+def _static_robot_body(rr: Any) -> list[Any]:
+    return [
+        rr.Boxes3D(
+            half_sizes=[
+                BODY_LENGTH_M * 0.5,
+                BODY_WIDTH_M * 0.5,
+                PLANNING_HEIGHT_M * 0.5,
+            ],
+            centers=[0.0, 0.0, PLANNING_HEIGHT_M * 0.5 - BASE_LINK_HEIGHT_M],
+            colors=[(0, 255, 127)],
+        ),
+        rr.Transform3D(parent_frame="tf#/base_link"),
+    ]
+
+
+def _m20_rerun_blueprint() -> Any:
+    """Go2-style navigation layout, adapted for the camera-less M20."""
+    import rerun as rr
+    import rerun.blueprint as rrb
+
+    return rrb.Blueprint(
+        rrb.Spatial3DView(
+            origin="world",
+            name="M20 KronkNav",
+            background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
+            line_grid=rrb.LineGrid3D(
+                plane=rr.components.Plane3D.XY.with_distance(0.5),
+            ),
+        ),
+        rrb.TimePanel(state="hidden"),
+        rrb.SelectionPanel(state="hidden"),
+    )
+
+
 _rerun_config = {
-    "memory_limit": "256MB",
+    "blueprint": _m20_rerun_blueprint,
+    # Match the Go2 navigation replay budget so a newly attached viewer catches
+    # up quickly instead of replaying a large sensor backlog.
+    "memory_limit": "64MB",
     "tf_axes": 0.35,
     "max_hz": {
-        "world/lidar": 2.0,
-        "world/local_map": 2.0,
-        "world/global_map": 0.2,
+        "world/local_map": 0.5,
+        # RayTracingVoxelMap already limits this at the source.
+        "world/global_map": 0,
     },
     "visual_override": {
+        # These are internal high-rate bridge streams. Logging the 100k-point
+        # raw cloud and 200 Hz IMU saturated the RK3588 and queued minutes of
+        # Rerun data. The Go2 navigation view likewise shows maps, not lidar.
+        "world/raw_lidar": None,
+        "world/imu": None,
+        "world/lidar": None,
         "world/global_map": _render_global_map,
         "world/planner_path": None,
         "world/path": _render_path,
         **planner_visual_override(PLANNER_VIZ_HZ),
     },
+    "static": {
+        "world/robot_body": _static_robot_body,
+    },
 }
+
+
+# Safe hardware bring-up graph: raw M20 sensors -> native Point-LIO -> Rerun.
+# It intentionally has no connection/controller modules and cannot publish
+# /NAV_CMD. Use this before starting the full mapper/planner blueprint.
+deeprobotics_m20_pointlio = autoconnect(
+    vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config),
+    M20ROSBridge.blueprint(enable_command_output=False),
+    M20PointLio.blueprint(),
+).global_config(n_workers=2, transport="lcm")
 
 
 def _m20_kronknav(*, enable_command_output: bool) -> Blueprint:
@@ -75,7 +133,7 @@ def _m20_kronknav(*, enable_command_output: bool) -> Blueprint:
 
     The boolean is intentionally fixed by the two exported blueprints below;
     selecting the control blueprint is the deployment-time ownership decision.
-    Both still start with the Python command gate disarmed.
+    Both still start with the operator command arm disarmed.
     """
     return autoconnect(
         vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config),
@@ -85,6 +143,7 @@ def _m20_kronknav(*, enable_command_output: bool) -> Blueprint:
             max_linear_y=MAX_LINEAR_Y_M_S,
             max_angular_z=MAX_ANGULAR_Z_RAD_S,
         ),
+        M20PointLio.blueprint(),
         M20Connection.blueprint(
             max_linear_x=MAX_LINEAR_X_M_S,
             max_linear_y=MAX_LINEAR_Y_M_S,
@@ -94,7 +153,7 @@ def _m20_kronknav(*, enable_command_output: bool) -> Blueprint:
             voxel_size=VOXEL_SIZE_M,
             max_range=25.0,
             emit_every=1,
-            global_emit_every=20,
+            global_emit_every=50,
             support_min=4,
             world_frame="odom",
             worker_threads=3,
@@ -141,6 +200,8 @@ def _m20_kronknav(*, enable_command_output: bool) -> Blueprint:
 # does not create a /NAV_CMD publisher and M20Connection can never become ready.
 deeprobotics_m20_kronknav = autoconnect(_m20_kronknav(enable_command_output=False))
 
-# Explicit control ownership: creates /NAV_CMD, while still requiring fresh
-# estop/localization status and a deliberate M20Connection.arm() RPC.
+# Explicit control ownership: creates /NAV_CMD. A single M20Connection.standup()
+# call performs the vendor state/gait sequence and arms after the robot confirms
+# its RL-Control command path. Mapper health remains navigation diagnostics, as
+# it does in the Go2 stack; it is not a manual-teleop latch.
 deeprobotics_m20_kronknav_control = autoconnect(_m20_kronknav(enable_command_output=True))

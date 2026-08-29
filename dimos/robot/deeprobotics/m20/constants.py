@@ -20,8 +20,8 @@ import math
 BODY_LENGTH_M = 0.82
 BODY_WIDTH_M = 0.506
 
-# The official M20 locomotion SDK's stand_height_ default. Verify that the
-# vendor /ODOM child pose uses the same base origin before hardware tuning.
+# The official M20 locomotion SDK's stand_height_ default. Verify the PointLIO
+# base origin and physical clearance on hardware before planner tuning.
 BASE_LINK_HEIGHT_M = 0.48
 
 # Conservative initial MLS clearance. This includes the body above base_link

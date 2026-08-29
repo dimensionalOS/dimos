@@ -8,9 +8,10 @@ The current C++ NativeModule SDK carries those streams over local LCM. The M20
 blueprints therefore pin the complete onboard graph to LCM; this bridge does not
 contain a private Zenoh implementation.
 
-The bridge always subscribes to `/LIDAR/POINTS`, `/ODOM`, `/LOCATION_STATUS`,
-and `/HES_STATUS`. It publishes lidar, pose, odometry, TF, lidar-readiness, and
-command-readiness streams into the local DimOS graph.
+The bridge always subscribes to `/LIDAR/POINTS`, `/IMU`, and `/HES_STATUS`. It
+publishes the raw cloud, IMU, lidar-readiness, and command-readiness streams
+into the local DimOS graph. `M20PointLio` consumes the cloud and IMU and is the
+sole producer of pose, odometry, TF, map-ready lidar, and localization-readiness.
 
 The inspected M20 publishes merged front/rear clouds at 10 Hz with reliable,
 volatile DDS QoS. Each point uses the vendor's 26-byte layout (`x`, `y`, `z`,
@@ -32,15 +33,27 @@ become group-writable by the existing `user` group so DimOS remains unprivileged
 `enable_command_output` defaults to `false`. When explicitly enabled, the bridge
 owns a `/NAV_CMD` publisher but emits nonzero velocity only while:
 
-- location status is fresh and exactly `1` (normal);
-- hard-estop status is fresh and exactly `0` (not triggered);
+- the local PointLIO estimate is fresh and advancing;
+- `/MOTION_INFO` is fresh and confirms RL Control state `17`;
+- any received hard-estop status is exactly `0` (not triggered);
 - a valid merged lidar cloud has arrived within the lidar timeout;
 - the `/NAV_CMD` publisher has a matched subscriber;
 - the Python connection has explicitly armed and supplied a fresh bounded command.
 
+The inspected firmware advertises `/HES_STATUS` with the documented DDS type
+and QoS but emits no samples, including to the vendor `ros2 topic echo` tool.
+The bridge therefore does not misuse it as a liveness heartbeat: an observed
+trigger still vetoes commands, while the robot controller independently
+enforces the physical hard stop below this API.
+
 The native watchdog uses a steady clock and sends zero after command timeout,
-on lidar or robot-health loss, and during shutdown. Starting the bridge never changes robot
-mode, gait, planner service, charging state, or standing state.
+on robot-control loss, and during shutdown. Lidar and PointLIO readiness remain
+navigation diagnostics; they do not permanently disarm Go2-style manual motion.
+Starting the bridge never changes robot mode, gait, planner service, charging
+state, or standing state on startup. The normal explicit operator action is one
+`M20Connection.standup()` RPC, which switches `basic_server` to navigation usage
+mode, completes Stand → RL Control, resets and selects the navigation gait,
+waits for command-path feedback, and arms.
 
 The bridge diagnoses but does not remotely manage the vendor sensor pipeline.
 For boot-persistent clouds, `multicast-relay.service` must be enabled on NOS and

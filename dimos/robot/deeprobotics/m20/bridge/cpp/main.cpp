@@ -20,25 +20,26 @@
 #include <type_traits>
 #include <utility>
 
-#include <drdds/msg/location_status.hpp>
 #include <drdds/msg/nav_cmd.hpp>
+#include <drdds/msg/gait.hpp>
+#include <drdds/msg/motion_state.hpp>
+#include <drdds/msg/motion_info.hpp>
 #include <drdds/msg/std_msg_int32.hpp>
-#include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/msg/point_field.hpp>
 
 #include "dimos/native.hpp"
 
-#include "geometry_msgs/PoseStamped.hpp"
-#include "geometry_msgs/TransformStamped.hpp"
 #include "geometry_msgs/Twist.hpp"
-#include "nav_msgs/Odometry.hpp"
+#include "sensor_msgs/Imu.hpp"
 #include "sensor_msgs/PointCloud2.hpp"
 #include "sensor_msgs/PointField.hpp"
 #include "std_msgs/Bool.hpp"
 #include "std_msgs/Header.hpp"
-#include "tf2_msgs/TFMessage.hpp"
+#include "std_msgs/Int32.hpp"
+#include "std_msgs/UInt32.hpp"
 
 using dimos::native::Builder;
 using dimos::native::Config;
@@ -50,6 +51,7 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 constexpr int64_t kNanosecondsPerSecond = 1'000'000'000LL;
+constexpr int kMotionRlControl = 17;
 
 void require_nonempty(const std::string& value, const char* name) {
     if (value.empty()) {
@@ -262,13 +264,14 @@ std_msgs::Header to_dimos_header(const std_msgs::msg::Header& source,
 
 struct M20ROSBridgeConfig {
     std::string lidar_topic;
-    std::string odom_topic;
+    std::string imu_topic;
     std::string nav_cmd_topic;
-    std::string location_status_topic;
+    std::string motion_state_topic;
+    std::string motion_info_topic;
+    std::string gait_topic;
     std::string hes_status_topic;
     std::string node_name;
     std::string cloud_frame;
-    std::string world_frame;
     std::string base_frame;
     bool enable_command_output;
     double command_rate_hz;
@@ -281,13 +284,14 @@ struct M20ROSBridgeConfig {
 
     void validate() const {
         require_nonempty(lidar_topic, "lidar_topic");
-        require_nonempty(odom_topic, "odom_topic");
+        require_nonempty(imu_topic, "imu_topic");
         require_nonempty(nav_cmd_topic, "nav_cmd_topic");
-        require_nonempty(location_status_topic, "location_status_topic");
+        require_nonempty(motion_state_topic, "motion_state_topic");
+        require_nonempty(motion_info_topic, "motion_info_topic");
+        require_nonempty(gait_topic, "gait_topic");
         require_nonempty(hes_status_topic, "hes_status_topic");
         require_nonempty(node_name, "node_name");
         require_nonempty(cloud_frame, "cloud_frame");
-        require_nonempty(world_frame, "world_frame");
         require_nonempty(base_frame, "base_frame");
         dimos::native::require_positive(command_rate_hz, "command_rate_hz");
         dimos::native::require_positive(command_timeout_s, "command_timeout_s");
@@ -302,13 +306,14 @@ struct M20ROSBridgeConfig {
 M20ROSBridgeConfig parse_m20_config(Config& config) {
     M20ROSBridgeConfig result{};
     result.lidar_topic = config.take<std::string>("lidar_topic");
-    result.odom_topic = config.take<std::string>("odom_topic");
+    result.imu_topic = config.take<std::string>("imu_topic");
     result.nav_cmd_topic = config.take<std::string>("nav_cmd_topic");
-    result.location_status_topic = config.take<std::string>("location_status_topic");
+    result.motion_state_topic = config.take<std::string>("motion_state_topic");
+    result.motion_info_topic = config.take<std::string>("motion_info_topic");
+    result.gait_topic = config.take<std::string>("gait_topic");
     result.hes_status_topic = config.take<std::string>("hes_status_topic");
     result.node_name = config.take<std::string>("node_name");
     result.cloud_frame = config.take<std::string>("cloud_frame");
-    result.world_frame = config.take<std::string>("world_frame");
     result.base_frame = config.take<std::string>("base_frame");
     result.enable_command_output = config.take<bool>("enable_command_output");
     result.command_rate_hz = config.take<double>("command_rate_hz");
@@ -328,12 +333,17 @@ public:
     void build(Builder& builder, Config& config) override {
         cfg_ = parse_m20_config(config);
         builder.input<geometry_msgs::Twist>("safe_cmd_vel", &M20ROSBridge::on_command, this);
+        builder.input<std_msgs::Bool>("localization_ready",
+                                      &M20ROSBridge::on_localization_ready, this);
+        builder.input<std_msgs::Int32>("motion_state_cmd",
+                                      &M20ROSBridge::on_motion_state_command, this);
+        builder.input<std_msgs::UInt32>("gait_cmd", &M20ROSBridge::on_gait_command, this);
         command_ready_ = builder.output<std_msgs::Bool>("command_ready");
         lidar_ready_ = builder.output<std_msgs::Bool>("lidar_ready");
-        lidar_ = builder.output<sensor_msgs::PointCloud2>("lidar");
-        odom_ = builder.output<geometry_msgs::PoseStamped>("odom");
-        odometry_ = builder.output<nav_msgs::Odometry>("odometry");
-        tf_ = builder.output<tf2_msgs::TFMessage>("tf");
+        motion_state_ = builder.output<std_msgs::Int32>("motion_state");
+        gait_state_ = builder.output<std_msgs::UInt32>("gait_state");
+        raw_lidar_ = builder.output<sensor_msgs::PointCloud2>("raw_lidar");
+        imu_ = builder.output<sensor_msgs::Imu>("imu");
     }
 
     void setup() override {
@@ -349,23 +359,35 @@ public:
         // future incompatible vendor QoS change instead of silently dropping.
         const auto lidar_qos =
             rclcpp::QoS(rclcpp::KeepLast(2)).reliable().durability_volatile();
-        const auto sensor_qos = rclcpp::SensorDataQoS().keep_last(2);
+        // The advertised M20 endpoint is RELIABLE/TRANSIENT_LOCAL. Some M20
+        // firmware revisions expose the endpoint without actually emitting
+        // its documented 1 Hz samples, so HES is a veto when observed rather
+        // than the command-path heartbeat. The physical stop remains enforced
+        // below this API by the robot controller.
+        const auto hes_qos =
+            rclcpp::QoS(rclcpp::KeepLast(2)).reliable().transient_local();
         lidar_subscription_ = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
             cfg_.lidar_topic, lidar_qos,
             [this](sensor_msgs::msg::PointCloud2::SharedPtr msg) { on_lidar(*msg); });
-        odom_subscription_ = node_->create_subscription<nav_msgs::msg::Odometry>(
-            cfg_.odom_topic, sensor_qos,
-            [this](nav_msgs::msg::Odometry::SharedPtr msg) { on_odometry(*msg); });
-        location_subscription_ = node_->create_subscription<drdds::msg::LocationStatus>(
-            cfg_.location_status_topic, sensor_qos,
-            [this](drdds::msg::LocationStatus::SharedPtr msg) { on_location_status(*msg); });
+        imu_subscription_ = node_->create_subscription<sensor_msgs::msg::Imu>(
+            cfg_.imu_topic,
+            rclcpp::QoS(rclcpp::KeepLast(20)).reliable().durability_volatile(),
+            [this](sensor_msgs::msg::Imu::SharedPtr msg) { on_imu(*msg); });
         hes_subscription_ = node_->create_subscription<drdds::msg::StdMsgInt32>(
-            cfg_.hes_status_topic, sensor_qos,
+            cfg_.hes_status_topic, hes_qos,
             [this](drdds::msg::StdMsgInt32::SharedPtr msg) { on_hes_status(*msg); });
+        motion_info_subscription_ = node_->create_subscription<drdds::msg::MotionInfo>(
+            cfg_.motion_info_topic,
+            rclcpp::QoS(rclcpp::KeepLast(20)).reliable().durability_volatile(),
+            [this](drdds::msg::MotionInfo::SharedPtr msg) { on_motion_info(*msg); });
 
         if (cfg_.enable_command_output) {
             nav_cmd_publisher_ = node_->create_publisher<drdds::msg::NavCmd>(
                 cfg_.nav_cmd_topic, rclcpp::QoS(rclcpp::KeepLast(2)).reliable());
+            motion_state_publisher_ = node_->create_publisher<drdds::msg::MotionState>(
+                cfg_.motion_state_topic, rclcpp::QoS(rclcpp::KeepLast(2)).reliable());
+            gait_publisher_ = node_->create_publisher<drdds::msg::Gait>(
+                cfg_.gait_topic, rclcpp::QoS(rclcpp::KeepLast(2)).reliable());
         }
 
         const auto period = std::chrono::duration<double>(1.0 / cfg_.command_rate_hz);
@@ -380,7 +402,7 @@ public:
         logging::info(
             "M20 ROS bridge started",
             {logging::Field("lidar_topic", cfg_.lidar_topic),
-             logging::Field("odom_topic", cfg_.odom_topic),
+             logging::Field("imu_topic", cfg_.imu_topic),
              logging::Field("command_output", cfg_.enable_command_output)});
     }
 
@@ -399,9 +421,11 @@ public:
             spin_thread_.join();
         }
         nav_cmd_publisher_.reset();
+        motion_state_publisher_.reset();
+        gait_publisher_.reset();
         hes_subscription_.reset();
-        location_subscription_.reset();
-        odom_subscription_.reset();
+        motion_info_subscription_.reset();
+        imu_subscription_.reset();
         lidar_subscription_.reset();
         if (executor_ != nullptr && node_ != nullptr) {
             executor_->remove_node(node_);
@@ -440,7 +464,7 @@ private:
             result.data_length = checked_i32(source.data.size(), "point-cloud byte count");
             result.data = source.data;
             result.is_dense = static_cast<int8_t>(source.is_dense);
-            lidar_.publish(result);
+            raw_lidar_.publish(result);
             {
                 std::lock_guard<std::mutex> lock(state_mutex_);
                 lidar_received_at_ = Clock::now();
@@ -453,47 +477,27 @@ private:
         }
     }
 
-    void on_odometry(const nav_msgs::msg::Odometry& source) {
-        nav_msgs::Odometry result;
-        result.header = to_dimos_header(source.header, cfg_.world_frame);
-        result.child_frame_id = cfg_.base_frame;
-
-        result.pose.pose.position.x = source.pose.pose.position.x;
-        result.pose.pose.position.y = source.pose.pose.position.y;
-        result.pose.pose.position.z = source.pose.pose.position.z;
-        result.pose.pose.orientation.x = source.pose.pose.orientation.x;
-        result.pose.pose.orientation.y = source.pose.pose.orientation.y;
-        result.pose.pose.orientation.z = source.pose.pose.orientation.z;
-        result.pose.pose.orientation.w = source.pose.pose.orientation.w;
-        result.twist.twist.linear.x = source.twist.twist.linear.x;
-        result.twist.twist.linear.y = source.twist.twist.linear.y;
-        result.twist.twist.linear.z = source.twist.twist.linear.z;
-        result.twist.twist.angular.x = source.twist.twist.angular.x;
-        result.twist.twist.angular.y = source.twist.twist.angular.y;
-        result.twist.twist.angular.z = source.twist.twist.angular.z;
-        for (std::size_t i = 0; i < source.pose.covariance.size(); ++i) {
-            result.pose.covariance[i] = source.pose.covariance[i];
-            result.twist.covariance[i] = source.twist.covariance[i];
+    void on_imu(const sensor_msgs::msg::Imu& source) {
+        sensor_msgs::Imu result;
+        result.header = to_dimos_header(source.header, cfg_.base_frame);
+        result.orientation.x = source.orientation.x;
+        result.orientation.y = source.orientation.y;
+        result.orientation.z = source.orientation.z;
+        result.orientation.w = source.orientation.w;
+        result.angular_velocity.x = source.angular_velocity.x;
+        result.angular_velocity.y = source.angular_velocity.y;
+        result.angular_velocity.z = source.angular_velocity.z;
+        result.linear_acceleration.x = source.linear_acceleration.x;
+        result.linear_acceleration.y = source.linear_acceleration.y;
+        result.linear_acceleration.z = source.linear_acceleration.z;
+        for (std::size_t index = 0; index < 9; ++index) {
+            result.orientation_covariance[index] = source.orientation_covariance[index];
+            result.angular_velocity_covariance[index] =
+                source.angular_velocity_covariance[index];
+            result.linear_acceleration_covariance[index] =
+                source.linear_acceleration_covariance[index];
         }
-
-        geometry_msgs::PoseStamped pose;
-        pose.header = result.header;
-        pose.pose = result.pose.pose;
-
-        geometry_msgs::TransformStamped transform;
-        transform.header = result.header;
-        transform.child_frame_id = cfg_.base_frame;
-        transform.transform.translation.x = source.pose.pose.position.x;
-        transform.transform.translation.y = source.pose.pose.position.y;
-        transform.transform.translation.z = source.pose.pose.position.z;
-        transform.transform.rotation = result.pose.pose.orientation;
-        tf2_msgs::TFMessage transforms;
-        transforms.transforms_length = 1;
-        transforms.transforms.push_back(std::move(transform));
-
-        odometry_.publish(result);
-        odom_.publish(pose);
-        tf_.publish(transforms);
+        imu_.publish(result);
     }
 
     void on_command(const geometry_msgs::Twist& source) {
@@ -510,28 +514,64 @@ private:
         have_command_ = true;
     }
 
-    void on_location_status(const drdds::msg::LocationStatus& source) {
+    void on_localization_ready(const std_msgs::Bool& source) {
         std::lock_guard<std::mutex> lock(state_mutex_);
-        location_status_ = static_cast<int>(source.data.total_status);
-        location_received_at_ = Clock::now();
-        have_location_ = true;
+        localization_ready_state_ = source.data != 0;
+        localization_received_at_ = Clock::now();
+        have_localization_ = true;
+    }
+
+    void on_motion_state_command(const std_msgs::Int32& source) {
+        if (motion_state_publisher_ == nullptr || !rclcpp::ok()) return;
+        drdds::msg::MotionState output;
+        set_vendor_header(output.header, command_sequence_.fetch_add(1), node_->now());
+        output.data.state = source.data;
+        motion_state_publisher_->publish(output);
+        logging::warn("published M20 motion-state command",
+                      {logging::Field("state", static_cast<int64_t>(source.data))});
+    }
+
+    void on_gait_command(const std_msgs::UInt32& source) {
+        if (gait_publisher_ == nullptr || !rclcpp::ok()) return;
+        drdds::msg::Gait output;
+        set_vendor_header(output.header, command_sequence_.fetch_add(1), node_->now());
+        output.data.gait = source.data;
+        gait_publisher_->publish(output);
+        logging::info("published M20 gait command",
+                      {logging::Field("gait", static_cast<int64_t>(source.data))});
     }
 
     void on_hes_status(const drdds::msg::StdMsgInt32& source) {
         std::lock_guard<std::mutex> lock(state_mutex_);
         hes_status_ = vendor_int32_value(source);
-        hes_received_at_ = Clock::now();
         have_hes_ = true;
+    }
+
+    void on_motion_info(const drdds::msg::MotionInfo& source) {
+        const int motion_state = source.data.motion_state.state;
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            motion_state_value_ = motion_state;
+            motion_info_received_at_ = Clock::now();
+            have_motion_info_ = true;
+        }
+        std_msgs::Int32 motion;
+        motion.data = motion_state;
+        motion_state_.publish(motion);
+        std_msgs::UInt32 gait;
+        gait.data = source.data.gait_state.gait;
+        gait_state_.publish(gait);
     }
 
     bool safety_ready(Clock::time_point now) const {
         std::lock_guard<std::mutex> lock(state_mutex_);
-        if (!cfg_.enable_command_output || !have_location_ || !have_hes_) {
+        if (!cfg_.enable_command_output || !have_motion_info_) {
             return false;
         }
         const auto timeout = std::chrono::duration<double>(cfg_.safety_timeout_s);
-        return now - location_received_at_ <= timeout && now - hes_received_at_ <= timeout &&
-               location_status_ == 1 && hes_status_ == 0;
+        return now - motion_info_received_at_ <= timeout &&
+               motion_state_value_ == kMotionRlControl &&
+               (!have_hes_ || hes_status_ == 0);
     }
 
     bool lidar_fresh(Clock::time_point now) const {
@@ -585,7 +625,7 @@ private:
         const bool ready = !force_zero && !stopping_.load(std::memory_order_acquire) &&
                            nav_cmd_publisher_ != nullptr &&
                            nav_cmd_publisher_->get_subscription_count() > 0 &&
-                           cloud_ready && safety_ready(now);
+                           safety_ready(now);
         std_msgs::Bool ready_message;
         ready_message.data = static_cast<int8_t>(ready);
         command_ready_.publish(ready_message);
@@ -605,33 +645,37 @@ private:
     M20ROSBridgeConfig cfg_;
     Output<std_msgs::Bool> command_ready_;
     Output<std_msgs::Bool> lidar_ready_;
-    Output<sensor_msgs::PointCloud2> lidar_;
-    Output<geometry_msgs::PoseStamped> odom_;
-    Output<nav_msgs::Odometry> odometry_;
-    Output<tf2_msgs::TFMessage> tf_;
+    Output<std_msgs::Int32> motion_state_;
+    Output<std_msgs::UInt32> gait_state_;
+    Output<sensor_msgs::PointCloud2> raw_lidar_;
+    Output<sensor_msgs::Imu> imu_;
 
     std::shared_ptr<rclcpp::Node> node_;
     std::shared_ptr<rclcpp::executors::SingleThreadedExecutor> executor_;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_subscription_;
-    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscription_;
-    rclcpp::Subscription<drdds::msg::LocationStatus>::SharedPtr location_subscription_;
+    rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_subscription_;
     rclcpp::Subscription<drdds::msg::StdMsgInt32>::SharedPtr hes_subscription_;
+    rclcpp::Subscription<drdds::msg::MotionInfo>::SharedPtr motion_info_subscription_;
     rclcpp::Publisher<drdds::msg::NavCmd>::SharedPtr nav_cmd_publisher_;
+    rclcpp::Publisher<drdds::msg::MotionState>::SharedPtr motion_state_publisher_;
+    rclcpp::Publisher<drdds::msg::Gait>::SharedPtr gait_publisher_;
     rclcpp::TimerBase::SharedPtr timer_;
     std::thread spin_thread_;
 
     mutable std::mutex state_mutex_;
     geometry_msgs::Twist latest_command_ = zero_twist();
     Clock::time_point command_received_at_{};
-    Clock::time_point location_received_at_{};
-    Clock::time_point hes_received_at_{};
+    Clock::time_point localization_received_at_{};
+    Clock::time_point motion_info_received_at_{};
     Clock::time_point lidar_received_at_{};
     bool have_command_ = false;
-    bool have_location_ = false;
+    bool have_localization_ = false;
     bool have_hes_ = false;
+    bool have_motion_info_ = false;
     bool have_lidar_ = false;
+    bool localization_ready_state_ = false;
     uint32_t last_lidar_width_ = 0;
-    int location_status_ = 0;
+    int motion_state_value_ = 0;
     int hes_status_ = 1;
     std::atomic<bool> stopping_{false};
     std::atomic<int8_t> lidar_health_state_{-1};

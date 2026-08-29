@@ -30,6 +30,12 @@ cmake_args=(
 if [[ -n "${DIMOS_LCM_DIR:-}" ]]; then
   cmake_args+=("-DDIMOS_LCM_DIR=${DIMOS_LCM_DIR}")
 fi
+if [[ -n "${M20_PFR_DIR:-}" ]]; then
+  cmake_args+=("-DFETCHCONTENT_SOURCE_DIR_PFR=${M20_PFR_DIR}")
+fi
+if [[ -n "${M20_NLOHMANN_JSON_DIR:-}" ]]; then
+  cmake_args+=("-DFETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON=${M20_NLOHMANN_JSON_DIR}")
+fi
 
 cmake "${cmake_args[@]}"
 cmake --build "$bridge_dir/build" --parallel "${M20_BUILD_JOBS:-4}"

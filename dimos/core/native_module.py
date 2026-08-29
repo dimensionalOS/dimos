@@ -75,8 +75,14 @@ if sys.platform.startswith("linux"):
         if _LIBC.prctl(_PR_SET_PDEATHSIG, signal.SIGTERM) != 0:
             err = ctypes.get_errno()
             raise OSError(err, f"_set_process_to_die_when_parent_dies failed: {os.strerror(err)}")
+
+    def _configure_native_child(cpu_affinity: frozenset[int] | None) -> None:
+        _set_process_to_die_when_parent_dies()
+        if cpu_affinity is not None:
+            os.sched_setaffinity(0, cpu_affinity)
 else:
     _set_process_to_die_when_parent_dies = None  # type: ignore[assignment]
+    _configure_native_child = None  # type: ignore[assignment]
 
 if sys.version_info < (3, 13):
     from typing_extensions import TypeVar
@@ -122,6 +128,8 @@ class NativeModuleConfig(ModuleConfig):
     cwd: str | None = None
     extra_args: list[str] = Field(default_factory=list)
     extra_env: dict[str, str] = Field(default_factory=dict)
+    # Optional Linux CPU set inherited by every thread in the native child.
+    cpu_affinity: frozenset[int] | None = None
     # Session settings for this module alone, e.g. opening it as the zenoh router
     # the rest of the graph connects to. None follows the global config.
     session: SessionConfig | None = None
@@ -306,6 +314,15 @@ class NativeModule(Module):
             module=self._module_label,
             cmd=" ".join(cmd),
             cwd=cwd,
+            cpu_affinity=(
+                sorted(self.config.cpu_affinity) if self.config.cpu_affinity is not None else None
+            ),
+        )
+
+        child_setup = (
+            functools.partial(_configure_native_child, self.config.cpu_affinity)
+            if _configure_native_child is not None
+            else None
         )
 
         self._process = subprocess.Popen(
@@ -316,7 +333,7 @@ class NativeModule(Module):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             start_new_session=True,
-            preexec_fn=_set_process_to_die_when_parent_dies,
+            preexec_fn=child_setup,
         )
         assert self._process.stdin is not None
         if stdin_blob is not None:
