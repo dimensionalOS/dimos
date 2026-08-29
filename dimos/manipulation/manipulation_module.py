@@ -107,6 +107,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.perception.experimental.object import Object as DetObject
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -189,6 +190,7 @@ class ManipulationModule(Module):
     # Input: occupied cells of a mapped workspace, in the planning frame. Each
     # message is a complete map, so it replaces the obstacle rather than adding.
     voxel_map: In[PointCloud2]
+    objects: In[list[DetObject]]
     tf: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -291,6 +293,7 @@ class ManipulationModule(Module):
             logger.info("Floor obstacle added", z=fz)
 
         self._world_monitor.start_state_monitor()
+        self._world_monitor.start_obstacle_monitor()
 
         if self._world_monitor.visualization is not None:
             self._world_monitor.start_visualization_thread(rate_hz=10.0)
@@ -1315,6 +1318,27 @@ class ManipulationModule(Module):
     def world_monitor(self) -> WorldMonitor | None:
         """Access the world monitor for advanced obstacle/world operations."""
         return self._world_monitor
+
+    async def handle_objects(self, objects: list[DetObject]) -> None:
+        """Cache the latest perception objects for an explicit obstacle refresh."""
+        if self._world_monitor is not None:
+            self._world_monitor.on_objects(objects)
+
+    @rpc
+    def refresh_obstacles(self, min_duration: float = 0.0) -> int:
+        """Sync cached perception objects into the planning world."""
+        if self._world_monitor is None:
+            return 0
+        return len(self._world_monitor.refresh_obstacles(min_duration))
+
+    @rpc
+    def get_obstacles(self) -> dict[str, PoseStamped]:
+        """Return planning-world obstacle poses keyed by obstacle name."""
+        if self._world_monitor is None:
+            return {}
+        return {
+            obstacle.name: obstacle.pose for obstacle in self._world_monitor.world.get_obstacles()
+        }
 
     @rpc
     def add_obstacle(

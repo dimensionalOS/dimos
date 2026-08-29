@@ -33,13 +33,12 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
+can-motor-control = false
 dimos-viewer = false
 dimos-lcm = false
-pyrealsense2-extended = false
-edgetam-dimos = false
-can-motor-control = false
 lcm-dimos-fork = false
 md-babel-py = false
+edgetam-dimos = false
 roboplan = false
 
 [manifest]
@@ -1820,7 +1819,6 @@ all = [
     { name = "pycollada" },
     { name = "pygame" },
     { name = "pymavlink" },
-    { name = "pyrealsense2-extended", marker = "sys_platform != 'darwin'" },
     { name = "python-multipart" },
     { name = "pyyaml" },
     { name = "reportlab" },
@@ -1918,7 +1916,6 @@ manipulation = [
     { name = "piper-sdk" },
     { name = "pycollada" },
     { name = "pygame" },
-    { name = "pyrealsense2-extended", marker = "sys_platform != 'darwin'" },
     { name = "pyyaml" },
     { name = "roboplan" },
     { name = "trimesh" },
@@ -2348,7 +2345,6 @@ requires-dist = [
     { name = "pygame", marker = "extra == 'manipulation'", specifier = ">=2.6.1" },
     { name = "pygame", marker = "extra == 'sim'", specifier = ">=2.6.1" },
     { name = "pymavlink", marker = "extra == 'drone'" },
-    { name = "pyrealsense2-extended", marker = "sys_platform != 'darwin' and extra == 'manipulation'" },
     { name = "python-dotenv" },
     { name = "python-multipart", marker = "extra == 'misc'", specifier = ">=0.0.27" },
     { name = "pyturbojpeg", specifier = "==1.8.2" },
@@ -4383,6 +4379,12 @@ wheels = [
 ]
 
 [[package]]
+name = "jsmin"
+version = "3.0.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/5e/73/e01e4c5e11ad0494f4407a3f623ad4d87714909f50b17a06ed121034ff6e/jsmin-3.0.1.tar.gz", hash = "sha256:c0959a121ef94542e807a674142606f7e90214a2b3d1eb17300244bbb5cc2bfc", size = 13925, upload-time = "2022-01-16T20:35:59.13Z" }
+
+[[package]]
 name = "jsonlines"
 version = "4.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4393,12 +4395,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/35/87/bcda8e46c88d0e34c
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f8/62/d9ba6323b9202dd2fe166beab8a86d29465c41a0288cbe229fac60c1ab8d/jsonlines-4.0.0-py3-none-any.whl", hash = "sha256:185b334ff2ca5a91362993f42e83588a360cf95ce4b71a73548502bda52a7c55", size = 8701, upload-time = "2023-09-01T12:34:42.563Z" },
 ]
-
-[[package]]
-name = "jsmin"
-version = "3.0.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/5e/73/e01e4c5e11ad0494f4407a3f623ad4d87714909f50b17a06ed121034ff6e/jsmin-3.0.1.tar.gz", hash = "sha256:c0959a121ef94542e807a674142606f7e90214a2b3d1eb17300244bbb5cc2bfc", size = 13925, upload-time = "2022-01-16T20:35:59.13Z" }
 
 [[package]]
 name = "jsonpatch"
@@ -8006,23 +8002,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/7d/0d/3d092aa20efaedacb89c3221a92c6491be5b28f618a2c36b52b53e7446c2/pyquaternion-0.9.9.tar.gz", hash = "sha256:b1f61af219cb2fe966b5fb79a192124f2e63a3f7a777ac3cadf2957b1a81bea8", size = 15530, upload-time = "2020-10-05T01:31:30.327Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/49/b3/d8482e8cacc8ea15a356efea13d22ce1c5914a9ee36622ba250523240bf2/pyquaternion-0.9.9-py3-none-any.whl", hash = "sha256:e65f6e3f7b1fdf1a9e23f82434334a1ae84f14223eee835190cd2e841f8172ec", size = 14361, upload-time = "2020-10-05T01:31:37.575Z" },
-]
-
-[[package]]
-name = "pyrealsense2-extended"
-version = "2.58.1.10581.post1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/66/ae/7a39455a9874ee53574315f68bc0dfdc036405811ec9da3c7a2771d46d36/pyrealsense2_extended-2.58.1.10581.post1.tar.gz", hash = "sha256:5093218d1a8a125841d0a7c8565ea8dad16eabc89d925dfbb82bbe76d7a5b30b", size = 2440, upload-time = "2026-05-31T20:13:39.432Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e2/22/bc5ac6caecaccc90be8409d19b5460d4d138efba935679a0aaf313a19d9e/pyrealsense2_extended-2.58.1.10581.post1-cp310-cp310-manylinux1_x86_64.whl", hash = "sha256:7bea2cada776665790d48ff6f8d44994e52bdf4f72d65393486802735152e7c2", size = 12393387, upload-time = "2026-05-31T20:49:50.883Z" },
-    { url = "https://files.pythonhosted.org/packages/05/94/0471db24eba0ac07a03146a7ad908a96a60a3f724e7b068a6c49d944798c/pyrealsense2_extended-2.58.1.10581.post1-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:84786588eb44ff9e24eecfdc96f5f3adc891ab54be40e65720b466eb6f237207", size = 6346406, upload-time = "2026-05-31T20:49:52.828Z" },
-    { url = "https://files.pythonhosted.org/packages/48/f0/2159f2fa788f2100a4c8e3645747b1889c2dd17abf977d0e042248438805/pyrealsense2_extended-2.58.1.10581.post1-cp310-cp310-win_amd64.whl", hash = "sha256:f3afe733081cd85703dd4df380334ef0e95f43981cb2d5ddcd1f0d0e55116dbd", size = 8751144, upload-time = "2026-05-31T20:49:55.88Z" },
-    { url = "https://files.pythonhosted.org/packages/bd/2c/43e599086ce4ad32fee1a46a09ba998c5cbe3c73441091fe2e68cd4517da/pyrealsense2_extended-2.58.1.10581.post1-cp311-cp311-manylinux1_x86_64.whl", hash = "sha256:3b919fbbd349cc813b98de00c195f3a5fe77fd9d4913c52b040576b11712553c", size = 12395222, upload-time = "2026-05-31T20:49:58.02Z" },
-    { url = "https://files.pythonhosted.org/packages/8f/a5/9b8e536de70dfdba9fab17700fe53902c155171911be82ff12106ddca3b8/pyrealsense2_extended-2.58.1.10581.post1-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:c2f3de9f44b21ac65861c8d53ccc3f8897ac9e6f5e983d26f39744ef6d8c6df2", size = 6350114, upload-time = "2026-05-31T20:50:00.34Z" },
-    { url = "https://files.pythonhosted.org/packages/b5/13/6c01b994b713d7dbe010d5b0738266d37689500cf153a9dbee92a40f67ab/pyrealsense2_extended-2.58.1.10581.post1-cp311-cp311-win_amd64.whl", hash = "sha256:c9ad2211261f84057f9776ee35b07f6f87359223d262eb15fcb2bc85ba937a61", size = 8753521, upload-time = "2026-05-31T20:50:01.82Z" },
-    { url = "https://files.pythonhosted.org/packages/f8/c1/0b5cd6737dc34e23d57a9da59ba5f18f91bc8238f642f3410f227e603357/pyrealsense2_extended-2.58.1.10581.post1-cp312-cp312-manylinux1_x86_64.whl", hash = "sha256:e24187e0fd874c67f0de9a2639908fda90e320220f88d1d200307cf632189544", size = 12392172, upload-time = "2026-05-31T20:50:03.661Z" },
-    { url = "https://files.pythonhosted.org/packages/22/95/149ec7777fc6545664cc543e4ffaf350976f164edac7f8827405fcf8d421/pyrealsense2_extended-2.58.1.10581.post1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:004634383f25e13c66fa71229184c4ddd1931f7235a19851ef976e9489ad186c", size = 6340752, upload-time = "2026-05-31T20:50:05.61Z" },
-    { url = "https://files.pythonhosted.org/packages/a6/9b/f81c8009a3bf8cd2b1d1ce74321c6f8bdb7d7075895fb04800f3795b431d/pyrealsense2_extended-2.58.1.10581.post1-cp312-cp312-win_amd64.whl", hash = "sha256:76ddf1dadd4dd8c542d4249d50dc4507962808f9ae3b6e807f317f319abeead3", size = 8754299, upload-time = "2026-05-31T20:50:09.02Z" },
 ]
 
 [[package]]

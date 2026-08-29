@@ -2,7 +2,8 @@
 """Build every nix-backed native module, or decide whether CI needs to.
 
 Walks the whole `dimos` package for any `NativeModuleConfig` subclass whose
-`build_command` runs nix. Discovery is pure AST (stdlib only, no dimos import),
+`build_command` is a `nix build` (a `nix develop -c cargo build` leaves no
+store path to publish, so it stays outside the gate). Discovery is pure AST (stdlib only, no dimos import),
 so this script runs on a bare `python3` with nothing installed.
 
 Modes:
@@ -125,6 +126,14 @@ def _literal_default(classdef: ast.ClassDef, field: str, source: str) -> str | N
 EXTERNALLY_PROVISIONED = frozenset({"dimos.mapping.cuvslam.cuvslam.CuvslamConfig"})
 
 
+def is_nix_build(command: str | None) -> bool:
+    """True for a `nix build …` command, the only kind that yields a `result` to publish."""
+    if command is None:
+        return False
+    tokens = command.split()
+    return "nix" in tokens and tokens[tokens.index("nix") + 1 :][:1] == ["build"]
+
+
 def discover() -> tuple[DiscoveredModule, ...]:
     found = []
     provisioned_seen = set()
@@ -148,7 +157,7 @@ def discover() -> tuple[DiscoveredModule, ...]:
                     provisioned_seen.add(qualname)
                     continue
                 build_command = _literal_default(node, "build_command", source)
-                if build_command is None or "nix" not in build_command:
+                if not is_nix_build(build_command):
                     continue
                 cwd = _literal_default(node, "cwd", source)
                 build_dir = os.path.normpath(path.parent / (cwd or "."))
