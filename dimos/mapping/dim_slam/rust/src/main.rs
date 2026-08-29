@@ -57,7 +57,7 @@ struct DimSlamConfig {
     publish_tf: bool,
     publish_rate: f64,
     replay_buffer_seconds: f64,
-    mahalanobis_gate: f64,
+    max_measurement_stddevs: f64,
     max_position_m: f64,
     use_imu: bool,
     /// Keyed by the frame_id the IMU's samples carry; use_imu needs exactly one entry.
@@ -137,7 +137,7 @@ impl DimSlam {
             output_frame_id: self.config.output_frame_id.clone(),
             publish_rate: self.config.publish_rate,
             replay_buffer_seconds: self.config.replay_buffer_seconds,
-            mahalanobis_gate: self.config.mahalanobis_gate,
+            max_measurement_stddevs: self.config.max_measurement_stddevs,
             max_position_m: self.config.max_position_m,
             use_imu: self.config.use_imu,
             imus: self.config.imus.clone(),

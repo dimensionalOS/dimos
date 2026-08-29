@@ -312,7 +312,7 @@ class DimSlamConfig(NativeModuleConfig):
     replay_buffer_seconds: float = 0.5
     # Standard deviations per measurement dimension before a reading is called an
     # outlier. 0 disables the gate.
-    mahalanobis_gate: float = 5.0
+    max_measurement_stddevs: float = 5.0
     # Caps the filter's own state rather than an incoming reading. 0 disables it.
     max_position_m: float = 10000.0
 
