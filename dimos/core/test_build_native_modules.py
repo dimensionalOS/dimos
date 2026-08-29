@@ -169,7 +169,7 @@ def _closure_nix_configs(classes: list[_ClassDef]) -> set[tuple[str, str]]:
             f"{cls.file}: {cls.name}.build_command must default to a plain string literal "
             "so bin/build-native-modules can read it without importing dimos"
         )
-        if command is not None and "nix" in command:
+        if _SCRIPT.is_nix_build(command):
             nix_configs.add((cls.file, cls.name))
     return nix_configs
 

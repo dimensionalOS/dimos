@@ -416,13 +416,27 @@ class CameraInfo(Timestamped):
         if not image_topic:
             return rr.Pinhole(**pinhole_kwargs)
 
-        if optical_frame:
-            # Re-parent the camera entity to the optical tf frame. Logging a
-            # separate Transform3D for the same entity would create a second
-            # parent and Rerun rejects that.
-            pinhole_kwargs["parent_frame"] = f"tf#/{optical_frame}"
+        return [(image_topic, self.to_rerun_pinhole(image_plane_distance, optical_frame))]
 
-        return [(image_topic, rr.Pinhole(**pinhole_kwargs))]
+    def to_rerun_pinhole(
+        self, image_plane_distance: float = 1.0, optical_frame: str | None = None
+    ) -> Any:
+        """The Pinhole to log on this camera's image entity, parented to its optical frame."""
+        import rerun as rr
+
+        fx, fy = self.K[0], self.K[4]
+        cx, cy = self.K[2], self.K[5]
+        # Re-parent the image entity here rather than with a separate
+        # Transform3D, which would give it a second parent and lose the frustum.
+        frame = optical_frame or self.frame_id
+        return rr.Pinhole(
+            focal_length=[fx, fy],
+            principal_point=[cx, cy],
+            width=self.width,
+            height=self.height,
+            image_plane_distance=image_plane_distance,
+            parent_frame=f"tf#/{frame}" if frame else None,
+        )
 
 
 class CalibrationProvider:
