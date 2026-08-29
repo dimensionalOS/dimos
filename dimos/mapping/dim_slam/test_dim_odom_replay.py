@@ -24,8 +24,10 @@ import math
 
 import pytest
 
-# The recording is a Git LFS fixture, which the regular CI job caps at 1 MiB.
-pytestmark = pytest.mark.self_hosted
+# The recording is a Git LFS fixture, which the regular CI job caps at 1 MiB, and the
+# linux dim_odom wheel is CUDA-only, so this needs the GPU runner rather than the
+# containerized one.
+pytestmark = pytest.mark.self_hosted_large
 
 dim_odom = pytest.importorskip("dim_odom")
 
