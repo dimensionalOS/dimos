@@ -30,11 +30,13 @@ angular velocity; ``step()`` returns 29 position targets in DDS order.
 
 from __future__ import annotations
 
+from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
 import math
 from pathlib import Path
 import time
-from typing import Any, cast
+from typing import Any, Final, Literal, TypeAlias, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -143,6 +145,63 @@ SONIC_KD: list[float] = [
 
 NUM_JOINTS = 29
 HISTORY_LEN = 10
+ENCODER_REFERENCE_FRAMES = 10
+
+SonicTeleopPipeline: TypeAlias = Literal["sonic-v1.1", "sonic-low-latency"]
+SONIC_V1_1_PIPELINE: Final[SonicTeleopPipeline] = "sonic-v1.1"
+SONIC_LOW_LATENCY_PIPELINE: Final[SonicTeleopPipeline] = "sonic-low-latency"
+
+
+@dataclass(frozen=True)
+class SonicModelProfile:
+    """One indivisible NVIDIA SONIC model and observation-layout contract."""
+
+    name: SonicTeleopPipeline
+    model_subdir: str
+    encoder_obs_dim: int
+    smpl_frames: int
+    g1_frame_stride: int
+    heading_normalized: bool
+    encoder_sha256: str
+    decoder_sha256: str
+
+    @property
+    def smpl_anchor_offset(self) -> int:
+        return SMPL_JOINTS_OFFSET + self.smpl_frames * 72
+
+    @property
+    def wrists_offset(self) -> int:
+        return self.smpl_anchor_offset + self.smpl_frames * 6
+
+
+SONIC_MODEL_PROFILES: Final[dict[SonicTeleopPipeline, SonicModelProfile]] = {
+    SONIC_V1_1_PIPELINE: SonicModelProfile(
+        name=SONIC_V1_1_PIPELINE,
+        model_subdir="sonic_v1_1",
+        encoder_obs_dim=1751,
+        smpl_frames=10,
+        g1_frame_stride=5,
+        heading_normalized=True,
+        encoder_sha256="fb97de22819b2057b41459802128d91723d91a25f0ad73e7bfc41a9cf8365bae",
+        decoder_sha256="34bae8570d4a4421a5391a5c2befd745d4a02d182ec539e5f9da44c091c67509",
+    ),
+    SONIC_LOW_LATENCY_PIPELINE: SonicModelProfile(
+        name=SONIC_LOW_LATENCY_PIPELINE,
+        model_subdir="low_latency",
+        encoder_obs_dim=1247,
+        smpl_frames=4,
+        g1_frame_stride=1,
+        heading_normalized=False,
+        encoder_sha256="60be43157f57d812f38bdbb740a5de5d5d070e8840d9edc16f02a91a6d06255b",
+        decoder_sha256="c4ac2e74045e7cbfb568f15e6bf47ea7ce023df7a94322af50be223e0a628bab",
+    ),
+}
+
+
+def sonic_model_profile(name: SonicTeleopPipeline) -> SonicModelProfile:
+    """Return the exact released model contract selected by the CLI."""
+    return SONIC_MODEL_PROFILES[name]
+
 
 # ONNX index -> DDS index (isaaclab_to_mujoco in the C++)
 ONNX_TO_DDS = np.array(
@@ -311,7 +370,6 @@ UPPER_BODY_ONNX_INDICES = np.array(
 # heading, not the full base quat).
 # ---------------------------------------------------------------------------
 
-ENCODER_OBS_DIM = 1751
 ENCODER_TOKEN_DIM = 64
 DECODER_OBS_DIM = 994
 
@@ -322,8 +380,6 @@ LOWERBODY_VEL_OFFSET = 770  # motion_joint_velocities_lowerbody_10frame_step5: 1
 VR_POS_OFFSET = 890  # vr_3point_local_target: 9
 VR_ORN_OFFSET = 899  # vr_3point_local_orn_target: 12
 SMPL_JOINTS_OFFSET = 911  # smpl_joints_10frame_step1: 720
-SMPL_ANCHOR_OFFSET = 1631  # smpl_anchor_orientation_heading_10frame_step1: 60
-WRISTS_OFFSET = 1691  # motion_joint_positions_wrists_10frame_step1: 60
 
 DEFAULT_HEIGHT = 0.788740
 POLICY_DT = 0.02
@@ -525,7 +581,9 @@ class SonicPipeline:
         encoder_path: str | Path,
         decoder_path: str | Path,
         planner_path: str | Path,
+        profile: SonicTeleopPipeline = SONIC_V1_1_PIPELINE,
     ) -> None:
+        self._profile = sonic_model_profile(profile)
         prepare_sonic_onnx_runtime()
         self._encoder = create_sonic_session("encoder", encoder_path, allow_cpu_shape_ops=False)
         self._decoder = create_sonic_session("decoder", decoder_path, allow_cpu_shape_ops=False)
@@ -538,14 +596,18 @@ class SonicPipeline:
         # Fail loudly on a mismatched checkpoint (e.g. the pre-v1.1 release,
         # whose encoder takes 1762 floats and a different field layout).
         enc_dim = int(cast("int", self._encoder.get_inputs()[0].shape[-1]))
-        if enc_dim != ENCODER_OBS_DIM:
+        if enc_dim != self._profile.encoder_obs_dim:
             raise ValueError(
-                f"SONIC encoder obs dim {enc_dim} != {ENCODER_OBS_DIM}; this build "
-                "supports only the SONIC v1.1 checkpoint (HF nvidia/GEAR-SONIC "
-                "sonic_v1_1/)"
+                f"SONIC {profile} encoder obs dim {enc_dim} != "
+                f"{self._profile.encoder_obs_dim}; use the matching NVIDIA "
+                f"{self._profile.model_subdir}/ encoder, decoder, and observation config"
             )
+        decoder_dim = int(cast("int", self._decoder.get_inputs()[0].shape[-1]))
+        if decoder_dim != DECODER_OBS_DIM:
+            raise ValueError(f"SONIC {profile} decoder obs dim {decoder_dim} != {DECODER_OBS_DIM}")
         logger.info(
             "SonicPipeline models loaded",
+            sonic_pipeline=profile,
             onnxruntime_version=getattr(ort, "__version__", "unknown"),
             encoder_providers=self._encoder.get_providers(),
             decoder_providers=self._decoder.get_providers(),
@@ -562,6 +624,9 @@ class SonicPipeline:
         self._history_ptr = 0
         self._last_action = np.zeros(NUM_JOINTS, dtype=np.float32)
         self._obs_buffer = np.zeros(DECODER_OBS_DIM, dtype=np.float32)
+        self._encoder_durations_ms: deque[float] = deque(maxlen=250)
+        self._decoder_durations_ms: deque[float] = deque(maxlen=250)
+        self._planner_durations_ms: deque[float] = deque(maxlen=50)
 
         self._trajectory: _Trajectory | None = None
         self._traj_frame = 0
@@ -572,6 +637,7 @@ class SonicPipeline:
             max_workers=1, thread_name_prefix="sonic-planner"
         )
         self._planner_future: Future[list[Any]] | None = None
+        self._planner_started_at: float | None = None
         self._replan_timer = 0.0
         self._needs_replan = True
         self._step_count = 0
@@ -886,8 +952,8 @@ class SonicPipeline:
     # -- encoder ----------------------------------------------------------
 
     def _build_standing_token(self) -> NDArray[Any]:
-        enc_obs = np.zeros(ENCODER_OBS_DIM, dtype=np.float32)
-        for i in range(10):
+        enc_obs = np.zeros(self._profile.encoder_obs_dim, dtype=np.float32)
+        for i in range(ENCODER_REFERENCE_FRAMES):
             enc_obs[4 + i * NUM_JOINTS : 4 + (i + 1) * NUM_JOINTS] = DEFAULT_ANGLES_ONNX
             enc_obs[ANCHOR_HIST_OFFSET + i * 6 : ANCHOR_HIST_OFFSET + (i + 1) * 6] = _IDENTITY_6D
         out = self._encoder.run(None, {self._encoder_input: enc_obs.reshape(1, -1)})
@@ -921,7 +987,7 @@ class SonicPipeline:
         the 17 upper-body joints across all 10 frames."""
         upper_vals = self._upper_body_17_onnx()
         upper_vels = self._upper_body_vel_17_onnx()
-        for i in range(10):
+        for i in range(ENCODER_REFERENCE_FRAMES):
             pos = 4 + i * NUM_JOINTS
             vel = 294 + i * NUM_JOINTS
             for k, idx in enumerate(UPPER_BODY_ONNX_INDICES):
@@ -929,23 +995,23 @@ class SonicPipeline:
                 enc_obs[vel + idx] = upper_vels[k]
 
     def _build_encoder_obs(self, base_quat: NDArray[Any]) -> NDArray[Any]:
-        enc_obs = np.zeros(ENCODER_OBS_DIM, dtype=np.float32)
+        enc_obs = np.zeros(self._profile.encoder_obs_dim, dtype=np.float32)
         traj = self._trajectory
         assert traj is not None
         f_curr = min(self._traj_frame, traj.num_frames - 1)
 
-        for i in range(10):
-            f = min(f_curr + i * 5, traj.num_frames - 1)
+        for i in range(ENCODER_REFERENCE_FRAMES):
+            f = min(f_curr + i * self._profile.g1_frame_stride, traj.num_frames - 1)
             enc_obs[4 + i * NUM_JOINTS : 4 + (i + 1) * NUM_JOINTS] = traj.joint_pos[f]
             enc_obs[294 + i * NUM_JOINTS : 294 + (i + 1) * NUM_JOINTS] = traj.joint_vel[f]
 
         if self._has_upper_body_targets():
             self._inject_upper_body(enc_obs)
 
-        # Anchor orientations are heading-normalized (orientation_mode 1)
-        q_left_inv = _calc_heading_quat_inv(base_quat)
-        for i in range(10):
-            f = min(f_curr + i * 5, traj.num_frames - 1)
+        # The selected bundle defines heading-normalized or body-frame anchors.
+        q_left_inv = self._reference_orientation_inverse(base_quat)
+        for i in range(ENCODER_REFERENCE_FRAMES):
+            f = min(f_curr + i * self._profile.g1_frame_stride, traj.num_frames - 1)
             q_aligned = _quat_multiply(
                 self._heading_delta_quat, traj.root_quat[f].astype(np.float64)
             )
@@ -961,14 +1027,14 @@ class SonicPipeline:
         orientation, VR 3-point blocks. All other fields stay zero - the C++
         gathers ONLY the active mode's required observations into a zeroed
         buffer (GatherEncoderObservations)."""
-        enc_obs = np.zeros(ENCODER_OBS_DIM, dtype=np.float32)
+        enc_obs = np.zeros(self._profile.encoder_obs_dim, dtype=np.float32)
         enc_obs[0] = 1.0  # encoder_mode_4: scalar mode id, rest zeros
         traj = self._trajectory
         assert traj is not None
         f_curr = min(self._traj_frame, traj.num_frames - 1)
 
-        for i in range(10):
-            f = min(f_curr + i * 5, traj.num_frames - 1)
+        for i in range(ENCODER_REFERENCE_FRAMES):
+            f = min(f_curr + i * self._profile.g1_frame_stride, traj.num_frames - 1)
             enc_obs[LOWERBODY_POS_OFFSET + i * 12 : LOWERBODY_POS_OFFSET + (i + 1) * 12] = (
                 traj.joint_pos[f][LOWER_BODY_MJC_IN_ONNX]
             )
@@ -976,7 +1042,7 @@ class SonicPipeline:
                 traj.joint_vel[f][LOWER_BODY_MJC_IN_ONNX]
             )
 
-        q_left_inv = _calc_heading_quat_inv(base_quat)
+        q_left_inv = self._reference_orientation_inverse(base_quat)
         q_aligned = _quat_multiply(
             self._heading_delta_quat, traj.root_quat[f_curr].astype(np.float64)
         )
@@ -988,6 +1054,11 @@ class SonicPipeline:
         enc_obs[VR_POS_OFFSET : VR_POS_OFFSET + 9] = self._vr_pos
         enc_obs[VR_ORN_OFFSET : VR_ORN_OFFSET + 12] = self._vr_orn
         return enc_obs
+
+    def _reference_orientation_inverse(self, base_quat: NDArray[Any]) -> NDArray[Any]:
+        if self._profile.heading_normalized:
+            return _calc_heading_quat_inv(base_quat)
+        return _quat_conjugate(np.asarray(base_quat, dtype=np.float64))
 
     # -- planner ----------------------------------------------------------
 
@@ -1093,6 +1164,7 @@ class SonicPipeline:
         except Exception as exc:
             logger.warning("SonicPipeline planner input build failed", error=repr(exc))
             return
+        self._planner_started_at = time.perf_counter()
         self._planner_future = self._planner_executor.submit(self._planner.run, None, inputs)
 
     def _check_planner_result(self) -> None:
@@ -1102,6 +1174,11 @@ class SonicPipeline:
             self._apply_planner_result(self._planner_future.result())
         except Exception as exc:
             logger.warning("SonicPipeline planner inference failed", error=repr(exc))
+        if self._planner_started_at is not None:
+            self._planner_durations_ms.append(
+                (time.perf_counter() - self._planner_started_at) * 1000.0
+            )
+        self._planner_started_at = None
         self._planner_future = None
 
     def _apply_planner_result(self, result: list[Any]) -> None:
@@ -1257,8 +1334,8 @@ class SonicPipeline:
         elif self._trajectory is not None and self._trajectory.num_frames > 0:
             token = self._run_encoder(self._build_encoder_obs(self._cur_quat))
         elif self._has_upper_body_targets():
-            enc_obs = np.zeros(ENCODER_OBS_DIM, dtype=np.float32)
-            for i in range(10):
+            enc_obs = np.zeros(self._profile.encoder_obs_dim, dtype=np.float32)
+            for i in range(ENCODER_REFERENCE_FRAMES):
                 enc_obs[4 + i * NUM_JOINTS : 4 + (i + 1) * NUM_JOINTS] = DEFAULT_ANGLES_ONNX
                 enc_obs[ANCHOR_HIST_OFFSET + i * 6 : ANCHOR_HIST_OFFSET + (i + 1) * 6] = (
                     _IDENTITY_6D
@@ -1293,7 +1370,9 @@ class SonicPipeline:
 
         self._nan_check("token", token)
         self._nan_check("decoder_obs", obs)
+        decoder_started = time.perf_counter()
         out = self._decoder.run(None, {self._decoder_input: obs.reshape(1, -1)})
+        self._decoder_durations_ms.append((time.perf_counter() - decoder_started) * 1000.0)
         actions = out[0].squeeze()[:NUM_JOINTS].astype(np.float32)
         if self._nan_check("actions", actions):
             return self._last_targets_dds.copy()
@@ -1327,14 +1406,14 @@ class SonicPipeline:
         """
         motion = self._streamed
         assert motion is not None
-        enc_obs = np.zeros(ENCODER_OBS_DIM, dtype=np.float32)
+        enc_obs = np.zeros(self._profile.encoder_obs_dim, dtype=np.float32)
         enc_obs[0] = float(motion.encode_mode)
         f_curr = min(self._streamed_frame, motion.timesteps - 1)
-        q_left_inv = _calc_heading_quat_inv(base_quat)
+        q_left_inv = self._reference_orientation_inverse(base_quat)
 
         if motion.encode_mode == 0:
-            for i in range(10):
-                f = min(f_curr + i * 5, motion.timesteps - 1)
+            for i in range(ENCODER_REFERENCE_FRAMES):
+                f = min(f_curr + i * self._profile.g1_frame_stride, motion.timesteps - 1)
                 enc_obs[4 + i * NUM_JOINTS : 4 + (i + 1) * NUM_JOINTS] = motion.joint_pos[f]
                 enc_obs[294 + i * NUM_JOINTS : 294 + (i + 1) * NUM_JOINTS] = motion.joint_vel[f]
                 q_aligned = _quat_multiply(
@@ -1348,7 +1427,7 @@ class SonicPipeline:
                 self._inject_upper_body(enc_obs)
         else:
             assert motion.smpl_joints is not None
-            for i in range(10):
+            for i in range(self._profile.smpl_frames):
                 f = min(f_curr + i, motion.timesteps - 1)
                 o = SMPL_JOINTS_OFFSET + i * 72
                 enc_obs[o : o + 72] = motion.smpl_joints[f].ravel()
@@ -1356,14 +1435,21 @@ class SonicPipeline:
                     self._heading_delta_quat, motion.root_quat[f].astype(np.float64)
                 )
                 q_rel = _quat_multiply(q_left_inv, q_aligned)
-                ao = SMPL_ANCHOR_OFFSET + i * 6
+                ao = self._profile.smpl_anchor_offset + i * 6
                 enc_obs[ao : ao + 6] = _rotmat_to_6d(_quat_to_rotmat(q_rel))
-                wo = WRISTS_OFFSET + i * 6
+                wo = self._profile.wrists_offset + i * 6
                 enc_obs[wo : wo + 6] = motion.joint_pos[f][WRIST_ONNX_INDICES]
         return enc_obs
 
     def _run_encoder(self, enc_obs: NDArray[Any]) -> NDArray[Any]:
+        if enc_obs.shape != (self._profile.encoder_obs_dim,):
+            raise ValueError(
+                f"SONIC {self._profile.name} encoder observation has shape "
+                f"{enc_obs.shape}, expected ({self._profile.encoder_obs_dim},)"
+            )
+        started = time.perf_counter()
         out = self._encoder.run(None, {self._encoder_input: enc_obs.reshape(1, -1)})
+        self._encoder_durations_ms.append((time.perf_counter() - started) * 1000.0)
         return out[0].squeeze().astype(np.float32)
 
     # -- telemetry --------------------------------------------------------
@@ -1372,6 +1458,9 @@ class SonicPipeline:
         speed = math.hypot(self._vx, self._vy)
         mode = self._mode_override if self._mode_override is not None else self._auto_mode(speed)
         return {
+            "sonic_pipeline": self._profile.name,
+            "encoder_obs_dim": self._profile.encoder_obs_dim,
+            "smpl_reference_frames": self._profile.smpl_frames,
             "mode": mode,
             "mode_override": self._mode_override,
             "mode_queue": list(self._mode_queue),
@@ -1391,4 +1480,20 @@ class SonicPipeline:
             "vr_age_sec": (
                 round(time.perf_counter() - self._vr_time, 3) if self._vr_pos is not None else -1.0
             ),
+            "encoder_timing_ms": _timing_summary(self._encoder_durations_ms),
+            "decoder_timing_ms": _timing_summary(self._decoder_durations_ms),
+            "planner_timing_ms": _timing_summary(self._planner_durations_ms),
         }
+
+
+def _timing_summary(samples: deque[float]) -> dict[str, float | int]:
+    if not samples:
+        return {"samples": 0, "mean": 0.0, "p95": 0.0, "p99": 0.0, "max": 0.0}
+    values = np.asarray(samples, dtype=np.float64)
+    return {
+        "samples": len(samples),
+        "mean": round(float(np.mean(values)), 3),
+        "p95": round(float(np.percentile(values, 95)), 3),
+        "p99": round(float(np.percentile(values, 99)), 3),
+        "max": round(float(np.max(values)), 3),
+    }

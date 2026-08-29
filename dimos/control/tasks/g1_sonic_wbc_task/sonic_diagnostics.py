@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 import hashlib
 import json
 import os
@@ -32,24 +33,33 @@ import numpy as np
 from numpy.typing import NDArray
 import onnxruntime as ort  # type: ignore[import-untyped]
 
+from dimos.control.tasks.g1_sonic_wbc_task.sonic_hardware import (
+    ensure_sonic_max_performance,
+)
 from dimos.control.tasks.g1_sonic_wbc_task.sonic_onnx_runtime import (
     CPU_PROVIDER,
     JETSON_ORT_VERSION,
     create_sonic_session,
     prepare_sonic_onnx_runtime,
 )
-from dimos.utils.data import LfsPath
+from dimos.control.tasks.g1_sonic_wbc_task.sonic_pipeline import SONIC_MODEL_PROFILES
+from dimos.utils.data import get_data_dir
 
 CUDA_HOME = Path("/usr/local/cuda-11.8")
 L4T_RELEASE = Path("/etc/nv_tegra_release")
 CUDNN_LIBRARY = Path("/usr/lib/aarch64-linux-gnu/libcudnn.so.8")
 REFERENCE_PATH = Path(__file__).with_name("sonic_doctor_reference.json")
 
-EXPECTED_MODEL_SHA256 = {
-    "encoder": "fb97de22819b2057b41459802128d91723d91a25f0ad73e7bfc41a9cf8365bae",
-    "decoder": "34bae8570d4a4421a5391a5c2befd745d4a02d182ec539e5f9da44c091c67509",
-    "planner": "39b553e197f62f077975ba38512bc04781a3fc37c2af7c6756e04629f760edea",
-}
+EXPECTED_MODEL_SHA256 = (
+    {f"{profile.name} encoder": profile.encoder_sha256 for profile in SONIC_MODEL_PROFILES.values()}
+    | {
+        f"{profile.name} decoder": profile.decoder_sha256
+        for profile in SONIC_MODEL_PROFILES.values()
+    }
+    | {
+        "planner": "39b553e197f62f077975ba38512bc04781a3fc37c2af7c6756e04629f760edea",
+    }
+)
 ALLOWED_PLANNER_CPU_OPS = frozenset({"Atan", "Slice", "Concat", "ArgMax", "Tile", "ArgMin", "Clip"})
 MAX_PLANNER_CPU_EVENTS = 56
 MAX_POLICY_P99_MS = 15.0
@@ -81,22 +91,26 @@ class SonicDiagnosticReport:
 
 @dataclass(frozen=True)
 class SonicModelPaths:
-    """The three ONNX files consumed by SONIC."""
+    """Both released SONIC policy bundles and their shared planner."""
 
-    encoder: Path
-    decoder: Path
+    profiles: dict[str, tuple[Path, Path]]
     planner: Path
 
 
 def resolve_sonic_model_paths() -> SonicModelPaths:
     """Resolve the same model overrides used by the G1 SONIC blueprint."""
     model_dir_env = os.environ.get("SONIC_MODEL_DIR")
-    model_dir = Path(model_dir_env) if model_dir_env else LfsPath("sonic")
+    model_dir = Path(model_dir_env) if model_dir_env else get_data_dir("sonic")
     planner_env = os.environ.get("SONIC_PLANNER_PATH")
     planner = Path(planner_env) if planner_env else model_dir / "planner_sonic.onnx"
     return SonicModelPaths(
-        encoder=Path(model_dir / "model_encoder.onnx"),
-        decoder=Path(model_dir / "model_decoder.onnx"),
+        profiles={
+            profile.name: (
+                Path(model_dir / profile.model_subdir / "model_encoder.onnx"),
+                Path(model_dir / profile.model_subdir / "model_decoder.onnx"),
+            )
+            for profile in SONIC_MODEL_PROFILES.values()
+        },
         planner=Path(planner),
     )
 
@@ -138,7 +152,13 @@ def _host_checks() -> tuple[_Check, ...]:
             ),
         ),
         ("CUDA execution provider", _verify_cuda_provider),
+        ("Jetson MAXN and locked clocks", _verify_max_performance),
     )
+
+
+def _verify_max_performance() -> str:
+    ensure_sonic_max_performance()
+    return "MAXN; CPU/GPU clocks locked"
 
 
 def _raise(message: str) -> str:
@@ -179,16 +199,23 @@ def _run_checks(checks: tuple[_Check, ...]) -> list[SonicDiagnosticCheck]:
 
 
 def _model_checks(paths: SonicModelPaths) -> tuple[_Check, ...]:
+    models = (
+        [
+            (f"{profile_name} encoder", encoder)
+            for profile_name, (encoder, _decoder) in paths.profiles.items()
+        ]
+        + [
+            (f"{profile_name} decoder", decoder)
+            for profile_name, (_encoder, decoder) in paths.profiles.items()
+        ]
+        + [("planner", paths.planner)]
+    )
     return tuple(
         (
             f"{name} model",
             lambda name=name, path=path: _verify_model(name, path),
         )
-        for name, path in (
-            ("encoder", paths.encoder),
-            ("decoder", paths.decoder),
-            ("planner", paths.planner),
-        )
+        for name, path in models
     )
 
 
@@ -270,6 +297,16 @@ def _benchmark(operation: Callable[[], Any], samples: int, percentile: float) ->
     return float(np.percentile(durations_ms, percentile))
 
 
+def _run_policy_pair(
+    encoder: Any,
+    decoder: Any,
+    encoder_input: _Array,
+    decoder_input: _Array,
+) -> None:
+    encoder.run(None, {encoder.get_inputs()[0].name: encoder_input})
+    decoder.run(None, {decoder.get_inputs()[0].name: decoder_input})
+
+
 def _profile_cpu_ops(profile_path: Path) -> Counter[str]:
     events = json.loads(profile_path.read_text(encoding="utf-8"))
     return Counter(
@@ -309,8 +346,14 @@ def _accuracy_detail(name: str, actual: _Array, expected: _Array) -> str:
 
 def _inference_checks(paths: SonicModelPaths) -> list[SonicDiagnosticCheck]:
     prepare_sonic_onnx_runtime()
-    encoder = create_sonic_session("encoder", paths.encoder, allow_cpu_shape_ops=False)
-    decoder = create_sonic_session("decoder", paths.decoder, allow_cpu_shape_ops=False)
+    sessions = {
+        profile_name: (
+            create_sonic_session(f"{profile_name} encoder", encoder, allow_cpu_shape_ops=False),
+            create_sonic_session(f"{profile_name} decoder", decoder, allow_cpu_shape_ops=False),
+        )
+        for profile_name, (encoder, decoder) in paths.profiles.items()
+    }
+    encoder, decoder = sessions["sonic-v1.1"]
 
     encoder_input = np.zeros((1, 1751), dtype=np.float32)
     decoder_input = np.zeros((1, 994), dtype=np.float32)
@@ -333,6 +376,26 @@ def _inference_checks(paths: SonicModelPaths) -> list[SonicDiagnosticCheck]:
         cpu_ops = _profile_cpu_ops(profile_path)
 
     checks: list[SonicDiagnosticCheck] = []
+    for profile_name, (profile_encoder, profile_decoder) in sessions.items():
+        profile = SONIC_MODEL_PROFILES[cast("Any", profile_name)]
+        profile_encoder_input = np.zeros((1, profile.encoder_obs_dim), dtype=np.float32)
+        profile_decoder_input = np.zeros((1, 994), dtype=np.float32)
+        outputs = (
+            profile_encoder.run(
+                None, {profile_encoder.get_inputs()[0].name: profile_encoder_input}
+            )[0],
+            profile_decoder.run(
+                None, {profile_decoder.get_inputs()[0].name: profile_decoder_input}
+            )[0],
+        )
+        finite = all(np.all(np.isfinite(output)) for output in outputs)
+        checks.append(
+            SonicDiagnosticCheck(
+                f"{profile_name} inference",
+                finite,
+                f"encoder input={profile.encoder_obs_dim}, finite outputs={finite}",
+            )
+        )
     unexpected_ops = set(cpu_ops) - ALLOWED_PLANNER_CPU_OPS
     cpu_events = sum(cpu_ops.values())
     if unexpected_ops or cpu_events > MAX_PLANNER_CPU_EVENTS:
@@ -374,27 +437,34 @@ def _inference_checks(paths: SonicModelPaths) -> list[SonicDiagnosticCheck]:
         )
     )
 
-    policy_p99 = _benchmark(
-        lambda: (
-            encoder.run(None, {encoder.get_inputs()[0].name: encoder_input}),
-            decoder.run(None, {decoder.get_inputs()[0].name: decoder_input}),
-        ),
-        samples=20,
-        percentile=99.0,
-    )
     planner_p95 = _benchmark(lambda: planner.run(None, planner_inputs), samples=10, percentile=95.0)
-    checks.extend(
-        (
+    for profile_name, (profile_encoder, profile_decoder) in sessions.items():
+        profile = SONIC_MODEL_PROFILES[cast("Any", profile_name)]
+        profile_encoder_input = np.zeros((1, profile.encoder_obs_dim), dtype=np.float32)
+        profile_decoder_input = np.zeros((1, 994), dtype=np.float32)
+        policy_p99 = _benchmark(
+            partial(
+                _run_policy_pair,
+                profile_encoder,
+                profile_decoder,
+                profile_encoder_input,
+                profile_decoder_input,
+            ),
+            samples=20,
+            percentile=99.0,
+        )
+        checks.append(
             SonicDiagnosticCheck(
-                "policy latency",
+                f"{profile_name} policy latency",
                 policy_p99 <= MAX_POLICY_P99_MS,
                 f"p99={policy_p99:.2f} ms, limit={MAX_POLICY_P99_MS:.2f} ms",
-            ),
-            SonicDiagnosticCheck(
-                "planner latency",
-                planner_p95 <= MAX_PLANNER_P95_MS,
-                f"p95={planner_p95:.2f} ms, limit={MAX_PLANNER_P95_MS:.2f} ms",
-            ),
+            )
+        )
+    checks.append(
+        SonicDiagnosticCheck(
+            "planner latency",
+            planner_p95 <= MAX_PLANNER_P95_MS,
+            f"p95={planner_p95:.2f} ms, limit={MAX_PLANNER_P95_MS:.2f} ms",
         )
     )
     return checks

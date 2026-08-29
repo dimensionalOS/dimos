@@ -193,6 +193,16 @@ def test_ax_starts_smooth_transition_from_planner(
     pipeline.begin_stream_transition.assert_called_once_with(0.5)
 
 
+def test_slow_policy_timing_does_not_gate_pose(task_and_pipeline: tuple[Any, Any]) -> None:
+    task, _pipeline = task_and_pipeline
+    for index in range(10):
+        task._record_policy_timing(0.201, 1.0 + index * 0.02)
+
+    _start_pose_transition(task)
+
+    assert task.state_snapshot()["webxr_teleop"]["mode"] == "pose_transition"
+
+
 def test_completed_transition_enters_pose(task_and_pipeline: tuple[Any, Any]) -> None:
     task, pipeline = task_and_pipeline
     _start_pose_transition(task)
@@ -301,7 +311,7 @@ def test_pose_requires_complete_ten_frame_buffer(task_and_pipeline: tuple[Any, A
     pipeline.apply_pose_message.assert_not_called()
 
 
-def test_low_latency_pipeline_requires_two_frames_and_is_reported(mocker: Any) -> None:
+def test_low_latency_pipeline_requires_four_frames_and_is_reported(mocker: Any) -> None:
     pipeline_class = mocker.patch(
         "dimos.control.tasks.g1_sonic_wbc_task.g1_sonic_wbc_task.SonicPipeline"
     )
@@ -326,15 +336,16 @@ def test_low_latency_pipeline_requires_two_frames_and_is_reported(mocker: Any) -
         task.compute(_state(0.5))
         task.compute(_state(0.52))
         _prime_pose_stream(task)
-        task.on_body_tracking(_body_snapshot(capture_time_s=1.02), t_now=1.02)
-        task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.03)
+        for capture_time in (1.02, 1.04, 1.06):
+            task.on_body_tracking(_body_snapshot(capture_time_s=capture_time), t_now=capture_time)
+        task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.07)
 
         teleop = task.state_snapshot()["webxr_teleop"]
         fields = pipeline.apply_pose_message.call_args.args[0]
         assert teleop["mode"] == "pose_transition"
         assert teleop["sonic_pipeline"] == "sonic-low-latency"
-        assert teleop["pose_window_frames"] == 2
-        assert fields["frame_index"].tolist() == [0, 1]
+        assert teleop["pose_window_frames"] == 4
+        assert fields["frame_index"].tolist() == [0, 1, 2, 3]
     finally:
         task.stop()
 

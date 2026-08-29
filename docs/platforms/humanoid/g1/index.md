@@ -174,6 +174,8 @@ export LD_LIBRARY_PATH=/usr/local/cuda-11.8/lib64:$LD_LIBRARY_PATH
 export LD_LIBRARY_PATH=/usr/local/cuda-11.8/compat:$LD_LIBRARY_PATH
 source .venv-sonic-jp5/bin/activate
 
+sudo nvpmodel -m 0
+sudo jetson_clocks
 dimos hardware g1 sonic-doctor
 ```
 
@@ -192,7 +194,8 @@ with target-side package detection. CUDA 11 and cuDNN 8 resolve to the pinned
 the pip cache and verifies the dispatcher, distribution, runtime, and CUDA
 provider versions after installation.
 
-`sonic-doctor` never contacts the robot. It validates the exact model hashes,
+`sonic-doctor` never contacts the robot. It validates MAXN and locked CPU/GPU
+clocks, the exact model hashes for both official policy bundles,
 CUDA execution partition, numerical output, and onboard latency. The encoder
 and decoder are forbidden from using CPU fallback. The planner may use CPU
 only for its audited shape/index operators; a larger or different partition
@@ -205,6 +208,9 @@ Run the activated environment's `dimos` executable directly. Do not use
 Rehearse the full stack in MuJoCo before connecting policy output to motors:
 
 ```bash
+uv run python bin/hardware/g1/setup-sonic-models \
+  --profile sonic-v1.1
+
 dimos --simulation mujoco --viewer none \
   run unitree-g1-sonic-webxr-teleop \
   --sonic-pipeline sonic-v1.1
@@ -260,20 +266,25 @@ Before pressing A+X, stand upright with feet together, look forward, keep the
 upper arms down, bend the forearms 90 degrees forward, and point the palms
 inward.
 
-Select the WebXR pose window when launching the blueprint. Both options use the
-same SONIC v1.1 ONNX models:
+Select the NVIDIA policy bundle when launching the blueprint. Encoder,
+decoder, observation layout, and pose window always switch together:
+[NVIDIA's model card](https://github.com/NVlabs/GR00T-WholeBodyControl/blob/main/docs/source/model_card.md)
+documents both contracts, and the setup script downloads their pinned files
+from [`nvidia/GEAR-SONIC`](https://huggingface.co/nvidia/GEAR-SONIC/tree/main).
 
 | `--sonic-pipeline` | Pose window | Use when |
 |---|---:|---|
 | `sonic-v1.1` (default) | 10 frames / about 200 ms | Matching the official temporal input is more important than latency |
-| `sonic-low-latency` | 2 frames / about 40 ms | Responsiveness is more important; the newest frame fills the remaining encoder slots |
+| `sonic-low-latency` | 4 frames / about 80 ms | NVIDIA's released low-latency model and body-frame observation layout |
 
 ```bash
 # Official ten-frame path (the flag may be omitted)
 uv run dimos --simulation mujoco run unitree-g1-sonic-webxr-teleop \
   --sonic-pipeline sonic-v1.1
 
-# Two-frame low-latency path
+# Official four-frame low-latency path
+uv run python bin/hardware/g1/setup-sonic-models \
+  --profile sonic-low-latency
 uv run dimos --simulation mujoco run unitree-g1-sonic-webxr-teleop \
   --sonic-pipeline sonic-low-latency
 ```
@@ -305,7 +316,7 @@ Use the CLI and controller in this order:
 1. Run `dimos hardware g1 arm`, then `dimos hardware g1 status`. Confirm
    `armed: True`, `dry_run: True`, and `webxr: planner`.
 2. Align the operator with the robot and wait until `pose_buffer` reports
-   `ready`: about 200 ms for `sonic-v1.1` or 40 ms for
+   `ready`: about 200 ms for `sonic-v1.1` or 80 ms for
    `sonic-low-latency` after complete tracking begins.
 3. Press **A+X** to enter dry-run `POSE_TRANSITION`, followed by `POSE` after
    the configured handoff. The robot must not follow the pose. Confirm
@@ -320,6 +331,12 @@ Use the CLI and controller in this order:
 6. Press **A+X** again to return to the balancing planner.
 7. Finish routine operation with `dimos hardware g1 disable`, followed by
    `dimos stop`.
+
+SONIC inference runs at 50 Hz. On hardware, the G1 connection holds the newest
+policy target and publishes it to `rt/lowcmd` at 500 Hz. Runtime timing is
+reported under `policy_timing` by `dimos hardware g1 status`, but it does not
+gate POSE or force a return to PLANNER. Run `sonic-doctor` before hardware use;
+its policy and planner latency checks are the performance acceptance gate.
 
 ABXY has no SONIC teleoperation action. The terminal owns live policy output,
 while the PICO wearer owns only the `PLANNER`/`POSE` tracking toggle. Neither

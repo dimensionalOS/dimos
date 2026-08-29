@@ -22,7 +22,7 @@ import pytest
 @pytest.mark.parametrize(
     ("simulation", "backend", "auto_arm", "auto_dry_run", "ramp_seconds", "decimation"),
     [
-        ("", "G1WholeBodyConnection", False, True, 3.0, 2),
+        ("", "G1WholeBodyConnection", False, True, 3.0, 1),
         ("mujoco", "MujocoSimModule", True, False, 0.0, 1),
     ],
 )
@@ -88,6 +88,8 @@ configured_tasks = _configure_sonic_teleop_tasks(
     coordinator_config.pose_transition_seconds,
 )
 assert configured_tasks[0].params["sonic_pipeline"] == "sonic-low-latency"
+assert configured_tasks[0].params["encoder_onnx"].endswith("low_latency/model_encoder.onnx")
+assert configured_tasks[0].params["decoder_onnx"].endswith("low_latency/model_decoder.onnx")
 assert configured_tasks[0].params["pose_transition_seconds"] == 0.8
 try:
     parser.parse(cli_tokens=["--sonic-pipeline", "unknown"])

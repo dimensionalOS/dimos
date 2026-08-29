@@ -30,6 +30,7 @@ carrying, jump...) are RPC-reachable via coordinator.task_invoke:
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from enum import Enum
 import math
@@ -54,10 +55,8 @@ from dimos.control.tasks.g1_sonic_wbc_task.sonic_pipeline import (
     DEFAULT_ANGLES_DDS,
     LOCOMOTION_MODES,
     NUM_JOINTS,
-    SonicPipeline,
-)
-from dimos.control.tasks.g1_sonic_wbc_task.webxr_retargeting import (
     SONIC_V1_1_PIPELINE,
+    SonicPipeline,
     SonicTeleopPipeline,
 )
 from dimos.control.tasks.g1_sonic_wbc_task.zmq_wire import (
@@ -143,6 +142,7 @@ class G1SonicWBCTask(BaseControlTask):
             encoder_path=config.encoder_onnx,
             decoder_path=config.decoder_onnx,
             planner_path=config.planner_onnx,
+            profile=config.sonic_pipeline,
         )
 
         self._default_29 = DEFAULT_ANGLES_DDS.copy()
@@ -168,6 +168,9 @@ class G1SonicWBCTask(BaseControlTask):
         self._stream_source_requested = False
         self._last_dry_run_log_t = 0.0
         self._last_diag_log_t = 0.0
+        self._policy_durations_ms: deque[float] = deque(maxlen=500)
+        self._policy_intervals_ms: deque[float] = deque(maxlen=500)
+        self._last_policy_started_at: float | None = None
 
         self._cmd_lock = threading.Lock()
         self._cmd = np.zeros(3, dtype=np.float32)
@@ -321,6 +324,7 @@ class G1SonicWBCTask(BaseControlTask):
                 cmd = self._cmd.copy()
         self._pipeline.set_velocity(float(cmd[0]), float(cmd[1]), float(cmd[2]))
 
+        policy_started_at = time.perf_counter()
         targets_29 = self._pipeline.step(
             q_dds=q_29,
             dq_dds=dq_29,
@@ -328,6 +332,7 @@ class G1SonicWBCTask(BaseControlTask):
             gyro_body=gyro,
             gravity_body=gravity,
         )
+        self._record_policy_timing(time.perf_counter() - policy_started_at, policy_started_at)
         self._last_targets = targets_29.tolist()
         self._zmq_publish_state(state.t_now, q_29, dq_29, quat, gyro, targets_29)
 
@@ -776,6 +781,7 @@ class G1SonicWBCTask(BaseControlTask):
         snap["zmq"] = dict(self._zmq_stats)
         snap["debug_q_leg"] = [round(float(v), 4) for v in self._cached_q_29[:6]]
         snap["debug_dq_leg"] = [round(float(v), 4) for v in self._cached_dq_29[:6]]
+        snap["policy_timing"] = self._policy_timing_snapshot()
         try:
             imu = self._adapter.read_imu()
             snap["debug_quat"] = [round(float(v), 4) for v in imu.quaternion]
@@ -789,6 +795,34 @@ class G1SonicWBCTask(BaseControlTask):
     def _reset_policy_state(self) -> None:
         self._pipeline.reset()
         self._tick_count = 0
+        self._policy_durations_ms.clear()
+        self._policy_intervals_ms.clear()
+        self._last_policy_started_at = None
+
+    def _record_policy_timing(self, duration_seconds: float, started_at: float) -> None:
+        duration_ms = duration_seconds * 1000.0
+        self._policy_durations_ms.append(duration_ms)
+        if self._last_policy_started_at is not None:
+            self._policy_intervals_ms.append((started_at - self._last_policy_started_at) * 1000.0)
+        self._last_policy_started_at = started_at
+
+    def _policy_timing_snapshot(self) -> dict[str, Any]:
+        def summary(samples: deque[float]) -> dict[str, float | int]:
+            if not samples:
+                return {"samples": 0, "mean": 0.0, "p95": 0.0, "p99": 0.0, "max": 0.0}
+            values = np.asarray(samples, dtype=np.float64)
+            return {
+                "samples": len(samples),
+                "mean": round(float(np.mean(values)), 3),
+                "p95": round(float(np.percentile(values, 95)), 3),
+                "p99": round(float(np.percentile(values, 99)), 3),
+                "max": round(float(np.max(values)), 3),
+            }
+
+        return {
+            "step_ms": summary(self._policy_durations_ms),
+            "start_interval_ms": summary(self._policy_intervals_ms),
+        }
 
     def _enter_control(self) -> None:
         self._control_state = SonicControlState.CONTROL
@@ -846,6 +880,20 @@ def _create_task(
     task_class: type[G1SonicWBCTask],
 ) -> G1SonicWBCTask:
     params = G1SonicWBCTaskParams.model_validate(cfg.params)
+    model_paths = (
+        Path(params.encoder_onnx),
+        Path(params.decoder_onnx),
+        Path(params.planner_onnx),
+    )
+    missing_models = [str(path) for path in model_paths if not path.is_file()]
+    if missing_models:
+        raise FileNotFoundError(
+            "SONIC model files are missing: "
+            f"{', '.join(missing_models)}. Run "
+            "`python bin/hardware/g1/setup-sonic-models "
+            f"--profile {params.sonic_pipeline}` from the active DimOS environment "
+            "before starting SONIC."
+        )
     hw = hardware.get(params.hardware_id) if hardware else None
     if hw is None:
         raise ValueError(

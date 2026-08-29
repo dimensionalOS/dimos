@@ -46,10 +46,9 @@ from dimos.control.tasks.g1_sonic_wbc_task.sonic_pipeline import (
     DEFAULT_ANGLES_DDS,
     SONIC_KD,
     SONIC_KP,
-)
-from dimos.control.tasks.g1_sonic_wbc_task.webxr_retargeting import (
     SONIC_V1_1_PIPELINE,
     SonicTeleopPipeline,
+    sonic_model_profile,
 )
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
@@ -68,7 +67,7 @@ from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.unitree.g1.config import G1
 from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
 from dimos.teleop.webxr.controller_types import Buttons
-from dimos.utils.data import LfsPath
+from dimos.utils.data import LfsPath, get_data_dir
 from dimos.visualization.vis_module import vis_module
 
 _G1_NAV_VOXEL_RESOLUTION = 0.05
@@ -100,14 +99,17 @@ _MUJOCO_LIDAR_KWARGS: dict[str, Any] = {
     "mujoco_lidar_robot_exclusion_radius": G1.width_clearance,
 }
 
-# SONIC model files ship in the LFS data archive (data/sonic: encoder,
-# decoder, 774 MB planner, reference motion clips). LfsPath pulls lazily on
-# first access; SONIC_MODEL_DIR / SONIC_PLANNER_PATH override for machines
-# with a gear_sonic_deploy checkout.
+# The setup command materializes the shared SONIC planner/motions archive and
+# downloads each official policy bundle into data/sonic. Keep model resolution
+# non-lazy here so a missing bundle fails fast instead of re-extracting the
+# archive during blueprint startup. SONIC_MODEL_DIR / SONIC_PLANNER_PATH allow
+# an explicit external model checkout.
 _env_model_dir = os.environ.get("SONIC_MODEL_DIR")
-_SONIC_RELEASE_DIR = Path(_env_model_dir) if _env_model_dir else LfsPath("sonic")
+_SONIC_RELEASE_DIR = Path(_env_model_dir) if _env_model_dir else get_data_dir("sonic")
 _env_planner = os.environ.get("SONIC_PLANNER_PATH")
-_SONIC_PLANNER_PATH = Path(_env_planner) if _env_planner else LfsPath("sonic/planner_sonic.onnx")
+_SONIC_PLANNER_PATH = (
+    Path(_env_planner) if _env_planner else _SONIC_RELEASE_DIR / "planner_sonic.onnx"
+)
 
 _MJCF_PATH = LfsPath("mujoco_sim/g1_gear_wbc.xml")
 _G1_NUM_MOTORS = len(g1_joints)
@@ -196,11 +198,11 @@ else:
     _backend = G1WholeBodyConnection.blueprint()
     _adapter_type = "transport_lcm"
     _adapter_address = ""
-    _tick_rate = 100.0
+    _tick_rate = 50.0
     _auto_arm = False
     _auto_dry_run = True
     _default_ramp_seconds = 3.0
-    _decimation = 2  # 100 Hz tick / 2 = 50 Hz policy
+    _decimation = 1
     _n_workers = 10
     from dimos.hardware.sensors.lidar.pointlio.module import PointLio
     from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
@@ -256,12 +258,16 @@ def _configure_sonic_teleop_tasks(
     sonic_pipeline: SonicTeleopPipeline,
     pose_transition_seconds: float,
 ) -> list[TaskConfig]:
+    profile = sonic_model_profile(sonic_pipeline)
+    release_dir = _SONIC_RELEASE_DIR / profile.model_subdir
     return [
         replace(
             task,
             params={
                 **task.params,
                 "sonic_pipeline": sonic_pipeline,
+                "encoder_onnx": str(release_dir / "model_encoder.onnx"),
+                "decoder_onnx": str(release_dir / "model_decoder.onnx"),
                 "pose_transition_seconds": pose_transition_seconds,
             },
         )
@@ -322,8 +328,16 @@ def _g1_sonic_coordinator(
                 priority=50,
                 auto_start=True,
                 params={
-                    "encoder_onnx": str(_SONIC_RELEASE_DIR / "model_encoder.onnx"),
-                    "decoder_onnx": str(_SONIC_RELEASE_DIR / "model_decoder.onnx"),
+                    "encoder_onnx": str(
+                        _SONIC_RELEASE_DIR
+                        / sonic_model_profile(SONIC_V1_1_PIPELINE).model_subdir
+                        / "model_encoder.onnx"
+                    ),
+                    "decoder_onnx": str(
+                        _SONIC_RELEASE_DIR
+                        / sonic_model_profile(SONIC_V1_1_PIPELINE).model_subdir
+                        / "model_decoder.onnx"
+                    ),
                     "planner_onnx": str(_SONIC_PLANNER_PATH),
                     "hardware_id": "g1",
                     "auto_arm": _auto_arm,
