@@ -94,6 +94,8 @@ class ObjectDB:
                     inserted = self._insert_pending(obj, now)
                     results[inserted.object_id] = inserted
                     stats["created"] += 1
+                    if self._check_promotion(inserted):
+                        stats["promoted"] += 1
                     continue
 
                 updated = self._update_existing(matched, obj, now)

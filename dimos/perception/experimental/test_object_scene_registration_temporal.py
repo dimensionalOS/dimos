@@ -61,32 +61,53 @@ def module() -> Iterator[ObjectSceneRegistrationModule]:
     module.stop()
 
 
-def test_temporal_tf_lookup_uses_bounded_image_timestamp(
+def test_transform_is_captured_before_slow_detector(
     monkeypatch: Any, module: ObjectSceneRegistrationModule
 ) -> None:
-    tf = _FakeTF(MagicMock())
-    module._tf = tf  # type: ignore[assignment]
-    monkeypatch.setattr(
-        "dimos.perception.experimental.object_scene_registration.Object.from_2d_to_list",
-        lambda **_: [],
-    )
+    now = [0.0]
+    transform = MagicMock(name="fresh_transform")
 
-    ObjectSceneRegistrationModule._process_3d_detections(
-        module,
-        MagicMock(spec=ImageDetections2D),
-        _image(12.5),
-        _image(12.5),
+    class _ExpiringTF(_FakeTF):
+        def get(self, *args: Any, **kwargs: Any) -> Any:
+            super().get(*args, **kwargs)
+            return transform if now[0] <= 10.0 else None
+
+    tf = _ExpiringTF(None)
+    module._tf = tf  # type: ignore[assignment]
+    module._detector_backend = "owlv2"
+    module._detector = MagicMock()
+    module._text_prompts = ["cup"]
+    module.detections_2d = MagicMock()
+    color = Image(
+        data=np.zeros((2, 2, 3), dtype=np.uint8),
+        format=ImageFormat.BGR,
+        frame_id="camera",
+        ts=12.5,
     )
+    detections = ImageDetections2D(color, [])
+
+    def slow_detection(*_args: Any, **_kwargs: Any) -> ImageDetections2D:
+        now[0] = 11.0
+        return detections
+
+    module._detector.query_detections.side_effect = slow_detection
+    process_3d = MagicMock()
+    monkeypatch.setattr(module, "_process_3d_detections", process_3d)
+
+    module._process_images(color, _image(12.5))
 
     assert tf.calls == [(("map", "camera", 12.5, 0.1), {"forward_tolerance": 0.2})]
+    process_3d.assert_called_once_with(detections, color, ANY, transform)
 
 
 def test_failed_lookup_does_not_retry_without_time_or_replace_coherent_cache(
     monkeypatch: Any, module: ObjectSceneRegistrationModule
 ) -> None:
     old_transform = MagicMock(name="old_transform")
-    tf = _FakeTF(old_transform)
-    module._tf = tf  # type: ignore[assignment]
+    warning = MagicMock()
+    monkeypatch.setattr(
+        "dimos.perception.experimental.object_scene_registration.logger.warning", warning
+    )
     monkeypatch.setattr(
         "dimos.perception.experimental.object_scene_registration.Object.from_2d_to_list",
         lambda **_: [],
@@ -98,19 +119,19 @@ def test_failed_lookup_does_not_retry_without_time_or_replace_coherent_cache(
         MagicMock(spec=ImageDetections2D),
         old_depth,
         old_depth,
+        old_transform,
     )
-    tf.result = None
     new_depth = _image(2.0)
     ObjectSceneRegistrationModule._process_3d_detections(
         module,
         MagicMock(spec=ImageDetections2D),
         new_depth,
         new_depth,
+        None,
     )
 
-    assert len(tf.calls) == 2
-    assert tf.calls[1] == (("map", "camera", 2.0, 0.1), {"forward_tolerance": 0.2})
     assert module._latest_scene_snapshot == (old_depth, old_transform)
+    warning.assert_called_once_with("Failed to lookup transform from camera frame to target frame")
 
 
 def test_full_scene_pointcloud_uses_one_coherent_scene_snapshot(
@@ -149,7 +170,9 @@ def test_full_scene_pointcloud_uses_one_coherent_scene_snapshot(
 
 
 def test_owlv2_queries_configured_prompts(monkeypatch: Any) -> None:
-    module = ObjectSceneRegistrationModule(detector_backend="owlv2")
+    module = ObjectSceneRegistrationModule(
+        target_frame="camera", detector_backend="owlv2", detector_confidence=0.07
+    )
     module._camera_info = MagicMock()
     module._detector = MagicMock()
     module._text_prompts = ["mug"]
@@ -167,13 +190,13 @@ def test_owlv2_queries_configured_prompts(monkeypatch: Any) -> None:
 
     module._process_images(color, _image(4.0))
 
-    module._detector.query_detections.assert_called_once_with(color, ["mug"], threshold=0.6)
-    process_3d.assert_called_once_with(detections, color, ANY)
+    module._detector.query_detections.assert_called_once_with(color, ["mug"], threshold=0.07)
+    process_3d.assert_called_once_with(detections, color, ANY, None)
     module.stop()
 
 
 def test_moondream_queries_each_configured_prompt(monkeypatch: Any) -> None:
-    module = ObjectSceneRegistrationModule(detector_backend="moondream")
+    module = ObjectSceneRegistrationModule(target_frame="camera", detector_backend="moondream")
     module._camera_info = MagicMock()
     module._detector = MagicMock()
     module._text_prompts = ["cup", "bottle"]
@@ -207,7 +230,7 @@ def test_moondream_queries_each_configured_prompt(monkeypatch: Any) -> None:
 
 
 def test_edgetam_refines_detector_output(monkeypatch: Any) -> None:
-    module = ObjectSceneRegistrationModule(segmentation_backend="edgetam")
+    module = ObjectSceneRegistrationModule(target_frame="camera", segmentation_backend="edgetam")
     module._camera_info = MagicMock()
     color = Image(
         data=np.zeros((2, 2, 3), dtype=np.uint8),
@@ -228,7 +251,7 @@ def test_edgetam_refines_detector_output(monkeypatch: Any) -> None:
     module._process_images(color, _image(4.0))
 
     module._segmenter.segment.assert_called_once_with(raw_detections)
-    process_3d.assert_called_once_with(segmented_detections, color, ANY)
+    process_3d.assert_called_once_with(segmented_detections, color, ANY, None)
     module.stop()
 
 
@@ -309,6 +332,7 @@ def test_scan_output_includes_pending_objects(monkeypatch: Any) -> None:
         MagicMock(spec=ImageDetections2D),
         _image(4.0),
         _image(4.0),
+        None,
     )
 
     assert observed == [pending]
@@ -320,6 +344,7 @@ def test_scan_output_includes_pending_objects(monkeypatch: Any) -> None:
         MagicMock(spec=ImageDetections2D),
         _image(5.0),
         _image(5.0),
+        None,
     )
 
     assert observed == []
@@ -382,6 +407,7 @@ def test_object_db_uses_wall_clock_for_pending_ttl(monkeypatch: Any) -> None:
     detected.ts = 4.0  # Hardware timestamps are relative to camera boot.
     detected.last_seen_ts = None
     detected.center = None
+    detected.detections_count = 1
     now = [1000.0]
     monkeypatch.setattr("dimos.perception.experimental.objectDB.time.time", lambda: now[0])
 
@@ -427,3 +453,50 @@ def test_object_db_counts_each_source_frame_once(monkeypatch: Any) -> None:
     assert object_db.add_objects([newer]) == [first]
     first.update_object.assert_called_once_with(newer)
     assert first.last_seen_ts == 1001.0
+
+
+def test_object_db_promotes_a_first_sighting_when_threshold_is_one() -> None:
+    object_db = ObjectDB(min_detections_for_permanent=1)
+    detected = MagicMock(
+        object_id="first-id",
+        track_id=-1,
+        ts=1.0,
+        last_seen_ts=None,
+        detections_count=1,
+        name="cup",
+    )
+    detected.center = None
+
+    object_db.add_objects([detected])
+
+    assert object_db.get_objects() == [detected]
+    assert object_db.get_stats() == {
+        "pending_count": 0,
+        "permanent_count": 1,
+        "total_count": 1,
+    }
+
+
+def test_object_db_keeps_first_sighting_pending_above_threshold() -> None:
+    object_db = ObjectDB(min_detections_for_permanent=2)
+    detected = MagicMock(
+        object_id="first-id",
+        track_id=7,
+        ts=1.0,
+        last_seen_ts=None,
+        detections_count=1,
+        name="cup",
+    )
+    detected.center = None
+    newer = MagicMock(object_id="newer-id", track_id=7, ts=2.0)
+    newer.center = None
+    detected.update_object.side_effect = lambda _: setattr(detected, "detections_count", 2)
+
+    object_db.add_objects([detected])
+
+    assert object_db.get_objects() == []
+    assert object_db.find_by_object_id("first-id") is detected
+
+    object_db.add_objects([newer])
+
+    assert object_db.get_objects() == [detected]

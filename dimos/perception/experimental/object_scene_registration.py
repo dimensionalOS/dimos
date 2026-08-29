@@ -52,6 +52,7 @@ class ObjectSceneRegistrationConfig(ModuleConfig):
     prompt_mode: YoloePromptMode = YoloePromptMode.LRPC
     detector_backend: Literal["yoloe", "owlv2", "moondream"] = "yoloe"
     segmentation_backend: Literal["yolo", "edgetam"] = "yolo"
+    detector_confidence: float = 0.6
     detect_on_request: bool = False
     distance_threshold: float = 0.2
     min_detections_for_permanent: int = 6
@@ -92,7 +93,7 @@ class ObjectSceneRegistrationModule(Module):
         self._prompt_mode = self.config.prompt_mode
         self._detector_backend = self.config.detector_backend
         self._segmentation_backend = self.config.segmentation_backend
-        self._detector_confidence = 0.6
+        self._detector_confidence = self.config.detector_confidence
         self._detect_on_request = self.config.detect_on_request
         self._object_db = ObjectDB(
             distance_threshold=self.config.distance_threshold,
@@ -389,6 +390,16 @@ class ObjectSceneRegistrationModule(Module):
             data=depth_cv, format=ImageFormat.DEPTH, frame_id=depth_msg.frame_id, ts=depth_msg.ts
         )
 
+        camera_transform = None
+        if self._target_frame != color_image.frame_id:
+            camera_transform = self.tfbuffer.get(
+                self._target_frame,
+                color_image.frame_id,
+                color_image.ts,
+                0.1,
+                forward_tolerance=0.2,
+            )
+
         if self._detector_backend == "owlv2":
             if not self._text_prompts:
                 detections_2d = ImageDetections2D(color_image, [])
@@ -421,31 +432,24 @@ class ObjectSceneRegistrationModule(Module):
         self.detections_2d.publish(detections_2d_msg)
 
         # Process 3D detections
-        return self._process_3d_detections(detections_2d, color_image, depth_image)
+        return self._process_3d_detections(
+            detections_2d, color_image, depth_image, camera_transform
+        )
 
     def _process_3d_detections(
         self,
         detections_2d: ImageDetections2D[Any],
         color_image: Image,
         depth_image: Image,
+        camera_transform: Transform | None,
     ) -> list[DetObject]:
         """Convert 2D detections to 3D and publish."""
         if self._camera_info is None:
             return []
 
-        # Look up transform from camera frame to target frame (e.g., map)
-        camera_transform = None
-        if self._target_frame != color_image.frame_id:
-            camera_transform = self.tfbuffer.get(
-                self._target_frame,
-                color_image.frame_id,
-                color_image.ts,
-                0.1,
-                forward_tolerance=0.2,
-            )
-            if camera_transform is None:
-                logger.info("Failed to lookup transform from camera frame to target frame")
-                return []
+        if self._target_frame != color_image.frame_id and camera_transform is None:
+            logger.warning("Failed to lookup transform from camera frame to target frame")
+            return []
 
         # Cache depth and transform together, only after the lookup succeeds.
         self._latest_scene_snapshot = (depth_image, camera_transform)
