@@ -511,6 +511,10 @@ tests-self-hosted = [
     "mcap>=1.2.0",
     # Needed to compile the in-tree extensions.
     "pybind11>=2.12",
+    # dim_slam's visual odometry, replayed in-process by test_dim_odom_replay.
+    # Only two of the published wheels are usable: the linux aarch64 one is built
+    # for Thor/SVE2 and SIGILLs on other ARM cores, and there is no sdist.
+    "dim-odom>=0.1.0; (sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'darwin' and platform_machine == 'arm64')",
 ]
 docs = [
     "mkdocs-awesome-nav>=3.3.0",
@@ -524,7 +528,7 @@ docs = [
 required-version = ">=0.9.17"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false }
+exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false }
 override-dependencies = [
     # ultralytics, unitree-sdk2py-dimos and unitree-webrtc-connect depend on
     # opencv-python, which ships the same cv2/ tree as our opencv-contrib-python

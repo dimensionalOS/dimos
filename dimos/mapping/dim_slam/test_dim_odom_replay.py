@@ -24,6 +24,9 @@ import math
 
 import pytest
 
+# The recording is a Git LFS fixture, which the regular CI job caps at 1 MiB.
+pytestmark = pytest.mark.self_hosted
+
 dim_odom = pytest.importorskip("dim_odom")
 
 from dimos.memory.store.sqlite import SqliteStore
