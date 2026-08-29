@@ -229,6 +229,31 @@ def test_a_topic_funnel_reaches_the_native_process_as_a_list(monkeypatch) -> Non
         module.stop()
 
 
+def test_funnel_info_rides_the_launch_line_but_not_the_argv(monkeypatch) -> None:
+    """Per-topic info becomes a {topic, info} entry on stdin; argv keeps only topics."""
+    monkeypatch.setattr(native_module_mod.global_config, "transport", "lcm")
+    module = StubNativeModule(
+        executable=_ECHO,
+        topic_funnels={
+            "cams": TopicFunnel(
+                names={"cam0/imu": {"rectified": True}, "cam1/imu": {}}, msg_type=Imu
+            )
+        },
+    )
+    try:
+        topics = module._collect_topics()
+        assert topics["cams"] == [
+            {"topic": "/cam0/imu#sensor_msgs.Imu", "info": {"rectified": True}},
+            "/cam1/imu#sensor_msgs.Imu",
+        ]
+        assert module._argv(topics)[1:3] == [
+            "--cams",
+            "/cam0/imu#sensor_msgs.Imu,/cam1/imu#sensor_msgs.Imu",
+        ]
+    finally:
+        module.stop()
+
+
 def test_a_wired_topic_funnel_entry_uses_its_transport() -> None:
     """Remapping/pins arrive as set_transport on the entry, and the launch line follows."""
     module = StubNativeModule(

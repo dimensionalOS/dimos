@@ -13,7 +13,7 @@
 # limitations under the License.
 import asyncio
 from collections.abc import AsyncGenerator, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 import inspect
 import json
@@ -31,7 +31,7 @@ from typing import (
     get_type_hints,
 )
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from reactivex.disposable import CompositeDisposable, Disposable
 
 from dimos.core.core import T, rpc
@@ -112,10 +112,27 @@ class TopicFunnel(BaseModel):
     producers, `.remappings()` and `.namespace()` rewrite it, and transport
     pins apply. A python module subscribes the wired streams itself; a native
     module hands their channels to its subprocess, which does the subscribing.
+
+    `names` may also be a dict attaching arbitrary per-stream info that the
+    handler receives on `Metadata.info`:
+    `TopicFunnel(names={"depth": {"meters_per_unit": 0.001}, "color": {}})`.
     """
 
     names: list[str]
     msg_type: type[Any] | None = None
+    info: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _split_names_dict(cls, data: Any) -> Any:
+        if isinstance(data, dict) and isinstance(data.get("names"), dict):
+            names_dict = data["names"]
+            data = {
+                **data,
+                "names": list(names_dict),
+                "info": {name: value for name, value in names_dict.items() if value},
+            }
+        return data
 
     @field_validator("names")
     @classmethod
@@ -128,17 +145,26 @@ class TopicFunnel(BaseModel):
             )
         return names
 
+    @model_validator(mode="after")
+    def _info_keys_must_be_names(self) -> "TopicFunnel":
+        unknown = [name for name in self.info if name not in self.names]
+        if unknown:
+            raise ValueError(f"topic funnel info keys are not in names: {unknown}")
+        return self
+
 
 @dataclass(frozen=True)
 class Metadata:
     """Which stream a message arrived on, for handlers that take `(msg, meta)`.
 
     `index` is the position in the funnel's `names` (0 for a plain input);
-    `name` is the stream name as the module declared it, pre-remapping.
+    `name` is the stream name as the module declared it, pre-remapping;
+    `info` is whatever the funnel's `TopicFunnel.info` attached to that name.
     """
 
     index: int
     name: str
+    info: dict[str, Any] = field(default_factory=dict)
 
 
 def _handler_wants_metadata(handler: Callable[..., Any], label: str) -> bool:
@@ -778,14 +804,18 @@ class ModuleBase(Configurable, CompositeResource):
                     "(topic funnels have no sync path)"
                 )
             if _handler_wants_metadata(handler, f"{type(self).__name__}.handle_{port}"):
+                metas = tuple(
+                    Metadata(index=index, name=name, info=group.info.get(name, {}))
+                    for index, name in enumerate(group.names)
+                )
 
                 async def invoke(
                     index: int,
                     msg: Any,
                     _handler: Callable[[Any, Metadata], Any] = handler,
-                    _names: tuple[str, ...] = tuple(group.names),
+                    _metas: tuple[Metadata, ...] = metas,
                 ) -> None:
-                    await _handler(msg, Metadata(index=index, name=_names[index]))
+                    await _handler(msg, _metas[index])
             else:
 
                 async def invoke(  # type: ignore[misc]

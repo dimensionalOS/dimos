@@ -121,7 +121,8 @@ struct MultiCam {
 
 impl MultiCam {
     async fn handle_cameras(&mut self, image: Image, meta: Metadata) {
-        // meta.index: position in the topic list; meta.topic: the topic itself
+        // meta.index: position in the topic list; meta.topic: the topic itself;
+        // meta.info: per-topic JSON the coordinator attached (Null when none)
     }
 }
 ```
@@ -133,6 +134,8 @@ MultiCam.blueprint(
     topic_funnels={"cameras": TopicFunnel(names=["left_cam", "right_cam"], msg_type=Image)},
 )
 ```
+
+`names` may also be a dict attaching arbitrary per-stream info — `names={"left_cam": {"rectified": True}, "right_cam": {}}` — which reaches the handler as `Metadata.info` (a dict in python, `serde_json::Value` in rust; on the launch line such an entry is a `{"topic": ..., "info": ...}` object instead of a plain string).
 
 `names` are stream names, not backend topics — a leading `/` is rejected. Each entry becomes a synthetic `In` stream on the python side, so the blueprint machinery treats it like a declared port: autoconnect matches it against producers' `Out` streams, `.remappings()` and `.namespace()` rewrite it, and blueprint transport pins apply. The same blueprint runs unchanged over LCM or zenoh.
 

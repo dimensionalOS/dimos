@@ -27,15 +27,19 @@ class FanInModule(Module):
 
     tagged: Out[int]
     named: Out[str]
+    scaled: Out[float]
 
     async def handle_sensors(self, value: int, meta: Metadata) -> None:
         self.tagged.publish(meta.index * 100 + value)
         self.named.publish(meta.name)
+        self.scaled.publish(value * meta.info.get("scale", 1.0))
 
 
 @pytest.fixture
 def start_fan_in_module(each_transport):
-    blueprint = FanInModule.blueprint(topic_funnels={"sensors": TopicFunnel(names=["s0", "s1"])})
+    blueprint = FanInModule.blueprint(
+        topic_funnels={"sensors": TopicFunnel(names={"s0": {"scale": 0.5}, "s1": {}})}
+    )
     coordinator = ModuleCoordinator.build(blueprint)
     yield
     coordinator.stop()
@@ -48,6 +52,7 @@ def group_transports(each_transport):
         make_transport("s1"),
         make_transport("tagged"),
         make_transport("named"),
+        make_transport("scaled"),
     ]
     for transport in transports:
         transport.start()
@@ -57,19 +62,23 @@ def group_transports(each_transport):
 
 
 def test_topic_funnel_tags_each_message_with_its_stream(start_fan_in_module, group_transports):
-    s0, s1, tagged, named = group_transports
+    s0, s1, tagged, named, scaled = group_transports
     queue: Queue[int] = Queue()
     names: Queue[str] = Queue()
+    scales: Queue[float] = Queue()
     tagged.subscribe(queue.put)
     named.subscribe(names.put)
+    scaled.subscribe(scales.put)
 
     s0.publish(7)
     assert queue.get(timeout=1.0) == 7
     assert names.get(timeout=1.0) == "s0"
+    assert scales.get(timeout=1.0) == 3.5
 
     s1.publish(7)
     assert queue.get(timeout=1.0) == 107
     assert names.get(timeout=1.0) == "s1"
+    assert scales.get(timeout=1.0) == 7.0
 
 
 @pytest.fixture
@@ -113,6 +122,11 @@ def test_namespace_prefixes_topic_funnel_entries():
 def test_a_group_entry_cannot_collide_with_a_declared_stream():
     with pytest.raises(ValueError, match="collides"):
         FanInModule(topic_funnels={"sensors": TopicFunnel(names=["tagged"])})
+
+
+def test_funnel_info_keys_must_be_names():
+    with pytest.raises(ValueError, match="not in names"):
+        TopicFunnel(names=["s0"], info={"s9": {"scale": 2.0}})
 
 
 class PlainFanInModule(Module):

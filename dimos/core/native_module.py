@@ -261,17 +261,24 @@ class NativeModule(Module):
         # A blueprint builds its config before global config is settled.
         return pinned.rebased()
 
-    def _argv(self, topics: dict[str, str | list[str]]) -> list[str]:
-        """The command line the native process is spawned with."""
+    def _argv(self, topics: dict[str, str | list[str | dict[str, Any]]]) -> list[str]:
+        """The command line the native process is spawned with. Per-topic funnel
+        info travels only on the stdin JSON, so an entry object contributes just
+        its topic here."""
         cmd = [self.config.executable]
-        for name, topic_str in topics.items():
-            joined = ",".join(topic_str) if isinstance(topic_str, list) else topic_str
+        for name, value in topics.items():
+            if isinstance(value, list):
+                joined = ",".join(
+                    entry["topic"] if isinstance(entry, dict) else entry for entry in value
+                )
+            else:
+                joined = value
             cmd.extend([f"--{name}", joined])
         cmd.extend(self.config.to_cli_args())
         cmd.extend(self.config.extra_args)
         return cmd
 
-    def _stdin_blob(self, topics: dict[str, str | list[str]]) -> bytes:
+    def _stdin_blob(self, topics: dict[str, str | list[str | dict[str, Any]]]) -> bytes:
         """The JSON line the native process reads its launch from."""
         config_dict = self.config.to_config_dict()
         blob: dict[str, Any] = {
@@ -517,8 +524,8 @@ class NativeModule(Module):
             duration_sec=round(build_elapsed, 3),
         )
 
-    def _collect_topics(self) -> dict[str, str | list[str]]:
-        topics: dict[str, str | list[str]] = {}
+    def _collect_topics(self) -> dict[str, str | list[str | dict[str, Any]]]:
+        topics: dict[str, str | list[str | dict[str, Any]]] = {}
         for name in list(self.inputs) + list(self.outputs) + list(self.ios):
             stream = getattr(self, name, None)
             if stream is None:
@@ -535,15 +542,16 @@ class NativeModule(Module):
                     f"[{self._module_label}] topic funnel {port!r} collides with the "
                     "port of the same name declared as a stream"
                 )
-            channels = []
+            entries: list[str | dict[str, Any]] = []
             for name in group.names:
                 transport = getattr(self._funnel_streams[name], "_transport", None)
                 channel = getattr(transport, "channel", None)
-                # Unwired (standalone use): the channel the default transport lands on.
-                channels.append(
-                    channel if channel is not None else channel_for(name, group.msg_type)
-                )
-            topics[port] = channels
+                if channel is None:
+                    # Unwired (standalone use): the channel the default transport lands on.
+                    channel = channel_for(name, group.msg_type)
+                info = group.info.get(name)
+                entries.append(channel if info is None else {"topic": channel, "info": info})
+            topics[port] = entries
         return topics
 
     def _collect_output_qos(self) -> dict[str, dict[str, str]]:
