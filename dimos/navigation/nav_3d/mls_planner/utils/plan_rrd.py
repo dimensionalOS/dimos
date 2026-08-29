@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Replay a lidar+odometry .db through RayTraceMap and the MLS planner into rerun.
+"""Replay a lidar .db through RayTraceMap and the MLS planner into rerun.
 
 Pass one or more --config clearance,buffer,weight to overlay each as a colored path.
 """
@@ -27,25 +27,23 @@ import numpy as np
 from numpy.typing import NDArray
 import typer
 
+from dimos.mapping.ray_tracing.module import TF_MATCH_TOLERANCE_S
 from dimos.mapping.ray_tracing.transformer import RayTraceMap
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF, tf_stream
 from dimos.memory.transform import FnTransformer
 from dimos.memory.type.observation import Observation
-from dimos.memory.vis.utils import (
-    DEFAULT_RENDER_VOXEL,
-    attach_pose_from_odom,
-    default_render_voxel,
-)
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.memory.vis.utils import DEFAULT_RENDER_VOXEL, default_render_voxel
 from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
 from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
 from dimos.navigation.nav_3d.mls_planner.mls_planner import MLSPlanner
-from dimos.navigation.tf_pose import base_height_above_ground
-from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT, ROBOT_LENGTH, ROBOT_WIDTH
+from dimos.robot.unitree.go2.constants import (
+    BASE_LINK_HEIGHT,
+    ROBOT_HEIGHT,
+    ROBOT_LENGTH,
+    ROBOT_WIDTH,
+)
 from dimos.utils.data import resolve_named_path
 
 if TYPE_CHECKING:
@@ -57,10 +55,6 @@ TIMELINE = "ts"
 
 # --voxel-size default, and the render size --render-voxel scales from when unset.
 DEFAULT_VOXEL_SIZE = 0.08
-
-# Mount frames as recorded on the tf stream.
-BASE_FRAME = "base_link"
-SENSOR_FRAME = "mid360_link"
 
 SENSOR_PATH_COLOR = [80, 160, 255]
 
@@ -126,6 +120,22 @@ def _parse_configs(
     return out
 
 
+def _pose_from_tf(tf: StreamTF, world_frame: str) -> FnTransformer[PointCloud2, PointCloud2]:
+    """Attach the tf pose at the cloud stamp. A failed lookup clears any
+    recorded pose so the cloud is dropped downstream."""
+
+    def attach(obs: Observation[PointCloud2]) -> Observation[PointCloud2]:
+        t = tf.get(
+            world_frame,
+            obs.data.frame_id,
+            time_point=obs.ts,
+            time_tolerance=TF_MATCH_TOLERANCE_S,
+        )
+        return obs.with_pose(t)
+
+    return FnTransformer(attach)
+
+
 def _log_edges(edges: NDArray[np.float32], entity: str) -> None:
     import rerun as rr
 
@@ -181,50 +191,6 @@ class _TfSync:
             for path, archetype in self._next.data.to_rerun(self._tree):
                 rr.log(path, archetype)
             self._next = next(self._pending, None)
-
-
-def _base_from_sensor(store: SqliteStore) -> Transform | None:
-    """Sensor to robot base link transform from the recorded tf stream."""
-    tf = StreamTF.from_store(store)
-    if tf is None:
-        return None
-    return tf.get(SENSOR_FRAME, BASE_FRAME)
-
-
-def _base_pose(pose: tuple[float, ...], ts: float, base_from_sensor: Transform) -> Transform:
-    """World to robot base link."""
-    px, py, pz, qx, qy, qz, qw = pose
-    sensor = Transform(
-        translation=Vector3(px, py, pz),
-        rotation=Quaternion(qx, qy, qz, qw),
-        frame_id="world",
-        child_frame_id=base_from_sensor.frame_id,
-        ts=ts,
-    )
-    return sensor + base_from_sensor
-
-
-def _plan_start(
-    pose: tuple[float, ...],
-    ts: float,
-    base_from_sensor: Transform | None,
-    base_height: float,
-    robot_height: float,
-) -> tuple[tuple[float, float, float], Transform | None]:
-    """Ground-projected planner start, plus the base pose when tf has the mount.
-
-    Without a tf stream the start is the sensor pose dropped by the robot height.
-    """
-    px, py, pz, *_ = pose
-    if base_from_sensor is None:
-        return (float(px), float(py), float(pz) - robot_height), None
-    base = _base_pose(pose, ts, base_from_sensor)
-    start = (
-        float(base.translation.x),
-        float(base.translation.y),
-        float(base.translation.z) - base_height,
-    )
-    return start, base
 
 
 def _log_odometry(
@@ -445,6 +411,7 @@ def _process_frame(
     planners: list[tuple[str, list[int], MLSPlanner]],
     goal: tuple[float, float, float],
     start: tuple[float, float, float],
+    sensor_z: float,
     render_voxel: float,
     clearance_clamp: float,
     hard_clearance: float,
@@ -453,9 +420,7 @@ def _process_frame(
     """Plan every config for one frame, log paths/map/metrics, return the ref timing."""
     import rerun as rr
 
-    assert ray_obs.pose_tuple is not None
     bounds = ray_obs.tags["region_bounds"]
-    _, _, pz, *_ = ray_obs.pose_tuple
     ox, oy, radius, z_min, z_max = bounds
     pts = ray_obs.data.points_f32()
     rr.set_time(TIMELINE, timestamp=ray_obs.ts)
@@ -464,7 +429,7 @@ def _process_frame(
     surface = nodes = edges = np.empty((0,), dtype=np.float32)
     for j, (label, color, planner) in enumerate(planners):
         t0 = perf_counter()
-        planner.update_region(pts, (ox, oy), radius, z_min, z_max, float(pz))
+        planner.update_region(pts, (ox, oy), radius, z_min, z_max, sensor_z)
         t1 = perf_counter()
         waypoints = planner.plan(start, goal)
         t2 = perf_counter()
@@ -500,10 +465,17 @@ def main(
     lidar_stream: str = typer.Option(
         "pointlio_lidar", "--lidar-stream", help="Lidar stream in the recording"
     ),
-    odom_stream: str = typer.Option(
-        "pointlio_odometry", "--odom-stream", help="Odometry stream in the recording"
+    world_frame: str = typer.Option(
+        "odom", "--world-frame", help="Fixed frame clouds are registered and planning runs in"
     ),
-    align_tol: float = typer.Option(0.05, "--align-tol", help="Lidar/odom alignment tolerance (s)"),
+    base_frame: str = typer.Option(
+        "base_link", "--base-frame", help="Frame whose tf pose is the planning start"
+    ),
+    start_z_offset: float = typer.Option(
+        BASE_LINK_HEIGHT,
+        "--start-z-offset",
+        help="Height of the base frame above the ground; subtracted from the start pose z",
+    ),
     voxel_size: float = typer.Option(
         DEFAULT_VOXEL_SIZE, "--voxel-size", help="Voxel edge length (m)"
     ),
@@ -618,12 +590,12 @@ def main(
             lidar = lidar.from_time(from_time)
         if to_time is not None:
             lidar = lidar.to_time(to_time)
-        odom = store.stream(odom_stream, Odometry).order_by("ts")
         tf = _tf_over(store, lidar)
+        tf_lookup = StreamTF.from_store(store)
+        if tf_lookup is None:
+            raise typer.BadParameter(f"{db_path} has no tf stream to register clouds from")
 
-        pose_tagged = lidar.align(odom, tolerance=align_tol).transform(
-            FnTransformer(attach_pose_from_odom)
-        )
+        pose_tagged = lidar.transform(_pose_from_tf(tf_lookup, world_frame))
         ray_pipeline = pose_tagged.transform(
             RayTraceMap(
                 voxel_size=voxel_size,
@@ -655,32 +627,25 @@ def main(
 
         rr.log("world/goal", rr.Points3D([goal], colors=[[255, 0, 0]], radii=0.1), static=True)
 
-        base_from_sensor = _base_from_sensor(store)
-        base_height = (
-            base_height_above_ground(robot_height, base_from_sensor.inverse())
-            if base_from_sensor is not None
-            else 0.0
+        rr.log(
+            "world/robot_body/outline",
+            rr.Boxes3D(
+                half_sizes=[ROBOT_LENGTH / 2, ROBOT_WIDTH / 2, robot_height / 2],
+                colors=[(0, 255, 127)],
+            ),
+            static=True,
         )
-        if base_from_sensor is not None:
-            rr.log(
-                "world/robot_body/outline",
-                rr.Boxes3D(
-                    half_sizes=[ROBOT_LENGTH / 2, ROBOT_WIDTH / 2, robot_height / 2],
-                    colors=[(0, 255, 127)],
-                ),
-                static=True,
-            )
-            # wall_clearance is the planner's proxy for the robot radius.
-            rr.log(
-                "world/robot_body/clearance",
-                rr.Cylinders3D(
-                    lengths=[robot_height],
-                    radii=[wall_clearance],
-                    colors=[(255, 120, 120, 80)],
-                    fill_mode="solid",
-                ),
-                static=True,
-            )
+        # wall_clearance is the planner's proxy for the robot radius.
+        rr.log(
+            "world/robot_body/clearance",
+            rr.Cylinders3D(
+                lengths=[robot_height],
+                radii=[wall_clearance],
+                colors=[(255, 120, 120, 80)],
+                fill_mode="solid",
+            ),
+            static=True,
+        )
         sensor_trail: list[tuple[float, float, float]] = []
 
         try:
@@ -689,14 +654,29 @@ def main(
                 tf_sync.up_to(ray_obs.ts)
                 if ray_obs.pose_tuple is None:
                     continue
-                start, base = _plan_start(
-                    ray_obs.pose_tuple, ray_obs.ts, base_from_sensor, base_height, robot_height
+                # Small tolerance keeps this lookup's ensure window inside the
+                # pose lookups' cached span, avoiding a double reload. The
+                # buffer warns on every miss, so a skipped frame is never silent.
+                base = tf_lookup.get(
+                    world_frame,
+                    base_frame,
+                    time_point=ray_obs.ts,
+                    time_tolerance=TF_MATCH_TOLERANCE_S,
                 )
+                if base is None:
+                    continue
+                start = (
+                    float(base.translation.x),
+                    float(base.translation.y),
+                    float(base.translation.z) - start_z_offset,
+                )
+                sensor_z = float(base.translation.z)
                 ref_timing = _process_frame(
                     ray_obs,
                     planners,
                     goal,
                     start,
+                    sensor_z,
                     render_voxel,
                     clearance_clamp,
                     ref_clearance,

@@ -10,15 +10,24 @@ dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "
 dimos-module-macros = { version = "=0.1.0", path = "../dimos-module-macros" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 nalgebra = "0.35.0"
+# Feature pins only. The workspace build enables these via the mls-planner
+# image stack, and without them per-package maturin builds resolve shared deps
+# differently and recompile their dependent trees instead of reusing artifacts.
+approx = "0.5"
+bytemuck = { version = "1", features = ["extern_crate_alloc"] }
+num-rational = { version = "0.4", default-features = false, features = ["num-bigint-std", "std"] }
+num-traits = { version = "0.2", features = ["libm"] }
 rayon = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "io-std", "io-util"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# Without preserve_order a Value::Object is a BTreeMap, so parsing the stdin line
+# alphabetises every key before the config struct ever sees it.
+serde_json = { version = "1", features = ["preserve_order"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 validator = { version = "0.20", features = ["derive"] }
 # Default features pull in ring via QUIC/TLS, which breaks static musl cross-linking.
-zenoh = { version = "=1.9.0", default-features = false, features = ["transport_tcp", "transport_udp", "unstable"] }
+zenoh = { version = "=1.9.0", default-features = false, features = ["transport_tcp", "transport_udp", "unstable", "shared-memory"] }
 
 [dev-dependencies]
 tracing-test = "0.2"

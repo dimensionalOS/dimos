@@ -22,7 +22,12 @@ from dimos.cli.dimos import main as app
 from dimos.evals import runner as runner_module
 from dimos.evals.types import EvalResult
 from dimos.evals.vqa import generate as generate_module, suite as suite_module
-from dimos.evals.vqa.generate import GenerationRequest, GenerationResult, PublicCase
+from dimos.evals.vqa.generate import (
+    GenerationRequest,
+    GenerationResult,
+    PublicCase,
+    VqaGenerationConfig,
+)
 
 
 def test_vqa_cli_exposes_generate_and_run() -> None:
@@ -44,7 +49,9 @@ def test_vqa_generate_cli_declares_single_image_input() -> None:
     assert "--start" in output
     assert "--stop" in output
     assert "--stride" in output
+    assert "--sync-tolerance" not in output
     assert "--output" in output
+    assert "absent or empty" in output
 
 
 def test_vqa_run_cli_declares_standalone_dataset_input() -> None:
@@ -57,10 +64,12 @@ def test_vqa_run_cli_declares_standalone_dataset_input() -> None:
 
 
 def test_vqa_generate_cli_runs_generation(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    seen: list[GenerationRequest] = []
+    seen: list[tuple[GenerationRequest, VqaGenerationConfig | None]] = []
 
-    def fake_generate(request: GenerationRequest) -> GenerationResult:
-        seen.append(request)
+    def fake_generate(
+        request: GenerationRequest, config: VqaGenerationConfig | None = None
+    ) -> GenerationResult:
+        seen.append((request, config))
         return GenerationResult(
             output=request.output_directory(),
             cases=(
@@ -90,17 +99,24 @@ def test_vqa_generate_cli_runs_generation(monkeypatch: pytest.MonkeyPatch, tmp_p
     )
 
     assert result.exit_code == 0
-    assert seen == [GenerationRequest(dataset="recording.db", image_index=3, output=tmp_path)]
+    assert seen == [
+        (
+            GenerationRequest(dataset="recording.db", image_index=3, output=tmp_path),
+            None,
+        )
+    ]
     assert "Generated 1 VQA case" in result.stdout
 
 
 def test_vqa_generate_cli_accepts_frame_range(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    seen: list[GenerationRequest] = []
+    seen: list[tuple[GenerationRequest, VqaGenerationConfig | None]] = []
 
-    def fake_generate(request: GenerationRequest) -> GenerationResult:
-        seen.append(request)
+    def fake_generate(
+        request: GenerationRequest, config: VqaGenerationConfig | None = None
+    ) -> GenerationResult:
+        seen.append((request, config))
         return GenerationResult(output=request.output_directory(), cases=())
 
     monkeypatch.setattr(generate_module, "generate_dataset", fake_generate)
@@ -125,14 +141,50 @@ def test_vqa_generate_cli_accepts_frame_range(
 
     assert result.exit_code == 0
     assert seen == [
-        GenerationRequest(
-            dataset="recording.db",
-            start=2,
-            stop=9,
-            stride=3,
-            output=tmp_path,
+        (
+            GenerationRequest(
+                dataset="recording.db",
+                start=2,
+                stop=9,
+                stride=3,
+                output=tmp_path,
+            ),
+            None,
         )
     ]
+
+
+def test_vqa_generate_cli_formats_expected_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_generate(
+        request: GenerationRequest, config: VqaGenerationConfig | None = None
+    ) -> GenerationResult:
+        raise ValueError("dataset has no 'tf' stream")
+
+    monkeypatch.setattr(generate_module, "generate_dataset", fake_generate)
+
+    result = CliRunner().invoke(
+        app,
+        ["evals", "vqa", "generate", "recording.db", "--image-index", "0"],
+    )
+
+    assert result.exit_code != 0
+    assert "dataset has no 'tf' stream" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_vqa_run_cli_formats_dataset_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def fail_load(dataset: Path) -> tuple[()]:
+        raise ValueError(f"invalid VQA dataset file: {dataset / 'cases.jsonl'}")
+
+    monkeypatch.setattr(suite_module, "load_suite", fail_load)
+
+    result = CliRunner().invoke(app, ["evals", "vqa", "run", str(tmp_path)])
+
+    assert result.exit_code != 0
+    assert "invalid VQA dataset file" in result.output
+    assert "Traceback" not in result.output
 
 
 def test_vqa_run_cli_runs_shared_evaluator(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -23,6 +23,7 @@ import inspect
 import shutil
 import sys
 import threading
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from dimos.core.coordination.blueprint_config.values import deep_merge, plain
@@ -295,6 +296,11 @@ class ModuleCoordinator(Resource):
             )
         return self._deployed_modules.get(names[0]) if names else None  # type: ignore[return-value]
 
+    @property
+    def transports(self) -> Mapping[tuple[str, type], Transport[Any]]:
+        """Every wired stream ``(name, type)`` and the transport carrying it."""
+        return MappingProxyType(self._transport_registry)
+
     def _send_on_system_modules(self) -> None:
         modules = list(self._deployed_modules.values())
         for module in modules:
@@ -325,7 +331,7 @@ class ModuleCoordinator(Resource):
                 instance = self.get_instance(instance_key)  # type: ignore[assignment]
                 instance.set_transport(original_name, transport)  # type: ignore[union-attr]
                 self._module_transports.setdefault(instance_key, {})[original_name] = transport
-                logger.info(
+                logger.debug(
                     "Transport",
                     name=remapped_name,
                     original_name=original_name,
@@ -664,7 +670,8 @@ def _rpc_name(instance_key: str, cls: type[ModuleBase]) -> str:
     return cls.__name__ if instance_key == cls.name else instance_key
 
 
-def _all_name_types(blueprint: Blueprint) -> set[tuple[str, type]]:
+def stream_name_types(blueprint: Blueprint) -> set[tuple[str, type]]:
+    """Every wired stream ``(name, type)`` in *blueprint*, remappings applied. No workers needed."""
     result = set()
     for bp in blueprint.active_blueprints:
         for conn in bp.streams:
@@ -675,7 +682,7 @@ def _all_name_types(blueprint: Blueprint) -> set[tuple[str, type]]:
 
 
 def _is_name_unique(blueprint: Blueprint, name: str) -> bool:
-    return sum(1 for n, _ in _all_name_types(blueprint) if n == name) == 1
+    return sum(1 for n, _ in stream_name_types(blueprint) if n == name) == 1
 
 
 def _get_transport_for(blueprint: Blueprint, name: str, stream_type: type) -> PubSubTransport[Any]:

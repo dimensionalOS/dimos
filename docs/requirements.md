@@ -64,4 +64,4 @@ If running on a headless Ubuntu server (no display), install OpenGL libraries fo
 sudo apt-get install -y libgl1 libegl1
 ```
 
-Nix users (`nix develop`) don't need this — the flake provides `libGL`, `libGLU`, and `mesa`.
+Nix users (`nix develop`) don't need this. The flake provides `libGL`, `libGLU`, and `mesa`.

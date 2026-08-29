@@ -23,7 +23,7 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.core.transport import pLCMTransport
+from dimos.core.transport_factory import make_transport
 
 
 class StartModule(Module):
@@ -45,7 +45,7 @@ class StartModule(Module):
 
 
 @pytest.fixture
-def start_module():
+def start_module(each_transport):
     blueprint = StartModule.blueprint()
     coordinator = ModuleCoordinator.build(blueprint)
     yield
@@ -53,8 +53,8 @@ def start_module():
 
 
 @pytest.fixture
-def get_collected_letters():
-    uppercase_transport = pLCMTransport("/uppercase")
+def get_collected_letters(each_transport):
+    uppercase_transport = make_transport("/uppercase")
     uppercase_transport.start()
     queue = Queue()
     uppercase_transport.subscribe(queue.put)

@@ -14,9 +14,9 @@ on:
 jobs:
   build:
     runs-on: [self-hosted, Linux]
+    environment: docker-hub
     permissions:
       contents: read
-      packages: write
 
     steps:
       - name: Fix permissions
@@ -46,7 +46,7 @@ jobs:
 
           # Check each docker image tag against branch list
           docker images --format "{{.Repository}}:{{.Tag}}|{{.ID}}" | \
-          grep "ghcr.io/dimensionalos" | \
+          grep -E "ghcr.io/dimensionalos|^dimensional/" | \
           grep -v ":<none>" | \
           while IFS='|' read image_ref id; do
             tag=$(echo "$image_ref" | cut -d: -f2)
@@ -70,7 +70,7 @@ jobs:
 
             # Keep newest image per tag
             docker images --format "{{.Repository}}|{{.Tag}}|{{.ID}}" | \
-            grep "ghcr.io/dimensionalos" | \
+            grep -E "ghcr.io/dimensionalos|^dimensional/" | \
             grep -v "<none>" | \
             while IFS='|' read repo tag id; do
               created_ts=$(docker inspect -f '{{.Created}}' "$id" 2>/dev/null)
@@ -104,7 +104,7 @@ jobs:
 
             # Remove ALL images except main and dev tags
             docker images --format "{{.Repository}}:{{.Tag}} {{.ID}}" | \
-            grep -E "ghcr.io/dimensionalos" | \
+            grep -E "ghcr.io/dimensionalos|^dimensional/" | \
             grep -vE ":(main|dev)$" | \
             awk '{print $2}' | xargs -r docker rmi -f || true
 
@@ -119,9 +119,8 @@ jobs:
       - uses: docker/login-action@v4.4.0
         if: ${{ inputs.should-run }}
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: dimensional
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       # required for github cache of docker layers
       - uses: crazy-max/ghaction-github-runtime@v4

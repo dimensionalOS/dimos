@@ -73,8 +73,9 @@ myModule = MyModule(frame_id="frame_id_override", device="CPU")
 ```
 
 ```results
+00:32:58.268 [inf][otocol/service/zenohservice.py] Zenoh session opened connect=[] gossip=True listen=['tcp/127.0.0.1:0'] mode=peer multicast_interface=lo
 Config(
-    rpc_transport=<class 'dimos.protocol.rpc.pubsubrpc.LCMRPC'>,
+    rpc_transport=<class 'dimos.protocol.rpc.zenohrpc.ZenohRPC'>,
     default_rpc_timeout=120.0,
     rpc_timeouts={'build': 86400.0, 'start': 1200.0},
     frame_id_prefix=None,
@@ -97,6 +98,7 @@ Config(
         zenoh_scouting=False,
         zenoh_interface='',
         zenoh_multicast=True,
+        zenoh_scout_addr='',
         zenoh_gossip=True,
         zenoh_connect_timeout=1.0,
         viewer='rerun',
@@ -120,7 +122,7 @@ Config(
         robot_rotation_diameter=0.6,
         nerf_speed=1.0,
         mcp_port=9990,
-        transport='lcm',
+        transport='zenoh',
         build_native=False,
         dtop=False,
         obstacle_avoidance=True,
@@ -131,7 +133,7 @@ Config(
         dimsim_headless=True,
         local_relay=False,
         relay_url=None,
-        dimos_cloud_url='https://login.dimensional.org',
+        dimos_cloud_url='https://api.dimensional.org',
         dimos_api_key=None
     ),
     publish_interval=0,

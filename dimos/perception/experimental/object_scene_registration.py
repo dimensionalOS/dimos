@@ -12,15 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import threading
 import time
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from numpy.typing import NDArray
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -46,8 +47,22 @@ from dimos.utils.reactive import backpressure
 logger = setup_logger()
 
 
+class ObjectSceneRegistrationConfig(ModuleConfig):
+    target_frame: str = "base_link"
+    prompt_mode: YoloePromptMode = YoloePromptMode.LRPC
+    detector_backend: Literal["yoloe", "owlv2", "moondream"] = "yoloe"
+    segmentation_backend: Literal["yolo", "edgetam"] = "yolo"
+    detector_confidence: float = 0.6
+    detect_on_request: bool = False
+    distance_threshold: float = 0.2
+    min_detections_for_permanent: int = 6
+    max_distance: float = 0.0
+    use_aabb: bool = False
+    max_obstacle_width: float = 0.0
+
+
 class ObjectSceneRegistrationModule(Module):
-    """Module for detecting objects in camera images using YOLO-E with 2D and 3D detection."""
+    """Register prompted camera detections as stable 3D scene objects."""
 
     color_image: In[Image]
     depth_image: In[Image]
@@ -59,50 +74,71 @@ class ObjectSceneRegistrationModule(Module):
     objects: Out[list[DetObject]]
     pointcloud: Out[PointCloud2]
 
-    _detector: Yoloe2DDetector | None = None
+    _detector: Any | None = None
+    _segmenter: Any | None = None
     _camera_info: CameraInfo | None = None
     _object_db: ObjectDB
+    _text_prompts: list[str]
+    _latest_aligned_frames: tuple[Image, Image] | None = None
+    _processing_lock: threading.RLock
     # A tuple assignment/read is atomic, so depth and its transform cannot be
     # observed from different frames by get_full_scene_pointcloud().
     _latest_scene_snapshot: tuple[Image, Transform | None] | None = None
 
-    def __init__(
-        self,
-        target_frame: str = "map",
-        prompt_mode: YoloePromptMode = YoloePromptMode.LRPC,
-        # ObjectDB tuning
-        distance_threshold: float = 0.2,
-        min_detections_for_permanent: int = 6,
-        # Object 3D reconstruction tuning
-        max_distance: float = 0.0,
-        use_aabb: bool = False,
-        max_obstacle_width: float = 0.0,
-        **kwargs: Any,
-    ) -> None:
+    config: ObjectSceneRegistrationConfig
+
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._target_frame = target_frame
-        self._prompt_mode = prompt_mode
+        self._target_frame = self.config.target_frame
+        self._prompt_mode = self.config.prompt_mode
+        self._detector_backend = self.config.detector_backend
+        self._segmentation_backend = self.config.segmentation_backend
+        self._detector_confidence = self.config.detector_confidence
+        self._detect_on_request = self.config.detect_on_request
         self._object_db = ObjectDB(
-            distance_threshold=distance_threshold,
-            min_detections_for_permanent=min_detections_for_permanent,
+            distance_threshold=self.config.distance_threshold,
+            min_detections_for_permanent=self.config.min_detections_for_permanent,
         )
-        self._max_distance = max_distance
-        self._use_aabb = use_aabb
-        self._max_obstacle_width = max_obstacle_width
+        self._processing_lock = threading.RLock()
+        self._text_prompts = []
+        self._max_distance = self.config.max_distance
+        self._use_aabb = self.config.use_aabb
+        self._max_obstacle_width = self.config.max_obstacle_width
 
     @rpc
     def start(self) -> None:
         super().start()
 
-        if self._prompt_mode == YoloePromptMode.LRPC:
-            model_name = "yoloe-11l-seg-pf.pt"
-        else:
-            model_name = "yoloe-11l-seg.pt"
+        if self._detector_backend == "owlv2":
+            from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
 
-        self._detector = Yoloe2DDetector(
-            model_name=model_name,
-            prompt_mode=self._prompt_mode,
-        )
+            self._detector = Owlv2Detector()
+            self._detector.start()
+        elif self._detector_backend == "moondream":
+            from dimos.models.vl.moondream import MoondreamVlModel
+
+            self._detector = MoondreamVlModel()
+            self._detector.start()
+        else:
+            if self._prompt_mode == YoloePromptMode.LRPC:
+                model_name = "yoloe-11l-seg-pf.pt"
+            else:
+                model_name = "yoloe-11l-seg.pt"
+            self._detector = Yoloe2DDetector(
+                model_name=model_name,
+                prompt_mode=self._prompt_mode,
+                conf=self._detector_confidence,
+            )
+
+        if self._segmentation_backend == "edgetam":
+            try:
+                from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
+
+                self._segmenter = EdgeTAMImageSegmenter()
+            except ModuleNotFoundError as e:
+                raise ModuleNotFoundError(
+                    "EdgeTAM requires the optional dependencies from dimos[misc]"
+                ) from e
 
         self.camera_info.subscribe(lambda msg: setattr(self, "_camera_info", msg))
 
@@ -118,11 +154,14 @@ class ObjectSceneRegistrationModule(Module):
     def stop(self) -> None:
         """Stop the module and clean up resources."""
 
-        if self._detector:
-            self._detector.stop()
-            self._detector = None
+        with self._processing_lock:
+            if self._detector:
+                self._detector.stop()
+                self._detector = None
+            self._segmenter = None
 
-        self._object_db.clear()
+            self._object_db.clear()
+            self._latest_aligned_frames = None
 
         logger.info("ObjectSceneRegistrationModule stopped")
         super().stop()
@@ -134,8 +173,43 @@ class ObjectSceneRegistrationModule(Module):
         bboxes: NDArray[np.float64] | None = None,
     ) -> None:
         """Set prompts for detection. Provide either text or bboxes, not both."""
-        if self._detector is not None:
+        with self._processing_lock:
+            self._set_prompts(text=text, bboxes=bboxes)
+
+    def _set_prompts(
+        self,
+        text: list[str] | None = None,
+        bboxes: NDArray[np.float64] | None = None,
+    ) -> None:
+        if self._detector_backend in {"owlv2", "moondream"}:
+            if bboxes is not None:
+                raise ValueError(f"{self._detector_backend} supports text prompts only")
+            self._text_prompts = text or []
+        elif self._detector is not None:
             self._detector.set_prompts(text=text, bboxes=bboxes)
+
+    @rpc
+    def scan_scene(self, text: list[str] | None = None) -> Detection3DArray:
+        """Run one serialized detection pass over the latest aligned RGB-D frame."""
+        with self._processing_lock:
+            if text is not None:
+                self._set_prompts(text=text)
+            frames = self._latest_aligned_frames
+            if frames is None:
+                return to_detection3d_array([], frame_id=self._target_frame)
+            objects = self._scan_scene_objects(frames)
+            return to_detection3d_array(
+                objects,
+                frame_id=self._target_frame,
+                ts=frames[0].ts,
+            )
+
+    def _scan_scene_objects(self, frames: tuple[Image, Image] | None = None) -> list[DetObject]:
+        """Process one frame and return only objects observed during this scan."""
+        frames = frames or self._latest_aligned_frames
+        if frames is None:
+            return []
+        return self._process_images(*frames)
 
     @rpc
     def select_object(self, track_id: int) -> dict[str, Any] | None:
@@ -245,31 +319,35 @@ class ObjectSceneRegistrationModule(Module):
         return pc
 
     @skill
-    def detect(self, *prompts: str) -> str:
+    def detect(self, prompts: list[str]) -> str:
         """Detect objects matching the given text prompts.
 
         Do NOT call this tool multiple times for one query. Pass all objects in a single call.
-        For example, to detect a cup and mouse, call detect("cup", "mouse") not detect("cup") then detect("mouse").
+        For example, to detect a cup and mouse, pass ["cup", "mouse"] in one call.
 
         Args:
-            prompts (str): Text descriptions of objects to detect (e.g., "person", "car", "dog")
+            prompts: Text descriptions of concrete object categories to detect.
 
         Returns:
             str: Detected objects with their object_id (stable UUID) and name.
 
         Example:
-            detect("person", "car", "dog")
-            detect("cup")
+            detect(["person", "car", "dog"])
+            detect(["cup"])
         """
         if not prompts:
             return "No prompts provided."
-        if self._detector is None:
-            return "Detector not initialized."
-
-        self._detector.set_prompts(text=list(prompts))
-        time.sleep(2.0)
-
-        detected = self.get_detected_objects()
+        with self._processing_lock:
+            if self._detector is None:
+                return "Detector not initialized."
+            self._set_prompts(text=prompts)
+            if self._detect_on_request:
+                detected = [obj.agent_encode() for obj in self._scan_scene_objects()]
+            else:
+                detected = None
+        if detected is None:
+            time.sleep(2.0)
+            detected = self.get_detected_objects()
         if not detected:
             return "No objects detected."
 
@@ -290,12 +368,16 @@ class ObjectSceneRegistrationModule(Module):
 
     def _on_aligned_frames(self, frames) -> None:  # type: ignore[no-untyped-def]
         color_msg, depth_msg = frames
-        self._process_images(color_msg, depth_msg)
+        self._latest_aligned_frames = (color_msg, depth_msg)
+        if self._detect_on_request:
+            return
+        with self._processing_lock:
+            self._process_images(color_msg, depth_msg)
 
-    def _process_images(self, color_msg: Image, depth_msg: Image) -> None:
+    def _process_images(self, color_msg: Image, depth_msg: Image) -> list[DetObject]:
         """Process synchronized color and depth images (runs in background thread)."""
         if not self._detector or not self._camera_info:
-            return
+            return []
 
         color_image = color_msg
         # Convert depth to meters (float32)
@@ -308,30 +390,6 @@ class ObjectSceneRegistrationModule(Module):
             data=depth_cv, format=ImageFormat.DEPTH, frame_id=depth_msg.frame_id, ts=depth_msg.ts
         )
 
-        # Run 2D detection
-        detections_2d: ImageDetections2D[Any] = self._detector.process_image(color_image)
-
-        detections_2d_msg = Detection2DArray(
-            detections_length=len(detections_2d.detections),
-            header=Header(color_image.ts, color_image.frame_id or ""),
-            detections=[det.to_ros_detection2d() for det in detections_2d.detections],
-        )
-        self.detections_2d.publish(detections_2d_msg)
-
-        # Process 3D detections
-        self._process_3d_detections(detections_2d, color_image, depth_image)
-
-    def _process_3d_detections(
-        self,
-        detections_2d: ImageDetections2D[Any],
-        color_image: Image,
-        depth_image: Image,
-    ) -> None:
-        """Convert 2D detections to 3D and publish."""
-        if self._camera_info is None:
-            return
-
-        # Look up transform from camera frame to target frame (e.g., map)
         camera_transform = None
         if self._target_frame != color_image.frame_id:
             camera_transform = self.tfbuffer.get(
@@ -341,9 +399,57 @@ class ObjectSceneRegistrationModule(Module):
                 0.1,
                 forward_tolerance=0.2,
             )
-            if camera_transform is None:
-                logger.info("Failed to lookup transform from camera frame to target frame")
-                return
+
+        if self._detector_backend == "owlv2":
+            if not self._text_prompts:
+                detections_2d = ImageDetections2D(color_image, [])
+            else:
+                detections_2d = self._detector.query_detections(
+                    color_image,
+                    self._text_prompts,
+                    threshold=self._detector_confidence,
+                )
+        elif self._detector_backend == "moondream":
+            detections_2d = ImageDetections2D(color_image, [])
+            for class_id, prompt in enumerate(self._text_prompts):
+                prompted = self._detector.query_detections(color_image, prompt)
+                for detection in prompted.detections:
+                    # Moondream's per-query indices are not temporal track IDs.
+                    detection.track_id = -1
+                    detection.class_id = class_id
+                detections_2d.detections.extend(prompted.detections)
+        else:
+            detections_2d = self._detector.process_image(color_image)
+
+        if self._segmenter is not None:
+            detections_2d = self._segmenter.segment(detections_2d)
+
+        detections_2d_msg = Detection2DArray(
+            detections_length=len(detections_2d.detections),
+            header=Header(color_image.ts, color_image.frame_id or ""),
+            detections=[det.to_ros_detection2d() for det in detections_2d.detections],
+        )
+        self.detections_2d.publish(detections_2d_msg)
+
+        # Process 3D detections
+        return self._process_3d_detections(
+            detections_2d, color_image, depth_image, camera_transform
+        )
+
+    def _process_3d_detections(
+        self,
+        detections_2d: ImageDetections2D[Any],
+        color_image: Image,
+        depth_image: Image,
+        camera_transform: Transform | None,
+    ) -> list[DetObject]:
+        """Convert 2D detections to 3D and publish."""
+        if self._camera_info is None:
+            return []
+
+        if self._target_frame != color_image.frame_id and camera_transform is None:
+            logger.warning("Failed to lookup transform from camera frame to target frame")
+            return []
 
         # Cache depth and transform together, only after the lookup succeeds.
         self._latest_scene_snapshot = (depth_image, camera_transform)
@@ -358,11 +464,11 @@ class ObjectSceneRegistrationModule(Module):
             use_aabb=self._use_aabb,
             max_obstacle_width=self._max_obstacle_width,
         )
-        if not objects:
-            return
 
-        # Add objects to spatial memory database
-        self._object_db.add_objects(objects)
+        # Empty observations still advance pending-object expiry.
+        observed_objects = self._object_db.add_objects(objects)
+        if not objects:
+            return []
 
         # Publish ALL permanent objects so downstream consumers get the full set,
         # not just this frame's batch (which may be a subset of what's on the table).
@@ -375,4 +481,4 @@ class ObjectSceneRegistrationModule(Module):
         objects_for_pc = all_permanent
         aggregated_pc = aggregate_pointclouds(objects_for_pc)
         self.pointcloud.publish(aggregated_pc)
-        return
+        return observed_objects

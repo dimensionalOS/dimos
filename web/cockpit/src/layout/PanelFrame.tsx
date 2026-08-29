@@ -6,8 +6,8 @@
 
 import { type ReactNode, useEffect, useState } from "react";
 import type { PanelSpec } from "@dimos/shared";
-import { useChannel } from "../session/hooks.ts";
-import type { ChannelStore } from "../session/store.ts";
+import type { ChannelStore } from "@dimos/sdk";
+import { useStoreChannel } from "@dimos/sdk/react";
 import styles from "./PanelFrame.module.css";
 
 /** Sink-side draw diagnostics, mutated in place and sampled by the badge. */
@@ -29,7 +29,7 @@ export function Badge({ store, ch, health, staleMs, unit, testId }: {
   unit: string;
   testId: string;
 }) {
-  const { stats } = useChannel(store, ch);
+  const { stats } = useStoreChannel(store, ch);
   let text: string;
   let error = false;
   let stale = false;
