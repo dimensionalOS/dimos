@@ -151,6 +151,7 @@ def test_g1_collection_streams_do_not_require_world_poses() -> None:
     ]
 
 
+@pytest.mark.self_hosted
 def test_g1_manipulation_model_tracks_full_body_but_plans_only_arms() -> None:
     config = g1_manipulation_model_config()
 
