@@ -7,6 +7,7 @@ members = [
     "dimos/mapping/ray_tracing/rust/py",
     "dimos/navigation/nav_3d/mls_planner/rust",
     "dimos/navigation/nav_3d/mls_planner/rust/py",
+    "dimos/hardware/sensors/lidar/livox/rust",
     "dimos/hardware/sensors/lidar/virtual_mid360",
     "examples/native-modules/rust",
 ]

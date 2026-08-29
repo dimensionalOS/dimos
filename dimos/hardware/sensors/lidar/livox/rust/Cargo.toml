@@ -1,0 +1,11 @@
+[package]
+name = "dimos-livox"
+version = "0.1.0"
+edition = "2021"
+description = "Livox SDK2 wire protocol and Mid-360 driver for dimos"
+license = "Apache-2.0"
+
+[lib]
+
+[dependencies]
+crc = "3"
