@@ -62,7 +62,7 @@ from dimos.robot.diy.alfred.blueprints.alfred import alfred
 logger = logging.getLogger(__name__)
 
 FRONT_REALSENSE_SERIAL = "260922302422"  # D455, front-facing (librealsense serial)
-BACK_REALSENSE_SERIAL = "327122071721"  # D435if, back-facing (librealsense serial)
+BACK_REALSENSE_SERIAL = "327122073401"  # D435if, back-facing (librealsense serial; unit swapped 2026-08-29)
 
 # Highest resolution both models stream color AND aligned depth at together.
 _CAM_WIDTH, _CAM_HEIGHT, _CAM_FPS = 1280, 720, 15
