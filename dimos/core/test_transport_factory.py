@@ -26,6 +26,7 @@ from dimos.core.transport import (
 from dimos.core.transport_factory import (
     apply_transport_arg,
     default_zenoh_qos,
+    default_zenoh_queue_capacity,
     make_transport,
     rpc_backend,
     session_config,
@@ -91,8 +92,19 @@ def test_default_zenoh_qos_agent_channels_never_drop() -> None:
 
 
 def test_default_zenoh_qos_everything_else_uses_zenoh_defaults() -> None:
-    assert default_zenoh_qos("/cmd_vel", Twist) is None
     assert default_zenoh_qos("/tool_stream") is None
+
+
+def test_default_zenoh_qos_realtime_control_drops_stale_values() -> None:
+    assert default_zenoh_qos("/cmd_vel", Twist) == QOS_LATEST_WINS
+    assert default_zenoh_qos("/body_tracking") == QOS_LATEST_WINS
+
+
+def test_default_zenoh_queue_capacity_bounds_realtime_work() -> None:
+    assert default_zenoh_queue_capacity("/body_tracking") == 1
+    assert default_zenoh_queue_capacity("/motor_command") == 1
+    assert default_zenoh_queue_capacity("/teleop_buttons") == 16
+    assert default_zenoh_queue_capacity("/tool_stream") == 10000
 
 
 def test_make_transport_zenoh_typed_carries_qos() -> None:
@@ -103,6 +115,11 @@ def test_make_transport_zenoh_typed_carries_qos() -> None:
 def test_make_transport_zenoh_pickled_carries_qos() -> None:
     t = make_transport("/human_input", g=ZENOH)
     assert t._zenoh_topic.qos == QOS_NEVER_DROP
+
+
+def test_make_transport_zenoh_realtime_topic_carries_capacity() -> None:
+    t = make_transport("/cmd_vel", Twist, g=ZENOH)
+    assert t.topic.queue_capacity == 1
 
 
 def test_rpc_backend_resolves_per_transport() -> None:

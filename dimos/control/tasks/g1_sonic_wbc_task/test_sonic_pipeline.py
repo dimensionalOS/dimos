@@ -21,6 +21,7 @@ import onnxruntime as ort  # type: ignore[import-untyped]
 import pytest
 
 from dimos.control.tasks.g1_sonic_wbc_task.sonic_pipeline import (
+    DDS_TO_ONNX,
     DEFAULT_ANGLES_DDS,
     NUM_JOINTS,
     SMPL_JOINTS_OFFSET,
@@ -329,9 +330,13 @@ def test_planner_transition_blends_pose_token_to_each_live_planner_token(
     )
     _policy_step(pipeline)
     assert pipeline.reference_transition_active is False
+    assert pipeline.prepare_planner_transition() is True
+    assert pipeline.snapshot()["stream_active"] is True
+    assert pipeline.snapshot()["planner_transition_preparing"] is True
     planner_qpos = np.zeros((2, 36), dtype=np.float32)
     planner_qpos[:, 3] = 1.0
     pipeline._apply_planner_result([planner_qpos, np.array(2, dtype=np.int64)])
+    assert pipeline.planner_transition_ready is True
 
     planner_tokens = iter(
         [
@@ -361,7 +366,21 @@ def test_planner_transition_blends_pose_token_to_each_live_planner_token(
 
 
 def test_planner_transition_requires_a_previous_stream_token(pipeline: SonicPipeline) -> None:
+    assert pipeline.prepare_planner_transition() is False
     assert pipeline.begin_planner_transition(0.5) is False
+
+
+def test_planner_prepare_uses_measured_joint_context(pipeline: SonicPipeline) -> None:
+    pipeline._cur_q_dds = np.arange(NUM_JOINTS, dtype=np.float32)
+    pipeline._last_reference_token = np.zeros(64, dtype=np.float32)
+    pipeline._last_token_was_stream = True
+    pipeline._use_stream = True
+
+    assert pipeline.prepare_planner_transition() is True
+    context = pipeline._build_planner_context()
+
+    expected_q = np.broadcast_to(pipeline._cur_q_dds[DDS_TO_ONNX], (context.shape[0], 29))
+    np.testing.assert_array_equal(context[:, 7:36], expected_q)
 
 
 @pytest.mark.parametrize("duration", [0.0, -0.1, float("inf"), float("nan")])

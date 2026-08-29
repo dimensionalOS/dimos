@@ -37,6 +37,9 @@ def test_webxr_blueprint_resolves_safe_lifecycle_defaults(
     code = f"""
 from dimos.core.global_config import global_config
 global_config.update(simulation={simulation!r}, viewer="none")
+from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.robot.get_all_blueprints import get_blueprint_by_name
 
 blueprint = get_blueprint_by_name("unitree-g1-sonic-webxr-teleop")
@@ -52,6 +55,22 @@ assert task.params["default_ramp_seconds"] == {ramp_seconds!r}
 assert task.params["decimation"] == {decimation!r}
 assert task.params["zmq_enabled"] is False
 assert coordinator.kwargs["pose_transition_seconds"] == 0.5
+assert blueprint.global_config_overrides["transport"] == "zenoh"
+assert blueprint.global_config_overrides["zenoh_mode"] == "peer"
+expected_topics = {{
+    ("motor_states", JointState): "dimos/g1/motor_states/sensor_msgs.JointState",
+    ("imu", Imu): "dimos/g1/imu/sensor_msgs.Imu",
+    ("motor_command", MotorCommandArray):
+        "dimos/g1/motor_command/sensor_msgs.MotorCommandArray",
+}}
+for key, expected_topic in expected_topics.items():
+    transport = blueprint.transport_map[key]
+    assert transport.topic.key_expr == expected_topic
+    assert transport.topic.queue_capacity == 1
+if {simulation!r}:
+    assert coordinator.kwargs["hardware"][0].adapter_type == "sim_mujoco_g1"
+else:
+    assert coordinator.kwargs["hardware"][0].adapter_type == "transport_zenoh"
 """
     subprocess.run([sys.executable, "-c", code], check=True)
 

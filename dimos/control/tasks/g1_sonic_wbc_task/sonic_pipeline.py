@@ -660,6 +660,8 @@ class SonicPipeline:
         self._reference_transition_start_token: NDArray[Any] | None = None
         self._reference_transition_step = 0
         self._reference_transition_steps = 0
+        self._planner_transition_preparing = False
+        self._planner_transition_ready = False
         # Direct planner command (set_planner_command); None -> twist-derived
         self._planner_cmd: dict[str, Any] | None = None
         self._upper_vel_dds: NDArray[Any] | None = None
@@ -767,6 +769,7 @@ class SonicPipeline:
     def set_source_stream(self, use_stream: bool) -> None:
         """Command-topic planner-flag inverse: True -> pose-topic motion."""
         self._clear_reference_transition()
+        self._clear_planner_transition_prepare()
         if use_stream != self._use_stream:
             self._needs_replan = not use_stream
             # Motion-source switch = heading re-anchor (C++ sets
@@ -813,24 +816,71 @@ class SonicPipeline:
         self._start_reference_transition(start_token, duration_seconds)
         return True
 
-    def begin_planner_transition(self, duration_seconds: float) -> bool:
-        """Blend from the last streamed token to the balancing planner.
+    @property
+    def planner_transition_preparing(self) -> bool:
+        return self._planner_transition_preparing
 
-        Returns ``False`` when the policy has not produced a streamed token,
-        in which case planner is already the last decoder reference.
-        """
-        self._validate_reference_transition_duration(duration_seconds)
+    @property
+    def planner_transition_ready(self) -> bool:
+        return self._planner_transition_preparing and self._planner_transition_ready
+
+    def prepare_planner_transition(self) -> bool:
+        """Request a fresh planner trajectory while continuing the pose stream."""
         if (
             not self._use_stream
             or self._last_reference_token is None
             or not self._last_token_was_stream
         ):
             return False
+        self._planner_transition_preparing = True
+        self._planner_transition_ready = False
+        self._discard_pending_planner()
+        self._needs_replan = True
+        return True
+
+    def retry_planner_transition(self) -> bool:
+        """Discard a failed/stale planner request and submit from measured state again."""
+        if not self._planner_transition_preparing:
+            return False
+        self._planner_transition_ready = False
+        self._discard_pending_planner()
+        self._needs_replan = True
+        return True
+
+    def begin_planner_transition(self, duration_seconds: float) -> bool:
+        """Blend from the held stream token to a freshly prepared planner."""
+        self._validate_reference_transition_duration(duration_seconds)
+        if (
+            not self._use_stream
+            or not self.planner_transition_ready
+            or self._last_reference_token is None
+            or not self._last_token_was_stream
+            or self._trajectory is None
+            or self._trajectory.num_frames <= 0
+        ):
+            return False
 
         start_token = self._last_reference_token.copy()
-        self.stop_clip()
+        self._use_stream = False
+        self._streamed = None
+        self._streamed_frame = 0
+        self._merger.reset()
+        self._needs_replan = False
+        self._reset_heading_alignment()
+        self._anchor_planner_heading()
+        self._clear_planner_transition_prepare()
         self._start_reference_transition(start_token, duration_seconds)
         return True
+
+    def _discard_pending_planner(self) -> None:
+        if self._planner_future is not None and not self._planner_future.done():
+            self._planner_future.cancel()
+        self._planner_future = None
+        self._planner_started_at = None
+
+    def _clear_planner_transition_prepare(self) -> None:
+        self._planner_transition_preparing = False
+        self._planner_transition_ready = False
 
     @staticmethod
     def _validate_reference_transition_duration(duration_seconds: float) -> None:
@@ -921,6 +971,7 @@ class SonicPipeline:
         self._merger.reset()
         self._needs_replan = True
         self._reset_heading_alignment()
+        self._clear_planner_transition_prepare()
 
     def apply_pose_message(self, fields: dict) -> dict:
         """Merge one decoded pose-topic chunk; returns a merge summary."""
@@ -967,6 +1018,7 @@ class SonicPipeline:
         self._streamed_frame = 0
         self._use_stream = False
         self._clear_reference_transition()
+        self._clear_planner_transition_prepare()
         self._last_reference_token = None
         self._last_token_was_stream = False
         self._planner_cmd = None
@@ -1098,7 +1150,11 @@ class SonicPipeline:
 
     def _build_planner_context(self) -> NDArray:
         context = np.zeros((4, 36), dtype=np.float32)
-        if self._trajectory is not None and self._trajectory.num_frames > 4:
+        if (
+            not self._planner_transition_preparing
+            and self._trajectory is not None
+            and self._trajectory.num_frames > 4
+        ):
             traj = self._trajectory
             start = min(self._traj_frame + LOOK_AHEAD_FRAMES, traj.num_frames - 1)
             for n in range(4):
@@ -1111,7 +1167,7 @@ class SonicPipeline:
             for n in range(4):
                 context[n, 0:3] = root_pos
                 context[n, 3:7] = self._cur_quat
-                context[n, 7:36] = self._cur_q_dds
+                context[n, 7:36] = self._cur_q_dds[DDS_TO_ONNX]
         return context
 
     def _build_planner_inputs(self) -> dict:
@@ -1199,6 +1255,10 @@ class SonicPipeline:
             self._apply_planner_result(self._planner_future.result())
         except Exception as exc:
             logger.warning("SonicPipeline planner inference failed", error=repr(exc))
+            if self._planner_transition_preparing:
+                self._needs_replan = True
+        if self._planner_transition_preparing and not self._planner_transition_ready:
+            self._needs_replan = True
         if self._planner_started_at is not None:
             self._planner_durations_ms.append(
                 (time.perf_counter() - self._planner_started_at) * 1000.0
@@ -1215,7 +1275,11 @@ class SonicPipeline:
             return
         new_traj = self._resample_to_50hz(qpos_30hz, num_frames)
 
-        if self._trajectory is not None and self._trajectory.num_frames > 0:
+        if (
+            not self._planner_transition_preparing
+            and self._trajectory is not None
+            and self._trajectory.num_frames > 0
+        ):
             old, old_f = self._trajectory, self._traj_frame
             blend = min(BLEND_FRAMES, new_traj.num_frames)
             for f in range(blend):
@@ -1228,14 +1292,24 @@ class SonicPipeline:
             for f in range(min(blend, new_traj.num_frames - 1)):
                 new_traj.joint_vel[f] = (new_traj.joint_pos[f + 1] - new_traj.joint_pos[f]) * 50.0
 
-        if not self._heading_initialized and new_traj.num_frames > 0:
-            init_heading = _calc_heading_quat(self._cur_quat)
-            init_ref_inv = _calc_heading_quat_inv(new_traj.root_quat[0])
-            self._heading_delta_quat = _quat_multiply(init_heading, init_ref_inv)
-            self._heading_initialized = True
-
         self._trajectory = new_traj
         self._traj_frame = 0
+        if self._planner_transition_preparing:
+            # Keep the stream's heading alignment unchanged until the source
+            # switch. The fresh planner is anchored immediately before blend.
+            self._planner_transition_ready = True
+        else:
+            self._anchor_planner_heading()
+
+    def _anchor_planner_heading(self) -> None:
+        if self._heading_initialized or self._trajectory is None:
+            return
+        if self._trajectory.num_frames <= 0:
+            return
+        init_heading = _calc_heading_quat(self._cur_quat)
+        init_ref_inv = _calc_heading_quat_inv(self._trajectory.root_quat[0])
+        self._heading_delta_quat = _quat_multiply(init_heading, init_ref_inv)
+        self._heading_initialized = True
 
     def _resample_to_50hz(self, qpos_30hz: NDArray, n30: int) -> _Trajectory:
         n50 = max(2, int(n30 / 30.0 * 50.0))
@@ -1338,7 +1412,7 @@ class SonicPipeline:
             and mode not in STATIC_MODES
             and self._replan_timer >= interval
         )
-        if not self._use_stream and (
+        if (not self._use_stream or self._planner_transition_preparing) and (
             self._needs_replan
             or (self._replan_timer >= interval and moving)
             or traj_low
@@ -1506,6 +1580,8 @@ class SonicPipeline:
             "stream_encode_mode": self._streamed.encode_mode if self._streamed else -1,
             "reference_transition_active": self.reference_transition_active,
             "reference_transition_progress": self.reference_transition_progress,
+            "planner_transition_preparing": self._planner_transition_preparing,
+            "planner_transition_ready": self.planner_transition_ready,
             "vr_active": self._vr_active(),
             "vr_age_sec": (
                 round(time.perf_counter() - self._vr_time, 3) if self._vr_pos is not None else -1.0
