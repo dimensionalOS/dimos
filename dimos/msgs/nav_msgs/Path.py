@@ -198,7 +198,7 @@ class Path(Timestamped):
 
         Args:
             color: RGB color tuple for the path line
-            z_offset: Height above floor to render path (default 0.5m to avoid costmap occlusion)
+            z_offset: Height above floor to render path (default 0.2m to avoid costmap occlusion)
             radii: Thickness of the path line (default 0.05m = 5cm)
 
         Returns:
