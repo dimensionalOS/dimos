@@ -334,7 +334,7 @@ class TestDescribeTask:
         assert execute["params"] == ["trajectory"]
         assert "trajectory" in execute["signature"]
         assert desc["commands"]["cancel"]["params"] == []
-        assert desc["streams"] == []
+        assert desc["streams"] == [("joint_command", "claim_overlap")]
 
     def test_reports_velocity_stream_route(self, coordinator):
         task = CommandRecordingTask("velocity1")

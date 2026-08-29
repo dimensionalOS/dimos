@@ -68,7 +68,6 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -198,7 +197,6 @@ class ControlCoordinator(Module):
         # dispatch. They must stay out of _dispatch: the twist mapper itself
         # dispatches joint_command, and _task_lock is not reentrant.
         self._stream_pre_hooks: dict[str, Callable[[Any], None]] = {
-            "joint_command": self._map_joint_positions_to_trajectory,
             "twist_command": self._map_twist_to_base_joints,
         }
 
@@ -595,8 +593,6 @@ class ControlCoordinator(Module):
                 return
             with self._task_lock:
                 active = {stream for stream, entries in self._routes.items() if entries}
-                if self._trajectory_task is not None:
-                    active.add("joint_command")
             with self._hardware_lock:
                 has_base = any(
                     hw.component.hardware_type == HardwareType.BASE
@@ -703,28 +699,6 @@ class ControlCoordinator(Module):
         if names:
             joint_state = JointState(name=names, velocity=velocities)
             self._dispatch("joint_command", joint_state)
-
-    def _map_joint_positions_to_trajectory(self, msg: JointState) -> None:
-        """Route position-bearing joint commands through the canonical JTT limiter."""
-        if not msg.position or len(msg.name) != len(msg.position):
-            return
-        with self._task_lock:
-            task = self._trajectory_task
-            if task is None:
-                return
-            claimed = task.claim().joints
-            selected = [
-                (name, position)
-                for name, position in zip(msg.name, msg.position, strict=True)
-                if name in claimed
-            ]
-            if not selected:
-                return
-            trajectory = JointTrajectory(
-                joint_names=[name for name, _ in selected],
-                points=[TrajectoryPoint(positions=[position for _, position in selected])],
-            )
-            task.execute(trajectory, {})
 
     @rpc
     def set_estop(self, estopped: bool) -> bool:

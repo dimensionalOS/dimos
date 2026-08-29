@@ -38,6 +38,7 @@ from dimos.control.task import (
     JointCommandOutput,
     ResourceClaim,
 )
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
@@ -233,6 +234,23 @@ class JointTrajectoryTask(BaseControlTask):
             priority=self._config.priority,
             mode=ControlMode.SERVO_POSITION,
         )
+
+    def on_joint_command(self, msg: JointState, t_now: float) -> bool:
+        """Convert streamed joint positions into a velocity-bounded trajectory target."""
+        if not msg.position or len(msg.name) != len(msg.position):
+            return False
+        selected = [
+            (name, position)
+            for name, position in zip(msg.name, msg.position, strict=True)
+            if name in self._joint_names
+        ]
+        if not selected:
+            return False
+        trajectory = JointTrajectory(
+            joint_names=[name for name, _ in selected],
+            points=[TrajectoryPoint(positions=[position for _, position in selected])],
+        )
+        return self.execute(trajectory, {}).status is TrajectoryExecutionStatus.ACCEPTED
 
     def is_active(self) -> bool:
         """Check if task should run this tick."""
@@ -518,24 +536,38 @@ class JointTrajectoryTask(BaseControlTask):
         Returns:
             Progress as fraction, or 0.0 if not executing
         """
-        if self._state != TrajectoryState.EXECUTING or self._trajectory is None:
+        if self._state != TrajectoryState.EXECUTING:
             return 0.0
-        if self._trajectory.duration <= 0.0:
-            return 0.0
-        t_elapsed = t_now - self._start_time
-        return min(1.0, t_elapsed / self._trajectory.duration)
+        progress, _elapsed, _remaining = self._active_run_status(t_now)
+        return progress
+
+    def _active_run_status(self, t_now: float) -> tuple[float, float, float]:
+        """Aggregate timing conservatively across every active trajectory run."""
+        runs = {id(run): run for run, _index in self._motions.values()}.values()
+        progresses: list[float] = []
+        elapsed_times: list[float] = []
+        remaining_times: list[float] = []
+        for run in runs:
+            elapsed = 0.0 if run.start_time is None else max(0.0, t_now - run.start_time)
+            duration = run.trajectory.duration
+            progress = 0.0 if duration <= 0.0 else min(1.0, elapsed / duration)
+            progresses.append(progress)
+            elapsed_times.append(elapsed)
+            remaining_times.append(max(0.0, duration - elapsed))
+        if not progresses:
+            return 0.0, 0.0, 0.0
+        return min(progresses), max(elapsed_times), max(remaining_times)
 
     def get_status(self, t_now: float) -> TrajectoryStatus:
         """Return a non-destructive snapshot of the current execution state."""
 
         if self._state == TrajectoryState.EXECUTING:
-            progress = self.get_progress(t_now)
-            elapsed = 0.0 if self._pending_start else max(0.0, t_now - self._start_time)
+            progress, elapsed, remaining = self._active_run_status(t_now)
             return TrajectoryStatus(
                 state=self._state,
                 progress=progress,
                 time_elapsed=elapsed,
-                time_remaining=max(0.0, self._last_duration - elapsed),
+                time_remaining=remaining,
             )
         completed = self._state == TrajectoryState.COMPLETED
         return TrajectoryStatus(

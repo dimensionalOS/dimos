@@ -163,14 +163,15 @@ def _streaming_coordinator(make_coordinator):
 
 
 class TestJointCommandRouting:
-    def test_position_only_updates_trajectory_task(self, make_coordinator):
+    def test_position_only_updates_trajectory_task_once(self, make_coordinator, mocker):
         coordinator, taps = _streaming_coordinator(make_coordinator)
+        trajectory = coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)
+        execute = mocker.spy(trajectory, "execute")
 
         taps["joint_command"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
 
-        assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)._trajectory.points[
-            -1
-        ].positions == [
+        assert execute.call_count == 1
+        assert trajectory._trajectory.points[-1].positions == [
             0.1,
             0.2,
         ]
@@ -776,15 +777,17 @@ class TestCardRoutingContract:
         # The default path: routes are keyed by the card's own stream name.
         coordinator, _ = _streaming_coordinator(make_coordinator)
 
-        assert coordinator.describe_task(JOINT_TRAJECTORY_TASK_NAME)["streams"] == []
+        assert coordinator.describe_task(JOINT_TRAJECTORY_TASK_NAME)["streams"] == [
+            ("joint_command", "claim_overlap")
+        ]
 
-    def test_cardless_known_type_does_not_warn(self, make_coordinator, mocker):
+    def test_known_type_with_card_does_not_warn(self, make_coordinator, mocker):
         warn = mocker.patch.object(coord_mod.logger, "warning")
         coordinator, _ = make_coordinator()
         coordinator.start()
         warn.reset_mock()
 
-        # trajectory is a real type with an intentionally empty card.
+        # trajectory is a known type with a valid declared stream handler.
         coordinator.add_task(RecordingTask("traj", frozenset(ARM_JOINTS)), task_type="trajectory")
 
         assert not any("unknown task_type" in str(c.args[0]) for c in warn.call_args_list)
