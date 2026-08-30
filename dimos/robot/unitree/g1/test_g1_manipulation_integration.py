@@ -18,10 +18,10 @@ import pytest
 
 pytest.importorskip("roboplan.core")
 
+from dimos.manipulation.planning.planners import roboplan_planner as roboplan_planner_module
 from dimos.manipulation.planning.planners.roboplan_config import RoboPlanPlannerConfig
-from dimos.manipulation.planning.planners.roboplan_planner import RoboPlanPlanner
 from dimos.manipulation.planning.spec.enums import PlanningStatus
-from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
+from dimos.manipulation.planning.world import roboplan_world as roboplan_world_module
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.unitree.g1.manip_config import (
     G1_LEFT_ARM_JOINTS,
@@ -35,7 +35,7 @@ pytestmark = pytest.mark.self_hosted
 
 def test_full_body_state_supports_collision_checked_arm_only_plan() -> None:
     config = g1_manipulation_model_config()
-    world = RoboPlanWorld()
+    world = roboplan_world_module.RoboPlanWorld()
     world.load_model(config)
     world.finalize()
     full_body_state = JointState(
@@ -55,7 +55,9 @@ def test_full_body_state_supports_collision_checked_arm_only_plan() -> None:
         position=[*G1_READY_JOINTS["left_arm"], *G1_READY_JOINTS["right_arm"]],
     )
 
-    result = RoboPlanPlanner(world, RoboPlanPlannerConfig()).plan_selected_joint_path(
+    result = roboplan_planner_module.RoboPlanPlanner(
+        world, RoboPlanPlannerConfig()
+    ).plan_selected_joint_path(
         world,
         selection,
         start,
