@@ -88,12 +88,12 @@ xarm6_worldbelief = autoconnect(
             tf_extra_links=["link_base"],
         ),
     ),
+    # TODO: tf tree is broken here; RealSenseCamera no longer publishes its mount
+    # edge, so camera_link needs a parent (e.g. from the arm) to resolve into world.
     RealSenseCamera.blueprint(
         width=640,
         height=480,
         fps=15,
-        base_frame_id="link6",
-        base_transform=XARM6_WORLDBELIEF_CAMERA_TRANSFORM,
     ),
     RerunBridgeModule.blueprint(
         blueprint=_rerun_blueprint,
