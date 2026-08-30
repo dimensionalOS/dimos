@@ -22,9 +22,11 @@ refuses with a plain text "Cannot start X: capability Y is held by Z" result, in
 which case the LLM decides what to do (typically: call the appropriate stop tool,
 then retry).
 
-Capabilities are plain strings. Today the only declared capability is
-`CAP_MOVEMENT`. New capabilities should be added as constants here so they are
-discoverable from one place.
+Capabilities are plain strings, declared here rather than at the use site so two
+skills contending for one resource cannot spell it two different ways. Add a
+constant when a skill is ready to declare it: a capability nothing names in
+`uses=[...]` excludes nothing, so a placeholder reads as protection that is not
+there.
 """
 
 from __future__ import annotations
@@ -35,6 +37,9 @@ import time
 from typing import NamedTuple
 
 CAP_MOVEMENT = "movement"
+#: A carried load. Declared here rather than in a demo module so it is
+#: discoverable from one place, as this file asks.
+CAP_PAYLOAD = "payload"
 
 
 class _Hold(NamedTuple):

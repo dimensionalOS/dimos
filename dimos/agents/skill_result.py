@@ -33,7 +33,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
-from typing import Any, Generic, Literal
+from typing import TYPE_CHECKING, Any, Generic, Literal
+
+if TYPE_CHECKING:
+    from dimos.experimental.memory_belief.answer import UnknownReason
 
 # typing_extensions for PEP 696 TypeVar default support on Python < 3.13.
 from typing_extensions import TypeVar
@@ -65,9 +68,37 @@ class SkillResult(Generic[E]):
     error_code: E | None = None
     duration_ms: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
+    #: Raw observations this call saw or acted on, as ``(stream, id)`` pairs, so
+    #: an agent can re-read what a skill based its outcome on.
+    evidence: tuple[tuple[str, int], ...] = ()
+    #: Why the skill could not finish, when the reason is one the belief layer
+    #: already names. Carrying it rather than a bare bool is what lets
+    #: :attr:`retryable` be derived instead of guessed.
+    unknown_reason: UnknownReason | None = None
 
     def is_success(self) -> bool:
         return self.success
+
+    @property
+    def retryable(self) -> bool | None:
+        """Whether trying again could plausibly help. None when unknown.
+
+        Deliberately derived, never set by hand. Whether a retry is worth
+        anything is a property of the evidence, not of the author's mood:
+        ``occluded`` means a different vantage point may work, ``absent`` means
+        the thing is not there and calling again will say so again. Authors who
+        set this themselves get it inconsistent across a codebase.
+        """
+        if self.success:
+            return None
+        if self.unknown_reason is None:
+            return None
+        return not self.unknown_reason.is_terminal
+
+    @property
+    def suggested_capability(self) -> str | None:
+        """What would have to happen for a retry to succeed, if anything would."""
+        return self.unknown_reason.suggested_capability if self.unknown_reason else None
 
     @classmethod
     def ok(cls, message: str = "", **metadata: Any) -> SkillResult[E]:
@@ -86,6 +117,14 @@ class SkillResult(Generic[E]):
         }
         if self.metadata:
             payload["metadata"] = self.metadata
+        if self.unknown_reason is not None:
+            # Surfaced to the agent as structure, not prose: deciding what to do
+            # next should not require matching on a message string.
+            payload["unknown_reason"] = self.unknown_reason.name
+            payload["retryable"] = self.retryable
+            payload["suggested_capability"] = self.suggested_capability
+        if self.evidence:
+            payload["evidence"] = [{"stream": s, "id": i} for s, i in self.evidence]
         return [{"type": "text", "text": json.dumps(payload)}]
 
     def __str__(self) -> str:
