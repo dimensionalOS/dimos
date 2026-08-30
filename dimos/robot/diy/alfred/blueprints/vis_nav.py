@@ -154,7 +154,7 @@ _vis_nav = autoconnect(
         # while driving normally, so no threshold separates good frames from bad.
         covariance_gate_translation_std=0.0,
         # Alfred is holonomic in the plane.
-        constraint_twist_variances=Covariance(z=0.01, roll=0.01, pitch=0.01),
+        per_dimension_error_variance=Covariance(z=0.01, roll=0.01, pitch=0.01),
         # Wheel odometry crosses the wifi link and can land seconds late.
         replay_buffer_seconds=2.0,
         # No imus entry: adding gyro yaw halved final drift on drive_2026-08-18_23-05-04.db
