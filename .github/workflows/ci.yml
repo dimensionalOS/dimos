@@ -975,7 +975,7 @@ jobs:
     - web
     - tests
     - self-hosted-tests
-    #- self-hosted-large-tests
+    - self-hosted-large-tests
 
     runs-on: ubuntu-latest
     permissions:
