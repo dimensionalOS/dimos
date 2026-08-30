@@ -18,8 +18,8 @@
 mod msg_convert;
 
 use dim_slam::{
-    CameraConfig, CuvslamCore, CuvslamOdometryConfig, FusionCore, ImuConfig, OdometryEstimate,
-    OdometryFusionConfig, SourceConfig,
+    CameraConfig, CuvslamCore, CuvslamOdometryConfig, FusionCore, ImuConfig, InitialStds,
+    OdometryEstimate, OdometryFusionConfig, SourceConfig,
 };
 use dimos_module::{native_config, run_with_transport, warn_throttled, Input, Module, Output, Tf};
 use lcm_msgs::nav_msgs::Odometry;
@@ -59,6 +59,29 @@ struct OdomSourceConfig {
     twist_variances: Covariance,
 }
 
+/// One IMU, identified by the frame its samples carry.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct ImuSourceConfig {
+    frame_id: String,
+    gyro_noise_density: f64,
+    gyro_random_walk: f64,
+    accel_noise_density: f64,
+    accel_random_walk: f64,
+    init_samples: i64,
+    init_gyro_limit: f64,
+}
+
+/// Standard deviations seeding the filter covariance at initialization.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct InitialStdsConfig {
+    position: f64,
+    velocity: f64,
+    rotation: f64,
+    bias: f64,
+}
+
 /// The tracker's own drifting world frame. It never touches the wire, so the name is
 /// internal bookkeeping: it only tells the tracker's estimates apart inside the filter.
 const VISUAL_ODOM_FRAME_ID: &str = "visual_odom";
@@ -85,22 +108,12 @@ struct DimSlamConfig {
     replay_buffer_seconds: f64,
     outlier_rejection_allowed_variance: f64,
     max_position_m: f64,
-    /// Empty disables the IMU; otherwise it names the frame the samples carry.
-    imu_frame_id: String,
-    gyro_noise_density: f64,
-    gyro_random_walk: f64,
-    accel_noise_density: f64,
-    accel_random_walk: f64,
-    imu_init_samples: i64,
-    imu_init_gyro_limit: f64,
+    /// Empty disables inertial propagation; each entry keeps its own noise figures and biases.
+    imus: Vec<ImuSourceConfig>,
     initial_gravity_estimate: f64,
-    initial_position_std: f64,
-    initial_velocity_std: f64,
-    initial_rotation_std: f64,
-    initial_bias_std: f64,
+    initial_stds: InitialStdsConfig,
     /// Trust in the in-process visual odometry source.
     visual_odom_pose_variances: Covariance,
-    visual_odom_twist_variances: Covariance,
     /// External sources, each identified by the transform its estimates carry.
     odom_sources: Vec<OdomSourceConfig>,
     constraint_twist_variances: Covariance,
@@ -162,7 +175,7 @@ impl DimSlam {
             parent_frame_id: VISUAL_ODOM_FRAME_ID.to_string(),
             child_frame_id: self.config.output_frame_id.clone(),
             pose_variances: self.config.visual_odom_pose_variances.to_array(),
-            twist_variances: self.config.visual_odom_twist_variances.to_array(),
+            twist_variances: [0.0; 6],
         }];
         odom_sources.extend(self.config.odom_sources.iter().map(|source| SourceConfig {
             parent_frame_id: source.parent_frame_id.clone(),
@@ -177,20 +190,27 @@ impl DimSlam {
             replay_buffer_seconds: self.config.replay_buffer_seconds,
             outlier_rejection_allowed_variance: self.config.outlier_rejection_allowed_variance,
             max_position_m: self.config.max_position_m,
-            imu: (!self.config.imu_frame_id.is_empty()).then(|| ImuConfig {
-                frame_id: self.config.imu_frame_id.clone(),
-                gyro_noise_density: self.config.gyro_noise_density,
-                gyro_random_walk: self.config.gyro_random_walk,
-                accel_noise_density: self.config.accel_noise_density,
-                accel_random_walk: self.config.accel_random_walk,
-                init_samples: self.config.imu_init_samples,
-                init_gyro_limit: self.config.imu_init_gyro_limit,
-            }),
+            imus: self
+                .config
+                .imus
+                .iter()
+                .map(|imu| ImuConfig {
+                    frame_id: imu.frame_id.clone(),
+                    gyro_noise_density: imu.gyro_noise_density,
+                    gyro_random_walk: imu.gyro_random_walk,
+                    accel_noise_density: imu.accel_noise_density,
+                    accel_random_walk: imu.accel_random_walk,
+                    init_samples: imu.init_samples,
+                    init_gyro_limit: imu.init_gyro_limit,
+                })
+                .collect(),
             initial_gravity_estimate: self.config.initial_gravity_estimate,
-            initial_position_std: self.config.initial_position_std,
-            initial_velocity_std: self.config.initial_velocity_std,
-            initial_rotation_std: self.config.initial_rotation_std,
-            initial_bias_std: self.config.initial_bias_std,
+            initial_stds: InitialStds {
+                position: self.config.initial_stds.position,
+                velocity: self.config.initial_stds.velocity,
+                rotation: self.config.initial_stds.rotation,
+                bias: self.config.initial_stds.bias,
+            },
             odom_sources,
             constraint_twist_variances: self.config.constraint_twist_variances.to_array(),
         }));
@@ -235,7 +255,7 @@ impl DimSlam {
     }
 
     async fn handle_imu(&mut self, msg: Imu) {
-        if self.config.imu_frame_id.is_empty() {
+        if self.config.imus.is_empty() {
             return;
         }
         let sample = to_imu_sample(&msg);

@@ -70,6 +70,35 @@ class Covariance(BaseModel):
         return any(self.model_dump().values())
 
 
+class ImuConfig(BaseModel):
+    """One IMU and its noise model. Each entry keeps its own noise figures and its own
+    estimated biases, so a good gyro next to a cheap one keeps its say."""
+
+    # The frame_id this IMU's samples carry; any other frame is dropped.
+    frame_id: str = ""
+    gyro_noise_density: float = 0.0
+    gyro_random_walk: float = 0.0
+    accel_noise_density: float = 0.0
+    accel_random_walk: float = 0.0
+    # Averaged while stationary to level the filter and take the gyro bias; leaving that
+    # bias in cost 19.8 m of final error against 1.6 m on a 517 s Alfred drive. At 200 Hz
+    # this is one second of standing still at startup.
+    init_samples: int = 200
+    # rad/s. Above this the robot is called moving and bias calibration restarts, so it
+    # belongs above this gyro's own bias and below any real rotation. A noisy gyro that
+    # reads above it at rest never finishes init.
+    init_gyro_limit: float = 0.05
+
+
+class InitialStds(BaseModel):
+    """Standard deviations seeding the filter covariance at initialization."""
+
+    position: float = 0.01
+    velocity: float = 0.1
+    rotation: float = 0.05
+    bias: float = 0.05
+
+
 class SourceConfig(BaseModel):
     """One external odometry source and how much it is trusted. A variance below zero takes
     the message covariance, zero drops that dimension, above zero is a fixed variance. A
@@ -136,38 +165,21 @@ class DimSlamConfig(NativeModuleConfig):
     # Caps the filter's own state rather than an incoming reading. 0 disables it.
     max_position_m: float = 10000.0
 
-    # The frame_id the IMU's samples carry; any other frame is dropped. Empty disables the
-    # IMU: the filter is seeded level from the first source message and holds its pose
-    # between them.
-    imu_frame_id: str = ""
-    gyro_noise_density: float = 0.0
-    gyro_random_walk: float = 0.0
-    accel_noise_density: float = 0.0
-    accel_random_walk: float = 0.0
-    # Averaged while stationary to level the filter and take the gyro bias; leaving that
-    # bias in cost 19.8 m of final error against 1.6 m on a 517 s Alfred drive. At 200 Hz
-    # this is one second of standing still at startup.
-    imu_init_samples: int = 200
-    # rad/s. Above this the robot is called moving and bias calibration restarts, so it
-    # belongs above this gyro's own bias and below any real rotation. A noisy gyro that
-    # reads above it at rest never finishes init.
-    imu_init_gyro_limit: float = 0.05
+    # Empty disables inertial propagation: the filter is seeded level from the first source
+    # message and holds its pose between them.
+    imus: list[ImuConfig] = Field(default_factory=list)
     # m/s^2. Why is gravity a config?
     # 1) different IMUs have different bias
     # 2) gravity changes with latitude by a non-trivial amount for IMUs (0.05 m/s^2)
     initial_gravity_estimate: float = 9.8
-
-    initial_position_std: float = 0.01
-    initial_velocity_std: float = 0.1
-    initial_rotation_std: float = 0.05
-    initial_bias_std: float = 0.05
+    initial_stds: InitialStds = Field(default_factory=InitialStds)
 
     # Trust in the tracker's pose, per SourceConfig semantics; the module registers the
-    # tracker as a fusion source itself, so it never appears in `odom_sources`.
+    # tracker as a fusion source itself, so it never appears in `odom_sources`. The tracker
+    # is fused by pose deltas only.
     visual_odom_pose_variances: Covariance = Field(
         default_factory=lambda: Covariance(x=0.01, y=0.01, z=0.01, roll=0.05, pitch=0.05, yaw=0.05)
     )
-    visual_odom_twist_variances: Covariance = Field(default_factory=Covariance)
     # One entry per external source (wheel odometry, ...), matched against each message's
     # header.frame_id and child_frame_id.
     odom_sources: list[SourceConfig] = Field(default_factory=list)
@@ -177,31 +189,39 @@ class DimSlamConfig(NativeModuleConfig):
     constraint_twist_variances: Covariance = Field(default_factory=Covariance)
 
     @model_validator(mode="after")
-    def _imu_noise_is_set(self) -> DimSlamConfig:
-        if not self.imu_frame_id:
-            return self
+    def _imus_are_complete(self) -> DimSlamConfig:
         noise_figures = (
             "gyro_noise_density",
             "gyro_random_walk",
             "accel_noise_density",
             "accel_random_walk",
         )
-        missing = [name for name in noise_figures if getattr(self, name) <= 0.0]
-        if missing:
-            raise ValueError(f"the IMU needs its noise figures set: {', '.join(missing)}")
-        if self.imu_init_gyro_limit <= 0.0:
-            raise ValueError("imu_init_gyro_limit must be above zero to ever init")
+        seen_frames = set()
+        for index, imu in enumerate(self.imus):
+            if not imu.frame_id.strip():
+                raise ValueError(f"imus[{index}] needs a frame_id")
+            if imu.frame_id in seen_frames:
+                raise ValueError(f"imus[{index}] repeats frame_id {imu.frame_id!r}")
+            seen_frames.add(imu.frame_id)
+            missing = [name for name in noise_figures if getattr(imu, name) <= 0.0]
+            if missing:
+                raise ValueError(
+                    f"imus[{index}] ({imu.frame_id!r}) needs its noise figures set: "
+                    f"{', '.join(missing)}"
+                )
+            if imu.init_gyro_limit <= 0.0:
+                raise ValueError(
+                    f"imus[{index}] ({imu.frame_id!r}) init_gyro_limit must be above zero "
+                    "to ever init"
+                )
         return self
 
     @model_validator(mode="after")
     def _sources_are_fusable(self) -> DimSlamConfig:
         # Zero drops a dimension, so an all-zero source is fused in no dimension at all.
-        if (
-            not self.visual_odom_pose_variances.any_set()
-            and not self.visual_odom_twist_variances.any_set()
-        ):
+        if not self.visual_odom_pose_variances.any_set():
             raise ValueError(
-                "every visual_odom pose and twist variance is zero, "
+                "every visual_odom_pose_variances entry is zero, "
                 "which fuses the tracker in no dimension at all"
             )
         for index, source in enumerate(self.odom_sources):
