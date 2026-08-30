@@ -19,7 +19,7 @@ from both pytest and deno test). The transport (protocol.py) carries the
 manifest as one opaque dict; this module is the single owner of its
 structure and domain rules: version gate, bounded unique ids, positive
 rates, panel/layout/pages references that resolve, and kind-specific panel
-rules (video, map2d, teleop).
+rules (video, map2d, teleop, chat).
 
 Manifest v1 is frozen. Additive changes (new panel kinds, new params) ride
 the existing shape: unknown keys and kinds pass through validation.
@@ -319,6 +319,37 @@ def parse_manifest(data: Any) -> Manifest:
                 raise ManifestError(
                     "invalid_teleop_panel",
                     f"teleop panel {panel.id} needs a twist.json.v1 latest tx channel",
+                )
+        if panel.kind == "chat":
+            # channels: the text input (publish tx), the messages, the idle flag.
+            if len(panel.channels) != 3:
+                raise ManifestError(
+                    "invalid_chat_panel", f"chat panel {panel.id} must bind three channels"
+                )
+            text, messages, idle = (ch_ids[ch] for ch in panel.channels)
+            if (
+                text.encoding != "text.json.v1"
+                or text.delivery != "reliable"
+                or text.dir != "tx"
+                or text.publish != "shared"
+            ):
+                raise ManifestError(
+                    "invalid_chat_panel",
+                    f"chat panel {panel.id} needs a text.json.v1 reliable shared tx channel first",
+                )
+            if (
+                messages.encoding != "chat.json.v1"
+                or messages.delivery != "reliable"
+                or messages.dir != "rx"
+            ):
+                raise ManifestError(
+                    "invalid_chat_panel",
+                    f"chat panel {panel.id} needs a chat.json.v1 reliable rx channel second",
+                )
+            if idle.encoding != "json.v1" or idle.delivery != "latest" or idle.dir != "rx":
+                raise ManifestError(
+                    "invalid_chat_panel",
+                    f"chat panel {panel.id} needs a json.v1 latest rx channel third",
                 )
 
     seen: set[str] = set()

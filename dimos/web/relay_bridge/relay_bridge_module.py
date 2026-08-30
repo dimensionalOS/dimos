@@ -36,6 +36,7 @@ restarts (respawning the local child when it died).
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from collections.abc import AsyncIterator, Callable, Collection
 from dataclasses import dataclass, field, replace
 import functools
@@ -231,6 +232,10 @@ class RuntimeChannelSpec:
     # viewer: a new session must not wait for the next publish (the producer
     # may have gone quiet, possibly before the first viewer ever attached).
     resend_on_subscribe: bool = False
+    # Event channels (chat): the maxHz cap is met by spacing sends (a paced
+    # FIFO on the loop), never by dropping, so a burst of messages crosses
+    # complete and in order and a state flag keeps its newest value.
+    paced: bool = False
 
 
 class RelayBridgeConfig(ModuleConfig):
@@ -363,6 +368,55 @@ class _Session:
     last_n: int | float = 0
     unsubs: dict[str, Callable[[], None]] = field(default_factory=dict)
     retired: threading.Event = field(default_factory=threading.Event)
+
+
+# A producer sustaining more than maxHz for this many frames is pathological
+# (the agent chats at a few messages a second); beyond it the oldest go.
+_PACED_QUEUE_MAX = 256
+
+
+class _PacedSender:
+    """Send cap by spacing, not sampling: frames queue on the loop and go out
+    one per interval, in order, so an event channel (chat) never thins a
+    burst. Wraps the channel's real sender."""
+
+    def __init__(self, loop: asyncio.AbstractEventLoop, interval: float, send: _Sender) -> None:
+        self._loop = loop
+        self._interval = interval
+        self._send = send
+        self._queue: deque[tuple[bytes, _FrameMeta, float | None]] = deque()
+        self._due = 0.0
+        self._handle: asyncio.TimerHandle | None = None
+        self.dropped = 0
+
+    def __call__(self, payload: bytes, meta: _FrameMeta, ts: float | None) -> None:
+        self._queue.append((payload, meta, ts))
+        if len(self._queue) > _PACED_QUEUE_MAX:
+            self._queue.popleft()
+            self.dropped += 1
+        if self._handle is None:
+            self._drain()
+
+    def _drain(self) -> None:
+        self._handle = None
+        now = self._loop.time()
+        if now < self._due:
+            self._handle = self._loop.call_at(self._due, self._drain)
+            return
+        payload, meta, ts = self._queue.popleft()
+        self._due = now + self._interval
+        if self._queue:
+            self._handle = self._loop.call_at(self._due, self._drain)
+        try:
+            self._send(payload, meta, ts)
+        except Exception:
+            return  # session mid-teardown, same as _offer
+
+    def close(self) -> None:
+        if self._handle is not None:
+            self._handle.cancel()
+            self._handle = None
+        self._queue.clear()
 
 
 def _no_default_params(config: RelayBridgeConfig) -> dict[str, Any]:
@@ -881,10 +935,14 @@ class RelayBridgeModule(Module):
     def _build_senders(self, client: RelayClient) -> dict[str, _Sender]:
         senders: dict[str, _Sender] = {}
         for spec in self._channel_specs:
+            sender: _Sender
             if spec.delivery == "latest":
-                senders[spec.ch] = client.latest_writer(spec.ch).offer
+                sender = client.latest_writer(spec.ch).offer
             else:
-                senders[spec.ch] = functools.partial(self._send_reliable, client, spec.ch)
+                sender = functools.partial(self._send_reliable, client, spec.ch)
+            if spec.paced:
+                sender = _PacedSender(asyncio.get_running_loop(), 1.0 / spec.max_hz, sender)
+            senders[spec.ch] = sender
         return senders
 
     def _send_reliable(
@@ -1239,7 +1297,9 @@ class RelayBridgeModule(Module):
         if session.retired.is_set():
             return
         now = time.monotonic()
-        if not _passes_rate_gate(self._last_input, spec.ch, now, self._min_interval[spec.ch]):
+        if not spec.paced and not _passes_rate_gate(
+            self._last_input, spec.ch, now, self._min_interval[spec.ch]
+        ):
             return
         encoded = self._run_encoder(spec, msg)
         if encoded is None:
@@ -1279,6 +1339,9 @@ class RelayBridgeModule(Module):
         target.retired.set()
         if self._session is target:
             self._session = None
+        for sender in target.senders.values():
+            if isinstance(sender, _PacedSender):
+                sender.close()
         # A driving teleop stream cannot outlive its session (this also
         # covers module stop, KeyboardTeleop.stop() parity). Idempotent:
         # the edge gate makes the second call of a double-disconnect a no-op.
