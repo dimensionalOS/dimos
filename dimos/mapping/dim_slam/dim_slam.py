@@ -17,7 +17,6 @@ number of odometry sources by an error-state Kalman filter, in one process."""
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -34,8 +33,6 @@ from dimos.utils.logging_config import setup_logger
 from dimos.utils.nvidia_env import driver_env, sdk_variant
 
 logger = setup_logger()
-
-MODULE_DIR = Path(__file__).resolve().parent
 
 
 class CameraConfig(BaseModel):
@@ -56,16 +53,6 @@ class CameraConfig(BaseModel):
     depth_cloud_max_range: float = 0.0
     # One point per k x k depth block (median of in-gate depths). <= 1 emits every pixel.
     depth_cloud_decimation: int = 0
-
-
-# Datasheet values, in the continuous-time units the filter wants: rad/s/sqrt(Hz),
-# rad/s^2/sqrt(Hz), m/s^2/sqrt(Hz), m/s^3/sqrt(Hz). Named so the config check can insist on them.
-IMU_NOISE_FIGURES = (
-    "gyro_noise_density",
-    "gyro_random_walk",
-    "accel_noise_density",
-    "accel_random_walk",
-)
 
 
 class ImuConfig(BaseModel):
@@ -111,7 +98,7 @@ class SourceConfig(BaseModel):
 
 
 class DimSlamConfig(NativeModuleConfig):
-    cwd: str | None = str(MODULE_DIR / "rust")
+    cwd: str | None = "rust"
     executable: str = "result/bin/dim_slam"
     build_command: str | None = Field(
         default_factory=lambda: f"nix build -L 'path:.#{sdk_variant()}'"
@@ -198,7 +185,13 @@ class DimSlamConfig(NativeModuleConfig):
     def _imu_noise_is_set(self) -> DimSlamConfig:
         if not self.imu.frame_id:
             return self
-        missing = [name for name in IMU_NOISE_FIGURES if getattr(self.imu, name) <= 0.0]
+        noise_figures = (
+            "gyro_noise_density",
+            "gyro_random_walk",
+            "accel_noise_density",
+            "accel_random_walk",
+        )
+        missing = [name for name in noise_figures if getattr(self.imu, name) <= 0.0]
         if missing:
             raise ValueError(f"the IMU needs its noise figures set: {', '.join(missing)}")
         if self.imu.init_gyro_limit <= 0.0:
