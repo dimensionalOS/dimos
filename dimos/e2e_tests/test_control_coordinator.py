@@ -209,8 +209,8 @@ class TestControlCoordinatorE2E:
             assert "left_arm/joint1" in joints
             assert "right_arm/joint1" in joints
 
-            # The coordinator supports exactly one trajectory task, so the
-            # dual-arm blueprint has a single task spanning both arms
+            # The coordinator exposes one canonical planner trajectory task, so
+            # the dual-arm blueprint uses that task across both arms.
             tasks = client.list_tasks()
             assert tasks == [JOINT_TRAJECTORY_TASK_NAME]
 
