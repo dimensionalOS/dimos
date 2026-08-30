@@ -442,7 +442,9 @@ def localize(
                     )
             yield obs
 
-    candidates.transform(_detect).map(lambda obs: obs.derive(data=segmenter.segment(obs.data))).transform(_ingest).drain()
+    candidates.transform(_detect).map(
+        lambda obs: obs.derive(data=segmenter.segment(obs.data))
+    ).transform(_ingest).drain()
 
     if entries is not None:
         for entry, best in zip(entries, ungrounded, strict=True):
