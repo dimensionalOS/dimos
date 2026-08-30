@@ -176,7 +176,6 @@ struct M20PointLioConfig {
     std::string node_name;
     std::string world_frame;
     std::string base_frame;
-    double processing_rate_hz;
     double pointcloud_rate_hz;
     double odometry_rate_hz;
     double max_scan_duration_s;
@@ -238,7 +237,6 @@ struct M20PointLioConfig {
         require_nonempty(node_name, "node_name");
         require_nonempty(world_frame, "world_frame");
         require_nonempty(base_frame, "base_frame");
-        dimos::native::require_positive(processing_rate_hz, "processing_rate_hz");
         dimos::native::require_positive(pointcloud_rate_hz, "pointcloud_rate_hz");
         dimos::native::require_positive(odometry_rate_hz, "odometry_rate_hz");
         dimos::native::require_positive(max_scan_duration_s, "max_scan_duration_s");
@@ -274,7 +272,6 @@ M20PointLioConfig parse_m20_pointlio_config(Config& config) {
     result.node_name = config.take<std::string>("node_name");
     result.world_frame = config.take<std::string>("world_frame");
     result.base_frame = config.take<std::string>("base_frame");
-    result.processing_rate_hz = config.take<double>("processing_rate_hz");
     result.pointcloud_rate_hz = config.take<double>("pointcloud_rate_hz");
     result.odometry_rate_hz = config.take<double>("odometry_rate_hz");
     result.max_scan_duration_s = config.take<double>("max_scan_duration_s");
@@ -345,7 +342,7 @@ public:
         tf_ = builder.output<tf2_msgs::TFMessage>("tf");
 
         process_period_ = std::chrono::duration_cast<Clock::duration>(
-            std::chrono::duration<double>(1.0 / cfg_.processing_rate_hz));
+            std::chrono::duration<double>(1.0 / cfg_.main_freq));
         pointcloud_period_ = std::chrono::duration_cast<Clock::duration>(
             std::chrono::duration<double>(1.0 / cfg_.pointcloud_rate_hz));
         odometry_period_ = std::chrono::duration_cast<Clock::duration>(
@@ -446,7 +443,6 @@ public:
         const auto now = Clock::now();
         last_pointcloud_publish_ = now;
         last_odometry_publish_ = now;
-        processing_thread_ = std::thread([this]() { processing_loop(); });
         spin_thread_ = std::thread([this]() { executor_->spin(); });
         logging::info("M20 Point-LIO started",
                       {logging::Field("world_frame", cfg_.world_frame),
@@ -473,10 +469,58 @@ public:
         if (rclcpp::ok()) {
             rclcpp::shutdown();
         }
-        if (processing_thread_.joinable()) {
-            processing_thread_.join();
-        }
         point_lio_.reset();
+    }
+
+    void handle() override {
+        while (!shutdown_requested()) {
+            const auto iteration_started = Clock::now();
+            bool have_estimate = false;
+            double estimate_stamp = 0.0;
+            point_lio_->process();
+            const auto pose = point_lio_->get_pose();
+            have_estimate = dimos::has_estimate(pose);
+            if (have_estimate) {
+                const auto& source_odom = point_lio_->get_odometry();
+                estimate_stamp = source_odom.header.stamp.toSec();
+                const auto now = Clock::now();
+                if (std::isfinite(estimate_stamp) && estimate_stamp > 0.0) {
+                    if (now - last_pointcloud_publish_ >= pointcloud_period_ &&
+                        estimate_stamp > last_pointcloud_stamp_) {
+                        const auto cloud = point_lio_->get_body_cloud();
+                        if (cloud != nullptr && !cloud->empty()) {
+                            publish_pointcloud(cloud, estimate_stamp);
+                            last_pointcloud_stamp_ = estimate_stamp;
+                            last_pointcloud_publish_ = now;
+                        }
+                    }
+                    if (now - last_odometry_publish_ >= odometry_period_ &&
+                        estimate_stamp > last_odometry_stamp_) {
+                        publish_odometry(source_odom, estimate_stamp);
+                        last_odometry_stamp_ = estimate_stamp;
+                        last_odometry_publish_ = now;
+                    }
+                }
+            }
+
+            bool estimate_advanced = false;
+            if (have_estimate && std::isfinite(estimate_stamp) && estimate_stamp > 0.0) {
+                if (estimate_stamp > last_processed_estimate_stamp_) {
+                    last_processed_estimate_stamp_ = estimate_stamp;
+                    estimate_advanced = true;
+                }
+            }
+            if (estimate_advanced) {
+                std::lock_guard<std::mutex> lock(lidar_feed_mutex_);
+                estimator_initialized_ = true;
+                lidar_feed_pending_ = false;
+            }
+
+            const auto elapsed = Clock::now() - iteration_started;
+            if (elapsed < process_period_) {
+                std::this_thread::sleep_for(process_period_ - elapsed);
+            }
+        }
     }
 
 private:
@@ -710,57 +754,6 @@ private:
         last_imu_sensor_time_ = timestamp;
     }
 
-    void processing_loop() {
-        while (!stopping_.load(std::memory_order_acquire)) {
-            const auto iteration_started = Clock::now();
-            bool have_estimate = false;
-            double estimate_stamp = 0.0;
-            point_lio_->process();
-            const auto pose = point_lio_->get_pose();
-            have_estimate = dimos::has_estimate(pose);
-            if (have_estimate) {
-                const auto& source_odom = point_lio_->get_odometry();
-                estimate_stamp = source_odom.header.stamp.toSec();
-                const auto now = Clock::now();
-                if (std::isfinite(estimate_stamp) && estimate_stamp > 0.0) {
-                    if (now - last_pointcloud_publish_ >= pointcloud_period_ &&
-                        estimate_stamp > last_pointcloud_stamp_) {
-                        const auto cloud = point_lio_->get_body_cloud();
-                        if (cloud != nullptr && !cloud->empty()) {
-                            publish_pointcloud(cloud, estimate_stamp);
-                            last_pointcloud_stamp_ = estimate_stamp;
-                            last_pointcloud_publish_ = now;
-                        }
-                    }
-                    if (now - last_odometry_publish_ >= odometry_period_ &&
-                        estimate_stamp > last_odometry_stamp_) {
-                        publish_odometry(source_odom, estimate_stamp);
-                        last_odometry_stamp_ = estimate_stamp;
-                        last_odometry_publish_ = now;
-                    }
-                }
-            }
-
-            bool estimate_advanced = false;
-            if (have_estimate && std::isfinite(estimate_stamp) && estimate_stamp > 0.0) {
-                if (estimate_stamp > last_processed_estimate_stamp_) {
-                    last_processed_estimate_stamp_ = estimate_stamp;
-                    estimate_advanced = true;
-                }
-            }
-            if (estimate_advanced) {
-                std::lock_guard<std::mutex> lock(lidar_feed_mutex_);
-                estimator_initialized_ = true;
-                lidar_feed_pending_ = false;
-            }
-
-            const auto elapsed = Clock::now() - iteration_started;
-            if (elapsed < process_period_) {
-                std::this_thread::sleep_for(process_period_ - elapsed);
-            }
-        }
-    }
-
     void publish_pointcloud(const PointCloudXYZI::Ptr& cloud, double timestamp) {
         const auto count = static_cast<int>(cloud->size());
         auto output = dimos::make_xyzi_cloud(cfg_.base_frame, timestamp, count);
@@ -813,7 +806,6 @@ private:
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_subscription_;
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_subscription_;
     std::thread spin_thread_;
-    std::thread processing_thread_;
 
     Clock::duration process_period_{};
     Clock::duration pointcloud_period_{};

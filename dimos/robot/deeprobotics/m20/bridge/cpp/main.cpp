@@ -156,7 +156,6 @@ struct M20ROSBridgeConfig {
     std::string gait_topic;
     std::string hes_status_topic;
     std::string node_name;
-    bool enable_command_output;
     double command_rate_hz;
     double command_timeout_s;
     double safety_timeout_s;
@@ -188,7 +187,6 @@ M20ROSBridgeConfig parse_m20_config(Config& config) {
     result.gait_topic = config.take<std::string>("gait_topic");
     result.hes_status_topic = config.take<std::string>("hes_status_topic");
     result.node_name = config.take<std::string>("node_name");
-    result.enable_command_output = config.take<bool>("enable_command_output");
     result.command_rate_hz = config.take<double>("command_rate_hz");
     result.command_timeout_s = config.take<double>("command_timeout_s");
     result.safety_timeout_s = config.take<double>("safety_timeout_s");
@@ -236,14 +234,12 @@ public:
             rclcpp::QoS(rclcpp::KeepLast(20)).reliable().durability_volatile(),
             [this](drdds::msg::MotionInfo::SharedPtr msg) { on_motion_info(*msg); });
 
-        if (cfg_.enable_command_output) {
-            nav_cmd_publisher_ = node_->create_publisher<drdds::msg::NavCmd>(
-                cfg_.nav_cmd_topic, rclcpp::QoS(rclcpp::KeepLast(2)).reliable());
-            motion_state_publisher_ = node_->create_publisher<drdds::msg::MotionState>(
-                cfg_.motion_state_topic, rclcpp::QoS(rclcpp::KeepLast(2)).reliable());
-            gait_publisher_ = node_->create_publisher<drdds::msg::Gait>(
-                cfg_.gait_topic, rclcpp::QoS(rclcpp::KeepLast(2)).reliable());
-        }
+        nav_cmd_publisher_ = node_->create_publisher<drdds::msg::NavCmd>(
+            cfg_.nav_cmd_topic, rclcpp::QoS(rclcpp::KeepLast(2)).reliable());
+        motion_state_publisher_ = node_->create_publisher<drdds::msg::MotionState>(
+            cfg_.motion_state_topic, rclcpp::QoS(rclcpp::KeepLast(2)).reliable());
+        gait_publisher_ = node_->create_publisher<drdds::msg::Gait>(
+            cfg_.gait_topic, rclcpp::QoS(rclcpp::KeepLast(2)).reliable());
 
         const auto period = std::chrono::duration<double>(1.0 / cfg_.command_rate_hz);
         timer_ = node_->create_wall_timer(
@@ -254,8 +250,7 @@ public:
         executor_->add_node(node_);
         spin_thread_ = std::thread([this]() { executor_->spin(); });
 
-        logging::info("M20 command/state ROS bridge started",
-                      {logging::Field("command_output", cfg_.enable_command_output)});
+        logging::info("M20 command/state ROS bridge started");
     }
 
     void teardown() override {
@@ -346,7 +341,7 @@ private:
 
     bool safety_ready(Clock::time_point now) const {
         std::lock_guard<std::mutex> lock(state_mutex_);
-        if (!cfg_.enable_command_output || !have_motion_info_) {
+        if (!have_motion_info_) {
             return false;
         }
         const auto timeout = std::chrono::duration<double>(cfg_.safety_timeout_s);

@@ -53,7 +53,6 @@ class M20PointLioConfig(NativeModuleConfig):
     node_name: str = "dimos_m20_pointlio"
     world_frame: str = "odom"
     base_frame: str = "base_link"
-    processing_rate_hz: float = Field(default=1000.0, gt=0.0)
     pointcloud_rate_hz: float = Field(default=10.0, gt=0.0)
     odometry_rate_hz: float = Field(default=50.0, gt=0.0)
     max_scan_duration_s: float = Field(default=0.2, gt=0.0)

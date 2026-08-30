@@ -117,17 +117,12 @@ _rerun_config = {
 deeprobotics_m20_kronknav_control = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config),
     M20ROSBridge.blueprint(
-        enable_command_output=True,
         max_linear_x=MAX_LINEAR_X_M_S,
         max_linear_y=MAX_LINEAR_Y_M_S,
         max_angular_z=MAX_ANGULAR_Z_RAD_S,
     ),
     M20PointLio.blueprint(),
-    M20Connection.blueprint(
-        max_linear_x=MAX_LINEAR_X_M_S,
-        max_linear_y=MAX_LINEAR_Y_M_S,
-        max_angular_z=MAX_ANGULAR_Z_RAD_S,
-    ),
+    M20Connection.blueprint(),
     RayTracingVoxelMap.blueprint(
         voxel_size=VOXEL_SIZE_M,
         max_range=25.0,

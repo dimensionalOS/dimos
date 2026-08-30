@@ -18,11 +18,9 @@ from __future__ import annotations
 
 from datetime import datetime
 import json
-import math
 import socket
 import struct
 from threading import Condition, RLock
-import time
 from typing import Any
 
 from pydantic import Field
@@ -32,16 +30,11 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.Int32 import Int32
 from dimos.msgs.std_msgs.UInt32 import UInt32
-from dimos.robot.deeprobotics.m20.constants import (
-    MAX_ANGULAR_Z_RAD_S,
-    MAX_LINEAR_X_M_S,
-    MAX_LINEAR_Y_M_S,
-)
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.sequential_ids import SequentialIds
 
 logger = setup_logger()
 
@@ -69,11 +62,8 @@ _BASIC_SERVER_MODE_COMMAND = 5
 
 
 class M20ConnectionConfig(ModuleConfig):
-    """Limits for commands sent to the M20's high-level navigation interface."""
+    """State-transition and basic-server settings for M20 control."""
 
-    max_linear_x: float = Field(default=MAX_LINEAR_X_M_S, gt=0.0)
-    max_linear_y: float = Field(default=MAX_LINEAR_Y_M_S, gt=0.0)
-    max_angular_z: float = Field(default=MAX_ANGULAR_Z_RAD_S, gt=0.0)
     require_command_ready: bool = True
     stand_timeout_s: float = Field(default=12.0, gt=0.0)
     rl_control_timeout_s: float = Field(default=5.0, gt=0.0)
@@ -84,32 +74,14 @@ class M20ConnectionConfig(ModuleConfig):
     basic_server_timeout_s: float = Field(default=3.0, gt=0.0)
 
 
-def _clamp(value: float, limit: float) -> float:
-    return max(-limit, min(limit, value))
-
-
-def sanitize_twist(twist: Twist, config: M20ConnectionConfig) -> Twist:
-    """Return a finite, planar Twist bounded by the configured M20 limits."""
-    values = (twist.linear.x, twist.linear.y, twist.angular.z)
-    if not all(math.isfinite(value) for value in values):
-        return Twist.zero()
-    return Twist(
-        linear=Vector3(
-            _clamp(twist.linear.x, config.max_linear_x),
-            _clamp(twist.linear.y, config.max_linear_y),
-            0.0,
-        ),
-        angular=Vector3(0.0, 0.0, _clamp(twist.angular.z, config.max_angular_z)),
-    )
-
-
 class M20Connection(Module):
     """Expose the planner-facing M20 command surface with an explicit operator arm.
 
     The hardware bridge owns ROS 2/DrDDS and the command watchdog. This module
     remains transport-agnostic: it accepts the standard DimOS ``cmd_vel`` stream,
-    rejects it until ``standup()`` has armed control, bounds planar commands, and
-    emits ``safe_cmd_vel`` for the robot-local bridge.
+    rejects it until ``standup()`` has armed control, and emits ``safe_cmd_vel``
+    for the robot-local bridge. The native bridge is the single command-validation
+    and velocity-clamping boundary.
 
     ``standup()`` is the normal one-call operator entry point: it completes the
     vendor state and gait transitions, waits for the guarded command path, and
@@ -136,7 +108,7 @@ class M20Connection(Module):
         self._command_ready = False
         self._motion_state: int | None = None
         self._gait_state: int | None = None
-        self._basic_server_message_id = 0
+        self._basic_server_message_ids = SequentialIds()
 
     @rpc
     def start(self) -> None:
@@ -155,7 +127,7 @@ class M20Connection(Module):
 
     @rpc
     def arm(self) -> bool:
-        """Allow bounded planner commands to reach the M20 ROS bridge."""
+        """Allow planner commands to reach the M20 ROS bridge."""
         with self._lock:
             if self.config.require_command_ready and not self._command_ready:
                 logger.warning("M20 command gate refused arm: robot control path is not ready")
@@ -189,7 +161,7 @@ class M20Connection(Module):
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
-        """Forward a bounded planar velocity when armed.
+        """Forward velocity to the native validation boundary when armed.
 
         ``duration`` is accepted for connection compatibility. Command lifetime
         is enforced by the native bridge's monotonic watchdog.
@@ -197,8 +169,7 @@ class M20Connection(Module):
         del duration
         with self._lock:
             enabled = self._armed and (self._command_ready or not self.config.require_command_ready)
-        command = sanitize_twist(twist, self.config) if enabled else Twist.zero()
-        self.safe_cmd_vel.publish(command)
+        self.safe_cmd_vel.publish(twist if enabled else Twist.zero())
         return enabled
 
     @rpc
@@ -363,9 +334,7 @@ class M20Connection(Module):
         if len(payload) > 0xFFFF:
             raise ValueError("M20 basic_server payload exceeds the APDU limit")
 
-        with self._lock:
-            message_id = self._basic_server_message_id
-            self._basic_server_message_id = (message_id + 1) & 0xFFFF
+        message_id = self._basic_server_message_ids.next() & 0xFFFF
         header = _BASIC_SERVER_HEADER.pack(
             _BASIC_SERVER_MAGIC,
             len(payload),
@@ -404,34 +373,20 @@ class M20Connection(Module):
         return decoded if isinstance(decoded, dict) else {}
 
     def _wait_for_motion_state(self, expected: int, timeout_s: float) -> bool:
-        deadline = time.monotonic() + timeout_s
         with self._state_condition:
-            while self._motion_state != expected:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0.0:
-                    return False
-                self._state_condition.wait(remaining)
-            return True
+            return self._state_condition.wait_for(
+                lambda: self._motion_state == expected, timeout=timeout_s
+            )
 
     def _wait_for_gait_state(self, expected: int, timeout_s: float) -> bool:
-        deadline = time.monotonic() + timeout_s
         with self._state_condition:
-            while self._gait_state != expected:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0.0:
-                    return False
-                self._state_condition.wait(remaining)
-            return True
+            return self._state_condition.wait_for(
+                lambda: self._gait_state == expected, timeout=timeout_s
+            )
 
     def _wait_for_control_readiness(self, timeout_s: float) -> bool:
-        deadline = time.monotonic() + timeout_s
         with self._state_condition:
-            while not self._command_ready:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0.0:
-                    return False
-                self._state_condition.wait(remaining)
-            return True
+            return self._state_condition.wait_for(lambda: self._command_ready, timeout=timeout_s)
 
 
 def _recv_exact(connection: socket.socket, size: int) -> bytes:

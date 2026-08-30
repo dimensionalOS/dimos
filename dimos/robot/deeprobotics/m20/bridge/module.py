@@ -58,7 +58,6 @@ class M20ROSBridgeConfig(NativeModuleConfig):
     hes_status_topic: str = "/HES_STATUS"
     node_name: str = "dimos_m20_bridge"
 
-    enable_command_output: bool = False
     command_rate_hz: float = Field(default=10.0, gt=0.0)
     command_timeout_s: float = Field(default=0.4, gt=0.0)
     safety_timeout_s: float = Field(default=2.5, gt=0.0)
