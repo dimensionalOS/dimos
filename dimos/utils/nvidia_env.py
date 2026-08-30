@@ -12,9 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Picking the cuVSLAM SDK build and NVIDIA driver environment for the host.
-
-Shared by every module that runs cuVSLAM (cuvslam, dim_slam)."""
+"""Picking the cuVSLAM SDK build and NVIDIA driver environment for the host."""
 
 from __future__ import annotations
 
