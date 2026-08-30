@@ -55,26 +55,6 @@ class CameraConfig(BaseModel):
     depth_cloud_decimation: int = 0
 
 
-class ImuConfig(BaseModel):
-    """One physical IMU: its noise figures and how long it has to hold still to init."""
-
-    # The frame_id the IMU's samples carry; samples from any other frame are dropped.
-    frame_id: str = ""
-    gyro_noise_density: float = 0.0
-    gyro_random_walk: float = 0.0
-    accel_noise_density: float = 0.0
-    accel_random_walk: float = 0.0
-
-    # Averaged while stationary to level the filter and take the gyro bias; leaving that
-    # bias in cost 19.8 m of final error against 1.6 m on a 517 s Alfred drive. At 200 Hz
-    # this is one second of standing still at startup.
-    init_samples: int = 200
-    # rad/s. Above this the robot is called moving and bias calibration restarts, so it
-    # belongs above this gyro's own bias and below any real rotation. A noisy gyro that
-    # reads above it at rest never finishes init.
-    init_gyro_limit: float = 0.05
-
-
 class SourceConfig(BaseModel):
     """One external odometry source and how much it is trusted. A variance below zero takes
     the message covariance, zero drops that dimension, above zero is a fixed variance. A
@@ -146,14 +126,25 @@ class DimSlamConfig(NativeModuleConfig):
     # Caps the filter's own state rather than an incoming reading. 0 disables it.
     max_position_m: float = 10000.0
 
-    # Leaving frame_id empty disables the IMU: the filter is seeded level from the first
-    # source message and holds its pose between them.
-    imu: ImuConfig = Field(default_factory=ImuConfig)
-    # m/s^2, seeding the filter rather than fixing it: a ZUPT is meant to refine it later.
-    # Worth setting only on good hardware. Local gravity runs 9.780 at the equator to 9.832
-    # at the poles, a 0.07 spread, and altitude is a tenth of that (Everest costs 0.027).
-    # The BMI055 in a D455 has a 0.69 zero-g offset, ten times the whole spread, so there
-    # the number is unmeasurable; an ADIS16505 repeats to 0.02 and can tell the difference.
+    # The frame_id the IMU's samples carry; any other frame is dropped. Empty disables the
+    # IMU: the filter is seeded level from the first source message and holds its pose
+    # between them.
+    imu_frame_id: str = ""
+    gyro_noise_density: float = 0.0
+    gyro_random_walk: float = 0.0
+    accel_noise_density: float = 0.0
+    accel_random_walk: float = 0.0
+    # Averaged while stationary to level the filter and take the gyro bias; leaving that
+    # bias in cost 19.8 m of final error against 1.6 m on a 517 s Alfred drive. At 200 Hz
+    # this is one second of standing still at startup.
+    imu_init_samples: int = 200
+    # rad/s. Above this the robot is called moving and bias calibration restarts, so it
+    # belongs above this gyro's own bias and below any real rotation. A noisy gyro that
+    # reads above it at rest never finishes init.
+    imu_init_gyro_limit: float = 0.05
+    # m/s^2. Why is gravity a config?
+    # 1) different IMUs have different bias
+    # 2) gravity changes with latitude by a non-trivial amount for IMUs (0.05 m/s^2)
     initial_gravity_estimate: float = 9.8
 
     initial_position_std: float = 0.01
@@ -183,7 +174,7 @@ class DimSlamConfig(NativeModuleConfig):
 
     @model_validator(mode="after")
     def _imu_noise_is_set(self) -> DimSlamConfig:
-        if not self.imu.frame_id:
+        if not self.imu_frame_id:
             return self
         noise_figures = (
             "gyro_noise_density",
@@ -191,11 +182,11 @@ class DimSlamConfig(NativeModuleConfig):
             "accel_noise_density",
             "accel_random_walk",
         )
-        missing = [name for name in noise_figures if getattr(self.imu, name) <= 0.0]
+        missing = [name for name in noise_figures if getattr(self, name) <= 0.0]
         if missing:
             raise ValueError(f"the IMU needs its noise figures set: {', '.join(missing)}")
-        if self.imu.init_gyro_limit <= 0.0:
-            raise ValueError("imu.init_gyro_limit must be above zero to ever init")
+        if self.imu_init_gyro_limit <= 0.0:
+            raise ValueError("imu_init_gyro_limit must be above zero to ever init")
         return self
 
     @model_validator(mode="after")

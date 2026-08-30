@@ -55,8 +55,14 @@ struct DimSlamConfig {
     replay_buffer_seconds: f64,
     outlier_rejection_allowed_variance: f64,
     max_position_m: f64,
-    /// `frame_id` empty disables the IMU; otherwise it names the frame the samples carry.
-    imu: ImuConfig,
+    /// Empty disables the IMU; otherwise it names the frame the samples carry.
+    imu_frame_id: String,
+    gyro_noise_density: f64,
+    gyro_random_walk: f64,
+    accel_noise_density: f64,
+    accel_random_walk: f64,
+    imu_init_samples: i64,
+    imu_init_gyro_limit: f64,
     initial_gravity_estimate: f64,
     initial_position_std: f64,
     initial_velocity_std: f64,
@@ -136,7 +142,15 @@ impl DimSlam {
             replay_buffer_seconds: self.config.replay_buffer_seconds,
             outlier_rejection_allowed_variance: self.config.outlier_rejection_allowed_variance,
             max_position_m: self.config.max_position_m,
-            imu: Some(self.config.imu.clone()).filter(|imu| !imu.frame_id.is_empty()),
+            imu: (!self.config.imu_frame_id.is_empty()).then(|| ImuConfig {
+                frame_id: self.config.imu_frame_id.clone(),
+                gyro_noise_density: self.config.gyro_noise_density,
+                gyro_random_walk: self.config.gyro_random_walk,
+                accel_noise_density: self.config.accel_noise_density,
+                accel_random_walk: self.config.accel_random_walk,
+                init_samples: self.config.imu_init_samples,
+                init_gyro_limit: self.config.imu_init_gyro_limit,
+            }),
             initial_gravity_estimate: self.config.initial_gravity_estimate,
             initial_position_std: self.config.initial_position_std,
             initial_velocity_std: self.config.initial_velocity_std,
@@ -186,7 +200,7 @@ impl DimSlam {
     }
 
     async fn handle_imu(&mut self, msg: Imu) {
-        if self.config.imu.frame_id.is_empty() {
+        if self.config.imu_frame_id.is_empty() {
             return;
         }
         let sample = to_imu_sample(&msg);
