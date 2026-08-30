@@ -16,7 +16,7 @@
 
 use dim_slam::nalgebra::{Isometry3, Matrix6, Quaternion, Translation3, UnitQuaternion, Vector3};
 use dim_slam::{CameraModel, ImageFrame, ImuSample, OdometryEstimate, PointCloud, Twist};
-use dimos_module::Transform;
+use dimos_module::{Tf, Transform};
 use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{CameraInfo, Image, Imu, PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
@@ -52,6 +52,13 @@ pub fn to_isometry(transform: &Transform) -> Isometry3<f64> {
         Translation3::from(transform.translation()),
         transform.rotation(),
     )
+}
+
+pub fn tf_lookup(tf: &Tf) -> impl Fn(&str, &str) -> Option<Isometry3<f64>> + '_ {
+    move |parent: &str, child: &str| {
+        tf.get_latest(parent, child)
+            .map(|transform| to_isometry(&transform))
+    }
 }
 
 pub fn to_image_frame(img: Image) -> ImageFrame {

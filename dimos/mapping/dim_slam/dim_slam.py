@@ -197,9 +197,10 @@ def _driver_env() -> dict[str, str]:
 
 
 class CameraConfig(BaseModel):
-    """Settings for one camera, keyed by the frame_id its images carry. A depth stream is a
-    camera of its own here, and need not be a rig camera."""
+    """Settings for one camera, identified by the frame_id its images carry. A depth stream
+    is a camera of its own here, and need not be a rig camera."""
 
+    frame_id: str = ""
     # Asserted, not performed. cuVSLAM takes one flag for the whole rig, so the rig's
     # cameras have to agree.
     rectified: bool = True
@@ -228,6 +229,8 @@ IMU_NOISE_FIGURES = (
 class ImuConfig(BaseModel):
     """One physical IMU: its noise figures and how long it has to hold still to init."""
 
+    # The frame_id the IMU's samples carry; samples from any other frame are dropped.
+    frame_id: str = ""
     gyro_noise_density: float = 0.0
     gyro_random_walk: float = 0.0
     accel_noise_density: float = 0.0
@@ -244,11 +247,17 @@ class ImuConfig(BaseModel):
 
 
 class SourceConfig(BaseModel):
-    """How much one odometry source is trusted. Below zero takes the message covariance,
-    zero drops that dimension, above zero is a fixed variance. A drifting source's
-    covariance describes its accumulated drift rather than the delta being fused, so a
-    fixed value is usually the right answer."""
+    """One external odometry source and how much it is trusted. A variance below zero takes
+    the message covariance, zero drops that dimension, above zero is a fixed variance. A
+    drifting source's covariance describes its accumulated drift rather than the delta
+    being fused, so a fixed value is usually the right answer."""
 
+    # The transform this source's estimates carry: each message's header.frame_id and
+    # child_frame_id. Both halves are needed because two sources can share a parent. A
+    # source whose parent is odom_frame_id is fused absolutely; anything else is fused as
+    # filter-anchored deltas, since its own pose has drifted.
+    parent_frame_id: str = ""
+    child_frame_id: str = ""
     # [x y z roll pitch yaw]
     pose_variances: list[float] = Field(
         default_factory=lambda: [0.0] * 6, min_length=6, max_length=6
@@ -270,16 +279,16 @@ class DimSlamConfig(NativeModuleConfig):
 
     # no default: this choice changes what inputs are required
     camera_mode: Literal["mono", "stereo", "rgbd"]
-    # Empty: auto-discover from camera_info.
-    camera_frames: list[str] = Field(default_factory=list)
-    # Keyed by the frame_id the camera's images carry; an absent camera takes the defaults.
-    cameras: dict[str, CameraConfig] = Field(default_factory=dict)
+    # In cuVSLAM's index order: the rig cameras first (two for stereo, one otherwise), then
+    # any settings-only streams such as an rgbd depth camera. Empty auto-discovers the rig
+    # from camera_info; an unlisted camera takes the defaults.
+    cameras: list[CameraConfig] = Field(default_factory=list)
     # Off runs the deterministic CPU path, which needs a libcuvslam built
     # -DENFORCE_GPU=OFF. A build carrying only the other backend is used with a warning.
     use_gpu: bool = True
 
-    # The tracker's own world frame, drifting freely; the filter fuses it as a
-    # drifting source, so it must key one of `sources`.
+    # The tracker's own world frame, drifting freely; the filter fuses it as a drifting
+    # source with the visual_odom variances below.
     visual_odom_frame_id: str = "visual_odom"
     # Frame the cuVSLAM rig is built in. Empty means output_frame_id.
     rig_frame_id: str = ""
@@ -311,10 +320,9 @@ class DimSlamConfig(NativeModuleConfig):
     # Caps the filter's own state rather than an incoming reading. 0 disables it.
     max_position_m: float = 10000.0
 
-    # Keyed by the frame_id the IMU's samples carry. Empty disables the IMU: the filter is
-    # seeded level from the first source message and holds its pose between them. It
-    # propagates on a single IMU, so at most one fully specified entry.
-    imus: dict[str, ImuConfig] = Field(default_factory=dict)
+    # Leaving frame_id empty disables the IMU: the filter is seeded level from the first
+    # source message and holds its pose between them.
+    imu: ImuConfig = Field(default_factory=ImuConfig)
     # m/s^2, seeding the filter rather than fixing it: a ZUPT is meant to refine it later.
     # Worth setting only on good hardware. Local gravity runs 9.780 at the equator to 9.832
     # at the poles, a 0.07 spread, and altitude is a tenth of that (Everest costs 0.027).
@@ -327,18 +335,19 @@ class DimSlamConfig(NativeModuleConfig):
     initial_rotation_std: float = 0.05
     initial_bias_std: float = 0.05
 
-    # One entry per source, keyed "parent_frame_id->child_frame_id" and matched against each
-    # message's header.frame_id and child_frame_id. Both halves are needed because two
-    # sources can share a parent. A source whose parent is odom_frame_id is fused
-    # absolutely; anything else is fused as filter-anchored deltas, since its own pose has
-    # drifted.
-    sources: dict[str, SourceConfig] = Field(
-        default_factory=lambda: {
-            "visual_odom->base_link": SourceConfig(
-                pose_variances=[0.01, 0.01, 0.01, 0.05, 0.05, 0.05]
-            )
-        }
+    # Trust in the tracker's pose, per SourceConfig semantics; the module registers the
+    # tracker as a fusion source itself, so it never appears in `odom_sources`.
+    visual_odom_pose_variances: list[float] = Field(
+        default_factory=lambda: [0.01, 0.01, 0.01, 0.05, 0.05, 0.05],
+        min_length=6,
+        max_length=6,
     )
+    visual_odom_twist_variances: list[float] = Field(
+        default_factory=lambda: [0.0] * 6, min_length=6, max_length=6
+    )
+    # One entry per external source (wheel odometry, ...), matched against each message's
+    # header.frame_id and child_frame_id.
+    odom_sources: list[SourceConfig] = Field(default_factory=list)
     # A virtual zero-twist measurement applied with every source message, for the
     # directions the platform cannot move in. Above zero pulls that dimension toward
     # zero with this variance; zero leaves it free.
@@ -348,41 +357,32 @@ class DimSlamConfig(NativeModuleConfig):
 
     @model_validator(mode="after")
     def _imu_noise_is_set(self) -> DimSlamConfig:
-        if not self.imus:
+        if not self.imu.frame_id:
             return self
-        # The filter propagates on one IMU, so a second entry would silently go unused.
-        if len(self.imus) > 1:
-            raise ValueError(f"the filter propagates on a single IMU, got {list(self.imus)}")
-        frame, imu = next(iter(self.imus.items()))
-        missing = [name for name in IMU_NOISE_FIGURES if getattr(imu, name) <= 0.0]
+        missing = [name for name in IMU_NOISE_FIGURES if getattr(self.imu, name) <= 0.0]
         if missing:
-            raise ValueError(f"IMU {frame!r} needs its noise figures set: {', '.join(missing)}")
-        if imu.init_gyro_limit <= 0.0:
-            raise ValueError(f"IMU {frame!r}'s init_gyro_limit must be above zero to ever init")
+            raise ValueError(f"the IMU needs its noise figures set: {', '.join(missing)}")
+        if self.imu.init_gyro_limit <= 0.0:
+            raise ValueError("imu.init_gyro_limit must be above zero to ever init")
         return self
 
     @model_validator(mode="after")
     def _sources_are_fusable(self) -> DimSlamConfig:
-        # The native parses these keys and refuses a malformed one; catching it here names
-        # the offender against the config that wrote it.
-        for key in self.sources:
-            parent, separator, child = key.partition("->")
-            if not separator or not parent.strip() or not child.strip():
-                raise ValueError(
-                    f"source key {key!r} must be written 'parent_frame_id->child_frame_id'"
-                )
-        # The tracker's pose only reaches the filter as a source under this transform.
-        visual_odom_key = f"{self.visual_odom_frame_id}->{self.output_frame_id}"
-        if visual_odom_key not in self.sources:
-            raise ValueError(
-                f"source {visual_odom_key!r} is missing from sources {list(self.sources)}, "
-                "so the visual odometry would never be fused"
-            )
         # Zero drops a dimension, so an all-zero source is fused in no dimension at all.
-        for key, source in self.sources.items():
+        if not any(self.visual_odom_pose_variances) and not any(self.visual_odom_twist_variances):
+            raise ValueError(
+                "every visual_odom pose and twist variance is zero, "
+                "which fuses the tracker in no dimension at all"
+            )
+        for index, source in enumerate(self.odom_sources):
+            if not source.parent_frame_id.strip() or not source.child_frame_id.strip():
+                raise ValueError(
+                    f"odom_sources[{index}] needs both parent_frame_id and child_frame_id"
+                )
             if not any(source.pose_variances) and not any(source.twist_variances):
                 raise ValueError(
-                    f"source {key!r} has every pose and twist variance at zero, "
+                    f"odom_sources[{index}] ({source.parent_frame_id!r} -> "
+                    f"{source.child_frame_id!r}) has every pose and twist variance at zero, "
                     "which fuses nothing; use a positive variance or drop the source"
                 )
         return self
@@ -390,7 +390,7 @@ class DimSlamConfig(NativeModuleConfig):
 
 class DimSlam(NativeModule):
     """Every camera publishes onto the same ``image`` and ``camera_info`` streams and is
-    told apart by ``frame_id``; ``camera_frames`` fixes which frames are on the rig and
+    told apart by ``frame_id``; the ``cameras`` list fixes which frames are on the rig and
     in what order. Extrinsics come from tf against ``rig_frame_id``. ``depth_image`` feeds
     ``depth_cloud`` in every mode, and is additionally tracked against in ``rgbd``,
     reprojected onto the rig camera through ``depth_camera_info`` and tf when the depth
@@ -398,7 +398,7 @@ class DimSlam(NativeModule):
 
     The tracker's pose stream never touches the wire: it enters the filter as a
     drifting source under ``visual_odom_frame_id``. Any number of external sources
-    (wheel odometry, ...) publish onto ``sources`` and are told apart by
+    (wheel odometry, ...) publish onto ``odom_sources`` and are told apart by
     ``header.frame_id`` and ``child_frame_id``. Late messages roll the filter back and replay
     everything after.
     """
@@ -410,7 +410,7 @@ class DimSlam(NativeModule):
     camera_info: In[CameraInfo]
     depth_camera_info: In[CameraInfo]
     imu: In[Imu]
-    sources: In[Odometry]
+    odom_sources: In[Odometry]
 
     odometry: Out[Odometry]
     depth_cloud: Out[PointCloud2]

@@ -96,7 +96,7 @@ def _replay_trajectory(db_path):
             {
                 "camera_mode": "stereo",
                 "use_gpu": False,
-                "camera_frames": list(CAMERA_FRAMES),
+                "cameras": [{"frame_id": frame} for frame in CAMERA_FRAMES],
             },
             tf=_static_tf_lookup(replay),
         )

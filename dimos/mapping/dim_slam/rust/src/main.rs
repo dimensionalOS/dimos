@@ -17,29 +17,27 @@
 
 mod msg_convert;
 
-use std::collections::BTreeMap;
-
-use dim_slam::nalgebra::Isometry3;
 use dim_slam::{
     CameraConfig, CuvslamCore, CuvslamOdometryConfig, FusionCore, ImuConfig, OdometryEstimate,
-    OdometryFusionConfig, SourceConfig, SourceKey,
+    OdometryFusionConfig, SourceConfig,
 };
 use dimos_module::{native_config, run_with_transport, warn_throttled, Input, Module, Output, Tf};
 use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{CameraInfo, Image, Imu, PointCloud2};
 use msg_convert::{
-    to_camera_model, to_estimate, to_image_frame, to_imu_sample, to_isometry, to_odometry_msg,
-    to_point_cloud2, to_transform,
+    tf_lookup, to_camera_model, to_estimate, to_image_frame, to_imu_sample, to_isometry,
+    to_odometry_msg, to_point_cloud2, to_transform,
 };
 
 #[native_config]
 struct DimSlamConfig {
     camera_mode: String,
-    camera_frames: Vec<String>,
-    /// Keyed by the frame_id the camera's images carry; an absent camera takes the defaults.
-    cameras: BTreeMap<String, CameraConfig>,
+    /// In cuVSLAM's index order: the rig cameras first (two for stereo, one otherwise), then
+    /// any settings-only streams such as an rgbd depth camera. Empty discovers the rig off
+    /// camera_info.
+    cameras: Vec<CameraConfig>,
     use_gpu: bool,
-    /// Fused as a drifting source, so it must also key one of `sources`.
+    /// Fused as a drifting source; the module registers it with the visual_odom variances.
     visual_odom_frame_id: String,
     rig_frame_id: String,
     map_frame_id: String,
@@ -55,24 +53,19 @@ struct DimSlamConfig {
     replay_buffer_seconds: f64,
     outlier_rejection_allowed_variance: f64,
     max_position_m: f64,
-    /// Keyed by the frame_id the IMU's samples carry. Empty disables the IMU; the filter
-    /// propagates on a single one, so at most one entry.
-    imus: BTreeMap<String, ImuConfig>,
+    /// `frame_id` empty disables the IMU; otherwise it names the frame the samples carry.
+    imu: ImuConfig,
     initial_gravity_estimate: f64,
     initial_position_std: f64,
     initial_velocity_std: f64,
     initial_rotation_std: f64,
     initial_bias_std: f64,
-    /// Keyed "parent_frame_id->child_frame_id", the transform the source's estimates carry.
-    sources: BTreeMap<SourceKey, SourceConfig>,
+    /// Trust in the in-process visual odometry source.
+    visual_odom_pose_variances: [f64; 6],
+    visual_odom_twist_variances: [f64; 6],
+    /// External sources, each identified by the transform its estimates carry.
+    odom_sources: Vec<SourceConfig>,
     constraint_twist_variances: [f64; 6],
-}
-
-fn tf_lookup(tf: &Tf) -> impl Fn(&str, &str) -> Option<Isometry3<f64>> + '_ {
-    move |parent: &str, child: &str| {
-        tf.get_latest(parent, child)
-            .map(|transform| to_isometry(&transform))
-    }
 }
 
 #[derive(Module)]
@@ -90,9 +83,9 @@ struct DimSlam {
     depth_camera_info: Input<CameraInfo>,
     #[input(decode = Imu::decode)]
     imu: Input<Imu>,
-    /// External odometry sources, told apart by header.frame_id.
+    /// External odometry sources, told apart by the transform each message carries.
     #[input(decode = Odometry::decode)]
-    sources: Input<Odometry>,
+    odom_sources: Input<Odometry>,
     #[output(encode = Odometry::encode)]
     odometry: Output<Odometry>,
     /// rgbd only: range-gated depth points, in the depth frame.
@@ -111,7 +104,6 @@ impl DimSlam {
     async fn init(&mut self) {
         let vo = CuvslamCore::new(CuvslamOdometryConfig {
             camera_mode: self.config.camera_mode.clone(),
-            camera_frames: self.config.camera_frames.clone(),
             cameras: self.config.cameras.clone(),
             use_gpu: self.config.use_gpu,
             odom_frame_id: self.config.visual_odom_frame_id.clone(),
@@ -126,6 +118,15 @@ impl DimSlam {
             max_skew_ms: self.config.max_skew_ms,
         });
         self.vo = Some(vo.unwrap_or_else(|error| panic!("{error}")));
+        // The in-process tracker is always a fusion source; it goes first so a no-IMU blend
+        // prefers it.
+        let mut odom_sources = vec![SourceConfig {
+            parent_frame_id: self.config.visual_odom_frame_id.clone(),
+            child_frame_id: self.config.output_frame_id.clone(),
+            pose_variances: self.config.visual_odom_pose_variances,
+            twist_variances: self.config.visual_odom_twist_variances,
+        }];
+        odom_sources.extend(self.config.odom_sources.iter().cloned());
         self.fusion = Some(FusionCore::new(OdometryFusionConfig {
             odom_frame_id: self.config.odom_frame_id.clone(),
             output_frame_id: self.config.output_frame_id.clone(),
@@ -133,13 +134,13 @@ impl DimSlam {
             replay_buffer_seconds: self.config.replay_buffer_seconds,
             outlier_rejection_allowed_variance: self.config.outlier_rejection_allowed_variance,
             max_position_m: self.config.max_position_m,
-            imus: self.config.imus.clone(),
+            imu: Some(self.config.imu.clone()).filter(|imu| !imu.frame_id.is_empty()),
             initial_gravity_estimate: self.config.initial_gravity_estimate,
             initial_position_std: self.config.initial_position_std,
             initial_velocity_std: self.config.initial_velocity_std,
             initial_rotation_std: self.config.initial_rotation_std,
             initial_bias_std: self.config.initial_bias_std,
-            sources: self.config.sources.clone(),
+            odom_sources,
             constraint_twist_variances: self.config.constraint_twist_variances,
         }));
     }
@@ -183,7 +184,7 @@ impl DimSlam {
     }
 
     async fn handle_imu(&mut self, msg: Imu) {
-        if self.config.imus.is_empty() {
+        if self.config.imu.frame_id.is_empty() {
             return;
         }
         let sample = to_imu_sample(&msg);
@@ -205,7 +206,7 @@ impl DimSlam {
         self.publish().await;
     }
 
-    async fn handle_sources(&mut self, msg: Odometry) {
+    async fn handle_odom_sources(&mut self, msg: Odometry) {
         self.fusion
             .as_mut()
             .expect("setup ran")
