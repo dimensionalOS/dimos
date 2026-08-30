@@ -32,7 +32,6 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.manipulators._modeling import (
-    base_pose,
     joint_names,
 )
 
@@ -123,7 +122,6 @@ def make_a1z_model_config(
         )
     return RobotModelConfig(
         model=model,
-        base_pose=base_pose(),
         joint_names=model_joint_names,
         base_link="base_link",
         planning_groups=[
