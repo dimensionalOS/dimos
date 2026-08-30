@@ -64,7 +64,7 @@ FUSION_CONFIG = {
         }
     ],
     # Ground robot: pin vz, roll and pitch rates.
-    "constraint_twist_variances": [0.0, 0.0, 1e-6, 1e-6, 1e-6, 0.0],
+    "per_dimension_error_variance": [0.0, 0.0, 1e-6, 1e-6, 1e-6, 0.0],
 }
 
 
