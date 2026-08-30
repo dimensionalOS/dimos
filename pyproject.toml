@@ -512,9 +512,10 @@ tests-self-hosted = [
     # Needed to compile the in-tree extensions.
     "pybind11>=2.12",
     # dim_slam's visual odometry, replayed in-process by test_dim_odom_replay.
-    # Only two of the published wheels are usable: the linux aarch64 one is built
-    # for Thor/SVE2 and SIGILLs on other ARM cores, and there is no sdist.
-    "dim-odom>=0.1.0; (sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'darwin' and platform_machine == 'arm64')",
+    # There is no sdist (proprietary source). The 0.1.1+ aarch64 wheel is a generic
+    # armv8 fork build (the old Thor/SVE2 SIGILL is gone), but its libcuvslam still
+    # links glibc 2.38 / GLIBCXX 3.4.32, so JetPack 6 (glibc 2.35) cannot load it yet.
+    "dim-odom>=0.1.2; (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or (sys_platform == 'darwin' and platform_machine == 'arm64')",
 ]
 docs = [
     "mkdocs-awesome-nav>=3.3.0",
