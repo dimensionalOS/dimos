@@ -25,6 +25,9 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 DEFAULT_ADDRESS = "172.6.2.20:11323"
 ALFRED_URDF = Path(__file__).resolve().parent / "alfred.urdf"
 
+MID360_IP = "192.168.1.189"
+"""Alfred's Mid-360, on the Jetson's wired 192.168.1.100/24 link."""
+
 
 @dataclass(frozen=True)
 class AlfredConfig:

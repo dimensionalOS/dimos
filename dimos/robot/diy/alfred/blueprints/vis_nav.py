@@ -20,12 +20,19 @@ one rather than run on its own.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from functools import partial
 from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.mapping.dim_slam.dim_slam import CameraConfig, Covariance, DimSlam, SourceConfig
+from dimos.mapping.dim_slam.dim_slam import (
+    CameraConfig,
+    Covariance,
+    DimSlam,
+    ImuConfig,
+    SourceConfig,
+)
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.dannav.holonomic_tc.module import DanHolonomicTC
 from dimos.navigation.dannav.local_planner.module import DanLocalPlanner
@@ -117,105 +124,129 @@ lidar-raycast reference on drive_2026-08-18_23-05-04.db)."""
 
 ALFRED_BODY_HEIGHT_METERS = 0.5
 
-_vis_nav = autoconnect(
-    DimSlam.blueprint(
-        camera_mode="stereo",
-        # Alfred's computer has no GPU, so libcuvslam is built -DENFORCE_GPU=OFF.
-        use_gpu=False,
-        # Both imagers share one camera_info topic. Left undeclared, cuVSLAM orders its rig
-        # by sorting the frame names it saw, which is left-then-right only by luck of naming.
-        cameras=[
-            *(CameraConfig(frame_id=frame) for frame in IR_ENTITY_BY_FRAME),
-            CameraConfig(
-                frame_id=DEPTH_FRAME,
-                depth_cloud_max_range=DEPTH_MAX_RANGE_METERS,
-                # A full-resolution D455 cloud is ~400k points a frame at 30 Hz and drowns
-                # the mapper: voxel_ray_tracing handles one cloud at a time and its cost is
-                # linear in point count, so at 3 it sheds most of what it is sent.
-                depth_cloud_decimation=5,
-            ),
-        ],
-        # Fixed variances: the message covariances report accumulated drift, not the delta
-        # fused. Visual z is dropped; the wheels report z=roll=pitch=0 always, so those
-        # are kept as absolute anchors - the zero-twist constraint below only damps the
-        # velocities and let all three random-walk (a second floor in the map, then a
-        # visibly rolled robot). Without the IMU there is no other gravity reference.
-        visual_odom_pose_variances=Covariance(x=0.01, y=0.01, roll=0.05, pitch=0.05, yaw=0.05),
-        # Only the wheels measure velocity; the tracker publishes no twist at all.
-        odom_sources=[
-            SourceConfig(
-                parent_frame_id="wheel_odom",
-                child_frame_id="base_link",
-                pose_variances=Covariance(x=0.05, y=0.05, z=0.001, roll=0.001, pitch=0.001),
-                twist_variances=Covariance(x=0.02, y=0.02, yaw=0.05),
-            ),
-        ],
-        # The CPU tracker's reported translation std starts above 1.0 and grows past 9
-        # while driving normally, so no threshold separates good frames from bad.
-        covariance_gate_translation_std=0.0,
-        # Alfred is holonomic in the plane.
-        per_dimension_error_variance=Covariance(z=0.01, roll=0.01, pitch=0.01),
-        # Wheel odometry crosses the wifi link and can land seconds late.
-        replay_buffer_seconds=2.0,
-        # No imus entry: adding gyro yaw halved final drift on drive_2026-08-18_23-05-04.db
-        # (wheel alone 2.66 m out, wheel + gyro 1.33 m, against a 0.59 m floor on the lidar
-        # reference's own heading), and the mast D455 mount is now the solved d455_joint
-        # origin rather than the photo estimate — but an uncalibrated mount once misaligned
-        # gravity by ~2.4 m/s^2 and diverged the fusion, so the IMU (BMI055 in IMU_FRAME:
-        # gyro 0.0018 / 2e-5, accel 0.02 / 3e-3) stays off until a replay clears the new one.
-    ).remappings([(DimSlam, "odom_sources", "source_odometry")]),
-    RayTracingVoxelMap.blueprint(
-        voxel_size=VOXEL_SIZE_METERS,
-        max_range=DEPTH_MAX_RANGE_METERS,
-    ).remappings([(RayTracingVoxelMap, "lidar", "depth_cloud")]),
-    MLSPlannerNative.blueprint(
-        voxel_size=VOXEL_SIZE_METERS,
-        robot_height=ALFRED_BODY_HEIGHT_METERS,
-        wall_clearance_m=0.2,
-        step_penalty_weight=1.0,
-    ).remappings([(MLSPlannerNative, "path", "planner_path")]),
-    # Solely the tf-driven start_pose source for the dannav odom remaps below.
-    StartRelay.blueprint(),
-    DanLocalPlanner.blueprint(resample_spacing_m=0.1).remappings(
-        [(DanLocalPlanner, "odom", "start_pose")]
-    ),
-    DanHolonomicTC.blueprint().remappings([(DanHolonomicTC, "odom", "start_pose")]),
-    MovementManager.blueprint(),
-    vis_module(
-        global_config.viewer,
-        rerun_config={
-            "blueprint": _rerun_blueprint,
-            "static": {ALFRED_RERUN_ROOT: _alfred_urdf_static},
-            # Keyed by the topic's entity path, before any visual_override renames it.
-            # Everything is held to 1 Hz: the viewer rides a wifi link, and the
-            # uncapped clouds put it seconds behind live. tf is capped too, so the
-            # whole scene ticks once a second rather than re-posing per odom update.
-            "max_hz": {
-                "world/tf": 1.0,
-                "world/color_image": 1.0,
-                "world/depth_image": 1.0,
-                "world/image": 1.0,
-                "world/depth_cloud": 1.0,
-                "world/global_map": 1.0,
-                "world/local_map": 1.0,
-                "world/surface_map": 1.0,
-                "world/nodes": 1.0,
-                "world/node_edges": 1.0,
-            },
-            # An image only renders if it shares an entity with its Pinhole.
-            "visual_override": {
-                "world/planner_path": partial(_path_colored, color=GLOBAL_PATH_PURPLE),
-                "world/color_image": partial(_image_at, entity_path=f"{CAMERA_RERUN_ROOT}/color"),
-                "world/color_camera_info": partial(
-                    _pinhole_at, entity_path=f"{CAMERA_RERUN_ROOT}/color"
-                ),
-                "world/depth_image": partial(_image_at, entity_path=f"{CAMERA_RERUN_ROOT}/depth"),
-                "world/depth_camera_info": partial(
-                    _pinhole_at, entity_path=f"{CAMERA_RERUN_ROOT}/depth"
-                ),
-                "world/image": _ir_image,
-                "world/camera_info": _ir_pinhole,
-            },
-        },
-    ),
+D455_IMU = ImuConfig(
+    frame_id=IMU_FRAME,
+    gyro_noise_density=0.0018,
+    gyro_random_walk=2e-5,
+    accel_noise_density=0.02,
+    accel_random_walk=3e-3,
 )
+"""The D455's BMI055, left out of the default nav. Gyro yaw halved final drift on
+drive_2026-08-18_23-05-04.db (wheel alone 2.66 m out, wheel + gyro 1.33 m, against a 0.59 m
+floor on the lidar reference's own heading), and the mast mount is now the solved d455_joint
+origin rather than the photo estimate — but an uncalibrated mount once misaligned gravity by
+~2.4 m/s^2 and diverged the fusion, so it waits on a replay that clears the new one."""
+
+
+def vis_nav(
+    *,
+    imus: Sequence[ImuConfig] = (),
+    map_cloud_topic: str = "depth_cloud",
+    map_max_range: float = DEPTH_MAX_RANGE_METERS,
+) -> Any:
+    """Odometry through to wheel commands. `map_cloud_topic` is what the voxel map raytraces,
+    so it also decides which sensor's origin the free space is carved from."""
+    return autoconnect(
+        DimSlam.blueprint(
+            camera_mode="stereo",
+            # Alfred's computer has no GPU, so libcuvslam is built -DENFORCE_GPU=OFF.
+            use_gpu=False,
+            # Both imagers share one camera_info topic. Left undeclared, cuVSLAM orders its rig
+            # by sorting the frame names it saw, which is left-then-right only by luck of naming.
+            cameras=[
+                *(CameraConfig(frame_id=frame) for frame in IR_ENTITY_BY_FRAME),
+                CameraConfig(
+                    frame_id=DEPTH_FRAME,
+                    depth_cloud_max_range=DEPTH_MAX_RANGE_METERS,
+                    # A full-resolution D455 cloud is ~400k points a frame at 30 Hz and drowns
+                    # the mapper: voxel_ray_tracing handles one cloud at a time and its cost is
+                    # linear in point count, so at 3 it sheds most of what it is sent.
+                    depth_cloud_decimation=5,
+                ),
+            ],
+            # Fixed variances: the message covariances report accumulated drift, not the delta
+            # fused. Visual z is dropped; the wheels report z=roll=pitch=0 always, so those
+            # are kept as absolute anchors - the zero-twist constraint below only damps the
+            # velocities and let all three random-walk (a second floor in the map, then a
+            # visibly rolled robot). With no IMU there is no other gravity reference.
+            visual_odom_pose_variances=Covariance(x=0.01, y=0.01, roll=0.05, pitch=0.05, yaw=0.05),
+            # Only the wheels measure velocity; the tracker publishes no twist at all.
+            odom_sources=[
+                SourceConfig(
+                    parent_frame_id="wheel_odom",
+                    child_frame_id="base_link",
+                    pose_variances=Covariance(x=0.05, y=0.05, z=0.001, roll=0.001, pitch=0.001),
+                    twist_variances=Covariance(x=0.02, y=0.02, yaw=0.05),
+                ),
+            ],
+            # The CPU tracker's reported translation std starts above 1.0 and grows past 9
+            # while driving normally, so no threshold separates good frames from bad.
+            covariance_gate_translation_std=0.0,
+            # Alfred is holonomic in the plane.
+            per_dimension_error_variance=Covariance(z=0.01, roll=0.01, pitch=0.01),
+            # Wheel odometry crosses the wifi link and can land seconds late.
+            replay_buffer_seconds=2.0,
+            # Every IMU publishes on the one imu topic; the filter sorts them by frame_id and
+            # keeps a bias pair per entry, so an unlisted frame is dropped rather than fused.
+            imus=list(imus),
+        ).remappings([(DimSlam, "odom_sources", "source_odometry")]),
+        RayTracingVoxelMap.blueprint(
+            voxel_size=VOXEL_SIZE_METERS,
+            max_range=map_max_range,
+        ).remappings([(RayTracingVoxelMap, "lidar", map_cloud_topic)]),
+        MLSPlannerNative.blueprint(
+            voxel_size=VOXEL_SIZE_METERS,
+            robot_height=ALFRED_BODY_HEIGHT_METERS,
+            wall_clearance_m=0.2,
+            step_penalty_weight=1.0,
+        ).remappings([(MLSPlannerNative, "path", "planner_path")]),
+        # Solely the tf-driven start_pose source for the dannav odom remaps below.
+        StartRelay.blueprint(),
+        DanLocalPlanner.blueprint(resample_spacing_m=0.1).remappings(
+            [(DanLocalPlanner, "odom", "start_pose")]
+        ),
+        DanHolonomicTC.blueprint().remappings([(DanHolonomicTC, "odom", "start_pose")]),
+        MovementManager.blueprint(),
+        vis_module(
+            global_config.viewer,
+            rerun_config={
+                "blueprint": _rerun_blueprint,
+                "static": {ALFRED_RERUN_ROOT: _alfred_urdf_static},
+                # Keyed by the topic's entity path, before any visual_override renames it.
+                # Everything is held to 1 Hz: the viewer rides a wifi link, and the
+                # uncapped clouds put it seconds behind live. tf is capped too, so the
+                # whole scene ticks once a second rather than re-posing per odom update.
+                "max_hz": {
+                    "world/tf": 1.0,
+                    "world/color_image": 1.0,
+                    "world/depth_image": 1.0,
+                    "world/image": 1.0,
+                    "world/depth_cloud": 1.0,
+                    "world/lidar": 1.0,
+                    "world/global_map": 1.0,
+                    "world/local_map": 1.0,
+                    "world/surface_map": 1.0,
+                    "world/nodes": 1.0,
+                    "world/node_edges": 1.0,
+                },
+                # An image only renders if it shares an entity with its Pinhole.
+                "visual_override": {
+                    "world/planner_path": partial(_path_colored, color=GLOBAL_PATH_PURPLE),
+                    "world/color_image": partial(
+                        _image_at, entity_path=f"{CAMERA_RERUN_ROOT}/color"
+                    ),
+                    "world/color_camera_info": partial(
+                        _pinhole_at, entity_path=f"{CAMERA_RERUN_ROOT}/color"
+                    ),
+                    "world/depth_image": partial(
+                        _image_at, entity_path=f"{CAMERA_RERUN_ROOT}/depth"
+                    ),
+                    "world/depth_camera_info": partial(
+                        _pinhole_at, entity_path=f"{CAMERA_RERUN_ROOT}/depth"
+                    ),
+                    "world/image": _ir_image,
+                    "world/camera_info": _ir_pinhole,
+                },
+            },
+        ),
+    )

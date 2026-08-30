@@ -19,6 +19,8 @@ dimos run alfred-mls-nav
 
 from __future__ import annotations
 
+from typing import Any
+
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import JpegLcmTransport
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
@@ -26,7 +28,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.robot.diy.alfred.blueprints.vis_nav import _vis_nav
+from dimos.robot.diy.alfred.blueprints.vis_nav import vis_nav
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
 
 # librealsense leaks usbfs fds (~8/s) in this worker; keep socket-accepting modules
@@ -44,37 +46,43 @@ D455_MOUNT = Transform(
 drive_2026-08-18_23-05-04 by registering D455 depth against the point-lio lidar map.
 Only z is tightly resolved; x and y are bounded to about +/-3 cm."""
 
+D455_REMAPPINGS = [
+    (RealSenseCamera, "infrared_left", "image"),
+    (RealSenseCamera, "infrared_right", "image"),
+    (RealSenseCamera, "infrared_left_camera_info", "camera_info"),
+    (RealSenseCamera, "infrared_right_camera_info", "camera_info"),
+    # Keep the colour info off the stream cuVSLAM reads its rig from.
+    (RealSenseCamera, "camera_info", "color_camera_info"),
+]
+
+
+def jpeg_color() -> dict[tuple[str, type[Image]], JpegLcmTransport]:
+    """Raw colour is 19.6 MB/s of the Jetson's LCM traffic and only ever gets looked at, so
+    pay a JPEG encode to buy back the bus and the CPU."""
+    return {("color_image", Image): JpegLcmTransport("/color_image", Image)}
+
+
+def d455_stereo() -> Any:
+    """The mast D455 as cuVSLAM's stereo rig. The projector is off: its dots ride with the
+    robot, so they track as stationary features and eat the motion estimate."""
+    return RealSenseCamera.blueprint(
+        fps=30,
+        enable_infrared=True,
+        emitter_enabled=False,
+        enable_imu=True,
+        camera_name="d455",
+        serial_number=D455_SERIAL,
+        base_transform=D455_MOUNT,
+    )
+
+
 alfred_mls_nav = (
     autoconnect(
-        RealSenseCamera.blueprint(
-            fps=30,
-            enable_infrared=True,
-            emitter_enabled=False,
-            enable_imu=True,
-            camera_name="d455",
-            serial_number=D455_SERIAL,
-            base_transform=D455_MOUNT,
-        ),
+        d455_stereo(),
         AlfredHighLevel.blueprint(),
-        _vis_nav,
+        vis_nav(),
     )
-    .remappings(
-        [
-            (RealSenseCamera, "infrared_left", "image"),
-            (RealSenseCamera, "infrared_right", "image"),
-            (RealSenseCamera, "infrared_left_camera_info", "camera_info"),
-            (RealSenseCamera, "infrared_right_camera_info", "camera_info"),
-            # Keep the colour info off the stream cuVSLAM reads its rig from.
-            (RealSenseCamera, "camera_info", "color_camera_info"),
-            (AlfredHighLevel, "wheel_odometry", "source_odometry"),
-        ]
-    )
-    .transports(
-        {
-            # Raw colour is 19.6 MB/s of the Jetson's LCM traffic and only ever gets
-            # looked at, so pay a JPEG encode to buy back the bus and the CPU.
-            ("color_image", Image): JpegLcmTransport("/color_image", Image),
-        }
-    )
+    .remappings([*D455_REMAPPINGS, (AlfredHighLevel, "wheel_odometry", "source_odometry")])
+    .transports(jpeg_color())
     .global_config(n_workers=10, robot_model="alfred")
 )

@@ -29,14 +29,12 @@ from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.diy.alfred.blueprints.alfred_mls_nav import D455_MOUNT, D455_SERIAL
+from dimos.robot.diy.alfred.config import MID360_IP
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
 
 # librealsense leaks usbfs fds (~8/s) in this worker; keep socket-accepting modules
 # out of its fd table so EMFILE cannot take down the teleop controls.
 RealSenseCamera.dedicated_worker = True
-
-MID360_IP = "192.168.1.189"
-"""Alfred's Mid-360, on the Jetson's wired 192.168.1.100/24 link."""
 
 alfred_keyboard_teleop = (
     autoconnect(

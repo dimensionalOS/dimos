@@ -114,6 +114,13 @@
     <parent link="base_link"/><child link="mid360_link"/>
     <origin xyz="0.2307 -0.1636 0.437" rpy="-0.0096 0.3933 -0.0219"/>
   </joint>
+  <!-- The Mid-360's ICM-40609 sits off the point-cloud origin's axis; offset from
+       the official Livox extrinsic (extrinsic_T flipped), axes already aligned. -->
+  <link name="mid360_imu_link"/>
+  <joint name="mid360_imu_joint" type="fixed">
+    <parent link="mid360_link"/><child link="mid360_imu_link"/>
+    <origin xyz="0.011 0.02329 -0.04412" rpy="0 0 0"/>
+  </joint>
 
   <!-- RealSense D435i mounted upside-down at the rear, centered left-right,
        facing off the back, on a 40 mm extrusion rail lying on the deck about
