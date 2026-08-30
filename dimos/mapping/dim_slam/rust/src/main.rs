@@ -28,6 +28,36 @@ use msg_convert::{
     tf_lookup, to_camera_model, to_estimate, to_image_frame, to_imu_sample, to_isometry,
     to_odometry_msg, to_point_cloud2, to_transform,
 };
+use serde::{Deserialize, Serialize};
+
+/// Per-axis variances. For a pose x/y/z are metres and roll/pitch/yaw radians; for a twist
+/// they are the linear (m/s) and angular (rad/s) rates about the same axes.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct Covariance {
+    x: f64,
+    y: f64,
+    z: f64,
+    roll: f64,
+    pitch: f64,
+    yaw: f64,
+}
+
+impl Covariance {
+    fn to_array(&self) -> [f64; 6] {
+        [self.x, self.y, self.z, self.roll, self.pitch, self.yaw]
+    }
+}
+
+/// One external odometry source, identified by the transform its estimates carry.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct OdomSourceConfig {
+    parent_frame_id: String,
+    child_frame_id: String,
+    pose_variances: Covariance,
+    twist_variances: Covariance,
+}
 
 /// The tracker's own drifting world frame. It never touches the wire, so the name is
 /// internal bookkeeping: it only tells the tracker's estimates apart inside the filter.
@@ -69,11 +99,11 @@ struct DimSlamConfig {
     initial_rotation_std: f64,
     initial_bias_std: f64,
     /// Trust in the in-process visual odometry source.
-    visual_odom_pose_variances: [f64; 6],
-    visual_odom_twist_variances: [f64; 6],
+    visual_odom_pose_variances: Covariance,
+    visual_odom_twist_variances: Covariance,
     /// External sources, each identified by the transform its estimates carry.
-    odom_sources: Vec<SourceConfig>,
-    constraint_twist_variances: [f64; 6],
+    odom_sources: Vec<OdomSourceConfig>,
+    constraint_twist_variances: Covariance,
 }
 
 #[derive(Module)]
@@ -131,10 +161,15 @@ impl DimSlam {
         let mut odom_sources = vec![SourceConfig {
             parent_frame_id: VISUAL_ODOM_FRAME_ID.to_string(),
             child_frame_id: self.config.output_frame_id.clone(),
-            pose_variances: self.config.visual_odom_pose_variances,
-            twist_variances: self.config.visual_odom_twist_variances,
+            pose_variances: self.config.visual_odom_pose_variances.to_array(),
+            twist_variances: self.config.visual_odom_twist_variances.to_array(),
         }];
-        odom_sources.extend(self.config.odom_sources.iter().cloned());
+        odom_sources.extend(self.config.odom_sources.iter().map(|source| SourceConfig {
+            parent_frame_id: source.parent_frame_id.clone(),
+            child_frame_id: source.child_frame_id.clone(),
+            pose_variances: source.pose_variances.to_array(),
+            twist_variances: source.twist_variances.to_array(),
+        }));
         self.fusion = Some(FusionCore::new(OdometryFusionConfig {
             odom_frame_id: self.config.odom_frame_id.clone(),
             output_frame_id: self.config.output_frame_id.clone(),
@@ -157,7 +192,7 @@ impl DimSlam {
             initial_rotation_std: self.config.initial_rotation_std,
             initial_bias_std: self.config.initial_bias_std,
             odom_sources,
-            constraint_twist_variances: self.config.constraint_twist_variances,
+            constraint_twist_variances: self.config.constraint_twist_variances.to_array(),
         }));
     }
 

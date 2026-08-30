@@ -55,6 +55,21 @@ class CameraConfig(BaseModel):
     depth_cloud_decimation: int = 0
 
 
+class Covariance(BaseModel):
+    """Per-axis variances. For a pose x/y/z are metres and roll/pitch/yaw radians; for a
+    twist they are the linear (m/s) and angular (rad/s) rates about the same axes."""
+
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+    roll: float = 0.0
+    pitch: float = 0.0
+    yaw: float = 0.0
+
+    def any_set(self) -> bool:
+        return any(self.model_dump().values())
+
+
 class SourceConfig(BaseModel):
     """One external odometry source and how much it is trusted. A variance below zero takes
     the message covariance, zero drops that dimension, above zero is a fixed variance. A
@@ -67,14 +82,9 @@ class SourceConfig(BaseModel):
     # filter-anchored deltas, since its own pose has drifted.
     parent_frame_id: str = ""
     child_frame_id: str = ""
-    # [x y z roll pitch yaw]
-    pose_variances: list[float] = Field(
-        default_factory=lambda: [0.0] * 6, min_length=6, max_length=6
-    )
-    # [vx vy vz wx wy wz], body frame
-    twist_variances: list[float] = Field(
-        default_factory=lambda: [0.0] * 6, min_length=6, max_length=6
-    )
+    pose_variances: Covariance = Field(default_factory=Covariance)
+    # Body frame.
+    twist_variances: Covariance = Field(default_factory=Covariance)
 
 
 class DimSlamConfig(NativeModuleConfig):
@@ -154,23 +164,17 @@ class DimSlamConfig(NativeModuleConfig):
 
     # Trust in the tracker's pose, per SourceConfig semantics; the module registers the
     # tracker as a fusion source itself, so it never appears in `odom_sources`.
-    visual_odom_pose_variances: list[float] = Field(
-        default_factory=lambda: [0.01, 0.01, 0.01, 0.05, 0.05, 0.05],
-        min_length=6,
-        max_length=6,
+    visual_odom_pose_variances: Covariance = Field(
+        default_factory=lambda: Covariance(x=0.01, y=0.01, z=0.01, roll=0.05, pitch=0.05, yaw=0.05)
     )
-    visual_odom_twist_variances: list[float] = Field(
-        default_factory=lambda: [0.0] * 6, min_length=6, max_length=6
-    )
+    visual_odom_twist_variances: Covariance = Field(default_factory=Covariance)
     # One entry per external source (wheel odometry, ...), matched against each message's
     # header.frame_id and child_frame_id.
     odom_sources: list[SourceConfig] = Field(default_factory=list)
     # A virtual zero-twist measurement applied with every source message, for the
     # directions the platform cannot move in. Above zero pulls that dimension toward
     # zero with this variance; zero leaves it free.
-    constraint_twist_variances: list[float] = Field(
-        default_factory=lambda: [0.0] * 6, min_length=6, max_length=6
-    )
+    constraint_twist_variances: Covariance = Field(default_factory=Covariance)
 
     @model_validator(mode="after")
     def _imu_noise_is_set(self) -> DimSlamConfig:
@@ -192,7 +196,10 @@ class DimSlamConfig(NativeModuleConfig):
     @model_validator(mode="after")
     def _sources_are_fusable(self) -> DimSlamConfig:
         # Zero drops a dimension, so an all-zero source is fused in no dimension at all.
-        if not any(self.visual_odom_pose_variances) and not any(self.visual_odom_twist_variances):
+        if (
+            not self.visual_odom_pose_variances.any_set()
+            and not self.visual_odom_twist_variances.any_set()
+        ):
             raise ValueError(
                 "every visual_odom pose and twist variance is zero, "
                 "which fuses the tracker in no dimension at all"
@@ -202,7 +209,7 @@ class DimSlamConfig(NativeModuleConfig):
                 raise ValueError(
                     f"odom_sources[{index}] needs both parent_frame_id and child_frame_id"
                 )
-            if not any(source.pose_variances) and not any(source.twist_variances):
+            if not source.pose_variances.any_set() and not source.twist_variances.any_set():
                 raise ValueError(
                     f"odom_sources[{index}] ({source.parent_frame_id!r} -> "
                     f"{source.child_frame_id!r}) has every pose and twist variance at zero, "
