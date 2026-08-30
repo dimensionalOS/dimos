@@ -511,6 +511,13 @@ tests-self-hosted = [
     "mcap>=1.2.0",
     # Needed to compile the in-tree extensions.
     "pybind11>=2.12",
+    # dim_slam's visual odometry, replayed in-process by test_dim_odom_replay.
+    # There is no sdist (proprietary source). 0.1.5 is the first release whose fusion
+    # config takes an `imus` list (one bias pair per IMU); earlier releases reject that
+    # shape. It also carries the JetPack 6 fixes: manylinux_2_35 wheels with the aarch64
+    # build targeting armv8.2-a, so an Orin no longer traps on build-host armv9
+    # instructions.
+    "dim-odom>=0.1.5; (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or (sys_platform == 'darwin' and platform_machine == 'arm64')",
 ]
 docs = [
     "mkdocs-awesome-nav>=3.3.0",
@@ -524,7 +531,7 @@ docs = [
 required-version = ">=0.9.17"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false }
+exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false }
 override-dependencies = [
     # ultralytics, unitree-sdk2py-dimos and unitree-webrtc-connect depend on
     # opencv-python, which ships the same cv2/ tree as our opencv-contrib-python

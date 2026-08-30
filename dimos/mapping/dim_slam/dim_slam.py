@@ -17,190 +17,29 @@ number of odometry sources by an error-state Kalman filter, in one process."""
 
 from __future__ import annotations
 
-import ctypes
-import os
-from pathlib import Path
-import platform
-import sys
 from typing import Literal
-from uuid import uuid4
 
 from pydantic import BaseModel, Field, model_validator
 
-from dimos.constants import CACHE_DIR
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.ImuInfo import ImuInfo
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.nvidia_env import driver_env, sdk_variant
 
 logger = setup_logger()
 
-MODULE_DIR = Path(__file__).resolve().parent
-
-# The nix loader ignores ld.so.cache, so dlopen("libcuda.so.1") fails. Jetson needs the
-# whole directory: its libcuda.so.1 depends on its siblings.
-_DRIVER_ONLY_LIB_DIRS = (
-    Path("/run/opengl-driver/lib"),
-    # Jetson: which of these two names exists varies by release.
-    Path("/usr/lib/aarch64-linux-gnu/nvidia"),
-    Path("/usr/lib/aarch64-linux-gnu/tegra"),
-)
-# Adding one of these whole would shadow the binary's libstdc++, so symlink the driver.
-_HOST_LIB_DIRS = (
-    Path("/usr/lib/x86_64-linux-gnu"),
-    Path("/usr/lib/aarch64-linux-gnu"),
-)
-# nixpkgs tracks a newer CUDA than JetPack ships and the mismatch fails at
-# cusolverDnCreate, so the host's own runtime goes first where it exists.
-_HOST_CUDA_LIB_DIR = Path("/usr/local/cuda/lib64")
-_DRIVER_LIBS = (
-    "libcuda.so.1",
-    "libnvidia-ptxjitcompiler.so.1",
-    "libnvidia-nvvm.so.4",
-    "libnvidia-ml.so.1",
-)
-_DRIVER_LINK_DIR = CACHE_DIR / "nvidia-driver-libs"
-
-
-def driver_library_dir() -> Path | None:
-    dedicated = next(
-        (d for d in _DRIVER_ONLY_LIB_DIRS if (d / "libcuda.so.1").exists()),
-        None,
-    )
-    if dedicated is not None:
-        return dedicated
-    host = next((d for d in _HOST_LIB_DIRS if (d / "libcuda.so.1").exists()), None)
-    if host is None:
-        return None
-    _DRIVER_LINK_DIR.mkdir(parents=True, exist_ok=True)
-    for name in _DRIVER_LIBS:
-        source = host / name
-        link = _DRIVER_LINK_DIR / name
-        if not source.exists():
-            continue
-        target = source.resolve()
-        if link.is_symlink() and link.readlink() == target:
-            continue
-        # Two callers can reach this at once, and symlink_to over an existing path raises.
-        staging = link.with_name(f"{name}.{uuid4().hex}.tmp")
-        staging.symlink_to(target)
-        os.replace(staging, link)
-    return _DRIVER_LINK_DIR
-
-
-Hardware = Literal[
-    "thor",
-    "orin",
-    "xavier",
-    "nano",
-    "linux-x86-nvidia",
-    "linux-x86-no-nvidia",
-    "linux-arm-no-nvidia",
-    "darwin-apple-silicon",
-    "darwin-intel",
-]
-
-
-def detect_hardware() -> Hardware:
-    if sys.platform == "darwin":
-        if platform.machine() == "arm64":
-            return "darwin-apple-silicon"
-        return "darwin-intel"
-    if platform.machine() == "aarch64":
-        compatible = Path("/proc/device-tree/compatible")
-        chip = compatible.read_bytes() if compatible.exists() else b""
-        if b"tegra264" in chip:
-            return "thor"
-        if b"tegra234" in chip:
-            return "orin"
-        if b"tegra194" in chip:
-            return "xavier"
-        if b"tegra210" in chip:
-            return "nano"
-        return "linux-arm-no-nvidia"
-    if detect_cuda_major() > 0:
-        return "linux-x86-nvidia"
-    return "linux-x86-no-nvidia"
-
-
-def detect_cuda_major() -> int:
-    """0 when there is no NVIDIA driver (always on darwin)."""
-    if sys.platform == "darwin":
-        return 0
-    candidates = ["libcuda.so.1"] + [
-        str(directory / "libcuda.so.1")
-        for directory in (*_DRIVER_ONLY_LIB_DIRS, *_HOST_LIB_DIRS)
-        if (directory / "libcuda.so.1").exists()
-    ]
-    for candidate in candidates:
-        try:
-            driver = ctypes.CDLL(candidate)
-        except OSError:
-            continue
-        version = ctypes.c_int()
-        if driver.cuDriverGetVersion(ctypes.byref(version)) == 0:
-            return version.value // 1000
-    return 0
-
-
-def sdk_variant() -> str:
-    """Nix cannot see the installed driver (cuda12 vs cuda13) or /proc/device-tree
-    (orin vs thor), so the flake's default package cannot make this choice.
-    """
-    hardware = detect_hardware()
-    if hardware in ("thor", "orin"):
-        return hardware
-    if hardware in ("xavier", "nano"):
-        # cuVSLAM ships no JetPack 4/5 build, so their GPUs are unusable here
-        logger.warning("cuVSLAM has no %s GPU build; only use_gpu=False will work.", hardware)
-        return "aarch64"
-    if hardware == "darwin-apple-silicon":
-        return "metal"
-    if hardware == "darwin-intel":
-        raise RuntimeError("cuVSLAM has no Intel-mac build; it needs Apple silicon.")
-    if hardware == "linux-arm-no-nvidia":
-        # non-Jetson ARM: the CPU-fallback build
-        return "aarch64"
-    if hardware == "linux-x86-no-nvidia":
-        # same derivation as x86_64-cuda12 (ENFORCE_GPU=OFF, so it runs without a
-        # driver); the alias exists so the choice reads as deliberate
-        logger.warning("No NVIDIA driver found; only use_gpu=False will work.")
-        return "x86_64"
-    major = detect_cuda_major()
-    if major < 12:
-        logger.warning(
-            "This NVIDIA driver supports CUDA %d and the GPU path needs 12+; "
-            "only use_gpu=False will work until the driver is upgraded.",
-            major,
-        )
-    return f"x86_64-cuda{major}"
-
-
-def _driver_env() -> dict[str, str]:
-    if sys.platform == "darwin":
-        return {"CUMETAL_USE_METAL_DEVICE_ADDRESSES": "1"}
-    parts = [str(_HOST_CUDA_LIB_DIR)] if _HOST_CUDA_LIB_DIR.is_dir() else []
-    driver_dir = driver_library_dir()
-    if driver_dir is not None:
-        parts.append(str(driver_dir))
-    if not parts:
-        return {}
-    existing = os.environ.get("LD_LIBRARY_PATH", "")
-    if existing:
-        parts.append(existing)
-    return {"LD_LIBRARY_PATH": ":".join(parts)}
-
 
 class CameraConfig(BaseModel):
-    """Settings for one camera, keyed by the frame_id its images carry. A depth stream is a
-    camera of its own here, and need not be a rig camera."""
+    """Settings for one camera, identified by the frame_id its images carry. A depth stream
+    is a camera of its own here, and need not be a rig camera."""
 
+    frame_id: str = ""
     # Asserted, not performed. cuVSLAM takes one flag for the whole rig, so the rig's
     # cameras have to agree.
     rectified: bool = True
@@ -216,24 +55,31 @@ class CameraConfig(BaseModel):
     depth_cloud_decimation: int = 0
 
 
-# Datasheet values, in the continuous-time units the filter wants: rad/s/sqrt(Hz),
-# rad/s^2/sqrt(Hz), m/s^2/sqrt(Hz), m/s^3/sqrt(Hz). Named so use_imu can insist on them.
-IMU_NOISE_FIGURES = (
-    "gyro_noise_density",
-    "gyro_random_walk",
-    "accel_noise_density",
-    "accel_random_walk",
-)
+class Covariance(BaseModel):
+    """Per-axis variances. For a pose x/y/z are metres and roll/pitch/yaw radians; for a
+    twist they are the linear (m/s) and angular (rad/s) rates about the same axes."""
+
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+    roll: float = 0.0
+    pitch: float = 0.0
+    yaw: float = 0.0
+
+    def any_set(self) -> bool:
+        return any(self.model_dump().values())
 
 
 class ImuConfig(BaseModel):
-    """One physical IMU: its noise figures and how long it has to hold still to init."""
+    """One IMU and its noise model. Each entry keeps its own noise figures and its own
+    estimated biases, so a good gyro next to a cheap one keeps its say."""
 
+    # The frame_id this IMU's samples carry; any other frame is dropped.
+    frame_id: str = ""
     gyro_noise_density: float = 0.0
     gyro_random_walk: float = 0.0
     accel_noise_density: float = 0.0
     accel_random_walk: float = 0.0
-
     # Averaged while stationary to level the filter and take the gyro bias; leaving that
     # bias in cost 19.8 m of final error against 1.6 m on a 517 s Alfred drive. At 200 Hz
     # this is one second of standing still at startup.
@@ -244,24 +90,34 @@ class ImuConfig(BaseModel):
     init_gyro_limit: float = 0.05
 
 
-class SourceConfig(BaseModel):
-    """How much one odometry source is trusted. Below zero takes the message covariance,
-    zero drops that dimension, above zero is a fixed variance. A drifting source's
-    covariance describes its accumulated drift rather than the delta being fused, so a
-    fixed value is usually the right answer."""
+class InitialStds(BaseModel):
+    """Standard deviations seeding the filter covariance at initialization."""
 
-    # [x y z roll pitch yaw]
-    pose_variances: list[float] = Field(
-        default_factory=lambda: [0.0] * 6, min_length=6, max_length=6
-    )
-    # [vx vy vz wx wy wz], body frame
-    twist_variances: list[float] = Field(
-        default_factory=lambda: [0.0] * 6, min_length=6, max_length=6
-    )
+    position: float = 0.01
+    velocity: float = 0.1
+    rotation: float = 0.05
+    bias: float = 0.05
+
+
+class SourceConfig(BaseModel):
+    """One external odometry source and how much it is trusted. A variance below zero takes
+    the message covariance, zero drops that dimension, above zero is a fixed variance. A
+    drifting source's covariance describes its accumulated drift rather than the delta
+    being fused, so a fixed value is usually the right answer."""
+
+    # The transform this source's estimates carry: each message's header.frame_id and
+    # child_frame_id. Both halves are needed because two sources can share a parent. A
+    # source whose parent is odom_frame_id is fused absolutely; anything else is fused as
+    # filter-anchored deltas, since its own pose has drifted.
+    parent_frame_id: str = ""
+    child_frame_id: str = ""
+    pose_variances: Covariance = Field(default_factory=Covariance)
+    # Body frame.
+    twist_variances: Covariance = Field(default_factory=Covariance)
 
 
 class DimSlamConfig(NativeModuleConfig):
-    cwd: str | None = str(MODULE_DIR / "rust")
+    cwd: str | None = "rust"
     executable: str = "result/bin/dim_slam"
     # The dimos-repo input is this repo, so writing the lock during evaluation changes the
     # tree being hashed and the build dies on its own edit.
@@ -269,32 +125,23 @@ class DimSlamConfig(NativeModuleConfig):
         default_factory=lambda: f"nix build -L --no-write-lock-file 'path:.#{sdk_variant()}'"
     )
     stdin_config: bool = True
-    extra_env: dict[str, str] = Field(default_factory=_driver_env)
+    extra_env: dict[str, str] = Field(default_factory=driver_env)
 
     # no default: this choice changes what inputs are required
     camera_mode: Literal["mono", "stereo", "rgbd"]
-    # Empty: auto-discover from camera_info. Kept a list rather than folded into cameras
-    # because it carries cuVSLAM's rig order, and a JSON object's key order does not
-    # survive deserialization.
-    camera_frames: list[str] = Field(default_factory=list)
-    # Keyed by the frame_id the camera's images carry; an absent camera takes the defaults.
-    cameras: dict[str, CameraConfig] = Field(default_factory=dict)
+    # In cuVSLAM's index order: the rig cameras first (two for stereo, one otherwise), then
+    # any settings-only streams such as an rgbd depth camera. Empty auto-discovers the rig
+    # from camera_info; an unlisted camera takes the defaults.
+    cameras: list[CameraConfig] = Field(default_factory=list)
     # Off runs the deterministic CPU path, which needs a libcuvslam built
     # -DENFORCE_GPU=OFF. A build carrying only the other backend is used with a warning.
     use_gpu: bool = True
 
-    # The tracker's own world frame, drifting freely; the filter fuses it as a
-    # drifting source, so it must key one of `sources`.
-    visual_odom_frame_id: str = "visual_odom"
     # Frame the cuVSLAM rig is built in. Empty means output_frame_id.
     rig_frame_id: str = ""
     # Carried for whatever consumes the loop-closed pose; nothing here publishes map -> odom.
     map_frame_id: str = "map"
 
-    # cuVSLAM's Inertial mode: the stereo pair plus one IMU. The noise model and frame
-    # come from the imu_info stream. Separate from use_imu, which feeds the fusion
-    # filter. Implemented only on the CUDA path.
-    cuvslam_enable_imu: bool = False
     # Stamp spread one frame set may span, milliseconds; 0 keeps cuVSLAM's 1 ms contract. A
     # software-triggered rig needs this widened: Spot's images land within ~15 ms of each
     # other and its depth trails its camera by up to ~90 ms, so every set is dropped at 1 ms.
@@ -314,96 +161,80 @@ class DimSlamConfig(NativeModuleConfig):
     # The filter itself steps at the IMU rate; this is only how often it emits.
     publish_rate: float = 50.0
     replay_buffer_seconds: float = 0.5
-    # Standard deviations per measurement dimension before a reading is called an
-    # outlier. 0 disables the gate.
-    mahalanobis_gate: float = 5.0
+    # Outlier gate in variance units, per measurement dimension. Smaller is more
+    # aggressive, 0 is no gate.
+    outlier_rejection_allowed_variance: float = 25.0
     # Caps the filter's own state rather than an incoming reading. 0 disables it.
     max_position_m: float = 10000.0
 
-    # On, the filter propagates on IMU and needs one fully specified imus entry. Off, it is
-    # seeded level from the first source message and holds its pose between them.
-    use_imu: bool = False
-
-    # Keyed by the frame_id the IMU's samples carry. The filter propagates on a single IMU,
-    # so use_imu needs exactly one entry.
-    imus: dict[str, ImuConfig] = Field(default_factory=dict)
-    # m/s^2, seeding the filter rather than fixing it: a ZUPT is meant to refine it later.
-    # Worth setting only on good hardware. Local gravity runs 9.780 at the equator to 9.832
-    # at the poles, a 0.07 spread, and altitude is a tenth of that (Everest costs 0.027).
-    # The BMI055 in a D455 has a 0.69 zero-g offset, ten times the whole spread, so there
-    # the number is unmeasurable; an ADIS16505 repeats to 0.02 and can tell the difference.
+    # Empty disables inertial propagation: the filter is seeded level from the first source
+    # message and holds its pose between them.
+    imus: list[ImuConfig] = Field(default_factory=list)
+    # m/s^2. Why is gravity a config?
+    # 1) different IMUs have different bias
+    # 2) gravity changes with latitude by a non-trivial amount for IMUs (0.05 m/s^2)
     initial_gravity_estimate: float = 9.8
+    initial_stds: InitialStds = Field(default_factory=InitialStds)
 
-    initial_position_std: float = 0.01
-    initial_velocity_std: float = 0.1
-    initial_rotation_std: float = 0.05
-    initial_bias_std: float = 0.05
-
-    # One entry per source, keyed "parent_frame_id->child_frame_id" and matched against each
-    # message's header.frame_id and child_frame_id. Both halves are needed because two
-    # sources can share a parent. A source whose parent is odom_frame_id is fused
-    # absolutely; anything else is fused as filter-anchored deltas, since its own pose has
-    # drifted.
-    sources: dict[str, SourceConfig] = Field(
-        default_factory=lambda: {
-            "visual_odom->base_link": SourceConfig(
-                pose_variances=[0.01, 0.01, 0.01, 0.05, 0.05, 0.05]
-            )
-        }
+    # Trust in the tracker's pose, per SourceConfig semantics; the module registers the
+    # tracker as a fusion source itself, so it never appears in `odom_sources`. The tracker
+    # is fused by pose deltas only.
+    visual_odom_pose_variances: Covariance = Field(
+        default_factory=lambda: Covariance(x=0.01, y=0.01, z=0.01, roll=0.05, pitch=0.05, yaw=0.05)
     )
+    # One entry per external source (wheel odometry, ...), matched against each message's
+    # header.frame_id and child_frame_id.
+    odom_sources: list[SourceConfig] = Field(default_factory=list)
     # A virtual zero-twist measurement applied with every source message, for the
     # directions the platform cannot move in. Above zero pulls that dimension toward
     # zero with this variance; zero leaves it free.
-    constraint_twist_variances: list[float] = Field(
-        default_factory=lambda: [0.0] * 6, min_length=6, max_length=6
-    )
+    constraint_twist_variances: Covariance = Field(default_factory=Covariance)
 
     @model_validator(mode="after")
-    def _imu_noise_is_set(self) -> DimSlamConfig:
-        if not self.use_imu:
-            return self
-        # The filter propagates on one IMU, so a second entry would silently go unused.
-        if len(self.imus) != 1:
-            raise ValueError(f"use_imu needs exactly one imus entry, got {list(self.imus)}")
-        frame, imu = next(iter(self.imus.items()))
-        missing = [name for name in IMU_NOISE_FIGURES if getattr(imu, name) <= 0.0]
-        if missing:
-            raise ValueError(f"use_imu needs IMU {frame!r}'s noise figures: {', '.join(missing)}")
-        if imu.init_gyro_limit <= 0.0:
-            raise ValueError(f"IMU {frame!r}'s init_gyro_limit must be above zero to ever init")
-        return self
-
-    @model_validator(mode="after")
-    def _mode_combinations(self) -> DimSlamConfig:
-        # cuVSLAM has no inertial mono or rgbd, so the flag would be dropped on the floor.
-        if self.cuvslam_enable_imu and self.camera_mode != "stereo":
-            raise ValueError(
-                f"cuvslam_enable_imu needs camera_mode='stereo', not {self.camera_mode!r}"
-            )
+    def _imus_are_complete(self) -> DimSlamConfig:
+        noise_figures = (
+            "gyro_noise_density",
+            "gyro_random_walk",
+            "accel_noise_density",
+            "accel_random_walk",
+        )
+        seen_frames = set()
+        for index, imu in enumerate(self.imus):
+            if not imu.frame_id.strip():
+                raise ValueError(f"imus[{index}] needs a frame_id")
+            if imu.frame_id in seen_frames:
+                raise ValueError(f"imus[{index}] repeats frame_id {imu.frame_id!r}")
+            seen_frames.add(imu.frame_id)
+            missing = [name for name in noise_figures if getattr(imu, name) <= 0.0]
+            if missing:
+                raise ValueError(
+                    f"imus[{index}] ({imu.frame_id!r}) needs its noise figures set: "
+                    f"{', '.join(missing)}"
+                )
+            if imu.init_gyro_limit <= 0.0:
+                raise ValueError(
+                    f"imus[{index}] ({imu.frame_id!r}) init_gyro_limit must be above zero "
+                    "to ever init"
+                )
         return self
 
     @model_validator(mode="after")
     def _sources_are_fusable(self) -> DimSlamConfig:
-        # The native parses these keys and refuses a malformed one; catching it here names
-        # the offender against the config that wrote it.
-        for key in self.sources:
-            parent, separator, child = key.partition("->")
-            if not separator or not parent.strip() or not child.strip():
-                raise ValueError(
-                    f"source key {key!r} must be written 'parent_frame_id->child_frame_id'"
-                )
-        # The tracker's pose only reaches the filter as a source under this transform.
-        visual_odom_key = f"{self.visual_odom_frame_id}->{self.output_frame_id}"
-        if visual_odom_key not in self.sources:
-            raise ValueError(
-                f"source {visual_odom_key!r} is missing from sources {list(self.sources)}, "
-                "so the visual odometry would never be fused"
-            )
         # Zero drops a dimension, so an all-zero source is fused in no dimension at all.
-        for key, source in self.sources.items():
-            if not any(source.pose_variances) and not any(source.twist_variances):
+        if not self.visual_odom_pose_variances.any_set():
+            raise ValueError(
+                "every visual_odom_pose_variances entry is zero, "
+                "which fuses the tracker in no dimension at all"
+            )
+        for index, source in enumerate(self.odom_sources):
+            if not source.parent_frame_id.strip() or not source.child_frame_id.strip():
                 raise ValueError(
-                    f"source {key!r} has every pose and twist variance at zero, "
+                    f"odom_sources[{index}] needs both parent_frame_id and child_frame_id"
+                )
+            if not source.pose_variances.any_set() and not source.twist_variances.any_set():
+                raise ValueError(
+                    f"odom_sources[{index}] ({source.parent_frame_id!r} -> "
+                    f"{source.child_frame_id!r}) has every pose and twist variance at zero, "
                     "which fuses nothing; use a positive variance or drop the source"
                 )
         return self
@@ -411,15 +242,15 @@ class DimSlamConfig(NativeModuleConfig):
 
 class DimSlam(NativeModule):
     """Every camera publishes onto the same ``image`` and ``camera_info`` streams and is
-    told apart by ``frame_id``; ``camera_frames`` fixes which frames are on the rig and
+    told apart by ``frame_id``; the ``cameras`` list fixes which frames are on the rig and
     in what order. Extrinsics come from tf against ``rig_frame_id``. ``depth_image`` feeds
     ``depth_cloud`` in every mode, and is additionally tracked against in ``rgbd``,
     reprojected onto the rig camera through ``depth_camera_info`` and tf when the depth
     sensor differs.
 
-    The tracker's pose stream never touches the wire: it enters the filter as a
-    drifting source under ``visual_odom_frame_id``. Any number of external sources
-    (wheel odometry, ...) publish onto ``sources`` and are told apart by
+    The tracker's pose stream never touches the wire: it enters the filter directly
+    as a drifting source. Any number of external sources
+    (wheel odometry, ...) publish onto ``odom_sources`` and are told apart by
     ``header.frame_id`` and ``child_frame_id``. Late messages roll the filter back and replay
     everything after.
     """
@@ -431,8 +262,7 @@ class DimSlam(NativeModule):
     camera_info: In[CameraInfo]
     depth_camera_info: In[CameraInfo]
     imu: In[Imu]
-    imu_info: In[ImuInfo]
-    sources: In[Odometry]
+    odom_sources: In[Odometry]
 
     odometry: Out[Odometry]
     depth_cloud: Out[PointCloud2]

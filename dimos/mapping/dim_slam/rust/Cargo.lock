@@ -567,7 +567,7 @@ dependencies = [
 [[package]]
 name = "dim_slam"
 version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimSLAM?branch=fused_odom#e612daa313dd88e86e64018c0a3584c136290674"
+source = "git+https://github.com/dimensionalOS/dimSLAM?branch=fused_odom#70a7e48d8d9724f70318029a25fc9cd6dd01c9f5"
 dependencies = [
  "cu_vslam_rs",
  "nalgebra",

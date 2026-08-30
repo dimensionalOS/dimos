@@ -25,7 +25,7 @@ from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.mapping.dim_slam.dim_slam import CameraConfig, DimSlam, ImuConfig, SourceConfig
+from dimos.mapping.dim_slam.dim_slam import CameraConfig, Covariance, DimSlam, SourceConfig
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.dannav.holonomic_tc.module import DanHolonomicTC
 from dimos.navigation.dannav.local_planner.module import DanLocalPlanner
@@ -124,54 +124,46 @@ _vis_nav = autoconnect(
         use_gpu=False,
         # Both imagers share one camera_info topic. Left undeclared, cuVSLAM orders its rig
         # by sorting the frame names it saw, which is left-then-right only by luck of naming.
-        camera_frames=list(IR_ENTITY_BY_FRAME),
-        cameras={
-            DEPTH_FRAME: CameraConfig(
+        cameras=[
+            *(CameraConfig(frame_id=frame) for frame in IR_ENTITY_BY_FRAME),
+            CameraConfig(
+                frame_id=DEPTH_FRAME,
                 depth_cloud_max_range=DEPTH_MAX_RANGE_METERS,
                 # A full-resolution D455 cloud is ~400k points a frame at 30 Hz and drowns
                 # the mapper: voxel_ray_tracing handles one cloud at a time and its cost is
                 # linear in point count, so at 3 it sheds most of what it is sent.
                 depth_cloud_decimation=5,
-            )
-        },
+            ),
+        ],
         # Fixed variances: the message covariances report accumulated drift, not the delta
         # fused. Visual z is dropped; the wheels report z=roll=pitch=0 always, so those
         # are kept as absolute anchors - the zero-twist constraint below only damps the
         # velocities and let all three random-walk (a second floor in the map, then a
         # visibly rolled robot). Without the IMU there is no other gravity reference.
+        visual_odom_pose_variances=Covariance(x=0.01, y=0.01, roll=0.05, pitch=0.05, yaw=0.05),
         # Only the wheels measure velocity; the tracker publishes no twist at all.
-        sources={
-            "visual_odom->base_link": SourceConfig(
-                pose_variances=[0.01, 0.01, 0.0, 0.05, 0.05, 0.05],
+        odom_sources=[
+            SourceConfig(
+                parent_frame_id="wheel_odom",
+                child_frame_id="base_link",
+                pose_variances=Covariance(x=0.05, y=0.05, z=0.001, roll=0.001, pitch=0.001),
+                twist_variances=Covariance(x=0.02, y=0.02, yaw=0.05),
             ),
-            "wheel_odom->base_link": SourceConfig(
-                pose_variances=[0.05, 0.05, 0.001, 0.001, 0.001, 0.0],
-                twist_variances=[0.02, 0.02, 0.0, 0.0, 0.0, 0.05],
-            ),
-        },
+        ],
         # The CPU tracker's reported translation std starts above 1.0 and grows past 9
         # while driving normally, so no threshold separates good frames from bad.
         covariance_gate_translation_std=0.0,
         # Alfred is holonomic in the plane.
-        constraint_twist_variances=[0.0, 0.0, 0.01, 0.01, 0.01, 0.0],
+        constraint_twist_variances=Covariance(z=0.01, roll=0.01, pitch=0.01),
         # Wheel odometry crosses the wifi link and can land seconds late.
         replay_buffer_seconds=2.0,
-        # Halves final drift on drive_2026-08-18_23-05-04.db: wheel alone ends 2.66 m out,
-        # wheel + gyro 1.33 m, against a 0.59 m floor on the lidar reference's own heading.
-        # The mast D455 mount is now the solved d455_joint origin rather than the photo
-        # estimate, but an uncalibrated mount once misaligned gravity by ~2.4 m/s^2 and
-        # diverged the fusion, so the IMU stays off until a replay run clears the new one.
-        use_imu=False,
-        # Bosch BMI055 datasheet figures, the part in the D455.
-        imus={
-            IMU_FRAME: ImuConfig(
-                gyro_noise_density=0.0018,
-                gyro_random_walk=2e-5,
-                accel_noise_density=0.02,
-                accel_random_walk=3e-3,
-            )
-        },
-    ).remappings([(DimSlam, "sources", "source_odometry")]),
+        # No imus entry: adding gyro yaw halved final drift on drive_2026-08-18_23-05-04.db
+        # (wheel alone 2.66 m out, wheel + gyro 1.33 m, against a 0.59 m floor on the lidar
+        # reference's own heading), and the mast D455 mount is now the solved d455_joint
+        # origin rather than the photo estimate — but an uncalibrated mount once misaligned
+        # gravity by ~2.4 m/s^2 and diverged the fusion, so the IMU (BMI055 in IMU_FRAME:
+        # gyro 0.0018 / 2e-5, accel 0.02 / 3e-3) stays off until a replay clears the new one.
+    ).remappings([(DimSlam, "odom_sources", "source_odometry")]),
     RayTracingVoxelMap.blueprint(
         voxel_size=VOXEL_SIZE_METERS,
         max_range=DEPTH_MAX_RANGE_METERS,
