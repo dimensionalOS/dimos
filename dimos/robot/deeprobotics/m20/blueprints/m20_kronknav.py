@@ -101,11 +101,7 @@ _rerun_config = {
         "world/global_map": 0,
     },
     "visual_override": {
-        # These are internal high-rate bridge streams. Logging the 100k-point
-        # raw cloud and 200 Hz IMU saturated the RK3588 and queued minutes of
-        # Rerun data. The Go2 navigation view likewise shows maps, not lidar.
-        "world/raw_lidar": None,
-        "world/imu": None,
+        # The navigation view shows maps rather than the registered lidar.
         "world/lidar": None,
         "world/global_map": _render_global_map,
         "world/planner_path": None,
@@ -118,12 +114,11 @@ _rerun_config = {
 }
 
 
-# Safe hardware bring-up graph: raw M20 sensors -> native Point-LIO -> Rerun.
+# Safe hardware bring-up graph: direct ROS sensors -> native Point-LIO -> Rerun.
 # It intentionally has no connection/controller modules and cannot publish
 # /NAV_CMD. Use this before starting the full mapper/planner blueprint.
 deeprobotics_m20_pointlio = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config),
-    M20ROSBridge.blueprint(enable_command_output=False),
     M20PointLio.blueprint(),
 ).global_config(n_workers=2, transport="lcm")
 

@@ -8,10 +8,13 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+find_package(ament_cmake REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(OpenMP QUIET)
 find_package(PCL 1.8 REQUIRED COMPONENTS common filters)
 find_package(PkgConfig REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(sensor_msgs REQUIRED)
 pkg_check_modules(LCM REQUIRED IMPORTED_TARGET lcm)
 
 include(FetchContent)
@@ -41,6 +44,35 @@ if(NOT DEFINED POINTLIO_DIR)
   set(POINTLIO_DIR ${pointlio_SOURCE_DIR})
 endif()
 
+set(POINTLIO_SOURCE_DIR ${POINTLIO_DIR})
+file(READ "${POINTLIO_SOURCE_DIR}/src/laserMapping.hpp" pointlio_mapping_source)
+file(READ "${POINTLIO_SOURCE_DIR}/include/ivox/ivox3d.h" pointlio_ivox_source)
+string(FIND "${pointlio_mapping_source}" "crossmat_list.reserve" pointlio_has_reserve)
+string(FIND "${pointlio_mapping_source}" "crossmat_list.resize" pointlio_has_resize)
+string(FIND "${pointlio_ivox_source}" "#include <glog/logging.h>" pointlio_has_glog)
+
+if(NOT pointlio_has_reserve EQUAL -1 AND NOT pointlio_has_glog EQUAL -1)
+  set(POINTLIO_PATCHED_DIR "${CMAKE_BINARY_DIR}/pointlio-patched")
+  file(REMOVE_RECURSE "${POINTLIO_PATCHED_DIR}")
+  file(MAKE_DIRECTORY "${POINTLIO_PATCHED_DIR}")
+  file(COPY "${POINTLIO_SOURCE_DIR}/" DESTINATION "${POINTLIO_PATCHED_DIR}")
+  find_package(Git REQUIRED)
+  execute_process(
+    COMMAND "${GIT_EXECUTABLE}" apply "${CMAKE_CURRENT_SOURCE_DIR}/pointlio-gos.patch"
+    WORKING_DIRECTORY "${POINTLIO_PATCHED_DIR}"
+    RESULT_VARIABLE pointlio_patch_result
+    ERROR_VARIABLE pointlio_patch_error
+  )
+  if(NOT pointlio_patch_result EQUAL 0)
+    message(FATAL_ERROR "Could not patch the pinned Point-LIO source: ${pointlio_patch_error}")
+  endif()
+  set(POINTLIO_DIR "${POINTLIO_PATCHED_DIR}")
+elseif(NOT pointlio_has_resize EQUAL -1 AND pointlio_has_glog EQUAL -1)
+  message(STATUS "Using an already-patched Point-LIO source: ${POINTLIO_SOURCE_DIR}")
+else()
+  message(FATAL_ERROR "Point-LIO source is neither the pinned original nor the expected patched tree")
+endif()
+
 if(NOT DEFINED DIMOS_NATIVE_CPP_DIR)
   set(DIMOS_NATIVE_CPP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../../native/cpp)
 endif()
@@ -53,7 +85,6 @@ add_executable(m20_pointlio
   ${POINTLIO_DIR}/src/parameters.cpp
 )
 target_include_directories(m20_pointlio PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}/compat
   ${POINTLIO_DIR}/include
   ${POINTLIO_DIR}/include/IKFoM/IKFoM_toolkit
   ${POINTLIO_DIR}/src
@@ -66,12 +97,16 @@ target_compile_definitions(m20_pointlio PRIVATE
   ROOT_DIR="/tmp/m20_pointlio_"
 )
 target_compile_options(m20_pointlio PRIVATE -Wall -Wextra -Wpedantic)
-target_link_libraries(m20_pointlio PRIVATE
+target_link_libraries(m20_pointlio
   dimos_native
   Eigen3::Eigen
   PkgConfig::LCM
   ${PCL_LIBRARIES}
 )
+ament_target_dependencies(m20_pointlio
+  rclcpp
+  sensor_msgs
+)
 if(OpenMP_CXX_FOUND)
-  target_link_libraries(m20_pointlio PRIVATE OpenMP::OpenMP_CXX)
+  target_link_libraries(m20_pointlio OpenMP::OpenMP_CXX)
 endif()

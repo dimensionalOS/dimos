@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Native Point-LIO wrapper for the M20's typed raw LiDAR and IMU streams."""
+"""Native Point-LIO wrapper with direct M20 ROS lidar and IMU ingress."""
 
 from __future__ import annotations
 
@@ -21,10 +21,9 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import Field
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
-from dimos.core.stream import In, Out
+from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -40,10 +39,19 @@ class M20PointLioConfig(NativeModuleConfig):
     executable: str = "build/m20_pointlio"
     build_command: str | None = "./build.sh"
     stdin_config: bool = True
+    extra_env: dict[str, str] = Field(
+        default_factory=lambda: {
+            "LD_LIBRARY_PATH": "/opt/ros/foxy/lib",
+            "RMW_IMPLEMENTATION": "rmw_fastrtps_cpp",
+        }
+    )
     # GOS isolates its RK3588 big cores. Cores 6-7 run the vendor lidar
     # drivers, so Point-LIO owns the otherwise-idle big cores 4-5.
     cpu_affinity: frozenset[int] | None = frozenset({4, 5})
 
+    lidar_topic: str = "/LIDAR/POINTS"
+    imu_topic: str = "/IMU"
+    node_name: str = "dimos_m20_pointlio"
     world_frame: str = "odom"
     base_frame: str = "base_link"
     processing_rate_hz: float = Field(default=1000.0, gt=0.0)
@@ -123,18 +131,16 @@ class M20PointLioConfig(NativeModuleConfig):
 
 
 class M20PointLio(NativeModule, perception.Lidar, perception.Odometry):
-    """Run the existing DimOS Point-LIO core on M20 raw sensor streams.
+    """Run the pinned Point-LIO core directly on the M20's ROS sensor topics.
 
-    The module deliberately has no vendor odometry input. It consumes only the
-    merged ``base_link`` cloud and 200 Hz ``base_link`` IMU produced by the M20
-    hardware bridge, then owns the ``odom -> base_link`` transform.
+    The native process subscribes to the merged ``base_link`` cloud and 200 Hz
+    ``base_link`` IMU itself, avoiding a full-payload LCM hop through the command
+    bridge. It has no vendor odometry input and owns ``odom -> base_link``.
     """
 
     config: M20PointLioConfig
 
-    raw_lidar: In[PointCloud2]
-    imu: In[Imu]
-
+    lidar_ready: Out[Bool]
     localization_ready: Out[Bool]
     lidar: Out[PointCloud2]
     odom: Out[PoseStamped]

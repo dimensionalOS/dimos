@@ -1,10 +1,9 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 //
-// M20 Point-LIO adapter. The hardware bridge publishes the robot's public
-// merged RoboSense PointCloud2 and base-aligned IMU onto local DimOS LCM
-// streams. This process converts those typed streams into the existing DimOS
-// Point-LIO core and owns odom -> base_link. It has no vendor odometry input.
+// M20 Point-LIO adapter. This process subscribes directly to the robot's public
+// merged RoboSense PointCloud2 and base-aligned IMU over ROS 2, converts them
+// into the pinned Point-LIO core, and owns odom -> base_link.
 
 #include <algorithm>
 #include <atomic>
@@ -21,6 +20,11 @@
 #include <thread>
 #include <utility>
 #include <vector>
+
+#include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/imu.hpp>
+#include <sensor_msgs/msg/point_cloud2.hpp>
+#include <sensor_msgs/msg/point_field.hpp>
 
 #include "dimos/native.hpp"
 
@@ -78,9 +82,9 @@ int ivox_nearby_code(const std::string& name) {
         name + "'");
 }
 
-double header_seconds(const std_msgs::Header& header) {
+double header_seconds(const std_msgs::msg::Header& header) {
     return static_cast<double>(header.stamp.sec) +
-           static_cast<double>(header.stamp.nsec) / 1e9;
+           static_cast<double>(header.stamp.nanosec) / 1e9;
 }
 
 template <typename T>
@@ -99,14 +103,14 @@ struct M20FieldOffsets {
     std::size_t timestamp;
 };
 
-M20FieldOffsets validate_m20_cloud(const sensor_msgs::PointCloud2& cloud) {
-    if (cloud.height <= 0 || cloud.width <= 0) {
+M20FieldOffsets validate_m20_cloud(const sensor_msgs::msg::PointCloud2& cloud) {
+    if (cloud.height == 0 || cloud.width == 0) {
         throw std::runtime_error("M20 point cloud is empty");
     }
-    if (cloud.is_bigendian != 0) {
+    if (cloud.is_bigendian) {
         throw std::runtime_error("M20 Point-LIO requires a little-endian cloud");
     }
-    if (cloud.point_step <= 0 || cloud.row_step <= 0) {
+    if (cloud.point_step == 0 || cloud.row_step == 0) {
         throw std::runtime_error("M20 point cloud has an invalid stride");
     }
     const auto point_count = static_cast<std::size_t>(cloud.width) *
@@ -123,25 +127,26 @@ M20FieldOffsets validate_m20_cloud(const sensor_msgs::PointCloud2& cloud) {
     M20FieldOffsets offsets{missing, missing, missing, missing, missing, missing};
     for (const auto& field : cloud.fields) {
         const auto offset = static_cast<std::size_t>(field.offset);
-        if (field.count <= 0 || offset >= static_cast<std::size_t>(cloud.point_step)) {
+        if (field.count == 0 || offset >= static_cast<std::size_t>(cloud.point_step)) {
             continue;
         }
-        if (field.name == "x" && field.datatype == sensor_msgs::PointField::FLOAT32) {
+        if (field.name == "x" &&
+            field.datatype == sensor_msgs::msg::PointField::FLOAT32) {
             offsets.x = offset;
         } else if (field.name == "y" &&
-                   field.datatype == sensor_msgs::PointField::FLOAT32) {
+                   field.datatype == sensor_msgs::msg::PointField::FLOAT32) {
             offsets.y = offset;
         } else if (field.name == "z" &&
-                   field.datatype == sensor_msgs::PointField::FLOAT32) {
+                   field.datatype == sensor_msgs::msg::PointField::FLOAT32) {
             offsets.z = offset;
         } else if (field.name == "intensity" &&
-                   field.datatype == sensor_msgs::PointField::FLOAT32) {
+                   field.datatype == sensor_msgs::msg::PointField::FLOAT32) {
             offsets.intensity = offset;
         } else if (field.name == "ring" &&
-                   field.datatype == sensor_msgs::PointField::UINT16) {
+                   field.datatype == sensor_msgs::msg::PointField::UINT16) {
             offsets.ring = offset;
         } else if (field.name == "timestamp" &&
-                   field.datatype == sensor_msgs::PointField::FLOAT64) {
+                   field.datatype == sensor_msgs::msg::PointField::FLOAT64) {
             offsets.timestamp = offset;
         }
     }
@@ -168,6 +173,9 @@ struct TimedPoint {
 }  // namespace
 
 struct M20PointLioConfig {
+    std::string lidar_topic;
+    std::string imu_topic;
+    std::string node_name;
     std::string world_frame;
     std::string base_frame;
     double processing_rate_hz;
@@ -231,6 +239,9 @@ struct M20PointLioConfig {
     bool debug;
 
     void validate() const {
+        require_nonempty(lidar_topic, "lidar_topic");
+        require_nonempty(imu_topic, "imu_topic");
+        require_nonempty(node_name, "node_name");
         require_nonempty(world_frame, "world_frame");
         require_nonempty(base_frame, "base_frame");
         dimos::native::require_positive(processing_rate_hz, "processing_rate_hz");
@@ -268,6 +279,9 @@ struct M20PointLioConfig {
 // while retaining strict unknown/missing-key validation.
 M20PointLioConfig parse_m20_pointlio_config(Config& config) {
     M20PointLioConfig result{};
+    result.lidar_topic = config.take<std::string>("lidar_topic");
+    result.imu_topic = config.take<std::string>("imu_topic");
+    result.node_name = config.take<std::string>("node_name");
     result.world_frame = config.take<std::string>("world_frame");
     result.base_frame = config.take<std::string>("base_frame");
     result.processing_rate_hz = config.take<double>("processing_rate_hz");
@@ -340,8 +354,7 @@ public:
     void build(Builder& builder, Config& config) override {
         cfg_ = parse_m20_pointlio_config(config);
 
-        builder.input<sensor_msgs::PointCloud2>("raw_lidar", &M20PointLio::on_lidar, this);
-        builder.input<sensor_msgs::Imu>("imu", &M20PointLio::on_imu, this);
+        lidar_ready_ = builder.output<std_msgs::Bool>("lidar_ready");
         localization_ready_ = builder.output<std_msgs::Bool>("localization_ready");
         lidar_ = builder.output<sensor_msgs::PointCloud2>("lidar");
         odom_ = builder.output<geometry_msgs::PoseStamped>("odom");
@@ -418,42 +431,99 @@ public:
         params.odom_only = cfg_.odom_only;
 
         point_lio_ = std::make_unique<PointLio>(params, cfg_.msr_freq, cfg_.main_freq);
+
+        rclcpp::init(0, nullptr);
+        dimos::native::install_signal_handlers();
+        node_ = std::make_shared<rclcpp::Node>(cfg_.node_name);
+        lidar_callback_group_ = node_->create_callback_group(
+            rclcpp::CallbackGroupType::MutuallyExclusive);
+        imu_callback_group_ = node_->create_callback_group(
+            rclcpp::CallbackGroupType::MutuallyExclusive);
+
+        rclcpp::SubscriptionOptions lidar_options;
+        lidar_options.callback_group = lidar_callback_group_;
+        rclcpp::SubscriptionOptions imu_options;
+        imu_options.callback_group = imu_callback_group_;
+        const auto lidar_qos =
+            rclcpp::QoS(rclcpp::KeepLast(2)).reliable().durability_volatile();
+        const auto imu_qos =
+            rclcpp::QoS(rclcpp::KeepLast(20)).reliable().durability_volatile();
+        lidar_subscription_ = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
+            cfg_.lidar_topic, lidar_qos,
+            [this](sensor_msgs::msg::PointCloud2::SharedPtr message) {
+                on_lidar(*message);
+            },
+            lidar_options);
+        imu_subscription_ = node_->create_subscription<sensor_msgs::msg::Imu>(
+            cfg_.imu_topic, imu_qos,
+            [this](sensor_msgs::msg::Imu::SharedPtr message) { on_imu(*message); },
+            imu_options);
+        executor_ = std::make_shared<rclcpp::executors::MultiThreadedExecutor>(
+            rclcpp::ExecutorOptions(), 2);
+        executor_->add_node(node_);
+
         const auto now = Clock::now();
         last_pointcloud_publish_ = now;
         last_odometry_publish_ = now;
         last_readiness_publish_ = now - readiness_period_;
         processing_thread_ = std::thread([this]() { processing_loop(); });
+        spin_thread_ = std::thread([this]() { executor_->spin(); });
         logging::info("M20 Point-LIO started",
                       {logging::Field("world_frame", cfg_.world_frame),
                        logging::Field("base_frame", cfg_.base_frame),
-                       logging::Field("scan_lines", static_cast<int64_t>(cfg_.scan_line))});
+                       logging::Field("scan_lines", static_cast<int64_t>(cfg_.scan_line)),
+                       logging::Field("lidar_topic", cfg_.lidar_topic),
+                       logging::Field("imu_topic", cfg_.imu_topic)});
     }
 
     void teardown() override {
         stopping_.store(true, std::memory_order_release);
+        if (executor_ != nullptr) {
+            executor_->cancel();
+        }
+        if (spin_thread_.joinable()) {
+            spin_thread_.join();
+        }
+        lidar_subscription_.reset();
+        imu_subscription_.reset();
+        lidar_callback_group_.reset();
+        imu_callback_group_.reset();
+        executor_.reset();
+        node_.reset();
+        if (rclcpp::ok()) {
+            rclcpp::shutdown();
+        }
         if (processing_thread_.joinable()) {
             processing_thread_.join();
         }
         std_msgs::Bool ready;
         ready.data = 0;
+        lidar_ready_.publish(ready);
         localization_ready_.publish(ready);
         point_lio_.reset();
     }
 
 private:
-    void on_lidar(const sensor_msgs::PointCloud2& source) {
+    void on_lidar(const sensor_msgs::msg::PointCloud2& source) {
         if (stopping_.load(std::memory_order_acquire) || point_lio_ == nullptr) return;
         const auto received_at = Clock::now();
         bool feed_reserved = false;
 
-        std::unique_lock<std::mutex> callback_lock(lidar_callback_mutex_, std::try_to_lock);
-        if (!callback_lock.owns_lock() || point_lio_is_processing_lidar()) {
-            log_busy_lidar_drop();
-            return;
-        }
-
         try {
             const auto offsets = validate_m20_cloud(source);
+            {
+                std::lock_guard<std::mutex> lock(health_mutex_);
+                last_lidar_received_at_ = received_at;
+                have_lidar_ = true;
+            }
+
+            std::unique_lock<std::mutex> callback_lock(lidar_callback_mutex_,
+                                                       std::try_to_lock);
+            if (!callback_lock.owns_lock() || point_lio_is_processing_lidar()) {
+                log_busy_lidar_drop();
+                return;
+            }
+
             const auto point_count = static_cast<std::size_t>(source.width) *
                                      static_cast<std::size_t>(source.height);
             const auto point_step = static_cast<std::size_t>(source.point_step);
@@ -562,13 +632,6 @@ private:
             }
             message->point_num = static_cast<uli>(message->points.size());
 
-            // Sensor liveness is an ingress property. Record it as soon as the
-            // sample is validated, independently of estimator throughput.
-            {
-                std::lock_guard<std::mutex> lock(health_mutex_);
-                last_lidar_received_at_ = received_at;
-                have_lidar_ = true;
-            }
             // Point-LIO's feeder callbacks take its internal buffer mutex and
             // are designed to run concurrently with process(). An outer lock
             // here would block sensor ingestion for the full estimator step.
@@ -629,7 +692,7 @@ private:
         }
     }
 
-    void on_imu(const sensor_msgs::Imu& source) {
+    void on_imu(const sensor_msgs::msg::Imu& source) {
         if (stopping_.load(std::memory_order_acquire) || point_lio_ == nullptr) return;
         const auto received_at = Clock::now();
         const double timestamp = header_seconds(source.header);
@@ -681,6 +744,13 @@ private:
         }
         point_lio_->feed_imu(message);
         last_imu_sensor_time_ = timestamp;
+    }
+
+    bool lidar_health_is_fresh(Clock::time_point now) const {
+        std::lock_guard<std::mutex> lock(health_mutex_);
+        return have_lidar_ &&
+               now - last_lidar_received_at_ <=
+                   std::chrono::duration<double>(cfg_.lidar_timeout_s);
     }
 
     bool localization_health_is_fresh(Clock::time_point now) const {
@@ -754,16 +824,31 @@ private:
     }
 
     void publish_readiness(Clock::time_point now) {
-        const bool ready = localization_health_is_fresh(now);
-        std_msgs::Bool message;
-        message.data = static_cast<int8_t>(ready);
-        localization_ready_.publish(message);
+        const bool lidar_ready = lidar_health_is_fresh(now);
+        const bool localization_ready = localization_health_is_fresh(now);
+        std_msgs::Bool lidar_message;
+        lidar_message.data = static_cast<int8_t>(lidar_ready);
+        lidar_ready_.publish(lidar_message);
+        std_msgs::Bool localization_message;
+        localization_message.data = static_cast<int8_t>(localization_ready);
+        localization_ready_.publish(localization_message);
 
-        const int8_t current = ready ? 1 : 0;
+        const int8_t current_lidar = lidar_ready ? 1 : 0;
+        const int8_t previous_lidar =
+            lidar_readiness_state_.exchange(current_lidar, std::memory_order_acq_rel);
+        if (current_lidar != previous_lidar) {
+            if (lidar_ready) {
+                logging::info("M20 Point-LIO lidar input is ready");
+            } else {
+                logging::warn("M20 Point-LIO lidar input is not ready");
+            }
+        }
+
+        const int8_t current = localization_ready ? 1 : 0;
         const int8_t previous =
             readiness_state_.exchange(current, std::memory_order_acq_rel);
         if (current != previous) {
-            if (ready) {
+            if (localization_ready) {
                 logging::info("M20 Point-LIO localization is ready");
             } else {
                 logging::warn("M20 Point-LIO localization is not ready");
@@ -827,12 +912,21 @@ private:
     }
 
     M20PointLioConfig cfg_;
+    Output<std_msgs::Bool> lidar_ready_;
     Output<std_msgs::Bool> localization_ready_;
     Output<sensor_msgs::PointCloud2> lidar_;
     Output<geometry_msgs::PoseStamped> odom_;
     Output<nav_msgs::Odometry> odometry_;
     Output<tf2_msgs::TFMessage> tf_;
     std::unique_ptr<PointLio> point_lio_;
+
+    std::shared_ptr<rclcpp::Node> node_;
+    std::shared_ptr<rclcpp::executors::MultiThreadedExecutor> executor_;
+    rclcpp::CallbackGroup::SharedPtr lidar_callback_group_;
+    rclcpp::CallbackGroup::SharedPtr imu_callback_group_;
+    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_subscription_;
+    rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_subscription_;
+    std::thread spin_thread_;
     std::thread processing_thread_;
 
     Clock::duration process_period_{};
@@ -864,6 +958,7 @@ private:
     std::atomic<uint64_t> busy_lidar_drops_{0};
     std::atomic<bool> logged_cloud_contract_{false};
     std::atomic<bool> logged_cloud_sampling_{false};
+    std::atomic<int8_t> lidar_readiness_state_{-1};
     std::atomic<int8_t> readiness_state_{-1};
 };
 

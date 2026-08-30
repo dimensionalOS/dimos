@@ -7,8 +7,6 @@ front lidar 10.21.33.201 -- MSOP 6691 / DIFOP 7781 --+
                                                         +--> NOS multicast-relay.service
 rear lidar  10.21.33.202 -- MSOP 6692 / DIFOP 7782 --+       --> GOS rsdriver.service
                                                                --> DDS /LIDAR/POINTS
-                                                               --> m20_ros_bridge
-                                                               --> local LCM raw lidar + IMU
                                                                --> M20PointLio
                                                                --> RayTracingVoxelMap
 ```
@@ -142,10 +140,10 @@ module, LCM traffic, ROS/DDS traffic, or Zenoh router runs on AOS.
 
 ## Run DimOS locally on GOS
 
-Load the local-only LCM URL before launching DimOS. Its explicit 16 MiB receive
-buffer is needed for fragmented multi-megabyte clouds. The native ROS bridge
-also needs the vendor Foxy library path and Fast DDS profile in its inherited
-environment:
+Load the local-only LCM URL before launching DimOS. Raw lidar and IMU remain in
+Fast DDS and enter `M20PointLio` directly; they are not serialized through LCM.
+Both native ROS processes need the vendor Foxy library path and Fast DDS profile
+in their inherited environment:
 
 ```bash
 source /opt/ros/foxy/setup.bash
@@ -197,13 +195,10 @@ source /opt/robot/scripts/setup_ros2.sh
 ros2 topic hz --wall-time --window 100 /LIDAR/POINTS
 ```
 
-The native bridge additionally validates every cloud and publishes
+The native `M20PointLio` process validates every cloud and publishes
 `lidar_ready` at 10 Hz. Five missed nominal frames (0.5 seconds) make it false.
-The bridge logs `M20 lidar stream is missing or stale` once on loss and
-`M20 lidar stream is healthy` once on recovery. Both the native `/NAV_CMD`
-watchdog and `M20Connection` require fresh lidar, so loss immediately forces
-zero velocity and disarms the Python gate. DDS rematches automatically after an
-`rsdriver.service` restart; DimOS does not need to restart.
+DDS rematches automatically after an `rsdriver.service` restart; DimOS does not
+need to restart.
 
 Process supervision cannot make a disconnected or unpowered sensor produce
 data. The contract is therefore: restart crashed vendor processes, detect an

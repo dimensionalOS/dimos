@@ -20,7 +20,6 @@ from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -77,7 +76,7 @@ def test_default_kronknav_blueprint_cannot_publish_robot_commands() -> None:
 
 
 def test_pointlio_bringup_blueprint_has_no_command_publisher() -> None:
-    assert _bridge_kwargs(deeprobotics_m20_pointlio)["enable_command_output"] is False
+    assert not any(atom.module is M20ROSBridge for atom in deeprobotics_m20_pointlio.blueprints)
     assert not any(atom.module is M20Connection for atom in deeprobotics_m20_pointlio.blueprints)
 
 
@@ -93,19 +92,13 @@ def test_m20_blueprints_pin_native_sdk_supported_local_transport() -> None:
 def test_sensor_and_pose_streams_reach_mapping_and_navigation() -> None:
     blueprint = deeprobotics_m20_kronknav
 
-    assert _endpoint_modules(blueprint, "raw_lidar", PointCloud2, "out") == {M20ROSBridge}
-    assert _endpoint_modules(blueprint, "raw_lidar", PointCloud2, "in") == {M20PointLio}
-    assert _endpoint_modules(blueprint, "imu", Imu, "out") == {M20ROSBridge}
-    assert _endpoint_modules(blueprint, "imu", Imu, "in") == {M20PointLio}
+    assert not _endpoint_modules(blueprint, "raw_lidar", PointCloud2, "out")
     assert _endpoint_modules(blueprint, "lidar", PointCloud2, "out") == {M20PointLio}
     assert RayTracingVoxelMap in _endpoint_modules(blueprint, "lidar", PointCloud2, "in")
-    assert _endpoint_modules(blueprint, "lidar_ready", Bool, "out") == {M20ROSBridge}
+    assert _endpoint_modules(blueprint, "lidar_ready", Bool, "out") == {M20PointLio}
     assert _endpoint_modules(blueprint, "lidar_ready", Bool, "in") == {M20Connection}
     assert _endpoint_modules(blueprint, "localization_ready", Bool, "out") == {M20PointLio}
-    assert _endpoint_modules(blueprint, "localization_ready", Bool, "in") == {
-        M20ROSBridge,
-        M20Connection,
-    }
+    assert _endpoint_modules(blueprint, "localization_ready", Bool, "in") == {M20Connection}
     assert _endpoint_modules(blueprint, "tf", TFMessage, "out") == {M20PointLio}
     assert _endpoint_modules(blueprint, "tf", TFMessage, "in") == {
         RayTracingVoxelMap,
@@ -158,8 +151,8 @@ def test_rerun_uses_go2_navigation_data_budget() -> None:
     max_hz = config["max_hz"]
 
     assert isinstance(visual_override, dict)
-    assert visual_override["world/raw_lidar"] is None
-    assert visual_override["world/imu"] is None
+    assert "world/raw_lidar" not in visual_override
+    assert "world/imu" not in visual_override
     assert visual_override["world/lidar"] is None
     assert isinstance(max_hz, dict)
     assert max_hz["world/local_map"] == 0.5

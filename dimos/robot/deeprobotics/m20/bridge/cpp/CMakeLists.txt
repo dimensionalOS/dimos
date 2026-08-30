@@ -10,9 +10,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(ament_cmake REQUIRED)
 find_package(drdds REQUIRED)
-find_package(nav_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(sensor_msgs REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LCM REQUIRED IMPORTED_TARGET lcm)
 
@@ -43,9 +41,7 @@ target_include_directories(m20_ros_bridge PRIVATE
 )
 ament_target_dependencies(m20_ros_bridge
   drdds
-  nav_msgs
   rclcpp
-  sensor_msgs
 )
 target_link_libraries(m20_ros_bridge
   dimos_native

@@ -5,6 +5,22 @@
 set -euo pipefail
 
 pointlio_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ros_setup="${M20_ROS_SETUP:-/opt/robot/scripts/setup_ros2.sh}"
+
+if [[ -f "$ros_setup" ]]; then
+  # shellcheck disable=SC1090
+  set +u
+  source "$ros_setup"
+  set -u
+elif [[ -f /opt/ros/foxy/setup.bash ]]; then
+  # shellcheck disable=SC1091
+  set +u
+  source /opt/ros/foxy/setup.bash
+  set -u
+else
+  echo "M20 ROS setup not found: $ros_setup" >&2
+  exit 1
+fi
 
 cmake_args=(
   -S "$pointlio_dir"
