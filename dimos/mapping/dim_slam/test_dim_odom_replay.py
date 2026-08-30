@@ -198,13 +198,11 @@ def test_dim_odom_stereo_replay():
     first = _replay_trajectory(db_path)
     second = _replay_trajectory(db_path)
 
-    assert len(first) >= SNIPPET_STEREO_PAIRS // 2, (
-        f"expected odometry for most stereo pairs, got {len(first)}"
-    )
+    assert len(first) == SNIPPET_STEREO_PAIRS
     displacement = math.dist(first[0][1], first[-1][1])
-    assert 1.0 < displacement < 5.0, (
-        f"net displacement {displacement:.2f} m outside the ~2.5 m recorded drive"
-    )
+    # The replay is deterministic, so the drive's net displacement is a constant; approx
+    # only absorbs libm differences between platforms.
+    assert displacement == pytest.approx(1.774337937477785)
     assert first == second, "replaying the same data twice diverged"
 
 
@@ -214,9 +212,7 @@ def test_dim_odom_fusion_replay():
     first = _replay_fusion(db_path)
     second = _replay_fusion(db_path)
 
-    assert len(first) >= 500, f"expected ~100 Hz output over ~15 s, got {len(first)}"
+    assert len(first) == 1203
     displacement = math.dist(first[0][1], first[-1][1])
-    assert 1.0 < displacement < 4.0, (
-        f"net displacement {displacement:.2f} m outside the ~2.3 m recorded drive"
-    )
+    assert displacement == pytest.approx(2.437007550968355)
     assert first == second, "replaying the same data twice diverged"
