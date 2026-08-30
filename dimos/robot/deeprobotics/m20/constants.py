@@ -30,8 +30,9 @@ PLANNING_HEIGHT_M = 0.65
 
 ROTATION_DIAMETER_M = math.hypot(BODY_LENGTH_M, BODY_WIDTH_M)
 
-# Conservative command bounds until direction signs, gait, latency, and
-# stopping distance have been measured on the actual robot.
-MAX_LINEAR_X_M_S = 0.3
-MAX_LINEAR_Y_M_S = 0.3
-MAX_ANGULAR_Z_RAD_S = 0.5
+# Documented upper command bounds across the supported agile navigation gaits.
+# Navigation cruise speed remains controller-owned; these are only the final
+# robot-facing envelope for /NAV_CMD.
+MAX_LINEAR_X_M_S = 2.0
+MAX_LINEAR_Y_M_S = 1.0
+MAX_ANGULAR_Z_RAD_S = 2.0

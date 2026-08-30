@@ -42,8 +42,6 @@ from dimos.visualization.vis_module import vis_module
 VOXEL_SIZE_M = 0.1
 PLANNER_VIZ_HZ = 0.0
 
-CRUISE_SPEED_M_S = 0.25
-
 
 def _render_global_map(msg: Any) -> Any:
     return msg.to_rerun()
@@ -157,7 +155,6 @@ deeprobotics_m20_kronknav_control = autoconnect(
     ),
     DanHolonomicTC.blueprint(
         run_profile="walk",
-        speed_m_s=CRUISE_SPEED_M_S,
         control_frequency=10.0,
     ),
     MovementManager.blueprint(),
