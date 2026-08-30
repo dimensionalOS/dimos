@@ -23,9 +23,7 @@ from pydantic import Field
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.spec import perception
 
@@ -41,6 +39,7 @@ class M20PointLioConfig(NativeModuleConfig):
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(
         default_factory=lambda: {
+            "FASTRTPS_DEFAULT_PROFILES_FILE": "/opt/robot/fastdds.xml",
             "LD_LIBRARY_PATH": "/opt/ros/foxy/lib",
             "RMW_IMPLEMENTATION": "rmw_fastrtps_cpp",
         }
@@ -57,10 +56,6 @@ class M20PointLioConfig(NativeModuleConfig):
     processing_rate_hz: float = Field(default=1000.0, gt=0.0)
     pointcloud_rate_hz: float = Field(default=10.0, gt=0.0)
     odometry_rate_hz: float = Field(default=50.0, gt=0.0)
-    readiness_rate_hz: float = Field(default=10.0, gt=0.0)
-    lidar_timeout_s: float = Field(default=0.5, gt=0.0)
-    imu_timeout_s: float = Field(default=0.5, gt=0.0)
-    estimate_timeout_s: float = Field(default=0.5, gt=0.0)
     max_scan_duration_s: float = Field(default=0.2, gt=0.0)
     # Live merged M20 frames contain roughly 100k returns. Point-LIO cannot
     # process that rate in real time on the RK3588, so the native adapter
@@ -130,7 +125,7 @@ class M20PointLioConfig(NativeModuleConfig):
     debug: bool = False
 
 
-class M20PointLio(NativeModule, perception.Lidar, perception.Odometry):
+class M20PointLio(NativeModule, perception.Lidar):
     """Run the pinned Point-LIO core directly on the M20's ROS sensor topics.
 
     The native process subscribes to the merged ``base_link`` cloud and 200 Hz
@@ -140,11 +135,8 @@ class M20PointLio(NativeModule, perception.Lidar, perception.Odometry):
 
     config: M20PointLioConfig
 
-    lidar_ready: Out[Bool]
-    localization_ready: Out[Bool]
     lidar: Out[PointCloud2]
     odom: Out[PoseStamped]
-    odometry: Out[Odometry]
     tf: Out[TFMessage]
 
 

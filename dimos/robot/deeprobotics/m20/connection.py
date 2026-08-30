@@ -109,9 +109,7 @@ class M20Connection(Module):
     The hardware bridge owns ROS 2/DrDDS and the command watchdog. This module
     remains transport-agnostic: it accepts the standard DimOS ``cmd_vel`` stream,
     rejects it until ``standup()`` has armed control, bounds planar commands, and
-    emits ``safe_cmd_vel`` for the robot-local bridge. Lidar and localization
-    readiness are diagnostic signals for the navigation stack; like the Go2
-    connection, they do not permanently disable manual velocity control.
+    emits ``safe_cmd_vel`` for the robot-local bridge.
 
     ``standup()`` is the normal one-call operator entry point: it completes the
     vendor state and gait transitions, waits for the guarded command path, and
@@ -123,8 +121,6 @@ class M20Connection(Module):
 
     cmd_vel: In[Twist]
     command_ready: In[Bool]
-    lidar_ready: In[Bool]
-    localization_ready: In[Bool]
     motion_state: In[Int32]
     gait_state: In[UInt32]
     safe_cmd_vel: Out[Twist]
@@ -138,8 +134,6 @@ class M20Connection(Module):
         self._state_condition = Condition(self._lock)
         self._armed = False
         self._command_ready = False
-        self._lidar_ready = False
-        self._localization_ready = False
         self._motion_state: int | None = None
         self._gait_state: int | None = None
         self._basic_server_message_id = 0
@@ -148,10 +142,6 @@ class M20Connection(Module):
     def start(self) -> None:
         super().start()
         self.register_disposable(Disposable(self.command_ready.subscribe(self._on_command_ready)))
-        self.register_disposable(Disposable(self.lidar_ready.subscribe(self._on_lidar_ready)))
-        self.register_disposable(
-            Disposable(self.localization_ready.subscribe(self._on_localization_ready))
-        )
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
         self.register_disposable(Disposable(self.motion_state.subscribe(self._on_motion_state)))
         self.register_disposable(Disposable(self.gait_state.subscribe(self._on_gait_state)))
@@ -196,18 +186,6 @@ class M20Connection(Module):
         """Return whether the native bridge reports a live robot control path."""
         with self._lock:
             return self._command_ready
-
-    @rpc
-    def is_lidar_ready(self) -> bool:
-        """Return whether the native bridge has received a valid cloud within its timeout."""
-        with self._lock:
-            return self._lidar_ready
-
-    @rpc
-    def is_localization_ready(self) -> bool:
-        """Return whether the native M20 Point-LIO estimator is healthy and publishing."""
-        with self._lock:
-            return self._localization_ready
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
@@ -315,24 +293,6 @@ class M20Connection(Module):
         if was_armed and not ready:
             self.safe_cmd_vel.publish(Twist.zero())
             logger.warning("M20 command output temporarily inhibited: robot control path is stale")
-
-    def _on_lidar_ready(self, msg: Bool) -> None:
-        ready = bool(msg.data)
-        with self._state_condition:
-            changed = self._lidar_ready != ready
-            self._lidar_ready = ready
-            self._state_condition.notify_all()
-        if changed and ready:
-            logger.info("M20 lidar stream became ready")
-
-    def _on_localization_ready(self, msg: Bool) -> None:
-        ready = bool(msg.data)
-        with self._state_condition:
-            changed = self._localization_ready != ready
-            self._localization_ready = ready
-            self._state_condition.notify_all()
-        if changed and ready:
-            logger.info("M20 Point-LIO localization became ready")
 
     def _on_motion_state(self, msg: Int32) -> None:
         with self._state_condition:

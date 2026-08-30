@@ -16,7 +16,7 @@
 
 from typing import Any
 
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.dannav.holonomic_tc.module import DanHolonomicTC
@@ -114,89 +114,62 @@ _rerun_config = {
 }
 
 
-# Safe hardware bring-up graph: direct ROS sensors -> native Point-LIO -> Rerun.
-# It intentionally has no connection/controller modules and cannot publish
-# /NAV_CMD. Use this before starting the full mapper/planner blueprint.
-deeprobotics_m20_pointlio = autoconnect(
+deeprobotics_m20_kronknav_control = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config),
+    M20ROSBridge.blueprint(
+        enable_command_output=True,
+        max_linear_x=MAX_LINEAR_X_M_S,
+        max_linear_y=MAX_LINEAR_Y_M_S,
+        max_angular_z=MAX_ANGULAR_Z_RAD_S,
+    ),
     M20PointLio.blueprint(),
-).global_config(n_workers=2, transport="lcm")
-
-
-def _m20_kronknav(*, enable_command_output: bool) -> Blueprint:
-    """Compose one complete M20 graph on GOS.
-
-    The boolean is intentionally fixed by the two exported blueprints below;
-    selecting the control blueprint is the deployment-time ownership decision.
-    Both still start with the operator command arm disarmed.
-    """
-    return autoconnect(
-        vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config),
-        M20ROSBridge.blueprint(
-            enable_command_output=enable_command_output,
-            max_linear_x=MAX_LINEAR_X_M_S,
-            max_linear_y=MAX_LINEAR_Y_M_S,
-            max_angular_z=MAX_ANGULAR_Z_RAD_S,
-        ),
-        M20PointLio.blueprint(),
-        M20Connection.blueprint(
-            max_linear_x=MAX_LINEAR_X_M_S,
-            max_linear_y=MAX_LINEAR_Y_M_S,
-            max_angular_z=MAX_ANGULAR_Z_RAD_S,
-        ),
-        RayTracingVoxelMap.blueprint(
-            voxel_size=VOXEL_SIZE_M,
-            max_range=25.0,
-            emit_every=1,
-            global_emit_every=50,
-            support_min=4,
-            world_frame="odom",
-            worker_threads=3,
-        ),
-        MLSPlannerNative.blueprint(
-            world_frame="odom",
-            base_frame="base_link",
-            voxel_size=VOXEL_SIZE_M,
-            robot_height=PLANNING_HEIGHT_M,
-            start_z_offset_m=BASE_LINK_HEIGHT_M,
-            wall_clearance_m=0.3,
-            wall_buffer_m=0.85,
-            wall_buffer_weight=100.0,
-            step_threshold_m=0.12,
-            step_penalty_weight=4.0,
-            viz_publish_hz=PLANNER_VIZ_HZ,
-            worker_threads=2,
-        ).remappings(
-            [
-                (MLSPlannerNative, "global_map", "global_map_unused"),
-                (MLSPlannerNative, "path", "planner_path"),
-            ]
-        ),
-        DanLocalPlanner.blueprint(
-            lock_replan=0.4,
-            resample_spacing_m=0.1,
-        ),
-        DanHolonomicTC.blueprint(
-            run_profile="walk",
-            speed_m_s=CRUISE_SPEED_M_S,
-            control_frequency=10.0,
-        ),
-        MovementManager.blueprint(),
-    ).global_config(
-        n_workers=4,
-        obstacle_avoidance=False,
-        robot_width=BODY_WIDTH_M,
-        robot_rotation_diameter=ROTATION_DIAMETER_M,
-        transport="lcm",
-    )
-
-
-# Safe default: mapping, planning, and Rerun are live, but the native process
-# does not create a /NAV_CMD publisher and M20Connection can never become ready.
-deeprobotics_m20_kronknav = autoconnect(_m20_kronknav(enable_command_output=False))
-
-# Explicit control ownership: creates /NAV_CMD. A single M20Connection.standup()
-# call performs the vendor state/gait sequence and arms after the robot confirms
-# its RL-Control command path. Mapper health remains navigation diagnostics, as
-# it does in the Go2 stack; it is not a manual-teleop latch.
-deeprobotics_m20_kronknav_control = autoconnect(_m20_kronknav(enable_command_output=True))
+    M20Connection.blueprint(
+        max_linear_x=MAX_LINEAR_X_M_S,
+        max_linear_y=MAX_LINEAR_Y_M_S,
+        max_angular_z=MAX_ANGULAR_Z_RAD_S,
+    ),
+    RayTracingVoxelMap.blueprint(
+        voxel_size=VOXEL_SIZE_M,
+        max_range=25.0,
+        emit_every=1,
+        global_emit_every=50,
+        support_min=4,
+        world_frame="odom",
+        worker_threads=3,
+    ),
+    MLSPlannerNative.blueprint(
+        world_frame="odom",
+        base_frame="base_link",
+        voxel_size=VOXEL_SIZE_M,
+        robot_height=PLANNING_HEIGHT_M,
+        start_z_offset_m=BASE_LINK_HEIGHT_M,
+        wall_clearance_m=0.3,
+        wall_buffer_m=0.85,
+        wall_buffer_weight=100.0,
+        step_threshold_m=0.12,
+        step_penalty_weight=4.0,
+        viz_publish_hz=PLANNER_VIZ_HZ,
+        worker_threads=2,
+    ).remappings(
+        [
+            (MLSPlannerNative, "global_map", "global_map_unused"),
+            (MLSPlannerNative, "path", "planner_path"),
+        ]
+    ),
+    DanLocalPlanner.blueprint(
+        lock_replan=0.4,
+        resample_spacing_m=0.1,
+    ),
+    DanHolonomicTC.blueprint(
+        run_profile="walk",
+        speed_m_s=CRUISE_SPEED_M_S,
+        control_frequency=10.0,
+    ),
+    MovementManager.blueprint(),
+).global_config(
+    n_workers=4,
+    obstacle_avoidance=False,
+    robot_width=BODY_WIDTH_M,
+    robot_rotation_diameter=ROTATION_DIAMETER_M,
+    transport="lcm",
+)

@@ -30,11 +30,9 @@
 
 #include "geometry_msgs/PoseStamped.hpp"
 #include "geometry_msgs/TransformStamped.hpp"
-#include "nav_msgs/Odometry.hpp"
 #include "sensor_msgs/Imu.hpp"
 #include "sensor_msgs/PointCloud2.hpp"
 #include "sensor_msgs/PointField.hpp"
-#include "std_msgs/Bool.hpp"
 #include "tf2_msgs/TFMessage.hpp"
 
 #include "estimator_pose.hpp"
@@ -181,10 +179,6 @@ struct M20PointLioConfig {
     double processing_rate_hz;
     double pointcloud_rate_hz;
     double odometry_rate_hz;
-    double readiness_rate_hz;
-    double lidar_timeout_s;
-    double imu_timeout_s;
-    double estimate_timeout_s;
     double max_scan_duration_s;
     int max_cloud_points;
     double msr_freq;
@@ -247,10 +241,6 @@ struct M20PointLioConfig {
         dimos::native::require_positive(processing_rate_hz, "processing_rate_hz");
         dimos::native::require_positive(pointcloud_rate_hz, "pointcloud_rate_hz");
         dimos::native::require_positive(odometry_rate_hz, "odometry_rate_hz");
-        dimos::native::require_positive(readiness_rate_hz, "readiness_rate_hz");
-        dimos::native::require_positive(lidar_timeout_s, "lidar_timeout_s");
-        dimos::native::require_positive(imu_timeout_s, "imu_timeout_s");
-        dimos::native::require_positive(estimate_timeout_s, "estimate_timeout_s");
         dimos::native::require_positive(max_scan_duration_s, "max_scan_duration_s");
         dimos::native::require_positive(msr_freq, "msr_freq");
         dimos::native::require_positive(main_freq, "main_freq");
@@ -287,10 +277,6 @@ M20PointLioConfig parse_m20_pointlio_config(Config& config) {
     result.processing_rate_hz = config.take<double>("processing_rate_hz");
     result.pointcloud_rate_hz = config.take<double>("pointcloud_rate_hz");
     result.odometry_rate_hz = config.take<double>("odometry_rate_hz");
-    result.readiness_rate_hz = config.take<double>("readiness_rate_hz");
-    result.lidar_timeout_s = config.take<double>("lidar_timeout_s");
-    result.imu_timeout_s = config.take<double>("imu_timeout_s");
-    result.estimate_timeout_s = config.take<double>("estimate_timeout_s");
     result.max_scan_duration_s = config.take<double>("max_scan_duration_s");
     result.max_cloud_points = config.take<int>("max_cloud_points");
     result.msr_freq = config.take<double>("msr_freq");
@@ -354,11 +340,8 @@ public:
     void build(Builder& builder, Config& config) override {
         cfg_ = parse_m20_pointlio_config(config);
 
-        lidar_ready_ = builder.output<std_msgs::Bool>("lidar_ready");
-        localization_ready_ = builder.output<std_msgs::Bool>("localization_ready");
         lidar_ = builder.output<sensor_msgs::PointCloud2>("lidar");
         odom_ = builder.output<geometry_msgs::PoseStamped>("odom");
-        odometry_ = builder.output<nav_msgs::Odometry>("odometry");
         tf_ = builder.output<tf2_msgs::TFMessage>("tf");
 
         process_period_ = std::chrono::duration_cast<Clock::duration>(
@@ -367,8 +350,6 @@ public:
             std::chrono::duration<double>(1.0 / cfg_.pointcloud_rate_hz));
         odometry_period_ = std::chrono::duration_cast<Clock::duration>(
             std::chrono::duration<double>(1.0 / cfg_.odometry_rate_hz));
-        readiness_period_ = std::chrono::duration_cast<Clock::duration>(
-            std::chrono::duration<double>(1.0 / cfg_.readiness_rate_hz));
     }
 
     void setup() override {
@@ -465,7 +446,6 @@ public:
         const auto now = Clock::now();
         last_pointcloud_publish_ = now;
         last_odometry_publish_ = now;
-        last_readiness_publish_ = now - readiness_period_;
         processing_thread_ = std::thread([this]() { processing_loop(); });
         spin_thread_ = std::thread([this]() { executor_->spin(); });
         logging::info("M20 Point-LIO started",
@@ -496,26 +476,16 @@ public:
         if (processing_thread_.joinable()) {
             processing_thread_.join();
         }
-        std_msgs::Bool ready;
-        ready.data = 0;
-        lidar_ready_.publish(ready);
-        localization_ready_.publish(ready);
         point_lio_.reset();
     }
 
 private:
     void on_lidar(const sensor_msgs::msg::PointCloud2& source) {
         if (stopping_.load(std::memory_order_acquire) || point_lio_ == nullptr) return;
-        const auto received_at = Clock::now();
         bool feed_reserved = false;
 
         try {
             const auto offsets = validate_m20_cloud(source);
-            {
-                std::lock_guard<std::mutex> lock(health_mutex_);
-                last_lidar_received_at_ = received_at;
-                have_lidar_ = true;
-            }
 
             std::unique_lock<std::mutex> callback_lock(lidar_callback_mutex_,
                                                        std::try_to_lock);
@@ -694,7 +664,6 @@ private:
 
     void on_imu(const sensor_msgs::msg::Imu& source) {
         if (stopping_.load(std::memory_order_acquire) || point_lio_ == nullptr) return;
-        const auto received_at = Clock::now();
         const double timestamp = header_seconds(source.header);
         if (!std::isfinite(timestamp) || timestamp <= 0.0 ||
             !std::isfinite(source.angular_velocity.x) ||
@@ -737,31 +706,8 @@ private:
                 (kStandardGravityMps2 * kStandardGravityMps2);
         }
 
-        {
-            std::lock_guard<std::mutex> lock(health_mutex_);
-            last_imu_received_at_ = received_at;
-            have_imu_ = true;
-        }
         point_lio_->feed_imu(message);
         last_imu_sensor_time_ = timestamp;
-    }
-
-    bool lidar_health_is_fresh(Clock::time_point now) const {
-        std::lock_guard<std::mutex> lock(health_mutex_);
-        return have_lidar_ &&
-               now - last_lidar_received_at_ <=
-                   std::chrono::duration<double>(cfg_.lidar_timeout_s);
-    }
-
-    bool localization_health_is_fresh(Clock::time_point now) const {
-        std::lock_guard<std::mutex> lock(health_mutex_);
-        return have_lidar_ && have_imu_ && have_estimate_ &&
-               now - last_lidar_received_at_ <=
-                   std::chrono::duration<double>(cfg_.lidar_timeout_s) &&
-               now - last_imu_received_at_ <=
-                   std::chrono::duration<double>(cfg_.imu_timeout_s) &&
-               now - last_estimate_advanced_at_ <=
-                   std::chrono::duration<double>(cfg_.estimate_timeout_s);
     }
 
     void processing_loop() {
@@ -795,14 +741,10 @@ private:
                 }
             }
 
-            const auto now = Clock::now();
             bool estimate_advanced = false;
             if (have_estimate && std::isfinite(estimate_stamp) && estimate_stamp > 0.0) {
-                std::lock_guard<std::mutex> lock(health_mutex_);
-                if (!have_estimate_ || estimate_stamp > last_estimate_sensor_time_) {
-                    last_estimate_sensor_time_ = estimate_stamp;
-                    last_estimate_advanced_at_ = now;
-                    have_estimate_ = true;
+                if (estimate_stamp > last_processed_estimate_stamp_) {
+                    last_processed_estimate_stamp_ = estimate_stamp;
                     estimate_advanced = true;
                 }
             }
@@ -811,47 +753,10 @@ private:
                 estimator_initialized_ = true;
                 lidar_feed_pending_ = false;
             }
-            if (now - last_readiness_publish_ >= readiness_period_) {
-                publish_readiness(now);
-                last_readiness_publish_ = now;
-            }
 
             const auto elapsed = Clock::now() - iteration_started;
             if (elapsed < process_period_) {
                 std::this_thread::sleep_for(process_period_ - elapsed);
-            }
-        }
-    }
-
-    void publish_readiness(Clock::time_point now) {
-        const bool lidar_ready = lidar_health_is_fresh(now);
-        const bool localization_ready = localization_health_is_fresh(now);
-        std_msgs::Bool lidar_message;
-        lidar_message.data = static_cast<int8_t>(lidar_ready);
-        lidar_ready_.publish(lidar_message);
-        std_msgs::Bool localization_message;
-        localization_message.data = static_cast<int8_t>(localization_ready);
-        localization_ready_.publish(localization_message);
-
-        const int8_t current_lidar = lidar_ready ? 1 : 0;
-        const int8_t previous_lidar =
-            lidar_readiness_state_.exchange(current_lidar, std::memory_order_acq_rel);
-        if (current_lidar != previous_lidar) {
-            if (lidar_ready) {
-                logging::info("M20 Point-LIO lidar input is ready");
-            } else {
-                logging::warn("M20 Point-LIO lidar input is not ready");
-            }
-        }
-
-        const int8_t current = localization_ready ? 1 : 0;
-        const int8_t previous =
-            readiness_state_.exchange(current, std::memory_order_acq_rel);
-        if (current != previous) {
-            if (localization_ready) {
-                logging::info("M20 Point-LIO localization is ready");
-            } else {
-                logging::warn("M20 Point-LIO localization is not ready");
             }
         }
     }
@@ -870,53 +775,34 @@ private:
     }
 
     void publish_odometry(const custom_messages::Odometry& source, double timestamp) {
-        nav_msgs::Odometry output;
-        output.header = dimos::make_header(cfg_.world_frame, timestamp);
-        output.child_frame_id = cfg_.base_frame;
-        output.pose.pose.position.x = source.pose.pose.position.x;
-        output.pose.pose.position.y = source.pose.pose.position.y;
-        output.pose.pose.position.z = source.pose.pose.position.z;
-        output.pose.pose.orientation.x = source.pose.pose.orientation.x;
-        output.pose.pose.orientation.y = source.pose.pose.orientation.y;
-        output.pose.pose.orientation.z = source.pose.pose.orientation.z;
-        output.pose.pose.orientation.w = source.pose.pose.orientation.w;
-        output.twist.twist.linear.x = source.twist.twist.linear.x;
-        output.twist.twist.linear.y = source.twist.twist.linear.y;
-        output.twist.twist.linear.z = source.twist.twist.linear.z;
-        output.twist.twist.angular.x = source.twist.twist.angular.x;
-        output.twist.twist.angular.y = source.twist.twist.angular.y;
-        output.twist.twist.angular.z = source.twist.twist.angular.z;
-        for (int index = 0; index < 36; ++index) {
-            output.pose.covariance[index] = source.pose.covariance[index];
-            output.twist.covariance[index] = source.twist.covariance[index];
-        }
-
         geometry_msgs::PoseStamped pose;
-        pose.header = output.header;
-        pose.pose = output.pose.pose;
+        pose.header = dimos::make_header(cfg_.world_frame, timestamp);
+        pose.pose.position.x = source.pose.pose.position.x;
+        pose.pose.position.y = source.pose.pose.position.y;
+        pose.pose.position.z = source.pose.pose.position.z;
+        pose.pose.orientation.x = source.pose.pose.orientation.x;
+        pose.pose.orientation.y = source.pose.pose.orientation.y;
+        pose.pose.orientation.z = source.pose.pose.orientation.z;
+        pose.pose.orientation.w = source.pose.pose.orientation.w;
 
         geometry_msgs::TransformStamped transform;
-        transform.header = output.header;
+        transform.header = pose.header;
         transform.child_frame_id = cfg_.base_frame;
-        transform.transform.translation.x = output.pose.pose.position.x;
-        transform.transform.translation.y = output.pose.pose.position.y;
-        transform.transform.translation.z = output.pose.pose.position.z;
-        transform.transform.rotation = output.pose.pose.orientation;
+        transform.transform.translation.x = pose.pose.position.x;
+        transform.transform.translation.y = pose.pose.position.y;
+        transform.transform.translation.z = pose.pose.position.z;
+        transform.transform.rotation = pose.pose.orientation;
         tf2_msgs::TFMessage transforms;
         transforms.transforms_length = 1;
         transforms.transforms.push_back(std::move(transform));
 
-        odometry_.publish(output);
         odom_.publish(pose);
         tf_.publish(transforms);
     }
 
     M20PointLioConfig cfg_;
-    Output<std_msgs::Bool> lidar_ready_;
-    Output<std_msgs::Bool> localization_ready_;
     Output<sensor_msgs::PointCloud2> lidar_;
     Output<geometry_msgs::PoseStamped> odom_;
-    Output<nav_msgs::Odometry> odometry_;
     Output<tf2_msgs::TFMessage> tf_;
     std::unique_ptr<PointLio> point_lio_;
 
@@ -932,23 +818,13 @@ private:
     Clock::duration process_period_{};
     Clock::duration pointcloud_period_{};
     Clock::duration odometry_period_{};
-    Clock::duration readiness_period_{};
     Clock::time_point last_pointcloud_publish_{};
     Clock::time_point last_odometry_publish_{};
-    Clock::time_point last_readiness_publish_{};
     double last_pointcloud_stamp_ = 0.0;
     double last_odometry_stamp_ = 0.0;
     double last_lidar_sensor_time_ = 0.0;
     double last_imu_sensor_time_ = 0.0;
-
-    mutable std::mutex health_mutex_;
-    Clock::time_point last_lidar_received_at_{};
-    Clock::time_point last_imu_received_at_{};
-    Clock::time_point last_estimate_advanced_at_{};
-    double last_estimate_sensor_time_ = 0.0;
-    bool have_lidar_ = false;
-    bool have_imu_ = false;
-    bool have_estimate_ = false;
+    double last_processed_estimate_stamp_ = 0.0;
     std::atomic<bool> stopping_{false};
     mutable std::mutex lidar_feed_mutex_;
     std::mutex lidar_callback_mutex_;
@@ -958,8 +834,6 @@ private:
     std::atomic<uint64_t> busy_lidar_drops_{0};
     std::atomic<bool> logged_cloud_contract_{false};
     std::atomic<bool> logged_cloud_sampling_{false};
-    std::atomic<int8_t> lidar_readiness_state_{-1};
-    std::atomic<int8_t> readiness_state_{-1};
 };
 
 int main() {

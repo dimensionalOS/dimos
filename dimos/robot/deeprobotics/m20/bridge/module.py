@@ -45,6 +45,7 @@ class M20ROSBridgeConfig(NativeModuleConfig):
     # runtime dependency explicit and reproducible.
     extra_env: dict[str, str] = Field(
         default_factory=lambda: {
+            "FASTRTPS_DEFAULT_PROFILES_FILE": "/opt/robot/fastdds.xml",
             "LD_LIBRARY_PATH": "/opt/ros/foxy/lib",
             "RMW_IMPLEMENTATION": "rmw_fastrtps_cpp",
         }
