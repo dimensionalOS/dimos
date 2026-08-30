@@ -45,8 +45,8 @@ class M20PointLioConfig(NativeModuleConfig):
         }
     )
     # GOS isolates its RK3588 big cores. Cores 6-7 run the vendor lidar
-    # drivers, so Point-LIO owns the otherwise-idle big cores 4-5.
-    cpu_affinity: frozenset[int] | None = frozenset({4, 5})
+    # drivers, core 5 is assigned to mapping, and Point-LIO owns core 4.
+    cpu_affinity: frozenset[int] | None = frozenset({4})
 
     lidar_topic: str = "/LIDAR/POINTS"
     imu_topic: str = "/IMU"
@@ -56,10 +56,6 @@ class M20PointLioConfig(NativeModuleConfig):
     pointcloud_rate_hz: float = Field(default=10.0, gt=0.0)
     odometry_rate_hz: float = Field(default=50.0, gt=0.0)
     max_scan_duration_s: float = Field(default=0.2, gt=0.0)
-    # Live merged M20 frames contain roughly 100k returns. Point-LIO cannot
-    # process that rate in real time on the RK3588, so the native adapter
-    # uniformly selects this many returns before sorting and preprocessing.
-    max_cloud_points: int = Field(default=20_000, gt=0, le=100_000)
 
     msr_freq: float = Field(default=200.0, gt=0.0)
     main_freq: float = Field(default=1000.0, gt=0.0)
@@ -74,7 +70,9 @@ class M20PointLioConfig(NativeModuleConfig):
     scan_line: int = Field(default=192, gt=0)
     scan_rate: int = Field(default=10, gt=0)
     blind: float = Field(default=0.5, ge=0.0)
-    point_filter_num: int = Field(default=3, gt=0)
+    # Use Point-LIO's standard pre-KF decimator for the merged dual-lidar cloud.
+    # Queue growth is bounded separately by the adapter's one-frame admission gate.
+    point_filter_num: int = Field(default=8, gt=0)
 
     use_imu_as_input: bool = False
     prop_at_freq_of_imu: bool = True

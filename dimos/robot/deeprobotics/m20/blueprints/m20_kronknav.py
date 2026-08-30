@@ -129,6 +129,7 @@ deeprobotics_m20_kronknav_control = autoconnect(
         support_min=4,
         world_frame="odom",
         worker_threads=3,
+        cpu_affinity=frozenset({5}),
     ),
     MLSPlannerNative.blueprint(
         world_frame="odom",
@@ -143,6 +144,7 @@ deeprobotics_m20_kronknav_control = autoconnect(
         step_penalty_weight=4.0,
         viz_publish_hz=PLANNER_VIZ_HZ,
         worker_threads=2,
+        cpu_affinity=frozenset({0, 1}),
     ).remappings(
         [
             (MLSPlannerNative, "global_map", "global_map_unused"),

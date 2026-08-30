@@ -52,7 +52,6 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 constexpr double kStandardGravityMps2 = 9.80665;
-constexpr std::size_t kPointLioStaticPointLimit = 100'000;
 constexpr std::size_t kM20RawPointLimit = 500'000;
 constexpr std::size_t kMaxInitializationLidarFrames = 20;
 
@@ -179,7 +178,6 @@ struct M20PointLioConfig {
     double pointcloud_rate_hz;
     double odometry_rate_hz;
     double max_scan_duration_s;
-    int max_cloud_points;
     double msr_freq;
     double main_freq;
     bool con_frame;
@@ -242,10 +240,6 @@ struct M20PointLioConfig {
         dimos::native::require_positive(max_scan_duration_s, "max_scan_duration_s");
         dimos::native::require_positive(msr_freq, "msr_freq");
         dimos::native::require_positive(main_freq, "main_freq");
-        if (max_cloud_points <= 0 ||
-            max_cloud_points > static_cast<int>(kPointLioStaticPointLimit)) {
-            throw std::runtime_error("max_cloud_points must be in [1, 100000]");
-        }
         if (scan_line <= 0 || scan_line > std::numeric_limits<uint16_t>::max()) {
             throw std::runtime_error("scan_line must be in [1, 65535]");
         }
@@ -275,7 +269,6 @@ M20PointLioConfig parse_m20_pointlio_config(Config& config) {
     result.pointcloud_rate_hz = config.take<double>("pointcloud_rate_hz");
     result.odometry_rate_hz = config.take<double>("odometry_rate_hz");
     result.max_scan_duration_s = config.take<double>("max_scan_duration_s");
-    result.max_cloud_points = config.take<int>("max_cloud_points");
     result.msr_freq = config.take<double>("msr_freq");
     result.main_freq = config.take<double>("main_freq");
     result.con_frame = config.take<bool>("con_frame");
@@ -541,22 +534,12 @@ private:
             const auto point_count = static_cast<std::size_t>(source.width) *
                                      static_cast<std::size_t>(source.height);
             const auto point_step = static_cast<std::size_t>(source.point_step);
-            const auto point_limit = static_cast<std::size_t>(cfg_.max_cloud_points);
-            const auto source_sample_count = std::min(point_count, point_limit);
             std::vector<TimedPoint> points;
-            points.reserve(source_sample_count);
+            points.reserve(point_count);
             uint16_t min_ring = std::numeric_limits<uint16_t>::max();
             uint16_t max_ring = 0;
 
-            for (std::size_t sample_index = 0; sample_index < source_sample_count;
-                 ++sample_index) {
-                const std::size_t index =
-                    source_sample_count == point_count
-                        ? sample_index
-                        : (source_sample_count == 1
-                               ? point_count / 2
-                               : sample_index * (point_count - 1) /
-                                     (source_sample_count - 1));
+            for (std::size_t index = 0; index < point_count; ++index) {
                 const auto base = index * point_step;
                 const float x = read_unaligned<float>(source.data, base + offsets.x);
                 const float y = read_unaligned<float>(source.data, base + offsets.y);
@@ -589,22 +572,10 @@ private:
                 throw std::runtime_error("M20 cloud has no finite Point-LIO returns");
             }
 
-            if (point_count > source_sample_count &&
-                !logged_cloud_sampling_.exchange(true, std::memory_order_acq_rel)) {
-                logging::info(
-                    "uniformly sampled M20 cloud before Point-LIO preprocessing",
-                    {logging::Field("input_points", static_cast<int64_t>(point_count)),
-                     logging::Field("sampled_source_points",
-                                    static_cast<int64_t>(source_sample_count)),
-                     logging::Field("selected_valid_points",
-                                    static_cast<int64_t>(points.size()))});
-            }
-
             std::sort(points.begin(), points.end(),
                       [](const TimedPoint& left, const TimedPoint& right) {
                           return left.timestamp < right.timestamp;
                       });
-            const auto valid_point_count = points.size();
             const double first_point_time = points.front().timestamp;
             const double last_point_time = points.back().timestamp;
             const double scan_duration = last_point_time - first_point_time;
@@ -666,8 +637,6 @@ private:
                     "M20 Point-LIO accepted cloud contract",
                     {logging::Field("input_points", static_cast<int64_t>(point_count)),
                      logging::Field("valid_points",
-                                    static_cast<int64_t>(valid_point_count)),
-                     logging::Field("selected_points",
                                     static_cast<int64_t>(points.size())),
                      logging::Field("min_ring", static_cast<int64_t>(min_ring)),
                      logging::Field("max_ring", static_cast<int64_t>(max_ring)),
@@ -825,7 +794,6 @@ private:
     bool lidar_feed_pending_ = false;
     std::atomic<uint64_t> busy_lidar_drops_{0};
     std::atomic<bool> logged_cloud_contract_{false};
-    std::atomic<bool> logged_cloud_sampling_{false};
 };
 
 int main() {
