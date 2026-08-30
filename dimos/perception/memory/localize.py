@@ -34,7 +34,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import math
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
@@ -48,7 +48,10 @@ from dimos.perception.memory.types import Localization, LocalizePolicy, Support
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from dimos.memory.stream import Stream
+    from dimos.memory.type.observation import PoseTuple
     from dimos.models.embedding.siglip import SigLIPModel
     from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
     from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
@@ -66,6 +69,31 @@ _SCORE_CACHE_MAX = 8192
 
 def _similarity(obs: Any) -> float:
     return float(obs.similarity)
+
+
+def _settled(index: Stream[Any, Any], spacing: float) -> set[int]:
+    """Ids of the index frames left once sub-spacing duplicates are dropped.
+
+    The index emits the sharpest frame per window from a fixed phase, so a
+    camera that moves between windows leaves both the settled frame and the
+    blurred one taken while it was still moving. Their poses differ, so the
+    blurred one passes as a second viewpoint and lifts to a displaced cloud.
+    A pair closer than half the index window is one window's content split
+    by that phase; only the sharper of the two survives here.
+    """
+    ids: set[int] = set()
+    last_id = -1
+    last_ts = -math.inf
+    last_sharpness = -1.0
+    for obs in index.order_by("ts"):
+        sharpness = float(obs.data.sharpness)
+        if obs.ts - last_ts < spacing:
+            if sharpness <= last_sharpness:
+                continue
+            ids.discard(last_id)
+        ids.add(obs.id)
+        last_id, last_ts, last_sharpness = obs.id, obs.ts, sharpness
+    return ids
 
 
 def _centroid(det: Detection3DPC) -> np.ndarray:
@@ -235,9 +263,11 @@ def localize(
     is flagged below ``refusal_margin`` - never a silent guess.
 
     A list *query* shares one detection pass: every label's semantic peaks
-    select frames, and each unique frame is scored against every label in a
-    single OWLv2 forward, segmented and lifted once. One instance list per
-    label, in input order. ``trace`` then takes a list of the same length.
+    mark its sightings, each peak takes the frames adjacent to it in time
+    until the verification policy's viewpoints are covered, and each unique
+    selected frame is scored against every label, segmented and lifted once.
+    One instance list per label, in input order. ``trace`` then takes a list
+    of the same length.
 
     The index, the rig and the three models belong to the caller: nothing
     here is loaded or stopped, so one process can call this repeatedly on
@@ -260,46 +290,66 @@ def localize(
         list(trace) if isinstance(trace, list) else [trace] * len(queries)
     )
 
-    peaks_per_label: list[Stream[Any, Any]] = []
+    index_count = index.count()
+    settled = _settled(index, 0.5 / rig.embed_hz)
+    source = index.filter(lambda obs: obs.id in settled)
+    candidate_ids: set[int] = set()
+    expanded: set[float] = set()
+    anchor_x = 0.0
+    anchor_y = 0.0
+    anchor_count = 0
+
     for q in queries:
         query_embedding = siglip.embed_text(q)
-        label_peaks: Stream[Any, Any] = (
-            index.search(query_embedding)
+        sightings = list(
+            source.search(query_embedding)
             .order_by("ts")
             .transform(peaks(key=_similarity, distance=1.0))
-            .materialize()
         )
-        logger.info(
-            f"localize {q!r}: {label_peaks.count()} semantic peaks of {index.count()} embedded"
+        # A peak is never the window's last sample, and an instance's position
+        # follows its latest sighting: the tail's best frame is one too.
+        sightings.extend(
+            source.after(sightings[-1].ts if sightings else 0.0).search(query_embedding, k=1)
         )
-        peaks_per_label.append(label_peaks)
-
-    frames: dict[float, Any] = {}
-    expanded: set[float] = set()
-    for label_peaks in peaks_per_label:
-        for peak in label_peaks:
-            frames.setdefault(peak.ts, peak)
+        peak_count = 0
+        for peak in sightings:
+            peak_pose = cast("PoseTuple", peak.pose_tuple)
+            peak_count += 1
+            anchor_count += 1
+            anchor_x += peak_pose[0]
+            anchor_y += peak_pose[1]
+            candidate_ids.add(peak.id)
             if peak.ts in expanded:
                 continue
             expanded.add(peak.ts)
-            nearby: Stream[Any, Any] = index.near(
+            gathered: Stream[Any, Any] = source.near(
                 peak.pose_stamped, radius=policy.verify_radius_m
             ).transform(QualityWindow(lambda img: img.sharpness, window=0.5))
-            for obs in nearby:
-                frames.setdefault(obs.ts, obs)
-    ordered = sorted(frames.values(), key=lambda obs: obs.ts)
-    logger.info(f"detection: {len(ordered)} candidate frames for {len(queries)} labels")
+            for obs in gathered:
+                candidate_ids.add(obs.id)
+        logger.info(f"localize {q!r}: {peak_count} semantic peaks of {index_count} embedded")
 
-    if ordered:
+    candidates = index.filter(lambda obs: obs.id in candidate_ids).order_by("ts")
+    candidate_count = len(candidate_ids)
+    logger.info(f"detection: {candidate_count} candidate frames for {len(queries)} labels")
+
+    plane = None
+    if candidate_count:
         from dimos.perception.memory.support_plane import fit_support_plane
 
-        anchors = [peak.pose_tuple for label_peaks in peaks_per_label for peak in label_peaks]
-        mx = sum(t[0] for t in anchors) / len(anchors)
-        my = sum(t[1] for t in anchors) / len(anchors)
+        mx = anchor_x / anchor_count
+        my = anchor_y / anchor_count
         cell = (round(mx / 2.0), round(my / 2.0))
         plane = rig._plane_cache.get(cell)
         if plane is None:
-            plane = fit_support_plane(rig, ordered)
+            stride = max(1, candidate_count // 5)
+            keyframes = []
+            for i, obs in enumerate(candidates):
+                if i % stride == 0:
+                    keyframes.append(obs)
+                    if len(keyframes) == 5:
+                        break
+            plane = fit_support_plane(rig, keyframes)
             if plane is not None:
                 rig._plane_cache[cell] = plane
 
@@ -324,76 +374,75 @@ def localize(
 
     floor = policy.candidate_floor
     cache = detector.score_cache
-    misses = [
-        obs
-        for obs in ordered
-        if any(
-            obs.ts not in ingested[j] and (obs.ts, q, floor) not in cache
-            for j, q in enumerate(queries)
-        )
-    ]
-    if misses:
-        scored = detector.query_score_rows_batch(
-            [obs.data for obs in misses], queries, threshold=floor
-        )
-        for obs, (boxes, rows) in zip(misses, scored, strict=True):
-            for j, q in enumerate(queries):
-                keep = rows[:, j] >= floor
-                cache[(obs.ts, q, floor)] = (boxes[keep], rows[keep, j])
-                if len(cache) > _SCORE_CACHE_MAX:
-                    cache.popitem(last=False)
 
-    for obs in ordered:
-        active = [j for j in range(len(queries)) if obs.ts not in ingested[j]]
-        if not active:
-            continue
-        rows_per_label: list[tuple[int, tuple[Any, Any]]] = []
-        for j in active:
-            key = (obs.ts, queries[j], floor)
-            cache.move_to_end(key)
-            rows_per_label.append((j, cache[key]))
-            ingested[j].add(obs.ts)
-        if not any(len(scores) for _j, (_boxes, scores) in rows_per_label):
-            continue
-        img = obs.data
-        candidates: list[Detection2DBBox] = []
-        for j, (boxes, scores) in rows_per_label:
-            for box, score in zip(boxes, scores, strict=True):
-                det = Detection2DBBox(
-                    bbox=(float(box[0]), float(box[1]), float(box[2]), float(box[3])),
-                    track_id=len(candidates),
-                    class_id=j,
-                    confidence=float(score),
-                    name=queries[j],
-                    ts=img.ts,
-                    image=img,
-                )
-                if det.is_valid():
-                    candidates.append(det)
-        if not candidates:
-            continue
-
-        frame = segmenter.segment(ImageDetections2D(image=img, detections=candidates))
-        lifted = _lift(frame, rig, policy, plane)
-        grounded = {det3d.track_id for det3d in lifted}
-        for det2d in frame:
-            j = det2d.class_id
-            best = ungrounded[j]
-            if det2d.track_id not in grounded and (best is None or det2d.confidence > best[0]):
-                ungrounded[j] = (det2d.confidence, det2d.ts)
-        for det3d in lifted:
-            label_trace = traces[det3d.class_id]
-            if label_trace is not None:
-                label_trace.matched.append((det3d.ts, det3d))
-            identities[det3d.class_id].add(det3d)
-        for j, label_trace in enumerate(traces):
-            if label_trace is None:
+    def _detect(upstream: Iterator[Any]) -> Iterator[Any]:
+        for obs in upstream:
+            active = [j for j in range(len(queries)) if obs.ts not in ingested[j]]
+            if not active:
                 continue
-            label_dets = [det for det in frame if det.class_id == j]
-            if label_dets:
-                label_trace.detection_frames.append(
-                    obs.derive(data=ImageDetections2D(image=obs.data, detections=label_dets))
-                )
+            if any((obs.ts, queries[j], floor) not in cache for j in active):
+                boxes, rows = detector.query_score_rows_batch([obs.data], queries, threshold=floor)[
+                    0
+                ]
+                for j, q in enumerate(queries):
+                    keep = rows[:, j] >= floor
+                    cache[(obs.ts, q, floor)] = (boxes[keep], rows[keep, j])
+                    if len(cache) > _SCORE_CACHE_MAX:
+                        cache.popitem(last=False)
+
+            rows_per_label: list[tuple[int, tuple[Any, Any]]] = []
+            for j in active:
+                key = (obs.ts, queries[j], floor)
+                cache.move_to_end(key)
+                rows_per_label.append((j, cache[key]))
+                ingested[j].add(obs.ts)
+            if not any(len(scores) for _j, (_boxes, scores) in rows_per_label):
+                continue
+            img = obs.data
+            detections: list[Detection2DBBox] = []
+            for j, (boxes, scores) in rows_per_label:
+                for box, score in zip(boxes, scores, strict=True):
+                    det = Detection2DBBox(
+                        bbox=(float(box[0]), float(box[1]), float(box[2]), float(box[3])),
+                        track_id=len(detections),
+                        class_id=j,
+                        confidence=float(score),
+                        name=queries[j],
+                        ts=img.ts,
+                        image=img,
+                    )
+                    if det.is_valid():
+                        detections.append(det)
+            if detections:
+                yield obs.derive(data=ImageDetections2D(image=img, detections=detections))
+
+    def _ingest(upstream: Iterator[Any]) -> Iterator[Any]:
+        for obs in upstream:
+            frame = obs.data
+            lifted = _lift(frame, rig, policy, plane)
+            grounded = {det3d.track_id for det3d in lifted}
+            for det2d in frame:
+                j = det2d.class_id
+                best = ungrounded[j]
+                if det2d.track_id not in grounded and (best is None or det2d.confidence > best[0]):
+                    ungrounded[j] = (det2d.confidence, det2d.ts)
+            for det3d in lifted:
+                label_trace = traces[det3d.class_id]
+                if label_trace is not None:
+                    label_trace.matched.append((det3d.ts, det3d))
+                identities[det3d.class_id].add(det3d)
+            for j in range(len(queries)):
+                label_trace = traces[j]
+                if label_trace is None:
+                    continue
+                label_dets = [det for det in frame if det.class_id == j]
+                if label_dets:
+                    label_trace.detection_frames.append(
+                        obs.derive(data=ImageDetections2D(image=frame.image, detections=label_dets))
+                    )
+            yield obs
+
+    candidates.transform(_detect).map(lambda obs: obs.derive(data=segmenter.segment(obs.data))).transform(_ingest).drain()
 
     if entries is not None:
         for entry, best in zip(entries, ungrounded, strict=True):
