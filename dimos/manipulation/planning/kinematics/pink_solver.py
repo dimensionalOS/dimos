@@ -298,6 +298,28 @@ class _PinkSolverCore:
         return target_model
 
 
+def _reduce_to_controlled_joints(
+    model: pinocchio.Model,
+    config: RobotModelConfig,
+    controlled_joints: Sequence[str] | None,
+) -> pinocchio.Model:
+    """Lock joints outside the solve so IK cannot exploit uncommanded motion."""
+    controlled_joint_names = tuple(controlled_joints or config.joint_names)
+    controlled_joint_ids = {
+        _get_joint_id(model, joint_name) for joint_name in controlled_joint_names
+    }
+    locked_joint_ids = [
+        joint_id for joint_id in range(1, len(model.joints)) if joint_id not in controlled_joint_ids
+    ]
+    if not locked_joint_ids:
+        return model
+    return pinocchio.buildReducedModel(
+        model,
+        locked_joint_ids,
+        np.asarray(pinocchio.neutral(model), dtype=np.float64),
+    )
+
+
 def _build_joint_mapping(
     model: pinocchio.Model,
     config: RobotModelConfig,
