@@ -139,7 +139,7 @@ deeprobotics_m20_kronknav_control = autoconnect(
         wall_clearance_m=0.3,
         wall_buffer_m=0.85,
         wall_buffer_weight=100.0,
-        step_threshold_m=0.12,
+        step_threshold_m=0.25,
         step_penalty_weight=4.0,
         viz_publish_hz=PLANNER_VIZ_HZ,
         worker_threads=2,
@@ -151,7 +151,8 @@ deeprobotics_m20_kronknav_control = autoconnect(
     ),
     DanLocalPlanner.blueprint(
         lock_replan=0.4,
-        resample_spacing_m=0.1,
+        # Preserve MLS's 3D waypoints; the 2D resampler replaces every Z with zero.
+        resample_spacing_m=0.0,
     ),
     DanHolonomicTC.blueprint(
         run_profile="walk",
