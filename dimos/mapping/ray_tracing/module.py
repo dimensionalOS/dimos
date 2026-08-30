@@ -35,7 +35,12 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     cwd: str | None = "rust"
     # The crate is a workspace member, so cargo builds into the repo-root target dir.
     executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "voxel_ray_tracing")
-    build_command: str | None = "cargo build --release"
+    # The repo flake supplies cargo: rustup's PATH entry is absent in
+    # non-interactive shells (ssh commands, systemd units). resolve() because nix's
+    # path fetcher refuses symlinked components (macOS /tmp).
+    build_command: str | None = (
+        f"nix develop path:{DIMOS_PROJECT_ROOT.resolve()} -c cargo build --release"
+    )
     stdin_config: bool = True
 
     voxel_size: float = 0.1
