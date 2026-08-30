@@ -53,6 +53,9 @@ class CameraConfig(BaseModel):
     depth_cloud_max_range: float = 0.0
     # One point per k x k depth block (median of in-gate depths). <= 1 emits every pixel.
     depth_cloud_decimation: int = 0
+    # Multisensor only: this rig camera also receives depth images, already aligned to it.
+    # Any depth-providing camera anchors the rig's metric scale.
+    provides_depth: bool = False
 
 
 class Covariance(BaseModel):
@@ -126,10 +129,14 @@ class DimSlamConfig(NativeModuleConfig):
     extra_env: dict[str, str] = Field(default_factory=driver_env)
 
     # no default: this choice changes what inputs are required
-    camera_mode: Literal["mono", "stereo", "rgbd"]
-    # In cuVSLAM's index order: the rig cameras first (two for stereo, one otherwise), then
-    # any settings-only streams such as an rgbd depth camera. Empty auto-discovers the rig
-    # from camera_info; an unlisted camera takes the defaults.
+    # multisensor (experimental in cuVSLAM): any mix of RGB and RGB-D cameras plus an
+    # optional IMU; the cameras marked provides_depth anchor the rig's metric scale.
+    camera_mode: Literal["mono", "stereo", "rgbd", "multisensor"]
+    # In cuVSLAM's index order: the rig cameras first (two for stereo, the whole list for
+    # multisensor, one otherwise), then any settings-only streams such as an rgbd depth
+    # camera. Empty auto-discovers the rig from camera_info; an unlisted camera takes the
+    # defaults. Multisensor requires this list: any rig size is legal there, so discovery
+    # cannot know when it is done.
     cameras: list[CameraConfig] = Field(default_factory=list)
     # Off runs the deterministic CPU path, which needs a libcuvslam built
     # -DENFORCE_GPU=OFF. A build carrying only the other backend is used with a warning.
@@ -186,7 +193,16 @@ class DimSlamConfig(NativeModuleConfig):
     # A virtual zero-twist measurement applied with every source message, for the
     # directions the platform cannot move in. Above zero pulls that dimension toward
     # zero with this variance; zero leaves it free.
-    constraint_twist_variances: Covariance = Field(default_factory=Covariance)
+    per_dimension_error_variance: Covariance = Field(default_factory=Covariance)
+
+    @model_validator(mode="after")
+    def _multisensor_lists_its_rig(self) -> DimSlamConfig:
+        if self.camera_mode == "multisensor" and not self.cameras:
+            raise ValueError(
+                "camera_mode='multisensor' requires cameras; auto-discovery cannot know "
+                "how many cameras the rig has"
+            )
+        return self
 
     @model_validator(mode="after")
     def _imus_are_complete(self) -> DimSlamConfig:

@@ -89,9 +89,9 @@ const VISUAL_ODOM_FRAME_ID: &str = "visual_odom";
 #[native_config]
 struct DimSlamConfig {
     camera_mode: String,
-    /// In cuVSLAM's index order: the rig cameras first (two for stereo, one otherwise), then
-    /// any settings-only streams such as an rgbd depth camera. Empty discovers the rig off
-    /// camera_info.
+    /// In cuVSLAM's index order: the rig cameras first (two for stereo, the whole list for
+    /// multisensor, one otherwise), then any settings-only streams such as an rgbd depth
+    /// camera. Empty discovers the rig off camera_info; multisensor requires the list.
     cameras: Vec<CameraConfig>,
     use_gpu: bool,
     rig_frame_id: String,
@@ -116,7 +116,7 @@ struct DimSlamConfig {
     visual_odom_pose_variances: Covariance,
     /// External sources, each identified by the transform its estimates carry.
     odom_sources: Vec<OdomSourceConfig>,
-    constraint_twist_variances: Covariance,
+    per_dimension_error_variance: Covariance,
 }
 
 #[derive(Module)]
@@ -212,7 +212,7 @@ impl DimSlam {
                 bias: self.config.initial_stds.bias,
             },
             odom_sources,
-            constraint_twist_variances: self.config.constraint_twist_variances.to_array(),
+            per_dimension_error_variance: self.config.per_dimension_error_variance.to_array(),
         }));
     }
 
