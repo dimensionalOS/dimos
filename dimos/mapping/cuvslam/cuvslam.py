@@ -19,8 +19,8 @@ from typing import Literal
 from pydantic import Field, model_validator
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
+from dimos.core.nvidia_env import driver_env, sdk_variant
 from dimos.core.stream import IO, In, Out
-from dimos.mapping.cuvslam_runtime import driver_env, sdk_variant
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
