@@ -288,7 +288,7 @@ Decoder notes:
 
 A `dir="tx"` channel with `publish="shared"` is a browser input: any viewer may publish, the bridge decodes the JSON value with the matching `@web_decoder` and publishes it on a typed `Out` port, and your modules consume it like any other stream.
 
-```python
+```python skip
 cockpit(channels=[
     Channel("human_input", str, dir="tx", encoding="text.json.v1", publish="shared"),
 ])
