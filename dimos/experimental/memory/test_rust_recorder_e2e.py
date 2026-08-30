@@ -52,7 +52,7 @@ from dimos.protocol.service.zenohservice import ZenohConfig, ZenohSessionPool
 pytestmark = pytest.mark.self_hosted_large
 
 _RUST_WORKSPACE = DIMOS_PROJECT_ROOT / "native" / "rust"
-_EXECUTABLE = _RUST_WORKSPACE / "target" / "debug" / "dimos-memory-recorder"
+_EXECUTABLE = _RUST_WORKSPACE / "result" / "bin" / "dimos-memory-recorder"
 _MCAP_AVAILABLE = importlib.util.find_spec("mcap") is not None
 
 
@@ -72,10 +72,19 @@ class FakeTransport:
 @pytest.fixture(scope="module")
 def rust_recorder_executable() -> Path:
     subprocess.run(
-        ["cargo", "build", "-p", "dimos-memory-recorder"],
+        [
+            "nix",
+            "--extra-experimental-features",
+            "nix-command flakes",
+            "build",
+            "-L",
+            ".#dimos-memory-recorder",
+            "--no-write-lock-file",
+        ],
         cwd=_RUST_WORKSPACE,
         check=True,
     )
+    assert _EXECUTABLE.is_file()
     return _EXECUTABLE
 
 
