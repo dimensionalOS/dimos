@@ -201,9 +201,11 @@ Each task type ships a manifest at `dimos/control/tasks/<task>/_registry.py`.
 (Pinocchio, ONNX Runtime) load only when a task is actually created.
 
 ```python
-TASK_FACTORIES = {"servo": "dimos.control.tasks.servo_task.servo_task:create_task"}
-TASK_CONSUMES = {"servo": {"joint_command": ("on_joint_command", "claim_overlap")}}
-TASK_EXPOSES = {"trajectory": ["execute", "cancel", "get_state"]}
+TASK_FACTORIES = {
+    "trajectory": "dimos.control.tasks.trajectory_task.trajectory_task:create_task"
+}
+TASK_CONSUMES = {"trajectory": {"joint_command": ("on_joint_command", "claim_overlap")}}
+TASK_EXPOSES = {"trajectory": ["execute", "cancel", "get_state", "get_status"]}
 ```
 
 `TASK_CONSUMES` maps a coordinator input to `(handler, routing rule)`. The

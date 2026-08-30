@@ -137,6 +137,8 @@ class JointTrajectoryTaskConfig:
 
     Attributes:
         joint_names: List of joint names this task controls
+        name: Task identity used for arbitration and preemption events. The
+            canonical planner task keeps the ``joint_trajectory`` default.
         priority: Priority for arbitration (higher wins)
         start_position_tolerance: Maximum difference between current joint
             position and the first trajectory point.
@@ -150,6 +152,7 @@ class JointTrajectoryTaskConfig:
         tuple[Annotated[str, Field(min_length=1)], ...],
         BeforeValidator(_to_joint_names),
     ] = Field(min_length=1)
+    name: Annotated[str, Field(min_length=1)] = JOINT_TRAJECTORY_TASK_NAME
     priority: int = Field(default=10, strict=True)
     start_position_tolerance: float = Field(
         default=0.05,
@@ -196,7 +199,7 @@ class JointTrajectoryTask(BaseControlTask):
         Args:
             config: Task configuration
         """
-        self._name = JOINT_TRAJECTORY_TASK_NAME
+        self._name = config.name
         self._config = config
         self._joint_names = frozenset(config.joint_names)
         self._joint_names_list = list(config.joint_names)
@@ -591,14 +594,11 @@ class JointTrajectoryTaskParams(BaseConfig):
 
 
 def create_task(cfg: Any, hardware: Any) -> JointTrajectoryTask:
-    if cfg.name != JOINT_TRAJECTORY_TASK_NAME:
-        raise ValueError(
-            f"trajectory task must be named {JOINT_TRAJECTORY_TASK_NAME!r}, got {cfg.name!r}"
-        )
     params = JointTrajectoryTaskParams.model_validate(cfg.params)
     return JointTrajectoryTask(
         JointTrajectoryTaskConfig(
             joint_names=cfg.joint_names,
+            name=cfg.name,
             priority=cfg.priority,
             start_position_tolerance=params.start_position_tolerance,
             velocity_limits=params.velocity_limits,

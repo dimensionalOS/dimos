@@ -494,16 +494,26 @@ class TestControlCoordinatorLifecycle:
 
 
 class TestControlCoordinatorTrajectoryExecution:
-    def test_trajectory_config_requires_canonical_name(self, make_coordinator):
+    def test_named_trajectory_task_does_not_replace_canonical_rpc_task(self, make_coordinator):
         coordinator = make_coordinator()
-        config = TaskConfig(
-            name="other_name",
-            type="trajectory",
-            joint_names=["arm/joint1"],
+        canonical = coordinator._create_task_from_config(joint_trajectory_task(["arm/joint1"]))
+        policy = coordinator._create_task_from_config(
+            TaskConfig(
+                name="policy_rollout",
+                type="trajectory",
+                joint_names=["arm/joint1"],
+                priority=5,
+            )
         )
 
-        with pytest.raises(ValueError, match="must be named 'joint_trajectory'"):
-            coordinator._create_task_from_config(config)
+        assert coordinator.add_task(canonical)
+        assert coordinator.add_task(policy)
+        assert canonical.name == JOINT_TRAJECTORY_TASK_NAME
+        assert isinstance(policy, JointTrajectoryTask)
+        assert policy.name == "policy_rollout"
+        assert coordinator._trajectory_task is canonical
+        assert coordinator.get_task("policy_rollout") is policy
+        assert policy.claim().priority == 5
 
     def test_joint_trajectory_task_factory(self):
         config = joint_trajectory_task(

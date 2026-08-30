@@ -49,6 +49,7 @@ from dimos.control.hardware_interface import (
 from dimos.control.routing import Routing
 from dimos.control.task import ControlTask
 from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JOINT_TRAJECTORY_TASK_NAME,
     JointTrajectoryTask,
     TrajectoryCancellationResult,
     TrajectoryCancellationStatus,
@@ -486,9 +487,11 @@ class ControlCoordinator(Module):
             if task.name in self._tasks:
                 logger.warning(f"Task {task.name} already registered")
                 return False
-            if isinstance(task, JointTrajectoryTask):
+            if isinstance(task, JointTrajectoryTask) and task.name == JOINT_TRAJECTORY_TASK_NAME:
                 if self._trajectory_task is not None:
-                    raise ValueError("ControlCoordinator supports exactly one JointTrajectoryTask")
+                    raise ValueError(
+                        "ControlCoordinator supports exactly one canonical JointTrajectoryTask"
+                    )
                 self._trajectory_task = task
             if task_type is not None:
                 try:
