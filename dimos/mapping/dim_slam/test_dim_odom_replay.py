@@ -19,7 +19,6 @@ and handed straight to dim_odom's CuvslamOdometry, so the output only depends
 on the recorded data and must therefore be identical run to run.
 """
 
-import heapq
 import math
 
 import pytest
@@ -32,6 +31,7 @@ pytestmark = pytest.mark.self_hosted_large
 dim_odom = pytest.importorskip("dim_odom")
 
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.tf import StreamTF
 from dimos.utils.data import get_data
 
 # 12 s of alfred (D455) driving ~2.5 m: stereo IR pairs at 15 fps, camera infos, tf.
@@ -39,69 +39,51 @@ SNIPPET = "alfred_stereo_short.db"
 SNIPPET_STEREO_PAIRS = 179
 CAMERA_STREAMS = ("infrared_left", "infrared_right")
 CAMERA_FRAMES = ("camera_infra1_optical_frame", "camera_infra2_optical_frame")
-RIG_FRAME = "base_link"
 
 
-def _static_tf_lookup(replay):
-    """Collects the recording's static tf chain into a dim_odom tf callable."""
-    parent_of = {}
-    for _ts, message in replay.stream("tf").iterate_ts():
-        for transform in message.transforms:
-            translation = transform.translation
-            rotation = transform.rotation
-            parent_of.setdefault(
-                transform.child_frame_id,
-                (
-                    transform.frame_id,
-                    (
-                        (translation.x, translation.y, translation.z),
-                        (rotation.x, rotation.y, rotation.z, rotation.w),
-                    ),
-                ),
-            )
-        if all(_chain(parent_of, RIG_FRAME, frame) for frame in CAMERA_FRAMES):
-            break
+def _tf_lookup(store):
+    """The recording's tf tree as the (parent, child) callable dim_odom expects."""
+    tf = StreamTF.from_store(store)
 
     def lookup(parent, child):
-        chain = _chain(parent_of, parent, child)
-        if chain is None:
+        transform = tf.get(parent, child, warn=False)
+        if transform is None:
             return None
-        parent_from_child = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
-        for step in chain:
-            parent_from_child = dim_odom.compose(parent_from_child, step)
-        return parent_from_child
+        translation, rotation = transform.translation, transform.rotation
+        return (
+            (translation.x, translation.y, translation.z),
+            (rotation.x, rotation.y, rotation.z, rotation.w),
+        )
 
     return lookup
 
 
-def _chain(parent_of, parent, child):
-    """The transforms composing parent_from_child, topmost first, or None."""
-    chain = []
-    frame = child
-    while frame != parent:
-        if frame not in parent_of:
-            return None
-        frame, transform = parent_of[frame]
-        chain.append(transform)
-    chain.reverse()
-    return chain
+def _image_frame(image):
+    return dim_odom.ImageFrame(
+        timestamp_ns=round(image.ts * 1e9),
+        frame_id=image.frame_id,
+        width=image.width,
+        height=image.height,
+        encoding="mono8",
+        step=image.width,
+        data=bytes(image.data),
+    )
 
 
 def _replay_trajectory(db_path):
     store = SqliteStore(path=db_path, must_exist=True)
     store.start()
     try:
-        replay = store.replay()
         tracker = dim_odom.CuvslamOdometry(
             {
                 "camera_mode": "stereo",
                 "use_gpu": False,
                 "cameras": [{"frame_id": frame} for frame in CAMERA_FRAMES],
             },
-            tf=_static_tf_lookup(replay),
+            tf=_tf_lookup(store),
         )
         for stream in CAMERA_STREAMS:
-            info = replay.stream(f"{stream}_camera_info").first()
+            info = store.stream(f"{stream}_camera_info").first().data
             tracker.handle_camera_info(
                 dim_odom.CameraModel(
                     timestamp_ns=round(info.ts * 1e9),
@@ -113,33 +95,18 @@ def _replay_trajectory(db_path):
                 )
             )
 
-        def tagged(priority, stream):
-            for ts, message in replay.stream(stream).iterate_ts():
-                yield ts, priority, message
-
+        left, right = (store.stream(stream).order_by("ts") for stream in CAMERA_STREAMS)
         estimates = []
         pairs = 0
-        merged = heapq.merge(
-            *(tagged(priority, stream) for priority, stream in enumerate(CAMERA_STREAMS)),
-            key=lambda item: item[:2],
-        )
-        for _ts, priority, image in merged:
-            pairs += priority
-            estimate = tracker.handle_image(
-                dim_odom.ImageFrame(
-                    timestamp_ns=round(image.ts * 1e9),
-                    frame_id=image.frame_id,
-                    width=image.width,
-                    height=image.height,
-                    encoding="mono8",
-                    step=image.width,
-                    data=bytes(image.data),
-                )
-            )
-            if estimate is not None:
-                estimates.append(
-                    (estimate.timestamp_ns, estimate.translation, estimate.rotation_xyzw)
-                )
+        # Half a frame period at 15 fps: pairs match, neighboring frames never do.
+        for pair in left.align(right, tolerance=1 / 30):
+            pairs += 1
+            for image in (pair.data.infrared_left.data, pair.data.infrared_right.data):
+                estimate = tracker.handle_image(_image_frame(image))
+                if estimate is not None:
+                    estimates.append(
+                        (estimate.timestamp_ns, estimate.translation, estimate.rotation_xyzw)
+                    )
         assert pairs == SNIPPET_STEREO_PAIRS
         return estimates
     finally:
