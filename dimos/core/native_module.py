@@ -47,7 +47,6 @@ import inspect
 import json
 import os
 from pathlib import Path
-import shutil
 import signal
 import subprocess
 import sys
@@ -481,17 +480,11 @@ class NativeModule(Module):
             build_command=self.config.build_command,
         )
         build_start = time.perf_counter()
-        env = {**os.environ, **self.config.extra_env}
-        # Non-interactive shells (ssh commands, systemd) miss the rustup PATH entry, so
-        # cargo build commands die with exit 127 there.
-        cargo_dir = Path.home() / ".cargo" / "bin"
-        if shutil.which("cargo") is None and (cargo_dir / "cargo").exists():
-            env["PATH"] = f"{cargo_dir}{os.pathsep}{env.get('PATH', '')}"
         proc = subprocess.Popen(
             self.config.build_command,
             shell=True,
             cwd=self.config.cwd,
-            env=env,
+            env={**os.environ, **self.config.extra_env},
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )
