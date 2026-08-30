@@ -36,3 +36,7 @@ ROTATION_DIAMETER_M = math.hypot(BODY_LENGTH_M, BODY_WIDTH_M)
 MAX_LINEAR_X_M_S = 2.0
 MAX_LINEAR_Y_M_S = 1.0
 MAX_ANGULAR_Z_RAD_S = 2.0
+
+# Vendor AOS H.265 camera streams documented for the M20 internal network.
+FRONT_CAMERA_RTSP_URL = "rtsp://10.21.31.103:8554/video1"
+REAR_CAMERA_RTSP_URL = "rtsp://10.21.31.103:8554/video2"
