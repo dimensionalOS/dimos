@@ -287,9 +287,6 @@ class DimSlamConfig(NativeModuleConfig):
     # -DENFORCE_GPU=OFF. A build carrying only the other backend is used with a warning.
     use_gpu: bool = True
 
-    # The tracker's own world frame, drifting freely; the filter fuses it as a drifting
-    # source with the visual_odom variances below.
-    visual_odom_frame_id: str = "visual_odom"
     # Frame the cuVSLAM rig is built in. Empty means output_frame_id.
     rig_frame_id: str = ""
     # Carried for whatever consumes the loop-closed pose; nothing here publishes map -> odom.
@@ -396,8 +393,8 @@ class DimSlam(NativeModule):
     reprojected onto the rig camera through ``depth_camera_info`` and tf when the depth
     sensor differs.
 
-    The tracker's pose stream never touches the wire: it enters the filter as a
-    drifting source under ``visual_odom_frame_id``. Any number of external sources
+    The tracker's pose stream never touches the wire: it enters the filter directly
+    as a drifting source. Any number of external sources
     (wheel odometry, ...) publish onto ``odom_sources`` and are told apart by
     ``header.frame_id`` and ``child_frame_id``. Late messages roll the filter back and replay
     everything after.

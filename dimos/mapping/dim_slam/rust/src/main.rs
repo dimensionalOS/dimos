@@ -29,6 +29,10 @@ use msg_convert::{
     to_odometry_msg, to_point_cloud2, to_transform,
 };
 
+/// The tracker's own drifting world frame. It never touches the wire, so the name is
+/// internal bookkeeping: it only tells the tracker's estimates apart inside the filter.
+const VISUAL_ODOM_FRAME_ID: &str = "visual_odom";
+
 #[native_config]
 struct DimSlamConfig {
     camera_mode: String,
@@ -37,8 +41,6 @@ struct DimSlamConfig {
     /// camera_info.
     cameras: Vec<CameraConfig>,
     use_gpu: bool,
-    /// Fused as a drifting source; the module registers it with the visual_odom variances.
-    visual_odom_frame_id: String,
     rig_frame_id: String,
     map_frame_id: String,
     covariance_gate_translation_std: f64,
@@ -106,7 +108,7 @@ impl DimSlam {
             camera_mode: self.config.camera_mode.clone(),
             cameras: self.config.cameras.clone(),
             use_gpu: self.config.use_gpu,
-            odom_frame_id: self.config.visual_odom_frame_id.clone(),
+            odom_frame_id: VISUAL_ODOM_FRAME_ID.to_string(),
             output_frame_id: self.config.output_frame_id.clone(),
             rig_frame_id: self.config.rig_frame_id.clone(),
             map_frame_id: self.config.map_frame_id.clone(),
@@ -121,7 +123,7 @@ impl DimSlam {
         // The in-process tracker is always a fusion source; it goes first so a no-IMU blend
         // prefers it.
         let mut odom_sources = vec![SourceConfig {
-            parent_frame_id: self.config.visual_odom_frame_id.clone(),
+            parent_frame_id: VISUAL_ODOM_FRAME_ID.to_string(),
             child_frame_id: self.config.output_frame_id.clone(),
             pose_variances: self.config.visual_odom_pose_variances,
             twist_variances: self.config.visual_odom_twist_variances,
