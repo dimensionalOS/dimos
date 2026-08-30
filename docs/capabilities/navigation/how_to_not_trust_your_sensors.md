@@ -24,7 +24,7 @@ If your robot drives indoors, it normally:
 Tell the system this. It prevents sensor errors from making the robot slowly sink through the floor or appear to tilt.
 
 ```python
-constraint_twist_variances=Covariance(
+per_dimension_error_variance=Covariance(
     z=1e-6,
     roll=1e-6,
     pitch=1e-6,
