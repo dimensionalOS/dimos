@@ -4,48 +4,16 @@
 
 set -euo pipefail
 
-apply_fastdds_permissions() {
-  local path
-  local -a shm_files=()
-
-  mapfile -d '' -t shm_files < <(
-    find /dev/shm -maxdepth 1 -type f \
-      \( -name 'fastrtps_*' -o -name 'sem.fastrtps_*' \) -print0
-  )
-
-  for path in "${shm_files[@]}"; do
-    [[ -e "$path" ]] || continue
-    chgrp user -- "$path" || {
-      [[ ! -e "$path" ]] || return 1
-      continue
-    }
-    chmod g+rw -- "$path" || {
-      [[ ! -e "$path" ]] || return 1
-    }
-  done
-}
-
-if [[ "${1:-}" == "--all" ]]; then
-  # Fast DDS creates a segment, port, lock and semaphore in separate steps.
-  # Rescan briefly so a single systemd path activation covers the whole set.
-  for _attempt in $(seq 1 20); do
-    apply_fastdds_permissions
-    sleep 0.1
-  done
-  exit 0
-fi
-
 service_pid="${1:-}"
 if [[ ! "$service_pid" =~ ^[0-9]+$ ]] || [[ ! -d "/proc/$service_pid" ]]; then
   echo "expected the live rsdriver.service MainPID, got: $service_pid" >&2
   exit 1
 fi
 
-settle_passes=0
 for _attempt in $(seq 1 50); do
   driver_pid="$(pgrep --parent "$service_pid" --exact rslidar | head -n 1 || true)"
   if [[ -n "$driver_pid" ]]; then
-    mapfile -t driver_shm_files < <(
+    mapfile -t shm_files < <(
       {
         awk '$NF ~ /^\/dev\/shm\/fastrtps_/ {print $NF}' "/proc/$driver_pid/maps"
         for fd in "/proc/$driver_pid"/fd/*; do
@@ -55,18 +23,11 @@ for _attempt in $(seq 1 50); do
         | grep -E '^/dev/shm/fastrtps_([0-9a-f]+|port[0-9]+)(_el)?$' \
         | sort -u
     )
-    if (( ${#driver_shm_files[@]} >= 4 )); then
-      ((settle_passes += 1))
+    if (( ${#shm_files[@]} >= 4 )); then
+      chgrp user -- "${shm_files[@]}"
+      chmod g+rw -- "${shm_files[@]}"
+      exit 0
     fi
-  fi
-
-  # A Foxy reader scans every same-host Fast DDS participant before matching
-  # rslidar. Root-owned encryption/cpu segments can therefore block the cloud
-  # even when rslidar's own files are writable.
-  apply_fastdds_permissions
-
-  if (( settle_passes >= 20 )); then
-    exit 0
   fi
   sleep 0.1
 done
