@@ -96,20 +96,22 @@ def ls() -> None:
     table.add_column("file", style="bold")
     table.add_column("uploaded", style="dim", no_wrap=True)
     table.add_column("kind")
+    table.add_column("blueprint", style="magenta")
     table.add_column("robot", style="magenta")
     table.add_column("topics", style="dim", max_width=48)
     table.add_column("size", justify="right")
     table.add_column("state")
     for u in CloudData().ls():
-        streams = (u.get("manifest") or {}).get("streams") or []
+        mani = u.get("manifest") or {}
         state = u["state"]
         table.add_row(
             u["id"][:12],
             u["filename"],
             str(u.get("created_at") or "")[:16].replace("T", " ") or "—",
             u.get("kind", ""),
+            mani.get("blueprint") or "—",
             u.get("robot_id") or "—",
-            ", ".join(s.get("name", "?") for s in streams) or "—",
+            ", ".join(s.get("name", "?") for s in (mani.get("streams") or [])) or "—",
             decimal(u["size"]),
             f"[green]{state}[/]" if state == "complete" else f"[yellow]{state}[/]",
         )

@@ -28,6 +28,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import sqlite3
 import tempfile
@@ -132,6 +133,8 @@ class MultipartBackend:
     ) -> dict[str, Any]:
         tick = progress or (lambda phase, done, total: None)
         manifest = _manifest(path)
+        if bp := _blueprint(path):
+            manifest = dict(manifest or {}, blueprint=bp)
         with self._staging(path) as tmp:
             if self.codec_id and path.suffix != codecs.suffix(self.codec_id):
                 _require_space(Path(tmp), path.stat().st_size)
@@ -368,6 +371,12 @@ def _tag(row: dict[str, Any]) -> str:
     except (KeyError, ValueError):
         return f"{uid}-"
     return f"{stamp:%Y%m%d-%H%M%S}-{uid}-"
+
+
+def _blueprint(path: Path) -> str | None:
+    """Run dirs are named <stamp>-<blueprint> (generate_run_id)."""
+    m = re.fullmatch(r"\d{8}-\d{6}-(.+)", path.parent.name)
+    return m.group(1) if m else None
 
 
 def _sha256(path: Path) -> str:

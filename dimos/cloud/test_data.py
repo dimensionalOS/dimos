@@ -175,6 +175,16 @@ def test_explicit_path_uploads_fresh_file(env: tuple[CloudData, FakeTransport, P
     assert cloud.upload(db)["state"] == "complete"
 
 
+def test_blueprint_recorded_from_run_dir(env: tuple[CloudData, FakeTransport, Path]) -> None:
+    cloud, t, db = env
+    run = db.parent / "20260830-155733-unitree-go2"
+    run.mkdir()
+    r = cloud.upload(recording(run))
+    assert t.uploads[r["upload_id"]]["manifest"]["blueprint"] == "unitree-go2"
+    plain = cloud.upload(db)
+    assert "blueprint" not in t.uploads[plain["upload_id"]]["manifest"]
+
+
 def test_kind_inferred_from_file(env: tuple[CloudData, FakeTransport, Path]) -> None:
     cloud, t, db = env
     blob = db.parent / "flight.bin"
