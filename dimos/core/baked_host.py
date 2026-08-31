@@ -20,11 +20,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 import json
 import sys
-from typing import get_args, get_origin, get_type_hints
+from typing import Any, get_args, get_origin, get_type_hints
 
 from pydantic import Field, create_model
 
-from dimos.core.native_module import NativeModule, NativeModuleConfig
+from dimos.core.native_module import NativeModule, NativeModuleConfig, TopicsMap
 from dimos.core.stream import IO, In, Out
 
 
@@ -83,7 +83,7 @@ class BakedHost(NativeModule):
     _members: Mapping[str, type[NativeModule]] = {}
     _remaps: Mapping[tuple[str, str], str] = {}
 
-    def _member_topics(self, instance: str, topics: Mapping[str, str]) -> dict[str, str]:
+    def _member_topics(self, instance: str, topics: Mapping[str, Any]) -> dict[str, Any]:
         member = self._members[instance]
         resolved = {}
         for port in _member_ports(member):
@@ -92,14 +92,14 @@ class BakedHost(NativeModule):
                 resolved[port] = topics[name]
         return resolved
 
-    def _argv(self, topics: dict[str, str]) -> list[str]:
+    def _argv(self, topics: TopicsMap) -> list[str]:
         """A baked host takes its whole wiring on the launch line, so no flags.
 
         The binary rejects an unknown argument rather than ignoring it.
         """
         return [self.config.executable, *self.config.extra_args]
 
-    def _stdin_blob(self, topics: dict[str, str]) -> bytes:
+    def _stdin_blob(self, topics: TopicsMap) -> bytes:
         sections: dict[str, object] = {}
         for instance in self._members:
             member_config = getattr(self.config, f"{instance}_config")

@@ -727,19 +727,20 @@ class ModuleBase(Configurable, CompositeResource):
         # Validate every handler before subscribing any of them.
         bindings: list[tuple[Any, Callable[[Any], Any]]] = []
         for input_name, in_stream in {**self.inputs, **self.ios}.items():
-            handler = getattr(self, f"handle_{input_name}", None)
-            if handler is None:
+            declared_handler = getattr(self, f"handle_{input_name}", None)
+            if declared_handler is None:
                 continue
             # Async @rpc wraps the coroutine fn in a sync dispatcher. Unwrap it
             # so we subscribe the raw coroutine fn instead of the wrapper (which
             # would block on run_coroutine_threadsafe from the rx thread).
-            if hasattr(handler, "aio"):
-                handler = handler.aio.__get__(self, type(self))
-            if not inspect.iscoroutinefunction(handler):
+            if hasattr(declared_handler, "aio"):
+                declared_handler = declared_handler.aio.__get__(self, type(self))
+            if not inspect.iscoroutinefunction(declared_handler):
                 raise TypeError(
                     f"{type(self).__name__}.handle_{input_name} must be `async def` "
                     "(use a manual self.<input>.subscribe(...) for sync handlers)"
                 )
+            handler: Callable[..., Any] = declared_handler
             if _handler_wants_metadata(handler, f"{type(self).__name__}.handle_{input_name}"):
                 metadata = Metadata(index=0, name=input_name)
 
@@ -793,16 +794,17 @@ class ModuleBase(Configurable, CompositeResource):
         so this is a no-op there.
         """
         for port, group in self.config.topic_funnels.items():
-            handler = getattr(self, f"handle_{port}", None)
-            if handler is None:
+            declared_handler = getattr(self, f"handle_{port}", None)
+            if declared_handler is None:
                 continue
-            if hasattr(handler, "aio"):
-                handler = handler.aio.__get__(self, type(self))
-            if not inspect.iscoroutinefunction(handler):
+            if hasattr(declared_handler, "aio"):
+                declared_handler = declared_handler.aio.__get__(self, type(self))
+            if not inspect.iscoroutinefunction(declared_handler):
                 raise TypeError(
                     f"{type(self).__name__}.handle_{port} must be `async def` "
                     "(topic funnels have no sync path)"
                 )
+            handler: Callable[..., Any] = declared_handler
             if _handler_wants_metadata(handler, f"{type(self).__name__}.handle_{port}"):
                 metas = tuple(
                     Metadata(index=index, name=name, info=group.info.get(name, {}))

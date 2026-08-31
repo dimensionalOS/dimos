@@ -64,6 +64,10 @@ from dimos.core.transport_factory import channel_for, session_config
 from dimos.protocol.service.spec import SessionConfig
 from dimos.utils.logging_config import setup_logger
 
+# Port name -> the wire channel(s) it is launched with. A funnel port carries a
+# list, and an entry with per-topic info is an object rather than a bare string.
+TopicsMap = dict[str, str | list[str | dict[str, Any]]]
+
 if sys.platform.startswith("linux"):
     import ctypes
     from ctypes.util import find_library
@@ -261,7 +265,7 @@ class NativeModule(Module):
         # A blueprint builds its config before global config is settled.
         return pinned.rebased()
 
-    def _argv(self, topics: dict[str, str | list[str | dict[str, Any]]]) -> list[str]:
+    def _argv(self, topics: TopicsMap) -> list[str]:
         """The command line the native process is spawned with. Per-topic funnel
         info travels only on the stdin JSON, so an entry object contributes just
         its topic here."""
@@ -278,7 +282,7 @@ class NativeModule(Module):
         cmd.extend(self.config.extra_args)
         return cmd
 
-    def _stdin_blob(self, topics: dict[str, str | list[str | dict[str, Any]]]) -> bytes:
+    def _stdin_blob(self, topics: TopicsMap) -> bytes:
         """The JSON line the native process reads its launch from."""
         config_dict = self.config.to_config_dict()
         blob: dict[str, Any] = {
@@ -524,8 +528,8 @@ class NativeModule(Module):
             duration_sec=round(build_elapsed, 3),
         )
 
-    def _collect_topics(self) -> dict[str, str | list[str | dict[str, Any]]]:
-        topics: dict[str, str | list[str | dict[str, Any]]] = {}
+    def _collect_topics(self) -> TopicsMap:
+        topics: TopicsMap = {}
         for name in list(self.inputs) + list(self.outputs) + list(self.ios):
             stream = getattr(self, name, None)
             if stream is None:
