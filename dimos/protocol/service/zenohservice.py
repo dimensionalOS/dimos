@@ -69,17 +69,41 @@ _mesh_listen: str | None = None
 _mesh_connect: tuple[str, ...] = ()
 
 
+# Every endpoint this process ever handed out. A worker binds its port only
+# once its interpreter has booted, and the kernel happily reissues a
+# just-closed probe port -- without this, back-to-back spawns can be handed
+# the same port, leaving twin workers racing for one listener (the loser dies
+# EADDRINUSE, the winner dials itself).
+_allocated_mesh_endpoints: set[str] = set()
+_allocate_lock = threading.Lock()
+
+
 def allocate_mesh_endpoint() -> str:
     """Reserve a free loopback port and return it as a ``tcp/`` locator.
 
-    The probe socket closes before zenoh binds the port at session open; a
-    collision in that window fails the session open loudly rather than
-    silently dropping traffic.
+    Never returns a port this process handed out before. The probe socket
+    still closes before zenoh binds the port at session open; a collision
+    with an unrelated process in that window fails the session open loudly
+    rather than silently dropping traffic.
     """
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port: int = sock.getsockname()[1]
-    return f"tcp/127.0.0.1:{port}"
+    colliding: list[socket.socket] = []
+    try:
+        with _allocate_lock:
+            while True:
+                sock = socket.socket()
+                sock.bind(("127.0.0.1", 0))
+                endpoint = f"tcp/127.0.0.1:{sock.getsockname()[1]}"
+                if endpoint in _allocated_mesh_endpoints:
+                    # Hold the socket so the kernel cannot offer this port
+                    # again while re-probing.
+                    colliding.append(sock)
+                    continue
+                sock.close()
+                _allocated_mesh_endpoints.add(endpoint)
+                return endpoint
+    finally:
+        for sock in colliding:
+            sock.close()
 
 
 def configure_zenoh_mesh(listen: str | None, connect: Sequence[str]) -> None:
@@ -129,7 +153,13 @@ def _default_connect_endpoints() -> list[str]:
         ips = _locators(f"{global_config.robot_ip or ''},{global_config.robot_ips or ''}")
         robots = [f"tcp/{ip}" if ":" in ip else f"tcp/{ip}:{ROBOT_ZENOH_PORT}" for ip in ips]
         out = list(dict.fromkeys(robots + _locators(global_config.zenoh_connect)))
-    out.extend(endpoint for endpoint in _mesh_connect if endpoint not in out)
+    # A session must never dial its own listener (zenoh rejects the link with
+    # CONNECTION_TO_SELF and keeps retrying); the roster cannot normally
+    # contain this process's own endpoint, but a port collision must not turn
+    # into a self-dialing session.
+    out.extend(
+        endpoint for endpoint in _mesh_connect if endpoint not in out and endpoint != _mesh_listen
+    )
     return out
 
 

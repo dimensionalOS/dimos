@@ -22,6 +22,7 @@ with multicast scouting fully dead.
 
 from collections.abc import Iterator
 import time
+from types import SimpleNamespace
 
 import pytest
 from reactivex.disposable import Disposable
@@ -52,6 +53,54 @@ def test_mesh_endpoints_feed_zenoh_config_defaults() -> None:
     config = zenohservice.ZenohConfig()
     assert config.listen == []
     assert sibling not in config.connect
+
+
+def test_allocate_mesh_endpoint_never_reissues_a_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Back-to-back allocations must never hand out one port twice.
+
+    A worker binds its port only once its interpreter has booted, and the
+    kernel reissues a just-closed probe port -- without the dedup, twin
+    workers race for one listener: the loser dies EADDRINUSE and the winner
+    dials itself.
+    """
+    ports = iter([47843, 47843, 47843, 50000])
+
+    class FakeSocket:
+        def __init__(self) -> None:
+            self._port = next(ports)
+            self.closed = False
+            created.append(self)
+
+        def bind(self, addr: tuple[str, int]) -> None:
+            pass
+
+        def getsockname(self) -> tuple[str, int]:
+            return ("127.0.0.1", self._port)
+
+        def close(self) -> None:
+            self.closed = True
+
+    created: list[FakeSocket] = []
+
+    monkeypatch.setattr(zenohservice, "socket", SimpleNamespace(socket=FakeSocket))
+    monkeypatch.setattr(zenohservice, "_allocated_mesh_endpoints", set())
+
+    assert zenohservice.allocate_mesh_endpoint() == "tcp/127.0.0.1:47843"
+    assert zenohservice.allocate_mesh_endpoint() == "tcp/127.0.0.1:50000"
+    assert all(sock.closed for sock in created)
+
+
+def test_own_listen_endpoint_is_never_dialed() -> None:
+    """A port collision must not turn into a session dialing its own listener."""
+    endpoint = zenohservice.allocate_mesh_endpoint()
+    sibling = "tcp/127.0.0.1:1"
+    zenohservice.configure_zenoh_mesh(endpoint, (endpoint, sibling))
+    try:
+        config = zenohservice.ZenohConfig()
+        assert endpoint not in config.connect
+        assert sibling in config.connect
+    finally:
+        zenohservice.configure_zenoh_mesh(None, ())
 
 
 def test_diverged_config_rides_the_mesh_session() -> None:
