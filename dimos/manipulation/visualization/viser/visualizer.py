@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from contextlib import suppress
+from threading import Lock
 from typing import TYPE_CHECKING
 
 from dimos.manipulation.visualization.viser.animation import (
@@ -76,22 +77,33 @@ class ViserManipulationVisualizer:
         self._current_state: JointState | None = None
         self._model_config: RobotModelConfig | None = None
         self._last_ground_truth_report: tuple[tuple[str, str | None, float | None], ...] = ()
+        self._start_lock = Lock()
         self._closed = False
 
     def _ensure_started(self) -> None:
         if self._closed or self._runtime is not None:
             return
+        with self._start_lock:
+            if self._closed or self._runtime is not None:
+                return
+            self._start_runtime()
+
+    def _start_runtime(self) -> None:
+        """Start Viser after the caller has serialized lazy initialization."""
         runtime = ViserRuntime(self.config)
         scene: ViserManipulationScene | None = None
         gui: ViserPanelGui | None = None
         try:
             server = runtime.start()
             apply_dimos_theme(server)
-            scene = ViserManipulationScene(
-                server,
-                ViserUrdf,
-                ground_truth_overlay=self.config.ground_truth_overlay,
-            )
+            if self.config.ground_truth_overlay:
+                scene = ViserManipulationScene(
+                    server,
+                    ViserUrdf,
+                    ground_truth_overlay=True,
+                )
+            else:
+                scene = ViserManipulationScene(server, ViserUrdf)
             gui = (
                 ViserPanelGui(
                     server,
