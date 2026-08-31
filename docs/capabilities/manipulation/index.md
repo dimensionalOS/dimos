@@ -27,7 +27,7 @@ dimos run keyboard-teleop-xarm7   # XArm7 7-DOF
 ```
 
 R1 Pro currently uses finite planar planning-workspace bounds. The stacked
-[unbounded planar-base planning handoff](unbounded-planar-base.md) defines how
+[unbounded planar-base planning handoff](/docs/capabilities/manipulation/unbounded-planar-base.md) defines how
 to remove those fixed bounds without making individual planning queries
 unbounded.
 

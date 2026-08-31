@@ -1,7 +1,7 @@
 # Unbounded Planar-Base Planning Handoff
 
-**Status:** Follow-up contract  
-**Version:** 1 (2026-08-31)  
+**Status:** Follow-up contract
+**Version:** 1 (2026-08-31)
 **Depends on:** PR #3784
 
 This document specifies the stacked follow-up to PR #3784. That PR deliberately
