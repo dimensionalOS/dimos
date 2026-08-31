@@ -27,7 +27,6 @@ from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators._modeling import (
-    base_pose,
     joint_names,
 )
 from dimos.utils.data import LfsPath
@@ -81,7 +80,6 @@ def make_openyam_model_config(
     model_joint_names = joint_names(OPENYAM_DOF, prefix="yam_joint")
     return RobotModelConfig(
         model=RobotModel.from_file(OPENYAM_MODEL_PATH, package_paths=OPENYAM_PACKAGE_PATHS),
-        base_pose=base_pose(),
         joint_names=model_joint_names,
         base_link="yam_base_link",
         planning_groups=[
