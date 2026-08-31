@@ -1,14 +1,12 @@
 name: dimos-host-discovery-router
 
-x-dimos-environment: &dimos-environment
+x-dimos-common: &dimos-common
   ZENOH_MODE: client
-  ZENOH_CONNECT: tcp/router:7447
   ZENOH_CONNECT_TIMEOUT: "10"
   ZENOH_SCOUTING: "false"
   ZENOH_MULTICAST: "false"
   ZENOH_GOSSIP: "false"
   DIMOS_ZENOH_MODE: client
-  DIMOS_ZENOH_CONNECT: tcp/router:7447
   DIMOS_ZENOH_CONNECT_TIMEOUT: "10"
   DIMOS_ZENOH_SCOUTING: "false"
   DIMOS_ZENOH_MULTICAST: "false"
@@ -17,25 +15,71 @@ x-dimos-environment: &dimos-environment
   PYTHONPATH: /app
   PYTHONUNBUFFERED: "1"
 
+x-dimos-environment-a: &dimos-environment-a
+  <<: *dimos-common
+  ZENOH_CONNECT: tcp/router-a:7447
+  DIMOS_ZENOH_CONNECT: tcp/router-a:7447
+
+x-dimos-environment-b: &dimos-environment-b
+  <<: *dimos-common
+  ZENOH_CONNECT: tcp/router-b:7447
+  DIMOS_ZENOH_CONNECT: tcp/router-b:7447
+
 services:
-  router:
+  router-a:
+    image: eclipse/zenoh:1.9.0
+    command:
+      - -l
+      - tcp/0.0.0.0:7447
+      - -e
+      - tcp/router-b:7447
+      - --no-multicast-scouting
+    depends_on:
+      - router-b
+    networks:
+      - network-a
+      - router-transit
+
+  router-b:
     image: eclipse/zenoh:1.9.0
     command: ["-l", "tcp/0.0.0.0:7447", "--no-multicast-scouting"]
+    networks:
+      - network-b
+      - router-transit
 
-  host:
+  host-a:
     image: dimos-host-discovery:compose
     build:
       context: ../..
       dockerfile: experimental/hosted/Dockerfile
-    command: ["dimos", "host", "serve"]
-    environment: *dimos-environment
+    command: ["dimos", "host", "serve", "--tag", "network-a"]
+    environment: *dimos-environment-a
     depends_on:
-      - router
+      - router-a
     deploy:
-      replicas: 10
+      replicas: 5
     init: true
     restart: on-failure
     stop_grace_period: 10s
+    networks:
+      - network-a
+
+  host-b:
+    image: dimos-host-discovery:compose
+    build:
+      context: ../..
+      dockerfile: experimental/hosted/Dockerfile
+    command: ["dimos", "host", "serve", "--tag", "network-b"]
+    environment: *dimos-environment-b
+    depends_on:
+      - router-b
+    deploy:
+      replicas: 5
+    init: true
+    restart: on-failure
+    stop_grace_period: 10s
+    networks:
+      - network-b
 
   discovery:
     image: dimos-host-discovery:compose
@@ -43,9 +87,11 @@ services:
       context: ../..
       dockerfile: experimental/hosted/Dockerfile
     command: ["dimos", "host", "list", "--json", "--timeout", "5"]
-    environment: *dimos-environment
+    environment: *dimos-environment-a
     depends_on:
-      - router
+      - router-a
+    networks:
+      - network-a
     profiles:
       - tools
 
@@ -55,9 +101,11 @@ services:
       context: ../..
       dockerfile: experimental/hosted/Dockerfile
     command: ["python", "-m", "experimental.hosted.run_remote_execution"]
-    environment: *dimos-environment
+    environment: *dimos-environment-a
     depends_on:
-      - router
+      - router-a
+    networks:
+      - network-a
     profiles:
       - tools
 
@@ -67,8 +115,18 @@ services:
       context: ../..
       dockerfile: experimental/hosted/Dockerfile
     command: ["sleep", "infinity"]
-    environment: *dimos-environment
+    environment: *dimos-environment-a
     depends_on:
-      - router
+      - router-a
     stdin_open: true
     tty: true
+    networks:
+      - network-a
+
+networks:
+  network-a:
+    internal: true
+  network-b:
+    internal: true
+  router-transit:
+    internal: true

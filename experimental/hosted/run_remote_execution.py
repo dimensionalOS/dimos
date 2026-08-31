@@ -29,7 +29,6 @@ from dimos.cli.commands.host import (
     _get_descriptor,
     _host_rpc,
 )
-from dimos.core.global_config import global_config
 from dimos.hosted.daemon import (
     HOST_CONTROL_RPC_NAME,
     DeploymentStatus,
@@ -65,17 +64,11 @@ def _wait_for_available_host(rpc: ZenohRPC) -> HostDescriptor:
 
 
 def _make_fragment(descriptor: HostDescriptor, run_id: str) -> HostFragment:
+    # Network settings belong to the target Host; controller locators may be unreachable there.
     blueprint = RemoteExecutionProbe.blueprint(instance_name=PROBE_INSTANCE).global_config(
         transport="zenoh",
         viewer="none",
         n_workers=1,
-        zenoh_mode=global_config.zenoh_mode,
-        zenoh_connect=global_config.zenoh_connect,
-        zenoh_scouting=global_config.zenoh_scouting,
-        zenoh_interface=global_config.zenoh_interface,
-        zenoh_multicast=global_config.zenoh_multicast,
-        zenoh_gossip=global_config.zenoh_gossip,
-        zenoh_connect_timeout=global_config.zenoh_connect_timeout,
     )
     payload = pickle.dumps(blueprint, protocol=pickle.HIGHEST_PROTOCOL)
     return HostFragment(
