@@ -64,8 +64,8 @@ class JointTrajectoryGenerator:
 
         Args:
             num_joints: Number of joints
-            max_velocity: rad/s (single value applies to all joints, or per-joint list)
-            max_acceleration: rad/s^2 (single value or per-joint list)
+            max_velocity: Native coordinate/s (scalar or per-joint list)
+            max_acceleration: Native coordinate/s² (scalar or per-joint list)
             points_per_segment: Number of intermediate points per waypoint segment
         """
         self.num_joints = num_joints
@@ -85,8 +85,8 @@ class JointTrajectoryGenerator:
         Set velocity and acceleration limits.
 
         Args:
-            max_velocity: rad/s (single value applies to all joints, or per-joint)
-            max_acceleration: rad/s^2 (single value or per-joint)
+            max_velocity: Native coordinate/s (scalar or per-joint list)
+            max_acceleration: Native coordinate/s² (scalar or per-joint list)
         """
         if isinstance(max_velocity, (int, float)):
             self.max_velocity = [float(max_velocity)] * self.num_joints
@@ -103,7 +103,7 @@ class JointTrajectoryGenerator:
         Generate a trajectory through waypoints with trapezoidal velocity profile.
 
         Args:
-            waypoints: List of joint positions [q1, q2, ..., qn] in radians
+            waypoints: Joint positions [q1, q2, ..., qn] in native coordinates
                        First waypoint is start, last is goal
 
         Returns:
