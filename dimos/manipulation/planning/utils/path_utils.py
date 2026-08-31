@@ -180,19 +180,20 @@ def simplify_path(
 
 
 def compute_path_length(path: JointPath) -> float:
-    """Compute total path length in joint space.
+    """Compute unweighted coordinate-space path length for diagnostics.
 
-    Sums the Euclidean distances between consecutive waypoints.
+    Sums Euclidean distances between consecutive waypoint vectors. The result
+    has no single physical unit when the path mixes linear and angular joints.
 
     Args:
         path: Path to measure (list of JointState waypoints)
 
     Returns:
-        Total Euclidean length in native joint coordinates
+        Unweighted Euclidean coordinate-space length
 
     Example:
         length = compute_path_length(path)
-        print(f"Path length: {length:.2f} rad")
+        print(f"Coordinate-space path length: {length:.2f}")
     """
     if len(path) <= 1:
         return 0.0

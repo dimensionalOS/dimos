@@ -114,11 +114,11 @@ representations.
 ```python skip
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.robot.assets.model import PlanarBaseConfig, RobotModel
+from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
 
-base = PlanarBaseConfig(
-    position_lower=(-5.0, -5.0, -3.14),
-    position_upper=(5.0, 5.0, 3.14),
+base = PlanarBaseDefinition(
+    workspace_lower=(-5.0, -5.0, -3.14),
+    workspace_upper=(5.0, 5.0, 3.14),
     velocity_limits=(1.0, 1.0, 2.0),
     acceleration_limits=(2.0, 2.0, 4.0),
 )
@@ -140,10 +140,14 @@ config = RobotModelConfig(
 )
 ```
 
-`x` and `y` limits use meters; `yaw` limits use radians. `base_pose` remains
-the static world placement of the generated root, including the robot's floor
-height. Include all three generated joint names in `RobotModelConfig.joint_names`;
-individual planning groups opt into mobile-base motion by including those names.
+The finite workspace bounds define the current planner search domain, not
+physical base stops. `x` and `y` use meters; `yaw` uses radians. `base_pose`
+remains the static world placement of the generated root, including the robot's
+floor height. Include all three generated joint names in
+`RobotModelConfig.joint_names`; individual planning groups opt into mobile-base
+motion by including those names. See
+[Unbounded Planar-Base Planning](../../../docs/capabilities/manipulation/unbounded-planar-base.md)
+for the stacked follow-up design that removes these fixed workspace bounds.
 
 The R1 Pro blueprint exposes disjoint `left_arm`, `right_arm`, `torso`, and
 `moving_base` groups. In Viser, select an arm plus `torso` and `moving_base` to

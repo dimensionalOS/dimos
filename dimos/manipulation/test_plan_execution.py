@@ -30,7 +30,7 @@ from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.robot.assets.model import PlanarBaseConfig
+from dimos.robot.assets.model import PlanarBaseDefinition
 
 
 def _plan(final_position: float = 1.0, joint_name: str = "arm/j0") -> GeneratedPlan:
@@ -113,9 +113,9 @@ def test_execute_rejects_planar_base_plan_but_keeps_it_for_preview(
 ) -> None:
     coordinator = _coordinator()
     module = _module_with_coordinator(coordinator, module_factory)
-    planar_base = PlanarBaseConfig(
-        position_lower=(-2.0, -2.0, -3.14),
-        position_upper=(2.0, 2.0, 3.14),
+    planar_base = PlanarBaseDefinition(
+        workspace_lower=(-2.0, -2.0, -3.14),
+        workspace_upper=(2.0, 2.0, 3.14),
         velocity_limits=(1.0, 1.0, 2.0),
         acceleration_limits=(2.0, 2.0, 4.0),
     )
@@ -136,9 +136,9 @@ def test_execute_rejects_planar_base_plan_but_keeps_it_for_preview(
 def test_execute_allows_arm_only_plan_from_planar_model(module_factory) -> None:
     coordinator = _coordinator()
     module = _module_with_coordinator(coordinator, module_factory)
-    planar_base = PlanarBaseConfig(
-        position_lower=(-2.0, -2.0, -3.14),
-        position_upper=(2.0, 2.0, 3.14),
+    planar_base = PlanarBaseDefinition(
+        workspace_lower=(-2.0, -2.0, -3.14),
+        workspace_upper=(2.0, 2.0, 3.14),
         velocity_limits=(1.0, 1.0, 2.0),
         acceleration_limits=(2.0, 2.0, 4.0),
     )
