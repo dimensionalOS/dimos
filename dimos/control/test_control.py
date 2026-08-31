@@ -1354,6 +1354,41 @@ class TestTickLoop:
 
         adapter.write_joint_positions.assert_called_once_with([0.0, 0.0, 0.75])
 
+    def test_expired_manual_gripper_command_releases_policy_gripper(self):
+        manual = GripperControlTask(
+            "openyam_gripper",
+            GripperControlTaskConfig(joint_names=["arm/gripper"], priority=20, hold_duration=0.1),
+            limits=[(0.0, 1.0)],
+        )
+        policy = GripperControlTask(
+            "policy_gripper",
+            GripperControlTaskConfig(joint_names=["arm/gripper"], priority=10, hold_duration=0.1),
+            limits=[(0.0, 1.0)],
+        )
+        tick_loop = TickLoop(
+            tick_rate=100.0,
+            hardware={},
+            hardware_lock=threading.Lock(),
+            tasks={manual.name: manual, policy.name: policy},
+            task_lock=threading.Lock(),
+            joint_to_hardware={},
+        )
+        assert manual.set_normalized([0.25], t_now=1.0)
+        assert policy.set_normalized([0.75], t_now=1.05)
+
+        commands, preemptions = tick_loop._arbitrate(
+            tick_loop._compute_all_tasks(CoordinatorState(joints=JointStateSnapshot(), t_now=1.05))
+        )
+        assert commands["arm/gripper"][2] == manual.name
+        assert preemptions == {policy.name: {"arm/gripper": manual.name}}
+
+        assert policy.set_normalized([0.75], t_now=1.11)
+        commands, preemptions = tick_loop._arbitrate(
+            tick_loop._compute_all_tasks(CoordinatorState(joints=JointStateSnapshot(), t_now=1.11))
+        )
+        assert commands["arm/gripper"][2] == policy.name
+        assert preemptions == {}
+
     def test_tick_loop_starts_and_stops(self, mock_adapter, wait_until):
         component = HardwareComponent(
             hardware_id="arm",
