@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
@@ -28,10 +27,11 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
 class MLSPlannerNativeConfig(NativeModuleConfig):
-    cwd: str | None = "rust"
-    # The crate is a workspace member, so cargo builds into the repo-root target dir.
-    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "mls_planner")
-    build_command: str | None = "nix develop path:../../../../../nix/rust -c cargo build --release"
+    # The crate is a workspace member, so it is built from the repo root along
+    # with every other rust native module.
+    cwd: str | None = "../../../.."
+    executable: str = "result/bin/mls_planner"
+    build_command: str | None = "nix build -L .#rust_native_modules"
     stdin_config: bool = True
 
     world_frame: str = "odom"

@@ -311,6 +311,49 @@
         };
 
         # ------------------------------------------------------------
+        # 3b. Native modules built from the cargo workspace
+        # ------------------------------------------------------------
+        # One derivation for every rust native module, because they are one
+        # cargo workspace: splitting them per module would vendor the deps and
+        # rebuild the shared crates once each.
+        #
+        # `src` is filtered down to the crates rather than being `./.`, so a
+        # doc or python edit leaves the derivation unchanged and the Cachix
+        # closure is substituted instead of rebuilt. It also keeps the build
+        # independent of whether a given clone has pulled the git-lfs datasets.
+        rustNativeModules = pkgs.rustPlatform.buildRustPackage {
+          pname = "dimos-rust-native-modules";
+          version = "0.1.0";
+          # Assembled from path literals rather than filtered out of `./.`, so
+          # the only repo content reaching the derivation is the workspace
+          # itself. `bin/build-native-modules --inputs-hash` reads these same
+          # literals to key the Cachix publish marker, so a doc or python edit
+          # neither rebuilds this nor re-runs the publish job.
+          src = pkgs.runCommand "dimos-rust-workspace" { } ''
+            mkdir -p $out/native $out/dimos/mapping/ray_tracing \
+                     $out/dimos/navigation/nav_3d/mls_planner \
+                     $out/dimos/hardware/sensors/lidar $out/examples/native-modules
+            cp ${./Cargo.toml} $out/Cargo.toml
+            cp ${./Cargo.lock} $out/Cargo.lock
+            cp -r ${./native/rust} $out/native/rust
+            cp -r ${./dimos/mapping/ray_tracing/rust} $out/dimos/mapping/ray_tracing/rust
+            cp -r ${./dimos/navigation/nav_3d/mls_planner/rust} $out/dimos/navigation/nav_3d/mls_planner/rust
+            cp -r ${./dimos/hardware/sensors/lidar/virtual_mid360} $out/dimos/hardware/sensors/lidar/virtual_mid360
+            cp -r ${./examples/native-modules/rust} $out/examples/native-modules/rust
+            chmod -R u+w $out
+          '';
+          # Vendored by cargo rather than by `cargoLock.lockFile`: nix's own
+          # fetcher sends a `curl/*` user agent, which crates.io answers with a
+          # 403, so every crate not already in cache.nixos.org fails to fetch.
+          # Cargo sends its own user agent and is served normally.
+          cargoHash = "sha256-YZHhJ1O++lYGGBfrvSCGolfglFF8Zxsly44+1+N/Hb0=";
+          # The `py` members are pyo3 cdylibs for the python side, not module
+          # executables, so only the binary crates are built here.
+          cargoBuildFlags = [ "-p" "dimos-voxel-ray-tracing" "-p" "dimos-mls-planner" ];
+          doCheck = false;
+        };
+
+        # ------------------------------------------------------------
         # 4. Closure copied into the OCI image rootfs
         # ------------------------------------------------------------
         imageRoot = pkgs.buildEnv {
@@ -322,6 +365,8 @@
       in {
         ## Local dev shell
         devShells = devShells;
+
+        packages.rust_native_modules = rustNativeModules;
 
         ## Layered docker image with DockerTools
         packages.devcontainer = pkgs.dockerTools.buildLayeredImage {

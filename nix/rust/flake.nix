@@ -14,11 +14,15 @@
       systems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
       forAll = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
     in {
-      # Locked to the same nixpkgs rev as the repo-root flake, so this is the
-      # same toolchain the dev shell hands out rather than a second download.
+      # The toolchain the clippy and fmt hooks run in. Locked to the same nixpkgs
+      # rev as the repo-root flake, so this is not a second toolchain download.
       devShells = forAll (pkgs: {
         default = pkgs.mkShell {
-          packages = [ pkgs.cargo pkgs.rustc pkgs.clippy pkgs.rustfmt pkgs.pkg-config ];
+          packages = [ pkgs.cargo pkgs.rustc pkgs.clippy pkgs.rustfmt ]
+            # librealsense pulls v4l-utils, which nixpkgs will not evaluate off
+            # Linux. The realsense crate simply has no macOS build; the rest of
+            # the workspace still lints there.
+            ++ nixpkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.librealsense pkgs.pkg-config ];
         };
       });
     };

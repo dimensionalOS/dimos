@@ -320,7 +320,11 @@ def _flake_refs(flake: Path) -> tuple[set[str], set[str]]:
 
 def _collect_input_paths(module: DiscoveredModule) -> set[str]:
     """Repo paths whose content can reach this module's derivation."""
-    paths = {module.build_dir}
+    # Hashing the build dir of a repo-root flake would hash the whole tree, so
+    # every commit would invalidate the marker and re-run the publish job. Such
+    # a flake reaches repo content only through the path literals collected
+    # below, so the flake itself is the only extra input.
+    paths = {"flake.nix", "flake.lock"} if module.build_dir == "." else {module.build_dir}
     if not _is_local_flake(module):
         return paths
     root = REPO_ROOT / module.build_dir / "flake.nix"
