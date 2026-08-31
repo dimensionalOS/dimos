@@ -130,14 +130,17 @@ def make_dual_xarm6_model_config() -> RobotModelConfig:
     )
 
 
-def make_xarm7_sim_hardware(address: str | Path) -> HardwareComponent:
+def make_xarm7_sim_hardware(
+    address: str | Path, *, home_joints: list[float] | None = None
+) -> HardwareComponent:
+    selected_home = XARM7_SIM_HOME if home_joints is None else home_joints
     return make_xarm_hardware(
         "arm",
         7,
         adapter_type="sim_mujoco",
         address=address,
         gripper=True,
-        home_joints=XARM7_SIM_HOME,
+        home_joints=selected_home,
     )
 
 
