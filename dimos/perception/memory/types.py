@@ -112,24 +112,77 @@ class LocalizePolicy:
     and height distributions of one measured scene, so a different rig,
     object scale or detector vocabulary needs its own instance rather than
     the defaults.
+
+    `candidate_floor`: OWLv2 score at which a box is formed for a query.
+        Boxes below this never lift.
+
+    `accept_score`: A support group is returned when its highest member score meets this.
+        The RGB-only path uses the same floor.
+
+    `min_views`: Unique camera positions, rounded to 1 cm, required before a group is confirmed.
+        A support seen from one pose only is dropped.
+
+    `cluster_radius_m`: Two lifted detections are the same support when their cloud centers sit within this many meters.
+
+    `peak_prominence`: Minimum SigLIP similarity rise for a semantic peak.
+        A local maximum below this is not a peak.
+
+    `peak_distance_s`: Minimum seconds between two semantic peaks.
+
+    `peak_width_s`: Minimum peak width in seconds at half prominence.
+        ``None`` disables the width gate.
+
+    `verify_radius_m`: Index frames whose pose is within this many meters of a peak are gathered for OWLv2.
+
+    `verify_window_s`: Keep the sharpest gathered frame per this many seconds.
+
+    `settled_window_fraction`: Collapse index frames closer than this fraction of ``1/embed_hz`` to the sharper one, so one window does not count as two viewpoints.
+
+    `tail_k`: After the last peak, take this many extra frames by query similarity so the window tail can be a latest sighting.
+
+    `max_object_extent_m`: Drop a lift whose longest AABB edge exceeds this.
+
+    `surface_patch_max_rise_m`: Drop a lift whose 95th-percentile height above the support is below this, when the drop test also holds.
+        A cloud that hugs the support is a patch of the surface, not an object.
+
+    `surface_patch_min_drop_m`: Drop a lift whose 5th-percentile height is above this, when the rise test also holds.
+
+    `min_depth_points`: Minimum points on a depth lift.
+        Projected-cloud rigs ignore this.
+
+    `min_camera_range_m`: Drop a lift whose median point-to-camera range is below this.
+
+    `fuse_voxel_m`: Voxel size of the union cloud at identity merge.
+        ``0`` concatenates.
+
+    `plane_cell_m`: XY cell size for the support-plane cache.
+
+    `plane_keyframes`: Candidate frames sampled to fit the support plane.
+
+    `refusal_margin`: If this instance's score minus the best coexisting rival is below this, ``reason`` is set.
+        The instance is still returned.
     """
 
-    candidate_floor: float = 0.25  # form a candidate at this score
+    candidate_floor: float = 0.25
     accept_score: float = 0.40
-    refusal_margin: float = 0.15
-    min_views: int = 2  # a support seen from one pose only is unconfirmed
-
-    cluster_radius_m: float = 0.08  # observations within this are the same support
-    fuse_voxel_m: float = 0.01  # union-cloud voxel at the identity merge; 0 concatenates
-    min_depth_points: int = 60
+    min_views: int = 2
+    cluster_radius_m: float = 0.08
+    peak_prominence: float = 0.02
+    peak_distance_s: float = 1.0
+    peak_width_s: float | None = 0.5
+    verify_radius_m: float = 1.6
+    verify_window_s: float = 0.5
+    settled_window_fraction: float = 0.5
+    tail_k: int = 1
     max_object_extent_m: float = 0.60
-    min_camera_range_m: float = 0.28
-    # A cloud that hugs the support surface is a patch of the surface, not an
-    # object: every real object rises above the plane, a surface patch does not.
     surface_patch_max_rise_m: float = 0.003
     surface_patch_min_drop_m: float = -0.02
-    # Images gathered around each semantic peak for the detection pass.
-    verify_radius_m: float = 1.6
+    min_depth_points: int = 60
+    min_camera_range_m: float = 0.28
+    fuse_voxel_m: float = 0.01
+    plane_cell_m: float = 2.0
+    plane_keyframes: int = 5
+    refusal_margin: float = 0.15
 
 
 @dataclass(frozen=True)

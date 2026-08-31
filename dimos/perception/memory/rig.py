@@ -133,13 +133,13 @@ ROOM_LOCALIZE_POLICY = LocalizePolicy(
     candidate_floor=0.18,
     accept_score=0.32,
     cluster_radius_m=0.30,
-    fuse_voxel_m=0.03,
-    min_depth_points=30,
+    verify_radius_m=5.0,
     max_object_extent_m=2.0,
-    min_camera_range_m=0.5,
     surface_patch_max_rise_m=0.08,
     surface_patch_min_drop_m=-0.06,
-    verify_radius_m=5.0,
+    min_depth_points=30,
+    min_camera_range_m=0.5,
+    fuse_voxel_m=0.03,
 )
 
 
@@ -150,7 +150,7 @@ def _tf_root(store: Any, tf_name: str) -> str | None:
     """The tf tree's root frame: a parent that is never a child."""
     parents: set[str] = set()
     children: set[str] = set()
-    for obs in store.stream(tf_name).limit(500):
+    for obs in store.stream(tf_name):
         for transform in obs.data.transforms:
             parents.add(transform.frame_id)
             children.add(transform.child_frame_id)
@@ -464,12 +464,15 @@ class Rig:
         color_candidates: list[str] = []
         depth_candidates: list[str] = []
         empty_images: list[str] = []
+        image_frames: dict[str, str] = {}
         for name in image_names:
             stream = store.stream(name)
             if stream.count() == 0:
                 empty_images.append(name)
                 continue
-            frame = stream.first().data.data
+            image = stream.first().data
+            image_frames[name] = image.frame_id
+            frame = image.data
             if frame.dtype == np.uint16 or frame.dtype.kind == "f":
                 depth_candidates.append(name)
             elif (
@@ -480,6 +483,12 @@ class Rig:
                 color_candidates.append(name)
             else:
                 logger.info(f"rig: image stream {name!r} is neither color nor metric depth")
+        if color_name is None and depth_name is not None:
+            depth_frame = store.stream(depth_name).first().data.frame_id
+            matching = [name for name in color_candidates if image_frames[name] == depth_frame]
+            if len(matching) == 1:
+                color_name = matching[0]
+                logger.info(f"rig: paired depth {depth_name!r} with color {color_name!r}")
         if color_name is None:
             if len(color_candidates) > 1:
                 color_name = max(color_candidates, key=lambda n: _stream_rate(store.stream(n)))
