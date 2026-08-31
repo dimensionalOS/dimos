@@ -43,6 +43,7 @@ from dimos.evals.agents.question_answer import QuestionAnswer
 from dimos.evals.environments.dataset import Dataset
 from dimos.evals.environments.image_file import ImageFile
 from dimos.evals.environments.sim import Sim
+from dimos.evals.runner import EvalRunner
 from dimos.evals.scorers import (
     choice,
     exact,
@@ -346,6 +347,22 @@ def test_blind_never_reads_the_recording(dataset: str, tmp_path: Path) -> None:
 
 
 # -- runner -------------------------------------------------------------------------
+
+
+def test_runner_uses_unique_directory_when_timestamps_match(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("dimos.evals.runner.time.strftime", lambda _: "run-20260831-120000-")
+    first = EvalRunner(out_dir=tmp_path)
+    second = EvalRunner(out_dir=tmp_path)
+
+    first.run([], FakeAgent())
+    second.run([], FakeAgent())
+
+    assert first.run_dir != second.run_dir
+    assert first.run_dir.parent == second.run_dir.parent == tmp_path
+    assert first.run_dir.name.startswith("run-20260831-120000-")
+    assert second.run_dir.name.startswith("run-20260831-120000-")
 
 
 def test_runner_end_to_end_offline(dataset: str, tmp_path: Path) -> None:

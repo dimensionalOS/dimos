@@ -25,6 +25,7 @@ from dataclasses import asdict, dataclass, replace
 import json
 from pathlib import Path
 import subprocess
+import tempfile
 import threading
 import time
 from typing import Any
@@ -228,9 +229,9 @@ class EvalRunner(Configurable):
         return self._run_dir
 
     def _new_run_dir(self) -> Path:
-        run_dir = self.config.out_dir / time.strftime("run-%Y%m%d-%H%M%S")
-        run_dir.mkdir(parents=True, exist_ok=True)
-        return run_dir
+        self.config.out_dir.mkdir(parents=True, exist_ok=True)
+        prefix = time.strftime("run-%Y%m%d-%H%M%S-")
+        return Path(tempfile.mkdtemp(prefix=prefix, dir=self.config.out_dir))
 
     def _write_artifacts(self, results: list[EvalResult], agent: Agent) -> None:
         lines = [json.dumps(asdict(r)) for r in results]
