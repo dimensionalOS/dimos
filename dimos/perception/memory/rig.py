@@ -146,15 +146,35 @@ ROOM_LOCALIZE_POLICY = LocalizePolicy(
 MOBILE_SPAN_M = 3.0  # camera translation beyond this means a mobile base
 
 
-def _tf_root(store: Any, tf_name: str) -> str | None:
-    """The tf tree's root frame: a parent that is never a child."""
-    parents: set[str] = set()
-    children: set[str] = set()
+ROOT_PROBES = 24  # instants a frame is probed at before it counts as unreachable
+
+
+def _tf_root(store: Any, tf_name: str, tf: StreamTF, optical_frame: str) -> str | None:
+    """The tf tree's root frame: a parent that is never a child, among the
+    frames the camera actually reaches.
+
+    A recording can carry an anchor edge published once at each end of the
+    run, above the frame every other transform is stamped in. It is a root the
+    camera never reaches through, and taking it strands every pose lookup, so
+    frames no probe resolves are dropped before the root is taken. Probes sit
+    at bin midpoints, where an anchor stamped at the ends cannot answer.
+    """
+    edges: set[tuple[str, str]] = set()
     for obs in store.stream(tf_name):
         for transform in obs.data.transforms:
-            parents.add(transform.frame_id)
-            children.add(transform.child_frame_id)
-    roots = parents - children
+            edges.add((transform.frame_id, transform.child_frame_id))
+    if not edges:
+        return None  # live store, nothing recorded yet
+    frames = {frame for edge in edges for frame in edge}
+    t0, t1 = store.stream(tf_name).get_time_range()
+    reached = {optical_frame}
+    for k in range(ROOT_PROBES):
+        ts = t0 + (t1 - t0) * (k + 0.5) / ROOT_PROBES
+        for frame in frames - reached:
+            if tf.get(optical_frame, frame, ts, TF_TOLERANCE, warn=False) is not None:
+                reached.add(frame)
+    linked = [(p, c) for p, c in edges if p in reached and c in reached]
+    roots = {p for p, _ in linked} - {c for _, c in linked}
     return roots.pop() if len(roots) == 1 else None
 
 
@@ -517,15 +537,6 @@ class Rig:
         if cloud_name is not None:
             claimed.add(cloud_name)
 
-        world_frame = gates.WORLD_FRAME
-        if tf is not None:
-            world_frame = _tf_root(store, cast("str", tf_name)) or world_frame
-        elif cloud is not None:
-            try:
-                world_frame = cloud.first().data.frame_id
-            except LookupError:
-                pass  # live store, nothing recorded yet
-
         # intrinsics: inline manifest dict, named stream, or discovery by
         # type with the color camera's frame deciding among several
         camera_info = None
@@ -562,6 +573,19 @@ class Rig:
                     raise ValueError(f"several camera_info streams {candidates}; pass a manifest")
             if ci_name is not None:
                 camera_info = store.stream(ci_name).first().data
+
+        # embed-only stores (no geometry) may carry no calibration at all;
+        # every geometry API raises on use, embedding never touches it
+        optical_frame = camera_info.frame_id if camera_info is not None else gates.OPTICAL_FRAME
+
+        world_frame = gates.WORLD_FRAME
+        if tf is not None:
+            world_frame = _tf_root(store, cast("str", tf_name), tf, optical_frame) or world_frame
+        elif cloud is not None:
+            try:
+                world_frame = cloud.first().data.frame_id
+            except LookupError:
+                pass  # live store, nothing recorded yet
 
         base_to_optical = None
         mount = roles.get("base_to_optical")
@@ -600,9 +624,6 @@ class Rig:
                     "base_to_optical mount in the <db>.rig.json manifest"
                 )
 
-        # embed-only stores (no geometry) may carry no calibration at all;
-        # every geometry API raises on use, embedding never touches it
-        optical_frame = camera_info.frame_id if camera_info is not None else gates.OPTICAL_FRAME
         rig = cls(
             camera_info=cast("CameraInfo", camera_info),
             color=color,
