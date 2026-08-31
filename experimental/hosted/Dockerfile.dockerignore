@@ -1,6 +1,10 @@
 *
 !dimos/
 !dimos/**
+!experimental/
+!experimental/hosted/
+!experimental/hosted/remote_execution_probe.py
+!experimental/hosted/run_remote_execution.py
 !LICENSE
 !MANIFEST.in
 !README.md

@@ -14,6 +14,7 @@ x-dimos-environment: &dimos-environment
   DIMOS_ZENOH_MULTICAST: "false"
   DIMOS_ZENOH_GOSSIP: "false"
   DIMOS_LOG_LEVEL: WARNING
+  PYTHONPATH: /app
   PYTHONUNBUFFERED: "1"
 
 services:
@@ -47,3 +48,27 @@ services:
       - router
     profiles:
       - tools
+
+  remote-execution:
+    image: dimos-host-discovery:compose
+    build:
+      context: ../..
+      dockerfile: experimental/hosted/Dockerfile
+    command: ["python", "-m", "experimental.hosted.run_remote_execution"]
+    environment: *dimos-environment
+    depends_on:
+      - router
+    profiles:
+      - tools
+
+  sandbox:
+    image: dimos-host-discovery:compose
+    build:
+      context: ../..
+      dockerfile: experimental/hosted/Dockerfile
+    command: ["sleep", "infinity"]
+    environment: *dimos-environment
+    depends_on:
+      - router
+    stdin_open: true
+    tty: true
