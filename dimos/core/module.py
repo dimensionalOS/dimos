@@ -476,7 +476,13 @@ class ModuleBase(Configurable, CompositeResource):
                 lifecycle = getattr(attr, "__skill_lifecycle__", "instant")
                 skills.append(
                     SkillInfo(
-                        class_name=self.__class__.__name__,
+                        # The instance name when this module is namespaced, so a
+                        # fleet of identical modules stays individually
+                        # addressable. RpcCall uses this as the RPC topic
+                        # prefix, and _rpc_name() picks the same string, so the
+                        # two agree. Falling back to the class name keeps
+                        # single-instance blueprints unchanged.
+                        class_name=self.config.instance_name or self.__class__.__name__,
                         func_name=name,
                         args_schema=schema,
                         uses=uses,

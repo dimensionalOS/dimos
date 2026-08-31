@@ -91,14 +91,49 @@ def _handle_initialize(req_id: Any) -> dict[str, Any]:
     )
 
 
+def tool_names(skills: list[SkillInfo]) -> dict[str, SkillInfo]:
+    """Map MCP tool name -> skill, disambiguating duplicates by instance.
+
+    A skill name is left bare when only one module offers it, which is the
+    common case and keeps existing blueprints and docs working. When several
+    module *instances* offer the same skill -- a namespaced fleet of three
+    drones all exposing ``takeoff`` -- the bare name is ambiguous and the last
+    registration would silently win, so those become
+    ``drone1/px4dronemodule/takeoff``. That matches the RPC topic exactly.
+    """
+    counts: dict[str, int] = {}
+    for s in skills:
+        counts[s.func_name] = counts.get(s.func_name, 0) + 1
+    out: dict[str, SkillInfo] = {}
+    for s in skills:
+        name = s.func_name if counts[s.func_name] == 1 else f"{s.class_name}/{s.func_name}"
+        out[name] = s
+    return out
+
+
+def with_qualified_aliases(named: dict[str, SkillInfo]) -> dict[str, SkillInfo]:
+    """Extend a tool-name map with each skill's instance-qualified name.
+
+    ``tools/list`` shows only the canonical names from `tool_names`, but a call
+    to ``dog1/go2firstcontact/safe_move`` must work even while that dog is the
+    only module offering ``safe_move``: the qualified form is the RPC topic, so
+    it is never ambiguous, and an operator's fleet scripts keep working when
+    the fleet is temporarily one robot.
+    """
+    out = dict(named)
+    for s in named.values():
+        out.setdefault(f"{s.class_name}/{s.func_name}", s)
+    return out
+
+
 def _handle_tools_list(req_id: Any, skills: list[SkillInfo]) -> dict[str, Any]:
     tools = []
 
-    for s in skills:
+    for name, s in tool_names(skills).items():
         schema = json.loads(s.args_schema)
         description = schema.pop("description", None)
         schema.pop("title", None)
-        tool: dict[str, Any] = {"name": s.func_name, "inputSchema": schema}
+        tool: dict[str, Any] = {"name": name, "inputSchema": schema}
         if description:
             tool["description"] = description
         if s.uses or s.lifecycle != "instant":
@@ -384,12 +419,15 @@ class McpServer(Module):
         app.state.skills = [
             skill_info for module in modules for skill_info in (module.get_skills() or [])
         ]
-        app.state.skills_by_name = {s.func_name: s for s in app.state.skills}
+        # Keyed by MCP tool name, which is instance-qualified when a skill
+        # exists on more than one module instance. The RpcCall still targets the
+        # bare func_name on that instance's RPC topic. Qualified aliases are
+        # callable but not listed (see with_qualified_aliases).
+        named = with_qualified_aliases(tool_names(app.state.skills))
+        app.state.skills_by_name = named
         app.state.rpc_calls = {
-            skill_info.func_name: RpcCall(
-                None, self.rpc, skill_info.func_name, skill_info.class_name, []
-            )
-            for skill_info in app.state.skills
+            name: RpcCall(None, self.rpc, skill_info.func_name, skill_info.class_name, [])
+            for name, skill_info in named.items()
         }
 
     @skill

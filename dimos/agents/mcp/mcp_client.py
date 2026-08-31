@@ -14,22 +14,15 @@
 
 from collections.abc import Callable
 from queue import Empty, Queue
+import re
 from threading import Event, RLock, Thread
 import time
 from typing import Any
 import uuid
-import warnings
-
-from langchain_core._api.deprecation import LangChainPendingDeprecationWarning
-
-# Importing langchain_core un-mutes its pending-deprecation warnings, so this ignore
-# must be registered after that import to take precedence. It silences the noisy
-# `allowed_objects` warning emitted when langchain.agents pulls in langgraph.checkpoint.
-warnings.filterwarnings("ignore", category=LangChainPendingDeprecationWarning)
 
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.messages.base import BaseMessage
 from langchain_core.tools import StructuredTool
 from langchain_openai import ChatOpenAI
@@ -189,7 +182,16 @@ class McpClient(Module):
 
     def _mcp_tool_to_langchain(self, mcp_tool: dict[str, Any]) -> StructuredTool:
         name = mcp_tool["name"]
+        # OpenAI restricts function names to [a-zA-Z0-9_-]. Namespaced MCP
+        # tools ("dog1/leggedsimmodule/state") contain '/', and ONE such name
+        # 400-fails the entire request -- the model never sees any tool and,
+        # before the guard in _thread_loop, the agent thread died on it. The
+        # model is shown a sanitized alias; the MCP server is always called
+        # with the real name via the closure below.
+        model_name = re.sub(r"[^a-zA-Z0-9_-]", "_", name)
         description = mcp_tool.get("description", "")
+        if model_name != name:
+            description = f"[{name}] {description}"
         input_schema = mcp_tool.get("inputSchema", {"type": "object", "properties": {}})
 
         def call_tool(**kwargs: Any) -> str:
@@ -210,7 +212,7 @@ class McpClient(Module):
             return text
 
         return StructuredTool(
-            name=name,
+            name=model_name,
             description=description,
             func=call_tool,
             args_schema=input_schema,
@@ -335,10 +337,24 @@ class McpClient(Module):
             except Empty:
                 continue
 
-            with self._lock:
-                if not self._state_graph:
-                    raise ValueError("No state graph initialized")
-                self._process_message(self._state_graph, message)
+            try:
+                with self._lock:
+                    if not self._state_graph:
+                        raise ValueError("No state graph initialized")
+                    self._process_message(self._state_graph, message)
+            except Exception as e:
+                # A single failed turn (network blip, provider 4xx/5xx) must
+                # not kill this thread: before this guard, one exception left
+                # every later message queued forever while the UI showed
+                # "thinking...". Tell the operator and keep serving.
+                logger.error(f"Agent turn failed: {type(e).__name__}: {e}")
+                try:
+                    self.agent.publish(
+                        AIMessage(content=f"[agent error] {type(e).__name__}: {e}")
+                    )
+                    self.agent_idle.publish(True)
+                except Exception:
+                    pass
 
     def _process_message(
         self, state_graph: CompiledStateGraph[Any, Any, Any, Any], message: BaseMessage
