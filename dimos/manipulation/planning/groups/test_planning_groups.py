@@ -116,6 +116,20 @@ def test_fallback_generation_and_branch_rejection() -> None:
         )
 
 
+def test_fallback_includes_planar_base_but_excludes_terminal_prismatic() -> None:
+    model = _serial_model("prismatic", "prismatic", "revolute", "revolute", "prismatic")
+    joint_names = [joint.name for joint in model.joints]
+
+    group = generate_fallback_planning_group(
+        model=model,
+        controllable_joint_names=joint_names,
+    )
+
+    assert group.joint_names == ("joint1", "joint2", "joint3", "joint4")
+    assert group.base_link == "link0"
+    assert group.tip_link == "link4"
+
+
 def test_discovery_rejects_missing_explicit_srdf(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="SRDF file not found"):
         discover_planning_group_definitions(
