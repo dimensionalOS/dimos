@@ -83,6 +83,7 @@ class TickLoop:
         joint_to_hardware: Dict mapping joint_name -> hardware_id
         publish_callback: Optional callback to publish the merged JointState
         publish_robot_callback: Optional callback, called with (hardware_id, msg)
+        publish_targets_callback: Optional callback to publish arbitrated joint targets
         frame_id: Frame ID for published JointState
         log_ticks: Whether to log tick information
     """
@@ -97,6 +98,7 @@ class TickLoop:
         joint_to_hardware: dict[JointName, HardwareId],
         publish_callback: Callable[[JointState], None] | None = None,
         publish_robot_callback: Callable[[HardwareId, JointState], None] | None = None,
+        publish_targets_callback: Callable[[JointState], None] | None = None,
         frame_id: str = "coordinator",
         log_ticks: bool = False,
     ) -> None:
@@ -108,6 +110,7 @@ class TickLoop:
         self._joint_to_hardware = joint_to_hardware
         self._publish_callback = publish_callback
         self._publish_robot_callback = publish_robot_callback
+        self._publish_targets_callback = publish_targets_callback
         self._frame_id = frame_id
         self._log_ticks = log_ticks
 
@@ -193,6 +196,9 @@ class TickLoop:
 
         if self._publish_callback:
             self._publish_joint_state(joint_states)
+
+        if self._publish_targets_callback:
+            self._publish_joint_targets(joint_commands)
 
         if self._publish_robot_callback:
             self._publish_robot_joint_states(per_hardware, joint_states.timestamp)
@@ -437,6 +443,41 @@ class TickLoop:
         )
         if self._publish_callback:
             self._publish_callback(msg)
+
+    def _publish_joint_targets(
+        self, joint_commands: dict[str, tuple[float, ControlMode, str]]
+    ) -> None:
+        """Publish the arbitrated commands of this tick as a JointState.
+
+        The message carries only the joints commanded this tick. The value of
+        each joint lands in the field matching its control mode; the other
+        fields hold zero.
+        """
+        from dimos.hardware.manipulators.spec import ControlMode
+
+        if not joint_commands:
+            return
+        names = list(joint_commands.keys())
+        positions: list[float] = []
+        velocities: list[float] = []
+        efforts: list[float] = []
+        for name in names:
+            value, mode, _ = joint_commands[name]
+            positions.append(
+                value if mode in (ControlMode.POSITION, ControlMode.SERVO_POSITION) else 0.0
+            )
+            velocities.append(value if mode is ControlMode.VELOCITY else 0.0)
+            efforts.append(value if mode is ControlMode.TORQUE else 0.0)
+        msg = JointState(
+            ts=time.time(),
+            frame_id=self._frame_id,
+            name=names,
+            position=positions,
+            velocity=velocities,
+            effort=efforts,
+        )
+        if self._publish_targets_callback:
+            self._publish_targets_callback(msg)
 
     def _publish_robot_joint_states(
         self,
