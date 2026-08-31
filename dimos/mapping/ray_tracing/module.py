@@ -35,7 +35,7 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     cwd: str | None = "rust"
     # The crate is a workspace member, so cargo builds into the repo-root target dir.
     executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "voxel_ray_tracing")
-    build_command: str | None = "nix develop path:../../../.. -c cargo build --release"
+    build_command: str | None = "nix develop path:../../../../nix/rust -c cargo build --release"
     stdin_config: bool = True
 
     voxel_size: float = 0.1
