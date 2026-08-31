@@ -43,6 +43,56 @@ target_link_libraries(dimos_native INTERFACE
   Threads::Threads
 )
 
+# Zenoh transport. zenoh-cpp is header-only over zenoh-c, which is a compiled
+# rust library, so unlike the rest of the SDK it cannot be vendored cheaply.
+# AUTO builds it in when the packages are installed; ON demands them.
+set(DIMOS_NATIVE_ZENOH AUTO CACHE STRING "Build zenoh transport support: AUTO, ON or OFF")
+set_property(CACHE DIMOS_NATIVE_ZENOH PROPERTY STRINGS AUTO ON OFF)
+if(NOT DIMOS_NATIVE_ZENOH STREQUAL "OFF")
+  # zenohcxxConfig.cmake only defines its backend target when zenohc::lib
+  # already exists, and hard-errors when no backend does, so zenoh-c is looked
+  # up first and zenoh-cpp only when it was found.
+  if(DIMOS_NATIVE_ZENOH STREQUAL "ON")
+    find_package(zenohc REQUIRED)
+    find_package(zenohcxx REQUIRED)
+  else()
+    find_package(zenohc QUIET)
+    if(zenohc_FOUND)
+      find_package(zenohcxx QUIET)
+    endif()
+  endif()
+endif()
+if(zenohcxx_FOUND)
+  # The transport needs reliability QoS and the link list it waits on, which
+  # zenoh-c only emits under its unstable API. That is off in an upstream source
+  # build and on in every published binary, so it is detected, not assumed.
+  include(CheckCXXSourceCompiles)
+  get_target_property(zenohc_includes zenohc::lib INTERFACE_INCLUDE_DIRECTORIES)
+  set(CMAKE_REQUIRED_INCLUDES ${zenohc_includes})
+  check_cxx_source_compiles("
+    #include <zenoh_configure.h>
+    #if !defined(Z_FEATURE_UNSTABLE_API)
+    #error unstable api off
+    #endif
+    int main() { return 0; }
+  " DIMOS_NATIVE_ZENOH_UNSTABLE_API)
+  unset(CMAKE_REQUIRED_INCLUDES)
+endif()
+if(zenohcxx_FOUND AND DIMOS_NATIVE_ZENOH_UNSTABLE_API)
+  message(STATUS "dimos_native: zenoh-cpp found, zenoh transport enabled")
+  target_compile_definitions(dimos_native INTERFACE DIMOS_NATIVE_ZENOH)
+  target_link_libraries(dimos_native INTERFACE zenohcxx::zenohc)
+elseif(zenohcxx_FOUND)
+  set(zenoh_hint "zenoh-c is built without its unstable API, which the zenoh transport needs, \
+rebuild it with -DZENOHC_BUILD_WITH_UNSTABLE_API=ON")
+  if(DIMOS_NATIVE_ZENOH STREQUAL "ON")
+    message(FATAL_ERROR "dimos_native: ${zenoh_hint}")
+  endif()
+  message(STATUS "dimos_native: ${zenoh_hint}, DIMOS_TRANSPORT=zenoh will error at startup")
+else()
+  message(STATUS "dimos_native: zenoh-cpp not found, DIMOS_TRANSPORT=zenoh will error at startup")
+endif()
+
 option(DIMOS_NATIVE_BUILD_TESTS "Build the dimos native SDK tests" OFF)
 if(DIMOS_NATIVE_BUILD_TESTS)
   enable_testing()

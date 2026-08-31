@@ -262,12 +262,29 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y liblcm-dev nlohmann-json3-dev
+      # The version the rust transport pins, so both ends of the wire match.
+      - name: Install zenoh-c and zenoh-cpp
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ZENOH_VERSION: 1.9.0
+        run: |
+          mkdir -p /tmp/zenoh
+          gh release download "$ZENOH_VERSION" --repo eclipse-zenoh/zenoh-c \
+            --pattern "zenoh-c-$ZENOH_VERSION-x86_64-unknown-linux-gnu-standalone.zip" \
+            --output /tmp/zenoh-c.zip
+          gh release download "$ZENOH_VERSION" --repo eclipse-zenoh/zenoh-cpp \
+            --pattern "zenohcpp-$ZENOH_VERSION-standalone.zip" --output /tmp/zenoh-cpp.zip
+          unzip -q /tmp/zenoh-c.zip -d /tmp/zenoh
+          unzip -q /tmp/zenoh-cpp.zip -d /tmp/zenoh
+      # ON, not AUTO: a zenoh that silently went missing would skip the tests.
       - name: Configure
-        run: cmake -S native/cpp -B build/native-cpp -DDIMOS_NATIVE_BUILD_TESTS=ON
+        run: |
+          cmake -S native/cpp -B build/native-cpp -DDIMOS_NATIVE_BUILD_TESTS=ON \
+            -DDIMOS_NATIVE_ZENOH=ON -DCMAKE_PREFIX_PATH=/tmp/zenoh
       - name: Build
         run: cmake --build build/native-cpp -j
       - name: Test
-        run: ctest --test-dir build/native-cpp --output-on-failure
+        run: LD_LIBRARY_PATH=/tmp/zenoh/lib ctest --test-dir build/native-cpp --output-on-failure
 
       - name: Find C++ native modules
         id: find-modules

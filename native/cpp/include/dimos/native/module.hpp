@@ -375,11 +375,12 @@ private:
     Notifier* notifier_ = nullptr;
 };
 
-// Parse the coordinator's stdin line into topics / config. Other keys the
-// coordinator sends, such as qos, are ignored.
+// The coordinator's stdin line: the topics and config this SDK reads out of it,
+// plus the whole blob, which the transport reads its own keys off.
 struct StdinConfig {
     std::unordered_map<std::string, std::string> topics;
     nlohmann::json config;
+    nlohmann::json launch;
 };
 
 inline StdinConfig parse_stdin_config(const std::string& line) {
@@ -397,14 +398,22 @@ inline StdinConfig parse_stdin_config(const std::string& line) {
         }
     }
     out.config = blob.contains("config") ? blob["config"] : nlohmann::json();
+    out.launch = std::move(blob);
     return out;
 }
 
-template <class M>
-void run_fallible(std::unique_ptr<Transport> transport) {
+/// Read the coordinator's launch line off stdin. The transport is built from it,
+/// so it is read before the transport exists.
+inline StdinConfig read_stdin_config() {
     std::string line;
     std::getline(std::cin, line);
-    StdinConfig parsed = parse_stdin_config(line);
+    return parse_stdin_config(line);
+}
+
+template <class M>
+void run_fallible(std::unique_ptr<Transport> transport, StdinConfig parsed) {
+    transport->set_publisher_qos(parsed.launch.contains("qos") ? parsed.launch["qos"]
+                                                              : nlohmann::json());
 
     Notifier notifier;
     Builder builder(std::move(parsed.topics), &notifier);
@@ -462,12 +471,12 @@ void run_fallible(std::unique_ptr<Transport> transport) {
     module.teardown();
 }
 
-/// Run module `M` over `transport`, reading config from stdin and blocking until
-/// shutdown. Any startup error is logged and the process exits non-zero.
+/// Run module `M` over `transport`, blocking until shutdown. Any startup error
+/// is logged and the process exits non-zero.
 template <class M>
-void run(std::unique_ptr<Transport> transport) {
+void run(std::unique_ptr<Transport> transport, StdinConfig parsed) {
     try {
-        run_fallible<M>(std::move(transport));
+        run_fallible<M>(std::move(transport), std::move(parsed));
     } catch (const std::exception& e) {
         log::error(e.what());
         std::exit(1);
