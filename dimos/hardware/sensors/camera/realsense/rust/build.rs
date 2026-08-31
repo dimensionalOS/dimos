@@ -12,10 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// nixpkgs' realsense2.pc names a libdir of lib/x86_64-linux-gnu while the .so
-// sits in lib/, so walk up to the real directory. Emit it as a link search
-// path (the .pc's -L alone dangles) and as an rpath so the binary also runs
-// outside the nix shell that built it.
+// nixpkgs' realsense2.pc names a libdir the .so is not in, so walk up to the
+// real directory and emit it as both a link search path and an rpath.
 fn main() {
     let lib = pkg_config::probe_library("realsense2").expect("librealsense2 via pkg-config");
     for path in lib.link_paths {

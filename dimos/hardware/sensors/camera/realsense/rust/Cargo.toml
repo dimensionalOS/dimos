@@ -31,14 +31,14 @@ infrared_left_camera_info = "sensor_msgs.CameraInfo"
 infrared_right_camera_info = "sensor_msgs.CameraInfo"
 
 [dependencies]
-dimos-module = { path = "../../../../../../native/rust/dimos-module" }
-lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+dimos-module.workspace = true
+lcm-msgs.workspace = true
 realsense-rust = "1.3"
 realsense-sys = "2.56"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
-serde = { version = "1", features = ["derive"] }
-tracing = "0.1"
-validator = { version = "0.20", features = ["derive"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
+serde.workspace = true
+tracing.workspace = true
+validator.workspace = true
 
 [build-dependencies]
 pkg-config = "0.3"
