@@ -19,10 +19,6 @@ the literal bytes sent to and received from the provider as
 ``<seq>-request.json`` / ``<seq>-response.json`` (auth header dropped). Give
 it to any OpenAI-backed chat model as ``http_client=``; every call becomes
 one pair of files, whole, not reconstructed from normalized messages.
-
-``write_normalized(dir, messages, result)`` is the fallback for providers
-that offer no HTTP hook: the same file pair built from LangChain's view of
-the call, marked ``"normalized": true`` so a reader knows it is not wire-exact.
 """
 
 from __future__ import annotations
@@ -118,29 +114,3 @@ def tracing_http_client(trace_dir: Path, **kwargs: Any) -> httpx.Client:
         "response": [*hooks.get("response", []), on_response],
     }
     return httpx.Client(event_hooks=hooks, **kwargs)
-
-
-def write_normalized(trace_dir: Path, messages: list[Any], result: Any) -> tuple[int, Path, Path]:
-    """Record a call from LangChain's normalized view (no HTTP hook available)."""
-    trace_dir.mkdir(parents=True, exist_ok=True)
-    seq = _next_seq(trace_dir)
-    req, resp = request_path(trace_dir, seq), response_path(trace_dir, seq)
-    _write(req, {"normalized": True, "messages": [m.model_dump() for m in messages]})
-    _write(resp, {"normalized": True, "result": result.model_dump()})
-    return seq, req, resp
-
-
-def latest_pair(trace_dir: Path, after: int) -> tuple[int, Path, Path] | None:
-    """The newest complete request/response pair with seq >= *after*, if any.
-    A retried call leaves several pairs; the newest is the one that answered."""
-    if not trace_dir.is_dir():
-        return None
-    seqs = sorted(
-        int(p.name[: -len(REQUEST_SUFFIX)])
-        for p in trace_dir.glob(f"*{REQUEST_SUFFIX}")
-        if p.name[: -len(REQUEST_SUFFIX)].isdigit()
-    )
-    seqs = [s for s in seqs if s >= after and response_path(trace_dir, s).exists()]
-    if not seqs:
-        return None
-    return seqs[-1], request_path(trace_dir, seqs[-1]), response_path(trace_dir, seqs[-1])
