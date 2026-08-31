@@ -30,7 +30,6 @@ warnings.filterwarnings("ignore", category=LangChainPendingDeprecationWarning)
 
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
-from langchain.chat_models.base import _attempt_infer_model_provider
 from langchain_core.messages import HumanMessage
 from langchain_core.messages.base import BaseMessage
 from langchain_core.tools import StructuredTool
@@ -65,12 +64,10 @@ def _init_model(model_name: str, trace_dir: Path | None = None) -> Any:
     """
     client = None if trace_dir is None else tracing_http_client(trace_dir)
     if ":" in model_name or not model_name.startswith(_RESPONSES_REASONING_MODEL_PREFIXES):
-        provider = _attempt_infer_model_provider(model_name.split(":", 1)[-1])
-        if ":" in model_name:
-            provider = model_name.split(":", 1)[0]
-        if client is not None and provider == "openai":
+        model = init_chat_model(model=model_name)
+        if client is not None and isinstance(model, ChatOpenAI):
             return init_chat_model(model=model_name, http_client=client)
-        return init_chat_model(model=model_name)
+        return model
 
     return ChatOpenAI(
         model=model_name,
