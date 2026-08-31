@@ -26,7 +26,7 @@ import re
 from typing import Annotated
 import xml.etree.ElementTree as ET
 
-from pydantic import ConfigDict, Field, FiniteFloat, model_validator
+from pydantic import ConfigDict, Field, model_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from typing_extensions import Self
 
@@ -97,20 +97,18 @@ class _JointPositionLimits:
 _PLANAR_BASE_CONFIG = ConfigDict(extra="forbid", validate_default=True)
 _NonEmptyString = Annotated[str, Field(min_length=1)]
 _PositiveFiniteFloat = Annotated[float, Field(gt=0.0, allow_inf_nan=False)]
-_FiniteVector3 = tuple[FiniteFloat, FiniteFloat, FiniteFloat]
 _PositiveVector3 = tuple[_PositiveFiniteFloat, _PositiveFiniteFloat, _PositiveFiniteFloat]
 
 
 @pydantic_dataclass(frozen=True, config=_PLANAR_BASE_CONFIG)
 class PlanarBaseDefinition:
-    """Synthetic floor-constrained base coordinates and planning workspace.
+    """Synthetic floor-constrained base coordinates.
 
     The three coordinates are ordered ``x``, ``y``, then ``yaw``. Linear
-    coordinates use meters and angular coordinates use radians.
+    coordinates use meters and angular coordinates use radians. Translation is
+    unbounded and yaw is periodic.
     """
 
-    workspace_lower: _FiniteVector3
-    workspace_upper: _FiniteVector3
     velocity_limits: _PositiveVector3
     acceleration_limits: _PositiveVector3
     root_link: _NonEmptyString = "planar_base_root"
@@ -124,11 +122,6 @@ class PlanarBaseDefinition:
     def _validate_cross_field_invariants(self) -> Self:
         if len(set(self.joint_names)) != 3:
             raise ValueError("Planar base joint names must be unique")
-        if any(
-            lower >= upper
-            for lower, upper in zip(self.workspace_lower, self.workspace_upper, strict=True)
-        ):
-            raise ValueError("Planar base workspace bounds must be strictly increasing")
         return self
 
 
@@ -336,7 +329,7 @@ def _add_planar_base(xml: str, definition: PlanarBaseDefinition) -> str:
         ET.SubElement(root, "link", {"name": name})
     links = (definition.root_link, x_link, xy_link, root_links[0])
     axes = ("1 0 0", "0 1 0", "0 0 1")
-    types = ("prismatic", "prismatic", "revolute")
+    types = ("prismatic", "prismatic", "continuous")
     for index, (name, axis, joint_type) in enumerate(
         zip(definition.joint_names, axes, types, strict=True)
     ):
@@ -349,8 +342,6 @@ def _add_planar_base(xml: str, definition: PlanarBaseDefinition) -> str:
             joint,
             "limit",
             {
-                "lower": str(definition.workspace_lower[index]),
-                "upper": str(definition.workspace_upper[index]),
                 "effort": "1",
                 "velocity": str(definition.velocity_limits[index]),
                 "acceleration": str(definition.acceleration_limits[index]),

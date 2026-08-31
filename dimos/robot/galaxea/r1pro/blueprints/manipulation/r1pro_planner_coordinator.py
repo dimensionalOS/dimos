@@ -33,6 +33,7 @@ r1pro_planner_coordinator = autoconnect(
     planner(
         model=make_r1pro_planar_model_config(),
         visualization={"backend": "viser"},
+        trajectory_parametrization={"backend": "simple_trapezoid"},
     ),
     coordinator(
         hardware=[_r1pro_hardware],

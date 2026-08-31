@@ -15,8 +15,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Barrier, Lock
+import time
 
 import pytest
 
@@ -24,7 +27,11 @@ pytest.importorskip("viser", reason="Viser optional dependency is not installed"
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningSceneInfo
+from dimos.manipulation.planning.spec.models import (
+    GeneratedPlan,
+    PlanningGroupID,
+    PlanningSceneInfo,
+)
 from dimos.manipulation.visualization.operator import OperatorStatus, TargetEvaluationResult
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.gui import ViserPanelGui
@@ -40,11 +47,49 @@ from dimos.manipulation.visualization.viser.state import (
 )
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
 
 
 class EmptyServer:
     pass
+
+
+class FakeNumericHandle:
+    def __init__(self, value: float) -> None:
+        self.value = value
+
+    def on_update(self, _callback: Callable[[object], None]) -> None:
+        pass
+
+    def remove(self) -> None:
+        pass
+
+
+class ConcurrentRemovalHandle:
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self.remove_count = 0
+
+    def remove(self) -> None:
+        with self._lock:
+            self.remove_count += 1
+            if self.remove_count > 1:
+                raise RuntimeError("handle removed more than once")
+        time.sleep(0.01)
+
+
+class FakeJointGui:
+    def __init__(self) -> None:
+        self.numbers: list[tuple[str, dict[str, float]]] = []
+        self.sliders: list[tuple[str, dict[str, float]]] = []
+
+    def add_number(self, label: str, **kwargs: float) -> FakeNumericHandle:
+        self.numbers.append((label, kwargs))
+        return FakeNumericHandle(kwargs["initial_value"])
+
+    def add_slider(self, label: str, **kwargs: float) -> FakeNumericHandle:
+        self.sliders.append((label, kwargs))
+        return FakeNumericHandle(kwargs["initial_value"])
 
 
 class FakeOperatorBackend:
@@ -174,6 +219,74 @@ def make_gui(module: FakeOperatorBackend | None = None) -> ViserPanelGui:
         lambda: None,
         ViserVisualizationConfig(),
     )
+
+
+def test_planar_joint_controls_use_unbounded_translation_inputs_and_wrapped_yaw() -> None:
+    planar = PlanarBaseDefinition(
+        velocity_limits=(1.0, 1.0, 2.0),
+        acceleration_limits=(2.0, 2.0, 4.0),
+    )
+    group = PlanningGroup("moving_base", planar.joint_names, planar.root_link)
+    panel = ViserPanelGui(
+        EmptyServer(),
+        PlanningSceneInfo(
+            model=RobotModelConfig(
+                model=RobotModel.from_file(Path("/tmp/model.urdf")).with_planar_base(planar),
+                joint_names=list(planar.joint_names),
+                base_link=planar.root_link,
+            ),
+            planning_groups=[group],
+        ),
+        FakeOperator(),
+        lambda: None,
+        ViserVisualizationConfig(),
+    )
+    panel.state.selected_group_ids = (group.id,)
+    panel.state.group_joint_targets[group.id] = JointState(
+        name=list(planar.joint_names), position=[6.0, -7.0, 4.0]
+    )
+    controls = FakeJointGui()
+
+    panel._build_joint_slider_handles(controls)  # type: ignore[arg-type]
+
+    assert [label for label, _kwargs in controls.numbers] == [
+        "moving_base/base/x",
+        "moving_base/base/y",
+    ]
+    assert all("min" not in kwargs and "max" not in kwargs for _, kwargs in controls.numbers)
+    assert controls.sliders == [
+        (
+            "moving_base/base/yaw",
+            {
+                "min": pytest.approx(-3.141592653589793),
+                "max": pytest.approx(3.141592653589793),
+                "step": 0.001,
+                "initial_value": pytest.approx(4.0 - 2.0 * 3.141592653589793),
+            },
+        )
+    ]
+
+
+def test_clear_joint_sliders_is_safe_during_concurrent_rebuilds() -> None:
+    panel = make_gui()
+    handles = [ConcurrentRemovalHandle() for _ in range(3)]
+    panel._joint_sliders = {
+        (PlanningGroupID("arm"), f"joint_{index}"): handle for index, handle in enumerate(handles)
+    }
+    worker_count = 8
+    barrier = Barrier(worker_count)
+
+    def clear_at_once() -> None:
+        barrier.wait()
+        panel._clear_joint_sliders()
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = [executor.submit(clear_at_once) for _ in range(worker_count)]
+        for future in futures:
+            future.result()
+
+    assert panel._joint_sliders == {}
+    assert [handle.remove_count for handle in handles] == [1, 1, 1]
 
 
 @pytest.mark.parametrize(

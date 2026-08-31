@@ -116,6 +116,11 @@ class WorldMonitor:
         with self._lock:
             return self._world.get_joint_limits()
 
+    def get_joint_velocity_limits(self) -> NDArray[np.float64]:
+        """Get positive velocity limits in canonical joint order."""
+        with self._lock:
+            return self._world.get_joint_velocity_limits()
+
     # Obstacle Management
 
     def add_obstacle(self, obstacle: Obstacle) -> str:

@@ -114,8 +114,6 @@ def test_execute_rejects_planar_base_plan_but_keeps_it_for_preview(
     coordinator = _coordinator()
     module = _module_with_coordinator(coordinator, module_factory)
     planar_base = PlanarBaseDefinition(
-        workspace_lower=(-2.0, -2.0, -3.14),
-        workspace_upper=(2.0, 2.0, 3.14),
         velocity_limits=(1.0, 1.0, 2.0),
         acceleration_limits=(2.0, 2.0, 4.0),
     )
@@ -137,8 +135,6 @@ def test_execute_allows_arm_only_plan_from_planar_model(module_factory) -> None:
     coordinator = _coordinator()
     module = _module_with_coordinator(coordinator, module_factory)
     planar_base = PlanarBaseDefinition(
-        workspace_lower=(-2.0, -2.0, -3.14),
-        workspace_upper=(2.0, 2.0, 3.14),
         velocity_limits=(1.0, 1.0, 2.0),
         acceleration_limits=(2.0, 2.0, 4.0),
     )

@@ -330,8 +330,6 @@ def test_drake_planar_base_coordinates_move_original_robot_root(tmp_path: Path) 
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
     planar_base = PlanarBaseDefinition(
-        workspace_lower=(-2.0, -2.0, -3.14),
-        workspace_upper=(2.0, 2.0, 3.14),
         velocity_limits=(1.0, 1.0, 2.0),
         acceleration_limits=(2.0, 2.0, 4.0),
     )

@@ -399,36 +399,50 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         robot_data = self._require_model()
         config = robot_data.config
 
+        planar_names = (
+            set(config.model.planar_base.joint_names) if config.model.planar_base else set()
+        )
+
         if config.joint_limits_lower is not None and config.joint_limits_upper is not None:
-            return (
-                np.array(config.joint_limits_lower),
-                np.array(config.joint_limits_upper),
-            )
+            lower = np.array(config.joint_limits_lower, dtype=np.float64)
+            upper = np.array(config.joint_limits_upper, dtype=np.float64)
+            for index, name in enumerate(config.joint_names):
+                if name in planar_names:
+                    lower[index], upper[index] = -np.inf, np.inf
+            return lower, upper
 
         # Query Drake plant if finalized (limits from URDF/MJCF)
         if self._finalized:
-            lower = []
-            upper = []
+            lower_values: list[float] = []
+            upper_values: list[float] = []
             for joint_name in config.joint_names:
                 joint = self._plant.GetJointByName(joint_name, robot_data.model_instance)
                 lower_val = joint.position_lower_limits()[0]
                 upper_val = joint.position_upper_limits()[0]
-                if not np.isfinite(lower_val) or not np.isfinite(upper_val):
+                if joint_name in planar_names:
+                    lower_val, upper_val = -np.inf, np.inf
+                elif not np.isfinite(lower_val) or not np.isfinite(upper_val):
                     logger.warning(
                         "Joint '%s' has no limits in model; falling back to ±π", joint_name
                     )
                     lower_val = -np.pi if not np.isfinite(lower_val) else lower_val
                     upper_val = np.pi if not np.isfinite(upper_val) else upper_val
-                lower.append(lower_val)
-                upper.append(upper_val)
-            return (np.array(lower), np.array(upper))
+                lower_values.append(lower_val)
+                upper_values.append(upper_val)
+            return (np.array(lower_values), np.array(upper_values))
 
         # Pre-finalization fallback
         n_joints = len(config.joint_names)
-        return (
-            np.full(n_joints, -np.pi),
-            np.full(n_joints, np.pi),
-        )
+        lower = np.full(n_joints, -np.pi)
+        upper = np.full(n_joints, np.pi)
+        for index, name in enumerate(config.joint_names):
+            if name in planar_names:
+                lower[index], upper[index] = -np.inf, np.inf
+        return lower, upper
+
+    def get_joint_velocity_limits(self) -> NDArray[np.float64]:
+        """Get positive velocity limits in canonical joint order."""
+        return np.asarray(self._require_model().config.canonical_velocity_limits())
 
     # Obstacle Management
 

@@ -16,7 +16,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 import math
-from typing import TypeAlias, cast
+from threading import RLock
+from typing import Any, TypeAlias, cast
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.planners.roboplan_config import RoboPlanCartesianPathConfig
@@ -98,6 +99,11 @@ def _copy_joint_state(state: JointState | None) -> JointState | None:
     return None if state is None else JointState(state)
 
 
+def _wrap_angle(value: float) -> float:
+    """Wrap one angle to the Viser yaw slider's canonical interval."""
+    return (value + math.pi) % (2.0 * math.pi) - math.pi
+
+
 ROBOT_DISPLAY_LABELS = tuple(mode.value.title() for mode in RobotDisplayMode)
 ROBOT_DISPLAY_MODES: dict[str, RobotDisplayMode] = {mode.value: mode for mode in RobotDisplayMode}
 ROBOT_DISPLAY_COLLISION_WARNING = (
@@ -135,7 +141,8 @@ class ViserPanelGui:
         self._suppress_target_callbacks = False
         self._default_group_initialized = False
         self._handles: dict[str, PanelHandle] = {}
-        self._joint_sliders: dict[tuple[PlanningGroupID, str], GuiSliderHandle[float]] = {}
+        self._joint_controls_lock = RLock()
+        self._joint_sliders: dict[tuple[PlanningGroupID, str], Any] = {}
         self._worker = TargetEvaluationWorker(
             self._handle_target_evaluation_request,
             self._apply_target_evaluation_result,
@@ -457,20 +464,21 @@ class ViserPanelGui:
                 remove()
 
     def _toggle_group_selected(self, group_id: str) -> None:
-        groups = {str(group.id): group for group in self.list_planning_groups()}
-        if group_id not in groups:
-            return
-        current = list(self.state.selected_group_ids)
-        if group_id in current:
-            current.remove(group_id)
-        else:
-            current.append(group_id)
-        self.state.selected_group_ids = tuple(current)
-        self.state.advance_selection_epoch()
-        self._clear_invalidated_preview()
-        self._prune_inactive_group_state()
-        self._initialize_selected_group_targets()
-        self._build_joint_sliders()
+        with self._joint_controls_lock:
+            groups = {str(group.id): group for group in self.list_planning_groups()}
+            if group_id not in groups:
+                return
+            current = list(self.state.selected_group_ids)
+            if group_id in current:
+                current.remove(group_id)
+            else:
+                current.append(group_id)
+            self.state.selected_group_ids = tuple(current)
+            self.state.advance_selection_epoch()
+            self._clear_invalidated_preview()
+            self._prune_inactive_group_state()
+            self._initialize_selected_group_targets()
+            self._build_joint_sliders()
         self.refresh()
 
     def _build_scene_controls(self, gui: GuiApi) -> None:
@@ -600,61 +608,79 @@ class ViserPanelGui:
                     self._suppress_target_callbacks = False
 
     def _build_joint_sliders(self) -> None:
-        gui = self.server.gui
-        self._clear_joint_sliders()
-        if not self.state.selected_group_ids:
-            return
-        joint_folder = self._handles.get("joint_control_folder")
-        if joint_folder is not None:
-            folder = cast("GuiFolderHandle", joint_folder)
-            with folder:
-                self._build_joint_slider_handles(gui)
-            return
-        self._build_joint_slider_handles(gui)
+        with self._joint_controls_lock:
+            gui = self.server.gui
+            self._clear_joint_sliders()
+            if not self.state.selected_group_ids:
+                return
+            joint_folder = self._handles.get("joint_control_folder")
+            if joint_folder is not None:
+                folder = cast("GuiFolderHandle", joint_folder)
+                with folder:
+                    self._build_joint_slider_handles(gui)
+                return
+            self._build_joint_slider_handles(gui)
 
     def _build_joint_slider_handles(self, gui: GuiApi) -> None:
-        for group_id in self.state.selected_group_ids:
-            group = self._groups_by_id().get(group_id)
-            if group is None:
-                continue
-            config = self.get_model_config()
-            target = self.state.group_joint_targets.get(group_id)
-            if config is None or target is None:
-                continue
-            config_indexes = {str(name): index for index, name in enumerate(config.joint_names)}
-            for joint_name, value in zip(group.joint_names, target.position, strict=True):
-                index = config_indexes.get(str(joint_name))
-                lower, upper = DEFAULT_JOINT_LIMITS
-                if index is not None and config.joint_limits_lower is not None:
-                    lower = config.joint_limits_lower[index]
-                if index is not None and config.joint_limits_upper is not None:
-                    upper = config.joint_limits_upper[index]
-                key = (group_id, str(joint_name))
-                handle = gui.add_slider(
-                    f"{group_id}/{joint_name}",
-                    min=float(lower),
-                    max=float(upper),
-                    step=0.001,
-                    initial_value=float(value),
-                )
+        with self._joint_controls_lock:
+            for group_id in self.state.selected_group_ids:
+                group = self._groups_by_id().get(group_id)
+                if group is None:
+                    continue
+                config = self.get_model_config()
+                target = self.state.group_joint_targets.get(group_id)
+                if config is None or target is None:
+                    continue
+                config_indexes = {str(name): index for index, name in enumerate(config.joint_names)}
+                planar = config.model.planar_base
+                translation_names = set(planar.joint_names[:2]) if planar is not None else set()
+                yaw_name = planar.joint_names[2] if planar is not None else None
+                for joint_name, value in zip(group.joint_names, target.position, strict=True):
+                    index = config_indexes.get(str(joint_name))
+                    lower, upper = DEFAULT_JOINT_LIMITS
+                    if index is not None and config.joint_limits_lower is not None:
+                        lower = config.joint_limits_lower[index]
+                    if index is not None and config.joint_limits_upper is not None:
+                        upper = config.joint_limits_upper[index]
+                    key = (group_id, str(joint_name))
+                    handle: Any
+                    if joint_name in translation_names:
+                        handle = gui.add_number(
+                            f"{group_id}/{joint_name}",
+                            step=0.001,
+                            initial_value=float(value),
+                        )
+                    else:
+                        if joint_name == yaw_name:
+                            lower, upper = -math.pi, math.pi
+                            value = _wrap_angle(float(value))
+                        handle = gui.add_slider(
+                            f"{group_id}/{joint_name}",
+                            min=float(lower),
+                            max=float(upper),
+                            step=0.001,
+                            initial_value=float(value),
+                        )
 
-                def on_slider_update(
-                    _event: object,
-                    selected_group_id: PlanningGroupID = group_id,
-                    name: str = str(joint_name),
-                ) -> None:
-                    self._on_joint_slider_update(selected_group_id, name)
+                    def on_slider_update(
+                        _event: object,
+                        selected_group_id: PlanningGroupID = group_id,
+                        name: str = str(joint_name),
+                    ) -> None:
+                        self._on_joint_slider_update(selected_group_id, name)
 
-                handle.on_update(on_slider_update)
-                self._joint_sliders[key] = handle
+                    handle.on_update(on_slider_update)
+                    self._joint_sliders[key] = handle
 
     def _clear_joint_sliders(self) -> None:
-        for handle in self._joint_sliders.values():
-            try:
-                handle.remove()
-            except AttributeError:
-                pass
-        self._joint_sliders.clear()
+        with self._joint_controls_lock:
+            handles = tuple(self._joint_sliders.values())
+            self._joint_sliders.clear()
+            for handle in handles:
+                try:
+                    handle.remove()
+                except AttributeError:
+                    pass
 
     def _groups_by_id(self) -> dict[PlanningGroupID, PlanningGroup]:
         return {group.id: group for group in self.list_planning_groups()}
@@ -791,11 +817,13 @@ class ViserPanelGui:
             targets[group_id] = JointState({"name": list(group.joint_names), "position": positions})
             slider_values.append((group_id, group.joint_names, positions))
         self.state.group_joint_targets.update(targets)
-        if any(
-            (group_id, str(joint_name)) not in self._joint_sliders
-            for group_id, joint_names, _positions in slider_values
-            for joint_name in joint_names
-        ):
+        with self._joint_controls_lock:
+            sliders_missing = any(
+                (group_id, str(joint_name)) not in self._joint_sliders
+                for group_id, joint_names, _positions in slider_values
+                for joint_name in joint_names
+            )
+        if sliders_missing:
             self._build_joint_sliders()
         for group_id, joint_names, positions in slider_values:
             self._set_group_slider_values(group_id, joint_names, positions)
@@ -806,31 +834,38 @@ class ViserPanelGui:
     def _set_group_slider_values(
         self, group_id: PlanningGroupID, joint_names: tuple[str, ...], values: list[float]
     ) -> None:
-        self._suppress_target_callbacks = True
-        try:
-            for joint_name, value in zip(joint_names, values, strict=True):
-                handle = self._joint_sliders.get((group_id, str(joint_name)))
-                if handle is not None:
-                    handle.value = float(value)
-        finally:
-            self._suppress_target_callbacks = False
+        with self._joint_controls_lock:
+            self._suppress_target_callbacks = True
+            try:
+                for joint_name, value in zip(joint_names, values, strict=True):
+                    handle = self._joint_sliders.get((group_id, str(joint_name)))
+                    if handle is not None:
+                        planar = self.get_model_config().model.planar_base
+                        if planar is not None and joint_name == planar.joint_names[2]:
+                            value = _wrap_angle(float(value))
+                        handle.value = float(value)
+            finally:
+                self._suppress_target_callbacks = False
 
     def _target_set_from_sliders(self) -> dict[PlanningGroupID, JointState] | None:
-        targets: dict[PlanningGroupID, JointState] = {}
-        for group_id in self.state.selected_group_ids:
-            group = self._groups_by_id().get(group_id)
-            if group is None:
-                self._set_error(f"Unknown planning group: {group_id}")
-                return None
-            positions: list[float] = []
-            for joint_name in group.joint_names:
-                handle = self._joint_sliders.get((group_id, str(joint_name)))
-                if handle is None:
-                    self._set_error(f"Missing target slider for {group_id}/{joint_name}")
+        with self._joint_controls_lock:
+            targets: dict[PlanningGroupID, JointState] = {}
+            for group_id in self.state.selected_group_ids:
+                group = self._groups_by_id().get(group_id)
+                if group is None:
+                    self._set_error(f"Unknown planning group: {group_id}")
                     return None
-                positions.append(float(handle.value))
-            targets[group_id] = JointState({"name": list(group.joint_names), "position": positions})
-        return targets
+                positions: list[float] = []
+                for joint_name in group.joint_names:
+                    handle = self._joint_sliders.get((group_id, str(joint_name)))
+                    if handle is None:
+                        self._set_error(f"Missing target slider for {group_id}/{joint_name}")
+                        return None
+                    positions.append(float(handle.value))
+                targets[group_id] = JointState(
+                    {"name": list(group.joint_names), "position": positions}
+                )
+            return targets
 
     def _on_joint_slider_update(self, _group_id: PlanningGroupID, _joint_name: str) -> None:
         if self._closed:

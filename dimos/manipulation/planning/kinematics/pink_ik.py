@@ -23,12 +23,12 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pink
 from pink.exceptions import NoSolutionFound
-import pinocchio
 
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.kinematics.pink_solver import (
     _get_frame_id,
+    _JointMapping,
     _PinkRobotContext,
     _PinkSolverCore,
     _seed_positions_for_mapping,
@@ -202,8 +202,16 @@ class PinkIK(_PinkSolverCore):
         for attempt in range(max_attempts):
             current_positions = seed_positions.copy()
             if attempt > 0:
+                retry_lower, retry_upper = _finite_retry_limits(
+                    targets[0][0].mapping,
+                    seed_positions,
+                    lower_limits,
+                    upper_limits,
+                    selected_indices,
+                    attempt,
+                )
                 current_positions[selected_indices] = np.random.uniform(
-                    lower_limits[selected_indices], upper_limits[selected_indices]
+                    retry_lower[selected_indices], retry_upper[selected_indices]
                 )
             try:
                 q0 = self._q_from_dimos_positions(targets[0][0], current_positions)
@@ -338,17 +346,46 @@ class PinkIK(_PinkSolverCore):
         upper_limits: NDArray[np.float64],
         attempt: int,
     ) -> NDArray[np.float64]:
-        neutral = pinocchio.neutral(context.model)
-        q = np.array(neutral, dtype=np.float64)
+        seed_positions = _seed_positions_for_mapping(seed, context.mapping)
+        positions = seed_positions
+        if attempt > 0:
+            lower, upper = _finite_retry_limits(
+                context.mapping,
+                seed_positions,
+                lower_limits,
+                upper_limits,
+                range(len(seed_positions)),
+                attempt,
+            )
+            positions = np.random.uniform(lower, upper)
+        return self._q_from_dimos_positions(context, positions)
 
-        if attempt == 0:
-            positions = _seed_positions_for_mapping(seed, context.mapping)
-        else:
-            positions = np.random.uniform(lower_limits, upper_limits)
 
-        for value, idx_q in zip(positions, context.mapping.idx_q, strict=True):
-            q[idx_q] = value
-        return q
+def _finite_retry_limits(
+    mapping: _JointMapping,
+    seed_positions: NDArray[np.float64],
+    lower_limits: NDArray[np.float64],
+    upper_limits: NDArray[np.float64],
+    movable_indices: Sequence[int],
+    attempt: int,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Build finite retry bounds around unbounded planar seed coordinates."""
+    lower = lower_limits.copy()
+    upper = upper_limits.copy()
+    translation_indices = set(mapping.translation_indices)
+    periodic_indices = set(mapping.periodic_indices)
+    margin = float(2 ** (attempt - 1))
+    for index in movable_indices:
+        if index in translation_indices:
+            lower[index] = seed_positions[index] - margin
+            upper[index] = seed_positions[index] + margin
+        elif index in periodic_indices:
+            lower[index], upper[index] = -np.pi, np.pi
+        if not np.isfinite(lower[index]) or not np.isfinite(upper[index]):
+            raise ValueError(
+                f"Cannot sample retry seed for unbounded joint '{mapping.dimos_joint_names[index]}'"
+            )
+    return lower, upper
 
 
 def _within_limits(

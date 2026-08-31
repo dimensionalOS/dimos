@@ -78,6 +78,10 @@ class WorldSpec(Protocol):
         """Get model joint limits (lower, upper)."""
         ...
 
+    def get_joint_velocity_limits(self) -> NDArray[np.float64]:
+        """Get positive velocity limits in canonical joint order."""
+        ...
+
     # Obstacle Management
     def add_obstacle(self, obstacle: Obstacle) -> str | None:
         """Add an obstacle, returning a non-empty native ID if inserted."""

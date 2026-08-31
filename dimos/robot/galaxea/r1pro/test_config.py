@@ -99,6 +99,8 @@ def test_r1pro_config_exposes_disjoint_mobile_bimanual_groups() -> None:
     ]
     assert len(grouped_joints) == len(set(grouped_joints))
     assert set(grouped_joints) == set(R1PRO_PLANNING_JOINTS)
+    assert config.canonical_velocity_limits()[:3] == list(R1PRO_PLANAR_BASE.velocity_limits)
+    assert config.canonical_acceleration_limits()[:3] == list(R1PRO_PLANAR_BASE.acceleration_limits)
 
 
 def test_r1pro_hardware_model_matches_upper_body_feedback() -> None:
@@ -148,6 +150,7 @@ def test_r1pro_blueprint_wires_viser_planner_to_fake_hardware() -> None:
     )
 
     assert manipulation.visualization.backend == "viser"
+    assert manipulation.trajectory_parametrization.backend == "simple_trapezoid"
     assert coordinator.hardware[0].hardware_type == HardwareType.WHOLE_BODY
     assert coordinator.hardware[0].adapter_type == "mock_whole_body"
     assert coordinator.hardware[0].joints == list(R1PRO_PLANNING_JOINTS)
