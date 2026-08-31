@@ -54,6 +54,7 @@ XARM_ROOM_PROMPTS = [
     # as a ring instead of a roll. Keep a shape-word fallback for that view.
     "green ring",
 ]
+XARM_ROOM_OBJECTS = ["bottle", "can", "cup", "tape", "marker", "box"]
 
 xarm_perception_sim = autoconnect(
     ManipulationModule.blueprint(
@@ -90,7 +91,7 @@ xarm_room_sim = autoconnect(
     ManipulationModule.blueprint(
         model=_xarm7_sim_model,
         planning_timeout=10.0,
-        visualization={"backend": "none"},
+        visualization={"backend": "viser", "ground_truth_overlay": True},
     ),
     ManipulationSkills.blueprint(),
     PickAndPlaceModule.blueprint(planning_frame="world"),
@@ -104,6 +105,7 @@ xarm_room_sim = autoconnect(
             # world->link7 edge and can make an otherwise valid scan unregistrable.
             "base_frame_id": "world",
             "reset_joint_positions": XARM_ROOM_SCAN_JOINTS,
+            "ground_truth_body_names": XARM_ROOM_OBJECTS,
         }
     ),
     ObjectSceneRegistrationModule.blueprint(

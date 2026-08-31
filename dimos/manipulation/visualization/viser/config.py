@@ -35,6 +35,10 @@ class ViserVisualizationConfig(BaseModel):
     panel_enabled: bool = Field(
         default=True, validation_alias=AliasChoices("panel_enabled", "viser_panel_enabled")
     )
+    ground_truth_overlay: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("ground_truth_overlay", "viser_ground_truth_overlay"),
+    )
     poll_hz: float = Field(default=5.0, validation_alias=AliasChoices("poll_hz", "viser_poll_hz"))
     preview_duration: float = Field(
         default=3.0, validation_alias=AliasChoices("preview_duration", "viser_preview_duration")

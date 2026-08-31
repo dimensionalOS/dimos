@@ -1137,6 +1137,14 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         """Embedded Meshcat observes native WorldSpec obstacle mutations."""
         return None
 
+    def set_ground_truth_poses(
+        self,
+        poses: dict[str, PoseStamped],
+        belief: dict[str, PoseStamped],
+    ) -> None:
+        """Ignore sim-only overlays in the legacy Meshcat backend."""
+        return None
+
     def get_visualization_url(self) -> str | None:
         """Get visualization URL if enabled."""
         if self._meshcat is not None:

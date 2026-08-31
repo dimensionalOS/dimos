@@ -75,6 +75,7 @@ class ViserManipulationVisualizer:
         self._operator: object | None = None
         self._current_state: JointState | None = None
         self._model_config: RobotModelConfig | None = None
+        self._last_ground_truth_report: tuple[tuple[str, str | None, float | None], ...] = ()
         self._closed = False
 
     def _ensure_started(self) -> None:
@@ -86,7 +87,11 @@ class ViserManipulationVisualizer:
         try:
             server = runtime.start()
             apply_dimos_theme(server)
-            scene = ViserManipulationScene(server, ViserUrdf)
+            scene = ViserManipulationScene(
+                server,
+                ViserUrdf,
+                ground_truth_overlay=self.config.ground_truth_overlay,
+            )
             gui = (
                 ViserPanelGui(
                     server,
@@ -215,6 +220,36 @@ class ViserManipulationVisualizer:
         self._ensure_started()
         if self._scene is not None:
             self._scene.clear_vis_obstacles()
+
+    def set_ground_truth_poses(
+        self,
+        poses: dict[str, PoseStamped],
+        belief: dict[str, PoseStamped],
+    ) -> None:
+        """Replace the live sim-truth ghosts and compare them with planner belief."""
+        if self._closed or not self.config.ground_truth_overlay:
+            return
+        self._ensure_started()
+        if self._scene is None:
+            return
+        rows = tuple(self._scene.set_ground_truth_poses(poses, belief))
+        rounded = tuple(
+            (truth, matched, None if delta is None else round(delta, 4))
+            for truth, matched, delta in rows
+        )
+        if rounded != self._last_ground_truth_report:
+            self._last_ground_truth_report = rounded
+            logger.info(
+                "Truth-vs-belief deltas",
+                deltas=[
+                    {
+                        "truth": truth,
+                        "belief": matched,
+                        "delta_m": delta,
+                    }
+                    for truth, matched, delta in rounded
+                ],
+            )
 
     def update_state(self, frame: VisualizationStateFrame) -> None:
         """Update current robot render state from a pushed state frame."""

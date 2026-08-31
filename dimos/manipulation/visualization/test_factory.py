@@ -83,6 +83,13 @@ class FakeVisualization:
     def clear_vis_obstacles(self) -> None:
         return None
 
+    def set_ground_truth_poses(
+        self,
+        poses: dict[str, PoseStamped],
+        belief: dict[str, PoseStamped],
+    ) -> None:
+        return None
+
 
 class FakeWorld:
     def load_model(self, config: RobotModelConfig) -> None:
@@ -230,6 +237,13 @@ class FakeMeshcatWorld(FakeWorld):
 
     def clear_vis_obstacles(self) -> None:
         self.visualization_calls.append(("clear_vis_obstacles",))
+
+    def set_ground_truth_poses(
+        self,
+        poses: dict[str, PoseStamped],
+        belief: dict[str, PoseStamped],
+    ) -> None:
+        self.visualization_calls.append(("set_ground_truth_poses", poses, belief))
 
 
 def test_config_defaults_to_no_visualization() -> None:
