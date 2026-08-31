@@ -738,8 +738,7 @@ def run_policy(
             time.sleep(0.1)
         else:
             raise RuntimeError(
-                "live policy observations did not become ready: "
-                f"{policy_status['last_error']}"
+                f"live policy observations did not become ready: {policy_status['last_error']}"
             )
         policy_status = policy.start_rollout(duration)
         if not policy_status["active"]:
