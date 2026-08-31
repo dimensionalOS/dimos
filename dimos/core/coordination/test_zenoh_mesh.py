@@ -54,6 +54,26 @@ def test_mesh_endpoints_feed_zenoh_config_defaults() -> None:
     assert sibling not in config.connect
 
 
+def test_diverged_config_rides_the_mesh_session() -> None:
+    """A config diverging after the mesh session opened must not rebind its port.
+
+    A deploy's host-config sync can shift session settings after the eager
+    mesh session opened (a robot_ip arriving at deploy time shifts the connect
+    endpoints); the pool must hand back the session holding the mesh port
+    instead of failing zenoh.open on a second bind.
+    """
+    pool = zenohservice.ZenohSessionPool()
+    zenohservice.configure_zenoh_mesh(zenohservice.allocate_mesh_endpoint(), ())
+    try:
+        mesh_session = pool.acquire(zenohservice.ZenohConfig())
+        diverged = zenohservice.ZenohConfig(connect=["tcp/10.11.12.13:7447"])
+        assert diverged.session_key != zenohservice.ZenohConfig().session_key
+        assert pool.acquire(diverged) is mesh_session
+    finally:
+        zenohservice.configure_zenoh_mesh(None, ())
+        pool.close_all()
+
+
 class MeshSource(Module):
     mesh_data: Out[Vector3]
 

@@ -300,6 +300,8 @@ def _zenoh_config(config: ZenohConfig) -> zenoh.Config:
 class ZenohSessionPool:
     def __init__(self) -> None:
         self._sessions: dict[str, zenoh.Session] = {}
+        # Key of the session holding this process's mesh listen endpoint.
+        self._mesh_key: str | None = None
         self._lock = threading.Lock()
         self._opened_in_pid: int | None = None
 
@@ -317,9 +319,24 @@ class ZenohSessionPool:
                     "Fork or daemonize before any zenoh use."
                 )
             if key not in self._sessions:
+                if self._mesh_key is not None and _mesh_listen in config.listen_endpoints:
+                    # The mesh listen port binds once per process. When session
+                    # settings shift after the mesh session opened (a deploy's
+                    # host-config sync bringing a runtime robot_ip), the new
+                    # config rides the session already holding the port: a
+                    # second bind can only fail, and the coordinator reaches
+                    # this worker only through that session anyway.
+                    logger.warning(
+                        "Zenoh config diverged after the mesh session opened, reusing it",
+                        held=self._mesh_key,
+                        requested=key,
+                    )
+                    return self._sessions[self._mesh_key]
                 _warn_client_single_link(config)
                 self._sessions[key] = zenoh.open(_zenoh_config(config))
                 self._opened_in_pid = os.getpid()
+                if _mesh_listen is not None and _mesh_listen in config.listen_endpoints:
+                    self._mesh_key = key
                 logger.info(
                     "Zenoh session opened",
                     mode=config.mode,
@@ -346,6 +363,7 @@ class ZenohSessionPool:
                 except zenoh.ZError as e:
                     logger.warning("Zenoh session close failed", session_key=key, error=str(e))
             self._sessions.clear()
+            self._mesh_key = None
 
 
 # Process-default pool used by production code. Constructing it opens no sessions.
