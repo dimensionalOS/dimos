@@ -16,7 +16,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+import contextlib
 import functools
 from pathlib import Path
 from typing import Any
@@ -38,19 +39,17 @@ def handle_fail(fn: Callable[..., None]) -> Callable[..., None]:
     return wrapper
 
 
-def _bar(name: str) -> Callable[[str, int, int], None]:
+@contextlib.contextmanager
+def _bar(name: str) -> Iterator[Callable[[str, int, int], None]]:
     from rich.progress import Progress
 
-    bar = Progress(transient=True)
-    bar.start()
-    task = bar.add_task(name, total=None)
+    with Progress(transient=True) as bar:
+        task = bar.add_task(name, total=None)
 
-    def tick(phase: str, done: int, total: int) -> None:
-        bar.update(task, description=f"{phase} {name}", completed=done, total=total or None)
-        if phase == "upload" and done >= total:
-            bar.stop()
+        def tick(phase: str, done: int, total: int) -> None:
+            bar.update(task, description=f"{phase} {name}", completed=done, total=total or None)
 
-    return tick
+        yield tick
 
 
 @handle_fail
@@ -64,7 +63,8 @@ def upload(
     failed = False
     for t in targets:
         try:
-            r = cloud.upload(t, robot_id=robot, kind=kind, chunk_mb=chunk, progress=_bar(t.name))
+            with _bar(t.name) as tick:
+                r = cloud.upload(t, robot_id=robot, kind=kind, chunk_mb=chunk, progress=tick)
             note = "already uploaded" if r["skipped"] else r["state"]
             typer.echo(f"{t.name}: {note} ({r['upload_id'][:12]})")
             if r["quota"].get("state") not in (None, "ok"):
