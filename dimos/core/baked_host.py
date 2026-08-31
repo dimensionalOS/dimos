@@ -20,11 +20,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 import json
 import sys
-from typing import Any, get_args, get_origin, get_type_hints
+from typing import get_args, get_origin, get_type_hints
 
 from pydantic import Field, create_model
 
-from dimos.core.native_module import NativeModule, NativeModuleConfig, TopicsMap
+from dimos.core.native_module import NativeModule, NativeModuleConfig, TopicsMap, TopicValue
 from dimos.core.stream import IO, In, Out
 
 
@@ -83,9 +83,9 @@ class BakedHost(NativeModule):
     _members: Mapping[str, type[NativeModule]] = {}
     _remaps: Mapping[tuple[str, str], str] = {}
 
-    def _member_topics(self, instance: str, topics: Mapping[str, Any]) -> dict[str, Any]:
+    def _member_topics(self, instance: str, topics: TopicsMap) -> dict[str, TopicValue]:
         member = self._members[instance]
-        resolved = {}
+        resolved: dict[str, TopicValue] = {}
         for port in _member_ports(member):
             name = self._remaps.get((instance, port), port)
             if name in topics:

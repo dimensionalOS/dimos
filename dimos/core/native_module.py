@@ -52,7 +52,7 @@ import subprocess
 import sys
 import threading
 import time
-from typing import IO, Any
+from typing import IO, Any, TypedDict
 
 from pydantic import Field, model_validator
 
@@ -64,9 +64,18 @@ from dimos.core.transport_factory import channel_for, session_config
 from dimos.protocol.service.spec import SessionConfig
 from dimos.utils.logging_config import setup_logger
 
-# Port name -> the wire channel(s) it is launched with. A funnel port carries a
-# list, and an entry with per-topic info is an object rather than a bare string.
-TopicsMap = dict[str, str | list[str | dict[str, Any]]]
+
+class TopicEntry(TypedDict):
+    """A funnel entry carrying that stream's info, mirroring the native `TopicEntry`."""
+
+    topic: str
+    info: dict[str, Any]
+
+
+# The wire channel(s) one port is launched with. A funnel port carries a list,
+# and an entry with per-topic info is an object rather than a bare string.
+TopicValue = str | list[str | TopicEntry]
+TopicsMap = dict[str, TopicValue]
 
 if sys.platform.startswith("linux"):
     import ctypes
@@ -541,7 +550,7 @@ class NativeModule(Module):
             if channel is not None:
                 topics[name] = channel
         for port, funnel in self.config.topic_funnels.items():
-            entries: list[str | dict[str, Any]] = []
+            entries: list[str | TopicEntry] = []
             for name in funnel.names:
                 stream = self._funnel_streams[name]
                 transport = getattr(stream, "_transport", None)
@@ -550,7 +559,7 @@ class NativeModule(Module):
                     # Unwired (standalone use): the channel the default transport lands on.
                     channel = channel_for(name, stream.type)
                 info = funnel.info.get(name)
-                entries.append(channel if info is None else {"topic": channel, "info": info})
+                entries.append(channel if info is None else TopicEntry(topic=channel, info=info))
             topics[port] = entries
         return topics
 
