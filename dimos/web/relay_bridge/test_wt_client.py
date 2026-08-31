@@ -23,17 +23,22 @@ import asyncio
 import pytest
 
 from dimos.web.relay_bridge.protocol import (
-    ChannelSpec,
+    CONTROL_CHANNEL,
+    MAX_CONTROL_PAYLOAD_BYTES,
+    PROTOCOL_VERSION,
     DataFrame,
     Error,
     FrameHeader,
+    Hello,
     Msg,
     ProtocolError,
     RobotInfo,
     RobotManifest,
     Role,
     Subs,
+    decode_datagram,
     encode_data_frame,
+    encode_datagram,
 )
 from dimos.web.relay_bridge.wt_client import RelayClient, RelayRejectedError
 
@@ -48,6 +53,10 @@ class StubSession:
         self.welcomed = asyncio.Event()
         self.relay_error: Error | None = None
         self.sent_msgs: list[Msg] = []
+        self.sent_frames: list[tuple[FrameHeader, bytes]] = []
+        self.resets: list[int] = []
+        # Stream ids reported as still in flight (empty = instant delivery).
+        self.in_flight: set[int] = set()
         self.frames_dropped = 0
         self.control_dropped = 0
         self._next_id = 100
@@ -57,13 +66,16 @@ class StubSession:
         # aioquic session would.
         encode_data_frame(header, payload)
         self._next_id += 1
+        self.sent_frames.append((header, payload))
         return self._next_id
 
     def stream_in_flight(self, stream_id: int) -> bool:
-        return False  # delivered instantly; the pump loops straight back
+        return stream_id in self.in_flight
 
     def reset_if_in_flight(self, stream_id: int) -> bool:
-        return False
+        self.resets.append(stream_id)
+        self.in_flight.discard(stream_id)
+        return True
 
     async def wait_closed(self) -> None:
         await self.closed.wait()
@@ -238,20 +250,126 @@ async def test_control_messages_wakes_on_late_push() -> None:
     assert seen == [Subs(chs=["odom"], n=7)]
 
 
-async def test_hello_oversized_datagram_refused() -> None:
-    # An unsendable datagram wedges aioquic's whole datagram queue, so an
-    # oversized hello must be refused before anything is queued. StubSession
-    # has no send_msg/welcomed: a guard placed after the first send would fail
-    # this test with AttributeError instead.
-    client = _client(StubSession())
-    manifest = RobotManifest(
-        channels=[
-            ChannelSpec(ch=f"channel_{i}", encoding="jpeg.v1", delivery="latest", maxHz=15.0)
-            for i in range(40)
-        ]
+async def test_robot_hello_rides_control_frames_and_retries() -> None:
+    # v5: the robot hello is an @control data frame on a fresh one-shot
+    # stream per attempt, repeated until the welcome datagram lands.
+    session = StubSession()
+    client = _client(session)
+
+    async def welcome_after_two() -> None:
+        while len(session.sent_frames) < 2:
+            await asyncio.sleep(0.005)
+        session.welcomed.set()
+
+    welcomer = asyncio.create_task(welcome_after_two())
+    await asyncio.wait_for(
+        client.hello(robot=RobotInfo(id="r1", name="r1", model="test")), timeout=5.0
     )
-    with pytest.raises(ProtocolError, match="hello datagram"):
+    await welcomer
+    assert len(session.sent_frames) >= 2
+    assert all(header.ch == CONTROL_CHANNEL for header, _ in session.sent_frames)
+    msg = decode_datagram(session.sent_frames[0][1])
+    assert msg == Hello(
+        v=PROTOCOL_VERSION, role="robot", robot=RobotInfo(id="r1", name="r1", model="test")
+    )
+    assert session.sent_msgs == []  # nothing rode datagrams
+
+
+async def test_robot_hello_resend_retires_in_flight_stream() -> None:
+    # A relay that never ACKs: each resend must first reset its still-in-
+    # flight predecessor, and the exit path must retire the final attempt, so
+    # a failed hello leaves no stream outstanding. The timeout message names
+    # the likely cause (protocol-version mismatch).
+    session = StubSession()
+    real_send = session.send_frame
+
+    def send_frame(header: FrameHeader, payload: bytes) -> int:
+        stream_id = real_send(header, payload)
+        session.in_flight.add(stream_id)
+        return stream_id
+
+    session.send_frame = send_frame  # type: ignore[method-assign]
+    client = _client(session)
+    with pytest.raises(TimeoutError, match="protocol-version"):
+        await client.hello(timeout=0.7, robot=RobotInfo(id="r1", name="r1", model="test"))
+    n = len(session.sent_frames)
+    assert n >= 2
+    # Ids are sequential from 101; every stream was retired - predecessors at
+    # resend time, the last one on exit.
+    assert session.resets == list(range(101, 101 + n))
+    assert session.in_flight == set()
+
+
+async def test_robot_hello_oversized_control_payload_refused() -> None:
+    # The relay caps @control payloads at MAX_CONTROL_PAYLOAD_BYTES; the
+    # client must refuse locally, before any frame or datagram is queued.
+    session = StubSession()
+    client = _client(session)
+    manifest = RobotManifest(pad="a" * MAX_CONTROL_PAYLOAD_BYTES)
+    with pytest.raises(ProtocolError, match="trim the manifest"):
         await client.hello(robot=RobotInfo(id="r1", name="r1", model="test"), manifest=manifest)
+    assert session.sent_frames == []
+    assert session.sent_msgs == []
+
+
+async def test_robot_hello_control_payload_boundary_is_exact() -> None:
+    # Exactly MAX_CONTROL_PAYLOAD_BYTES sends; one byte more is refused.
+    robot = RobotInfo(id="r1", name="r1", model="test")
+    base = len(
+        encode_datagram(Hello(v=PROTOCOL_VERSION, role="robot", robot=robot, manifest={"pad": ""}))
+    )
+    pad = MAX_CONTROL_PAYLOAD_BYTES - base
+
+    at_cap = StubSession()
+    with pytest.raises(TimeoutError):
+        await _client(at_cap).hello(timeout=0.05, robot=robot, manifest={"pad": "a" * pad})
+    assert len(at_cap.sent_frames[0][1]) == MAX_CONTROL_PAYLOAD_BYTES
+
+    over_cap = StubSession()
+    with pytest.raises(ProtocolError, match=str(MAX_CONTROL_PAYLOAD_BYTES)):
+        await _client(over_cap).hello(timeout=0.05, robot=robot, manifest={"pad": "a" * (pad + 1)})
+    assert over_cap.sent_frames == []
+
+
+async def test_robot_hello_cancellation_is_prompt_and_retires_stream() -> None:
+    session = StubSession()
+    real_send = session.send_frame
+
+    def send_frame(header: FrameHeader, payload: bytes) -> int:
+        stream_id = real_send(header, payload)
+        session.in_flight.add(stream_id)
+        return stream_id
+
+    session.send_frame = send_frame  # type: ignore[method-assign]
+    client = _client(session)
+    task = asyncio.create_task(client.hello(robot=RobotInfo(id="r1", name="r1", model="test")))
+    await asyncio.sleep(0.05)  # inside the resend loop
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=1.0)
+    assert session.sent_frames  # at least one attempt went out before cancel
+    # Cancellation may not orphan the outstanding hello stream: hello() can
+    # run again on this live client.
+    assert session.in_flight == set()
+
+
+async def test_viewer_hello_rides_datagrams() -> None:
+    session = StubSession()
+    session.welcomed.set()
+    client = RelayClient("https://127.0.0.1:1", "viewer", session, ctx=None)
+    await client.hello()
+    assert session.sent_msgs == [Hello(v=PROTOCOL_VERSION, role="viewer")]
+    assert session.sent_frames == []
+
+
+async def test_viewer_hello_oversized_datagram_refused() -> None:
+    # An unsendable datagram wedges aioquic's whole datagram queue, so an
+    # oversized viewer hello is refused before anything is queued.
+    session = StubSession()
+    client = RelayClient("https://127.0.0.1:1", "viewer", session, ctx=None)
+    with pytest.raises(ProtocolError, match="hello datagram"):
+        await client.hello(manifest={"pad": "a" * 2000})
+    assert session.sent_msgs == []
 
 
 class FakeCtx:

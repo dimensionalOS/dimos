@@ -155,6 +155,7 @@ all_blueprints = {
     "xarm-perception-agent": "dimos.robot.manipulators.xarm.blueprints.agentic:xarm_perception_agent",
     "xarm-perception-sim": "dimos.robot.manipulators.xarm.blueprints.simulation:xarm_perception_sim",
     "xarm-perception-sim-agent": "dimos.robot.manipulators.xarm.blueprints.agentic:xarm_perception_sim_agent",
+    "xarm-room-sim": "dimos.robot.manipulators.xarm.blueprints.simulation:xarm_room_sim",
     "xarm6-worldbelief": "dimos.experimental.world_belief.xarm6_blueprint:xarm6_worldbelief",
     "xarm7-planner-coordinator": "dimos.robot.manipulators.xarm.blueprints.basic:xarm7_planner_coordinator",
     "xarm7-planner-coordinator-agent": "dimos.robot.manipulators.xarm.blueprints.agentic:xarm7_planner_coordinator_agent",

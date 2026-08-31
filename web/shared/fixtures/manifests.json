@@ -416,6 +416,21 @@
       "error": "invalid_channel_id"
     },
     {
+      "name": "reserved_channel_id",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "@control",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ]
+      },
+      "error": "reserved_channel_id"
+    },
+    {
       "name": "duplicate_channel_id",
       "data": {
         "version": 1,
