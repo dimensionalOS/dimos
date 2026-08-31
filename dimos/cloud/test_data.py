@@ -163,7 +163,12 @@ def test_upload_guards(env: tuple[CloudData, FakeTransport, Path], bad: str, why
     if "missing" not in bad:
         p.write_bytes(b"x")  # fresh mtime == still being written
     with pytest.raises((RuntimeError, OSError), match=why):
-        cloud.upload(p)
+        cloud.upload(p, skip_recent=True)
+
+
+def test_explicit_path_uploads_fresh_file(env: tuple[CloudData, FakeTransport, Path]) -> None:
+    cloud, _, db = env
+    assert cloud.upload(db)["state"] == "complete"
 
 
 def test_kind_inferred_from_file(env: tuple[CloudData, FakeTransport, Path]) -> None:

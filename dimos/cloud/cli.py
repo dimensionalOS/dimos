@@ -64,7 +64,14 @@ def upload(
     for t in targets:
         try:
             with _bar(t.name) as tick:
-                r = cloud.upload(t, robot_id=robot, kind=kind, chunk_mb=chunk, progress=tick)
+                r = cloud.upload(
+                    t,
+                    robot_id=robot,
+                    kind=kind,
+                    chunk_mb=chunk,
+                    progress=tick,
+                    skip_recent=path is None,
+                )
             note = "already uploaded" if r["skipped"] else r["state"]
             typer.echo(f"{t.name}: {note} ({r['upload_id'][:12]})")
             if r["quota"].get("state") not in (None, "ok"):

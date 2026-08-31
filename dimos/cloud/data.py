@@ -235,13 +235,14 @@ class CloudData:
         kind: str | None = None,
         chunk_mb: int | None = None,
         progress: Progress | None = None,
+        skip_recent: bool = False,
     ) -> dict[str, Any]:
         path = path.expanduser()
         if not path.is_file():
             raise FileNotFoundError(path)
         if _is_sidecar(path):
             raise RuntimeError(f"{path.name} is a SQLite sidecar, not the data file")
-        if time.time() - path.stat().st_mtime < global_config.dimos_upload_quiet_s:
+        if skip_recent and time.time() - path.stat().st_mtime < global_config.dimos_upload_quiet_s:
             raise RuntimeError("file still being written — skipped")
         chunk_mb = chunk_mb if chunk_mb is not None else global_config.dimos_upload_chunk_mb
         return self.backend.upload(
