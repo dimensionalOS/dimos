@@ -13,5 +13,6 @@
 // limitations under the License.
 
 pub mod live;
+pub mod pcap;
 pub mod pipeline;
 pub mod wire;

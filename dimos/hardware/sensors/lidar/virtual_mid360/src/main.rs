@@ -18,6 +18,7 @@
 // binds lidar_ip and sends UDP, so it works wherever the host_ip/lidar_ip are
 // reachable — IPs aliased on an interface (host ns, incl. macOS lo0) or a netns.
 
+use dimos_livox::pcap::{parse_pcap, PcapPacket};
 use dimos_livox::wire::{
     self, AsyncControlAck, ControlFrame, DetectionAck, InternalInfoAck, KeyValue,
 };
@@ -78,62 +79,6 @@ struct VirtualMid360 {
 /// Synthesize a Livox SDK2 ACK frame for `data` (per-cmd payload).
 fn build_ack(cmd_id: u16, seq: u32, data: &[u8]) -> Vec<u8> {
     wire::build_control(seq, cmd_id, wire::CMD_TYPE_ACK, wire::SENDER_LIDAR, data)
-}
-
-// ---- classic pcap (LE, magic d4c3b2a1) parser -> data-plane UDP packets ----
-struct Pkt {
-    ts: f64,
-    src_port: u16,
-    payload: Vec<u8>,
-}
-
-fn parse_pcap(path: &str) -> std::io::Result<Vec<Pkt>> {
-    let buffer = std::fs::read(path)?;
-    if buffer.len() < 24 || buffer[0..4] != [0xd4, 0xc3, 0xb2, 0xa1] {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("unsupported pcap (need classic little-endian, magic d4c3b2a1) at {path}"),
-        ));
-    }
-    let mut out = Vec::new();
-    let mut offset = 24usize;
-    while offset + 16 <= buffer.len() {
-        let ts_sec = u32::from_le_bytes(buffer[offset..offset + 4].try_into().unwrap());
-        let ts_usec = u32::from_le_bytes(buffer[offset + 4..offset + 8].try_into().unwrap());
-        let captured_len =
-            u32::from_le_bytes(buffer[offset + 8..offset + 12].try_into().unwrap()) as usize;
-        offset += 16;
-        if offset + captured_len > buffer.len() {
-            break;
-        }
-        let frame = &buffer[offset..offset + captured_len];
-        offset += captured_len;
-        // Ethernet(14) -> IPv4 -> UDP
-        if frame.len() < 14 + 20 + 8 || frame[12] != 0x08 || frame[13] != 0x00 {
-            continue;
-        }
-        let ip_header_len = ((frame[14] & 0x0f) as usize) * 4;
-        if frame[14 + 9] != 17 {
-            continue; // not UDP
-        }
-        let udp_offset = 14 + ip_header_len;
-        if frame.len() < udp_offset + 8 {
-            continue;
-        }
-        let src_port = u16::from_be_bytes([frame[udp_offset], frame[udp_offset + 1]]);
-        let udp_len = u16::from_be_bytes([frame[udp_offset + 4], frame[udp_offset + 5]]) as usize;
-        let payload_start = udp_offset + 8;
-        let payload_end = (udp_offset + udp_len).min(frame.len());
-        if payload_end <= payload_start {
-            continue;
-        }
-        out.push(Pkt {
-            ts: ts_sec as f64 + ts_usec as f64 / 1e6,
-            src_port,
-            payload: frame[payload_start..payload_end].to_vec(),
-        });
-    }
-    Ok(out)
 }
 
 /// Verify we're in the lidar netns with lidar_ip bindable; else return a helpful
@@ -347,7 +292,7 @@ fn spawn_stream(
     lidar_ip: Ipv4Addr,
     host_ip: Ipv4Addr,
     mcast_data: Ipv4Addr,
-    packets: Arc<Vec<Pkt>>,
+    packets: Arc<Vec<PcapPacket>>,
     rate: f64,
     delay: f64,
     armed: Arc<AtomicBool>,
