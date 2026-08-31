@@ -97,6 +97,10 @@ OPENARM_LEFT_WRIST_CAMERA_DEVICE = (
 )
 OPENARM_RIGHT_WRIST_CAMERA_DEVICE = ""
 
+# Front D455 on the Alfred rig; pinned so the scene camera never grabs the
+# rig's other RealSense. Override with --real-sense-camera.serial-number.
+OPENARM_SCENE_CAMERA_SERIAL = "260922302422"
+
 OPENARM_COLLECT_IMAGE_WIDTH = 640
 OPENARM_COLLECT_IMAGE_HEIGHT = 480
 OPENARM_COLLECT_IMAGE_FPS = 30
@@ -157,6 +161,7 @@ def _openarm_cameras_if_real() -> tuple[Blueprint, ...]:
         return ()
     return (
         RealSenseCamera.blueprint(
+            serial_number=OPENARM_SCENE_CAMERA_SERIAL,
             width=OPENARM_COLLECT_IMAGE_WIDTH,
             height=OPENARM_COLLECT_IMAGE_HEIGHT,
             fps=OPENARM_COLLECT_IMAGE_FPS,
