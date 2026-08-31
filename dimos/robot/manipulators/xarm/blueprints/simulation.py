@@ -18,10 +18,12 @@ from __future__ import annotations
 
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.manipulation.grasping.grasp_gen_x import GraspGenXModule
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import (
@@ -36,14 +38,21 @@ from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 _xarm7_sim_model = make_xarm7_sim_robot_config()
 _xarm7_sim_hw = make_xarm7_sim_hardware(XARM7_SIM_PATH)
-XARM_ROOM_SCENE_PATH = LfsPath("xarm_grasp_sim/scene.xml")
+XARM_GRASP_SCENE_PATH = LfsPath("xarm_grasp_sim/scene.xml")
 # The stock xArm home points the narrow wrist-camera frustum between the six
 # widely spaced targets. This collision-free top-down pose raises the camera
 # enough to put every mesh in one frame, without changing the configured base
 # pose or introducing coordinate offsets.
-XARM_ROOM_SCAN_JOINTS = [0.0, -0.04609, 0.0, 1.83940, 0.0, 1.87106, 0.0]
-_xarm_room_sim_hw = make_xarm7_sim_hardware(XARM_ROOM_SCENE_PATH, home_joints=XARM_ROOM_SCAN_JOINTS)
-XARM_ROOM_PROMPTS = [
+XARM_GRASP_SCAN_JOINTS = [0.0, -0.04609, 0.0, 1.83940, 0.0, 1.87106, 0.0]
+_xarm_grasp_sim_hw = make_xarm7_sim_hardware(
+    XARM_GRASP_SCENE_PATH, home_joints=XARM_GRASP_SCAN_JOINTS
+)
+# data/xarm_grasp_sim/xarm7.xml bolts link_base to the world origin instead of the
+# 12 cm pedestal data/xarm7 uses, so this scene must not inherit the pedestal offset.
+# With it, the planning model sits 12 cm above the arm MuJoCo simulates and every
+# pose executes 12 cm low -- the exact failure XARM7_SIM_BASE_POSE warns about.
+_xarm_grasp_sim_model = make_xarm7_sim_robot_config(base_pose=PoseStamped(frame_id="world"))
+XARM_GRASP_PROMPTS = [
     "black bottle",
     "gray can",
     "red cup",
@@ -86,24 +95,54 @@ xarm_perception_sim = autoconnect(
     RerunBridgeModule.blueprint(),
 )
 
-xarm_room_sim = autoconnect(
+# Measured off data/xarm_grasp_sim (mj_forward on the driver joint limits), expressed
+# in GraspGenX's convention -- approach along +Z, jaws closing along X -- with the
+# origin on xarm_gripper_base_link, which is the frame GraspGenX predicts into.
+XARM_GRIPPER_SWEEP_VOLUME = {
+    "extents_open": (0.0889, 0.030, 0.0370),
+    "offset_open": (0.0, 0.0, 0.1421),
+    "extents_half_open": (0.0479, 0.030, 0.0370),
+    "offset_half_open": (0.0, 0.0, 0.1530),
+    "fingertip_depth": 0.1606,
+}
+# xarm_gripper_base_link -> link_tcp, the planning tip frame: +0.172 m along the
+# approach axis (xarm_gripper.urdf.xacro joint_tcp) plus the quarter turn that takes
+# GraspGenX's X closing axis onto the xArm gripper's Y.
+XARM_GRASP_FRAME_TO_TCP = (
+    (0.0, 1.0, 0.0, 0.0),
+    (-1.0, 0.0, 0.0, 0.0),
+    (0.0, 0.0, 1.0, 0.172),
+    (0.0, 0.0, 0.0, 1.0),
+)
+
+
+# Everything the room scene needs except the GraspGenSpec provider, which the two
+# blueprints below choose between. Exactly one provider may be composed in: the
+# PickAndPlaceModule resolves its generator by spec, so two would be ambiguous.
+_XARM_GRASP_SIM_MODULES = (
     ManipulationModule.blueprint(
-        model=_xarm7_sim_model,
+        model=_xarm_grasp_sim_model,
         planning_timeout=10.0,
         visualization={"backend": "none"},
     ),
     ManipulationSkills.blueprint(),
-    PickAndPlaceModule.blueprint(planning_frame="world"),
-    HeuristicGraspModule.blueprint(),
+    PickAndPlaceModule.blueprint(
+        planning_frame="world",
+        # These jaws asymptote to 0.995-0.996 and never reach 1.0, so opening a
+        # gripper that is already open moves nothing and has to settle on arrival
+        # alone. The stock 0.005 tolerance sits right on that gap and passes or
+        # fails by luck; 0.01 clears it while still tracking real jaw travel.
+        grasp_verification={"settle_tolerance": 0.01},
+    ),
     MujocoSimModule.blueprint(
         **{
-            **make_xarm7_sim_module_kwargs(XARM_ROOM_SCENE_PATH),
+            **make_xarm7_sim_module_kwargs(XARM_GRASP_SCENE_PATH),
             "headless": True,
             # Publish the simulated camera pose directly in the planning frame.
             # A wrist-relative TF would require a second asynchronously stamped
             # world->link7 edge and can make an otherwise valid scan unregistrable.
             "base_frame_id": "world",
-            "reset_joint_positions": XARM_ROOM_SCAN_JOINTS,
+            "reset_joint_positions": XARM_GRASP_SCAN_JOINTS,
         }
     ),
     ObjectSceneRegistrationModule.blueprint(
@@ -122,9 +161,9 @@ xarm_room_sim = autoconnect(
         min_detections_for_permanent=1,
     ),
     coordinator(
-        hardware=[_xarm_room_sim_hw],
+        hardware=[_xarm_grasp_sim_hw],
         tasks=[
-            trajectory_task(_xarm_room_sim_hw),
+            trajectory_task(_xarm_grasp_sim_hw),
             TaskConfig(
                 name="arm_gripper",
                 type="gripper",
@@ -132,5 +171,16 @@ xarm_room_sim = autoconnect(
                 priority=20,
             ),
         ],
+    ),
+)
+
+
+xarm_grasp_sim = autoconnect(*_XARM_GRASP_SIM_MODULES, HeuristicGraspModule.blueprint())
+
+xarm_grasp_sim_graspgenx = autoconnect(
+    *_XARM_GRASP_SIM_MODULES,
+    GraspGenXModule.blueprint(
+        gripper=XARM_GRIPPER_SWEEP_VOLUME,
+        grasp_frame_to_tcp=XARM_GRASP_FRAME_TO_TCP,
     ),
 )

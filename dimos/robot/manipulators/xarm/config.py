@@ -69,11 +69,13 @@ XARM7_SIM_HOME = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
 XARM7_SIM_BASE_POSE = PoseStamped(frame_id="world", position=Vector3(z=0.12))
 
 
-def make_xarm7_sim_robot_config() -> RobotModelConfig:
+def make_xarm7_sim_robot_config(base_pose: PoseStamped | None = None) -> RobotModelConfig:
+    """Build the sim planning model. Pass ``base_pose`` for a scene that mounts
+    ``link_base`` somewhere other than the pedestal ``data/xarm7`` uses."""
     return make_xarm7_model_config(
         add_gripper=True,
         gripper_hardware_id="arm",
-        base_pose=XARM7_SIM_BASE_POSE,
+        base_pose=XARM7_SIM_BASE_POSE if base_pose is None else base_pose,
         tf_extra_links=["link7"],
         home_joints=XARM7_SIM_HOME,
         pre_grasp_offset=0.05,
