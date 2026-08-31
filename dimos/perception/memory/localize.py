@@ -291,7 +291,7 @@ def localize(
     )
 
     index_count = index.count()
-    settled = _settled(index, 0.5 / rig.embed_hz)
+    settled = _settled(index, policy.settled_window_fraction / rig.embed_hz)
     source = index.filter(lambda obs: obs.id in settled)
     candidate_ids: set[int] = set()
     expanded: set[float] = set()
@@ -304,12 +304,21 @@ def localize(
         sightings = list(
             source.search(query_embedding)
             .order_by("ts")
-            .transform(peaks(key=_similarity, distance=1.0))
+            .transform(
+                peaks(
+                    key=_similarity,
+                    prominence=policy.peak_prominence,
+                    distance=policy.peak_distance_s,
+                    width=policy.peak_width_s,
+                )
+            )
         )
         # A peak is never the window's last sample, and an instance's position
         # follows its latest sighting: the tail's best frame is one too.
         sightings.extend(
-            source.after(sightings[-1].ts if sightings else 0.0).search(query_embedding, k=1)
+            source.after(sightings[-1].ts if sightings else 0.0).search(
+                query_embedding, k=policy.tail_k
+            )
         )
         peak_count = 0
         for peak in sightings:
@@ -324,7 +333,7 @@ def localize(
             expanded.add(peak.ts)
             gathered: Stream[Any, Any] = source.near(
                 peak.pose_stamped, radius=policy.verify_radius_m
-            ).transform(QualityWindow(lambda img: img.sharpness, window=0.5))
+            ).transform(QualityWindow(lambda img: img.sharpness, window=policy.verify_window_s))
             for obs in gathered:
                 candidate_ids.add(obs.id)
         logger.info(f"localize {q!r}: {peak_count} semantic peaks of {index_count} embedded")
@@ -339,15 +348,15 @@ def localize(
 
         mx = anchor_x / anchor_count
         my = anchor_y / anchor_count
-        cell = (round(mx / 2.0), round(my / 2.0))
+        cell = (round(mx / policy.plane_cell_m), round(my / policy.plane_cell_m))
         plane = rig._plane_cache.get(cell)
         if plane is None:
-            stride = max(1, candidate_count // 5)
+            stride = max(1, candidate_count // policy.plane_keyframes)
             keyframes = []
             for i, obs in enumerate(candidates):
                 if i % stride == 0:
                     keyframes.append(obs)
-                    if len(keyframes) == 5:
+                    if len(keyframes) == policy.plane_keyframes:
                         break
             plane = fit_support_plane(rig, keyframes)
             if plane is not None:
