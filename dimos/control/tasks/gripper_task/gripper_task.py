@@ -91,6 +91,7 @@ class GripperControlTask(BaseControlTask):
         self._stamp_pending = False
         self._estopped = False
         self._measured: dict[str, float] = {}
+        self._warned_normalized_clamps: set[str] = set()
 
     def claim(self) -> ResourceClaim:
         """Declare resource requirements."""
@@ -158,13 +159,50 @@ class GripperControlTask(BaseControlTask):
         return self._latch(list(values), t_now)
 
     def set_normalized(self, values: list[float], t_now: float | None = None) -> bool:
-        """Set per-joint targets as 0.0-1.0 of travel; 0.0 closed, 1.0 open."""
-        if not self._validate_values(
-            "set_normalized", values, [(_CLOSED, _OPEN)] * len(self._joint_names)
-        ):
+        """Set bounded per-joint openings; finite inputs saturate to 0.0-1.0."""
+        if len(values) != len(self._joint_names):
+            logger.warning(
+                "Joint command rejected",
+                task=self._name,
+                method="set_normalized",
+                reason="arity",
+                expected=len(self._joint_names),
+                got=len(values),
+            )
             return False
-        native = [lo + (hi - lo) * v for v, (lo, hi) in zip(values, self._limits, strict=True)]
+        if any(not math.isfinite(value) for value in values):
+            logger.warning(
+                "Joint command rejected",
+                task=self._name,
+                method="set_normalized",
+                reason="non-finite",
+                values=values,
+            )
+            return False
+
+        normalized = [min(_OPEN, max(_CLOSED, value)) for value in values]
+        for name, value, bounded in zip(self._joint_names, values, normalized, strict=True):
+            if value != bounded and name not in self._warned_normalized_clamps:
+                logger.warning(
+                    "Normalized gripper command saturated",
+                    task=self._name,
+                    joint_name=name,
+                    value=value,
+                    saturated=bounded,
+                )
+                self._warned_normalized_clamps.add(name)
+        native = [
+            lo + (hi - lo) * value for value, (lo, hi) in zip(normalized, self._limits, strict=True)
+        ]
         return self._latch(native, t_now)
+
+    def cancel(self) -> bool:
+        """Clear the latched target so this task releases its joints."""
+        with self._lock:
+            was_active = self._target is not None
+            self._target = None
+            self._stamp_pending = False
+        return was_active
 
     def get_position(self) -> list[float] | None:
         """Measured positions in native units, from the tick snapshot."""
