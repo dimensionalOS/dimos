@@ -17,37 +17,21 @@ from __future__ import annotations
 from pathlib import Path
 import xml.etree.ElementTree as ElementTree
 
-import numpy as np
-from scipy.spatial.transform import Rotation
-
-from dimos.robot.diy.alfred.blueprints.alfred_mls_nav import D455_MOUNT
+from dimos.robot.diy.alfred.blueprints.vis_nav import DEPTH_FRAME, IR_ENTITY_BY_FRAME
+from dimos.robot.diy.alfred.mount_tf import mount_transforms
 
 URDF = Path(__file__).parent / "alfred.urdf"
 
 
-def joint_origin(name: str) -> tuple[np.ndarray, np.ndarray]:
-    joint = ElementTree.parse(URDF).getroot().find(f"./joint[@name='{name}']")
-    assert joint is not None, f"{name} is missing from alfred.urdf"
-    origin = joint.find("origin")
-    assert origin is not None
-    return (
-        np.array([float(v) for v in origin.attrib["xyz"].split()]),
-        np.array([float(v) for v in origin.attrib["rpy"].split()]),
-    )
-
-
-def test_the_camera_mount_the_blueprint_publishes_matches_the_urdf():
-    """The camera driver publishes base_link->d455_link itself and never reads the urdf,
-    so the two can drift apart silently."""
-    translation, rpy = joint_origin("d455_joint")
-    mount = D455_MOUNT.translation
-    assert np.allclose([mount.x, mount.y, mount.z], translation, atol=1e-4)
-
-    urdf_rotation = Rotation.from_euler("xyz", rpy)
-    blueprint_rotation = Rotation.from_quat(
-        [D455_MOUNT.rotation.x, D455_MOUNT.rotation.y, D455_MOUNT.rotation.z, D455_MOUNT.rotation.w]
-    )
-    assert (urdf_rotation.inv() * blueprint_rotation).magnitude() < 1e-3
+def test_every_camera_frame_dim_slam_wants_is_rooted_at_base_link():
+    """cuVSLAM places no camera at all until every configured frame resolves against
+    base_link, so one missing mount edge drops every image instead of degrading."""
+    parents = {t.child_frame_id: t.frame_id for t in mount_transforms()}
+    for frame in [*IR_ENTITY_BY_FRAME, DEPTH_FRAME]:
+        # The driver publishes the imager leaves off its own link; the mount tree owes
+        # that link a path to base_link.
+        link = frame.split("_")[0] + "_link"
+        assert parents.get(link) == "base_link", f"{frame} has no path to base_link"
 
 
 def test_every_urdf_link_has_exactly_one_parent():

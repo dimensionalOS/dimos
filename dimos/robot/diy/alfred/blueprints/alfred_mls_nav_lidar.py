@@ -35,6 +35,7 @@ from dimos.robot.diy.alfred.blueprints.alfred_mls_nav import (
 from dimos.robot.diy.alfred.blueprints.vis_nav import D455_IMU, vis_nav
 from dimos.robot.diy.alfred.config import MID360_IP
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
+from dimos.robot.diy.alfred.mount_tf import AlfredMountTf
 
 MID360_FRAME = "mid360_link"
 MID360_IMU_FRAME = "mid360_imu_link"
@@ -67,6 +68,7 @@ alfred_mls_nav_lidar = (
             frame_id=MID360_FRAME,
             imu_frame_id=MID360_IMU_FRAME,
         ),
+        AlfredMountTf.blueprint(),
         AlfredHighLevel.blueprint(),
         vis_nav(
             imus=[D455_IMU, MID360_IMU],
@@ -76,5 +78,5 @@ alfred_mls_nav_lidar = (
     )
     .remappings([*D455_REMAPPINGS, (AlfredHighLevel, "wheel_odometry", "source_odometry")])
     .transports(jpeg_color())
-    .global_config(n_workers=11, robot_model="alfred")
+    .global_config(n_workers=12, robot_model="alfred")
 )

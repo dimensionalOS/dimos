@@ -31,6 +31,7 @@ from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.diy.alfred.blueprints.alfred_mls_nav import D455_SERIAL
 from dimos.robot.diy.alfred.config import MID360_IP
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
+from dimos.robot.diy.alfred.mount_tf import AlfredMountTf
 
 # librealsense leaks usbfs fds (~8/s) in this worker; keep socket-accepting modules
 # out of its fd table so EMFILE cannot take down the teleop controls.
@@ -53,6 +54,7 @@ alfred_keyboard_teleop = (
             ]
         ),
         MovementManager.blueprint(),
+        AlfredMountTf.blueprint(),
         AlfredHighLevel.blueprint(),
     )
     .transports(
@@ -62,5 +64,5 @@ alfred_keyboard_teleop = (
             ("color_image", Image): JpegLcmTransport("/color_image", Image),
         }
     )
-    .global_config(n_workers=6, robot_model="alfred")
+    .global_config(n_workers=7, robot_model="alfred")
 )

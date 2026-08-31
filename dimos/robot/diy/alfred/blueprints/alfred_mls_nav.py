@@ -25,12 +25,10 @@ from dimos.core.coordination.blueprints import TransportSpec, autoconnect
 from dimos.core.stream import Transport
 from dimos.core.transport import JpegLcmTransport
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.diy.alfred.blueprints.vis_nav import vis_nav
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
+from dimos.robot.diy.alfred.mount_tf import AlfredMountTf
 
 # librealsense leaks usbfs fds (~8/s) in this worker; keep socket-accepting modules
 # out of its fd table so EMFILE cannot take down rerun/keyboard controls.
@@ -38,15 +36,6 @@ RealSenseCamera.dedicated_worker = True
 
 D455_SERIAL = "260922302422"
 """The mast D455. The rear D435i stays plugged in, so the device is pinned by serial."""
-
-D455_MOUNT = Transform(
-    translation=Vector3(0.2146, -0.0008, 1.5435),
-    rotation=Quaternion(0.0009818, 0.0723326, -0.0053295, 0.9973658),
-)
-"""base_link -> d455_link. The urdf is what the running system reads; this copy exists so
-test_alfred can catch the two drifting apart. Mirrors the d455_joint origin. Solved from
-drive_2026-08-18_23-05-04 by registering D455 depth against the point-lio lidar map.
-Only z is tightly resolved; x and y are bounded to about +/-3 cm."""
 
 D455_REMAPPINGS = [
     (RealSenseCamera, "infrared_left", "image"),
@@ -80,10 +69,11 @@ def d455_stereo() -> Any:
 alfred_mls_nav = (
     autoconnect(
         d455_stereo(),
+        AlfredMountTf.blueprint(),
         AlfredHighLevel.blueprint(),
         vis_nav(),
     )
     .remappings([*D455_REMAPPINGS, (AlfredHighLevel, "wheel_odometry", "source_odometry")])
     .transports(jpeg_color())
-    .global_config(n_workers=10, robot_model="alfred")
+    .global_config(n_workers=11, robot_model="alfred")
 )

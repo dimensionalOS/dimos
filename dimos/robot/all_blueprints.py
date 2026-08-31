@@ -167,6 +167,7 @@ all_blueprints = {
 
 all_modules = {
     "alfred-high-level": "dimos.robot.diy.alfred.effector_high_level.AlfredHighLevel",
+    "alfred-mount-tf": "dimos.robot.diy.alfred.mount_tf.AlfredMountTf",
     "arm-command-module": "dimos.teleop.hosted.arm_command.ArmCommandModule",
     "arm-pose-coordinator": "dimos.robot.manipulators.common.coordinators.ArmPoseCoordinator",
     "arm-pose-twist-coordinator": "dimos.robot.manipulators.common.coordinators.ArmPoseTwistCoordinator",
