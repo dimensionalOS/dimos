@@ -17,8 +17,6 @@
 
 from __future__ import annotations
 
-import math
-
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
@@ -40,8 +38,6 @@ R1PRO_PACKAGE_ROOT = R1PRO_DESCRIPTION_SOURCE / "R1Pro" / "urdf_r1pro_g1z_2026"
 R1PRO_MODEL_PATH = R1PRO_PACKAGE_ROOT / "urdf" / "r1pro_2026.urdf"
 
 R1PRO_PLANAR_BASE = PlanarBaseDefinition(
-    workspace_lower=(-5.0, -5.0, -math.pi),
-    workspace_upper=(5.0, 5.0, math.pi),
     velocity_limits=(1.0, 1.0, 2.0),
     acceleration_limits=(2.0, 2.0, 4.0),
     root_link="r1pro_planar_base_root",

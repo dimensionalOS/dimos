@@ -27,6 +27,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from threading import RLock
 from typing import TYPE_CHECKING, Any
+import xml.etree.ElementTree as ET
 
 import numpy as np
 
@@ -129,6 +130,10 @@ class RoboPlanWorld:
         if model_data.lower_limits is None or model_data.upper_limits is None:
             raise RuntimeError("Joint limits are available after RoboPlan finalization")
         return model_data.lower_limits.copy(), model_data.upper_limits.copy()
+
+    def get_joint_velocity_limits(self) -> NDArray[np.float64]:
+        """Get positive velocity limits in canonical joint order."""
+        return np.asarray(self.get_model_config().canonical_velocity_limits())
 
     def ordered_joint_positions(self, joint_state: JointState) -> NDArray[np.float64]:
         """Return a canonical joint state in configured model order."""
@@ -429,6 +434,24 @@ class RoboPlanWorld:
         if config.joint_limits_lower is not None and config.joint_limits_upper is not None:
             lower = np.asarray(config.joint_limits_lower, dtype=np.float64)
             upper = np.asarray(config.joint_limits_upper, dtype=np.float64)
+        elif config.model.planar_base is not None:
+            root = ET.fromstring(config.model.load().xml)
+            joints = {joint.get("name"): joint for joint in root.findall("joint")}
+            planar_names = set(config.model.planar_base.joint_names)
+            lower_values: list[float] = []
+            upper_values: list[float] = []
+            for name in config.joint_names:
+                if name in planar_names:
+                    lower_values.append(-np.inf)
+                    upper_values.append(np.inf)
+                    continue
+                limit = joints[name].find("limit")
+                lower_attr = limit.get("lower") if limit is not None else None
+                upper_attr = limit.get("upper") if limit is not None else None
+                lower_values.append(float(lower_attr) if lower_attr is not None else -np.pi)
+                upper_values.append(float(upper_attr) if upper_attr is not None else np.pi)
+            lower = np.asarray(lower_values)
+            upper = np.asarray(upper_values)
         else:
             scene = self._require_scene()
             lower, upper = scene.getPositionLimitVectors(group.name, False)
@@ -445,8 +468,17 @@ class RoboPlanWorld:
             upper = np.asarray([by_name[name][1] for name in config.joint_names])
         if len(lower) != len(config.joint_names) or len(upper) != len(config.joint_names):
             raise ValueError("Joint limit length must match joint_names length")
-        if np.any(~np.isfinite(lower)) or np.any(~np.isfinite(upper)):
-            raise ValueError("RoboPlanWorld requires finite joint limits")
+        planar_names = (
+            set(config.model.planar_base.joint_names)
+            if config.model.planar_base is not None
+            else set()
+        )
+        for index, name in enumerate(config.joint_names):
+            if name in planar_names:
+                lower[index], upper[index] = -np.inf, np.inf
+        finite_mask = np.asarray([name not in planar_names for name in config.joint_names])
+        if np.any(~np.isfinite(lower[finite_mask])) or np.any(~np.isfinite(upper[finite_mask])):
+            raise ValueError("RoboPlanWorld requires finite non-planar joint limits")
         return lower, upper
 
     def _validate_planning_group_config(self, config: RobotModelConfig) -> None:
@@ -506,7 +538,16 @@ class RoboPlanWorld:
         scene = self._require_scene()
         group = self._require_model().all_group
         positions = self._current_positions(ctx, overlay)
-        q = np.asarray([positions[name] for name in group.public_names], dtype=np.float64)
+        planar = self.get_model_config().model.planar_base
+        yaw_name = planar.joint_names[2] if planar is not None else None
+        group_positions: list[float] = []
+        for name in group.public_names:
+            value = positions[name]
+            if name == yaw_name:
+                group_positions.extend((float(np.cos(value)), float(np.sin(value))))
+            else:
+                group_positions.append(value)
+        q = np.asarray(group_positions, dtype=np.float64)
         return np.asarray(scene.toFullJointPositions(group.name, q), dtype=np.float64)
 
     def _current_positions(

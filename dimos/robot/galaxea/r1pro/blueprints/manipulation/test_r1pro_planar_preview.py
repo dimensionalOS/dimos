@@ -46,6 +46,13 @@ def test_planar_preview_uses_fake_hardware_for_all_planning_joints() -> None:
     )
 
     assert manipulation.visualization.backend == "viser"
+    assert manipulation.trajectory_parametrization.backend == "simple_trapezoid"
+    assert manipulation.model.canonical_velocity_limits()[:3] == list(
+        R1PRO_PLANAR_BASE.velocity_limits
+    )
+    assert manipulation.model.canonical_acceleration_limits()[:3] == list(
+        R1PRO_PLANAR_BASE.acceleration_limits
+    )
     assert coordinator.hardware[0].hardware_type == HardwareType.WHOLE_BODY
     assert coordinator.hardware[0].adapter_type == "mock_whole_body"
     assert coordinator.hardware[0].joints == list(R1PRO_PLANNING_JOINTS)

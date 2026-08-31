@@ -42,6 +42,7 @@ import dimos.manipulation.planning.kinematics.pink_ik as pink_planning
 from dimos.manipulation.planning.kinematics.pink_ik import (
     PinkIK,
     PinkIKConfig,
+    _finite_retry_limits,
 )
 import dimos.manipulation.planning.kinematics.pink_solver as pink_ik
 from dimos.manipulation.planning.kinematics.pink_solver import (
@@ -50,7 +51,9 @@ from dimos.manipulation.planning.kinematics.pink_solver import (
     _frame_task_key,
     _PinkRobotContext,
     _PinkSolverCore,
+    _read_dimos_position,
     _seed_positions_for_mapping,
+    _write_dimos_position,
 )
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus
@@ -59,7 +62,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
 from dimos.utils.transform_utils import matrix_to_pose
 
 _TRACKING_ERROR_RAD = np.deg2rad(10.0)
@@ -200,6 +203,27 @@ class _FakeModel:
 
     def getFrameId(self, name: str) -> int:
         return self._frame_ids.get(name, len(self.frames))
+
+
+class _FakePlanarModel:
+    nq = 4
+    nv = 3
+
+    def __init__(self) -> None:
+        self.names = ["universe", "base/x", "base/y", "base/yaw"]
+        self.joints = [
+            SimpleNamespace(idx_q=-1, idx_v=-1, nq=0, nv=0),
+            SimpleNamespace(idx_q=0, idx_v=0, nq=1, nv=1),
+            SimpleNamespace(idx_q=1, idx_v=1, nq=1, nv=1),
+            SimpleNamespace(idx_q=2, idx_v=2, nq=2, nv=1),
+        ]
+        self._joint_ids = {"base/x": 1, "base/y": 2, "base/yaw": 3}
+
+    def existJointName(self, name: str) -> bool:
+        return name in self._joint_ids
+
+    def getJointId(self, name: str) -> int:
+        return self._joint_ids.get(name, len(self.joints))
 
 
 class _FakeSE3:
@@ -357,7 +381,6 @@ def _install_fake_modules(mocker: MockerFixture, converge: bool = True) -> _Fake
     modules = _fake_modules(converge=converge)
     mocker.patch.object(pose_target_ik, "pink", modules.pink)
     mocker.patch.object(pink_planning, "pink", modules.pink)
-    mocker.patch.object(pink_planning, "pinocchio", modules.pinocchio)
     mocker.patch.object(pink_ik, "pink", modules.pink)
     mocker.patch.object(pink_ik, "pinocchio", modules.pinocchio)
     mocker.patch.object(pink_ik.qpsolvers, "available_solvers", ["proxqp"])
@@ -559,6 +582,55 @@ def test_joint_order_mapping_uses_names_not_positions() -> None:
     assert mapping.idx_q == [1, 0, 2]
     assert mapping.idx_v == [1, 0, 2]
     assert _seed_positions_for_mapping(seed, mapping).tolist() == [10.0, 20.0, 30.0]
+
+
+def test_planar_mapping_converts_continuous_yaw_to_public_scalar() -> None:
+    planar = PlanarBaseDefinition(
+        velocity_limits=(1.0, 1.0, 2.0),
+        acceleration_limits=(2.0, 2.0, 4.0),
+    )
+    config = RobotModelConfig(
+        model=RobotModel.from_file(Path("/tmp/planar.urdf")).with_planar_base(planar),
+        joint_names=list(planar.joint_names),
+        base_link=planar.root_link,
+    )
+    mapping = _build_joint_mapping(cast("Any", _FakePlanarModel()), config)
+    q = np.zeros(4)
+
+    for index, value in enumerate((10.0, -4.0, np.pi + 0.2)):
+        _write_dimos_position(q, mapping, index, value)
+
+    assert mapping.periodic_indices == (2,)
+    assert mapping.translation_indices == (0, 1)
+    assert q == pytest.approx([10.0, -4.0, -np.cos(0.2), -np.sin(0.2)])
+    assert [_read_dimos_position(q, mapping, index) for index in range(3)] == pytest.approx(
+        [10.0, -4.0, -np.pi + 0.2]
+    )
+
+
+def test_planar_retry_sampling_uses_finite_expanding_translation_window() -> None:
+    planar = PlanarBaseDefinition(
+        velocity_limits=(1.0, 1.0, 2.0),
+        acceleration_limits=(2.0, 2.0, 4.0),
+    )
+    config = RobotModelConfig(
+        model=RobotModel.from_file(Path("/tmp/planar.urdf")).with_planar_base(planar),
+        joint_names=list(planar.joint_names),
+        base_link=planar.root_link,
+    )
+    mapping = _build_joint_mapping(cast("Any", _FakePlanarModel()), config)
+
+    lower, upper = _finite_retry_limits(
+        mapping,
+        np.array([100.0, -50.0, 0.0]),
+        np.full(3, -np.inf),
+        np.full(3, np.inf),
+        range(3),
+        attempt=3,
+    )
+
+    assert lower == pytest.approx([96.0, -54.0, -np.pi])
+    assert upper == pytest.approx([104.0, -46.0, np.pi])
 
 
 def test_streaming_envelope_intersects_configured_and_urdf_velocity(
