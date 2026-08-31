@@ -42,7 +42,9 @@ def reasoning_text(content: Any) -> str:
         elif block.get("type") == "reasoning":
             summary = block.get("summary")
             if isinstance(summary, list):
-                parts.append("".join(str(s.get("text", "")) for s in summary if isinstance(s, dict)))
+                parts.append(
+                    "".join(str(s.get("text", "")) for s in summary if isinstance(s, dict))
+                )
     return "\n\n".join(p for p in parts if p)
 
 
