@@ -29,14 +29,17 @@ from dimos.robot.manipulators.openyam.blueprints.teleop import (
     _openyam_quest_pink,
     openyam_quest_tasks,
 )
-from dimos.robot.manipulators.openyam.config import OPENYAM_JOINTS
+from dimos.robot.manipulators.openyam.config import OPENYAM_GRIPPER_JOINT, OPENYAM_JOINTS
 from dimos.teleop.quest.quest_extensions import ArmTeleopModule
+
+OPENYAM_POLICY_FPS = 30.0
 
 learning_rollout_quest_openyam = (
     autoconnect(
         LeRobotPolicyModule.blueprint(
             joint_names=OPENYAM_JOINTS,
-            fps=30.0,
+            gripper_joint_name=OPENYAM_GRIPPER_JOINT,
+            fps=OPENYAM_POLICY_FPS,
             robot_type="openyam",
         ),
         QuestRolloutControllerModule.blueprint(),
@@ -51,7 +54,7 @@ learning_rollout_quest_openyam = (
                 camera_index=0,
                 width=640,
                 height=480,
-                fps=30.0,
+                fps=OPENYAM_POLICY_FPS,
                 frame_id_prefix="wrist",
             ),
             frame_id="wrist_camera_link",
@@ -66,6 +69,7 @@ learning_rollout_quest_openyam = (
         [
             (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
             (LeRobotPolicyModule, "joint_command", "policy_joint_command"),
+            (LeRobotPolicyModule, "gripper_command", "policy_gripper_command"),
         ]
     )
     .transports(
