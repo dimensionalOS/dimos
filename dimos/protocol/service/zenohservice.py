@@ -91,17 +91,30 @@ def configure_zenoh_mesh(listen: str | None, connect: Sequence[str]) -> None:
     complete because every session dials whatever existed when it opened and
     is dialled by everything newer.
 
-    An emptied roster (every worker shut down) also closes the pooled sessions
-    that dialed the departed endpoints. Zenoh retries refused dials forever,
-    so without this every coordinator lifecycle in a long-lived process (a
-    pytest worker, a daemon restarting blueprints) leaks a session whose
-    runtime threads and sockets keep hammering dead ports.
+    An empty roster here is a plain update: it can be transient (the last
+    worker being replaced during a restart), and live RPC clients keep using
+    the sessions they already hold. Full teardown goes through
+    release_zenoh_mesh() instead.
+    """
+    global _mesh_listen, _mesh_connect
+    _mesh_listen = listen
+    _mesh_connect = tuple(connect)
+
+
+def release_zenoh_mesh() -> None:
+    """Tear the mesh down and close the pooled sessions that dialed it.
+
+    Only for full worker-pool shutdown, never for a transient roster change.
+    Zenoh retries refused dials forever, so without this every coordinator
+    lifecycle in a long-lived process (a pytest worker, a daemon restarting
+    blueprints) leaks a session whose runtime threads and sockets keep
+    hammering dead ports.
     """
     global _mesh_listen, _mesh_connect
     previous = _mesh_connect
-    _mesh_listen = listen
-    _mesh_connect = tuple(connect)
-    if previous and not _mesh_connect:
+    _mesh_listen = None
+    _mesh_connect = ()
+    if previous:
         default_session_pool.close_dialing(previous)
 
 

@@ -21,7 +21,11 @@ from dimos.core.coordination.python_worker import PythonWorker
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleBase, ModuleSpec
 from dimos.core.rpc_client import ModuleProxyProtocol, RPCClient
-from dimos.protocol.service.zenohservice import allocate_mesh_endpoint, configure_zenoh_mesh
+from dimos.protocol.service.zenohservice import (
+    allocate_mesh_endpoint,
+    configure_zenoh_mesh,
+    release_zenoh_mesh,
+)
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.safe_thread_map import safe_thread_map
 
@@ -235,7 +239,7 @@ class WorkerManagerPython:
                 logger.error(f"Error shutting down worker: {e}", exc_info=True)
 
         self._workers.clear()
-        configure_zenoh_mesh(None, ())
+        release_zenoh_mesh()
 
         logger.info("All workers shut down")
 

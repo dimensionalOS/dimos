@@ -74,13 +74,15 @@ def test_diverged_config_rides_the_mesh_session() -> None:
         pool.close_all()
 
 
-def test_emptied_mesh_roster_closes_the_dialing_sessions() -> None:
-    """Coordinator teardown must reclaim the sessions dialing its workers.
+def test_released_mesh_closes_the_dialing_sessions() -> None:
+    """Full worker-pool teardown must reclaim the sessions dialing its workers.
 
     Zenoh retries refused dials forever, so a long-lived process (a pytest
     worker, a daemon restarting blueprints) would otherwise accumulate one
     session per coordinator lifecycle, each burning threads and sockets on
-    dead ports.
+    dead ports. A transiently emptied roster (the last worker being replaced
+    during a restart) must NOT close anything: live RPC clients keep using
+    the sessions they already hold.
     """
     worker = zenohservice.allocate_mesh_endpoint()
     zenohservice.configure_zenoh_mesh(None, (worker,))
@@ -88,8 +90,12 @@ def test_emptied_mesh_roster_closes_the_dialing_sessions() -> None:
         config = zenohservice.ZenohConfig()
         assert worker in config.connect
         session = zenohservice.default_session_pool.acquire(config)
-    finally:
+
         zenohservice.configure_zenoh_mesh(None, ())
+        assert not session.is_closed()
+    finally:
+        zenohservice.configure_zenoh_mesh(None, (worker,))
+        zenohservice.release_zenoh_mesh()
 
     assert session.is_closed()
     assert config.session_key not in zenohservice.default_session_pool._sessions
