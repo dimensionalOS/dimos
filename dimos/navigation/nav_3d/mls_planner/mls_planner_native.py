@@ -31,12 +31,11 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     cwd: str | None = "rust"
     # The crate is a workspace member, so cargo builds into the repo-root target dir.
     executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "mls_planner")
-    # The repo flake supplies cargo: rustup's PATH entry is absent in
-    # non-interactive shells (ssh commands, systemd units). resolve() because nix's
-    # path fetcher refuses symlinked components (macOS /tmp).
-    build_command: str | None = (
-        f"nix develop path:{DIMOS_PROJECT_ROOT.resolve()} -c cargo build --release"
-    )
+    # The repo flake supplies cargo: rustup's PATH entry is absent in non-interactive
+    # shells (ssh commands, systemd units). Relative to cwd rather than
+    # DIMOS_PROJECT_ROOT so it stays a literal the CI inputs hash can read, and because
+    # nix resolves it against the real cwd, sidestepping symlinked components (macOS /tmp).
+    build_command: str | None = "nix develop path:../../../../.. -c cargo build --release"
     stdin_config: bool = True
 
     world_frame: str = "odom"
