@@ -45,10 +45,10 @@ jobs:
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
   cachix-build-check:
-    # Mirror check in cachix-build to skip forks.
-    if: |
-      !cancelled() &&
-      (github.event_name == 'push' || github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository)
+    # Holds no secrets, so it runs on fork PRs too: forks need its inputs-hash
+    # output to restore the base branch's publish marker and download the
+    # prebuilt binaries. Only cachix-build itself is fork-guarded.
+    if: ${{ !cancelled() }}
     timeout-minutes: 10
     runs-on: ubuntu-latest
     permissions:
@@ -149,14 +149,16 @@ jobs:
           CACHIX_CACHE_NAME: dimensionalos
         run: python3 bin/build-native-modules --verify-published
       - name: Record the published inputs manifest
-        # Forensics for the marker saved below: the manifest names every tree
-        # hash behind the inputs-hash this publish ran for.
+        # The manifest is forensics for the marker saved below; links.txt maps
+        # each result symlink to its store path so consumers can materialise
+        # the binaries with --link-results instead of re-running nix.
         env:
           CACHIX_CACHE_NAME: dimensionalos
         run: |
           mkdir -p .cachix-marker
           python3 bin/build-native-modules --inputs-hash \
             > .cachix-marker/inputs-hash.txt 2> .cachix-marker/manifest.txt
+          python3 bin/build-native-modules --record-links > .cachix-marker/links.txt
       - name: Save publish marker
         uses: actions/cache/save@v6
         with:
@@ -548,6 +550,28 @@ jobs:
       - name: Set PYTHON_GIL=0 for free-threading builds
         if: ${{ endsWith(matrix.pyver, 't') }}
         run: echo "PYTHON_GIL=0" >> $GITHUB_ENV
+      # The published store paths are x86_64-linux, so the arm leg (and any
+      # future macOS leg) skips provisioning; binary-needing tests skip there.
+      # On a marker miss (fork PR, eviction) the binaries are simply absent —
+      # hosted runners never fall back to building the heavy C++ closures.
+      - name: Install Nix (with Cachix substituter)
+        if: runner.os == 'Linux' && runner.arch == 'X64'
+        env:
+          INPUT_EXTRA_NIX_CONFIG: |
+            extra-substituters = https://dimensionalos.cachix.org
+            extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
+          INPUT_SET_AS_TRUSTED_USER: "true"
+        run: bash docker/ros/install-nix.sh
+      - name: Restore publish marker
+        if: runner.os == 'Linux' && runner.arch == 'X64'
+        id: native-marker
+        uses: actions/cache/restore@v6
+        with:
+          path: .cachix-marker
+          key: cachix-published-${{ runner.os }}-${{ runner.arch }}-${{ needs.cachix-build-check.outputs.inputs-hash }}
+      - name: Provision native modules from Cachix
+        if: steps.native-marker.outputs.cache-hit == 'true'
+        run: python3 bin/build-native-modules --link-results .cachix-marker/links.txt
       - name: Install dependencies
         run: uv sync --group tests --frozen
       - name: Run tests
@@ -625,6 +649,11 @@ jobs:
               options: --memory=6g --memory-swap=6g
               volumes:
                 - /var/cache/dimos-root-cache:/root/.cache
+                # Persistent Nix store — without it every run reinstalls nix
+                # and re-downloads the modules' full runtime closure (~600 MB)
+                # through the runner's uplink. GC'd at the end of the job; the
+                # provision step roots the live closure so GC keeps it.
+                - /var/cache/dimos-nix:/nix
             markers: "self_hosted or skipif_no_ros"
             experimental: false
           # macOS runner disabled for now — we don't want Mac tests.
@@ -725,9 +754,35 @@ jobs:
           max-jobs = 0
           EOF
           echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
-      - name: Fetch native modules from Cachix
+      - name: Restore publish marker
         if: contains(matrix.markers, 'skipif_no_ros')
-        run: python3 bin/build-native-modules
+        id: native-marker
+        uses: actions/cache/restore@v6
+        with:
+          path: .cachix-marker
+          key: cachix-published-${{ runner.os }}-${{ runner.arch }}-${{ needs.cachix-build-check.outputs.inputs-hash }}
+      - name: Provision native modules from Cachix
+        if: contains(matrix.markers, 'skipif_no_ros')
+        # The marker records every result -> store path mapping, so the warm
+        # path is symlink recreation against the runner's persistent /nix plus
+        # substitution of anything missing by exact path — no nix evaluation.
+        # A missed marker (evicted) falls back to the full nix build.
+        run: |
+          if [ "${{ steps.native-marker.outputs.cache-hit }}" = "true" ]; then
+            python3 bin/build-native-modules --link-results .cachix-marker/links.txt
+          else
+            python3 bin/build-native-modules
+          fi
+          # Root the out paths (and thereby their closures) so the end-of-job
+          # GC keeps them warm: the workspace result links die in the next
+          # run's `git clean`, so they cannot serve as roots themselves.
+          # Replacing the directory unroots superseded paths for GC to reap.
+          sudo mkdir -p /nix/var/nix/gcroots/dimos-native
+          sudo find /nix/var/nix/gcroots/dimos-native -maxdepth 1 -type l -delete
+          python3 bin/build-native-modules --record-links | cut -d' ' -f2 | sort -u |
+            while read -r p; do
+              sudo ln -sfn "$p" "/nix/var/nix/gcroots/dimos-native/$(basename "$p")"
+            done
       - name: Run tests
         run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not mujoco'
       - name: Re-run the failing tests with maximum verbosity
@@ -788,6 +843,13 @@ jobs:
           size_mb=$(du -sm "$UV_CACHE_DIR" | cut -f1)
           echo "uv cache size: ${size_mb} MB"
           if [ "$size_mb" -gt 25600 ]; then uv cache prune --ci; fi
+      - name: GC the persistent Nix store
+        # /nix persists on the runner (container volume above), so superseded
+        # module closures accumulate as inputs change. Unrooted paths go; the
+        # provision step's gcroots keep the live closure across runs. Not
+        # always(): a cancelled run can leave nix processes holding locks.
+        if: ${{ !cancelled() && matrix.os == 'Linux' }}
+        run: nix-collect-garbage --delete-older-than 3d
 
   self-hosted-large-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
