@@ -17,14 +17,15 @@ from queue import Queue
 import pytest
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.core.module import Metadata, Module, TopicFunnel
-from dimos.core.stream import Out
+from dimos.core.module import Metadata, Module
+from dimos.core.stream import In, Out
 from dimos.core.transport_factory import make_transport
 
 
 class FanInModule(Module):
     """One handler for two same-typed streams; echoes which one it came from."""
 
+    sensors: In[int]
     tagged: Out[int]
     named: Out[str]
     scaled: Out[float]
@@ -37,8 +38,8 @@ class FanInModule(Module):
 
 @pytest.fixture
 def start_fan_in_module(each_transport):
-    blueprint = FanInModule.blueprint(
-        topic_funnels={"sensors": TopicFunnel(names={"s0": {"scale": 0.5}, "s1": {}})}
+    blueprint = FanInModule.blueprint().remappings(
+        [(FanInModule, "sensors", {"s0": {"scale": 0.5}, "s1": {}})]
     )
     coordinator = ModuleCoordinator.build(blueprint)
     yield
@@ -83,9 +84,9 @@ def test_topic_funnel_tags_each_message_with_its_stream(start_fan_in_module, gro
 
 @pytest.fixture
 def start_remapped_fan_in_module(each_transport):
-    blueprint = FanInModule.blueprint(
-        topic_funnels={"sensors": TopicFunnel(names=["s0", "s1"])}
-    ).remappings([(FanInModule, "s0", "alt0")])
+    blueprint = FanInModule.blueprint().remappings(
+        [(FanInModule, "sensors", ["s0", "s1"]), (FanInModule, "s0", "alt0")]
+    )
     coordinator = ModuleCoordinator.build(blueprint)
     yield
     coordinator.stop()
@@ -111,27 +112,44 @@ def test_topic_funnel_entries_follow_remappings(start_remapped_fan_in_module, ea
 
 
 def test_namespace_prefixes_topic_funnel_entries():
-    blueprint = FanInModule.blueprint(
-        topic_funnels={"sensors": TopicFunnel(names=["s0", "s1"])}
-    ).namespace("bot")
+    blueprint = (
+        FanInModule.blueprint()
+        .remappings([(FanInModule, "sensors", ["s0", "s1"])])
+        .namespace("bot")
+    )
     atom = blueprint.blueprints[0]
     assert blueprint.remapping_map[atom.name, "s0"] == "bot/s0"
     assert blueprint.remapping_map[atom.name, "s1"] == "bot/s1"
 
 
-def test_a_group_entry_cannot_collide_with_a_declared_stream():
+def test_a_fanned_in_port_no_longer_connects_under_its_own_name():
+    """The port stands in for its entries rather than being a stream of its own."""
+    blueprint = FanInModule.blueprint().remappings([(FanInModule, "sensors", ["s0", "s1"])])
+    names = {stream.name for stream in blueprint.blueprints[0].streams}
+    assert "sensors" not in names
+    assert {"s0", "s1"} <= names
+
+
+def test_fanning_in_an_undeclared_port_is_an_error():
+    with pytest.raises(ValueError, match="no such In/IO stream"):
+        FanInModule.blueprint().remappings([(FanInModule, "nope", ["s0"])])
+
+
+def test_a_funnel_entry_cannot_collide_with_a_declared_stream():
     with pytest.raises(ValueError, match="collides"):
-        FanInModule(topic_funnels={"sensors": TopicFunnel(names=["tagged"])})
+        FanInModule(topic_funnels={"sensors": {"names": ["tagged"]}})
 
 
-def test_funnel_info_keys_must_be_names():
-    with pytest.raises(ValueError, match="not in names"):
-        TopicFunnel(names=["s0"], info={"s9": {"scale": 2.0}})
+def test_a_funnel_entry_rejects_a_backend_topic_string():
+    """Entries are stream names, so a leading slash is a transport leaking in."""
+    with pytest.raises(ValueError, match="not topics"):
+        FanInModule.blueprint().remappings([(FanInModule, "sensors", ["/s0"])])
 
 
 class PlainFanInModule(Module):
     """A funnel handler that doesn't ask for metadata just gets the message."""
 
+    sensors: In[int]
     echoed: Out[int]
 
     async def handle_sensors(self, value: int) -> None:
@@ -139,8 +157,8 @@ class PlainFanInModule(Module):
 
 
 def test_a_funnel_handler_without_meta_gets_just_the_message(each_transport):
-    blueprint = PlainFanInModule.blueprint(
-        topic_funnels={"sensors": TopicFunnel(names=["s0", "s1"])}
+    blueprint = PlainFanInModule.blueprint().remappings(
+        [(PlainFanInModule, "sensors", ["s0", "s1"])]
     )
     coordinator = ModuleCoordinator.build(blueprint)
     s1, echoed = make_transport("s1"), make_transport("echoed")

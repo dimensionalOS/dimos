@@ -205,8 +205,8 @@ class NativeModule(Module):
     ``DIMOS_TRANSPORT`` env var. With ``stdin_config``, the topics, config,
     publisher QoS and session settings also arrive as one JSON line on stdin.
 
-    A port named in ``topic_funnels`` gets a list of channels instead of one, so
-    several same-typed streams reach a single native handler.
+    A port fanned in by ``.remappings()`` gets a list of channels instead of one,
+    so several same-typed streams reach a single native handler.
 
     The native process should parse whichever it uses and pub/sub on the given
     topics directly. On ``stop()``, the process receives SIGTERM.
@@ -540,20 +540,16 @@ class NativeModule(Module):
             channel = getattr(transport, "channel", None)
             if channel is not None:
                 topics[name] = channel
-        for port, group in self.config.topic_funnels.items():
-            if port in topics:
-                raise ValueError(
-                    f"[{self._module_label}] topic funnel {port!r} collides with the "
-                    "port of the same name declared as a stream"
-                )
+        for port, funnel in self.config.topic_funnels.items():
             entries: list[str | dict[str, Any]] = []
-            for name in group.names:
-                transport = getattr(self._funnel_streams[name], "_transport", None)
+            for name in funnel.names:
+                stream = self._funnel_streams[name]
+                transport = getattr(stream, "_transport", None)
                 channel = getattr(transport, "channel", None)
                 if channel is None:
                     # Unwired (standalone use): the channel the default transport lands on.
-                    channel = channel_for(name, group.msg_type)
-                info = group.info.get(name)
+                    channel = channel_for(name, stream.type)
+                info = funnel.info.get(name)
                 entries.append(channel if info is None else {"topic": channel, "info": info})
             topics[port] = entries
         return topics

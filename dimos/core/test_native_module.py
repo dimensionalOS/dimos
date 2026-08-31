@@ -105,6 +105,12 @@ class StubIoModule(NativeModule):
     tf: IO[TFMessage]
 
 
+class StubFunnelModule(NativeModule):
+    config: StubNativeConfig
+    cams: In[Imu]
+    cmd_vel: In[Twist]
+
+
 class StubConsumer(Module):
     pointcloud: In[PointCloud2]
     imu: In[Imu]
@@ -212,11 +218,11 @@ def test_tf_topic_comes_from_the_declared_port_only() -> None:
 
 
 def test_a_topic_funnel_reaches_the_native_process_as_a_list(monkeypatch) -> None:
-    """A group's channels are resolved without the module declaring a stream each."""
+    """The funnelled port carries every entry's channel instead of one of its own."""
     monkeypatch.setattr(native_module_mod.global_config, "transport", "lcm")
-    module = StubNativeModule(
+    module = StubFunnelModule(
         executable=_ECHO,
-        topic_funnels={"cams": TopicFunnel(names=["cam0/imu", "cam1/imu"], msg_type=Imu)},
+        topic_funnels={"cams": TopicFunnel(names=["cam0/imu", "cam1/imu"])},
     )
     try:
         topics = module._collect_topics()
@@ -232,13 +238,9 @@ def test_a_topic_funnel_reaches_the_native_process_as_a_list(monkeypatch) -> Non
 def test_funnel_info_rides_the_launch_line_but_not_the_argv(monkeypatch) -> None:
     """Per-topic info becomes a {topic, info} entry on stdin; argv keeps only topics."""
     monkeypatch.setattr(native_module_mod.global_config, "transport", "lcm")
-    module = StubNativeModule(
+    module = StubFunnelModule(
         executable=_ECHO,
-        topic_funnels={
-            "cams": TopicFunnel(
-                names={"cam0/imu": {"rectified": True}, "cam1/imu": {}}, msg_type=Imu
-            )
-        },
+        topic_funnels={"cams": TopicFunnel.of({"cam0/imu": {"rectified": True}, "cam1/imu": {}})},
     )
     try:
         topics = module._collect_topics()
@@ -256,9 +258,9 @@ def test_funnel_info_rides_the_launch_line_but_not_the_argv(monkeypatch) -> None
 
 def test_a_wired_topic_funnel_entry_uses_its_transport() -> None:
     """Remapping/pins arrive as set_transport on the entry, and the launch line follows."""
-    module = StubNativeModule(
+    module = StubFunnelModule(
         executable=_ECHO,
-        topic_funnels={"cams": TopicFunnel(names=["cam0/imu"], msg_type=Imu)},
+        topic_funnels={"cams": TopicFunnel(names=["cam0/imu"])},
     )
     transport = LCMTransport("/remapped/imu", Imu)
     try:
@@ -270,33 +272,17 @@ def test_a_wired_topic_funnel_entry_uses_its_transport() -> None:
             transport.stop()
 
 
-def test_a_topic_funnel_rejects_a_backend_topic_string() -> None:
-    """Names are stream names, so a leading slash is a transport leaking in."""
-    with pytest.raises(ValidationError, match="not topics"):
-        TopicFunnel(names=["/cam0/imu"], msg_type=Imu)
-
-
-def test_a_topic_funnel_cannot_shadow_a_declared_port() -> None:
-    module = StubNativeModule(
-        executable=_ECHO,
-        topic_funnels={"cmd_vel": TopicFunnel(names=["other"], msg_type=Twist)},
-    )
-    transport = LCMTransport("/cmd_vel", Twist)
-    try:
-        module.set_transport("cmd_vel", transport)
-        with pytest.raises(ValueError, match="collides"):
-            module._collect_topics()
-    finally:
-        module.stop()
-        with contextlib.suppress(Exception):
-            transport.stop()
+def test_a_topic_funnel_needs_a_declared_port() -> None:
+    """The funnel replaces a port's wiring, so it has to have one to replace."""
+    with pytest.raises(ValueError, match="not an In or IO stream"):
+        StubFunnelModule(executable=_ECHO, topic_funnels={"nope": TopicFunnel(names=["cam0/imu"])})
 
 
 def test_a_topic_funnel_is_not_a_native_config_field() -> None:
-    """The group is wiring, so it belongs in `topics`, not the config struct."""
-    module = StubNativeModule(
+    """The funnel is wiring, so it belongs in `topics`, not the config struct."""
+    module = StubFunnelModule(
         executable=_ECHO,
-        topic_funnels={"cams": TopicFunnel(names=["cam0/imu"], msg_type=Imu)},
+        topic_funnels={"cams": TopicFunnel(names=["cam0/imu"])},
     )
     try:
         assert "topic_funnels" not in module.config.to_config_dict()

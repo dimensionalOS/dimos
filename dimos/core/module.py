@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 import inspect
@@ -31,7 +31,7 @@ from typing import (
     get_type_hints,
 )
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 from reactivex.disposable import CompositeDisposable, Disposable
 
 from dimos.core.core import T, rpc
@@ -104,35 +104,31 @@ Deployment = Literal["python", "docker"]
 
 
 class TopicFunnel(BaseModel):
-    """Several same-typed streams that one port fans into a single handler.
+    """Several same-typed streams that one declared port fans into one handler.
+
+    Built by `Blueprint.remappings()` from a list or dict value; blueprints do
+    not construct it directly.
 
     `names` are stream names — `left_cam`, `robot1/lidar` — never a backend
-    topic string. Each entry becomes a synthetic `In` stream, so the blueprint
-    machinery treats it like a declared port: autoconnect matches it against
-    producers, `.remappings()` and `.namespace()` rewrite it, and transport
-    pins apply. A python module subscribes the wired streams itself; a native
-    module hands their channels to its subprocess, which does the subscribing.
+    topic string. Each entry replaces the port as an `In` stream, so autoconnect
+    matches it against producers, `.namespace()` rewrites it, and transport pins
+    apply. A python module subscribes the wired streams itself; a native module
+    hands their channels to its subprocess, which does the subscribing.
 
     `names` may also be a dict attaching arbitrary per-stream info that the
-    handler receives on `Metadata.info`:
-    `TopicFunnel(names={"depth": {"meters_per_unit": 0.001}, "color": {}})`.
+    handler receives on `Metadata.info`.
     """
 
     names: list[str]
-    msg_type: type[Any] | None = None
     info: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
-    @model_validator(mode="before")
     @classmethod
-    def _split_names_dict(cls, data: Any) -> Any:
-        if isinstance(data, dict) and isinstance(data.get("names"), dict):
-            names_dict = data["names"]
-            data = {
-                **data,
-                "names": list(names_dict),
-                "info": {name: value for name, value in names_dict.items() if value},
-            }
-        return data
+    def of(cls, entries: "Sequence[str] | Mapping[str, Mapping[str, Any]]") -> "TopicFunnel":
+        """Build one from a plain list of names, or a dict of name -> info."""
+        if isinstance(entries, Mapping):
+            info = {name: dict(value) for name, value in entries.items() if value}
+            return cls(names=list(entries), info=info)
+        return cls(names=list(entries))
 
     @field_validator("names")
     @classmethod
@@ -144,13 +140,6 @@ class TopicFunnel(BaseModel):
                 "start with '/' (use `left_cam`, not `/left_cam`)"
             )
         return names
-
-    @model_validator(mode="after")
-    def _info_keys_must_be_names(self) -> "TopicFunnel":
-        unknown = [name for name in self.info if name not in self.names]
-        if unknown:
-            raise ValueError(f"topic funnel info keys are not in names: {unknown}")
-        return self
 
 
 @dataclass(frozen=True)
@@ -192,7 +181,8 @@ class ModuleConfig(BaseConfig):
     # once (see BlueprintAtom.instance_name). Changes the RPC topic prefix
     # from the class name to this name.
     instance_name: str | None = None
-    # Port name -> the group of streams that port's single handler receives.
+    # Declared In/IO port -> the streams that port's single handler receives.
+    # Set by `Blueprint.remappings()`, not by blueprint authors.
     topic_funnels: dict[str, TopicFunnel] = Field(default_factory=dict)
     g: GlobalConfig = global_config
 
@@ -728,7 +718,8 @@ class ModuleBase(Configurable, CompositeResource):
         bindings: list[tuple[Any, Callable[[Any], Any]]] = []
         for input_name, in_stream in {**self.inputs, **self.ios}.items():
             declared_handler = getattr(self, f"handle_{input_name}", None)
-            if declared_handler is None:
+            # A funnelled port's handler is bound to the funnel's streams instead.
+            if declared_handler is None or input_name in self.config.topic_funnels:
                 continue
             # Async @rpc wraps the coroutine fn in a sync dispatcher. Unwrap it
             # so we subscribe the raw coroutine fn instead of the wrapper (which
@@ -763,27 +754,31 @@ class ModuleBase(Configurable, CompositeResource):
             self.process_observable(in_stream.pure_observable(), handler)
 
     def _make_funnel_streams(self) -> "dict[str, In[Any]]":
-        """One synthetic `In` per topic-funnel entry, keyed by stream name.
+        """One `In` per topic-funnel entry, keyed by stream name.
 
         These are wired like declared ports (`set_transport` finds them, the
         blueprint machinery remaps/namespaces/pins them), but they are not
         attributes, so `inputs` and the native launch line never see them as
-        ports of their own.
+        ports of their own — the funnel's port stands in for all of them.
         """
         streams: dict[str, In[Any]] = {}
-        declared = set(self.inputs) | set(self.outputs) | set(self.ios)
-        for port, group in self.config.topic_funnels.items():
-            for name in group.names:
-                if name in declared:
+        for port, funnel in self.config.topic_funnels.items():
+            declared = self.inputs.get(port) or self.ios.get(port)
+            if declared is None:
+                raise ValueError(
+                    f"topic funnel port {port!r} is not an In or IO stream of {type(self).__name__}"
+                )
+            for name in funnel.names:
+                if name != port and name in {**self.inputs, **self.outputs, **self.ios}:
                     raise ValueError(
                         f"topic funnel {port!r} entry {name!r} collides with a "
                         f"declared stream of {type(self).__name__}"
                     )
                 if name in streams:
                     raise ValueError(
-                        f"topic funnel {port!r} entry {name!r} appears in more than one group"
+                        f"topic funnel {port!r} entry {name!r} appears in more than one funnel"
                     )
-                streams[name] = In(group.msg_type or Any, name, self)
+                streams[name] = In(declared.type, name, self)
         return streams
 
     def _bind_topic_funnels(self) -> None:
@@ -833,7 +828,7 @@ class ModuleBase(Configurable, CompositeResource):
                 stream = self._funnel_streams[name]
                 if getattr(stream, "_transport", None) is None:
                     # Not wired by a coordinator (standalone use): default transport.
-                    stream.transport = make_transport(name, group.msg_type)
+                    stream.transport = make_transport(name, stream.type)
                 self.register_disposable(Disposable(stream.subscribe(partial(on_msg, index))))
 
     def _make_async_dispatch(

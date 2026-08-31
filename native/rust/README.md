@@ -127,30 +127,32 @@ impl MultiCam {
 }
 ```
 
-The Python wrapper supplies the sources with `topic_funnels`, keyed by port name:
+Funnelling happens at the blueprint routing level: `.remappings()` takes a list of stream names where it would otherwise take one.
 
 ```python
-MultiCam.blueprint(
-    topic_funnels={"cameras": TopicFunnel(names=["left_cam", "right_cam"], msg_type=Image)},
-)
+MultiCam.blueprint().remappings([
+    (MultiCam, "cameras", ["left_cam", "right_cam"]),
+])
 ```
 
-`names` may also be a dict attaching arbitrary per-stream info — `names={"left_cam": {"rectified": True}, "right_cam": {}}` — which reaches the handler as `Metadata.info` (a dict in python, `serde_json::Value` in rust; on the launch line such an entry is a `{"topic": ..., "info": ...}` object instead of a plain string).
+A dict instead of a list attaches arbitrary per-stream info — `{"left_cam": {"rectified": True}, "right_cam": {}}` — which reaches the handler as `Metadata.info` (a dict in python, `serde_json::Value` in rust; on the launch line such an entry is a `{"topic": ..., "info": ...}` object instead of a plain string).
 
-`names` are stream names, not backend topics — a leading `/` is rejected. Each entry becomes a synthetic `In` stream on the python side, so the blueprint machinery treats it like a declared port: autoconnect matches it against producers' `Out` streams, `.remappings()` and `.namespace()` rewrite it, and blueprint transport pins apply. The same blueprint runs unchanged over LCM or zenoh.
+The entries are stream names, not backend topics — a leading `/` is rejected. Each one takes the port's place as an `In` stream of the same type, so autoconnect matches it against producers' `Out` streams, `.namespace()` and further `.remappings()` rewrite it, and blueprint transport pins apply. The same blueprint runs unchanged over LCM or zenoh.
 
-The group itself is not a port with a stream of its own: python hands the wired entries' channels to the native process, which subscribes them directly. On the launch line the port's value is an array rather than a string. A group configured with no names still claims its port but never yields.
+The port itself stops being a stream of its own: python hands the wired entries' channels to the native process, which subscribes them directly. On the launch line the port's value is an array rather than a string. A funnel with no entries still claims its port but never yields.
 
-`topic_funnels` lives on `ModuleConfig`, so a plain Python `Module` takes the same field. There the module subscribes the group itself and dispatches to `async def handle_<port>`. Opting into metadata is by signature — a one-parameter handler just gets the message, a two-parameter handler also gets a `Metadata` with `index` (position in `names`) and `name` (the stream name as declared, pre-remapping):
+Fan-in is a `ModuleConfig` feature, so a plain Python `Module` funnels the same way. There the module subscribes the entries itself and dispatches to `async def handle_<port>`. Opting into metadata is by signature — a one-parameter handler just gets the message, a two-parameter handler also gets a `Metadata` with `index` (position in the list) and `name` (the stream name as declared, pre-remapping):
 
 ```python
 class MultiCam(Module):
+    cameras: In[Image]
+
     async def handle_cameras(self, image: Image, meta: Metadata) -> None: ...
 ```
 
 The same applies to any `handle_<input>` for a plain `In` port, where the metadata is always `index=0, name=<input>`.
 
-The whole group shares one dispatcher, so the handler is never re-entered, and its mailbox holds the latest unprocessed message per stream rather than one slot for the group — a chatty camera cannot starve the others.
+The whole funnel shares one dispatcher, so the handler is never re-entered, and its mailbox holds the latest unprocessed message per stream rather than one slot for the funnel — a chatty camera cannot starve the others.
 
 ## Transforms
 
