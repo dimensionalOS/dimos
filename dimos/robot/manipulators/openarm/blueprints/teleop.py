@@ -21,7 +21,7 @@ from dataclasses import replace
 from dimos.control.coordinator import ControlCoordinatorConfig, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.robot.manipulators.openarm.config import (
@@ -133,41 +133,50 @@ _openarm_quest_task = TaskConfig(
     },
 )
 
-# Safe default: both controllers feed one bimanual task backed by in-memory
-# hardware. Supplying both CAN ports selects the physical adapter.
-teleop_quest_openarm = autoconnect(
-    ArmTeleopModule.blueprint(),
-    OpenArmTeleopCoordinator.blueprint(
-        instance_name="ControlCoordinator",
-        tasks=[
-            _openarm_quest_task,
-            TaskConfig(
-                name="left_arm_gripper",
-                type="gripper",
-                joint_names=[OPENARM_GRIPPER_JOINTS[0]],
-                priority=20,
-                stream_bind={"gripper_command": "left_gripper_command"},
-            ),
-            TaskConfig(
-                name="right_arm_gripper",
-                type="gripper",
-                joint_names=[OPENARM_GRIPPER_JOINTS[1]],
-                priority=20,
-                stream_bind={"gripper_command": "right_gripper_command"},
-            ),
-            _trajectory_task(priority=20),
-        ],
-    ),
-    _OpenArmManipulationModule.blueprint(
-        model=openarm_bimanual_model_config(),
-        kinematics=_openarm_quest_pink,
-        visualization={"backend": "viser"},
-    ),
-).remappings(
-    [
-        (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
-        (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
-        (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
-        (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
-    ]
-)
+
+def teleop_quest_openarm_blueprint(*, publish_joint_targets: bool = False) -> Blueprint:
+    """The OpenArm Quest teleop stack, with optional coordinator extras.
+
+    Safe default: both controllers feed one bimanual task backed by in-memory
+    hardware. Supplying both CAN ports selects the physical adapter.
+    """
+    return autoconnect(
+        ArmTeleopModule.blueprint(),
+        OpenArmTeleopCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            publish_joint_targets=publish_joint_targets,
+            tasks=[
+                _openarm_quest_task,
+                TaskConfig(
+                    name="left_arm_gripper",
+                    type="gripper",
+                    joint_names=[OPENARM_GRIPPER_JOINTS[0]],
+                    priority=20,
+                    stream_bind={"gripper_command": "left_gripper_command"},
+                ),
+                TaskConfig(
+                    name="right_arm_gripper",
+                    type="gripper",
+                    joint_names=[OPENARM_GRIPPER_JOINTS[1]],
+                    priority=20,
+                    stream_bind={"gripper_command": "right_gripper_command"},
+                ),
+                _trajectory_task(priority=20),
+            ],
+        ),
+        _OpenArmManipulationModule.blueprint(
+            model=openarm_bimanual_model_config(),
+            kinematics=_openarm_quest_pink,
+            visualization={"backend": "viser"},
+        ),
+    ).remappings(
+        [
+            (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
+            (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
+            (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
+            (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
+        ]
+    )
+
+
+teleop_quest_openarm = autoconnect(teleop_quest_openarm_blueprint())

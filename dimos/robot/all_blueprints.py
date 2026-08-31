@@ -73,6 +73,7 @@ all_blueprints = {
     "keyboard-teleop-piper": "dimos.robot.manipulators.piper.blueprints.teleop:keyboard_teleop_piper",
     "keyboard-teleop-xarm6": "dimos.robot.manipulators.xarm.blueprints.teleop:keyboard_teleop_xarm6",
     "keyboard-teleop-xarm7": "dimos.robot.manipulators.xarm.blueprints.teleop:keyboard_teleop_xarm7",
+    "learning-collect-quest-openarm": "dimos.imitation.collection.blueprint:learning_collect_quest_openarm",
     "learning-collect-quest-piper": "dimos.imitation.collection.blueprint:learning_collect_quest_piper",
     "learning-collect-quest-xarm7": "dimos.imitation.collection.blueprint:learning_collect_quest_xarm7",
     "mid360": "dimos.hardware.sensors.lidar.livox.livox_blueprints:mid360",
@@ -254,6 +255,7 @@ all_modules = {
     "object-tracking": "dimos.perception.experimental.object_tracker.ObjectTracking",
     "observe-skill": "dimos.agents.skills.observe_skill.ObserveSkill",
     "odometry-hist": "dimos.mapping.odometry_hist.OdometryHist",
+    "open-arm-collection-recorder": "dimos.imitation.collection.blueprint.OpenArmCollectionRecorder",
     "open-arm-teleop-coordinator": "dimos.robot.manipulators.openarm.blueprints.teleop.OpenArmTeleopCoordinator",
     "osm-skill": "dimos.agents.skills.osm.OsmSkill",
     "path-following-coordinator": "dimos.control.path_following_coordinator.PathFollowingCoordinator",
@@ -304,5 +306,6 @@ all_modules = {
     "world-belief-module": "dimos.experimental.world_belief.worldbelief_module.WorldBeliefModule",
     "world-belief-recorder": "dimos.experimental.world_belief.worldbelief_recorder.WorldBeliefRecorder",
     "wrist-camera": "dimos.teleop.hosted.blueprints.cloudflare.WristCamera",
+    "wrist-camera-module": "dimos.imitation.collection.blueprint.WristCameraModule",
     "zed-camera": "dimos.hardware.sensors.camera.zed.camera.ZEDCamera",
 }

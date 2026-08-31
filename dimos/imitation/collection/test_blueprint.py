@@ -18,12 +18,15 @@ import pytest
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.imitation.collection.blueprint import (
+    OpenArmCollectionRecorder,
+    learning_collect_quest_openarm,
     learning_collect_quest_piper,
     learning_collect_quest_xarm7,
 )
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.manipulators.openarm.blueprints.teleop import OpenArmTeleopCoordinator
 from dimos.teleop.quest.quest_extensions import ArmTeleopModule
 
 AGGREGATE = "coordinator_joint_state"
@@ -91,3 +94,58 @@ def test_recorder_reads_aggregate_joint_state(blueprint: Blueprint) -> None:
     assert streams[("collectionrecorder", AGGREGATE)] == AGGREGATE
     assert streams[("ControlCoordinator", AGGREGATE)] == AGGREGATE
     assert not [port for _instance, port in streams if port.endswith("_joints")]
+
+
+TARGETS = "coordinator_joint_targets"
+
+
+def test_openarm_collection_streams_are_poseless() -> None:
+    recorder = next(
+        atom
+        for atom in learning_collect_quest_openarm.blueprints
+        if atom.module is OpenArmCollectionRecorder
+    )
+
+    assert recorder.kwargs["poseless_streams"] == [
+        "color_image",
+        "left_wrist_image",
+        "right_wrist_image",
+        "coordinator_joint_state",
+        "coordinator_joint_targets",
+        "status",
+    ]
+    assert recorder.kwargs["record_tf"] is False
+
+
+def test_openarm_recorder_and_monitor_stop_after_producers() -> None:
+    assert learning_collect_quest_openarm.active_blueprints[0].module is OpenArmCollectionRecorder
+    assert learning_collect_quest_openarm.active_blueprints[1].module is EpisodeMonitorModule
+
+
+def test_openarm_coordinator_publishes_joint_targets() -> None:
+    coordinator = next(
+        atom
+        for atom in learning_collect_quest_openarm.blueprints
+        if atom.module is OpenArmTeleopCoordinator
+    )
+
+    assert coordinator.kwargs["publish_joint_targets"] is True
+
+
+def test_openarm_recorder_reads_state_and_targets() -> None:
+    streams = _joint_streams(learning_collect_quest_openarm)
+
+    assert streams[("openarmcollectionrecorder", AGGREGATE)] == AGGREGATE
+    assert streams[("ControlCoordinator", AGGREGATE)] == AGGREGATE
+    assert streams[("openarmcollectionrecorder", TARGETS)] == TARGETS
+    assert streams[("ControlCoordinator", TARGETS)] == TARGETS
+
+
+def test_openarm_collection_status_is_wired_to_quest_hud() -> None:
+    hud = next(
+        atom for atom in learning_collect_quest_openarm.blueprints if atom.module is ArmTeleopModule
+    )
+    status = next(stream for stream in hud.streams if stream.name == "status")
+
+    assert status.direction == "in"
+    assert status.type.__name__ == "EpisodeStatus"

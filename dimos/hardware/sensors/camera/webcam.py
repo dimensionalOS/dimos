@@ -28,7 +28,7 @@ from dimos.utils.reactive import backpressure
 
 
 class WebcamConfig(CameraConfig):
-    camera_index: int = 0  # /dev/videoN
+    camera_index: int | str = 0  # /dev/videoN index, or a device path such as /dev/v4l/by-path/...
     width: int = 640
     height: int = 480
     fps: float = 15.0
