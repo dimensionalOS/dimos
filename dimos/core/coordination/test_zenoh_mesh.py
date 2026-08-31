@@ -74,6 +74,27 @@ def test_diverged_config_rides_the_mesh_session() -> None:
         pool.close_all()
 
 
+def test_emptied_mesh_roster_closes_the_dialing_sessions() -> None:
+    """Coordinator teardown must reclaim the sessions dialing its workers.
+
+    Zenoh retries refused dials forever, so a long-lived process (a pytest
+    worker, a daemon restarting blueprints) would otherwise accumulate one
+    session per coordinator lifecycle, each burning threads and sockets on
+    dead ports.
+    """
+    worker = zenohservice.allocate_mesh_endpoint()
+    zenohservice.configure_zenoh_mesh(None, (worker,))
+    try:
+        config = zenohservice.ZenohConfig()
+        assert worker in config.connect
+        session = zenohservice.default_session_pool.acquire(config)
+    finally:
+        zenohservice.configure_zenoh_mesh(None, ())
+
+    assert session.is_closed()
+    assert config.session_key not in zenohservice.default_session_pool._sessions
+
+
 class MeshSource(Module):
     mesh_data: Out[Vector3]
 

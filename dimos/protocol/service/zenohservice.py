@@ -90,10 +90,19 @@ def configure_zenoh_mesh(listen: str | None, connect: Sequence[str]) -> None:
     live workers. Already-open sessions are not reconfigured: the mesh stays
     complete because every session dials whatever existed when it opened and
     is dialled by everything newer.
+
+    An emptied roster (every worker shut down) also closes the pooled sessions
+    that dialed the departed endpoints. Zenoh retries refused dials forever,
+    so without this every coordinator lifecycle in a long-lived process (a
+    pytest worker, a daemon restarting blueprints) leaks a session whose
+    runtime threads and sockets keep hammering dead ports.
     """
     global _mesh_listen, _mesh_connect
+    previous = _mesh_connect
     _mesh_listen = listen
     _mesh_connect = tuple(connect)
+    if previous and not _mesh_connect:
+        default_session_pool.close_dialing(previous)
 
 
 def _default_connect_endpoints() -> list[str]:
@@ -300,6 +309,8 @@ def _zenoh_config(config: ZenohConfig) -> zenoh.Config:
 class ZenohSessionPool:
     def __init__(self) -> None:
         self._sessions: dict[str, zenoh.Session] = {}
+        # Endpoints each session dialed at open, for close_dialing().
+        self._dialed: dict[str, tuple[str, ...]] = {}
         # Key of the session holding this process's mesh listen endpoint.
         self._mesh_key: str | None = None
         self._lock = threading.Lock()
@@ -335,6 +346,7 @@ class ZenohSessionPool:
                 _warn_client_single_link(config)
                 self._sessions[key] = zenoh.open(_zenoh_config(config))
                 self._opened_in_pid = os.getpid()
+                self._dialed[key] = tuple(config.connect)
                 if _mesh_listen is not None and _mesh_listen in config.listen_endpoints:
                     self._mesh_key = key
                 logger.info(
@@ -352,6 +364,25 @@ class ZenohSessionPool:
         if self._opened_in_pid == os.getpid():
             self.close_all()
 
+    def close_dialing(self, endpoints: Sequence[str]) -> None:
+        """Close every pooled session that dialed any of these endpoints.
+
+        Runs when the mesh roster empties: the departed workers' ports are
+        dead (and the kernel may hand them to an unrelated process later), so
+        the sessions dialing them can only burn retries.
+        """
+        doomed = set(endpoints)
+        with self._lock:
+            for key in [k for k, dialed in self._dialed.items() if doomed & set(dialed)]:
+                try:
+                    self._sessions[key].close()
+                except zenoh.ZError as e:
+                    logger.warning("Zenoh session close failed", session_key=key, error=str(e))
+                del self._sessions[key]
+                del self._dialed[key]
+                if self._mesh_key == key:
+                    self._mesh_key = None
+
     def close_all(self) -> None:
         """Close every pooled session and empty the pool."""
         with self._lock:
@@ -363,6 +394,7 @@ class ZenohSessionPool:
                 except zenoh.ZError as e:
                     logger.warning("Zenoh session close failed", session_key=key, error=str(e))
             self._sessions.clear()
+            self._dialed.clear()
             self._mesh_key = None
 
 
