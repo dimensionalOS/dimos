@@ -17,7 +17,7 @@ from queue import Queue
 import pytest
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.core.module import Metadata, Module
+from dimos.core.module import Module, TopicMetadata
 from dimos.core.stream import In, Out
 from dimos.core.transport_factory import make_transport
 
@@ -30,7 +30,7 @@ class FanInModule(Module):
     named: Out[str]
     scaled: Out[float]
 
-    async def handle_sensors(self, value: int, meta: Metadata) -> None:
+    async def handle_sensors(self, value: int, meta: TopicMetadata) -> None:
         self.tagged.publish(meta.index * 100 + value)
         self.named.publish(meta.name)
         self.scaled.publish(value * meta.info.get("scale", 1.0))

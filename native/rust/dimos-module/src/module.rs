@@ -117,7 +117,7 @@ impl<T: Send + 'static> Route for TypedRoute<T> {
 /// with `#[input(meta)]`. `info` is whatever the coordinator attached to that
 /// topic on the launch line (`Null` when nothing was).
 #[derive(Clone, Debug)]
-pub struct Metadata {
+pub struct TopicMetadata {
     pub index: usize,
     pub topic: String,
     pub info: serde_json::Value,
@@ -138,9 +138,9 @@ impl<T> Input<T> {
         self.receiver.recv().await.map(|(_, msg)| msg)
     }
 
-    pub async fn recv_meta(&mut self) -> Option<(T, Metadata)> {
+    pub async fn recv_meta(&mut self) -> Option<(T, TopicMetadata)> {
         let (index, msg) = self.receiver.recv().await?;
-        let meta = Metadata {
+        let meta = TopicMetadata {
             index,
             topic: self.topics[index].clone(),
             info: self.infos[index].clone(),
@@ -1545,7 +1545,7 @@ mod tests {
         }
 
         impl Rig {
-            async fn handle_cams(&mut self, msg: Msg, meta: crate::Metadata) {
+            async fn handle_cams(&mut self, msg: Msg, meta: crate::TopicMetadata) {
                 let mut tagged = vec![meta.index as u8];
                 tagged.extend(msg.0);
                 self.seen.publish(&Msg(tagged)).await.expect("publish");

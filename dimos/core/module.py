@@ -116,7 +116,7 @@ class TopicFunnel(BaseModel):
     hands their channels to its subprocess, which does the subscribing.
 
     `names` may also be a dict attaching arbitrary per-stream info that the
-    handler receives on `Metadata.info`.
+    handler receives on `TopicMetadata.info`.
     """
 
     names: list[str]
@@ -143,7 +143,7 @@ class TopicFunnel(BaseModel):
 
 
 @dataclass(frozen=True)
-class Metadata:
+class TopicMetadata:
     """Which stream a message arrived on, for handlers that take `(msg, meta)`.
 
     `index` is the position in the funnel's `names` (0 for a plain input);
@@ -733,12 +733,12 @@ class ModuleBase(Configurable, CompositeResource):
                 )
             handler: Callable[..., Any] = declared_handler
             if _handler_wants_metadata(handler, f"{type(self).__name__}.handle_{input_name}"):
-                metadata = Metadata(index=0, name=input_name)
+                metadata = TopicMetadata(index=0, name=input_name)
 
                 async def with_meta(
                     msg: Any,
-                    _handler: Callable[[Any, Metadata], Any] = handler,
-                    _metadata: Metadata = metadata,
+                    _handler: Callable[[Any, TopicMetadata], Any] = handler,
+                    _metadata: TopicMetadata = metadata,
                 ) -> None:
                     await _handler(msg, _metadata)
 
@@ -802,15 +802,15 @@ class ModuleBase(Configurable, CompositeResource):
             handler: Callable[..., Any] = declared_handler
             if _handler_wants_metadata(handler, f"{type(self).__name__}.handle_{port}"):
                 metas = tuple(
-                    Metadata(index=index, name=name, info=group.info.get(name, {}))
+                    TopicMetadata(index=index, name=name, info=group.info.get(name, {}))
                     for index, name in enumerate(group.names)
                 )
 
                 async def invoke(
                     index: int,
                     msg: Any,
-                    _handler: Callable[[Any, Metadata], Any] = handler,
-                    _metas: tuple[Metadata, ...] = metas,
+                    _handler: Callable[[Any, TopicMetadata], Any] = handler,
+                    _metas: tuple[TopicMetadata, ...] = metas,
                 ) -> None:
                     await _handler(msg, _metas[index])
             else:
