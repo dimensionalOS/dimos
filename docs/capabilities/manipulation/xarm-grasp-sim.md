@@ -34,6 +34,39 @@ uv sync --extra graspgenx
 MUJOCO_GL=egl dimos run xarm-grasp-sim-graspgenx
 ```
 
+## Voxel map obstacles
+
+The wrist camera feeds a live voxel map that the planner treats as one octree
+obstacle, so trajectories avoid whatever has actually been seen rather than only
+the registered objects:
+
+```
+MujocoSimModule.pointcloud
+  -> PointCloudSelfFilter        drops the arm's own returns, emits a clear mask
+  -> RayTracingVoxelMap          accumulates occupied cells in the world frame
+  -> ManipulationModule.voxel_map   rebuilt as the "mapping/voxel-map" obstacle
+```
+
+`XARM_GRASP_VOXEL_SIZE` is the single resolution all three stages share; they
+must agree or the clear mask names cells the map does not hold and the octree
+does not line up with what was mapped. The blueprint also enables the sim's
+`pointcloud` output, which is off by default, and publishes TF for every one of
+the arm's collision links — the self filter drops a whole cloud if any link
+transform is missing at capture time.
+
+`RayTracingVoxelMap` is a native module, so it needs the Rust binary once per
+box:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+cargo build --release -p dimos-voxel-ray-tracing
+```
+
+Because the target object is itself mapped geometry, a collision-checked plan
+into it can only ever be rejected. The pregrasp-to-grasp leg and the retreat are
+therefore straight-line `move_linear` servos with collision checking off; only
+the approach to the pregrasp pose is a checked plan.
+
 ## The scene
 
 The scene is an enclosed 2.6 m by 3.0 m room. The xArm is bolted to the world

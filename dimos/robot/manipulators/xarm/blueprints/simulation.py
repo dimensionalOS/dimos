@@ -23,10 +23,13 @@ from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+from dimos.manipulation.planning.utils.point_cloud_self_filter import PointCloudSelfFilter
+from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import (
+    XARM7_COLLISION_LINKS,
     XARM7_SIM_PATH,
     make_xarm7_sim_hardware,
     make_xarm7_sim_module_kwargs,
@@ -47,11 +50,21 @@ XARM_GRASP_SCAN_JOINTS = [0.0, -0.04609, 0.0, 1.83940, 0.0, 1.87106, 0.0]
 _xarm_grasp_sim_hw = make_xarm7_sim_hardware(
     XARM_GRASP_SCENE_PATH, home_joints=XARM_GRASP_SCAN_JOINTS
 )
+# One resolution for the whole mapping chain. The self filter's clear mask, the
+# mapper's cells and the planner's octree must all agree: a mismatched mask names
+# cells the map does not hold and clears nothing, and a mismatched octree does not
+# line up with what was mapped.
+XARM_GRASP_VOXEL_SIZE = 0.025
 # data/xarm_grasp_sim/xarm7.xml bolts link_base to the world origin instead of the
 # 12 cm pedestal data/xarm7 uses, so this scene must not inherit the pedestal offset.
 # With it, the planning model sits 12 cm above the arm MuJoCo simulates and every
 # pose executes 12 cm low -- the exact failure XARM7_SIM_BASE_POSE warns about.
-_xarm_grasp_sim_model = make_xarm7_sim_robot_config(base_pose=PoseStamped(frame_id="world"))
+_xarm_grasp_sim_model = make_xarm7_sim_robot_config(
+    base_pose=PoseStamped(frame_id="world"),
+    # The self filter needs a capture-time transform for every collision link
+    # and drops the whole cloud when one is missing.
+    tf_extra_links=XARM7_COLLISION_LINKS,
+)
 XARM_GRASP_PROMPTS = [
     "black bottle",
     "gray can",
@@ -124,6 +137,8 @@ _XARM_GRASP_SIM_MODULES = (
         model=_xarm_grasp_sim_model,
         planning_timeout=10.0,
         visualization={"backend": "none"},
+        world_frame="world",
+        voxel_map_resolution=XARM_GRASP_VOXEL_SIZE,
     ),
     ManipulationSkills.blueprint(),
     PickAndPlaceModule.blueprint(
@@ -143,7 +158,25 @@ _XARM_GRASP_SIM_MODULES = (
             # world->link7 edge and can make an otherwise valid scan unregistrable.
             "base_frame_id": "world",
             "reset_joint_positions": XARM_GRASP_SCAN_JOINTS,
+            # Off by default, and the voxel mapping chain has nothing to map
+            # without it. Scene registration reads colour and depth directly.
+            "enable_pointcloud": True,
         }
+    ),
+    # The wrist camera sees the arm itself, so the arm's returns must be dropped
+    # before mapping and the volume it occupies erased from the map: ray tracing
+    # cannot clear what the arm permanently occludes.
+    PointCloudSelfFilter.blueprint(
+        model=_xarm_grasp_sim_model.model,
+        voxel_size=XARM_GRASP_VOXEL_SIZE,
+        world_frame="world",
+    ),
+    # Tabletop reach, not a room-scale lidar sweep: a short max_range keeps the
+    # octree to the workspace the arm can actually plan into.
+    RayTracingVoxelMap.blueprint(
+        voxel_size=XARM_GRASP_VOXEL_SIZE,
+        world_frame="world",
+        max_range=2.0,
     ),
     ObjectSceneRegistrationModule.blueprint(
         target_frame="world",
@@ -175,7 +208,16 @@ _XARM_GRASP_SIM_MODULES = (
 )
 
 
-xarm_grasp_sim = autoconnect(*_XARM_GRASP_SIM_MODULES, HeuristicGraspModule.blueprint())
+# The mapping chain is wired by stream name, so the two edges whose names differ
+# are bridged here: self filter -> mapper, and mapper -> the planner's octree.
+_XARM_GRASP_SIM_REMAPPINGS = [
+    (RayTracingVoxelMap, "lidar", "filtered_pointcloud"),
+    (ManipulationModule, "voxel_map", "global_map"),
+]
+
+xarm_grasp_sim = autoconnect(*_XARM_GRASP_SIM_MODULES, HeuristicGraspModule.blueprint()).remappings(
+    _XARM_GRASP_SIM_REMAPPINGS
+)
 
 xarm_grasp_sim_graspgenx = autoconnect(
     *_XARM_GRASP_SIM_MODULES,
@@ -183,4 +225,4 @@ xarm_grasp_sim_graspgenx = autoconnect(
         gripper=XARM_GRIPPER_SWEEP_VOLUME,
         grasp_frame_to_tcp=XARM_GRASP_FRAME_TO_TCP,
     ),
-)
+).remappings(_XARM_GRASP_SIM_REMAPPINGS)
