@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 from typing import Any, Literal
@@ -73,11 +74,13 @@ class ObjectSceneRegistrationModule(Module):
     depth_image: In[Image]
     camera_info: In[CameraInfo]
     tf: In[TFMessage]
+    scan_requests: In[list[str]]
 
     detections_2d: Out[Detection2DArray]
     detections_3d: Out[Detection3DArray]
     objects: Out[list[DetObject]]
     pointcloud: Out[PointCloud2]
+    scan_results: Out[Detection3DArray]
 
     _detector: Any | None = None
     _segmenter: BoxPromptImageSegmenter | None = None
@@ -220,6 +223,11 @@ class ObjectSceneRegistrationModule(Module):
                 frame_id=self._target_frame,
                 ts=frames[0].ts,
             )
+
+    async def handle_scan_requests(self, prompts: list[str]) -> None:
+        """Run a panel-requested scan and publish its response."""
+        result = await asyncio.to_thread(self.scan_scene, text=prompts)
+        self.scan_results.publish(result)
 
     def _scan_scene_objects(self, frames: tuple[Image, Image] | None = None) -> list[DetObject]:
         """Process one frame and return only objects observed during this scan."""

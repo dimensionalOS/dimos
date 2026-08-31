@@ -87,6 +87,7 @@ def _operator() -> tuple[ManipulationOperator, MagicMock, MagicMock]:
     module._execute_generated_plan.return_value = True
     module.cancel.return_value = ExecutionResult(ExecutionStatus.NO_EXECUTION)
     module.clear_planned_path.return_value = True
+    module.scan_from_here.return_value = {"detected": 3, "refreshed": 5, "total": 5}
 
     monitor = MagicMock()
     monitor.planning_groups = PlanningGroupRegistry([config])
@@ -178,3 +179,12 @@ def test_cartesian_planning_uses_current_group_pose() -> None:
     assert result is module.generate_cartesian_plan.return_value
     targets = module.generate_cartesian_plan.call_args.args[0]
     assert targets["left_arm"] == (monitor.get_group_ee_pose.return_value, target)
+
+
+def test_scan_from_here_uses_module_seam() -> None:
+    operator, module, _ = _operator()
+
+    result = operator.scan_from_here(["cup", "bottle"], 12.0)
+
+    assert result == {"detected": 3, "refreshed": 5, "total": 5}
+    module.scan_from_here.assert_called_once_with(["cup", "bottle"], 12.0)

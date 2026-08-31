@@ -218,6 +218,10 @@ class ManipulationOperator:
     def clear_plan(self) -> bool:
         return self._module.clear_planned_path()
 
+    def scan_from_here(self, prompts: list[str], timeout: float) -> dict[str, int]:
+        """Run perception at the current arm pose and refresh planner obstacles."""
+        return self._module.scan_from_here(prompts, timeout)
+
     def _validate_joint_request(
         self, request: JointTargetRequest
     ) -> tuple[tuple[PlanningGroup, ...] | None, TargetEvaluationResult | None]:

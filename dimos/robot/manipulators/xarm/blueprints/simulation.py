@@ -90,7 +90,12 @@ xarm_room_sim = autoconnect(
     ManipulationModule.blueprint(
         model=_xarm7_sim_model,
         planning_timeout=10.0,
-        visualization={"backend": "none"},
+        visualization={
+            "backend": "viser",
+            "scan_from_here_enabled": True,
+            "scan_prompts": XARM_ROOM_PROMPTS,
+            "viewpoints_enabled": True,
+        },
     ),
     ManipulationSkills.blueprint(),
     PickAndPlaceModule.blueprint(planning_frame="world"),
